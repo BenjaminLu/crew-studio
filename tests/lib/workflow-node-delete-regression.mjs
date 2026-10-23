@@ -17,6 +17,7 @@ export async function verifyNodeDeletion(p, {ok,lang,tag}) {
   const visible=await p.locator('[data-node]').evaluateAll(xs=>xs.map(x=>x.dataset.node).sort());ok(same(visible,ids(expectedNodes)),`remaining disconnected nodes stay visible in ${view} after deleting ${removed} ${tag}`);
   const clipped=await p.locator('svg.rt-graph').evaluate(svg=>{const frame=svg.getBoundingClientRect();return [...svg.querySelectorAll('[data-node]')].filter(el=>{const r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return x<frame.x||x>frame.right||y<frame.y||y>frame.bottom;}).map(el=>el.dataset.node);});
   ok(clipped.length===0,`surviving nodes are actually inside the canvas after deletion ${view}/${removed} ${tag}`,JSON.stringify(clipped));
+  const drawnEdges=await p.locator('svg.rt-graph').evaluate(svg=>svg.lay.edges.flatMap(e=>e.index).sort((a,b)=>a-b));ok(same(drawnEdges,expectedEdges.map((_,i)=>i)),`disconnected steps keep their original edge indices in ${view} after deleting ${removed} ${tag}`,JSON.stringify(drawnEdges));
   // Native selection must still reach every surviving node, including repeated labels.
   for(const node of expectedNodes){await select(node.id);ok(await p.locator(`[data-del-node="${node.id}"]`).isVisible(),`remaining ${node.id} is selectable for repair ${view} ${tag}`);}
   await close();const undo=nextDef();await p.keyboard.press(modifier+'+z');const restored=await undo;ok(same(restored.nodes,baseline.nodes)&&same(restored.edges,baseline.edges)&&same(restored.roles,baseline.roles),`Undo restores exact nodes, edges and settings ${view}/${removed} ${tag}`);
@@ -35,19 +36,35 @@ export async function verifyNodeDeletion(p, {ok,lang,tag}) {
  }
 }
 
-// Existing close/closed branches must be visible before deletion, not suddenly
-// promoted from the run-summary projection after an unrelated step disappears.
+// What the editor Overview lets a captain reach: drawn steps, plus steps listed in a badge drawn on the canvas.
+export const overviewReach=p=>p.locator('svg.rt-graph').evaluate(svg=>{const out=new Set([...svg.querySelectorAll('[data-node]')].map(x=>x.dataset.node));
+ for(const [key,list] of Object.entries(svg.lay.badges||{})){const at=key.indexOf(':'),kind=key.slice(0,at),id=key.slice(at+1);
+  for(const b of list){if(!svg.querySelector(`[data-badge="${CSS.escape(kind==='node'?`${b.kind}:${id}`:`s:${id}:${b.kind}`)}"]`))continue;for(const x of b.kind==='loop'?[b.loop]:b.kind==='ask'?[b.node]:b.nodes)out.add(x);}}
+ return [...out].sort();});
+// Default Overview is the folded main path: a deletion may unfold a branch, but never hides another step.
+// Show all connections draws the actual graph: the visible ID set changes only by the deleted step.
 export async function verifyCloseBranchDeletion(p, base, ok) {
- await p.goto(`${base}/#/workflows/trivial-lane`);await p.locator('svg.rt-graph').waitFor();await p.locator('[data-view-toggle="simple"]').click();
+ await p.goto(`${base}/#/workflows/trivial-lane`);await p.locator('svg.rt-graph').waitFor();await revealEditorControl(p,'[data-view-toggle="simple"]');await p.locator('[data-view-toggle="simple"]').click();
  const before=(await (await p.request.get(`${base}/api/wf/trivial-lane`)).json()).def,sorted=xs=>[...xs].sort(),same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
  const shown=()=>p.locator('svg.rt-graph [data-node]').evaluateAll(xs=>xs.map(x=>x.dataset.node));
- const initial=await shown();ok(same(sorted(initial),sorted(before.nodes.map(n=>n.id)))&&initial.includes('close')&&initial.includes('closed'),'editor Overview shows actual close branches before any deletion',JSON.stringify(initial));
+ const allEdges=p.locator('[data-graph-all-edges]');
  const next=()=>p.waitForRequest(r=>r.url().endsWith('/api/wf/validate')&&r.method()==='POST').then(r=>r.postDataJSON().def),modifier=process.platform==='darwin'?'Meta':'Control';
- for(const target of ['done','merge','recipe','approve']){
-  if(await p.locator('[data-inspector-close]').isVisible())await p.locator('[data-inspector-close]').click();await revealEditorControl(p,'[data-fit]');await p.locator('[data-fit]').click();
-  const visibleBefore=await shown();await p.locator(`[data-node="${target}"]`).click();const pending=next();await p.locator(`[data-del-node="${target}"]`).click();const after=await pending,expectedNodes=before.nodes.filter(n=>n.id!==target),expectedEdges=before.edges.filter(e=>e.from!==target&&e.to!==target);
-  ok(same(after.nodes,expectedNodes)&&same(after.edges,expectedEdges)&&same(after.roles,before.roles),`deleting ${target} changes only its exact object and incident edges; no node or reconnection added`);
-  const visibleAfter=await shown();ok(same(sorted(visibleAfter),sorted(visibleBefore.filter(id=>id!==target)))&&same(sorted(visibleAfter),sorted(expectedNodes.map(n=>n.id))),`deleting ${target} neither introduces close nor removes any other visual node`,JSON.stringify({visibleBefore,visibleAfter}));
-  const undo=next();await p.keyboard.press(modifier+'+z');const restored=await undo;ok(same(restored.nodes,before.nodes)&&same(restored.edges,before.edges)&&same(sorted(await shown()),sorted(initial)),`Undo ${target} restores exact data and original visible IDs`);
+ const pressed=async()=>await allEdges.count()?allEdges.getAttribute('aria-pressed'):null;
+ for(const mode of ['main path','all connections']){
+  if(mode==='all connections'){if(!await allEdges.count()){ok(false,'the editor Overview offers Show all connections');return;}await revealEditorControl(p,'[data-graph-all-edges]');await allEdges.click();}
+  ok(await pressed()===String(mode==='all connections'),`Show all connections is ${mode==='all connections'?'on':'off'} for the ${mode} pass`);
+  const initial=await shown();
+  if(mode==='main path')ok(!initial.includes('close')&&!initial.includes('closed')&&same(await overviewReach(p),sorted(before.nodes.map(n=>n.id))),'editor Overview folds the close branches into badges and still reaches every step',JSON.stringify(initial));
+  else ok(same(sorted(initial),sorted(before.nodes.map(n=>n.id)))&&initial.includes('close')&&initial.includes('closed'),'Show all connections draws the actual close branches before any deletion',JSON.stringify(initial));
+  for(const target of ['done','merge','recipe','approve']){
+   if(await p.locator('[data-inspector-close]').isVisible())await p.locator('[data-inspector-close]').click();await revealEditorControl(p,'[data-fit]');await p.locator('[data-fit]').click();
+   const visibleBefore=await shown();await p.locator(`[data-node="${target}"]`).click();const pending=next();await p.locator(`[data-del-node="${target}"]`).click();const after=await pending,expectedNodes=before.nodes.filter(n=>n.id!==target),expectedEdges=before.edges.filter(e=>e.from!==target&&e.to!==target);
+   ok(same(after.nodes,expectedNodes)&&same(after.edges,expectedEdges)&&same(after.roles,before.roles),`deleting ${target} (${mode}) changes only its exact object and incident edges; no node or reconnection added`);
+   const visibleAfter=await shown();
+   if(mode==='main path')ok(same(await overviewReach(p),sorted(expectedNodes.map(n=>n.id))),`deleting ${target} in the editor Overview never hides another step: each is drawn or in a drawn badge`,JSON.stringify({visibleBefore,visibleAfter}));
+   else ok(same(sorted(visibleAfter),sorted(visibleBefore.filter(id=>id!==target)))&&same(sorted(visibleAfter),sorted(expectedNodes.map(n=>n.id))),`deleting ${target} with Show all connections neither introduces close nor removes any other visual node`,JSON.stringify({visibleBefore,visibleAfter}));
+   const undo=next();await p.keyboard.press(modifier+'+z');const restored=await undo;ok(same(restored.nodes,before.nodes)&&same(restored.edges,before.edges)&&same(sorted(await shown()),sorted(initial)),`Undo ${target} (${mode}) restores exact data and original visible IDs`);
+  }
  }
+ await allEdges.click();ok(await pressed()==='false','Show all connections turns back off after the close-branch check');
 }

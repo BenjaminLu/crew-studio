@@ -359,7 +359,10 @@
   // a node whose only way on is back to the node it came from (Pick the door) folds into that node's badge;
   // every other node off the way from the entry to the end (step-back, stalled, budget, scope, parked, closed,
   // dropped) becomes one "⚑ N escalations" badge on the stage (or node) it leaves from. Back edges are not drawn.
-  function simplify(def, reached = []) {
+  // keepDisconnected (the editable Overview): steps no longer connected to the entry stay visible with their own
+  // edges, and any step the projection would neither draw nor carry in a drawn badge stays visible too.
+  function simplify(def, reached = [], keepDisconnected = false) {
+    if (!def.nodes.length) return { def: { ...def, nodes: [], edges: [] }, edgeIndex: [], badges: {}, hidden: [], disconnected: [] };
     const full = layout(def, { noFlip: true });
     const back = new Set(full.edges.filter((e) => e.back).flatMap((e) => e.index));
     const byId = new Map(def.nodes.map((n) => [n.id, n]));
@@ -378,42 +381,56 @@
     const mainEnd = full.nodes.filter((n) => n.main).sort((a, b) => b.rank - a.rank)[0]?.id;
     const end = sinks.includes(mainEnd) ? mainEnd : sinks.sort((a, b) => (rk.get(b) ?? 0) - (rk.get(a) ?? 0))[0] ?? entry;
     const toEnd = reach(end, -1);
-    const keep = new Set(def.nodes.filter((n) => fromEntry.has(n.id) && toEnd.has(n.id) && !isLoop.has(n.id)).map((n) => n.id));
+    const projected = new Set(def.nodes.filter((n) => fromEntry.has(n.id) && toEnd.has(n.id) && !isLoop.has(n.id)).map((n) => n.id));
     // a run's view also keeps the end node the run actually reached (a "closed" end beside the main lane's end)
-    for (const id of reached) if (byId.has(id) && !isLoop.has(id) && !def.edges.some((e) => e.from === id)) keep.add(id);
-    const badges = {}; const add = (k, b) => (badges[k] = badges[k] || []).push(b);
-    for (const L of loops) add(`node:${L.args.producer}`, { kind: "loop", loop: L.id, text: `↻ ${(/^(fix|refine)/i.exec(L.label) || ["refine"])[0].toLowerCase()}`, cap: Number(L.args?.round_cap ?? 3) });
+    for (const id of reached) if (byId.has(id) && !isLoop.has(id) && !def.edges.some((e) => e.from === id)) projected.add(id);
+    const connected = new Set([entry]), pending = [entry];
+    while (keepDisconnected && pending.length) { const id = pending.shift(); for (const edge of def.edges) if (edge.from === id && !connected.has(edge.to)) { connected.add(edge.to); pending.push(edge.to); } }
+    const disconnected = new Set(keepDisconnected ? def.nodes.filter((n) => !connected.has(n.id)).map((n) => n.id) : []);
     const stageOf = new Map(); stagesFor(def).forEach((st) => st.nodes.forEach((n) => stageOf.set(n, st.id)));
-    const folded = new Set();
-    for (const n of def.nodes) { if (keep.has(n.id) || isLoop.has(n.id)) continue;
-      const ins = def.edges.filter((e) => e.to === n.id), outs = def.edges.filter((e) => e.from === n.id);
-      const src = [...new Set(ins.map((e) => e.from))];
-      if (src.length === 1 && keep.has(src[0]) && outs.length && outs.every((e) => e.to === src[0])) { folded.add(n.id); add(`node:${src[0]}`, { kind: "ask", node: n.id, text: n.kind === "card" ? "asks you if unsure" : n.label }); } }
-    // escalations: walk back from each to the kept nodes (or loops, standing for their producers) it leaves from
-    const escal = def.nodes.filter((n) => !keep.has(n.id) && !isLoop.has(n.id) && !folded.has(n.id));
-    const holders = new Map();
-    for (const n of escal) {
-      const seen = new Set([n.id]), q = [n.id], from = new Set();
-      while (q.length) { const x = q.shift(); for (const e of def.edges) if (e.to === x && !seen.has(e.from)) { seen.add(e.from);
-        if (keep.has(e.from)) from.add(e.from); else if (isLoop.has(e.from)) from.add(byId.get(e.from).args.producer); else q.push(e.from); } }
-      for (const f of from) { const k = stageOf.get(f) ? `stage:${stageOf.get(f)}` : `node:${f}`; if (!holders.has(k)) holders.set(k, new Set()); holders.get(k).add(n.id); }
+    // Steps drawn with their original edges: disconnected ones, plus (editing only) any the badges below would lose.
+    const extra = new Set(disconnected);
+    let keep, badges;
+    for (;;) {
+      keep = new Set([...projected, ...extra]); badges = {}; const add = (k, b) => (badges[k] = badges[k] || []).push(b);
+      const carried = new Set();
+      for (const L of loops) if (!keep.has(L.id)) { add(`node:${L.args.producer}`, { kind: "loop", loop: L.id, text: `↻ ${(/^(fix|refine)/i.exec(L.label) || ["refine"])[0].toLowerCase()}`, cap: Number(L.args?.round_cap ?? 3) }); if (keep.has(L.args.producer)) carried.add(L.id); }
+      const folded = new Set();
+      for (const n of def.nodes) { if (keep.has(n.id) || isLoop.has(n.id)) continue;
+        const ins = def.edges.filter((e) => e.to === n.id), outs = def.edges.filter((e) => e.from === n.id);
+        const src = [...new Set(ins.map((e) => e.from))];
+        if (src.length === 1 && keep.has(src[0]) && outs.length && outs.every((e) => e.to === src[0])) { folded.add(n.id); carried.add(n.id); add(`node:${src[0]}`, { kind: "ask", node: n.id, text: n.kind === "card" ? "asks you if unsure" : n.label }); } }
+      // escalations: walk back from each to the kept nodes (or loops, standing for their producers) it leaves from
+      const escal = def.nodes.filter((n) => !keep.has(n.id) && !isLoop.has(n.id) && !folded.has(n.id));
+      const holders = new Map();
+      for (const n of escal) {
+        const seen = new Set([n.id]), q = [n.id], from = new Set();
+        while (q.length) { const x = q.shift(); for (const e of def.edges) if (e.to === x && !seen.has(e.from)) { seen.add(e.from);
+          if (keep.has(e.from)) from.add(e.from); else if (isLoop.has(e.from)) from.add(byId.get(e.from).args.producer); else q.push(e.from); } }
+        for (const f of from) { if (keep.has(f)) carried.add(n.id); const k = stageOf.get(f) ? `stage:${stageOf.get(f)}` : `node:${f}`; if (!holders.has(k)) holders.set(k, new Set()); holders.get(k).add(n.id); }
+      }
+      for (const [k, set] of holders) add(k, { kind: "escalations", nodes: [...set], text: `⚑ ${set.size} escalation${set.size > 1 ? "s" : ""}`, labels: [...set].map((x) => byId.get(x).label) });
+      const lost = keepDisconnected ? def.nodes.filter((n) => !keep.has(n.id) && !carried.has(n.id)) : [];
+      if (!lost.length) break;
+      for (const n of lost) extra.add(n.id);
     }
-    for (const [k, set] of holders) add(k, { kind: "escalations", nodes: [...set], text: `⚑ ${set.size} escalation${set.size > 1 ? "s" : ""}`, labels: [...set].map((x) => byId.get(x).label) });
     const nodes = def.nodes.filter((n) => keep.has(n.id));
-    const edges = []; for (const e of fwd) if (keep.has(e.from) && keep.has(e.to) && !edges.some((x) => x.from === e.from && x.to === e.to)) edges.push({ from: e.from, to: e.to, when: e.when, checks: def.edges[e.i]?.checks, i: e.i });
-    return { def: { ...def, nodes, edges: edges.map(({ i, ...x }) => x) }, edgeIndex: edges.map((e) => e.i), badges, hidden: def.nodes.filter((n) => !keep.has(n.id)).map((n) => n.id) };
+    const edges = []; for (const e of fwd) if (keep.has(e.from) && keep.has(e.to) && !(def.edges[e.i].from !== e.from && keep.has(def.edges[e.i].from)) && !edges.some((x) => x.from === e.from && x.to === e.to)) edges.push({ from: e.from, to: e.to, when: e.when, checks: def.edges[e.i]?.checks, i: e.i });
+    // Preserve exact original edge identities/conditions/checks around those steps, including loops/back edges.
+    for (const [i, e] of def.edges.entries()) if ((extra.has(e.from) || extra.has(e.to)) && keep.has(e.from) && keep.has(e.to) && !edges.some((x) => x.i === i)) edges.push({ ...e, i });
+    return { def: { ...def, nodes, edges: edges.map(({ i, ...x }) => x) }, edgeIndex: edges.map((e) => e.i), badges, disconnected: [...disconnected], hidden: def.nodes.filter((n) => !keep.has(n.id)).map((n) => n.id) };
   }
   function layoutSimple(def, opts = {}) {
-    // Editing represents the actual graph from the outset. Run summaries keep
-    // the main-path projection below; removing a step must not promote a hidden branch.
+    // actualGraph ("Show all connections" in the editor) draws every step and edge; otherwise the main-path
+    // projection, and keepDisconnected (the editor) keeps steps a deletion cut off visible for repair.
     if (opts.actualGraph || !def.nodes.length) {
       const g = layout(def, { collapsed: opts.collapsed, wrap: opts.wrap ?? 6, noFlip: true, offsets: opts.offsets, row: 128, foot: 28, actualGraph: !!opts.actualGraph });
       g.badges = {}; g.hidden = []; g.simple = true; return g;
     }
-    const sim = simplify(def, opts.reached || []);
+    const sim = simplify(def, opts.reached || [], !!opts.keepDisconnected);
     const g = layout(sim.def, { collapsed: opts.collapsed, wrap: opts.wrap ?? 6, noFlip: true, offsets: opts.offsets, row: 128, foot: 28 });
     for (const e of g.edges) e.index = e.index.map((i) => sim.edgeIndex[i]); // back to the full definition's edge numbers
-    g.badges = sim.badges; g.hidden = sim.hidden; g.simple = true;
+    g.badges = sim.badges; g.hidden = sim.hidden; g.disconnected = sim.disconnected; g.simple = true;
     return g;
   }
 

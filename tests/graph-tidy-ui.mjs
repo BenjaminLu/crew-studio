@@ -82,9 +82,34 @@ try {
     await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
     const ids = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.map((g) => g.dataset.node));
     const actualDef=(await (await p.request.get(`${base}/api/wf/code-firstmate`)).json()).def;
-    ok(JSON.stringify([...ids].sort())===JSON.stringify(actualDef.nodes.map(n=>n.id).sort()), "editor Overview initially shows every actual node, including existing close and loop branches", ids.join(","));
-    const edgeIndexes=await p.evaluate(()=>document.querySelector('svg.rt-graph').lay.edges.flatMap(e=>e.index).sort((a,b)=>a-b));
-    ok(JSON.stringify(edgeIndexes)===JSON.stringify(actualDef.edges.map((_,i)=>i))&&await p.locator('svg.rt-graph .rt-edge[data-back]').count()>=10,"editor Overview represents every original edge identity, including back/escalation edges");
+    const allEdges = p.locator("[data-graph-all-edges]");
+    ok(ids.length === 19 && ids.includes("pr-open") && !ids.some((x) => ["spec-fix", "fix", "plan-fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].includes(x)), "the editor Overview is the default and shows the main path with publication and the designer round (19 nodes)", ids.join(","));
+    ok(await p.locator("svg.rt-graph .rt-edge").count() === 20 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await p.locator('svg.rt-graph .rt-edge[data-edge*="step-back"], svg.rt-graph .rt-edge[data-edge*="scope-card"], svg.rt-graph .rt-edge[data-edge*="→spec["]').count() === 0, "editor Overview draws the 20 main-path edges: no back edges and no escalation edges", String(await p.locator("svg.rt-graph .rt-edge").count()));
+    const bt = async (k) => (await p.textContent(`[data-badge="${k}"]`).catch(() => "")) || "";
+    ok(await bt("loop:spec") === "↻ refine ≤3" && await bt("loop:build") === "↻ fix ≤3" && await bt("ask:door") === "? asks you if unsure" && await bt("s:build:escalations") === "⚑ 8 escalations" && await bt("s:intake:escalations") === "⚑ 3 escalations",
+      "editor Overview badges show the loops (with their cap), the door question and the escalation counts", [await bt("loop:spec"), await bt("loop:build"), await bt("ask:door"), await bt("s:build:escalations")].join(" | "));
+    const escBadge = p.locator('[data-badge="s:build:escalations"]'), hasEscBadge = await escBadge.count() > 0;
+    if (hasEscBadge) { await escBadge.dispatchEvent("click"); await p.waitForTimeout(150); }
+    const esc = await p.$$eval('[data-badge-list="s:build:escalations"] .rt-badge-item', (xs) => xs.map((x) => x.textContent));
+    ok(esc.length === 8 && esc.includes("Step-back card"), "an editor escalation badge lists its escalations", esc.join(","));
+    if (hasEscBadge) await escBadge.dispatchEvent("click");
+    ok(await allEdges.isVisible() && await allEdges.evaluate((b) => b.tagName === "BUTTON" && b.getAttribute("aria-pressed") === "false" && !b.closest("[data-editor-more]")) && (await allEdges.textContent()).trim() === "Show all connections" && await p.evaluate(() => localStorage.getItem("crew.graphAllEdges")) === null,
+      "Show all connections is a visible, unpressed toolbar button by default");
+    // Show all connections: the complete actual graph, kept across a reload, and back to the main path when turned off
+    const actualShown = async () => { const shown = (await p.locator("svg.rt-graph [data-node]").evaluateAll((xs) => xs.map((x) => x.dataset.node))).sort(); const edgeIndexes = await p.evaluate(() => document.querySelector("svg.rt-graph").lay.edges.flatMap((e) => e.index).sort((a, b) => a - b));
+      return JSON.stringify(shown) === JSON.stringify(actualDef.nodes.map((n) => n.id).sort()) && JSON.stringify(edgeIndexes) === JSON.stringify(actualDef.edges.map((_, i) => i)) && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-badge-kind=loop], [data-badge-kind=escalations], [data-badge-kind=ask]").count() === 0; };
+    if (!await allEdges.count()) ok(false, "the editor Overview offers Show all connections");
+    else {
+      await allEdges.click(); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec-fix"]');
+      ok(await allEdges.getAttribute("aria-pressed") === "true" && await actualShown() && await p.locator("[data-port]").count() === 0, "Show all connections draws all 32 steps and every original edge identity, back/escalation edges included, without ports");
+      ok(await p.evaluate(() => localStorage.getItem("crew.graphAllEdges")) === "1", "Show all connections is remembered");
+      await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec-fix"]');
+      ok(await p.locator("[data-graph-all-edges]").getAttribute("aria-pressed") === "true" && await actualShown(), "Show all connections persists across a reload");
+      await p.locator("[data-graph-all-edges]").click(); await p.waitForFunction(() => document.querySelectorAll("svg.rt-graph [data-node]").length === 19);
+      ok(await allEdges.getAttribute("aria-pressed") === "false" && await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await bt("loop:spec") === "↻ refine ≤3" && await p.evaluate(() => localStorage.getItem("crew.graphAllEdges")) === "0", "turning Show all connections off returns to the main path with badges");
+      await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]');
+      ok(await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("[data-graph-all-edges]").getAttribute("aria-pressed") === "false", "the main path stays after a reload once Show all connections is off");
+    }
     const minFont = await p.evaluate(() => { const svg = document.querySelector("svg.rt-graph"); const k = svg.getScreenCTM().a; return Math.min(...[...svg.querySelectorAll("[data-node] .rt-label")].map((t) => parseFloat(getComputedStyle(t).fontSize) * k)); });
     ok(minFont >= 11, "node titles render at 11 px or more in the simple view at Fit (1440)", `${minFont.toFixed(1)} px`);
     ok(await p.locator("[data-minimap]").count() === 0, "the simple view fits whole and needs no minimap");
@@ -92,8 +117,9 @@ try {
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]');
     const detailIds = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.length);
     ok(detailIds === 32 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-port]").count() === 32 && await p.locator('svg.rt-graph [data-node="pr-open"]').count() === 1, "toggling to Detail view restores every node, back edge and port", String(detailIds));
+    ok(await p.locator("[data-graph-all-edges]").isHidden(), "Show all connections belongs to Overview: Edit graph always draws the complete graph");
     await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.click('[data-view-toggle="simple"]'); await p.waitForSelector('svg.rt-graph[data-view="simple"]');
-    ok(JSON.stringify((await p.locator("svg.rt-graph [data-node]").evaluateAll(xs=>xs.map(x=>x.dataset.node))).sort())===JSON.stringify(actualDef.nodes.map(n=>n.id).sort()) && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]"), "back in editor Overview: every actual node remains, connection ports stay in Edit graph");
+    ok(await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]") && await p.locator("[data-graph-all-edges]").isVisible(), "back in editor Overview: the main path again, connection ports stay in Edit graph");
     await p.context().close();
   }
   // ---------- a column reflow keeps an unfitted Overview's scale; a fitted Overview fits again ----------
@@ -183,10 +209,12 @@ try {
   let runId = null;
   { runId = seededRun;
     const p = await page(1440, "light");
+    await p.evaluate(() => localStorage.setItem("crew.graphAllEdges", "1"));
     await p.goto(`${base}/#/run/${runId}`); await p.waitForSelector('[data-runview] [data-node="spec"][data-state]', { timeout: 120000 }).catch(() => {});
     const simpleIds = await p.evaluate(async () => { const j = await (await fetch("/api/wf/code-firstmate")).json(); return window.crewLayout.layoutSimple(j.def, { wrap: 6 }).nodes.map((n) => n.id).sort(); });
     const shown = (await p.$$eval("[data-runview] [data-node]", (gs) => gs.map((g) => g.dataset.node))).sort();
     ok(runId && JSON.stringify(shown) === JSON.stringify(simpleIds) && await p.locator("[data-runview] [data-state]").count() > 0, "the run view shows the same simple view, with node states", shown.join(","));
+    ok(shown.length < 32 && !shown.includes("spec-fix") && await p.locator("[data-runview] [data-graph-all-edges]").count() === 0 && await p.locator("[data-runview] svg.rt-graph .rt-edge[data-back]").count() === 0, "the run Overview keeps its projection even with Show all connections remembered from the editor", String(shown.length));
     const bt = async (k) => (await p.textContent(`[data-badge="${k}"]`).catch(() => "")) || "";
     ok(/^↻ refine(?: ≤3| · round \d\/3)$/.test(await bt("loop:spec")) && await bt("loop:build") === "↻ fix ≤3" && await bt("ask:door") === "? asks you if unsure" && await bt("s:build:escalations") === "⚑ 8 escalations" && await bt("s:intake:escalations") === "⚑ 3 escalations",
       "run Overview preserves loop caps, the door question and escalation counts", [await bt("loop:spec"), await bt("loop:build"), await bt("ask:door"), await bt("s:build:escalations")].join(" | "));
@@ -223,15 +251,15 @@ try {
   ok(JSON.stringify([...wfs].sort())===JSON.stringify(expected), "public native workflows plus the explicitly installed captain fixture lane", wfs.join(","));
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme);
-    for (const id of wfs) for (const view of ["simple", "detail"]) {
-      await p.evaluate((v) => localStorage.setItem("crew.graphView", v), view);
+    for (const id of wfs) for (const mode of ["simple", "all", "detail"]) { const view = mode === "all" ? "simple" : mode;
+      await p.evaluate(([v, all]) => { localStorage.setItem("crew.graphView", v); localStorage.setItem("crew.graphAllEdges", all ? "1" : "0"); }, [view, mode === "all"]);
       await p.goto(`${base}/#/workflows/${id}${id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed"));
       const okSel = await p.waitForSelector(`svg.rt-graph[data-view="${view}"] [data-node], svg.rt-graph[data-view="${view}"] [data-stage-node]`, { timeout: 15000 }).then(() => true).catch(() => false);
       await p.waitForTimeout(200);
       const crossings=await through(p),noOverflow=await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
-      ok(okSel && !crossings.length && noOverflow, `${id} renders at ${width} ${scheme} (${view})`,JSON.stringify({okSel,crossings,noOverflow}));
-      await p.screenshot({ path: join(shots, `${id}-${view}-${width}-${scheme}.png`), fullPage: true });
-      if (view === "simple") { await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(150); await p.screenshot({ path: join(shots, `${id}-simple-fit-${width}-${scheme}.png`), fullPage: true }); }
+      ok(okSel && !crossings.length && noOverflow, `${id} renders at ${width} ${scheme} (${mode})`,JSON.stringify({okSel,crossings,noOverflow}));
+      await p.screenshot({ path: join(shots, `${id}-${mode}-${width}-${scheme}.png`), fullPage: true });
+      if (view === "simple") { await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(150); await p.screenshot({ path: join(shots, `${id}-${mode}-fit-${width}-${scheme}.png`), fullPage: true }); }
     }
     await p.context().close();
   }
