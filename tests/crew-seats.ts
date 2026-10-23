@@ -106,6 +106,7 @@ try {
     const t2 = C.applyChange(t, { kind: "seat", seat, member: member("claude", "opus-5.5", "high") });
     ok(t2.members["music-director"]?.model === "opus-5.5" && t2.seats["music-director"].labelZh === "音樂總監", "a specialist seat is declared and filled together");
     ok(!C.capabilitiesOf("claude", "opus-5.5").includes("audio") && C.capabilitiesOf("codex", "gpt", [{ provider: "codex", models: [{ id: "gpt", tags: ["audio"] }] }]).includes("audio"), "capability tags come from the provider, or the model's own facts");
+    ok(C.capabilitiesOf("cursor", "composer-2.5").includes("vision") && ["codex", "claude", "cursor"].every((p) => C.capabilitiesOf(p, "m").includes("vision")), "Cursor reads images (cursor-agent takes them as --image), as Codex and Claude do");
   }
   // ---------- the store ----------
   {
