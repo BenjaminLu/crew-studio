@@ -11,7 +11,8 @@ Every change takes the same path, in this order:
    and have them look again.
 2. **Rebase** onto the current `origin/main`. Resolve conflicts yourself, keeping both sides' intent.
 3. **Core suites.** `bun run test:core` must pass on the rebased head: env-isolation, git-config-guard,
-   firstmate-staffing, smoke-code, acceptance (its known-fail entries are listed in `tests/acceptance-known.ts`),
+   firstmate-staffing, smoke-code, acceptance (once as is and once with `ACCEPTANCE_PROVIDER=cursor`; its
+   known-fail entries are listed in `tests/acceptance-known.ts`),
    the fast subset of the sandboxed end-to-end gate (`test:sandboxed-e2e:fast`: needs Playwright's Chromium,
    `npx playwright install chromium`), privacy, opencc-only, and the build. Also run the suites that cover the files
    you touched.

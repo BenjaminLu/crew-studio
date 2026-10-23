@@ -13,7 +13,7 @@
     "test:ui-information-density": "node tests/ui-information-density.mjs",
     "test:contract": "bun tests/contract.ts",
     "test:live-acceptance": "bun tests/live-acceptance.ts",
-    "test:acceptance": "bun tests/acceptance-drive.ts && bun tests/acceptance.ts && bun tests/acceptance-known.ts && bun tests/acceptance-sandboxed.ts",
+    "test:acceptance": "bun tests/acceptance-drive.ts && bun tests/acceptance.ts && ACCEPTANCE_PROVIDER=cursor bun tests/acceptance.ts && bun tests/acceptance-known.ts && bun tests/acceptance-sandboxed.ts",
     "acceptance:sandboxed": "bun scripts/acceptance-sandboxed.ts",
     "test:acceptance-cursor": "ACCEPTANCE_PROVIDER=cursor bun scripts/acceptance-sandboxed.ts",
     "test:cursor-login-ui": "node tests/cursor-login-ui.mjs && node tests/cursor-project-ui.mjs",

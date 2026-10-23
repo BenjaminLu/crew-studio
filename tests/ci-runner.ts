@@ -11,6 +11,8 @@ try {
   check('nested aliases preserve every command and variant', () => assert.deepEqual(commands({test: 'bun a && bun run test:x && X=1 node c', 'test:x': 'node b && bun d'}, 'full'), ['bun a', 'node b', 'bun d', 'X=1 node c']));
   check('recursive aliases fail instead of losing coverage', () => assert.throws(() => commands({test:'bun run test'}, 'full'), /Recursive/));
   check('script aliases produce portable artifact paths', () => assert.equal(artifactName('test:ci:portable'), 'test-ci-portable'));
+  const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts;
+  check('core and full CI run the plain acceptance suite on the Cursor stub too', () => { for (const mode of ['core', 'full']) assert(commands(scripts, mode).includes('ACCEPTANCE_PROVIDER=cursor bun tests/acceptance.ts'), mode); });
   check('missing scripts fail', () => assert.throws(() => commands({}, 'core'), /Missing/));
   const env = testEnv({...process.env, GITHUB_TOKEN:'fake-secret', ACTIONS_RUNTIME_TOKEN:'fake-runtime', CREW_DATA:'/forbidden', CREW_LOCAL_UNRESTRICTED:'1'});
   check('runner drops inherited credentials and operator settings', () => assert(!('GITHUB_TOKEN' in env) && !('ACTIONS_RUNTIME_TOKEN' in env) && !('CREW_DATA' in env) && !('CREW_LOCAL_UNRESTRICTED' in env)));
