@@ -52,8 +52,8 @@ for(const width of[320,390,1440])for(const lang of['en','zh-TW'])for(const theme
   await connectNode('hook','done');await connectNode('start','hook','continue');ok(await p.locator('[data-edge]').count()===2,`captain connects the new step through original controls ${tag}`);
   // A slow runner, made certain: the back connection's entry error is showing when the captain deletes it, and the deletion's
   // validation answers only when the test lets it. Its answer drops that error row above the canvas, moving the canvas up.
-  const held=[];let holding=true;await connectNode('hook','start');await p.locator('[data-valid="errors"]').waitFor();await p.route('**/api/wf/validate',r=>{held.push(r);});
-  const answerValidation=async()=>{if(!holding)return;holding=false;while(!held.length)await p.waitForTimeout(20);for(const r of held.splice(0))await r.continue();await p.unroute('**/api/wf/validate');await p.locator('[data-valid="ok"]').waitFor();};
+  const held=[];let holding=true;await p.locator('[data-valid="ok"]').waitFor();await connectNode('hook','start');await p.locator('[data-valid="errors"]').waitFor();await p.route('**/api/wf/validate',r=>{held.push(r);});
+  const answerValidation=async()=>{if(!holding)return;holding=false;for(const until=Date.now()+5000;!held.length;await p.waitForTimeout(20))if(Date.now()>until)throw new Error('the deleted connection was never validated');for(const r of held.splice(0))await r.continue().catch(()=>{});await p.unroute('**/api/wf/validate');await p.locator('[data-valid="ok"]').waitFor();};
   await closeInspector();await p.locator('[data-edge="hook→start"] [data-edge-hit]').click();ok(await p.locator('[data-del-edge="hook→start"]').isVisible(),`native pointer selects a back connection ${tag}`);await p.locator('[data-del-edge="hook→start"]').click();ok(await p.locator('[data-edge="hook→done"]').count()===1&&await p.locator('[data-edge="hook→start"]').count()===0,`deleting back connection preserves neighboring edge ${tag}`);
   // aim only once the deletion's validation has landed: aimed before, the pointer presses where the connection was
   await answerValidation();
