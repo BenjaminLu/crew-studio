@@ -6,7 +6,7 @@ import { sessionCookie } from "../src/csrf.ts";
 import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +26,8 @@ const H = await harness([
   Y({ id: "plain", name: "plain", roles: [], nodes: [{ id: "ask", kind: "card", label: "Ask", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Ok?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 0, y: 0 }], edges: [] })]);
 const E = H.engine as any, DATA = H.data;
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd, stdio: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } }).toString().trim();
-const repos = mkdtempSync(join(tmpdir(), "crew-po-repos-"));
+// "usd" in the name: a temp path (whose random suffix can spell it) never reads as a cost field
+const repos = mkdtempSync(join(tmpdir(), "crew-po-repos-usd-"));
 const mkRepo = (name: string) => { const d = join(repos, name); mkdirSync(d); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), name); git(d, "add", "README.md"); git(d, "commit", "-q", "-m", "start"); return d; };
 const harbor = mkRepo("harbor-api"), tide = mkRepo("tidepool-docs"), reef = mkRepo("reef-api");
 git(reef, "remote", "add", "origin", "https://github.com/acme/reef-api.git");
@@ -167,7 +168,8 @@ const strip = (s: string) => s.split("\n").filter((l) => !/\/gates[234]?(\/|:|$)
 { const A = new Set(strip(after).split("\n")), B = new Set(strip(before).split("\n")); const diff = [...A].filter((x) => !B.has(x)).concat([...B].filter((x) => !A.has(x)).map((x) => "-" + x));
   ok(!diff.length, "an overview read writes nothing under the data dir or the repositories", diff.slice(0, 6).join(" | ")); }
 ok(!existsSync(join(DATA, "projects", store.key({ namespace: "git", id: "sandbox", identity: "x" } as any))), "no staffing folder is created for a project without crew");
-const all = JSON.stringify([side, pg, ext, sb, st]);
+const tmpPath = new RegExp(`(?:${[realpathSync(tmpdir()), tmpdir()].map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})[^"\\s]*`, "g");
+const all = JSON.stringify([side, pg, ext, sb, st]).replace(tmpPath, "<tmp>");
 ok(!/cost|usd|price|token|\$\d/i.test(all), "no cost fields anywhere", (all.match(/.{30}(cost|usd|price|token).{30}/i) || [""])[0]);
 
 // ---- m3: a read creates no folder, not even policies/ (the engine made it at start; take it away first) ----

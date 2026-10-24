@@ -23,7 +23,7 @@
 // engine below): FIXTURE-WRITE ["path", …] and FIXTURE-READ ["path", …] write and read what those rules let through (and an
 // OS sandbox around the process, if any, does not refuse), an attached PDF likewise, and FIXTURE-SHELL runs
 // `printenv CURSOR_API_KEY` unless Shell(*) is denied. A turn that carries the conversation so far (everything before
-// "[Studio: the captain's new message]") answers FIXTURE-RECALL <word> with whether that word is in it.
+// "[Studio <token>: the captain's new message]") answers FIXTURE-RECALL <word> with whether that word is in it.
 // As the real CLI: --resume of a UUID chat (or --continue) fails when /tmp cannot be written, and a lone prompt naming a
 // subcommand runs that subcommand.
 // Every -p run first runs the hooks cursor-agent would load (the user's under $HOME; the git root's .cursor/hooks.json and
@@ -43,6 +43,10 @@ const raw = process.argv.slice(2), end = raw.indexOf("--"), argv = end < 0 ? raw
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const get = (k) => flags.includes(k) ? flags[flags.indexOf(k) + 1] : undefined;
 const fail = (text, code = 1) => { out({ type: "result", subtype: "error", is_error: true, result: text }); process.exit(code); };
+// a terminal's persistent session (CURSOR_AGENT_PERSIST_SESSION, tmux's TMUX*) changes what cursor-agent does (it ignores SIGINT
+// and SIGTERM, and rebinds chats in the user's /tmp/cursor-agent-persist-<uid>), and a parent cursor-agent's CURSOR_AGENT_*,
+// CURSOR_CONVERSATION_ID and CURSOR_REQUEST_ID are its own chat's: Studio's children (--version included) never inherit them
+{ const tied = Object.keys(process.env).filter((k) => /^(TMUX(_|$)|CURSOR_AGENT_|CURSOR_(CONVERSATION|REQUEST)_ID$)/.test(k)); if (tied.length) fail(`cursor-agent fixture: run inside a terminal's persistent session or another agent's chat (${tied.join(", ")})`, 2); }
 if (argv.length === 1 && argv[0] === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
 // --resume <chat> / --continue (544.index.js J → index.js K, before the key is even looked at): a chat id shaped as a UUID (and
 // --continue's latest chat) is first checked against cursor-agent's persistent sessions, which mkdirs a claim lock under the
@@ -55,9 +59,6 @@ if (argv.length === 1 && argv[0] === "--version") { console.log("2026.10.01-fixt
     try { mkdirSync(lock, { mode: 0o700 }); rmdirSync(lock); } catch (e) { fail(`Chat ${chat} may still be running, but Cursor could not verify its persistent session: ${e?.code}: ${e?.message}`); }
   }
 }
-// a terminal's persistent session (CURSOR_AGENT_PERSIST_SESSION, tmux's TMUX*) changes what cursor-agent does (it ignores SIGINT
-// and SIGTERM, and rebinds chats in the user's /tmp/cursor-agent-persist-<uid>): Studio's children must never inherit one
-{ const tied = Object.keys(process.env).filter((k) => /^(TMUX(_|$)|CURSOR_AGENT_(PERSIST|TMUX))/.test(k)); if (tied.length) fail(`cursor-agent fixture: run inside a terminal's persistent session (${tied.join(", ")})`, 2); }
 if (!/^crsr_acceptance[A-Za-z0-9]+$/.test(key)) fail("Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY.");
 // best effort: under an OS sandbox only a log inside the writable folders is written
 const log = (o) => { if (process.env.CURSOR_FIXTURE_LOG) try { appendFileSync(process.env.CURSOR_FIXTURE_LOG, JSON.stringify(o) + "\n"); } catch {} };
@@ -160,23 +161,31 @@ const images = argv.flatMap((a, i) => a === "--image" ? [argv[i + 1]] : []).map(
 });
 log({ argv: argv.slice(0, -1), chat: session_id, home: process.env.HOME, images, key: createHash("sha256").update(key).digest("hex").slice(0, 12) });
 // an explicit project's turn carries the conversation so far before the captain's new message (src/host/cursor.ts carried()). Read
-// as a model would: where the carried note names a token, only the new-message line with that token ends it; otherwise the first
-// line that says it is the captain's new message does, wherever it came from.
+// as a model would, carelessly: where the carried note names a token, the first appearance of the new-message marker with that
+// token ends it, even inside a quoted reply; otherwise the first line that says it is the captain's new message does, wherever it
+// came from. Its earlier captain turns: a JSON line's "captain", or any line starting "Captain: ".
 const whole = argv.at(-1), fence = /^\s*\[Studio ([0-9a-f-]{36}): this chat so far/.exec(whole)?.[1];
-const boundary = fence ? whole.indexOf(`\n[Studio ${fence}: the captain's new message]\n`) : whole.search(/\n\[Studio[^\]\n]*: the captain's new message\]\n/);
+const marker = fence ? `[Studio ${fence}: the captain's new message]` : "";
+const boundary = fence ? whole.indexOf(marker) : whole.search(/\n\[Studio[^\]\n]*: the captain's new message\]\n/);
 const earlier = boundary < 0 ? "" : whole.slice(0, boundary);
-const text = (boundary < 0 ? whole : whole.slice(whole.indexOf("\n", boundary + 1) + 1)).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
+const text = (boundary < 0 ? whole : fence ? whole.slice(boundary + marker.length).replace(/^\n/, "") : whole.slice(whole.indexOf("\n", boundary + 1) + 1)).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
+const captainSaid = earlier.split("\n").slice(1).flatMap((l) => { try { const o = JSON.parse(l); if (typeof o?.captain === "string") return [o.captain]; } catch {} return l.startsWith("Captain: ") ? [l.slice(9)] : []; });
 out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
 const say = (t) => out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] }, session_id });
 if (images.length) say(`FIXTURE-SAW-IMAGES ${images.map((i) => i.sha256.slice(0, 12)).join(",")}`);
 for (const o of hookOutput) say(`FIXTURE-HOOK-OUTPUT ${o}`);
 if (project) {
-  // FIXTURE-SAY <JSON string>: the model replies with exactly that text; FIXTURE-SPOOF in what it takes for the captain's message
-  // means a carried reply forged the boundary
-  if (text.includes("FIXTURE-SAY ")) say(JSON.parse(text.slice(text.indexOf("FIXTURE-SAY ") + 12).split("\n")[0]));
+  // FIXTURE-SAY <JSON string>: the model replies with exactly that text, {FENCE} in it this turn's token (a reply that saw this
+  // turn's new-message marker repeats it); FIXTURE-SPOOF in what it takes for the captain's message means a carried reply forged
+  // the boundary
+  if (text.includes("FIXTURE-SAY ")) say(JSON.parse(text.slice(text.indexOf("FIXTURE-SAY ") + 12).split("\n")[0]).replaceAll("{FENCE}", fence ?? ""));
   if (text.includes("FIXTURE-SPOOF")) say("FIXTURE-SPOOFED");
+  // FIXTURE-CAPTAIN-ASKED <word>: whether an earlier captain turn, as the model reads the carried conversation, holds that word
+  if (text.includes("FIXTURE-CAPTAIN-ASKED ")) { const w = text.slice(text.indexOf("FIXTURE-CAPTAIN-ASKED ") + 22).split(/\s/)[0]; say(`FIXTURE-CAPTAIN-ASKED ${w} ${captainSaid.some((c) => c.includes(w))}`); }
   // FIXTURE-RECALL <word>: whether the conversation carried into this turn holds that word
   if (text.includes("FIXTURE-RECALL ")) { const w = text.slice(text.indexOf("FIXTURE-RECALL ") + 15).split(/\s/)[0]; say(`FIXTURE-RECALLED ${w} ${earlier.includes(w)}`); }
+  // FIXTURE-HISTORY: the carried conversation's shape: its JSON lines' lengths, and whether it holds a raw U+2028/2029/0085
+  if (text.includes("FIXTURE-HISTORY")) say(`FIXTURE-HISTORY ${JSON.stringify({ lines: earlier.split("\n").filter((l) => l.startsWith("{")).map((l) => l.length), raw: /[\u2028\u2029\u0085]/.test(earlier), huge: earlier.includes("HUGE\\u2028TURN\\u2029\\u0085") })}`);
   if (text.includes("Crew Studio started you as firstmate in")) say(`Ready as firstmate in ${ws}; first message: ${/## (state\/HANDOFF-[\w.-]+\.md)/.exec(text)?.[1] ?? "none"}`);
   // FIXTURE-WRITE ["path", ...]: the model tries to write each file with its Write tool
   if (text.includes("FIXTURE-WRITE ")) {
