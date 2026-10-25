@@ -22,7 +22,7 @@ const sim = githubSimulator(bare);
 const grant: GitHubProjectGrant = { mode: "simulator", repository: "fixture/project", localPath: repo, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: "2026-10-15T00:00:00Z", approvalId: "test-only-local-grant" };
 const dir = (name: string) => { const p = join(temp, name); mkdirSync(p); return p; };
 const req = { repo, base: "main", branch: "crew/task", head: h1, title: "Test spec", body: "Approved spec\n## Door\ntwo-way\n## Rollback\nrevert" };
-// the product's default budget; a short one only where the timeout itself is under test (a loaded runner's Git push can exceed it)
+// the product's default budget; a short one only where the timeout itself is under test (on a loaded runner a REST round-trip or a Git step can exceed it)
 const adapter = (timeoutMs?: number) => new GitHubPrAdapter(grant, () => "fake-test-token-do-not-leak", timeoutMs);
 try {
   ok(typeof projectPrAdapter === "function", "explicit project adapter selection exists");
