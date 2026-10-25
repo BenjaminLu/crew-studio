@@ -115,11 +115,16 @@ window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAct
 window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 // Cursor: the CLI on disk and whether the crew's Cursor API key is present (the key itself is never read here or shown);
 // `ready` is the server's dry start check (Studio's own workspace or an explicit project). Neither makes a model request.
-const CURSOR={view:null,ready:null,refused:null,loading:false,loaded:false,read:0};
+const CURSOR={view:null,ready:null,refused:null,begin:null,loading:false,loaded:false,read:0};
 const cursorReady=()=>CURSOR.ready?.ok===true;
 function cursorRefresh(fresh=false){const read=++CURSOR.read,before=JSON.stringify([CURSOR.view,CURSOR.ready]);CURSOR.loading=true;
  return Promise.all([getJ(fresh?"/api/cursor/account?fresh=1":"/api/cursor/account").catch(()=>null),getJ("/api/main/start/cursor-ready").catch(()=>null)]).then(([v,ready])=>{if(read!==CURSOR.read)return;if(v&&!v.error)CURSOR.view=v;CURSOR.ready=ready&&typeof ready.ok==="boolean"?ready:null;})
-  .finally(()=>{if(read!==CURSOR.read)return;CURSOR.loading=false;const first=!CURSOR.loaded;CURSOR.loaded=true;if(first||JSON.stringify([CURSOR.view,CURSOR.ready])!==before){render();dispatchEvent(new Event("crew:cursor-account"));}});}
+  .finally(()=>{if(read!==CURSOR.read)return;CURSOR.loading=false;const first=!CURSOR.loaded;CURSOR.loaded=true;if(first||JSON.stringify([CURSOR.view,CURSOR.ready])!==before){render();dispatchEvent(new Event("crew:cursor-account"));}
+   const begin=CURSOR.begin;CURSOR.begin=null;if(begin&&cursorReady()&&MS.view?.context==="studio"&&MS.view?.state==="detached"&&MS.view.project===begin.project)void continueNative(begin,"cursor");});}
+// Check again is Cursor's sign-in: turning Cursor ready with no Firstmate running starts it on Cursor in the chat, as finishing a
+// Codex or Claude sign-in does. A check of a Cursor that was already ready only checks. The read that settles it decides: the
+// check's own read is superseded when its key change comes back as a live "cursor-account" push.
+function cursorCheck(){const phone=MS.me?.kind==="phone"&&!MS.me?.allowDrive;CURSOR.begin=!phone&&CURSOR.loaded&&CURSOR.ready!==null&&!cursorReady()&&MS.view?.context==="studio"&&MS.view?.state==="detached"?{project:MS.view.project}:null;return cursorRefresh(true);}
 const CURSOR_KEY_STEP=()=>h("pre",{class:"mono","data-cursor-key-step":"1",style:"white-space:pre-wrap;margin:0"},'security add-generic-password -s crew-studio-cursor-api-key -a "$USER" -w');
 /** The Cursor account's state and how to add a key: one source for the Firstmate page's Cursor card and Doctor's login action. */
 function cursorAccountParts(){
@@ -128,7 +133,7 @@ function cursorAccountParts(){
  const label={"unknown":T("Checking Cursor…","正在確認 Cursor…"),"not-installed":T("The Cursor CLI (cursor-agent) is not installed on this Mac. Install it from the Doctor first.","這台 Mac 沒有安裝 Cursor CLI（cursor-agent）。請先在 Doctor 安裝。"),"key-present":T("A Cursor API key for the crew is present. Studio never shows or reads it here.","已有給 crew 用的 Cursor API key。Studio 不會在這裡顯示或讀取它。"),"key-missing":T("No Cursor API key for the crew yet. Create one in the Cursor dashboard (Integrations), then keep it in the keychain:","還沒有給 crew 用的 Cursor API key。請在 Cursor dashboard（Integrations）建立一把，再存進鑰匙圈：")}[state];
  return {state,attrs:{"data-cursor-account":state},status:h("p",{"data-cursor-status":"1",style:"margin:0"},label),
   how:state==="key-missing"?h("div",{"data-cursor-how":"1"},CURSOR_KEY_STEP(),h("p",{class:"faint",style:"margin:4px 0 0"},T("Paste the key when the Terminal asks for it, then press Check again. Studio reads the keychain first; CURSOR_API_KEY in Studio's environment is used only when no keychain item or key file is found.","在終端機要求時貼上 key，再按「重新檢查」。Studio 會先讀鑰匙圈；只有找不到鑰匙圈項目或金鑰檔時，才使用 Studio 環境中的 CURSOR_API_KEY。"))):null,
-  buttons:[h("button",{class:"btn ghost","data-cursor-refresh":"1",onclick:()=>void cursorRefresh(true)},T("Check again","重新檢查"))]};
+  buttons:[h("button",{class:"btn ghost","data-cursor-refresh":"1",onclick:()=>void cursorCheck()},T("Check again","重新檢查"))]};
 }
 function cursorAccountPanel(){const x=cursorAccountParts();return h("section",{class:"card tk-drive tk-account",...x.attrs},h("h2",{},T("Cursor account","Cursor 帳號")),x.status,x.how,h("div",{class:"actions"},...x.buttons));}
 function cursorWhy(){const r=CURSOR.ready?.ok===false?CURSOR.ready:CURSOR.refused;if(!r||r.ok)return null;return h("p",{class:"note","data-cursor-start-why":r.code},T(r.en||r.reason,r.zh||r.reason));}
@@ -163,7 +168,7 @@ function startCursorFlow(d){
 /** Studio's own primary, stopped rather than handed to a terminal: anything in its own workspace, and a fresh Cursor chat anywhere. */
 const ownPrimary=v=>v?.context==="studio"||(v?.host==="cursor"&&!v?.origin&&v?.drive?.path==="fresh");
 // Doctor's login action for Cursor: how to add the key, then check again (Studio never takes the key through the page)
-function cursorConnect(){modal(T("Add a Cursor API key","加入 Cursor API key"),h("div",{style:"display:grid;gap:8px;max-width:560px"},h("p",{style:"margin:0"},T("Create an API key in the Cursor dashboard (Integrations), then keep it in the keychain from Terminal:","請在 Cursor dashboard（Integrations）建立 API key，再從終端機存進鑰匙圈：")),CURSOR_KEY_STEP(),h("p",{class:"faint",style:"margin:0"},T("Studio reads the key only when a Cursor round or Firstmate starts. It is never shown here.","Studio 只在 Cursor 回合或 Firstmate 啟動時讀取這把 key，不會在這裡顯示。"))),async close=>{close();await cursorRefresh(true);});const ok=document.querySelector("#modalRoot .modal .btn.primary");if(ok)ok.textContent=T("Check again","重新檢查");}
+function cursorConnect(){modal(T("Add a Cursor API key","加入 Cursor API key"),h("div",{style:"display:grid;gap:8px;max-width:560px"},h("p",{style:"margin:0"},T("Create an API key in the Cursor dashboard (Integrations), then keep it in the keychain from Terminal:","請在 Cursor dashboard（Integrations）建立 API key，再從終端機存進鑰匙圈：")),CURSOR_KEY_STEP(),h("p",{class:"faint",style:"margin:0"},T("Studio reads the key only when a Cursor round or Firstmate starts. It is never shown here.","Studio 只在 Cursor 回合或 Firstmate 啟動時讀取這把 key，不會在這裡顯示。"))),async close=>{close();await cursorCheck();});const ok=document.querySelector("#modalRoot .modal .btn.primary");if(ok)ok.textContent=T("Check again","重新檢查");}
 window.crewCursorAccountPanel=cursorAccountPanel;window.crewConnectCursor=cursorConnect;
 window.liveListen("cursor-account",m=>{CURSOR.view=JSON.parse(m.data);void cursorRefresh();});
 addEventListener("crew:live",()=>{if(CURSOR.loaded)void cursorRefresh();});

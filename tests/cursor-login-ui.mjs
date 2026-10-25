@@ -1,8 +1,9 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Cursor's page login in a real Studio on the offline cursor-agent fixture, beside the Codex and Claude cards (still there,
 // one each): without the crew's key the start card and the Doctor say so (English and zh-TW) and Start stays off; the Doctor's
-// login action shows how to add the key and never a key; once the key file is there, Check again turns the card ready and
-// Start on Cursor opens Studio's own Firstmate on Cursor. No real vendor, keychain or network.
+// login action shows how to add the key and never a key; once the key file is there, Check again turns Cursor ready and, like
+// finishing a Codex or Claude sign-in, starts Studio's own Firstmate on Cursor in the chat; stopped, Check again on a card
+// already ready starts nothing, and Start on Cursor starts it again. No real vendor, keychain or network.
 import{spawn}from'node:child_process';import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,chmodSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';import{freePort,waitUp,withSession}from'./boot.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),root=join(here,'..'),FIXTURE=join(here,'fixture/cursor-agent.mjs'),tmp=mkdtempSync(join(tmpdir(),'crew-cursor-login-')),home=join(tmp,'home'),data=join(tmp,'data'),calls=join(tmp,'cursor.jsonl');
 mkdirSync(join(home,'.codex'),{recursive:true});mkdirSync(data);
@@ -37,19 +38,34 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  ok(/Add a Cursor API key/.test(await p.locator('#modalRoot .modal').textContent()),'Doctor\'s login action explains how to add the key, in the page');
  // the captain keeps the key for the crew (here the private file; the keychain is off in tests), then checks again
  const dir=join(home,'.config','crew-studio');mkdirSync(dir,{recursive:true});writeFileSync(join(dir,'cursor-api-key'),KEY+'\n',{mode:0o600});chmodSync(join(dir,'cursor-api-key'),0o600);
- await p.locator('#modalRoot .modal .btn.primary').click();
- await p.locator('.tk-account[data-cursor-account="key-present"]').waitFor({timeout:15000});ok(true,'Check again sees the new key at once');
- ok(!(await p.content()).includes(KEY),'the Doctor never shows the key');
- await p.goto(base+'/#/board');await p.locator(`${card}[data-cursor-account="key-present"][data-cursor-ready="true"]`).waitFor({timeout:15000});
- ok(!await p.locator(`${card} [data-cursor-start]`).isDisabled()&&await p.locator(`${card} [data-cursor-start-why]`).count()===0,'with the key the card is ready and Start on Cursor is on');
  ok(runs().length===0,'no page read ran a Cursor chat or turn');
+ // the check's key change comes back as a live "cursor-account" push, whose read supersedes the check's own: held so that the
+ // check's read ends first, stale, and the reads after it settle Cursor ready later
+ let readies=0;await p.route('**/api/main/start/cursor-ready',async r=>{await new Promise(d=>setTimeout(d,[300,1200,1200][readies++]??0));await r.continue().catch(()=>{});});
+ await p.evaluate(()=>{window.fixtureToasts=[];new MutationObserver(ms=>{for(const m of ms)for(const n of m.addedNodes)if(n.classList?.contains('toast'))window.fixtureToasts.push(n.textContent);}).observe(document.body,{childList:true});});
+ await p.locator('#modalRoot .modal .btn.primary').click();
+ // failure-only: whether the start was never tried, or tried and refused (a toast says why)
+ await p.waitForFunction(()=>MS.view?.state==='attached'&&MS.view?.host==='cursor',null,{timeout:15000}).catch(async e=>{console.log('auto-start state '+JSON.stringify(await p.evaluate(()=>({main:MS.view&&{state:MS.view.state,context:MS.view.context,host:MS.view.host},toasts:window.fixtureToasts,ready:[...document.querySelectorAll('[data-cursor-ready],[data-cursor-account]')].map(e=>e.dataset)}))));throw e;});
+ await p.locator('#chatLog').getByText('Hello! I am your Studio Firstmate. What would you like to make?').waitFor({timeout:15000});
+ await p.unroute('**/api/main/start/cursor-ready');ok(readies>=2,'the check\'s own read was superseded by the push\'s');
+ // the start takes the captain to the chat on the Board, so the Doctor's panel may be gone before it shows the key
+ ok((await api('/api/cursor/account')).key==='present','Check again sees the new key at once');
+ ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&runs().filter(r=>r.argv[0]==='-p').length===1,'connecting Cursor (Check again turns it ready) starts Studio\'s own Firstmate on Cursor and its greeting shows in the chat, as a Codex or Claude sign-in does');
+ ok(!(await p.content()).includes(KEY),'the Doctor never shows the key');
+ await api('/api/main/detach',{});
+ await p.goto(base+'/#/board');await p.locator(`${card}[data-cursor-account="key-present"][data-cursor-ready="true"]`).waitFor({timeout:15000});
+ await p.waitForFunction(()=>MS.view?.state==='detached',null,{timeout:15000});
+ ok(!await p.locator(`${card} [data-cursor-start]`).isDisabled()&&await p.locator(`${card} [data-cursor-start-why]`).count()===0,'with the key the card is ready and Start on Cursor is on');
+ const before=runs().length;await Promise.all([p.waitForResponse(r=>r.url().includes('/api/main/start/cursor-ready')),p.locator(`${card} [data-cursor-refresh]`).click()]);await p.waitForTimeout(300);
+ ok(runs().length===before&&await p.evaluate(()=>MS.view?.state)==='detached','Check again on a card already ready only checks: it starts no Firstmate');
  for(const lang of['en','zh-TW']){await p.setViewportSize({width:390,height:900});await p.evaluate(l=>setLang(l),lang);await p.locator(card).waitFor();ok(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),`no horizontal page scroll at 390 px (${lang})`);}
  await p.setViewportSize({width:1440,height:1000});await p.evaluate(()=>setLang('en'));
  await p.locator(`${card} [data-cursor-start]`).click();
  await p.waitForFunction(()=>MS.view?.state==='attached'&&MS.view?.host==='cursor',null,{timeout:15000});
  await p.locator('#chatLog').getByText('Hello! I am your Studio Firstmate. What would you like to make?').waitFor({timeout:15000});
  ok(true,'Start on Cursor opens Studio\'s own Firstmate on Cursor and its greeting shows in the chat');
- ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&runs().filter(r=>r.argv[0]==='-p').length===1,'one Cursor chat and one greeting turn');
+ for(let i=0;i<150&&runs().filter(r=>r.argv[0]==='-p').length<2;i++)await p.waitForTimeout(100);
+ ok(runs().filter(r=>r.argv[0]==='create-chat').length===2&&runs().filter(r=>r.argv[0]==='-p').length===2,'one more Cursor chat and one more greeting turn');
  // attachments in the chat: an image is a ready chip with no refusal; a PDF says why it cannot go (English and zh-TW) and blocks the send
  const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==','base64'),PDF=Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n','latin1');
  await p.setInputFiles('#chatFile',{name:'shot.png',mimeType:'image/png',buffer:PNG});
@@ -67,6 +83,13 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.waitForFunction(()=>/FIXTURE-SAW-IMAGES/.test(document.querySelector('#chatLog')?.textContent||''),null,{timeout:15000});
  ok(runs().filter(r=>r.argv[0]==='-p').length===turns+1&&runs().at(-1).argv.includes('--image'),'without the PDF the image goes to cursor-agent and its answer shows in the chat');
  ok(!(await p.content()).includes(KEY),'the page never shows the key');
+ // a phone that may not drive Firstmate: its Check again only checks, as its Codex and Claude sign-ins cannot start one either
+ await api('/api/main/detach',{});rmSync(join(dir,'cursor-api-key'));await p.goto(base+'/#/board');
+ await p.locator(`${card} [data-cursor-refresh]`).click();await p.locator(`${card}[data-cursor-account="key-missing"]`).waitFor({timeout:15000});await p.waitForFunction(()=>MS.view?.state==='detached',null,{timeout:15000});
+ writeFileSync(join(dir,'cursor-api-key'),KEY+'\n',{mode:0o600});await p.evaluate(()=>{MS.me={...MS.me,kind:'phone',allowDrive:false};});
+ const phoneBefore=runs().length;await Promise.all([p.waitForResponse(r=>r.url().includes('/api/main/start/cursor-ready')),p.locator(`${card} [data-cursor-refresh]`).click()]);
+ await p.locator(`${card}[data-cursor-account="key-present"]`).waitFor({timeout:15000});await p.waitForTimeout(300);
+ ok(runs().length===phoneBefore&&await p.evaluate(()=>MS.view?.state)==='detached','on a phone that may not drive, Check again turns Cursor ready but starts no Firstmate');
  ok(errors.length===0,'no browser errors '+errors.join('\n'));
  await api('/api/main/detach',{});await p.close();console.log(`cursor-login-ui: ${pass} passed, 0 failed`);
 }catch(error){console.log('fixture server:',output.slice(-4000));throw error;}finally{await browser?.close();if(app.exitCode===null&&app.signalCode===null){const end=new Promise(r=>app.once('exit',r));app.kill('SIGTERM');await end;}rmSync(tmp,{recursive:true,force:true});}
