@@ -10,12 +10,15 @@ const isMain = () => chatMode === "main";
 // ---------- data ----------
 const getJ = (u) => fetch(u).then((r) => r.json());
 const postJ = (u, b) => fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b || {}) }).then(async (r) => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
-async function loadMain() { try { MS.view = await getJ("/api/main"); } catch {} if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); }
+// a read answered after the stream already brought a later view (the greeting that ends the first turn) must not replace it
+const newerMain = (v) => !MS.view || v.boot !== MS.view.boot || !(v.seq <= MS.view.seq);
+async function loadMain() { try { const v = await getJ("/api/main"); if (newerMain(v)) MS.view = v; } catch {} if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); }
 getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false); }).catch(() => {});
 (function stream() { // on the page's one event stream (app.js)
   const es = { addEventListener: (t, f) => window.liveListen(t, f) };
   es.addEventListener("main", (m) => {
     const v = JSON.parse(m.data);
+    if (!newerMain(v)) return;
     const finished = MS.view && v.log.length !== MS.view.log.length;
     MS.view = v; if (finished && !v.busy) { MS.live = ""; MS.liveTools = []; }
     if (!v.busy && v.log.at(-1)?.kind === "firstmate") { MS.live = ""; MS.liveTools = []; }
