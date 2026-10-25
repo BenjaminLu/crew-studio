@@ -115,15 +115,16 @@ window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAct
 window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 // Cursor: the CLI on disk and whether the crew's Cursor API key is present (the key itself is never read here or shown);
 // `ready` is the server's dry start check (Studio's own workspace or an explicit project). Neither makes a model request.
-const CURSOR={view:null,ready:null,refused:null,loading:false,loaded:false,read:0};
+const CURSOR={view:null,ready:null,refused:null,begin:null,loading:false,loaded:false,read:0};
 const cursorReady=()=>CURSOR.ready?.ok===true;
 function cursorRefresh(fresh=false){const read=++CURSOR.read,before=JSON.stringify([CURSOR.view,CURSOR.ready]);CURSOR.loading=true;
  return Promise.all([getJ(fresh?"/api/cursor/account?fresh=1":"/api/cursor/account").catch(()=>null),getJ("/api/main/start/cursor-ready").catch(()=>null)]).then(([v,ready])=>{if(read!==CURSOR.read)return;if(v&&!v.error)CURSOR.view=v;CURSOR.ready=ready&&typeof ready.ok==="boolean"?ready:null;})
-  .finally(()=>{if(read!==CURSOR.read)return;CURSOR.loading=false;const first=!CURSOR.loaded;CURSOR.loaded=true;if(first||JSON.stringify([CURSOR.view,CURSOR.ready])!==before){render();dispatchEvent(new Event("crew:cursor-account"));}});}
+  .finally(()=>{if(read!==CURSOR.read)return;CURSOR.loading=false;const first=!CURSOR.loaded;CURSOR.loaded=true;if(first||JSON.stringify([CURSOR.view,CURSOR.ready])!==before){render();dispatchEvent(new Event("crew:cursor-account"));}
+   const begin=CURSOR.begin;CURSOR.begin=null;if(begin&&cursorReady()&&MS.view?.context==="studio"&&MS.view?.state==="detached"&&MS.view.project===begin.project)void continueNative(begin,"cursor");});}
 // Check again is Cursor's sign-in: turning Cursor ready with no Firstmate running starts it on Cursor in the chat, as finishing a
-// Codex or Claude sign-in does. A check of a Cursor that was already ready only checks.
-function cursorCheck(){const begin=!cursorReady()&&MS.view?.context==="studio"&&MS.view?.state==="detached"?{project:MS.view.project}:null;
- return cursorRefresh(true).then(()=>{if(begin&&cursorReady()&&MS.view?.context==="studio"&&MS.view?.state==="detached"&&MS.view.project===begin.project)return continueNative(begin,"cursor");});}
+// Codex or Claude sign-in does. A check of a Cursor that was already ready only checks. The read that settles it decides: the
+// check's own read is superseded when its key change comes back as a live "cursor-account" push.
+function cursorCheck(){CURSOR.begin=!cursorReady()&&MS.view?.context==="studio"&&MS.view?.state==="detached"?{project:MS.view.project}:null;return cursorRefresh(true);}
 const CURSOR_KEY_STEP=()=>h("pre",{class:"mono","data-cursor-key-step":"1",style:"white-space:pre-wrap;margin:0"},'security add-generic-password -s crew-studio-cursor-api-key -a "$USER" -w');
 /** The Cursor account's state and how to add a key: one source for the Firstmate page's Cursor card and Doctor's login action. */
 function cursorAccountParts(){
