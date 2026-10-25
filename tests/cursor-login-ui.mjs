@@ -1,8 +1,9 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Cursor's page login in a real Studio on the offline cursor-agent fixture, beside the Codex and Claude cards (still there,
 // one each): without the crew's key the start card and the Doctor say so (English and zh-TW) and Start stays off; the Doctor's
-// login action shows how to add the key and never a key; once the key file is there, Check again turns the card ready and
-// Start on Cursor opens Studio's own Firstmate on Cursor. No real vendor, keychain or network.
+// login action shows how to add the key and never a key; once the key file is there, Check again turns Cursor ready and, like
+// finishing a Codex or Claude sign-in, starts Studio's own Firstmate on Cursor in the chat; stopped, Check again on a card
+// already ready starts nothing, and Start on Cursor starts it again. No real vendor, keychain or network.
 import{spawn}from'node:child_process';import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,chmodSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';import{freePort,waitUp,withSession}from'./boot.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),root=join(here,'..'),FIXTURE=join(here,'fixture/cursor-agent.mjs'),tmp=mkdtempSync(join(tmpdir(),'crew-cursor-login-')),home=join(tmp,'home'),data=join(tmp,'data'),calls=join(tmp,'cursor.jsonl');
 mkdirSync(join(home,'.codex'),{recursive:true});mkdirSync(data);
@@ -37,19 +38,27 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  ok(/Add a Cursor API key/.test(await p.locator('#modalRoot .modal').textContent()),'Doctor\'s login action explains how to add the key, in the page');
  // the captain keeps the key for the crew (here the private file; the keychain is off in tests), then checks again
  const dir=join(home,'.config','crew-studio');mkdirSync(dir,{recursive:true});writeFileSync(join(dir,'cursor-api-key'),KEY+'\n',{mode:0o600});chmodSync(join(dir,'cursor-api-key'),0o600);
+ ok(runs().length===0,'no page read ran a Cursor chat or turn');
  await p.locator('#modalRoot .modal .btn.primary').click();
  await p.locator('.tk-account[data-cursor-account="key-present"]').waitFor({timeout:15000});ok(true,'Check again sees the new key at once');
+ await p.waitForFunction(()=>MS.view?.state==='attached'&&MS.view?.host==='cursor',null,{timeout:15000});
+ await p.locator('#chatLog').getByText('Hello! I am your Studio Firstmate. What would you like to make?').waitFor({timeout:15000});
+ ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&runs().filter(r=>r.argv[0]==='-p').length===1,'connecting Cursor (Check again turns it ready) starts Studio\'s own Firstmate on Cursor and its greeting shows in the chat, as a Codex or Claude sign-in does');
  ok(!(await p.content()).includes(KEY),'the Doctor never shows the key');
+ await api('/api/main/detach',{});
  await p.goto(base+'/#/board');await p.locator(`${card}[data-cursor-account="key-present"][data-cursor-ready="true"]`).waitFor({timeout:15000});
+ await p.waitForFunction(()=>MS.view?.state==='detached',null,{timeout:15000});
  ok(!await p.locator(`${card} [data-cursor-start]`).isDisabled()&&await p.locator(`${card} [data-cursor-start-why]`).count()===0,'with the key the card is ready and Start on Cursor is on');
- ok(runs().length===0,'no page read ran a Cursor chat or turn');
+ const before=runs().length;await p.locator(`${card} [data-cursor-refresh]`).click();await p.waitForTimeout(1500);
+ ok(runs().length===before&&await p.evaluate(()=>MS.view?.state)==='detached','Check again on a card already ready only checks: it starts no Firstmate');
  for(const lang of['en','zh-TW']){await p.setViewportSize({width:390,height:900});await p.evaluate(l=>setLang(l),lang);await p.locator(card).waitFor();ok(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),`no horizontal page scroll at 390 px (${lang})`);}
  await p.setViewportSize({width:1440,height:1000});await p.evaluate(()=>setLang('en'));
  await p.locator(`${card} [data-cursor-start]`).click();
  await p.waitForFunction(()=>MS.view?.state==='attached'&&MS.view?.host==='cursor',null,{timeout:15000});
  await p.locator('#chatLog').getByText('Hello! I am your Studio Firstmate. What would you like to make?').waitFor({timeout:15000});
  ok(true,'Start on Cursor opens Studio\'s own Firstmate on Cursor and its greeting shows in the chat');
- ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&runs().filter(r=>r.argv[0]==='-p').length===1,'one Cursor chat and one greeting turn');
+ for(let i=0;i<150&&runs().filter(r=>r.argv[0]==='-p').length<2;i++)await p.waitForTimeout(100);
+ ok(runs().filter(r=>r.argv[0]==='create-chat').length===2&&runs().filter(r=>r.argv[0]==='-p').length===2,'one more Cursor chat and one more greeting turn');
  // attachments in the chat: an image is a ready chip with no refusal; a PDF says why it cannot go (English and zh-TW) and blocks the send
  const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==','base64'),PDF=Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n','latin1');
  await p.setInputFiles('#chatFile',{name:'shot.png',mimeType:'image/png',buffer:PNG});
