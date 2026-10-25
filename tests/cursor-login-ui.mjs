@@ -44,11 +44,12 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  let readies=0;await p.route('**/api/main/start/cursor-ready',async r=>{await new Promise(d=>setTimeout(d,[300,1200,1200][readies++]??0));await r.continue().catch(()=>{});});
  await p.evaluate(()=>{window.fixtureToasts=[];new MutationObserver(ms=>{for(const m of ms)for(const n of m.addedNodes)if(n.classList?.contains('toast'))window.fixtureToasts.push(n.textContent);}).observe(document.body,{childList:true});});
  await p.locator('#modalRoot .modal .btn.primary').click();
- await p.locator('.tk-account[data-cursor-account="key-present"]').waitFor({timeout:15000});ok(true,'Check again sees the new key at once');
  // failure-only: whether the start was never tried, or tried and refused (a toast says why)
  await p.waitForFunction(()=>MS.view?.state==='attached'&&MS.view?.host==='cursor',null,{timeout:15000}).catch(async e=>{console.log('auto-start state '+JSON.stringify(await p.evaluate(()=>({main:MS.view&&{state:MS.view.state,context:MS.view.context,host:MS.view.host},toasts:window.fixtureToasts,ready:[...document.querySelectorAll('[data-cursor-ready],[data-cursor-account]')].map(e=>e.dataset)}))));throw e;});
  await p.locator('#chatLog').getByText('Hello! I am your Studio Firstmate. What would you like to make?').waitFor({timeout:15000});
  await p.unroute('**/api/main/start/cursor-ready');ok(readies>=2,'the check\'s own read was superseded by the push\'s');
+ // the start takes the captain to the chat on the Board, so the Doctor's panel may be gone before it shows the key
+ ok((await api('/api/cursor/account')).key==='present','Check again sees the new key at once');
  ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&runs().filter(r=>r.argv[0]==='-p').length===1,'connecting Cursor (Check again turns it ready) starts Studio\'s own Firstmate on Cursor and its greeting shows in the chat, as a Codex or Claude sign-in does');
  ok(!(await p.content()).includes(KEY),'the Doctor never shows the key');
  await api('/api/main/detach',{});
