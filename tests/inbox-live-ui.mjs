@@ -98,11 +98,18 @@ try {
   const r3 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a third percent helper"), params: { project: "sandbox" } })).j;
   let c3 = null; for (let i = 0; i < 240 && !c3; i++) { c3 = (await call("/api/scards?open=1")).j.cards.find((c) => c.run === r3.id && c.ste); if (!c3) await A.waitForTimeout(500); }
   await A.evaluate((id) => { location.hash = `#/inbox/${id}`; }, c3.id); await A.waitForSelector(`[data-inbox-studio] [data-scard="${c3.id}"]`, { timeout: 10000 });
+  // C is on the same card's page and leaves for the Board just as the answer's card refresh lands: the navigation commits
+  // in the task the refresh resolves in, before its hashchange is handled
+  await C.evaluate((id) => { location.hash = `#/inbox/${id}`; }, c3.id); await C.waitForSelector(`[data-inbox-studio] [data-scard="${c3.id}"]`, { timeout: 10000 });
+  await C.evaluate((id) => { const json = Response.prototype.json; Response.prototype.json = function () { const u = new URL(this.url);
+    return json.call(this).then((j) => { if (u.pathname === "/api/scards" && u.search === "?open=1" && !(j.cards || []).some((c) => c.id === id)) { Response.prototype.json = json; location.hash = "#/board"; } return j; }); }; }, c3.id);
   const opt = c3.options.find((o) => !o.note && o.id !== "dispatch") ?? c3.options.at(-1);
   await A.click(`[data-inbox-studio] [data-scard="${c3.id}"] [data-option="${opt.id}"]`);
   // answered, it leaves; nothing else waits, so the Inbox goes back to its list (#/inbox) and says the answer was recorded
   ok(await waitFor(A, (id) => !document.querySelector(`[data-inbox-row="${id}"]`) && !document.querySelector(`[data-scard="${id}"]`) && location.hash === "#/inbox" && !!document.querySelector(`[data-inbox-recorded="${id}"]`), c3.id, 10000),
     "the card answered on its own Inbox page leaves, and the Inbox says its answer was recorded", JSON.stringify([await A.evaluate(() => location.hash), await dom(A)]));
+  ok(await waitFor(C, () => location.hash === "#/board" && !!document.querySelector("[data-board] [data-tb-tab]"), null, 10000) && await C.evaluate(() => window.__mark === "no-reload"),
+    "leaving a card's Inbox page for the Board as its answered card leaves shows the Board: the Inbox does not take the URL back", await C.evaluate(() => `${location.hash} ${S.route.name}`));
   const r4 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a fourth percent helper"), params: { project: "sandbox" } })).j;
   const c4seen = await waitFor(A, () => !!document.querySelector("[data-inbox-studio] [data-scard]") && [...document.querySelectorAll("[data-inbox-studio] [data-scard]")].some((e) => e.querySelector("[data-option]")), null, 120000);
   const c4 = (await call("/api/scards?open=1")).j.cards.find((c) => c.run === r4.id);
