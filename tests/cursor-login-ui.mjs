@@ -56,7 +56,7 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.goto(base+'/#/board');await p.locator(`${card}[data-cursor-account="key-present"][data-cursor-ready="true"]`).waitFor({timeout:15000});
  await p.waitForFunction(()=>MS.view?.state==='detached',null,{timeout:15000});
  ok(!await p.locator(`${card} [data-cursor-start]`).isDisabled()&&await p.locator(`${card} [data-cursor-start-why]`).count()===0,'with the key the card is ready and Start on Cursor is on');
- const before=runs().length;await p.locator(`${card} [data-cursor-refresh]`).click();await p.waitForTimeout(1500);
+ const before=runs().length;await Promise.all([p.waitForResponse(r=>r.url().includes('/api/main/start/cursor-ready')),p.locator(`${card} [data-cursor-refresh]`).click()]);await p.waitForTimeout(300);
  ok(runs().length===before&&await p.evaluate(()=>MS.view?.state)==='detached','Check again on a card already ready only checks: it starts no Firstmate');
  for(const lang of['en','zh-TW']){await p.setViewportSize({width:390,height:900});await p.evaluate(l=>setLang(l),lang);await p.locator(card).waitFor();ok(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),`no horizontal page scroll at 390 px (${lang})`);}
  await p.setViewportSize({width:1440,height:1000});await p.evaluate(()=>setLang('en'));
@@ -83,6 +83,13 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.waitForFunction(()=>/FIXTURE-SAW-IMAGES/.test(document.querySelector('#chatLog')?.textContent||''),null,{timeout:15000});
  ok(runs().filter(r=>r.argv[0]==='-p').length===turns+1&&runs().at(-1).argv.includes('--image'),'without the PDF the image goes to cursor-agent and its answer shows in the chat');
  ok(!(await p.content()).includes(KEY),'the page never shows the key');
+ // a phone that may not drive Firstmate: its Check again only checks, as its Codex and Claude sign-ins cannot start one either
+ await api('/api/main/detach',{});rmSync(join(dir,'cursor-api-key'));await p.goto(base+'/#/board');
+ await p.locator(`${card} [data-cursor-refresh]`).click();await p.locator(`${card}[data-cursor-account="key-missing"]`).waitFor({timeout:15000});await p.waitForFunction(()=>MS.view?.state==='detached',null,{timeout:15000});
+ writeFileSync(join(dir,'cursor-api-key'),KEY+'\n',{mode:0o600});await p.evaluate(()=>{MS.me={...MS.me,kind:'phone',allowDrive:false};});
+ const phoneBefore=runs().length;await Promise.all([p.waitForResponse(r=>r.url().includes('/api/main/start/cursor-ready')),p.locator(`${card} [data-cursor-refresh]`).click()]);
+ await p.locator(`${card}[data-cursor-account="key-present"]`).waitFor({timeout:15000});await p.waitForTimeout(300);
+ ok(runs().length===phoneBefore&&await p.evaluate(()=>MS.view?.state)==='detached','on a phone that may not drive, Check again turns Cursor ready but starts no Firstmate');
  ok(errors.length===0,'no browser errors '+errors.join('\n'));
  await api('/api/main/detach',{});await p.close();console.log(`cursor-login-ui: ${pass} passed, 0 failed`);
 }catch(error){console.log('fixture server:',output.slice(-4000));throw error;}finally{await browser?.close();if(app.exitCode===null&&app.signalCode===null){const end=new Promise(r=>app.once('exit',r));app.kill('SIGTERM');await end;}rmSync(tmp,{recursive:true,force:true});}
