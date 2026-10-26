@@ -11,7 +11,7 @@ import { git, must, setGitHome } from "../src/git";
 import { githubSimulator } from "./lib/github-simulator";
 let passed = 0, failed = 0;
 const ok = (v: any, name: string) => { console.log(`${v ? "PASS" : "FAIL"} ${name}`); v ? passed++ : failed++; };
-const rejects = async (f: () => any, pattern: RegExp, name: string) => { try { await f(); ok(false, name); } catch (e: any) { ok(pattern.test(e.message) && !e.message.includes("fake-test-token"), name); } };
+const rejects = async (f: () => any, pattern: RegExp, name: string) => { try { await f(); ok(false, name); } catch (e: any) { const good = pattern.test(e.message) && !e.message.includes("fake-test-token"); if (!good) console.log(`  rejected with: ${String(e.message).replaceAll("fake-test-token-do-not-leak", "<token>")}`); ok(good, name); } };
 const temp = checkedTempDir("github-foundation-"), repo = join(temp, "source"), bare = join(temp, "remote.git");
 mkdirSync(repo); setGitHome(join(temp, "data"));
 must(repo, ["init", "-q", "-b", "main"]); writeFileSync(join(repo, "file"), "one"); must(repo, ["add", "file"]); must(repo, ["commit", "-qm", "one"]);
@@ -22,7 +22,8 @@ const sim = githubSimulator(bare);
 const grant: GitHubProjectGrant = { mode: "simulator", repository: "fixture/project", localPath: repo, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: "2026-10-15T00:00:00Z", approvalId: "test-only-local-grant" };
 const dir = (name: string) => { const p = join(temp, name); mkdirSync(p); return p; };
 const req = { repo, base: "main", branch: "crew/task", head: h1, title: "Test spec", body: "Approved spec\n## Door\ntwo-way\n## Rollback\nrevert" };
-const adapter = () => new GitHubPrAdapter(grant, () => "fake-test-token-do-not-leak", 200);
+// the product's default budget; a short one only where the timeout itself is under test (on a loaded runner a REST round-trip or a Git step can exceed it)
+const adapter = (timeoutMs?: number) => new GitHubPrAdapter(grant, () => "fake-test-token-do-not-leak", timeoutMs);
 try {
   ok(typeof projectPrAdapter === "function", "explicit project adapter selection exists");
   if (typeof projectPrAdapter !== "function") {
@@ -64,7 +65,7 @@ try {
   const recovered = await adapter().open({ ...req, branch: "crew/partial" }, partial);
   ok(recovered.id === "2" && sim.pulls.size === 2, "lost POST recovery finds durable same PR");
   const timeout = dir("timeout"); sim.fail({ method: "GET", delay: 500, once: true });
-  await rejects(() => adapter().open({ ...req, branch: "crew/timeout" }, timeout), /timed out/, "bounded request timeout fails honestly");
+  await rejects(() => adapter(200).open({ ...req, branch: "crew/timeout" }, timeout), /timed out/, "bounded request timeout fails honestly");
   ok(!existsSync(join(timeout, "pr.json")) && !sim.head("crew/timeout"), "timeout creates no false record or ref");
   ok(sim.calls.every(c => !/reviews|comments/.test(c.path)), "adapter never calls review or comment endpoints");
   for (const [method, path, body] of [["POST", "/pulls/1/reviews", {}], ["POST", "/issues/1/comments", {}], ["DELETE", "/pulls/1", {}], ["POST", "/pulls", { title: "x", body: "x", head: "crew/task", base: "main", surprise: true }], ["GET", "/pulls?state=open&head=fixture%3Acrew%2Ftask&base=main&per_page=100&unknown=1", null]] as const) {
@@ -97,7 +98,8 @@ try {
   const pending = busyAdapter.open({ ...req, branch: "crew/busy" }, busyDir).catch(() => null);
   await rejects(() => busyAdapter.open({ ...req, branch: "crew/busy" }, busyDir), /in progress/, "concurrent publication on same adapter is held"); await pending;
   for (const [label, mutate] of [["head", (p: any) => ({ ...p, head: { ...p.head, sha: initial } })], ["body", (p: any) => ({ ...p, body: "wrong" })], ["id", (p: any) => ({ ...p, number: "99" })]] as const) {
-    const d = dir(`invalid-${label}`); sim.transformNext("POST", mutate);
+    // a slow but healthy vendor: the shape check, not a timeout, must refuse the response
+    const d = dir(`invalid-${label}`); sim.transformNext("POST", mutate); const slow = sim.holdNext("POST", "/pulls"); slow.started.then(() => Bun.sleep(250)).then(slow.release);
     await rejects(() => adapter().open({ ...req, branch: `crew/invalid-${label}` }, d), /mismatch|invalid/, `malformed vendor ${label} response fails closed`);
     ok(!existsSync(join(d, "pr.json")), `malformed ${label} creates no success record`);
   }
