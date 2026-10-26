@@ -244,7 +244,8 @@ function viewInbox(id) {
     const at = IB.order.indexOf(want);
     if (at >= 0) { // it was in the list and left (answered, here or elsewhere, or withdrawn): the card after it is selected
       const next = IB.order.slice(at + 1).find((x) => ids.includes(x)) || IB.order.slice(0, at).reverse().find((x) => ids.includes(x)) || null;
-      if (id) { history.replaceState(null, "", ibHash(next)); S.route.arg = id = next; }
+      // a navigation already under way (the URL moved on, its hashchange not handled yet) keeps its URL
+      if (id) { if (location.hash === ibHash(id)) history.replaceState(null, "", ibHash(next)); S.route.arg = id = next; }
       left = want; want = next;
     } else { if (id) gone = id; want = null; }
   }

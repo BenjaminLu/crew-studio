@@ -262,7 +262,7 @@ try {
     ok(await p.waitForFunction(async (id) => (await (await fetch(`/api/scards/${id}`)).json()).status === "answered", card?.id, { timeout: 10000 }).then(() => true, () => false), "the real card is answered from the Inbox the Board linked to");
     await p.goto(`${base}/#/board`);
     ok(await p.waitForFunction((id) => { const l = document.querySelector(`[data-task="${id}"] .tb-stage`)?.textContent || ""; return l && !/^Intake /.test(l); }, rid, { timeout: 60000 }).then(() => true, () => false),
-      "the real run advances past Intake on the Board, live", (await stage(p, rid).catch(() => "")));
+      "the real run advances past Intake on the Board, live", await p.evaluate((id) => `${location.hash} ${S.route?.name} ${document.querySelector(`[data-task="${id}"] .tb-stage`)?.textContent ?? "(no row)"}`, rid));
     await p.screenshot({ path: join(shots, "board-real-run-1440-light.png"), fullPage: true });
     await ctx.close(); }
 
