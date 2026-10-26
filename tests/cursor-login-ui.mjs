@@ -60,9 +60,11 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  ok(runs().length===before&&await p.evaluate(()=>MS.view?.state)==='detached','Check again on a card already ready only checks: it starts no Firstmate');
  for(const lang of['en','zh-TW']){await p.setViewportSize({width:390,height:900});await p.evaluate(l=>setLang(l),lang);await p.locator(card).waitFor();ok(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),`no horizontal page scroll at 390 px (${lang})`);}
  await p.setViewportSize({width:1440,height:1000});await p.evaluate(()=>setLang('en'));
+ // The chat keeps the earlier session's greeting above a separator: wait for this session's own, one more than before.
+ const greeting=p.locator('#chatLog .bub').filter({hasText:'Hello! I am your Studio Firstmate. What would you like to make?'}),greetings=await greeting.count();
  await p.locator(`${card} [data-cursor-start]`).click();
  await p.waitForFunction(()=>MS.view?.state==='attached'&&MS.view?.host==='cursor',null,{timeout:15000});
- await p.locator('#chatLog').getByText('Hello! I am your Studio Firstmate. What would you like to make?').waitFor({timeout:15000});
+ await greeting.nth(greetings).waitFor({timeout:15000});
  ok(true,'Start on Cursor opens Studio\'s own Firstmate on Cursor and its greeting shows in the chat');
  for(let i=0;i<150&&runs().filter(r=>r.argv[0]==='-p').length<2;i++)await p.waitForTimeout(100);
  ok(runs().filter(r=>r.argv[0]==='create-chat').length===2&&runs().filter(r=>r.argv[0]==='-p').length===2,'one more Cursor chat and one more greeting turn');
