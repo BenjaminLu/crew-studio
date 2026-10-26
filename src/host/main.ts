@@ -1,6 +1,6 @@
 import {bundledText} from '../bundled';
 import { neutralizeMarkers } from "../operating-rules";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {writeNativeDiagnostic} from './native-errors';
 import {NativeToolFailure,type NativeFailure} from './types';
 import { fromError, fromExternal } from '../runtime/failures';
@@ -61,6 +61,8 @@ export type MainView = {
   state: MainState; driver: Driver; host: HostId | null; sessionId: string | null; model: string | null; busy: boolean;
   pausedReason: string | null; queue: QItem[]; approvals: ReturnType<PermissionBridge["pending"]>; log: LogItem[]; resume: string | null; project: string;
   origin: Origin | null; context?: "studio" | "explicit-project"; holdWakes: boolean; wakeGraceMs: number; drive: Drive | null;
+  /** every snapshot in the order Studio took it (seq) since this boot: a page holding a read and a streamed view keeps the newer */
+  boot: string; seq: number;
 };
 /** a chat note in both UI languages: text keeps the English line (filters and older readers use it), i18n carries both */
 const bi = (en: string, tw: string): { text: string; i18n: { en: string; "zh-TW": string } } => ({ text: en, i18n: { en, "zh-TW": tw } });
@@ -217,8 +219,11 @@ export class MainSession {
     return { state: this.state, driver: this.driver(), host: this.session?.host ?? null, sessionId: this.session?.id ?? null, model: this.session?.model ?? null,
       busy: this.session?.busy ?? false, pausedReason: this.pausedReason, queue: this.queue.list(), approvals: this.bridge.pending(), log: [...this.log, ...(this.o.nativeOutcomes?.(this.session?.host ?? this.driver().host,this.session?.id ?? this.driver().sessionId) ?? [])].sort((a,b)=>a.at-b.at).slice(-200),
       resume: this.lastResume, project: this.o.projectDir, context: this.o.nativeWorkspace ? "studio" : "explicit-project", origin: this.origin, holdWakes: this.origin?.mode === "rehearsal", wakeGraceMs: this.wakeGraceMs,
-      drive: this.drive ? { ...this.drive, model: (this.session && this.session.model !== this.session.host ? this.session.model : null) ?? this.drive.model, effort: this.session?.effort ?? this.drive.effort } : null };
+      drive: this.drive ? { ...this.drive, model: (this.session && this.session.model !== this.session.host ? this.session.model : null) ?? this.drive.model, effort: this.session?.effort ?? this.drive.effort } : null,
+      boot: this.viewBoot, seq: ++this.viewSeq };
   }
+  private readonly viewBoot = randomUUID();
+  private viewSeq = 0;
   private changed() { try { this.onView(this.view()); } catch {} }
   private lastLabel: SessionLabel | null = null;
   private sessionLabel(): SessionLabel | null {
