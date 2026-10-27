@@ -98,10 +98,7 @@ function claudeNextStep(phone){
 // The server switches atomically: the full Claude readiness first; only then is Codex stopped. A refusal keeps Codex running.
 async function switchToClaude(){
  const pre=await getJ("/api/main/start/claude-ready").catch(()=>null);if(pre)delete pre.status;if(!pre?.ok){CLAUDE.ready=pre;render();return toast(pre?T(pre.en||pre.reason,pre.zh||pre.reason):T("Claude readiness could not be checked.","無法確認 Claude 是否可用。"));}
- const from=MS.view?.host==="codex"?"Codex":MS.view?.host;
- modal(T("Switch Firstmate to Claude?","把 Firstmate 換成 Claude？"),h("p",{style:"max-width:520px"},T(`Studio first checks Claude, including the crew token. Only then does it stop the ${from} Firstmate (its conversation stays where it is; dispatched Tasks keep running) and start a fresh Firstmate on Claude, which greets you in the chat. If Claude is not ready, ${from} keeps running.`,`Studio 會先確認 Claude（包括 crew token），確認後才停止 ${from} 上的 Firstmate（對話保留；已派出的任務繼續執行），再在 Claude 上開新的 Firstmate，它會在對話中向你打招呼。Claude 還沒準備好時，${from} 會繼續執行。`)),
-  async(close,btn)=>{btn.disabled=true;const r=await postJ("/api/main/switch",{to:"claude",confirm:true,locale:lang}).catch(()=>null);close();if(!r?.ok){if(r?.code?.startsWith("claude")){CLAUDE.refused=r;void claudeRefresh();}await loadMain();render();return toast(r?T(r.en||r.reason||r.error,r.zh||r.reason||r.error):T("Switch failed; check Firstmate.","切換失敗，請確認 Firstmate。"));}CLAUDE.refused=null;await openNativeConversation();loadTakeover();});
- const ok=document.querySelector("#modalRoot .modal .btn.primary");if(ok){ok.textContent=T("Switch to Claude","換成 Claude");ok.setAttribute("data-claude-switch-confirm","1");}
+ switchFirstmate("claude");
 }
 // The chat panel offers whichever primary host is ready; each button starts only that host.
 window.crewHostReady=()=>{if(!CLAUDE.loaded&&!CLAUDE.loading)void claudeRefresh();if(!CURSOR.loaded&&!CURSOR.loading)void cursorRefresh();if(!ACCOUNT.view&&!ACCOUNT.loading){ACCOUNT.loading=true;refreshAccount().finally(()=>{ACCOUNT.loading=false;});}return{codex:ACCOUNT.view?.state==="ready",claude:claudeReady(),cursor:cursorReady(),starting:ACCOUNT.starting};};
@@ -140,14 +137,17 @@ function cursorWhy(){const r=CURSOR.ready?.ok===false?CURSOR.ready:CURSOR.refuse
 function startCursorCard(d,phone){
  if(!CURSOR.loading&&(!CURSOR.loaded||(CURSOR.ready===null&&!CURSOR.readyAsked))){CURSOR.readyAsked=true;void cursorRefresh();}
  const native=d.view?.context==="studio",ready=cursorReady(),others=(ACCOUNT.view||d.codex?.account||{}).state==="ready"||(native&&claudeReady()),acc=cursorAccountParts(),c=d.cursor||CURSOR.view||{},handoff=d.codex?.handoffFile;
- return h("section",{class:"card tk-drive","data-section":"start-cursor","data-cursor-ready":String(ready),"data-cursor-context":native?"studio":"explicit-project",...acc.attrs},h("h2",{},T("Firstmate on Cursor","Cursor 上的 Firstmate")),
-  h("p",{class:"muted",style:"margin:0"},native?T("A fresh Firstmate in Studio’s own workspace. It works through Studio’s own tools only; it takes images, not PDFs.","在 Studio 自己的工作空間開啟全新的 Firstmate。它只透過 Studio 自己的工具工作；可以接收圖片，但不能接收 PDF。")
+ const short={"key-present":T("Key set","金鑰已設"),"key-missing":T("No key","缺金鑰"),"not-installed":T("Not installed","未安裝"),"unknown":T("Checking…","確認中…")}[acc.state];
+ const start=h("button",{class:ready&&!others?"btn primary":"btn",id:"startCursorBtn","data-cursor-start":"1",disabled:phone||!ready||ACCOUNT.starting||(MS.view||d.view)?.state!=="detached"||null,onclick:()=>native?continueNative({project:d.project},"cursor"):startCursorFlow(d)},native?T("Start on Cursor","在 Cursor 上開始"):T("Start Firstmate on Cursor…","在 Cursor 上啟動 Firstmate…"));
+ return hostRow({"data-section":"start-cursor","data-cursor-ready":String(ready),"data-cursor-context":native?"studio":"explicit-project",...acc.attrs},{name:"Cursor",ready,running:runningOn("cursor"),state:short,
+  model:native?modelPick("cursor",c.model,phone):h("span",{class:"mono","data-fm-model":"cursor"},c.model||T("Cursor default","Cursor 預設")),
+  actions:[runningPrimary()?switchButton("cursor",ready,c.model,phone):start,...acc.buttons],
+  notes:[acc.how,cursorWhy()],
+  more:[h("p",{class:"muted",style:"margin:0"},native?T("A fresh Firstmate in Studio’s own workspace. It works through Studio’s own tools only; it takes images, not PDFs.","在 Studio 自己的工作空間開啟全新的 Firstmate。它只透過 Studio 自己的工具工作；可以接收圖片，但不能接收 PDF。")
    :T("Explicit project override: this fresh chat follows the shown project’s authority and handoff. The OS sandbox lets it read and write only inside this folder; it takes images and PDFs.","明確指定的專案：新對話會遵循下方專案的授權與交接內容。作業系統沙盒只允許它讀寫這個資料夾；可以接收圖片和 PDF。")),
   h("div",{class:"tk-kv"},kvRow(T("Folder","資料夾"),h("span",{class:"mono"},d.project)),
    native?null:kvRow(T("First message","第一則訊息"),handoff?h("span",{class:"mono","data-handoff-file":handoff},handoff):T("No explicit project handoff","沒有明確指定的專案交接檔")),
-   kvRow(T("Model · effort","模型 · 推理強度"),h("span",{"data-cursor-config":"1"},`${c.model||T("Cursor default","Cursor 預設")} · ${T("none","無")} `,h("span",{class:"faint"},T("(signs in with the crew’s Cursor API key)","（用 crew 的 Cursor API key 登入）")))),kvRow(T("Account","帳號"),acc.status)),
-  acc.how,cursorWhy(),
-  h("div",{class:"actions"},h("button",{class:ready&&!others?"btn primary":"btn",id:"startCursorBtn","data-cursor-start":"1",disabled:phone||!ready||ACCOUNT.starting||(MS.view||d.view)?.state!=="detached"||null,onclick:()=>native?continueNative({project:d.project},"cursor"):startCursorFlow(d)},native?T("Start on Cursor","在 Cursor 上開始"):T("Start Firstmate on Cursor…","在 Cursor 上啟動 Firstmate…")),...acc.buttons));
+   kvRow(T("Model · effort","模型 · 推理強度"),h("span",{"data-cursor-config":"1"},`${c.model||T("Cursor default","Cursor 預設")} · ${T("none","無")} `,h("span",{class:"faint"},T("(signs in with the crew’s Cursor API key)","（用 crew 的 Cursor API key 登入）")))),kvRow(T("Account","帳號"),acc.status))]});
 }
 // an explicit project: the same confirmation as Codex's, then a fresh Firstmate on Cursor in that folder (only this button starts it)
 function startCursorFlow(d){
@@ -221,7 +221,7 @@ function viewTakeover() {
     h("p", {}, T("Connect your account and start new work in the shown project. Taking over an existing session is optional.",
       "連接帳號，在下方顯示的專案開始新工作。接手既有 session 是選用功能。"))))];
 
-  if(!driving)kids.push(startCards(d,phone)); // one card per host: account state and Start together
+  if(!driving)kids.push(startCards(d,phone)); // one line per host: account state, model and Start together
   if (driving) {
     kids.push(h("section", { class: "card tk-drive", "data-takeover": o ? o.mode : "attached" },
       h("div", { class: "tk-row" }, h("span", { class: "badge run" }, h("span", { class: "d" }), o?.mode === "rehearsal" ? T("Rehearsal", "演練中") : T("Studio is driving", "Studio 駕駛中")),
@@ -256,6 +256,7 @@ function viewTakeover() {
         v.state === "paused" ? h("button", { class: "btn", onclick: () => postJ("/api/main/resume").then((r) => r.error && toast(r.error)) }, T("Resume", "繼續")) : null,
         h("button", { class: "btn", id: "releaseBtn", disabled: phone || null, onclick: releaseFlow }, ownPrimary(v) ? T("Stop Firstmate…","停止 Firstmate…") : T("Release…", "交還…")))));
     if(v.context!=="studio")kids.push(dispatchBox(v));
+    else if(ownPrimary(v))kids.push(startCards(d,phone)); // switch host or model from the same lines
   } else {
     const drv = v?.driver || {};
     if (v?.context!=="studio" && drv.holder === "terminal" && drv.resume) kids.push(h("section", { class: "card tk-drive", "data-released": "1" },
@@ -309,25 +310,66 @@ function sessionList(d, fm, phone) {
       : h("div", { class: "empty" }, T("No Claude Code or Codex session found for this project.", "找不到這個專案的 Claude Code 或 Codex session。")));
 }
 
+// One line per host: name, account state, model, its actions; what it is and how it signs in sit under Details.
+const FM_HOSTS={codex:"Codex",claude:"Claude",cursor:"Cursor"};
+const runningOn=host=>{const v=MS.view;return !!v&&v.context==="studio"&&["attached","paused"].includes(v.state)&&v.host===host;};
+const runningPrimary=()=>{const v=MS.view;return !!v&&v.context==="studio"&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state);};
+function hostRow(attrs,o){
+ return h("section",{class:"tk-host",...attrs,"data-host-running":o.running?"1":null},
+  h("div",{class:"tk-host-line"},h("span",{class:`tk-dot ${o.running?"run":o.ready?"ok":""}`,"aria-hidden":"true"}),h("b",{class:"tk-host-name"},o.name),
+   h("span",{class:"tk-host-state","data-host-state":"1"},o.running?T("Running","執行中"):o.state),h("span",{class:"tk-host-model"},o.model),h("div",{class:"actions"},...o.actions)),
+  ...o.notes.filter(Boolean),
+  h("details",{class:"tk-host-more"},h("summary",{},T("Details","詳細")),...o.more.filter(Boolean)));
+}
+// The models detected on this Mac (the Crew page's detection, reused for a minute) for the model menus; read once per page load.
+const FM_MODELS={list:null,loading:false};
+function fmModels(host){if(!FM_MODELS.list&&!FM_MODELS.loading){FM_MODELS.loading=true;getJ("/api/team?facts=1").then(v=>{FM_MODELS.list=(v.models||[]).filter(m=>m.available!==false);}).catch(()=>{FM_MODELS.list=[];}).finally(()=>{FM_MODELS.loading=false;render();});}return (FM_MODELS.list||[]).filter(m=>m.provider===host).map(m=>m.model);}
+/** The model Firstmate starts with on Claude or Cursor: saved for the next start or switch, never changing a running one by itself. */
+function modelPick(host,current,phone){
+ const list=[...new Set([current,...fmModels(host)].filter(Boolean))];
+ if(list.length<2)return h("span",{class:"mono","data-fm-model":host},current||T("default","預設"));
+ return h("select",{class:"input sm mono","data-fm-model":host,"aria-label":T(`Firstmate model on ${FM_HOSTS[host]}`,`${FM_HOSTS[host]} 上的 Firstmate 模型`),disabled:phone||null,onchange:async e=>{const r=await postJ("/api/main/model",{host,model:e.target.value});if(!r.ok)return toast(r.error||T("Could not save the model.","無法儲存模型。"));if(host==="claude")void claudeRefresh(true);else void cursorRefresh();loadTakeover();toast(runningOn(host)?T(`Saved. Firstmate keeps ${MS.view.drive?.model||"its model"} until you restart it on ${r.model}.`,`已儲存。Firstmate 會繼續用 ${MS.view.drive?.model||"目前的模型"}，直到你用 ${r.model} 重新開始。`):T(`Firstmate starts on ${r.model} next time.`,`下次會用 ${r.model} 開始 Firstmate。`));}},...list.map(m=>h("option",{value:m,selected:m===current||null},m)));
+}
+/** The switch action on a host's line while a Firstmate runs: to another ready host, or on the same host to the newly picked model. */
+function switchButton(host,ready,model,phone){
+ if(!runningPrimary())return null;
+ const same=MS.view.host===host;if(same&&(!model||model===MS.view.drive?.model))return null;
+ return h("button",{class:"btn","data-fm-switch":host,disabled:phone||!ready||ACCOUNT.starting||null,onclick:()=>switchFirstmate(host)},same?T(`Restart on ${model}`,`改用 ${model} 重新開始`):T(`Switch to ${FM_HOSTS[host]}`,`切換到 ${FM_HOSTS[host]}`));
+}
+// The server switches atomically: the new host's full readiness first; only then is the running Firstmate stopped. A refusal keeps it running.
+function switchFirstmate(host){
+ const name=FM_HOSTS[host],from=FM_HOSTS[MS.view?.host]||MS.view?.host,same=MS.view?.host===host;
+ modal(same?T(`Restart Firstmate on ${name}?`,`在 ${name} 上重新開始 Firstmate？`):T(`Switch Firstmate to ${name}?`,`把 Firstmate 換成 ${name}？`),h("p",{style:"max-width:520px"},T(`Studio first checks ${name}. Only then does it stop the ${from} Firstmate (its conversation stays in the chat; dispatched Tasks keep running) and start a new conversation on ${name}, which greets you in the chat. If ${name} is not ready, ${from} keeps running.`,`Studio 會先確認 ${name} 可用，確認後才停止 ${from} 上的 Firstmate（對話留在 chat 裡；已派出的任務繼續執行），再在 ${name} 上開新對話，它會在 chat 裡向你打招呼。${name} 還沒準備好時，${from} 會繼續執行。`)),
+  async(close,btn)=>{btn.disabled=true;ACCOUNT.starting=true;let r=null;try{r=await postJ("/api/main/switch",{to:host,confirm:true,locale:lang}).catch(()=>null);}finally{ACCOUNT.starting=false;}close();
+   if(!r?.ok){if(host==="claude"&&r?.code?.startsWith("claude")){CLAUDE.refused=r;void claudeRefresh();}if(host==="cursor"&&r?.code){CURSOR.refused=r;void cursorRefresh();}await loadMain();render();return toast(r?T(r.en||r.reason||r.error,r.zh||r.reason||r.error):T("Switch failed; check Firstmate.","切換失敗，請確認 Firstmate。"));}
+   if(host==="claude")CLAUDE.refused=null;if(host==="cursor")CURSOR.refused=null;await openNativeConversation();loadTakeover();});
+ const ok=document.querySelector("#modalRoot .modal .btn.primary");if(ok){ok.textContent=same?T("Restart","重新開始"):T(`Switch to ${name}`,`換成 ${name}`);ok.setAttribute("data-fm-switch-confirm",host);if(host==="claude")ok.setAttribute("data-claude-switch-confirm","1");}
+}
+window.crewSwitchFirstmate=switchFirstmate;
 function startCodexCard(d, phone, begin = false) {
   const c = d.codex || {}, cfg = c.config || {};const account=ACCOUNT.view||c.account||{};const native=d.view?.context==="studio";
   const acc = codexAccountParts(begin); // the account lives on this card: status, sign-in, verify, then Start
-  return h("section", { class: "card tk-drive", "data-section": "start-codex", ...acc.attrs }, h("h2", {}, T("Firstmate on Codex", "Codex 上的 Firstmate")),
-    h("p", { class: "muted", style: "margin:0" }, native ? T("A fresh Firstmate in Studio’s own workspace. No repository, terminal session or handoff is required.","在 Studio 自己的工作空間開啟全新的 Firstmate。不需要 repo、終端機 session 或交接檔。") : T("Explicit project override: this fresh thread follows the shown project’s authority and handoff.","明確指定的專案：新對話會遵循下方專案的授權與交接內容。")),
+  const ready = account.state === "ready";
+  const short = { ready: T("Verified", "已驗證"), pending: T("Signing in…", "登入中…"), checking: T("Checking…", "檢查中…") }[account.state] || (account.authenticated ? T("Not verified", "未驗證") : T("Not connected", "未連接"));
+  const start = h("button", { class: native && ready && !claudeReady() ? "btn primary" : "btn", id: "startCodexBtn", disabled: phone || !ready || ACCOUNT.busy || (MS.view||d.view)?.state!=="detached" || null, onclick: () => native ? continueNative({project:d.project}) : startCodexFlow(d) }, native ? T("Start on Codex","在 Codex 上開始") : T("Start Firstmate on Codex…", "在 Codex 上啟動 Firstmate…"));
+  return hostRow({ "data-section": "start-codex", ...acc.attrs }, { name: "Codex", ready, running: runningOn("codex"), state: short,
+    model: h("span", { class: "mono", "data-fm-model": "codex", "data-codex-config": "1", title: T("Set in your Codex config (~/.codex/config.toml); Studio never overrides it", "在你的 Codex 設定（~/.codex/config.toml）裡設定；Studio 不會改") }, `${cfg.model || T("Codex default", "Codex 預設")} · ${cfg.effort || T("Codex default", "Codex 預設")}`),
+    actions: [...(ready ? [] : acc.buttons), runningPrimary() ? switchButton("codex", ready, null, phone) : start, ...(ready ? acc.buttons : [])],
+    notes: [acc.pending, runningPrimary() ? null : acc.owned],
+    more: [h("p", { class: "muted", style: "margin:0" }, native ? T("A fresh Firstmate in Studio’s own workspace. No repository, terminal session or handoff is required.","在 Studio 自己的工作空間開啟全新的 Firstmate。不需要 repo、終端機 session 或交接檔。") : T("Explicit project override: this fresh thread follows the shown project’s authority and handoff.","明確指定的專案：新對話會遵循下方專案的授權與交接內容。")),
     h("div", { class: "tk-kv" },
       kvRow(T("Folder", "資料夾"), h("span", { class: "mono" }, d.project)),
       kvRow(T("First message", "第一則訊息"), native ? T("Studio’s own Firstmate introduction","Studio 自己的 Firstmate 開場") : c.handoffFile ? h("span", { class: "mono", "data-handoff-file": c.handoffFile }, c.handoffFile) : T("No explicit project handoff", "沒有明確指定的專案交接檔")),
-      kvRow(T("Model · effort", "模型 · 推理強度"), h("span", { "data-codex-config": "1" }, `${cfg.model || T("Codex default", "Codex 預設")} · ${cfg.effort || T("Codex default", "Codex 預設")} `,
+      kvRow(T("Model · effort", "模型 · 推理強度"), h("span", {}, `${cfg.model || T("Codex default", "Codex 預設")} · ${cfg.effort || T("Codex default", "Codex 預設")} `,
         h("span", { class: "faint" }, cfg.from?.length ? T(`(configured in ${cfg.from.join(", ")}; effective values appear after startup)`, `（設定於 ${cfg.from.join("、")}；啟動後會顯示實際值）`) : T("(Studio never overrides it)", "（Studio 不會改）")))),
-      kvRow(T("Account", "帳號"), acc.status)), acc.pending, acc.owned,
-    h("div", { class: "actions" }, ...(account.state === "ready" ? [] : acc.buttons), h("button", { class: native && account.state==="ready" && !claudeReady() ? "btn primary" : "btn", id: "startCodexBtn", disabled: phone || account.state!=="ready" || ACCOUNT.busy || (MS.view||d.view)?.state!=="detached" || null, onclick: () => native ? continueNative({project:d.project}) : startCodexFlow(d) }, native ? T("Start on Codex","在 Codex 上開始") : T("Start Firstmate on Codex…", "在 Codex 上啟動 Firstmate…")), ...(account.state === "ready" ? acc.buttons : [])));
+      kvRow(T("Account", "帳號"), acc.status))] });
 }
 
 // Studio's own workspace: Codex, Claude and Cursor side by side; each starts only from its own button, never the other.
 function startCards(d, phone, begin = false) {
   // an explicit project starts on Codex or Cursor: Claude keeps its own account card there, still one card per host
-  if (d.view?.context !== "studio") return h("div", { class: "tk-hosts" }, startCodexCard(d, phone, begin), startCursorCard(d, phone), claudeAccountPanel({ next: false }));
-  return h("div", { class: "tk-hosts", "data-section": "start-firstmate" }, startCodexCard(d, phone, begin), startClaudeCard(d, phone), startCursorCard(d, phone));
+  if (d.view?.context !== "studio") return h("div", { class: "tk-host-stack" }, h("div", { class: "card tk-hosts" }, startCodexCard(d, phone, begin), startCursorCard(d, phone)), claudeAccountPanel({ next: false }));
+  return h("div", { class: "card tk-hosts", "data-section": "start-firstmate" }, startClaudeCard(d, phone), startCursorCard(d, phone), startCodexCard(d, phone, begin));
 }
 function startClaudeCard(d, phone) {
   // this card is Studio's workspace: read the preflight even when the first read ran before the workspace was known
@@ -335,8 +377,16 @@ function startClaudeCard(d, phone) {
   const c = d.claude || {}, ready = claudeReady(), codexReady = (ACCOUNT.view || d.codex?.account || {}).state === "ready";
   // the same body as the Codex card: what it is, folder, first message, model · effort; then how it signs in
   const acc = claudeAccountParts(); // the account lives on this card: status, sign-in, check again, then Start
-  return h("section", { class: "card tk-drive", "data-section": "start-claude", "data-claude-ready": String(ready), ...acc.attrs }, h("h2", {}, T("Firstmate on Claude", "Claude 上的 Firstmate")),
-    h("p", { class: "muted", style: "margin:0" }, T("A fresh Firstmate in Studio’s own workspace. No repository, terminal session or handoff is required.", "在 Studio 自己的工作空間開啟全新的 Firstmate。不需要 repo、終端機 session 或交接檔。")),
+  const short = { "signed-in": T("Signed in", "已登入"), exhausted: T("Quota used up", "額度用完"), "signed-out": T("Not signed in", "未登入"), unknown: T("Unchecked", "未確認") }[acc.state];
+  const start = h("button", { class: ready && !codexReady ? "btn primary" : "btn", id: "startClaudeBtn", disabled: phone || !ready || ACCOUNT.starting || (MS.view || d.view)?.state !== "detached" || null, onclick: () => continueNative({ project: d.project }, "claude") }, T("Start on Claude", "在 Claude 上開始"));
+  return hostRow({ "data-section": "start-claude", "data-claude-ready": String(ready), ...acc.attrs }, { name: "Claude", ready, running: runningOn("claude"), state: short,
+    model: modelPick("claude", c.model, phone),
+    actions: [...(acc.state === "signed-in" ? [] : acc.buttons), runningPrimary() ? switchButton("claude", ready, c.model, phone) : start, ...(acc.state === "signed-in" ? acc.buttons : [])],
+    notes: [acc.reason,
+      // not signed in: the state on the line already says so and the sign-in button sits on it; no second note
+      (CLAUDE.ready || CLAUDE.refused) && !(claudeWhyCode() === "claudeNotSignedIn" && ["signed-out", "unknown"].includes(acc.state)) ? claudeWhy() : CLAUDE.ready || CLAUDE.refused || ready ? null : h("p", { class: "faint", "data-claude-start-why": "checking" }, T("Checking Claude…", "正在確認 Claude…")),
+      acc.phoneNote],
+    more: [h("p", { class: "muted", style: "margin:0" }, T("A fresh Firstmate in Studio’s own workspace. No repository, terminal session or handoff is required.", "在 Studio 自己的工作空間開啟全新的 Firstmate。不需要 repo、終端機 session 或交接檔。")),
     h("div", { class: "tk-kv" },
       kvRow(T("Folder", "資料夾"), h("span", { class: "mono" }, d.project)),
       kvRow(T("First message", "第一則訊息"), T("Studio’s own Firstmate introduction", "Studio 自己的 Firstmate 開場")),
@@ -344,12 +394,7 @@ function startClaudeCard(d, phone) {
         h("span", { class: "faint" }, T("(signs in with the crew token; Studio’s own tools are allowed)", "（用 crew token 登入；Studio 自己的工具可直接用）")))),
       ready && CLAUDE.ready?.permissionMode ? kvRow(T("Permissions", "權限"), claudeModeText(CLAUDE.ready.permissionMode)) : null,
       ready && CLAUDE.ready?.autoMode ? kvRow(T("Auto-mode rules", "Auto mode 規則"), claudeAutoRules(CLAUDE.ready.autoMode)) : null,
-      kvRow(T("Account", "帳號"), acc.status)),
-    acc.reason,
-    // not signed in: the account line above already says so and the sign-in button sits on this card; no second note
-    (CLAUDE.ready || CLAUDE.refused) && !(claudeWhyCode() === "claudeNotSignedIn" && ["signed-out", "unknown"].includes(acc.state)) ? claudeWhy() : CLAUDE.ready || CLAUDE.refused || ready ? null : h("p", { class: "faint", "data-claude-start-why": "checking" }, T("Checking Claude…", "正在確認 Claude…")),
-    h("div", { class: "actions" }, ...(acc.state === "signed-in" ? [] : acc.buttons), h("button", { class: ready && !codexReady ? "btn primary" : "btn", id: "startClaudeBtn", disabled: phone || !ready || ACCOUNT.starting || (MS.view || d.view)?.state !== "detached" || null, onclick: () => continueNative({ project: d.project }, "claude") }, T("Start on Claude", "在 Claude 上開始")), ...(acc.state === "signed-in" ? acc.buttons : [])),
-    acc.phoneNote);
+      kvRow(T("Account", "帳號"), acc.status))] });
 }
 
 async function openNativeConversation(){chatMode="main";store.set("crew.chatMode","main");location.hash="#/board";await loadMain();openChat(true);renderChat(false);}

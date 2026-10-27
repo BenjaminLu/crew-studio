@@ -621,3 +621,20 @@ body.chat-closed .main{padding-bottom:120px}
 .chat .bub{line-height:1.65;overflow-wrap:anywhere}
 
 @media(min-width:761px){.nav{min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;flex:0 1 auto}.nav-labs,.nav-labs-body{min-width:0;max-width:100%}.nav-item{flex-shrink:0}.nav-item .nl{min-width:0;overflow:hidden;text-overflow:ellipsis}.side-foot{flex-shrink:0}.nav-proj{min-height:44px;flex-shrink:0;max-height:24vh}.nav-proj-list{max-height:16vh}}
+/* the chat head's Firstmate menu: who runs it, switch host, stop */
+.fm-menu{position:relative;flex:none}
+.fm-menu>summary{list-style:none;display:flex;align-items:center;gap:6px;max-width:150px;padding-inline:8px;cursor:pointer}
+.fm-menu>summary .ic{transition:transform .15s}
+.fm-menu[open]>summary .ic{transform:rotate(90deg)}
+.chat-head .who{min-width:84px}
+.fm-menu>summary::-webkit-details-marker{display:none}
+.fm-menu .fm-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fm-menu .tk-dot{width:8px;height:8px;border-radius:50%;background:var(--border);flex:none}
+.fm-menu .tk-dot.run{background:var(--accent-text)}
+.fm-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:40;min-width:220px;display:grid;padding:6px;background:var(--surface,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14)}
+.fm-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:0;background:none;border-radius:6px;font:inherit;font-size:13.5px;color:var(--text);text-align:left;cursor:pointer;text-decoration:none}
+.fm-item:hover:not([disabled]){background:var(--surface-2)}
+.fm-item[disabled]{cursor:default;color:var(--text-2)}
+.fm-item .faint{margin-left:auto;font-size:12px}
+.fm-item .fm-gap{width:16px;flex:none}
+.fm-stop{color:var(--bad);border-top:1px solid var(--border);border-radius:0 0 6px 6px;margin-top:4px}
