@@ -68,6 +68,14 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  ok(true,'Start on Cursor opens Studio\'s own Firstmate on Cursor and its greeting shows in the chat');
  for(let i=0;i<150&&runs().filter(r=>r.argv[0]==='-p').length<2;i++)await p.waitForTimeout(100);
  ok(runs().filter(r=>r.argv[0]==='create-chat').length===2&&runs().filter(r=>r.argv[0]==='-p').length===2,'one more Cursor chat and one more greeting turn');
+ // the start is an event the captain sees, not only the chat opening: a toast and a line in the chat, with the host and model
+ ok(await p.locator('#chatLog [data-main="connected"][data-connected-host="cursor"]').count()===2&&/Firstmate (connected|已連接)[\s\S]*Cursor · composer-2\.5/.test(await p.locator('#chatLog [data-main="connected"]').last().innerText())&&(await p.evaluate(()=>window.fixtureToasts)).some(t=>/Firstmate (connected|已連接) · Cursor · composer-2\.5/.test(t)),'each start shows Firstmate connected, with Cursor and its model, in the chat and as a toast');
+ // the model's reasoning is shown while it runs: "thinking…" with what the vendor shows of it, then the reply replaces it
+ await p.evaluate(()=>{window.fixtureThinking=[];new MutationObserver(()=>{const el=document.querySelector('[data-main="live"][data-thinking="1"]');if(el)fixtureThinking.push(el.innerText);}).observe(document.querySelector('#chatLog'),{childList:true,subtree:true,characterData:true});});
+ const thinkFrom=await p.evaluate(()=>MS.view.log.length);await p.locator('#chatIn').fill('FIXTURE-THINK');await p.locator('#chatIn').press('Enter');
+ await p.waitForFunction(n=>!MS.view.busy&&MS.view.log.slice(n).some(x=>x.kind==='captain')&&MS.view.log.at(-1)?.kind==='firstmate',thinkFrom,{timeout:15000});
+ const thinking=await p.evaluate(()=>fixtureThinking);
+ ok(thinking.some(t=>/thinking…|思考中…/.test(t)&&/weighing the ask/.test(t))&&await p.locator('[data-main="live"][data-thinking]').count()===0,'while the model reasons the chat says thinking… with its reasoning, and the reply replaces it '+JSON.stringify(thinking.slice(-3)));
  // attachments in the chat: an image is a ready chip with no refusal; a PDF says why it cannot go (English and zh-TW) and blocks the send
  const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==','base64'),PDF=Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n','latin1');
  await p.setInputFiles('#chatFile',{name:'shot.png',mimeType:'image/png',buffer:PNG});

@@ -143,6 +143,8 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           toolFailure = "Codex code-mode tool execution failed. Repository reads are not verified; check the Codex runtime before continuing.";
         }
         else if (m.method === "item/agentMessage/delta" && p.delta) { text += p.delta; emit({ type: "delta", text: String(p.delta) }); }
+        else if (m.method === "item/started" && p.item?.type === "reasoning") emit({ type: "thinking", text: "" });
+        else if ((m.method === "item/reasoning/summaryTextDelta" || m.method === "item/reasoning/textDelta") && p.delta) emit({ type: "thinking", text: String(p.delta) });
         else if (m.method === "item/started" && p.item && p.item.type !== "agentMessage" && p.item.type !== "userMessage" && p.item.type !== "reasoning")
           emit({ type: "toolStart", id: String(p.item.id), name: String(p.item.type), summary: p.item.type==="imageGeneration"?"Generating image":shortSummary(p.item.command ?? p.item.tool ?? p.item.changes ?? p.item),
             ...(/^(?:mcp|dynamic)ToolCall$/.test(p.item.type) && typeof p.item.tool === "string" ? { tool: p.item.tool, input: p.item.arguments } : {}) });

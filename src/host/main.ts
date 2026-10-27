@@ -79,7 +79,9 @@ export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstma
   /** an error from outside Studio (vendor, CLI, network, process, attachment), typed, with the exact external message */
   external?: ExternalError;
   /** a wake Studio wrote: the short summaries the chat shows in place of the raw turn (live E2E S23) */
-  shown?: import("./queue").Shown[] };
+  shown?: import("./queue").Shown[];
+  /** Studio now drives a primary on this host: the chat shows it as a connected event, not only the session's first reply */
+  connected?: { host: HostId; model: string | null } };
 export type SessionLabel = { host: HostId; id: string; model: string | null };
 
 export type MainOpts = {
@@ -295,7 +297,7 @@ export class MainSession {
     this.drive = null; this.origin = null;
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;
     this.wakes = new WakeReader(this.o.stateDir);
-    this.note({ kind: "status", ...bi(`Attached to ${host} session ${this.session.id}`, `已接上 ${host} session ${this.session.id}`) });
+    this.note({ kind: "status", ...bi(`Attached to ${host} session ${this.session.id}`, `已接上 ${host} session ${this.session.id}`), connected: { host, model: this.session.model ?? null } });
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
     this.changed();
     void this.pump();
@@ -446,7 +448,7 @@ export class MainSession {
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;
     this.wakes = new WakeReader(this.o.stateDir);
     this.seenWakes.clear();
-    this.note({ kind: "status", text: statement });
+    this.note({ kind: "status", text: statement, connected: { host, model: this.drive.model ?? se.model ?? null } });
     if (host === "claude" && extra?.autoMode) this.note({ kind: "status", ...bi(`The captain's auto-mode rules are ${extra.autoMode.summary}`, `船長的 auto mode 規則：${extra.autoMode.summaryZh || extra.autoMode.summary}`) });
     // local unrestricted mode (operator .env): a Claude primary is told so in its first message, as Codex is on every turn (after the rules, before the body)
     const body = this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })(),extra?.locale) : freshText(cwd, newest);

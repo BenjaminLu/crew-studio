@@ -95,6 +95,12 @@ async function turn(text, files = []) {
   } else if (text.includes("STUB_QUOTA")) {
     out({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
     out({ type: "result", subtype: "error_during_execution", is_error: true, result: "Claude usage limit reached" });
+  } else if (text.includes("STUB_THINK")) {
+    // a thinking block streams before the text block, as with extended thinking
+    out({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } });
+    for (const thinking of ["weighing ", "the ask"]) out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking } } });
+    out({ type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "thought it over" } } });
+    out({ type: "result", subtype: "success", is_error: false, result: "thought it over" });
   } else if (text.includes("STUB_TOOL")) {
     out({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls -la" } }] } });
     const a = await askPermission("Bash", { command: "ls -la" });

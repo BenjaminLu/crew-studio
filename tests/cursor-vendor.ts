@@ -397,6 +397,9 @@ console.log("the host in an explicit project: the project folder only");
   ok(pruns().length > 5 && pruns().every((c) => !c.argv.includes("--resume") && !c.argv.includes("--continue")), "no turn in the project resumes a chat", JSON.stringify(pruns().map((c) => c.argv.slice(-6))).slice(0, 400));
   ok(runs.length === 1 && runs[0].argv[runs[0].argv.indexOf("--workspace") + 1] === ws && runs[0].argv[runs[0].argv.indexOf("--sandbox") + 1] === "disabled" && runs[0].argv.includes("--disable-project-configs") && !runs[0].argv.includes("--approve-mcps") && !runs[0].argv.includes("--force") && runs[0].home !== process.env.HOME,
     "the project is the workspace, under the OS sandbox (cursor-agent's own off inside it), never --force, no MCP server auto-approved, project cli.json off, a private home", JSON.stringify(runs[0]?.argv));
+  const thinkFrom = events.length; await s.send("FIXTURE-THINK");
+  const turnEvents = events.slice(thinkFrom), thought = turnEvents.filter((e) => e.type === "thinking").map((e) => e.text).join(""), firstThink = turnEvents.findIndex((e) => e.type === "thinking"), firstReply = turnEvents.findIndex((e) => e.type === "delta" || e.type === "message");
+  ok(thought === "weighing the ask" && firstThink >= 0 && (firstReply < 0 || firstThink < firstReply), "the model's thinking streams as thinking events before the reply", JSON.stringify(turnEvents.map((e) => e.type)));
   const resume = await s.detach(); delete process.env.CURSOR_FIXTURE_LOG;
   ok(resume === "", "stopping it hands back no resume command", JSON.stringify(resume));
   ok(!existsSync(join(proj, ".cursor")), "Studio wrote nothing into the project's .cursor/");

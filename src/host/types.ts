@@ -24,6 +24,8 @@ export type PermissionAnswer = { allow: boolean; message?: string; updatedInput?
 export type HostEvent =
   | {type:"nativeToolFailure";failure:NativeFailure}
   | { type: "delta"; text: string }
+  /** the model is reasoning before it answers or calls a tool: `text` is what the vendor shows of it (a summary or the thinking itself), "" when it shows nothing */
+  | { type: "thinking"; text: string }
   | { type: "progress"; text: string }
   /** `tool`: the called tool's own name when `name` is a vendor item type (Codex mcpToolCall/dynamicToolCall); `input`: its
    *  arguments, read by Studio for the chat's activity line (src/tool-activity.ts) and dropped before the event leaves Studio */

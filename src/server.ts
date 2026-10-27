@@ -223,7 +223,7 @@ sweepChatFiles(); setInterval(sweepChatFiles, Number(process.env.CREW_ATTACH_SWE
 main.onView = (v) => { send("main", v); if (v.state === "attached") { try { runtime.engine.resumeFirstmateQuestions(); } catch {} } }; // Firstmate attached: send questions it could not take at the restart
 main.onEvent = (e: HostEvent) => {
   // a Claude primary's own quota or sign-in refusal is the Claude account card's fact too (no fallback anywhere)
-  if (e.type === "hostRefusal" && main.view().host === "claude") { try { nativeClaude.observe(e.raw); } catch {} } if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
+  if (e.type === "hostRefusal" && main.view().host === "claude") { try { nativeClaude.observe(e.raw); } catch {} } if (e.type === "delta" || e.type === "thinking" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 // Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
