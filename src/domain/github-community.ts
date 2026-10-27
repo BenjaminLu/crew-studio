@@ -1,9 +1,23 @@
 // Repository text is untrusted contribution guidance, never execution authority.
-import{createHash}from'node:crypto';import type{GitHubPrAdapter}from'../adapters/github';import{templateShapeProblem}from'./pull-template';
+import{createHash}from'node:crypto';import type{GitHubPrAdapter}from'../adapters/github';import{templateShapeProblem,parsePullTemplate,renderPullBody,needsText,withoutSessionLinks}from'./pull-template';
 export type CommunityFile={repository:string;head:string;path:string;blob:string;sha256:string;text:string};
 export type CommunityBundle={schema:1;repository:string;head:string;pulls:CommunityFile[];issues:CommunityFile[];contributing:CommunityFile|null;agents:CommunityFile|null;sha256:string};
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
-export async function discoverGitHubCommunity(adapter:GitHubPrAdapter,externalSignal?:AbortSignal):Promise<CommunityBundle>{
+/** What discovery reads: the PR adapter, or communitySource over any GitHub-shaped reader. */
+export type CommunitySource=Pick<GitHubPrAdapter,'communitySnapshot'|'communityContent'>;
+const COMMUNITY_PATH=/^((\.github|docs)\/)?(pull_request_template\.md|PULL_REQUEST_TEMPLATE(\/[A-Za-z0-9_.-]+\.md)?|CONTRIBUTING\.md|ISSUE_TEMPLATE(\.[Mm][Dd]|\/[A-Za-z0-9_.-]+\.(md|ya?ml))?|AGENTS\.md)$/i;
+/** The PR adapter's identity rules over another reader (REST with a token, `gh api`, a local checkout): `get` answers a
+ *  GitHub REST path under /repos/<repository>, or null for a 404. The owner's .github repository counts only when public. */
+export function communitySource(repository:string,get:(repository:string,suffix:string)=>Promise<any|null>):CommunitySource{
+ const pins=new Map<string,string>(),of=(source:'repository'|'owner')=>source==='repository'?repository:repository.split('/')[0]+'/.github';
+ return{
+  async communitySnapshot(source){if(!['repository','owner'].includes(source))throw new Error('Invalid community source');const want=of(source),meta=await get(want,'');if(meta===null){if(source==='owner')return null;throw new Error('Repository unavailable');}
+   if(String(meta.full_name).toLowerCase()!==want.toLowerCase()||typeof meta.default_branch!=='string'||!meta.default_branch||source==='owner'&&(meta.private!==false||meta.visibility!=='public'))throw new Error('Community source identity/public visibility unverified');
+   const commit=await get(want,`/commits/${encodeURIComponent(meta.default_branch)}`);if(!/^[a-f0-9]{40}$/.test(commit?.sha))throw new Error('Community default branch identity unverified');const pin={repository:want,head:commit.sha as string,source};pins.set(want+'@'+commit.sha,JSON.stringify(pin));return{...pin};},
+  async communityContent(pin,path){if(pins.get(pin?.repository+'@'+pin?.head)!==JSON.stringify(pin)||typeof path!=='string'||!COMMUNITY_PATH.test(path))throw new Error('Community read outside the pinned contribution files');return get(pin.repository,`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pin.head}`);},
+ };
+}
+export async function discoverGitHubCommunity(adapter:CommunitySource,externalSignal?:AbortSignal):Promise<CommunityBundle>{
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000),signal=externalSignal?AbortSignal.any([externalSignal,controller.signal]):controller.signal;let bytesRead=0,requests=0;try{
  const repo=await adapter.communitySnapshot('repository',signal);if(!repo)throw new Error('Repository snapshot unavailable');let owner:Awaited<ReturnType<typeof adapter.communitySnapshot>>|undefined;const fallback=async()=>owner===undefined?(owner=await adapter.communitySnapshot('owner',signal)):owner;
  const file=async(pin:NonNullable<typeof repo>,path:string):Promise<CommunityFile|null>=>{if(++requests>80)throw new Error('Community discovery request bound exceeded');const raw=await adapter.communityContent(pin,path,signal);if(raw===null)return null;if(raw.type!=='file'||raw.path!==path||raw.encoding!=='base64'||typeof raw.content!=='string'||!/^[a-f0-9]{40}$/.test(raw.sha)||!Number.isSafeInteger(raw.size)||raw.size<0||raw.size>131072||raw.content.length>180000||!/^[A-Za-z0-9+/=\r\n]*$/.test(raw.content))throw new Error('Community file is malformed, symlinked or oversized');const bytes=Buffer.from(raw.content,'base64');bytesRead+=bytes.length;if(bytesRead>1_000_000)throw new Error('Community source bundle exceeds bound');if(bytes.length!==raw.size||createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`)).update(bytes).digest('hex')!==raw.sha)throw new Error('Community file bytes do not match blob');return{repository:pin.repository,head:pin.head,path,blob:raw.sha,sha256:createHash('sha256').update(bytes).digest('hex'),text:bytes.toString('utf8')};};
@@ -13,9 +27,16 @@ export async function discoverGitHubCommunity(adapter:GitHubPrAdapter,externalSi
  let pulls=await prs(repo);if(!pulls){const pin=await fallback();pulls=pin?await prs(pin):null;}
  // A repository's own issue template/config directory replaces the owner's whole set.
  let issues=await directory(repo,'.github/ISSUE_TEMPLATE');if(issues===null){const legacy=await single(repo,'ISSUE_TEMPLATE.md');if(legacy)issues=[legacy];else{const pin=await fallback();issues=pin?await directory(pin,'.github/ISSUE_TEMPLATE'):null;if(issues===null&&pin){const f=await single(pin,'ISSUE_TEMPLATE.md');if(f)issues=[f];}}}
- let contributing=await single(repo,'CONTRIBUTING.md');if(!contributing){const pin=await fallback();if(pin)contributing=await single(pin,'CONTRIBUTING.md');}const agents=await file(repo,'AGENTS.md'),body={schema:1 as const,repository:repo.repository,head:repo.head,pulls:pulls??[],issues:issues??[],contributing,agents};return{...body,sha256:hash(body)};}finally{clearTimeout(timer);}
+ let contributing=await single(repo,'CONTRIBUTING.md');if(!contributing){const pin=await fallback();if(pin)contributing=await single(pin,'CONTRIBUTING.md');}const agents=await file(repo,'AGENTS.md').catch(e=>{if(/symlinked|do not match blob/.test(String(e?.message)))return null;throw e;}),body={schema:1 as const,repository:repo.repository,head:repo.head,pulls:pulls??[],issues:issues??[],contributing,agents};return{...body,sha256:hash(body)};}finally{clearTimeout(timer);}
 }
 // A filled body keeps the template's shape (pull-template.ts): every heading in order and every checkbox, ticked only where `proven` names it.
 export function applyPullTemplate(bundle:CommunityBundle,request:{path:string;blob:string;title:string;body:string;requiredInputsConfirmed:boolean;sources:string;proven?:string[]}){
  const {sha256,...body}=bundle;if(hash(body)!==sha256||request.sources!==sha256)throw new Error('Contribution sources changed');if(bundle.pulls.length&&!request.path)throw new Error('Choose an exact PR template');const selected=bundle.pulls.find(f=>f.path===request.path&&f.blob===request.blob);if(bundle.pulls.length&&!selected)throw new Error('Chosen template source/hash is unavailable');if(typeof request.title!=='string'||!request.title.trim()||request.title.length>200||typeof request.body!=='string'||request.body.length>60000||request.requiredInputsConfirmed!==true)throw new Error('Captain must supply title/body and confirm applicable required inputs before PR publication');if(selected&&!request.body.includes(selected.text)&&templateShapeProblem(selected.text,request.body,request.proven??[]))throw new Error('Preserve the literal selected template; add evidence without silently ticking its checkboxes');return{schema:1,title:request.title,body:request.body,sources:sha256,template:selected?{repository:selected.repository,head:selected.head,path:selected.path,blob:selected.blob,sha256:selected.sha256}:null,untrustedGuidance:true};
+}
+// A body Studio writes with no captain choice in between: the repository's default template (several and no default: the
+// first by path), Studio's text in its first section that asks for text, every heading kept and every checkbox unticked.
+export function defaultPullBody(bundle:CommunityBundle,text:string):{body:string;template:CommunityFile|null}{
+ text=withoutSessionLinks(text);const t=bundle.pulls.find(f=>/(^|\/)pull_request_template\.md$/i.test(f.path))??[...bundle.pulls].sort((a,b)=>a.path.localeCompare(b.path))[0];if(!t)return{body:text,template:null};
+ const sections=parsePullTemplate(t.text),first=sections.find(needsText),body=renderPullBody(sections,{text:first?.heading?{[first.heading]:text}:{},rows:[],proven:new Set()});
+ return{body:first?body:`${text}\n\n${body}`,template:t};
 }

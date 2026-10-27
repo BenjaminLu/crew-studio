@@ -106,7 +106,7 @@
     "test:run-graph-navigation": "node tests/run-graph-navigation-ui.mjs",
     "test:default-workflow-catalog": "bun tests/example-workflows.ts && bun tests/default-workflow-catalog.ts && node tests/default-workflow-catalog-ui.mjs",
     "test:coffee-local-jobs": "bun tests/native-coffee-kit.ts && COFFEE_LOCAL_JOB_CONTROL=timeout bun tests/native-coffee-kit.ts && COFFEE_LOCAL_JOB_CONTROL=cancel bun tests/native-coffee-kit.ts && COFFEE_LOCAL_JOB_CONTROL=unsafe bun tests/native-coffee-kit.ts && COFFEE_LOCAL_JOBS_UI=1 node tests/studio-agents-ui.mjs",
-    "test:github-review-workflow": "bun tests/github-review-workflow.ts && bun tests/github-community.ts",
+    "test:github-review-workflow": "bun tests/github-review-workflow.ts && bun tests/github-community.ts && bun tests/contribution-templates.ts",
     "test:github-review-workflow-ui": "node tests/github-review-workflow-ui.mjs",
     "test:web-open-task-reopen": "bun tests/task-reopen.ts && bun tests/web-open-links.ts && bun tests/web-open-task-reopen-ui.mjs && bun tests/web-open-server.mjs",
     "test:workflow-gate": "bun tests/workflow-gate.ts && node tests/workflow-gate-ui.mjs && bun tests/bundled-workflow-gate.ts",

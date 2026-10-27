@@ -41,6 +41,14 @@ Every change takes the same path, in this order:
 - Never `git stash` (the stash is shared by every worktree), `git bisect` in the checkout, force-push a shared branch,
   or `git add -A` / `git add .`. Stage files by name; never commit `node_modules`, `.env` or generated deliverables.
 
+## Pull requests and issues
+
+- A pull request body follows `.github/pull_request_template.md`: Summary, Evidence, Merge Danger (Door and Blast Radius),
+  every heading in order. An issue starts from `.github/ISSUE_TEMPLATE/`. The `PR text` check in CI enforces the
+  pull request body and the commit messages.
+- In another repository, use that repository's own templates: `bun scripts/contribution-templates.ts --repo <owner/name>
+  --pr` (or `--issue`) prints the one GitHub would offer, and `--check-body <file>` checks a body against it (AGENTS.md).
+
 ## Text and privacy
 
 - Traditional and Simplified Chinese convert through `opencc-js` only. Do not add a character mapping table
