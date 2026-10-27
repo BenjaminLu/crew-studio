@@ -92,13 +92,14 @@ try {
   const fold = await p.locator("#startClaudeBtn").boundingBox(), fold2 = await p.locator("#startCodexBtn").boundingBox();
   ok(fold && fold2 && fold.y + fold.height <= 900 && fold2.y + fold2.height <= 900, "both start buttons are above the fold at 1280×900");
   const [bc, bl] = [await p.locator('[data-section="start-codex"]').boundingBox(), await p.locator('[data-section="start-claude"]').boundingBox()];
-  ok(bc && bl && Math.abs(bc.y - bl.y) < 2 && bl.x > bc.x + bc.width - 2, "the two choices sit side by side on a wide screen");
+  ok(bc && bl && Math.abs(bc.x - bl.x) < 2 && bl.y < bc.y && await p.locator('.tk-hosts [data-section="start-claude"] ~ [data-section="start-codex"]').count() === 1, "the hosts are lines of one card, Claude above Codex");
 
   // the card's next step after sign-in, when nothing runs yet (checked without starting: the auto-continue below is the start)
   await api("/api/claude/account/login", {}); for (let i = 0; i < 100 && (await api("/api/claude/account")).state === "pending"; i++) await new Promise((r) => setTimeout(r, 50));
   await p.evaluate(() => window.dispatchEvent(new Event("crew:live")));
   ok(await seen(p, '[data-section="start-claude"][data-claude-ready="true"]') && await p.locator("#startClaudeBtn.primary").count() === 1 && await p.locator("#startCodexBtn.primary").count() === 0, "only Claude is ready: its Start is the primary button");
   ok(await seen(p, '[data-section="start-claude"][data-claude-ready="true"]') && (await p.locator("#startClaudeBtn").innerText()).includes("Start on Claude") && await p.locator("[data-claude-start]").count() === 0, "signed in: the start card reads Start on Claude; the account card repeats no start beside it");
+  await p.locator('[data-section="start-claude"] .tk-host-more > summary').click(); // the mode sits under the line's Details
   ok(/Claude permission mode: auto/.test(await p.locator('[data-section="start-claude"] [data-claude-permission-mode]').first().innerText().catch(() => "")), "the Claude start card shows Claude permission mode: auto");
   // where no start card shows (Doctor), the account card carries the next step
   await p.goto(base + "/#/doctor");
@@ -173,6 +174,25 @@ try {
   ok(switched, "the confirmed switch stops Codex and starts a fresh Claude Firstmate");
   ok(await seen(p, greeting("English"), 15000), "after the switch the right-side chat shows the Claude greeting");
   await shot(p, "chat-after-switch");
+  // the chat head names the running Firstmate and switches or stops it from anywhere, no detour through the start cards
+  const waitHost = async (host) => { for (let i = 0; i < 200; i++) { const m = await api("/api/main"); if (m.state === "attached" && m.host === host) return true; await new Promise((r) => setTimeout(r, 50)); } return false; };
+  await p.goto(base + "/#/board"); await p.evaluate(() => openChat(true));
+  ok(await seen(p, '#chatFm > summary[data-fm-menu="claude"]') && /Claude/.test(await p.locator("#chatFm > summary").innerText()), "the chat head shows Firstmate runs on Claude");
+  await p.locator("#chatFm > summary").click();
+  ok(await seen(p, '[data-fm-menu-host="codex"]:enabled') && await p.locator('[data-fm-menu-host="claude"]').isDisabled() && await p.locator("[data-fm-stop]").isVisible(), "its menu offers the other ready host and Stop; the running host is marked, not offered");
+  await shot(p, "chat-menu-open");
+  await p.locator('[data-fm-menu-host="codex"]').click(); await seen(p, '[data-fm-switch-confirm="codex"]'); await p.locator('[data-fm-switch-confirm="codex"]').click();
+  const toCodex = await waitHost("codex");
+  ok(toCodex && await seen(p, '#chatLog [data-main="connected"][data-connected-host="codex"]', 15000), "switching from the chat menu starts a new conversation on Codex, shown as connected");
+  // the Firstmate page keeps the host lines while one runs: switch from there too
+  await p.goto(base + "/#/firstmate");
+  ok(await seen(p, '[data-section="start-codex"][data-host-running]') && await seen(p, '[data-section="start-claude"] [data-fm-switch="claude"]:enabled') && await p.locator("#startClaudeBtn").count() === 0, "while Codex runs the Firstmate page marks it running and offers Switch to Claude on Claude's line");
+  await p.locator('[data-fm-switch="claude"]').click(); await seen(p, '[data-fm-switch-confirm="claude"]'); await p.locator('[data-fm-switch-confirm="claude"]').click();
+  ok(await waitHost("claude"), "Switch on the Firstmate page moves Firstmate back to Claude");
+  await p.goto(base + "/#/board"); await p.evaluate(() => openChat(true)); await seen(p, '#chatFm > summary[data-fm-menu="claude"]');
+  await p.locator("#chatFm > summary").click(); await p.locator("[data-fm-stop]").click();
+  let stopped = false; for (let i = 0; i < 200; i++) { if ((await api("/api/main")).state === "detached") { stopped = true; break; } await new Promise((r) => setTimeout(r, 50)); }
+  ok(stopped && await seen(p, '#chatFm > summary[data-fm-menu="none"]'), "Stop in the chat menu stops Firstmate and the head says it is not connected");
   await api("/api/main/detach", {});
   // Claude did not enable auto: the card shows the effective mode and says so
   writeFileSync(join(tmp, "effective-mode"), "default");
@@ -187,6 +207,7 @@ try {
     codexAuth(false); await api("/api/codex/account/verify", {}).catch(() => null);
     const z = await zc.newPage(); z.on("pageerror", (e) => errors.push(String(e)));
     await z.goto(base + "/#/firstmate"); await seen(z, '[data-section="start-claude"][data-claude-ready="true"] [data-claude-permission-mode]');
+    await z.locator('[data-section="start-claude"] .tk-host-more > summary').click();
     const card = await z.locator('[data-section="start-claude"]').innerText().catch(() => "");
     ok(card.includes("Claude 權限模式：auto") && card.includes("船長的 auto mode 規則") && !/Claude permission mode|Captain auto-mode rules|built-in defaults/.test(card), "zh-TW: the Claude start card shows the mode and the auto-mode rules in Chinese");
     await z.locator("#startClaudeBtn").click(); await seen(z, greeting("Traditional Chinese"), 15000);

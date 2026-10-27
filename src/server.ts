@@ -224,7 +224,8 @@ main.onView = (v) => { send("main", v); if (v.state === "attached") { try { runt
 main.onEvent = (e: HostEvent) => {
   // a Claude primary's own quota or sign-in refusal is the Claude account card's fact too (no fallback anywhere)
   if (e.type === "hostRefusal" && main.view().host === "claude") { try { nativeClaude.observe(e.raw); } catch {} } if (e.type === "delta" || e.type === "thinking" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
-const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
+// a Firstmate on Codex holds the account; one on Claude or Cursor does not, so Codex can be verified for a switch to it
+const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>{const v=main.view();return v.state!=="detached"&&v.host!=="claude"&&v.host!=="cursor";},configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 // Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
 for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
@@ -276,7 +277,7 @@ refreshTs(); setInterval(refreshTs, 60_000);
 const tsRunner: TsRunner = process.env.CREW_TAILSCALE_LIVE === "1" ? new LiveRunner() : new StubRunner();
 let serveOn = false;
 // a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
-const PHONE_DRIVE = new Set(["/api/main/attachments", "/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/main/locale", "/api/answer", "/api/settings"]);
+const PHONE_DRIVE = new Set(["/api/main/attachments", "/api/main/model", "/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/main/locale", "/api/answer", "/api/settings"]);
 const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
   "/api/claude/native/verify","/api/claude/native/cancel","/api/claude/account/login","/api/claude/account/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
 
@@ -774,6 +775,17 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
         if (!fit.ok) return json({ ...fit, error: `${fit.reason.en} / ${fit.reason["zh-TW"]}` }, 409);
         chatFiles.markSent(files.files.map((f) => f.id));
         return json({ queued: main.enqueue("chat", text, who.kind === "phone" ? `phone:${who.device.name}` : "desktop", files.files.map(({ path, ...ref }) => ref)), deliveries: fit.deliveries });
+      }
+      // The model Studio starts Firstmate with on Claude or Cursor (Codex's comes from the captain's Codex config). Only the
+      // setting changes: a running Firstmate keeps its model until the captain switches it (POST /api/main/switch).
+      if (p === "/api/main/model") {
+        if (b?.host !== "claude" && b?.host !== "cursor") return json({ error: "Studio sets the Firstmate model on Claude or Cursor; Codex uses its own config", code: "host" }, 400);
+        const m = typeof b.model === "string" ? b.model.trim() : "";
+        if (!/^[\w.:\/-]{1,80}$/.test(m)) return json({ error: "bad model name", code: "model" }, 400);
+        let saved: any = {}; try { saved = JSON.parse(readFileSync(SETTINGS, "utf8")); } catch {}
+        const cur = chatSettings();
+        writeFileSync(SETTINGS, JSON.stringify({ ...saved, provider: cur.provider, models: { ...cur.models, [b.host]: m } }, null, 2));
+        return json({ ok: true, host: b.host, model: m });
       }
       if (p === "/api/main/interrupt") { await main.interrupt(); return json({ ok: true }); }
       if (p === "/api/main/resume") { const r = main.resume(); return json(r, r.ok ? 200 : 409); }

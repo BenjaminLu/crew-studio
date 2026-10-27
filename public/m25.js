@@ -51,8 +51,32 @@ function modeSeg() { return h("div", {id:"chatMode",class:"tk-row",style:"margin
 (function mountSeg() { const head = $(".chat-head"); head.after(modeSeg()); })();
 const refreshSeg = () => $$("#chatMode button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === chatMode)));
 
+// The chat head names the running Firstmate and holds its controls: switch host, stop, models and accounts.
+(function mountFmMenu() { $(".chat-head .who").after(h("details", { class: "fm-menu", id: "chatFm" })); })();
+document.addEventListener("click", (e) => { const m = $("#chatFm"); if (m?.open && !m.contains(e.target)) m.open = false; });
+function fmMenu() {
+  const el = $("#chatFm"); if (!el || el.open) return; // never rebuilt under the captain's pointer
+  const v = MS.view, running = !!v && ["attached", "paused"].includes(v.state), own = running && v.context === "studio" && !v.origin && v.drive?.path === "fresh";
+  const r = window.crewHostReady?.() || {}, phone = MS.me?.kind === "phone" && !MS.me?.allowDrive, model = running ? v.drive?.model || (v.model !== v.host ? v.model : "") : "";
+  const close = () => { el.open = false; };
+  const item = (host) => { const cur = running && v.host === host;
+    return h("button", { class: "fm-item", role: "menuitem", "data-fm-menu-host": host, disabled: phone || cur || !r[host] || r.starting || (running && !own) || (!running && v?.context !== "studio") || null,
+      onclick: () => { close(); running ? window.crewSwitchFirstmate?.(host) : window.crewStartFirstmate?.(host); } },
+      cur ? icon("check", "ic sm") : h("span", { class: "fm-gap" }), cur ? T(`On ${VENDOR[host]}`, `正在 ${VENDOR[host]} 上`) : running ? T(`Switch to ${VENDOR[host]}`, `切換到 ${VENDOR[host]}`) : T(`Start on ${VENDOR[host]}`, `在 ${VENDOR[host]} 上開始`),
+      !cur && !r[host] ? h("span", { class: "faint" }, T("not ready", "未就緒")) : null); };
+  el.replaceChildren(
+    h("summary", { class: "btn ghost sm", "data-fm-menu": running ? v.host : "none", "aria-label": T("Firstmate: host, model, stop", "Firstmate：主機、模型、停止") },
+      h("span", { class: `tk-dot ${running ? "run" : ""}` }), h("span", { class: "fm-label" }, running ? [VENDOR[v.host] || v.host, model].filter(Boolean).join(" · ") : T("Not connected", "未連接")), icon("chev", "ic sm")),
+    h("div", { class: "fm-pop", role: "menu" }, ...["claude", "cursor", "codex"].map(item),
+      h("a", { class: "fm-item", role: "menuitem", href: "#/firstmate", "data-fm-settings": "1", onclick: close }, h("span", { class: "fm-gap" }), T("Models and accounts…", "模型與帳號…")),
+      running ? h("button", { class: "fm-item fm-stop", role: "menuitem", "data-fm-stop": "1", disabled: phone || null, onclick: () => { close(); handBack(); } }, icon("stop", "ic sm"), own ? T("Stop Firstmate", "停止 Firstmate") : T("Hand back to terminal", "交回終端機")) : null));
+  hydrateIcons(el);
+}
+for (const ev of ["crew:claude-status", "crew:codex-account", "crew:cursor-account"]) addEventListener(ev, () => fmMenu());
+
 showChatInfo = function () {
   refreshSeg();
+  fmMenu();
   $("#chatProv").hidden = isMain(); // This selector belongs to the old read-only status provider.
   $("#chatClear").hidden = isMain(); // Clearing its local cache does not clear the owned primary.
   if (!isMain()) return chatInfoStatus();

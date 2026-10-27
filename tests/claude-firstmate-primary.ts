@@ -237,7 +237,22 @@ try {
   const sw = await api("/api/main/switch", { to: "claude", confirm: true });
   ok(sw.status === 200 && sw.body.ok && UUID.test(sw.body.id) && (await view()).host === "claude", "with a working crew token Switch stops Codex and starts a fresh Claude Firstmate");
   await idle();
-  ok((await api("/api/main/switch", { to: "claude", confirm: true })).body.code === "notRunning", "Switch needs a running Codex Firstmate");
+  // the same host again: a new conversation (how a model change takes effect), the earlier one stays in the chat
+  const again = await api("/api/main/switch", { to: "claude", confirm: true });
+  ok(again.status === 200 && again.body.ok && UUID.test(again.body.id) && again.body.id !== sw.body.id && (await view()).host === "claude", "Switch to the same host starts a new conversation on it", JSON.stringify(again.body));
+  await idle();
+  ok((await api("/api/main/switch", { to: "nope", confirm: true })).body.code === "host", "Switch names Codex, Claude or Cursor");
+  // the Firstmate model: saved for the next start or switch, never changing the running one by itself
+  ok((await api("/api/main/model", { host: "codex", model: "gpt-x" })).body.code === "host" && (await api("/api/main/model", { host: "claude", model: "bad name!" })).body.code === "model", "the model setting is Claude's or Cursor's, with a model name");
+  const setModel = await api("/api/main/model", { host: "claude", model: "claude-opus-5-5" });
+  ok(setModel.body.ok && (await view()).drive?.model === "claude-sonnet-5-5", "saving a model leaves the running Firstmate on its model", JSON.stringify(setModel.body));
+  const swModel = await api("/api/main/switch", { to: "claude", confirm: true });
+  await idle();
+  const am: string[] = claudeRuns().filter((x) => x.argv).at(-1)?.argv ?? [];
+  const vm = await view(); ok(swModel.body.ok && am[am.indexOf("--model") + 1] === "claude-opus-5-5" && vm.drive?.model === "claude-opus-5-5", "a switch after the model change starts Firstmate on the new model", JSON.stringify({ body: swModel.body, model: am[am.indexOf("--model") + 1], drive: vm.drive?.model }));
+  await api("/api/main/model", { host: "claude", model: "claude-sonnet-5-5" });
+  await api("/api/main/detach", {});
+  ok((await api("/api/main/switch", { to: "claude", confirm: true })).body.code === "notRunning", "Switch needs a running Firstmate");
   await api("/api/main/detach", {});
 
   // --- the operator override: env or .env only, default|auto, anything else refused ---

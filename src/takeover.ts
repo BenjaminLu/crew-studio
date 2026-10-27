@@ -121,57 +121,59 @@ export function createTakeover(d: Deps) {
       const r = await d.main.takeover(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? ""), mode);
       return json(r, r.ok ? 200 : 409);
     }
-    // Switch Studio's own Codex Firstmate to Claude, atomically for the captain: the full Claude readiness (which reads the
-    // crew token itself, as a start does) runs first; only when it passes is Codex stopped and Claude started with that login.
-    // Any refusal leaves Codex attached and returns the typed reason.
-    if (p === "/api/main/switch") {
-      if (b?.to !== "claude") return json({ error: "Studio switches a Codex Firstmate to Claude only", code: "host" }, 400);
-      if (b?.confirm !== true) return json({ error: "confirm first: Studio stops the running Firstmate", code: "confirm" }, 400);
-      const v = d.main.view();
-      if (v.context !== "studio" || v.origin || v.drive?.path !== "fresh" || !["attached", "paused"].includes(v.state) || v.host !== "codex")
-        return json({ error: "No Studio-owned Codex Firstmate is running to switch / 沒有可切換的 Studio Codex Firstmate", code: "notRunning" }, 409);
-      if (!d.claudePrimary) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" }, 409);
-      const ready = await d.claudePrimary();
-      if (!ready.ok) return json({ ...ready, kept: "codex" }, 409);
-      const now = d.main.view();
-      if (now.host !== "codex" || !["attached", "paused"].includes(now.state)) return json({ error: "The Firstmate changed while Claude was checked; review it first / 檢查 Claude 期間 Firstmate 已變更，請先確認", code: "changed" }, 409);
-      await d.main.detach();
-      const r = await d.main.startFresh("claude", undefined, { locale:boardLocale(), env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
-      return json(r, r.ok ? 200 : 409);
-    }
-    if (p === "/api/main/start" && b?.host === "claude") {
-      if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
-      if (d.main.view().context !== "studio") return json({ error: "Claude starts a fresh Firstmate only in Studio's own workspace / Claude 只能在 Studio 自己的工作空間開新的 Firstmate", code: "host" }, 400);
-      if (d.main.view().state !== "detached") return json({ error: "Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還" }, 409);
-      if (!d.claudePrimary) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" }, 409);
-      const ready = await d.claudePrimary();
-      if (!ready.ok) return json(ready, 409);
-      const r = await d.main.startFresh("claude", undefined, { locale:boardLocale(), env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
-      return json(r, r.ok ? 200 : 409);
-    }
-    if (p === "/api/main/start" && b?.host === "cursor") {
-      if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
-      if (d.main.view().state !== "detached") return json({ error: "Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還" }, 409);
-      if (!d.cursorPrimary) return json({ ok: false, code: "cursorUnavailable", reason: "Cursor is not available to Studio / Studio 無法使用 Cursor" }, 409);
-      const ready = await d.cursorPrimary();
-      if (!ready.ok) return json(ready, 409);
-      const r = await d.main.startFresh("cursor", undefined, { locale: boardLocale(), env: ready.env, model: ready.model, effort: null });
-      return json(r, r.ok ? 200 : 409);
-    }
-    if (p === "/api/main/start") {
-      if (b?.host !== "codex") return json({ error: "a fresh start runs on Codex, Claude or Cursor", code: "host" }, 400);
-      if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
-      if(d.main.view().state!=="detached")return json({error:"Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還"},409);
-      if(!d.codexAccount)return json({error:"Codex account verification unavailable / 無法驗證 Codex 帳號"},409);
+    // A fresh start on `host` in Studio's own way: everything it needs is checked first, and only a start that passed runs.
+    // The start and a switch use the same check, so a switch stops nothing while the new host is not ready.
+    type Fresh = { ok: false; status: number; body: Record<string, unknown> } | { ok: true; start: () => ReturnType<typeof d.main.startFresh> };
+    const prepareFresh = async (host: "codex" | "claude" | "cursor"): Promise<Fresh> => {
+      if (host === "claude") {
+        if (!d.claudePrimary) return { ok: false, status: 409, body: { ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" } };
+        const ready = await d.claudePrimary();
+        if (!ready.ok) return { ok: false, status: 409, body: ready as any };
+        return { ok: true, start: () => d.main.startFresh("claude", undefined, { locale:boardLocale(), env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode }) };
+      }
+      if (host === "cursor") {
+        if (!d.cursorPrimary) return { ok: false, status: 409, body: { ok: false, code: "cursorUnavailable", reason: "Cursor is not available to Studio / Studio 無法使用 Cursor" } };
+        const ready = await d.cursorPrimary();
+        if (!ready.ok) return { ok: false, status: 409, body: ready as any };
+        return { ok: true, start: () => d.main.startFresh("cursor", undefined, { locale: boardLocale(), env: ready.env, model: ready.model, effort: null }) };
+      }
+      if(!d.codexAccount)return { ok: false, status: 409, body: {error:"Codex account verification unavailable / 無法驗證 Codex 帳號"} };
       let verified:Awaited<ReturnType<NonNullable<Deps["codexAccount"]>["ensureReady"]>>;
-      try{verified=await d.codexAccount.ensureReady();}catch{return json({error:"Connect Codex and verify the vendor-configured model/quota before starting / 請先連接 Codex 並驗證廠商設定的模型與配額"},409);}
-      const r = await d.main.startFresh("codex",opened=>{
+      try{verified=await d.codexAccount.ensureReady();}catch{return { ok: false, status: 409, body: {error:"Connect Codex and verify the vendor-configured model/quota before starting / 請先連接 Codex 並驗證廠商設定的模型與配額"} };}
+      return { ok: true, start: () => d.main.startFresh("codex",opened=>{
         const current=codexConfig(d.main.view().project), expected=verified.configuration??verified;
         if(verified.state!=="ready"||!verified.authenticated||verified.quota!=="available"||!verified.expires||verified.expires<=Date.now()||typeof verified.model!=="string"||!verified.model||typeof verified.effort!=="string"||!verified.effort||current.model!==expected.model||current.effort!==expected.effort||opened.model!==verified.model||opened.effort!==verified.effort)throw new Error(`Codex startup identity mismatch: expected ${verified.model}/${verified.effort}, received ${opened.model}/${opened.effort??"unknown"}. Refresh readiness before retrying. / Codex 啟動身分不符：預期 ${verified.model}/${verified.effort}，收到 ${opened.model}/${opened.effort??"未提供"}；請重新檢查可用性。`);
         return true;
-      },{locale:boardLocale(),...(verified.configuration?.effort===null?{codexDefaultEffort:verified.effort!}:{})});
+      },{locale:boardLocale(),...(verified.configuration?.effort===null?{codexDefaultEffort:verified.effort!}:{})}) };
+    };
+    // Switch Studio's own running Firstmate to another host, or to the same host with another model, atomically for the
+    // captain: the new host's full readiness runs first; only when it passes is the running one stopped and the new one
+    // started (a new conversation; the earlier one stays in the chat). Any refusal leaves the running Firstmate as it was.
+    if (p === "/api/main/switch") {
+      const to = b?.to;
+      if (to !== "codex" && to !== "claude" && to !== "cursor") return json({ error: "Studio switches Firstmate to Codex, Claude or Cursor", code: "host" }, 400);
+      if (b?.confirm !== true) return json({ error: "confirm first: Studio stops the running Firstmate", code: "confirm" }, 400);
+      const v = d.main.view();
+      if (v.context !== "studio" || v.origin || v.drive?.path !== "fresh" || !["attached", "paused"].includes(v.state) || !v.host)
+        return json({ error: "No Studio-owned Firstmate is running to switch / 沒有可切換的 Studio Firstmate", code: "notRunning" }, 409);
+      const prep = await prepareFresh(to);
+      if (!prep.ok) return json({ ...prep.body, kept: v.host }, prep.status);
+      const now = d.main.view();
+      if (now.sessionId !== v.sessionId || !["attached", "paused"].includes(now.state)) return json({ error: "The Firstmate changed while the new host was checked; review it first / 檢查期間 Firstmate 已變更，請先確認", code: "changed" }, 409);
+      await d.main.detach();
+      const r = await prep.start();
       return json(r, r.ok ? 200 : 409);
     }
+    if (p === "/api/main/start" && (b?.host === "claude" || b?.host === "cursor" || b?.host === "codex")) {
+      if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
+      if (b.host === "claude" && d.main.view().context !== "studio") return json({ error: "Claude starts a fresh Firstmate only in Studio's own workspace / Claude 只能在 Studio 自己的工作空間開新的 Firstmate", code: "host" }, 400);
+      if (d.main.view().state !== "detached") return json({ error: "Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還" }, 409);
+      const prep = await prepareFresh(b.host);
+      if (!prep.ok) return json(prep.body, prep.status);
+      const r = await prep.start();
+      return json(r, r.ok ? 200 : 409);
+    }
+    if (p === "/api/main/start") return json({ error: "a fresh start runs on Codex, Claude or Cursor", code: "host" }, 400);
     if (p === "/api/main/question") {
       const pend = d.main.bridge.pending().find((x) => x.id === b?.id);
       if (!pend || pend.tool !== "AskUserQuestion") return json({ error: "no such question waiting" }, 404);

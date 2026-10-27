@@ -60,11 +60,6 @@
 .tk-staffing-summary { white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; font-size:13px; }
 .tk-staffing details code { display:block; overflow-wrap:anywhere; }
 @media(max-width:500px){.tk-staffing{padding:16px}.tk-staffing select{width:100%;margin-right:0}}
-.tk-hosts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:stretch}
-.tk-hosts>.tk-drive{margin:0;display:flex;flex-direction:column}
-.tk-hosts .tk-kv .kv{grid-template-columns:1fr;gap:2px}
-.tk-hosts>.tk-drive .actions{margin-top:auto}
-@media (max-width:860px){.tk-hosts{grid-template-columns:1fr}}
 /* chat attachments: the pending tray above the input, the drop target, and sent files in the history */
 .att-tray{display:flex;gap:8px;overflow-x:auto;padding:10px 14px 0;scrollbar-width:thin}
 .att-tray[hidden]{display:none}
@@ -98,3 +93,23 @@
 .att-chip [data-att-note="warn"]{color:var(--warn)}
 /* the Firstmate page's crew line: the team version and where to adjust it */
 .tk-crewline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:12px 16px;font-size:14px}
+/* One card, one line per host: state, model and actions; Details holds what it is and how it signs in. */
+.tk-hosts{display:grid;gap:0;padding:4px 16px}
+.tk-host{display:grid;gap:6px;padding:12px 0;border-top:1px solid var(--border)}
+.tk-host:first-child{border-top:0}
+.tk-host-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:34px}
+.tk-host-name{min-width:56px;font-size:14.5px}
+.tk-host-state{font-size:13px;color:var(--text-2);min-width:64px}
+.tk-host[data-host-running] .tk-host-state{color:var(--accent-text);font-weight:600}
+.tk-host-model{font-size:13px;min-width:0;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk-host-model select{max-width:240px}
+.tk-host-line .actions{margin:0 0 0 auto;display:flex;gap:8px;flex-wrap:wrap}
+.tk-dot{width:8px;height:8px;border-radius:50%;background:var(--border);flex:none}
+.tk-dot.ok{background:var(--ok,#1a7f37)}
+.tk-dot.run{background:var(--accent-text)}
+.tk-host .note,.tk-host [data-cursor-how]{margin:0}
+.tk-host-more>summary{cursor:pointer;font-size:12.5px;color:var(--text-2);width:max-content}
+.tk-host-more[open]{display:grid;gap:8px}
+.tk-host-more .tk-kv .kv{grid-template-columns:minmax(110px,160px) 1fr}
+.tk-host-stack{display:grid;gap:12px}
+@media (max-width:640px){.tk-host-line .actions{margin-left:0;width:100%}.tk-host-more .tk-kv .kv{grid-template-columns:1fr}}
