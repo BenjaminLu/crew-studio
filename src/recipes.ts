@@ -18,6 +18,7 @@ import { basename, extname, join, normalize, posix } from "node:path";
 import type { Artifact, ArtifactStore, Version } from "./artifacts";
 import { sha256File } from "./artifacts";
 import { findToken } from "./github";
+import { communitySource, defaultPullBody, discoverGitHubCommunity } from "./domain/github-community";
 
 export type Repo = { id: string; name: string; path: string; base: string; remote: string | null; github: string | null };
 export type Check = { id: string; label: string; ok: boolean | null; detail: string };
@@ -202,8 +203,14 @@ export class Lane {
     if (c.state !== "ready" || c.pr) return c;
     if (!repo.github) throw new Error("this repository is not on GitHub");
     const h = this.headers(); if (!h) throw new Error("GitHub not connected");
+    const text = `From Crew Studio's trivial lane: ${c.artifact} v${c.version} (sha256 ${c.sha256}).\n\n${c.checks.map((x) => `- ${x.ok === false ? "✗" : x.ok ? "✓" : "·"} ${x.label}: ${x.detail}`).join("\n")}`;
+    // the repository's own pull request template (or its owner's), found as GitHub finds it; unreadable means no PR
+    const read = async (repository: string, suffix: string) => { const g = await fetch(`${this.api}/repos/${repository}${suffix}`, { headers: h, redirect: "error" }); if (g.status === 404) return null; if (!g.ok) throw new Error(`GitHub ${g.status}`); return g.json(); };
+    let filled: ReturnType<typeof defaultPullBody>;
+    try { filled = defaultPullBody(await discoverGitHubCommunity(communitySource(repo.github, read)), text); }
+    catch (e: any) { throw new Error(`could not read the repository's pull request template: ${e?.message ?? e}`); }
     const r = await fetch(`${this.api}/repos/${repo.github}/pulls`, { method: "POST", headers: h, body: JSON.stringify({ title: c.kind === "add" ? `Add ${c.title} to the README` : `Update ${c.asset}`,
-      head: c.branch, base: c.base, body: `From Crew Studio's trivial lane: ${c.artifact} v${c.version} (sha256 ${c.sha256}).\n\n${c.checks.map((x) => `- ${x.ok === false ? "✗" : x.ok ? "✓" : "·"} ${x.label}: ${x.detail}`).join("\n")}` }) });
+      head: c.branch, base: c.base, body: filled.body }) });
     const body: any = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`GitHub refused the PR (${r.status}): ${body?.message ?? ""}`);
     c.pr = { number: body.number, url: body.html_url };

@@ -103,10 +103,18 @@ const PNG_B = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
 // ---------- 3. the trivial lane: checks, unit level ----------
 const gseen: { method: string; path: string; body: any; auth: string | null }[] = [];
 let ciMode: "success" | "failure" | "pending" = "success";
+const LANE_TEMPLATE = "## What changed\n\n<!-- describe it -->\n\n## Checklist\n\n- [ ] I ran the tests\n";
 const gapi = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
   const u = new URL(req.url); let body: any = null; try { body = await req.json(); } catch {}
   gseen.push({ method: req.method, path: u.pathname, body, auth: req.headers.get("authorization") });
   if (req.headers.get("authorization") !== "Bearer lane_token_1234567890abcdef") return Response.json({ message: "Bad credentials" }, { status: 401 });
+  // the repository's contribution files, as GitHub serves them: acme/demo has its own PR template, acme/.github does not exist
+  if (req.method === "GET" && u.pathname === "/repos/acme/demo") return Response.json({ full_name: "acme/demo", default_branch: "main", private: true, visibility: "private" });
+  if (req.method === "GET" && u.pathname === "/repos/acme/demo/commits/main") return Response.json({ sha: "c".repeat(40) });
+  if (req.method === "GET" && u.pathname === "/repos/acme/demo/contents/.github/pull_request_template.md" && u.searchParams.get("ref") === "c".repeat(40)) {
+    const text = Buffer.from(LANE_TEMPLATE), sha = new Bun.CryptoHasher("sha1").update(Buffer.concat([Buffer.from(`blob ${text.length}\0`), text])).digest("hex");
+    return Response.json({ type: "file", path: ".github/pull_request_template.md", encoding: "base64", content: text.toString("base64"), sha, size: text.length });
+  }
   if (req.method === "POST" && u.pathname === "/repos/acme/demo/pulls") return Response.json({ number: 42, html_url: "https://github.com/acme/demo/pull/42" }, { status: 201 });
   if (req.method === "PUT" && u.pathname === "/repos/acme/demo/pulls/42/merge") return Response.json({ merged: true, sha: "abc" });
   if (/\/repos\/acme\/demo\/commits\/\w+\/check-runs/.test(u.pathname)) return Response.json({ check_runs: [{ name: "ci", status: ciMode === "pending" ? "in_progress" : "completed", conclusion: ciMode === "pending" ? null : ciMode }] });
@@ -302,6 +310,7 @@ try {
   const withPr = (await post(`/api/lane/${card.id}/pr`)).body;
   const prCall = gseen.find((g) => g.method === "POST" && g.path === "/repos/acme/demo/pulls");
   ok(withPr.pr?.number === 42 && prCall?.body?.head === card.branch && prCall?.body?.base === "main" && prCall.auth === "Bearer lane_token_1234567890abcdef", "the PR is opened through the REST API (mock)", JSON.stringify(prCall?.body));
+  ok(/^## What changed\n\nFrom Crew Studio's trivial lane: /.test(prCall?.body?.body ?? "") && /## Checklist\n\n- \[ \] I ran the tests/.test(prCall?.body?.body ?? "") && !/describe it/.test(prCall?.body?.body ?? ""), "the PR body follows the repository's own template: Studio's text under its first heading, its checkbox left unticked", JSON.stringify(prCall?.body?.body));
   ciMode = "pending"; const pend = (await post(`/api/lane/${card.id}/ci`)).body;
   ok(pend.checks.find((c: any) => c.id === "ci").detail.startsWith("running") && pend.state === "ready", "CI running is shown and does not fail the card");
   ok(/still running/.test((await post(`/api/lane/${card.id}/merge`)).body.error), "no merge while CI runs");
