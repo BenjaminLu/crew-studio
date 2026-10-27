@@ -63,6 +63,10 @@ for (const [host, id] of [[claude, "sess-main"], [codex, "th-stub-1"]] as const)
   const text = ev.filter((e) => e.type === "delta").map((e: any) => e.text).join("");
   ok(text === "echo: hello there" && ev.some((e) => e.type === "message") && ev.at(-1)?.type === "turnEnd", `${tag}: deltas stream in order, then message, then turnEnd`, JSON.stringify(text));
   ok(s.id === id && !s.busy, `${tag}: the attached id is kept and the session is idle after the turn`);
+  ev.length = 0;
+  await s.send("STUB_THINK");
+  const thought = ev.filter((e) => e.type === "thinking").map((e: any) => e.text).join(""), firstThink = ev.findIndex((e) => e.type === "thinking"), firstDelta = ev.findIndex((e) => e.type === "delta");
+  ok(thought === "weighing the ask" && firstThink >= 0 && firstThink < firstDelta, `${tag}: the model's reasoning streams as thinking events before the reply`, JSON.stringify(ev.map((e) => e.type)));
   // second turn on the same process: the conversation carries on
   ev.length = 0;
   const r2 = await s.send("second");

@@ -128,7 +128,7 @@ try {
       ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: no sideways scroll at ${width} ${scheme}`);
       if (name === "firstmate") {
         const log = await p.locator("#chatLog").innerText();
-        ok(/已接上 claude session/.test(log), `the chat's Studio note reads in 简体中文 at ${width}`, log.slice(0, 200));
+        ok(/Firstmate 已连接/.test(log) && !/已連接/.test(log), `the chat's connected line reads in 简体中文 at ${width}`, log.slice(0, 200));
         const reply = await p.locator('#chatLog [data-main="firstmate"] .bub', { hasText: "echo:" }).last().innerText().catch(() => "");
         ok(reply === "echo: 这个文件 程式碼.js 看 https://x.tw/设置 和 src/设置.ts 的设置", `a Firstmate reply converts for display; inline code stays as written, a bare URL and path are prose (${width})`, reply);
         ok(await p.locator('#chatLog [data-main="captain"] .bub').last().innerText() === said, `the captain's own line stays as typed (${width})`);

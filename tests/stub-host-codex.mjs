@@ -65,6 +65,12 @@ async function runTurn(turnId, text, input = []) {
     say = response.result?.success === false ? "Dynamic tool declined." : "Dynamic tool response malformed.";
   }
   if (text.includes("STUB_CODEHOST_FAILURE")) note("item/completed", { turnId, item: { type: "functionCallOutput", id: "exec-error", name: "exec", namespace: null, output: "timed out negotiating with the code-mode host" }, completedAtMs: Date.now() });
+  // STUB_THINK: a reasoning item with a streamed summary before the reply, as a reasoning model's turn has
+  if (text.includes("STUB_THINK")) {
+    note("item/started", { turnId, item: { id: "r1", type: "reasoning", summary: [], content: [] }, startedAtMs: Date.now() });
+    for (const delta of ["weighing ", "the ask"]) note("item/reasoning/summaryTextDelta", { turnId, itemId: "r1", delta, summaryIndex: 0 });
+    note("item/completed", { turnId, item: { id: "r1", type: "reasoning", summary: ["weighing the ask"], content: [] }, completedAtMs: Date.now() });
+  }
   if (text.includes("STUB_TOOL")) {
     const item = { id: "cmd1", type: "commandExecution", command: "ls -la", commandActions: [], cwd: process.cwd(), status: "inProgress" };
     note("item/started", { turnId, item, startedAtMs: Date.now() });

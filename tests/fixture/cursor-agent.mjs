@@ -172,6 +172,8 @@ const text = (boundary < 0 ? whole : fence ? whole.slice(boundary + marker.lengt
 const captainSaid = earlier.split("\n").slice(1).flatMap((l) => { try { const o = JSON.parse(l); if (typeof o?.captain === "string") return [o.captain]; } catch {} return l.startsWith("Captain: ") ? [l.slice(9)] : []; });
 out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
 const say = (t) => out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] }, session_id });
+// FIXTURE-THINK: cursor-agent streams the model's thinking before its reply
+if (text.includes("FIXTURE-THINK")) { for (const t of ["weighing ", "the ask"]) out({ type: "thinking", subtype: "delta", text: t, session_id }); out({ type: "thinking", subtype: "completed", session_id }); say("FIXTURE-THOUGHT"); }
 if (images.length) say(`FIXTURE-SAW-IMAGES ${images.map((i) => i.sha256.slice(0, 12)).join(",")}`);
 for (const o of hookOutput) say(`FIXTURE-HOOK-OUTPUT ${o}`);
 if (project) {

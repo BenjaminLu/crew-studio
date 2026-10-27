@@ -299,6 +299,8 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
                   }
                 } else if (m.type === "assistant") {
                   for (const c of m.message?.content ?? []) if (c?.type === "text" && c.text) { reply += c.text; emit({ type: "delta", text: String(c.text) }); }
+                } else if (m.type === "thinking") {
+                  if (m.subtype !== "completed") emit({ type: "thinking", text: typeof m.text === "string" ? m.text : "" });
                 } else if (m.type === "tool_call") {
                   const c = callOf(m.tool_call);
                   if (m.subtype === "started") emit({ type: "toolStart", id: String(m.call_id), name: c.name, tool: c.name, summary: shortSummary(c.args), input: c.args });

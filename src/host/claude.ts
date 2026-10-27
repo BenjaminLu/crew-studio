@@ -219,6 +219,8 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
             external();
             const ev = m.event;
             if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) emit({ type: "delta", text: ev.delta.text });
+            else if (ev?.type === "content_block_start" && (ev.content_block?.type === "thinking" || ev.content_block?.type === "redacted_thinking")) emit({ type: "thinking", text: "" });
+            else if (ev?.type === "content_block_delta" && ev.delta?.type === "thinking_delta" && ev.delta.thinking) emit({ type: "thinking", text: String(ev.delta.thinking) });
           } else if (m.type === "assistant") {
             external();
             for (const c of m.message?.content ?? []) {

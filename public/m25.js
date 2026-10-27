@@ -3,7 +3,7 @@
 // M2 agent) and "firstmate" (the attached main session). The firstmate mode
 // shows who is driving, the input queue, tool permission requests and the
 // session's replies. The Phone page pairs phones and shows Tailscale.
-const MS = { view: null, live: "", liveTools: [], sessions: null, sesHost: "claude", sesErr: null, me: { kind: "desktop", allowDrive: false } };
+const MS = { view: null, live: "", liveTools: [], thinking: null, sessions: null, sesHost: "claude", sesErr: null, me: { kind: "desktop", allowDrive: false } };
 let chatMode = "main"; // One primary conversation; read-only context lives in Activity.
 const isMain = () => chatMode === "main";
 
@@ -12,7 +12,17 @@ const getJ = (u) => fetch(u).then((r) => r.json());
 const postJ = (u, b) => fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b || {}) }).then(async (r) => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
 // a read answered after the stream already brought a later view (the greeting that ends the first turn) must not replace it
 const newerMain = (v) => !MS.view || v.boot !== MS.view.boot || !(v.seq <= MS.view.seq);
-async function loadMain() { try { const v = await getJ("/api/main"); if (newerMain(v)) MS.view = v; } catch {} if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); }
+const VENDOR = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
+const hostLabel = (c) => [VENDOR[c.host] || c.host, c.model].filter(Boolean).join(" · ");
+/** Firstmate just came up (a start, a takeover, a switch of host): say so, so the chat opening is not the only sign. */
+function announceConnected(prev, v) {
+  if (!prev || v.state !== "attached" || prev.state === "attached" || prev.state === "paused" || (prev.sessionId === v.sessionId && prev.boot === v.boot)) return;
+  // the line Studio wrote names the model the session reported; the view may still hold the requested alias
+  const c = v.log.findLast((x) => x.connected)?.connected || v;
+  toast(h("span", { "data-connected-toast": v.host }, icon("check", "ic sm"), " ", T(`Firstmate connected · ${hostLabel(c)}`, `Firstmate 已連接 · ${hostLabel(c)}`)));
+}
+const takeView = (v) => { const prev = MS.view; MS.view = v; announceConnected(prev, v); };
+async function loadMain() { try { const v = await getJ("/api/main"); if (newerMain(v)) takeView(v); } catch {} if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); }
 getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false); }).catch(() => {});
 (function stream() { // on the page's one event stream (app.js)
   const es = { addEventListener: (t, f) => window.liveListen(t, f) };
@@ -20,14 +30,16 @@ getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false);
     const v = JSON.parse(m.data);
     if (!newerMain(v)) return;
     const finished = MS.view && v.log.length !== MS.view.log.length;
-    MS.view = v; if (finished && !v.busy) { MS.live = ""; MS.liveTools = []; }
-    if (!v.busy && v.log.at(-1)?.kind === "firstmate") { MS.live = ""; MS.liveTools = []; }
+    takeView(v); if (finished && !v.busy) { MS.live = ""; MS.liveTools = []; MS.thinking = null; }
+    if (!v.busy && v.log.at(-1)?.kind === "firstmate") { MS.live = ""; MS.liveTools = []; MS.thinking = null; }
     if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); else if (S.route?.name === "remote") render();
   });
   es.addEventListener("mainEvent", (m) => {
     const e = JSON.parse(m.data);
-    if (e.type === "delta") MS.live += e.text;
-    else if (e.type === "toolStart") { const a = toolActivity(e); if (a) MS.liveTools.push(a.label); }
+    if (e.type === "delta") { MS.live += e.text; MS.thinking = null; }
+    // reasoning shows until the reply or a tool call starts; a later round of reasoning shows again
+    else if (e.type === "thinking") { const was = MS.thinking; MS.thinking = (was ?? "") + e.text; if (was !== null && $("#mainThinking")) return paintThinking(); }
+    else if (e.type === "toolStart") { MS.thinking = null; const a = toolActivity(e); if (a) MS.liveTools.push(a.label); }
     if (isMain()) { const el = $("#mainLive"); if (el && e.type === "delta") paintLive(); else renderChat(false); }
   });
 })();
@@ -131,6 +143,10 @@ const noteText = (it) => (it.i18n ? (lang === "zh-CN" ? it.i18n["zh-CN"] || I18N
 // the live reply while it streams: painted at most once per frame, converted without caching (its prefixes are never reused)
 let liveFrame = 0;
 const liveText = () => I18N.chatText(lang, MS.live, { live: true });
+// the tail of what the model shows of its reasoning: enough to see it moving, never the whole of it
+const thinkingTail = () => (MS.thinking || "").replace(/\s+/g, " ").trim().slice(-240);
+let thinkFrame = 0;
+function paintThinking() { if (thinkFrame) return; thinkFrame = requestAnimationFrame(() => { thinkFrame = 0; const el = $("#mainThinking"); if (el) el.textContent = thinkingTail(); }); }
 function paintLive() { if (liveFrame) return; liveFrame = requestAnimationFrame(() => { liveFrame = 0; const el = $("#mainLive"); if (!el) return; el.textContent = liveText(); const log = $("#chatLog"); log.scrollTop = log.scrollHeight; }); }
 // a tool call as one human line in the Board's language (live S27; src/tool-activity.ts writes it), never the raw call: that
 // stays folded under the line. A line from before Studio wrote one says only the tool's short name; ToolSearch is not shown
@@ -167,6 +183,8 @@ function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
   if (it.external) return externalView(it.external);
+  if (it.connected) return h("div", { class: "faint", "data-main": "connected", "data-connected-host": it.connected.host, role: "status", style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--accent-text);display:flex;gap:6px;align-items:center;flex-wrap:wrap" },
+    icon("check", "ic sm"), h("b", { style: "color:var(--accent-text)" }, T("Firstmate connected", "Firstmate 已連接")), h("span", { class: "vbadge" }, hostLabel(it.connected)), h("span", {}, new Date(it.at).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" })));
   if (it.attachmentRefusal) return externalView({ source: "studio", class: "attachment", code: it.attachmentRefusal, message: it.text.replace(/^Not sent: /, ""), reason: { en: "An attachment could not be sent.", "zh-TW": "附件無法送出。" } });
   if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(I18N.chatText(lang, it.text))));
   if (it.kind === "tool") return toolLine(it);
@@ -187,7 +205,7 @@ renderChat = function (stick = true) {
   else {
     kids.push(driverBanner(v));
     v.approvals.forEach((a) => kids.push(approvalCard(a)));
-    const history = v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-200);
+    const history = v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || x.connected || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-200);
     let tools = [];
     const flushTools = () => { const group = toolGroup(tools); if (group) kids.push(group); tools = []; };
     history.forEach((x, i, all) => {
@@ -196,7 +214,9 @@ renderChat = function (stick = true) {
       if (x.kind === "tool" && !x.external && !x.attachmentRefusal) tools.push(x);
       else { flushTools(); const el = logItem(x, i); if (el) kids.push(el); }
     }); flushTools();
-    if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
+    const thinking = MS.thinking !== null && !MS.live;
+    if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live", "data-thinking": thinking ? "1" : null }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, thinking ? T("thinking…", "思考中…") : T("working…", "處理中…"))),
+      thinking && MS.thinking ? h("div", { class: "faint", id: "mainThinking", style: "font-size:12px;font-style:italic;white-space:pre-wrap" }, thinkingTail()) : null,
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
       MS.live ? h("div", { class: "bub", id: "mainLive" }, liveText()) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
     (MS.notices || []).forEach((n) => kids.push(externalView(n)));
