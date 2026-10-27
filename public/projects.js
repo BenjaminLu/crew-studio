@@ -37,7 +37,8 @@ function drawSide() {
   const side = $(".side"), nav = $(".nav"); if (!side || !nav) return;
   let sec = side.querySelector("[data-projects-nav]");
   if (!sec) { sec = h("section", { class: "nav-proj", "data-projects-nav": "1", "aria-labelledby": "projH" }); nav.after(sec); }
-  const head = h("div", { class: "nav-proj-h" }, h("a", { id: "projH", href: "#/projects" }, T("Projects", "專案")));
+  const head = h("div", { class: "nav-proj-h" }, h("a", { id: "projH", href: "#/projects" }, T("Projects", "專案")), h("span", { class: "x-grow" }),
+    h("button", { class: "nav-proj-add", type: "button", "data-side-add-project": "1", title: T("Add local project", "新增本機專案"), "aria-label": T("Add local project", "新增本機專案"), onclick: openAdd }, icon("plus", "ic sm")));
   let body;
   if (PJ.side === null && !PJ.sideErr) body = [0, 1, 2].map(() => h("div", { class: "skel pj-side-skel", "data-projects-skel": "1" }));
   else if (PJ.sideErr && !PJ.side) body = [h("div", { class: "pj-side-msg bad", role: "status" }, T("Registry unreadable", "無法讀取登錄資料"))];
@@ -78,9 +79,17 @@ async function loadSide(force = false) {
 
 // ---------- the projects index ----------
 function pipe(segs, cls = "pipe") { return h("div", { class: cls }, (segs || []).map((s) => h("i", { class: s || null }))); }
+/** opens the add form on the projects index, from the index's button or the sidebar's + from any page */
+function openAdd() {
+  PJ.adding = PJ.adding || { path: "", name: "", busy: false, error: null };
+  PJ.adding.focus = true;
+  if (S.route?.name === "projects") soft(); else location.hash = "#/projects";
+}
 function localProjectForm() {
   const a=PJ.adding;if(!a)return null;
   const path=h("input",{class:"input",id:"project-local-path",name:"path",type:"text",required:true,maxlength:1000,autocomplete:"off",placeholder:"/Users/you/projects/repository",value:a.path,oninput:e=>{a.path=e.target.value;}});
+  // the field takes focus once it is in the page, which after a route change is a render later than the click
+  if(a.focus){a.focus=false;requestAnimationFrame(()=>document.getElementById("project-local-path")?.focus());}
   const name=h("input",{class:"input",id:"project-local-name",name:"name",type:"text",maxlength:100,autocomplete:"off",value:a.name,oninput:e=>{a.name=e.target.value;}});
   return h("form",{class:"card x-pad x-stack pj-add", "data-local-project-form":"1",onsubmit:async e=>{
     e.preventDefault();if(a.busy)return;a.busy=true;a.error=null;soft();
@@ -95,7 +104,7 @@ function localProjectForm() {
 }
 function viewIndex() {
   if (PJ.side === null && !PJ.sideErr) { loadSide(true); }
-  const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Projects", "專案")), h("p", {}, T("Every project Studio can work in, and what each one is doing now.", "Studio 能工作的每個專案，以及它們現在在做什麼。"))), h("button", {class:"btn primary", "data-add-local-project":"1", onclick:()=>{PJ.adding=PJ.adding||{path:"",name:"",busy:false,error:null};soft();setTimeout(()=>document.getElementById("project-local-path")?.focus(),0);}},T("Add local project","新增本機專案")));
+  const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Projects", "專案")), h("p", {}, T("Every project Studio can work in, and what each one is doing now.", "Studio 能工作的每個專案，以及它們現在在做什麼。"))), h("button", {class:"btn primary", "data-add-local-project":"1", onclick:openAdd},T("Add local project","新增本機專案")));
   if (PJ.side === null && !PJ.sideErr) return h("div", { class: "page", "data-projects-index": "1" }, head, h("div", { class: "pj-states" }, [0, 1, 2].map(() => h("div", { class: "card x-pad x-stack" }, h("div", { class: "skel", style: "height:22px;width:60%" }), h("div", { class: "skel", style: "height:14px" }), h("div", { class: "skel", style: "height:14px;width:80%" })))));
   if (PJ.sideErr && !PJ.side) return h("div", { class: "page", "data-projects-index": "1" }, head, h("div", { class: "card x-pad x-stack" }, h("div", { class: "err" }, icon("alert", "ic sm"), h("span", {}, T("The project registry cannot be read. Nothing was changed.", "無法讀取專案登錄資料。沒有任何變更。"))), h("div", {}, h("button", { class: "btn", onclick: () => loadSide(true) }, T("Try again", "重試")))));
   const list = PJ.side.projects || [];
