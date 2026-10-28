@@ -336,13 +336,14 @@ import b332 from "../docs/units/transcripts.md" with { type: "file" };
 import b333 from "../docs/units/ui-test-waits.md" with { type: "file" };
 import b334 from "../docs/units/visual-sandbox.md" with { type: "file" };
 import b335 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
-import b336 from "../docs/units/workflow-definition-export.md" with { type: "file" };
-import b337 from "../docs/units/workflow-overview.md" with { type: "file" };
-import b338 from "../docs/units/workflow-packages.md" with { type: "file" };
-import b339 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
-import b340 from "../docs/units/worktrees.md" with { type: "file" };
-import b341 from "../docs/v2-spec.md" with { type: "file" };
-import b342 from "../docs/w29-local-sandbox.md" with { type: "file" };
+import b336 from "../docs/units/web-terminal.md" with { type: "file" };
+import b337 from "../docs/units/workflow-definition-export.md" with { type: "file" };
+import b338 from "../docs/units/workflow-overview.md" with { type: "file" };
+import b339 from "../docs/units/workflow-packages.md" with { type: "file" };
+import b340 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
+import b341 from "../docs/units/worktrees.md" with { type: "file" };
+import b342 from "../docs/v2-spec.md" with { type: "file" };
+import b343 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -681,11 +682,12 @@ export const BUNDLED: Record<string, string> = {
   "docs/units/ui-test-waits.md": b333,
   "docs/units/visual-sandbox.md": b334,
   "docs/units/web-open-task-reopen.md": b335,
-  "docs/units/workflow-definition-export.md": b336,
-  "docs/units/workflow-overview.md": b337,
-  "docs/units/workflow-packages.md": b338,
-  "docs/units/workflow-semantic-comparison.md": b339,
-  "docs/units/worktrees.md": b340,
-  "docs/v2-spec.md": b341,
-  "docs/w29-local-sandbox.md": b342,
+  "docs/units/web-terminal.md": b336,
+  "docs/units/workflow-definition-export.md": b337,
+  "docs/units/workflow-overview.md": b338,
+  "docs/units/workflow-packages.md": b339,
+  "docs/units/workflow-semantic-comparison.md": b340,
+  "docs/units/worktrees.md": b341,
+  "docs/v2-spec.md": b342,
+  "docs/w29-local-sandbox.md": b343,
 };
