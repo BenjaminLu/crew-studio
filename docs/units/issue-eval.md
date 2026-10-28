@@ -47,8 +47,9 @@ does this too):
 
 **The captain's rulings.** A ruling of the triage's disagreement court (docs/units/board.md, "The disagreement court") is
 written as the captain's own label (`source: captain`, `from` naming the ruling) through `IssueEvalStore.addCaptain`:
-the state, files and package it decides, `needs-info` included. It replaces that issue's earlier captain label; derived
-labels are left as they are.
+the state, files and package it decides, `needs-info` included. It is merged into that issue's earlier captain label
+field by field (the ruling's fields win; a category or security answer given before stays); derived labels are left as
+they are. A ruling on an issue that changed on GitHub meanwhile writes nothing.
 
 Not derivable: a declined package (the triage record drops it and keeps no trace beyond its id never being reused), a
 declined category's former members (the record releases them), a match the captain kept apart (the new package does

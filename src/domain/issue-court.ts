@@ -22,6 +22,8 @@ export type CourtCase={id:string;kind:CaseKind;issues:number[];
  /** finding: state, locate (one side could not find it in the code), location, missing, duplicate, check; package:
   *  package; a set-aside case: its kind */
  diff:string[];reason:string;a:Record<string,Side|null>;b:Record<string,Side|null>;
+ /** each issue's content hash as it was investigated: a ruling on an issue changed since is not applied */
+ hashes?:Record<string,string>;
  /** per issue, what both reports agree on and both pass Studio's check for (null: they do not) */
  agreed:Record<string,{state:string}|null>;
  groupings?:{a:Part[];b:Part[];separate:Part[]};
@@ -68,7 +70,8 @@ export function buildDocket(o:{project:string;repository:string;commit:string;sn
  const side=(r:Report,v:typeof va,n:number):Side|null=>{const f:any=r.issues.find(x=>x.n===n);if(!f)return null;const c=v.get(n),locus=sharedLocus(f,f,read),qs=questionsOf(f);
   return{state:String(f.state),locus,ok:!!c?.ok,problems:(c?.problems??[]).slice(0,10).map(p=>oneLine(p,300)),repro:oneLine(f.repro,500),security:f.security==='yes'||!!c?.security,excerpts:excerpts(f,locus,read),
    ...(qs.length?{questions:qs}:{}),...(Number.isSafeInteger(f.duplicateOf)?{duplicateOf:f.duplicateOf}:{})};};
- const sides=(ns:number[])=>({a:Object.fromEntries(ns.map(n=>[n,side(a,va,n)])),b:Object.fromEntries(ns.map(n=>[n,side(b,vb,n)])),agreed:Object.fromEntries(ns.map(n=>[n,agreedOn(n)]))});
+ const hashOf=new Map(o.snapshot.issues.map(i=>[i.n,i.hash]));
+ const sides=(ns:number[])=>({hashes:Object.fromEntries(ns.map(n=>[n,hashOf.get(n)??''])),a:Object.fromEntries(ns.map(n=>[n,side(a,va,n)])),b:Object.fromEntries(ns.map(n=>[n,side(b,vb,n)])),agreed:Object.fromEntries(ns.map(n=>[n,agreedOn(n)]))});
  const both=(n:number,s:string)=>a.issues.find(f=>f.n===n)?.state===s&&b.issues.find(f=>f.n===n)?.state===s;
  const cases:CourtCase[]=[],placed=new Set<number>();let k=0;
  const grouping=(r:Report,R:number[]):Part[]=>{const parts:Part[]=[],done=new Set<number>();
@@ -100,9 +103,9 @@ export function buildDocket(o:{project:string;repository:string;commit:string;sn
  *  optional one-line reason. Adopting a side's finding needs that finding to pass Studio's check. Anything else refuses
  *  the whole set. */
 export function parseRulings(d:Docket,raw:unknown):Ruling[]{
- if(!Array.isArray(raw)||!raw.length||raw.length>d.cases.length)throw new Error(`Send one ruling per case, at most ${d.cases.length}`);
+ if(!Array.isArray(raw)||!raw.length||raw.length>d.cases.length)throw new Error(`Send one ruling for each of the docket's ${d.cases.length} case${d.cases.length===1?'':'s'}`);
  const seen=new Set<string>();
- return raw.map((r:any)=>{
+ const out=raw.map((r:any):Ruling=>{
   if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(x=>!['case','pick','reason'].includes(x)))throw new Error('A ruling is {case, pick, reason?}');
   const c=d.cases.find(x=>x.id===r.case);if(typeof r.case!=='string'||!c)throw new Error(`${String(r.case).slice(0,20)} is not a case of this docket`);
   if(seen.has(c.id))throw new Error(`${c.id} is ruled twice`);seen.add(c.id);
@@ -113,6 +116,9 @@ export function parseRulings(d:Docket,raw:unknown):Ruling[]{
   if(r.reason!==undefined&&r.reason!==null&&(typeof r.reason!=='string'||r.reason.length>400))throw new Error(`${c.id}: the reason is one line of text`);
   const reason=typeof r.reason==='string'?oneLine(r.reason,200):'';
   return{case:c.id,pick:r.pick,...(reason?{reason}:{})};});
+ // every case is ruled: the rulings answer the court card once, and a case left out would never come back to the court
+ if(out.length!==d.cases.length)throw new Error(`Rule every case of the docket: ${d.cases.filter(c=>!seen.has(c.id)).map(c=>c.id).join(', ')} not ruled`);
+ return out;
 }
 
 const lastId=(rec:TriageRecord)=>Math.max(rec.lastPackage??0,...rec.packages.map(p=>Number(p.id.slice(2))||0));
@@ -127,7 +133,10 @@ const lastId=(rec:TriageRecord)=>Math.max(rec.lastPackage??0,...rec.packages.map
  *    agree on is adopted (a single package, or the agreed no-code state); where they disagree it stays for a person.
  *  - Needs-info: with the no-code issues as needs-info, the reports' questions for the reporter kept, shown only in Studio.
  *  Each ruling is recorded on the record and gives the captain's gold labels (state, files, package) where it says one. */
-export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:string;card:string;by:string;at:string}){
+export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:string;card:string;by:string;at:string;
+ /** issues whose text, labels or comments changed on GitHub since the docket (or closed): their cases are not applied */
+ changed?:Iterable<number>}){
+ const moved=new Set(o.changed??[]),skipped:number[]=[];
  const issues={...rec.issues},added:string[]=[],removed:string[]=[],released:number[]=[],needsInfo:number[]=[],gold:Record<string,GoldLabel>={},entries:RulingEntry[]=[],back:{issues:number[];reason:string}[]=[];
  let packages=[...rec.packages],noCode:NoCode[]=[...(rec.noCode??[])],last=lastId(rec);
  const ruled=new Set<number>();
@@ -144,6 +153,10 @@ export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:s
   else if(ag){mark(n,{checked:true,state:ag.state as any},r);toNoCode(n,ag.state as NoCode['state'],[...(sa?.questions??[]),...(sb?.questions??[])]);if(ag.state==='needs-info')needsInfo.push(n);label(n,{state:ag.state as GoldLabel['state']},r);}
   else{mark(n,{},r);back.push({issues:[n],reason:`the captain ruled ${r.pick} on #${n}, but the two reports disagree on it (or Studio's check fails): decide it here`});}};
  for(const r of rulings){const c=d.cases.find(x=>x.id===r.case)!;const made:string[]=[];
+  // decided on text that is no longer the issue's: left for the next triage, which investigates it again
+  if(c.issues.some(n=>moved.has(n))){const ns=c.issues.filter(n=>!!issues[String(n)]);skipped.push(...ns);c.issues.forEach(n=>ruled.add(n));
+   if(ns.length)back.push({issues:ns,reason:`changed on GitHub while the court waited: the captain's ruling (${r.pick}) on ${c.id} is not applied; the next triage takes ${ns.length===1?'it':'them'} again`});
+   entries.push({case:c.id,kind:c.kind,issues:c.issues,pick:r.pick,...(r.reason?{reason:r.reason}:{}),packages:[],run:o.run,card:o.card,by:o.by,at:o.at,skipped:'changed'} as RulingEntry);continue;}
   // an issue closed or gone since the docket was made is left as it is
   const live=c.issues.filter(n=>!!issues[String(n)]);
   if(r.pick==='needs-info'){for(const n of live){const qs=[...new Set([...(c.a[String(n)]?.questions??[]),...(c.b[String(n)]?.questions??[])])].slice(0,5);
@@ -156,10 +169,13 @@ export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:s
     if(needsCode(s.state)){const id=newPack({kind:s.state==='fixed?'?'recheck':'single',members:[n],order:[n]});made.push(id);label(n,{state:s.state as GoldLabel['state'],...(files(s).length?{files:files(s)}:{}),package:id},r);}
     else{toNoCode(n,s.state as NoCode['state'],s.questions);if(s.state==='needs-info')needsInfo.push(n);label(n,{state:s.state as GoldLabel['state']},r);}}}
   else{const parts=c.groupings![r.pick==='separate'?'separate':r.pick as 'a'|'b'],from=r.pick==='b'?c.b:c.a;
-   for(const p of parts){const members=p.members.filter(n=>!!issues[String(n)]);if(!members.length)continue;
-    // the batch's package this part takes in, if it still waits for approval; any other it holds whole goes into it
+   for(const p of parts){
+    // the batch's packages this part takes in, only while they still wait for approval: one declined meanwhile (its issues
+    // released) or approved (its work may start) is left as it is, and its issues stay out of this part
     const into=p.joins.map(id=>packages.find(x=>x.id===id&&x.status==='proposed')).filter((x):x is StoredPackage=>!!x);
-    const pk={kind:p.kind,members,order:p.order.filter(n=>members.includes(n))};let id:string;
+    const allowed=new Set([...c.issues,...into.flatMap(x=>x.members)]),members=p.members.filter(n=>allowed.has(n)&&!!issues[String(n)]);if(!members.length)continue;
+    const kind:Package['kind']=members.length===1?(p.kind==='recheck'?'recheck':'single'):p.kind;
+    const pk={kind,members,order:kind==='single'||kind==='recheck'?members:p.order.filter(n=>members.includes(n))};let id:string;
     if(into.length){id=into[0].id;packages=packages.filter(x=>!into.slice(1).includes(x)).map(x=>x===into[0]?{...x,...pk,security:pk.members.some(n=>issues[String(n)]?.security)}:x);
      removed.push(...into.slice(1).map(x=>x.id));made.push(id);}
     else{id=newPack(pk);made.push(id);}
@@ -170,5 +186,5 @@ export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:s
  const record:TriageRecord={...rec,issues,investigated,packages,lastPackage:last,noCode:mergeNoCode(noCode.map(x=>({...x,issues:x.issues.filter(n=>!released.includes(n))}))),
   toHuman:[...rec.toHuman.map(h=>({...h,issues:h.issues.filter(n=>!ruled.has(n))})).filter(h=>h.issues.length),...back],
   rulings:[...(rec.rulings??[]),...entries].slice(-1000)};
- return{record,added,removed:[...new Set(removed)].filter(id=>!added.includes(id)),released,needsInfo:sorted(needsInfo),gold};
+ return{record,added,removed:[...new Set(removed)].filter(id=>!added.includes(id)),released,needsInfo:sorted(needsInfo),gold,skipped:sorted(skipped)};
 }

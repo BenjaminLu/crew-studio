@@ -35,7 +35,9 @@ const CAPTAIN=/^captain\b/i,SHA=/^[a-f0-9]{40}$/,FILE_CAP=2_000_000,SUBMITS=5,CO
 const PINNED=[{nodes:'f4dd997eb1456da0aed54bf397ee585e838ccd7065abfc42fce75d36e690026c',edges:'6833cf59f182a41e3d9d67c352f1230b160bb3cd6cf662eb0bfee6d7dd5f0d8e'}];
 const digest=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const key=(ns:number[])=>[...ns].sort((a,b)=>a-b).join(',');
-type State={project:string;repository:string;commit:string;tree:string;batch:number[];snapshot:string};
+type State={project:string;repository:string;commit:string;tree:string;batch:number[];snapshot:string;
+ /** the project's repository the commit was pinned in: the docket's file view reads its git objects */
+ repo?:string};
 
 /** A file of the pinned checkout as text, or null: only regular files inside it, at most FILE_CAP bytes. */
 export const checkoutReader=(tree:string)=>(file:string)=>{const p=join(tree,file);try{if(!realInside(tree,p)||!statSync(p).isFile()||statSync(p).size>FILE_CAP)return null;return readFileSync(p,'utf8');}catch{return null;}};
@@ -87,7 +89,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   try{must(join(tree,'..'),['clone','--shared','--no-checkout','-q',record.github!.localPath,tree]);must(tree,['checkout','-q','--detach',commit]);}catch(e){dropTree(x.run.id);throw e;}
   // the files of the commit only: git's own metadata (its config names the project's path) is not part of what is read
   rmSync(join(tree,'.git'),{recursive:true,force:true});
-  x.ctx.issueTriage={project,repository:snap.repository,commit,tree,batch,snapshot:snap.hash} satisfies State;
+  x.ctx.issueTriage={project,repository:snap.repository,commit,tree,batch,snapshot:snap.hash,repo:record.github!.localPath} satisfies State;
   engine.record(x,'issue-triage-snapshot',{head:snap.hash,data:{schema:1,project,repository:snap.repository,commit,open:snap.issues.length,batch}} as any);
   x.rn.note=`${batch.length} of ${snap.issues.length} open issues, code at ${commit.slice(0,7)}`;x.save();return 'ok';};
 
@@ -152,8 +154,11 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  const writeAtomic=(f:string,text:string)=>{mkdirSync(join(f,'..'),{recursive:true});const tmp=`${f}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;writeFileSync(tmp,text,{mode:0o600});renameSync(tmp,f);};
  const docketFile=(run:string)=>join(engine.rdir(run),'court-docket.json');
  const rulingsFile=(run:string,hash:string)=>join(engine.rdir(run),`court-rulings-${hash.replace(/[^a-f0-9]/g,'')}.json`);
- /** the run's docket as its record step wrote it (the ledger's digest), or none: a triage from before the court has none */
- const docketOf=(run:string):Docket|null=>{const e:any=engine.trusted(run).entries.filter((e:any)=>e.record==='issue-triage-docket').at(-1);if(!e)return null;
+ /** the run's docket as its record step wrote it (the ledger's digest), or none: a triage pinned to the definition from
+  *  before the court has none. A triage with a court whose reports were written has one: missing, it is refused, never
+  *  taken for a batch with nothing to rule on. */
+ const docketOf=(run:string):Docket|null=>{const trusted=engine.trusted(run),e:any=trusted.entries.filter((e:any)=>e.record==='issue-triage-docket').at(-1);
+  if(!e){if(engine.get(run)?.def.nodes.some((n:any)=>n.id==='court')&&trusted.entries.some((e:any)=>e.record==='issue-triage-written'))throw new Error('This triage\'s docket was not recorded: triage these issues again');return null;}
   let d:Docket;try{d=JSON.parse(readFileSync(docketFile(run),'utf8'));}catch{throw new Error('This triage\'s docket is missing');}
   if(digest(d)!==e.head)throw new Error('This triage\'s docket changed on disk');return d;};
  const RULED=/^rulings ([a-f0-9]{64})$/;
@@ -172,13 +177,14 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    const batch=triageRecord({project:t.project,snapshot:snap,a:a.report,b:b.report,read:checkoutReader(t.tree),reads:{a:a.reads,b:b.reads},by:`issue-triage ${x.run.id}`});
    const prev=store.get(t.project),merged=mergeTriage(prev,atSnapshot(withoutChanged(batch,changed),fresh));
    const added=merged.packages.filter(p=>!prev?.packages.some(q=>q.id===p.id)).map(p=>p.id),matched=(merged.cross??[]).filter(c=>!prev?.cross?.some(q=>q.id===c.id)).map(c=>c.id);
-   store.write(merged);
-   // the disagreement court's docket: this batch's items for a person, as Studio checked both reports (not one changed or closed meanwhile)
+   // the disagreement court's docket: this batch's items for a person, as Studio checked both reports (not one changed or
+   // closed meanwhile); on the ledger before the triage is written, so a written triage always has its docket
    const gone=t.batch.filter(n=>!now.has(n)),docket=buildDocket({project:t.project,repository:t.repository,commit:t.commit,snapshot:snap,a:a.report,b:b.report,read:checkoutReader(t.tree),reads:{a:a.reads,b:b.reads},
     toHuman:batch.toHuman,added:merged.packages.filter(p=>added.includes(p.id)),skip:[...changed,...gone],by:{a:`${a.by.provider} ${a.by.model}`,b:`${b.by.provider} ${b.by.model}`}});
-   writeAtomic(docketFile(x.run.id),JSON.stringify(docket));x.ctx.issueTriage={...t,added,matched,court:docket.cases.length};
-   engine.record(x,'issue-triage-written',{head:digest(merged),data:{schema:1,project:t.project,commit:t.commit,added,toHuman:merged.toHuman.length,changed}} as any);
+   writeAtomic(docketFile(x.run.id),JSON.stringify(docket));
    engine.record(x,'issue-triage-docket',{head:digest(docket),data:{schema:1,project:t.project,cases:docket.cases.length,issues:docket.cases.flatMap(c=>c.issues)}} as any);
+   store.write(merged);x.ctx.issueTriage={...t,added,matched,court:docket.cases.length};
+   engine.record(x,'issue-triage-written',{head:digest(merged),data:{schema:1,project:t.project,commit:t.commit,added,toHuman:merged.toHuman.length,changed}} as any);
    // counted from what was written: an issue edited meanwhile, or closed, is not agreed on any more
    const none=(merged.noCode??[]).flatMap(n=>n.issues).filter(n=>t.batch.includes(n)).length;
    x.rn.note=`${added.length} new work package${added.length===1?'':'s'}${none?`; ${none} agreed to have nothing to change in the code`:''}${matched.length?`; ${matched.length} at the same function as an earlier package, to decide on the project page`:''}${changed.length?`; ${changed.length} issue${changed.length===1?'':'s'} changed on GitHub meanwhile`:''}${docket.cases.length?`; ${docket.cases.length} disagreement${docket.cases.length===1?'':'s'} for the captain to rule on`:''}`;x.save();
@@ -206,15 +212,26 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(entry.data?.choice==='skip'){x.rn.note='Left for the project page';return pass();}
   if(entry.data?.choice!=='ruled')throw new Error('The captain\'s rulings are missing');
   const rulings=rulingsOf(x.run.id,entry.data?.note,d),rec=store.get(t.project);if(!rec)throw new Error('This project\'s triage is gone');
-  // applied once: a step run again after a restart finds its rulings on the record
-  const done=(rec.rulings??[]).filter(r=>r.run===x.run.id&&r.card===card.id);
-  let added:string[],removed:string[]=[];
-  if(done.length)added=[...new Set(done.flatMap(r=>r.packages))];
-  else{const at=new Date().toISOString(),out=applyRulings(rec,d,rulings,{run:x.run.id,card:card.id,by:String(entry.actor),at});store.write(out.record);evals.addCaptain(t.project,out.gold,at);
-   added=out.added;removed=out.removed;
-   engine.record(x,'issue-triage-ruled',{actor:String(entry.actor),head:digest(out.record),data:{schema:1,project:t.project,card:card.id,answerSeq:entry.seq,rulings:digest(rulings),
-    cases:rulings.map(r=>({case:r.case,pick:r.pick,issues:d.cases.find(c=>c.id===r.case)!.issues})),added:out.added,removed:out.removed,released:out.released,needsInfo:out.needsInfo,gold:Object.keys(out.gold).map(Number)}} as any);
-   x.rn.note=`${rulings.length} ruled: ${out.added.length} new package${out.added.length===1?'':'s'}${out.released.length?`, ${out.released.length} back to triage`:''}${out.needsInfo.length?`, ${out.needsInfo.length} need information`:''}; ${Object.keys(out.gold).length} gold label${Object.keys(out.gold).length===1?'':'s'} written`;}
+  // applied once, in three writes that a step run again (after a failure or a restart) completes: the outcome is kept beside
+  // the Task first, then the triage, the gold set and the ledger are each written unless already there
+  const planFile=join(engine.rdir(x.run.id),`court-applied-${card.id.replace(/[^\w-]/g,'')}.json`);
+  type Plan={at:string;head:string;added:string[];removed:string[];released:number[];needsInfo:number[];skipped:number[];gold:Record<string,any>};
+  const written=(rec.rulings??[]).some(r=>r.run===x.run.id&&r.card===card.id);
+  let plan:Plan;
+  if(!written){
+   // the issues as GitHub has them now (GET only): a ruling on one changed since the docket was made is not applied
+   const fresh=await snapshotIssues(selected(t.project).adapter,{signal:engine.abortOf(x.run).signal});guard(x);
+   const now=new Map(fresh.issues.map(i=>[i.n,i.hash])),moved=d.cases.flatMap(c=>c.issues.filter(n=>c.hashes?.[String(n)]!==undefined&&now.get(n)!==c.hashes[String(n)]));
+   const at=new Date().toISOString(),out=applyRulings(rec,d,rulings,{run:x.run.id,card:card.id,by:String(entry.actor),at,changed:moved});
+   plan={at,head:digest(out.record),added:out.added,removed:out.removed,released:out.released,needsInfo:out.needsInfo,skipped:out.skipped,gold:out.gold};
+   writeAtomic(planFile,JSON.stringify(plan));store.write(out.record);}
+  else{try{plan=JSON.parse(readFileSync(planFile,'utf8'));}catch{throw new Error('The applied rulings are on the triage, but what they decided is missing beside the Task');}}
+  evals.addCaptain(t.project,plan.gold,plan.at);
+  if(!engine.trusted(x.run.id).entries.some((e:any)=>e.record==='issue-triage-ruled'&&e.data?.card===card.id))
+   engine.record(x,'issue-triage-ruled',{actor:String(entry.actor),head:plan.head,data:{schema:1,project:t.project,card:card.id,answerSeq:entry.seq,rulings:digest(rulings),
+    cases:rulings.map(r=>({case:r.case,pick:r.pick,issues:d.cases.find(c=>c.id===r.case)!.issues})),added:plan.added,removed:plan.removed,released:plan.released,needsInfo:plan.needsInfo,skipped:plan.skipped,gold:Object.keys(plan.gold).map(Number)}} as any);
+  const added=plan.added,removed=plan.removed;
+  x.rn.note=`${rulings.length} ruled: ${plan.added.length} new package${plan.added.length===1?'':'s'}${plan.released.length?`, ${plan.released.length} back to triage`:''}${plan.needsInfo.length?`, ${plan.needsInfo.length} need information`:''}${plan.skipped.length?`, ${plan.skipped.length} changed on GitHub meanwhile (not applied)`:''}; ${Object.keys(plan.gold).length} gold label${Object.keys(plan.gold).length===1?'':'s'} written`;
   const kept=store.get(t.project)?.packages??[];
   x.ctx.issueTriage={...t,added:[...new Set([...(t.added??[]).filter(id=>!removed.includes(id)),...added])].filter(id=>kept.some(p=>p.id===id))};x.save();
   return (x.ctx.issueTriage as any).added.length?'ok':'none';};
@@ -359,10 +376,14 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    url:REPO.test(t.repository)?`https://github.com/${t.repository}/issues/${n}`:null};}
  /** A file of the project's repository at the triage's pinned commit, read from git's objects (never a checkout, nothing
   *  written): a regular file inside the repository, not under .git, at most COURT_FILE_CAP bytes, text. */
- function courtFile(project:string,run:string,path:unknown){const{t}=courtRun(project,run);
+ function courtFile(project:string,run:string,path:unknown){const{t,d}=courtRun(project,run);
   if(typeof path!=='string'||!path||path.length>300||isAbsolute(path)||/[\0\\]/.test(path))throw new Error('Name a file of the repository');
   const file=normalize(path);if(file.split('/').some(p=>p==='..'||p==='.'||p==='.git'||!p))throw new Error('Name a file inside the repository, outside .git');
-  const repo=projects.nativeSnapshot().records.find(p=>p.id===project)?.github?.localPath;if(!repo)throw new Error('This project is not connected to GitHub');
+  // only a file a side of this docket names or quotes
+  const named=new Set(d.cases.flatMap(c=>[...Object.values(c.a),...Object.values(c.b)]).flatMap(s=>s?[...s.locus.map(l=>l.file),...s.excerpts.map(x=>x.file)]:[]));
+  if(!named.has(file))throw new Error(`${file} is not a file on this docket`);
+  // the repository the triage pinned the commit in, as it recorded it
+  const repo=t.repo;if(!repo)throw new Error('This triage did not record its repository');
   const ls=git(repo,['ls-tree','-l','-z',t.commit,'--',file]),row=ls.ok?ls.out.split('\0').find(l=>l.endsWith(`\t${file}`)):undefined;
   const m=row?/^(\d{6}) (\w+) ([a-f0-9]{40,64}) +(\d+|-)\t/.exec(row):null;
   if(!m)throw new Error(`${file} is not a file at ${t.commit.slice(0,7)}`);

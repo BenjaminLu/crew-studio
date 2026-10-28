@@ -310,15 +310,18 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
   before packaging (a likely duplicate, an open pull request naming it, a person's work) is a case of its kind. Each
   side carries what Studio checked: its state, its locus (a file that exists, a symbol only when it is a code name, line
   numbers), the code around the stated range as read at the pinned commit with the quoted lines marked (at most 60 lines
-  a locus), Studio's check (or its problems), and its repro and questions as model-written text. The docket is a file
-  beside the Task with its digest on the ledger; a changed docket is refused.
+  a locus), Studio's check (or its problems), its repro and questions as model-written text, and each issue's hash as
+  investigated. The docket is a file beside the Task with its digest on the ledger, recorded before the triage is
+  written; a changed docket is refused, and a triage with a court whose docket is not on the ledger stops there (it is
+  never taken for one with nothing to rule on).
 - **The page.** One case per screen: the issue numbers and titles (untrusted text), what differs, A and B side by side
   with their checked code, and the rulings docked below (keys 1 to 4, R for a one-line reason, Z to undo; on the phone,
   taps). No suggestion is shown. The issue button opens the issue as the snapshot holds it (its text, labels, and the
   comments the snapshot read, as text; the snapshot holds none unless it read them) and a link to it on GitHub. A locus or
   an excerpt opens the file at the pinned commit (`GET /api/issue-triage/<project>/court/<task>/file?path=`), read from
-  the project repository's git objects (never a checkout; nothing written): a regular file inside the repository, not
-  under `.git`, at most 512 KB, text; it scrolls to the quoted lines and links to them on GitHub at that commit.
+  the git objects of the repository the triage recorded when it pinned the commit (never a checkout; nothing written):
+  only a file a side of the docket names or quotes, a regular file inside the repository, not under `.git`, at most
+  512 KB, text; it scrolls to the quoted lines and links to them on GitHub at that commit.
   Escape, the backdrop or the close button closes a popup. Every text is a text node; the only links are https to
   `github.com/<repository>`, built from the docket's checked repository and commit. Rulings not sent yet are kept in the
   tab (sessionStorage) until they are.
@@ -327,20 +330,26 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
   information; a pull request open: wait, take it anyway, or needs information; a person's work: agree, give it to an
   agent, or needs information. The page sends them once (`POST /api/issue-triage/<project>/court/<task> {rulings}`, the
   captain on the desktop or the phone: they are the court card's answer). Studio checks them against the docket (each
-  case of the docket, once, a pick its kind offers, a reason of one line) and refuses the whole set otherwise, keeps them
+  case of the docket ruled exactly once, a pick its kind offers, a reason of one line) and refuses the whole set
+  otherwise, keeps them
   beside the Task under their digest, and answers the card with that digest; a bare answer of the card (without the
   rulings) is refused, and only the captain answers it. "Leave them for the project page" applies nothing.
-- **Applied** (the `rulings` step, once per card: a step run again after a restart finds them on the record). A or B:
+- **Applied** (the `rulings` step, once per card). Studio reads the issues again first (GET only): a case whose issue
+  changed on GitHub since it was investigated, or closed, is not applied and writes no gold; it stays under "For you to
+  judge" with why, and the next triage takes it again. What the rulings decide is kept beside the Task, then the triage,
+  the gold set and the ledger are each written unless already there, so a step run again after a failure or a restart
+  completes them without applying anything twice. A or B:
   that finding becomes the issue's state and locus; code to change makes a single package (a recheck when maybe fixed)
   waiting for approval; nothing to change puts it with the agreed no-code issues. A grouping: each part a package
   waiting for approval; a part that holds all of a package this batch proposed takes it in (the issue one report left
-  out joins it). Neither: the issue is released, triaged again later. Needs information: with the no-code issues as
+  out joins it) while that package still waits for approval; one declined or approved meanwhile is left as it is and its
+  issues stay out of the part. Neither: the issue is released, triaged again later. Needs information: with the no-code issues as
   needs-info, the reports' questions for the reporter kept (shown only in Studio). A confirmed duplicate, a pull request
   to wait for, a person's work: recorded, nothing packaged. Not a duplicate, take it anyway, give it to an agent: what
   both reports agree on is adopted (a single package, or the agreed no-code state); where they disagree the issue stays
   under "For you to judge" with why. Each ruling is kept on the triage record (`rulings`: case, issues, pick, reason,
   packages, who, when) and on the ledger (`issue-triage-ruled`), and written to the project's gold set as the captain's
-  label (`IssueEvalStore.addCaptain`, docs/units/issue-eval.md): the state, the files and the package where the ruling
+  label (`IssueEvalStore.addCaptain`, merged field by field, docs/units/issue-eval.md): the state, the files and the package where the ruling
   says them (nothing for neither, a duplicate, a pull request or a person's work). Nothing is written to GitHub: no
   comment, label, close or request.
 

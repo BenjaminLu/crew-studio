@@ -216,7 +216,9 @@ export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:strin
  /** the captain's ruling on the two investigators' disagreement (src/domain/issue-court.ts) */
  ruled?:{pick:string;case:string;run:string;by:string;at:string}};
 /** One ruling of the captain's disagreement court, as the triage record keeps it. */
-export type RulingEntry={case:string;kind:string;duplicateOf?:number;issues:number[];pick:string;reason?:string;packages:string[];run:string;card:string;by:string;at:string};
+export type RulingEntry={case:string;kind:string;duplicateOf?:number;issues:number[];pick:string;reason?:string;packages:string[];run:string;card:string;by:string;at:string;
+ /** changed: the issue changed on GitHub while the court waited, so the ruling was not applied */
+ skipped?:'changed'};
 export type TriageRecord={schema:1;project:string;repository:string;commit:string;snapshot:{hash:string;fetchedAt:string};open:number;investigated:number[];
  issues:Record<string,TriageIssue>;packages:StoredPackage[];lastPackage?:number;
  /** new findings at the same function as an earlier package not started yet: the captain joins them to it or keeps them apart */

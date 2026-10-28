@@ -163,7 +163,7 @@ function viewCourt(arg) {
   if (s.done || !v.waiting) {
     if (s.done) return wrap(summary({ ...v, project, run }, key, s));
     return wrap(h("div", { class: "card x-pad", "data-court-closed": "1" }, h("p", {}, T("This court is not waiting for rulings.", "這個法庭沒有在等裁決。")),
-      v.ruled?.length ? h("ol", { class: "ct-list" }, v.ruled.map((r) => h("li", {}, h("span", { class: "mono" }, `${r.case} ${r.issues.map((n) => `#${n}`).join(" ")}`), ` ${r.pick}${r.packages?.length ? ` → ${r.packages.join(", ")}` : ""}`, r.reason ? h("span", { class: "faint" }, ` — ${r.reason}`) : null))) : null,
+      v.ruled?.length ? h("ol", { class: "ct-list" }, v.ruled.map((r) => h("li", {}, h("span", { class: "mono" }, `${r.case} ${r.issues.map((n) => `#${n}`).join(" ")}`), ` ${r.pick}${r.packages?.length ? ` → ${r.packages.join(", ")}` : ""}${r.skipped ? T(" (not applied: the issue changed on GitHub)", "（沒套用：issue 在 GitHub 上改過了）") : ""}`, r.reason ? h("span", { class: "faint" }, ` — ${r.reason}`) : null))) : null,
       h("a", { href: `#/run/${encodeURIComponent(run)}` }, T("Open the Task", "開啟任務"))));
   }
   // a docket changed since (another case list): rulings kept for it are dropped
