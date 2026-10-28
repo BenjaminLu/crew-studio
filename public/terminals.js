@@ -180,16 +180,22 @@ function patchPage() {
 // goes to code-firstmate's "From existing branch": spec card, scope, checks at base and head, review, fixes, merge card
 function reviewRow(t) {
   const g = t.git?.end || t.git?.start; if (!g && !t.review) return null;
-  const where = g ? h("span", { class: "faint" }, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : g.head.slice(0, 10)) : null;
+  const where = g ? h("span", { class: "faint" }, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : String(g.head ?? "").slice(0, 10)) : null;
   if (t.review) return h("div", { class: "wt-review", "data-term-review": t.id }, where, h("a", { class: "btn sm", "data-term-review-run": t.review.run, href: `#/run/${encodeURIComponent(t.review.run)}` }, T(`In review: ${t.review.run}`, `審查中：${t.review.run}`)));
   if (!TM.canWrite) return where ? h("div", { class: "wt-review" }, where) : null;
-  const why = t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審") : !t.git?.end?.commits ? T("No commits beyond the base to review: commit the work on a branch", "沒有比 base 新的 commit 可送審：先在 branch 上 commit") : null;
+  const why = t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審")
+    : !t.git?.end && t.stopped ? T("Studio stopped this terminal and did not record where its checkout ended: start a new terminal", "Studio 停掉這個終端機時沒記下 checkout 停在哪：請開新的終端機")
+    : !t.git?.end?.commits ? T("No commits beyond the base to review: commit the work on a branch", "沒有比 base 新的 commit 可送審：先在 branch 上 commit") : null;
   // a refusal stays here, in the captain's language, until the next try (a toast alone passed unseen on the live board)
   const refused = TM.refused.get(t.id), [en, zh] = refused ? refused.split(" / ") : [];
   return h("div", { class: "wt-review", "data-term-review": t.id }, where, why ? h("span", { class: "faint" }, why) : null,
     h("button", { type: "button", class: "btn primary sm", "data-term-send": t.id, disabled: !!why, onclick: () => termOp(t.id, "review") }, T("Send for review", "送審")),
     refused ? h("p", { class: "wt-refused", role: "alert", "data-term-review-error": t.id }, T("Send for review was refused: ", "送審被拒："), T(en, zh || en)) : null);
 }
+// a terminal listed from its record after Studio restarted: nothing re-attached; Studio stopped it, or it had ended before
+const restoredNote = (t) => !t.restored ? null : h("p", { class: "faint wt-restored", "data-term-restored": t.stopped || "ended" },
+  t.stopped === "studio-stopped" ? T("From before Studio restarted: Studio stopped it while it ran. Its output is the transcript.", "Studio 重新啟動前的終端機：它還在跑時被 Studio 停掉了。輸出是它的紀錄。")
+    : T("From before Studio restarted: it had ended. Its output is the transcript.", "Studio 重新啟動前的終端機：它已經結束了。輸出是它的紀錄。"));
 function detail(t) {
   const p = pane(t);
   return h("section", { class: "wt-detail", "data-term-detail": t.id }, ...detailHead(t), p.host);
@@ -202,8 +208,10 @@ function detailHead(t) {
         h("div", { class: "faint wt-cmd", title: t.project.path }, h("code", {}, t.command), T(` in ${t.project.path}`, ` 於 ${t.project.path}`))),
       TM.canWrite ? h("div", { class: "wt-actions" },
         t.running ? h("button", { type: "button", class: "btn", "data-term-kill": t.id, onclick: () => termOp(t.id, "kill") }, T("Stop", "停止")) : null,
-        h("button", { type: "button", class: "btn", "data-term-restart": t.id, onclick: () => termOp(t.id, "restart") }, T("Restart", "重新啟動")),
+        // a terminal from before Studio restarted has no command to run again here: start a new one
+        t.restored ? null : h("button", { type: "button", class: "btn", "data-term-restart": t.id, onclick: () => termOp(t.id, "restart") }, T("Restart", "重新啟動")),
         t.running ? null : h("button", { type: "button", class: "btn ghost", "data-term-dismiss": t.id, onclick: () => termOp(t.id, "dismiss") }, T("Remove", "移除"))) : null),
+    restoredNote(t),
     reviewRow(t),
     t.ask && t.state === "waiting" ? h("div", { class: "wt-ask", "data-term-ask": "1" }, T("Asks: ", "問你："), t.ask) : null,
     url ? h("div", { class: "wt-remote", "data-term-remote": "1" }, qrBox(url),
@@ -213,7 +221,8 @@ function detailHead(t) {
 }
 const selected = (arg) => TM.list.find((t) => t.id === arg) || (arg ? null : TM.list.filter((t) => t.running).at(-1) || TM.list.at(-1) || null);
 const listRows = (sel) => TM.list.map((t) => h("a", { class: "wt-item", href: `#/terminals/${encodeURIComponent(t.id)}`, "data-term-row": t.id, "aria-current": sel?.id === t.id ? "page" : null },
-  h("span", { class: "wt-iname" }, t.label), badge(t), h("span", { class: "faint wt-iproj" }, t.project.name), t.ask && t.state === "waiting" ? h("span", { class: "wt-iask" }, t.ask) : null));
+  h("span", { class: "wt-iname" }, t.label), badge(t), h("span", { class: "faint wt-iproj" }, t.project.name),
+  t.restored ? h("span", { class: "faint", "data-term-row-restored": t.id }, T(t.stopped ? "· stopped by Studio's restart" : "· before the restart", t.stopped ? "・Studio 重啟時停掉" : "・重啟前")) : null, t.ask && t.state === "waiting" ? h("span", { class: "wt-iask" }, t.ask) : null));
 function viewTerminals(arg) {
   if (TM.list === null) { load(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:240px" })); }
   // a terminal no longer listed loses its stream

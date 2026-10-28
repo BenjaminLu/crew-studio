@@ -908,7 +908,9 @@ function timelineLine(e, r) {
   if (e.type === "check_result") { // "card SC-001 · core/ste-wording failed (1 finding)", the edge or hook in words
     const where = !e.edge ? "" : e.edge.startsWith("card:") ? `${T("card", "卡片")} ${e.edge.slice(5)} · ` : e.edge.startsWith("hook:") ? `${e.edge.slice(5)} ${T("hook", "hook")} · ` : `${e.edge} · `;
     const n = /\((\d+) findings?\)/.exec(e.summary || "")?.[1]; const vw = VERDICT[e.verdict] || [e.verdict, e.verdict];
-    return [h("b", {}, e.node ? label(e.node) : T("Check", "檢查")), `: ${where}${e.check} ${T(vw[0], vw[1])}${n ? T(` (${n} finding${n === "1" ? "" : "s"})`, `（${n} 個問題）`) : ""}`]; }
+    // a pass that ran nothing (data.status not-run: no test command declared) says so, with its reason
+    const nr = typeof e.notRun === "string" ? T(` (not run: ${e.notRun})`, `（未執行：${e.notRun}）`) : "";
+    return [h("b", {}, e.node ? label(e.node) : T("Check", "檢查")), `: ${where}${e.check} ${T(vw[0], vw[1])}${nr}${n ? T(` (${n} finding${n === "1" ? "" : "s"})`, `（${n} 個問題）`) : ""}`]; }
   if (e.type === "run") return [h("b", {}, T("Task", "任務")), `: ${stateWord({ status: e.from }, r)} → ${stateWord({ status: e.to, result: e.to === "succeeded" ? e.result ?? r.result : null, merged: !!r.ctx?.merged }, r)}`];
   if (e.type === "node") { const w = NODE_WORDS[e.to] || [e.to, e.to]; return [h("b", {}, label(e.node)), `: ${T(w[0], w[1])}`]; }
   if (e.type === "node_started") {
@@ -1040,7 +1042,8 @@ function viewRun(id) {
     h("div", { class: "rt-cols" },
       h("div", { class: "card x-pad" }, h("h3", {}, T("Done lines", "完成條件")), (r.done || []).map((d) => h("div", { class: `rt-done ${d.proved ? "ok" : ""}` }, `${d.proved ? "✓" : "·"} ${d.index + 1}. ${d.text}`)), !(r.done || []).length ? h("p", { class: "faint" }, T("No done lines.", "沒有完成條件。")) : null,
         h("h3", {}, T("Evidence ledger", "證據帳本")), h("p", { class: r.ledgerOk ? "faint" : "bad", "data-ledger-state": id }, !r.ledger.length && r.ledgerOk ? T("No entries yet", "還沒有紀錄") : r.ledgerOk ? T(`${r.ledger.length} entries, signatures verified`, `${r.ledger.length} 筆，簽章已驗證`) : T("the ledger does not verify", "帳本驗證失敗")),
-        h("div", { class: "rt-ledger" }, r.ledger.slice(-60).reverse().map((e) => h("div", { class: `rt-le v-${e.verdict}` }, h("span", { class: "mono" }, `#${e.seq}`), ` ${e.check} `, h("b", {}, e.verdict), e.node ? h("span", { class: "faint", "data-ledger-where": e.seq }, v.gview === "detail" ? ` ${e.node}${e.round ? ` r${e.round}` : ""}` // the node id and round in short only in Detail
+        h("div", { class: "rt-ledger" }, r.ledger.slice(-60).reverse().map((e) => h("div", { class: `rt-le v-${e.verdict}`, "data-ledger-not-run": e.data?.status === "not-run" ? e.seq : null }, h("span", { class: "mono" }, `#${e.seq}`), ` ${e.check} `, h("b", {}, e.verdict),
+          e.data?.status === "not-run" ? h("span", { class: "faint" }, T(` (not run: ${e.data.reason ?? "no reason recorded"})`, `（未執行：${e.data.reason ?? "沒有記錄原因"}）`)) : null, e.node ? h("span", { class: "faint", "data-ledger-where": e.seq }, v.gview === "detail" ? ` ${e.node}${e.round ? ` r${e.round}` : ""}` // the node id and round in short only in Detail
           : ` · ${r.def?.nodes?.find((x) => x.id === e.node)?.label || e.node}${e.round ? T(`, round ${e.round}`, `，第 ${e.round} 回合`) : ""}`) : null)))),
       h("div", { class: "card x-pad" }, h("h3", {}, T("Timeline", "時間軸")), h("div", { class: "rt-timeline", "data-timeline": id }, r.events.filter((e) => v.gview === "detail" || simpleShows(e, r.events)).slice(-80).reverse().map((e) => h("div", { class: "rt-ev" }, h("span", { class: "mono faint" }, (e.ts || "").slice(11, 19)), " ",
         v.gview === "detail" ? [e.node ? h("b", {}, e.node) : null, ` ${e.type}${e.from || e.to ? ` ${e.from ?? ""}→${e.to ?? ""}` : ""}${e.cause ? ` · ${e.cause}` : ""}`] : timelineLine(e, r)))))));

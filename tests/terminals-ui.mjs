@@ -42,6 +42,12 @@ execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", 
 execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "init"], { cwd: repoDir });
 writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "demo", name: "Demo", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true },
   { id: "repo", name: "Repo", path: repoDir, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
+// a terminal that ended before Studio (re)started: its record alone, as a redeploy leaves it
+const seededHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
+mkdirSync(join(data, "terminals"), { recursive: true, mode: 0o700 });
+writeFileSync(join(data, "terminals", "T-seeded-before1.json"), JSON.stringify({ id: "T-seeded-before1", project: { id: "repo", name: "Repo", path: repoDir, base: "main" }, preset: null, kind: "custom", label: "seeded",
+  command: "echo seeded", by: "desktop", startedAt: "2026-10-20T10:00:00.000Z", endedAt: "2026-10-20T10:01:00.000Z", exitCode: 0, signal: null, cols: 100, rows: 30,
+  git: { start: { branch: "main", head: seededHead, commits: 0, base: "main" }, end: { branch: "agent/seeded", head: seededHead, commits: 1, base: "main" } }, review: null, transcript: null, transcriptBytes: 0, transcriptTruncated: false, remoteControl: null, sandboxed: false, evidence: false }));
 writeFileSync(join(bin, "claude"), `#!/bin/sh
 if [ "$1" = "--help" ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; exit 0; fi
 for a in "$@"; do [ "$a" = "--remote-control" ] && printf 'Remote Control active: https://claude.ai/code/rc-UIFAKE789\\r\\n'; done
@@ -74,6 +80,12 @@ try {
   ok((await p.locator("[data-term-warning]").innerText()).includes(`full permissions in ${proj}`) && /Not sandboxed/.test(await p.locator("[data-term-warning]").innerText()), "it says, before anything starts: not sandboxed, full permissions, in the project's path");
   ok(await p.locator('[data-preset="claude"]').count() === 1 && await p.locator('[data-preset="shell"]').count() === 1 && await p.locator('[data-preset="aider"]').count() === 0, "presets: the CLIs on PATH and the shell");
   ok(await p.locator("#termRc").isChecked(), "Claude Code's Remote Control toggle is on by default");
+  // a terminal that ended before Studio started is listed from its record, marked, and can still be sent for review
+  await p.goto(base + "/#/terminals/T-seeded-before1");
+  ok(await seen(p.locator('[data-term-row-restored="T-seeded-before1"]')) && await seen(p.locator('[data-term-restored="ended"]')), "a terminal from before the restart is listed and marked as such");
+  ok(await seen(p.locator('[data-term-send="T-seeded-before1"]:not([disabled])')) && await p.locator('[data-term-restart="T-seeded-before1"]').count() === 0
+    && /agent\/seeded · 1 commit\(s\) beyond main/.test(await p.locator('[data-term-review="T-seeded-before1"]').innerText()), "it keeps its git end and Send for review; no Restart in place");
+  await p.goto(base + "/#/terminals");
   await p.locator("#termCmd").fill("printf 'Proceed with deploy? [y/N] '; read a; echo answer:$a; sleep 1");
   await p.locator("[data-term-run]").click();
   ok(await until(async () => /#\/terminals\/T-/.test(p.url())), "Run opens the new terminal", p.url());

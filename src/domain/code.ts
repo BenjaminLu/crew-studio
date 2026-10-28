@@ -26,6 +26,7 @@ import { dirname, join, normalize } from "node:path";
 import { folderTools, type AgentTool } from "../agent";
 import { classify, loadDefaults, matches, Projects, type ChangedPath } from "../doors";
 import type { Engine, X, Body } from "../runtime/engine";
+import { notRun } from "../runtime/engine";
 import { LocalPrAdapter, GitHubPrAdapter, projectPrAdapter, type PrAdapter } from "../adapters/github";
 import { locatorText } from "../runtime/locator";
 import { amendmentsSection, briefSection, briefState, type BriefState, type CarryCheck } from "../runtime/refine";
@@ -37,7 +38,7 @@ import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
 import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText, mergeDetail, type MergeInput } from "./mergecard";
-import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, remoteStopCard, remoteStopReasonOf, remoteChecksUsed, REMOTE_CHECK_LIMIT, REMOTE_CHECK_NODES, REMOTE_BEHIND, observedNotice, OBSERVED_MERGE, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
+import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, remoteStopCard, remoteStopReasonOf, withCause, remoteChecksUsed, REMOTE_CHECK_LIMIT, REMOTE_CHECK_NODES, REMOTE_BEHIND, observedNotice, OBSERVED_MERGE, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
@@ -161,8 +162,21 @@ export function doorOf(paths: ChangedPath[], sensitive: { glob: string; why: str
   return classify(paths, { defaults: { ...d, base }, topLevel: topLevel ?? null });
 }
 const scopePaths = (scope: string[]): ChangedPath[] => scope.map((p) => ({ path: String(p).replace(/\/$/, "/x").replace(/\*\*?/g, "x"), added: 1 }));
+/** The fail-first and CI gates' detail (the merge card's gate list): a pass that ran nothing says it was not run, and why. */
+export const runGateDetail = (what: "fail-first" | "CI", e: any) => !e ? `${what} never ran`
+  : `${what} ${e.verdict} at ${String(e.head).slice(0, 8)}${what === "fail-first" && e.data?.applicable === false ? " (not applicable: no behaviour file changed)" : ""}${notRun(e) !== null ? ` (not run: ${notRun(e)})` : ""}`;
+/** Remote readiness: the pauses before reading a pull request again while GitHub still computes its mergeability (10 s in all). */
+const MERGEABILITY_RETRY_MS = [1000, 2000, 3000, 4000];
+/** A pause that ends early when the Task is cancelled (the caller then asserts its phase). */
+const pause = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
+  if (signal?.aborted) return resolve();
+  const t = setTimeout(done, ms); function done() { clearTimeout(t); signal?.removeEventListener("abort", done); resolve(); }
+  signal?.addEventListener("abort", done, { once: true });
+});
 
-export function installCode(engine: Engine, o: { dataDir: string; projects: Projects; adapter?: PrAdapter; poller?:GitHubPoller; mergeWatchMs?: number; improve?: { checkTriggers?: () => Promise<any> } | null;
+export function installCode(engine: Engine, o: { dataDir: string; projects: Projects; adapter?: PrAdapter; poller?:GitHubPoller; mergeWatchMs?: number;
+  /** remote readiness: the pauses before reading the pull request again while GitHub computes its mergeability (tests shorten them) */
+  mergeabilityRetryMs?: number[]; improve?: { checkTriggers?: () => Promise<any> } | null;
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> };
   /** the review room's web tools (tests stub them; production goes through Studio's egress proxy) */
@@ -307,6 +321,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     return { signal, live, assert, rebind, retainPending };
   };
   const stopCard = (x: X, reason: string) => remoteStopCard(x, reason, engine);
+  const mergeabilityRetry = o.mergeabilityRetryMs ?? MERGEABILITY_RETRY_MS;
   engine.beforeStart["github-reconcile"] = async x => {
     // an end node (closed, parked …) reads nothing on GitHub: a pull request closed there must not stop the close itself
     if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open" || (x.run.def && !x.run.def.edges.some((e) => e.from === x.node.id))) return null;
@@ -505,8 +520,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (d.door === "one-way" && x.ctx.door?.door !== "one-way") return { ok: false, detail: `the diff touches a sensitive path (${d.reasons.filter((r) => r.list !== "trivial").map((r) => r.path).join(", ")}): it is one-way, but the run went the two-way path`, cls: "door-change", loc: { type: "file", path: d.reasons[0]?.path ?? "" } };
     return { ok: true, detail: `${ch.length} paths inside the scope; door ${d.door}` };
   });
-  gate("failfirst", (x, h) => { const e = lastPass(x, "firstmate/fail-first", h); return { ok: !!e && e.head === h && e.verdict === "pass", detail: e ? `fail-first ${e.verdict} at ${String(e.head).slice(0, 8)}${e.data?.applicable === false ? " (not applicable: no behaviour file changed)" : ""}` : "fail-first never ran" }; });
-  gate("ci", (x, h) => { const e = lastPass(x, "firstmate/ci", h); return { ok: !!e && e.head === h && e.verdict === "pass", detail: e ? `CI ${e.verdict} at ${String(e.head).slice(0, 8)}` : "CI never ran" }; });
+  gate("failfirst", (x, h) => { const e = lastPass(x, "firstmate/fail-first", h); return { ok: !!e && e.head === h && e.verdict === "pass", detail: runGateDetail("fail-first", e) }; });
+  gate("ci", (x, h) => { const e = lastPass(x, "firstmate/ci", h); return { ok: !!e && e.head === h && e.verdict === "pass", detail: runGateDetail("CI", e) }; });
   const localGateCI = engine.natives["gate-ci"];
   engine.natives["gate-ci"] = async (i, hp) => {
     const x = hp.x as X; if (x.ctx.pr?.adapter !== "github") return localGateCI(i, hp);
@@ -833,7 +848,14 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     let release: (() => void) | undefined;
     try {
       const pending=x.ctx.remoteUpdatePending?pendingUpdate(x,a):null;
-      const p = pending?null:await a.mutationState(x.ctx.pr, phase.signal,phase.assert); phase.assert();
+      let p = pending?null:await a.mutationState(x.ctx.pr, phase.signal,phase.assert); phase.assert();
+      // GitHub computes mergeability lazily after a push or an edit and answers null meanwhile: read again a few times, with a
+      // short backoff, before the phase gives up (bounded; a cancelled Task ends the wait)
+      for (const ms of mergeabilityRetry) {
+        if (!p || p.mergeable != null || p.mergeable_state === "dirty") break;
+        await pause(ms, phase.signal); phase.assert();
+        p = await a.mutationState(x.ctx.pr, phase.signal, phase.assert); phase.assert();
+      }
       if (p && (p.mergeable === false || p.mergeable_state === "dirty")) {
         const c = await engine.card(x,"step-back",{title:"Remote conflict: native rebase round",zhTitle:"遠端衝突：原生 rebase 輪次",captainOnly:true,
           en:{why:"The remote branch cannot merge cleanly.",next:"Authorize a task-only rebase resolution round; fresh CI and review will follow."},zh:{why:"遠端分支無法乾淨合併。",next:"核准只修改此任務的 rebase 解決輪次；之後重新執行 CI 與審查。"},
@@ -869,7 +891,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (checks.blocked.length) return "fail";
       if(!a.branchAllowed(x.ctx.branch,x.ctx.head)) return namingCard(x,a,x.ctx.head);
       return remoteWait(x,a);
-    } catch { if (!phase.live()) return { outcome: "cancel" }; await stopCard(x,"remote readiness/update could not be proved; no approval or merge allowed"); return { wait: true }; } finally { release?.(); }
+    } catch (e: any) {
+      if (!phase.live()) return { outcome: "cancel" };
+      // the cause is on the card, in the log and on the ledger: the captain sees why it stopped before checking again
+      const reason = withCause("remote readiness/update was not proved; no approval or merge allowed", e), cause = /\(cause: ([^]*)\)$/.exec(reason)?.[1] ?? null;
+      // the log and the ledger are best effort: whatever they do, the stop card is raised
+      try { x.log(`remote readiness stopped: ${reason}`); } catch {}
+      try { engine.record(x, "remote-readiness-stop", { head: x.ctx.pr?.head ?? x.ctx.head ?? null, data: { version: 1, reason, cause } } as any); } catch {}
+      await stopCard(x, reason); return { wait: true };
+    } finally { release?.(); }
   };
   /** A tainted Task ends here, reviewed and on its local branch: no merge card, no merge, nothing published. Publishing it is
    *  not offered (a later, explicit captain action may be). The branch, its head and its base are on the ledger. */

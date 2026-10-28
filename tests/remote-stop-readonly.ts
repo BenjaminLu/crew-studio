@@ -41,7 +41,7 @@ const pr = await adapter.open({ repo, base: "main", branch: rec.branch, head: ol
 sim.expect("PUT", `/pulls/${pr.id}/update-branch`, { message: "Accepted" }, { expected_head_sha: old }, 202);
 sim.expect("GET", "/branches/main/protection/required_status_checks", { strict: true, checks: [], contexts: [] });
 sim.pulls.get(Number(pr.id)).mergeable = null; // remote-ready first stops: mergeability unknown
-installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter });
+installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter, mergeabilityRetryMs: [20, 20] });
 E.actions["fixture.setup"] = (x) => {
   Object.assign(x.ctx, { repo, worktree: rec.path, wt: { project: "fixture", task: "task" }, head: old, base: "main", baseCommit: base, branch: rec.branch, pr, spec: { scope: ["task"], done: ["task exists"] } });
   E.record(x, "fixture-review", { check: "firstmate/review-verdict", head: old, verdict: "pass", data: { binding: { version: 1, head: old, base, patch: git(repo, ["patch-id", "--stable"], git(repo, ["diff", "--binary", base, old]).out).out.split(" ")[0] } } } as any);
@@ -54,7 +54,7 @@ try {
   const r = E.start({ workflow: "readonly" });
   await until(() => !!openCard(r) && !E.busy(r.id), 10000);
   const c = openCard(r);
-  ok(c?.node === "remote-ready" && ids(c) === "check,close" && /could not be proved/.test(c.body), "remote-ready stops on unknown mergeability with Check again", `${c?.node} ${ids(c)} ${c?.body}`);
+  ok(c?.node === "remote-ready" && ids(c) === "check,close" && /was not proved/.test(c.body), "remote-ready stops on unknown mergeability with Check again", `${c?.node} ${ids(c)} ${c?.body}`);
   Object.assign(sim.pulls.get(Number(pr.id)), { mergeable: true, mergeable_state: "behind" });
   const before = sim.calls.length;
   await E.answer(c.id, { choice: "check", by: "captain" } as any);

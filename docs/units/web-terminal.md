@@ -56,8 +56,13 @@ window does) and SIGKILL two seconds later.
 - At most `CREW_TERMINAL_MAX` running (default 8), and at most 4 open views (streams) of one terminal. Ended terminals stay
   listed (with their replay) until removed; at most 20.
 - Studio stopping kills every terminal's process group (SIGHUP then SIGKILL; `tests/terminals.ts` checks a grandchild goes
-  too). Nothing is re-attached on restart: a record left open is closed as `studio-stopped` on the next start, and the list
-  starts empty. What can survive: a process that left the group on purpose (`setsid`, `nohup … &` with its own process group,
+  too). Nothing is re-attached on restart: no process, no input, no Restart in place. A terminal still running when Studio
+  stops gets its end and where its checkout stood (its git end) in its record, marked `studio-stopped`; a record left open
+  (Studio killed with SIGKILL) is closed as `studio-stopped` on the next start, with no git end. After the restart the
+  ended terminals (the 20 newest that were not removed) are listed again from their records, marked `restored` (and
+  `stopped: "studio-stopped"` for one Studio stopped), with their git end, their review state and their transcript as the
+  replay; Send for review works on them under the same guards (below). Remove is kept in the record (`dismissed`), so a
+  removed terminal does not come back. What can survive: a process that left the group on purpose (`setsid`, `nohup … &` with its own process group,
   a daemon, a `disown`ed job that changed its group), and everything when Studio itself is killed with SIGKILL (no handler
   runs). Those are the captain's processes, as they would be after closing a Terminal window.
 - Each terminal's record is `data/terminals/<id>.json` (who started it, project, command, start, end, exit code or
@@ -120,4 +125,5 @@ link. A revoked phone's streams end.
 A finished terminal whose project checkout is on a branch with commits beyond the project's base offers **Send for
 review**: code-firstmate reviews the branch from a copy in a Studio worktree (docs/units/branch-intake.md). The terminal
 records the checkout's branch and head at start and at end (Studio's own git: no hooks, no user config), and the lines the
-captain typed at an agent's own prompt, for the spec writer, as data.
+captain typed at an agent's own prompt, for the spec writer, as data. A terminal listed from its record after a restart
+keeps its button: its git end is the head it hands over, and a checkout that moved since is refused as for any terminal.

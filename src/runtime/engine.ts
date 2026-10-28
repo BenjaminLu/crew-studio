@@ -145,6 +145,15 @@ const FAILED_OUTCOMES = new Set(["fail", "timeout", "cap"]);
 const JOB_CODES: Record<string, FailureCode> = { notLoggedIn: "env.login", quotaExhausted: "env.quota", cliUnavailable: "env.tool-missing", modelMismatch: "invalid-input.config", cleanupUnverified: "internal.bug" };
 const clone = <T>(v: T): T => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
+/** A check that allowed its gate without running anything (`data.status: "not-run"`): its reason, else null. It still passes;
+ *  every summary of it says it was not run, so a pass never hides that nothing ran (docs/check-contract.md). */
+export const notRun = (e: { verdict?: string; data?: any }): string | null =>
+  e?.data?.status === "not-run" ? String(e.data.reason ?? "no reason recorded").replace(/\s+/g, " ").slice(0, 200) : null;
+/** " (n not run: a, b)" for a list of check results, "" when every one ran. */
+const notRunNote = (entries: { check: string; verdict?: string; data?: any }[]) => {
+  const nr = entries.filter((e) => notRun(e) !== null);
+  return nr.length ? ` (${nr.length} not run: ${[...new Set(nr.map((e) => e.check))].join(", ")})` : "";
+};
 /** {{ctx.a.b}} / {{params.x}} / {{run.title}} in card text */
 export function fill(s: string, run: Run): string {
   return String(s ?? "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, p: string) => {
@@ -804,7 +813,7 @@ export class Engine {
     step.checks = out.entries.map((e) => ({ check: e.check, verdict: e.verdict, seq: e.seq }));
     if (out.blocked.length) { const note = `${out.blocked.map((e) => `${e.check}: ${e.verdict}`).join(", ")}${res.note ? ` · ${res.note}` : ""}`;
       return { outcome: "fail", note, failure: this.checkFailure(x, out.blocked, "deterministic.check") }; }
-    return { outcome: res.outcome, note: [res.note, `${out.entries.filter((e) => e.verdict === "pass").length}/${out.entries.length} checks pass`].filter(Boolean).join(" · ") };
+    return { outcome: res.outcome, note: [res.note, `${out.entries.filter((e) => e.verdict === "pass").length}/${out.entries.length} checks pass${notRunNote(out.entries)}`].filter(Boolean).join(" · ") };
   }
 
   /** A node's attempt ended (or is now waiting on a card). */
@@ -1057,8 +1066,9 @@ export class Engine {
   private recordCheck(x: X, L: Ledger, e: any): LedgerEntry {
     if ((x.edgeOwner && !this.owns(x)) || this.gone.has(x.run.id) || (TERMINAL.includes(x.run.status) && !String(e.edge ?? "").startsWith("hook:"))) return { ...e, seq: 0, sig: "", error: "late check result refused" }; // no ordinary check writes after its owner ends
     const rec = L.add(e.inputHash ? { ...e, inputHashAlgorithm: INPUT_HASH_ALGORITHM } : e);
-    this.emit(x.run, "check_result", `${e.edge ? `${e.edge} · ` : `${x.node.label} · `}${e.check}: ${e.verdict}${e.findings.length ? ` (${e.findings.length} finding${e.findings.length > 1 ? "s" : ""})` : ""}${e.error ? ` — ${String(e.error).slice(0, 160)}` : ""}`,
-      { node: x.node.id, check: e.check, verdict: e.verdict, ledger: rec.seq, sig: rec.sig, blocking: e.blocking, edge: e.edge ?? null });
+    const nr = notRun(e);
+    this.emit(x.run, "check_result", `${e.edge ? `${e.edge} · ` : `${x.node.label} · `}${e.check}: ${e.verdict}${nr !== null ? ` (not run: ${nr})` : ""}${e.findings.length ? ` (${e.findings.length} finding${e.findings.length > 1 ? "s" : ""})` : ""}${e.error ? ` — ${String(e.error).slice(0, 160)}` : ""}`,
+      { node: x.node.id, check: e.check, verdict: e.verdict, ledger: rec.seq, sig: rec.sig, blocking: e.blocking, edge: e.edge ?? null, ...(nr !== null ? { notRun: nr } : {}) });
     return rec;
   }
   async input(x: X, man: CheckManifest, params: Record<string, any>, out: string, given: string[] = []): Promise<CheckInput> {
@@ -1934,10 +1944,10 @@ export class Engine {
     // check: runs its checks; the outcome is pass/fail, or a route a check names (data.route), e.g. the door
     this.kinds.check = { async start(x: X) {
       const r = await self.runChecks(x, x.node.checks ?? [], null);
-      x.rn.data.results = r.entries.map((e) => ({ check: e.check, verdict: e.verdict, seq: e.seq }));
+      x.rn.data.results = r.entries.map((e) => ({ check: e.check, verdict: e.verdict, seq: e.seq, ...(notRun(e) !== null ? { notRun: notRun(e) } : {}) }));
       const routed = x.node.args?.route_from ? r.entries.find((e) => e.check === x.node.args!.route_from) as any : null;
       if (routed?.data?.route) { x.rn.note = `${routed.check}: ${routed.data.route}`; if (x.node.args?.store) x.ctx[x.node.args.store] = routed.data; return { outcome: String(routed.data.route), note: x.rn.note }; }
-      return { outcome: r.blocked.length ? "fail" : "pass", note: r.blocked.length ? r.blocked.map((e) => `${e.check} ${e.verdict}`).join(", ") : `${r.entries.filter((e) => e.verdict === "pass").length}/${r.entries.length} pass` };
+      return { outcome: r.blocked.length ? "fail" : "pass", note: r.blocked.length ? r.blocked.map((e) => `${e.check} ${e.verdict}`).join(", ") : `${r.entries.filter((e) => e.verdict === "pass").length}/${r.entries.length} pass${notRunNote(r.entries)}` };
     } };
     // card: asks a human (or an auth window) and waits
     this.kinds.card = {
