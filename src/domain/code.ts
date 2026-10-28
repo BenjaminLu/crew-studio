@@ -927,7 +927,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     try { o.projects.assertExecutable({ project: project.id, base: r.ctx.pr.base }); } catch (e: any) { return { skip: `the project's GitHub grant does not verify: ${String(e?.message ?? e).slice(0, 200)}` }; }
     try { const a = projectPrAdapter(project, o.dataDir, o.poller); return a instanceof GitHubPrAdapter ? { a } : { skip: "no GitHub adapter" }; } catch (e: any) { return { skip: String(e?.message ?? e).slice(0, 200) }; }
   };
-  const reconcilable = (r: any) => !!r && ["succeeded", "cancelled"].includes(r.status) && (r.status === "cancelled" || r.result === "closed") && !r.reconciled && !r.ctx?.merged
+  const reconcilable = (r: any) => !!r && !engine.logFault(r.id) && ["succeeded", "cancelled"].includes(r.status) && (r.status === "cancelled" || r.result === "closed") && !r.reconciled && !r.ctx?.merged
     && r.ctx?.pr?.adapter === "github" && /^[1-9][0-9]*$/.test(String(r.ctx.pr.id ?? "")) && typeof r.ctx.pr.base === "string" && typeof r.ctx.pr.branch === "string";
   const reconciling = new Map<string, Promise<any>>();
   const reconcileFromGitHub = (id: string) => {

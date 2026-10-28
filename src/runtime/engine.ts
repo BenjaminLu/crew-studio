@@ -41,7 +41,7 @@ import { roundSkillTools, skillFooters, skillGate, skillProvenance, type SkillRo
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { composeSkeleton, type SkeletonFacts } from "./brief-skeleton";
 import { clampTitle, deriveTitle } from "../task-title";
-import { appendLines, readLog, repairTail, writeAtomic, type LogRead } from "./durable-log";
+import { appendLines, readLog, repairTail, syncDir, writeAtomic, type LogRead } from "./durable-log";
 import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
@@ -314,10 +314,25 @@ export class Engine {
   rdir(id: string) { return join(this.root, id.replace(/[^\w-]/g, "")); }
   /** A run that takes no more writes: deleted, or its event log is corrupt (sealed: nothing is appended behind a bad line). */
   private closed(id: string) { return this.gone.has(id) || this.sealed.has(id); }
-  private event(r: Run, e: Record<string, any>) { return { seq: ++r.events, ts: now(), run: r.id, ...e }; }
-  /** Write events as one write (and, unless sync is false, one fsync): a commit's events are one durable step (src/runtime/durable-log.ts). */
+  /** The k-th event of the write being built: r.events moves only once the write lands (write). */
+  private event(r: Run, e: Record<string, any>, k = 0) { return { seq: r.events + 1 + k, ts: now(), run: r.id, ...e }; }
+  /**
+   * Write events as one write (and, unless sync is false, one sync): a commit's events are one durable step, framed by
+   * `tx` on its first line (src/runtime/durable-log.ts). A write that failed and could not be cut back may have left
+   * half a commit in the log: the run is sealed in memory, so nothing lands behind it and the next start reads the tail.
+   */
   private write(r: Run, evs: Record<string, any>[], sync = true) {
-    appendLines(join(this.rdir(r.id), "events.jsonl"), evs.map((ev, i) => JSON.stringify(i === 0 && evs.length > 1 ? { ...ev, tx: evs.length } : ev)), { sync });
+    if (!evs.length) return;
+    try { appendLines(join(this.rdir(r.id), "events.jsonl"), evs.map((ev, i) => JSON.stringify(i === 0 ? { ...ev, tx: evs.length } : ev)), { sync }); }
+    catch (e: any) {
+      if (e?.partial) {
+        const message = `the event log of ${r.id} could not be written or cut back (${String(e?.message ?? e).slice(0, 160)}): Studio stopped writing to it; the next start reads what reached the disk`;
+        this.sealed.set(r.id, { line: 0, message });
+        this.deps.log.emit({ type: "run_log_corrupt", workflow: r.workflow, task: r.id, summary: message, data: {} });
+      }
+      throw e;
+    }
+    r.events = evs.at(-1)!.seq;
   }
   private append(r: Run, e: Record<string, any>, sync = true) {
     if (this.closed(r.id)) return { seq: r.events, ts: now(), run: r.id, ...e }; // a deleted or sealed run takes no more writes
@@ -329,7 +344,7 @@ export class Engine {
     if (this.closed(r.id)) return;
     const c = this.committed.get(r.id)!;
     r.updatedAt = now();
-    const evs: any[] = [], batch: any[] = []; const add = (e: Record<string, any>) => { const ev = this.event(r, e); batch.push(ev); return ev; };
+    const evs: any[] = [], batch: any[] = []; const add = (e: Record<string, any>) => { const ev = this.event(r, e, batch.length); batch.push(ev); return ev; };
     if (r.status !== c.status || RUN_FIELDS.some((k) => !same((r as any)[k], (c as any)[k]))) {
       const set: any = {}; for (const k of RUN_FIELDS) if (!same((r as any)[k], (c as any)[k])) set[k] = (r as any)[k];
       evs.push(add({ type: "run", from: c.status, to: r.status, cause, set }));
@@ -376,17 +391,25 @@ export class Engine {
   private seal(id: string, log: LogRead) {
     const line = log.corrupt?.line ?? 0;
     const message = `the event log of ${id} is corrupt at line ${line} (data/runs/${id}/events.jsonl): Studio stopped this task instead of guessing its state; nothing of it resumes`;
-    let r: Run | null = null;
+    let r: Run | null = null, snap: Run | null = null;
     try { r = fold(log.rows); } catch {}
-    if (!r) try { r = JSON.parse(readFileSync(join(this.rdir(id), "run.json"), "utf8")); } catch {} // the creation itself is unreadable: the snapshot cache names the run
-    this.sealed.set(id, { line, message });
-    this.deps.log.emit({ type: "run_log_corrupt", workflow: r?.workflow ?? "", task: id, summary: message, data: { line } });
+    try { snap = JSON.parse(readFileSync(join(this.rdir(id), "run.json"), "utf8")); } catch {}
+    if (snap?.id !== id) snap = null;
+    // a run that had ended (its last snapshot, or what the good lines say) keeps its end: it loads read-only as it ended, with the note
+    const ended = snap && TERMINAL.includes(snap.status) ? snap : r && TERMINAL.includes(r.status) ? r : null;
+    if (!r) r = snap; // the creation itself is unreadable: the snapshot cache names the run
+    this.sealed.set(id, { line, message: ended ? `${message}; it had ended ${ended.status}${ended.result ? ` (${ended.result})` : ""} and is shown read-only` : message });
+    this.deps.log.emit({ type: "run_log_corrupt", workflow: r?.workflow ?? "", task: id, summary: this.sealed.get(id)!.message, data: { line } });
+    if (ended) { this.runs.set(id, ended); this.committed.set(id, clone(ended)); return; }
     if (!r || r.id !== id) return; // nothing names the run: Studio's log says why it is not listed
     r.status = "failed"; r.endedAt ??= now(); r.error = message;
     this.runs.set(id, r); this.committed.set(id, clone(r));
-    const open = this.cards.list({ run: id, open: true }).find((c) => c.kind === "failure" && c.failure?.diagnostics?.eventLog === "corrupt");
+    // the card raised at an earlier start: still open, it stays; answered (Park, a new Task), that answer is the decision
+    const earlier = this.cards.list({ run: id }).filter((c) => c.kind === "failure" && c.failure?.diagnostics?.eventLog === "corrupt");
+    const open = earlier.find((c) => c.status === "open"), answered = earlier.find((c) => c.status !== "open");
     const f = failure("internal.bug", message, { source: "engine", run: id, diagnostics: { eventLog: "corrupt", line: String(line), text: log.corrupt?.text ?? "" } });
-    if (open) { r.failure = open.failure ?? f; r.failureCard = open.id; return; } // raised at an earlier start: the same card stays
+    if (open) { r.failure = open.failure ?? f; r.failureCard = open.id; return; }
+    if (answered) { r.failure = answered.failure ?? f; r.failureCard = answered.id; r.parked = { by: answered.answer?.by ?? "captain", at: answered.answer?.at ?? now(), note: answered.answer?.note ?? `answered: ${answered.answer?.choice ?? answered.status}` }; return; }
     try { this.raiseFailure(r, null, f); } catch (e: any) { r.failure = f; this.deps.log.emit({ type: "run_log_corrupt", workflow: r.workflow, task: id, summary: `failure card could not be raised: ${String(e?.message ?? e).slice(0, 200)}`, data: {} }); }
   }
   /** What a timeline shows: transitions and display events, not the ctx/ndata payloads. */
@@ -410,6 +433,7 @@ export class Engine {
         catch (e: any) { try { this.seal(d, { ...log, corrupt: { line: 0, text: `the torn tail could not be cut: ${String(e?.message ?? e).slice(0, 80)}` } }); } catch {} continue; }
       const r = fold(log.rows); if (!r) continue;
       this.runs.set(r.id, r); this.committed.set(r.id, clone(r));
+      if (log.skipped?.length) this.deps.log.emit({ type: "run_log_skipped", workflow: r.workflow, task: r.id, summary: `${r.id}: event log: skipped ${log.skipped.length} unreadable line${log.skipped.length > 1 ? "s" : ""} (line ${log.skipped.map((x) => x.line).join(", ")}) written before the crash-safe format, as Studio always did`, data: { lines: log.skipped.map((x) => x.line) } });
       if (repaired) this.emit(r, "log", repaired, { torn: log.torn });
       if (TERMINAL.includes(r.status)) continue;
       let n = 0; const reroute: string[] = []; const reanswer: string[] = []; const reescalate: string[] = [];
@@ -497,7 +521,7 @@ export class Engine {
     const errs = validate(def, this.defs.known, this.defs.runners?.(), this.defs.skillInfo ?? undefined).filter((p) => p.level === "error"); if (errs.length) throw new Error(`${def.id} v${def.version} is not runnable: ${errs[0].text}`);
     this.deps.authorizeStart?.(def, o);
     const id = allocate(this.root, "R");
-    mkdirSync(this.rdir(id), { recursive: true });
+    mkdirSync(this.rdir(id), { recursive: true }); syncDir(this.root); // the new folder itself survives a crash
     const params: Record<string, string> = {};
     for (const [k, p] of Object.entries(def.params ?? {})) if (p.default != null) params[k] = String(p.default);
     // a parameter is at most 4000 characters, or the larger bound its definition declares (max, up to 64 KB)
@@ -1166,6 +1190,8 @@ export class Engine {
   onCancel: (r: Run) => void = () => {};
   /** A domain's own clean-up when a run is deleted (each pack removes what it made for the run). */
   onDelete: (r: Run) => void = () => {};
+  /** A sealed run (its event log is corrupt) is never written again: only Delete removes it. */
+  private writable(r: Run, what: string) { const f = this.logFault(r.id); if (f) throw new Error(`${r.id} cannot be ${what}: ${f.message}`); }
   private ended(r: Run, what: string) { if (!TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}: only an ended run can be ${what}`);
     const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. The run can be ${what} once that is done`); }
   /** A terminal captain hold can be continued, never treated as an approval or a new job. */
@@ -1197,7 +1223,7 @@ export class Engine {
    * entry written before a crash is not written again, only its event).
    */
   reconcileMerge(id: string, fact: Record<string, any>) {
-    const r = this.must(id); this.ended(r, "reconciled");
+    const r = this.must(id); this.ended(r, "reconciled"); this.writable(r, "reconciled");
     if (r.reconciled) return r.reconciled;
     if (r.ctx.merged) throw new Error("the Task ended merged: nothing to reconcile");
     const t = this.trusted(id); if (!t.ok) throw new Error("the Task's evidence ledger does not verify: nothing is reconciled");
@@ -1222,7 +1248,7 @@ export class Engine {
   reconcilable?: (r: Run) => boolean;
   /** Hide an ended run from the default lists, or bring it back. An event in the run and in Studio's log. */
   archive(id: string, on: boolean, by = "captain") {
-    const r = this.must(id); this.ended(r, on ? "archived" : "unarchived");
+    const r = this.must(id); this.ended(r, on ? "archived" : "unarchived"); this.writable(r, on ? "archived" : "unarchived");
     if (!!r.archived === on) return r;
     r.archived = on; this.append(r, on ? { type: "archived", archived: true, by } : { type: "unarchived", by }); r.updatedAt = now();
     const c = this.committed.get(r.id); if (c) c.archived = on;

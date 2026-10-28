@@ -10,7 +10,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, sleep, suite, until, Y } from "./rt-harness";
-import { appendLines, durableFs, parseLog } from "../src/runtime/durable-log";
+import { appendLines, durableFs, fullSync, parseLog } from "../src/runtime/durable-log";
 import { Ledger } from "../src/runtime/checks";
 const { ok, end } = suite("durable-log");
 
@@ -23,8 +23,13 @@ const { ok, end } = suite("durable-log");
   ok(part.rows.length === 1 && part.torn?.lines === 2 && part.torn.keep === Buffer.byteLength(`${a}\n`), "a commit of three events a crash kept two of is dropped whole", JSON.stringify(part));
   const whole = parseLog(`${JSON.stringify({ seq: 1, type: "x", tx: 2 })}\n${b}\n`);
   ok(whole.rows.length === 2 && !whole.torn && whole.rows.every((r) => !("tx" in r)), "a complete commit is kept, without its frame mark");
-  const bad = parseLog(`${a}\n{not json\n${b}\n`);
-  ok(!!bad.corrupt && bad.corrupt.line === 2 && bad.rows.length === 1, "a corrupt line before the tail stops the reader there and names its line", JSON.stringify(bad));
+  const framed = JSON.stringify({ seq: 1, type: "x", tx: 1 });
+  const bad = parseLog(`${framed}\n{not json\n${b}\n`);
+  ok(!!bad.corrupt && bad.corrupt.line === 2 && bad.rows.length === 1, "a corrupt line before the tail of a framed log stops the reader there and names its line", JSON.stringify(bad));
+  const legacy = parseLog(`${a}\n{not json\n${b}\n`);
+  ok(!legacy.corrupt && legacy.rows.length === 2 && legacy.skipped?.[0]?.line === 2, "the same line in a log written before the framing is skipped and reported, as the old reader did", JSON.stringify(legacy));
+  const first = parseLog(`{not json\n${b}\n`);
+  ok(!!first.corrupt && first.corrupt.line === 1, "a log whose first line does not parse is corrupt (nothing names the run)", JSON.stringify(first));
 }
 
 // ---------- a failed write leaves nothing behind ----------
@@ -93,7 +98,8 @@ const evs = E.events(done.id), atA = evs.findIndex((e) => e.type === "node" && e
 // ---------- a corrupt line in the middle stops that run only ----------
 {
   const bad = `R-${next++}`; mkdirSync(E.rdir(bad), { recursive: true });
-  const lines = E.events(done.id).slice(0, atA + 1).map((e) => JSON.stringify({ ...e, run: bad, ...(e.type === "run_created" ? { run: { ...e.run, id: bad } } : {}) }));
+  // written by the crash-safe writer (every commit framed with tx), then damaged in the middle
+  const lines = E.events(done.id).slice(0, atA + 1).map((e) => JSON.stringify({ ...e, run: bad, tx: 1, ...(e.type === "run_created" ? { run: { ...e.run, id: bad } } : {}) }));
   lines.splice(2, 0, '{"seq":2,"type":"ctx","set":{"k":'); // a damaged line with good lines after it
   const file = join(E.rdir(bad), "events.jsonl"); writeFileSync(file, lines.join("\n") + "\n");
   const good = copy(done.id, 0); // only its creation: it starts at the entry after the restart
@@ -110,8 +116,76 @@ const evs = E.events(done.id), atA = evs.findIndex((e) => e.type === "node" && e
   ok(cards.length === 1 && r!.failureCard === cards[0].id && cards[0].failure?.code === "internal.bug" && cards[0].options.some((o) => o.id === "new-task"), "… the captain gets its failure card (a new Task with the same request is offered)", JSON.stringify(cards.map((c) => [c.kind, c.failure?.code, c.options.map((o) => o.id)])));
   const E3 = fresh(); E3.load();
   ok(E3.cards.list({ run: bad, open: true }).filter((c) => c.kind === "failure").length === 1 && E3.get(bad)?.failureCard === cards[0].id, "a later restart keeps the same card, not a second one");
+  // the sealed run's snapshot is never rewritten: no reconcile, no archive, and the code domain does not offer a GitHub check
+  const snap = join(E3.rdir(bad), "run.json"), snapBefore = (() => { try { return readFileSync(snap, "utf8"); } catch { return null; } })();
+  let refusedArchive = false; try { E3.archive(bad, true); } catch { refusedArchive = true; }
+  let refusedReconcile = false; try { E3.reconcileMerge(bad, { pr: 1, base: "main", sha: "a".repeat(40) }); } catch { refusedReconcile = true; }
+  const snapAfter = (() => { try { return readFileSync(snap, "utf8"); } catch { return null; } })();
+  ok(refusedArchive && refusedReconcile && snapAfter === snapBefore && readFileSync(file, "utf8") === bytes, "a sealed run is not archived or reconciled: its run.json and log stay as they were");
+  // (that the code domain never offers a sealed run for a GitHub check: tests/reconciled-merge.ts)
+  // the captain parks it: later restarts take the answered card as the decision, no new card is raised
+  await E3.answerFailure(E3.cards.get(cards[0].id)!, { choice: "park", by: "captain" });
+  const E4 = fresh(); E4.load();
+  const all = E4.cards.list({ run: bad }).filter((c) => c.kind === "failure");
+  ok(all.length === 1 && all[0].status !== "open" && !!E4.get(bad)?.parked && E4.get(bad)?.failureCard === cards[0].id, "after Park, a restart raises no new card and the run stays parked", JSON.stringify(all.map((c) => [c.id, c.status])) + ` parked=${JSON.stringify(E4.get(bad)?.parked)}`);
   E3.remove(bad, bad);
   ok(!E3.get(bad) && !E3.logFault(bad), "the captain can still delete the run");
+}
+
+// ---------- logs written before the crash-safe format ----------
+// the old writer appended one event per call with no fsync: a crash left half a line, and the next start glued its next event
+// onto it, so a garbage line sits mid-file. The old reader skipped it; a log with no framed (tx) commit before such a line keeps that
+{
+  const old = `R-${next++}`; mkdirSync(E.rdir(old), { recursive: true });
+  const lines = E.events(done.id).map((e) => JSON.stringify({ ...e, run: old, ...(e.type === "run_created" ? { run: { ...e.run, id: old } } : {}) }));
+  lines.splice(3, 1, lines[3].slice(0, 30) + lines[4]); lines.splice(4, 1); // a half line glued onto the next event
+  const file = join(E.rdir(old), "events.jsonl"); writeFileSync(file, lines.join("\n") + "\n");
+  const E2 = fresh(); E2.load(); await sleep(200);
+  const r = E2.get(old);
+  ok(r?.status === "succeeded" && !E2.logFault(old) && !E2.cards.list({ run: old }).some((c) => c.kind === "failure"), "an old-format log with a garbage line mid-file loads as before (the line skipped), not sealed", `${r?.status} ${JSON.stringify(E2.logFault(old))}`);
+}
+// a crash-safe log corrupt in the middle, of a run whose run.json says it ended: loaded read-only as it ended, never flipped to failed
+{
+  const ended = `R-${next++}`; mkdirSync(E.rdir(ended), { recursive: true });
+  const lines = E.events(done.id).map((e) => JSON.stringify({ ...e, run: ended, tx: 1, ...(e.type === "run_created" ? { run: { ...e.run, id: ended } } : {}) }));
+  lines.splice(2, 0, "{garbage");
+  const file = join(E.rdir(ended), "events.jsonl"); writeFileSync(file, lines.join("\n") + "\n");
+  writeFileSync(join(E.rdir(ended), "run.json"), JSON.stringify({ ...E.get(done.id)!, id: ended }));
+  const bytes = readFileSync(file, "utf8"), snap = readFileSync(join(E.rdir(ended), "run.json"), "utf8");
+  const E2 = fresh(); E2.load(); await sleep(200);
+  const r = E2.get(ended);
+  ok(r?.status === "succeeded" && r.result === "done" && !!E2.logFault(ended) && !E2.cards.list({ run: ended }).some((c) => c.kind === "failure"), "an ended run with a corrupt log loads as it ended, read-only with a note, no failure card", `${r?.status} ${JSON.stringify(E2.logFault(ended))}`);
+  ok(readFileSync(file, "utf8") === bytes && readFileSync(join(E2.rdir(ended), "run.json"), "utf8") === snap, "… nothing of it is rewritten");
+}
+
+// ---------- macOS: fsync does not flush the drive's cache, F_FULLFSYNC does ----------
+if (process.platform === "darwin") {
+  const f = join(H.data, "full.jsonl"); appendLines(f, ['{"seq":1}']);
+  const fd = durableFs.openSync(f, "r");
+  try { ok(fullSync(fd) === "F_FULLFSYNC", "on macOS a durable write is flushed with F_FULLFSYNC"); } finally { durableFs.closeSync(fd); }
+}
+
+// ---------- a new run's folder is durable: the runs folder is fsynced when it is created ----------
+{
+  const paths = new Map<number, string>(), synced: string[] = [], real = { ...durableFs };
+  (durableFs as any).openSync = (p: string, flag: string) => { const fd = real.openSync(p, flag); paths.set(fd, String(p)); return fd; };
+  (durableFs as any).fsyncSync = (fd: number) => { synced.push(String(paths.get(fd))); return real.fsyncSync(fd); };
+  let id = ""; try { id = E.start({ workflow: "two", text: "dir" }).id; } finally { Object.assign(durableFs, real); }
+  await until(() => E.get(id)!.status === "succeeded", 8000);
+  ok(synced.includes(E.root) && synced.includes(E.rdir(id)), "starting a run fsyncs the runs folder (its new folder) and the run's folder (its new log)", JSON.stringify(synced));
+}
+
+// ---------- a failed write that cannot be cut back seals the run in memory; the seq moves only when a write lands ----------
+{
+  const r = E.get(done.id)!, file = join(E.rdir(done.id), "events.jsonl"), seq = r.events, real = { ...durableFs };
+  (durableFs as any).writeSync = (fd: number, buf: Buffer, off: number) => { real.writeSync(fd, buf, off, 5); throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" }); };
+  (durableFs as any).ftruncateSync = () => { throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" }); };
+  r.ctx.cut = 1; let threw = false;
+  try { E.commit(r, "fixture"); } catch { threw = true; } finally { Object.assign(durableFs, real); }
+  ok(threw && r.events === seq, "a failed write leaves the run's seq where it was", `${seq} → ${r.events}`);
+  ok(!!E.logFault(done.id), "… and a write that left half a commit it could not cut seals the run", JSON.stringify(E.logFault(done.id)));
+  const size = statSync(file).size; r.ctx.after = 1; E.commit(r, "fixture");
+  ok(statSync(file).size === size, "… nothing more is written behind it");
 }
 
 // ---------- the ledger ----------
