@@ -5,7 +5,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // turn's search results or a documentation host), and the fetcher's own guards (no DNS lookup before the checks, the
 // resolved address, redirects on the same host, no search configured). Illustrations take concepts from a fixed list.
 // No real network: the lookup, the proxy lease and fetch are stubs.        bun tests/review-web.ts
-import { DOCS_HOSTS, ILLUSTRATION_CONCEPTS, illustrationPrompt, leak, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebContext } from "../src/review-web";
+import { DOCS_HOSTS, docsHosts, ILLUSTRATION_CONCEPTS, illustrationPrompt, leak, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebContext } from "../src/review-web";
 let pass = 0, fail = 0;
 const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const ctx: WebContext = {
@@ -56,11 +56,18 @@ urlRefused("https://cHJpY2VXaXRo.example.org/", /does not look like a public sit
 urlRefused("https://pricewithtax.example.org/", /identifier or file of this change|does not look like a public site/, "an identifier as a host label");
 urlRefused("https://xn--80ak6aa92e.com/", /does not look like a public site/, "a punycode host");
 urlRefused("https://developer.mozilla.org/en-US/docs/price-with-tax", /identifier or file of this change/, "an identifier in a docs path");
-urlRefused("https://github.com/acme-org/ledger-kit/pull/3", /repository/);
+urlRefused("https://github.com/acme-org/ledger-kit/pull/3", /repository|user content/);
 urlRefused("https://example.com/page", /search results or a documentation host/, "a host that is neither a search result nor documentation");
 ok(urlRefusal("https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/round", ctx, allowed) === null, "allowed: a page on a documentation host");
 ok(urlRefusal("https://example.org/rounding-guide", ctx, allowed) === null && urlRefusal("https://blog.example.net/posts/half-up", ctx, allowed) === null && /search results/.test(String(urlRefusal("https://example.org/other-page", ctx, allowed))), "allowed: exactly the pages this turn's search returned, nothing else on their hosts");
 ok(leak("plain words", ctx) === null, "plain words carry nothing");
+// hosts of user content: their owners see who reads them
+for (const u of ["https://gist.github.com/someone/abc", "https://raw.githubusercontent.com/o/r/main/notes", "https://pastebin.com/raw-page", "https://webhook.site/landing"]) {
+  const both = { urls: new Set([...allowed.urls, u.replace(/\/$/, "")]), hosts: new Set([...allowed.hosts, new URL(u).hostname]) };
+  ok(/user content/.test(String(urlRefusal(u, ctx, both))), `refused even when allowed: a user-content host (${new URL(u).hostname})`, String(urlRefusal(u, ctx, both))); }
+ok(urlRefusal("https://docs.github.com/en/rest", ctx, allowed) === null, "GitHub's own documentation stays a documentation host");
+const pol = docsHosts(["gist.github.com", "docs.example.org"]), fine = docsHosts(["docs.example.org", "DOCS.EXAMPLE.NET."]);
+ok("refused" in pol && /review_room\.docs_hosts names gist\.github\.com/.test(pol.refused) && "hosts" in fine && fine.hosts.includes("docs.example.org") && fine.hosts.includes("docs.example.net"), "a docs_hosts policy naming a user-content host is refused with the reason; other hosts are added", JSON.stringify({ pol, fine }));
 
 // illustrations: concepts from the fixed list only
 ok("refused" in illustrationPrompt({ concepts: ["priceWithTax"] }) && "refused" in illustrationPrompt({ concepts: ["a sketch of src/billing/tax-table.ts"] }) && "refused" in illustrationPrompt({ concepts: [] }) && "refused" in illustrationPrompt({ concepts: ["number"], layout: "free text" }),

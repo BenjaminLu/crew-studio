@@ -21,7 +21,7 @@ import { git, gitArgv, gitEnv } from "../git";
 import { helper, normPath } from "../review-read";
 import { localUnrestricted } from "../local-execution";
 import { OperatingRules, jobInstructions } from "../operating-rules";
-import { DOCS_HOSTS, ILLUSTRATION_CONCEPTS, ILLUSTRATION_LAYOUTS, WEB_CALLS_PER_TURN, illustrationPrompt, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebBackend, type WebContext } from "../review-web";
+import { DOCS_HOSTS, docsHosts, ILLUSTRATION_CONCEPTS, ILLUSTRATION_LAYOUTS, WEB_CALLS_PER_TURN, illustrationPrompt, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebBackend, type WebContext } from "../review-web";
 import type { AgentTool } from "../agent";
 import { keys } from "../keys";
 import { openScopedProxy, type ProxyAuthority } from "../egress-client";
@@ -180,6 +180,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   };
   const citesOf = (list: unknown, ok: (k: string, v: string) => boolean): Cite[] => (Array.isArray(list) ? list : []).slice(0, 8).map((r) => { const t = String(r ?? ""), m = /^\[?(diff|ledger|commit|source|board):([^\]\s]{1,300})\]?$/.exec(t); return { ref: m ? `${m[1]}:${m[2]}` : t.slice(0, 100), ok: !!m && ok(m[1], m[2]) }; });
 
+  /** the documentation hosts a turn may read: the built-in list, plus policy review_room.docs_hosts unless it names a host
+   *  of user content (a pastebin, a gist, a repository host), whose owner sees who reads it: then the turn is refused */
+  const docsHostsOf = (run: any): { hosts: string[] } | { refused: string } => docsHosts(([] as any[]).concat(engine.policy(run, "review_room.docs_hosts", []) ?? []));
   const generator = (): Illustrator | null => o.illustrate ?? (engine.deps.generateImage ? ((p: string, auth: () => void, sig: AbortSignal, rules: any) => engine.deps.generateImage(p, auth, sig, undefined, rules)) as Illustrator : null);
   const pendingImages = new Set<Promise<void>>();
   /** Start one illustration in the background: a pending board item now, the PNG in the room's folder when it is ready. */
@@ -361,7 +364,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   async function runTurn(c: SCard, room: Room, turn: Turn, s: ReturnType<typeof subject>, provider: any, sk: ReturnType<typeof skills>, confirm: string,
     adm: { x: any; system: string; rules: any; admissionReceipt: unknown; receipt: (r: any) => unknown }) {
     // the pages this turn may read: its own search results, and the documentation hosts (built in, plus policy review_room.docs_hosts)
-    const ctx = await webContext(s), allowed = { urls: new Set<string>(), hosts: new Set([...DOCS_HOSTS, ...([] as any[]).concat(engine.policy(s.run, "review_room.docs_hosts", []) ?? []).map((h) => String(h).toLowerCase())]) };
+    const docs = docsHostsOf(s.run), ctx = await webContext(s), allowed = { urls: new Set<string>(), hosts: new Set("hosts" in docs ? docs.hosts : DOCS_HOSTS) };
     const check = (u: string) => urlRefusal(u, ctx, allowed);
     const web: WebBackend = typeof o.web === "function" ? o.web(check) : o.web ?? proxiedWeb(() => engine.deps.agents.egress, { check });
     const x = adm.x, system = adm.system, rules = adm.rules;
@@ -438,7 +441,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const off = engine.grants.open("sandbox-off", s.run.ctx.project ?? s.run.params?.project ?? null);
       if (off) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
       if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
-      const sk = skills();
+      const sk = skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
       // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it, the native
       // selection verifies the reviewer member's capability, and staffing issues its receipt for the tutor seat
       const run = s.run, x = engine.x(run, s.node, run.nodes[s.node.id]), pick = tutorPick(run, s.node); let provider: any;
@@ -447,7 +450,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
       const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
       const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })) };
-      const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, aux);
+      const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
       let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
       if (live.has(c.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
       const room: Room = load(c.run, c.id) ?? fresh(c, s);

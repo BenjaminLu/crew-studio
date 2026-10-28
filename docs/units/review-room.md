@@ -67,7 +67,8 @@ deciding its merge, without anything leaving Studio.
   selection on that node as the reviewer (capability verified, certified for that owner), and staffing issues a receipt
   for the tutor seat. Staffing knows the seat (`engine.deps.auxiliarySeats`: the seat, the role whose approved member it
   runs on, the sha256 of each pinned text) and checks the provider, model and effort against the approved reviewer and
-  that every pinned text is in the instructions; the receipt records the seat and the hash of its texts
+  that the instructions are exactly the pinned texts, in order, under the safety and operating rules (nothing added,
+  nothing left out, nothing reordered); the receipt records the seat and the hash of its texts
   (`staffing-instructions`, with `seat: review-room-tutor`). The round is one of the Task's jobs (`ref` is the Task): the
   same queue, cancel and provider admission as other roles, which recheck the receipt, the owner and the instructions'
   hash at launch. A seat staffing does not know, or instructions that differ from the pins, are refused before anything
@@ -123,7 +124,19 @@ the destination and the shape, decided before any DNS lookup:
   punycode, short human-looking labels), on its standard port, with no credentials and no query string; its path is at
   most eight short human-looking segments, not one letter at a time, with nothing still percent-encoded after one decode,
   and it passes the same name and identifier checks. A redirect stays on the host it started from.
+- A host of user content (`USER_CONTENT_HOSTS`: github.com and its user-content hosts, gists, pastebins, request
+  catchers, app hosting) is never read: its owner sees who reads it. GitHub's own documentation (docs.github.com) stays
+  a documentation host. A `review_room.docs_hosts` policy that names such a host refuses every turn with that reason
+  until it is removed.
 - A turn makes at most eight web calls (`WEB_CALLS_PER_TURN`).
+- Known false positives, by design (the filter errs on the side of refusing): a query is refused when, with separators
+  stripped, it contains a file stem of the tree of six or more letters ("tax table" for `tax-table.ts`), any repository,
+  owner, project, folder or denylisted name of five or more letters anywhere ("ledgers" when the repository is `ledger`),
+  an identifier of the change of eight or more letters spelled out in words, or a CamelCase word with two inner capitals
+  (`WebSocketServer`). The tutor then rephrases in general words.
+- Follow-up: a search endpoint that answers with an HTML page has its markup stripped before the tutor reads it, so the
+  result links (`href`) are lost and only addresses written out in the text can be read next; a JSON search endpoint
+  keeps them.
 - The fetch goes through Studio's egress proxy with a one-host credential; the resolved-address guard refuses loopback,
   private, link-local and metadata addresses.
 - Search needs `CREW_REVIEW_SEARCH_URL` (a URL with `{q}`) on a public host by name: a search server on this machine or

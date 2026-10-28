@@ -233,6 +233,11 @@ ok(Buffer.compare(room.audio(merge.id, say1.src.split("/").at(-1)), Buffer.alloc
 Object.assign(reviewer, saved);
 noVoice = null; try { await room.speech(merge.id, "t3"); } catch (e) { noVoice = e; }
 ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.length === 1, "when the seat's vendor changes after a scene, its narration is not sent anywhere", noVoice?.message);
+// ---------- a docs_hosts policy naming a host of user content refuses the turn ----------
+E.policies.setProject("sandbox", { install: false, review_room: { docs_hosts: ["raw.githubusercontent.com"] } } as any);
+refusal = null; try { await room.start(merge.id, { action: "how", confirm: (room.view(merge.id) as any).offer.hash }, "captain"); } catch (e) { refusal = e; }
+E.policies.setProject("sandbox", { install: false });
+ok(refusal?.code === "policy" && /raw\.githubusercontent\.com/.test(refusal.message) && /user content/.test(refusal.message), "a review_room.docs_hosts policy that names a host of user content refuses the turn, saying why", refusal?.message);
 // ---------- a changed skill text refuses the turn ----------
 const pin = ROOM_SKILLS[1] as any, real = pin.sha256; pin.sha256 = "0".repeat(64);
 refusal = null; try { await room.start(merge.id, { action: "why", confirm: offer.hash }, "captain"); } catch (e) { refusal = e; } pin.sha256 = real;

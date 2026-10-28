@@ -26,6 +26,15 @@ export type WebBackend = { search(q: string, signal?: AbortSignal): Promise<any>
 export const WEB_CALLS_PER_TURN = 8;
 /** documentation hosts a page may come from without having been a search result (policy review_room.docs_hosts adds more) */
 export const DOCS_HOSTS = ["developer.mozilla.org", "docs.python.org", "nodejs.org", "bun.sh", "www.typescriptlang.org", "react.dev", "www.rfc-editor.org", "datatracker.ietf.org", "en.wikipedia.org", "html.spec.whatwg.org", "tc39.es", "docs.github.com", "git-scm.com", "www.postgresql.org", "sqlite.org"];
+/** hosts whose pages are user content and whose owners can see who reads them: never a documentation host, never fetched */
+export const USER_CONTENT_HOSTS = ["github.com", "gist.github.com", "raw.githubusercontent.com", "gist.githubusercontent.com", "objects.githubusercontent.com", "gitlab.com", "bitbucket.org", "pastebin.com", "paste.ee", "hastebin.com", "dpaste.org", "dpaste.com", "ghostbin.co", "termbin.com", "0x0.st", "transfer.sh", "rentry.co", "justpaste.it", "controlc.com", "webhook.site", "requestbin.com", "pipedream.net", "ngrok.io", "ngrok-free.app", "glitch.me", "replit.com", "codepen.io", "jsfiddle.net", "pages.dev", "netlify.app", "vercel.app", "herokuapp.com"];
+const userContent = (host: string) => !DOCS_HOSTS.includes(host) && USER_CONTENT_HOSTS.some((u) => host === u || host.endsWith("." + u));
+/** the documentation hosts: the built-in list plus the policy's, or why the policy is refused (it names a user-content host) */
+export function docsHosts(extra: unknown[]): { hosts: string[] } | { refused: string } {
+  const add = extra.map((h) => String(h ?? "").trim().toLowerCase().replace(/\.$/, "")).filter(Boolean), bad = add.filter(userContent);
+  if (bad.length) return { refused: `Policy review_room.docs_hosts names ${bad.slice(0, 3).join(", ")}: a host of user content (its owner sees who reads it) is never a documentation host. Remove it from the policy. / review_room.docs_hosts 政策列了使用者內容主機（${bad.slice(0, 3).join("、")}），對方看得到誰在讀，不能當文件主機；請從政策移除。` };
+  return { hosts: [...new Set([...DOCS_HOSTS, ...add])] };
+}
 const PRIVATE_TLD = /\.(local|lan|internal|intranet|corp|home|localdomain|home\.arpa|ts\.net|private|test|invalid|onion)$/i;
 const comp = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 /** a word that reads like encoded data: hex, or letters and digits or cases switching back and forth */
@@ -100,6 +109,7 @@ export function urlRefusal(raw: unknown, c: WebContext, allowed?: { urls: Set<st
   if (isIP(host)) return "an address by number (public hosts by name only)";
   if (!host.includes(".") || isLoopbackName(host) || PRIVATE_TLD.test(host)) return "a private host";
   if (u.port && !["80", "443"].includes(u.port)) return "only the standard ports";
+  if (userContent(host)) return "a host of user content (its owner sees who reads it)";
   if (u.search || t.includes("?")) return "no query string (a page address only)";
   const labels = host.split("."); if (labels.length > 5 || !labels.every(LABEL_OK)) return "a host name that does not look like a public site";
   let path = u.pathname; try { path = decodeURIComponent(path); } catch { return "a malformed address"; }
