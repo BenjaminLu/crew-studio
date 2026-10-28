@@ -15,7 +15,7 @@
 // (fold), keeps finished nodes and restarts interrupted ones.
 //   run:  queued → running ⇄ waiting → succeeded | failed | cancelled, plus paused
 //   node: pending → running → passed | failed | error | skipped | superseded
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { allocate } from "../ids";
@@ -41,6 +41,7 @@ import { roundSkillTools, skillFooters, skillGate, skillProvenance, type SkillRo
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { composeSkeleton, type SkeletonFacts } from "./brief-skeleton";
 import { clampTitle, deriveTitle } from "../task-title";
+import { appendLines, readLog, repairTail, writeAtomic, type LogRead } from "./durable-log";
 import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
@@ -311,50 +312,82 @@ export class Engine {
 
   // ---------- persistence: events first, the snapshot is their fold ----------
   rdir(id: string) { return join(this.root, id.replace(/[^\w-]/g, "")); }
-  private append(r: Run, e: Record<string, any>) {
-    if (this.gone.has(r.id)) return { seq: r.events, ts: now(), run: r.id, ...e }; // a deleted run takes no more writes
-    const ev = { seq: ++r.events, ts: now(), run: r.id, ...e };
-    appendFileSync(join(this.rdir(r.id), "events.jsonl"), JSON.stringify(ev) + "\n");
+  /** A run that takes no more writes: deleted, or its event log is corrupt (sealed: nothing is appended behind a bad line). */
+  private closed(id: string) { return this.gone.has(id) || this.sealed.has(id); }
+  private event(r: Run, e: Record<string, any>) { return { seq: ++r.events, ts: now(), run: r.id, ...e }; }
+  /** Write events as one write (and, unless sync is false, one fsync): a commit's events are one durable step (src/runtime/durable-log.ts). */
+  private write(r: Run, evs: Record<string, any>[], sync = true) {
+    appendLines(join(this.rdir(r.id), "events.jsonl"), evs.map((ev, i) => JSON.stringify(i === 0 && evs.length > 1 ? { ...ev, tx: evs.length } : ev)), { sync });
+  }
+  private append(r: Run, e: Record<string, any>, sync = true) {
+    if (this.closed(r.id)) return { seq: r.events, ts: now(), run: r.id, ...e }; // a deleted or sealed run takes no more writes
+    const ev = this.event(r, e); this.write(r, [ev], sync);
     return ev;
   }
   /** Record every change since the last commit as events, then write the snapshot cache. */
   commit(r: Run, cause = "progress") {
-    if (this.gone.has(r.id)) return;
+    if (this.closed(r.id)) return;
     const c = this.committed.get(r.id)!;
     r.updatedAt = now();
-    const evs: any[] = [];
+    const evs: any[] = [], batch: any[] = []; const add = (e: Record<string, any>) => { const ev = this.event(r, e); batch.push(ev); return ev; };
     if (r.status !== c.status || RUN_FIELDS.some((k) => !same((r as any)[k], (c as any)[k]))) {
       const set: any = {}; for (const k of RUN_FIELDS) if (!same((r as any)[k], (c as any)[k])) set[k] = (r as any)[k];
-      evs.push(this.append(r, { type: "run", from: c.status, to: r.status, cause, set }));
+      evs.push(add({ type: "run", from: c.status, to: r.status, cause, set }));
     }
     for (const [id, n] of Object.entries(r.nodes)) {
       const o = c.nodes[id]; const set: any = {}; for (const k of NODE_FIELDS) if (!same((n as any)[k], (o as any)?.[k])) set[k] = clone((n as any)[k]);
-      if (n.state !== o?.state) evs.push(this.append(r, { type: "node", node: id, from: o?.state ?? null, to: n.state, cause: n.cause ?? cause, visit: n.visits, outcome: n.outcome, set }));
-      else if (Object.keys(set).length) this.append(r, { type: "ndata", node: id, set });
+      if (n.state !== o?.state) evs.push(add({ type: "node", node: id, from: o?.state ?? null, to: n.state, cause: n.cause ?? cause, visit: n.visits, outcome: n.outcome, set }));
+      else if (Object.keys(set).length) add({ type: "ndata", node: id, set });
     }
-    if (!same(r.queue, c.queue)) this.append(r, { type: "queue", queue: r.queue });
+    if (!same(r.queue, c.queue)) add({ type: "queue", queue: r.queue });
     const set: any = {}; const del: string[] = [];
     for (const [k, v] of Object.entries(r.ctx)) if (!same(v, c.ctx[k])) set[k] = clone(v);
     for (const k of Object.keys(c.ctx)) if (!(k in r.ctx)) del.push(k);
-    if (Object.keys(set).length || del.length) this.append(r, { type: "ctx", set, del });
-    for (const s of r.steps) { const o = c.steps.find((y) => y.seq === s.seq); if (!o || !same(o, s)) this.append(r, { type: "step", step: clone(s) }); }
+    if (Object.keys(set).length || del.length) add({ type: "ctx", set, del });
+    for (const s of r.steps) { const o = c.steps.find((y) => y.seq === s.seq); if (!o || !same(o, s)) add({ type: "step", step: clone(s) }); }
+    this.write(r, batch); // every change of this commit: one write, one fsync
     this.committed.set(r.id, clone(r));
     this.deps.agents.queue.wake();
-    const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
+    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r));
     for (const e of evs) { this.deps.log.emit({ type: `run_${e.type === "run" ? "status" : "node"}`, workflow: r.workflow, task: r.id, summary: e.type === "run" ? `${e.from} → ${e.to} (${e.cause})` : `${e.node}: ${e.from} → ${e.to} (${e.cause})`, data: { version: r.version, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause } });
       this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, event: { seq: e.seq, ts: e.ts, type: e.type, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause, outcome: e.outcome ?? null }, nodes: this.nodeStates(r) }); }
   }
   save(r: Run) { this.commit(r); }
   /** A display event (logs, check results, cards raised): in the run's events and Studio's log, ignored by the fold. */
   emit(r: Run, type: string, summary: string, data: Record<string, any> = {}) {
-    if (this.gone.has(r.id)) return;
-    const ev = this.append(r, { type, summary, ...data });
+    if (this.closed(r.id)) return;
+    // one write, no fsync of its own: the fold ignores it, and the next commit's fsync makes it durable with the file
+    const ev = this.append(r, { type, summary, ...data }, false);
     this.deps.log.emit({ type: `run_${type}`, workflow: r.workflow, task: r.id, summary, data: { version: r.version, ...data } });
     this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, event: ev, nodes: this.nodeStates(r) });
   }
-  events(id: string, after = 0): any[] {
-    const f = join(this.rdir(id), "events.jsonl"); if (!existsSync(f)) return [];
-    return readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((e) => e && e.seq > after);
+  /** The run's events as far as they can be read: a torn tail is left out, and nothing after a corrupt line is (see readLog). */
+  events(id: string, after = 0): any[] { return this.readEvents(id).rows.filter((e) => e.seq > after); }
+  private readEvents(id: string): LogRead { return readLog(join(this.rdir(id), "events.jsonl")); }
+  /** Runs whose event log has a corrupt line before its tail: they are not folded past it, not resumed, and take no writes. */
+  private sealed = new Map<string, { line: number; message: string }>();
+  /** Why a run's event log cannot be replayed (null when it can). */
+  logFault(id: string) { return this.sealed.get(id) ?? null; }
+  /**
+   * A run whose event log is corrupt before its last line: Studio does not guess the state after the bad line. The run
+   * loads as failed (internal) with what the good lines say, nothing of it resumes or runs, and the captain gets its
+   * failure card (Report it, Start a new Task with the same request, Park). Delete still removes it. Other runs load as usual.
+   */
+  private seal(id: string, log: LogRead) {
+    const line = log.corrupt?.line ?? 0;
+    const message = `the event log of ${id} is corrupt at line ${line} (data/runs/${id}/events.jsonl): Studio stopped this task instead of guessing its state; nothing of it resumes`;
+    let r: Run | null = null;
+    try { r = fold(log.rows); } catch {}
+    if (!r) try { r = JSON.parse(readFileSync(join(this.rdir(id), "run.json"), "utf8")); } catch {} // the creation itself is unreadable: the snapshot cache names the run
+    this.sealed.set(id, { line, message });
+    this.deps.log.emit({ type: "run_log_corrupt", workflow: r?.workflow ?? "", task: id, summary: message, data: { line } });
+    if (!r || r.id !== id) return; // nothing names the run: Studio's log says why it is not listed
+    r.status = "failed"; r.endedAt ??= now(); r.error = message;
+    this.runs.set(id, r); this.committed.set(id, clone(r));
+    const open = this.cards.list({ run: id, open: true }).find((c) => c.kind === "failure" && c.failure?.diagnostics?.eventLog === "corrupt");
+    const f = failure("internal.bug", message, { source: "engine", run: id, diagnostics: { eventLog: "corrupt", line: String(line), text: log.corrupt?.text ?? "" } });
+    if (open) { r.failure = open.failure ?? f; r.failureCard = open.id; return; } // raised at an earlier start: the same card stays
+    try { this.raiseFailure(r, null, f); } catch (e: any) { r.failure = f; this.deps.log.emit({ type: "run_log_corrupt", workflow: r.workflow, task: id, summary: `failure card could not be raised: ${String(e?.message ?? e).slice(0, 200)}`, data: {} }); }
   }
   /** What a timeline shows: transitions and display events, not the ctx/ndata payloads. */
   timeline(id: string, after = 0) { return this.events(id, after).filter((e) => !["ctx", "ndata", "queue", "step", "run_created"].includes(e.type))
@@ -368,8 +401,16 @@ export class Engine {
   load() {
     const backoffs: [Run, string][] = [];
     for (const d of readdirSync(this.root).filter((x) => /^R-\d+$/.test(x))) {
-      const r = fold(this.events(d)); if (!r) continue;
+      // one run's bad log never stops the others: a corrupt line seals that run, a torn tail is cut off and noted
+      let log: LogRead;
+      try { log = this.readEvents(d); } catch (e: any) { log = { rows: [], torn: null, unterminated: false, corrupt: { line: 0, text: String(e?.message ?? e).slice(0, 120) } }; }
+      if (log.corrupt) { try { this.seal(d, log); } catch {} continue; }
+      let repaired: string | null = null;
+      if (log.torn || log.unterminated) try { repairTail(join(this.rdir(d), "events.jsonl"), log); if (log.torn) repaired = `event log: dropped a torn tail of ${log.torn.lines} line${log.torn.lines > 1 ? "s" : ""} (${log.torn.bytes} bytes) that a crash left unfinished`; }
+        catch (e: any) { try { this.seal(d, { ...log, corrupt: { line: 0, text: `the torn tail could not be cut: ${String(e?.message ?? e).slice(0, 80)}` } }); } catch {} continue; }
+      const r = fold(log.rows); if (!r) continue;
       this.runs.set(r.id, r); this.committed.set(r.id, clone(r));
+      if (repaired) this.emit(r, "log", repaired, { torn: log.torn });
       if (TERMINAL.includes(r.status)) continue;
       let n = 0; const reroute: string[] = []; const reanswer: string[] = []; const reescalate: string[] = [];
       for (const [id, rn] of Object.entries(r.nodes)) {
@@ -1170,7 +1211,7 @@ export class Engine {
     r.reconciled = reconciled; r.updatedAt = now();
     this.append(r, { type: "reconciled", summary: `pull request #${d.pr} was merged on GitHub into ${d.base} as ${String(d.sha).slice(0, 8)}; the Task had ended ${d.original?.result ?? d.original?.status} (reconciled, recorded in the ledger as #${rec.seq})`, reconciled });
     const c = this.committed.get(r.id); if (c) c.reconciled = reconciled;
-    const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
+    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r));
     this.deps.log.emit({ type: "run_reconciled", workflow: r.workflow, task: r.id, summary: `${r.id}: pull request #${d.pr} merged on GitHub (reconciled)`, data: { pr: d.pr, sha: d.sha, ledger: rec.seq } });
     this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, reconciled, event: { type: "reconciled" }, nodes: this.nodeStates(r) });
     return reconciled;
@@ -1185,7 +1226,7 @@ export class Engine {
     if (!!r.archived === on) return r;
     r.archived = on; this.append(r, on ? { type: "archived", archived: true, by } : { type: "unarchived", by }); r.updatedAt = now();
     const c = this.committed.get(r.id); if (c) c.archived = on;
-    const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
+    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r));
     this.deps.log.emit({ type: on ? "run_archived" : "run_unarchived", workflow: r.workflow, task: r.id, summary: `${r.id} ${on ? "archived" : "unarchived"} by ${by}`, data: { by } });
     this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, archived: on, event: { type: "archived", archived: on }, nodes: this.nodeStates(r) });
     return r;
@@ -1199,7 +1240,7 @@ export class Engine {
     const r = this.must(id); this.ended(r, "deleted");
     if (String(confirm ?? "").trim() !== r.id) throw new Error(`type the run id (${r.id}) to delete it`);
     this.onDelete(r); // a domain clean-up that throws leaves the run intact (still listed, still writable) and the error goes back
-    this.gone.add(r.id);
+    this.gone.add(r.id); this.sealed.delete(r.id);
     const cards = this.cards.removeRun(r.id);
     rmSync(this.rdir(r.id), { recursive: true, force: true });
     this.runs.delete(r.id); this.committed.delete(r.id); this.aborts.delete(r.id);
