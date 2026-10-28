@@ -75,7 +75,7 @@ export class ClaudeNative{
    if(this.denial?.code==='quotaExhausted')return this.base(p,{auth:this.authDenied?'unverified':'verified',loginState:'logged-in',context,refusal:'exhausted',reason:'Claude is signed in but quota is exhausted; wait for reset, not login'});
    if(this.authDenied)return this.base(p,{loginState:'logged-in',context,reason:'This CLI stores a login, but runtime authentication was refused; selected-context authentication is unverified'});
    const cached=this.admitted.get(pairKey(p));if(cached&&isClaudeExecutionAdmission(cached,p))return cached;
-   return this.base(p,{auth:'verified',loginState:'logged-in',context,reason:'Signed in; remaining quota and actual selected model execution are unverified. Explicit Verify is required.'});
+   return this.base(p,{auth:'verified',loginState:'logged-in',context,reason:'Signed in; remaining quota and actual selected model execution are unverified. Studio verifies the exact model with one bounded request before its first round.'});
   }catch{return this.base(p,{reason:'Claude auth metadata is unavailable in this context'});}finally{if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;}if(clean)rmSync(root,{recursive:true,force:true});}
  }
  private accountEnv():Record<string,string>{return{PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(process.env.CLAUDE_CODE_OAUTH_TOKEN?{CLAUDE_CODE_OAUTH_TOKEN:process.env.CLAUDE_CODE_OAUTH_TOKEN}:{}),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};}
@@ -158,4 +158,11 @@ export class ClaudeNative{
 }
 export const nativeClaude=new ClaudeNative();
 export const probeClaudeNative=(p:ClaudePair,signal?:AbortSignal)=>nativeClaude.status(p,signal);
+/** Before a round: a signed-in Claude with no execution receipt for this exact pair is verified by Studio itself (one
+ *  bounded request), so the captain never has to press Verify first. Nothing else is verified: not a Claude that is not
+ *  signed in, not one whose quota is exhausted or that is unavailable, not one already admitted, not an unsupported pair. */
+export async function admitSignedInClaude(cap:ProviderCapability,p:ClaudePair,d:{verify:(p:ClaudePair,o:{confirm:boolean;signal?:AbortSignal})=>Promise<ProviderCapability>;admitted:(cap:ProviderCapability,p:ClaudePair)=>boolean}={verify:(p,o)=>nativeClaude.verify(p,o),admitted:isClaudeExecutionAdmission},signal?:AbortSignal):Promise<ProviderCapability>{
+ if(cap.provider!=='claude'||!cap.available||cap.auth!=='verified'||cap.quota!=='unknown'||!validClaudePair(p)||d.admitted(cap,p))return cap;
+ return d.verify(p,{confirm:true,signal});
+}
 export function makeNativeClaudeProvider(cap:ProviderCapability,p:ClaudePair){const entry=receipts.get(cap);if(!entry||!isClaudeExecutionAdmission(cap,p))throw new Error('Claude native execution receipt is unavailable');return claudeProvider(p.model,entry.binary,{...p,live:()=>isClaudeExecutionAdmission(cap,p),invalidate:(code,event)=>entry.owner.invalidate(code,event),login:()=>({...entry.login,env:{...entry.login.env}})});}
