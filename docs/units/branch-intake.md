@@ -71,7 +71,8 @@ work.
 
 Only the Mac's page, as for every terminal write (cookie, same origin); a phone sees the Task it was sent as but cannot
 send. A running terminal, one whose checkout has nothing beyond base (commit on a branch first: work committed straight
-onto the base branch has nothing beyond it), and a second send are refused. A finished terminal stays sendable after
+onto the base branch has nothing beyond it), and a second send are refused, also while the first is still in flight
+(`pending`: one Task per terminal). A finished terminal stays sendable after
 Studio restarts: it is listed again from its record (docs/units/web-terminal.md), with its git end and whether it was
 sent. One that Studio stopped while it ran is listed as `studio-stopped`, with the git end recorded at shutdown; the
 `moved` guard compares that head with the checkout as for any terminal, and one with no recorded end (Studio was killed)

@@ -69,5 +69,15 @@ try {
   ok(/remote mergeability remains unverified/.test(String(stop?.data?.cause ?? "")), "the ledger records the cause", JSON.stringify(stop?.data));
   ok(E.events(b.id).some((e: any) => e.type === "log" && /remote mergeability remains unverified/.test(e.summary ?? "")), "the run's log names the cause");
   E.cancel(b.id); await until(() => !E.busy(b.id), 8000);
+
+  // the ledger write of the stop's cause fails: the stop card is still raised (the node never fails without it)
+  const record = E.record.bind(E);
+  E.record = ((x: any, kind: string, e: any) => { if (kind === "remote-readiness-stop") throw new Error("ledger write failed"); return record(x, kind, e); }) as any;
+  const f = E.start({ workflow: "pending" });
+  await until(() => (!!openCard(f) && !E.busy(f.id)) || ["succeeded", "failed"].includes(f.status), 15000);
+  E.record = record;
+  const fc = openCard(f);
+  ok(f.status !== "failed" && fc?.node === "remote-ready" && /remote mergeability remains unverified/.test(fc?.body ?? ""), "a failed ledger write of the cause still raises the stop card", `${f.status} ${fc?.body ?? ""}`);
+  E.cancel(f.id); await until(() => !E.busy(f.id), 8000);
 } catch (e: any) { ok(false, "unexpected error", e.stack); } finally { H.stop(); sim.stop(); rmSync(temp, { recursive: true, force: true }); }
 end();

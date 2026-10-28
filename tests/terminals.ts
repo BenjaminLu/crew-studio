@@ -11,7 +11,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { freePort, waitUp } from "./boot.mjs";
-import { LinkRedactor, Ring, SecretWindow, Terminals, findLink, terminalEnv, REMOTE_REMOVED } from "../src/terminals";
+import { LinkRedactor, Ring, SecretWindow, TermError, Terminals, findLink, terminalEnv, REMOTE_REMOVED } from "../src/terminals";
 import { sessionCookieName } from "../src/csrf";
 import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs";
 
@@ -72,9 +72,12 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   const d = checkedTempDir("crew-terminals-restart-"), pr = join(d, "p"); mkdirSync(pr); assertTempRepo(pr);
   const G = (...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=Agent", "-c", "user.email=agent@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: pr, stdout: "pipe", stderr: "pipe" }); if (!r.success) throw new Error(r.stderr.toString()); return r.stdout.toString().trim(); };
   G("init", "-qb", "main"); writeFileSync(join(pr, "a.txt"), "a\n"); G("add", "a.txt"); G("commit", "-qm", "base"); G("checkout", "-qb", "agent/work");
-  const reviews: any[] = [];
+  const reviews: any[] = []; let reviewDelay = 0;
   const mk = () => new Terminals({ dataDir: d, projects: () => [{ id: "p", name: "P", path: pr, base: "main" }], shell: "/bin/sh", env: { PATH: "/usr/bin:/bin" },
-    review: async (r) => { reviews.push(r); return { run: `R-${reviews.length}` }; } });
+    review: async (r) => { reviews.push(r); const n = reviews.length; if (reviewDelay) await sleep(reviewDelay); return { run: `R-${n}` }; } });
+  const replayOf = async (svc: Terminals, id: string) => { const rd = svc.attach(id, false).body!.getReader(); let s = "";
+    while (!/event: exit/.test(s)) { const { value, done } = await rd.read(); if (done) break; s += new TextDecoder().decode(value); } rd.cancel().catch(() => {});
+    return Buffer.from(JSON.parse(/event: replay\ndata: (.*)\n/.exec(s)?.[1] ?? "{}").b64 ?? "", "base64").toString(); };
   const a = mk();
   const v = await a.create({ project: "p", command: "git -c user.name=Agent -c user.email=agent@example.invalid -c commit.gpgsign=false commit -q --allow-empty -m work && echo WORK-DONE" });
   await until(() => a.get(v.id)?.running === false, 8000);
@@ -88,19 +91,32 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   ok(!!ended && ended.restored === true && ended.state === "done" && ended.exitCode === 0 && ended.git.end?.branch === "agent/work" && ended.git.end?.commits === 1 && ended.review === null,
     "a terminal that ended cleanly is listed again, marked as from before the restart, with its git end", JSON.stringify(ended));
   ok(!!stopped && stopped.restored === true && stopped.stopped === "studio-stopped" && stopped.state === "exited" && !!stopped.endedAt, "a terminal that was running at shutdown is listed as studio-stopped", JSON.stringify(stopped));
-  const rd = b.attach(v.id, false).body!.getReader(); let replay = "";
-  while (!/event: exit/.test(replay)) { const { value, done } = await rd.read(); if (done) break; replay += new TextDecoder().decode(value); } rd.cancel().catch(() => {});
-  ok(Buffer.from(JSON.parse(/event: replay\ndata: (.*)\n/.exec(replay)?.[1] ?? "{}").b64 ?? "", "base64").toString().includes("WORK-DONE"), "its replay is its transcript", replay.slice(0, 300));
+  const replay = await replayOf(b, v.id);
+  ok(replay.includes("WORK-DONE"), "its replay is its transcript", replay.slice(0, 300));
   let restartRefused = ""; try { await b.restart(v.id); } catch (e: any) { restartRefused = e.code; }
   ok(restartRefused === "restored", "a terminal from before the restart is not restarted in place (start a new one)", restartRefused);
   const sent = await b.sendForReview(v.id);
   ok(sent.review?.run === "R-1" && reviews[0]?.commit === ended?.git.end?.head && reviews[0]?.branch === "agent/work", "Send for review works on it after the restart", JSON.stringify(reviews));
   const c = mk(); ok(c.list().find((t) => t.id === v.id)?.review?.run === "R-1", "its review state survives the next restart too");
+  ok((await replayOf(c, v.id)).includes("WORK-DONE") && JSON.parse(readFileSync(join(d, "terminals", `${v.id}.json`), "utf8")).transcript === `${v.id}.log`,
+    "after Send for review and a second restart its record still names its transcript, and the replay is still there");
   let again = ""; try { await c.sendForReview(v.id); } catch (e: any) { again = e.code; } ok(again === "sent", "and it is not sent twice", again);
   // the checkout moves after the restart: the studio-stopped terminal's guard refuses it
   G("commit", "-q", "--allow-empty", "-m", "someone else");
   let moved = ""; try { await c.sendForReview(run.id); } catch (e: any) { moved = e.code; }
   ok(moved === "moved" && reviews.length === 1, "a studio-stopped terminal whose checkout moved since is refused (N2)", moved);
+  // two Send for review at once on one terminal: one Task, the second is refused while the first is in flight
+  const w = await c.create({ project: "p", command: "echo again" }); await until(() => c.get(w.id)?.running === false, 5000);
+  reviewDelay = 300;
+  const both = await Promise.allSettled([c.sendForReview(w.id), c.sendForReview(w.id)]); reviewDelay = 0;
+  ok(reviews.length === 2 && both.filter((x) => x.status === "fulfilled").length === 1 && both.some((x) => x.status === "rejected" && (x.reason as any)?.code === "pending"),
+    "two concurrent sends start one review; the other is refused as pending", JSON.stringify(both.map((x) => x.status === "rejected" ? (x.reason as any)?.code : "ok")));
+  // a malformed record (a head that is not a commit id) is listed without a git end, and Send for review refuses it cleanly
+  writeFileSync(join(d, "terminals", "T-malformed-0001.json"), JSON.stringify({ id: "T-malformed-0001", project: { id: "p", name: "P", path: pr, base: "main" }, kind: "custom", label: "bad", command: "x",
+    startedAt: "2026-10-20T10:00:00.000Z", endedAt: "2026-10-20T10:01:00.000Z", exitCode: 0, git: { start: { head: 7, branch: "x" }, end: { head: { not: "a sha" }, branch: "agent/work", commits: 1 } }, review: null, transcript: null }));
+  const m = mk(), bad = m.list().find((t) => t.id === "T-malformed-0001");
+  let badCode = ""; try { await m.sendForReview("T-malformed-0001"); } catch (e: any) { badCode = e instanceof TermError ? e.code : `untyped: ${e?.message}`; }
+  ok(!!bad && bad.git.end === null && bad.git.start === null && badCode === "noGit", "a malformed record's git facts are dropped, and Send for review refuses it with a typed error", `${JSON.stringify(bad?.git)} ${badCode}`);
   rmSync(d, { recursive: true, force: true });
 }
 

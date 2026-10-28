@@ -180,7 +180,7 @@ function patchPage() {
 // goes to code-firstmate's "From existing branch": spec card, scope, checks at base and head, review, fixes, merge card
 function reviewRow(t) {
   const g = t.git?.end || t.git?.start; if (!g && !t.review) return null;
-  const where = g ? h("span", { class: "faint" }, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : g.head.slice(0, 10)) : null;
+  const where = g ? h("span", { class: "faint" }, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : String(g.head ?? "").slice(0, 10)) : null;
   if (t.review) return h("div", { class: "wt-review", "data-term-review": t.id }, where, h("a", { class: "btn sm", "data-term-review-run": t.review.run, href: `#/run/${encodeURIComponent(t.review.run)}` }, T(`In review: ${t.review.run}`, `審查中：${t.review.run}`)));
   if (!TM.canWrite) return where ? h("div", { class: "wt-review" }, where) : null;
   const why = t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審")

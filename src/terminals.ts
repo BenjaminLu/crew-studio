@@ -155,7 +155,9 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
   decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
-  line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[] };
+  line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[];
+  /** the transcript's file name in the record: kept for a terminal listed after a restart (it writes no more to it) */
+  transcriptName: string | null; reviewing?: boolean };
 export type CreateSpec = { project: string; preset?: string | null; command?: string | null; args?: string[]; remoteControl?: boolean; cols?: number; rows?: number };
 export class TermError extends Error { constructor(readonly status: number, message: string, readonly code: string) { super(message); } }
 
@@ -256,7 +258,7 @@ export class Terminals {
     const t: Term = { id, project, preset, kind, label, command: shown, by, startedAt: new Date().toISOString(), endedAt: null, exitCode: null, signal: null,
       state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false, restored: false, stopped: null, git: { start: gitFacts(project.path, project.base), end: null }, review: null, line: "", lineAt: null, inputs: [],
       proc: null, ring: new Ring(this.cap), tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: false, subs: new Set(),
-      decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null, seen: new Set(), linkSeen: false };
+      decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null, seen: new Set(), linkSeen: false, transcriptName: null };
     if (t.tFile) writeFileSync(t.tFile, "", { mode: 0o600 });
     try {
       t.proc = Bun.spawn(argv, { cwd: project.path, env: terminalEnv(this.env(), this.o.secrets?.() ?? []),
@@ -339,7 +341,7 @@ export class Terminals {
   private saveMeta(t: Term, extra: Record<string, unknown> = {}) {
     const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated, git, review } = t;
     try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, git, review,
-      transcript: t.tFile ? `${id}.log` : null, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
+      transcript: t.tFile ? `${id}.log` : t.transcriptName, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
       sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}), ...extra }, null, 1), { mode: 0o600 }); } catch {}
   }
   /** The terminals' own records (data/terminals/<id>.json), not their input files. */
@@ -373,7 +375,8 @@ export class Terminals {
       const t: Term = { id: m.id, project, preset: m.preset ?? null, kind: m.kind ?? "custom", label: String(m.label ?? "terminal"), command: String(m.command ?? ""), by: String(m.by ?? "desktop"),
         startedAt: String(m.startedAt ?? m.endedAt), endedAt: m.endedAt, exitCode: typeof m.exitCode === "number" ? m.exitCode : null, signal: m.signal ?? null,
         state: m.exitCode === 0 && !stopped ? "done" : "exited", reason: "exit", ask: null, cols: Number(m.cols) || 100, rows: Number(m.rows) || 30, running: false, remote,
-        transcriptTruncated: !!m.transcriptTruncated, git: { start: m.git?.start ?? null, end: m.git?.end ?? null }, review: m.review ?? null, restored: true, stopped, line: "", lineAt: null, inputs,
+        transcriptTruncated: !!m.transcriptTruncated, git: { start: facts(m.git?.start), end: facts(m.git?.end) }, review: m.review ?? null, restored: true, stopped, line: "", lineAt: null, inputs,
+        transcriptName: m.transcript === `${m.id}.log` ? m.transcript : null,
         proc: null, ring, tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: !!text, subs: new Set(), decoder: new TextDecoder(), redactor: new SecretWindow(false),
         tFile: null, tBytes: Number(m.transcriptBytes) || 0, timer: null, spec: null, remoteUrl: null, seen: new Set(),
         // the transcript is already redacted; a phone still gets no output from one that ever showed a Remote Control link
@@ -419,6 +422,8 @@ export class Terminals {
     if (!this.o.review) throw new TermError(501, "Send for review is not available here", "noReview");
     if (t.running) throw new TermError(409, "the agent is still running: send it for review once it has finished", "running");
     if (t.review) throw new TermError(409, `already sent for review as ${t.review.run}`, "sent");
+    // one send at a time: t.review is set only once the Task exists (after the staffing step), so a second click waits out
+    if (t.reviewing) throw new TermError(409, "Send for review is already in progress for this terminal", "pending");
     // the head this terminal ended on: the checkout may have moved since (another terminal, the captain's own Terminal), and
     // Send for review on this terminal must not hand that other work over under this terminal's intent
     const end = t.git.end, live = gitFacts(t.project.path, t.project.base);
@@ -426,7 +431,8 @@ export class Terminals {
     if (!end || !live) throw new TermError(409, "the project's folder is not a git checkout with a commit", "noGit");
     if (live.head !== end.head) throw new TermError(409, `the project's checkout moved since this terminal ended (it ended on ${end.head.slice(0, 10)}, it is now on ${live.head.slice(0, 10)}): start a new terminal for the work now there`, "moved");
     if (!end.commits) throw new TermError(409, `no commits beyond ${t.project.base ?? "the base"}: commit the work on a branch first`, "noCommits");
-    const { run } = await this.o.review({ terminal: t.id, project: t.project.id, commit: end.head, branch: end.branch, label: t.label, command: t.command, by });
+    t.reviewing = true; let run: string;
+    try { ({ run } = await this.o.review({ terminal: t.id, project: t.project.id, commit: end.head, branch: end.branch, label: t.label, command: t.command, by })); } finally { t.reviewing = false; }
     t.review = { run, at: new Date().toISOString() }; this.saveMeta(t); this.changed();
     this.o.log?.("terminal.review", `terminal ${t.id} (${t.label}) sent for review as ${run}`, { id: t.id, project: t.project.id, run, commit: end.head, branch: end.branch });
     return this.view(t, true);
@@ -477,6 +483,9 @@ export class Terminals {
 }
 const enc = new TextEncoder();
 const RECORD = /^T-[\w-]{1,60}\.json$/;
+/** A record's git facts, read back: a commit id as head, else none (a hand-edited or damaged record never reaches git or the page). */
+const facts = (g: any): TermGit | null => g && typeof g.head === "string" && /^[0-9a-f]{40,64}$/.test(g.head)
+  ? { head: g.head, branch: typeof g.branch === "string" ? g.branch : null, commits: Number.isInteger(g.commits) && g.commits >= 0 ? g.commits : null, base: typeof g.base === "string" ? g.base : null } : null;
 
 /**
  * The routes. `who` is the server's (src/remote/pairing.ts); `cookie` says the request carries the desktop page's own session

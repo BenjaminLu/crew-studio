@@ -895,8 +895,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (!phase.live()) return { outcome: "cancel" };
       // the cause is on the card, in the log and on the ledger: the captain sees why it stopped before checking again
       const reason = withCause("remote readiness/update was not proved; no approval or merge allowed", e), cause = /\(cause: ([^]*)\)$/.exec(reason)?.[1] ?? null;
-      x.log(`remote readiness stopped: ${reason}`);
-      engine.record(x, "remote-readiness-stop", { head: x.ctx.pr?.head ?? x.ctx.head ?? null, data: { version: 1, reason, cause } } as any);
+      // the log and the ledger are best effort: whatever they do, the stop card is raised
+      try { x.log(`remote readiness stopped: ${reason}`); } catch {}
+      try { engine.record(x, "remote-readiness-stop", { head: x.ctx.pr?.head ?? x.ctx.head ?? null, data: { version: 1, reason, cause } } as any); } catch {}
       await stopCard(x, reason); return { wait: true };
     } finally { release?.(); }
   };
