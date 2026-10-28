@@ -1,0 +1,18 @@
+# The review room's host Task (internal): made only by the review room, on the captain's first confirmed paid turn in the room
+# of a pull request no Studio Task made (docs/units/review-room.md, "Subjects"; driven end to end by tests/review-room-anywhere.ts).
+schema: 2
+workflow: review-room-host
+pin: { version: 1, sha256: "a29c66b0fd606902a75dd95bbdb71b229a8e08966d6d69517150e9f9e00a63a1" }   # bun scripts/acceptance/pin.ts review-room-host
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: internal
+    covers: "the board's workflow list does not offer it and the start route refuses it: only the review room makes a host Task"
+    how: internal
+    board_refusal: { status: 409, error: "internal or retired" }

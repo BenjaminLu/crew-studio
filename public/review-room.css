@@ -113,3 +113,14 @@
 .rr-zoom .btn { justify-self: end; }
 @media (max-width: 560px) { .rr-quick .btn, .rr-step-bar .btn, .rr-top .btn, .rr-confirm .btn { min-height: 44px; } .rr-msg.captain { margin-left: 0; } }
 .rr-ph { display: grid; place-items: center; min-height: 220px; padding: 16px; border: 2px dashed var(--border-strong); border-radius: 10px; color: var(--text-2); text-align: center; }
+/* a branch's or a pull request's room: what it is about (the pull request on GitHub, new commits since the captain last looked),
+   the URL box, and someone else's words (a reviewer, a commit message) quoted as plain text */
+.rr-subject { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 0 0 12px; overflow-wrap: anywhere; }
+.rr-subject p { margin: 0; flex: 1 1 320px; min-width: 0; }
+.rr-moved { padding: 6px 10px; border-radius: 8px; background: rgba(201,134,26,.12); }
+.rr-quote { margin: 6px 0 0; padding: 4px 10px; border-left: 3px solid var(--border); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.rr-prbox { display: grid; gap: 8px; max-width: 720px; }
+.rr-prlabel { display: grid; gap: 4px; }
+.rr-prbox .input { width: 100%; min-width: 0; }
+.rr-prbox .btn { justify-self: start; }
+@media (max-width: 560px) { .rr-prbox .btn, .rr-subject .btn { min-height: 44px; } }

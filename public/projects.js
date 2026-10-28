@@ -339,7 +339,9 @@ function viewPage(id) {
   // a project connected to GitHub: its issues, triaged in batches, and the work packages (public/issues.js)
   const issues = !studio && gh?.connected && gh.verified && window.crewProjectIssues ? window.crewProjectIssues(p.id, gh.repository) : null;
   const right = studio ? null : h("div", { class: "pj-col" }, sensitiveSection(d, p.id), outputsSection(d), worktreesSection(d));
-  return h("div", { class: "page", "data-project-page": id }, header, notice, chips, attn, health, issues, h("div", { class: "pj-cols" }, left, right));
+  // paste a pull request's URL: its review room (public/review-room.js; Studio reads it on GitHub, GET only)
+  const prRoom = !studio && gh?.connected && gh.verified && window.crewReviewRoomPrBox ? window.crewReviewRoomPrBox(p.id, gh.repository) : null;
+  return h("div", { class: "page", "data-project-page": id }, header, notice, chips, attn, health, issues, prRoom, h("div", { class: "pj-cols" }, left, right));
 }
 
 routes.projects = viewIndex;

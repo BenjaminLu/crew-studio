@@ -171,7 +171,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   reviewSpeak?: import("./review-room").Speaker }) {
   installCodeQueue(engine);
   // the merge card's review room: a view on the card (its summary), never its answer or its readiness
-  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, speak: o.reviewSpeak });
+  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, speak: o.reviewSpeak, projects: o.projects,
+    // a pull request is read (GET) with its connected project's own grant, verified like any GitHub use (an injected adapter in tests)
+    github: (p: any) => { if (o.adapter instanceof GitHubPrAdapter) return o.adapter.grant.repository === p.github?.repository ? o.adapter : null;
+      if (!p.github) return null; o.projects.assertExecutable({ project: p.id, base: p.base ?? p.github.base }); const a = projectPrAdapter(p, o.dataDir, o.poller); return a instanceof GitHubPrAdapter ? a : null; } });
   const priorCardView = engine.cards.view;
   const evidenceFor = (card: any) => {
     const run = engine.get(card.run), detail = card.detail;

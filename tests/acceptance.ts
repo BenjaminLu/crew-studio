@@ -95,7 +95,7 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     if (!r.board_refusal) failures.push(`a held run needs board_refusal`);
     return { failures };
   }
-  if (r.how === "retired") {
+  if (r.how === "retired" || r.how === "internal") { // internal: started only by Studio itself (the review room makes its host Task)
     const wf = (await s.api("/api/wf")).body.workflows ?? []; if (wf.some((w: any) => w.id === r.workflow)) failures.push(`the board's workflow list offers retired ${r.workflow}`);
     return { failures };
   }

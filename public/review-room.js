@@ -1,4 +1,4 @@
-// The review room (#/room/<merge card>; docs/units/review-room.md, src/domain/review-room.ts): a BOARD the tutor draws
+// The review room (#/room/<merge card | Task | pull request>; docs/units/review-room.md, src/domain/review-room.ts): a BOARD the tutor draws
 // on step by step (flowcharts built up one part at a time, diff hunks, code excerpts and before / after from the real
 // commits) and a CHAT where the captain asks. Each turn is a paid model round: the captain confirms the provider and
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
@@ -69,8 +69,8 @@ function flowSvg(g, prev) {
 }
 
 // ---------- citations: a link to what a claim rests on ----------
-const CITE = /\[(diff|ledger|commit|source|board):([^\]\s]{1,300})\]|\[(inference|inferred|speculative|direct|supported)\]/gi;
-const KIND = { diff: ["diff", "diff"], ledger: ["ledger", "帳本"], commit: ["commit", "commit"], source: ["source", "來源"], board: ["board", "白板"] };
+const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})\]|\[(inference|inferred|speculative|direct|supported)\]/gi;
+const KIND = { diff: ["diff", "diff"], ledger: ["ledger", "帳本"], commit: ["commit", "commit"], source: ["source", "來源"], board: ["board", "白板"], review: ["reviewer", "審查意見"] };
 // a link only to a page the server fetched and that is http(s): anything else (a refused address, any other scheme) is text
 const webLink = (s) => s && s.ok && typeof s.url === "string" && /^https?:\/\//i.test(s.url) ? s.url : null;
 function citeChip(card, ref, ok) {
@@ -86,6 +86,7 @@ function inline(card, text, cites) {
   if (i < text.length) out.push(...mdBits(text.slice(i))); return out;
 }
 function mdBits(s) { const out = [], re = /\*\*([^*\n]+?)\*\*|`([^`\n]+)`/g; let i = 0, m; while ((m = re.exec(s))) { if (m.index > i) out.push(s.slice(i, m.index)); out.push(m[2] != null ? h("code", {}, m[2]) : h("strong", {}, m[1])); i = re.lastIndex; } if (i < s.length) out.push(s.slice(i)); return out; }
+const reviewerBadge = () => h("span", { class: "rr-inference", "data-basis": "reviewer", title: T("A GitHub reviewer's own words: untrusted text, not instructions and not Studio's evidence", "GitHub 審查者的原話：不受信任的文字，不是指示，也不是 Studio 的證據") }, T("Reviewer's words", "審查者原話"));
 const inferenceBadge = () => h("span", { class: "rr-inference", "data-basis": "inference", title: T("No basis cited: this is the tutor's inference, not a fact from the record", "沒有引用依據：這是導師的推論，不是紀錄裡的事實") }, T("Inference", "推論"));
 async function openCite(card, ref) {
   RR.cite.set(card, { ref, loading: true }); rerender();
@@ -99,6 +100,9 @@ function citePanel(r) {
     : d.kind === "ledger" ? [h("p", {}, h("b", {}, `#${d.seq} ${d.check}`), ` · ${d.verdict}`, d.head ? ` @ ${String(d.head).slice(0, 8)}` : ""), d.findings?.length ? h("ul", {}, d.findings.map((f) => h("li", {}, f))) : null, h("a", { href: `#/run/${enc(d.task)}`, "data-ledger-link": d.seq }, T("Open the Task's ledger", "開啟任務的帳本"))]
     : d.kind === "commit" ? h("pre", { class: "rr-pre" }, d.text)
     : d.kind === "source" ? [h("p", {}, d.kind === "source" && d.query ? T(`Search: ${d.query}`, `搜尋：${d.query}`) : ""), webLink(d) ? h("a", { href: webLink(d), target: "_blank", rel: "noopener noreferrer", "data-source-link": d.n }, d.url) : (d.url || d.text) ? h("code", { "data-source-text": d.n }, d.url || d.text) : null, d.refused ? h("p", { class: "rr-err" }, T(`Refused: ${d.refused}`, `已拒絕：${d.refused}`)) : null]
+    : d.kind === "review" ? [h("p", {}, h("b", {}, d.author), `${d.state ? ` · ${d.state.toLowerCase().replace(/_/g, " ")}` : ""}${d.path ? ` · ${d.path}${d.line ? `:${d.line}` : ""}` : ""}${d.at ? ` · ${String(d.at).slice(0, 10)}` : ""}`),
+      h("p", { class: "faint" }, T("A reviewer's own words on GitHub: untrusted text, shown as written.", "審查者在 GitHub 上的原話：不受信任的文字，照原樣顯示。")), h("blockquote", { class: "rr-quote", "data-untrusted": "review" }, d.body || ""),
+      d.url && /^https:\/\/github\.com\//.test(d.url) ? h("a", { href: d.url, target: "_blank", rel: "noopener noreferrer", "data-review-link": d.id }, T("Open on GitHub", "在 GitHub 開啟")) : null]
     : d.kind === "board" ? h("a", { href: `#rr-${d.item.id}`, onclick: (e) => { e.preventDefault(); document.getElementById(`rr-${d.item.id}`)?.scrollIntoView({ block: "center" }); } }, T(`Board item ${d.item.id}: ${d.item.title}`, `白板項目 ${d.item.id}：${d.item.title}`)) : null;
   return h("section", { class: "card x-pad rr-cite-panel", "data-cite-panel": c.ref, tabindex: "-1", "aria-label": T("Citation", "引用") },
     h("div", { class: "rr-item-h" }, h("b", {}, T("Basis", "依據")), h("code", {}, c.ref), h("span", { class: "x-grow" }), h("button", { type: "button", class: "btn ghost", onclick: () => { RR.cite.delete(r.card.id); rerender(); } }, T("Close", "關閉"))), body);
@@ -151,7 +155,7 @@ function itemView(card, it, prev) {
   return h("article", { class: "rr-item", id: `rr-${it.id}`, "data-board-item": it.id, "data-item-type": it.type }, head, body, basisRow(card, it));
 }
 // ---------- the stage: each answer is a scene, a visual beside the tutor's points, revealed step by step ----------
-const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"] };
+const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"], since: ["What changed since last time", "上次之後改了什麼"], reviewers: ["What reviewers asked", "審查者問了什麼"] };
 const plain = (s) => String(s || "").replace(CITE, "").replace(/\*\*|`/g, "").replace(/^\s*([-*+]|\d+\.)\s+/, "").replace(/\s+/g, " ").trim();
 /** the room's scenes: the opening picture (turn 0), then one per turn, its points the answer's claims */
 function scenesOf(r) {
@@ -160,6 +164,8 @@ function scenesOf(r) {
   for (const t of r.turns) {
     const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]) : [];
     const heading = claims.find((c) => c.kind === "heading"), [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action];
+    // a scene Studio made itself (no model): what changed since the captain last looked, what GitHub reviewers asked
+    if (t.studio) { out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: T(en, zh), question: null, visuals: r.board.filter((b) => b.turn === t.n), points: claims, questions: [] }); continue; }
     out.push({ key: `t${t.n}`, turn: t.n, t, title: heading ? plain(heading.text.replace(/^\s*#+\s*/, "")) : `${T(en, zh)}: ${t.text.slice(0, 80)}`, question: t.text,
       visuals: r.board.filter((b) => b.turn === t.n), points: claims.filter((c) => c.kind !== "heading"), questions: r.check.questions.filter((q) => q.turn === t.n) });
   }
@@ -209,7 +215,7 @@ async function playVendor(card, sc) {
 }
 function play(card, sc) {
   stopPlay(); RR.playing = card; RR.reveal.set(`${card}/${sc.key}`, 0);
-  const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
+  const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t && !sc.studio) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
   advance(card);
 }
 function voicePicker(r) {
@@ -235,10 +241,13 @@ function stageView(r) {
       h("div", { class: "rr-visual", "data-visual": v?.id || "" }, v ? itemView(card, v, prev) : h("p", { class: "faint rr-novisual" }, sc.t?.status === "running" ? T("The tutor is drawing…", "導師正在畫…") : T("No picture for this answer.", "這個回答沒有圖。")),
         sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : b.type, ` ${b.title.slice(0, 24)}`))) : null),
       h("div", { class: "rr-points" },
+        sc.studio ? h("p", { class: "faint", "data-studio-scene": sc.t.action }, T("Made by Studio from the commits and from what GitHub shows: no model, nothing paid.", "由 Studio 依 commit 和 GitHub 上的內容做成：沒有模型，不付費。")) : null,
         sc.question ? h("p", { class: "rr-q", "data-scene-question": "" }, h("span", { class: "vbadge" }, T(...(ACTION_LABEL[sc.t.action] || [sc.t.action, sc.t.action]))), " ", sc.question) : null,
         sc.t && sc.t.status !== "done" ? (sc.t.status === "running" ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
         h("ol", { class: "rr-pointlist", "data-points": sc.points.length }, sc.points.slice(0, k).map((c, n) => c.kind === "code" ? h("li", { class: "rr-point code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")))
-          : h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${n === k - 1 ? " now" : ""}`, "data-claim": c.basis || c.kind }, c.basis === "inference" ? inferenceBadge() : null, inline(card, c.text.replace(/^\s*[-*+]\s+/, ""), c.cites)))),
+          : h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${n === k - 1 ? " now" : ""}`, "data-claim": c.basis || c.kind }, c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, inline(card, c.text.replace(/^\s*[-*+]\s+/, ""), c.cites),
+            // what someone else wrote (a reviewer, a commit message): their words as plain text, never parsed for citations or markup
+            c.quote ? h("blockquote", { class: "rr-quote", "data-untrusted": c.basis === "reviewer" ? "review" : "text" }, c.quote) : null))),
         sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
         sc.t?.status === "done" && sc.t.cost?.usd != null ? h("p", { class: "faint rr-cost" }, `$${Number(sc.t.cost.usd).toFixed(2)} · ${sc.t.provider} · ${sc.t.model}`) : null)),
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, caption),
@@ -263,7 +272,7 @@ function listen(card) {
 }
 function promptBar(r) {
   const card = r.card.id, busy = r.running != null || RR.posting.has(card), offer = r.offer, conf = RR.confirm.get(card), err = RR.err.get(card);
-  if (!r.open) return h("div", { class: "rr-bar" }, h("p", { class: "faint", "data-room-closed": "" }, T("The merge card is answered: this room is read-only now.", "合併卡已回覆：審查室現在只能閱讀。")));
+  if (!r.open) return h("div", { class: "rr-bar" }, h("p", { class: "faint", "data-room-closed": "" }, r.closed ? T(r.closed.en, r.closed.zh) : T("The merge card is answered: this room is read-only now.", "合併卡已回覆：審查室現在只能閱讀。")));
   if (offer?.error) return h("div", { class: "rr-bar" }, h("p", { class: "rr-err", "data-room-unavailable": "" }, offer.error));
   if (RR.mic == null) void micReady();
   const ask = (action) => { const text = action === "ask" ? (RR.draft.get(card) || "").trim() : ""; if (action === "ask" && !text) return; RR.confirm.set(card, { action, text }); rerender(); };
@@ -293,9 +302,9 @@ function promptBar(r) {
 }
 // ---------- the transcript drawer (closed by default): questions and scene titles, the check and the sources ----------
 function drawer(r) {
-  const card = r.card.id, scenes = scenesOf(r), q = r.check.questions, graded = q.filter((x) => x.result), right = graded.filter((x) => x.result.correct).length;
+  const card = r.card.id, scenes = scenesOf(r), q = r.check.questions, graded = q.filter((x) => x.result), right = graded.filter((x) => x.result.correct).length, asked = r.turns.filter((t) => !t.studio).length;
   return h("details", { class: "card x-pad rr-drawer", "data-transcript": card, open: RR.drawer.has(card), ontoggle: (e) => { e.target.open ? RR.drawer.add(card) : RR.drawer.delete(card); } },
-    h("summary", {}, T(`Transcript · ${r.turns.length} question${r.turns.length === 1 ? "" : "s"} · check ${graded.length ? `${right}/${graded.length}` : "—"} · ${r.sources.filter((s) => s.ok).length} sources`, `紀錄 · ${r.turns.length} 個問題 · 檢查 ${graded.length ? `${right}/${graded.length}` : "—"} · ${r.sources.filter((s) => s.ok).length} 個來源`)),
+    h("summary", {}, T(`Transcript · ${asked} question${asked === 1 ? "" : "s"} · check ${graded.length ? `${right}/${graded.length}` : "—"} · ${r.sources.filter((s) => s.ok).length} sources`, `紀錄 · ${asked} 個問題 · 檢查 ${graded.length ? `${right}/${graded.length}` : "—"} · ${r.sources.filter((s) => s.ok).length} 個來源`)),
     h("ol", { class: "rr-turns" }, scenes.map((sc, i) => h("li", { "data-turn": sc.turn, "data-turn-status": sc.t?.status || "opening" }, h("button", { type: "button", class: "rr-jump", "data-jump": sc.key, onclick: () => { stopPlay(); RR.scene.set(card, i); rerender(); document.querySelector("[data-stage]")?.scrollIntoView({ block: "start" }); } },
       sc.question ? h("span", { class: "rr-jq" }, sc.question.slice(0, 160)) : null, h("span", { class: "faint" }, ` → ${sc.title}`))))),
     h("h3", {}, T("Understanding check", "理解檢查")),
@@ -307,8 +316,45 @@ function drawer(r) {
       s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
       : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")));
 }
+// ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------
+const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set() };
+/** the URL box (the Review Room's home, and a small one on a connected project's page) */
+function prBox(where, repository) {
+  const busy = PR.busy.has(where), err = PR.err.get(where);
+  const go = async () => { const url = (PR.url.get(where) || "").trim(); if (!url || busy) return; PR.busy.add(where); PR.err.delete(where); rerenderAny();
+    try { const out = await postJ("/api/review-room/open-pr", { url }); RR.rooms.set(out.id, out.room); PR.url.delete(where); location.hash = out.href; }
+    catch (e) { PR.err.set(where, e.message); } finally { PR.busy.delete(where); rerenderAny(); } };
+  return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
+    h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),
+      h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 300, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>", value: PR.url.get(where) || "",
+        oninput: (e) => PR.url.set(where, e.target.value), "aria-label": T("Pull request URL", "Pull request 網址") })),
+    h("button", { type: "submit", class: "btn primary", "data-pr-open": where, disabled: busy }, busy ? T("Reading it on GitHub…", "正在讀取 GitHub…") : T("Open its review room", "開啟它的審查室")),
+    h("p", { class: "faint" }, T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
+    err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);
+}
+const rerenderAny = () => { if (S.route?.name === "room" || S.route?.name === "project") render(); };
+window.crewReviewRoomPrBox = (project, repository) => h("section", { class: "card x-pad", "data-project-review-room": project }, prBox(`project:${project}`, repository));
+async function checkNow(id) {
+  if (PR.checking.has(id)) return; PR.checking.add(id); RR.err.delete(id); rerender();
+  try { RR.rooms.set(id, await postJ(`/api/review-room/${enc(id)}/check`, {})); } catch (e) { RR.err.set(id, e.message); } finally { PR.checking.delete(id); rerender(); }
+}
+/** what the room is about, and its state: the pull request on GitHub (open, approved, merged, closed), new commits since the captain last looked */
+function subjectBar(r) {
+  const id = r.card.id, ps = r.prState, mv = r.moved, kind = r.subject?.kind;
+  const verdicts = ps?.verdicts?.length ? ps.verdicts.map((v) => `${v.author}: ${v.state === "APPROVED" ? T("approved", "核准") : v.state === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : T("dismissed", "撤銷")}${v.current ? "" : T(" (an older head)", "（較舊的 head）")}`).join(" · ") : null;
+  return h("div", { class: "rr-subject", "data-room-subject": kind || "merge" },
+    ps ? h("p", { "data-pr-state": ps.state, "data-pr-approved": String(!!ps.approved) }, h("span", { class: `badge ${ps.state === "merged" ? "ok" : ps.state === "closed" ? "bad" : ps.approved ? "ok" : "run"}` }, ps.state === "merged" ? T("Merged on GitHub", "已在 GitHub 合併") : ps.state === "closed" ? T("Closed on GitHub", "已在 GitHub 關閉") : ps.approved ? T("Open · approved at this head", "開啟中 · 已在這個 head 核准") : ps.draft ? T("Open · draft", "開啟中 · 草稿") : T("Open", "開啟中")),
+      " ", ps.headRepo && r.subject?.repository && ps.headRepo.toLowerCase() !== r.subject.repository.toLowerCase() ? T(`from the fork ${ps.headRepo} · `, `來自 fork ${ps.headRepo} · `) : "", verdicts ? h("span", { "data-pr-verdicts": "" }, verdicts) : T("No reviewer verdict yet", "還沒有審查者的結論"),
+      h("span", { class: "faint" }, T(` · read on GitHub ${String(ps.checkedAt || "").slice(0, 16).replace("T", " ")}`, ` · ${String(ps.checkedAt || "").slice(0, 16).replace("T", " ")} 讀取自 GitHub`))) : null,
+    r.stale ? h("p", { class: "rr-err", role: "status", "data-pr-stale": "" }, T(`GitHub shows newer commits (${String(r.stale.head).slice(0, 8)}) Studio could not fetch yet: ${r.stale.error}. The room shows the last head it has; check again before asking.`, `GitHub 上有較新的 commit（${String(r.stale.head).slice(0, 8)}），Studio 還沒抓到：${r.stale.error}。審查室顯示它手上最後的 head；提問前請再檢查一次。`)) : null,
+    kind === "branch" ? h("p", { "data-branch-state": r.reviewed ? "reviewed" : "not-reviewed" }, r.reviewed ? T(`Reviewed by Studio at ${String(r.head || "").slice(0, 8)}${r.local ? " · ready on its local branch, not published" : ""}`, `Studio 已在 ${String(r.head || "").slice(0, 8)} 審查通過${r.local ? " · 在本機分支上就緒，不會發布" : ""}`) : T("Studio's review has not passed at this head yet.", "Studio 的審查還沒在這個 head 通過。")) : null,
+    mv ? h("p", { class: "rr-moved", role: "status", "data-room-moved": mv.commits ?? "rewritten" }, mv.commits != null ? T(`${mv.commits} new commit${mv.commits === 1 ? "" : "s"} since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}). Your next question opens with what changed.`, `你上次看過之後有 ${mv.commits} 個新 commit（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。下一個問題會先看改了什麼。`)
+      : T(`The branch was rewritten since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `你上次看過之後分支被改寫了（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)) : null,
+    kind === "pr" ? h("button", { type: "button", class: "btn", "data-room-check": id, disabled: PR.checking.has(id) || r.checking || null, onclick: () => checkNow(id) }, PR.checking.has(id) || r.checking ? T("Reading GitHub…", "正在讀取 GitHub…") : T("Check for new commits", "檢查新的 commit")) : null);
+}
 routes.room = (arg) => {
-  if (!arg) return page(T("Review room", "審查室"), T("Open a review room from a merge card.", "請從合併卡開啟審查室。"));
+  if (!arg) return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 的網址。"),
+    h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null)));
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
@@ -316,9 +362,15 @@ routes.room = (arg) => {
   const scenes = scenesOf(r), seen = RR.seen.get(arg);
   if (!seen) RR.seen.set(arg, new Set(scenes.filter((s) => !s.t || s.t.status !== "running").map((s) => s.key)));
   else for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key); RR.scene.delete(arg); RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); }
-  const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
-  return page(T("Review room", "審查室"), T(`${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room never answers the merge card.`, `${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不會回覆合併卡。`),
-    h("div", { class: "rr-top" }, h("b", {}, title), h("a", { class: "btn ghost", href: `#/run/${enc(r.card.run)}`, "data-room-task": "" }, T("Back to the Task", "回到任務")), h("a", { class: "btn ghost", href: `#/inbox/${enc(r.card.id)}` }, T("The merge card", "合併卡"))),
+  const kind = r.subject?.kind || "merge", title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
+  const sub = kind === "merge" ? T(`${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room never answers the merge card.`, `${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不會回覆合併卡。`)
+    : kind === "branch" ? T(`${r.task?.title || r.card.id} · its branch · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room changes nothing about the Task.`, `${r.task?.title || r.card.id} · 它的分支 · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不改變任務的任何事。`)
+    : T(`${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}. Studio only reads GitHub; the room never comments, reviews or merges.`, `${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}。Studio 只讀 GitHub；審查室不留言、不審查、不合併。`);
+  const ghLink = kind === "pr" && /^https:\/\/github\.com\//.test(r.subject?.url || "") ? h("a", { class: "btn ghost", href: r.subject.url, target: "_blank", rel: "noopener noreferrer", "data-room-github": "" }, T("Open on GitHub", "在 GitHub 開啟")) : null;
+  return page(T("Review room", "審查室"), sub,
+    h("div", { class: "rr-top" }, h("b", {}, title), r.task?.id ? h("a", { class: "btn ghost", href: `#/run/${enc(r.task.id)}`, "data-room-task": "" }, T("Back to the Task", "回到任務")) : null,
+      kind === "merge" ? h("a", { class: "btn ghost", href: `#/inbox/${enc(r.card.id)}` }, T("The merge card", "合併卡")) : null, ghLink),
+    kind === "merge" ? null : subjectBar(r),
     citePanel(r),
     RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } }, onkeydown: (e) => { if (e.key === "Escape") { RR.zoom = null; rerender(); } } },
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null,
