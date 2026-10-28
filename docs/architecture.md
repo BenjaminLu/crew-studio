@@ -324,9 +324,43 @@ from strict source-owned registry and bounded Git metadata reads. Coffee-workflo
 integration is separate; absent source authority fails closed. The Firstmate chat is the primary entry; the
 editable configuration panel is a secondary view of the same decision state.
 
+### Adaptive staffing
+
+Studio adapts to the models this machine has instead of asking the captain to verify each one or to add an opposite vendor.
+What the machine has comes from the provider facts (`src/domain/independence.ts` `usableModels`), never from configuration
+alone: every vendor that is installed and signed in, each model it verified, and each model a signed-in Claude offers for a
+verification Studio runs itself. A model is **runnable** when its facts are fresh and its quota is available (Claude: its
+quota is always unknown and its execution receipt admits it); a vendor that is signed in but out of quota, whose quota
+cannot be read, or whose facts expired is **held**, with the reason. A held vendor still counts for every independence
+rule: it is waited for, never worked around (as the native queue's vendor policy holds, docs/units/native-queue-vendor-policy.md).
+
+- **Verification by Studio.** Before a Board start (`POST /api/wruns`) and before a review room turn, every role (or the
+  tutor's member) that is signed in but not verified yet, or whose facts went stale, is verified by Studio itself
+  (`autoVerify` in `src/runtime/index.ts`, `src/providers/staffing-verify.ts`): a signed-in Claude pair gets the one
+  bounded request of `admitSignedInClaude` (its receipt serves half an hour), a Cursor key is checked again
+  (`cursor-agent models`, no model request), Codex reads its free probe again. Each model is verified once even when
+  several roles use it, and one verification runs per model at a time, shared by every caller waiting on it (it ends only
+  when every waiter has left, and an ended one leaves no backoff). A verification that does not pass is not paid for again
+  for ten minutes, except when the captain presses Start again; the review room skips a model in that backoff for the next
+  one. The facts are then read again and the start proceeds. What was verified is recorded on the Task's ledger
+  (`staffing-auto-verify`, for a Board start and for a tutor's turn) and in Studio's log. The Start form itself never pays: it
+  says which models Studio will verify on Start. A role is still blocked, with a bilingual reason, when its vendor is not
+  signed in, is out of quota, cannot read its quota (Codex, a checked Cursor key: never a verification, never a backoff),
+  does not offer the model or effort, or when the verification does not pass.
+- **Independence, relaxed only when a vendor is not there.** A rule that asks for a second vendor or model keeps its level
+  while two vendors are installed and signed in (held or not); with one such vendor it accepts another model of it; with
+  one model it accepts that model (`required`). Without provider facts nothing is relaxed, and the facts are read again
+  before any relaxation. Every relaxed case is said where the captain looks and recorded: the review room's tutor
+  (docs/units/review-room.md), the issue triage investigators (docs/units/board.md), and a staffed code Task whose reviewer
+  runs on the worker's own model, compared node by node as staffed (`effectivePick`: a node override wins): the Start form
+  says so, naming another model when there is one; the Task's ledger records `review-independence`; its merge card says it.
+  The team's resolution (`src/domain/crew.ts`) still moves a reviewing seat to another member's model when the team has
+  one; nothing here refuses a reviewer on the worker's model. A judged check with `distinct_providers` is never relaxed
+  (pack-genesis judges need two vendors to promote).
+
 ### Claude native admission
 
-Claude metadata uses official local CLI auth status without making a model request. Authentication, quota exhaustion and unknown quota remain distinct. Only explicit desktop Verify for an exact selected model/effort may create a private, short-lived execution admission after an isolated tool-free request exits successfully with matching actual model identity and verified process-group cleanup. Quota stays unknown; this Claude-only receipt does not weaken other providers or certify remaining balance. Runtime authentication, quota, model or execution failures invalidate it. Native worker execution preserves the existing round OS sandbox and source MCP allowlist; successful stream results wait for successful exit and group cleanup. See [the unit contract](units/claude-native-capability.md) for limitations and retained offline evidence.
+Claude metadata uses official local CLI auth status without making a model request. Authentication, quota exhaustion and unknown quota remain distinct. Only an exact selected model/effort verification (the desktop Verify, or Studio's own before a round or a start: "Adaptive staffing" above) may create a private, short-lived execution admission after an isolated tool-free request exits successfully with matching actual model identity and verified process-group cleanup. Quota stays unknown; this Claude-only receipt does not weaken other providers or certify remaining balance. Runtime authentication, quota, model or execution failures invalidate it. Native worker execution preserves the existing round OS sandbox and source MCP allowlist; successful stream results wait for successful exit and group cleanup. See [the unit contract](units/claude-native-capability.md) for limitations and retained offline evidence.
 
 
 Claude staffing keeps quota unknown. Only a source-owned callback holding the actual, unexpired, exact-model/effort Claude execution receipt may satisfy the unknown-quota exception during staffing confirmation and pre-allocation admission. Public copied facts cannot grant this authority; metadata lookup never performs Verify or chooses a replacement model. Codex retains its available-quota requirement.

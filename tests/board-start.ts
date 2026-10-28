@@ -23,7 +23,7 @@ if(process.env.BOARD_START_FIXTURE_DATA){
  const defs=new WorkflowDefs(data),list=new Projects(data),store=new StaffingStore(data),def=defs.get('code-firstmate')!,skill=skillTextFor(root),stale=join(repoHome,'stale');
  spawnSync('mkdir',['-p',stale]);assertTempRepo(stale);git(stale,['init','-q','-b','main']);writeFileSync(join(stale,'README.md'),'fixture\n');git(stale,['add','README.md']);git(stale,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
  list.add({id:'fixture',name:'Fixture repo',path:repo,base:'main'} as any);list.add({id:'unstaffed',name:'Unstaffed repo',path:other,base:'main'} as any);list.add({id:'stale',name:'Stale crew repo',path:stale,base:'main'} as any);
- const approve=(id:string,sha256:string)=>store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity(id,[root]),workflow:{id:def.id,version:def.version,sha256},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
+ const approve=(id:string,sha256:string)=>store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity(id,[root]),workflow:{id:def.id,version:def.version,sha256},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:r.id==='reviewer'?'claude-opus-5-5':'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
  approve('fixture',staffingHash(def));approve('stale',staffingHash({...def,description:'an older definition'}));
  const codexRepo=join(repoHome,'codex');spawnSync('mkdir',['-p',codexRepo]);assertTempRepo(codexRepo);git(codexRepo,['init','-q','-b','main']);writeFileSync(join(codexRepo,'README.md'),'fixture\n');git(codexRepo,['add','README.md']);git(codexRepo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
  list.add({id:'codex',name:'Codex crew repo',path:codexRepo,base:'main'} as any);
@@ -31,10 +31,15 @@ if(process.env.BOARD_START_FIXTURE_DATA){
  console.log('board-start fixture ready');process.exit(0);
 }
 const H=await harness([]);
-let codexAuth='verified',factsCalls=0;
-const facts=async()=>{factsCalls++;return[{provider:'codex',support:'supported' as const,auth:codexAuth,quota:'available',expires:Date.now()+60000,models:[{id:'fixture-model',efforts:['low']}]},{provider:'claude',support:'supported' as const,auth:'verified',quota:'unknown',expires:Date.now()+60000,models:[]}];};
+let codexAuth='verified',codexQuota='available',factsCalls=0,verifyGate:Promise<void>=Promise.resolve();
+// Claude as the server reads it: signed in, its offered models (candidates), and only the models Studio verified as models
+let claude={auth:'verified',login:'logged-in',quota:'unknown',candidates:[] as {id:string;efforts:string[]}[]},verifyPasses=true;
+const claudeVerified=new Set<string>(),verifyCalls:string[]=[];
+const facts=async()=>{factsCalls++;return[{provider:'codex',support:'supported' as const,auth:codexAuth,quota:codexQuota,expires:Date.now()+60000,models:[{id:'fixture-model',efforts:['low']}]},{provider:'claude',support:'supported' as const,auth:claude.auth,quota:claude.quota,login:claude.login,expires:Date.now()+60000,models:claude.candidates.filter(m=>claudeVerified.has(m.id)),candidates:claude.candidates}];};
 let projects:any;
 const rt=createRuntime({dataDir:H.data,agents:H.agents,provider:H.engine.deps.provider,defaultProvider:()=>({provider:'claude',model:'studio-default'}),log:H.engine.deps.log,send(){},fmRoot:root,protectedRoots:[root],studioUrl:()=>H.toolUrl,staffingFacts:facts,
+ // stands in for the server's bounded verification (#44's request for Claude): counted, never a model call
+ staffingAdmission:(role:any)=>role.provider==='claude'&&claudeVerified.has(role.model),staffingVerify:async(role:any,o:any)=>{verifyCalls.push(`${role.provider}/${role.model}`);await verifyGate;if(o?.signal?.aborted)return false;if(verifyPasses)claudeVerified.add(role.model);return verifyPasses;},
  install:[(engine:any,c:any)=>{projects=c.projects;installCode(engine,{dataDir:c.dataDir,projects:c.projects});}]} as any);
 const E=rt.engine;
 // a provider that answers the spec round the way a coordinator does, and records who it ran as
@@ -63,11 +68,53 @@ try{
  ok(down?.staffing?.state==='blocked'&&down.staffing.code==='staffing_not_ready'&&!!down.staffing.role,'an approved crew whose vendor is unavailable now shows cannot start with the role',JSON.stringify(down?.staffing));
  codexAuth='verified';
  projects.add({id:'claude-crew',name:'Claude crew repo',path:claudeRepo,base:'main'});
- store.approve({schema:1,algorithm:'sha256-canonical-v1',project:projects.staffingIdentity('claude-crew',[root]),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:E.deps.skillText(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:2});
- const claudeCrew=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='claude-crew');
- ok(claudeCrew?.staffing?.state==='blocked'&&claudeCrew.staffing.code==='staffing_not_ready'&&/signed in but not verified by a bounded request/.test(claudeCrew.staffing.reason?.en??''),'a signed-in but unverified Claude crew cannot start: the form never pays for a verification',JSON.stringify(claudeCrew?.staffing));
- {const runs=E.list().length,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'claude-crew'}});
-  ok(r.status===409&&r.body.code==='staffing_not_ready'&&E.list().length===runs,'starting the unverified Claude crew anyway is a typed refusal and creates no Task',JSON.stringify(r.body).slice(0,300));}
+ // a Claude crew: the reviewer on another Claude model than the rest, both signed in and offered, neither verified yet
+ const claudeModel=(id:string)=>id==='reviewer'?'claude-opus-5-5':'claude-sonnet-5-5';
+ store.approve({schema:1,algorithm:'sha256-canonical-v1',project:projects.staffingIdentity('claude-crew',[root]),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:claudeModel(r.id),effort:'low',skill:store.remember({ref:r.skill,version:1,text:E.deps.skillText(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:2});
+ claude.candidates=[{id:'claude-sonnet-5-5',efforts:['low','high']},{id:'claude-opus-5-5',efforts:['low','high']}];
+ const claudeOptions=async()=>(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='claude-crew')?.staffing;
+ const startClaude=()=>call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'claude-crew'}});
+ let claudeCrew=await claudeOptions();
+ ok(claudeCrew?.state==='approved'&&claudeCrew.readiness?.state==='ready'&&claudeCrew.readiness.verify?.length===def.roles.length&&/verifies claude claude-sonnet-5-5, claude claude-opus-5-5 with one small paid request each/.test(claudeCrew.readiness.note?.en??'')&&!verifyCalls.length,
+  'a signed-in but unverified Claude crew can start: the form says Studio verifies each model on Start, and pays for nothing itself',JSON.stringify(claudeCrew));
+ // Start: Studio verifies each model once (not once per role), reads the facts again, and the Task starts
+ {const r=await startClaude();
+  ok(r.status===200&&!!r.body.id&&verifyCalls.join(' ')==='claude/claude-sonnet-5-5 claude/claude-opus-5-5','Start verifies each signed-in model once, then the Task starts',JSON.stringify({status:r.status,calls:verifyCalls,body:JSON.stringify(r.body).slice(0,300)}));
+  const rec:any=r.body.id&&E.trusted(r.body.id).entries.find((e:any)=>e.record==='staffing-auto-verify');
+  ok(rec?.data?.verified?.length===2&&rec.data.verified.every((v:string)=>/claude claude-(sonnet|opus)-5-5/.test(v)),'what Studio verified is on the Task\'s signed ledger',JSON.stringify(rec?.data));
+  if(r.body.id)await E.cancel(r.body.id,'test');}
+ {const r=await startClaude();ok(r.status===200&&verifyCalls.length===2,'a model verified once is not paid for again within its window');if(r.body.id)await E.cancel(r.body.id,'test');}
+ // the receipt ran out and the verification fails: blocked with the reason; a tutor's or a dispatch's retry waits ten minutes,
+ // but the captain's own Start tries again at once
+ claudeVerified.clear();verifyPasses=false;
+ {const runs=E.list().length,r=await startClaude();
+  ok(r.status===409&&r.body.code==='staffing_not_ready'&&/did not pass/.test(r.body.staffing?.reason?.en??'')&&!!r.body.staffing.reason.zh&&E.list().length===runs,'a verification that fails is a bilingual refusal and creates no Task',JSON.stringify(r.body).slice(0,300));
+  const calls=verifyCalls.length;let held='';try{await E.deps.ensurePick({provider:'claude',model:'claude-sonnet-5-5',effort:'low'});}catch(e:any){held=String(e?.message);}
+  ok(/did not pass a few minutes ago/.test(held)&&verifyCalls.length===calls,'a failed verification is not paid for again within minutes by Studio itself (the tutor)',held);
+  const again=await startClaude();
+  ok(again.status===409&&/did not pass/.test(again.body.staffing?.reason?.en??'')&&verifyCalls.length===calls+1,'the captain pressing Start again retries it at once',JSON.stringify({calls:verifyCalls,body:again.body}).slice(0,300));}
+ // a verification whose caller left ends without a backoff: the next caller verifies
+ {verifyPasses=true;let release!:()=>void;const gate=new Promise<void>(r=>release=r);const base=verifyGate;verifyGate=gate;
+  const ac=new AbortController(),calls=verifyCalls.length,first=E.deps.ensurePick({provider:'claude',model:'claude-opus-5-5',effort:'low'},{signal:ac.signal}).then(()=>'ready',(e:any)=>String(e?.message));
+  await new Promise(r=>setTimeout(r,20));ac.abort();release();const said=await first;verifyGate=base;claudeVerified.delete('claude-opus-5-5');
+  const next=await E.deps.ensurePick({provider:'claude',model:'claude-opus-5-5',effort:'low'}).then(()=>'ready',(e:any)=>String(e?.message));
+  ok(/ended before it finished/.test(said)&&next==='ready'&&verifyCalls.length===calls+2,'a verification ended by its caller leaves no backoff: the next one verifies',JSON.stringify({said,next,calls:verifyCalls.slice(calls)}));}
+ claudeVerified.clear();verifyPasses=false;
+ // Codex whose quota cannot be read now: a hold with that reason, never a failed verification and no backoff
+ {const keep=codexQuota;codexQuota='unknown';const calls=verifyCalls.length,o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'}});
+  ok(o?.state==='blocked'&&/quota could not be read just now/.test(o.reason?.en??'')&&r.status===409&&/quota could not be read just now/.test(r.body.staffing?.reason?.en??'')&&!/did not pass/.test(r.body.error)&&verifyCalls.length===calls,'Codex with unreadable quota holds with that reason, nothing is verified and nothing is backed off',JSON.stringify({o,r:r.body}).slice(0,400));codexQuota=keep;}
+ // never verified: a Claude that is not signed in, one out of quota, a model it does not offer
+ for(const [what,set,re] of [['not signed in',()=>{claude={...claude,auth:'missing',login:'not-logged-in'};},/not signed in/],['out of quota',()=>{claude={...claude,quota:'exhausted'};},/out of quota/],['not offered',()=>{claude={...claude,candidates:[{id:'claude-haiku-5-5',efforts:['low']}]};},/does not offer/]] as const){
+  const keep={...claude};(set as any)();const calls=verifyCalls.length,o=await claudeOptions(),r=await startClaude();
+  ok(o?.state==='blocked'&&(re as RegExp).test(o.reason?.en??'')&&r.status===409&&r.body.code==='staffing_not_ready'&&(re as RegExp).test(r.body.staffing?.reason?.en??'')&&verifyCalls.length===calls,`a Claude crew ${what} stays blocked with its reason, and Studio pays for no verification`,JSON.stringify({o,r:r.body}).slice(0,300));claude=keep;}
+ verifyPasses=true;claude.candidates=[];claudeVerified.clear();
+ // the reviewer on the worker's own model: never refused, always said; with another usable model, the form says which one to give it
+ claude.candidates=[{id:'claude-sonnet-5-5',efforts:['low']}];
+ {const o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing;
+  ok(o?.state==='approved'&&o.readiness?.state==='ready'&&o.readiness.independence?.level==='same'&&/another model \(claude claude-sonnet-5-5\)/.test(o.readiness.independence.en)&&!!o.readiness.independence.zh,'a reviewer on the worker\'s own model can start; the form names another usable model for an independent review',JSON.stringify(o).slice(0,400));}
+ claude.candidates=[];
+ {const o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing;
+  ok(o?.readiness?.independence?.level==='same'&&/Only one model is usable on this machine \(codex fixture-model\)/.test(o.readiness.independence.en),'on one usable model the form says the reviewer runs on the worker\'s model because nothing else is usable',JSON.stringify(o?.readiness));}
 
  const before=E.list().length;
  const noProject=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{provider:'codex'}});
@@ -92,6 +139,8 @@ try{
  const ledger=E.trusted(id).entries,binding=ledger.find((e:any)=>e.record==='staffing-start'),instructions=ledger.find((e:any)=>e.record==='staffing-instructions'&&e.node==='spec');
  ok(reached&&binding?.data.config===approved.hash,'the Task reaches spec bound to the approved crew in its signed ledger',JSON.stringify({status:E.get(id)?.status,error:E.get(id)?.error,nodes:Object.fromEntries(Object.entries(E.get(id)?.nodes??{}).filter(([,n]:any)=>n.visits).map(([k,n]:any)=>[k,n.state]))}));
  ok(instructions?.data.provider==='codex'&&instructions.data.model==='fixture-model'&&instructions.data.effort==='low'&&launched.some(l=>l.id==='codex'&&l.model==='fixture-model'),'the spec round runs as the approved coordinator, not the Studio default');
+ {const ind:any=ledger.find((e:any)=>e.record==='review-independence');
+  ok(ind?.data?.level==='same'&&ind.data.reachable==='same'&&/Same model as the author/.test(ind.data.en)&&/Only one model is usable on this machine \(codex fixture-model\)/.test(ind.data.en)&&!!ind.data.zh,'on a machine with one usable model the reviewer runs on the worker\'s model, and the Task\'s ledger says so',JSON.stringify(ind?.data));}
  ok(E.get(id)!.params.base==='main'&&E.get(id)!.params.project==='fixture'&&!E.get(id)!.params.repo,'the Task takes its base from the registered project');
  await until(()=>E.cards.list({run:id,open:true}).some(c=>c.node==='dispatch'),8000);
  }

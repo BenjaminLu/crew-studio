@@ -145,7 +145,9 @@ Issues belong to their project: a project connected to GitHub has a "GitHub issu
   investigators' models as a triage of this project would run them (the team's seats in this project, else the
   workflow's Claude and Codex roles). Triaging posts `POST /api/issue-triage/<project>/start` (the desktop captain only)
   and opens the Task, which reads the issues and waits at its start card before any model runs. When both investigators
-  would run on one model the form says so and cannot start.
+  would run on one model while this machine has another model (signed in, even if held for now), the form says so and cannot start; when that one
+  model is all this machine has (docs/architecture.md, "Adaptive staffing"), it starts and the form says
+  "Investigators ran on the same model; agreement is weaker evidence".
 - **The latest triage** (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
   `data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`, which
   also names the investigators): work packages and what the investigators disagreed on. With categories, each
@@ -186,7 +188,40 @@ model and effort, marking a change this project makes to the team.
   quotes at least one distinctive line (16 characters or more, whitespace, commas and semicolons aside, naming something
   besides keywords: `} catch (e) {` alone is not evidence), and every quoted line is in its file within 15 lines of the
   stated range and inside what `fs_read` returned to that investigator in its round. It compares the two reports: the
-  same state and, when that state needs code, a shared file. Two `not-found` (or two `not-code`) answers agree.
+  same state and, when that state needs code, a shared file. Two `not-found`, two `not-code` or two `needs-info` answers
+  agree; `needs-info` against `not-found` agrees too, as `needs-info` (neither could locate it, and one says what is
+  missing; the other state against `present`, `fixed?` or `not-code` is a disagreement).
+- The investigators check completeness before looking for code (`workflows/skills/issue-triager.md`): a bug needs steps,
+  the expected and actual result, an error or stack trace and the environment or version; a feature or task the problem,
+  the outcome and the scope. One that lacks what is needed to locate it is `needs-info`, with 1 to 3 questions for the
+  reporter (each one line, at most 300 characters); research, roadmap and process issues are `not-code`. Neither needs a
+  location or quoted code.
+- Each finding says who can do it: `fit: agent`, or `human` with a reason (`needs-info`, `product-decision`,
+  `too-large`, `external-dependency`, `security-owner`, `other`). When the reports agree on the issue, either one's
+  `human` sets it aside before packaging: it goes to "For you to judge" (`kind: 'human-fit'`) with the reasons and
+  whether one investigator or both said so (`fitFrom`), never into a package; the rest of its set is still packaged.
+  When they disagree, it stays a disagreement, so the captain sees that. A report from before fit was asked reads as
+  `agent`; a report submitted now must give every finding its fit.
+- Duplicates: a finding may name `duplicateOf`, an open issue or one of the 50 most recently updated closed issues the
+  snapshot read, with the matching symptom quoted from both issues' own text (`symptom.here`, `symptom.there`: body or
+  comments, at least 16 characters each; a title is never a symptom), which Studio checks. It counts only when both
+  reports name the same issue and both pass the check: the issue goes to "For you to judge" as a duplicate
+  (`kind: 'duplicate'`), never into a package, and the page shows both quotes as text with where each was found (body,
+  or a comment and its writer's relation to the repository). Two issues found duplicates of each other: the older
+  (lower number) stays, only the newer is set aside. One report's duplicate, or two different ones, is a disagreement.
+- Work in progress: Studio reads the open pull requests (GET, 30 a page, at most 10 pages; the note says when there were
+  more) and counts only a trusted one: its author is the repository's OWNER, a MEMBER or a COLLABORATOR, or its branch
+  is in this repository (anyone can open a fork's pull request naming every issue). It must name the issue on purpose:
+  a closing keyword (`fixes`, `closes`, `resolves`) before `#n`, or an explicit reference to this repository
+  (`owner/repo#n`, the issue's URL), in its title or text with HTML comments removed. A bare `#n` ("Step #12", "a
+  regression from #12"), `&#12;`, `#12a` and another repository's references do not count. Each pull request is read
+  once and its references intersected with the open issues. Such an issue is never packaged: it goes to "For you to
+  judge" (`kind: 'in-progress'`) with each pull request and its author; the captain may take it anyway
+  (`POST /api/issue-triage/<project>/take {issue}`, the desktop captain only), which makes a package waiting for
+  approval and records the pull request it went past, only for an issue both reports agree has code to change, an
+  agent's work and no duplicate. A failed pull request read never stops the triage: the snapshot's note says why (the
+  token may not read them, the rate limit is used up, or GitHub did not answer) and that none is known to be in
+  progress.
 - A work package is what both reports agree on and every member passes the check: an ordered set (worked in that order,
   one pull request each), an unordered set (its owner picks the order), a one-change group, a single issue, or a recheck
   (both find it already fixed: a person rechecks it, it is never closed on that evidence). Sets match by overlap: when
@@ -196,16 +231,25 @@ model and effort, marking a change this project makes to the team.
   is not one both gave. A set both find partly fixed goes there too (a person decides what is still work); a set both
   find wholly fixed is a recheck.
   Everything else is listed under "For you to judge" with the reason.
-- Issues both reports find `not-found` (it needs more information) or both `not-code` are their own agreed outcome
-  (`rec.noCode`, one entry per state), listed as "Agreed: nothing to change in the code": neither a package nor a
-  disagreement. Both reports must pass the check for that too; otherwise the issue goes to "For you to judge". It is
-  shown only in Studio, never written to GitHub.
+- Issues both reports find `needs-info` (or one `needs-info`, the other `not-found`), both `not-found` (it needs more
+  information) or both `not-code` are their own agreed outcome (`rec.noCode`, one entry per state), listed as "Agreed:
+  nothing to change in the code": neither a package nor a disagreement. Both reports must pass the check for that too;
+  otherwise the issue goes to "For you to judge". A `needs-info` entry keeps each issue's questions from both reports,
+  cleaned, each once, at most 5, shown under the issue as text. All of it is shown only in Studio: no comment, label,
+  question or cross-reference is ever written to GitHub; the captain asks the reporter, if at all. A needs-info issue
+  that changes (an edit, or a new comment: the reporter's answer) leaves the list and is triaged again.
 - Security comes from the issue's labels or either report (one report's `yes` is never a disagreement); a security
   package says its issues are referenced, not closed, by a pull request and close only after a recheck.
 - A package is waiting for approval, approved, or stale (an issue's title, text or labels changed since it was
-  investigated: any label, `good first issue` too, since a label can change how its pull request names it).
-- The stored triage keeps each issue's title, labels and content hash, never its body. Titles are untrusted text and
-  only ever go into text nodes.
+  investigated: any label, `good first issue` too, since a label can change how its pull request names it). Comments
+  never make a package stale: the hash staleness, approval and working compare is the title, text and labels only, as
+  before comments were read. The comment count is kept apart: an issue not in committed work (approved, or with a Task)
+  whose count changed since it was investigated is taken again by the next batch; an issue triaged before counts were
+  kept is not taken again for comments it already had. An issue changed while it was investigated (a comment added,
+  removed or edited included) is marked and taken again by the next batch.
+- The stored triage keeps each issue's title, labels and content hash, never its body or comments; for an investigated
+  issue also its fit and reasons, an agreed duplicate and the pull requests found. Titles and questions are untrusted
+  text and only ever go into text nodes.
 
 ### Issue categories
 
@@ -270,26 +314,109 @@ Categories card), `tests/acceptance/issue-categories.yaml`.
 1. **Snapshot.** Studio reads the open issues through the project's GitHub grant (GET only) and pins the code: the commit
    the base branch is at, cloned read-only under `data/work/issue-triage/<task>/checkout`, never touching the project's
    own repository. The batch is the issues named, else the oldest open issues not investigated at their current text
-   (15 by default, at most 50).
+   (15 by default, at most 50). For the batch it also reads, GET only: each issue's latest comments (at most 20, each
+   at most 4000 characters, 24000 together, cleaned like the text: NFKC, no zero-width or bidi characters, no HTML
+   comments), the 50 most recently updated closed issues (title and the first 2000 characters, for duplicates) and the
+   trusted open pull requests that name an open issue on purpose. The snapshot's hash covers all of it.
 2. **Start card.** Captain-only: the batch, the commit and both investigators' models. Nothing paid runs before it;
-   closing it removes the checkout. It is refused before it is shown when both investigators would run on one model, or
-   when their rounds would not be in the round sandbox with no network beyond the model (a sandbox-off grant, an
+   closing it removes the checkout. It is refused before it is shown when both investigators would run on one model while
+   this machine has another usable model (or no provider facts were read), or when their rounds would not be in the round sandbox with no network beyond the model (a sandbox-off grant, an
    `egress.allow` policy, local unrestricted mode).
-3. **Two investigators** on the maker and reviewer seats (Claude and Codex without a Studio team; the team decides otherwise; always two different models) follow `workflows/skills/issue-triager.md`.
-   They read issue text only through `issue_read` (this batch only, marked untrusted) and the code only through
+3. **Two investigators** on the maker and reviewer seats (Claude and Codex without a Studio team; the team decides
+   otherwise) follow `workflows/skills/issue-triager.md`. They run on two different models, of one vendor when only one
+   is signed in. Only when this machine has one model at all (a vendor out of quota or with unreadable quota still counts;
+   the facts are read again first) do both run on it: the start card says so ("Investigators ran
+   on the same model; agreement is weaker evidence", with why), Studio's ledger records it (`issue-triage-independence`),
+   the record step accepts the two reports only from exactly the pair that card confirmed, the approval card says it, and each package the batch adds keeps
+   `investigators: {level: same, by, en, zh}`, shown on the project page beside the package.
+   They read issue text and comments only through `issue_read` (this batch and the closed issues the brief lists, marked
+   untrusted; it also names the open pull requests found for an issue) and the code only through
    `fs_list`, `fs_search` and `fs_read` on the checkout, in the round sandbox with no network and no token. They submit
-   with `triage_submit`: Studio refuses a report for another commit or one that does not cover the batch exactly once,
+   with `triage_submit`: Studio refuses a report for another commit, one that does not cover the batch exactly once, or
+   one with a finding without its fit,
    and answers with every finding that fails the check (a file, symbol, line range or quote it cannot find, or a quote
    `fs_read` never showed that investigator), so the investigator can correct it. The ledger records a digest of what
    `fs_read` returned next to each report; a report whose reads are missing or changed is refused, and one from a round
    that ran before Studio recorded reads is refused by name (triage those issues again).
-4. **Record.** Studio checks both reports (refused when both ran on the same model), reads the issues again (a package
-   with an issue edited meanwhile goes to "For you to judge"), joins the batch to the stored triage (a closed issue's
+4. **Record.** Studio checks both reports (refused when both ran on the same model), reads the issues and the batch's
+   comments again (a package with an issue edited, commented on or with a comment edited meanwhile goes to "For you to
+   judge"), joins the batch to the stored triage (a closed issue's
    package is dropped, an edited issue's package becomes stale and the issue is taken again by a later batch) and
-   removes the checkout.
-5. **Approval card.** Captain-only, naming the security packages and that whoever owns security must agree. Approving
-   reads the issues once more: a package whose issue changed is stale, never approved. Every step is on the Task's
-   signed ledger (`issue-triage-snapshot`, `issue-triage-report`, `issue-triage-written`, `issue-triage-approved`).
+   removes the checkout. Before removing it, Studio writes the batch's docket for the disagreement court (below).
+5. **Disagreement court.** When the batch left items for a person, a captain-only card waits for the captain's rulings
+   (no timer); with none, the step passes on. Applying them is its own step (`rulings`); then the batch goes on.
+6. **Approval card.** Captain-only, naming the security packages and that whoever owns security must agree, and counting
+   the batch's issues that need information from their reporter and those set aside for the captain (a person's work, a
+   duplicate, a pull request open), all listed on the project page and none posted to GitHub. It holds the packages the
+   batch proposed and those the rulings made. Approving reads the issues once more: a package whose issue changed is
+   stale, never approved. Every step is on the Task's signed ledger (`issue-triage-snapshot`,
+   `issue-triage-report`, `issue-triage-written`, `issue-triage-docket`, `issue-triage-ruled`, `issue-triage-approved`).
+
+The definition is version 2 (the court added). A Task pinned to version 1, started before, runs on: its steps accept
+either definition, and a version 1 Task has no court.
+
+### The disagreement court
+
+`src/domain/issue-court.ts` (the docket and the rulings), the `court` and `rulings` steps of `src/issue-triage-workflow.ts`,
+the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the court card's "Open the docket").
+
+- **The docket.** The record step turns the batch's items for a person into cases, each issue in one case; an issue
+  edited on GitHub meanwhile, or closed, is left out (a later batch takes it again). An issue the two reports disagree
+  on, or whose finding Studio's check refused, is a finding case, named by what differs: the state, the place in the
+  code (no shared file), whether it can be located at all (one side not-found or needs-info), one report missing it,
+  or the check. The issues of an item both reports agree on and both pass are one grouping case. An item set aside
+  before packaging (a likely duplicate, an open pull request naming it, a person's work) is a case of its kind. Each
+  side carries what Studio checked: its state, its locus (a file that exists, a symbol only when it is a code name, line
+  numbers), the code around the stated range as read at the pinned commit with the quoted lines marked (at most 60 lines
+  a locus), Studio's check (or its problems), its repro and questions as model-written text, and each issue's hash and comment count as
+  investigated. The docket is a file beside the Task with its digest on the ledger, recorded before the triage is
+  written; a changed docket is refused, and a triage with a court whose docket is not on the ledger stops there (it is
+  never taken for one with nothing to rule on).
+- **The page.** One case per screen: the issue numbers and titles (untrusted text), what differs, A and B side by side
+  with their checked code, and the rulings docked below (keys 1 to 4, R for a one-line reason, Z to undo; on the phone,
+  taps). No suggestion is shown. The issue button opens the issue as the snapshot holds it (its text, labels, and the
+  comments the snapshot read, as text; the snapshot holds none unless it read them) and a link to it on GitHub. A locus or
+  an excerpt opens the file at the pinned commit (`GET /api/issue-triage/<project>/court/<task>/file?path=`), read from
+  the git objects of the repository the triage recorded when it pinned the commit (never a checkout; nothing written):
+  only a file a side of the docket names or quotes, a regular file inside the repository, not under `.git`, at most
+  512 KB, text; it scrolls to the quoted lines and links to them on GitHub at that commit.
+  Escape, the backdrop or the close button closes a popup. Every text is a text node; the only links are https to
+  `github.com/<repository>`, built from the docket's checked repository and commit. Rulings not sent yet are kept in the
+  tab (sessionStorage) until they are.
+- **Rulings.** A finding: A, B (that side's finding must pass Studio's check), neither, or needs information. A
+  grouping: A's grouping, B's, all separate, or needs information. A duplicate: confirm, not a duplicate, or needs
+  information; a pull request open: wait, take it anyway, or needs information; a person's work: agree, give it to an
+  agent, or needs information. The page sends them once (`POST /api/issue-triage/<project>/court/<task> {rulings}`, the
+  captain on the desktop or the phone: they are the court card's answer). Studio checks them against the docket (each
+  case of the docket ruled exactly once, a pick its kind offers, a reason of one line) and refuses the whole set
+  otherwise, keeps them
+  beside the Task under their digest, and answers the card with that digest; a bare answer of the card (without the
+  rulings) is refused, and only the captain answers it. "Leave them for the project page" applies nothing.
+- **Applied** (the `rulings` step, once per card). Studio reads the issues again first (GET only): a case whose issue
+  changed on GitHub since it was investigated (its title, text or labels, or its comment count), or closed, is not applied and writes no gold; it stays under "For you to
+  judge" with why, and the next triage takes it again. What the rulings decide is kept beside the Task, then the triage,
+  the gold set and the ledger are each written unless already there, so a step run again after a failure or a restart
+  completes them without applying anything twice. A or B:
+  that finding becomes the issue's state and locus; code to change makes a single package (a recheck when maybe fixed)
+  waiting for approval; nothing to change puts it with the agreed no-code issues. A grouping: each part a package
+  waiting for approval; a part that holds all of a package this batch proposed takes it in (the issue one report left
+  out joins it) while that package still waits for approval; one declined or approved meanwhile is left as it is and its
+  issues stay out of the part. Neither: the issue is released, triaged again later. Needs information: with the no-code issues as
+  needs-info, the reports' questions for the reporter kept (shown only in Studio). A confirmed duplicate or a person's
+  work: recorded, nothing packaged, nothing closed or labeled on GitHub. Waiting for the pull request: recorded, and the
+  issue stays set aside as in progress, so it can still be taken on the project page. Not a duplicate, take it anyway,
+  give it to an agent: what both reports agree on is adopted (a single package marked as both reports' agreement, or the
+  agreed no-code state; given to an agent, the issue's fit becomes agent); where they disagree the issue stays under
+  "For you to judge" with why. Taking it anyway follows the project page's rule (`takeRefusal`): a person's work, a
+  duplicate, or no agreed code to change is refused and stays set aside, the refusal recorded; taken, the package
+  records the pull requests. Not a duplicate drops the duplicate mark and applies the rules the duplicate went before,
+  in the triage's order: an open pull request naming it sets it aside as in progress, a person's work as human-fit;
+  only then is the agreement adopted. A case set aside shows why: the pull requests and their authors, the fit reasons and whether one
+  or both investigators gave them, the symptom each issue's text quotes. Each ruling is kept on the triage record (`rulings`: case, issues, pick, reason,
+  packages, who, when) and on the ledger (`issue-triage-ruled`), and written to the project's gold set as the captain's
+  label (`IssueEvalStore.addCaptain`, the answer replaced whole, docs/units/issue-eval.md): the state, the files and the package where the ruling
+  says them (nothing for neither, a duplicate, a pull request or a person's work). Nothing is written to GitHub: no
+  comment, label, close or request.
 
 ### Working a package
 
@@ -331,14 +458,18 @@ holding it is always allowed (one rule, `taintRefusal` in `src/runtime/engine.ts
 proposal; the Board shows where its Task stands (in progress, ready on its branch, merged, ended without either) and how
 to start the next one: an issue whose Task is ready counts as done for the package's order.
 
-Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, declining, next issue, brief, store, routes),
+Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, declining, next issue, brief, store, routes; the court's docket, groupings, set-aside cases, rulings, needs-info questions and routes),
 `tests/issue-triage-workflow.ts` (the workflow end to end against a local GitHub stand-in with scripted investigators:
-both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (the
+both cards, the tool limits, refused reports, changed issues and comments, needs-info, fit, duplicates and pull
+requests in progress, one model, Firstmate's tool; the court passing on, its card, each ruling applied, gold labels, who
+may rule, the issue and file views, and each kind of item the triage sets aside ruled in the court), `tests/issues-ui.mjs` (the
 project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
-links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the empty state, the Crew section's seats; the
+links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the needs-info questions as text with nothing posted, the people's issues, duplicates and pull requests in progress, the empty state, the Crew section's seats; the
 Board has no Issues view), `tests/tainted-task.ts` (a tainted Task: only Studio marks it and the dispatched Task keeps it,
 no GitHub call through the whole code-firstmate flow and an end on its local branch, no issue reference or @mention in
-its commits, run-mode review, no step, agent turn, check or carrying answer outside the OS sandbox). Both workflow tests
+its commits, run-mode review, no step, agent turn, check or carrying answer outside the OS sandbox). `tests/issues-ui.mjs`
+also drives the docket page at 1440 and 390 zh-TW: one case per screen, the popups, the keys, the rulings sent, no
+request to GitHub. Both workflow tests
 check that GitHub is only ever read (no POST, PATCH, PUT or DELETE).
 
 ### Measuring triage and categories
