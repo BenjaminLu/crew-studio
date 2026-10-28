@@ -102,10 +102,26 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/\/api\/issue-triage\/wallet\/cross$/, (r) => { crosses.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, joined: "P-2" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/approve$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); approvals.push(b); r.fulfill(o.refuseApprove ? { status: 409, json: { error: `${b.packages[0]} is approved, not waiting for approval` } } : { json: o.staleApprove ? { ok: true, approved: [], stale: b.packages } : { ok: true, approved: b.packages, stale: [] } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/start$/, (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, task: "R-77", href: "#/run/R-77" } }); });
+  if (o.court) await o.court(ctx);
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
   await p.goto(`${base}/${hash}`); await p.waitForTimeout(800);
   return { ctx, p, posts, approvals, crosses, catCalls, declines, takes };
 }
+// the disagreement court of one triage (public/court.js): a docket served by the test, the rulings it sends recorded
+const SHA = "d".repeat(40), okSide = (file, o = {}) => ({ state: "present", locus: [{ file, symbol: "match", lines: "2-3" }], ok: true, problems: [], repro: "a shorter prefix matches", security: false,
+  excerpts: [{ file, start: 1, lines: ["export const match = (url) =>", "  list.find((d) => d.url.startsWith(url))", "}"], quoted: [2] }], ...o });
+const DOCKET = { schema: 1, project: "wallet", repository: "fixture/wallet", commit: SHA, by: { a: "claude claude-opus-5-5", b: "codex gpt-6" }, run: "R-50", status: "waiting", waiting: true, card: "SC-7", ruled: [],
+  issues: { 31: { title: 'Match <img src=x onerror="window.__pwned=3"> prefix', labels: [] }, 32: { title: "Menu hidden items", labels: [] }, 33: { title: "Menu order", labels: [] }, 34: { title: "Same crash again", labels: [] } },
+  cases: [
+    { id: "C-1", kind: "finding", issues: [31], diff: ["location"], reason: "the reports disagree", agreed: { 31: null }, a: { 31: okSide("src/url.ts") }, b: { 31: okSide("src/other.ts", { ok: false, problems: ["quoted code not found: list.find"] }) } },
+    { id: "C-2", kind: "package", issues: [32, 33], diff: ["package"], reason: "the reports put these in different packages", agreed: { 32: { state: "present" }, 33: { state: "present" } },
+      a: { 32: okSide("src/menu.ts"), 33: okSide("src/menu.ts") }, b: { 32: okSide("src/menu.ts"), 33: okSide("src/menu.ts") },
+      groupings: { a: [{ members: [32, 33], order: [], kind: "unordered", joins: [] }], b: [{ members: [32], order: [32], kind: "single", joins: [] }, { members: [33], order: [33], kind: "single", joins: [] }], separate: [{ members: [32], order: [32], kind: "single", joins: [] }, { members: [33], order: [33], kind: "single", joins: [] }] } },
+    { id: "C-3", kind: "duplicate", issues: [34], diff: ["duplicate"], reason: "both find #34 a duplicate of #12", duplicateOf: 12, agreed: { 34: { state: "present" } }, a: { 34: okSide("src/url.ts", { duplicateOf: 12, symptom: { here: "crash <i>in</i> saveDraft", there: "crash in saveDraft" } }) }, b: { 34: okSide("src/url.ts", { duplicateOf: 12 }) } }] };
+const courtRoutes = (sent, asked) => async (ctx) => {
+  await ctx.route(/\/api\/issue-triage\/wallet\/court\/R-50(\?.*)?$/, (r) => { if (r.request().method() === "POST") { sent.push(JSON.parse(r.request().postData() || "{}")); return r.fulfill({ json: { ok: true, task: "R-50", ruled: 3, href: "#/run/R-50" } }); } return r.fulfill({ json: DOCKET }); });
+  await ctx.route(/\/api\/issue-triage\/wallet\/court\/R-50\/issue\/31$/, (r) => r.fulfill({ json: { n: 31, title: DOCKET.issues[31].title, body: 'Steps <script>window.__pwned=4</script> then <img src=x onerror="window.__pwned=5">', labels: ["bug"], author: "someone", association: "NONE", comments: [{ author: "x", association: "MEMBER", at: "2026-10-28T10:00:00Z", body: "<b>seen</b> on 3.8" }], url: "https://github.com/fixture/wallet/issues/31" } }));
+  await ctx.route(/\/api\/issue-triage\/wallet\/court\/R-50\/file\?/, (r) => { asked.push(new URL(r.request().url()).searchParams.get("path")); r.fulfill({ json: { path: "src/url.ts", commit: SHA, size: 90, text: Array.from({ length: 80 }, (_, i) => i === 1 ? "  list.find((d) => d.url.startsWith(url))" : `// line ${i + 1} <i>x</i>`).join("\n") } }); }); };
 const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.querySelector("#main").scrollWidth <= document.querySelector("#main").clientWidth + 1);
 try {
   { const { ctx, p } = await open(1440, "en", "#/board");
@@ -253,6 +269,65 @@ try {
   { const { ctx, p } = await open(1440, "en", "#/project/wallet", { empty: true });
     await p.waitForSelector("[data-issues-empty]", { timeout: 8000 }).catch(() => {});
     ok(/No triage of fixture\/wallet yet/.test(await p.locator('[data-project-issues="wallet"]').textContent()) && await p.locator("[data-issue-triage]").count() === 1, "with no triage the section says how to start one, with the form");
+    await ctx.close(); }
+  // --- the disagreement court: one case per screen, popups, keys, the rulings sent once, nothing to GitHub ---
+  { const sent = [], asked = [], requests = [];
+    const { ctx, p } = await open(1440, "en", "#/court/wallet/R-50", { court: courtRoutes(sent, asked) });
+    p.on("request", (q) => requests.push(`${q.method()} ${q.url()}`));
+    await p.evaluate(() => { try { sessionStorage.clear(); } catch {} }); await p.reload(); await p.waitForSelector("[data-court-case]", { timeout: 8000 }).catch(() => {});
+    ok(await p.locator("[data-court-case]").count() === 1 && await p.locator('[data-court-case="C-1"]').count() === 1 && await p.locator("[data-court-side]").count() === 2, "the court shows one case per screen, both sides");
+    ok(await p.evaluate(() => !document.querySelector("#view img") && !window.__pwned && /<img src=x/.test(document.querySelector(".ct-title").textContent)), "an issue title with markup shows as text");
+    ok(/The place differs/.test(await p.locator("[data-court-diff]").textContent()) && /A: still there · src\/url\.ts/.test(await p.locator("[data-court-crux]").textContent()) && /B: still there · src\/other\.ts/.test(await p.locator("[data-court-crux]").textContent()), "the disagreement is named and set out, A against B");
+    ok(await p.locator('[data-court-side="a"] .ct-code .q').count() === 1 && /startsWith/.test(await p.locator('[data-court-side="a"] .ct-code .q').textContent()) && /quoted code not found/.test(await p.locator('[data-court-side="b"] .ct-chk.bad').textContent()) && await p.locator('[data-court-side="a"] .ct-chk.ok').count() >= 3, "each side shows its checked code with the quoted line marked, and Studio's check", "");
+    ok(!/recommend|suggest(ed|ion):|建議採用/i.test(await p.locator("#view").textContent()), "no suggestion is shown");
+    ok(await p.locator('[data-court-pick="b"]').isDisabled(), "a side Studio's check refused cannot be adopted");
+    await p.screenshot({ path: join(shots, "court-case-1440.png") });
+    // the issue popup: the snapshot's text and comments as text, a GitHub link; Escape closes it, focus back on its button
+    await p.click('[data-court-issue="31"]'); await p.waitForSelector("[data-court-no-comments], .ct-cm .ct-text", { timeout: 4000 }).catch(() => {});
+    ok(await p.locator(".ct-modal[role=dialog]").count() === 1 && /<script>window.__pwned=4<\/script>/.test(await p.locator(".ct-modal .ct-body").textContent()) && /<b>seen<\/b> on 3.8/.test(await p.locator(".ct-modal .ct-body").textContent()) && await p.evaluate(() => !document.querySelector(".ct-modal img, .ct-modal script, .ct-body b") && !window.__pwned), "the issue popup shows the text and comments as text, and runs nothing", await p.evaluate(() => JSON.stringify([document.querySelectorAll(".ct-modal").length, document.querySelector(".ct-modal .ct-body")?.textContent, window.__pwned, document.querySelector(".ct-modal img, .ct-modal script, .ct-body b")?.outerHTML])));
+    ok(await p.locator('.ct-modal a[data-court-gh]').getAttribute("href") === "https://github.com/fixture/wallet/issues/31" && await p.locator('.ct-modal a[data-court-gh]').getAttribute("target") === "_blank", "the issue popup links to the issue on GitHub, in a new tab");
+    await p.keyboard.press("1");
+    ok(await p.locator('[data-court-case="C-1"]').count() === 1, "a key pressed while a popup is open rules nothing");
+    await p.keyboard.press("Escape");
+    ok(await p.locator(".ct-modal").count() === 0 && await p.evaluate(() => document.activeElement?.dataset?.courtIssue === "31"), "Escape closes the popup and gives focus back");
+    // the file popup: the file at the pinned commit, scrolled to the quoted lines; the backdrop closes it
+    await p.click('[data-court-side="a"] [data-court-excerpt]'); await p.waitForSelector('.ct-file [data-line="2"]', { timeout: 4000 }).catch(() => {});
+    ok(asked.join() === "src/url.ts" && await p.locator('.ct-file [data-line="2"].q').count() === 1 && await p.locator(".ct-file .q").count() === 1 && await p.evaluate(() => !document.querySelector(".ct-file i")), "the file popup reads the file at the pinned commit and marks the quoted line; its text stays text");
+    ok(await p.locator('.ct-modal a[data-court-gh]').getAttribute("href") === `https://github.com/fixture/wallet/blob/${SHA}/src/url.ts#L2`, "the file popup links to those lines on GitHub at the pinned commit", await p.locator('.ct-modal a[data-court-gh]').getAttribute("href"));
+    await p.mouse.click(5, 5); await p.waitForTimeout(100);
+    ok(await p.locator(".ct-modal").count() === 0, "clicking the backdrop closes the popup");
+    await p.click('[data-court-side="b"] [data-court-file="src/other.ts"]'); await p.waitForTimeout(200);
+    ok(asked.at(-1) === "src/other.ts" && await p.locator(".ct-modal").count() === 1, "the locus opens its file too"); await p.keyboard.press("Escape");
+    // keys: 2 is refused here, 1 rules, Z undoes, R goes to the reason, Enter leaves it
+    await p.keyboard.press("2"); ok(await p.locator('[data-court-case="C-1"]').count() === 1, "the key of a side that cannot be adopted rules nothing");
+    await p.keyboard.press("1"); ok(await p.locator('[data-court-case="C-2"]').count() === 1, "1 rules the case and the next one is shown");
+    ok(/A's grouping/.test(await p.locator('[data-court-pick="a"]').textContent()) && /All separate/.test(await p.locator('[data-court-pick="separate"]').textContent()) && /#32\s*#33/.test(await p.locator('[data-court-grouping="a"]').textContent()), "a grouping case offers A's grouping, B's, all separate or needs information, and shows each grouping");
+    await p.keyboard.press("z"); ok(await p.locator('[data-court-case="C-1"]').count() === 1, "Z undoes the last ruling");
+    await p.keyboard.press("r"); ok(await p.evaluate(() => document.activeElement?.dataset?.courtReason === "1"), "R goes to the reason");
+    await p.keyboard.type("A reads the code path that runs"); await p.keyboard.press("Enter");
+    ok(await p.evaluate(() => document.activeElement?.dataset?.courtReason !== "1"), "Enter leaves the reason");
+    await p.keyboard.press("1"); await p.keyboard.press("3");
+    ok(await p.locator('[data-court-case="C-3"]').count() === 1 && /Duplicate of #12/.test(await p.locator('[data-court-pick="confirm"]').textContent()) && await p.locator("[data-court-pick]").count() === 3, "a duplicate case is ruled confirm, not a duplicate, or needs information");
+    ok(/crash <i>in<\/i> saveDraft/.test(await p.locator('[data-court-symptom="a:34"]').textContent()) && await p.locator("[data-court-symptom] i").count() === 0, "a duplicate case shows the matching symptom both issues quote, as text");
+    await p.click('[data-court-pick="confirm"]');
+    ok(await p.locator("[data-court-summary]").count() === 1 && await p.locator("[data-court-ruled]").count() === 3 && sent.length === 0, "after the last case the rulings are listed, nothing sent yet");
+    await p.click("[data-court-submit]"); await p.waitForTimeout(300);
+    ok(sent.length === 1 && JSON.stringify(sent[0]) === JSON.stringify({ rulings: [{ case: "C-1", pick: "a", reason: "A reads the code path that runs" }, { case: "C-2", pick: "separate" }, { case: "C-3", pick: "confirm" }] }), "sending posts each case's ruling once, with its reason", JSON.stringify(sent));
+    ok(/Nothing was written to GitHub/.test(await p.locator('[data-court-summary] [role="status"]').textContent()) && await p.locator('[data-court-summary] a[href="#/run/R-50"]').count() === 1, "the court says the Task applies them and links to it");
+    ok(requests.every((q) => q.startsWith("GET ") || q === `POST ${base}/api/issue-triage/wallet/court/R-50` || q === `POST ${base}/api/main/locale`) && !requests.some((q) => /github\.com/.test(q)), "the court calls nothing on GitHub and writes nothing but its rulings to Studio", requests.filter((q) => !q.startsWith("GET ")).join(", "));
+    await p.screenshot({ path: join(shots, "court-1440.png"), fullPage: true });
+    await ctx.close(); }
+  { const sent = [], asked = [];
+    const { ctx, p } = await open(390, "zh-TW", "#/court/wallet/R-50", { court: courtRoutes(sent, asked) });
+    await p.evaluate(() => { try { sessionStorage.clear(); } catch {} }); await p.reload(); await p.waitForSelector("[data-court-case]", { timeout: 8000 }).catch(() => {});
+    ok(await noSideways(p) && /分歧法庭/.test(await p.locator("#view").textContent()) && await p.locator("[data-court-dock]").isVisible(), "390: the court fits the phone, the rulings docked in reach");
+    const [a, b] = await Promise.all(["a", "b"].map((k) => p.locator(`[data-court-side="${k}"]`).boundingBox()));
+    ok(a && b && b.y > a.y && Math.abs(a.x - b.x) < 2, "390: the two sides stack");
+    await p.screenshot({ path: join(shots, "court-390.png"), fullPage: false });
+    await p.click('[data-court-pick="a"]'); ok(await p.locator('[data-court-case="C-2"]').count() === 1, "390: a tap rules the case");
+    await p.click('[data-court-issue="32"]'); await p.waitForTimeout(200);
+    ok(await noSideways(p) && await p.locator(".ct-modal").count() === 1, "390: a popup fits the phone"); await p.click("[data-court-close]");
+    ok(await p.locator(".ct-modal").count() === 0, "the close button closes the popup");
     await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {

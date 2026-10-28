@@ -10,7 +10,8 @@ import * as triage from './issue-triage';
 import type {Checked,Finding,Reads,Report,Snapshot,TriageRecord,WorkState} from './issue-triage';
 import {PLANNED,type CategoryRecord} from './issue-categories';
 
-export type GoldState=Finding['state'];
+/** the triager's states, and needs-info: the captain's ruling that an issue needs more from its reporter (src/domain/issue-court.ts) */
+export type GoldState=Finding['state']|'needs-info';
 /** One issue's gold answer. Every field is optional: a field is scored only where it is labeled. */
 export type GoldLabel={n:number;state?:GoldState;files?:string[];security?:'yes'|'no';
  /** a category id (C-n) or PLANNED */

@@ -361,6 +361,56 @@ try{
  ok(merged.lastPackage===2&&T.mergeTriage({...merged,packages:merged.packages.filter(p=>p.id!=='P-2')},second).packages.at(-1)!.id==='P-3','a package id is never given out twice, even after its package was dropped');
  mkdirSync(join(repo,'.git'),{recursive:true});writeFileSync(join(repo,'.git/config'),'[core]\n\trepositoryformatversion = 0\n');
  ok(!T.verifyReport(report([finding(1,{locus:[{file:'.git/config',symbol:'x',lines:'1'}],evidence:'repositoryformatversion = 0'})]),snap,read)[0].ok,'git metadata is not code: a quote from .git fails the check');
+ // --- the disagreement court (src/domain/issue-court.ts): the docket a batch leaves, and the captain's rulings applied ---
+ { const C=await import('../src/domain/issue-court');
+  const at={run:'R-5',card:'SC-9',by:'captain',at:'2026-10-29T00:00:00Z'},clip={locus:[{file:'src/a/clip.ts',symbol:'setClipboard',lines:'1-2'}],evidence:'Clipboard.setString(payload)'};
+  const docketOf=(a:any,b:any,toHuman?:any[])=>{const rec=T.triageRecord({project:'fixture',snapshot:snap,a,b,read,by:'issue-triage R-5'});
+   return{rec,d:C.buildDocket({project:'fixture',repository:'fixture/project',commit:'c'.repeat(40),snapshot:snap,a,b,read,toHuman:toHuman??rec.toHuman,added:rec.packages,by:{a:'claude m1',b:'codex m2'}})};};
+  // a grouping: the issue one report leaves out of a set joins the package of the issues both name, when that report's set is ruled
+  const ga=report([finding(1),finding(3,clip),finding(4)],{related:[{members:[1,3,4],order:[],why:'x'}]}),gb=report([finding(1),finding(3,clip),finding(4)],{related:[{members:[1,3],order:[],why:'x'}],alone:[4]});
+  const g=docketOf(ga,gb),gc=g.d.cases[0];
+  ok(g.rec.packages.length===1&&g.rec.packages[0].members.join()==='1,3'&&g.d.cases.length===1&&gc.kind==='package'&&gc.issues.join()==='4','an issue only one report puts in a set is a grouping case of its own',JSON.stringify(g.d.cases));
+  ok(gc.groupings!.a[0].members.join()==='1,3,4'&&gc.groupings!.a[0].joins.join()==='P-1'&&gc.groupings!.b[0].members.join()==='4'&&gc.groupings!.b[0].kind==='single','each report\'s grouping is shown: A\'s takes in the package both name, B\'s keeps it alone',JSON.stringify(gc.groupings));
+  const ja=C.applyRulings(g.rec,g.d,[{case:gc.id,pick:'a'}],at);
+  ok(ja.record.packages.length===1&&ja.record.packages[0].members.join()==='1,3,4'&&ja.record.packages[0].kind==='unordered'&&ja.record.packages[0].security&&!ja.added.length&&ja.gold['4'].package==='P-1'&&!ja.record.toHuman.length,'A\'s grouping: the issue joins the package both named, which still waits for approval',JSON.stringify(ja.record.packages));
+  // the package a grouping takes in was decided while the court waited: its issues are never revived nor packaged twice
+  const declined=C.applyRulings(T.declinePackages(g.rec,['P-1']),g.d,[{case:gc.id,pick:'a'}],at);
+  ok(declined.record.packages.map(p=>`${p.members.join('+')}:${p.kind}`).join()==='4:single'&&declined.record.issues['1'].investigated===false&&declined.gold['4'].package===declined.added[0],'a grouping whose package was declined meanwhile takes only the case\'s own issue: the declined issues stay released',JSON.stringify(declined.record.packages));
+  const approved=C.applyRulings({...g.rec,packages:g.rec.packages.map(p=>({...p,status:'approved' as const}))},g.d,[{case:gc.id,pick:'a'}],at);
+  ok(approved.record.packages.map(p=>`${p.id}:${p.members.join('+')}:${p.status}`).join()==='P-1:1+3:approved,P-2:4:proposed'&&[1,3,4].every(n=>approved.record.packages.filter(p=>p.members.includes(n)).length===1),'a grouping whose package was approved meanwhile leaves it as approved and packages the case\'s issue alone: no issue in two packages',JSON.stringify(approved.record.packages));
+  const jb=C.applyRulings(g.rec,g.d,[{case:gc.id,pick:'b'}],at);
+  ok(jb.record.packages.map(p=>`${p.id}:${p.members.join('+')}:${p.kind}`).join()==='P-1:1+3:unordered,P-2:4:single'&&jb.added.join()==='P-2'&&jb.gold['4'].package==='P-2'&&jb.gold['4'].files?.join()==='src/a/url.ts','B\'s grouping: the issue is a package of its own',JSON.stringify(jb.record.packages));
+  // the items set aside before packaging (a duplicate, a pull request open, a person's work): each its own kind of case
+  const ka=report([finding(1),finding(3,clip),finding(4)],{alone:[1,3,4]}),kb=report([finding(1),finding(3),finding(4)],{alone:[1,3,4]});
+  const k=docketOf(ka,kb,[{issues:[1],reason:'both find #1 a duplicate of #9',kind:'duplicate',duplicateOf:9},{issues:[4],reason:'open pull request #77 names #4',kind:'in-progress',pulls:[77]},{issues:[3],reason:'not an agent\'s work',kind:'human-fit',fit:['product-decision']}]);
+  const kc=(n:number)=>k.d.cases.find(c=>c.issues.includes(n))!;
+  ok(kc(1).kind==='duplicate'&&kc(1).duplicateOf===9&&kc(4).kind==='in-progress'&&kc(4).pulls?.join()==='77'&&kc(3).kind==='human-fit'&&kc(3).fit?.join()==='product-decision'&&kc(1).agreed['1']?.state==='present'&&kc(3).agreed['3']===null,'an item set aside before packaging is a case of its kind, with what both reports agree on',JSON.stringify(k.d.cases.map(c=>[c.kind,c.agreed])));
+  await refuses(()=>C.parseRulings(k.d,[{case:kc(1).id,pick:'a'},{case:kc(4).id,pick:'wait'},{case:kc(3).id,pick:'human'}]),'a duplicate case is ruled confirm, not a duplicate, or needs-info: not A or B');
+  await refuses(()=>C.parseRulings(k.d,[{case:kc(1).id,pick:'confirm'},{case:kc(4).id,pick:'wait'}]),'every case of the docket is ruled: a partial set is refused');
+  // as the triage sets them aside: in no package, each an item of its kind
+  const kr=C.applyRulings({...k.rec,packages:[],toHuman:[{issues:[1],reason:'dup'},{issues:[3,4],reason:'x'}]},k.d,[{case:kc(1).id,pick:'confirm'},{case:kc(4).id,pick:'take'},{case:kc(3).id,pick:'agent'}],at);
+  ok(!kr.record.packages.some(p=>p.members.includes(1))&&kr.record.rulings!.find(r=>r.issues.includes(1))!.duplicateOf===9&&kr.record.issues['1'].ruled?.pick==='confirm'&&!kr.gold['1'],'a confirmed duplicate is recorded, packaged nothing, and nothing goes to GitHub');
+  ok(kr.record.packages.some(p=>p.members.join()==='4'&&p.kind==='single'&&p.status==='proposed')&&kr.gold['4'].state==='present','taking an issue a pull request names anyway adopts what both reports agree on: a package waiting for approval');
+  ok(!kr.record.packages.some(p=>p.members.includes(3))&&kr.record.toHuman.some(h=>h.issues.join()==='3'&&/disagree/.test(h.reason)),'giving an issue to an agent while the reports disagree on it leaves it for a person, with why',JSON.stringify(kr.record.toHuman));
+  // needs-info: the reports' questions for the reporter kept with it, shown only in Studio; kept through the next batch
+  const qa=report([finding(1,{state:'needs-info',locus:[],evidence:'nothing names it',repro:'none',questions:['Which page were you on?']})],{alone:[1]}),qb=report([finding(1)],{alone:[1]});
+  const q=docketOf(qa,qb),qc=q.d.cases[0];
+  ok(qc.kind==='finding'&&qc.diff.includes('locate')&&qc.a['1']!.questions?.join()==='Which page were you on?','one report cannot locate it: a finding case, its questions shown',JSON.stringify(qc));
+  const qr=C.applyRulings(q.rec,q.d,C.parseRulings(q.d,[{case:qc.id,pick:'needs-info',reason:'ask first\nplease'}]),at);
+  const ni=qr.record.noCode!.find(x=>x.state==='needs-info')!;
+  ok(ni.issues.join()==='1'&&ni.questions?.['1']?.join()==='Which page were you on?'&&qr.record.issues['1'].state==='needs-info'&&qr.gold['1'].state==='needs-info'&&qr.record.rulings![0].reason==='ask first please','needs-info: with the no-code issues, its questions kept, the reason one line',JSON.stringify(qr.record.noCode));
+  // an issue changed on GitHub since the docket was made: its ruling is not applied, no gold is written, it waits for the next triage
+  const moved=C.applyRulings(q.rec,q.d,[{case:qc.id,pick:'needs-info'}],{...at,changed:[1]});
+  ok(!moved.record.noCode?.some(x=>x.state==='needs-info')&&!moved.gold['1']&&moved.record.toHuman.some(h=>h.issues.includes(1)&&/changed on GitHub/.test(h.reason))&&moved.skipped.join()==='1'&&moved.record.rulings![0].packages.length===0,'a ruling on an issue changed on GitHub since the docket is not applied and writes no gold',JSON.stringify(moved.record.toHuman));
+  ok(q.d.cases[0].hashes?.['1']===snap.issues.find(i=>i.n===1)!.hash,'the docket keeps each issue\'s hash as it was investigated');
+  const later=T.mergeTriage(qr.record,T.triageRecord({project:'fixture',snapshot:snap,a:report([finding(4)],{alone:[4]}),b:report([finding(4)],{alone:[4]}),read,by:'issue-triage R-6'}));
+  ok(later.noCode?.find(x=>x.state==='needs-info')?.questions?.['1']?.length===1&&later.rulings?.length===1&&later.issues['1'].ruled?.pick==='needs-info','a later batch keeps the needs-info issue, its questions and the rulings',JSON.stringify(later.noCode));
+  await refuses(()=>C.parseRulings(q.d,[{case:qc.id,pick:'needs-info',extra:1}]),'a ruling with an unknown field is refused');
+  await refuses(()=>C.parseRulings(q.d,[]),'an empty set of rulings is refused');
+  // the court's routes: the phone may send rulings (they answer a card); a malformed path is refused
+  ok((await post('/api/issue-triage/fixture/court/R-1',{rulings:[{case:'C-1',pick:'a'}]},'phone')).status===409,'the phone captain can send rulings (refused here only because there is no such triage)');
+  ok((await post('/api/issue-triage/fixture/court/R-1',{rulings:[],more:1})).status===400&&(await get('/api/issue-triage/fixture/court/x')).status===400&&(await get('/api/issue-triage/fixture/court/R-1/file?path=src/a/url.ts')).status===409&&(await post('/api/issue-triage/fixture/court/R-1/file',{rulings:[]})).status===405,'the court\'s routes refuse a malformed request, an unknown triage, and a write to a read');
+  ok((await post('/api/issue-triage/fixture/approve',{packages:['P-1']},'phone')).status===403,'the phone still cannot do the rest on the project page'); }
  // --- completeness, comments, duplicates and existing work (read-only: nothing goes to GitHub) ---
  { calls.length=0;
   ok(Array.isArray(await adapter.remoteRead('closed-issues' as any,'fixture/project',1))&&calls.at(-1)==='GET /repos/fixture/project/issues?state=closed&sort=updated&direction=desc&per_page=50&page=1','the recently closed issues are read in one page, most recently updated first');
@@ -457,6 +507,15 @@ try{
    const busy=T.proposePackages(report([finding(1),finding(3)],{related:[{members:[1,3],order:[],why:'x'}]}),report([finding(1),finding(3)],{related:[{members:[1,3],order:[],why:'x'}]}),full,read);
    ok(!busy.packages.length&&busy.toHuman.filter(h=>h.kind==='in-progress').map(h=>h.issues.join()+':'+h.pulls?.join()).join()==='1:21,3:24','an issue an open pull request names is never packaged: in progress, for a person',JSON.stringify(busy));
    const d2=T.proposePackages(report([dup(1,3),finding(4)],{alone:[1,4]}),report([dup(1,3),finding(4)],{alone:[1,4]}),dsnap,read);
+   // ruled not a duplicate, the issue meets the rules the duplicate went before: an open pull request, then a person's work
+   { const C=await import('../src/domain/issue-court');
+     const notDup=(snapshot:any)=>{const ra=report([dup(1,3),finding(4)],{alone:[1,4]}),rb=report([dup(1,3,{fit:'human',fitReason:'too-large'}),finding(4)],{alone:[1,4]});
+      const rec=T.triageRecord({project:'fixture',snapshot,a:ra,b:rb,read,by:'t'}),d=C.buildDocket({project:'fixture',repository:'fixture/project',commit:'c'.repeat(40),snapshot,a:ra,b:rb,read,toHuman:rec.toHuman,added:rec.packages,by:{a:'x',b:'y'}});
+      return C.applyRulings(rec,d,C.parseRulings(d,d.cases.map(c=>({case:c.id,pick:c.kind==='duplicate'?'not-duplicate':c.kind==='finding'?'neither':c.kind==='package'?'separate':c.kind==='in-progress'?'wait':'human'}))),{run:'R-1',card:'SC-1',by:'captain',at:'2026-10-29T00:00:00Z'});};
+     const busy=notDup({...dsnap,issues:dsnap.issues.map(i=>i.n===1?{...i,prs:[21]}:i),pulls:full.pulls});
+     ok(!busy.record.packages.some(p=>p.members.includes(1))&&busy.record.issues['1'].duplicateOf===undefined&&busy.record.toHuman.some(h=>h.kind==='in-progress'&&h.issues.join()==='1'&&h.pulls?.join()==='21'),'not a duplicate, an issue an open pull request names is set aside as in progress, not packaged',JSON.stringify(busy.record.toHuman));
+     const person=notDup(dsnap);
+     ok(!person.record.packages.some(p=>p.members.includes(1))&&person.record.toHuman.some(h=>h.kind==='human-fit'&&h.issues.join()==='1'&&h.fit?.join()==='too-large'),'not a duplicate, a person\'s work is set aside as human-fit, not packaged',JSON.stringify(person.record.toHuman)); }
    ok(!d2.packages.some(p=>p.members.includes(1))&&d2.toHuman.some(h=>h.kind==='duplicate'&&h.issues.join()==='1'&&h.duplicateOf===3&&/#3/.test(h.reason)),'an agreed duplicate is never packaged: it is listed for a person with the issue it duplicates',JSON.stringify(d2));
    const d3=T.proposePackages(report([dup(1,3),finding(4)],{alone:[1,4]}),report([finding(1),finding(4)],{alone:[1,4]}),dsnap,read);
    ok(!d3.packages.some(p=>p.members.includes(1))&&d3.toHuman.some(h=>h.issues.includes(1)&&!h.kind),'a duplicate only one report names is a disagreement, for a person');
@@ -524,7 +583,13 @@ try{
    const disagreeing=T.triageRecord({project:'fixture',snapshot:full,a:report([finding(1)],{alone:[1]}),b:report([finding(1,{state:'fixed?'})],{alone:[1]}),read,by:'t'});
    await refuses(()=>T.takeAnyway(disagreeing,1,{by:'c'}),'an in-progress issue the reports disagree on cannot be taken into a package');
    const human=T.triageRecord({project:'fixture',snapshot:full,a:report([finding(1,{fit:'human',fitReason:'too-large'})],{alone:[1]}),b:report([finding(1)],{alone:[1]}),read,by:'t'});
-   await refuses(()=>T.takeAnyway(human,1,{by:'c'}),'an in-progress issue that is a person\'s work cannot be taken into a package'); }
+   await refuses(()=>T.takeAnyway(human,1,{by:'c'}),'an in-progress issue that is a person\'s work cannot be taken into a package');
+   // the court's "take it anyway" follows the same rule: a person's work set aside as in progress is not packaged
+   { const C=await import('../src/domain/issue-court');const ra=report([finding(1,{fit:'human',fitReason:'too-large'})],{alone:[1]}),rb=report([finding(1)],{alone:[1]});
+     const d=C.buildDocket({project:'fixture',repository:'fixture/project',commit:'c'.repeat(40),snapshot:full,a:ra,b:rb,read,toHuman:human.toHuman,added:human.packages,by:{a:'x',b:'y'}});
+     const take=d.cases.find(c=>c.kind==='in-progress'&&c.issues.join()==='1')!;
+     const out=C.applyRulings(human,d,C.parseRulings(d,d.cases.map(c=>({case:c.id,pick:c===take?'take':c.kind==='in-progress'?'wait':c.kind==='finding'?'neither':c.kind==='package'?'separate':c.kind==='duplicate'?'confirm':'human'}))),{run:'R-1',card:'SC-1',by:'captain',at:'2026-10-29T00:00:00Z'});
+     ok(!out.record.packages.some(p=>p.members.includes(1))&&out.record.issues['1'].fit==='human'&&out.record.toHuman.some(h=>h.kind==='in-progress'&&h.issues.includes(1))&&/person's work/.test(out.record.rulings!.find(r=>r.issues.includes(1))!.refused??''),'taking an in-progress issue anyway in the court is refused as on the project page when it is a person\'s work: it stays set aside, with why',JSON.stringify(out.record.packages)); } }
    ok(!T.atSnapshot(rec,{...full,issues:full.issues.filter(i=>i.n!==1)}).noCode?.length,'a closed needs-info issue leaves the list'); }
  }
  console.log(`issue-triage: ${pass} passed, 0 failed`);

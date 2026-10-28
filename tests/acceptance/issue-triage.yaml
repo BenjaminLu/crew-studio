@@ -1,10 +1,10 @@
 # Triage a batch of a connected project's open GitHub issues: started only by Firstmate's studio_triage_issues tool
 # (internal). Offline cases use the loopback GitHub simulator; the investigators are paid model work and run only after the
-# captain's start card, so these cases stop before them. The investigators, the checks and the approval card run end to end
-# against scripted investigators in tests/issue-triage-workflow.ts.
+# captain's start card, so these cases stop before them. The investigators, the checks, the disagreement court and the
+# approval card run end to end against scripted investigators in tests/issue-triage-workflow.ts.
 schema: 2
 workflow: issue-triage
-pin: { version: 1, sha256: "94d2a4cc78409178e2a4d5b26f1f19121efaba20e9c822eb5fb4119e24bc9074" }   # bun scripts/acceptance/pin.ts issue-triage
+pin: { version: 2, sha256: "e9157df25f8cfd971bcac6c27a8e2fff506ac6aa39121e2a105a2ca8c1047dee" }   # bun scripts/acceptance/pin.ts issue-triage
 topic: "Acceptance: internal workflow"
 start: { provider: null, params: {} }
 providers: []
@@ -20,7 +20,7 @@ stub:
     setup: [github-sim, github-issues]
     board_refusal: { status: 409, error: "internal or retired" }
     cards: [{ node: confirm, answer: close }]
-    expect: { status: succeeded, result: closed, visited: [snapshot, confirm, drop, cancelled], not_visited: [a, b, record, approve] }
+    expect: { status: succeeded, result: closed, visited: [snapshot, confirm, drop, cancelled], not_visited: [a, b, record, court, approve] }
   - name: nothing-open
     covers: "a project with no open issue → the triage ends at once, with no card and no investigator"
     how: triage
