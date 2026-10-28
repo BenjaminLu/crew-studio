@@ -59,8 +59,9 @@ writes a template (JSON) of a stratified sample: strata are category × whether 
 investigated), taken in turn so each one is represented; within one, a fixed order from the seed (the project id by
 default). Issues the captain labeled before are left out. Each row's `model` shows investigator A's and B's own answers
 (from the stored reports), where they disagree (`diff`), what Studio kept, the category and the package. `gold` is
-prefilled with the current answer, except for a field the two investigators disagree on (state, location, security, or
-everything when one did not report the issue): that one is left empty for the captain to decide. The captain corrects
+prefilled with the current answer, except for a field the two investigators disagree on (the state, and then its files
+too; the files; security when their answers differ, though Studio flags either; or everything when one did not report
+the issue): that one is left empty for the captain to decide. The captain corrects
 `gold`, drops a field they cannot judge, sets `"reviewed": true` (exactly `true`), and imports:
 
     bun scripts/issue-eval.ts import <project> <file>
@@ -75,20 +76,28 @@ or of another schema. Only an active or proposed category is accepted (not a dec
     bun scripts/issue-eval.ts score <project> [--repo path] [--out file] [--no-write]
 
 replays every stored triage batch of the project (`data/runs/<task>/issue-snapshot.json`, `issue-report-a.json`,
-`issue-report-b.json`; the report a step kept in `run.json` if the file is missing) through the current
-`parseReport`, `verifyReport`, `compareReports` and `proposePackages`, imported from `src/domain/issue-triage.ts`, never
-copied: a changed rule changes the score. The pinned checkout is removed after each triage, so the code is read from
-the project's repository at each report's commit (`git cat-file`, nothing written): `--repo`, else the project's
-GitHub folder. Without it, or for a commit the repository lacks, every quoted line fails the check and the score says
-so. An issue investigated twice is answered by its latest batch. Packages are each batch's own: the cross-batch match
-(and a captain's join of one) is not replayed, so a gold pair whose issues were answered by different batches is not
-scored as a miss but counted apart (`package.pairs.crossBatch`), and an issue whose gold package spans batches is left
-out of `exact` (`exactOf` says how many count). Categories are the current categories record; where the captain changed
-an issue's category, the categorizer's own answer comes from its stored report in the run's `run.json`. A merged
-category, in an answer or in the gold, is followed to the one it was merged into.
+`issue-report-b.json`; the report a step kept in `run.json` if the file is missing) through the current `parseReport`,
+`verifyReport`, `compareReports` and `proposePackages`, imported from `src/domain/issue-triage.ts`, never copied: a
+changed rule changes the score. The pinned checkout is removed after each triage, so the code is read from the project's
+repository at each report's commit (`git cat-file`, nothing written): `--repo`, else the project's GitHub folder.
+Without it, or for a commit the repository lacks, every quoted line fails the check and the score says so. Where the run
+recorded what `fs_read` returned to each investigator (`triageReads` on the step, since Studio records them), the replay
+checks quotes against it as the workflow does. A report from before that has no reads: it is replayed with every other
+check (line ranges, symbols, distinctive quotes), only the "quoted from what fs_read showed you" check left out, and
+`runs.withoutReads` counts such batches. Recorded reads not shaped as `{file: [[start, end], ...]}` are treated as none.
+`withReads` repeats the metrics over only the issues answered by batches with recorded reads, so old and new data can be
+read apart. A batch the current rules throw on is skipped and named in `runs.skipped`. The ledger digest the workflow
+demands of a live round is not checked here: the scorer measures rules on stored reports, it does not admit them. An
+issue investigated twice is answered by its latest batch. Packages are each batch's own: the cross-batch match (and a
+captain's join of one) is not replayed, so a gold pair whose issues were answered by different batches is not scored as
+a miss but counted apart (`package.pairs.crossBatch`), and an issue whose gold package spans batches is left out of
+`exact` (`exactOf` says how many count). Categories are the current categories record; where the captain changed an
+issue's category, the categorizer's own answer comes from its stored report in the run's `run.json`. A merged category,
+in an answer or in the gold, is followed to the one it was merged into.
 
-Per predictor (investigator A, investigator B, and `studio`: what Studio does with the two, answering only for issues in
-a package both agree on; for security, Studio's flag from either report or a label):
+Per predictor (investigator A, investigator B, and `studio`: what Studio does with the two, answering for issues in a
+package both agree on, and for issues both find not-found or both not-code (`noCode`: that state, no files); for
+security, Studio's flag from either report or a label):
 
 - **state** and **security**: gold, answered, coverage, accuracy (right among answered), recall (right among labeled),
   and precision and recall per class;
@@ -96,7 +105,8 @@ a package both agree on; for security, Studio's flag from either report or a lab
 - **category**: accuracy and recall, and precision and recall on `PLANNED` (`notPlanned` counts against it);
 - **package**: pairs of labeled issues put together, precision and recall, and the share whose package is exactly the
   gold set;
-- **human**: the share of investigated issues routed to a person (in no package).
+- **human**: the share of investigated issues routed to a person (in no package and not agreed `noCode`), with the
+  `noCode` count beside it; both counted on each issue's latest answer.
 
 The headline numbers use the effective gold (the captain's fields over derived ones). `bySource.captain` and
 `bySource.derived` score each source alone: derived package gold comes from packages Studio itself proposed (and the

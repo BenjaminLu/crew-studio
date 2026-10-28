@@ -80,6 +80,11 @@ try {
       let before = entries(E, r).length, calls = sim.calls.length;
       let res = await E.reconcileFromGitHub!(r.id);
       ok(res.state === "not-merged" && entries(E, r).length === before && !r.reconciled && E.reconcilable!(r) && !writes(calls).length, "a pull request still open on GitHub: nothing is recorded and the Task still reads closed", JSON.stringify(res));
+      // a run whose event log is sealed (corrupt, src/runtime/durable-log.ts) is never read on GitHub nor reconciled
+      (E as any).sealed.set(r.id, { line: 3, message: "sealed for the test" });
+      calls = sim.calls.length; res = await E.reconcileFromGitHub!(r.id);
+      ok(!E.reconcilable!(r) && res.state === "skipped" && sim.calls.length === calls, "a Task with a sealed event log is not reconcilable and GitHub is not read for it", JSON.stringify(res));
+      (E as any).sealed.delete(r.id);
       // the captain merged it on GitHub (as on 2026-10-18T01:08:19Z): Studio reads it and records the observation once
       sha = mergeOnGitHub(pr, r.ctx.pr.branch);
       const past = entries(E, r).map((e: any) => [e.seq, e.sig]); before = past.length; calls = sim.calls.length;
