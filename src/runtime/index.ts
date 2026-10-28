@@ -274,6 +274,8 @@ export function createRuntime(d: RuntimeDeps) {
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
 
   const grantNonces = new Map<string, number>();
+  /** the review room's last "Check for new commits" per room (a rate limit on GitHub reads) */
+  const roomChecks = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
     if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
@@ -611,7 +613,9 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
         if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
-        if (room[2] === "check") { try { return json(await rr.check(room[1])); } catch (e: any) { return fail(e); } }
+        // Check for new commits reads GitHub: at most once every few seconds per room, whatever the page sends
+        if (room[2] === "check") { const last = roomChecks.get(room[1]) ?? 0; if (Date.now() - last < 5000) return json({ error: "Checked a moment ago; try again in a few seconds / 剛剛才檢查過，請稍候再試", code: "rate_limited" }, 429);
+          roomChecks.set(room[1], Date.now()); try { return json(await rr.check(room[1])); } catch (e: any) { return fail(e); } }
         if (room[2] === "speech") { try { return json(await rr.speech(room[1], b?.scene)); } catch (e: any) { return fail(e); } }
         try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm }, by)); } catch (e: any) { return fail(e); }
       }

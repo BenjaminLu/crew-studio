@@ -2,7 +2,7 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import {GitHubPoller,readAuthority,grantReadScope} from '../github-poller';
 // Local review remains the default. GitHub publication requires a trusted,
 // exact project grant; this interface exposes no review/comment/merge endpoint.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -102,6 +102,8 @@ export function validateGitHubGrant(g: GitHubProjectGrant) {
 // owned until cleanup; Studio exit kills only groups it actually created.
 // https://nodejs.org/api/child_process.html#optionsdetached
 const gitGroups = new Set<number>();
+/** one pull request fetch at a time per review room cache (GitHubPrAdapter.fetchPull) */
+const pullFetches = new Map<string, Promise<void>>();
 process.once("exit", () => { for (const pid of gitGroups) try { process.kill(-pid, "SIGKILL"); } catch {} });
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 export async function ownedGit(argv: string[], cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal) {
@@ -439,23 +441,35 @@ export class GitHubPrAdapter implements PrAdapter {
   }
   /** The review room's copy of pull request n (src/domain/review-room.ts): GitHub's refs/pull/<n>/head (a fork's head too) and
    *  the base branch, fetched read-only with the grant's credential into a bare repository Studio owns under its data
-   *  directory (cache). Never the project's checkout or its object store, no worktree, nothing pushed, no gc; bounded by time
-   *  and by the cache's size on disk (over maxBytes the cache is removed and the read refused). Each head it saw is kept
-   *  (refs/crew/seen/<sha>) so a later head can be compared with it. */
+   *  directory (cache). Never the project's checkout or its object store, no worktree, no hooks, no templates, nothing pushed,
+   *  no gc. Full history (the room reads merge-base, log and blame at the head). Bounded: a time limit, and the cache's size on
+   *  disk, watched while the fetch runs (over maxBytes the fetch is stopped) and checked after it, success or not; a fetch that
+   *  stops leaves no temporary pack behind. Over the cap the read is refused with overCap set (the caller decides whether the
+   *  cache may go: another room may be reading it). One fetch at a time per cache. Each head it saw is kept (refs/crew/seen/<sha>). */
   async fetchPull(n: string, base: string, cache: string, o: { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number } = {}) {
     validateGitHubGrant(this.grant); o.signal?.throwIfAborted();
     if (!/^[1-9][0-9]{0,8}$/.test(n) || !ref(base) || !cache.startsWith("/") || /[\r\n]/.test(cache)) throw new Error("invalid pull request fetch target");
-    mkdirSync(cache, { recursive: true, mode: 0o700 });
-    if (!existsSync(join(cache, "HEAD"))) localMust(cache, ["init", "--bare", "-q", "."]);
-    const env = publicationEnv(this.gitAuth()), timeout = Math.max(1000, Math.min(600_000, o.timeoutMs ?? 120_000)), max = o.maxBytes ?? 1024 ** 3;
-    const c = (args: string[]) => ownedGit(gitArgv(["-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args]), cache, env, timeout, o.signal);
-    await c(["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", this.grant.pushUrl, `+refs/pull/${n}/head:refs/crew/pull/${n}/head`, `+refs/heads/${base}:refs/crew/pull/${n}/base`]);
-    const head = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/head^{commit}`]), tip = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/base^{commit}`]);
-    if (!sha.test(head) || !sha.test(tip)) throw new Error("the fetched pull request head or base is invalid");
-    const kib = (await c(["count-objects", "-v"])).split("\n").reduce((t, l) => { const m = /^(size|size-pack|size-garbage): (\d+)$/.exec(l); return t + (m ? Number(m[2]) : 0); }, 0);
-    if (kib * 1024 > max) { rmSync(cache, { recursive: true, force: true }); throw new Error(`the pull request's repository is larger than the review room keeps (${Math.round(max / 1024 ** 2)} MB)`); }
-    await c(["update-ref", `refs/crew/seen/${head}`, head]);
-    return { head, base: tip };
+    const prior = pullFetches.get(cache) ?? Promise.resolve(); let done!: () => void; const mine = new Promise<void>((r) => (done = r)), chain = prior.then(() => mine); pullFetches.set(cache, chain);
+    await prior.catch(() => {});
+    const max = o.maxBytes ?? 1024 ** 3, packs = join(cache, "objects", "pack");
+    const sizeOf = (dir: string): number => { let t = 0; try { for (const e of readdirSync(dir, { withFileTypes: true })) { const f = join(dir, e.name); t += e.isDirectory() ? sizeOf(f) : (() => { try { return statSync(f).size; } catch { return 0; } })(); } } catch {} return t; };
+    const overCap = () => Object.assign(new Error(`the pull request's repository is larger than the review room keeps (${Math.round(max / 1024 ** 2)} MB)`), { overCap: true });
+    const clean = () => { try { for (const f of readdirSync(packs)) if (/^tmp_|\.keep$|\.lock$/.test(f)) rmSync(join(packs, f), { force: true }); } catch {} try { for (const f of readdirSync(join(cache, "objects"))) if (/^(incoming-|tmp_)/.test(f)) rmSync(join(cache, "objects", f), { recursive: true, force: true }); } catch {} };
+    const stop = new AbortController(), signal = o.signal ? AbortSignal.any([o.signal, stop.signal]) : stop.signal; let over = false;
+    const watch = setInterval(() => { if (sizeOf(join(cache, "objects")) > max) { over = true; stop.abort(); } }, 250);
+    try {
+      mkdirSync(cache, { recursive: true, mode: 0o700 });
+      if (!existsSync(join(cache, "HEAD"))) localMust(cache, ["-c", "core.hooksPath=/dev/null", "init", "--bare", "-q", "--template=", "."]);
+      const env = publicationEnv(this.gitAuth()), timeout = Math.max(1000, Math.min(600_000, o.timeoutMs ?? 120_000));
+      const c = (args: string[]) => ownedGit(gitArgv(["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args]), cache, env, timeout, signal);
+      try { await c(["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", this.grant.pushUrl, `+refs/pull/${n}/head:refs/crew/pull/${n}/head`, `+refs/heads/${base}:refs/crew/pull/${n}/base`]); }
+      catch (e) { clean(); if (over || sizeOf(join(cache, "objects")) > max) throw overCap(); throw e; }
+      if (sizeOf(join(cache, "objects")) > max) throw overCap();
+      const head = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/head^{commit}`]), tip = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/base^{commit}`]);
+      if (!sha.test(head) || !sha.test(tip)) throw new Error("the fetched pull request head or base is invalid");
+      await c(["update-ref", `refs/crew/seen/${head}`, head]);
+      return { head, base: tip };
+    } finally { clearInterval(watch); clean(); done(); if (pullFetches.get(cache) === chain) pullFetches.delete(cache); }
   }
   /** Fetch the granted base branch head into the local object store (read only); the per-round rebase target before a PR exists. */
   async importBase(signal?: AbortSignal) {

@@ -634,7 +634,7 @@ export class Engine {
   private jobAdmission(o: any, key: string): QueueRequest {
     const r = o.ref ? this.get(o.ref) : null;
     return { key, task: r?.id ?? o.ref ?? key, project: r ? this.queueProject(r) : "studio", deadline: Date.now() + this.queueTimeout(r ?? undefined), signal: r ? this.abortOf(r).signal : undefined,
-      limits: () => this.queueLimits(r ?? undefined), ready: () => ({ ready: !r || !TERMINAL.includes(r.status) || (!!o.auxOwner && this.owns(o.auxOwner)), reason: "task ended" }), waiting() {}, admitted() {} };
+      limits: () => this.queueLimits(r ?? undefined), ready: () => ({ ready: !r || !TERMINAL.includes(r.status) || (!!o.auxOwner && o.auxOwner.run === r && this.owns(o.auxOwner)), reason: "task ended" }), waiting() {}, admitted() {} };
   }
   private roundAdmission(x: X, mode: string): QueueRequest {
     const worker = this.queueDomain?.worker(x, mode) ?? false;

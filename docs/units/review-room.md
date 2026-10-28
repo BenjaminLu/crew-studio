@@ -68,11 +68,17 @@ A room has one subject and keeps one identity across that subject's heads:
   request with GET only, through the project's own adapter (`remoteRead`: the pull request, its reviews, review comments,
   issue comments and files, at most three pages of 100 each), and fetches `refs/pull/<n>/head` (a fork's head too) and the
   base branch into a bare repository Studio owns, `data/review-room/cache/<hash>.git` (`GitHubPrAdapter.fetchPull`: the
-  grant's credential path, a time limit, no gc, a size cap, `CREW_REVIEW_PR_CACHE_MB`, default 1024, over which the cache
-  is removed and the read refused). Never the project's checkout or its object store, no worktree, nothing pushed. The
-  room's base is the merge base of the head and the base branch. Every text GitHub returns (title, body, branch names,
-  reviews, comments) is untrusted: cleaned like issue text (`cleanText`, nothing that could close its fence) and fenced in
-  the tutor's prompt (`<untrusted-pr-text>`, `<untrusted-review-comments>`), data, never instructions.
+  grant's credential path, no hooks and no templates, a time limit, no gc, full history for merge base, log and blame, one
+  fetch at a time per cache). Its size on disk is capped (`CREW_REVIEW_PR_CACHE_MB`, default 1024): watched while the fetch
+  runs (over the cap it is stopped) and checked after it, success or not; a stopped fetch leaves no temporary pack. Over the
+  cap the read is refused and the cache removed, unless a turn of a room of that repository is reading it. Never the
+  project's checkout or its object store, no worktree, nothing pushed. The room's base is the merge base of the head and
+  the base branch. When the commits cannot be fetched (the cap, the network, a head that moved during the read), what
+  GitHub showed (state, text, files, reviews, comments) is still kept and the room is marked stale: it reads the last head
+  it has, and takes no paid turn until a check fetches the new one. Every text GitHub returns (title, body, branch names,
+  file paths, reviews, comments, commit messages) is untrusted: cleaned like issue text (`cleanText`) with every angle
+  bracket turned into a glyph (‹ ›), so nothing in it can open or close a fence, and fenced in the tutor's prompt in fences
+  named afresh each turn (`<untrusted-pr-text-<nonce>>`, `<untrusted-review-comments-<nonce>>`), data, never instructions.
 
 A branch's or a pull request's turns run on the reviewer seat of the Task that made it (a pull request: the newest Task
 whose recorded pull request is that URL): `tutorPick` on the Task's review node, admitted like the merge card's (native
@@ -97,8 +103,10 @@ line (who, where, which verdict) cited `[review:<id>]` (`r…` a review, `c…` 
 words themselves as plain text beside it (`quote`: never parsed for citations or markup). A citation opens the note.
 
 **Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
-re-entry (the desktop page, at most once a minute) or "Check for new commits" (`POST …/check`) Studio reads the pull
-request again; a branch's head is read from its Task. No background loop. When the head moved, the room says "N new
+re-entry (the desktop page, at most once a minute from the last attempt) or "Check for new commits" (`POST …/check`, the
+desktop captain only, at most once every five seconds a room) Studio reads the pull request again; a branch's head is read
+from its Task. No background loop. A paid turn on a pull request read more than five minutes ago reads it again first: merged
+or closed since, the turn is refused. When the head moved, the room says "N new
 commits since you last looked" (or that the branch was rewritten), and the next turn's first scene is Studio's **what
 changed since last time**: the diff old head..new head on the board, the new commits (their messages as text), the files,
 and for each inline reviewer comment whether the lines it points at changed since (the captain judges whether that answers
@@ -300,6 +308,12 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     host Task …", "the host is bound to the project's approved crew …", "the moved head opens the next turn …", "no writes
     anywhere …", "with no approved crew for the project …"; review-room-ui "a Task whose branch passed …", "a project connected
     to GitHub offers the pull request box …".
+22. Untrusted text cannot leave its fence; the cache is bounded; a stale or old read takes no paid turn; the review gate is per
+    head. — review-room-anywhere "a comment is kept as its words …", "the tutor reads the reviewers' words in a fence named
+    afresh …", "a malicious file path and a malicious branch name …", "a fetch over the size cap …", "over the cap the cache
+    goes …", "the next check fetches the commits again …", "a paid turn on a pull request read a while ago …", "the branch's
+    head moved past the reviewed one …", "a ready-on-branch head with no tainted-ready ledger entry …", "an auxiliary owner
+    owns its node until it is released"; smoke "even allowed to drive, a phone cannot open a pull request's review room …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
