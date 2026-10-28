@@ -124,6 +124,9 @@ try{
  ok((await post('/api/issue-triage/fixture/start',{size:0})).status===400&&(await post('/api/issue-triage/fixture/start',{size:51})).status===400&&(await post('/api/issue-triage/fixture/start',{issues:['x']})).status===400,'the batch size is 1 to 50, and issue numbers are numbers');
  ok((await post('/api/issue-triage/fixture/approve',{packages:['P-1']},'phone')).status===403,'only the desktop captain approves packages on the page');
  ok((await post('/api/issue-triage/fixture/approve',{packages:[]})).status===400&&(await post('/api/issue-triage/fixture/approve',{packages:['../x']})).status===400&&(await post('/api/issue-triage/fixture/approve',{})).status===400,'approving names one or more package ids (P-n)');
+ ok((await post('/api/issue-triage/fixture/decline',{packages:['P-1']},'phone')).status===403&&(await post('/api/issue-triage/fixture/decline',{packages:['x']})).status===400,'only the desktop captain declines packages, named P-n');
+ { const base=store.get('fixture')!,dec=await post('/api/issue-triage/fixture/decline',{packages:['P-1']});
+  ok(dec.status===200&&!store.get('fixture')!.packages.some(p=>p.id==='P-1'),'the captain declines a package on the page',JSON.stringify(dec)); store.write(base); }
  ok((await post('/api/issue-triage/fixture/cross',{id:'X-1',action:'join'},'phone')).status===403,'only the desktop captain decides a cross-batch match');
  ok((await post('/api/issue-triage/fixture/cross',{id:'X-1',action:'merge'})).status===400&&(await post('/api/issue-triage/fixture/cross',{id:'../x',action:'join'})).status===400,'a match is named X-n and decided join or apart');
  { const base=store.get('fixture')!;store.write({...base,cross:[{id:'X-7',issues:[4],package:{kind:'single',members:[4],order:[4],why:'',security:false,commit:'c'.repeat(40)},with:'P-1',where:'src/a/url.ts · match'}],lastCross:7});
@@ -159,6 +162,17 @@ try{
  ok(approved.approved.join(',')==='P-1'&&approved.stale.join(',')==='P-2','approval re-reads the issues: a package whose issue changed is stale, not approved');
  ok(approved.record.packages.find(p=>p.id==='P-1')?.status==='approved'&&approved.record.packages.find(p=>p.id==='P-2')?.status==='stale','the approved and stale packages are written so');
  ok(T.approvePackages(approved.record,['P-1'],snap).approved.length===0,'a package that is no longer a proposal is not approved again');
+ // declining: the captain drops a package; its issues are released, to be triaged again
+ { const d=T.declinePackages(merged,['P-1']),gone=merged.packages.find(p=>p.id==='P-1')!;
+  ok(!d.packages.some(p=>p.id==='P-1')&&gone.members.every(n=>!d.issues[String(n)].investigated)&&!d.investigated.some(n=>gone.members.includes(n)),'a declined package is dropped and its issues are released to be triaged again');
+  ok((d.lastPackage??0)>=Number(gone.id.slice(2))&&T.pickBatch(snap,d,{size:50}).some(n=>gone.members.includes(n)),'its id is never given out again, and the next batch takes its issues');
+  await refuses(()=>T.declinePackages(approved.record,['P-1']),'an approved package is not declined: its work may have started');
+  await refuses(()=>T.declinePackages(merged,['P-99']),'a package that does not exist is refused');
+  ok(T.declinePackages(approved.record,['P-2']).packages.every(p=>p.id!=='P-2'),'a stale package can be declined'); }
+ // a match waiting on a declined package: released with it, so the next batch investigates them together
+ { const x={...merged,cross:[{id:'X-9',issues:[7],package:{kind:'single' as const,members:[7],order:[7],why:'',security:false,commit:'c'.repeat(40)},with:'P-1',where:'src/a.ts · f'}],issues:{...merged.issues,'7':{title:'t',labels:[],hash:'7'.repeat(64),investigated:true,security:false}},investigated:[...merged.investigated,7]};
+  const d=T.declinePackages(x,['P-1']);
+  ok(!(d.cross??[]).some(c=>c.id==='X-9')&&!d.issues['7'].investigated&&!d.investigated.includes(7),'a match waiting on a declined package is dropped and its issues released with it'); }
 
  // --- working an approved package: the next issue, and its Task's brief ---
  const work=approved.record,none=()=>'none' as const;

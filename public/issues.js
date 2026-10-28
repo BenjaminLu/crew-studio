@@ -1,10 +1,11 @@
-// A project's GitHub issues, on its page (#/project/<id>; docs/units/board.md, "Issues"): start a triage of the next
-// batch (how many issues, or which ones), see the two investigators' models, and the triage the issue-triage workflow
-// left (src/domain/issue-triage.ts): work packages first, each one person's work done in order; then what the two
-// investigators did not agree on; then the issues nobody has investigated yet.
+// A project's GitHub issues, on its page (#/project/<id>; docs/units/board.md, "Issues"): the categories they are filed in,
+// and inside each category the triage the issue-triage workflow left for its issues (src/domain/issue-triage.ts): work
+// packages, each one person's work done in order, and what the two investigators did not agree on. Triage of issues no
+// category holds, and the batch form, are in one card after the categories.
 // Issue titles are untrusted text: they only ever go into text nodes and title attributes, never into markup.
 (() => {
-const IS = { rec: new Map(), busy: new Set(), forms: new Map(), sel: null, tab: "packages" };
+// sel: the package open, and the block (a category, or "other") it was opened in
+const IS = { rec: new Map(), busy: new Set(), forms: new Map(), sel: null, selIn: null };
 // each project's batch form: what was typed (kept as typed, checked when sent), whether it is sending, its last error
 const formOf = (project) => { let f = IS.forms.get(project); if (!f) IS.forms.set(project, (f = { size: "15", numbers: "", starting: false, error: null, approving: null, note: null })); return f; };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
@@ -45,9 +46,9 @@ function issueLine(rec, n, step, pid) {
       i.agree === false ? h("div", { class: "is-diff" }, T(`The investigators differ on: ${(i.diff || []).join(", ")}`, `兩位調查員在這些地方不同：${(i.diff || []).join("、")}`)) : null));
 }
 
-function packRow(rec, p, on) {
+function packRow(rec, p, on, key) {
   const st = STATUS[p.status] || STATUS.proposed, n = realMembers(rec, p).length;
-  return h("button", { type: "button", class: `is-row g-${st[2]}`, "aria-pressed": String(on), "data-pack": p.id, onclick: () => { IS.sel = p.id; rerender(); } },
+  return h("button", { type: "button", class: `is-row g-${st[2]}`, "aria-pressed": String(on), "data-pack": p.id, onclick: () => { const again = IS.sel === p.id && IS.selIn === key; IS.sel = again ? null : p.id; IS.selIn = again ? null : key; rerender(); } },
     h("span", { class: "is-id mono" }, p.id),
     h("span", { class: "is-what" }, h("b", {}, tagOf(rec, p) || T("Work package", "工作包")), h("span", {}, area(rec, p))),
     h("span", { class: "is-n num" }, String(n)),
@@ -64,6 +65,13 @@ async function approvePack(project, id) {
   catch (e) { f.note = e.message; }
   finally { f.approving = null; await load(project); }
 }
+async function declinePack(project, id) {
+  const f = formOf(project); f.approving = id; f.note = null; rerender();
+  try { await postJ(`/api/issue-triage/${encodeURIComponent(project)}/decline`, { packages: [id] });
+    f.note = T(`Declined ${id}. Its issues are triaged again with their category.`, `已退回 ${id}。它的 issue 之後跟著所屬類別重新分診。`); IS.sel = null; }
+  catch (e) { f.note = e.message; }
+  finally { f.approving = null; await load(project); }
+}
 function packDetail(rec, p) {
   if (!p) return h("aside", { class: "tb-detail is-detail" }, h("p", { class: "faint" }, T("Pick a work package.", "選一個工作包。")));
   const order = p.order.length ? p.order : p.members;
@@ -75,7 +83,10 @@ function packDetail(rec, p) {
       : T("One person works these in order, one pull request each. Each issue's repro becomes its test: it fails before the fix and passes after.", "同一個人照順序做，一張一個 PR。每張的重現方式就是它的測試：修之前失敗，修之後通過。") + (p.security ? T(" Security issues are referenced, not closed, by the pull request; they close after a recheck.", " 安全 issue 在 PR 裡只寫 Refs，合併後複測通過才關。") : "")),
     p.status === "proposed" ? h("div", { class: "is-approve" },
       h("button", { type: "button", class: "btn primary", "data-approve": p.id, disabled: formOf(rec.project).approving ? true : null, onclick: () => approvePack(rec.project, p.id) }, T(`Approve ${p.id}`, `核准 ${p.id}`)),
-      h("span", { class: "faint" }, (p.security ? T("It holds security issues: approve it once whoever owns security for this repository agrees. ", "含安全 issue：請先取得這個 repo 的安全負責人同意再核准。") : "") + T("Studio reads its issues again first.", "核准前 Studio 會再讀一次 issue。"))) : null,
+      h("button", { type: "button", class: "btn", "data-decline": p.id, disabled: formOf(rec.project).approving ? true : null, onclick: () => declinePack(rec.project, p.id) }, T("Decline", "退回")),
+      h("span", { class: "faint" }, (p.security ? T("It holds security issues: approve it once whoever owns security for this repository agrees. ", "含安全 issue：請先取得這個 repo 的安全負責人同意再核准。") : "") + T("Studio reads its issues again first. Declined, its issues are triaged again.", "核准前 Studio 會再讀一次 issue；退回的話，這些 issue 之後重新分診。"))) : null,
+    p.status === "stale" ? h("div", { class: "is-approve" },
+      h("button", { type: "button", class: "btn", "data-decline": p.id, disabled: formOf(rec.project).approving ? true : null, onclick: () => declinePack(rec.project, p.id) }, T("Decline: triage again", "退回：重新分診"))) : null,
     p.status === "approved" && p.kind !== "recheck" ? h("p", { class: "is-next" }, T(`To start the next issue, tell Firstmate: “work on ${p.id}”. You approve its Task on the dispatch card.`, `要開始下一張，跟 Firstmate 說：「做 ${p.id}」。任務會出 dispatch 卡給你核准。`)) : null,
     h("ol", { class: "is-list" }, order.map((n, i) => issueLine(rec, n, order.length > 1 && p.kind === "ordered" ? String(i + 1) : "·", p.id))),
     p.members.filter((n) => !order.includes(n)).length ? h("p", { class: "faint" }, T("Tracking issue: ", "總卡：") + p.members.filter((n) => !order.includes(n)).map((n) => `#${n}`).join(" ")) : null);
@@ -88,24 +99,30 @@ async function decideCross(project, id, action) {
   catch (e) { f.note = e.message; }
   await load(project);
 }
-function crossList(rec) {
-  return (rec.cross || []).map((c) => h("div", { class: "is-hrow is-cross", "data-cross": c.id },
+function crossList(rec, cross) {
+  return cross.map((c) => h("div", { class: "is-hrow is-cross", "data-cross": c.id },
     h("div", { class: "is-hissues" }, h("span", { class: "is-sec" }, T("Match", "對照")), c.issues.map((n) => h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono", title: rec.issues[n]?.title || "" }, `#${n}`))),
     h("span", {}, T(`The same function as ${c.with} (${c.where}), not started yet.`, `和 ${c.with} 同一個函式（${c.where}），那包還沒開工。`)),
     h("div", { class: "is-cross-acts" }, h("button", { type: "button", class: "btn primary", "data-cross-join": c.id, onclick: () => decideCross(rec.project, c.id, "join") }, T(`Join ${c.with}`, `併入 ${c.with}`)),
       h("button", { type: "button", class: "btn", "data-cross-apart": c.id, onclick: () => decideCross(rec.project, c.id, "apart") }, T("Keep apart", "分開做")))));
 }
-function humanList(rec) {
-  const cross = crossList(rec);
-  return h("div", { class: "card is-human" }, cross, rec.toHuman.length ? rec.toHuman.map((x) => h("div", { class: "is-hrow" },
+function humanList(rec, cross, toHuman) {
+  return h("div", { class: "card is-human" }, crossList(rec, cross), toHuman.map((x) => h("div", { class: "is-hrow" },
     h("div", { class: "is-hissues" }, x.issues.map((n) => h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono", title: rec.issues[n]?.title || "" }, `#${n}`))),
-    h("span", {}, x.reason))) : cross.length ? null : h("p", { class: "faint" }, T("The investigators agreed on everything they looked at.", "兩位調查員看過的都有共識。")));
+    h("span", {}, x.reason))));
 }
-
-function pendingList(rec) {
-  const rest = Object.entries(rec.issues).filter(([, i]) => !i.investigated && !i.closed).map(([n, i]) => [Number(n), i]).sort((a, b) => a[0] - b[0]);
-  return h("div", { class: "card is-pending" }, rest.length ? h("ul", {}, rest.map(([n, i]) => h("li", {}, h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: i.title }, i.title), i.security ? h("span", { class: "is-sec" }, T("Security", "安全")) : null)))
-    : h("p", { class: "faint" }, T("Every open issue has been investigated.", "每張 open issue 都調查過了。")));
+/** The triage of some issues (a category's, or those no category holds): its packages, the open one's detail, and what
+ *  waits for the captain's judgement. Nothing when none of them was triaged. */
+function triageOf(rec, issues, key) {
+  if (!rec?.schema) return null;
+  const set = new Set(issues), hit = (ns) => ns.some((n) => set.has(n));
+  const packs = rec.packages.filter((p) => hit(p.members)), cross = (rec.cross || []).filter((c) => hit(c.issues)), human = rec.toHuman.filter((x) => hit(x.issues));
+  if (!packs.length && !cross.length && !human.length) return null;
+  const open = IS.selIn === key ? packs.find((p) => p.id === IS.sel) : null;
+  return h("div", { class: "is-tri", "data-tri": key },
+    packs.length ? h("div", { class: "card is-packs", role: "list" }, packs.map((p) => packRow(rec, p, p === open, key))) : null,
+    open ? packDetail(rec, open) : null,
+    cross.length || human.length ? [h("h4", { class: "is-tri-h" }, T("For you to judge", "要你判斷")), humanList(rec, cross, human)] : null);
 }
 
 const who = (x) => (x?.provider ? `${x.provider} ${x.model || T("(default model)", "（預設模型）")}${x.effort ? ` · ${x.effort}` : ""}` : T("no model", "沒有模型"));
@@ -163,6 +180,7 @@ function categoriesCard(project) {
   const filed = list.reduce((a, x) => a + x.issues.length, 0), title = (n) => (c.titles || {})[n] || "";
   // a category's triage takes its issues not triaged yet (at most 50 at a time), so a large one is worked through in turns
   const tr = IS.rec.get(project), todo = (x) => x.issues.filter((n) => !tr?.issues?.[n]?.investigated).slice(0, 50);
+  const packOf = (n) => (tr?.packages || []).find((p) => p.members.includes(n))?.id || "";
   const row = (x) => {
     const editing = CAT.editing === x.id, others = active.filter((o) => o.id !== x.id);
     // a category stays open across redraws (an edit, a refetch) until the captain closes it
@@ -183,9 +201,11 @@ function categoriesCard(project) {
             h("option", { value: "" }, T("Merge into…", "併入…")), others.map((o) => h("option", { value: o.id }, o.name))) : null) : null,
         h("ul", { class: "is-cat-issues" }, x.issues.map((n) => h("li", { "data-cat-issue": String(n) },
           h("a", { href: `https://github.com/${c.repository}/issues/${n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: title(n) }, title(n)),
+          packOf(n) ? h("span", { class: "tb-count mono", "data-cat-pack": packOf(n) }, packOf(n)) : null,
           // any listed issue can be tagged planned; moving into another category needs one that is active
           h("select", { "aria-label": T(`Move #${n}`, `移動 #${n}`), "data-cat-move": String(n), onchange: (e) => { if (e.target.value) catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "move", n, to: e.target.value }); } },
-            h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name)), h("option", { value: "PLANNED" }, T("Planned work", "規劃中"))))))));
+            h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name)), h("option", { value: "PLANNED" }, T("Planned work", "規劃中")))))),
+        triageOf(tr, x.issues, x.id)));
   };
   // planned work: tagged in Studio and set aside, not handed out by category; the captain takes an issue off it
   const plan = c.planned || [], planKey = "PLANNED";
@@ -201,29 +221,29 @@ function categoriesCard(project) {
     note, h("div", { class: "is-cats" }, list.map(row), plannedRow));
 }
 
-/** The project page's GitHub issues section (a connected project only): starting a triage, and its result. */
+/** The project page's GitHub issues section (a connected project only): the categories, each with its own triage; then
+ *  the triage of issues no category holds, with the form that starts a batch by size or by number. */
 function projectIssues(project, repository) {
   const rec = IS.rec.get(project);
   if (!rec && !IS.busy.has(project)) void load(project);
   const has = !!rec?.schema;
   const head = h("div", { class: "sec-head" }, h("h2", { id: "hIssues" }, T("GitHub issues", "GitHub issues")),
-    has ? h("span", { class: "faint" }, T(`${rec.open} open · ${rec.investigated.length} investigated · ${rec.packages.length} work packages`, `${rec.open} 張 open・已調查 ${rec.investigated.length} 張・${rec.packages.length} 個工作包`) + (rec.dedup ? T(` · ${rec.dedup} repeat fix${rec.dedup === 1 ? "" : "es"} avoided`, `・避免重工 ${rec.dedup} 張`) : "")) : null);
+    has ? h("span", { class: "faint" }, T(`${rec.open} open · ${rec.packages.length} work packages`, `${rec.open} 張 open・${rec.packages.length} 個工作包`) + (rec.dedup ? T(` · ${rec.dedup} repeat fix${rec.dedup === 1 ? "" : "es"} avoided`, `・避免重工 ${rec.dedup} 張`) : "")) : null);
   if (!rec) return h("section", { id: "s-issues", "aria-labelledby": "hIssues", "data-project-issues": project }, head, h("div", { class: "card x-pad" }, h("p", { class: "faint" }, T("Loading…", "載入中…"))));
-  const packs = has ? rec.packages : [], pending = has ? Object.values(rec.issues).filter((i) => !i.investigated && !i.closed).length : 0;
-  if (!packs.some((p) => p.id === IS.sel)) IS.sel = packs[0]?.id ?? null;
-  const tabs = [["packages", "Work packages", "工作包", packs.length], ["human", "For you to judge", "要你判斷", has ? rec.toHuman.length + (rec.cross || []).length : 0], ["pending", "Not investigated", "待調查", pending]];
+  // the issues a live category holds: their triage is shown in it; the rest here
+  const cats = (CAT.data.get(project)?.list || []), inCat = new Set(cats.flatMap((x) => x.issues));
+  const rest = has ? Object.keys(rec.issues).map(Number).filter((n) => !inCat.has(n)) : [];
+  if (IS.sel && !(has && rec.packages.some((p) => p.id === IS.sel))) { IS.sel = null; IS.selIn = null; }
   return h("section", { id: "s-issues", "aria-labelledby": "hIssues", "data-project-issues": project },
     head,
     categoriesCard(project),
-    h("div", { class: "card x-pad" }, startForm(project, rec)),
     formOf(project).note ? h("p", { class: "note", role: "status" }, formOf(project).note) : null,
-    !has ? h("div", { class: "card x-pad" }, h("p", { class: "faint", "data-issues-empty": "1" }, T(`No triage of ${repository} yet. Triage a batch above: two investigators read the code, and the work packages they agree on appear here.`, `${repository} 還沒有分診。從上面開始分診一批：兩位調查員會讀程式碼，他們有共識的工作包會出現在這裡。`)))
-      : [h("p", { class: "faint" }, T(`Code read at ${rec.commit.slice(0, 7)} · issues read ${rec.snapshot.fetchedAt.slice(0, 16).replace("T", " ")}`, `程式碼版本 ${rec.commit.slice(0, 7)}・issue 讀取於 ${rec.snapshot.fetchedAt.slice(0, 16).replace("T", " ")}`)),
-        h("div", { class: "tb-tabs", role: "tablist" }, tabs.map(([k, en, zh, n]) => h("button", { type: "button", role: "tab", class: "tb-tab", "aria-selected": String(IS.tab === k), "data-is-tab": k, onclick: () => { IS.tab = k; rerender(); } }, T(en, zh), h("span", { class: "tb-count num" }, String(n))))),
-        IS.tab === "packages" ? h("div", { class: "tb-body is-body" },
-          h("div", { class: "card is-packs", role: "list" }, packs.length ? packs.map((p) => packRow(rec, p, p.id === IS.sel)) : h("p", { class: "faint" }, T("No work package both investigators agree on yet.", "還沒有兩位調查員都同意的工作包。"))),
-          packDetail(rec, packs.find((p) => p.id === IS.sel)))
-        : IS.tab === "human" ? humanList(rec) : pendingList(rec)]);
+    h("div", { class: "card x-pad is-other", "data-tri-other": "1" },
+      h("h3", {}, inCat.size ? T("Triage outside the categories", "類別以外的分診") : T("Triage", "分診")),
+      has ? h("p", { class: "faint" }, T(`Code read at ${rec.commit.slice(0, 7)} · issues read ${rec.snapshot.fetchedAt.slice(0, 16).replace("T", " ")}`, `程式碼版本 ${rec.commit.slice(0, 7)}・issue 讀取於 ${rec.snapshot.fetchedAt.slice(0, 16).replace("T", " ")}`)) : null,
+      startForm(project, rec),
+      !has ? h("p", { class: "faint", "data-issues-empty": "1" }, T(`No triage of ${repository} yet. Triage a category, or a batch here: two investigators read the code, and the work packages they agree on appear with their category.`, `${repository} 還沒有分診。分診一個類別，或在這裡分診一批：兩位調查員會讀程式碼，他們有共識的工作包會出現在所屬類別裡。`))
+        : triageOf(rec, rest, "other")));
 }
 window.crewProjectIssues = projectIssues;
 /** the project page refetched (a Task or a card changed): read the triage again with it */

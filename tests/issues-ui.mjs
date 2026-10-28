@@ -84,28 +84,36 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/\/api\/team\?project=wallet/, (r) => r.fulfill({ json: TEAM }));
   if (o.empty) await ctx.route(/\/api\/issue-triage\/wallet$/, (r) => r.fulfill({ json: { state: "none", investigators: { a: { provider: "claude", model: "claude-opus-5-5" }, b: { provider: "codex", model: "gpt-6" } } } }));
   if (o.same) await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, investigators: { a: { provider: "claude", model: "same" }, b: { provider: "claude", model: "same" } } } }); });
-  const posts = [], approvals = [], crosses = [], catCalls = [];
+  const posts = [], approvals = [], crosses = [], catCalls = [], declines = [];
+  await ctx.route(/\/api\/issue-triage\/wallet\/decline$/, (r) => { declines.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, declined: [] } }); });
   await ctx.route(/\/api\/issue-categories\/[a-z]+\/(start|edit)$/, (r) => { catCalls.push([r.request().url().split("/").slice(-2).join("/"), JSON.parse(r.request().postData() || "{}")]); r.fulfill({ json: { ok: true, task: "R-88", href: "#/run/R-88" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/cross$/, (r) => { crosses.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, joined: "P-2" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/approve$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); approvals.push(b); r.fulfill(o.refuseApprove ? { status: 409, json: { error: `${b.packages[0]} is approved, not waiting for approval` } } : { json: o.staleApprove ? { ok: true, approved: [], stale: b.packages } : { ok: true, approved: b.packages, stale: [] } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/start$/, (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, task: "R-77", href: "#/run/R-77" } }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
   await p.goto(`${base}/${hash}`); await p.waitForTimeout(800);
-  return { ctx, p, posts, approvals, crosses, catCalls };
+  return { ctx, p, posts, approvals, crosses, catCalls, declines };
 }
 const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.querySelector("#main").scrollWidth <= document.querySelector("#main").clientWidth + 1);
 try {
   { const { ctx, p } = await open(1440, "en", "#/board");
     ok(await p.locator(".is-views").count() === 0 && !(await p.locator('a[href="#/board/issues"]').count()), "the Board shows Tasks only: issues live on their project's page");
     await ctx.close(); }
-  { const { ctx, p, posts, approvals, crosses } = await open(1440);
+  { const { ctx, p, posts, approvals, crosses, declines } = await open(1440);
+    const openCat = async (id) => { await p.waitForSelector(`[data-cat="${id}"]`, { timeout: 8000 }); if (!(await p.locator(`[data-cat="${id}"]`).evaluate((e) => e.open))) await p.click(`[data-cat="${id}"] summary`); };
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
     ok(await p.locator('.pj-jump a[href="#s-issues"]').count() === 1, "a connected project's page has an Issues section to jump to");
-    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4, "the project's stored work packages are listed on its page");
+    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4, "the project's stored work packages are listed on its page, each once");
     ok(/2 repeat fixes avoided/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()), "the heading counts the repeat fixes the cross-batch match avoided");
-    ok(/6 open · 5 investigated · 4 work packages/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()), "the section heading says the counts");
-    ok(/ccccccc/.test(await p.locator('[data-project-issues="wallet"] > p.faint').first().textContent()), "the section names the commit the code was read at");
+    ok(/6 open · 4 work packages/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()) && !/investigated/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()), "the section heading says the counts, with no project-wide not-investigated count");
+    ok(!(await p.locator('[data-is-tab], .is-pending').count()) && !/Not investigated/.test(await p.locator('[data-project-issues="wallet"]').textContent()), "there are no project-wide tabs and no list of issues nobody investigated: a category's triage button takes them");
+    // each package and each item to judge sits with the category its issues are in; the rest after the categories
+    ok(await p.locator('[data-cat="C-1"] [data-tri="C-1"] [data-pack="P-1"]').count() === 1 && await p.locator('[data-tri="C-2"] [data-pack]').count() === 2 && await p.locator('[data-tri="C-3"] [data-cross="X-1"]').count() === 1, "packages and matches are shown in their issues' category");
+    ok(await p.locator('[data-tri-other] [data-pack="P-3"]').count() === 1 && /#15/.test(await p.locator('[data-tri-other] .is-human').textContent()), "triage of issues no category holds is shown after the categories");
+    ok(await p.locator('[data-cat="C-1"] [data-cat-issue="11"] [data-cat-pack="P-1"]').count() === 1, "a category's issue line names its work package");
+    ok(/ccccccc/.test(await p.locator('[data-tri-other] p.faint').first().textContent()), "the section names the commit the code was read at");
     ok(await p.locator("[data-issue-size]").inputValue() === "15" && /Investigators: claude .* and codex /.test(await p.locator("[data-investigators]").textContent()) && /codex/.test(await p.locator("[data-investigators]").textContent()), "the batch form offers a size (15 by default) and names both investigators' models");
+    await openCat("C-1"); await p.click('[data-tri="C-1"] [data-pack="P-1"]');
     const steps = await p.$$eval('[data-detail="P-1"] .is-issue', (xs) => xs.map((x) => [x.dataset.issue, x.querySelector(".is-step").textContent, x.querySelector(".is-loc")?.textContent]));
     ok(steps.map((s) => s.slice(0, 2).join(":")).join(",") === "11:1,12:2" && steps[0][2] === "src/bridge/index.ts · historyChange", "the selected package lists its issues in order, each with its code location");
     ok(await p.locator('[data-detail="P-1"] a[href="https://github.com/fixture/wallet/issues/11"][target="_blank"][rel~="noopener"]').count() === 1, "each issue links to GitHub in a new tab");
@@ -113,25 +121,26 @@ try {
     ok(/Ended without a merge/.test(await p.locator('[data-detail="P-1"] [data-issue="11"] .is-work').textContent()) && !(await p.locator('[data-detail="P-1"] [data-issue="12"] .is-work').count()), "an issue with a Task shows where it stands; one without shows nothing");
     ok(/work on P-1/.test(await p.locator('[data-detail="P-1"] .is-next').textContent()), "an approved package says how to start its next issue");
     ok(/An issue changed: triage again/.test(await p.locator('[data-pack="P-3"]').textContent()) && /Waiting for approval/.test(await p.locator('[data-pack="P-2"]').textContent()), "each package says where it stands");
-    ok(!(await p.locator('[data-detail="P-1"] [data-approve]').count()), "an approved package offers no approval");
-    await p.click('[data-pack="P-2"]');
-    ok(await p.locator('[data-detail="P-2"] [data-approve="P-2"]').count() === 1 && /reads its issues again/.test(await p.locator('[data-detail="P-2"] .is-approve').textContent()), "a package waiting for approval can be approved on the page, which reads its issues again first");
+    ok(!(await p.locator('[data-detail="P-1"] [data-approve], [data-detail="P-1"] [data-decline]').count()), "an approved package offers no approval and no decline");
+    await openCat("C-2"); await p.click('[data-tri="C-2"] [data-pack="P-2"]');
+    ok(await p.locator('[data-detail="P-2"] [data-approve="P-2"]').count() === 1 && await p.locator('[data-detail="P-2"] [data-decline="P-2"]').count() === 1 && /reads its issues again/.test(await p.locator('[data-detail="P-2"] .is-approve').textContent()), "a package waiting for approval can be approved or declined on the page");
     await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
     ok(approvals.length === 1 && approvals[0].packages.join() === "P-2" && /Approved P-2/.test(await p.locator('[data-project-issues="wallet"] [role="status"]').textContent()), "approving sends that package and says it was approved", JSON.stringify(approvals));
+    await openCat("C-2"); if (!(await p.locator('[data-detail="P-2"]').count())) await p.click('[data-tri="C-2"] [data-pack="P-2"]');
     ok(await p.evaluate(() => !document.querySelector("#view img") && !window.__pwned && /<img src=x/.test(document.querySelector('[data-detail="P-2"] .is-title').textContent)), "an issue title with markup shows as text and runs nothing");
-    await p.click('[data-pack="P-3"]');
-    ok(/Do not change code/.test(await p.locator('[data-detail="P-3"] .is-how').textContent()), "a maybe-fixed issue is a recheck, not a close");
+    await p.click('[data-tri="C-2"] [data-pack="P-4"]'); await p.click('[data-decline="P-4"]'); await p.waitForTimeout(400);
+    ok(declines.length === 1 && declines[0].packages.join() === "P-4" && /Declined P-4/.test(await p.locator('[data-project-issues="wallet"] [role="status"]').textContent()), "declining sends that package and says its issues are triaged again", JSON.stringify(declines));
+    await p.click('[data-tri-other] [data-pack="P-3"]');
+    ok(/Do not change code/.test(await p.locator('[data-detail="P-3"] .is-how').textContent()) && await p.locator('[data-detail="P-3"] [data-decline="P-3"]').count() === 1, "a maybe-fixed issue is a recheck, not a close; a stale package can be declined");
     ok(/changed for this project/.test(await p.locator('[data-seat="reviewer"]').textContent()) && /claude-sonnet-5-5/.test(await p.locator('[data-seat="reviewer"]').textContent()) && /claude-opus-5-5/.test(await p.locator('[data-seat="maker"]').textContent()) && !(await p.locator('[data-seat="designer"]').count()), "the Crew section lists each seat's model as this project runs it, marking this project's own changes");
     await p.screenshot({ path: join(shots, "project-issues-1440.png"), fullPage: true });
-    await p.click('[data-pack="P-4"]');
+    await openCat("C-2"); await p.click('[data-tri="C-2"] [data-pack="P-4"]');
     ok(/same function as P-2/.test(await p.locator('[data-detail="P-4"] .is-match').textContent()) && /src\/utils\/url\.ts · addParams/.test(await p.locator('[data-detail="P-4"] .is-match').textContent()), "a recheck made by the cross-batch match says which earlier package and function it shares");
-    await p.click('[data-is-tab="human"]');
-    ok(/#18/.test(await p.locator('[data-cross="X-1"]').textContent()) && /same function as P-2/.test(await p.locator('[data-cross="X-1"]').textContent()) && await p.locator('[data-is-tab="human"] .tb-count').textContent() === "2", "a cross-batch match waits for the captain under For you to judge, naming the earlier package and the function");
+    await openCat("C-3");
+    ok(/#18/.test(await p.locator('[data-cross="X-1"]').textContent()) && /same function as P-2/.test(await p.locator('[data-cross="X-1"]').textContent()), "a cross-batch match waits for the captain in its category, naming the earlier package and the function");
     await p.click('[data-cross="X-1"] [data-cross-join]'); await p.waitForTimeout(300);
     ok(crosses.length === 1 && crosses[0].id === "X-1" && crosses[0].action === "join", "joining sends that match to be joined", JSON.stringify(crosses));
-    ok(/#15/.test(await p.locator(".is-human").textContent()) && /disagree/.test(await p.locator(".is-human").textContent()), "what the investigators disagreed on is listed with the reason");
-    await p.click('[data-is-tab="pending"]');
-    ok(/Research: batch signing/.test(await p.locator(".is-pending").textContent()) && await p.locator(".is-pending li").count() === 1, "issues nobody investigated are listed");
+    ok(/disagree/.test(await p.locator('[data-tri-other] .is-human').textContent()), "what the investigators disagreed on is listed with the reason");
     await p.fill("[data-issue-numbers]", "12, x"); await p.click("[data-issue-triage]"); await p.waitForTimeout(200);
     ok(posts.length === 0 && /whole numbers/.test(await p.locator('[data-issue-start] [role="alert"]').textContent()), "issue numbers that are not numbers are refused before anything is sent");
     await p.goto(`${base}/#/project/vault`); await p.waitForSelector('[data-project-issues="vault"] [data-issue-start]', { timeout: 8000 }).catch(() => {});
@@ -184,11 +193,11 @@ try {
     ok(/No categories yet/.test(await p.locator('[data-categories="vault"]').textContent()) && /Build categories/.test(await p.locator('[data-cat-start="vault"]').textContent()), "a project with no categories offers to build them");
     await ctx.close(); }
   { const { ctx, p, approvals } = await open(1440, "en", "#/project/wallet", { staleApprove: true });
-    await p.waitForSelector('[data-pack="P-2"]'); await p.click('[data-pack="P-2"]'); await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
+    await p.waitForSelector('[data-cat="C-2"]'); await p.click('[data-cat="C-2"] summary'); await p.click('[data-tri="C-2"] [data-pack="P-2"]'); await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
     ok(approvals.length === 1 && /P-2 is stale/.test(await p.locator('[data-project-issues="wallet"] [role="status"]').textContent()), "a package whose issue changed is reported stale, not approved");
     await ctx.close(); }
   { const { ctx, p } = await open(1440, "en", "#/project/wallet", { refuseApprove: true });
-    await p.waitForSelector('[data-pack="P-2"]'); await p.click('[data-pack="P-2"]'); await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
+    await p.waitForSelector('[data-cat="C-2"]'); await p.click('[data-cat="C-2"] summary'); await p.click('[data-tri="C-2"] [data-pack="P-2"]'); await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
     const said = await p.locator('[data-project-issues="wallet"] [role="status"]').textContent();
     ok(/not waiting for approval/.test(said) && !/stale/.test(said), "a refused approval says why, and never calls the package stale", said);
     await ctx.close(); }
@@ -198,7 +207,7 @@ try {
     await ctx.close(); }
   { const { ctx, p } = await open(390, "zh-TW");
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
-    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4 && /分診/.test(await p.locator('[data-issue-start]').textContent()) && !/分類/.test(await p.locator('[data-issue-start]').textContent()) && /工作包/.test(await p.locator('[data-project-issues="wallet"] .tb-tabs').textContent()) && /這批要分診幾張/.test(await p.locator("[data-issue-start]").textContent()), "390 zh-TW: the packages and the batch form show, in Chinese");
+    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4 && /分診/.test(await p.locator('[data-issue-start]').textContent()) && !/分類/.test(await p.locator('[data-issue-start]').textContent()) && /工作包/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()) && /這批要分診幾張/.test(await p.locator("[data-issue-start]").textContent()), "390 zh-TW: the packages and the batch form show, in Chinese");
     ok(await noSideways(p), "390: no sideways scroll");
     await p.screenshot({ path: join(shots, "project-issues-390.png"), fullPage: true });
     await ctx.close(); }

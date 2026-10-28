@@ -131,4 +131,6 @@
 .is-cat-head{align-items:center;gap:8px 12px;margin-bottom:6px}.is-cat-head h3{margin:0;font-size:14px}
 .is-cats{display:grid;gap:6px}.is-cat{border:1px solid var(--border);border-radius:8px;padding:6px 10px}.is-cat>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px}
 .is-cat-scope{font-size:12px;flex:1 1 220px;min-width:0}.is-cat-body{display:grid;gap:8px;padding:8px 0 4px}.is-cat-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+/* a category's own triage, and the triage outside the categories */
+.is-tri{display:grid;gap:8px;min-width:0}.is-tri-h{margin:4px 0 0;font-size:13px}.is-other{display:grid;gap:10px;margin-top:12px}.is-other h3{margin:0;font-size:14px}
 .is-cat-issues{margin:0;padding-left:0;list-style:none;display:grid;gap:4px}.is-cat-issues li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:13px}.is-cat-issues .is-title{flex:1 1 200px;min-width:0}
