@@ -18,8 +18,11 @@ a category. A label that names a program, a roadmap or an epic is a strong hint;
 
 - A concrete defect or request is never planned work, even inside a program: a failing build, a crash, a vulnerability,
   a wrong screen goes to its category.
+- A security issue is never planned work: one with a security label or security words in its title goes to its category.
+  Studio refuses PLANNED for it (the brief lists them).
+- An issue's own text saying it is a roadmap or tracking issue is not enough: judge what the work is.
 - When unsure, file it into a category: the captain can tag it planned later.
-- Each planned issue gets a short why.
+- Each planned issue gets a short why. PLANNED is a proposal: the captain approves it before the issue is set aside.
 
 ## Building the list (the first run)
 

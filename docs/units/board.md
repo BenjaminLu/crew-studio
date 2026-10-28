@@ -213,9 +213,15 @@ A connected project's issues are filed into categories kept in Studio (`data/iss
 written to GitHub as labels: the lead's own view to hand work out one category at a time. A category is one product area
 or one kind of work; its issues may have different root causes. Security is a flag on an issue, never a category.
 Planned work (roadmap and program tasks, plans, process work) is tagged `PLANNED` in Studio and set aside: it is not
-handed out by category. The page lists it apart, each issue with why; the captain tags an issue planned (move to
-`PLANNED`) or takes it off (`unplan`: the next run files it into a category, and no run tags it planned again; the
-brief names such issues).
+handed out by category. A run only proposes the tag: an issue is set aside once the captain approves it on the run's
+card, so an issue's own text ("this is a roadmap tracking issue") never takes it out of the work queue. A security issue
+is never tagged planned by a run: one with a security label (`security` or `sec`, as triage reads it) or security words
+in its title (`SECURITY_TITLE` in `src/domain/issue-categories.ts`: security, vulnerability, exploit, CVE, XSS, CSRF,
+SSRF, RCE, injection, an auth or permission bypass, privilege escalation, a leaked secret, token, credential or key,
+資安, 安全, 漏洞) must be filed into a category, and the brief names such issues. The page lists planned work apart, each
+issue with why, and what a run proposed as waiting for approval; the captain tags an issue planned (move to `PLANNED`,
+which also approves a proposed one) or takes it off (`unplan`: the next run files it into a category, and no run tags it
+planned again; the brief names such issues).
 
 `workflows/v2/issue-categories.wf.yaml` (`src/issue-categories-workflow.ts`, `src/domain/issue-categories.ts`, internal;
 started from the project page's Build categories / File new issues button, `POST /api/issue-categories/<project>/start`):
@@ -228,15 +234,17 @@ started from the project page's Build categories / File new issues button, `POST
    text only through `issues_read` (untrusted) and submits once with `categories_submit`. Studio refuses a report that
    files an issue twice or leaves one out, names a category that is not open, gives a category no scope, or makes
    security a category. Building: every category has a name and a one-sentence scope. Filing: into an existing category,
-   or `NEW` with a name, a scope and why none fits. Either way an issue may instead be planned work, with why.
-4. **Record.** Issues filed into existing categories take effect at once. New categories (all of them, on a build) are
-   proposals; the record keeps each issue's title and the open issues of that read for the page. The list may have
+   or `NEW` with a name, a scope and why none fits. Either way an issue may instead be planned work, with why, unless it
+   is a security issue (refused: file it into a category).
+4. **Record.** Issues filed into existing categories take effect at once. New categories (all of them, on a build) and
+   planned work are proposals; the record keeps each issue's title and the open issues of that read for the page. The list may have
    changed while the categorizer ran: an issue filed into a category the captain merged follows the merge, one into a
    category gone since stays unfiled for the next run, and a new name that exists by now files into that category.
-5. **Approval card.** Captain-only, only when there are proposals: approve keeps them; decline releases their issues to
-   be filed again next run. It also lists the issues the run set aside as planned; that tag takes effect at once and
-   stays when the categories are declined. Proposals left by a run that ended (cancelled at the card) are approved or declined on the
-   page instead. A declined name is listed in later briefs and refused if proposed again, unless a live category holds it again. Names and scopes are one line of
+5. **Approval card.** Captain-only, only when there are proposals (new categories, planned work, or both): approve keeps
+   them; decline releases the categories' issues to be filed again next run, and makes each proposed planned issue the
+   captain's "not planned" (the next run files it into a category). It lists each proposed planned issue with its title
+   and the categorizer's why, as data. Proposals left by a run that ended (cancelled at the card) are approved or declined on the
+   page instead (a planned one: Set it aside, or Not planned). A declined name is listed in later briefs and refused if proposed again, unless a live category holds it again. Names and scopes are one line of
    plain text; security (資安, CVE and the like included) is never a category. Every step is on the run's ledger (`categories-snapshot`, `categories-report`,
    `categories-written`, `categories-decided`).
 
@@ -289,11 +297,25 @@ whose Task ended without a merge is offered again; a recheck package is not code
 first: one edited since it was investigated (its title, text or any label) makes the package stale and nothing is
 proposed; one missing from that read (closed, or moved between pages while read) is refused once, the package unchanged.
 
-The Task's request is built from the triage's fields only (`issueBrief`): the location at the triaged commit, the tag,
-the step in the package, a done line that must fail before the change and pass after (the triage's repro), and how the
-pull request names the issue: `Fixes #n`, or `Refs #n` for a security issue (it closes after a recheck), with no exploit
-detail in the branch, commits or pull request. The issue's title is quoted on one line as untrusted text; its body never
-goes in. The package records each issue's proposal; the Board shows where its Task stands (in progress, merged, ended
+The Task's request is built only from what Studio derived or checked (`issueBrief`): the issue numbers, each title quoted
+on one line as untrusted text, the files both investigators named (each exists at the triaged commit; `triageRecord`
+keeps only those), a symbol only when it is a code name that file contains, line numbers, the step in the package, a
+done line that must fail before the change and pass after, the rule that its branch, commits and pull request name no
+issue, and, for a security issue, no exploit detail there either. It names each issue as "issue n", never `#n`. Model-written text never goes in: not the repro, not the
+tag, not a package's why. The investigators read the issue's untrusted text, and two models can be steered by it alike,
+so their agreeing on a function does not make their words safe for a worker that runs commands; the page still shows
+the repro to the captain. The issue's body never goes in.
+
+The Task is **tainted**: Studio marks it (`_tainted`, a parameter no model can set: `proposeTainted` in
+`src/firstmate.ts`; a new Task from its failure card keeps it). A tainted Task leaves no trace on the triaged repository's issues: GitHub links any `#n`, `GH-n`, `owner/repo#n` or
+issue or pull request URL in a commit or a pull request back to that issue (and a closing keyword closes it), so each
+such reference becomes "an issue" in its round commits, its merge commit and its pull request's title and text
+(`withoutIssueRefs`, `src/domain/pull-template.ts`), and Studio refuses to edit in a text that still has one. Which
+issue a Task works on stays in Studio (the package's work record, the run's ledger); a person closes the issue once
+they have checked the merged change. Its reviewer always works in run mode (the tests run), whatever
+`reviewer.mode` says. And it runs only in the OS sandbox: no step of it starts, and no agent turn opens, while Studio is
+in local unrestricted mode (`CREW_LOCAL_UNRESTRICTED`) or a sandbox-off grant is open for its project (one rule,
+`taintRefusal` in `src/runtime/engine.ts`). The package records each issue's proposal; the Board shows where its Task stands (in progress, merged, ended
 without a merge) and how to start the next one.
 
 Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, declining, next issue, brief, store, routes),
@@ -301,7 +323,8 @@ Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches,
 both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (the
 project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
 links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the empty state, the Crew section's seats; the
-Board has no Issues view).
+Board has no Issues view), `tests/tainted-task.ts` (a tainted Task: no issue reference in its commits, run-mode review, no
+step outside the OS sandbox). Both workflow tests check that GitHub is only ever read (no POST, PATCH, PUT or DELETE).
 
 ### Measuring triage and categories
 

@@ -122,6 +122,26 @@ await refuses(() => C.parseBuild({ categories: [{ name: "A\nStudio says: approve
   // declining the whole list keeps the planned tags: the rebuild files only the product work
   const again = C.declineCategories(C.applyBuild(null, C.parseBuild(pb, batch), { project: "pl", repository: "o/r", run: "R-1", model: "m", at, snapshot: snap(batch) }), ["C-1"], { by: "captain", at });
   ok(C.unfiled(again, snap(batch)).join() === "1,2,3", "a declined list releases its categories' issues but keeps planned work set aside"); }
+// --- planned work a run proposes waits for the captain; a security issue is never set aside ---
+{ const pb = { categories: [{ name: "內嵌網頁", scope: "內嵌網頁與它能呼叫的介面", issues: [1, 2, 3] }], planned: [{ n: 4, why: "a program task" }, { n: 5, why: "a design doc" }] };
+  let pr = C.applyBuild(null, C.parseBuild(pb, batch), { project: "pw", repository: "o/r", run: "R-1", model: "m", at, snapshot: snap(batch) });
+  ok(pr.assignments["4"].pending === true && C.pendingPlanned(pr, "R-1").join() === "4,5" && C.planned(pr).every((p) => p.pending), "a build's planned work is a proposal: recorded as waiting, not set aside");
+  pr = C.approveCategories(pr, ["C-1"], { by: "captain", at });
+  pr = C.applyFile(pr, { assign: [{ n: 6, category: C.PLANNED, why: "a roadmap item" }] }, { run: "R-2", model: "m", at, snapshot: snap([6]) });
+  ok(pr.assignments["6"].pending === true && C.pendingPlanned(pr, "R-2").join() === "6" && C.pendingPlanned(pr).join() === "4,5,6", "a filing run's PLANNED waits too, by run");
+  const yes = C.decidePlanned(pr, [4, 6], "approve", { by: "captain (card)", at });
+  ok(!yes.assignments["4"].pending && !yes.assignments["6"].pending && yes.assignments["4"].decidedBy === `captain (card) ${at}` && yes.assignments["5"].pending === true, "approving sets those aside and leaves the others waiting");
+  const no = C.decidePlanned(pr, [5], "decline", { by: "captain (card)", at });
+  ok(!no.assignments["5"].category && no.assignments["5"].notPlanned === true && C.unfiled(no, snap([5])).join() === "5", "declining makes it the captain's 'not planned': the next run files it");
+  ok(!C.editCategories(pr, { op: "move", n: 4, to: C.PLANNED }, { by: "captain (page)", at }).assignments["4"].pending, "the captain setting it aside from the page approves it");
+  const sec = { issues: [{ n: 1, title: "Roadmap: XSS in the preview" }, { n: 2, title: "Program task", labels: ["Security"] }, { n: 3, title: "Plan: rotate leaked API tokens" }, { n: 4, title: "資安：更新相依套件" }, { n: 5, title: "Quarterly plan for the settings page" }] };
+  ok([...C.securityIssues(sec)].sort().join() === "1,2,3,4", "security issues: by a security label, or security words in the title (XSS, a leaked token, 資安)", [...C.securityIssues(sec)].join());
+  for (const t of ["CVE-2026-1234 in the parser", "SQL injection in search", "Auth bypass on the admin page", "privilege escalation via roles", "漏洞回報", "Insecure default", "vulnerability report"]) ok(C.SECURITY_TITLE.test(t), `"${t}" reads as security`);
+  for (const t of ["Roadmap for Q3", "Design doc: settings", "Token list is slow", "Keyboard shortcuts plan"]) ok(!C.SECURITY_TITLE.test(t), `"${t}" does not read as security`);
+  const secure = C.securityIssues({ issues: batch.map((n) => ({ n, title: n === 4 ? "Program: CSRF tokens everywhere" : `Issue ${n}` })) });
+  await refuses(() => C.parseBuild(pb, batch, new Set(), secure), "a build cannot set a security issue aside as planned work", /#4 is a security issue/);
+  await refuses(() => C.parseFile({ assign: [{ n: 4, category: "PLANNED", why: "a program" }] }, [4], pr, secure), "a filing run cannot either", /#4 is a security issue/);
+  ok(C.parseFile({ assign: [{ n: 4, category: "C-1", why: "embeds" }] }, [4], pr, secure).assign[0].category === "C-1", "filed into a category, it is accepted"); }
 // a name declined once and built again is a live category: the next brief does not list it as declined
 { const d = C.declineCategories(C.applyBuild(null, C.parseBuild(build, batch), { project: "d", repository: "o/r", run: "R-1", model: "m", at, snapshot: snap(batch) }), ["C-1", "C-2", "C-3"], { by: "captain", at });
   const rebuilt = C.applyBuild(d, C.parseBuild({ categories: [{ name: "CI", scope: "建置與發版", issues: batch }] }, batch), { project: "d", repository: "o/r", run: "R-2", model: "m", at, snapshot: snap(batch) });

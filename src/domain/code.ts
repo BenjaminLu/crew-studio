@@ -7,7 +7,7 @@ import { installCodeRecovery } from "./code-recovery";
 import { installCodeQueue, scopeBlockers, type ScopeBlocker } from "./code-queue";
 import { installCodeDesign } from "./code-design";
 import { installCodePublish } from "./code-publish";
-import { withoutSessionLinks } from "./pull-template";
+import { withoutIssueRefs, withoutSessionLinks } from "./pull-template";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
@@ -188,6 +188,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if(option&&!option.hold&&evidenceFor(card)?.blocked)throw new Error("Merge evidence is unavailable or stale; rerun verification and request a fresh card");
   };
   engine.beforeNodeChecks ??= {}; engine.cardPrepared ??= {}; engine.beforeStart ??= {}; engine.externalHandlers ??= {}; engine.externalValidators ??= {};
+  // a tainted Task: drawn from untrusted issue text (params._tainted, Studio's own mark: src/firstmate.ts proposeTainted). Its
+  // commit messages and pull request text reference no issue (no closing keyword, no #n, no issue link: withoutIssueRefs),
+  // its review runs in run mode, and it runs only in the OS sandbox (src/runtime/engine.ts taintRefusal)
+  const tainted = (x: X) => !!x.run.params?._tainted;
+  const refs = (x: X, t: string) => (tainted(x) ? withoutIssueRefs(t) : t);
   engine.cardPrepared["code-evidence-offer"]=(x,card)=>{
     if(card.kind!=="merge"||!card.detail?.codeEvidenceOffer)return;
     engine.record(x,"code-card-evidence-offer",{head:card.detail.codeEvidenceOffer.head,data:{card:card.id,offer:card.detail.codeEvidenceOffer}} as any);
@@ -611,7 +616,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       phase.assert(); x.ctx.remoteNaming = { version: 2, repository: adapter.grant.repository, grant: grantIdentity(adapter), branch: x.ctx.branch, head: h, card: c.id, node: x.node.id, ...(pending ? {version:3,sourceHead:pending.old.head,pendingHash:digest(pending)} : {}) }; engine.record(x,"naming-request",{head:h,data:{...x.ctx.remoteNaming}} as any); x.save(); return { wait: true };
   };
   // a repository pull request template: the pull request waits for the evidence and opens at remote-ready (code-publish.ts)
-  const publication = installCodePublish(engine, { dataDir: o.dataDir, projects: o.projects, injected: !!o.adapter, selectedAdapter, remotePhase, remoteWait, namingCard, shellOk, head, specMd });
+  const publication = installCodePublish(engine, { dataDir: o.dataDir, projects: o.projects, injected: !!o.adapter, selectedAdapter, remotePhase, remoteWait, namingCard, shellOk, head, specMd, refs });
   // the card that stands in for the merge card while the pull request text does not match the head: the staged text is bound
   // to that card in the ledger (its answer verifies the record)
   engine.cardPrepared["pr-text-final"] = (x, card) => {
@@ -628,9 +633,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (adapter instanceof GitHubPrAdapter && !x.ctx.pr) { const deferred = await publication.defer(x, adapter, phase); if (deferred) return deferred; }
     // a pull request opened from the template keeps the text the captain approved: each round's rebased head only moves it (the same lease push)
     const approved = x.ctx.pr && x.ctx.prText?.version === 1 && x.ctx.prText.hash ? x.ctx.pr : null;
-    const title = approved ? approved.title : x.ctx.spec?.title ?? x.run.title;
+    const title = approved ? approved.title : refs(x, x.ctx.spec?.title ?? x.run.title);
     const rollback = x.ctx.spec?.rollback ?? (x.ctx.door?.door === "one-way" ? "A revert does not undo this change; the approved plan must name the rollback." : "Revert the change to undo it.");
-    const body = approved ? approved.body : withoutSessionLinks(specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`);
+    const body = approved ? approved.body : refs(x, withoutSessionLinks(specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`));
     if (x.ctx.pr && x.ctx.pr.adapter !== adapter.id) throw new Error("review adapter authority changed; resolve the existing review request before publishing");
     if (x.ctx.pr) {
       const old = x.ctx.pr; let published: any;
@@ -824,7 +829,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const ledger = new Map(engine.ledger(x.run.id).map((e) => [e.seq, e]));
     const done = engine.doneLines(x.run).map((d: any) => ({ text: d.text, proofs: (d.by ?? []).map((b: any) => ({ check: b.check, verdict: (ledger.get(b.seq) as any)?.verdict ?? "?" })) }));
     const author = commitIdentity(x.ctx.repo);
-    return { ...taskCommitMessage({ run: x.run.id, head: h, type: x.ctx.spec?.type ?? null, title: x.ctx.spec?.title ?? x.run.title ?? "", what: x.ctx.spec?.what ?? null, why: x.ctx.spec?.why ?? [], done, author }, commitConvention(x.ctx.repo, h)), author };
+    const m = taskCommitMessage({ run: x.run.id, head: h, type: x.ctx.spec?.type ?? null, title: x.ctx.spec?.title ?? x.run.title ?? "", what: x.ctx.spec?.what ?? null, why: x.ctx.spec?.why ?? [], done, author }, commitConvention(x.ctx.repo, h));
+    return { subject: refs(x, m.subject), body: refs(x, m.body), message: refs(x, m.message), author };
   };
   /** the subject of the Task's one commit, for the merge card (null when it cannot be read yet) */
   const landing = (x: X): string | null => { try { const h = String(x.ctx.gatedHead ?? x.ctx.head ?? ""); return /^[0-9a-f]{40}$/.test(h) && x.ctx.repo ? taskCommit(x, h).subject : null; } catch { return null; } };
@@ -1262,7 +1268,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const commitRound = (x: X, rep: any, agent = "agent") => {
     shellOk(x); const k = wkey(x);
     const hb = W.handBack(k.project, k.task, { run: x.run.id, node: x.node.id, round: x.visit, agent,
-      message: `${commitSubject(x.ctx.spec?.type, x.ctx.spec?.title ?? x.run.title ?? "", { conventional: true, max: 72, source: null }, `Task ${x.run.id}`)}\n\nRound ${x.visit} of Crew Studio Task ${x.run.id}.\n\n${rep?.summary ?? ""}` });
+      message: refs(x, `${commitSubject(x.ctx.spec?.type, x.ctx.spec?.title ?? x.run.title ?? "", { conventional: true, max: 72, source: null }, `Task ${x.run.id}`)}\n\nRound ${x.visit} of Crew Studio Task ${x.run.id}.\n\n${rep?.summary ?? ""}`) });
     x.ctx.head = hb.head;
     x.ctx.rounds = [...(x.ctx.rounds ?? []), { round: x.visit, head: x.ctx.head, report: rep, ...(x.rn.data.failureAnswer ? { answer: { ...x.rn.data.failureAnswer } } : {}), at: new Date().toISOString() }];
   };
@@ -1405,7 +1411,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   // within the read budget), in run mode at least one executed verification unless it cannot run (recorded, flagged), and no
   // APPROVE over a worker report that says its tests were not run or not green unless the reviewer ran the covering tests
   // green itself (E2E F20). Untrusted files are read off the event loop, with caps (src/review-read.ts).
-  const reviewMode = (x: X): "diff" | "run" => (x.policy("reviewer.mode") === "diff" ? "diff" : "run");
+  // a tainted Task (drawn from untrusted issue text) is always reviewed in run mode: its tests run, whatever the policy says
+  const reviewMode = (x: X): "diff" | "run" => (!tainted(x) && x.policy("reviewer.mode") === "diff" ? "diff" : "run");
   /** the worker's own words that its tests were not run or not green (src/domain/report-verification.ts), or a last build
    * round stopped at the time limit (its report is gone; the round is never verified) */
   const workerUnverified = (x: X): string | null => {

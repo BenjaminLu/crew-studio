@@ -35,6 +35,8 @@ export type PublishDeps = {
   dataDir: string; projects: Projects; injected: boolean;
   selectedAdapter: (x: X) => PrAdapter; remotePhase: (x: X) => Phase; remoteWait: (x: X, a: PrAdapter) => Promise<Result | string>;
   namingCard: (x: X, a: GitHubPrAdapter, h: string) => Promise<Result>; shellOk: (x: X) => string; head: (wt: string) => string; specMd: (s: any) => string;
+  /** a tainted Task's text (drawn from untrusted issue text) with no issue reference left (withoutIssueRefs); any other Task's as it is */
+  refs: (x: X, text: string) => string;
 };
 const digest = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 /** The pull request text describes where the change ends, never how it got there. */
@@ -188,9 +190,9 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     for (const s of sections) for (const c of s.checkboxes) { const auto = autoProof(c.text), cite = cited.get(c.text);
       const id = auto ? (ids[auto] ? auto : null) : cite && ids[cite] && cite !== "lint" ? cite : null;
       if (id) { proven.add(c.text); proofs[c.text] = `${id}: ${ids[id]}`; } else unproven.push(c.text); }
-    const title = typeof got?.title === "string" && got.title.trim() && got.title.length <= 200 && !/[\r\n]/.test(got.title) && !SESSION_LINK.test(got.title) ? got.title.trim() : String(x.ctx.spec?.title ?? x.run.title).slice(0, 200);
-    const inner = withoutSessionLinks(template ? `${renderPullBody(sections, { text, rows, proven })}${trailer ? `\n${trailer}\n` : ""}`
-      : plainInner(x));
+    const title = d.refs(x, typeof got?.title === "string" && got.title.trim() && got.title.length <= 200 && !/[\r\n]/.test(got.title) && !SESSION_LINK.test(got.title) ? got.title.trim() : String(x.ctx.spec?.title ?? x.run.title).slice(0, 200));
+    const inner = d.refs(x, withoutSessionLinks(template ? `${renderPullBody(sections, { text, rows, proven })}${trailer ? `\n${trailer}\n` : ""}`
+      : plainInner(x)));
     // the rendered body keeps the template (every heading, every box, ticked only where proven); otherwise no preview is raised
     const shape = template ? templateShapeProblem(template.text, inner, [...proven]) : null;
     if (shape) missing.push({ field: "template shape", why: `the text does not keep the template: ${shape}` });
@@ -297,7 +299,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   /** A pull request without a template: Studio's part is the spec, the door and the rollback, rendered from the final state. */
   function plainInner(x: X): string {
     const rollback = x.ctx.spec?.rollback ?? (x.ctx.door?.door === "one-way" ? "A revert does not undo this change; the approved plan must name the rollback." : "Revert the change to undo it.");
-    return withoutSessionLinks(`${d.specMd(x.ctx.spec)}\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n${doorLine(x)}\n\n## Rollback\n${rollback}`);
+    return d.refs(x, withoutSessionLinks(`${d.specMd(x.ctx.spec)}\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n${doorLine(x)}\n\n## Rollback\n${rollback}`));
   }
   const DOOR = /^\*\*Door: .*$/m;
   /** Studio's text states the current facts Studio owns without writing: the door line (and, without a template, the whole part). */
@@ -449,6 +451,8 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
    *  Studio's part of the new text is recorded as its own for this head (pr-text-updated). False: the text changed meanwhile. */
   async function write(x: X, a: GitHubPrAdapter, phase: Phase, title: string, body: string, from: string, data: Record<string, unknown>): Promise<boolean> {
     const pr = x.ctx.pr;
+    // a Task drawn from an issue triage never edits in a reference to an issue, whoever wrote the text
+    if (d.refs(x, title) !== title || d.refs(x, body) !== body) throw new Error("a Task drawn from an issue triage never names an issue on GitHub (no #n, no issue link): edit the text without it");
     try { x.ctx.pr = await a.updateText(pr, title, body, (live) => liveDigest({ title: crlf(live.title), body: crlf(live.body) }) === from, x.dir, phase.signal, phase.assert); }
     catch (e: any) { phase.assert(); if (/text changed before the edit/.test(String(e?.message))) return false; throw e; }
     phase.assert();

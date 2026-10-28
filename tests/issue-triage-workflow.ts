@@ -250,7 +250,8 @@ try {
   ok(both.filter((b) => b.status === "fulfilled").length === 1 && both.some((b) => b.status === "rejected" && /being proposed/.test(String((b as any).reason?.message))), "two requests at once propose a package's issue once", JSON.stringify(both.map((b) => b.status)));
   const w1: any = (both.find((b) => b.status === "fulfilled") as any).value;
   const sent = proposed.at(-1);
-  ok(w1.issues.join() === "1" && sent.args.workflow === "code-firstmate" && sent.args.params.project === "proj" && /Fixes #1/.test(sent.args.text) && /src\/url\.ts · "match"/.test(sent.args.text) && sent.owner.captain, "the next issue is proposed on code-firstmate, from the triage's fields, in the captain's turn", JSON.stringify(sent?.args));
+  ok(w1.issues.join() === "1" && sent.args.workflow === "code-firstmate" && sent.args.params.project === "proj" && /src\/url\.ts · "match"/.test(sent.args.text) && sent.owner.captain, "the next issue is proposed on code-firstmate, from the triage's checked fields, in the captain's turn", JSON.stringify(sent?.args));
+  ok(sent.args.tainted === true && !/#\d|\b(Fixes|Closes|Refs) #/.test(sent.args.title + sent.args.text) && !/must not match https:\/\/a\.co\.evil|url-string-compare/.test(sent.args.text), "the proposal is marked tainted, names no issue as #n, and carries neither the investigators' repro nor their tag", JSON.stringify(sent?.args));
   ok(!/IGNORE ALL RULES/.test(sent.args.text), "the issue's text never goes into the Task's request");
   ok(/in progress/.test(await workErr({ project: "proj", package: "P-1" })), "while its Task runs, the package's next issue waits");
   await decide(w1.proposal, "close");
@@ -267,5 +268,7 @@ try {
   const hidden = open; open = open.filter((i) => i.number !== 2);
   ok(/check again/.test(await workErr({ project: "proj", package: "P-4" })) && store.get("proj")!.packages.find((p) => p.id === "P-4")!.status === "approved", "an issue missing from one read (closed, or slid between pages) is refused once, without marking the package stale");
   open = hidden;
+  // triage, approval and every proposed Task leave no trace on the triaged repository: GitHub is only read
+  ok(calls.length > 0 && calls.every((c) => c.startsWith("GET ")), "the whole triage, from snapshot to work packages, never calls a GitHub write (POST, PATCH, PUT, DELETE)", calls.filter((c) => !c.startsWith("GET ")).join(", "));
 } finally { H.stop(); server.stop(true); }
 end();

@@ -33,8 +33,9 @@ type State={project:string;repository:string;commit:string;tree:string;batch:num
 /** A file of the pinned checkout as text, or null: only regular files inside it, at most FILE_CAP bytes. */
 export const checkoutReader=(tree:string)=>(file:string)=>{const p=join(tree,file);try{if(!realInside(tree,p)||!statSync(p).isFile()||statSync(p).size>FILE_CAP)return null;return readFileSync(p,'utf8');}catch{return null;}};
 
-/** Studio's own proposal path (src/firstmate.ts studio_propose_work): a dispatch card the captain approves before any work */
-type Propose=(args:{workflow:string;version:number;title:string;text:string;params:Record<string,string>},owner:any)=>Promise<{proposal?:string}>;
+/** Studio's own proposal path (src/firstmate.ts studio_propose_work): a dispatch card the captain approves before any work.
+ *  tainted: the request comes from untrusted issue text; the Task it becomes carries the mark (src/firstmate.ts proposeTainted) */
+type Propose=(args:{workflow:string;version:number;title:string;text:string;params:Record<string,string>;tainted:true},owner:any)=>Promise<{proposal?:string}>;
 /** the team's resolution of a workflow in a project (src/domain/crew.ts resolveCrew): who runs each agent node there */
 type CrewOf=(def:any,project:string)=>{node:string;provider:string|null;model:string|null;effort?:string|null}[]|null;
 export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTriageStore,dataDir:string,o:{propose?:Propose;crewOf?:CrewOf}={}){
@@ -214,7 +215,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   return{state:DONE.includes(child.status)?'closed':'open',task:child.id};};
  /** every package's issues with a Task, for the Board */
  const progress=(rec:TriageRecord)=>Object.fromEntries(rec.packages.filter(p=>p.work).map(p=>[p.id,Object.fromEntries(Object.entries(p.work!).map(([n,e])=>[n,workOf(e)]))]));
- const workSpec={type:'function',name:'studio_work_package',description:'When the captain asks to work on (fix) an approved work package of a connected project\'s issue triage (the project page, GitHub issues; ids like P-3): propose the Task for its next issue on code-firstmate, from the triage\'s location, repro and security answer. One issue at a time, in the package\'s order; Studio reads the issue again first and refuses a package whose issue changed. The captain approves the Task on its dispatch card. Returns the proposal; call it again for the next issue once the previous one is merged.',
+ const workSpec={type:'function',name:'studio_work_package',description:'When the captain asks to work on (fix) an approved work package of a connected project\'s issue triage (the project page, GitHub issues; ids like P-3): propose the Task for its next issue on code-firstmate, from what Studio checked only: the issue numbers and titles, the files both investigators named and the security answer. The Task is marked tainted (issue text is untrusted): its commits and pull request name no issue (nothing is linked or closed on GitHub; Studio keeps which issue it is), its review runs the tests, and it runs only in the OS sandbox. One issue at a time, in the package\'s order; Studio reads the issue again first and refuses a package whose issue changed. The captain approves the Task on its dispatch card. Returns the proposal; call it again for the next issue once the previous one is merged.',
   inputSchema:{type:'object',properties:{project:{type:'string'},package:{type:'string'}},required:['project','package'],additionalProperties:false}};
  /** packages a proposal is being prepared for: two turns at once never propose one package's issue twice */
  const inFlight=new Set<string>();
@@ -237,7 +238,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(!changed.length&&missing.length)throw new NativeToolFailure('target_unavailable',`${missing.map(n=>'#'+n).join(' ')} is not among the open issues GitHub just listed (closed, or moved while it was read): check again`,`剛剛 GitHub 列出的 open issue 裡沒有 ${missing.map(n=>'#'+n).join(' ')}（可能已關閉，或讀取時剛好換頁）：請再試一次。`,'read_current_state');
   if(changed.length){const cur=store.get(args.project)!;store.write({...cur,packages:cur.packages.map(p=>p.id===args.package?{...p,status:'stale' as const}:p)});
    throw new NativeToolFailure('target_changed',`${changed.map(n=>'#'+n).join(' ')} changed on GitHub since it was investigated: ${args.package} is stale; triage it again`,`${changed.map(n=>'#'+n).join(' ')} 在調查之後被改過了：${args.package} 已過期，請重新分診。`,'read_current_state');}
-  const brief=issueBrief(rec,args.package,ns),r=await o.propose({workflow:'code-firstmate',version:def.version,title:brief.title,text:brief.text,params:{project:args.project}},owner);
+  const brief=issueBrief(rec,args.package,ns),r=await o.propose({workflow:'code-firstmate',version:def.version,title:brief.title,text:brief.text,params:{project:args.project},tainted:true},owner);
   if(!r?.proposal)throw new NativeToolFailure('configuration_missing','Studio did not create the proposal','Studio 沒有建立提案。','captain_review');
   const cur=store.get(args.project)!,at=new Date().toISOString();
   store.write({...cur,packages:cur.packages.map(p=>p.id===args.package?{...p,work:{...(p.work??{}),...Object.fromEntries(ns.map(n=>[String(n),{proposal:r.proposal!,at}]))}}:p)});

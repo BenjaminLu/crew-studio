@@ -92,7 +92,7 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
   const done = ["Prices in euro format as €1,234.50 (test/format.test.ts)", "Unknown currencies keep the code prefix (test/codes.test.ts)"];
   E.actions["fixture.seed"] = (x) => {
     Object.assign(x.ctx, { repo, worktree: repo, base: "main", baseCommit, head: must(repo, ["rev-parse", "HEAD"]), branch: x.run.params.branch, door: { door: "two-way" },
-      spec: { title: "Format euro prices", what: "Show euro prices with the euro sign and grouping.", why: ["Shoppers in the EU read prices wrongly."], done, scope: ["file"], rollback: "Revert the pull request." } });
+      spec: { title: x.run.params._tainted ? "Format euro prices, fixes #12" : "Format euro prices", what: x.run.params._tainted ? "Show euro prices with the euro sign (Closes fixture/project#12, see https://github.com/fixture/project/issues/12)." : "Show euro prices with the euro sign and grouping.", why: ["Shoppers in the EU read prices wrongly."], done, scope: ["file"], rollback: "Revert the pull request." } });
     // Studio's own evidence at this head: CI and fail-first pass (fail-first proves done line 1), the reviewer approved
     E.record(x, "check", { check: "firstmate/ci", verdict: "pass", kind: "deterministic", data: { shards: [] } } as any);
     E.record(x, "check", { check: "firstmate/fail-first", verdict: "pass", kind: "deterministic", proves: [0], data: { applicable: true } } as any);
@@ -110,7 +110,7 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     { heading: "Changes", text: "- Library: euro formatting" }, { heading: "How it was tested", text: "Fail-first tests on main, CI on the head." },
     { heading: "Screenshots", text: "No UI change" }, { heading: "Risk and rollback", text: "Low risk. Revert the pull request." }],
     ticks: [{ item: "Amounts stay integer cents end to end", evidence: "review" }, { item: "Docs and comments updated where behaviour changed", evidence: "made-up" }, { item: "`bun run lint` passes", evidence: "review" }], ...extra });
-  const startRun = async (branch: string) => { const r = E.start({ workflow: "pr-flow", text: "Format euro prices", params: { branch } }); await until(() => !!E.cards.list({ run: r.id, open: true }).length || ["succeeded", "failed"].includes(r.status), 15000); return r; };
+  const startRun = async (branch: string, more: Record<string, string> = {}) => { const r = E.start({ workflow: "pr-flow", text: "Format euro prices", params: { branch, ...more } }); await until(() => !!E.cards.list({ run: r.id, open: true }).length || ["succeeded", "failed"].includes(r.status), 15000); return r; };
   const openCard = (r: any) => E.cards.list({ run: r.id, open: true })[0];
   try {
     // GitHub refuses the template read: a hold card on pr-open, never "no template"; closing it ends the Task closed
@@ -126,6 +126,12 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     await until(() => ["succeeded", "failed"].includes(plain.status), 15000);
     const p1 = [...sim.pulls.values()].find((p) => p.head.ref === "crew/plain");
     ok(plain.status === "succeeded" && !!p1 && p1.body.includes("## Door\ntwo-way") && p1.body.includes("## Rollback") && !E.cards.list({ run: plain.id }).length, "no template: the pull request opens right after the build with the spec, door and rollback, no card", `${plain.status} ${p1?.body?.slice(0, 80)}`);
+
+    // a Task drawn from an issue triage (tainted): its pull request names no issue, so GitHub links and closes nothing
+    const taint = await startRun("crew/tainted", { _tainted: "issue-text" });
+    await until(() => ["succeeded", "failed"].includes(taint.status), 15000);
+    const pt = [...sim.pulls.values()].find((p) => p.head.ref === "crew/tainted");
+    ok(taint.status === "succeeded" && !!pt && !/#\d|\/issues\/\d/.test(pt.title + pt.body) && /fixes an issue/.test(pt.title) && /Closes an issue, see an issue/.test(pt.body), "a tainted Task's pull request title and text name no issue (no #n, no issue link)", `${pt?.title} ${pt?.body?.slice(0, 200)}`);
 
     // one template
     sim.community.set(".github/pull_request_template.md", TEMPLATE);

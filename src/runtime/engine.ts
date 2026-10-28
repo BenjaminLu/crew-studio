@@ -23,6 +23,8 @@ import type { AgentJob, AgentTool, Agents } from "../agent";
 import type { Provider } from "../providers";
 import type { StudioLog } from "../rawlog";
 import { ProviderRefusal } from "../providers/policy";
+import { localUnrestricted } from "../local-execution";
+import { RoundBlocked } from "../round-blocked";
 import { QueueRefusal, capacity, type QueueRequest } from "./queue";
 import { Grants } from "./grants";
 import { Cards, emptySections, type CardKind, type SCard, type Sections, type LocalRescope } from "./cards";
@@ -223,7 +225,8 @@ export class Engine {
   /** Where a round's source lives (the directory whose head a brief's file evidence is read from); a domain registers it, the first answer wins. */
   sourceRoots: Record<string,(x:X)=>string|null> = {};
   cardPrepared: Record<string, (x: X, card: SCard, body: Body) => void> = {};
-  beforeStart: Record<string, (x: X) => Promise<Result | null> | Result | null> = {};
+  // a tainted run (work drawn from untrusted issue text) starts no step outside the OS sandbox (taintRefusal)
+  beforeStart: Record<string, (x: X) => Promise<Result | null> | Result | null> = { "tainted-sandbox": (x) => { const why = this.taintRefusal(x.run); if (why) throw new RoundBlocked(why); return null; } };
   externalValidators: Record<string, (x: X, descriptor: any) => boolean> = {};
   externalHandlers: Record<string, (x: X, descriptor: any, wake: (result: Result) => void) => () => void> = {};
   private externalOwners = new Map<string, { cancel: () => void }>();
@@ -1562,7 +1565,8 @@ export class Engine {
       const reach = this.newTaskReach(r);
       if (!reach.newTaskAllowed) refuse({ en: "New task refused: this workflow is internal or retired. Ask Firstmate to prepare the work again.", "zh-TW": "已拒絕開始新任務：此流程為內部或已退役流程。請 Firstmate 重新準備這項工作。" });
       // the staffing pins travel with the task: start() checks them against the current staffing like any new task
-      const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing"));
+      // so does the taint: a Task drawn from untrusted issue text repeats as one
+      const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing" || k === "_tainted"));
       // the new task runs the current release of the workflow (a run pinned to a replaced version keeps its old routes); the captain starts it, Firstmate is not involved
       let next: Run; try { next = this.start({ workflow: r.workflow, version: reach.newerVersion ? undefined : r.version, title: r.title, text: r.text, params, by: a.by }); }
       catch (e: any) { refuse({ en: `New task refused: ${e?.message ?? e}`, "zh-TW": `已拒絕開始新任務：${e?.message ?? e}` }); throw e; }
@@ -1879,11 +1883,23 @@ export class Engine {
    * global) runs a round outside it, and the run's log says so.
    */
   roundSandbox(x: X, b: { writes: string[]; reads?: string[]; cwd?: string } | null, label = "agent") {
+    const tainted = this.taintRefusal(x.run); if (tainted) throw new RoundBlocked(tainted);
     const off = this.grants.open("sandbox-off", x.run.ctx.project ?? x.run.params?.project ?? null);
     if (off) { x.log(`this round runs outside the round sandbox: the captain's grant ${off.id} (until ${off.until})`); return null; }
     // a round with no folder of its own (judges, designers, coordinators) still opens in a scratch folder of its own under data/work
     const own = b ?? this.roundScratch(x, label);
     return { ...own, allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) };
+  }
+  /** Work drawn from untrusted text (params._tainted, set only by Studio: src/firstmate.ts proposeTainted, from an issue
+   * triage's work package) runs only in the OS sandbox: never in local unrestricted mode (CREW_LOCAL_UNRESTRICTED) and never
+   * under a sandbox-off grant. The one rule, checked before each step of such a run starts (beforeStart) and again for each
+   * agent turn (roundSandbox); the reason, or null. */
+  taintRefusal(r: Run): string | null {
+    if (!r.params?._tainted) return null;
+    let unrestricted = true; try { unrestricted = localUnrestricted(); } catch {}
+    if (unrestricted) return "this Task comes from untrusted issue text and runs only in the OS sandbox, but Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED): restart Studio without it";
+    const off = this.grants.open("sandbox-off", r.ctx?.project ?? r.params?.project ?? null);
+    return off ? `this Task comes from untrusted issue text and runs only in the OS sandbox, but the captain's sandbox-off grant ${off.id} is open: end it first` : null;
   }
   /** The one place a round's working folder is made: <data>/work/<area>/<run>/<node>-<visit>-<attempt>[-label] (fresh unless kept). */
   roundDir(x: X, area: string, o: { prefix?: string; label?: string; fresh?: boolean } = {}) {

@@ -118,15 +118,27 @@ try {
   open = [...open, issue(10, "Program: quarterly release plan"), issue(11, "Mail digest is late")];
   script = () => [{ tool: "categories_submit", args: { report: { assign: [{ n: 10, category: "PLANNED", why: "a program task" }, { n: 11, category: "NEW", new_name: "郵件", new_scope: "郵件與摘要", why: "沒有郵件類" }] } } }];
   r = await run(); await answer(r.id, "confirm", "start");
-  ok(/PLANNED/.test(prompt) && store.get("proj")!.assignments["10"].category === "PLANNED", "the brief offers PLANNED, and an issue tagged so is set aside", prompt.slice(0, 600));
-  ok(/#10/.test(cardAt(r.id, "approve")?.body ?? "") && /planned|規劃中/i.test(cardAt(r.id, "approve")?.body ?? ""), "the approval card lists the issues set aside as planned", cardAt(r.id, "approve")?.body);
+  ok(/PLANNED/.test(prompt) && /approves each one/.test(prompt) && store.get("proj")!.assignments["10"].category === "PLANNED" && store.get("proj")!.assignments["10"].pending === true, "the brief offers PLANNED as a proposal: the issue is recorded as proposed planned work, not set aside yet", prompt.slice(0, 600));
+  ok((flow.view("proj") as any).planned.find((p: any) => p.n === 10)?.pending === true, "the page lists it as waiting for approval");
+  const pc = cardAt(r.id, "approve");
+  ok(/#10 Program: quarterly release plan — a program task/.test(pc?.body ?? "") && /set aside only if you approve/.test(pc?.body ?? "") && /planned work/.test(pc?.title.en ?? ""), "the approval card lists each proposed planned issue with its title and why, and says it is set aside only if approved", JSON.stringify([pc?.title, pc?.body]));
   await answer(r.id, "approve", "decline"); await until(() => E.get(r.id)!.status === "succeeded");
-  ok((flow.view("proj") as any).planned.map((p: any) => p.n).join() === "10" && store.get("proj")!.assignments["10"].category === "PLANNED", "declining the new category keeps the planned tag; the page lists planned work apart");
-  flow.edit("proj", { op: "unplan", n: 10 }, "captain (page)");
-  script = () => [{ tool: "categories_submit", args: { report: { assign: [{ n: 10, category: "PLANNED", why: "again" }, { n: 11, category: "C-1", why: "close enough" }] } } },
-    { tool: "categories_submit", args: { report: { assign: [{ n: 10, category: "C-1", why: "a release task" }, { n: 11, category: "C-1", why: "close enough" }] } } }];
-  r = await run(); await answer(r.id, "confirm", "start"); await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status));
-  ok(/off planned work[^\n]*#10/.test(prompt) && /#10/.test(JSON.stringify(results[0])) && store.get("proj")!.assignments["10"].category === "C-1", "an issue the captain took off planned is named in the brief, a PLANNED for it is refused, and it is filed", prompt.slice(-400));
+  rec = store.get("proj")!;
+  ok(!(flow.view("proj") as any).planned.length && rec.assignments["10"].notPlanned === true && rec.assignments["10"].category === "" && E.trusted(r.id).entries.some((e: any) => e.record === "categories-decided" && e.data.planned?.join() === "10"), "declining sets nothing aside: the issue is the captain's 'not planned', on the ledger");
+  // security issues are never set aside: one by its title, one by its label; and a declined one is not tagged planned again
+  open = [...open, issue(12, "Roadmap: move to the v3 API"), issue(13, "Program task: XSS in the embed preview"), issue(14, "Roadmap item for Q3", { labels: [{ name: "security" }] })];
+  const all = (extra: any) => ({ report: { assign: [{ n: 10, category: "C-1", why: "a release task" }, { n: 11, category: "C-1", why: "close enough" }, { n: 12, category: "PLANNED", why: "a roadmap item" }, { n: 13, category: "C-1", why: "embeds" }, { n: 14, category: "C-1", why: "embeds" }].map((a) => ({ ...a, ...(extra[a.n] ?? {}) })) } });
+  script = () => [{ tool: "categories_submit", args: all({ 10: { category: "PLANNED" } }) }, { tool: "categories_submit", args: all({ 13: { category: "PLANNED" } }) }, { tool: "categories_submit", args: all({ 14: { category: "PLANNED" } }) }, { tool: "categories_submit", args: all({}) }];
+  r = await run(); await answer(r.id, "confirm", "start");
+  ok(/off planned work[^\n]*#10/.test(prompt) && /#10/.test(JSON.stringify(results[0])) && /Security issues, never PLANNED[^\n]*#13 #14/.test(prompt), "the brief names the issue declined as planned and the security issues, by title and by label", prompt.slice(-600));
+  ok(/#13 is a security issue/.test(JSON.stringify(results[1])) && /#14 is a security issue/.test(JSON.stringify(results[2])) && results[3]?.saved === true, "PLANNED for a security issue is refused, by its title or its label", JSON.stringify(results.slice(1, 4)));
+  rec = store.get("proj")!;
+  ok(rec.assignments["13"].category === "C-1" && rec.assignments["14"].category === "C-1" && rec.assignments["10"].category === "C-1" && rec.assignments["12"].pending === true, "they are filed into a category; the other planned proposal waits");
+  await answer(r.id, "approve", "approve"); await until(() => E.get(r.id)!.status === "succeeded");
+  rec = store.get("proj")!;
+  ok(rec.assignments["12"].category === "PLANNED" && !rec.assignments["12"].pending && /^captain/.test(rec.assignments["12"].decidedBy ?? "") && (flow.view("proj") as any).planned.map((p: any) => `${p.n}${p.pending ? "?" : ""}`).join() === "12", "approving sets it aside, with who approved it", JSON.stringify(rec.assignments["12"]));
+  flow.edit("proj", { op: "unplan", n: 12 }, "captain (page)");
+  ok(store.get("proj")!.assignments["12"].notPlanned === true && !(flow.view("proj") as any).planned.length, "the captain takes it off planned work from the page");
 
   // --- 6. outside the sandbox the categorizer does not run; closing the card files nothing ---
   open = [...open, issue(8, "Something new")];
@@ -138,6 +150,6 @@ try {
   ok(flow.start({ project: "proj", by: "a" }).id === flow.start({ project: "proj", by: "b" }).id, "one run at a time per project");
   let nope = ""; try { flow.start({ project: "nope", by: "captain" }); } catch (e: any) { nope = e.message; }
   ok(/registered project/.test(nope), "a project that is not registered is refused");
-  ok(calls.every((c) => c.startsWith("GET ")), "Studio only reads GitHub");
+  ok(calls.length > 0 && calls.every((c) => c.startsWith("GET ")), "Studio only reads GitHub: no run, card or edit calls a GitHub write (POST, PATCH, PUT, DELETE)", calls.filter((c) => !c.startsWith("GET ")).join(", "));
 } finally { H.stop(); server.stop(true); }
 end();
