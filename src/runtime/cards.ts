@@ -44,6 +44,8 @@ export type SCard = {
   competition?: import("../domain/startup-recursion").StartupCompetition | { untrusted: true };
   /** "Open this pull request?" (domain/code-publish.ts): the exact title and body Studio will open, and where */
   pullRequest?: PullRequestPreview | null;
+  /** a merge card's review room, as the card shows it (a view only, never stored, never readiness): src/domain/review-room.ts */
+  reviewRoom?: Record<string, any> | null;
   /** a dispatch card's crew (docs/design/crew-seats.md): who runs each node, and the efforts the captain may change for this run only */
   crew?: CardCrew | null;
   /** a spec card (code-firstmate's dispatch): the spec's scope, what it reads to verify, its open scope questions */

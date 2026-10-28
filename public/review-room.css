@@ -1,0 +1,55 @@
+/* The review room (public/review-room.js): the board beside the chat; stacked on a phone. */
+.rr-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+.rr-top b { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.rr-wrap { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
+.rr-right { display: grid; gap: 14px; min-width: 0; }
+@media (max-width: 980px) { .rr-wrap { grid-template-columns: minmax(0, 1fr); } }
+.rr-board, .rr-chat, .rr-side, .rr-cite-panel { min-width: 0; overflow-wrap: anywhere; }
+.rr-board h2, .rr-chat h2, .rr-side h2 { font-size: 15px; margin: 0 0 8px; }
+.rr-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin: 0 0 10px; background: var(--surface, transparent); min-width: 0; }
+.rr-item-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 0 0 6px; min-width: 0; }
+.rr-item-h code { overflow-wrap: anywhere; }
+.rr-pre > span { display: block; min-width: max-content; }
+.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--code-bg, rgba(127,127,127,.08)); font: 12px/1.45 var(--mono, ui-monospace, monospace); overflow-x: auto; max-width: 100%; white-space: pre; }
+.rr-diff .add { background: rgba(40,160,80,.16); }
+.rr-diff .del { background: rgba(210,60,60,.16); }
+.rr-diff .hunk { color: var(--text-2); }
+.rr-code i { font-style: normal; color: var(--text-2); user-select: none; }
+.rr-code .hl { background: var(--accent-soft); }
+.rr-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+@media (max-width: 640px) { .rr-compare { grid-template-columns: minmax(0, 1fr); } }
+.rr-steps { border: 1px dashed var(--accent); border-radius: 12px; padding: 8px; margin: 0 0 10px; }
+.rr-step-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 6px; }
+.rr-flow-wrap { overflow-x: auto; max-width: 100%; }
+.rr-flow { max-width: none; height: auto; }
+.rr-flow rect, .rr-flow polygon { fill: var(--surface, #fff); stroke: var(--border-strong); stroke-width: 1.4; }
+.rr-flow text { fill: var(--text, #111); font: 12px var(--sans, system-ui, sans-serif); }
+.rr-flow .rr-edge { stroke: var(--text-2, #666); stroke-width: 1.4; }
+.rr-flow .rr-edge.dashed { stroke-dasharray: 5 4; }
+.rr-flow .rr-arrowhead { fill: var(--text-2, #666); }
+.rr-flow .rr-elabel { fill: var(--text-2, #555); font-size: 11px; }
+.rr-flow .rr-new rect, .rr-flow .rr-new polygon { stroke: var(--accent); stroke-width: 2.6; fill: var(--accent-soft); }
+.rr-flow line.rr-new { stroke: var(--accent); stroke-width: 2.4; }
+.rr-turns { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px; }
+.rr-msg { padding: 8px 10px; border-radius: 10px; min-width: 0; overflow-wrap: anywhere; }
+.rr-msg.captain { background: var(--accent-soft); margin-left: 12%; }
+.rr-msg.tutor { border: 1px solid var(--border); margin-right: 4%; }
+.rr-answer p, .rr-answer h4 { margin: 0 0 8px; }
+.rr-claim.inference { border-left: 3px solid var(--warn, #c9861a); padding-left: 8px; }
+.rr-inference { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; margin-right: 6px; border-radius: 6px; background: rgba(201,134,26,.16); color: var(--warn-text, #8a5a0b); }
+.rr-tier { font-size: 11px; font-weight: 600; padding: 0 4px; border-radius: 4px; background: rgba(127,127,127,.14); }
+.rr-cite { font: 11px var(--mono, ui-monospace, monospace); padding: 1px 6px; margin: 0 2px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent-text, var(--accent)); cursor: pointer; max-width: 100%; overflow-wrap: anywhere; }
+.rr-cite.bad { border-color: var(--bad, #c33); color: var(--bad, #c33); text-decoration: line-through; }
+.rr-basis { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.rr-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.rr-confirm { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: var(--accent-soft); }
+.rr-confirm p { margin: 0 0 6px; }
+.rr-err { color: var(--bad, #c33); }
+.rr-cost { display: block; font-size: 11px; margin-top: 4px; }
+.rr-check, .rr-sources { margin: 0 0 10px; padding-left: 18px; }
+.rr-sources { list-style: none; padding-left: 0; }
+.rr-sources li { margin: 0 0 4px; overflow-wrap: anywhere; }
+.rr-mark.ok { color: var(--ok, #1d8a4a); }
+.rr-mark.miss { color: var(--bad, #c33); }
+.rr-cite-panel { margin: 0 0 12px; border: 1px solid var(--accent); }
+@media (max-width: 560px) { .rr-quick .btn, .rr-step-bar .btn, .rr-top .btn, .rr-confirm .btn { min-height: 44px; } .rr-msg.captain { margin-left: 0; } }

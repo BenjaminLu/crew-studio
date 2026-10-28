@@ -307,3 +307,10 @@ Board has no Issues view).
 
 A gold set per project (in the data directory only) and an offline scorer that replays the stored investigator reports
 through the current rules: `bun scripts/issue-eval.ts mine|label|import|score <project>` (docs/units/issue-eval.md).
+
+## The merge card's review room
+
+Every merge card, wherever it is shown (the Inbox, the Task page), carries the same "Open review room" entry and the
+room's summary (questions asked, the understanding check, sources). The room is its own page (`#/review/<card>`): a tutor
+on the reviewer seat explains the pull request on a board and in a chat, read-only, each turn a paid round the captain
+confirms; it never answers the card or changes merge readiness. Unit spec: [review-room.md](review-room.md).

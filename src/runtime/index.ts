@@ -272,7 +272,7 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) {
       if(p.startsWith('/api/workflow-packages')){
         const cap=12*1024*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
@@ -587,6 +587,17 @@ export function createRuntime(d: RuntimeDeps) {
         if (p === "/api/issue-triage") return json({ projects: issueTriage.list() });
         try { const id = decodeURIComponent(p.slice("/api/issue-triage/".length)), rec = issueTriage.get(id), investigators = issueTriageFlow.investigators(id);
           return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec), investigators } : { state: "none", investigators }); } catch { return json({ error: "invalid project id" }, 400); }
+      }
+      // ---------- a merge card's review room (src/domain/review-room.ts): read on any authenticated page; a turn is a paid
+      // round only the desktop captain starts, confirming its provider and model; nothing here answers the card ----------
+      const room = /^\/api\/review-room\/(SC-\d+)(?:\/(turn|cite))?$/.exec(p);
+      if (room) {
+        const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
+        if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
+        if (room[2] !== "turn" || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
+        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm }, by)); } catch (e: any) { return fail(e); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });

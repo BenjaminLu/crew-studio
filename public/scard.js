@@ -88,6 +88,10 @@ const SCARD_CSS = `
 .cc-cap-img img { width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
 .cc-cap-none { padding: 18px 8px; border: 1px dashed var(--border); border-radius: 8px; text-align: center; }
 .cc-cap-diff { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.cc-room { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-soft); }
+.cc-room .btn { border-color: var(--accent); color: var(--accent-text, var(--accent)); font-weight: 600; text-decoration: none; }
+.cc-room .cc-room-text { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .cc-room .btn { min-height: 44px; } }
 @media (max-width: 560px) { .cc-cap-pair { grid-template-columns: 1fr; } .cc-lang button,.cc-actions .btn { min-height:44px; min-width:44px; } }
 .cc-imgs { display: flex; gap: 8px; flex-wrap: wrap; }
 .cc-imgs img { max-width: min(100%, 420px); border: 1px solid var(--border); border-radius: 6px; }
@@ -496,6 +500,19 @@ function mountCard(el, card, opts = {}) {
   // round each (the last one open), and inside it the proposal and the critique each collapsible
   // (the last round's proposal open), model text rendered as markdown made of text nodes only
   // "Open this pull request?": where it goes and the exact title and body, the body rendered as markdown made of text nodes
+  // a merge card's review room (src/domain/review-room.ts): the same prominent entry on every merge card, and what the room
+  // recorded (questions asked, the understanding check, sources). Display only: nothing here answers or holds the card.
+  function reviewRoomView(c) {
+    const r = c.reviewRoom; if (c.kind !== "merge" || !r) return null;
+    const q = r.check || { asked: 0, graded: 0, correct: 0 }, src = r.sources || { consulted: 0 };
+    const score = q.graded ? T(`check ${q.correct}/${q.graded} correct`, `理解檢查答對 ${q.correct}/${q.graded}`) : q.asked ? T(`check: ${q.asked} asked, not answered yet`, `理解檢查：問了 ${q.asked} 題，還沒作答`) : T("no understanding check yet", "還沒做理解檢查");
+    const said = r.questions ? T(`${r.questions} question${r.questions === 1 ? "" : "s"} asked in the room · ${score} · ${src.consulted} source${src.consulted === 1 ? "" : "s"} consulted`, `審查室問了 ${r.questions} 題 · ${score} · 參考了 ${src.consulted} 個來源`)
+      : T("Have a tutor walk you through how and why this change works before you merge.", "合併前，請導師帶你看這個改動怎麼運作、為什麼這樣做。");
+    return h("section", { class: "cc-room", "data-review-room": c.id },
+      h("a", { class: "btn", href: r.href, "data-card-link": "review-room", "data-review-room-open": c.id }, T("Open review room", "開啟審查室")),
+      h("span", { class: "cc-count cc-room-text", "data-review-room-summary": "" }, said, r.running ? T(" · the tutor is working", " · 導師作答中") : "", " ",
+        T("(each question is a paid model round; the room never answers this card or changes whether it can merge)", "（每個問題都是一次付費的模型執行；審查室不會回覆這張卡，也不影響能否合併）")));
+  }
   function pullRequestView(c) {
     const p = c.pullRequest; if (!p) return null;
     return sec("pull-request", T("The pull request, exactly as it will open", "Pull request（開出去的樣子）"),
@@ -671,6 +688,7 @@ function mountCard(el, card, opts = {}) {
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
       competitionView(c),
       pullRequestView(c),
+      reviewRoomView(c),
       // the competition already shows every round; its card text would repeat them, so it is not shown again
       body && !c.competition ? (d || specCard(c) ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : bodyView(c, body)) : null,
     ];

@@ -9,3 +9,7 @@
   `dist/sandbox/resolved-address-guard.js` and `dist/sandbox/address.js` (the denied address classes, the cloud metadata
   list, the IPv4-in-IPv6 decoding and the loopback-name rule). The Apache License 2.0 text is at
   https://www.apache.org/licenses/LICENSE-2.0.
+- **pstack** (MIT License, copyright (c) 2026 Lauren Tan; https://github.com/backnotprop/pstack, commit
+  37d989cabf310ea2d7631f1d006117ca4cc8a799): its `how`, `why` and `teach` skills (with their references) are adapted, not
+  vendored as is, in `workflows/skills/pstack/` (how.md, why.md, teach.md) for the merge card's review room. The changes
+  and the full MIT License text are in `workflows/skills/pstack/NOTICE.md`.
