@@ -41,6 +41,10 @@ const record = {
     17: issue("Share link loses its fragment", { state: "fixed?", locus: loc("src/utils/url.ts", "addParams"), tag: "url-building-bug" }),
     18: issue("Query string doubled on retry", { locus: loc("src/utils/url.ts", "addParams"), tag: "url-building-bug" }),
     20: issue("Crash report with no stack trace", { state: "not-found", locus: [], tag: "crash-report" }),
+    21: issue("It does not work", { state: "needs-info", locus: [], tag: "unclear-report" }),
+    22: issue("Rewrite the menu system", { fit: "human", fitReason: ["too-large"], locus: loc("src/menu.ts", "openMenu") }),
+    23: issue("Saving fails", { duplicateOf: 70, locus: [] }),
+    24: issue("Theme fallback", { inProgress: [40], locus: loc("src/theme.ts", "pickTheme") }),
   },
   packages: [
     { id: "P-1", kind: "ordered", members: [11, 12], order: [11, 12], why: "Both decide which page a request really came from.", security: true, status: "approved", commit: "c".repeat(40), work: { 11: { proposal: "R-999", at: "2026-10-28T10:00:00Z" } } },
@@ -49,8 +53,12 @@ const record = {
     { id: "P-4", kind: "recheck", members: [17], order: [17], why: "", security: false, status: "proposed", commit: "c".repeat(40), match: { with: "P-2", where: "src/utils/url.ts · addParams" } },
   ],
   cross: [{ id: "X-1", issues: [18], package: { kind: "single", members: [18], order: [18], why: "", security: false, commit: "c".repeat(40) }, with: "P-2", where: "src/utils/url.ts · addParams" }], lastCross: 1, dedup: 2,
-  toHuman: [{ issues: [15], reason: "the reports disagree on, or the code check fails for, #15" }],
-  noCode: [{ issues: [20], state: "not-found", reason: "both investigators looked and could not find it in the code" }],
+  toHuman: [{ issues: [15], reason: "the reports disagree on, or the code check fails for, #15" },
+    { issues: [22], reason: "not an agent's work (too-large): a person takes it", kind: "human-fit", fit: ["too-large"] },
+    { issues: [23], reason: "both reports find #23 a duplicate of #70", kind: "duplicate", duplicateOf: 70 },
+    { issues: [24], reason: "open pull request #40 names #24", kind: "in-progress", pulls: [40] }],
+  noCode: [{ issues: [20], state: "not-found", reason: "both investigators looked and could not find it in the code" },
+    { issues: [21], state: "needs-info", reason: "the issue lacks what is needed to locate it", questions: { 21: ["Which version are you on?", 'What does <img src=x onerror="window.__pwned2=1"> show?'] } }],
   createdAt: "2026-10-28T09:40:00Z", by: "issue-triage R-9", lastPackage: 3,
 };
 writeFileSync(join(data, "issue-triage", "wallet.json"), JSON.stringify(record));
@@ -146,6 +154,12 @@ try {
     ok(/disagree/.test(await p.locator('[data-tri-other] .is-human').textContent()), "what the investigators disagreed on is listed with the reason");
     { const none = await p.locator('[data-tri-other] [data-no-code] [data-no-code-state="not-found"]').textContent().catch(() => "");
       ok(/#20/.test(none) && /needs more information|需要更多資訊/.test(none) && !/#20/.test(await p.locator('[data-tri-other] .is-human').textContent()), "issues both investigators could not find in the code are listed as agreed, needing information, not as a disagreement", none); }
+    { const ask = await p.locator('[data-tri-other] [data-no-code] [data-no-code-state="needs-info"]').textContent().catch(() => ""), sent = posts.length;
+      ok(/#21/.test(ask) && /Which version are you on\?/.test(ask) && /<img src=x/.test(ask) && !(await p.evaluate(() => window.__pwned2)) && await p.locator('[data-no-code-state="needs-info"] [data-questions="21"] li').count() === 2, "a needs-info issue is listed as agreed with its questions for the reporter, as text", ask);
+      ok(/nothing is posted to GitHub|不會貼到 GitHub/.test(ask) && posts.length === sent && await p.locator('[data-no-code-state="needs-info"] button').count() === 0, "the questions are shown only in Studio: nothing on the page posts them anywhere", ask); }
+    { const kind = async (k) => p.locator(`[data-tri-other] .is-human [data-human-kind="${k}"]`).textContent().catch(() => "");
+      const fit = await kind("human-fit"), dup = await kind("duplicate"), busy = await kind("in-progress");
+      ok(/#22/.test(fit) && /too large|太大/.test(fit) && /#23/.test(dup) && /#70/.test(dup) && /#24/.test(busy) && await p.locator('[data-human-kind="in-progress"] a[href="https://github.com/fixture/wallet/pull/40"]').count() === 1, "a person's issue says why (too large), a duplicate names the issue it repeats, and one in progress links its open pull request", JSON.stringify([fit, dup, busy])); }
     await p.fill("[data-issue-numbers]", "12, x"); await p.click("[data-issue-triage]"); await p.waitForTimeout(200);
     ok(posts.length === 0 && /whole numbers/.test(await p.locator('[data-issue-start] [role="alert"]').textContent()), "issue numbers that are not numbers are refused before anything is sent");
     await p.goto(`${base}/#/project/vault`); await p.waitForSelector('[data-project-issues="vault"] [data-issue-start]', { timeout: 8000 }).catch(() => {});

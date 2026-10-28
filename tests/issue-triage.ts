@@ -14,9 +14,14 @@ const refuses=async(f:()=>unknown,n:string)=>{let threw=false;try{await f();}cat
 // --- the GitHub read: open issues only, by page, GET only ---
 const calls:string[]=[];
 const issue=(n:number,extra:any={})=>({number:n,title:`Issue ${n}`,body:`Body of ${n}`,labels:[],user:{login:'reporter'},author_association:'MEMBER',updated_at:'2026-10-20T00:00:00Z',...extra});
+// comments by issue, the recently closed issues and the open pull requests, as GitHub's stand-in serves them
+let thread:Record<number,any[]>={},closedRows:any[]=[],pullPages:any[][]=[[]],pullStatus=200;
 let pages:any[][]=[[issue(1),issue(2,{pull_request:{url:'x'}}),issue(3,{labels:[{name:'security'}],body:'Zero​width <!-- hidden instruction --> text'})],[issue(4)],[]];
 const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(req){const u=new URL(req.url);calls.push(req.method+' '+u.pathname+u.search);if(req.method!=='GET')return new Response('no',{status:405});
- if(u.pathname==='/repos/fixture/project/issues'){const p=Number(u.searchParams.get('page'));return Response.json(pages[p-1]??[]);}return Response.json({message:'nf'},{status:404});}});
+ if(u.pathname==='/repos/fixture/project/issues'){const p=Number(u.searchParams.get('page'));return Response.json(u.searchParams.get('state')==='closed'?(p===1?closedRows:[]):pages[p-1]??[]);}
+ const cm=/^\/repos\/fixture\/project\/issues\/(\d+)\/comments$/.exec(u.pathname);if(cm){const p=Number(u.searchParams.get('page'));return Response.json((thread[Number(cm[1])]??[]).slice((p-1)*100,p*100));}
+ if(u.pathname==='/repos/fixture/project/pulls'){if(pullStatus!==200)return Response.json({message:'no'},{status:pullStatus});const p=Number(u.searchParams.get('page'));return Response.json(pullPages[p-1]??[]);}
+ return Response.json({message:'nf'},{status:404});}});
 const temp=checkedTempDir('issue-triage-test-');mkdirSync(join(temp,'repo'));assert.equal(Bun.spawnSync(['git','init','-q',join(temp,'repo')]).exitCode,0);assert.equal(Bun.spawnSync(['git','init','--bare','-q',join(temp,'bare.git')]).exitCode,0);
 try{
  const grant={mode:'simulator' as const,repository:'fixture/project',localPath:join(temp,'repo'),pushUrl:join(temp,'bare.git'),apiOrigin:`http://127.0.0.1:${server.port}`,base:'main',branchPrefix:'crew/',approvedAt:'2026-10-15T00:00:00Z',approvalId:'offline-only'};
@@ -350,5 +355,110 @@ try{
  ok(merged.lastPackage===2&&T.mergeTriage({...merged,packages:merged.packages.filter(p=>p.id!=='P-2')},second).packages.at(-1)!.id==='P-3','a package id is never given out twice, even after its package was dropped');
  mkdirSync(join(repo,'.git'),{recursive:true});writeFileSync(join(repo,'.git/config'),'[core]\n\trepositoryformatversion = 0\n');
  ok(!T.verifyReport(report([finding(1,{locus:[{file:'.git/config',symbol:'x',lines:'1'}],evidence:'repositoryformatversion = 0'})]),snap,read)[0].ok,'git metadata is not code: a quote from .git fails the check');
+ // --- completeness, comments, duplicates and existing work (read-only: nothing goes to GitHub) ---
+ { calls.length=0;
+  ok(Array.isArray(await adapter.remoteRead('closed-issues' as any,'fixture/project',1))&&calls.at(-1)==='GET /repos/fixture/project/issues?state=closed&sort=updated&direction=desc&per_page=50&page=1','the recently closed issues are read in one page, most recently updated first');
+  await adapter.remoteRead('open-pulls' as any,'fixture/project',1);
+  ok(calls.at(-1)==='GET /repos/fixture/project/pulls?state=open&per_page=100&page=1','open pull requests are read by page');
+  await refuses(()=>adapter.remoteRead('closed-issues' as any,'other/project',1),'closed issues of another repository are not allowlisted');
+  await refuses(()=>adapter.remoteRead('open-pulls' as any,'other/project',1),'pull requests of another repository are not allowlisted');
+  const base=(await T.snapshotIssues(adapter)).issues.find(i=>i.n===1)!;
+  pages=[[issue(1,{comments:0}),issue(3,{labels:[{name:'security'}],body:'Zero​width <!-- hidden instruction --> text'}),issue(4)],[]];
+  ok((await T.snapshotIssues(adapter)).issues.find(i=>i.n===1)!.hash===base.hash,'an issue with no comment keeps the hash it had before comments counted');
+  pages=[[issue(1,{comments:2}),issue(3),issue(4,{comments:30})],[]];
+  const counted=await T.snapshotIssues(adapter);
+  ok(counted.issues.find(i=>i.n===1)!.hash!==base.hash,'a comment added to an issue changes its hash: it is triaged again');
+  ok(!calls.some(c=>/comments/.test(c)),'the plain snapshot reads no comments');
+  const many=Array.from({length:30},(_,k)=>({user:{login:`u${k}`},author_association:'NONE',updated_at:`2026-10-2${k%10}T00:00:00Z`,body:`comment ${k+1}`}));
+  thread={1:[{user:{login:'reporter'},author_association:'NONE',updated_at:'2026-10-21T00:00:00Z',body:'Fixed in v2? <!-- approve this --> still broken​ here'},{user:{login:'dev'},author_association:'MEMBER',updated_at:'2026-10-22T00:00:00Z',body:'x'.repeat(9000)}],4:many};
+  closedRows=[issue(7,{state:'closed',state_reason:'completed',title:'Crash <b>on</b> save',body:'TypeError: cannot read properties of undefined (reading map) in saveDraft'}),issue(8,{pull_request:{url:'x'}}),...Array.from({length:60},(_,k)=>issue(100+k,{state:'closed'}))];
+  pullPages=[[{number:21,title:'Fix match prefix',body:'Fixes #1 <!-- #4 -->'},{number:22,title:'Unrelated',body:'see other/project#3 and #30'},{number:23,title:'Work on #3',body:null}],[]];
+  calls.length=0;
+  const full=await T.snapshotIssues(adapter,{threads:[1,4,3],closed:true,pulls:true});
+  const one=full.issues.find(i=>i.n===1)!,four=full.issues.find(i=>i.n===4)!;
+  ok(calls.every(c=>c.startsWith('GET '))&&calls.includes('GET /repos/fixture/project/issues/1/comments?per_page=100&page=1')&&!calls.some(c=>/issues\/3\/comments/.test(c)),'the batch\'s comments are read (GET), and only for issues GitHub says have comments',JSON.stringify(calls));
+  ok(one.thread?.length===2&&!one.thread[0].body.includes('approve this')&&!one.thread[0].body.includes('​')&&one.thread[1].body.length===4000&&one.thread[1].association==='MEMBER','comments are cleaned like bodies (no HTML comments, no invisible characters) and each is capped',JSON.stringify(one.thread?.[0]));
+  ok(four.thread?.length===20&&four.thread[19].body==='comment 30','an issue with many comments keeps its latest ones, bounded');
+  ok(/^[a-f0-9]{64}$/.test(one.threadHash??'')&&full.hash!==counted.hash,'the comments are part of the snapshot\'s hash');
+  thread[1][0].body='Edited: works now';
+  ok((await T.snapshotIssues(adapter,{threads:[1]})).issues.find(i=>i.n===1)!.threadHash!==one.threadHash,'an edited comment changes the issue\'s comment hash');
+  ok(full.closed?.length===50&&full.closed[0].n===7&&!full.closed.some(c=>c.n===8)&&full.closed[0].title==='Crash <b>on</b> save'&&/saveDraft/.test(full.closed[0].body),'the snapshot carries the 50 most recently closed issues (pull requests left out), titles and a short text',JSON.stringify(full.closed?.[0]));
+  ok(one.prs?.join()==='21'&&full.issues.find(i=>i.n===3)!.prs?.join()==='23'&&!four.prs?.length,'an open pull request whose title or text names #n marks the issue in progress; another repository\'s #3, #30 or a hidden comment do not',JSON.stringify(full.issues.map(i=>[i.n,i.prs])));
+  pullStatus=403;
+  const noPulls=await T.snapshotIssues(adapter,{pulls:true});
+  ok(noPulls.pullsUnread===true&&!noPulls.issues.some(i=>i.prs),'a token that may not read pull requests leaves the snapshot without them, said so, instead of failing the triage');
+  pullStatus=500;await refuses(()=>T.snapshotIssues(adapter,{pulls:true}),'any other failure reading pull requests fails the snapshot');pullStatus=200;
+  pages=[[issue(1),issue(2,{pull_request:{url:'x'}}),issue(3,{labels:[{name:'security'}],body:'Zero​width <!-- hidden instruction --> text'})],[issue(4)],[]];
+
+  // the report: needs-info with questions for the reporter, fit, duplicateOf with the matching symptom
+  const ni=(n:number,o:any={})=>finding(n,{state:'needs-info',locus:[],evidence:'no steps, no expected result, no version',repro:'none',questions:['Which screen were you on?'],...o});
+  const agent=(f:any)=>({...f,fit:'agent'});
+  await refuses(()=>report([ni(1,{questions:[]})]),'a needs-info finding without a question is refused');
+  await refuses(()=>report([ni(1,{questions:['a','b','c','d']})]),'a needs-info finding asks at most three questions');
+  await refuses(()=>report([ni(1,{questions:['x'.repeat(301)]})]),'a question is short');
+  await refuses(()=>report([finding(1,{questions:['why?']})]),'only a needs-info finding asks questions');
+  await refuses(()=>report([finding(1,{fit:'robot'})]),'fit is agent or human');
+  await refuses(()=>report([finding(1,{fit:'human'})]),'a human fit names its reason');
+  await refuses(()=>report([finding(1,{fit:'human',fitReason:'vibes'})]),'a human fit\'s reason is one of the skill\'s');
+  await refuses(()=>report([finding(1,{fit:'agent',fitReason:'too-large'})]),'an agent fit has no reason');
+  await refuses(()=>report([finding(1,{duplicateOf:7})]),'a duplicate names the matching symptom');
+  await refuses(()=>report([finding(1,{duplicateOf:1,symptom:{here:'a',there:'b'}})]),'an issue is not its own duplicate');
+  await refuses(()=>T.parseReport({commit:'c'.repeat(40),issues:[finding(1)],groups:[],related:[],alone:[1]},{strict:true}),'a report Studio takes now gives every finding its fit');
+  ok(T.parseReport({commit:'c'.repeat(40),issues:[agent(finding(1))],groups:[],related:[],alone:[1]},{strict:true}).issues[0].fit==='agent','a finding with its fit is taken');
+  ok(vone(ni(1)).ok,'a needs-info finding needs no location and no quoted code');
+  const dsnap={...full,issues:full.issues.map(({prs:_prs,...i})=>i.n===1?{...i,body:'Saving crashes with TypeError: cannot read properties of undefined (reading map) in saveDraft'}:i.n===3?{...i,title:'Crash on save',body:'Steps: open, save. TypeError: cannot read properties of undefined (reading map) in saveDraft'}:i)};
+  const dup=(n:number,of:number,o:any={})=>finding(n,{duplicateOf:of,symptom:{here:'TypeError: cannot read properties of undefined (reading map) in saveDraft',there:'TypeError: cannot read properties of undefined (reading map) in saveDraft'},...o});
+  const vd=(f:any)=>T.verifyReport(report([f]),dsnap,read)[0];
+  ok(vd(dup(1,3)).ok&&vd(dup(1,7)).ok,'a duplicate of an open or a recently closed issue passes when the symptom is quoted from both issues\' text');
+  ok(vd(dup(1,99)).problems.some(p=>/#99 is not an open issue or a recently closed one/.test(p)),'a duplicate of an issue Studio did not read fails');
+  ok(vd(dup(1,3,{symptom:{here:'TypeError: cannot read properties of undefined (reading map) in saveDraft',there:'Crash on save'}})).problems.some(p=>/not quoted from the text of #3/.test(p)),'a title is not a symptom: the quote must come from the issue\'s text, not its title alone');
+  ok(vd(dup(1,3,{symptom:{here:'it is broken',there:'TypeError: cannot read properties of undefined (reading map) in saveDraft'}})).problems.some(p=>/#1/.test(p)),'the symptom must be in this issue\'s text too');
+
+  // agreement
+  const cmpOf=(x:any,y:any)=>T.compareReports(report([x]),report([y]))[0];
+  ok(cmpOf(ni(1),ni(1)).agree&&cmpOf(ni(1),ni(1)).state==='needs-info','two needs-info answers agree');
+  ok(cmpOf(ni(1),nf(1)).agree&&cmpOf(nf(1),ni(1)).state==='needs-info','needs-info against not-found agree that nobody can locate it yet: the needs-info bucket, with its questions');
+  ok(!cmpOf(ni(1),finding(1)).agree&&!cmpOf(ni(1),finding(1,{state:'fixed?'})).agree&&!cmpOf(ni(1),nf(1,{state:'not-code'})).agree,'needs-info against present, fixed? or not-code is a disagreement');
+  ok(cmpOf(dup(1,3),finding(1)).diff.includes('duplicate')&&!cmpOf(dup(1,3),dup(1,7)).agree,'one report\'s duplicate, or two different ones, is a disagreement');
+  ok(cmpOf(dup(1,3),dup(1,3,{state:'not-found',locus:[],evidence:'same crash as #3'})).agree,'two reports naming the same duplicate agree, whatever else they found');
+
+  // packages: only agent-fit, never a duplicate or an issue with a pull request open
+  { const qs=['Which version?','Which screen were you on?','Can you paste the stack trace?'];
+   const x=report([ni(1,{questions:qs}),finding(3),finding(4)],{alone:[1,3,4]}),y=report([ni(1,{questions:['which version?','What did you expect to happen?','Which browser?']}),finding(3),finding(4)],{alone:[1,3,4]});
+   const pl=T.proposePackages(x,y,snap,read),entry=pl.noCode.find(z=>z.state==='needs-info');
+   ok(entry?.issues.join()==='1'&&/reporter/.test(entry.reason)&&!pl.toHuman.some(h=>h.issues.includes(1)),'issues both find needs-info are their own agreed outcome, not a disagreement',JSON.stringify(pl));
+   ok(entry?.questions?.['1']?.length===5&&entry.questions['1'][0]==='Which version?'&&!entry.questions['1'].includes('which version?'),'both reports\' questions are kept once each, at most five',JSON.stringify(entry?.questions));
+   const mixed=T.proposePackages(report([ni(1)],{alone:[1]}),report([nf(1)],{alone:[1]}),snap,read);
+   ok(mixed.noCode[0]?.state==='needs-info'&&mixed.noCode[0].questions?.['1']?.join()==='Which screen were you on?','needs-info and not-found land in the needs-info bucket with the questions asked');
+   const fit=T.proposePackages(report([finding(1,{fit:'human',fitReason:'product-decision'}),finding(3),finding(4)],{related:[{members:[1,3],order:[],why:'x'}],alone:[4]}),report([finding(1,{fit:'human',fitReason:'too-large'}),finding(3),finding(4,{fit:'agent'})],{related:[{members:[1,3],order:[],why:'x'}],alone:[4]}),snap,read);
+   const hf=fit.toHuman.find(h=>h.issues.join()==='1');
+   ok(!fit.packages.some(p=>p.members.includes(1))&&hf?.kind==='human-fit'&&hf.fit?.join()==='product-decision,too-large','a human-fit issue is never packaged: it goes to a person with both reasons',JSON.stringify(fit));
+   ok(fit.packages.some(p=>p.members.join()==='3')&&fit.packages.some(p=>p.members.join()==='4'),'the agent-fit rest of a set is still packaged');
+   ok(T.proposePackages(report([finding(1,{fit:'human',fitReason:'security-owner'})],{alone:[1]}),report([finding(1,{fit:'agent'})],{alone:[1]}),snap,read).toHuman[0]?.kind==='human-fit','either report\'s human fit makes the issue a person\'s');
+   const busy=T.proposePackages(report([finding(1),finding(3)],{related:[{members:[1,3],order:[],why:'x'}]}),report([finding(1),finding(3)],{related:[{members:[1,3],order:[],why:'x'}]}),full,read);
+   ok(!busy.packages.length&&busy.toHuman.filter(h=>h.kind==='in-progress').map(h=>h.issues.join()+':'+h.pulls?.join()).join()==='1:21,3:23','an issue an open pull request names is never packaged: in progress, for a person',JSON.stringify(busy));
+   const d2=T.proposePackages(report([dup(1,3),finding(4)],{alone:[1,4]}),report([dup(1,3),finding(4)],{alone:[1,4]}),dsnap,read);
+   ok(!d2.packages.some(p=>p.members.includes(1))&&d2.toHuman.some(h=>h.kind==='duplicate'&&h.issues.join()==='1'&&h.duplicateOf===3&&/#3/.test(h.reason)),'an agreed duplicate is never packaged: it is listed for a person with the issue it duplicates',JSON.stringify(d2));
+   const d3=T.proposePackages(report([dup(1,3),finding(4)],{alone:[1,4]}),report([finding(1),finding(4)],{alone:[1,4]}),dsnap,read);
+   ok(!d3.packages.some(p=>p.members.includes(1))&&d3.toHuman.some(h=>h.issues.includes(1)&&!h.kind),'a duplicate only one report names is a disagreement, for a person');
+
+   // the stored triage
+   const rec=T.triageRecord({project:'fixture',snapshot:full,a:x,b:y,read,by:'t'});
+   ok(rec.noCode?.find(z=>z.state==='needs-info')?.questions?.['1']?.length===5&&rec.issues['1'].state==='needs-info','the stored triage keeps the needs-info issues and their questions');
+   ok(rec.issues['3'].inProgress?.join()==='23'&&rec.issues['1'].inProgress?.join()==='21','the stored triage keeps the pull requests Studio found');
+   const frec=T.triageRecord({project:'fixture',snapshot:snap,a:report([finding(1,{fit:'human',fitReason:'too-large'})],{alone:[1]}),b:report([finding(1,{fit:'agent'})],{alone:[1]}),read,by:'t'});
+   ok(frec.issues['1'].fit==='human'&&frec.issues['1'].fitReason?.join()==='too-large','the stored triage keeps an issue\'s fit and its reasons');
+   { const hcut=T.withoutChanged(frec,[1]);
+    ok(!hcut.toHuman.some(h=>h.kind)&&hcut.toHuman.filter(h=>h.issues.includes(1)).length===1&&/changed on GitHub/.test(hcut.toHuman[0]?.reason??''),'an issue set aside for a person and edited meanwhile is listed once, as changed, not with its stale reason',JSON.stringify(hcut.toHuman)); }
+   ok(T.triageRecord({project:'fixture',snapshot:dsnap,a:report([dup(1,3)],{alone:[1]}),b:report([dup(1,3)],{alone:[1]}),read,by:'t'}).issues['1'].duplicateOf===3,'the stored triage keeps an agreed duplicate');
+   const cut=T.withoutChanged(rec,[1]);
+   ok(!cut.noCode?.length&&cut.toHuman.some(h=>h.issues.join()==='1'&&/changed on GitHub/.test(h.reason)),'a needs-info issue edited meanwhile leaves the list, questions and all');
+   const nsnap={...full,issues:full.issues.map(i=>i.n===1?{...i,hash:'f'.repeat(64)}:i)};
+   const answered=T.mergeTriage(rec,T.atSnapshot(T.triageRecord({project:'fixture',snapshot:nsnap,a:report([finding(4)],{alone:[4]}),b:report([finding(4)],{alone:[4]}),read,by:'t2'}),nsnap));
+   ok(!answered.noCode?.some(z=>z.issues.includes(1))&&answered.issues['1'].investigated===false&&T.pickBatch(nsnap,answered,{size:5}).includes(1),'a needs-info issue the reporter answered (a new comment or an edit) leaves the list and is triaged again',JSON.stringify(answered.noCode));
+   const again=T.mergeTriage(rec,T.triageRecord({project:'fixture',snapshot:full,a:report([ni(3,{questions:['Which page?']}),finding(4)],{alone:[3,4]}),b:report([ni(3,{questions:['Which page?']}),finding(4)],{alone:[3,4]}),read,by:'t3'}));
+   ok(again.noCode?.find(z=>z.state==='needs-info')?.issues.join()==='1,3'&&again.noCode.find(z=>z.state==='needs-info')!.questions?.['1']?.length===5&&again.noCode.find(z=>z.state==='needs-info')!.questions?.['3']?.join()==='Which page?','batches merge their needs-info issues and keep each one\'s questions');
+   ok(!T.atSnapshot(rec,{...full,issues:full.issues.filter(i=>i.n!==1)}).noCode?.length,'a closed needs-info issue leaves the list'); }
+ }
  console.log(`issue-triage: ${pass} passed, 0 failed`);
 }finally{server.stop(true);rmSync(temp,{recursive:true,force:true});}

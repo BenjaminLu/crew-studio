@@ -24,7 +24,7 @@ export type GoldLabel={n:number;state?:GoldState;files?:string[];security?:'yes'
  from?:string[]};
 export type GoldSet={schema:1;project:string;captain:Record<string,GoldLabel>;derived:Record<string,GoldLabel>;updatedAt:string};
 export const GOLD_SCHEMA=1, TEMPLATE_SCHEMA=1, SCORE_SCHEMA=1;
-const STATES:GoldState[]=['present','fixed?','not-code','not-found'];
+const STATES:GoldState[]=['present','fixed?','not-code','not-found','needs-info'];
 const FIELDS=['state','files','security','category','notPlanned','package'] as const;
 const cmp=(x:string,y:string)=>x<y?-1:x>y?1:0;
 
@@ -93,7 +93,7 @@ export function labelTemplate(o:{project:string;triage:TriageRecord|null;categor
    model:{investigated:!!i?.investigated,agree:i?.agree??null,diff:[...diff],checked:i?.checked??null,a:r?.a??null,b:r?.b??null,studio:{state:i?.state??null,files,security:i?.security?'yes':'no'},category:a?.category||null,categoryBy:a?.by??null,
     categoryName:c?.categories.find(x=>x.id===a?.category)?.name??(a?.category===PLANNED?PLANNED:null),package:pkg.get(n)??null},
    gold:{...(i?.state&&both&&!diff.has('state')?{state:i.state}:{}),...(files.length&&both&&!diff.has('state')&&!diff.has('location')?{files}:{}),...(i?.investigated&&both&&!(r?.a&&r?.b&&r.a.security!==r.b.security)?{security:(i.security?'yes':'no') as 'yes'|'no'}:{}),...(a?.category?{category:a.category}:{}),...(pkg.has(n)?{package:pkg.get(n)}:{})}};});
- return{schema:1,kind:'issue-eval-labels',project:o.project,createdAt:o.at,note:'Prefilled with the current answers, except where the two investigators disagree (model.diff): decide those. Correct each row\'s gold (state: present | fixed? | not-code | not-found; files: paths in the checkout; security: yes | no; category: C-n or PLANNED, or notPlanned: true; package: any key, one key per work package), drop a field you cannot judge, set reviewed: true, then import. Rows not reviewed are skipped.',rows};
+ return{schema:1,kind:'issue-eval-labels',project:o.project,createdAt:o.at,note:'Prefilled with the current answers, except where the two investigators disagree (model.diff): decide those. Correct each row\'s gold (state: present | fixed? | not-code | not-found | needs-info; files: paths in the checkout; security: yes | no; category: C-n or PLANNED, or notPlanned: true; package: any key, one key per work package), drop a field you cannot judge, set reviewed: true, then import. Rows not reviewed are skipped.',rows};
 }
 
 const inside=(f:string)=>!!f&&!isAbsolute(f)&&!normalize(f).split(/[\\/]/).some(p=>p==='..'||p==='.git');
@@ -136,8 +136,8 @@ export function parseLabels(raw:any,o:{project:string;triage:TriageRecord|null;c
 export type Replay={run:string;at:string;a:unknown;b:unknown;snapshot:Snapshot;read:(file:string)=>string|null;reads?:{a?:Reads;b?:Reads};skills?:string[]};
 export type Prediction={run:string;a?:Answer;b?:Answer;
  /** what Studio does with the issue: answered when it is in a work package both reports agree on, or when both agree it
-  *  has nothing to change in the code (noCode: not-found or not-code, no files) */
- studio?:Answer;securityFlag:boolean;agree:boolean;package:string|null;noCode:'not-found'|'not-code'|null;human:boolean;
+  *  has nothing to change in the code (noCode: not-found, not-code or needs-info, no files) */
+ studio?:Answer;securityFlag:boolean;agree:boolean;package:string|null;noCode:triage.NoCode['state']|null;human:boolean;
  /** its batch was replayed without recorded reads (from before Studio recorded them, or unreadable) */
  withoutReads:boolean};
 const answer=(f?:Finding):Answer|undefined=>f&&{state:f.state,files:[...new Set(f.locus.map(l=>normalize(l.file)))],security:f.security};
@@ -154,7 +154,7 @@ export function replay(batches:Replay[],rules:Rules=RULES){
    cmpd=new Map(rules.compareReports(a,b).map(c=>[c.n,c]));plan=rules.proposePackages(a,b,r.snapshot,r.read,reads);}
   catch(e:any){skipped.push({run:r.run,why:String(e?.message??e).slice(0,200)});continue;}
   if(blind)withoutReads++;
-  const none=new Map<number,'not-found'|'not-code'>();for(const x of plan.noCode??[])for(const n of x.issues)none.set(n,x.state);
+  const none=new Map<number,triage.NoCode['state']>();for(const x of plan.noCode??[])for(const n of x.issues)none.set(n,x.state);
   const inPkg=new Map<number,string>();plan.packages.forEach((p,i)=>p.members.forEach(n=>inPkg.set(n,`${r.run}#${i+1}`)));
   packages+=plan.packages.length;toHuman+=plan.toHuman.length;
   for(const n of new Set([...a.issues,...b.issues].map(f=>f.n))){const fa=a.issues.find(f=>f.n===n),fb=b.issues.find(f=>f.n===n),key=inPkg.get(n)??null;

@@ -106,10 +106,20 @@ function crossList(rec, cross) {
     h("div", { class: "is-cross-acts" }, h("button", { type: "button", class: "btn primary", "data-cross-join": c.id, onclick: () => decideCross(rec.project, c.id, "join") }, T(`Join ${c.with}`, `併入 ${c.with}`)),
       h("button", { type: "button", class: "btn", "data-cross-apart": c.id, onclick: () => decideCross(rec.project, c.id, "apart") }, T("Keep apart", "分開做")))));
 }
+// why an issue was set aside before packaging (src/domain/issue-triage.ts Human): a person's work, a duplicate, work in progress
+const FIT = { "needs-info": ["needs information", "資訊不足"], "product-decision": ["a product decision", "要產品決定"], "too-large": ["too large", "太大"], "external-dependency": ["an outside dependency", "依賴外部"], "security-owner": ["for the security owner", "安全負責人處理"], other: ["other", "其他"] };
+const ghPull = (repo, n) => `https://github.com/${repo}/pull/${n}`;
+function asideLine(rec, x) {
+  if (x.kind === "human-fit") return T(`A person's work, not an agent's: ${(x.fit || []).map((f) => (FIT[f] || [f])[0]).join(", ")}.`, `適合人做，不適合交給 agent：${(x.fit || []).map((f) => (FIT[f] || [f, f])[1]).join("、")}。`);
+  if (x.kind === "duplicate") return [T("Both investigators find it a duplicate of ", "兩位調查員都認為它和這張重複："), h("a", { href: ghIssue(rec.repository, x.duplicateOf), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${x.duplicateOf}`), T(", quoting the same symptom from both. Close it or keep it on GitHub yourself.", "，兩張都引用了同一個症狀。要不要關掉，由你自己到 GitHub 處理。")];
+  if (x.kind === "in-progress") return [T("An open pull request names it: ", "已有開著的 PR 提到它："), ...(x.pulls || []).map((n) => h("a", { href: ghPull(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n} `)), T("Check it before anyone starts.", "開工前先看那個 PR。")];
+  return x.reason;
+}
 function humanList(rec, cross, toHuman) {
-  return h("div", { class: "card is-human" }, crossList(rec, cross), toHuman.map((x) => h("div", { class: "is-hrow" },
-    h("div", { class: "is-hissues" }, x.issues.map((n) => h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono", title: rec.issues[n]?.title || "" }, `#${n}`))),
-    h("span", {}, x.reason))));
+  return h("div", { class: "card is-human" }, crossList(rec, cross), toHuman.map((x) => h("div", { class: "is-hrow", ...(x.kind ? { "data-human-kind": x.kind } : {}) },
+    h("div", { class: "is-hissues" }, x.kind ? h("span", { class: "is-sec" }, T(...({ "human-fit": ["Person", "人做"], duplicate: ["Duplicate", "重複"], "in-progress": ["In progress", "進行中"] }[x.kind] || [x.kind, x.kind]))) : null,
+      x.issues.map((n) => h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono", title: rec.issues[n]?.title || "" }, `#${n}`))),
+    h("span", {}, asideLine(rec, x)))));
 }
 /** The triage of some issues (a category's, or those no category holds): its packages, the open one's detail, and what
  *  waits for the captain's judgement. Nothing when none of them was triaged. */
@@ -127,12 +137,16 @@ function triageOf(rec, issues, key) {
     cross.length || human.length ? [h("h4", { class: "is-tri-h" }, T("For you to judge", "要你判斷")), humanList(rec, cross, human)] : null,
     none.length ? [h("h4", { class: "is-tri-h" }, T("Agreed: nothing to change in the code", "有共識：程式碼沒有要改的")), noCodeList(rec, none)] : null);
 }
-const NO_CODE = { "not-found": ["Both investigators could not find it in the code: it needs more information (a stack trace, a URL, steps).", "兩位調查員都在程式碼裡找不到：需要更多資訊（stack trace、網址、重現步驟）。"],
+const NO_CODE = { "needs-info": ["Both investigators find it lacks what is needed to locate it. Ask the reporter yourself if you want: these questions are kept here only, nothing is posted to GitHub.", "兩位調查員都認為資訊不足，找不到位置。要問回報者請自己去問：這些問題只存在這裡，不會貼到 GitHub。"],
+  "not-found": ["Both investigators could not find it in the code: it needs more information (a stack trace, a URL, steps).", "兩位調查員都在程式碼裡找不到：需要更多資訊（stack trace、網址、重現步驟）。"],
   "not-code": ["Both investigators say it is not a code change (research, design, process or tracking).", "兩位調查員都認為這不是改程式碼的事（研究、設計、流程或追蹤）。"] };
 function noCodeList(rec, none) {
   return h("div", { class: "card is-nocode", "data-no-code": "1" }, none.map((x) => h("div", { class: "is-hrow", "data-no-code-state": x.state },
     h("div", { class: "is-hissues" }, x.issues.map((n) => h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono", title: rec.issues[n]?.title || "" }, `#${n}`))),
-    h("span", {}, T(...(NO_CODE[x.state] || [x.reason, x.reason]))))));
+    h("span", {}, T(...(NO_CODE[x.state] || [x.reason, x.reason]))),
+    // the questions for the reporter: untrusted text an investigator wrote, only ever in text nodes
+    x.state === "needs-info" ? x.issues.filter((n) => x.questions?.[n]?.length).map((n) => h("div", { class: "is-questions" }, h("span", { class: "faint mono" }, `#${n}`),
+      h("ul", { "data-questions": String(n) }, x.questions[n].map((q) => h("li", {}, q))))) : null)));
 }
 
 const who = (x) => (x?.provider ? `${x.provider} ${x.model || T("(default model)", "（預設模型）")}${x.effort ? ` · ${x.effort}` : ""}` : T("no model", "沒有模型"));
