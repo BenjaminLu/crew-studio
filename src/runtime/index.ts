@@ -140,6 +140,8 @@ export function createRuntime(d: RuntimeDeps) {
   if (d.skills) defs.skillInfo = (id, v) => d.skills!.pinInfo(id, v);
   if (d.skills) defs.skillLibrary = () => d.skills!.library();
   const engine = new Engine({ dataDir: d.dataDir, agents: d.agents, provider: d.provider, defaultProvider: d.defaultProvider, selectProvider: d.selectProvider, log: d.log, send: d.send, skillText: skillTextFor(d.fmRoot), store: d.store, protectedRoots: d.protectedRoots ?? [d.fmRoot], library: d.skills ?? null }, defs);
+  // the review room's illustrations use the same image job as image steps (src/domain/review-room.ts)
+  if (d.generateImage) engine.deps.generateImage = d.generateImage;
   const projects = new Projects(d.dataDir);
   installHelloWeb(engine,d.m3?.store??new ArtifactStore(d.dataDir));
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs, generateImage: d.generateImage });
@@ -272,7 +274,7 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) {
       if(p.startsWith('/api/workflow-packages')){
         const cap=12*1024*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
@@ -596,6 +598,20 @@ export function createRuntime(d: RuntimeDeps) {
         if (p === "/api/issue-triage") return json({ projects: issueTriage.list() });
         try { const id = decodeURIComponent(p.slice("/api/issue-triage/".length)), rec = issueTriage.get(id), investigators = issueTriageFlow.investigators(id);
           return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec), investigators } : { state: "none", investigators }); } catch { return json({ error: "invalid project id" }, 400); }
+      }
+      // ---------- a merge card's review room (src/domain/review-room.ts): read on any authenticated page; a turn is a paid
+      // round only the desktop captain starts, confirming its provider and model; nothing here answers the card ----------
+      const room = /^\/api\/review-room\/(SC-\d+)(?:\/(turn|cite|image|audio|speech)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
+      if (room) {
+        const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
+        if (!writing && room[2] === "audio") { try { return new Response(rr.audio(room[1], room[3] ?? ""), { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
+        if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
+        if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
+        if ((room[2] !== "turn" && room[2] !== "speech") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
+        if (room[2] === "speech") { try { return json(await rr.speech(room[1], b?.scene)); } catch (e: any) { return fail(e); } }
+        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm }, by)); } catch (e: any) { return fail(e); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });
