@@ -84,9 +84,11 @@ GitHub folder. Without it, or for a commit the repository lacks, every quoted li
 so. Where the run recorded what `fs_read` returned to each investigator (`triageReads` on the step, since Studio records
 them), the replay checks quotes against it as the workflow does. A report from before that has no reads: it is replayed
 with every other check (line ranges, symbols, distinctive quotes), only the "quoted from what fs_read showed you" check
-left out, and `runs.withoutReads` counts such batches. The ledger digest the workflow demands of a live round is not
-checked here: the scorer measures rules on stored reports, it does not admit them. An issue investigated twice is
-answered by its latest batch. Packages are each batch's own: the cross-batch match
+left out, and `runs.withoutReads` counts such batches. Recorded reads not shaped as `{file: [[start, end], ...]}` are
+treated as none. `withReads` repeats the metrics over only the issues answered by batches with recorded reads, so old
+and new data can be read apart. A batch the current rules throw on is skipped and named in `runs.skipped`. The ledger
+digest the workflow demands of a live round is not checked here: the scorer measures rules on stored reports, it does
+not admit them. An issue investigated twice is answered by its latest batch. Packages are each batch's own: the cross-batch match
 (and a captain's join of one) is not replayed, so a gold pair whose issues were answered by different batches is not
 scored as a miss but counted apart (`package.pairs.crossBatch`), and an issue whose gold package spans batches is left
 out of `exact` (`exactOf` says how many count). Categories are the current categories record; where the captain changed
@@ -104,7 +106,7 @@ security, Studio's flag from either report or a label):
 - **package**: pairs of labeled issues put together, precision and recall, and the share whose package is exactly the
   gold set;
 - **human**: the share of investigated issues routed to a person (in no package and not agreed `noCode`), with the
-  `noCode` count beside it.
+  `noCode` count beside it; both counted on each issue's latest answer.
 
 The headline numbers use the effective gold (the captain's fields over derived ones). `bySource.captain` and
 `bySource.derived` score each source alone: derived package gold comes from packages Studio itself proposed (and the

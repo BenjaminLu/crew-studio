@@ -12,7 +12,7 @@ import { must, setGitHome } from "../src/git";
 const T = await import("../src/domain/issue-triage");
 const C = await import("../src/domain/issue-categories");
 const E = await import("../src/domain/issue-eval");
-const { IssueEvalStore, commitReader, privatePathProblem } = await import("../src/issue-eval-store");
+const { IssueEvalStore, commitReader, privatePathProblem, readsOf } = await import("../src/issue-eval-store");
 const { IssueTriageStore } = await import("../src/issue-triage-store");
 const { IssueCategoriesStore } = await import("../src/issue-categories-store");
 let pass = 0; const ok = (v: unknown, n: string, extra = "") => { assert.ok(v, `${n} ${extra}`); pass++; console.log("PASS " + n); };
@@ -192,6 +192,17 @@ try {
   const split = E.replay([{ run: "R-x", at, a: only(reportA, [1]), b: only(reportB, [1]), snapshot, read }, { run: "R-y", at: "2026-10-29T00:00:00Z", a: only(reportA, [5]), b: only(reportB, [5]), snapshot, read }]);
   const sx = E.score({ gold: { ...E.emptyGold(project, at), captain: { "1": { n: 1, package: "K", source: "captain", at }, "5": { n: 5, package: "K", source: "captain", at } } } as any, replayed: split, categories: answers });
   ok(sx.package.pairs.crossBatch === 1 && sx.package.pairs.gold === 0 && sx.package.pairs.recall === null && sx.package.exactOf === 0, "a gold pair across batches is reported apart from the package metrics", JSON.stringify(sx.package));
+  // an issue a later batch took again is counted once, by its latest answer
+  const twice = E.score({ gold, replayed: E.replay([{ run: "R-1", at, a: reportA, b: reportB, snapshot, read, reads: { a: seenAll, b: seenAll } }, { run: "R-2", at: "2026-10-29T00:00:00Z", a: reportA, b: reportB, snapshot, read, reads: { a: seenAll, b: seenAll } }]), categories: answers });
+  ok(twice.human.noCode === 1 && twice.human.investigated === 6 && twice.human.routed === 2, "no-code is counted on the latest answer per issue, not once per batch", JSON.stringify(twice.human));
+  // old and new data side by side: the same metrics over only the batches with recorded reads
+  const mixed = E.replay([{ run: "R-old", at, a: only(reportA, [1]), b: only(reportB, [1]), snapshot, read }, { run: "R-new", at: "2026-10-29T00:00:00Z", a: only(reportA, [5]), b: only(reportB, [5]), snapshot, read, reads: { a: seenAll, b: seenAll } }]);
+  const sm = E.score({ gold: { ...E.emptyGold(project, at), captain: { "1": { n: 1, state: "present", source: "captain", at }, "5": { n: 5, state: "not-code", source: "captain", at } } } as any, replayed: mixed, categories: answers });
+  ok(mixed.preds.get(1)?.withoutReads === true && mixed.preds.get(5)?.withoutReads === false && mixed.withoutReads === 1, "each answer says whether its batch had recorded reads");
+  ok(sm.state.studio.gold === 2 && sm.withReads.issues === 1 && sm.withReads.gold === 1 && sm.withReads.state.studio.gold === 1 && near(sm.withReads.state.studio.accuracy, 1) && sm.withReads.human.investigated === 1, "a second metric set covers only the batches with recorded reads", JSON.stringify(sm.withReads.human));
+  // one batch the rules cannot judge is skipped and named; the others are still scored
+  const broken = E.replay([{ run: "R-broken", at, a: reportA, b: reportB, snapshot: { ...snapshot, issues: null } as any, read }, { run: "R-fine", at: "2026-10-29T00:00:00Z", a: reportA, b: reportB, snapshot, read }]);
+  ok(broken.skipped.map((x) => x.run).join() === "R-broken" && broken.preds.size === 6 && broken.preds.get(1)?.run === "R-fine", "a batch the rules throw on is skipped and counted, the rest scored", JSON.stringify(broken.skipped));
   const bad = E.replay([{ run: "R-bad", at, a: { commit: "nope" }, b: reportB, snapshot, read }]);
   ok(bad.skipped.length === 1 && bad.preds.size === 0, "a stored report the current parser refuses is skipped and named");
   const later = E.replay([{ run: "R-2", at: "2026-10-29T00:00:00Z", a: { ...reportA, related: [], alone: [1, 2, 3, 4, 5, 6] }, b: { ...reportB, related: [], alone: [1, 2, 3, 4, 5, 6] }, snapshot, read }, { run: "R-tri", at, a: reportA, b: reportB, snapshot, read }]);
@@ -208,8 +219,12 @@ try {
   const full = withReads({ a: seenAll, b: seenAll }), blind = withReads({ a: {}, b: {} }), old = withReads(undefined);
   ok(full.packages === 2 && full.withoutReads === 0 && blind.packages === 0 && [1, 2, 3].every((n) => blind.preds.get(n)?.human), "recorded reads are checked: a quote nobody was shown packages nothing", JSON.stringify([full.packages, blind.packages]));
   ok(old.packages === 2 && old.withoutReads === 1, "a report from before reads were recorded is replayed without that one check, and counted");
+  ok(JSON.stringify(readsOf(seenAll)) === JSON.stringify(seenAll) && [{ "src/a.ts": [[3, 1]] }, { "src/a.ts": "1-3" }, { "src/a.ts": [[0, 2]] }, { "src/a.ts": [[1, 2, 3]] }, [[1, 2]], "x", null].every((v) => readsOf(v) === undefined), "recorded reads are taken only as {file: [[start, end]]}");
   const stored = store.triageBatches(project, () => read).batches[0];
   ok(JSON.stringify(stored.reads?.a) === JSON.stringify(seenAll) && E.replay([stored]).withoutReads === 0, "the store gives each investigator's recorded reads to the replay");
+  run("R-malformed", { workflow: "issue-triage", status: "succeeded", params: { project: "malformed" }, nodes: { a: { data: { triageReads: { "src/a.ts": "everything" } } }, b: { data: { triageReads: seenAll } } } }, { "issue-snapshot.json": snapshot, "issue-report-a.json": reportA, "issue-report-b.json": reportB });
+  const mal = store.triageBatches("malformed", () => read).batches[0], malReplay = E.replay([mal]);
+  ok(mal.reads?.a === undefined && mal.reads?.b !== undefined && malReplay.withoutReads === 1 && malReplay.skipped.length === 0 && malReplay.preds.size === 6, "malformed recorded reads make that batch one without reads, not a crash");
   const noCode = E.replay([{ run: "R-tri", at, a: reportA, b: reportB, snapshot, read: () => null }]);
   ok([1, 2, 3].every((n) => noCode.preds.get(n)?.human), "without the code every quoted line fails the live check, so nothing with a location is packaged");
 

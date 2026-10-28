@@ -89,5 +89,6 @@ console.log(`package pairs P ${pct(result.package.pairs.precision)} R ${pct(resu
 for(const src of ['captain','derived'] as const){const m=result.bySource[src];
  console.log(`${src} gold only: studio state acc ${pct(m.state.studio.accuracy)} (n=${m.state.studio.gold})  category acc ${pct(m.category.accuracy)} (n=${m.category.gold})  package pairs P ${pct(m.package.pairs.precision)} R ${pct(m.package.pairs.recall)} (n=${m.package.gold})`);}
 console.log(`routed to a person ${pct(result.human.share)} (${result.human.routed} of ${result.human.investigated} investigated; ${result.human.noCode} agreed to have nothing to change in the code)`);
+if(result.runs.withoutReads){const w=result.withReads;console.log(`with recorded reads only (${w.issues} issues): studio state acc ${pct(w.state.studio.accuracy)} (n=${w.state.studio.gold})  routed to a person ${pct(w.human.share)}`);}
 if(result.runs.withoutReads)console.log(`note: ${result.runs.withoutReads} batch(es) ran before Studio recorded what fs_read showed: replayed without that one check`);
 if(where)console.log(`written: ${where}`);

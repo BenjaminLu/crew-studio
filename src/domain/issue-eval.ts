@@ -7,7 +7,7 @@
 import {createHash} from 'node:crypto';
 import {isAbsolute,normalize} from 'node:path';
 import * as triage from './issue-triage';
-import type {Finding,Reads,Report,Snapshot,TriageRecord,WorkState} from './issue-triage';
+import type {Checked,Finding,Reads,Report,Snapshot,TriageRecord,WorkState} from './issue-triage';
 import {PLANNED,type CategoryRecord} from './issue-categories';
 
 export type GoldState=Finding['state'];
@@ -137,25 +137,31 @@ export type Replay={run:string;at:string;a:unknown;b:unknown;snapshot:Snapshot;r
 export type Prediction={run:string;a?:Answer;b?:Answer;
  /** what Studio does with the issue: answered when it is in a work package both reports agree on, or when both agree it
   *  has nothing to change in the code (noCode: not-found or not-code, no files) */
- studio?:Answer;securityFlag:boolean;agree:boolean;package:string|null;noCode:'not-found'|'not-code'|null;human:boolean};
+ studio?:Answer;securityFlag:boolean;agree:boolean;package:string|null;noCode:'not-found'|'not-code'|null;human:boolean;
+ /** its batch was replayed without recorded reads (from before Studio recorded them, or unreadable) */
+ withoutReads:boolean};
 const answer=(f?:Finding):Answer|undefined=>f&&{state:f.state,files:[...new Set(f.locus.map(l=>normalize(l.file)))],security:f.security};
 /** Each stored batch through the current rules; an issue investigated twice is answered by its latest batch, as the
  *  stored triage keeps it. Packages are each batch's own (the cross-batch match is not replayed). */
 export function replay(batches:Replay[],rules:Rules=RULES){
- const preds=new Map<number,Prediction>(),skipped:{run:string;why:string}[]=[];let toHuman=0,packages=0,noCode=0,withoutReads=0;
+ const preds=new Map<number,Prediction>(),skipped:{run:string;why:string}[]=[];let toHuman=0,packages=0,withoutReads=0;
  for(const r of [...batches].sort((x,y)=>cmp(x.at,y.at)||cmp(x.run,y.run))){
   let a:Report,b:Report;try{a=rules.parseReport(r.a);b=rules.parseReport(r.b);}catch(e:any){skipped.push({run:r.run,why:String(e?.message??e).slice(0,200)});continue;}
-  const reads=r.reads??{};if(!reads.a||!reads.b)withoutReads++;
-  const va=new Map(rules.verifyReport(a,r.snapshot,r.read,reads.a).map(c=>[c.n,c])),vb=new Map(rules.verifyReport(b,r.snapshot,r.read,reads.b).map(c=>[c.n,c]));
-  const cmpd=new Map(rules.compareReports(a,b).map(c=>[c.n,c])),plan=rules.proposePackages(a,b,r.snapshot,r.read,reads);
-  const none=new Map<number,'not-found'|'not-code'>();for(const x of plan.noCode??[])for(const n of x.issues)none.set(n,x.state);noCode+=none.size;
+  const reads=r.reads??{},blind=!reads.a||!reads.b;
+  // one batch the current rules cannot judge (a malformed snapshot or reads) is skipped and named, never the whole score
+  let va:Map<number,Checked>,vb:Map<number,Checked>,cmpd:Map<number,{agree:boolean}>,plan:ReturnType<Rules['proposePackages']>;
+  try{va=new Map(rules.verifyReport(a,r.snapshot,r.read,reads.a).map(c=>[c.n,c]));vb=new Map(rules.verifyReport(b,r.snapshot,r.read,reads.b).map(c=>[c.n,c]));
+   cmpd=new Map(rules.compareReports(a,b).map(c=>[c.n,c]));plan=rules.proposePackages(a,b,r.snapshot,r.read,reads);}
+  catch(e:any){skipped.push({run:r.run,why:String(e?.message??e).slice(0,200)});continue;}
+  if(blind)withoutReads++;
+  const none=new Map<number,'not-found'|'not-code'>();for(const x of plan.noCode??[])for(const n of x.issues)none.set(n,x.state);
   const inPkg=new Map<number,string>();plan.packages.forEach((p,i)=>p.members.forEach(n=>inPkg.set(n,`${r.run}#${i+1}`)));
   packages+=plan.packages.length;toHuman+=plan.toHuman.length;
   for(const n of new Set([...a.issues,...b.issues].map(f=>f.n))){const fa=a.issues.find(f=>f.n===n),fb=b.issues.find(f=>f.n===n),key=inPkg.get(n)??null;
    const sa=answer(fa),sb=answer(fb),nc=none.get(n)??null,flag=!!(va.get(n)?.security||vb.get(n)?.security);
    const studio=key&&sa?{...sa,files:[...new Set([...sa.files,...(sb?.files??[])])].sort()}:nc?{state:nc,files:[],security:(flag?'yes':'no') as 'yes'|'no'}:undefined;
-   preds.set(n,{run:r.run,a:sa,b:sb,studio,securityFlag:flag,agree:!!cmpd.get(n)?.agree,package:key,noCode:nc,human:!key&&!nc});}}
- return{preds,skipped,packages,toHuman,noCode,withoutReads};
+   preds.set(n,{run:r.run,a:sa,b:sb,studio,securityFlag:flag,agree:!!cmpd.get(n)?.agree,package:key,noCode:nc,human:!key&&!nc,withoutReads:blind});}}
+ return{preds,skipped,packages,toHuman,withoutReads};
 }
 
 /** The categorizer's answer per issue: the record's own where the model filed it; where the captain changed it, what the
@@ -224,11 +230,15 @@ export function score(o:{gold:GoldSet;replayed:ReturnType<typeof replay>;categor
  const eff=effectiveGold(o.gold),gold=Object.values(eff),P=o.replayed.preds,follow=o.follow??(id=>id);
  const only=(src:'captain'|'derived')=>Object.values(o.gold[src]).map(l=>({...l,sources:{}}) as Eff);
  const investigated=P.size,human=[...P.values()].filter(p=>p.human).length;
+ // the same metrics over only the issues answered by batches with recorded reads: old and new data side by side
+ const RP=new Map([...P].filter(([,p])=>!p.withoutReads)),rHuman=[...RP.values()].filter(p=>p.human).length;
  return{gold:{issues:gold.length,captain:gold.filter(l=>l.source==='captain').length,derived:gold.filter(l=>l.source==='derived').length,
    fields:Object.fromEntries(FIELDS.map(f=>[f,gold.filter(l=>l[f]!==undefined).length]))},
   ...metrics(gold,P,o.categories,follow),
   bySource:{captain:metrics(only('captain'),P,o.categories,follow),derived:metrics(only('derived'),P,o.categories,follow)},
-  human:{investigated,routed:human,share:rate(human,investigated),agreed:[...P.values()].filter(p=>p.agree).length,packages:o.replayed.packages,noCode:o.replayed.noCode,toHumanItems:o.replayed.toHuman},
+  withReads:{issues:RP.size,gold:gold.filter(l=>RP.has(l.n)).length,...metrics(gold.filter(l=>RP.has(l.n)),RP,o.categories,follow),human:{investigated:RP.size,routed:rHuman,share:rate(rHuman,RP.size)}},
+  // counted on the latest answer per issue: an issue a later batch took again is counted once
+  human:{investigated,routed:human,share:rate(human,investigated),agreed:[...P.values()].filter(p=>p.agree).length,packages:o.replayed.packages,noCode:[...P.values()].filter(p=>p.noCode).length,toHumanItems:o.replayed.toHuman},
   runs:{skipped:o.replayed.skipped,withoutReads:o.replayed.withoutReads}};
 }
 /** The gold set's own hash, so a score of a grown gold set never replaces an earlier one. */

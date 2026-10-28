@@ -9,7 +9,7 @@ import {realpathSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {git} from './git';
 import {GOLD_SCHEMA,type GoldSet,type Replay} from './domain/issue-eval';
-import type {WorkState} from './domain/issue-triage';
+import type {Reads,WorkState} from './domain/issue-triage';
 
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/,FILE_CAP=2_000_000;
 const json=(f:string)=>{try{return JSON.parse(readFileSync(f,'utf8'));}catch{return null;}};
@@ -17,6 +17,15 @@ const atomic=(f:string,v:unknown)=>{const tmp=`${f}.${process.pid}.${randomBytes
 type RunFile={id:string;workflow:string;status:string;params:Record<string,string>;createdAt:string;ctx?:any;nodes:Record<string,any>;steps?:any[]};
 /** the sha256 of the role skill a step's latest agent turn received: the engine keeps it on the run's steps, not its nodes */
 const skillOf=(r:RunFile,node:string):string|undefined=>{const s=[...(r.steps??[])].reverse().find(x=>x?.node===node&&typeof x?.roleSkill?.sha256==='string');return s?.roleSkill.sha256;};
+
+const line=(v:unknown)=>Number.isSafeInteger(v)&&(v as number)>=1;
+/** recorded reads, or undefined when absent or malformed: {file: [[start, end], ...]}, 1-based, start <= end */
+export function readsOf(v:unknown):Reads|undefined{
+ if(!v||typeof v!=='object'||Array.isArray(v))return undefined;const out:Reads={};
+ for(const[f,rs]of Object.entries(v as Record<string,unknown>)){if(!f||f.length>300||!Array.isArray(rs)||rs.length>10000)return undefined;
+  for(const x of rs)if(!Array.isArray(x)||x.length!==2||!line(x[0])||!line(x[1])||x[0]>x[1])return undefined;
+  out[f]=(rs as [number,number][]).map(([s,e])=>[s,e]);}
+ return out;}
 
 export class IssueEvalStore{
  constructor(readonly dataDir:string){}
@@ -38,8 +47,9 @@ export class IssueEvalStore{
    const a=json(join(d,'issue-report-a.json'))??r.nodes?.a?.data?.triageReport,b=json(join(d,'issue-report-b.json'))??r.nodes?.b?.data?.triageReport;
    if(!snap||!a||!b){if(snap)missing.push(r.id);continue;}
    const skills=['a','b'].map(n=>skillOf(r,n)).filter((s):s is string=>!!s);
-      // what fs_read showed each investigator, where the run recorded it (rounds since Studio records reads)
-   const seen=(n:string)=>{const v=r.nodes?.[n]?.data?.triageReads;return v&&typeof v==='object'&&!Array.isArray(v)?v:undefined;};
+   // what fs_read showed each investigator, where the run recorded it (rounds since Studio records reads); anything not
+   // shaped as {file: [[start, end], ...]} is treated as no reads, so the batch is replayed without that check
+   const seen=(n:string)=>readsOf(r.nodes?.[n]?.data?.triageReads);
    batches.push({run:r.id,at:r.createdAt,a,b,snapshot:snap,read:read(String(a.commit??'')),reads:{a:seen('a'),b:seen('b')},skills});}
   return{batches,missing};}
  /** The categorizer's stored reports for the project, and the skill each ran with. */
