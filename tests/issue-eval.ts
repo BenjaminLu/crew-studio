@@ -152,7 +152,18 @@ try {
   ok(Object.keys(loose.labels).length === 0 && loose.skipped === 2, "only reviewed: true imports a row");
   const good = parse(file([{ n: 1, reviewed: true, gold: { state: "present", files: ["./src/a.ts"] } }, { n: 2, reviewed: false, gold: { state: "present" } }]));
   ok(Object.keys(good.labels).join() === "1" && good.skipped === 1 && good.labels["1"].files![0] === "src/a.ts" && good.labels["1"].source === "captain", "reviewed rows are imported as the captain's, the rest skipped");
-  ok(parse(file([{ n: 1, reviewed: true, gold: { state: "needs-info" } }])).labels["1"].state === "needs-info", "needs-info (the issue lacks what is needed to locate it) is a gold state");
+  ok(parse(file([{ n: 1, reviewed: true, gold: { state: "needs-info" } }])).labels["1"].state === "needs-info", "needs-info, the captain's ruling that an issue needs more from its reporter, is a state the gold set takes");
+  // the disagreement court adds the captain's rulings to the gold set through the store, the derived labels untouched
+  { const scratch = new IssueEvalStore(join(temp, "court-gold"));
+    scratch.writeGold({ ...E.emptyGold(project, at), derived: { "3": { n: 3, package: "P-1", source: "derived", at } }, captain: { "2": { n: 2, state: "present", category: "C-1", security: "yes", source: "captain", at } } });
+    scratch.addCaptain(project, { "1": { n: 1, state: "needs-info", source: "captain", at }, "2": { n: 2, state: "fixed?", files: ["src/b.ts"], package: "P-4", source: "captain", at } }, at);
+    const g = scratch.gold(project)!;
+    ok(g.captain["1"].state === "needs-info" && g.captain["2"].state === "fixed?" && g.captain["2"].package === "P-4" && g.captain["2"].category === "C-1" && g.captain["2"].security === "yes" && g.derived["3"].package === "P-1", "a court's labels are merged into the captain's field by field (an earlier category or security answer kept), the derived ones kept", JSON.stringify(g));
+    // a later ruling replaces the answer (state, files, package) as a whole: no files or package left from the earlier one
+    scratch.addCaptain(project, { "2": { n: 2, state: "needs-info", source: "captain", at } }, at);
+    const g2 = scratch.gold(project)!.captain["2"];
+    ok(g2.state === "needs-info" && g2.files === undefined && g2.package === undefined && g2.category === "C-1" && g2.security === "yes", "a later ruling replaces the earlier answer whole (state, files, package), keeping only the category, planned and security answers", JSON.stringify(g2));
+    refuses(() => scratch.addCaptain(project, { "5": { n: 5, state: "present", source: "derived", at } as any }, at), "only the captain's labels are added that way", /captain/); }
 
   // --- scoring on a tiny hand-computed case ---
   const gold = { ...E.emptyGold(project, at), derived: E.mineDerived({ triage, categories: cats, work: (p) => store.work(p), at }), captain: Object.fromEntries([

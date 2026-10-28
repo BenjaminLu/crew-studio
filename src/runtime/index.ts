@@ -284,7 +284,8 @@ export function createRuntime(d: RuntimeDeps) {
     }
     const by = who.kind === "phone" ? "captain (phone)" : "captain";
     if(p==='/api/github-review/scan'||p==='/api/github-review/template'||p==='/api/github-review/community'){if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);if(who.kind!=='desktop')return json({error:'Confirm GitHub reviewer configuration on desktop'},403);try{return json(p.endsWith('/community')?await githubReview.community(b.project,req.signal):p.endsWith('/scan')?await githubReview.scan(b.project,b.url,req.signal):await githubReview.save(b,req.signal));}catch{return json({error:'GitHub review discovery/configuration could not be verified. Check registered project grant, PR URL and current access; no GitHub write was performed.',code:'github_review_unverified'},409);}}
-    if (writing && who.kind === "phone" && !/^\/api\/scards\//.test(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+    // the phone answers cards; a triage's rulings are its court card's answer (src/issue-triage-workflow.ts rule)
+    if (writing && who.kind === "phone" && !/^\/api\/scards\//.test(p) && !/^\/api\/issue-triage\/[A-Za-z0-9][A-Za-z0-9_.-]{0,199}\/court\/R-\d{1,9}$/.test(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
     try {
       {const r=await crewApi(p,url,req.method,writing,b,who,req.signal);if(r)return r;}
       if(p==='/api/onboarding'){
@@ -556,6 +557,19 @@ export function createRuntime(d: RuntimeDeps) {
           try { const run = issueTriageFlow.start({ project: start[1], size, issues, by: "captain (project page)" }); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
           catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
         }
+        // the disagreement court of one triage (public/court.js): its docket, an issue as the snapshot holds it, a file at the
+        // pinned commit (read from git's objects), and the captain's rulings (the desktop or the phone captain)
+        const court = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/court\/(R-\d{1,9})(?:\/(issue\/(\d{1,9})|file))?$/.exec(p);
+        if (court) {
+          try {
+            if (writing) { if (court[3]) return json({ error: "use GET" }, 405); if (b?.rulings === undefined || Object.keys(b ?? {}).some((k) => k !== "rulings")) return json({ error: "send {rulings: [{case, pick, reason?}]}" }, 400);
+              return json(await issueTriageFlow.rule(court[1], court[2], b.rulings, by)); }
+            if (!court[3]) return json(issueTriageFlow.courtView(court[1], court[2]));
+            if (court[4]) return json(issueTriageFlow.courtIssue(court[1], court[2], Number(court[4])));
+            return json(issueTriageFlow.courtFile(court[1], court[2], url.searchParams.get("path")));
+          } catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+        }
+        if (/^\/api\/issue-triage\/[^/]+\/court(\/|$)/.test(p)) return json({ error: "name a triage Task: /court/R-n" }, 400);
         // a cross-batch match, decided on the project page: join it to the earlier package, or keep it apart
         const crossM = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/cross$/.exec(p);
         if (crossM) {
