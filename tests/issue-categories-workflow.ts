@@ -104,6 +104,16 @@ try {
   ok(E.get(r.id)!.status === "succeeded" && store.get("proj")!.assignments["9"].category === "C-1", "a category merged while the categorizer ran: the run records, and its issue follows the merge", String(E.get(r.id)!.error));
   ok(/declined names \(data/i.test(prompt) && /推播/.test(prompt), "the brief lists the names the captain declined, so they are not proposed again", prompt.slice(-300));
 
+  // --- 5c. long issues: every page of issues_read stays small enough for a model's tool result ---
+  open = [...open, ...Array.from({ length: 45 }, (_, k) => issue(100 + k, `Long issue ${k}`, { body: "x".repeat(5000) }))];
+  const pages: any[] = [];
+  script = () => { const steps: any[] = []; for (let pg = 1; pg <= 12; pg++) steps.push({ tool: "issues_read", args: { page: pg } }); return steps; };
+  r = await run(); await answer(r.id, "confirm", "start"); await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status));
+  for (const res of results) if (Array.isArray(res?.issues) && res.issues.length) pages.push(res);
+  const seen = pages.flatMap((p) => p.issues.map((i: any) => i.n)), biggest = Math.max(...pages.map((p) => JSON.stringify(p).length));
+  ok(biggest <= 20000 && new Set(seen).size === 45 && /in \d+ page\(s\) of issues_read/.test(prompt) && pages[0].pages === pages.length, "every page of issues_read stays under 20,000 characters, and the pages together hold every issue of the run", JSON.stringify({ biggest, seen: new Set(seen).size, pages: pages.length, declared: pages[0]?.pages }));
+  open = open.filter((i) => i.number < 100);
+
   // --- 6. outside the sandbox the categorizer does not run; closing the card files nothing ---
   open = [...open, issue(8, "Something new")];
   const grants = E.grants.open; (E.grants as any).open = (kind: string) => kind === "sandbox-off" ? { id: "G-1", until: "2026-12-31" } : null;
