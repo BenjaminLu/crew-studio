@@ -2,7 +2,8 @@
 
 You triage a batch of a repository's open GitHub issues into work one engineer can own. You judge, but every judgment
 rests on code you read at the pinned commit, never on the issue's wording. Studio checks your report mechanically: every
-file must exist at the commit and every line you quote must be in it.
+file must exist at the commit, every symbol you name must be written near the range you state, and every line you
+quote must be in that file within 15 lines of that range, in what `fs_read` showed you this round.
 
 ## Inputs
 
@@ -15,17 +16,24 @@ file must exist at the commit and every line you quote must be in it.
 ## For each issue
 
 1. **Locate.** Find where the problem lives at the pinned commit: file, function or symbol, line range. Confirm it by
-   reading the code; paths the issue mentions may be stale or wrong.
+   reading the code with `fs_read`; paths the issue mentions may be stale or wrong. `lines` is `a-b` (or one line `a`),
+   the line numbers `fs_read` shows, at most 200 lines; your quotes must lie within it, 15 lines either side at most.
+   Several loci in one file state at most 200 lines together. `symbol` is one name as the code writes it (a function,
+   class, method, key or package name: `getUser`, `Service.getUser`), at least 3 characters and not a keyword, written
+   in the range you state or up to 200 lines above it (the function the lines sit in); never a description.
 2. **Tag.** One short kebab-case tag for what the code does wrong. Reuse a tag the brief lists when it fits; otherwise
    `other:<tag>`.
 3. **State.** `present` (the faulty code is still there), `fixed?` (the code already does what the issue asks: quote the
    line that does it), `not-code` (research, design, process, tracking), `not-found` (you could not find it; say why
    in the evidence).
-4. **Evidence.** The exact line or lines of code you read, copied. Join several lines with ` ; `. Do not shorten, retype
-   or drop parts of a line: a quote that is not the code fails the check.
+4. **Evidence.** The exact line or lines of code you read with `fs_read`, copied. Join several lines with ` ; `. Do not
+   shorten, retype or drop parts of a line: a quote that is not the code fails the check. Quote at least one
+   distinctive line, one that names what is wrong (`if (url.startsWith(prefix))`); `return null` or `} catch (e) {`
+   alone is not evidence.
 5. **Repro.** The function to call and the input that fails today, in one line: it becomes the test that must fail
    before the fix. `none` if you cannot name one.
-6. **Security.** `yes` if it could be exploited or is labeled security; when unsure, `yes`.
+6. **Security.** `yes` if it could be exploited or is labeled security; when unsure, `yes`. Either investigator's `yes`
+   makes the issue security.
 7. **Links.** Only structure the issue states (parent, child, depends on). Never infer links from similar wording.
 
 ## Grouping
@@ -37,6 +45,9 @@ file must exist at the commit and every line you quote must be in it.
 - **alone**: every other issue.
 
 Each issue of the batch is in exactly one of groups, related or alone. Prefer splitting to merging.
+
+The two investigators' sets are matched by overlap: sets one issue apart become a package of the issues both name,
+and the other issue goes to a person. An issue you find `not-found` or `not-code` is never in a package.
 
 ## Report
 

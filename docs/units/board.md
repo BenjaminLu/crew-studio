@@ -178,15 +178,30 @@ The page's Crew section lists each team seat the way this project runs it (`GET 
 model and effort, marking a change this project makes to the team.
 
 - A triage is two independent investigators' reports on one snapshot of the open issues, read against the code at one
-  commit. Studio checks every finding mechanically (the issue is in the snapshot, every file exists inside the checkout,
-  every quoted line is in those files, whitespace, commas and semicolons aside) and compares the two reports (same file,
-  state and security answer).
+  commit. Studio checks every finding mechanically: the issue is in the snapshot and every file exists inside the
+  checkout; a finding that needs code (`present`, `fixed?`) also states a line range (`a-b`; all its ranges in one file
+  at most 200 lines together) and a symbol that is one name (its last part at least 3 characters, not a keyword) written,
+  whole or by its last part as a whole word, from 200 lines above that range (the function it sits in) to 15 lines after
+  it (a name check, not a definition check),
+  quotes at least one distinctive line (16 characters or more, whitespace, commas and semicolons aside, naming something
+  besides keywords: `} catch (e) {` alone is not evidence), and every quoted line is in its file within 15 lines of the
+  stated range and inside what `fs_read` returned to that investigator in its round. It compares the two reports: the
+  same state and, when that state needs code, a shared file. Two `not-found` (or two `not-code`) answers agree.
 - A work package is what both reports agree on and every member passes the check: an ordered set (worked in that order,
   one pull request each), an unordered set (its owner picks the order), a one-change group, a single issue, or a recheck
-  (both find it already fixed: a person rechecks it, it is never closed on that evidence). Everything else is listed
-  under "For you to judge" with the reason.
-- Security comes from the issue's labels or either report; a security package says its issues are referenced, not
-  closed, by a pull request and close only after a recheck.
+  (both find it already fixed: a person rechecks it, it is never closed on that evidence). Sets match by overlap: when
+  the two reports' sets (or one-change groups at one file) differ by one issue, the issues both name are the package (a
+  single when one is left), marked as an overlap, and the other issue goes to "For you to judge"; a larger difference all
+  goes there. An issue one report leaves out anywhere but last in an order sends the whole set there: the order without it
+  is not one both gave. A set both find partly fixed goes there too (a person decides what is still work); a set both
+  find wholly fixed is a recheck.
+  Everything else is listed under "For you to judge" with the reason.
+- Issues both reports find `not-found` (it needs more information) or both `not-code` are their own agreed outcome
+  (`rec.noCode`, one entry per state), listed as "Agreed: nothing to change in the code": neither a package nor a
+  disagreement. Both reports must pass the check for that too; otherwise the issue goes to "For you to judge". It is
+  shown only in Studio, never written to GitHub.
+- Security comes from the issue's labels or either report (one report's `yes` is never a disagreement); a security
+  package says its issues are referenced, not closed, by a pull request and close only after a recheck.
 - A package is waiting for approval, approved, or stale (an issue's title, text or labels changed since it was
   investigated: any label, `good first issue` too, since a label can change how its pull request names it).
 - The stored triage keeps each issue's title, labels and content hash, never its body. Titles are untrusted text and
@@ -252,7 +267,10 @@ Categories card), `tests/acceptance/issue-categories.yaml`.
    They read issue text only through `issue_read` (this batch only, marked untrusted) and the code only through
    `fs_list`, `fs_search` and `fs_read` on the checkout, in the round sandbox with no network and no token. They submit
    with `triage_submit`: Studio refuses a report for another commit or one that does not cover the batch exactly once,
-   and answers with every finding whose file or quote it cannot find, so the investigator can correct it.
+   and answers with every finding that fails the check (a file, symbol, line range or quote it cannot find, or a quote
+   `fs_read` never showed that investigator), so the investigator can correct it. The ledger records a digest of what
+   `fs_read` returned next to each report; a report whose reads are missing or changed is refused, and one from a round
+   that ran before Studio recorded reads is refused by name (triage those issues again).
 4. **Record.** Studio checks both reports (refused when both ran on the same model), reads the issues again (a package
    with an issue edited meanwhile goes to "For you to judge"), joins the batch to the stored triage (a closed issue's
    package is dropped, an edited issue's package becomes stale and the issue is taken again by a later batch) and
@@ -284,3 +302,8 @@ both cards, the tool limits, refused reports, changed issues, one model, Firstma
 project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
 links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the empty state, the Crew section's seats; the
 Board has no Issues view).
+
+### Measuring triage and categories
+
+A gold set per project (in the data directory only) and an offline scorer that replays the stored investigator reports
+through the current rules: `bun scripts/issue-eval.ts mine|label|import|score <project>` (docs/units/issue-eval.md).

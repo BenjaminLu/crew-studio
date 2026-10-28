@@ -11,7 +11,9 @@ export type Finding={n:number;locus:Locus[];tag:string;state:'present'|'fixed?'|
 export type Related={members:number[];order:number[];why:string};
 export type Report={commit:string;issues:Finding[];groups:{id:string;fix_at:{file:string;symbol:string};members:number[];why_one_change:string}[];related:Related[];alone:number[]};
 export type Checked={n:number;ok:boolean;problems:string[];security:boolean};
-export type Package={kind:'ordered'|'unordered'|'one-change'|'single'|'recheck';members:number[];order:number[];why:string;security:boolean};
+export type Package={kind:'ordered'|'unordered'|'one-change'|'single'|'recheck';members:number[];order:number[];why:string;security:boolean;
+ /** exact: both reports name these issues alike; overlap: their sets differed by one issue (left), which went to a person */
+ agreement?:'exact'|'overlap';left?:number[]};
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const PAGES=40, BODY_MAX=16000, TITLE_MAX=300;
@@ -64,56 +66,133 @@ const squash=(s:string)=>s.replace(/[\s,;]+/g,'');
 const fragments=(evidence:string)=>evidence.split(/\s+(?:;|\/|\.\.\.|…)\s+/).map(s=>s.trim()).filter(s=>squash(s).length>=8);
 // inside the checkout, and code: git's own metadata is not
 const inside=(file:string)=>!!file&&!isAbsolute(file)&&!normalize(file).split(/[\\/]/).some(p=>p==='..'||p==='.git');
-/** Each finding against the snapshot and the code at the report's commit: the issue exists, every file exists inside the
- *  checkout, and every quoted line is in one of those files. Security comes from the issue's labels or either word. */
-export function verifyReport(r:Report,snap:Snapshot,read:(file:string)=>string|null):Checked[]{
- const byN=new Map(snap.issues.map(i=>[i.n,i]));
- return r.issues.map(f=>{const problems:string[]=[],issue=byN.get(f.n);
+/** a quote counts within NEAR lines of its locus's stated range; a stated range spans at most SPAN lines; a quote of fewer
+ *  than DISTINCT characters (squashed) is not evidence on its own */
+export const NEAR=15,SPAN=200,DISTINCT=16;
+/** "a-b" (or one line "a"), 1-based, at most SPAN lines; anything else is no range */
+export const lineRange=(s:string):[number,number]|null=>{const m=/^\s*(\d{1,7})\s*(?:[-–]\s*(\d{1,7}))?\s*$/.exec(s);if(!m)return null;const a=Number(m[1]),b=Number(m[2]??m[1]);return a>=1&&b>=a&&b-a<SPAN?[a,b]:null;};
+const KEYWORDS=new Set('return null undefined true false else if for while do switch case break continue try catch finally throw new this const let var function async await export default import from class extends super typeof instanceof void in of yield static public private protected readonly def end self nil none pass and or not elif fn pub mut impl'.split(' '));
+/** evidence on its own: at least DISTINCT characters squashed, and at least 8 letters of names that are not keywords
+ *  (`} catch (e) {`, `return null`, `export default App` say nothing about where the problem is) */
+export const distinctive=(p:string)=>squash(p).length>=DISTINCT&&(p.match(/[A-Za-z_$][\w$]*/g)??[]).filter(w=>!KEYWORDS.has(w)).join('').length>=8;
+/** a locus's symbol is one name as code writes it (`getUser`, `Service.getUser`, `Foo::bar`, `fast-xml-parser`), its last
+ *  part at least 3 characters and not a keyword; it must appear, whole or by that last part as a whole word, from SPAN
+ *  lines above the stated range (the function the lines sit in starts above them) to NEAR lines after it. A name check,
+ *  not a definition check: it refuses a description ("dependency declarations"), a name too short to mean anything (`x`)
+ *  and a name nowhere around the stated lines. */
+const SEP=/\.|::|#|\/|->/;
+const NAME=/^[A-Za-z_$][\w$-]*(?:(?:\.|::|#|\/|->)[A-Za-z_$][\w$-]*)*(?:\(\))?$/;
+export const symbolName=(symbol:string)=>{const t=symbol.trim();if(!NAME.test(t))return null;const name=t.replace(/\(\)$/,''),last=name.split(SEP).at(-1)!;return last.length>=3&&!KEYWORDS.has(last)?{name,last}:null;};
+const word=(s:string,text:string)=>new RegExp(`(?<![\\w$])${s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?![\\w$])`).test(text);
+/** what fs_read returned to one investigator in its round: each file, the line ranges it was shown */
+export type Reads=Record<string,[number,number][]>;
+const joined=(rs:[number,number][])=>[...rs].sort((x,y)=>x[0]-y[0]).reduce<[number,number][]>((m,r)=>{const l=m.at(-1);if(l&&r[0]<=l[1]+1)l[1]=Math.max(l[1],r[1]);else m.push([r[0],r[1]]);return m;},[]);
+/** Each finding against the snapshot and the code at the report's commit: the issue exists, and every file exists inside the
+ *  checkout. A finding that needs code (present, fixed?) also: every locus states a line range (all of them together at
+ *  most SPAN lines in one file) and names a symbol written from SPAN lines above it to NEAR lines after it; every quoted line is in its file within NEAR lines of a locus's stated range and, when the investigator's reads are
+ *  given, inside what fs_read returned to it; and at least one quoted line is distinctive. Security: the labels or the word. */
+export function verifyReport(r:Report,snap:Snapshot,read:(file:string)=>string|null,reads?:Reads):Checked[]{
+ const byN=new Map(snap.issues.map(i=>[i.n,i])),seen=reads?new Map<string,[number,number][]>():null;
+ for(const[f,rs]of Object.entries(reads??{}))seen!.set(normalize(f),joined([...(seen!.get(normalize(f))??[]),...rs]));
+ const span=(ls:string[],a:number,b:number)=>squash(ls.slice(Math.max(0,a-1),Math.max(0,b)).join('\n'));
+ return r.issues.map(f=>{const problems:string[]=[],issue=byN.get(f.n),code=f.state==='present'||f.state==='fixed?';
   if(!issue)problems.push(`#${f.n} is not in the snapshot`);
-  const texts:string[]=[];
-  for(const l of f.locus){if(!inside(l.file)){problems.push(`path ${l.file} is outside the checkout`);continue;}const t=read(normalize(l.file));if(t===null)problems.push(`${l.file} does not exist at ${r.commit.slice(0,7)}`);else texts.push(squash(t));}
-  if(f.state==='present'||f.state==='fixed?'){if(!f.locus.length)problems.push('no code location');const parts=fragments(f.evidence);if(!parts.length)problems.push('no quoted code');for(const p of parts)if(!texts.some(t=>t.includes(squash(p))))problems.push(`quoted code not found: ${p.slice(0,80)}`);}
+  const loci:{file:string;lines:string[];at:[number,number]|null}[]=[],stated=new Map<string,number>();
+  for(const l of f.locus){if(!inside(l.file)){problems.push(`path ${l.file} is outside the checkout`);continue;}const file=normalize(l.file),t=read(file);if(t===null){problems.push(`${l.file} does not exist at ${r.commit.slice(0,7)}`);continue;}
+   const at=lineRange(l.lines);
+   if(code&&!at)problems.push(`${l.file}: lines "${l.lines.slice(0,40)}" is not a line range like 12-30 (at most ${SPAN} lines)`);
+   const lines=t.split('\n'),nm=code?symbolName(l.symbol):null;
+   if(code&&!nm)problems.push(`${l.file}: the symbol "${l.symbol.slice(0,80)}" is not a name written in the code (one name like getUser or Service.getUser, at least 3 characters, not a keyword)`);
+   else if(code&&at){const win=lines.slice(Math.max(0,at[0]-1-SPAN),at[1]+NEAR).join('\n');if(!word(nm!.name,win)&&!word(nm!.last,win))problems.push(`${l.file}: the symbol "${l.symbol.slice(0,80)}" is not written from ${SPAN} lines above the stated range ${l.lines} to ${NEAR} lines after it`);}
+   // several ranges in one file never cover more than one range may: the window stays a window
+   if(code&&at)stated.set(file,(stated.get(file)??0)+at[1]-at[0]+1);
+   loci.push({file,lines,at});}
+  for(const[file,n]of stated)if(n>SPAN)problems.push(`${file}: the stated line ranges cover ${n} lines; at most ${SPAN} in one file`);
+  if(code){if(!f.locus.length)problems.push('no code location');const parts=fragments(f.evidence);if(!parts.length)problems.push('no quoted code');
+   else if(!parts.some(distinctive))problems.push(`no distinctive quoted code: quote a line of at least ${DISTINCT} characters that names something (not only "return null" or "} catch {")`);
+   for(const p of parts){const q=squash(p),near=loci.filter(l=>l.at&&span(l.lines,l.at[0]-NEAR,l.at[1]+NEAR).includes(q));
+    if(!near.length){problems.push(loci.some(l=>squash(l.lines.join('\n')).includes(q))?`quoted code is not within ${NEAR} lines of its locus's stated range: ${p.slice(0,80)}`:`quoted code not found: ${p.slice(0,80)}`);continue;}
+    // read in the round: the quote is inside one stretch fs_read returned, within the same window
+    if(seen&&!near.some(l=>(seen.get(l.file)??[]).some(([s,e])=>{const a=Math.max(s,l.at![0]-NEAR),b=Math.min(e,l.at![1]+NEAR);return a<=b&&span(l.lines,a,b).includes(q);})))problems.push(`quoted code is not in what fs_read returned to you this round: ${p.slice(0,80)}`);}}
   const security=f.security==='yes'||!!issue?.labels.some(l=>SECURITY_LABEL.test(l));
   return{n:f.n,ok:!problems.length,problems,security};});
 }
 
 const files=(f:Finding)=>new Set(f.locus.map(l=>normalize(l.file)));
-/** Two findings on the same issue agree when they share a file and give the same state and the same security answer. */
+const needsCode=(s?:string)=>s==='present'||s==='fixed?';
+/** Two findings on the same issue agree when they give the same state and, when that state needs code (present, fixed?),
+ *  share a file. Two not-found (or two not-code) answers agree: neither has a place to compare. Security is never a
+ *  disagreement: either answer (or a security label) makes the issue security. */
 export function compareReports(a:Report,b:Report){
  const bm=new Map(b.issues.map(f=>[f.n,f])),all=[...new Set([...a.issues.map(f=>f.n),...b.issues.map(f=>f.n)])].sort((x,y)=>x-y);
  return all.map(n=>{const x=a.issues.find(f=>f.n===n),y=bm.get(n),diff:string[]=[];
-  if(!x||!y)diff.push('missing');else{if(x.state!==y.state)diff.push('state');if(x.security!==y.security)diff.push('security');const fy=files(y);if(![...files(x)].some(f=>fy.has(f)))diff.push('location');}
-  return{n,agree:!diff.length,diff};});
+  if(!x||!y)diff.push('missing');else if(x.state!==y.state)diff.push('state');else if(needsCode(x.state)){const fy=files(y);if(![...files(x)].some(f=>fy.has(f)))diff.push('location');}
+  return{n,agree:!diff.length,diff,...(x&&y&&!diff.length?{state:x.state}:{})};});
 }
 
-const key=(ns:number[])=>[...ns].sort((x,y)=>x-y).join(',');
-/** Packages both reports agree on: the same related set in the same order, the same one-change group, or the same single
- *  issue; every member must pass the code check in both reports. An issue both find already fixed is a recheck, never a
- *  close. Everything else goes to a person, with the reason. */
-export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:string)=>string|null){
- const va=new Map(verifyReport(a,snap,read).map(c=>[c.n,c])),vb=new Map(verifyReport(b,snap,read).map(c=>[c.n,c]));
- const agree=new Map(compareReports(a,b).map(c=>[c.n,c]));
- const packages:Package[]=[],toHuman:{issues:number[];reason:string}[]=[],placed=new Set<number>();
- const sound=(ms:number[])=>ms.filter(n=>!(va.get(n)?.ok&&vb.get(n)?.ok&&agree.get(n)?.agree));
+/** issues both reports find not-found, or both not-code: agreed, with nothing in the code to change */
+export type NoCode={issues:number[];state:'not-found'|'not-code';reason:string};
+const NO_CODE:Record<NoCode['state'],string>={'not-found':'both investigators looked and could not find it in the code: it needs more information (a stack trace, a URL, steps) before anyone can fix it',
+ 'not-code':'both investigators say it is not a code change (research, design, process or tracking)'};
+const sorted=(ns:number[])=>[...ns].sort((x,y)=>x-y);
+/** Packages both reports agree on: a related set, a one-change group (at the same file) or a single issue; every member
+ *  must pass the code check in both reports and need code in both. Sets match by overlap: when the two reports' sets
+ *  differ by one issue, the issues both name are the package (two or more; one is a single) and the other goes to a
+ *  person; a larger difference all goes to a person. An issue both find already fixed is a recheck, never a close. An
+ *  issue both find not-found, or both not-code, is its own outcome (noCode), never a package. Everything else goes to a
+ *  person, with the reason. */
+export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:string)=>string|null,reads:{a?:Reads;b?:Reads}={}){
+ const va=new Map(verifyReport(a,snap,read,reads.a).map(c=>[c.n,c])),vb=new Map(verifyReport(b,snap,read,reads.b).map(c=>[c.n,c]));
+ const cmp=compareReports(a,b),agree=new Map(cmp.map(c=>[c.n,c]));
+ const packages:Package[]=[],toHuman:{issues:number[];reason:string}[]=[],placed=new Set<number>(),inSnap=new Set(snap.issues.map(i=>i.n));
+ // agreed with nothing to change: no-code when both reports pass the check, else for a person (a bad path, an unknown issue)
+ const idle=new Set(cmp.filter(c=>c.agree&&!needsCode(c.state)).map(c=>c.n)),passed=(n:number)=>!!(va.get(n)?.ok&&vb.get(n)?.ok);
+ const none=new Map(cmp.filter(c=>idle.has(c.n)&&inSnap.has(c.n)&&passed(c.n)).map(c=>[c.n,c.state as NoCode['state']]));
+ const noCode:NoCode[]=(['not-found','not-code'] as const).map(state=>({issues:[...none].filter(([,s])=>s===state).map(([n])=>n),state,reason:NO_CODE[state]})).filter(x=>x.issues.length);
+ none.forEach((_s,n)=>placed.add(n));
+ const failed=[...idle].filter(n=>!none.has(n)).sort((x,y)=>x-y);
+ if(failed.length){toHuman.push({issues:failed,reason:`both reports find nothing to change in the code, but the code check fails for ${failed.map(n=>'#'+n).join(' ')}`});failed.forEach(n=>placed.add(n));}
+ // an issue with no code to change is in no package: the sets are compared without it
+ const real=(ms:number[])=>ms.filter(n=>!idle.has(n));
+ const sound=(ms:number[])=>ms.filter(n=>!(va.get(n)?.ok&&vb.get(n)?.ok&&agree.get(n)?.agree&&needsCode(agree.get(n)?.state)));
  const security=(ms:number[])=>ms.some(n=>va.get(n)?.security||vb.get(n)?.security);
- const state=(n:number)=>a.issues.find(f=>f.n===n)?.state;
- const take=(kind:Package['kind'],members:number[],order:number[],why:string)=>{const weak=sound(members);
+ const both=(n:number,s:Finding['state'])=>a.issues.find(f=>f.n===n)?.state===s&&b.issues.find(f=>f.n===n)?.state===s;
+ const take=(kind:Package['kind'],members:number[],order:number[],why:string,left:number[]=[])=>{const weak=sound(members);
+  // a set both find partly fixed is not one piece of work: a person splits it; a set both find wholly fixed is a recheck
+  const fixed=members.filter(n=>both(n,'fixed?'));
   if(weak.length){toHuman.push({issues:members,reason:`the reports disagree on, or the code check fails for, ${weak.map(n=>'#'+n).join(' ')}`});}
-  else packages.push({kind,members:[...members].sort((x,y)=>x-y),order,why,security:security(members)});
+  else if(fixed.length&&fixed.length<members.length)toHuman.push({issues:members,reason:`both reports find ${fixed.map(n=>'#'+n).join(' ')} already fixed, the rest of the set not: a person decides what is still work`});
+  else packages.push({kind:fixed.length?'recheck':kind,members:sorted(members),order,why,security:security(members),agreement:left.length?'overlap':'exact',...(left.length?{left}:{})});
   members.forEach(n=>placed.add(n));};
- const bRelated=new Map(b.related.map(r=>[key(r.members),r]));
- for(const r of a.related){const other=bRelated.get(key(r.members));if(!other)continue;
+ const single=(n:number,left:number[]=[])=>take(both(n,'fixed?')?'recheck':'single',[n],[n],'',left);
+ /** each of a's sets against an unused b set at most one issue apart, the one sharing most issues first; a set left
+  *  unmatched stays for a person. `aside` sends the one issue only one report puts in the set to a person. */
+ const overlap=<T,>(mine:T[],theirs:T[],ms:(t:T)=>number[],fits:(x:T,y:T)=>boolean,on:(x:T,y:T,common:number[],left:number[],aside:()=>void)=>void)=>{const used=new Set<T>();
+  for(const x of mine){const xs=real(ms(x));if(!xs.length)continue;
+   const m=theirs.filter(t=>!used.has(t)&&fits(x,t)).map(t=>{const ys=real(ms(t));return{t,common:sorted(xs.filter(n=>ys.includes(n))),left:sorted([...xs.filter(n=>!ys.includes(n)),...ys.filter(n=>!xs.includes(n))])};})
+    .filter(c=>c.common.length>0&&c.left.length<=1).sort((p,q)=>q.common.length-p.common.length)[0];if(!m)continue;
+   used.add(m.t);const{common,left}=m;
+   // the one issue only one report puts in the set: a person decides whether it belongs
+   const aside=()=>{if(left.length&&!placed.has(left[0])){toHuman.push({issues:left,reason:`only one report puts #${left[0]} with ${common.map(n=>'#'+n).join(' ')}; the issues both name are proposed without it`});placed.add(left[0]);}};
+   on(x,m.t,common,left,aside);}};
+ overlap(a.related,b.related,r=>r.members,()=>true,(r,other,common,left,aside)=>{
+  // the issue one report leaves out is not last in an order: what came after it may need it first, so the order without it
+  // is not one both gave (a dropped last issue is safe)
+  const before=left.length&&[r.order,other.order].some(o=>{const i=o.indexOf(left[0]);return i>=0&&i<o.length-1;});
+  if(before){const all=sorted([...common,...left]).filter(n=>!placed.has(n));toHuman.push({issues:all,reason:`only one report puts #${left[0]} in this set, before others in its order: the order without it is not one both reports gave`});all.forEach(n=>placed.add(n));return;}
+  aside();
+  if(common.length<2){single(common[0],left);return;}
+  const ox=r.order.filter(n=>common.includes(n)),oy=other.order.filter(n=>common.includes(n));
   // no order from either side: one set, its owner picks the order
-  if(!r.order.length||!other.order.length){take('unordered',r.members,[],r.why);continue;}
-  if(other.order.join(',')!==r.order.join(',')){toHuman.push({issues:r.members,reason:'the reports name the same set in a different order'});r.members.forEach(n=>placed.add(n));continue;}
-  take('ordered',r.members,r.order,r.why);}
- const bGroups=new Map(b.groups.map(g=>[key(g.members),g]));
- for(const g of a.groups){const other=bGroups.get(key(g.members));if(!other||normalize(other.fix_at.file)!==normalize(g.fix_at.file))continue;take('one-change',g.members,[...g.members].sort((x,y)=>x-y),g.why_one_change);}
+  if(!ox.length||!oy.length){take('unordered',common,[],r.why,left);return;}
+  if(ox.join(',')!==oy.join(',')){toHuman.push({issues:common,reason:'the reports name the same set in a different order'});common.forEach(n=>placed.add(n));return;}
+  take('ordered',common,ox,r.why,left);});
+ overlap(a.groups,b.groups,g=>g.members,(g,o)=>normalize(o.fix_at.file)===normalize(g.fix_at.file),(g,_o,common,left,aside)=>{aside();if(common.length<2)single(common[0],left);else take('one-change',common,common,g.why_one_change,left);});
  const bAlone=new Set(b.alone);
- for(const n of a.alone)if(bAlone.has(n)&&!placed.has(n))take(state(n)==='fixed?'&&b.issues.find(f=>f.n===n)?.state==='fixed?'?'recheck':'single',[n],[n],'');
+ for(const n of a.alone)if(bAlone.has(n)&&!placed.has(n))single(n);
  const rest=[...new Set([...a.issues,...b.issues].map(f=>f.n))].filter(n=>!placed.has(n)).sort((x,y)=>x-y);
  if(rest.length)toHuman.push({issues:rest,reason:'the reports put these in different packages'});
- return{packages,toHuman};
+ return{packages,toHuman,noCode};
 }
 
 export type StoredPackage=Package&{id:string;commit:string;status:PackageStatus;work?:Record<string,{proposal:string;at:string}>;approvedBy?:string;approvedAt?:string;
@@ -129,20 +208,22 @@ export type TriageRecord={schema:1;project:string;repository:string;commit:strin
  /** new findings at the same function as an earlier package not started yet: the captain joins them to it or keeps them apart */
  cross?:CrossEntry[];lastCross?:number;
  /** issues joined to an earlier package instead of becoming one of their own: a repeat fix avoided */
- dedup?:number;toHuman:{issues:number[];reason:string}[];createdAt:string;by:string};
+ dedup?:number;toHuman:{issues:number[];reason:string}[];
+ /** issues both investigators agree have nothing in the code to change: not found there (needs information), or not code */
+ noCode?:NoCode[];createdAt:string;by:string};
 /** What a project's triage keeps: every open issue's title and labels (never its body), each investigated issue's
  *  location, repro, agreement and security answer, and the proposed packages. */
-export function triageRecord(o:{project:string;snapshot:Snapshot;a:Report;b:Report;read:(file:string)=>string|null;by:string;now?:()=>string}):TriageRecord{
- const {snapshot:snap,a,b,read}=o;
+export function triageRecord(o:{project:string;snapshot:Snapshot;a:Report;b:Report;read:(file:string)=>string|null;reads?:{a?:Reads;b?:Reads};by:string;now?:()=>string}):TriageRecord{
+ const {snapshot:snap,a,b,read}=o,reads=o.reads??{};
  if(a.commit!==b.commit)throw new Error('The two reports read different commits');
- const va=new Map(verifyReport(a,snap,read).map(c=>[c.n,c])),vb=new Map(verifyReport(b,snap,read).map(c=>[c.n,c])),cmp=new Map(compareReports(a,b).map(c=>[c.n,c]));
- const plan=proposePackages(a,b,snap,read),issues:Record<string,TriageIssue>={};
+ const va=new Map(verifyReport(a,snap,read,reads.a).map(c=>[c.n,c])),vb=new Map(verifyReport(b,snap,read,reads.b).map(c=>[c.n,c])),cmp=new Map(compareReports(a,b).map(c=>[c.n,c]));
+ const plan=proposePackages(a,b,snap,read,reads),issues:Record<string,TriageIssue>={};
  for(const i of snap.issues){const f=a.issues.find(x=>x.n===i.n)??b.issues.find(x=>x.n===i.n),c=cmp.get(i.n);
   issues[String(i.n)]={title:i.title,labels:i.labels,hash:i.hash,investigated:!!f,security:!!(va.get(i.n)?.security||vb.get(i.n)?.security||i.labels.some(l=>SECURITY_LABEL.test(l))),
    ...(f&&c?{agree:c.agree,diff:c.diff,state:f.state,tag:f.tag,locus:f.locus,repro:f.repro.slice(0,500),checked:!!(va.get(i.n)?.ok&&vb.get(i.n)?.ok)}:{})};}
  const investigated=Object.entries(issues).filter(([,v])=>v.investigated).map(([n])=>Number(n)).sort((x,y)=>x-y);
  return{schema:1,project:o.project,repository:snap.repository,commit:a.commit,snapshot:{hash:snap.hash,fetchedAt:snap.fetchedAt},open:snap.issues.length,investigated,issues,
-  packages:plan.packages.map((p,i)=>({...p,id:`P-${i+1}`,commit:a.commit,status:'proposed' as const})),lastPackage:plan.packages.length,toHuman:plan.toHuman,createdAt:o.now?.()??new Date().toISOString(),by:o.by};
+  packages:plan.packages.map((p,i)=>({...p,id:`P-${i+1}`,commit:a.commit,status:'proposed' as const})),lastPackage:plan.packages.length,toHuman:plan.toHuman,noCode:plan.noCode,createdAt:o.now?.()??new Date().toISOString(),by:o.by};
 }
 
 const started=(p:{work?:Record<string,unknown>})=>!!p.work&&Object.keys(p.work).length>0;
@@ -157,10 +238,15 @@ export function pickBatch(snap:Snapshot,prev:TriageRecord|null,o:{size:number;is
  const done=(i:IssueSnap)=>{const p=prev?.issues[String(i.n)];return!!p?.investigated&&p.hash===i.hash;};
  return snap.issues.filter(i=>!done(i)).map(i=>i.n).sort((x,y)=>x-y).slice(0,size);
 }
+/** issues kept in each no-code entry, the empty entries dropped */
+const noCodeOf=(xs:NoCode[]|undefined,keep:(n:number)=>boolean)=>(xs??[]).map(x=>({...x,issues:x.issues.filter(keep)})).filter(x=>x.issues.length);
+/** one entry per state, its issues once each, in order */
+const noCodeMerged=(xs:NoCode[])=>(['not-found','not-code'] as const).map(state=>({issues:sorted([...new Set(xs.filter(x=>x.state===state).flatMap(x=>x.issues))]),state,reason:NO_CODE[state]})).filter(x=>x.issues.length);
 /** Issues edited on GitHub while they were investigated: their packages go to a person (the next batch takes them again). */
 export function withoutChanged(rec:TriageRecord,changed:number[]):TriageRecord{
- const c=new Set(changed),hit=rec.packages.filter(p=>p.members.some(n=>c.has(n)));if(!hit.length)return rec;
- return{...rec,packages:rec.packages.filter(p=>!hit.includes(p)),toHuman:[...rec.toHuman,...hit.map(p=>({issues:p.members,reason:`changed on GitHub while being investigated: ${p.members.filter(n=>c.has(n)).map(n=>'#'+n).join(' ')}`}))]};
+ const c=new Set(changed),hit=rec.packages.filter(p=>p.members.some(n=>c.has(n))),gone=(rec.noCode??[]).flatMap(x=>x.issues).filter(n=>c.has(n));if(!hit.length&&!gone.length)return rec;
+ const why=(ns:number[])=>`changed on GitHub while being investigated: ${ns.filter(n=>c.has(n)).map(n=>'#'+n).join(' ')}`;
+ return{...rec,packages:rec.packages.filter(p=>!hit.includes(p)),noCode:noCodeOf(rec.noCode,n=>!c.has(n)),toHuman:[...rec.toHuman,...hit.map(p=>({issues:p.members,reason:why(p.members)})),...(gone.length?[{issues:gone,reason:why(gone)}]:[])]};
 }
 /** A batch joined to the project's stored triage. The batch's snapshot is the open issues now: a closed issue's package is
  *  dropped; an issue edited since it was investigated is investigated again and its package is stale; an issue the batch
@@ -194,7 +280,7 @@ export function mergeTriage(prev:TriageRecord|null,next:TriageRecord):TriageReco
   if(!started(old))cross.push({id:`X-${++lastX}`,issues:np.members,package:{...np},with:old.id,where});
   else added.push(recheckOf(np,old,where));}
  const investigated=Object.entries(issues).filter(([,v])=>v.investigated).map(([n])=>Number(n)).sort((x,y)=>x-y);
- return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman]};
+ return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman],noCode:noCodeMerged([...noCodeOf(prev.noCode,n=>open(n)&&!redone.has(n)),...(next.noCode??[])])};
 }
 /** The captain's approval of proposed packages, against the issues as GitHub has them now: a package whose issue was closed or
  *  edited since it was investigated is stale, never approved. */
@@ -221,7 +307,7 @@ export function atSnapshot(rec:TriageRecord,now:Snapshot):TriageRecord{
  const issues:Record<string,TriageIssue>={};
  for(const i of now.issues){const had=rec.issues[String(i.n)];issues[String(i.n)]=had?.investigated?{...had,title:i.title,labels:i.labels}:{title:i.title,labels:i.labels,hash:i.hash,investigated:false,security:i.labels.some(l=>SECURITY_LABEL.test(l))};}
  const open=(n:number)=>!!issues[String(n)];
- return{...rec,issues,open:now.issues.length,snapshot:{hash:now.hash,fetchedAt:now.fetchedAt},investigated:rec.investigated.filter(open),packages:rec.packages.filter(p=>p.members.every(open)),toHuman:rec.toHuman.filter(h=>h.issues.some(open))};
+ return{...rec,issues,open:now.issues.length,snapshot:{hash:now.hash,fetchedAt:now.fetchedAt},investigated:rec.investigated.filter(open),packages:rec.packages.filter(p=>p.members.every(open)),toHuman:rec.toHuman.filter(h=>h.issues.some(open)),noCode:noCodeOf(rec.noCode,open)};
 }
 
 export type WorkState='none'|'open'|'merged'|'closed';

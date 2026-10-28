@@ -117,12 +117,22 @@ function triageOf(rec, issues, key) {
   if (!rec?.schema) return null;
   const set = new Set(issues), hit = (ns) => ns.some((n) => set.has(n));
   const packs = rec.packages.filter((p) => hit(p.members)), cross = (rec.cross || []).filter((c) => hit(c.issues)), human = rec.toHuman.filter((x) => hit(x.issues));
-  if (!packs.length && !cross.length && !human.length) return null;
+  // agreed, with nothing in the code to change: not a disagreement, not a package
+  const none = (rec.noCode || []).map((x) => ({ ...x, issues: x.issues.filter((n) => set.has(n)) })).filter((x) => x.issues.length);
+  if (!packs.length && !cross.length && !human.length && !none.length) return null;
   const open = IS.selIn === key ? packs.find((p) => p.id === IS.sel) : null;
   return h("div", { class: "is-tri", "data-tri": key },
     packs.length ? h("div", { class: "card is-packs", role: "list" }, packs.map((p) => packRow(rec, p, p === open, key))) : null,
     open ? packDetail(rec, open) : null,
-    cross.length || human.length ? [h("h4", { class: "is-tri-h" }, T("For you to judge", "要你判斷")), humanList(rec, cross, human)] : null);
+    cross.length || human.length ? [h("h4", { class: "is-tri-h" }, T("For you to judge", "要你判斷")), humanList(rec, cross, human)] : null,
+    none.length ? [h("h4", { class: "is-tri-h" }, T("Agreed: nothing to change in the code", "有共識：程式碼沒有要改的")), noCodeList(rec, none)] : null);
+}
+const NO_CODE = { "not-found": ["Both investigators could not find it in the code: it needs more information (a stack trace, a URL, steps).", "兩位調查員都在程式碼裡找不到：需要更多資訊（stack trace、網址、重現步驟）。"],
+  "not-code": ["Both investigators say it is not a code change (research, design, process or tracking).", "兩位調查員都認為這不是改程式碼的事（研究、設計、流程或追蹤）。"] };
+function noCodeList(rec, none) {
+  return h("div", { class: "card is-nocode", "data-no-code": "1" }, none.map((x) => h("div", { class: "is-hrow", "data-no-code-state": x.state },
+    h("div", { class: "is-hissues" }, x.issues.map((n) => h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono", title: rec.issues[n]?.title || "" }, `#${n}`))),
+    h("span", {}, T(...(NO_CODE[x.state] || [x.reason, x.reason]))))));
 }
 
 const who = (x) => (x?.provider ? `${x.provider} ${x.model || T("(default model)", "（預設模型）")}${x.effort ? ` · ${x.effort}` : ""}` : T("no model", "沒有模型"));
