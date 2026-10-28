@@ -133,6 +133,65 @@ function startForm(project, rec) {
     f.error ? h("p", { class: "is-warn", role: "alert" }, f.error) : null);
 }
 
+// ---- the project's categories (src/issue-categories-workflow.ts): built once, new issues filed into them ----
+const CAT = { data: new Map(), busy: new Set(), again: new Set(), editing: null, note: new Map(), open: new Set() };
+// one read at a time per project; a read asked for meanwhile (after an edit) runs once the current one ends
+async function loadCats(project) {
+  if (CAT.busy.has(project)) { CAT.again.add(project); return; } CAT.busy.add(project);
+  try { CAT.data.set(project, await api(`/api/issue-categories/${encodeURIComponent(project)}`)); }
+  catch (e) { CAT.data.set(project, { state: "error", error: e.message }); }
+  finally { CAT.busy.delete(project); if (CAT.again.delete(project)) void loadCats(project); else rerender(); }
+}
+const catPost = async (project, path, body, after) => {
+  CAT.note.delete(project);
+  try { const r = await postJ(`/api/${path}`, body); if (after) after(r); } catch (e) { CAT.note.set(project, e.message); }
+  await loadCats(project);
+};
+function categoriesCard(project) {
+  const c = CAT.data.get(project);
+  if (!c && !CAT.busy.has(project)) void loadCats(project);
+  const go = (r) => { location.hash = r.href; };
+  const startBtn = (label) => h("button", { type: "button", class: "btn primary", "data-cat-start": project, onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/start`, {}, go) }, label);
+  const note = CAT.note.get(project) ? h("p", { class: "is-warn", role: "alert" }, CAT.note.get(project)) : null;
+  const head = (extra) => h("div", { class: "x-row wrap is-cat-head" }, h("h3", {}, T("Categories", "類別")), extra, h("span", { class: "x-grow" }));
+  if (!c) return h("div", { class: "card x-pad", "data-categories": project }, head(null), h("p", { class: "faint" }, T("Loading…", "載入中…")));
+  if (c.state === "none" || c.state === "error") return h("div", { class: "card x-pad", "data-categories": project },
+    head(startBtn(T("Build categories…", "建立類別…"))),
+    h("p", { class: "faint", "data-cat-empty": "1" }, T("No categories yet. A categorizer files every open issue into categories kept in Studio (not GitHub labels); once you approve the list it stays, and new issues are only filed into it, with a new category proposed when none fits.",
+      "還沒有類別。分類員會把所有 open issue 分好類，類別只存在 Studio（不是 GitHub 標籤）；你核准後清單就固定，之後新 issue 只會歸進既有類別，放不進去才提新類別。")), note);
+  const list = c.list || [], active = list.filter((x) => x.status === "active"), proposed = list.filter((x) => x.status === "proposed");
+  const filed = list.reduce((a, x) => a + x.issues.length, 0), title = (n) => (c.titles || {})[n] || "";
+  // a category's triage takes its issues not triaged yet (at most 50 at a time), so a large one is worked through in turns
+  const tr = IS.rec.get(project), todo = (x) => x.issues.filter((n) => !tr?.issues?.[n]?.investigated).slice(0, 50);
+  const row = (x) => {
+    const editing = CAT.editing === x.id, others = active.filter((o) => o.id !== x.id);
+    // a category stays open across redraws (an edit, a refetch) until the captain closes it
+    return h("details", { class: "is-cat", "data-cat": x.id, open: CAT.open.has(x.id) || editing ? true : null, ontoggle: (e) => { if (e.target.open) CAT.open.add(x.id); else CAT.open.delete(x.id); } },
+      h("summary", {}, h("b", {}, x.name), x.status === "proposed" ? h("span", { class: "is-sec" }, T("Waiting for approval", "等核准")) : null, h("span", { class: "tb-count num" }, String(x.issues.length)), h("span", { class: "faint is-cat-scope" }, x.scope)),
+      h("div", { class: "is-cat-body" },
+        x.status === "proposed" ? h("div", { class: "is-cat-acts" },
+          h("button", { type: "button", class: "btn primary", "data-cat-approve": x.id, onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "approve", ids: [x.id] }) }, T("Approve", "核准")),
+          h("button", { type: "button", class: "btn", "data-cat-decline": x.id, onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "decline", ids: [x.id] }) }, T("Decline: file its issues again", "退回：這些 issue 重新歸類"))) : null,
+        x.status === "active" ? h("div", { class: "is-cat-acts" },
+          h("button", { type: "button", class: "btn primary", "data-cat-triage": x.id, disabled: todo(x).length ? null : true,
+            onclick: () => catPost(project, `issue-triage/${encodeURIComponent(project)}/start`, { size: todo(x).length, issues: todo(x) }, go) },
+            todo(x).length ? T(`Triage this category (${todo(x).length})…`, `分診這一類（${todo(x).length} 張）…`) : T("All of it is triaged", "這一類都分診過了")),
+          editing ? [h("input", { type: "text", value: x.name, "data-cat-name": x.id, "aria-label": T("New name", "新名稱") }),
+              h("button", { type: "button", class: "btn", "data-cat-save": x.id, onclick: () => { const v = document.querySelector(`[data-cat-name="${x.id}"]`)?.value || ""; CAT.editing = null; catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "rename", id: x.id, name: v }); } }, T("Save", "儲存"))]
+            : h("button", { type: "button", class: "btn ghost", "data-cat-rename": x.id, onclick: () => { CAT.editing = x.id; rerender(); } }, T("Rename", "改名")),
+          others.length ? h("select", { "aria-label": T("Merge into", "併入"), "data-cat-merge": x.id, onchange: (e) => { if (e.target.value) catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "merge", id: x.id, into: e.target.value }); } },
+            h("option", { value: "" }, T("Merge into…", "併入…")), others.map((o) => h("option", { value: o.id }, o.name))) : null) : null,
+        h("ul", { class: "is-cat-issues" }, x.issues.map((n) => h("li", { "data-cat-issue": String(n) },
+          h("a", { href: `https://github.com/${c.repository}/issues/${n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: title(n) }, title(n)),
+          x.status === "active" && others.length ? h("select", { "aria-label": T(`Move #${n}`, `移動 #${n}`), "data-cat-move": String(n), onchange: (e) => { if (e.target.value) catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "move", n, to: e.target.value }); } },
+            h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name))) : null)))));
+  };
+  return h("div", { class: "card x-pad", "data-categories": project },
+    head([h("span", { class: "faint" }, T(`${active.length} categories · ${filed} issues filed`, `${active.length} 個類別・已歸類 ${filed} 張`)), startBtn(T("File new issues…", "歸類新 issue…"))]),
+    proposed.length ? h("p", { class: "note" }, T(`${proposed.length} new categor${proposed.length === 1 ? "y waits" : "ies wait"} for your approval: open it below, or answer its Task's card.`, `${proposed.length} 個新類別等你核准：在下面展開它，或在任務卡片上處理。`)) : null,
+    note, h("div", { class: "is-cats" }, list.map(row)));
+}
+
 /** The project page's GitHub issues section (a connected project only): starting a triage, and its result. */
 function projectIssues(project, repository) {
   const rec = IS.rec.get(project);
@@ -146,6 +205,7 @@ function projectIssues(project, repository) {
   const tabs = [["packages", "Work packages", "工作包", packs.length], ["human", "For you to judge", "要你判斷", has ? rec.toHuman.length + (rec.cross || []).length : 0], ["pending", "Not investigated", "待調查", pending]];
   return h("section", { id: "s-issues", "aria-labelledby": "hIssues", "data-project-issues": project },
     head,
+    categoriesCard(project),
     h("div", { class: "card x-pad" }, startForm(project, rec)),
     formOf(project).note ? h("p", { class: "note", role: "status" }, formOf(project).note) : null,
     !has ? h("div", { class: "card x-pad" }, h("p", { class: "faint", "data-issues-empty": "1" }, T(`No triage of ${repository} yet. Triage a batch above: two investigators read the code, and the work packages they agree on appear here.`, `${repository} 還沒有分診。從上面開始分診一批：兩位調查員會讀程式碼，他們有共識的工作包會出現在這裡。`)))
@@ -158,5 +218,5 @@ function projectIssues(project, repository) {
 }
 window.crewProjectIssues = projectIssues;
 /** the project page refetched (a Task or a card changed): read the triage again with it */
-window.crewProjectIssuesReload = (project) => { if (!IS.busy.has(project)) void load(project); };
+window.crewProjectIssuesReload = (project) => { if (!IS.busy.has(project)) void load(project); void loadCats(project); };
 })();

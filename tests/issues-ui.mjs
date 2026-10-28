@@ -52,6 +52,14 @@ const record = {
   createdAt: "2026-10-28T09:40:00Z", by: "issue-triage R-9", lastPackage: 3,
 };
 writeFileSync(join(data, "issue-triage", "wallet.json"), JSON.stringify(record));
+// the project's categories: two active, one waiting for approval (src/domain/issue-categories.ts)
+mkdirSync(join(data, "issue-categories"), { recursive: true });
+const cat = (id, name, scope, status) => ({ id, name, scope, status, createdAt: "2026-10-28T09:00:00Z", createdBy: "R-1 (claude m)" });
+const asg = (category) => ({ category, by: "model", at: "2026-10-28T09:00:00Z" });
+writeFileSync(join(data, "issue-categories", "wallet.json"), JSON.stringify({ schema: 1, project: "wallet", repository: "fixture/wallet", lastCategory: 3, updatedAt: "2026-10-28T09:00:00Z", runs: [],
+  categories: [cat("C-1", "內嵌網頁", "內嵌網頁與它能呼叫的介面", "active"), cat("C-2", "URL 工具", "網址組裝與解析", "active"), cat("C-3", "推播", "推播與通知", "proposed")],
+  assignments: { 11: asg("C-1"), 12: asg("C-1"), 16: asg("C-1"), 13: asg("C-2"), 17: asg("C-2"), 18: asg("C-3") },
+  titles: { 11: "Bridge trusts a page-supplied URL", 12: "Replies reach the next page", 13: 'Title with <img src=x onerror="window.__pwned=2"> markup', 17: "Share link loses its fragment", 18: "Query string doubled on retry" } }));
 
 const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
@@ -76,13 +84,14 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/\/api\/team\?project=wallet/, (r) => r.fulfill({ json: TEAM }));
   if (o.empty) await ctx.route(/\/api\/issue-triage\/wallet$/, (r) => r.fulfill({ json: { state: "none", investigators: { a: { provider: "claude", model: "claude-opus-5-5" }, b: { provider: "codex", model: "gpt-6" } } } }));
   if (o.same) await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, investigators: { a: { provider: "claude", model: "same" }, b: { provider: "claude", model: "same" } } } }); });
-  const posts = [], approvals = [], crosses = [];
+  const posts = [], approvals = [], crosses = [], catCalls = [];
+  await ctx.route(/\/api\/issue-categories\/[a-z]+\/(start|edit)$/, (r) => { catCalls.push([r.request().url().split("/").slice(-2).join("/"), JSON.parse(r.request().postData() || "{}")]); r.fulfill({ json: { ok: true, task: "R-88", href: "#/run/R-88" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/cross$/, (r) => { crosses.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, joined: "P-2" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/approve$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); approvals.push(b); r.fulfill(o.refuseApprove ? { status: 409, json: { error: `${b.packages[0]} is approved, not waiting for approval` } } : { json: o.staleApprove ? { ok: true, approved: [], stale: b.packages } : { ok: true, approved: b.packages, stale: [] } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/start$/, (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, task: "R-77", href: "#/run/R-77" } }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
   await p.goto(`${base}/${hash}`); await p.waitForTimeout(800);
-  return { ctx, p, posts, approvals, crosses };
+  return { ctx, p, posts, approvals, crosses, catCalls };
 }
 const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.querySelector("#main").scrollWidth <= document.querySelector("#main").clientWidth + 1);
 try {
@@ -136,6 +145,34 @@ try {
     await p.goto(`${base}/#/project/wallet`); await p.waitForSelector('[data-project-issues="wallet"] [data-issue-start]'); await p.fill("[data-issue-size]", "70"); await p.click("[data-issue-triage]"); await p.waitForTimeout(300);
     ok(posts.length === 1 && /1 to 50/.test(await p.locator('[data-project-issues="wallet"] [role="alert"]').textContent()), "a batch over 50 is refused before anything is sent");
     await ctx.close(); }
+  { const { ctx, p, posts, catCalls } = await open(1440);
+    await p.waitForSelector('[data-categories="wallet"] [data-cat="C-1"]', { timeout: 8000 }).catch(() => {});
+    const head = await p.locator('[data-categories="wallet"] .is-cat-head').textContent();
+    ok(/2 categories · 6 issues filed/.test(head) && /1 new category waits/.test(await p.locator('[data-categories="wallet"]').textContent()), "the categories card says how many categories and filed issues, and what waits for approval", head);
+    ok(await p.locator('[data-categories="wallet"] [data-cat]').count() === 3 && /Waiting for approval/.test(await p.locator('[data-cat="C-3"] summary').textContent()) && !(await p.locator('[data-cat="C-3"] [data-cat-triage]').count()), "each category is listed; one waiting for approval cannot be acted on yet");
+    await p.click('[data-cat="C-2"] summary');
+    ok(await p.evaluate(() => !document.querySelector("[data-categories] img") && !window.__pwned && /<img src=x/.test(document.querySelector('[data-cat-issue="13"] .is-title').textContent)), "a category's issue titles show as text and run nothing");
+    await p.click('[data-cat="C-1"] summary'); await p.click('[data-cat-triage="C-1"]'); await p.waitForTimeout(300);
+    ok(posts.length === 1 && posts[0].issues.join() === "16" && posts[0].size === 1 && /\(1\)/.test(await p.locator('[data-cat-triage="C-1"]').textContent().catch(() => "(1)")), "triaging a category sends only its issues not triaged yet", JSON.stringify(posts));
+    await p.goto(`${base}/#/project/wallet`); await p.waitForSelector('[data-cat="C-3"]'); await p.click('[data-cat="C-3"] summary');
+    await p.click('[data-cat-approve="C-3"]'); await p.waitForTimeout(300);
+    ok(catCalls.some(([u, b]) => u.endsWith("edit") && b.op === "approve" && b.ids.join() === "C-3") && await p.locator('[data-cat-decline="C-3"]').count() === 1, "a category waiting for approval is approved or declined right on the page", JSON.stringify(catCalls));
+    await p.goto(`${base}/#/project/wallet`); await p.waitForSelector('[data-cat="C-1"]');
+    if (!(await p.locator('[data-cat="C-1"]').evaluate((e) => e.open))) await p.click('[data-cat="C-1"] summary');
+    { const done = await p.evaluate(() => { const b = document.querySelector('[data-cat-triage="C-2"]'); return b ? [b.disabled, b.textContent] : null; });
+      ok(done && done[0] === true && /triaged/.test(done[1]), "a category whose issues are all triaged says so and cannot be sent again", JSON.stringify(done)); }
+    ok(await p.locator('[data-cat="C-1"]').evaluate((e) => e.open), "an opened category stays open when the page redraws");
+    await p.click('[data-cat-rename="C-1"]'); await p.fill('[data-cat-name="C-1"]', "內嵌網頁與介面"); await p.click('[data-cat-save="C-1"]'); await p.waitForTimeout(300);
+    await p.selectOption('[data-cat-move="11"]', "C-2").catch(() => {}); await p.waitForTimeout(300);
+    if (!(await p.locator('[data-cat="C-2"]').evaluate((e) => e.open))) await p.click('[data-cat="C-2"] summary');
+    await p.selectOption('[data-cat-merge="C-2"]', "C-1").catch(() => {}); await p.waitForTimeout(300);
+    const edits = catCalls.filter(([u]) => u.endsWith("edit")).map(([, b]) => b);
+    ok(edits.some((b) => b.op === "rename" && b.id === "C-1" && b.name === "內嵌網頁與介面") && edits.some((b) => b.op === "move" && b.n === 11 && b.to === "C-2") && edits.some((b) => b.op === "merge" && b.id === "C-2" && b.into === "C-1"), "the captain renames, moves an issue and merges categories on the page", JSON.stringify(edits));
+    await p.click('[data-cat-start="wallet"]'); await p.waitForTimeout(300);
+    ok(catCalls.some(([u]) => u === "wallet/start") && /#\/run\/R-88/.test(await p.evaluate(() => location.hash)), "filing new issues starts a run and opens it");
+    await p.goto(`${base}/#/project/vault`); await p.waitForSelector('[data-categories="vault"] [data-cat-empty]', { timeout: 8000 }).catch(() => {});
+    ok(/No categories yet/.test(await p.locator('[data-categories="vault"]').textContent()) && /Build categories/.test(await p.locator('[data-cat-start="vault"]').textContent()), "a project with no categories offers to build them");
+    await ctx.close(); }
   { const { ctx, p, approvals } = await open(1440, "en", "#/project/wallet", { staleApprove: true });
     await p.waitForSelector('[data-pack="P-2"]'); await p.click('[data-pack="P-2"]'); await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
     ok(approvals.length === 1 && /P-2 is stale/.test(await p.locator('[data-project-issues="wallet"] [role="status"]').textContent()), "a package whose issue changed is reported stale, not approved");
@@ -151,7 +188,7 @@ try {
     await ctx.close(); }
   { const { ctx, p } = await open(390, "zh-TW");
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
-    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4 && /分診/.test(await p.locator('[data-project-issues="wallet"]').textContent()) && !/分類/.test(await p.locator('[data-project-issues="wallet"]').textContent()) && /工作包/.test(await p.locator('[data-project-issues="wallet"] .tb-tabs').textContent()) && /這批要分診幾張/.test(await p.locator("[data-issue-start]").textContent()), "390 zh-TW: the packages and the batch form show, in Chinese");
+    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4 && /分診/.test(await p.locator('[data-issue-start]').textContent()) && !/分類/.test(await p.locator('[data-issue-start]').textContent()) && /工作包/.test(await p.locator('[data-project-issues="wallet"] .tb-tabs').textContent()) && /這批要分診幾張/.test(await p.locator("[data-issue-start]").textContent()), "390 zh-TW: the packages and the batch form show, in Chinese");
     ok(await noSideways(p), "390: no sideways scroll");
     await p.screenshot({ path: join(shots, "project-issues-390.png"), fullPage: true });
     await ctx.close(); }

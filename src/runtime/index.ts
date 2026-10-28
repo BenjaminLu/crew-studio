@@ -25,6 +25,8 @@ import {crewRoutes} from '../crew-routes';
 import {installCrewTools} from '../crew-tools';
 import {IssueTriageStore} from '../issue-triage-store';
 import {installIssueTriage} from '../issue-triage-workflow';
+import {IssueCategoriesStore} from '../issue-categories-store';
+import {installIssueCategories} from '../issue-categories-workflow';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate,heldNotice} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
@@ -181,7 +183,7 @@ export function createRuntime(d: RuntimeDeps) {
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
   let seatFilled=(_run:string)=>{}; // set once Firstmate's tools exist: a seat card the captain approved resumes the proposals it held (S8)
-  const issueTriage=new IssueTriageStore(d.dataDir);
+  const issueTriage=new IssueTriageStore(d.dataDir),issueCategories=new IssueCategoriesStore(d.dataDir);
   const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,cached:()=>staffingCapabilities as any,send:d.send,onApproved:run=>seatFilled(run)});
   // no image pick to seed the image maker from: raise the seat card now, so the captain sees why image work waits (never a silent block)
   if(imageSeatUnfilled){const def=engine.defs.get('images');if(def)void crewTools.seatGate(def,{key:'crew-migration'}).catch(()=>{});}
@@ -216,6 +218,7 @@ export function createRuntime(d: RuntimeDeps) {
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
   const draftTools=installWorkflowDraftTools(drafts,readiness?.tools,def=>{readiness?.versionSaved(def);try{d.send('wf',{id:def.id,version:def.version});}catch{}});
   const issueTriageFlow=installIssueTriage(engine,projects,issueTriage,d.dataDir,{propose:(args,owner)=>originalFirstmate.call('studio_propose_work',args,owner) as any,crewOf:(def,project)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),def,{},t.hash,project).nodes as any:null;}});
+  const categoriesFlow=installIssueCategories(engine,projects,issueCategories,d.dataDir);
   const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
@@ -269,7 +272,7 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) {
       if(p.startsWith('/api/workflow-packages')){
         const cap=12*1024*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
@@ -522,6 +525,21 @@ export function createRuntime(d: RuntimeDeps) {
           try { if (m[2] === "archive") return json(engine.archive(id, b?.archived !== false, by) && runView(id, who)); return json(engine.remove(id, String(b?.confirm ?? ""), by)); }
           catch (e: any) { const msg = String(e?.message ?? e); return json({ error: msg }, /only an ended run|still finishing/.test(msg) ? 409 : 400); }
         }
+      }
+      // ---------- issue categories: a project's issues filed into categories kept in Studio (src/issue-categories-workflow.ts).
+      // Read here; a run starts here (its captain card still comes before any model runs); the captain edits here ----------
+      const cat = /^\/api\/issue-categories\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})(?:\/(start|edit))?$/.exec(p);
+      if (cat) {
+        if (!cat[2]) { if (writing) return json({ error: "use GET" }, 405); try { return json(categoriesFlow.view(cat[1])); } catch { return json({ error: "invalid project id" }, 400); } }
+        if (!writing) return json({ error: "use POST" }, 405);
+        if (who.kind !== "desktop") return json({ error: "only the desktop captain changes categories" }, 403);
+        if (cat[2] === "start") { try { const run = categoriesFlow.start({ project: cat[1], by: "captain (project page)" }); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); } }
+        const e = b ?? {}, id = /^C-[1-9][0-9]{0,5}$/;
+        const ids = Array.isArray(e.ids) && e.ids.length > 0 && e.ids.length <= 40 && e.ids.every((x: any) => typeof x === "string" && id.test(x));
+        const valid = e.op === "rename" ? id.test(e.id) && typeof e.name === "string" : e.op === "move" ? Number.isSafeInteger(e.n) && e.n > 0 && id.test(e.to) : e.op === "merge" ? id.test(e.id) && id.test(e.into) : e.op === "approve" || e.op === "decline" ? ids : false;
+        if (!valid) return json({ error: "an edit is rename {id, name}, move {n, to}, merge {id, into}, or approve / decline {ids}" }, 400);
+        try { return json(categoriesFlow.edit(cat[1], e.op === "rename" ? { op: "rename", id: e.id, name: e.name } : e.op === "move" ? { op: "move", n: e.n, to: e.to } : e.op === "merge" ? { op: "merge", id: e.id, into: e.into } : { op: e.op, ids: e.ids }, "captain (project page)")); }
+        catch (err: any) { return json({ error: String(err?.message ?? err) }, 409); }
       }
       // ---------- issue triage: read here; written by the issue-triage workflow only. The project page starts one (the
       // captain on the desktop, a batch of 1 to 50 issues); its investigators still wait for the captain's start card ----------

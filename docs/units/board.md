@@ -186,6 +186,44 @@ model and effort, marking a change this project makes to the team.
 - The stored triage keeps each issue's title, labels and content hash, never its body. Titles are untrusted text and
   only ever go into text nodes.
 
+### Issue categories
+
+A connected project's issues are filed into categories kept in Studio (`data/issue-categories/<project>.json`), never
+written to GitHub as labels: the lead's own view to hand work out one category at a time. A category is one product area
+or one kind of work; its issues may have different root causes. Security is a flag on an issue, never a category.
+
+`workflows/v2/issue-categories.wf.yaml` (`src/issue-categories-workflow.ts`, `src/domain/issue-categories.ts`, internal;
+started from the project page's Build categories / File new issues button, `POST /api/issue-categories/<project>/start`):
+
+1. **Snapshot.** Studio reads the open issues (GET only) and takes the ones no category holds yet, at most 200. A
+   project with no list builds it; every later run files: the list is never built again from scratch.
+2. **Start card.** Captain-only: how many issues, build or file, the categorizer's model. Refused before it is shown when
+   the categorizer would not run in the round sandbox with no network beyond its model.
+3. **Categorizer** (the maker seat; Claude without a team) follows `workflows/skills/issue-categorizer.md`. It reads issue
+   text only through `issues_read` (untrusted) and submits once with `categories_submit`. Studio refuses a report that
+   files an issue twice or leaves one out, names a category that is not open, gives a category no scope, or makes
+   security a category. Building: every category has a name and a one-sentence scope. Filing: into an existing category,
+   or `NEW` with a name, a scope and why none fits.
+4. **Record.** Issues filed into existing categories take effect at once. New categories (all of them, on a build) are
+   proposals; the record keeps each issue's title and the open issues of that read for the page. The list may have
+   changed while the categorizer ran: an issue filed into a category the captain merged follows the merge, one into a
+   category gone since stays unfiled for the next run, and a new name that exists by now files into that category.
+5. **Approval card.** Captain-only, only when there are proposals: approve keeps them; decline releases their issues to
+   be filed again next run. Proposals left by a run that ended (cancelled at the card) are approved or declined on the
+   page instead. A declined name is listed in later briefs and refused if proposed again. Names and scopes are one line of
+   plain text; security (資安, CVE and the like included) is never a category. Every step is on the run's ledger (`categories-snapshot`, `categories-report`,
+   `categories-written`, `categories-decided`).
+
+The page's Categories card lists each category with its scope and issues. The captain renames a category, moves an issue
+and merges a category into another there (`POST /api/issue-categories/<project>/edit`, desktop only); a run never
+overwrites those edits, even for an issue it was filing at the time. Counts are of the issues open at the last read.
+"Triage this category" starts an issue triage of its issues not triaged yet, up to 50 at a time, so the investigators see
+the category together instead of a batch by age, and a large one is worked through in turns.
+
+Tests: `tests/issue-categories.ts` (the reports, build and file, approval, the captain's edits, the store, the routes),
+`tests/issue-categories-workflow.ts` (the workflow end to end with a scripted categorizer), `tests/issues-ui.mjs` (the
+Categories card), `tests/acceptance/issue-categories.yaml`.
+
 ### The issue-triage workflow
 
 `workflows/v2/issue-triage.wf.yaml` (`src/issue-triage-workflow.ts`, internal: Firstmate starts it with

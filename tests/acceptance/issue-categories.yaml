@@ -1,0 +1,29 @@
+# File a connected project's GitHub issues into categories kept in Studio: started only from the project page's Build
+# categories / File new issues button (internal). Offline cases use the loopback GitHub simulator; the categorizer is paid
+# model work and runs only after the captain's start card, so these cases stop before it. The categorizer, the checks and
+# the approval card run end to end against a scripted categorizer in tests/issue-categories-workflow.ts.
+schema: 2
+workflow: issue-categories
+pin: { version: 1, sha256: "14f184510962becd3dd8d0ebc403a8f02e32870cc69ac016757c6e53436ddd39" }   # bun scripts/acceptance/pin.ts issue-categories
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: close-at-start
+    covers: "the project page starts filing a simulator-connected project → Studio reads its open issues → captain-only start card → closed: no categorizer runs, nothing is filed; the board cannot start it"
+    how: categories
+    setup: [github-sim, github-issues]
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: confirm, answer: close }]
+    expect: { status: succeeded, result: closed, visited: [snapshot, confirm, cancelled], not_visited: [categorize, record, approve] }
+  - name: nothing-open
+    covers: "a project with no open issue → the run ends at once, with no card and no categorizer"
+    how: categories
+    setup: [github-sim, github-no-issues]
+    board_refusal: { status: 409, error: "internal or retired" }
+    expect: { status: succeeded, result: closed, visited: [snapshot, empty], not_visited: [confirm, categorize] }
