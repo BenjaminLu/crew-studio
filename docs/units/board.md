@@ -179,8 +179,10 @@ model and effort, marking a change this project makes to the team.
 
 - A triage is two independent investigators' reports on one snapshot of the open issues, read against the code at one
   commit. Studio checks every finding mechanically: the issue is in the snapshot and every file exists inside the
-  checkout; a finding that needs code (`present`, `fixed?`) also states a line range (`a-b`, at most 200 lines) and a
-  symbol its file names (as written, or its last dotted name, as a whole word: a name check, not a definition check),
+  checkout; a finding that needs code (`present`, `fixed?`) also states a line range (`a-b`; all its ranges in one file
+  at most 200 lines together) and a symbol that is one name (its last part at least 3 characters, not a keyword) written,
+  whole or by its last part as a whole word, from 200 lines above that range (the function it sits in) to 15 lines after
+  it (a name check, not a definition check),
   quotes at least one distinctive line (16 characters or more, whitespace, commas and semicolons aside, naming something
   besides keywords: `} catch (e) {` alone is not evidence), and every quoted line is in its file within 15 lines of the
   stated range and inside what `fs_read` returned to that investigator in its round. It compares the two reports: the
@@ -190,9 +192,13 @@ model and effort, marking a change this project makes to the team.
   (both find it already fixed: a person rechecks it, it is never closed on that evidence). Sets match by overlap: when
   the two reports' sets (or one-change groups at one file) differ by one issue, the issues both name are the package (a
   single when one is left), marked as an overlap, and the other issue goes to "For you to judge"; a larger difference all
-  goes there. Everything else is listed under "For you to judge" with the reason.
+  goes there. An issue one report leaves out of the middle of an order sends the whole set there: the order without it
+  is not one both gave. A member both find already fixed is marked a recheck inside its set, on the approval card too.
+  Everything else is listed under "For you to judge" with the reason.
 - Issues both reports find `not-found` (it needs more information) or both `not-code` are their own agreed outcome
-  (`rec.noCode`), listed as "Agreed: nothing to change in the code": neither a package nor a disagreement.
+  (`rec.noCode`, one entry per state), listed as "Agreed: nothing to change in the code": neither a package nor a
+  disagreement. Both reports must pass the check for that too; otherwise the issue goes to "For you to judge". It is
+  shown only in Studio, never written to GitHub.
 - Security comes from the issue's labels or either report (one report's `yes` is never a disagreement); a security
   package says its issues are referenced, not closed, by a pull request and close only after a recheck.
 - A package is waiting for approval, approved, or stale (an issue's title, text or labels changed since it was
@@ -262,7 +268,8 @@ Categories card), `tests/acceptance/issue-categories.yaml`.
    with `triage_submit`: Studio refuses a report for another commit or one that does not cover the batch exactly once,
    and answers with every finding that fails the check (a file, symbol, line range or quote it cannot find, or a quote
    `fs_read` never showed that investigator), so the investigator can correct it. The ledger records a digest of what
-   `fs_read` returned next to each report.
+   `fs_read` returned next to each report; a report whose reads are missing or changed is refused, and one from a round
+   that ran before Studio recorded reads is refused by name (triage those issues again).
 4. **Record.** Studio checks both reports (refused when both ran on the same model), reads the issues again (a package
    with an issue edited meanwhile goes to "For you to judge"), joins the batch to the stored triage (a closed issue's
    package is dropped, an edited issue's package becomes stale and the issue is taken again by a later batch) and

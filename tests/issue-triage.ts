@@ -98,7 +98,22 @@ try{
  { const far=vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines:'1-5'}]}));
   ok(!far.ok&&far.problems.some(p=>/not within 15 lines of its locus's stated range/.test(p)),'a quote that is in the file but far from the stated lines fails',JSON.stringify(far.problems)); }
  for(const lines of ['','near the top','45-','1-500'])ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines}]})).problems.some(p=>/is not a line range/.test(p)),`a locus whose lines are "${lines}" fails: no range to check the quote against`);
- ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'route declarations',lines:'45-51'}]})).problems.some(p=>/symbol "route declarations" is not in the file/.test(p)),'a symbol the file never names (a description) fails');
+ ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'route declarations',lines:'45-51'}]})).problems.some(p=>/symbol "route declarations" is not a name written in the code/.test(p)),'a symbol that is a description, not a name, fails');
+ ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'table pickRoute',lines:'45-51'}]})).problems.some(p=>/is not a name/.test(p)),'a description ending in a real name still fails: not only its last word is checked');
+ for(const symbol of ['r','e','try','return','table.e'])ok(vone(at({locus:[{file:'src/a/long.ts',symbol,lines:'45-51'}]})).problems.some(p=>/is not a name written in the code/.test(p)),`a symbol too short or a keyword ("${symbol}") fails, though the file has it`);
+ { const off=vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines:'45-51'},{file:'src/a/long.ts',symbol:'pickRoute',lines:'1-3'}]}));
+  ok(off.problems.some(p=>/symbol "pickRoute" is not written from 200 lines above the stated range 1-3 to 15 lines after it/.test(p)),'a symbol the file has, but only well below its stated range, fails',JSON.stringify(off.problems)); }
+ { writeFileSync(join(repo,'src/a/body.ts'),['export function loadRows(table: Row[]) {',...Array.from({length:120},(_,i)=>`  const v${i+1} = table[${i}]`),'  return table.filter((r) => r.visible && !r.archived)','}',...Array.from({length:240},(_,i)=>`// tail ${i+1}`),'loadRows([])'].join('\n'));
+  const body=(lines:string)=>vone(finding(1,{locus:[{file:'src/a/body.ts',symbol:'loadRows',lines}],evidence:'return table.filter((r) => r.visible && !r.archived)'}));
+  ok(body('118-124').ok,'the function a range sits in counts as its symbol, written up to 200 lines above it');
+  ok(body('330-340').problems.some(p=>/symbol "loadRows" is not written from 200 lines above/.test(p)),'a symbol written more than 200 lines above the range, and only far below it, fails'); }
+ ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute()',lines:'45-51'}]})).ok,'a symbol written as a call counts by its name');
+ for(const lines of ['51-45','0','0-10'])ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines}]})).problems.some(p=>/is not a line range/.test(p)),`a reversed or zero range ("${lines}") fails`);
+ { writeFileSync(join(repo,'src/a/big.ts'),[...Array.from({length:700},(_,i)=>`const step${i+1} = pickRoute(table, '/p${i+1}')`)].join('\n'));
+  const tiles=[1,200,400].map(s=>({file:'src/a/big.ts',symbol:'pickRoute',lines:`${s}-${s+199}`}));
+  const tiled=vone(finding(1,{locus:tiles,evidence:"const step650 = pickRoute(table, '/p650')"}));
+  ok(!tiled.ok&&tiled.problems.some(p=>/stated line ranges cover 600 lines; at most 200 in one file/.test(p)),'several ranges in one file cannot tile it: together they cover at most 200 lines',JSON.stringify(tiled.problems));
+  ok(vone(finding(1,{locus:[{file:'src/a/big.ts',symbol:'pickRoute',lines:'600-699'},{file:'src/a/big.ts',symbol:'pickRoute',lines:'100-199'}],evidence:"const step650 = pickRoute(table, '/p650')"})).ok,'two ranges in one file within 200 lines together pass'); }
  ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'Router.pickRoute',lines:'45-51'}]})).ok&&!vone(at({locus:[{file:'src/a/long.ts',symbol:'pick',lines:'45-51'}]})).ok,'a dotted symbol counts by its last name, as a whole word only');
  { const generic=vone(at({evidence:'} catch (e) { ; return null'}));
   ok(!generic.ok&&generic.problems.some(p=>/no distinctive quoted code/.test(p)),'quotes that only say "} catch (e) {" or "return null" are not evidence on their own',JSON.stringify(generic.problems)); }
@@ -129,6 +144,14 @@ try{
   ok(!wide.packages.length&&wide.toHuman.some(h=>h.issues.join()==='1,3,4'),'sets two or more issues apart stay with a person',JSON.stringify(wide));
   const ord=T.proposePackages(report([finding(1),finding(3),finding(4)],{related:[{members:[1,3,4],order:[4,3,1],why:'x'}]}),report([finding(1),finding(3),finding(4)],{related:[{members:[1,3],order:[3,1],why:'x'}],alone:[4]}),snap,read);
   ok(ord.packages[0]?.kind==='ordered'&&ord.packages[0].order.join()==='3,1','an overlap keeps the order both reports give its issues');
+  const mid=T.proposePackages(report([finding(1),finding(3),finding(4)],{related:[{members:[1,3,4],order:[1,3,4],why:'x'}]}),report([finding(1),finding(3),finding(4)],{related:[{members:[1,4],order:[1,4],why:'x'}],alone:[3]}),snap,read);
+  ok(!mid.packages.length&&mid.toHuman.some(h=>h.issues.join()==='1,3,4'&&/between others in its order/.test(h.reason)),'an issue one report leaves out of the middle of an order sends the whole set to a person, not 1 → 4 as ordered',JSON.stringify(mid));
+  const end=T.proposePackages(report([finding(1),finding(3),finding(4)],{related:[{members:[1,3,4],order:[1,3,4],why:'x'}]}),report([finding(1),finding(3),finding(4)],{related:[{members:[1,3],order:[1,3],why:'x'}],alone:[4]}),snap,read);
+  ok(end.packages[0]?.kind==='ordered'&&end.packages[0].order.join()==='1,3','an issue left off the end of an order keeps the order of the rest');
+  const two=T.proposePackages(report([finding(1),finding(3),finding(4)],{related:[{members:[1,3],order:[],why:'x'}],alone:[4]}),report([finding(1),finding(3),finding(4)],{related:[{members:[1,4],order:[],why:'x'},{members:[3],order:[],why:'y'}]}),snap,read);
+  ok(two.packages.some(p=>p.members.join()==='3'&&p.agreement==='overlap'&&p.left?.join()==='1'),'a set too far from the first set it shares as much with is matched to another one issue apart',JSON.stringify(two));
+  const mixed=T.proposePackages(report([finding(1),finding(3,{state:'fixed?'})],{related:[{members:[1,3],order:[],why:'x'}]}),report([finding(1),finding(3,{state:'fixed?'})],{related:[{members:[1,3],order:[],why:'x'}]}),snap,read);
+  ok(mixed.packages[0]?.recheck?.join()==='3'&&mixed.packages[0].kind==='unordered','a member both find already fixed is marked a recheck inside its set',JSON.stringify(mixed.packages));
   const weak=T.proposePackages(x,report([finding(1),finding(3,{evidence:'not in the code at all'}),finding(4)],{related:[{members:[1,3],order:[],why:'x'}],alone:[4]}),snap,read);
   ok(!weak.packages.length&&weak.toHuman.some(h=>h.issues.join()==='1,3'&&/code check fails/.test(h.reason)),'an overlap package still needs every member to pass the code check in both reports');
   const grp=(members:number[],file='src/a/url.ts')=>({id:'g',fix_at:{file,symbol:'match'},members,why_one_change:'one fix'});
@@ -137,11 +160,15 @@ try{
   ok(!T.proposePackages(report([finding(1),finding(3),finding(4)],{groups:[grp([1,3,4])]}),report([finding(1),finding(3),finding(4)],{groups:[grp([1,3],'src/a/clip.ts')],alone:[4]}),snap,read).packages.length,'groups at different files never match');
   const fixedSet=T.proposePackages(report([finding(1,{state:'fixed?'}),finding(3),nf(4)],{related:[{members:[1,4],order:[],why:'x'}],alone:[3]}),report([finding(1,{state:'fixed?'}),finding(3),nf(4)],{related:[{members:[1,4],order:[],why:'x'}],alone:[3]}),snap,read);
   ok(fixedSet.packages.find(p=>p.members.join()==='1')?.kind==='recheck'&&fixedSet.noCode[0]?.issues.join()==='4','a set left with one issue once its not-found issue is set aside is a single, and one fixed in both a recheck',JSON.stringify(fixedSet)); }
+ { const bad=T.proposePackages(report([nf(1,{locus:[{file:'../x',symbol:'x',lines:'1'}]}),finding(4)],{alone:[1,4]}),report([nf(1),finding(4)],{alone:[1,4]}),snap,read);
+  ok(!bad.noCode.length&&bad.toHuman.some(h=>h.issues.join()==='1'&&/code check fails for #1/.test(h.reason)),'two not-found answers are agreed only when both pass the check: a path outside the checkout goes to a person',JSON.stringify(bad)); }
  { const x=report([nf(1),finding(4)],{alone:[1,4]}),rec1=T.triageRecord({project:'fixture',snapshot:snap,a:x,b:x,read,by:'t'});
   ok(rec1.noCode?.[0]?.issues.join()==='1'&&rec1.issues['1'].agree===true,'the stored triage keeps the agreed no-code issues');
   ok(T.withoutChanged(rec1,[1]).toHuman.some(h=>h.issues.join()==='1'&&/changed on GitHub/.test(h.reason))&&!T.withoutChanged(rec1,[1]).noCode?.length,'an agreed no-code issue edited meanwhile goes to a person');
   const later=T.atSnapshot(rec1,{...snap,issues:snap.issues.filter(i=>i.n!==1)});
   ok(!later.noCode?.length,'a closed issue leaves the no-code list');
+  { const m=T.mergeTriage(rec1,T.triageRecord({project:'fixture',snapshot:snap,a:report([nf(3),finding(4)],{alone:[3,4]}),b:report([nf(3),finding(4)],{alone:[3,4]}),read,by:'t3'})).noCode??[];
+   ok(m.length===1&&m[0].state==='not-found'&&m[0].issues.join()==='1,3','batches\' no-code issues merge into one entry per state',JSON.stringify(m)); }
   ok(T.mergeTriage(rec1,T.triageRecord({project:'fixture',snapshot:snap,a:report([finding(4)],{alone:[4]}),b:report([finding(4)],{alone:[4]}),read,by:'t2'})).noCode?.[0]?.issues.join()==='1','a later batch keeps the earlier no-code issues it did not investigate again'); }
  // --- the stored triage of a project, and what the Board reads ---
  const rec=T.triageRecord({project:'fixture',snapshot:snap,a,b,read,by:'issue-triage R-1',now:()=>'2026-10-28T01:00:00Z'});

@@ -18,7 +18,7 @@ import {must} from './git';
 import {localUnrestricted} from './local-execution';
 import {realInside} from './secure';
 import {listTree,searchTree,typedRead,LINES_PER_READ} from './review-read';
-import {approvePackages,atSnapshot,declinePackages,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,triageRecord,verifyReport,withoutChanged,NEAR,type Reads,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
+import {approvePackages,atSnapshot,declinePackages,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,triageRecord,verifyReport,withoutChanged,NEAR,SPAN,type Reads,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
 import type {IssueTriageStore} from './issue-triage-store';
 import {NativeToolFailure} from './host/types';
 import type {Engine,X} from './runtime/engine';
@@ -133,6 +133,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  const reportOf=(x:X,node:string):{report:Report;reads:Reads;by:{provider:string;model:string}}=>{
   const rn=x.run.nodes[node],r=rn?.data?.triageReport as Report|undefined,seen=rn?.data?.triageReads as Reads|undefined,trusted=engine.trusted(x.run.id);
   const e:any=trusted.entries.filter((e:any)=>e.record==='issue-triage-report'&&e.data?.node===node).at(-1);
+  // a report from before Studio recorded reads (a round in flight when Studio was updated): never checked without them
+  if(r&&seen===undefined&&trusted.ok&&e&&e.head===digest(r)&&e.data?.reads===undefined)throw new Error(`Investigator ${node.toUpperCase()} ran before Studio recorded what fs_read showed it, so its quotes cannot be checked: triage these issues again`);
   if(!r||!seen||!trusted.ok||!e||e.head!==digest(r)||e.data?.reads!==digest(seen))throw new Error(`Investigator ${node.toUpperCase()}'s report is missing or changed`);
   return{report:r,reads:seen,by:{provider:String(e.data.provider),model:String(e.data.model)}};};
 
@@ -148,7 +150,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    const added=merged.packages.filter(p=>!prev?.packages.some(q=>q.id===p.id)).map(p=>p.id),matched=(merged.cross??[]).filter(c=>!prev?.cross?.some(q=>q.id===c.id)).map(c=>c.id);
    store.write(merged);x.ctx.issueTriage={...t,added,matched};
    engine.record(x,'issue-triage-written',{head:digest(merged),data:{schema:1,project:t.project,commit:t.commit,added,toHuman:merged.toHuman.length,changed}} as any);
-   const none=(batch.noCode??[]).flatMap(n=>n.issues).length;
+   // counted from what was written: an issue edited meanwhile, or closed, is not agreed on any more
+   const none=(merged.noCode??[]).flatMap(n=>n.issues).filter(n=>t.batch.includes(n)).length;
    x.rn.note=`${added.length} new work package${added.length===1?'':'s'}${none?`; ${none} agreed to have nothing to change in the code`:''}${matched.length?`; ${matched.length} at the same function as an earlier package, to decide on the project page`:''}${changed.length?`; ${changed.length} issue${changed.length===1?'':'s'} changed on GitHub meanwhile`:''}`;x.save();
    return added.length?'ok':'none';
   }finally{dropTree(x.run.id);}};
@@ -158,10 +161,11 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const packs=(rec?.packages??[]).filter(p=>t.added.includes(p.id)),sec=packs.filter(p=>p.security);
   // how strongly the two reports agree on each package: the same issues, or sets one issue apart (that one went to the captain)
   const agreed=(p:typeof packs[number])=>p.agreement==='overlap'?` · overlap, ${(p.left??[]).map(n=>`#${n}`).join(' ')} left to you / 部分重疊，${(p.left??[]).map(n=>`#${n}`).join(' ')} 交給你`:p.agreement==='exact'?' · both reports alike / 兩份報告一致':'';
-  const line=(p:typeof packs[number])=>`${p.id} · ${p.kind}${p.security?' · security':''}${agreed(p)}: ${(p.order.length?p.order:p.members).map(n=>`#${n}`).join(' → ')}${p.why?` (${p.why})`:''}`;
+  // a member both reports find already fixed is a recheck inside its set, never closed on that evidence
+  const line=(p:typeof packs[number])=>`${p.id} · ${p.kind}${p.security?' · security':''}${agreed(p)}: ${(p.order.length?p.order:p.members).map(n=>`#${n}${p.recheck?.includes(n)?' (recheck / 重新確認)':''}`).join(' → ')}${p.why?` (${p.why})`:''}`;
   await engine.card(x,'permission',{captainOnly:true,title:`Approve ${packs.length} work package${packs.length===1?'':'s'} for ${t.repository}?`,zhTitle:`核准 ${t.repository} 的 ${packs.length} 個工作包嗎？`,
-   en:{intent:`Work packages for ${t.repository}`,why:`Two investigators on different models read the code at ${t.commit.slice(0,7)} and agree on these. For every issue in them Studio checked both reports: each file exists at that commit, each named symbol appears in its file, and each quoted line is in its file within ${NEAR} lines of the stated range and in what fs_read showed that investigator; each finding quotes at least one distinctive line. Studio did not run the code: whether the quoted lines are the bug is the investigators' judgement.${sec.length?` ${sec.length} hold security issues: approve them once whoever owns security for this repository agrees.`:''}`,how:'Approve to let them be worked, one person per package, or keep them as proposals. Each issue is read again first: one that changed is not approved.'},
-   zh:{intent:`${t.repository} 的工作包`,why:`兩位不同模型的調查員在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。這些包裡的每張 issue，Studio 都核對了兩份報告：每個檔案在那個 commit 存在、每個指名的 symbol 出現在它的檔案裡、每行引用的程式碼都在檔案裡標示行號範圍前後 ${NEAR} 行內，而且是那位調查員用 fs_read 讀到的內容；每項發現至少引用一行有辨識度的程式碼。Studio 沒有執行程式碼：引用的那幾行是不是 bug，是調查員的判斷。${sec.length?`其中 ${sec.length} 個含安全 issue：請先取得這個 repo 的安全負責人同意再核准。`:''}`,how:'核准後就能開工，一包一個人；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。'},
+   en:{intent:`Work packages for ${t.repository}`,why:`Two investigators on different models read the code at ${t.commit.slice(0,7)} and agree on these. For every issue in them Studio checked both reports: each file exists at that commit, each stated range is at most ${SPAN} lines in a file, each named symbol is a name (not a description) written from ${SPAN} lines above its stated range to ${NEAR} lines after it, and each quoted line is in its file within ${NEAR} lines of the stated range and in what fs_read showed that investigator; each finding quotes at least one distinctive line. Studio did not run the code: whether the quoted lines are the bug is the investigators' judgement.${sec.length?` ${sec.length} hold security issues: approve them once whoever owns security for this repository agrees.`:''}`,how:'Approve to let them be worked, one person per package, or keep them as proposals. Each issue is read again first: one that changed is not approved.'},
+   zh:{intent:`${t.repository} 的工作包`,why:`兩位不同模型的調查員在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。這些包裡的每張 issue，Studio 都核對了兩份報告：每個檔案在那個 commit 存在、每個檔案標示的行號範圍合計最多 ${SPAN} 行、每個指名的 symbol 是一個名稱（不是描述），而且寫在標示範圍上方 ${SPAN} 行到下方 ${NEAR} 行之間、每行引用的程式碼都在檔案裡標示行號範圍前後 ${NEAR} 行內，而且是那位調查員用 fs_read 讀到的內容；每項發現至少引用一行有辨識度的程式碼。Studio 沒有執行程式碼：引用的那幾行是不是 bug，是調查員的判斷。${sec.length?`其中 ${sec.length} 個含安全 issue：請先取得這個 repo 的安全負責人同意再核准。`:''}`,how:'核准後就能開工，一包一個人；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。'},
    body:[...packs.map(line),...((t as any).matched?.length?['',`${(t as any).matched.length} more at the same function as an earlier package: join or keep apart on the project page. / 另有 ${(t as any).matched.length} 項和既有工作包在同一個函式：到專案頁決定併入或分開。`]:[]),'',`Code read at / 程式碼版本: ${t.commit}`,'The project page lists them, under GitHub issues. / 專案頁的「GitHub issues」可以看到。'].join('\n'),links:[{label:'Open the work packages',href:`#/project/${encodeURIComponent(t.project)}`}],
    options:[{id:'approve',label:`Approve ${packs.length} package${packs.length===1?'':'s'}`,labelZh:`核准 ${packs.length} 個工作包`,primary:true},{id:'close',label:'Keep as proposals',labelZh:'先留著當提案',hold:true}]});
   return{wait:true};};

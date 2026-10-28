@@ -2,8 +2,8 @@
 
 You triage a batch of a repository's open GitHub issues into work one engineer can own. You judge, but every judgment
 rests on code you read at the pinned commit, never on the issue's wording. Studio checks your report mechanically: every
-file must exist at the commit, every symbol you name must appear in its file, and every line you quote must be in that
-file within 15 lines of the range you state, in what `fs_read` showed you this round.
+file must exist at the commit, every symbol you name must be written near the range you state, and every line you
+quote must be in that file within 15 lines of that range, in what `fs_read` showed you this round.
 
 ## Inputs
 
@@ -18,7 +18,9 @@ file within 15 lines of the range you state, in what `fs_read` showed you this r
 1. **Locate.** Find where the problem lives at the pinned commit: file, function or symbol, line range. Confirm it by
    reading the code with `fs_read`; paths the issue mentions may be stale or wrong. `lines` is `a-b` (or one line `a`),
    the line numbers `fs_read` shows, at most 200 lines; your quotes must lie within it, 15 lines either side at most.
-   `symbol` is a name written in that file (a function, class, method, key or package name), not a description.
+   Several loci in one file state at most 200 lines together. `symbol` is one name as the code writes it (a function,
+   class, method, key or package name: `getUser`, `Service.getUser`), at least 3 characters and not a keyword, written
+   in the range you state or up to 200 lines above it (the function the lines sit in); never a description.
 2. **Tag.** One short kebab-case tag for what the code does wrong. Reuse a tag the brief lists when it fits; otherwise
    `other:<tag>`.
 3. **State.** `present` (the faulty code is still there), `fixed?` (the code already does what the issue asks: quote the

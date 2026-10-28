@@ -13,7 +13,9 @@ export type Report={commit:string;issues:Finding[];groups:{id:string;fix_at:{fil
 export type Checked={n:number;ok:boolean;problems:string[];security:boolean};
 export type Package={kind:'ordered'|'unordered'|'one-change'|'single'|'recheck';members:number[];order:number[];why:string;security:boolean;
  /** exact: both reports name these issues alike; overlap: their sets differed by one issue (left), which went to a person */
- agreement?:'exact'|'overlap';left?:number[]};
+ agreement?:'exact'|'overlap';left?:number[];
+ /** members of a set both reports find already fixed: inside the package, each is a recheck, never a close */
+ recheck?:number[]};
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const PAGES=40, BODY_MAX=16000, TITLE_MAX=300;
@@ -75,16 +77,21 @@ const KEYWORDS=new Set('return null undefined true false else if for while do sw
 /** evidence on its own: at least DISTINCT characters squashed, and at least 8 letters of names that are not keywords
  *  (`} catch (e) {`, `return null`, `export default App` say nothing about where the problem is) */
 export const distinctive=(p:string)=>squash(p).length>=DISTINCT&&(p.match(/[A-Za-z_$][\w$]*/g)??[]).filter(w=>!KEYWORDS.has(w)).join('').length>=8;
-/** the locus's symbol is in its file: written as it is, or its last name (`Service.getUser`: getUser) as a whole word. A
- *  name check, not a definition check: it refuses a symbol the file never mentions ("dependency declarations"). */
+/** a locus's symbol is one name as code writes it (`getUser`, `Service.getUser`, `Foo::bar`, `fast-xml-parser`), its last
+ *  part at least 3 characters and not a keyword; it must appear, whole or by that last part as a whole word, from SPAN
+ *  lines above the stated range (the function the lines sit in starts above them) to NEAR lines after it. A name check,
+ *  not a definition check: it refuses a description ("dependency declarations"), a name too short to mean anything (`x`)
+ *  and a name nowhere around the stated lines. */
+const SEP=/\.|::|#|\/|->/;
+const NAME=/^[A-Za-z_$][\w$-]*(?:(?:\.|::|#|\/|->)[A-Za-z_$][\w$-]*)*(?:\(\))?$/;
+export const symbolName=(symbol:string)=>{const t=symbol.trim();if(!NAME.test(t))return null;const name=t.replace(/\(\)$/,''),last=name.split(SEP).at(-1)!;return last.length>=3&&!KEYWORDS.has(last)?{name,last}:null;};
 const word=(s:string,text:string)=>new RegExp(`(?<![\\w$])${s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?![\\w$])`).test(text);
-const named=(symbol:string,text:string)=>{const t=symbol.trim(),last=t.split(/[^\w$]+/).filter(Boolean).at(-1);return!!t&&(word(t,text)||!!last&&word(last,text));};
 /** what fs_read returned to one investigator in its round: each file, the line ranges it was shown */
 export type Reads=Record<string,[number,number][]>;
 const joined=(rs:[number,number][])=>[...rs].sort((x,y)=>x[0]-y[0]).reduce<[number,number][]>((m,r)=>{const l=m.at(-1);if(l&&r[0]<=l[1]+1)l[1]=Math.max(l[1],r[1]);else m.push([r[0],r[1]]);return m;},[]);
 /** Each finding against the snapshot and the code at the report's commit: the issue exists, and every file exists inside the
- *  checkout. A finding that needs code (present, fixed?) also: every locus states a line range and names a symbol its file
- *  has; every quoted line is in its file within NEAR lines of a locus's stated range and, when the investigator's reads are
+ *  checkout. A finding that needs code (present, fixed?) also: every locus states a line range (all of them together at
+ *  most SPAN lines in one file) and names a symbol written from SPAN lines above it to NEAR lines after it; every quoted line is in its file within NEAR lines of a locus's stated range and, when the investigator's reads are
  *  given, inside what fs_read returned to it; and at least one quoted line is distinctive. Security: the labels or the word. */
 export function verifyReport(r:Report,snap:Snapshot,read:(file:string)=>string|null,reads?:Reads):Checked[]{
  const byN=new Map(snap.issues.map(i=>[i.n,i])),seen=reads?new Map<string,[number,number][]>():null;
@@ -92,12 +99,17 @@ export function verifyReport(r:Report,snap:Snapshot,read:(file:string)=>string|n
  const span=(ls:string[],a:number,b:number)=>squash(ls.slice(Math.max(0,a-1),Math.max(0,b)).join('\n'));
  return r.issues.map(f=>{const problems:string[]=[],issue=byN.get(f.n),code=f.state==='present'||f.state==='fixed?';
   if(!issue)problems.push(`#${f.n} is not in the snapshot`);
-  const loci:{file:string;lines:string[];at:[number,number]|null}[]=[];
+  const loci:{file:string;lines:string[];at:[number,number]|null}[]=[],stated=new Map<string,number>();
   for(const l of f.locus){if(!inside(l.file)){problems.push(`path ${l.file} is outside the checkout`);continue;}const file=normalize(l.file),t=read(file);if(t===null){problems.push(`${l.file} does not exist at ${r.commit.slice(0,7)}`);continue;}
    const at=lineRange(l.lines);
    if(code&&!at)problems.push(`${l.file}: lines "${l.lines.slice(0,40)}" is not a line range like 12-30 (at most ${SPAN} lines)`);
-   if(code&&!named(l.symbol,t))problems.push(`${l.file}: the symbol "${l.symbol.slice(0,80)}" is not in the file`);
-   loci.push({file,lines:t.split('\n'),at});}
+   const lines=t.split('\n'),nm=code?symbolName(l.symbol):null;
+   if(code&&!nm)problems.push(`${l.file}: the symbol "${l.symbol.slice(0,80)}" is not a name written in the code (one name like getUser or Service.getUser, at least 3 characters, not a keyword)`);
+   else if(code&&at){const win=lines.slice(Math.max(0,at[0]-1-SPAN),at[1]+NEAR).join('\n');if(!word(nm!.name,win)&&!word(nm!.last,win))problems.push(`${l.file}: the symbol "${l.symbol.slice(0,80)}" is not written from ${SPAN} lines above the stated range ${l.lines} to ${NEAR} lines after it`);}
+   // several ranges in one file never cover more than one range may: the window stays a window
+   if(code&&at)stated.set(file,(stated.get(file)??0)+at[1]-at[0]+1);
+   loci.push({file,lines,at});}
+  for(const[file,n]of stated)if(n>SPAN)problems.push(`${file}: the stated line ranges cover ${n} lines; at most ${SPAN} in one file`);
   if(code){if(!f.locus.length)problems.push('no code location');const parts=fragments(f.evidence);if(!parts.length)problems.push('no quoted code');
    else if(!parts.some(distinctive))problems.push(`no distinctive quoted code: quote a line of at least ${DISTINCT} characters that names something (not only "return null" or "} catch {")`);
    for(const p of parts){const q=squash(p),near=loci.filter(l=>l.at&&span(l.lines,l.at[0]-NEAR,l.at[1]+NEAR).includes(q));
@@ -135,36 +147,46 @@ export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:strin
  const va=new Map(verifyReport(a,snap,read,reads.a).map(c=>[c.n,c])),vb=new Map(verifyReport(b,snap,read,reads.b).map(c=>[c.n,c]));
  const cmp=compareReports(a,b),agree=new Map(cmp.map(c=>[c.n,c]));
  const packages:Package[]=[],toHuman:{issues:number[];reason:string}[]=[],placed=new Set<number>(),inSnap=new Set(snap.issues.map(i=>i.n));
- const none=new Map(cmp.filter(c=>c.agree&&!needsCode(c.state)&&inSnap.has(c.n)).map(c=>[c.n,c.state as NoCode['state']]));
+ // agreed with nothing to change: no-code when both reports pass the check, else for a person (a bad path, an unknown issue)
+ const idle=new Set(cmp.filter(c=>c.agree&&!needsCode(c.state)).map(c=>c.n)),passed=(n:number)=>!!(va.get(n)?.ok&&vb.get(n)?.ok);
+ const none=new Map(cmp.filter(c=>idle.has(c.n)&&inSnap.has(c.n)&&passed(c.n)).map(c=>[c.n,c.state as NoCode['state']]));
  const noCode:NoCode[]=(['not-found','not-code'] as const).map(state=>({issues:[...none].filter(([,s])=>s===state).map(([n])=>n),state,reason:NO_CODE[state]})).filter(x=>x.issues.length);
  none.forEach((_s,n)=>placed.add(n));
+ const failed=[...idle].filter(n=>!none.has(n)).sort((x,y)=>x-y);
+ if(failed.length){toHuman.push({issues:failed,reason:`both reports find nothing to change in the code, but the code check fails for ${failed.map(n=>'#'+n).join(' ')}`});failed.forEach(n=>placed.add(n));}
  // an issue with no code to change is in no package: the sets are compared without it
- const real=(ms:number[])=>ms.filter(n=>!none.has(n));
+ const real=(ms:number[])=>ms.filter(n=>!idle.has(n));
  const sound=(ms:number[])=>ms.filter(n=>!(va.get(n)?.ok&&vb.get(n)?.ok&&agree.get(n)?.agree&&needsCode(agree.get(n)?.state)));
  const security=(ms:number[])=>ms.some(n=>va.get(n)?.security||vb.get(n)?.security);
  const both=(n:number,s:Finding['state'])=>a.issues.find(f=>f.n===n)?.state===s&&b.issues.find(f=>f.n===n)?.state===s;
  const take=(kind:Package['kind'],members:number[],order:number[],why:string,left:number[]=[])=>{const weak=sound(members);
   if(weak.length){toHuman.push({issues:members,reason:`the reports disagree on, or the code check fails for, ${weak.map(n=>'#'+n).join(' ')}`});}
-  else packages.push({kind,members:sorted(members),order,why,security:security(members),agreement:left.length?'overlap':'exact',...(left.length?{left}:{})});
+  else{const re=members.length>1?sorted(members.filter(n=>both(n,'fixed?'))):[];
+   packages.push({kind,members:sorted(members),order,why,security:security(members),agreement:left.length?'overlap':'exact',...(left.length?{left}:{}),...(re.length?{recheck:re}:{})});}
   members.forEach(n=>placed.add(n));};
  const single=(n:number,left:number[]=[])=>take(both(n,'fixed?')?'recheck':'single',[n],[n],'',left);
- /** each of a's sets against the unused b set it shares most issues with; a set left unmatched stays for a person */
- const overlap=<T,>(mine:T[],theirs:T[],ms:(t:T)=>number[],fits:(x:T,y:T)=>boolean,on:(x:T,y:T,common:number[],left:number[])=>void)=>{const used=new Set<T>();
+ /** each of a's sets against an unused b set at most one issue apart, the one sharing most issues first; a set left
+  *  unmatched stays for a person. `aside` sends the one issue only one report puts in the set to a person. */
+ const overlap=<T,>(mine:T[],theirs:T[],ms:(t:T)=>number[],fits:(x:T,y:T)=>boolean,on:(x:T,y:T,common:number[],left:number[],aside:()=>void)=>void)=>{const used=new Set<T>();
   for(const x of mine){const xs=real(ms(x));if(!xs.length)continue;
-   const y=theirs.filter(t=>!used.has(t)&&fits(x,t)).map(t=>({t,n:real(ms(t)).filter(n=>xs.includes(n)).length})).filter(c=>c.n>0).sort((p,q)=>q.n-p.n)[0]?.t;if(y===undefined)continue;
-   const ys=real(ms(y)),common=sorted(xs.filter(n=>ys.includes(n))),left=sorted([...xs.filter(n=>!ys.includes(n)),...ys.filter(n=>!xs.includes(n))]);
-   if(left.length>1)continue;used.add(y);
+   const m=theirs.filter(t=>!used.has(t)&&fits(x,t)).map(t=>{const ys=real(ms(t));return{t,common:sorted(xs.filter(n=>ys.includes(n))),left:sorted([...xs.filter(n=>!ys.includes(n)),...ys.filter(n=>!xs.includes(n))])};})
+    .filter(c=>c.common.length>0&&c.left.length<=1).sort((p,q)=>q.common.length-p.common.length)[0];if(!m)continue;
+   used.add(m.t);const{common,left}=m;
    // the one issue only one report puts in the set: a person decides whether it belongs
-   if(left.length&&!placed.has(left[0])){toHuman.push({issues:left,reason:`only one report puts #${left[0]} with ${common.map(n=>'#'+n).join(' ')}; the issues both name are proposed without it`});placed.add(left[0]);}
-   on(x,y,common,left);}};
- overlap(a.related,b.related,r=>r.members,()=>true,(r,other,common,left)=>{
+   const aside=()=>{if(left.length&&!placed.has(left[0])){toHuman.push({issues:left,reason:`only one report puts #${left[0]} with ${common.map(n=>'#'+n).join(' ')}; the issues both name are proposed without it`});placed.add(left[0]);}};
+   on(x,m.t,common,left,aside);}};
+ overlap(a.related,b.related,r=>r.members,()=>true,(r,other,common,left,aside)=>{
+  // the issue one report leaves out sits between others in an order: the order without it is not one both gave
+  const between=left.length&&[r.order,other.order].some(o=>{const i=o.indexOf(left[0]);return i>0&&i<o.length-1;});
+  if(between){const all=sorted([...common,...left]).filter(n=>!placed.has(n));toHuman.push({issues:all,reason:`only one report puts #${left[0]} in this set, between others in its order: the order without it is not one both reports gave`});all.forEach(n=>placed.add(n));return;}
+  aside();
   if(common.length<2){single(common[0],left);return;}
   const ox=r.order.filter(n=>common.includes(n)),oy=other.order.filter(n=>common.includes(n));
   // no order from either side: one set, its owner picks the order
   if(!ox.length||!oy.length){take('unordered',common,[],r.why,left);return;}
   if(ox.join(',')!==oy.join(',')){toHuman.push({issues:common,reason:'the reports name the same set in a different order'});common.forEach(n=>placed.add(n));return;}
   take('ordered',common,ox,r.why,left);});
- overlap(a.groups,b.groups,g=>g.members,(g,o)=>normalize(o.fix_at.file)===normalize(g.fix_at.file),(g,_o,common,left)=>{if(common.length<2)single(common[0],left);else take('one-change',common,common,g.why_one_change,left);});
+ overlap(a.groups,b.groups,g=>g.members,(g,o)=>normalize(o.fix_at.file)===normalize(g.fix_at.file),(g,_o,common,left,aside)=>{aside();if(common.length<2)single(common[0],left);else take('one-change',common,common,g.why_one_change,left);});
  const bAlone=new Set(b.alone);
  for(const n of a.alone)if(bAlone.has(n)&&!placed.has(n))single(n);
  const rest=[...new Set([...a.issues,...b.issues].map(f=>f.n))].filter(n=>!placed.has(n)).sort((x,y)=>x-y);
@@ -217,6 +239,8 @@ export function pickBatch(snap:Snapshot,prev:TriageRecord|null,o:{size:number;is
 }
 /** issues kept in each no-code entry, the empty entries dropped */
 const noCodeOf=(xs:NoCode[]|undefined,keep:(n:number)=>boolean)=>(xs??[]).map(x=>({...x,issues:x.issues.filter(keep)})).filter(x=>x.issues.length);
+/** one entry per state, its issues once each, in order */
+const noCodeMerged=(xs:NoCode[])=>(['not-found','not-code'] as const).map(state=>({issues:sorted([...new Set(xs.filter(x=>x.state===state).flatMap(x=>x.issues))]),state,reason:NO_CODE[state]})).filter(x=>x.issues.length);
 /** Issues edited on GitHub while they were investigated: their packages go to a person (the next batch takes them again). */
 export function withoutChanged(rec:TriageRecord,changed:number[]):TriageRecord{
  const c=new Set(changed),hit=rec.packages.filter(p=>p.members.some(n=>c.has(n))),gone=(rec.noCode??[]).flatMap(x=>x.issues).filter(n=>c.has(n));if(!hit.length&&!gone.length)return rec;
@@ -255,7 +279,7 @@ export function mergeTriage(prev:TriageRecord|null,next:TriageRecord):TriageReco
   if(!started(old))cross.push({id:`X-${++lastX}`,issues:np.members,package:{...np},with:old.id,where});
   else added.push(recheckOf(np,old,where));}
  const investigated=Object.entries(issues).filter(([,v])=>v.investigated).map(([n])=>Number(n)).sort((x,y)=>x-y);
- return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman],noCode:[...noCodeOf(prev.noCode,n=>open(n)&&!redone.has(n)),...(next.noCode??[])]};
+ return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman],noCode:noCodeMerged([...noCodeOf(prev.noCode,n=>open(n)&&!redone.has(n)),...(next.noCode??[])])};
 }
 /** The captain's approval of proposed packages, against the issues as GitHub has them now: a package whose issue was closed or
  *  edited since it was investigated is stale, never approved. */
