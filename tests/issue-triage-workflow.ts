@@ -139,6 +139,7 @@ try {
   during.a = () => { open = open.map((i) => i.number === 4 ? { ...i, body: "edited during the investigation" } : i); };
   r = await runOf();
   const third = store.get("proj")!;
+  ok(/Earlier work packages[\s\S]*P-1[\s\S]*src\/url\.ts · match/.test(prompts.a ?? ""), "a later batch's brief lists the earlier work packages and where they are, so a finding can be matched to one", (prompts.a ?? "").slice(-600));
   ok(/not in this batch/.test(JSON.stringify(results.a?.[0])), "issue_read refuses an open issue that is not in this batch");
   ok(third.toHuman.some((h) => h.issues.includes(4) && /changed on GitHub/.test(h.reason)) && !third.packages.some((p) => p.members.includes(4)), "an issue edited during the investigation goes to a person, not into a package", JSON.stringify(third.toHuman));
   ok(third.packages.some((p) => p.members.join() === "2" && p.status === "proposed" && p.id === "P-4") && !third.packages.some((p) => p.id === "P-2"), "the stale package's issue, investigated again, replaces it with a new proposal");
@@ -188,6 +189,19 @@ try {
     open = open.filter((i) => i.number !== 2); let gone = ""; try { await flow.approve("proj", ["P-4"], "captain (project page)"); } catch (e: any) { gone = e.message; }
     ok(/check again/.test(gone) && store.get("proj")!.packages.find((p) => p.id === "P-4")!.status === "proposed", "an issue missing from one read is refused once, the package left waiting", gone);
     open = was; }
+
+  // --- 6c. a cross-batch match, decided on the project page: join it to the earlier package, or keep it apart ---
+  { const cur = store.get("proj")!, pk = (n: number) => ({ kind: "single" as const, members: [n], order: [n], why: "", security: false, commit });
+    store.write({ ...cur, cross: [{ id: "X-1", issues: [5], package: pk(5), with: "P-4", where: "src/clip.ts · setClipboard" }, { id: "X-2", issues: [1], package: pk(1), with: "P-4", where: "src/clip.ts · setClipboard" }], lastCross: 2 });
+    let bad = ""; try { await flow.cross("proj", "X-1", "maybe", "captain (project page)"); } catch (e: any) { bad = e.message; }
+    ok(/join or apart/.test(bad), "a match is decided by joining it or keeping it apart, nothing else", bad);
+    await flow.cross("proj", "X-1", "join", "captain (project page)");
+    const j = store.get("proj")!, p4 = j.packages.find((p) => p.id === "P-4")!;
+    ok(p4.members.includes(5) && p4.status === "proposed" && j.dedup === 1 && !j.cross!.some((c) => c.id === "X-1"), "joining puts the issue in the earlier package, which waits for approval again, and counts a repeat fix avoided");
+    await flow.cross("proj", "X-2", "apart", "captain (project page)");
+    const a = store.get("proj")!;
+    ok(a.packages.some((p) => p.members.join() === "1" && p.status === "proposed" && p.id === `P-${a.lastPackage}`) && !a.cross!.length, "keeping it apart makes its own package, waiting for approval");
+    { const c2 = store.get("proj")!; store.write({ ...c2, packages: c2.packages.map((p) => p.id === "P-4" ? { ...p, members: [2], order: [2] } : p).filter((p) => !(p.members.join() === "1" && p.id === `P-${c2.lastPackage}`)) }); } }
 
   // --- 7. working an approved package: one code Task per issue, through the captain's proposal ---
   const workErr = async (args: any, o: any = owner(true)) => { try { await flow.call("studio_work_package", args, o); return ""; } catch (e: any) { return `${e?.publicFailure?.code ?? ""} ${e.message}`; } };

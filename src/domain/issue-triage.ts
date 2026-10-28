@@ -116,10 +116,20 @@ export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:strin
  return{packages,toHuman};
 }
 
+export type StoredPackage=Package&{id:string;commit:string;status:PackageStatus;work?:Record<string,{proposal:string;at:string}>;approvedBy?:string;approvedAt?:string;
+ /** a recheck made by the cross-batch match: the earlier package at the same function, and where */
+ match?:{with:string;where:string};
+ /** cross-batch matches the captain joined to this package: which, who, when, and whether that withdrew its approval */
+ joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[]};
+export type CrossEntry={id:string;issues:number[];package:Package&{commit:string};with:string;where:string};
 export type PackageStatus='proposed'|'approved'|'declined'|'stale';
 export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:string;investigated:boolean;security:boolean;agree?:boolean;diff?:string[];state?:Finding['state'];tag?:string;locus?:Locus[];repro?:string;checked?:boolean};
 export type TriageRecord={schema:1;project:string;repository:string;commit:string;snapshot:{hash:string;fetchedAt:string};open:number;investigated:number[];
- issues:Record<string,TriageIssue>;packages:(Package&{id:string;commit:string;status:PackageStatus;work?:Record<string,{proposal:string;at:string}>;approvedBy?:string;approvedAt?:string})[];lastPackage?:number;toHuman:{issues:number[];reason:string}[];createdAt:string;by:string};
+ issues:Record<string,TriageIssue>;packages:StoredPackage[];lastPackage?:number;
+ /** new findings at the same function as an earlier package not started yet: the captain joins them to it or keeps them apart */
+ cross?:CrossEntry[];lastCross?:number;
+ /** issues joined to an earlier package instead of becoming one of their own: a repeat fix avoided */
+ dedup?:number;toHuman:{issues:number[];reason:string}[];createdAt:string;by:string};
 /** What a project's triage keeps: every open issue's title and labels (never its body), each investigated issue's
  *  location, repro, agreement and security answer, and the proposed packages. */
 export function triageRecord(o:{project:string;snapshot:Snapshot;a:Report;b:Report;read:(file:string)=>string|null;by:string;now?:()=>string}):TriageRecord{
@@ -135,6 +145,7 @@ export function triageRecord(o:{project:string;snapshot:Snapshot;a:Report;b:Repo
   packages:plan.packages.map((p,i)=>({...p,id:`P-${i+1}`,commit:a.commit,status:'proposed' as const})),lastPackage:plan.packages.length,toHuman:plan.toHuman,createdAt:o.now?.()??new Date().toISOString(),by:o.by};
 }
 
+const started=(p:{work?:Record<string,unknown>})=>!!p.work&&Object.keys(p.work).length>0;
 /** a package the captain approved, or one with work started: it outlives its issues closing */
 const committed=(p:{status:string;work?:unknown})=>p.status==='approved'||!!p.work;
 /** The next batch to investigate: the open issues named, else the oldest open issues not investigated at their current text. */
@@ -164,10 +175,26 @@ export function mergeTriage(prev:TriageRecord|null,next:TriageRecord):TriageReco
  const open=(n:number)=>!!issues[String(n)],kept=(ms:number[])=>ms.every(open)&&!ms.some(n=>redone.has(n));
  // ids are never given out twice: the highest ever issued, even when that package was dropped since
  let last=Math.max(prev.lastPackage??0,...prev.packages.map(p=>Number(p.id.slice(2))||0));
- const packages=[...prev.packages.filter(p=>committed(p)?p.members.every(open):kept(p.members)).map(p=>p.members.some(n=>issues[String(n)].hash!==prev.issues[String(n)]?.hash)?{...p,status:'stale' as const}:p),
-  ...next.packages.map(p=>({...p,id:`P-${++last}`}))];
+ const earlier:StoredPackage[]=prev.packages.filter(p=>committed(p)?p.members.every(open):kept(p.members)).map(p=>p.members.some(n=>issues[String(n)].hash!==prev.issues[String(n)]?.hash)?{...p,status:'stale' as const}:p);
+ // matched across batches by a fixed rule, never by a model: a new package at the same file and symbol as an earlier one
+ const spots=(ns:number[])=>new Set(ns.flatMap(n=>(issues[String(n)]?.locus??[]).map(l=>`${normalize(l.file)} · ${l.symbol.trim()}`)));
+ // code work only: a recheck (maybe fixed, no code to change) is never matched, nor matched to
+ const live=earlier.filter(p=>(p.status==='proposed'||p.status==='approved')&&p.kind!=='recheck');
+ let lastX=prev.lastCross??0;
+ const cross:CrossEntry[]=[],added:StoredPackage[]=[];
+ const recheckOf=(pk:Package&{commit:string},old:StoredPackage,where:string):StoredPackage=>({...pk,id:`P-${++last}`,status:'proposed',kind:'recheck',order:[...pk.members],match:{with:old.id,where},
+  why:`The same function as ${old.id} (${where}), whose work has started: recheck whether that work fixed it before changing code.`});
+ // a match still waiting: kept while its earlier package waits; a recheck once that package started; its own package once it is gone
+ for(const c of prev.cross??[]){if(!c.issues.every(open)||c.issues.some(n=>redone.has(n)))continue;const old=live.find(p=>p.id===c.with);
+  if(old&&!started(old))cross.push(c);else if(old)added.push(recheckOf(c.package,old,c.where));else added.push({...c.package,id:`P-${++last}`,status:'proposed'});}
+ for(const np of next.packages){const mine=spots(np.members),old=np.kind==='recheck'?undefined:live.find(p=>[...spots(p.members)].some(x=>mine.has(x)));
+  if(!old){added.push({...np,id:`P-${++last}`});continue;}
+  const where=[...spots(old.members)].find(x=>mine.has(x))!;
+  // not started: one person fixes the root cause once, if the captain joins them; started: that work may already have fixed it
+  if(!started(old))cross.push({id:`X-${++lastX}`,issues:np.members,package:{...np},with:old.id,where});
+  else added.push(recheckOf(np,old,where));}
  const investigated=Object.entries(issues).filter(([,v])=>v.investigated).map(([n])=>Number(n)).sort((x,y)=>x-y);
- return{...next,issues,investigated,packages,lastPackage:last,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman]};
+ return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman]};
 }
 /** The captain's approval of proposed packages, against the issues as GitHub has them now: a package whose issue was closed or
  *  edited since it was investigated is stale, never approved. */
@@ -220,4 +247,33 @@ export function issueBrief(rec:TriageRecord,id:string,ns:number[]):{title:string
  lines.push(`Scope: only ${ns.length>1?'these issues':'this issue'}; the package's other issues are separate Tasks.`);
  if(sec)lines.push('Security: no exploit detail in the branch name, the commit messages or the pull request.');
  return{title:ns.length>1?`Fix ${ns.map(n=>'#'+n).join(' ')} (${id})`:`Fix #${ns[0]} (${id})`,text:lines.join('\n')};
+}
+
+/** The captain joins a cross-batch match to the earlier package (not started yet): one person fixes the root cause once.
+ *  The package waits for approval again, since what it holds changed. */
+export function joinCross(rec:TriageRecord,id:string,o:{by?:string;at?:string}={}):TriageRecord{
+ const c=(rec.cross??[]).find(x=>x.id===id);if(!c)throw new Error(`No match ${id}`);
+ const old=rec.packages.find(p=>p.id===c.with);if(!old)throw new Error(`${c.with} is gone`);
+ if(started(old)||(old.status!=='proposed'&&old.status!=='approved'))throw new Error(`${old.id} is ${started(old)?'already being worked':old.status}: keep ${id} apart instead`);
+ if(old.kind==='recheck'||c.package.kind==='recheck')throw new Error(`${id} cannot join ${old.id}: a recheck changes no code; keep it apart`);
+ const members=[...new Set([...old.members,...c.issues])].sort((x,y)=>x-y);
+ // an ordered package keeps its order with the issue appended; anything else becomes a set its owner orders
+ const joined:StoredPackage={...old,members,...(old.kind==='ordered'?{kind:'ordered' as const,order:[...old.order,...c.issues.filter(n=>!old.order.includes(n))]}:{kind:'unordered' as const,order:[]}),
+  security:old.security||c.package.security,status:'proposed',joins:[...(old.joins??[]),{id,issues:c.issues,by:o.by??'captain',at:o.at??new Date().toISOString(),wasApproved:old.status==='approved'}]};
+ delete joined.approvedBy;delete joined.approvedAt;
+ return{...rec,packages:rec.packages.map(p=>p.id===old.id?joined:p),cross:(rec.cross??[]).filter(x=>x!==c),dedup:(rec.dedup??0)+1};
+}
+/** The captain keeps a cross-batch match apart: it becomes a package of its own, waiting for approval. */
+export function splitCross(rec:TriageRecord,id:string):TriageRecord{
+ const c=(rec.cross??[]).find(x=>x.id===id);if(!c)throw new Error(`No match ${id}`);
+ const last=Math.max(rec.lastPackage??0,...rec.packages.map(p=>Number(p.id.slice(2))||0))+1;
+ return{...rec,packages:[...rec.packages,{...c.package,id:`P-${last}`,status:'proposed'}],cross:(rec.cross??[]).filter(x=>x!==c),lastPackage:last};
+}
+
+/** The earlier packages a batch's brief lists, as data: what investigators wrote (files, symbols) cleaned, on one line,
+ *  with no markup that could close the brief's data block. */
+export function earlierPackages(rec:TriageRecord|null):string[]{
+ const ps=(rec?.packages??[]).filter(p=>(p.status==='proposed'||p.status==='approved')&&p.kind!=='recheck').slice(0,40);
+ const plain=(t:string,max:number)=>cleanText(t,max).replace(/[<>\r\n]+/g,' ').trim();
+ return ps.length?ps.map(p=>`${p.id} (${p.status}) ${p.members.map(n=>'#'+n).join(' ')}: ${[...new Set(p.members.flatMap(n=>(rec!.issues[String(n)]?.locus??[]).map(l=>`${plain(l.file,200)} · ${plain(l.symbol,120)}`)))].slice(0,3).join('; ')}`):['none yet'];
 }

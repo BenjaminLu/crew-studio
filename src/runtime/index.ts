@@ -535,6 +535,15 @@ export function createRuntime(d: RuntimeDeps) {
           try { const run = issueTriageFlow.start({ project: start[1], size, issues, by: "captain (project page)" }); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
           catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
         }
+        // a cross-batch match, decided on the project page: join it to the earlier package, or keep it apart
+        const crossM = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/cross$/.exec(p);
+        if (crossM) {
+          if (!writing) return json({ error: "use POST" }, 405);
+          if (who.kind !== "desktop") return json({ error: "only the desktop captain decides a match" }, 403);
+          if (typeof b?.id !== "string" || !/^X-[1-9][0-9]{0,5}$/.test(b.id) || (b?.action !== "join" && b?.action !== "apart")) return json({ error: "name the match (X-n) and join or apart" }, 400);
+          try { return json(issueTriageFlow.cross(crossM[1], b.id, b.action, "captain (project page)")); }
+          catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+        }
         // packages kept as proposals, approved later on the project page (the issues are read again first)
         const approve = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/approve$/.exec(p);
         if (approve) {

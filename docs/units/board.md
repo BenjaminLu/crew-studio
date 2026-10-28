@@ -153,6 +153,21 @@ Issues belong to their project: a project connected to GitHub has a "GitHub issu
   `POST /api/issue-triage/<project>/approve {packages}` (the desktop captain only) reads the issues again first; a
   package whose issue changed is stale, never approved, and an approved one records who approved it and when.
 
+**Matching across batches.** A batch's packages are matched against the earlier ones by a fixed rule, never by a
+model: a new package with an issue at the same file and symbol as an earlier package (waiting for approval or approved)
+is not added as its own. If the earlier package's work has not started, the match waits under "For you to judge"
+(`rec.cross`, `X-n`): the captain joins it to that package (which then waits for approval again; `dedup` counts a repeat
+fix avoided) or keeps it apart (`POST /api/issue-triage/<project>/cross {id, action: join|apart}`, the desktop captain
+only). If that work has started, the new package is a recheck naming the earlier package and the function (`match`):
+that work may already have fixed it. A waiting match whose earlier package starts becomes such a recheck; one whose
+earlier package is dropped or stale becomes a package of its own, so no issue is lost. The rule is conservative: the file
+and symbol must be equal as written (two investigators naming one function differently do not match), a recheck package
+is never matched, and a package matching several earlier ones is matched to the first. Nothing joins a recheck; joining
+an ordered package appends to its order, any other join makes a set its owner orders, and each join is recorded on the
+package (who, when, whether it withdrew an approval). Each batch's brief lists the earlier packages and where they are,
+as data cleaned of markup and line breaks.
+In Chinese the work is called 分診 (triage): its product is work packages, not categories.
+
 The page's Crew section lists each team seat the way this project runs it (`GET /api/team?project=<id>`): provider,
 model and effort, marking a change this project makes to the team.
 

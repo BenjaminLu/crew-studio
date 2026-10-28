@@ -127,3 +127,4 @@
 .is-field{display:grid;gap:4px;font-size:12px;color:var(--text-3)}.is-field input{width:96px}.is-field.grow{flex:1 1 220px}.is-field.grow input{width:100%}
 .is-inv{flex:1 1 100%;margin:0;font-size:12px}.is-warn{color:var(--bad)}
 .is-approve{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0}.is-approve .faint{font-size:12px}
+.is-cross{align-items:center}.is-cross-acts{display:flex;gap:6px;flex-wrap:wrap}.is-match{margin:0;font-size:12.5px}
