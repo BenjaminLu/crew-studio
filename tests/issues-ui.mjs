@@ -58,8 +58,8 @@ const cat = (id, name, scope, status) => ({ id, name, scope, status, createdAt: 
 const asg = (category) => ({ category, by: "model", at: "2026-10-28T09:00:00Z" });
 writeFileSync(join(data, "issue-categories", "wallet.json"), JSON.stringify({ schema: 1, project: "wallet", repository: "fixture/wallet", lastCategory: 3, updatedAt: "2026-10-28T09:00:00Z", runs: [],
   categories: [cat("C-1", "內嵌網頁", "內嵌網頁與它能呼叫的介面", "active"), cat("C-2", "URL 工具", "網址組裝與解析", "active"), cat("C-3", "推播", "推播與通知", "proposed")],
-  assignments: { 11: asg("C-1"), 12: asg("C-1"), 16: asg("C-1"), 13: asg("C-2"), 17: asg("C-2"), 18: asg("C-3") },
-  titles: { 11: "Bridge trusts a page-supplied URL", 12: "Replies reach the next page", 13: 'Title with <img src=x onerror="window.__pwned=2"> markup', 17: "Share link loses its fragment", 18: "Query string doubled on retry" } }));
+  assignments: { 11: asg("C-1"), 12: asg("C-1"), 16: asg("C-1"), 13: asg("C-2"), 17: asg("C-2"), 18: asg("C-3"), 19: { ...asg("PLANNED"), why: "a program task, not a defect" } },
+  titles: { 11: "Bridge trusts a page-supplied URL", 12: "Replies reach the next page", 13: 'Title with <img src=x onerror="window.__pwned=2"> markup', 17: "Share link loses its fragment", 18: "Query string doubled on retry", 19: "Program: quarterly release plan" } }));
 
 const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
@@ -166,7 +166,17 @@ try {
     await p.selectOption('[data-cat-move="11"]', "C-2").catch(() => {}); await p.waitForTimeout(300);
     if (!(await p.locator('[data-cat="C-2"]').evaluate((e) => e.open))) await p.click('[data-cat="C-2"] summary');
     await p.selectOption('[data-cat-merge="C-2"]', "C-1").catch(() => {}); await p.waitForTimeout(300);
+    // planned work: a Studio tag apart from the categories, never counted as filed
+    ok(/1/.test(await p.locator('[data-cat-planned] summary').textContent()) && /Planned work/.test(await p.locator('[data-cat-planned] summary').textContent()) && !(await p.locator('[data-cat] [data-cat-issue="19"]').count()), "planned work is listed apart from the categories");
+    if (!(await p.locator('[data-cat-planned]').evaluate((e) => e.open))) await p.click('[data-cat-planned] summary');
+    ok(/a program task, not a defect/.test(await p.locator('[data-cat-planned] [data-cat-issue="19"]').textContent()), "each planned issue says why it was set aside");
+    await p.click('[data-cat-unplan="19"]'); await p.waitForTimeout(300);
+    if (!(await p.locator('[data-cat="C-1"]').evaluate((e) => e.open))) await p.click('[data-cat="C-1"] summary');
+    await p.selectOption('[data-cat-move="12"]', "PLANNED").catch(() => {}); await p.waitForTimeout(300);
+    if (!(await p.locator('[data-cat="C-3"]').evaluate((e) => e.open))) await p.click('[data-cat="C-3"] summary');
+    ok(await p.locator('[data-cat-move="18"] option[value="PLANNED"]').count() === 1, "an issue in a category waiting for approval can be tagged planned too");
     const edits = catCalls.filter(([u]) => u.endsWith("edit")).map(([, b]) => b);
+    ok(edits.some((b) => b.op === "unplan" && b.n === 19) && edits.some((b) => b.op === "move" && b.n === 12 && b.to === "PLANNED"), "the captain takes an issue off planned, or tags one as planned, on the page", JSON.stringify(edits));
     ok(edits.some((b) => b.op === "rename" && b.id === "C-1" && b.name === "內嵌網頁與介面") && edits.some((b) => b.op === "move" && b.n === 11 && b.to === "C-2") && edits.some((b) => b.op === "merge" && b.id === "C-2" && b.into === "C-1"), "the captain renames, moves an issue and merges categories on the page", JSON.stringify(edits));
     await p.click('[data-cat-start="wallet"]'); await p.waitForTimeout(300);
     ok(catCalls.some(([u]) => u === "wallet/start") && /#\/run\/R-88/.test(await p.evaluate(() => location.hash)), "filing new issues starts a run and opens it");

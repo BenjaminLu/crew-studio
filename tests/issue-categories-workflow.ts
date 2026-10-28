@@ -114,6 +114,20 @@ try {
   ok(biggest <= 20000 && new Set(seen).size === 45 && /in \d+ page\(s\) of issues_read/.test(prompt) && pages[0].pages === pages.length, "every page of issues_read stays under 20,000 characters, and the pages together hold every issue of the run", JSON.stringify({ biggest, seen: new Set(seen).size, pages: pages.length, declared: pages[0]?.pages }));
   open = open.filter((i) => i.number < 100);
 
+  // --- 5d. planned work is set aside with Studio's PLANNED tag, never a category; the card says so ---
+  open = [...open, issue(10, "Program: quarterly release plan"), issue(11, "Mail digest is late")];
+  script = () => [{ tool: "categories_submit", args: { report: { assign: [{ n: 10, category: "PLANNED", why: "a program task" }, { n: 11, category: "NEW", new_name: "郵件", new_scope: "郵件與摘要", why: "沒有郵件類" }] } } }];
+  r = await run(); await answer(r.id, "confirm", "start");
+  ok(/PLANNED/.test(prompt) && store.get("proj")!.assignments["10"].category === "PLANNED", "the brief offers PLANNED, and an issue tagged so is set aside", prompt.slice(0, 600));
+  ok(/#10/.test(cardAt(r.id, "approve")?.body ?? "") && /planned|規劃中/i.test(cardAt(r.id, "approve")?.body ?? ""), "the approval card lists the issues set aside as planned", cardAt(r.id, "approve")?.body);
+  await answer(r.id, "approve", "decline"); await until(() => E.get(r.id)!.status === "succeeded");
+  ok((flow.view("proj") as any).planned.map((p: any) => p.n).join() === "10" && store.get("proj")!.assignments["10"].category === "PLANNED", "declining the new category keeps the planned tag; the page lists planned work apart");
+  flow.edit("proj", { op: "unplan", n: 10 }, "captain (page)");
+  script = () => [{ tool: "categories_submit", args: { report: { assign: [{ n: 10, category: "PLANNED", why: "again" }, { n: 11, category: "C-1", why: "close enough" }] } } },
+    { tool: "categories_submit", args: { report: { assign: [{ n: 10, category: "C-1", why: "a release task" }, { n: 11, category: "C-1", why: "close enough" }] } } }];
+  r = await run(); await answer(r.id, "confirm", "start"); await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status));
+  ok(/off planned work[^\n]*#10/.test(prompt) && /#10/.test(JSON.stringify(results[0])) && store.get("proj")!.assignments["10"].category === "C-1", "an issue the captain took off planned is named in the brief, a PLANNED for it is refused, and it is filed", prompt.slice(-400));
+
   // --- 6. outside the sandbox the categorizer does not run; closing the card files nothing ---
   open = [...open, issue(8, "Something new")];
   const grants = E.grants.open; (E.grants as any).open = (kind: string) => kind === "sandbox-off" ? { id: "G-1", until: "2026-12-31" } : null;

@@ -536,9 +536,10 @@ export function createRuntime(d: RuntimeDeps) {
         if (cat[2] === "start") { try { const run = categoriesFlow.start({ project: cat[1], by: "captain (project page)" }); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); } }
         const e = b ?? {}, id = /^C-[1-9][0-9]{0,5}$/;
         const ids = Array.isArray(e.ids) && e.ids.length > 0 && e.ids.length <= 40 && e.ids.every((x: any) => typeof x === "string" && id.test(x));
-        const valid = e.op === "rename" ? id.test(e.id) && typeof e.name === "string" : e.op === "move" ? Number.isSafeInteger(e.n) && e.n > 0 && id.test(e.to) : e.op === "merge" ? id.test(e.id) && id.test(e.into) : e.op === "approve" || e.op === "decline" ? ids : false;
-        if (!valid) return json({ error: "an edit is rename {id, name}, move {n, to}, merge {id, into}, or approve / decline {ids}" }, 400);
-        try { return json(categoriesFlow.edit(cat[1], e.op === "rename" ? { op: "rename", id: e.id, name: e.name } : e.op === "move" ? { op: "move", n: e.n, to: e.to } : e.op === "merge" ? { op: "merge", id: e.id, into: e.into } : { op: e.op, ids: e.ids }, "captain (project page)")); }
+        const issue = Number.isSafeInteger(e.n) && e.n > 0;
+        const valid = e.op === "rename" ? id.test(e.id) && typeof e.name === "string" : e.op === "move" ? issue && (id.test(e.to) || e.to === "PLANNED") : e.op === "unplan" ? issue : e.op === "merge" ? id.test(e.id) && id.test(e.into) : e.op === "approve" || e.op === "decline" ? ids : false;
+        if (!valid) return json({ error: "an edit is rename {id, name}, move {n, to (C-n or PLANNED)}, unplan {n}, merge {id, into}, or approve / decline {ids}" }, 400);
+        try { return json(categoriesFlow.edit(cat[1], e.op === "rename" ? { op: "rename", id: e.id, name: e.name } : e.op === "move" ? { op: "move", n: e.n, to: e.to } : e.op === "merge" ? { op: "merge", id: e.id, into: e.into } : e.op === "unplan" ? { op: "unplan", n: e.n } : { op: e.op, ids: e.ids }, "captain (project page)")); }
         catch (err: any) { return json({ error: String(err?.message ?? err) }, 409); }
       }
       // ---------- issue triage: read here; written by the issue-triage workflow only. The project page starts one (the

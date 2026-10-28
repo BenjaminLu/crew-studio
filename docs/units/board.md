@@ -191,6 +191,10 @@ model and effort, marking a change this project makes to the team.
 A connected project's issues are filed into categories kept in Studio (`data/issue-categories/<project>.json`), never
 written to GitHub as labels: the lead's own view to hand work out one category at a time. A category is one product area
 or one kind of work; its issues may have different root causes. Security is a flag on an issue, never a category.
+Planned work (roadmap and program tasks, plans, process work) is tagged `PLANNED` in Studio and set aside: it is not
+handed out by category. The page lists it apart, each issue with why; the captain tags an issue planned (move to
+`PLANNED`) or takes it off (`unplan`: the next run files it into a category, and no run tags it planned again; the
+brief names such issues).
 
 `workflows/v2/issue-categories.wf.yaml` (`src/issue-categories-workflow.ts`, `src/domain/issue-categories.ts`, internal;
 started from the project page's Build categories / File new issues button, `POST /api/issue-categories/<project>/start`):
@@ -203,14 +207,15 @@ started from the project page's Build categories / File new issues button, `POST
    text only through `issues_read` (untrusted) and submits once with `categories_submit`. Studio refuses a report that
    files an issue twice or leaves one out, names a category that is not open, gives a category no scope, or makes
    security a category. Building: every category has a name and a one-sentence scope. Filing: into an existing category,
-   or `NEW` with a name, a scope and why none fits.
+   or `NEW` with a name, a scope and why none fits. Either way an issue may instead be planned work, with why.
 4. **Record.** Issues filed into existing categories take effect at once. New categories (all of them, on a build) are
    proposals; the record keeps each issue's title and the open issues of that read for the page. The list may have
    changed while the categorizer ran: an issue filed into a category the captain merged follows the merge, one into a
    category gone since stays unfiled for the next run, and a new name that exists by now files into that category.
 5. **Approval card.** Captain-only, only when there are proposals: approve keeps them; decline releases their issues to
-   be filed again next run. Proposals left by a run that ended (cancelled at the card) are approved or declined on the
-   page instead. A declined name is listed in later briefs and refused if proposed again. Names and scopes are one line of
+   be filed again next run. It also lists the issues the run set aside as planned; that tag takes effect at once and
+   stays when the categories are declined. Proposals left by a run that ended (cancelled at the card) are approved or declined on the
+   page instead. A declined name is listed in later briefs and refused if proposed again, unless a live category holds it again. Names and scopes are one line of
    plain text; security (資安, CVE and the like included) is never a category. Every step is on the run's ledger (`categories-snapshot`, `categories-report`,
    `categories-written`, `categories-decided`).
 
