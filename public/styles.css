@@ -613,14 +613,14 @@ body.chat-closed .main{padding-bottom:120px}
 .cc-interview{display:grid;gap:16px;min-width:0}.cc-interview-field{display:grid;gap:6px;min-width:0}.cc-interview-field label{font-weight:600;overflow-wrap:anywhere}.cc-interview-field textarea{box-sizing:border-box;width:100%;min-height:80px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font:inherit;resize:vertical}.cc-interview-field textarea[aria-invalid=true]{border-color:var(--bad)}.cc-field-error{color:var(--bad);font-size:13px;min-height:1em}
 
 /* Keep the workspace readable even when the chat was widened on a larger display. */
-@media (min-width:1101px){.chat{max-width:max(360px,calc(100vw - 712px))}.nav{min-height:0;overflow-y:auto;flex:0 1 auto}.side-foot{flex-shrink:0}.nav-proj{min-height:44px;flex-shrink:0;max-height:24vh}.nav-proj-list{max-height:16vh}}
+@media (min-width:1101px){.chat{max-width:max(360px,calc(100vw - 712px))}.nav{min-height:0;overflow-y:auto;flex:0 1 auto}.side-foot{flex-shrink:0}.nav-proj{flex:1 1 0}.nav-proj-list{flex:1 1 0}}
 .tool-group{border:1px solid var(--border);border-radius:6px;font-size:12.5px;margin:4px 0;background:var(--surface-2)}
 .tool-group>summary{cursor:pointer;padding:8px;display:list-item;line-height:1.5;color:var(--text-2)}
 .tool-group-last{display:block;padding-left:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tool-group-items{padding:4px 8px;border-top:1px solid var(--border);background:var(--surface)}
 .chat .bub{line-height:1.65;overflow-wrap:anywhere}
 
-@media(min-width:761px){.nav{min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;flex:0 1 auto}.nav-labs,.nav-labs-body{min-width:0;max-width:100%}.nav-item{flex-shrink:0}.nav-item .nl{min-width:0;overflow:hidden;text-overflow:ellipsis}.side-foot{flex-shrink:0}.nav-proj{min-height:44px;flex-shrink:0;max-height:24vh}.nav-proj-list{max-height:16vh}}
+@media(min-width:761px){.nav{min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;flex:0 1 auto}.nav-labs,.nav-labs-body{min-width:0;max-width:100%}.nav-item{flex-shrink:0}.nav-item .nl{min-width:0;overflow:hidden;text-overflow:ellipsis}.side-foot{flex-shrink:0}.nav-proj{flex:1 1 0}.nav-proj-list{flex:1 1 0}}
 /* the chat head's Firstmate menu: who runs it, switch host, stop */
 .fm-menu{position:relative;flex:none}
 .fm-menu>summary{list-style:none;display:flex;align-items:center;gap:6px;max-width:150px;padding-inline:8px;cursor:pointer}
