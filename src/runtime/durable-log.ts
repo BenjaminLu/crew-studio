@@ -42,14 +42,17 @@ function darwinFcntl() {
   return fcntl;
 }
 /** Flush a descriptor to the disk: F_FULLFSYNC on macOS when it can, fsync(2) otherwise. Says which it did. */
+let warned = false;
 export function fullSync(fd: number): "F_FULLFSYNC" | "fsync" {
   const f = darwinFcntl();
   if (f && f(fd, F_FULLFSYNC) === 0) return "F_FULLFSYNC";
+  if (process.platform === "darwin" && !warned) { warned = true; console.warn(`crew-studio: F_FULLFSYNC ${f ? "was refused" : "is not available"}; event logs are synced with fsync, which a power cut can still lose from the drive's cache`); }
   fsyncSync(fd); return "fsync";
 }
 
-/** The file operations the writer uses, as one object so a test can watch them (a sync is called, once per write). */
-export const durableFs = { openSync, writeSync, fsyncSync: (fd: number) => { fullSync(fd); }, closeSync, fstatSync, ftruncateSync };
+/** The file operations the writer uses, as one object so a test can watch them (a sync is called, once per write).
+ *  fsyncSync is the full flush (logs); cacheSync is plain fsync(2), for a file rebuilt from the logs (run.json). */
+export const durableFs = { openSync, writeSync, fsyncSync: (fd: number) => { fullSync(fd); }, cacheSync: (fd: number) => fsyncSync(fd), closeSync, fstatSync, ftruncateSync };
 
 /** Sync a folder, so a file or folder just created in it (or renamed into it) survives a crash. */
 export function syncDir(dir: string) {
@@ -77,11 +80,12 @@ export function appendLines(file: string, lines: string[], o: { sync?: boolean }
   if (created && o.sync !== false) syncDir(dirname(file));
 }
 
-/** Replace a file whole: write a temporary copy, fsync it, rename it over the file. A reader sees the old file or the new one. */
-export function writeAtomic(file: string, text: string) {
+/** Replace a file whole: write a temporary copy, sync it, rename it over the file. A reader sees the old file or the new one.
+ *  `cache: true` for a file the logs rebuild (run.json): plain fsync, not the full flush, since losing it to a power cut loses nothing. */
+export function writeAtomic(file: string, text: string, o: { cache?: boolean } = {}) {
   const tmp = file + ".tmp";
   const fd = durableFs.openSync(tmp, "w");
-  try { const buf = Buffer.from(text); let off = 0; while (off < buf.length) off += durableFs.writeSync(fd, buf, off, buf.length - off); durableFs.fsyncSync(fd); }
+  try { const buf = Buffer.from(text); let off = 0; while (off < buf.length) off += durableFs.writeSync(fd, buf, off, buf.length - off); if (o.cache) durableFs.cacheSync(fd); else durableFs.fsyncSync(fd); }
   finally { durableFs.closeSync(fd); }
   renameSync(tmp, file);
 }

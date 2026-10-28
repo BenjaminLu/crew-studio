@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { harness, sleep, suite, until, Y } from "./rt-harness";
 import { appendLines, durableFs, fullSync, parseLog } from "../src/runtime/durable-log";
 import { Ledger } from "../src/runtime/checks";
+import { failure } from "../src/runtime/failures";
 const { ok, end } = suite("durable-log");
 
 // ---------- the reader ----------
@@ -66,6 +67,7 @@ const done = E.start({ workflow: "two", text: "x" }); await until(() => E.get(do
   (durableFs as any).openSync = (p: string, flag: string) => { const fd = real.openSync(p, flag); paths.set(fd, String(p)); return fd; };
   (durableFs as any).writeSync = (fd: number, ...rest: any[]) => { calls.push(`write ${paths.get(fd)}`); return (real.writeSync as any)(fd, ...rest); };
   (durableFs as any).fsyncSync = (fd: number) => { calls.push(`fsync ${paths.get(fd)}`); return real.fsyncSync(fd); };
+  (durableFs as any).cacheSync = (fd: number) => { calls.push(`cache-fsync ${paths.get(fd)}`); return real.cacheSync?.(fd); };
   const before = readFileSync(file, "utf8").split("\n").filter(Boolean).length;
   const r = E.get(done.id)!; r.ctx.one = 1; r.ctx.two = 2; r.queue = ["x"]; r.nodes.a.note = "changed"; r.nodes.b.note = "changed too";
   try { E.commit(r, "fixture"); } finally { Object.assign(durableFs, real); }
@@ -73,7 +75,7 @@ const done = E.start({ workflow: "two", text: "x" }); await until(() => E.get(do
   const on = (what: string, f: string) => calls.filter((c) => c === `${what} ${f}`).length;
   ok(added.length >= 4 && added[0].tx === added.length, "a commit of several events writes them framed as one commit", JSON.stringify(added.map((e) => [e.type, e.tx])));
   ok(on("write", file) === 1 && on("fsync", file) === 1, "… with one write and one fsync of the event log", JSON.stringify(calls));
-  ok(on("fsync", join(E.rdir(done.id), "run.json.tmp")) === 1, "… and the run.json snapshot is fsynced before its rename", JSON.stringify(calls));
+  ok(on("fsync", join(E.rdir(done.id), "run.json.tmp")) === 0 && on("cache-fsync", join(E.rdir(done.id), "run.json.tmp")) === 1, "… and the run.json snapshot (a cache) is fsynced, without a full flush, before its rename", JSON.stringify(calls));
 }
 
 // ---------- a torn tail is cut off and the run resumes ----------
@@ -158,6 +160,43 @@ const evs = E.events(done.id), atA = evs.findIndex((e) => e.type === "node" && e
   ok(readFileSync(file, "utf8") === bytes && readFileSync(join(E2.rdir(ended), "run.json"), "utf8") === snap, "… nothing of it is rewritten");
 }
 
+// a new Task started from the seal card: later starts keep the link to it
+{
+  const bad = `R-${next++}`; mkdirSync(E.rdir(bad), { recursive: true });
+  const lines = E.events(done.id).slice(0, atA + 1).map((e) => JSON.stringify({ ...e, run: bad, tx: 1, ...(e.type === "run_created" ? { run: { ...e.run, id: bad } } : {}) }));
+  lines.splice(2, 0, "{garbage"); writeFileSync(join(E.rdir(bad), "events.jsonl"), lines.join("\n") + "\n");
+  const E2 = fresh(); E2.load();
+  const card = E2.cards.get(E2.get(bad)!.failureCard!)!;
+  await E2.answerFailure(card, { choice: "new-task", by: "captain" });
+  const follower = E2.get(bad)!.ctx.followedBy;
+  await until(() => !!follower && E2.get(follower)?.status === "succeeded", 8000);
+  const E3 = fresh(); E3.load(); await sleep(100);
+  ok(!!follower && E3.get(bad)?.ctx.followedBy === follower && E3.get(bad)?.parked?.note === `followed by ${follower}`, "after a new Task from the seal card, a restart keeps the link to it", `${follower} ${JSON.stringify(E3.get(bad)?.parked)} ${E3.get(bad)?.ctx.followedBy}`);
+}
+
+// an ended run loaded read-only is never revived: its own failure card offers Retry, but nothing of it runs again
+{
+  const ended = `R-${next++}`; mkdirSync(E.rdir(ended), { recursive: true });
+  const lines = E.events(done.id).map((e) => JSON.stringify({ ...e, run: ended, tx: 1, ...(e.type === "run_created" ? { run: { ...e.run, id: ended } } : {}) }));
+  lines.splice(2, 0, "{garbage");
+  const file = join(E.rdir(ended), "events.jsonl"); writeFileSync(file, lines.join("\n") + "\n");
+  writeFileSync(join(E.rdir(ended), "run.json"), JSON.stringify({ ...E.get(done.id)!, id: ended, status: "failed", result: null }));
+  const E2 = fresh(); E2.load(); await sleep(100);
+  const r = E2.get(ended)!, node = r.def.nodes.find((n) => n.id === "b")!;
+  E2.raiseFailure(r, node, failure("transient.network", "the network dropped", { source: "engine", run: ended }));
+  const card = E2.cards.get(r.failureCard!)!, states = JSON.stringify(E2.nodeStates(r)), bytes = readFileSync(file, "utf8");
+  let refused = ""; try { await E2.answerFailure(card, { choice: card.options.find((o) => o.id !== "park" && o.id !== "report")!.id, by: "captain" }); } catch (e: any) { refused = String(e?.message ?? e); }
+  await sleep(200);
+  ok(!!refused && E2.cards.get(card.id)!.status === "open" && JSON.stringify(E2.nodeStates(E2.get(ended)!)) === states, "a sealed run's failure card refuses Retry: no node is put back to run", refused);
+  ok(!E2.continuable(ended), "… a sealed run is not offered Continue");
+  let offered = false; try { E2.continuationOffer(ended); offered = true; } catch {}
+  ok(!offered, "… and no continuation is offered or confirmed for it");
+  r.queue.push("b"); r.nodes.b.state = "pending"; r.status = "running"; let started = false;
+  const realRun = (E2 as any).runNode; (E2 as any).runNode = (...x: any[]) => { started = true; return realRun.apply(E2, x); };
+  E2.tick(r); await sleep(100); (E2 as any).runNode = realRun;
+  ok(!started && readFileSync(file, "utf8") === bytes, "… and tick runs nothing of a sealed run");
+}
+
 // ---------- macOS: fsync does not flush the drive's cache, F_FULLFSYNC does ----------
 if (process.platform === "darwin") {
   const f = join(H.data, "full.jsonl"); appendLines(f, ['{"seq":1}']);
@@ -184,6 +223,7 @@ if (process.platform === "darwin") {
   try { E.commit(r, "fixture"); } catch { threw = true; } finally { Object.assign(durableFs, real); }
   ok(threw && r.events === seq, "a failed write leaves the run's seq where it was", `${seq} → ${r.events}`);
   ok(!!E.logFault(done.id), "… and a write that left half a commit it could not cut seals the run", JSON.stringify(E.logFault(done.id)));
+  ok(r.status === "failed" && !!r.error, "… and stops it in memory (failed, its jobs stopped)", `${r.status} ${r.error}`);
   const size = statSync(file).size; r.ctx.after = 1; E.commit(r, "fixture");
   ok(statSync(file).size === size, "… nothing more is written behind it");
 }

@@ -329,6 +329,9 @@ export class Engine {
         const message = `the event log of ${r.id} could not be written or cut back (${String(e?.message ?? e).slice(0, 160)}): Studio stopped writing to it; the next start reads what reached the disk`;
         this.sealed.set(r.id, { line: 0, message });
         this.deps.log.emit({ type: "run_log_corrupt", workflow: r.workflow, task: r.id, summary: message, data: {} });
+        // nothing of it goes on in memory either: its jobs stop and it reads failed until the next start reads the disk
+        try { this.stopAll(r, "the event log could not be written"); } catch {}
+        r.status = "failed"; r.error = message; r.endedAt ??= now();
       }
       throw e;
     }
@@ -363,7 +366,7 @@ export class Engine {
     this.write(r, batch); // every change of this commit: one write, one fsync
     this.committed.set(r.id, clone(r));
     this.deps.agents.queue.wake();
-    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r));
+    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r), { cache: true });
     for (const e of evs) { this.deps.log.emit({ type: `run_${e.type === "run" ? "status" : "node"}`, workflow: r.workflow, task: r.id, summary: e.type === "run" ? `${e.from} → ${e.to} (${e.cause})` : `${e.node}: ${e.from} → ${e.to} (${e.cause})`, data: { version: r.version, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause } });
       this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, event: { seq: e.seq, ts: e.ts, type: e.type, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause, outcome: e.outcome ?? null }, nodes: this.nodeStates(r) }); }
   }
@@ -409,7 +412,14 @@ export class Engine {
     const open = earlier.find((c) => c.status === "open"), answered = earlier.find((c) => c.status !== "open");
     const f = failure("internal.bug", message, { source: "engine", run: id, diagnostics: { eventLog: "corrupt", line: String(line), text: log.corrupt?.text ?? "" } });
     if (open) { r.failure = open.failure ?? f; r.failureCard = open.id; return; }
-    if (answered) { r.failure = answered.failure ?? f; r.failureCard = answered.id; r.parked = { by: answered.answer?.by ?? "captain", at: answered.answer?.at ?? now(), note: answered.answer?.note ?? `answered: ${answered.answer?.choice ?? answered.status}` }; return; }
+    if (answered) {
+      // a new Task started from it: the signed failure-answer entry names it, so the link survives the restart
+      let follower: string | null = null; try { follower = this.ledger(id).filter((e: any) => e.record === "failure-answer" && e.data?.card === answered.id && e.data?.task).at(-1)?.data?.task ?? null; } catch {}
+      if (follower) r.ctx.followedBy = follower;
+      r.failure = answered.failure ?? f; r.failureCard = answered.id;
+      r.parked = { by: answered.answer?.by ?? "captain", at: answered.answer?.at ?? now(), note: follower ? `followed by ${follower}` : answered.answer?.note ?? `answered: ${answered.answer?.choice ?? answered.status}` };
+      return;
+    }
     try { this.raiseFailure(r, null, f); } catch (e: any) { r.failure = f; this.deps.log.emit({ type: "run_log_corrupt", workflow: r.workflow, task: id, summary: `failure card could not be raised: ${String(e?.message ?? e).slice(0, 200)}`, data: {} }); }
   }
   /** What a timeline shows: transitions and display events, not the ctx/ndata payloads. */
@@ -630,6 +640,7 @@ export class Engine {
   // ---------- the scheduler ----------
   tick(r: Run) {
     if (r.status === "paused" || TERMINAL.includes(r.status)) return;
+    if (this.closed(r.id)) return; // a sealed (or deleted) run runs nothing: its commits would be dropped
     const q = r.queue.splice(0); if (q.length) this.commit(r, "scheduled");
     for (const id of q) if (r.nodes[id]?.state === "pending") void this.track(r, `node ${id}`, this.runNode(r, id));
     this.settle(r);
@@ -1206,11 +1217,11 @@ export class Engine {
   }
   private continuationTarget(r:Run){const {card,node}=this.continuationShape(r);return{card,node,pin:this.continuationHash({run:this.continuationPin(r),card})};}
   /** Whether a continuation offer can be made now, from the task's shape alone (no artifact hashing): the run page shows its button only then. The offer still verifies every pinned byte. */
-  continuable(id:string){const r=this.get(id);if(!r||!TERMINAL.includes(r.status))return false;try{this.continuationShape(r);return true;}catch{return false;}}
-  continuationOffer(id:string){const r=this.must(id),{card,node,pin}=this.continuationTarget(r),past=this.trusted(id).entries.filter(e=>e.record==='captain-continuation-offer-v1'&&e.data?.pin===pin).at(-1);if(past)return past.data;
+  continuable(id:string){const r=this.get(id);if(!r||!TERMINAL.includes(r.status)||this.logFault(id))return false;try{this.continuationShape(r);return true;}catch{return false;}}
+  continuationOffer(id:string){const r=this.must(id);this.writable(r,"continued");const {card,node,pin}=this.continuationTarget(r),past=this.trusted(id).entries.filter(e=>e.record==='captain-continuation-offer-v1'&&e.data?.pin===pin).at(-1);if(past)return past.data;
     const offer={schema:1,token:randomBytes(16).toString('hex'),task:id,node:node.id,previousCard:card.id,visit:card.visit,pin,head:r.ctx.head??null,title:card.title};this.record(this.x(r,node,r.nodes[node.id]),'captain-continuation-offer-v1',{data:offer});return offer;
   }
-  confirmContinuation(id:string,token:string,confirmation:string){const r=this.must(id);if(confirmation!==id||typeof token!=='string'||! /^[a-f0-9]{32}$/.test(token))throw new Error('Explicit captain task confirmation is required');if(r.continuation?.token===token){const trust=this.trusted(id);if(!trust.ok||!trust.entries.some(e=>e.record==='captain-continuation-confirmed-v1'&&e.data?.token===token))throw new Error('Continuation receipt cannot be authenticated');return r;}
+  confirmContinuation(id:string,token:string,confirmation:string){const r=this.must(id);this.writable(r,"continued");if(confirmation!==id||typeof token!=='string'||! /^[a-f0-9]{32}$/.test(token))throw new Error('Explicit captain task confirmation is required');if(r.continuation?.token===token){const trust=this.trusted(id);if(!trust.ok||!trust.entries.some(e=>e.record==='captain-continuation-confirmed-v1'&&e.data?.token===token))throw new Error('Continuation receipt cannot be authenticated');return r;}
     const {card,node,pin}=this.continuationTarget(r),offer=this.trusted(id).entries.find(e=>e.record==='captain-continuation-offer-v1'&&e.data?.token===token)?.data;if(!offer||offer.task!==id||offer.pin!==pin||offer.previousCard!==card.id||offer.node!==node.id)throw new Error('Continuation offer is stale; read current task state');
     const rn=r.nodes[node.id];this.record(this.x(r,node,rn),'captain-continuation-confirmed-v1',{actor:'captain (desktop)',data:{token,previousCard:card.id,pin}});
     r.continuation={token,previousCard:card.id,node:node.id,visit:rn.visits+1};r.status='running';r.result=null;r.endedAt=null;r.error=null;r.cancelReason=null;r.queue=[node.id];rn.state='pending';rn.waiting=null;rn.card=null;rn.attempt=0;rn.routing=null;if(node.max_visits&&rn.visits>=node.max_visits+(rn.extra??0))rn.extra=(rn.extra??0)+1;
@@ -1237,7 +1248,7 @@ export class Engine {
     r.reconciled = reconciled; r.updatedAt = now();
     this.append(r, { type: "reconciled", summary: `pull request #${d.pr} was merged on GitHub into ${d.base} as ${String(d.sha).slice(0, 8)}; the Task had ended ${d.original?.result ?? d.original?.status} (reconciled, recorded in the ledger as #${rec.seq})`, reconciled });
     const c = this.committed.get(r.id); if (c) c.reconciled = reconciled;
-    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r));
+    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r), { cache: true });
     this.deps.log.emit({ type: "run_reconciled", workflow: r.workflow, task: r.id, summary: `${r.id}: pull request #${d.pr} merged on GitHub (reconciled)`, data: { pr: d.pr, sha: d.sha, ledger: rec.seq } });
     this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, reconciled, event: { type: "reconciled" }, nodes: this.nodeStates(r) });
     return reconciled;
@@ -1252,7 +1263,7 @@ export class Engine {
     if (!!r.archived === on) return r;
     r.archived = on; this.append(r, on ? { type: "archived", archived: true, by } : { type: "unarchived", by }); r.updatedAt = now();
     const c = this.committed.get(r.id); if (c) c.archived = on;
-    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r));
+    writeAtomic(join(this.rdir(r.id), "run.json"), JSON.stringify(r), { cache: true });
     this.deps.log.emit({ type: on ? "run_archived" : "run_unarchived", workflow: r.workflow, task: r.id, summary: `${r.id} ${on ? "archived" : "unarchived"} by ${by}`, data: { by } });
     this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, archived: on, event: { type: "archived", archived: on }, nodes: this.nodeStates(r) });
     return r;
@@ -1295,7 +1306,7 @@ export class Engine {
   async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; ack?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null; crew?: Record<string, string | null> | null }) {
     const c0 = this.cards.get(cardId); if (!c0) throw new Error("no such card");
     if (c0.kind === "failure") return this.answerFailure(c0, a);
-    const r = this.must(c0.run);
+    const r = this.must(c0.run); this.writable(r, "answered");
     if(this.repreparing.has(`${r.id}/${c0.node}`))throw new Error("Captain card preparation is still running; no answer was submitted");
     // a card is visible as soon as it is raised; its node finishes raising it (the STE check) a moment later: wait for that, not longer than cardReadyMs
     if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
@@ -1604,6 +1615,8 @@ export class Engine {
   /** The captain answered a failure card. Refusals (no change, not fixed, vague note) leave the card open and say why. */
   async answerFailure(c: SCard, a: { choice: string; note?: string | null; by: string; confirm?: string | null }) {
     const r = this.must(c.run); const f = c.failure;
+    // a sealed run (its event log is corrupt) never runs again: only Park, Report and a new Task with the same request
+    if (this.logFault(r.id) && ![ACT.park, ACT.report, ACT.newTask].includes(a.choice as any)) this.writable(r, "run again");
     if (!f || c.status !== "open" || r.failureCard !== c.id || !TERMINAL.includes(r.status) || r.parked) throw new Error(c.status !== "open" ? `this card is ${c.status}: a card is answered exactly once` : "this failure card is no longer the run's current failure");
     if (!c.options.some((o) => o.id === a.choice)) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
     if (String(a.by).startsWith("auth window")) throw new Error("a failure card is answered by the captain only");
