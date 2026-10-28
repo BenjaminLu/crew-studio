@@ -37,7 +37,7 @@ refused("deadbeefcafe1234 meaning", /encoded data/, "a hex word");
 refused("rounding рolicy", /plain ASCII/, "mixed scripts");
 // what is not words at all
 refused("status of build.corp", /private host/); refused("is 10.1.2.3 reachable", /private address/);
-refused("open /home/x/notes", /only words/); refused("const x = () => { return 1; }", /only words/);
+refused("open /home/you/notes", /only words/); refused("const x = () => { return 1; }", /only words/);
 refused("token ghp_abcdefghijklmnopqrstuvwxyz0123456789", /only words|encoded|credential/);
 refused("two\nlines", /one line/); refused("", /empty/);
 refused("one two three four five six seven eight nine ten eleven twelve thirteen", /at most 12 words/);
