@@ -110,6 +110,8 @@ const scripted = (id: string, model: string) => ({ id, model, sandboxFree: true,
   return { interrupt() {}, async *send(text: string) { me.text = text;
     for (const [name, args] of script.shift() ?? []) {
       if (name === "say") { yield { type: "delta", text: args } as any; continue; }
+      // one whole assistant message, as codex, claude and cursor stream it: its text, then the message that closes it
+      if (name === "msg") { yield { type: "delta", text: args } as any; yield { type: "message", text: args } as any; continue; }
       const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json(); results.push([name, j]);
       yield { type: "toolStart", id: name, name, args } as any; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) } as any; }
     yield { type: "turnEnd", status: "ok", usage: { usd: 0.02, inTokens: 10, outTokens: 5 } } as any; } }; } });
@@ -226,14 +228,17 @@ ok(src.filter((s) => s.refused && s.kind === "fetch").every((s) => s.url === und
 ok(JSON.stringify(webCalls) === JSON.stringify([["search", "JavaScript Math.round rounding of halves"], ["fetch", MDN]]), "only the clean query and the public page reach the web backend", JSON.stringify(webCalls));
 
 // ---------- the next turn carries the history; the check is graded ----------
-script.push([["check_grade", { results: [{ n: 1, correct: true, note: "300 cents" }, { n: 2, correct: false, note: "missed half-cent rounding" }] }],
+// a codex tutor streams a preamble before its tools and a progress message before its answer: neither is the answer
+const FINAL2 = "You missed how halves round [board:B1-3]. Math.round rounds 0.5 up [source:8].";
+script.push([["msg", "I’ll use the how guidance to explain the mode change and the compatibility check together."], ["check_grade", { results: [{ n: 1, correct: true, note: "300 cents" }, { n: 2, correct: false, note: "missed half-cent rounding" }] }],
   ["web_fetch", { url: "javascript:alert(document.cookie)" }], ["web_fetch", { url: "https://example.org/rounding-guide" }],
   ["web_search", { query: "half up rounding" }], ["web_fetch", { url: "https://example.org/rounding-guide" }], ["web_fetch", { url: "https://example.org/other-page" }],
-  ["web_search", { query: "bankers rounding" }], ["web_search", { query: "rounding modes" }], ["web_search", { query: "decimal rounding" }], ["web_search", { query: "one too many" }], ["say", "You missed how halves round [board:B1-3]. Math.round rounds 0.5 up [source:8]."]]);
+  ["web_search", { query: "bankers rounding" }], ["web_search", { query: "rounding modes" }], ["web_search", { query: "decimal rounding" }], ["web_search", { query: "one too many" }], ["msg", "Now I have what I need."], ["msg", FINAL2]]);
 await room.start(merge.id, { action: "ask", text: "1: it returns 300. 2: I am not sure.", lang: "en", confirm: offer.hash }, "captain"); await room.settle(merge.id);
 const v2 = room.view(merge.id) as any;
 ok(prompts[1].text.includes("Captain [teach]: 教我這個改動。") && prompts[1].text.includes("Tutor: ## Overview") && /1\. What does percent\(1999, 15\) return, and why\? \[not graded yet\]/.test(prompts[1].text) && /B1-3 code/.test(prompts[1].text), "the next turn's prompt carries the conversation, the open check and the board", prompts[1].text.slice(-1500));
 ok(v2.turns[1].status === "done" && v2.turns[1].claims.every((c: any) => c.basis === "cited"), "a reply citing a board excerpt and a source is cited");
+ok(v2.turns[1].answer === FINAL2 && !v2.turns[1].claims.some((c: any) => /guidance|what I need/.test(c.text)), "only the tutor's final message is the answer: a preamble before its tools or a progress message before its answer never shows", JSON.stringify(v2.turns[1].answer));
 const t2src = (v2.sources as any[]).filter((x) => x.turn === 2);
 ok(t2src[0].refused && t2src[0].url === undefined && t2src[0].text === "javascript:alert(document.cookie)", "a javascript: address is refused and kept as plain text, never an address", JSON.stringify(t2src[0]));
 ok(/search results or a documentation host/.test(t2src[1].refused) && t2src[3].ok && t2src[3].url === "https://example.org/rounding-guide" && /search results/.test(t2src[4].refused), "a page is read only after this turn's search returned it, and only that page", JSON.stringify(t2src.slice(1, 5)));

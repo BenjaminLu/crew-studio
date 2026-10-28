@@ -60,7 +60,11 @@ const ROOM = { card: { id: "SC-50", run: "R-050", node: "merge-card", title: { e
 
 // speech, stubbed: two on-device voices and one the browser would send to a server; on-device recognition; an audio player
 const stubs = ([mic]) => {
-  window.__spoken = []; const voices = [{ name: "Ava (Premium)", lang: "en-US", localService: true, voiceURI: "ava" }, { name: "Fred", lang: "en-US", localService: true, voiceURI: "fred" }, { name: "Google US English", lang: "en-US", localService: false, voiceURI: "google" }, { name: "Mei-Jia (Premium)", lang: "zh-TW", localService: true, voiceURI: "mj" }];
+  window.__spoken = []; const mac = (name, uri, lang = "en-US") => ({ name, lang, localService: true, voiceURI: uri });
+  // this Mac's voices as Chrome and Safari list them: novelty and legacy (MacinTalk, Eloquence) voices among the good ones
+  const voices = [mac("Samantha", "com.apple.voice.compact.en-US.Samantha"), mac("Fred", "fred"), mac("Ava (Premium)", "ava"), { name: "Google US English", lang: "en-US", localService: false, voiceURI: "google" }, mac("Mei-Jia (Premium)", "mj", "zh-TW"),
+    mac("Zarvox", "com.apple.speech.synthesis.voice.Zarvox"), mac("Bad News", "com.apple.speech.synthesis.voice.BadNews"), mac("Good News", "good-news"), mac("Bubbles", "bubbles"), mac("Whisper", "com.apple.speech.synthesis.voice.Whisper"),
+    mac("Eddy (English (US))", "com.apple.eloquence.en-US.Eddy"), mac("Grandma (English (UK))", "com.apple.eloquence.en-GB.Grandma", "en-GB"), mac("Kathy", "kathy"), mac("Zoe", "com.apple.voice.enhanced.en-US.Zoe")];
   Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => voices, speak: (u) => { window.__spoken.push([u.text, u.voice?.voiceURI]); setTimeout(() => u.onend && u.onend(), 5); }, cancel: () => {} } });
   window.SpeechSynthesisUtterance = function (t) { this.text = t; };
   class Rec { static async available(o) { window.__micAsked = o; return mic; } start() { window.__recStarted = { lang: this.lang, local: this.processLocally }; setTimeout(() => this.onresult && this.onresult({ results: [[{ transcript: "why do halves round up" }]] }), 10); } stop() { this.onend && this.onend(); } }
@@ -139,6 +143,8 @@ try {
     await p.click('[data-claim="cited"] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff");
     ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && /Math\.round/.test(await p.textContent("[data-cite-panel]")), "a citation opens the diff hunk it rests on", JSON.stringify(cites));
     // the scene's other pictures: the chart from git numbers and the generated illustration, labelled, enlarged on click
+    { const chip = await p.$eval('[data-visual-pick="B1-7"]', (e) => [e.textContent, e.title]);
+      ok(/ Checkout, before and…$/.test(chip[0]) && chip[1] === "Checkout, before and after", "a long picture title in the strip is cut at a word, with an ellipsis, and reads whole on hover", JSON.stringify(chip)); }
     await p.click('[data-visual-pick="B1-8"]');
     ok(await p.$eval("[data-visual] [data-chart]", (e) => e.dataset.chart + " " + e.querySelectorAll("rect").length) === "diffstat 4" && /counted by git/.test(await p.textContent("[data-visual] [data-kind]")), "a chart is drawn by Studio from git's numbers, labelled so");
     await p.click('[data-visual-pick="B1-9"]');
@@ -151,7 +157,11 @@ try {
     // voice: off by default; on-device voices only, the best first; the vendor's own voice for the whole scene
     await p.click('[data-jump="t1"]').catch(() => {});
     const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
-    ok(JSON.stringify(voices) === JSON.stringify(["off", "vendor", "local:ava", "local:fred"]) && (await p.$eval("[data-voice]", (e) => e.value)) === "off", "voice is off by default; the choices are the tutor vendor's own voice and this Mac's on-device voices, the best first (none a browser would send away)", JSON.stringify(voices));
+    ok(JSON.stringify(voices) === JSON.stringify(["off", "vendor", "local:ava", "local:com.apple.voice.enhanced.en-US.Zoe", "local:com.apple.voice.compact.en-US.Samantha"]) && (await p.$eval("[data-voice]", (e) => e.value)) === "off", "voice is off by default; the choices are the tutor vendor's own voice and this Mac's on-device voices, the best first (none a browser would send away, no novelty or robotic legacy voice)", JSON.stringify(voices));
+    // a voice picked before it was dropped (a robotic one) is not kept as silence: the best voice there is takes its place
+    await p.evaluate(() => localStorage.setItem("crew.room.voice", "local:fred")); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t1"]'); });
+    ok((await p.$eval("[data-voice]", (e) => e.value)) === "local:ava", "a saved voice no longer offered falls back to the best one on this Mac", await p.$eval("[data-voice]", (e) => e.value));
+    await p.selectOption("[data-voice]", "off");
     await p.selectOption("[data-voice]", "local:ava"); await p.click("[data-play]"); await p.waitForFunction(() => window.__spoken.length >= 2);
     ok(await p.evaluate(() => window.__spoken[0][0] === "An amount in cents goes into percent ." || /^An amount in cents goes into percent/.test(window.__spoken[0][0])) && await p.evaluate(() => window.__spoken[0][1] === "ava"), "with this Mac's voice each point is spoken as it appears", JSON.stringify(await p.evaluate(() => window.__spoken)));
     await p.click("[data-play]").catch(() => {}); await p.evaluate(() => { window.__spoken = []; });
@@ -178,6 +188,13 @@ try {
     ok(s.scene === "t3" && /The tutor is working/.test(s.caption) && await p.$eval('[data-room-action="teach"]', (e) => e.disabled), "the new turn opens its scene at once, working; one turn at a time", JSON.stringify(s));
     ok(await noScroll(p), "no sideways scroll at 1440");
     await p.screenshot({ path: join(shots, "room-1440.png") });
+    // leaving the room (a turn still running, a scene playing) leaves its page alone: neither the turn's poll nor the
+    // playback redraws the page now on screen, so nothing replaces the button the captain is pressing there
+    await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t1"]'); });
+    await p.click("[data-play]"); await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]');
+    await p.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.querySelector("#view"), { childList: true }); document.querySelector('[data-pr-url="home"]').dataset.mark = "1"; });
+    await p.waitForTimeout(4000);
+    ok(await p.evaluate(() => window.__redraws === 0 && document.querySelector('[data-pr-url="home"]').dataset.mark === "1"), "once the captain leaves a room, its poll and its playback no longer redraw the page on screen", String(await p.evaluate(() => window.__redraws)));
     await ctx.close(); }
 
   // ---------- no on-device recognition: no mic; 390, zh-TW ----------

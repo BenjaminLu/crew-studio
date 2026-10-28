@@ -552,7 +552,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         // the round sandbox with nothing to write and no host beyond its model (the egress.allow policy is not carried)
         sandbox: { writes: [], reads: [], allow: [] },
         record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, turn.round), header: { run: s.run.id, node: s.node.id, round: turn.round, head: s.head, base: s.base, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, role: "review-room-tutor", skills: sk.map((k) => `${k.id}@sha256:${k.sha256}`) } } } as any);
-      Object.assign(turn, { status: job.status === "done" ? "done" : "failed", job: job.id, answer: String(job.said ?? "").trim().slice(0, 20000), error: job.status === "done" ? null : String(job.error ?? job.status), cost: job.cost ?? null });
+      Object.assign(turn, { status: job.status === "done" ? "done" : "failed", job: job.id, answer: String(job.answer ?? job.said ?? "").trim().slice(0, 20000), error: job.status === "done" ? null : String(job.error ?? job.status), cost: job.cost ?? null });
     } catch (e: any) { Object.assign(turn, { status: "failed", error: String(e?.message ?? e).slice(0, 500) }); }
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
     turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
