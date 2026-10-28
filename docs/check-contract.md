@@ -83,7 +83,9 @@ adapter:
   findings_from: { regex: "^(?P<path>tests/[^:]+):(?P<line>\\d+): (?P<message>.*)$" }
 ```
 
-`adapter.optional: true` allows a missing repository command only when expansion produces an empty argv. The result allows the gate with `data.status: not-run`, a reason, and empty evidence/proves; it does not claim execution or test success. The default remains an error for an empty argv. A configured command always executes normally, and its nonzero exit still blocks. The built-in repository lint adapter opts into this behavior.
+`adapter.optional: true` allows a missing repository command only when expansion produces an empty argv. The result allows the gate with `data.status: not-run`, a reason, and empty evidence/proves; it does not claim execution or test success. Any check result with `data.status: not-run` keeps its verdict, and the
+engine says it was not run wherever it summarises it: the check row (`pass (not run: <reason>)`, and `notRun` on the
+`check_result` event), the node's note and its results, and the run page's ledger. The default remains an error for an empty argv. A configured command always executes normally, and its nonzero exit still blocks. The built-in repository lint adapter opts into this behavior.
 
 ## Hooks
 

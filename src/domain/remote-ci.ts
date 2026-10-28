@@ -2,6 +2,7 @@ import {GitHubPoller} from '../github-poller';
 import { createHash } from "node:crypto";
 import { GitHubPrAdapter, type ReviewRequest } from "../adapters/github";
 import { githubBackoff } from "../github";
+import { redactText } from "../secure";
 import type { X, Result } from "../runtime/engine";
 const hash = (v: any) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 export const grantIdentity = (adapter: GitHubPrAdapter) => adapter.grantIdentity();
@@ -132,7 +133,15 @@ export const OBSERVED_REFUSAL = "required checks are only observed (GitHub does 
 /** A stop that only someone's change on GitHub explains: the pull request closed or retargeted, its head or Task branch moved
  *  (someone else pushed). Studio never adopts that change, so a fresh check stops the same way: close is the only answer. */
 const TERMINAL_STOP = /closed, retargeted|PR closed, target changed|head moved|moved away|changed on GitHub|changed since|PR\/ref changed|no longer matches/i;
-export const remoteStopRecoverable = (reason: string) => !TERMINAL_STOP.test(reason);
+export const remoteStopRecoverable = (reason: string) => !TERMINAL_STOP.test(stopKind(reason));
+/** The cause Studio caught, appended to a stop reason as " (cause: …)": shown to the captain, never used to classify the stop. */
+const CAUSE = / \(cause: ([^]*)\)$/;
+const stopKind = (reason: string) => String(reason ?? "").replace(CAUSE, "");
+/** A stop reason with the cause Studio caught: one line, at most 240 characters, so the card names why it stopped. */
+export const withCause = (reason: string, e: any) => {
+  const cause = redactText(String(e?.message ?? e ?? "")).replace(/\s+/g, " ").replace(/[()]/g, "").replace(/\.\s*$/, "").trim().slice(0, 240);
+  return cause ? `${reason} (cause: ${cause})` : reason;
+};
 /** How many times the captain may check one node's remote stop again in a Task; after that, close is the only answer. */
 export const REMOTE_CHECK_LIMIT = 5;
 /** The captain's "Check again" (and "Update the branch") answers on this node's remote-stop cards, from the signature-verified
@@ -150,7 +159,9 @@ export const remoteStopReasonOf = (body: string) => /^Remote verification stoppe
 /** The card when the remote PR stopped verification: what went wrong (the reason), in both languages; nothing was merged.
  *  A known class gets its own title (closed or moved, refused access, unreachable, checks failed). A stop a fresh check can
  *  clear (recover, below the limit) also offers "Check again": its node verifies the pull request again under the current rules. */
-export function remoteStopBody(reason: string, o: { recover?: boolean; used?: number } = {}) {
+export function remoteStopBody(full: string, o: { recover?: boolean; used?: number } = {}) {
+  // the classification reads the stop's own words; the caught cause, when there is one, is shown in both languages as is
+  const reason = stopKind(full), cause = CAUSE.exec(full)?.[1] ?? null;
   const used = o.used ?? 0, recoverable = (o.recover ?? true) && remoteStopRecoverable(reason), check = recoverable && used < REMOTE_CHECK_LIMIT;
   const zh = /only observed/i.test(reason) ? "GitHub 沒有顯示 base 分支的分支保護，必要檢查只是 Studio 觀察到的，所以 Studio 不合併；請到 GitHub 合併。"
     : /pushed|moved away|changed on GitHub|changed since/i.test(reason) ? "GitHub 上的 PR 或任務 branch 在 Studio 上次推送後被改動了（例如有人推送）；Studio 沒有覆蓋它。"
@@ -189,8 +200,8 @@ export function remoteStopBody(reason: string, o: { recover?: boolean; used?: nu
       zh: `已經重新檢查 ${used} 次。請在 GitHub 核對 PR，關閉這個任務；如果改動要繼續，再開一個新任務。尚未授權合併。` }
     : { en: "Inspect the PR on GitHub, then close this task and start a fresh one if the change should go on. No merge is authorized.", zh: "請在 GitHub 核對 PR，關閉這個任務；如果改動要繼續，再開一個新任務。尚未授權合併。" };
   return { title, zhTitle, captainOnly: true, direct: true,
-    en: { why: `Remote verification stopped: ${reason}. Nothing was merged.`, how: how.en },
-    zh: { why: `遠端驗證已停止：${zh}沒有合併任何東西。`, how: how.zh }, body: `Remote verification stopped: ${reason}. Nothing was merged.`,
+    en: { why: `Remote verification stopped: ${full}. Nothing was merged.`, how: how.en },
+    zh: { why: `遠端驗證已停止：${zh}${cause ? `（原因：${cause}）` : ""}沒有合併任何東西。`, how: how.zh }, body: `Remote verification stopped: ${full}. Nothing was merged.`,
     options: [...(check && behind ? [{ id: "update", label: "Update the branch on GitHub", labelZh: "在 GitHub 更新分支", primary: true }] : []), ...(check ? [{ id: "check", label: "Check again", labelZh: "重新檢查", ...(behind ? {} : { primary: true }) }] : []), { id: "close", label: "Close without merging", labelZh: "不合併，關閉" }] };
 }
 /** The nodes whose answer handler checks a remote stop again (code.ts); a stop anywhere else is answered by close. */

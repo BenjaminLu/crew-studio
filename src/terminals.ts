@@ -14,7 +14,8 @@
 //   Bounds: a scrollback ring per terminal (CREW_TERMINAL_SCROLLBACK bytes, default 2 MiB), at most CREW_TERMINAL_MAX
 //   running (default 8), a transcript file per terminal capped at CREW_TERMINAL_TRANSCRIPT bytes (default 5 MiB), the 100
 //   newest records kept. Studio stopping kills every terminal (the process group, SIGHUP then SIGKILL); nothing is
-//   re-attached on restart: a record left open is closed as `studio-stopped` on the next start.
+//   re-attached on restart: a record left open is closed as `studio-stopped` on the next start, and the ended terminals
+//   (the 20 newest, not removed) are listed again from their records (`restored`), so Send for review still works on them.
 //   Record: data/terminals/<id>.json (who, project, command, start, end, exit code) and <id>.log (the transcript), and a
 //   `terminal.start` / `terminal.exit` line in Studio's activity log. A log only: never evidence for a merge or a gate.
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -41,7 +42,9 @@ export type TermGit = { branch: string | null; head: string; commits: number | n
 export type ReviewRequest = { terminal: string; project: string; commit: string; branch: string | null; label: string; command: string; by: string };
 export type TermView = { id: string; project: TermProject; preset: string | null; kind: AgentKind; label: string; command: string; by: string;
   startedAt: string; endedAt: string | null; exitCode: number | null; signal: string | null; state: TermState; reason: StateReason; ask: string | null;
-  cols: number; rows: number; running: boolean; git: { start: TermGit | null; end: TermGit | null }; review: { run: string; at: string } | null; remote: { enabled: boolean; mode: "flag" | "slash" | null; sent: boolean; url?: string | null } | null; transcriptTruncated: boolean };
+  cols: number; rows: number; running: boolean; git: { start: TermGit | null; end: TermGit | null }; review: { run: string; at: string } | null; remote: { enabled: boolean; mode: "flag" | "slash" | null; sent: boolean; url?: string | null } | null; transcriptTruncated: boolean;
+  /** listed from its record after Studio restarted (it ended before, or Studio stopped it); `stopped`: Studio stopped it */
+  restored: boolean; stopped: string | null };
 
 // Claude Code's Remote Control link: whoever holds it can drive the session from the Claude app, so it is a secret here
 export const REMOTE_URL = /https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code[^\s\x00-\x1f\x7f"'<>`\\│|]*/gi;
@@ -151,7 +154,7 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
 
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec; killTimer?: any; remoteUrl: string | null; stopped?: string; seen: Set<string>; linkSeen: boolean;
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
   line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[] };
 export type CreateSpec = { project: string; preset?: string | null; command?: string | null; args?: string[]; remoteControl?: boolean; cols?: number; rows?: number };
 export class TermError extends Error { constructor(readonly status: number, message: string, readonly code: string) { super(message); } }
@@ -173,6 +176,8 @@ export type TerminalsOpts = {
 };
 /** The project's checkout: its branch, head and commits beyond base (Studio's own git: no hooks, no user config). */
 export function gitFacts(path: string, base?: string | null): TermGit | null {
+  // a project folder that is gone (moved, deleted) has no checkout to read: git cannot even start there
+  try { if (!statSync(path).isDirectory()) return null; } catch { return null; }
   const head = git(path, ["rev-parse", "--verify", "HEAD^{commit}"]); if (!head.ok || !/^[0-9a-f]{40,64}$/.test(head.out)) return null;
   const br = git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
   let commits: number | null = null;
@@ -191,7 +196,7 @@ export class Terminals {
     this.keepTranscripts = o.transcripts ?? process.env.CREW_TERMINAL_TRANSCRIPTS !== "0";
     this.cap = envNum("CREW_TERMINAL_SCROLLBACK", 2 * MIB); this.max = envNum("CREW_TERMINAL_MAX", 8);
     this.tMax = envNum("CREW_TERMINAL_TRANSCRIPT", 5 * MIB); this.idleMs = envNum("CREW_TERMINAL_IDLE_MS", DEFAULT_IDLE_MS);
-    this.closeLeftovers(); this.prune();
+    this.closeLeftovers(); this.prune(); this.restore();
   }
   private env() { return this.o.env ?? process.env; }
   private shell() { return this.o.shell ?? this.env().SHELL ?? "/bin/sh"; }
@@ -214,8 +219,8 @@ export class Terminals {
     return p;
   }
   view(t: Term, desktop: boolean): TermView {
-    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, remote, transcriptTruncated, git, review } = t;
-    return { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, transcriptTruncated, git, review,
+    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, remote, transcriptTruncated, git, review, restored, stopped } = t;
+    return { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, transcriptTruncated, git, review, restored, stopped,
       remote: remote ? { enabled: remote.enabled, mode: remote.mode, sent: remote.sent, ...(desktop ? { url: t.remoteUrl } : {}) } : null };
   }
   list(desktop = true): TermView[] { return [...this.terms.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt)).map((t) => this.view(t, desktop)); }
@@ -249,7 +254,7 @@ export class Terminals {
     const command = spec.preset ? [preset === "shell" ? this.shell() : PRESETS.find((p) => p.id === preset)!.bin, ...argv.slice(1)].join(" ") : String(spec.command).trim();
     const shown = new LinkRedactor().whole(command);
     const t: Term = { id, project, preset, kind, label, command: shown, by, startedAt: new Date().toISOString(), endedAt: null, exitCode: null, signal: null,
-      state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false, git: { start: gitFacts(project.path, project.base), end: null }, review: null, line: "", lineAt: null, inputs: [],
+      state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false, restored: false, stopped: null, git: { start: gitFacts(project.path, project.base), end: null }, review: null, line: "", lineAt: null, inputs: [],
       proc: null, ring: new Ring(this.cap), tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: false, subs: new Set(),
       decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null, seen: new Set(), linkSeen: false };
     if (t.tFile) writeFileSync(t.tFile, "", { mode: 0o600 });
@@ -331,20 +336,50 @@ export class Terminals {
     this.o.log?.("terminal.exit", `terminal ${t.id} (${t.label}) ended: ${t.signal ? `signal ${t.signal}` : `exit ${t.exitCode}`}`, { id: t.id, project: t.project.id, exitCode: t.exitCode, signal: t.signal });
     this.changed();
   }
-  private saveMeta(t: Term) {
+  private saveMeta(t: Term, extra: Record<string, unknown> = {}) {
     const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated, git, review } = t;
     try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, git, review,
       transcript: t.tFile ? `${id}.log` : null, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
-      sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}) }, null, 1), { mode: 0o600 }); } catch {}
+      sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}), ...extra }, null, 1), { mode: 0o600 }); } catch {}
   }
+  /** The terminals' own records (data/terminals/<id>.json), not their input files. */
+  private records() { return readdirSync(this.dir).filter((f) => RECORD.test(f)); }
   private closeLeftovers() {
-    for (const f of readdirSync(this.dir).filter((f) => f.endsWith(".json"))) {
+    for (const f of this.records()) {
       try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && !m.endedAt) { m.endedAt = new Date().toISOString(); m.reason = "studio-stopped"; writeFileSync(join(this.dir, f), JSON.stringify(m, null, 1), { mode: 0o600 }); } } catch {}
     }
   }
   private prune(keep = 100) {
-    const metas = readdirSync(this.dir).filter((f) => f.endsWith(".json")).sort();
-    for (const f of metas.slice(0, Math.max(0, metas.length - keep))) { const id = f.slice(0, -5); if (this.terms.has(id)) continue; rmSync(join(this.dir, f), { force: true }); rmSync(join(this.dir, `${id}.log`), { force: true }); }
+    const metas = this.records().sort();
+    for (const f of metas.slice(0, Math.max(0, metas.length - keep))) { const id = f.slice(0, -5); if (this.terms.has(id)) continue; for (const x of [f, `${id}.log`, `${id}.inputs.json`]) rmSync(join(this.dir, x), { force: true }); }
+  }
+  /**
+   * After a restart: the ended terminals (the 20 newest, not removed) are listed again from their records, marked `restored`,
+   * with their git end, review state and transcript as their replay. Nothing is re-attached: no process, no input; a terminal
+   * Studio stopped while it ran is `studio-stopped`. Send for review works on them, under the same guards (moved, sent).
+   */
+  private restore() {
+    const recs: any[] = [];
+    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
+    recs.sort((a, b) => String(a.endedAt).localeCompare(String(b.endedAt)));
+    for (const m of recs.slice(-20)) {
+      const now = this.o.projects().find((p) => p.id === m.project.id);
+      const project: TermProject = now ? { id: now.id, name: now.name, path: now.path, base: now.base } : { id: m.project.id, name: String(m.project.name ?? m.project.id), path: String(m.project.path ?? ""), base: m.project.base };
+      const stopped = m.reason === "studio-stopped" ? "studio-stopped" : null, ring = new Ring(this.cap);
+      let text = "";
+      if (m.transcript) { try { const b = readFileSync(join(this.dir, `${m.id}.log`)); const tail = b.subarray(Math.max(0, b.length - this.cap)); ring.push(new Uint8Array(tail)); ring.dropped = b.length - tail.length; text = tail.toString("utf8"); } catch {} }
+      let inputs: string[] = []; try { const j = JSON.parse(readFileSync(join(this.dir, `${m.id}.inputs.json`), "utf8")); if (Array.isArray(j?.lines)) inputs = j.lines.map(String).slice(-40); } catch {}
+      const remote = m.remoteControl ? { enabled: !!m.remoteControl.enabled, mode: m.remoteControl.mode ?? null, sent: false } : null;
+      const t: Term = { id: m.id, project, preset: m.preset ?? null, kind: m.kind ?? "custom", label: String(m.label ?? "terminal"), command: String(m.command ?? ""), by: String(m.by ?? "desktop"),
+        startedAt: String(m.startedAt ?? m.endedAt), endedAt: m.endedAt, exitCode: typeof m.exitCode === "number" ? m.exitCode : null, signal: m.signal ?? null,
+        state: m.exitCode === 0 && !stopped ? "done" : "exited", reason: "exit", ask: null, cols: Number(m.cols) || 100, rows: Number(m.rows) || 30, running: false, remote,
+        transcriptTruncated: !!m.transcriptTruncated, git: { start: m.git?.start ?? null, end: m.git?.end ?? null }, review: m.review ?? null, restored: true, stopped, line: "", lineAt: null, inputs,
+        proc: null, ring, tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: !!text, subs: new Set(), decoder: new TextDecoder(), redactor: new SecretWindow(false),
+        tFile: null, tBytes: Number(m.transcriptBytes) || 0, timer: null, spec: null, remoteUrl: null, seen: new Set(),
+        // the transcript is already redacted; a phone still gets no output from one that ever showed a Remote Control link
+        linkSeen: text.includes(REMOTE_REMOVED) };
+      this.terms.set(t.id, t);
+    }
   }
   /** Ended terminals stay listed (their replay too) until dismissed; at most 20, the oldest go first. */
   private trimEnded() { const ended = [...this.terms.values()].filter((t) => !t.running).sort((a, b) => (a.endedAt ?? "").localeCompare(b.endedAt ?? "")); for (const t of ended.slice(0, Math.max(0, ended.length - 20))) this.terms.delete(t.id); this.prune(); }
@@ -387,6 +422,7 @@ export class Terminals {
     // the head this terminal ended on: the checkout may have moved since (another terminal, the captain's own Terminal), and
     // Send for review on this terminal must not hand that other work over under this terminal's intent
     const end = t.git.end, live = gitFacts(t.project.path, t.project.base);
+    if (!end && t.stopped) throw new TermError(409, "Studio stopped while this terminal ran and did not record where its checkout ended: start a new terminal for the work there", "noEnd");
     if (!end || !live) throw new TermError(409, "the project's folder is not a git checkout with a commit", "noGit");
     if (live.head !== end.head) throw new TermError(409, `the project's checkout moved since this terminal ended (it ended on ${end.head.slice(0, 10)}, it is now on ${live.head.slice(0, 10)}): start a new terminal for the work now there`, "moved");
     if (!end.commits) throw new TermError(409, `no commits beyond ${t.project.base ?? "the base"}: commit the work on a branch first`, "noCommits");
@@ -408,10 +444,14 @@ export class Terminals {
     sig("SIGHUP"); t.killTimer = setTimeout(() => { if (t.running) sig("SIGKILL"); }, 2000);
     return this.view(t, true);
   }
-  async restart(id: string, by = "desktop") { const t = this.need(id); if (t.running) { this.kill(id); await Promise.race([t.proc.exited, Bun.sleep(2500)]); } this.terms.delete(id); return this.create(t.spec, by); }
-  dismiss(id: string) { const t = this.need(id); if (t.running) throw new TermError(409, "stop it first", "running"); this.terms.delete(id); this.changed(); }
+  async restart(id: string, by = "desktop") { const t = this.need(id); if (!t.spec) throw new TermError(409, "this terminal is from before Studio restarted: start a new one", "restored"); if (t.running) { this.kill(id); await Promise.race([t.proc.exited, Bun.sleep(2500)]); } this.terms.delete(id); return this.create(t.spec, by); }
+  /** Off the list, and off it after a restart too (its record says so); the record and the transcript stay. */
+  dismiss(id: string) { const t = this.need(id); if (t.running) throw new TermError(409, "stop it first", "running"); this.saveMeta(t, { dismissed: true }); this.terms.delete(id); this.changed(); }
   /** Studio is stopping: every terminal's process group goes, at once (sync, so it also runs from an exit handler). */
-  shutdown() { for (const t of this.terms.values()) if (t.running) { for (const s of ["SIGHUP", "SIGKILL"] as const) { try { process.kill(-t.proc.pid, s); } catch { try { t.proc.kill(s); } catch {} } } t.stopped = "studio-stopped"; this.saveMeta(t); } }
+  // Its record gets its end and where the checkout stood (Studio's own git, sync), so after the restart it is listed as
+  // studio-stopped and Send for review's guard (the checkout moved since) has a head to compare with.
+  shutdown() { for (const t of this.terms.values()) if (t.running) { for (const s of ["SIGHUP", "SIGKILL"] as const) { try { process.kill(-t.proc.pid, s); } catch { try { t.proc.kill(s); } catch {} } }
+    t.stopped = "studio-stopped"; t.endedAt ??= new Date().toISOString(); try { t.git.end = gitFacts(t.project.path, t.project.base); } catch {} this.saveMeta(t); } }
 
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {
@@ -436,6 +476,7 @@ export class Terminals {
   cutDevice(device: string) { for (const t of this.terms.values()) for (const s of t.subs) if (s.device === device) { t.subs.delete(s); try { s.ctl.close(); } catch {} } }
 }
 const enc = new TextEncoder();
+const RECORD = /^T-[\w-]{1,60}\.json$/;
 
 /**
  * The routes. `who` is the server's (src/remote/pairing.ts); `cookie` says the request carries the desktop page's own session

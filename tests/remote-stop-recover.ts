@@ -48,7 +48,7 @@ const ready = Y({ id: "ready-flow", name: "Ready flow", roles: [], nodes: [
   edges: [["seed", "pr-open"], ["pr-open", "flip", "ok"], ["pr-open", "closed", "close"], ["flip", "remote-ready"], ["remote-ready", "merge-card", "ok"], ["remote-ready", "closed", "close"], ["merge-card", "closed", "close"]] });
 const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
   const H = await harness([flow, ready], data ? { data } : {}), E = H.engine;
-  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_ });
+  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_, mergeabilityRetryMs: [20, 20] });
   E.actions["fixture.flip"] = (x) => { sim.pulls.get(Number(x.ctx.pr.id)).mergeable = null; return "ok"; };
   E.actions["fixture.seed"] = (x) => {
     const branch = x.run.params.branch; must(repo, ["checkout", "-qb", branch, "main"]); const head = commit(branch); must(repo, ["checkout", "-q", "main"]);
@@ -152,7 +152,7 @@ try {
       sim.expect("GET", POLICY, PLAN, undefined, 403);
       const r = first.E.start({ workflow: "ready-flow", text: "stop", params: { branch: "crew/legacy" } }); await settle(first.E, r); runId = r.id; prId = Number(r.ctx.pr?.id);
       const live = openCard(first.E, r);
-      ok(live?.node === "remote-ready" && ids(live) === "check,close" && /could not be proved/.test(live.body), "a remote-ready stop GitHub can clear offers Check again", `${live?.node} ${ids(live)} ${live?.title?.en}`);
+      ok(live?.node === "remote-ready" && ids(live) === "check,close" && /was not proved/.test(live.body), "a remote-ready stop GitHub can clear offers Check again", `${live?.node} ${ids(live)} ${live?.title?.en}`);
       // what the previous release wrote on the live Task (R-069): the fallback reason, close as the only answer
       const c = live; oldId = c.id;
       Object.assign(c, { title: { en: "Remote verification stopped: close this task?", "zh-TW": "遠端驗證已停止：要關閉這個任務嗎？" }, body: "Remote verification stopped: remote PR or required policy could not be verified. Nothing was merged.",

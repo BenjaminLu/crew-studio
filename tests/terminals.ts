@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { freePort, waitUp } from "./boot.mjs";
 import { LinkRedactor, Ring, SecretWindow, Terminals, findLink, terminalEnv, REMOTE_REMOVED } from "../src/terminals";
 import { sessionCookieName } from "../src/csrf";
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs";
 
 let pass = 0, fail = 0;
 const ok = (v: unknown, n: string, extra = "") => { if (v) { pass++; console.log("  ok    " + n); } else { fail++; console.log(("  FAIL  " + n + " " + extra).trimEnd()); } };
@@ -60,6 +61,46 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   await until(() => svc.get(v.id)?.running === false, 5000);
   const meta = JSON.parse(readFileSync(join(d, "terminals", `${v.id}.json`), "utf8"));
   ok(!existsSync(join(d, "terminals", `${v.id}.log`)) && meta.transcript === null && meta.exitCode === 0, "transcripts off: no transcript file, the record stays", JSON.stringify(meta));
+  rmSync(d, { recursive: true, force: true });
+}
+
+// ---------- a restart: ended terminals are listed again from their records, and Send for review still works ----------
+// Running terminals are killed when Studio stops and never re-attached; a finished one comes back from data/terminals/<id>.json,
+// marked as from before the restart, with its git end and review state. One that was running at shutdown comes back as
+// studio-stopped, and the guard against a checkout that moved since still applies to it.
+{
+  const d = checkedTempDir("crew-terminals-restart-"), pr = join(d, "p"); mkdirSync(pr); assertTempRepo(pr);
+  const G = (...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=Agent", "-c", "user.email=agent@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: pr, stdout: "pipe", stderr: "pipe" }); if (!r.success) throw new Error(r.stderr.toString()); return r.stdout.toString().trim(); };
+  G("init", "-qb", "main"); writeFileSync(join(pr, "a.txt"), "a\n"); G("add", "a.txt"); G("commit", "-qm", "base"); G("checkout", "-qb", "agent/work");
+  const reviews: any[] = [];
+  const mk = () => new Terminals({ dataDir: d, projects: () => [{ id: "p", name: "P", path: pr, base: "main" }], shell: "/bin/sh", env: { PATH: "/usr/bin:/bin" },
+    review: async (r) => { reviews.push(r); return { run: `R-${reviews.length}` }; } });
+  const a = mk();
+  const v = await a.create({ project: "p", command: "git -c user.name=Agent -c user.email=agent@example.invalid -c commit.gpgsign=false commit -q --allow-empty -m work && echo WORK-DONE" });
+  await until(() => a.get(v.id)?.running === false, 8000);
+  const run = await a.create({ project: "p", command: "echo STILL-RUNNING; sleep 30" });
+  await until(() => a.get(run.id)?.sawOutput, 5000);
+  const gone = await a.create({ project: "p", command: "echo bye" }); await until(() => a.get(gone.id)?.running === false, 5000); a.dismiss(gone.id);
+  a.shutdown(); // Studio stops: the running one is killed, nothing more
+  const b = mk(), L = b.list();
+  const ended = L.find((t) => t.id === v.id), stopped = L.find((t) => t.id === run.id);
+  ok(L.every((t) => !t.running) && !L.some((t) => t.id === gone.id), "after a restart nothing runs, and a removed terminal stays removed", JSON.stringify(L.map((t) => [t.id, t.running])));
+  ok(!!ended && ended.restored === true && ended.state === "done" && ended.exitCode === 0 && ended.git.end?.branch === "agent/work" && ended.git.end?.commits === 1 && ended.review === null,
+    "a terminal that ended cleanly is listed again, marked as from before the restart, with its git end", JSON.stringify(ended));
+  ok(!!stopped && stopped.restored === true && stopped.stopped === "studio-stopped" && stopped.state === "exited" && !!stopped.endedAt, "a terminal that was running at shutdown is listed as studio-stopped", JSON.stringify(stopped));
+  const rd = b.attach(v.id, false).body!.getReader(); let replay = "";
+  while (!/event: exit/.test(replay)) { const { value, done } = await rd.read(); if (done) break; replay += new TextDecoder().decode(value); } rd.cancel().catch(() => {});
+  ok(Buffer.from(JSON.parse(/event: replay\ndata: (.*)\n/.exec(replay)?.[1] ?? "{}").b64 ?? "", "base64").toString().includes("WORK-DONE"), "its replay is its transcript", replay.slice(0, 300));
+  let restartRefused = ""; try { await b.restart(v.id); } catch (e: any) { restartRefused = e.code; }
+  ok(restartRefused === "restored", "a terminal from before the restart is not restarted in place (start a new one)", restartRefused);
+  const sent = await b.sendForReview(v.id);
+  ok(sent.review?.run === "R-1" && reviews[0]?.commit === ended?.git.end?.head && reviews[0]?.branch === "agent/work", "Send for review works on it after the restart", JSON.stringify(reviews));
+  const c = mk(); ok(c.list().find((t) => t.id === v.id)?.review?.run === "R-1", "its review state survives the next restart too");
+  let again = ""; try { await c.sendForReview(v.id); } catch (e: any) { again = e.code; } ok(again === "sent", "and it is not sent twice", again);
+  // the checkout moves after the restart: the studio-stopped terminal's guard refuses it
+  G("commit", "-q", "--allow-empty", "-m", "someone else");
+  let moved = ""; try { await c.sendForReview(run.id); } catch (e: any) { moved = e.code; }
+  ok(moved === "moved" && reviews.length === 1, "a studio-stopped terminal whose checkout moved since is refused (N2)", moved);
   rmSync(d, { recursive: true, force: true });
 }
 
@@ -299,8 +340,10 @@ try {
   ok(await until(() => !alive(leader), 4000), "Studio stopping killed it");
   ok(JSON.parse(readFileSync(join(data, "terminals", `${id10}.json`), "utf8")).reason === "studio-stopped", "its record says Studio stopped it");
   await boot();
-  ok((await list()).terminals.length === 0, "after a restart nothing is re-attached (the list starts empty)");
-  ok(readdirSync(join(data, "terminals")).filter((f) => f.endsWith(".json")).every((f) => JSON.parse(readFileSync(join(data, "terminals", f), "utf8")).endedAt), "every record from before the restart is closed");
+  const after = (await list()).terminals;
+  ok(after.length > 0 && after.every((t: any) => !t.running && t.restored === true) && after.find((t: any) => t.id === id10)?.stopped === "studio-stopped",
+    "after a restart nothing is re-attached: the ended terminals are listed from their records, the one Studio stopped as studio-stopped", JSON.stringify(after.map((t: any) => [t.id, t.running, t.restored, t.stopped])));
+  ok(readdirSync(join(data, "terminals")).filter((f) => /^T-[\w-]+\.json$/.test(f) && !f.endsWith(".inputs.json")).every((f) => JSON.parse(readFileSync(join(data, "terminals", f), "utf8")).endedAt), "every record from before the restart is closed");
 } finally {
   try { app?.kill("SIGTERM"); } catch {}
   await sleep(300); rmSync(tmp, { recursive: true, force: true });

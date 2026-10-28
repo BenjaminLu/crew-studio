@@ -71,7 +71,11 @@ work.
 
 Only the Mac's page, as for every terminal write (cookie, same origin); a phone sees the Task it was sent as but cannot
 send. A running terminal, one whose checkout has nothing beyond base (commit on a branch first: work committed straight
-onto the base branch has nothing beyond it), and a second send are refused. The Task starts through the board's own
+onto the base branch has nothing beyond it), and a second send are refused. A finished terminal stays sendable after
+Studio restarts: it is listed again from its record (docs/units/web-terminal.md), with its git end and whether it was
+sent. One that Studio stopped while it ran is listed as `studio-stopped`, with the git end recorded at shutdown; the
+`moved` guard compares that head with the checkout as for any terminal, and one with no recorded end (Studio was killed)
+is refused (`noEnd`). The Task starts through the board's own
 staffing step (one helper, `staffedStartGuard` and `staffedStartRun` in `src/runtime/index.ts`): code-firstmate needs its
 approved crew on that project; a signed-in role not verified yet is verified by Studio before the Task exists, and what it
 verified is on the Task's signed ledger (`staffing-auto-verify`); a refusal is the same bilingual `staffing_not_ready`. A

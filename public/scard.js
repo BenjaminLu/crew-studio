@@ -255,8 +255,9 @@ function mountCard(el, card, opts = {}) {
       sec("actual-change",T("Read the actual change","直接看改了什麼"),
         d.walk.length?d.walk.map(w=>h("details",{class:"cc-walk","data-walk":w.id,open:true},h("summary",{class:"cc-mono"},`${w.file}:${w.start}`),h("div",{class:"cc-diff"},w.lines.map(l=>h("div",{class:l[0]==="+"?"a":l[0]==="-"?"d":""},l))))):h("p",{},T("No diff was recorded; inspect the repository before accepting.","沒有保留 diff；驗收前請檢查儲存庫。")),
         (e.media||[]).length?h("div",{},h("p",{class:"cc-count"},T("Pinned capture receipt; file bytes have no digest","已釘選截圖紀錄；檔案內容沒有 digest")),capturesView({...c,captures:e.media})):h("p",{class:"cc-count"},T("No screenshots bound to both base and head. Use the linked app to inspect behavior.","沒有同時釘選 base 與 head 的截圖；請開啟連結中的 app 檢查行為。")),linksView(c)),
-      sec("execution",T("What actually ran?","實際跑了什麼？"),e.execution.map(x=>h("details",{"data-code-execution":x.check,open:x.verdict!=="pass"},
-        h("summary",{},h("span",{class:`cc-chip ${x.verdict==="pass"?"ok":"warn"}`},status(x.status))," ",x.check),
+      // a pass that ran nothing (not-run: no test command declared) is never shown as a green pass: warn chip, open, its reason
+      sec("execution",T("What actually ran?","實際跑了什麼？"),e.execution.map(x=>h("details",{"data-code-execution":x.check,"data-code-execution-status":x.status,open:x.verdict!=="pass"||x.status==="not-run"},
+        h("summary",{},h("span",{class:`cc-chip ${x.verdict==="pass"&&x.status!=="not-run"?"ok":"warn"}`},status(x.status))," ",x.check,x.status==="not-run"&&x.reason?h("span",{class:"cc-count"},T(` · not run: ${x.reason}`,` · 未執行：${x.reason}`)):null),
         h("p",{},x.reason||T("No applicability reason recorded.","沒有保留適用性說明。")),
         h("pre",{class:"cc-pre"},JSON.stringify({seq:x.seq,head:x.head,verdict:x.verdict,command:x.command,shards:x.shards},null,2)),
         (x.files||[]).map(f=>f.present?h("a",{href:f.href,target:"_blank",rel:"noopener","data-evidence":f.file},f.file):h("p",{class:"cc-chip bad"},T(`Missing: ${f.file}`,`檔案遺失：${f.file}`))))),
