@@ -91,8 +91,6 @@
 .bd-answered .need-d{color:var(--ok);font-weight:500}
 .bd-inbox-answered{margin-bottom:16px}
 /* The Issues view (public/issues.js): work packages beside the selected one's ordered issues. */
-.is-views{display:inline-flex;gap:0}.is-views .btn{border-radius:0}.is-views .btn:first-child{border-radius:8px 0 0 8px}.is-views .btn:last-child{border-radius:0 8px 8px 0;margin-left:-1px}
-.is-views .btn[aria-current="page"]{background:var(--surface-3);font-weight:600}
 .is-body{grid-template-columns:minmax(0,1fr) minmax(320px,420px)}
 @media (max-width:900px){.is-body{grid-template-columns:minmax(0,1fr)}}
 .is-packs{display:flex;flex-direction:column;overflow:hidden}
@@ -125,3 +123,6 @@
 .is-work.w-merged{color:var(--ok)}
 .is-work.w-open{color:var(--accent)}
 .is-next{font-size:13px;margin:6px 0}
+.is-start{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+.is-field{display:grid;gap:4px;font-size:12px;color:var(--text-3)}.is-field input{width:96px}.is-field.grow{flex:1 1 220px}.is-field.grow input{width:100%}
+.is-inv{flex:1 1 100%;margin:0;font-size:12px}.is-warn{color:var(--bad)}

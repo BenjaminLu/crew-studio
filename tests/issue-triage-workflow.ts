@@ -111,6 +111,7 @@ try {
   ok(rec.commit === commit && rec.packages.map((p) => `${p.id}:${p.kind}:${p.members.join("+")}`).join(",") === "P-1:single:1,P-2:single:2,P-3:recheck:3", "the packages both agree on are written, each a proposal", JSON.stringify(rec.packages));
   ok(rec.packages.find((p) => p.id === "P-2")!.security && /P-2 · single · security/.test(card.body) && /owns security for this repository/.test(JSON.stringify(card)) && /安全負責人/.test(JSON.stringify(card)), "a security package is named on the card, with who else must agree");
   ok(!existsSync(join(H.data, "work", "issue-triage", r.id)), "the pinned checkout is removed once the reports are checked");
+  ok(card.links?.[0]?.href === "#/project/proj" && /project page/.test(card.body), "the approval card links to the project's page, where the packages are listed", JSON.stringify(card.links));
   ok(!JSON.stringify(rec).includes("IGNORE ALL RULES"), "the stored triage keeps no issue text");
   const trusted = E.trusted(r.id);
   ok(trusted.ok && trusted.entries.filter((e: any) => e.record === "issue-triage-report").map((e: any) => `${e.data.node}:${e.data.provider}`).join(",") === "a:claude,b:codex", "Studio's ledger records each report with the model that wrote it");

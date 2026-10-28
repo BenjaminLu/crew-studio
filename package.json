@@ -24,7 +24,7 @@
     "test:env-preflight": "bun tests/env-preflight.ts",
     "test:host": "bun tests/host.ts",
     "test:takeover": "bun tests/takeover.ts && node tests/takeover-ui.mjs",
-    "test:board": "bun tests/board-crew.ts && node tests/board-ui.mjs && node tests/board-overview-ui.mjs && node tests/issues-ui.mjs",
+    "test:board": "bun tests/board-crew.ts && node tests/board-ui.mjs && node tests/board-overview-ui.mjs && bun tests/issues-ui.mjs",
     "test:inbox-live": "node tests/inbox-live-ui.mjs",
     "test:inbox-focus": "node tests/inbox-focus-ui.mjs",
     "test:inbox-answer-binding": "node tests/inbox-answer-binding-ui.mjs",

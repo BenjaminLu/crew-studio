@@ -138,10 +138,20 @@ Tests:
 
 ## Issues: open GitHub issues as work packages
 
-The Board has two views, Tasks (`#/board`) and Issues (`#/board/issues`), switched from its header. Issues shows a
-project's latest issue triage (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
-`data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`; the
-routes refuse writes).
+Issues belong to their project: a project connected to GitHub has a "GitHub issues" section on its page
+(`#/project/<id>`, `public/issues.js`); the Board shows Tasks only. The section has two parts:
+
+- **The batch form.** How many issues the next triage takes (1 to 50, 15 by default) or which issue numbers, and the two
+  investigators' models as a triage of this project would run them (the team's seats in this project, else the
+  workflow's Claude and Codex roles). Triaging posts `POST /api/issue-triage/<project>/start` (the desktop captain only)
+  and opens the Task, which reads the issues and waits at its start card before any model runs. When both investigators
+  would run on one model the form says so and cannot start.
+- **The latest triage** (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
+  `data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`, which
+  also names the investigators): work packages, what the investigators disagreed on, the issues not investigated.
+
+The page's Crew section lists each team seat the way this project runs it (`GET /api/team?project=<id>`): provider,
+model and effort, marking a change this project makes to the team.
 
 - A triage is two independent investigators' reports on one snapshot of the open issues, read against the code at one
   commit. Studio checks every finding mechanically (the issue is in the snapshot, every file exists inside the checkout,
@@ -203,6 +213,7 @@ without a merge) and how to start the next one.
 
 Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, next issue, brief, store, routes),
 `tests/issue-triage-workflow.ts` (the workflow end to end against a local GitHub stand-in with scripted investigators:
-both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (1440
-and 390 zh-TW: the switch, packages, order and locations, links, a title with markup, status, the other tabs, the empty
-state).
+both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (the
+project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
+links, a title with markup, status and Task progress, the other tabs, the empty state, the Crew section's seats; the
+Board has no Issues view).

@@ -113,6 +113,17 @@ try{
  ok((await get('/api/issue-triage/none-yet')).body.state==='none','a project without a triage reads as none');
  ok((await get('/api/issue-triage/bad%2F..')).status===400,'a malformed project id is refused');
  ok((await get('/api/issue-triage/fixture',true)).status===405,'the triage cannot be written through this route');
+ const post=async(path:string,body:any,kind='desktop')=>{const u=new URL('http://fixture'+path),r=await rt.handle(new Request(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),u,{kind}as any,true);return{status:r!.status,body:await r!.json()as any};};
+ ok(/claude/.test(one.body.investigators?.a?.provider)&&/codex/.test(one.body.investigators?.b?.provider),'the project\'s triage names the two investigators\' models as this project would run them');
+ { const C=await import('../src/domain/crew');const store=new C.CrewStore(data),m=(provider:string,model:string)=>({provider,model,effort:'high',skills:[]});
+  const v1=store.write({schema:1,members:{coordinator:m('claude','opus-5.5'),maker:m('claude','opus-5.5'),'alt-maker':m('claude','sonnet-5.5'),reviewer:m('codex','gpt-6.1-sol'),'design-reviewer':m('codex','gpt-6-astra')},seats:{},workflows:{}} as any,null,{by:'captain',via:'page'});
+  store.write(C.applyChange(C.teamBody(v1),{kind:'project',project:'fixture',seat:'reviewer',set:{provider:'claude',model:'sonnet-5.5'}} as any),v1.hash,{by:'captain',via:'page'});
+  const inv=(await get('/api/issue-triage/fixture')).body.investigators,other=(await get('/api/issue-triage/elsewhere')).body.investigators;
+  ok(inv?.a?.model==='opus-5.5'&&inv.a.from==='team'&&inv?.b?.provider==='claude'&&inv.b.model==='sonnet-5.5'&&other?.b?.model==='gpt-6.1-sol','with a team, the investigators are its maker and reviewer seats, with this project\'s own change to a seat'); }
+ ok((await post('/api/issue-triage/fixture/start',{size:20},'phone')).status===403,'only the desktop captain starts a triage');
+ ok((await post('/api/issue-triage/fixture/start',{size:0})).status===400&&(await post('/api/issue-triage/fixture/start',{size:51})).status===400&&(await post('/api/issue-triage/fixture/start',{issues:['x']})).status===400,'the batch size is 1 to 50, and issue numbers are numbers');
+ const notConnected=await post('/api/issue-triage/fixture/start',{size:20});
+ ok(notConnected.status===409&&/registered project/.test(notConnected.body.error),'a project that is not a connected GitHub project is refused with the reason',JSON.stringify(notConnected));
 
  // --- batches: what to investigate next, and how a batch joins the stored triage ---
  ok(T.pickBatch(snap,null,{size:2}).join(',')==='1,3','with no triage yet the oldest open issues come first, as many as the batch holds');
