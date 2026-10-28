@@ -357,13 +357,15 @@ try {
   // --- 3e. the approval card counts what is left for the captain as the rulings left it, not as the triage first wrote it ---
   { const crash = "TypeError: cannot read properties of undefined (reading id) in loadProfile";
     closedList = [issue(72, { state: "closed", title: "Profile crash", body: `Steps: open the profile. ${crash}` })];
-    // the earlier packages are set aside meanwhile, so the batch's own package is not matched to one of them
-    const kept = store.get("proj")!;
-    const batchOf = async (pkg: number, dup: number, rule: boolean) => {
-      store.write({ ...store.get("proj")!, packages: [], cross: [] }); reset2(); open = [...open, issue(pkg, { title: `Url match ${pkg}` }), issue(dup, { title: "Profile fails", body: `Opening the profile fails: ${crash}` })];
-      const report = { commit, issues: [finding(pkg), finding(dup, { state: "not-found", locus: [], evidence: "the same crash as #72", repro: "none", duplicateOf: 72, symptom: { here: crash, there: crash } })], groups: [], related: [], alone: [pkg, dup] };
-      script = () => [{ tool: "issue_read", args: { n: dup } }, { tool: "issue_read", args: { n: 72 } }, ...reading("src/url.ts"), { tool: "triage_submit", args: { report } }];
-      const run = await runOf({ issues: [pkg, dup] }); await until(() => !!E.cards.list({ run: run.id, open: true }).find((c) => c.node === "court"));
+    // the earlier packages are set aside meanwhile, so only this section's packages match
+    const kept = store.get("proj")!; store.write({ ...kept, packages: [], cross: [] });
+    const menuAt = { locus: [{ file: "src/menu.ts", symbol: "openMenu", lines: "1-3" }], evidence: "return items.filter((i) => i.visible && !i.hidden)" };
+    /** a batch of packages (each finding's overrides) and one agreed duplicate of #72; the court ruled confirm, or left */
+    const batchOf = async (pkgs: [number, any][], dup: number, rule: boolean) => {
+      reset2(); open = [...open, ...pkgs.map(([n]) => issue(n, { title: `Issue ${n}` })), issue(dup, { title: "Profile fails", body: `Opening the profile fails: ${crash}` })];
+      const report = { commit, issues: [...pkgs.map(([n, o]) => finding(n, o)), finding(dup, { state: "not-found", locus: [], evidence: "the same crash as #72", repro: "none", duplicateOf: 72, symptom: { here: crash, there: crash } })], groups: [], related: [], alone: [...pkgs.map(([n]) => n), dup] };
+      script = () => [{ tool: "issue_read", args: { n: dup } }, { tool: "issue_read", args: { n: 72 } }, ...reading("src/url.ts", "src/menu.ts"), { tool: "triage_submit", args: { report } }];
+      const run = await runOf({ issues: [...pkgs.map(([n]) => n), dup] }); await until(() => !!E.cards.list({ run: run.id, open: true }).find((c) => c.node === "court"));
       const court = E.cards.list({ run: run.id, open: true }).find((c) => c.node === "court")!, dv: any = flow.courtView("proj", run.id);
       if (rule) await flow.rule("proj", run.id, [{ case: dv.cases.find((c: any) => c.issues.includes(dup)).id, pick: "confirm" }], "captain");
       else await E.answer(court.id, { choice: "skip", by: "captain (card)" } as any);
@@ -371,10 +373,14 @@ try {
       const card = E.cards.list({ run: run.id, open: true }).find((c) => c.node === "approve")!;
       await E.answer(card.id, { choice: "close", by: "captain (card)" } as any); await until(() => E.get(run.id)!.status === "succeeded");
       return { note: String(E.get(run.id)!.nodes.record?.note), body: card.body ?? "" }; };
-    const ruled = await batchOf(60, 61, true);
-    ok(/1 set aside for you/.test(ruled.note) && !/for you to judge/.test(ruled.body) && !/要你判斷/.test(ruled.body), "a duplicate the court confirmed is no longer counted on the approval card as an issue for the captain to judge", ruled.body);
-    const left = await batchOf(62, 63, false);
-    ok(/1 issue is for you to judge/.test(left.body) && /1 張要你判斷/.test(left.body), "a duplicate left for the project page is still counted on the approval card", left.body);
+    // first a batch left for the project page: its duplicate (#63) stays set aside, its package at match() stays proposed
+    const left = await batchOf([[62, {}]], 63, false);
+    ok(/1 issue is for you to judge/.test(left.body) && /1 張要你判斷/.test(left.body) && !/at the same function/.test(left.body), "a duplicate left for the project page is still counted on the approval card", left.body);
+    // then a batch whose duplicate the court confirms: the earlier batch's #63 is not this batch's to count; #60 at match()
+    // again is matched to #62's package, #64 in the menu is a new package
+    const ruled = await batchOf([[60, {}], [64, menuAt]], 61, true);
+    ok(/1 set aside for you/.test(ruled.note) && !/for you to judge/.test(ruled.body) && !/要你判斷/.test(ruled.body) && store.get("proj")!.toHuman.some((h) => h.issues.includes(63)), "a duplicate the court confirmed is no longer counted on the approval card, nor one set aside by another batch", ruled.body);
+    ok(/1 at the same function as an earlier package/.test(ruled.note) && /1 more at the same function as an earlier package/.test(ruled.body) && /另有 1 項/.test(ruled.body), "the approval card counts the batch's matches to an earlier package that are still to decide", ruled.body);
     store.write(kept); closedList = []; open = open.filter((i) => i.number < 60); }
 
   // --- 4. both investigators on one model: no record ---

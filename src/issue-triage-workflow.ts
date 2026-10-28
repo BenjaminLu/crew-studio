@@ -216,7 +216,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
     toHuman:batch.toHuman,added:merged.packages.filter(p=>added.includes(p.id)),skip:[...changed,...gone],by:{a:`${a.by.provider} ${a.by.model}`,b:`${b.by.provider} ${b.by.model}`}});
    writeAtomic(docketFile(x.run.id),JSON.stringify(docket));
    engine.record(x,'issue-triage-docket',{head:digest(docket),data:{schema:1,project:t.project,cases:docket.cases.length,issues:docket.cases.flatMap(c=>c.issues)}} as any);
-   store.write(merged);x.ctx.issueTriage={...t,added,matched,needsInfo,aside,court:docket.cases.length};
+   store.write(merged);x.ctx.issueTriage={...t,added,matched,court:docket.cases.length};
    engine.record(x,'issue-triage-written',{head:digest(merged),data:{schema:1,project:t.project,commit:t.commit,added,toHuman:merged.toHuman.length,changed,...sameModel?{investigators:'same'}:{}}} as any);
    // counted from what was written: an issue edited meanwhile, or closed, is not agreed on any more
    const none=(merged.noCode??[]).flatMap(n=>n.issues).filter(n=>t.batch.includes(n)).length;
