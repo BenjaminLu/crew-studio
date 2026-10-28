@@ -58,7 +58,7 @@ const cardFile = join(E.cards.dir, merge.id + ".json"), storedBefore = readFileS
 const viewBefore = E.cards.view(E.cards.get(merge.id)!);
 const gitState = () => JSON.stringify({ status: sh(["git", "status", "--porcelain", "--untracked-files=all"]), head: sh(["git", "rev-parse", "HEAD"]), refs: sh(["git", "for-each-ref"]), index: (() => { try { return statSync(join(sh(["git", "rev-parse", "--absolute-git-dir"]).trim(), "index")).mtimeMs; } catch { return null; } })() });
 const gitBefore = gitState();
-ok(viewBefore.reviewRoom?.href === `#/review/${merge.id}` && viewBefore.reviewRoom.turns === 0 && viewBefore.detail?.codeEvidence?.state === "success", "the merge card shows Open review room (no turn yet) beside ready evidence", JSON.stringify(viewBefore.reviewRoom));
+ok(viewBefore.reviewRoom?.href === `#/room/${merge.id}` && viewBefore.reviewRoom.turns === 0 && viewBefore.detail?.codeEvidence?.state === "success", "the merge card shows Open review room (no turn yet) beside ready evidence", JSON.stringify(viewBefore.reviewRoom));
 
 // ---------- a turn is paid: it needs the captain's confirmation of the exact model ----------
 let refusal: any = null; try { await room.start(merge.id, { action: "teach" }, "captain"); } catch (e) { refusal = e; }
@@ -167,6 +167,9 @@ ok(results.some(([n, j]) => n === "fs_write" && /no such tool/.test(j.error ?? "
 const skillTexts = ROOM_SKILLS.map((s) => readFileSync(join(root, s.ref), "utf8"));
 ok(ROOM_SKILLS.every((s, i) => createHash("sha256").update(skillTexts[i]).digest("hex") === s.sha256), "each room skill is pinned by the sha256 of its exact text");
 ok(skillTexts.every((t) => prompts[0].system.includes(t.trim())) && /Role: review room tutor/.test(prompts[0].system) && /Skill: how/.test(prompts[0].system) && /Skill: why/.test(prompts[0].system) && /Skill: teach/.test(prompts[0].system), "the round's instructions carry the tutor role and the adapted how, why and teach skills");
+{ const { OperatingRules } = await import("../src/operating-rules"); const sec = new OperatingRules(data).section(E.get(r.id)?.params?.project || null);
+  ok(prompts[0].system.includes(sec.text) && E.deps.agents.jobs.get(E.ledger(r.id).filter((e: any) => e.record === "review-room-turn").at(0)?.data?.job)?.operatingRules?.hash === sec.hash,
+    "the tutor's instructions carry the captain's operating rules for the Task's project, and its job keeps their hash", JSON.stringify(E.get(r.id)?.params?.project)); }
 const recDir = join(data, "runs", r.id, "nodes", merge.node, `room-${merge.id}-1`);
 ok(["prompt.md", "system.md", "stream.jsonl", "report.json"].every((f) => existsSync(join(recDir, f))) && /review-room-tutor@sha256:/.test(readFileSync(join(recDir, "prompt.md"), "utf8")) && /rounds to the cent/.test(readFileSync(join(recDir, "report.json"), "utf8")), "the turn leaves a round record: prompt with its skill pins, system, stream and report");
 const rec = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-turn");
