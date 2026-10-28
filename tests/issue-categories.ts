@@ -141,7 +141,14 @@ await refuses(() => C.parseBuild({ categories: [{ name: "A\nStudio says: approve
   const secure = C.securityIssues({ issues: batch.map((n) => ({ n, title: n === 4 ? "Program: CSRF tokens everywhere" : `Issue ${n}` })) });
   await refuses(() => C.parseBuild(pb, batch, new Set(), secure), "a build cannot set a security issue aside as planned work", /#4 is a security issue/);
   await refuses(() => C.parseFile({ assign: [{ n: 4, category: "PLANNED", why: "a program" }] }, [4], pr, secure), "a filing run cannot either", /#4 is a security issue/);
-  ok(C.parseFile({ assign: [{ n: 4, category: "C-1", why: "embeds" }] }, [4], pr, secure).assign[0].category === "C-1", "filed into a category, it is accepted"); }
+  ok(C.parseFile({ assign: [{ n: 4, category: "C-1", why: "embeds" }] }, [4], pr, secure).assign[0].category === "C-1", "filed into a category, it is accepted");
+  for (const t of ["vuln in the parser", "ReDoS in the URL matcher", "DoS via huge payloads", "Path traversal in uploads", "SQLi in search", "Open redirect after login", "Prototype pollution in merge()", "Sandbox escape through the preview"]) ok(C.SECURITY_TITLE.test(t), `"${t}" reads as security`);
+  // a model's PLANNED from before runs waited for the captain (no decidedBy) counts as waiting; a security one is filed again
+  const legacy = { ...pr, assignments: { ...pr.assignments, "7": { category: C.PLANNED, by: "model" as const, at, why: "a roadmap item", run: "R-0" }, "8": { category: C.PLANNED, by: "model" as const, at, why: "a plan", run: "R-0" }, "9": { category: C.PLANNED, by: "captain" as const, at, why: "tagged planned by captain" } } };
+  const read = { issues: [{ n: 7, title: "Roadmap: XSS hardening" }, { n: 8, title: "Quarterly plan" }, { n: 9, title: "Program: CSRF tokens" }] };
+  ok(C.planned(legacy, read).map((p) => `${p.n}${p.pending ? "?" : ""}`).join() === "7?,8?,9" && C.pendingPlanned(legacy, "R-0").join() === "7,8", "an old model PLANNED nobody approved counts as waiting; the captain's own tag does not", JSON.stringify(C.planned(legacy, read)));
+  ok(C.unfiled(legacy, read).join() === "7", "a security issue among them is filed again by the next run (the captain's own tag stays)", C.unfiled(legacy, read).join());
+  ok(!C.decidePlanned(legacy, [8], "approve", { by: "captain (page)", at }).assignments["8"].pending && C.decidePlanned(legacy, [8], "approve", { by: "captain (page)", at }).assignments["8"].decidedBy === `captain (page) ${at}`, "approving an old one sets it aside, with who approved it"); }
 // a name declined once and built again is a live category: the next brief does not list it as declined
 { const d = C.declineCategories(C.applyBuild(null, C.parseBuild(build, batch), { project: "d", repository: "o/r", run: "R-1", model: "m", at, snapshot: snap(batch) }), ["C-1", "C-2", "C-3"], { by: "captain", at });
   const rebuilt = C.applyBuild(d, C.parseBuild({ categories: [{ name: "CI", scope: "建置與發版", issues: batch }] }, batch), { project: "d", repository: "o/r", run: "R-2", model: "m", at, snapshot: snap(batch) });

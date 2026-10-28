@@ -103,6 +103,7 @@
 .is-status{display:flex;align-items:center;gap:6px;font-size:13px}
 .is-row.g-you{--tb-c:var(--warn)}.is-row.g-run{--tb-c:var(--accent)}.is-row.g-all{--tb-c:var(--text-3)}
 .is-sec{font-size:11px;font-weight:600;color:var(--bad);background:var(--bad-soft);border-radius:999px;padding:0 7px;white-space:nowrap}
+.is-proposed{font-size:11px;font-weight:600;color:var(--warn);background:var(--warn-soft);border-radius:999px;padding:0 7px;white-space:nowrap}
 .is-detail h2{margin:2px 0 0;font-size:18px}
 .is-why,.is-how{margin:0;font-size:13.5px}.is-how{color:var(--text-2)}
 .is-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
@@ -120,7 +121,7 @@
 .is-pending ul{list-style:none;margin:0;padding:0}.is-pending li{display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13.5px;min-width:0}.is-pending li:first-child{border-top:0}
 @media (max-width:640px){.is-row{grid-template-columns:44px minmax(0,1fr) 28px}.is-kind,.is-status{grid-column:2/-1}}
 .is-work{font-size:12px;color:var(--text-3);margin-top:2px}
-.is-work.w-merged{color:var(--ok)}
+.is-work.w-merged,.is-work.w-ready{color:var(--ok)}
 .is-work.w-open{color:var(--accent)}
 .is-next{font-size:13px;margin:6px 0}
 .is-start{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}

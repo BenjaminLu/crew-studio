@@ -120,11 +120,19 @@ export const templateLanguage = (text: string) => ((String(text).match(/[぀-ヿ
 /** A claude.ai session link or a Claude-Session trailer never goes into text Studio pushes to GitHub (commit messages, pull request titles and bodies). */
 export const SESSION_LINK = /claude\.ai\/code\/session|Claude-Session:/i;
 export const withoutSessionLinks = (text: string) => String(text ?? "").split("\n").filter((l) => !SESSION_LINK.test(l)).join("\n");
-/** A Task drawn from an issue triage leaves no trace on the triaged repository's issues and pull requests: any reference
- *  GitHub would link (#n, GH-n, owner/repo#n, an issues or pull URL) becomes "an issue", so its commits and pull request
- *  neither close an issue nor add a cross-reference to one. The issues stay named in Studio's own records only. */
-const ISSUE_REF = /https?:\/\/[^\s)>\]]+?\/(?:issues|pull)\/\d+[^\s)>\]]*|(?:\b[\w.-]+\/[\w.-]+)?#\d+\b|\bGH-\d+\b/gi;
-export const withoutIssueRefs = (text: string) => String(text ?? "").replace(ISSUE_REF, "an issue");
+/** A Task drawn from an issue triage leaves no trace on GitHub: any reference GitHub would link back to an issue, a pull
+ *  request or a discussion (#n, GH-n, owner/repo#n; an issues, pull or discussions URL, with or without https:// or www.,
+ *  or a relative issues/n path) becomes "an issue", and an @mention (@user, @org/team) loses its @, so its text neither
+ *  closes an issue, nor cross-references one, nor notifies anyone. A #n counts only where GitHub links it (at the start or
+ *  after a space or punctuation): an HTML entity (&#123;), a CSS color (color: #123456;) and a URL's anchor (file.ts#12)
+ *  stay. Code (a fenced block or an inline span) stays as written. The issues stay named in Studio's own records only. */
+const LINK_URL = /(?:https?:\/\/|\bwww\.)[^\s)>\]]+?\/(?:issues|pulls?|discussions)\/\d+[^\s)>\]]*|(?<![\w/.-])(?:\.\.?\/)*(?:issues|pulls?|discussions)\/\d+\b/gi;
+const SHORT_REF = /(?<=^|[\s(\[{,;!?"'*_~>])(?:[\w.-]+\/[\w.-]+)?#\d+\b(?!;)|(?<![\w-])GH-\d+\b/gim;
+const CSS_COLOR = /\b(?:color|background(?:-color)?|fill|stroke|border(?:-[a-z]+)*|outline)\s*:\s*$/i;
+const MENTION = /(?<![\w`@.\/-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[\w.-]+)?)\b/g;
+const CODE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
+export const withoutGitHubLinks = (text: string) => String(text ?? "").split(CODE).map((part, i) => i % 2 ? part
+  : part.replace(LINK_URL, "an issue").replace(SHORT_REF, (m, at: number, all: string) => CSS_COLOR.test(all.slice(Math.max(0, at - 40), at)) ? m : "an issue").replace(MENTION, "$1")).join("");
 
 /** Studio's part of a pull request body, between two hidden markers: the begin marker names the head the text describes and
  *  the hash of the text between them, so Studio can tell a text that lags the head, or that someone edited, from its own.

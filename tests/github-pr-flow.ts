@@ -127,11 +127,12 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     const p1 = [...sim.pulls.values()].find((p) => p.head.ref === "crew/plain");
     ok(plain.status === "succeeded" && !!p1 && p1.body.includes("## Door\ntwo-way") && p1.body.includes("## Rollback") && !E.cards.list({ run: plain.id }).length, "no template: the pull request opens right after the build with the spec, door and rollback, no card", `${plain.status} ${p1?.body?.slice(0, 80)}`);
 
-    // a Task drawn from an issue triage (tainted): its pull request names no issue, so GitHub links and closes nothing
+    // a Task drawn from an issue triage (tainted) never touches GitHub: no push, no pull request, not even a read; it stops on its branch
+    const callsBefore = sim.calls.length;
     const taint = await startRun("crew/tainted", { _tainted: "issue-text" });
     await until(() => ["succeeded", "failed"].includes(taint.status), 15000);
-    const pt = [...sim.pulls.values()].find((p) => p.head.ref === "crew/tainted");
-    ok(taint.status === "succeeded" && !!pt && !/#\d|\/issues\/\d/.test(pt.title + pt.body) && /fixes an issue/.test(pt.title) && /Closes an issue, see an issue/.test(pt.body), "a tainted Task's pull request title and text name no issue (no #n, no issue link)", `${pt?.title} ${pt?.body?.slice(0, 200)}`);
+    ok(taint.status === "succeeded" && taint.result === "closed" && taint.ctx.taintedReady?.branch === "crew/tainted" && !sim.head("crew/tainted") && ![...sim.pulls.values()].some((p) => p.head.ref === "crew/tainted") && sim.calls.length === callsBefore && taint.ctx.pr?.adapter === "local"
+      && E.trusted(taint.id).entries.some((e: any) => e.record === "tainted-ready" && e.data?.branch === "crew/tainted"), "a tainted Task makes no GitHub call at all: it ends ready on its local branch, recorded on the ledger", JSON.stringify([taint.status, taint.result, taint.ctx.taintedReady, sim.calls.slice(callsBefore)]));
 
     // one template
     sim.community.set(".github/pull_request_template.md", TEMPLATE);

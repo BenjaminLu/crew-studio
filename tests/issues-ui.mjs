@@ -60,7 +60,7 @@ const cat = (id, name, scope, status) => ({ id, name, scope, status, createdAt: 
 const asg = (category) => ({ category, by: "model", at: "2026-10-28T09:00:00Z" });
 writeFileSync(join(data, "issue-categories", "wallet.json"), JSON.stringify({ schema: 1, project: "wallet", repository: "fixture/wallet", lastCategory: 3, updatedAt: "2026-10-28T09:00:00Z", runs: [],
   categories: [cat("C-1", "內嵌網頁", "內嵌網頁與它能呼叫的介面", "active"), cat("C-2", "URL 工具", "網址組裝與解析", "active"), cat("C-3", "推播", "推播與通知", "proposed")],
-  assignments: { 11: asg("C-1"), 12: asg("C-1"), 16: asg("C-1"), 13: asg("C-2"), 17: asg("C-2"), 18: asg("C-3"), 19: { ...asg("PLANNED"), why: "a program task, not a defect" }, 20: { ...asg("PLANNED"), why: "a roadmap item", run: "R-2", pending: true } },
+  assignments: { 11: asg("C-1"), 12: asg("C-1"), 16: asg("C-1"), 13: asg("C-2"), 17: asg("C-2"), 18: asg("C-3"), 19: { ...asg("PLANNED"), why: "a program task, not a defect", decidedBy: "captain (card) 2026-10-28T09:30:00Z" }, 20: { ...asg("PLANNED"), why: "a roadmap item", run: "R-2", pending: true } },
   titles: { 11: "Bridge trusts a page-supplied URL", 12: "Replies reach the next page", 13: 'Title with <img src=x onerror="window.__pwned=2"> markup', 17: "Share link loses its fragment", 18: "Query string doubled on retry", 19: "Program: quarterly release plan", 20: "Roadmap: move to the v3 API" } }));
 
 const port = await freePort();
@@ -120,7 +120,7 @@ try {
     ok(steps.map((s) => s.slice(0, 2).join(":")).join(",") === "11:1,12:2" && steps[0][2] === "src/bridge/index.ts · historyChange", "the selected package lists its issues in order, each with its code location");
     ok(await p.locator('[data-detail="P-1"] a[href="https://github.com/fixture/wallet/issues/11"][target="_blank"][rel~="noopener"]').count() === 1, "each issue links to GitHub in a new tab");
     { const how = await p.locator('[data-detail="P-1"] .is-how').textContent();
-      ok(/name no issue/.test(how) && /nothing is linked or closed there/.test(how) && /close it yourself/.test(how), "a package says its Tasks name no issue on GitHub, and that a person closes each one", how); }
+      ok(/Nothing goes to GitHub/.test(how) && /stops reviewed on its local branch/.test(how) && /no push and no pull request/.test(how) && /commits name no issue/.test(how), "a package says its Tasks never go to GitHub: each stops on its local branch, and its commits name no issue", how); }
     ok(/Ended without a merge/.test(await p.locator('[data-detail="P-1"] [data-issue="11"] .is-work').textContent()) && !(await p.locator('[data-detail="P-1"] [data-issue="12"] .is-work').count()), "an issue with a Task shows where it stands; one without shows nothing");
     ok(/work on P-1/.test(await p.locator('[data-detail="P-1"] .is-next').textContent()), "an approved package says how to start its next issue");
     ok(/An issue changed: triage again/.test(await p.locator('[data-pack="P-3"]').textContent()) && /Waiting for approval/.test(await p.locator('[data-pack="P-2"]').textContent()), "each package says where it stands");
@@ -187,6 +187,7 @@ try {
     // what a run proposed as planned waits for the captain: marked, not counted, set aside or filed from here
     const w20 = p.locator('[data-cat-planned] [data-cat-issue="20"]');
     ok(await p.locator('[data-cat-planned-waiting="1"]').count() === 1 && await w20.getAttribute("data-cat-pending") === "1" && /waiting for approval/.test(await w20.textContent()) && /a roadmap item/.test(await w20.textContent()), "planned work a run proposed is listed as waiting for approval, with its why");
+    ok(await w20.locator(".is-proposed").count() === 1 && await w20.locator(".is-sec").count() === 0 && await p.locator('[data-cat-planned-waiting="1"].is-proposed').count() === 1, "a proposal is marked as waiting, never styled as a security flag");
     await p.click('[data-cat-plan="20"]'); await p.waitForTimeout(300);
     ok(catCalls.some(([u, b]) => u.endsWith("edit") && b.op === "move" && b.n === 20 && b.to === "PLANNED"), "Set it aside approves it from the page");
     await p.click('[data-cat-unplan="19"]'); await p.waitForTimeout(300);

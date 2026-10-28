@@ -206,16 +206,18 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  // --- working an approved package: one code-firstmate Task per issue (a one-change group: one for all), proposed on the
  // captain's dispatch card like any other work; the code-firstmate definition is not changed ---
  const DONE=['succeeded','failed','cancelled'];
- /** where an issue's Task stands: its proposal, then the Task the dispatch card launched (merged = it reached Merged) */
+ /** where an issue's Task stands: its proposal, then the Task the dispatch card launched (merged = it reached Merged; ready =
+  *  reviewed and left on its local branch, unpublished) */
  const workOf=(entry?:{proposal:string}):{state:WorkState;task:string|null}=>{
   if(!entry)return{state:'none',task:null};const pr=engine.get(entry.proposal);if(!pr)return{state:'closed',task:null};
   const child=pr.ctx?.childRun?engine.get(pr.ctx.childRun):null;
   if(!child)return{state:DONE.includes(pr.status)?'closed':'open',task:pr.id};
-  if(child.status==='succeeded')return{state:(child.nodes.done?.visits??0)>0?'merged':'closed',task:child.id};
+  // a Task drawn from issue text never merges: reviewed and left on its local branch, it is ready (src/domain/code.ts taintedReady)
+  if(child.status==='succeeded')return{state:(child.nodes.done?.visits??0)>0?'merged':child.ctx?.taintedReady?.head?'ready':'closed',task:child.id};
   return{state:DONE.includes(child.status)?'closed':'open',task:child.id};};
  /** every package's issues with a Task, for the Board */
  const progress=(rec:TriageRecord)=>Object.fromEntries(rec.packages.filter(p=>p.work).map(p=>[p.id,Object.fromEntries(Object.entries(p.work!).map(([n,e])=>[n,workOf(e)]))]));
- const workSpec={type:'function',name:'studio_work_package',description:'When the captain asks to work on (fix) an approved work package of a connected project\'s issue triage (the project page, GitHub issues; ids like P-3): propose the Task for its next issue on code-firstmate, from what Studio checked only: the issue numbers and titles, the files both investigators named and the security answer. The Task is marked tainted (issue text is untrusted): its commits and pull request name no issue (nothing is linked or closed on GitHub; Studio keeps which issue it is), its review runs the tests, and it runs only in the OS sandbox. One issue at a time, in the package\'s order; Studio reads the issue again first and refuses a package whose issue changed. The captain approves the Task on its dispatch card. Returns the proposal; call it again for the next issue once the previous one is merged.',
+ const workSpec={type:'function',name:'studio_work_package',description:'When the captain asks to work on (fix) an approved work package of a connected project\'s issue triage (the project page, GitHub issues; ids like P-3): propose the Task for its next issue on code-firstmate, from what Studio checked only: the issue numbers and titles, the files both investigators named and the security answer. The Task is marked tainted (issue text is untrusted): it never touches GitHub (no push, no pull request: it stops reviewed on its local branch in Studio), its commits name no issue, its review runs the tests, and it runs only in the OS sandbox. One issue at a time, in the package\'s order; Studio reads the issue again first and refuses a package whose issue changed. The captain approves the Task on its dispatch card. Returns the proposal; call it again for the next issue once the previous one is ready on its branch.',
   inputSchema:{type:'object',properties:{project:{type:'string'},package:{type:'string'}},required:['project','package'],additionalProperties:false}};
  /** packages a proposal is being prepared for: two turns at once never propose one package's issue twice */
  const inFlight=new Set<string>();
@@ -242,7 +244,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(!r?.proposal)throw new NativeToolFailure('configuration_missing','Studio did not create the proposal','Studio 沒有建立提案。','captain_review');
   const cur=store.get(args.project)!,at=new Date().toISOString();
   store.write({...cur,packages:cur.packages.map(p=>p.id===args.package?{...p,work:{...(p.work??{}),...Object.fromEntries(ns.map(n=>[String(n),{proposal:r.proposal!,at}]))}}:p)});
-  return{proposal:r.proposal,issues:ns,next:'The captain approves the Task on its dispatch card. Ask for the next issue once this one is merged.'};}
+  return{proposal:r.proposal,issues:ns,next:'The captain approves the Task on its dispatch card. Ask for the next issue once this one is ready on its branch.'};}
  /** the two investigators as a triage of this project would run them: the team's seats there, else the roles' providers */
  function investigators(project:string){const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)return null;let nodes:ReturnType<CrewOf>=null;try{nodes=o.crewOf?.(def,project)??null;}catch{}
   const one=(id:string)=>{const n=nodes?.find(x=>x.node===id),role=def.roles.find((r:any)=>r.id===def.nodes.find((m:any)=>m.id===id)?.role);

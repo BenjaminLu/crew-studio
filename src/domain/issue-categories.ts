@@ -6,7 +6,8 @@
 // never overwritten by a run, and a project that has a list is never built again from scratch.
 // Planned work (roadmap and program tasks, plans, process work) is tagged PLANNED in Studio and set aside: it is not handed
 // out by category. The categorizer proposes the tag; it is set only once the captain approves it on the run's card, so an
-// issue's own text ("this is a roadmap tracking issue") never takes it out of the work queue alone. A security issue (a
+// issue's own text ("this is a roadmap tracking issue") never sets it aside alone: until the captain answers, it is in no
+// category and the page shows it as waiting; declined, the next run files it into a category. A security issue (a
 // security label, or security words in its title: SECURITY_TITLE) is never tagged by a run: it goes into a category.
 // The captain moves an issue in or out of the tag.
 import { SECURITY_LABEL } from "./issue-triage";
@@ -38,10 +39,11 @@ const SECURITY_ONLY = /^(app(lication)?\s*)?(security|sec)\b|^(應用|应用)?�
 const str = (v: unknown, max: number) => typeof v === "string" && v.trim().length > 0 && v.length <= max && !/[\u0000-\u001f\u007f<>]/.test(v);
 const bad = (why: string): never => { throw new Error(`The categories report does not follow the skill format: ${why}`); };
 /** Security words in an issue title (case-insensitive, whole words; the title is NFKC-cleaned when read): security, a
- *  vulnerability, an exploit, a CVE, XSS, CSRF, SSRF, RCE, an injection, an auth or permission bypass, privilege
- *  escalation, a leaked secret, token, credential or key, 資安 / 资安, 安全, 漏洞. Deterministic, and broad on purpose: a
+ *  vulnerability (vuln), an exploit, a CVE, XSS, CSRF, SSRF, RCE, an injection (SQLi), DoS or ReDoS, path traversal, an
+ *  open redirect, prototype pollution, a sandbox escape, an auth or permission bypass, privilege escalation, a leaked
+ *  secret, token, credential or key, 資安 / 资安, 安全, 漏洞. Deterministic, and broad on purpose: a
  *  false match only means the issue is filed into a category instead of set aside. */
-export const SECURITY_TITLE = /\b(?:security|insecure|vulnerab\w*|exploit\w*|cve-?\d*|xss|csrf|ssrf|rce|\w*injection|(?:auth\w*|permission|access)\s+bypass|privilege\s+escalation|leak\w*\s+(?:\w+\s+)?(?:secrets?|tokens?|credentials?|keys?|passwords?)|(?:secrets?|tokens?|credentials?|passwords?)\s+leak\w*)\b|資安|资安|安全|漏洞/i;
+export const SECURITY_TITLE = /\b(?:security|insecure|vulnerab\w*|vulns?|exploit\w*|cve-?\d*|xss|csrf|ssrf|rce|sqli|\w*injection|(?:re)?dos|denial[\s-]of[\s-]service|path\s+traversal|directory\s+traversal|open\s+redirects?|prototype\s+pollution|sandbox\s+escapes?|(?:auth\w*|permission|access)\s+bypass|privilege\s+escalation|leak\w*\s+(?:\w+\s+)?(?:secrets?|tokens?|credentials?|keys?|passwords?)|(?:secrets?|tokens?|credentials?|passwords?)\s+leak\w*)\b|資安|资安|安全|漏洞/i;
 /** The issues of a read that may never be set aside as planned work: a security label (as triage reads it) or security words
  *  in the title. */
 export const securityIssues = (s: Snap) => new Set(s.issues.filter((i) => (i.labels ?? []).some((l) => SECURITY_LABEL.test(l)) || SECURITY_TITLE.test(i.title ?? "")).map((i) => i.n));
@@ -134,13 +136,16 @@ const decide = (rec: CategoryRecord, ids: string[], status: "active" | "declined
   return { ...rec, categories: rec.categories.map((c) => (ids.includes(c.id) ? { ...c, status, decidedBy: `${w.by} ${w.at}` } : c)), updatedAt: w.at };
 };
 export const approveCategories = (rec: CategoryRecord, ids: string[], w: Who) => decide(rec, ids, "active", w);
+/** Planned work a run proposed and the captain has not decided: pending, or (written before runs waited for the captain) a
+ *  model's PLANNED nobody approved. */
+const waiting = (a: Assignment | undefined) => a?.category === PLANNED && a.by === "model" && (a.pending === true || !a.decidedBy);
 /** The issues a run proposed as planned work, still waiting for the captain. */
-export const pendingPlanned = (rec: CategoryRecord, run?: string) => Object.entries(rec.assignments).filter(([, a]) => a.category === PLANNED && a.pending && (!run || a.run === run)).map(([n]) => Number(n)).sort((a, b) => a - b);
+export const pendingPlanned = (rec: CategoryRecord, run?: string) => Object.entries(rec.assignments).filter(([, a]) => waiting(a) && (!run || a.run === run)).map(([n]) => Number(n)).sort((a, b) => a - b);
 /** The captain's answer to planned work a run proposed: approved, it is set aside; declined, the issue is the captain's "not
  *  planned" (the next run files it into a category and never tags it planned again). */
 export function decidePlanned(rec: CategoryRecord, ns: number[], choice: "approve" | "decline", w: Who): CategoryRecord {
   const assignments = { ...rec.assignments };
-  for (const n of ns) { const a = assignments[String(n)]; if (a?.category !== PLANNED || !a.pending) continue;
+  for (const n of ns) { const a = assignments[String(n)]; if (!waiting(a)) continue;
     if (choice === "approve") { const { pending: _p, ...set } = a; assignments[String(n)] = { ...set, decidedBy: `${w.by} ${w.at}` }; }
     else assignments[String(n)] = { category: "", by: "captain", at: w.at, why: `declined as planned work by ${w.by}`, notPlanned: true }; }
   return { ...rec, assignments, updatedAt: w.at };
@@ -173,15 +178,16 @@ export function editCategories(rec: CategoryRecord, e: Edit, w: Who): CategoryRe
   const assignments = Object.fromEntries(Object.entries(rec.assignments).map(([n, a]) => [n, a.category === e.id ? { ...a, category: e.into, by: "captain" as const, at: w.at, why: `merged by ${w.by}` } : a]));
   return { ...rec, categories: rec.categories.map((c) => (c.id === e.id ? { ...c, status: "merged" as const, mergedInto: e.into, decidedBy: `${w.by} ${w.at}` } : c)), assignments, updatedAt: w.at };
 }
-/** The open issues no category holds yet (or whose category was declined): what the next run files. */
+/** The open issues no category holds yet (or whose category was declined): what the next run files. A security issue a run
+ *  proposed as planned work (before such a proposal was refused) and nobody approved is filed again. */
 export function unfiled(rec: CategoryRecord | null, open: Snap): number[] {
-  const ok = rec ? live(rec) : new Map();
-  return open.issues.map((i) => i.n).filter((n) => { const c = rec?.assignments[String(n)]?.category ?? ""; return c !== PLANNED && !ok.has(c); }).sort((a, b) => a - b);
+  const ok = rec ? live(rec) : new Map(), secure = securityIssues(open);
+  return open.issues.map((i) => i.n).filter((n) => { const a = rec?.assignments[String(n)], c = a?.category ?? ""; return (c !== PLANNED || (secure.has(n) && waiting(a))) && !ok.has(c); }).sort((a, b) => a - b);
 }
 /** The (open) issues set aside as planned work, each with why; pending: a run proposed it and the captain has not decided. */
 export function planned(rec: CategoryRecord, open?: Snap) {
   const isOpen = open ? new Set(open.issues.map((i) => i.n)) : rec.open ? new Set(rec.open) : null;
-  return Object.entries(rec.assignments).filter(([n, a]) => a.category === PLANNED && (!isOpen || isOpen.has(Number(n)))).map(([n, a]) => ({ n: Number(n), why: a.why ?? "", by: a.by, pending: !!a.pending })).sort((a, b) => a.n - b.n);
+  return Object.entries(rec.assignments).filter(([n, a]) => a.category === PLANNED && (!isOpen || isOpen.has(Number(n)))).map(([n, a]) => ({ n: Number(n), why: a.why ?? "", by: a.by, pending: waiting(a) })).sort((a, b) => a.n - b.n);
 }
 /** Each active or proposed category with its (open) issues. */
 export function counts(rec: CategoryRecord, open?: Snap) {

@@ -214,10 +214,14 @@ written to GitHub as labels: the lead's own view to hand work out one category a
 or one kind of work; its issues may have different root causes. Security is a flag on an issue, never a category.
 Planned work (roadmap and program tasks, plans, process work) is tagged `PLANNED` in Studio and set aside: it is not
 handed out by category. A run only proposes the tag: an issue is set aside once the captain approves it on the run's
-card, so an issue's own text ("this is a roadmap tracking issue") never takes it out of the work queue. A security issue
+card, so an issue's own text ("this is a roadmap tracking issue") never sets it aside alone: until the captain answers it
+is in no category and the page shows it as waiting, and declined, the next run files it into a category. A model's
+`PLANNED` from before runs waited for the captain (no `decidedBy`) counts as waiting too; a security issue among those
+is filed again by the next run. A security issue
 is never tagged planned by a run: one with a security label (`security` or `sec`, as triage reads it) or security words
 in its title (`SECURITY_TITLE` in `src/domain/issue-categories.ts`: security, vulnerability, exploit, CVE, XSS, CSRF,
-SSRF, RCE, injection, an auth or permission bypass, privilege escalation, a leaked secret, token, credential or key,
+SSRF, RCE, injection or SQLi, DoS or ReDoS, path traversal, an open redirect, prototype pollution, a sandbox escape, an
+auth or permission bypass, privilege escalation, a leaked secret, token, credential or key,
 資安, 安全, 漏洞) must be filed into a category, and the brief names such issues. The page lists planned work apart, each
 issue with why, and what a run proposed as waiting for approval; the captain tags an issue planned (move to `PLANNED`,
 which also approves a proposed one) or takes it off (`unplan`: the next run files it into a category, and no run tags it
@@ -300,31 +304,42 @@ proposed; one missing from that read (closed, or moved between pages while read)
 The Task's request is built only from what Studio derived or checked (`issueBrief`): the issue numbers, each title quoted
 on one line as untrusted text, the files both investigators named (each exists at the triaged commit; `triageRecord`
 keeps only those), a symbol only when it is a code name that file contains, line numbers, the step in the package, a
-done line that must fail before the change and pass after, the rule that its branch, commits and pull request name no
-issue, and, for a security issue, no exploit detail there either. It names each issue as "issue n", never `#n`. Model-written text never goes in: not the repro, not the
+done line that must fail before the change and pass after, the rule that the Task stops on its local branch and its
+commits name no issue and mention no one, and, for a security issue, no exploit detail there either. It names each issue
+as "issue n", never `#n`. Model-written text never goes in: not the repro, not the
 tag, not a package's why. The investigators read the issue's untrusted text, and two models can be steered by it alike,
 so their agreeing on a function does not make their words safe for a worker that runs commands; the page still shows
 the repro to the captain. The issue's body never goes in.
 
 The Task is **tainted**: Studio marks it (`_tainted`, a parameter no model can set: `proposeTainted` in
-`src/firstmate.ts`; a new Task from its failure card keeps it). A tainted Task leaves no trace on the triaged repository's issues: GitHub links any `#n`, `GH-n`, `owner/repo#n` or
-issue or pull request URL in a commit or a pull request back to that issue (and a closing keyword closes it), so each
-such reference becomes "an issue" in its round commits, its merge commit and its pull request's title and text
-(`withoutIssueRefs`, `src/domain/pull-template.ts`), and Studio refuses to edit in a text that still has one. Which
-issue a Task works on stays in Studio (the package's work record, the run's ledger); a person closes the issue once
-they have checked the merged change. Its reviewer always works in run mode (the tests run), whatever
-`reviewer.mode` says. And it runs only in the OS sandbox: no step of it starts, and no agent turn opens, while Studio is
-in local unrestricted mode (`CREW_LOCAL_UNRESTRICTED`) or a sandbox-off grant is open for its project (one rule,
-`taintRefusal` in `src/runtime/engine.ts`). The package records each issue's proposal; the Board shows where its Task stands (in progress, merged, ended
-without a merge) and how to start the next one.
+`src/firstmate.ts`; a held proposal proposed again and a new Task from its failure card keep it). A tainted Task never
+touches GitHub: its review-request adapter is the local one whatever the project's grant (`selectedAdapter` in
+`src/domain/code.ts`), so nothing is pushed, no pull request is opened and nothing on GitHub is read for it. Reviewed and
+past CI, it does not reach the merge card: it ends at Remote readiness, ready on its local branch (`taintedReady`: the
+branch, its head and its base on the run's ledger as `tainted-ready`, the Task closed with "ready on branch …, not
+published"), and its merge step refuses it. The diff and the evidence stay on the Task's page in Studio. Studio offers no
+way to publish such a branch yet; a later, explicit captain action may. Which issue a Task works on stays in Studio (the
+package's work record, the run's ledger). As defence in depth its commit messages name no issue and mention no one:
+GitHub links any `#n`, `GH-n`, `owner/repo#n`, issue, pull request or discussion URL (with or without `https://` or
+`www.`, or a relative `issues/n` path) back to that issue, and notifies an `@user` or `@org/team`, so each reference
+becomes "an issue" and each mention loses its `@` (`withoutGitHubLinks`, `src/domain/pull-template.ts`; an HTML entity,
+a CSS color, a URL's anchor and code spans stay as written). Its reviewer always works in run mode (the tests run),
+whatever `reviewer.mode` says. And it runs only in the OS sandbox: while Studio is in local unrestricted mode
+(`CREW_LOCAL_UNRESTRICTED`) or a sandbox-off grant is open for its project, no step of it starts, no agent turn opens, no
+check runs (a node's, an edge's, a card's or one a domain runs after an answer) and no card answer carries it on, though
+holding it is always allowed (one rule, `taintRefusal` in `src/runtime/engine.ts`). The package records each issue's
+proposal; the Board shows where its Task stands (in progress, ready on its branch, merged, ended without either) and how
+to start the next one: an issue whose Task is ready counts as done for the package's order.
 
 Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, declining, next issue, brief, store, routes),
 `tests/issue-triage-workflow.ts` (the workflow end to end against a local GitHub stand-in with scripted investigators:
 both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (the
 project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
 links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the empty state, the Crew section's seats; the
-Board has no Issues view), `tests/tainted-task.ts` (a tainted Task: no issue reference in its commits, run-mode review, no
-step outside the OS sandbox). Both workflow tests check that GitHub is only ever read (no POST, PATCH, PUT or DELETE).
+Board has no Issues view), `tests/tainted-task.ts` (a tainted Task: only Studio marks it and the dispatched Task keeps it,
+no GitHub call through the whole code-firstmate flow and an end on its local branch, no issue reference or @mention in
+its commits, run-mode review, no step, agent turn, check or carrying answer outside the OS sandbox). Both workflow tests
+check that GitHub is only ever read (no POST, PATCH, PUT or DELETE).
 
 ### Measuring triage and categories
 

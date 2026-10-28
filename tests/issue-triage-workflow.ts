@@ -256,6 +256,9 @@ try {
   ok(/in progress/.test(await workErr({ project: "proj", package: "P-1" })), "while its Task runs, the package's next issue waits");
   await decide(w1.proposal, "close");
   ok(flow.progress(store.get("proj")!)["P-1"]["1"].state === "closed", "a Task that ends without a merge shows as closed");
+  { const t = E.get(w1.proposal)!; t.ctx.taintedReady = { branch: "crew/R-x", head: "a".repeat(40) };
+    ok(flow.progress(store.get("proj")!)["P-1"]["1"].state === "ready" && /merged or ready/.test(await workErr({ project: "proj", package: "P-1" })), "a Task that ended ready on its local branch shows as ready, and counts as done for the package");
+    delete t.ctx.taintedReady; }
   const w2: any = await flow.call("studio_work_package", { project: "proj", package: "P-1" }, owner(true));
   ok(w2.issues.join() === "1" && w2.proposal !== w1.proposal, "an issue whose Task did not merge is offered again");
   await decide(w2.proposal, "merge");

@@ -7,7 +7,7 @@ import { installCodeRecovery } from "./code-recovery";
 import { installCodeQueue, scopeBlockers, type ScopeBlocker } from "./code-queue";
 import { installCodeDesign } from "./code-design";
 import { installCodePublish } from "./code-publish";
-import { withoutIssueRefs, withoutSessionLinks } from "./pull-template";
+import { withoutGitHubLinks, withoutSessionLinks } from "./pull-template";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
@@ -188,11 +188,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if(option&&!option.hold&&evidenceFor(card)?.blocked)throw new Error("Merge evidence is unavailable or stale; rerun verification and request a fresh card");
   };
   engine.beforeNodeChecks ??= {}; engine.cardPrepared ??= {}; engine.beforeStart ??= {}; engine.externalHandlers ??= {}; engine.externalValidators ??= {};
-  // a tainted Task: drawn from untrusted issue text (params._tainted, Studio's own mark: src/firstmate.ts proposeTainted). Its
-  // commit messages and pull request text reference no issue (no closing keyword, no #n, no issue link: withoutIssueRefs),
-  // its review runs in run mode, and it runs only in the OS sandbox (src/runtime/engine.ts taintRefusal)
+  // a tainted Task: drawn from untrusted issue text (params._tainted, Studio's own mark: src/firstmate.ts proposeTainted). It
+  // never touches GitHub: its adapter is the local one whatever the project's grant (selectedAdapter), so nothing is pushed,
+  // opened or read there, and it stops on its local branch instead of the merge card (taintedReady). Its commit messages
+  // name no issue and @mention no one (withoutGitHubLinks), its review runs in run mode, and it runs only in the OS
+  // sandbox (src/runtime/engine.ts taintRefusal)
   const tainted = (x: X) => !!x.run.params?._tainted;
-  const refs = (x: X, t: string) => (tainted(x) ? withoutIssueRefs(t) : t);
+  const refs = (x: X, t: string) => (tainted(x) ? withoutGitHubLinks(t) : t);
   engine.cardPrepared["code-evidence-offer"]=(x,card)=>{
     if(card.kind!=="merge"||!card.detail?.codeEvidenceOffer)return;
     engine.record(x,"code-card-evidence-offer",{head:card.detail.codeEvidenceOffer.head,data:{card:card.id,offer:card.detail.codeEvidenceOffer}} as any);
@@ -259,6 +261,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     o.projects.assertExecutable({ project: x.ctx.project, base: x.ctx.base ?? p.base });
   };
   const selectedAdapter = (x: X): PrAdapter => {
+    if(tainted(x))return new LocalPrAdapter();
     if(o.adapter)return restoreNaming(x,o.adapter);
     const project=x.ctx.project?o.projects.get(x.ctx.project):null;if(!project?.github)return new LocalPrAdapter();
     const key=JSON.stringify(project.github)+"|"+x.run.id;let a=remoteAdapters.get(key);
@@ -270,7 +273,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       base:x.ctx.base??null,baseCommit:x.ctx.baseCommit??null,branch:x.ctx.branch??null,head:x.ctx.head??null,
       pr:x.ctx.pr ? {adapter:x.ctx.pr.adapter,id:x.ctx.pr.id,repo:x.ctx.pr.repo,base:x.ctx.pr.base,branch:x.ctx.pr.branch,head:x.ctx.pr.head,url:x.ctx.pr.url} : null,
       pending:x.ctx.remoteUpdatePending??null,
-      grant:o.adapter instanceof GitHubPrAdapter ? grantIdentity(o.adapter) : x.ctx.project ? o.projects.get(x.ctx.project)?.github??null : null });
+      grant:tainted(x) ? null : o.adapter instanceof GitHubPrAdapter ? grantIdentity(o.adapter) : x.ctx.project ? o.projects.get(x.ctx.project)?.github??null : null });
     let pinned=target();
     const owned = () => !signal?.aborted && (engine.owns ? engine.owns(x) : !x.cancelled?.());
     const live = () => owned() && target() === pinned;
@@ -822,7 +825,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       return remoteWait(x,a);
     } catch { if (!phase.live()) return { outcome: "cancel" }; await stopCard(x,"remote readiness/update could not be proved; no approval or merge allowed"); return { wait: true }; } finally { release?.(); }
   };
-  engine.actions["remote.ready"] = (x) => remoteReady(x);
+  /** A tainted Task ends here, reviewed and on its local branch: no merge card, no merge, nothing published. Publishing it is
+   *  not offered (a later, explicit captain action may be). The branch, its head and its base are on the ledger. */
+  const taintedReady = (x: X): string => {
+    const wt = shellOk(x), h = head(wt), ready = { branch: x.ctx.branch, head: h, base: x.ctx.base, baseCommit: x.ctx.baseCommit ?? null, at: new Date().toISOString() };
+    x.ctx.taintedReady = ready; engine.record(x, "tainted-ready", { head: h, data: { version: 1, ...ready } } as any);
+    x.ctx.endSummary = `ready on branch ${x.ctx.branch} at ${h.slice(0, 8)}, not published: work drawn from issue text never goes to GitHub`;
+    x.rn.note = x.ctx.endSummary; x.save(); return "close";
+  };
+  engine.actions["remote.ready"] = (x) => (tainted(x) ? taintedReady(x) : remoteReady(x));
   /** the Task's one curated commit message (src/domain/commit-message.ts): the spec's what and why, each done line with the
    * checks that proved it on the reviewed head, under the repository's CONTRIBUTING commit rules read at that head */
   const taskCommit = (x: X, h: string) => {
@@ -1013,6 +1024,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     return out;
   });
   engine.actions["git.merge"] = async (x) => {
+    if (tainted(x)) throw new Error("a Task drawn from issue text is never merged: it stops on its local branch");
     if (x.ctx.pr?.adapter === "github") {
       // merged on GitHub while the merge card was open (observed, never answered for the captain): the Task ends as merged
       if (x.ctx.mergeDetected) return detectedMerge(x);
@@ -1108,7 +1120,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const beforeInstall = write && x.node.mode === "build" ? (start: string) => { baseRefresh = refreshBase(x, start, remoteTip); return baseRefresh ? { pending: baseRefresh.conflicts.length > 0 } : null; } : undefined;
     // a GitHub-connected project's branch head is read from the granted repository with the grant's token, never from origin
     // decided by the grant's presence, not by building the adapter: a grant that does not validate stops the round (RoundBlocked), never local-only
-    const granted = o.adapter instanceof GitHubPrAdapter || !!(x.ctx.project && o.projects.get(x.ctx.project)?.github);
+    const granted = !tainted(x) && (o.adapter instanceof GitHubPrAdapter || !!(x.ctx.project && o.projects.get(x.ctx.project)?.github));
     const remote = granted ? () => { const a = selectedAdapter(x); if (!(a instanceof GitHubPrAdapter)) throw new Error("the project's GitHub grant gives no GitHub adapter"); return a.remoteGit(); } : null;
     try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, beforeInstall, remote, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
