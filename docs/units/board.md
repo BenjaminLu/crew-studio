@@ -335,7 +335,7 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
   beside the Task under their digest, and answers the card with that digest; a bare answer of the card (without the
   rulings) is refused, and only the captain answers it. "Leave them for the project page" applies nothing.
 - **Applied** (the `rulings` step, once per card). Studio reads the issues again first (GET only): a case whose issue
-  changed on GitHub since it was investigated, or closed, is not applied and writes no gold; it stays under "For you to
+  changed on GitHub since it was investigated (its title, text or labels), or closed, is not applied and writes no gold; it stays under "For you to
   judge" with why, and the next triage takes it again. What the rulings decide is kept beside the Task, then the triage,
   the gold set and the ledger are each written unless already there, so a step run again after a failure or a restart
   completes them without applying anything twice. A or B:
@@ -349,7 +349,7 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
   both reports agree on is adopted (a single package, or the agreed no-code state); where they disagree the issue stays
   under "For you to judge" with why. Each ruling is kept on the triage record (`rulings`: case, issues, pick, reason,
   packages, who, when) and on the ledger (`issue-triage-ruled`), and written to the project's gold set as the captain's
-  label (`IssueEvalStore.addCaptain`, merged field by field, docs/units/issue-eval.md): the state, the files and the package where the ruling
+  label (`IssueEvalStore.addCaptain`, the answer replaced whole, docs/units/issue-eval.md): the state, the files and the package where the ruling
   says them (nothing for neither, a duplicate, a pull request or a person's work). Nothing is written to GitHub: no
   comment, label, close or request.
 

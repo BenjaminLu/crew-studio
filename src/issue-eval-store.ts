@@ -33,12 +33,15 @@ export class IssueEvalStore{
  gold(project:string):GoldSet|null{const g=json(join(this.dir(project),'gold.json'));if(g&&g.schema!==GOLD_SCHEMA)throw new Error(`Unknown gold set schema ${g.schema}`);return g;}
  writeGold(g:GoldSet){if(g.schema!==GOLD_SCHEMA)throw new Error('Unknown gold set schema');const d=this.dir(g.project);mkdirSync(d,{recursive:true,mode:0o700});atomic(join(d,'gold.json'),g);}
  /** The captain's own labels added to the gold set (a ruling of the triage's disagreement court, src/domain/issue-court.ts):
-  *  merged into the captain's earlier label of that issue field by field (the newer answer wins); derived labels are
-  *  left as they are. Adding the same labels again changes nothing, so a step run again may repeat it. */
+  *  its answer (state, files, package) replaces the earlier one whole, the category, planned and security answers given
+  *  before kept; derived labels are left as they are. Adding the same labels again changes nothing, so a step run again
+  *  may repeat it. */
  addCaptain(project:string,labels:Record<string,GoldLabel>,at:string){if(!Object.keys(labels).length)return;const g=this.gold(project)??emptyGold(project,at);
   for(const l of Object.values(labels))if(l.source!=='captain'||!Number.isSafeInteger(l.n)||l.n<1)throw new Error('A captain label names its issue and comes from the captain');
-  // field by field: a state ruled now keeps a category or security answer the captain gave the issue before
-  const captain={...g.captain};for(const[n,l]of Object.entries(labels)){const was=captain[n];captain[n]=was?{...was,...l,from:[...new Set([...(was.from??[]),...(l.from??[])])]}:l;}
+  // the answer (state, files, package) is replaced whole: a ruling of needs-info leaves no files or package from an earlier
+  // one; only what the captain said about the issue otherwise (category, planned, security) is kept from before
+  const captain={...g.captain};for(const[n,l]of Object.entries(labels)){const was=captain[n];
+   captain[n]=was?{...(was.category!==undefined?{category:was.category}:{}),...(was.notPlanned?{notPlanned:was.notPlanned}:{}),...(was.security!==undefined?{security:was.security}:{}),...l,from:[...new Set([...(was.from??[]),...(l.from??[])])]}:l;}
   this.writeGold({...g,captain,updatedAt:at});}
  writeTemplate(project:string,t:unknown,stamp:string){const d=this.dir(project);mkdirSync(d,{recursive:true,mode:0o700});const f=join(d,`labels-${stamp.replace(/[^0-9TZ]/g,'')}.json`);atomic(f,t);return f;}
  writeScore(project:string,key:string,s:unknown){const d=join(this.dir(project),'scores');mkdirSync(d,{recursive:true,mode:0o700});const f=join(d,`${key.replace(/[^\w.-]/g,'')}.json`);atomic(f,s);return f;}

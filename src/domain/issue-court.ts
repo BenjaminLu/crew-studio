@@ -134,7 +134,7 @@ const lastId=(rec:TriageRecord)=>Math.max(rec.lastPackage??0,...rec.packages.map
  *  - Needs-info: with the no-code issues as needs-info, the reports' questions for the reporter kept, shown only in Studio.
  *  Each ruling is recorded on the record and gives the captain's gold labels (state, files, package) where it says one. */
 export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:string;card:string;by:string;at:string;
- /** issues whose text, labels or comments changed on GitHub since the docket (or closed): their cases are not applied */
+ /** issues whose content hash (title, text and labels) changed on GitHub since the docket, or closed: their cases are not applied */
  changed?:Iterable<number>}){
  const moved=new Set(o.changed??[]),skipped:number[]=[];
  const issues={...rec.issues},added:string[]=[],removed:string[]=[],released:number[]=[],needsInfo:number[]=[],gold:Record<string,GoldLabel>={},entries:RulingEntry[]=[],back:{issues:number[];reason:string}[]=[];
