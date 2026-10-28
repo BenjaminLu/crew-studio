@@ -228,6 +228,32 @@ try {
     await p.screenshot({ path: join(shots, "room-pr-390.png") });
     await ctx.close(); }
 
+  // ---------- the entries: the Task page's button on a reviewed branch, the project page's pull request box ----------
+  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+    await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); });
+    await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const def = { id: "code-firstmate", name: "Code", version: 1, kind: "code", roles: [], nodes: [{ id: "review", kind: "agent", mode: "review", role: "reviewer", label: "Review", x: 0, y: 0 }], edges: [] };
+    const task = (id, reviewRoom) => ({ id, title: "Add percent", status: "succeeded", result: "closed", workflow: "code-firstmate", version: 1, def, params: {}, ctx: {}, nodes: { review: { state: "passed", visits: 1 } }, cards: [], events: [], ledger: [], ledgerOk: true, ledgerBad: [], done: [], outputs: [], walked: [], steps: [], reviewRoom, createdAt: "2026-10-28T10:00:00Z", updatedAt: "2026-10-28T10:00:00Z" });
+    await ctx.route(/\/api\/tasks\/R-061$/, (r) => r.fulfill({ json: task("R-061", { href: "#/review/R-061", reviewed: true, head: H, branch: "crew/percent", local: true, turns: 0, moved: true }) }));
+    await ctx.route(/\/api\/tasks\/R-062$/, (r) => r.fulfill({ json: task("R-062", null) }));
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
+    await p.goto(`${base}/#/run/R-061`); await p.waitForSelector('[data-task-review-room="R-061"]', { timeout: 15000 });
+    ok((await p.getAttribute('[data-task-review-room="R-061"]', "href")) === "#/review/R-061" && /Open review room · new commits/.test(await p.textContent('[data-task-review-room="R-061"]')) && /local branch, not published/.test(await p.getAttribute('[data-task-review-room="R-061"]', "title")),
+      "a Task whose branch passed Studio's review shows Open review room (new commits marked; a local-only branch says so)");
+    await p.goto(`${base}/#/run/R-062`); await p.waitForSelector('[data-runview="R-062"]', { timeout: 15000 });
+    ok(!(await p.$("[data-task-review-room]")), "a Task with no reviewed branch has no review room button");
+    // the project page of a project connected to GitHub carries the pull request box
+    const real = await (await fetch(`${base}/api/projects/overview`, { headers: { "x-crew-session": process.env.CREW_SESSION_TOKEN } })).json().catch(() => null);
+    const pid = (real?.projects ?? []).find((x) => x.id && x.id !== "studio")?.id;
+    if (pid) { await ctx.route(new RegExp(`/api/projects/${pid}/overview$`), async (r) => { const res = await r.fetch(), j = await res.json(); r.fulfill({ json: { ...j, github: { connected: true, verified: true, repository: "fixture/project" } } }); });
+      await p.goto(`${base}/#/project/${pid}`); await p.waitForSelector(`[data-project-review-room="${pid}"]`, { timeout: 15000 });
+      ok(/Review a pull request of fixture\/project/.test(await p.textContent(`[data-project-review-room="${pid}"]`)) && (await p.getAttribute(`[data-pr-url="project:${pid}"]`, "placeholder")) === "https://github.com/fixture/project/pull/123", "a project connected to GitHub offers the pull request box on its page");
+      await p.route(/\/api\/review-room\/open-pr$/, (r) => r.fulfill({ status: 400, json: { error: "Paste a pull request's address: https://github.com/<owner>/<repo>/pull/<number>", code: "bad_url" } }));
+      await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/issues/1"); await p.click(`[data-pr-open="project:${pid}"]`); await p.waitForSelector(`[data-pr-error="project:${pid}"]`);
+      ok(/Paste a pull request's address/.test(await p.textContent(`[data-pr-error="project:${pid}"]`)), "the project page's box shows why an address is refused"); }
+    else ok(false, "fixture: the UI server lists a project to show", JSON.stringify(real));
+    await ctx.close(); }
+
   // ---------- the real routes: a card that does not exist, a write needs the desktop session ----------
   { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(`${base}/#/board`);
     const r = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999"); const b = await fetch("/api/review-room/SC-999/turn", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); const c = await fetch("/api/review-room/SC-999/speech", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code, c.status]; });

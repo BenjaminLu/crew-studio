@@ -29,11 +29,11 @@ import { PROVES } from "./proves";
 export type StubCard = { node: string; answers: string[]; note: string | null; before: string | null };
 export type StubExpect = { status?: "succeeded" | "failed" | "cancelled"; result?: string | null; visited: string[]; not_visited: string[]; library: boolean; outputs?: number; min_visits: Record<string, number>; approved?: string; waiting_on?: string };
 export type KnownFailure = { observed: string; match: RegExp; root_cause: string; covered_by?: string };
-export type StubRun = { workflow: string; name: string; covers: string; how: "board" | "firstmate" | "proposal" | "local-register" | "register" | "staffing" | "connect" | "grant-merge" | "crew" | "triage" | "categories" | "retired" | "held"; server: "sandbox" | "local-unrestricted";
+export type StubRun = { workflow: string; name: string; covers: string; how: "board" | "firstmate" | "proposal" | "local-register" | "register" | "staffing" | "connect" | "grant-merge" | "crew" | "triage" | "categories" | "retired" | "internal" | "held"; server: "sandbox" | "local-unrestricted";
   provider: string | null; topic: string; params: Record<string, string>; setup: string[]; cards: StubCard[]; expect: StubExpect | null; board_refusal: { status: number; error: RegExp } | null;
   known_failure: KnownFailure | null; target: { workflow: string; params: Record<string, string> } | null; timeout_s: number; needs: string[]; profiles: string[]; proves: string[]; shared: Scenario };
 
-const HOWS = ["board", "firstmate", "proposal", "local-register", "register", "staffing", "connect", "grant-merge", "crew", "triage", "categories", "retired", "held"];
+const HOWS = ["board", "firstmate", "proposal", "local-register", "register", "staffing", "connect", "grant-merge", "crew", "triage", "categories", "retired", "internal", "held"];
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
 const strings = (v: unknown, at: string): string[] => { if (v === undefined) return []; if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new Error(`${at} must be a list of names`); return v; };
 

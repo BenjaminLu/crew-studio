@@ -284,10 +284,28 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  }
  function verified(def:any,params:Record<string,string>){try{return verifyStored(def,params)}catch(error){const refusal=new QueueRefusal('Staffing approval requires confirmation: '+String((error as any)?.message??error));if(error instanceof SkillChanged)(refusal as any).failure=failure('env.skill-changed',error.message,{source:'staffing'});throw refusal;}}
  const previousStart=engine.deps.authorizeStart;
- engine.deps.authorizeStart=(def:any,o:any)=>{previousStart?.(def,o);if(applies(def)){const config=verified(def,o.params??{});verifyCapability?.(config);}};
+ engine.deps.authorizeStart=(def:any,o:any)=>{previousStart?.(def,o);if(def?.kind==='review-room-host')projectReviewerConfig(o?.params?.project);if(applies(def)){const config=verified(def,o.params??{});verifyCapability?.(config);}};
  const previousInitialize=engine.deps.initializeRun;
- engine.deps.initializeRun=(run:any)=>{previousInitialize?.(run);if(applies(run.def)){const c=verified(run.def,run.params),node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'staffing-start',{data:{schema:1,config:c.hash,project:staffingHash(c.project),definition:c.workflow.sha256}});}};
+ engine.deps.initializeRun=(run:any)=>{previousInitialize?.(run);if(isHost(run)){const c=projectReviewerConfig(run.params?.project),node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'staffing-start',{data:{schema:1,config:c.hash,project:staffingHash(c.project),definition:c.workflow.sha256}});}if(applies(run.def)){const c=verified(run.def,run.params),node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'staffing-start',{data:{schema:1,config:c.hash,project:staffingHash(c.project),definition:c.workflow.sha256}});}};
  // staffingUnapproved: no signed staffing for this Task yet (the readiness gate shows it as the captain's Run-time step, not a broken brief)
+ // The review room's host Task (workflow review-room-host, src/domain/review-room.ts): a pull request no Studio Task made has its
+ // tutor turns hosted on it. It has no staffing of its own: it is bound at start (staffing-start, signed like any Task's) to the
+ // project's approved staffing of a code workflow, and its turns run on that staffing's reviewer, checked exactly like a staffed Task's.
+ const isHost=(run:any)=>run?.def?.kind==='review-room-host';
+ /** the project's approved staffing that can staff the tutor: a code workflow's, with a reviewer role */
+ function projectReviewerConfig(projectId:string,binding?:string){
+  const none=()=>Object.assign(new QueueRefusal(`Approve this project's crew first: the tutor runs on its approved reviewer, and project ${projectId} has no approved code crew / 請先核准這個專案的船員：導師用它核准的審查者，專案 ${projectId} 還沒有核准的程式船員`),{code:'no_crew'});
+  if(typeof projectId!=='string'||!projectId)throw none();
+  let project:StaffingProject,current:StaffingConfig;try{project=resolveProject(projectId);current=store.current(project);}catch{throw none();}
+  const c=binding&&binding!==current.hash?store.byHash(project,binding):current;if(!c)throw none();
+  const def=engine.defs.get(c.workflow.id,c.workflow.version);if(!def||def.kind!=='code'||!applies(def)||!c.roles.reviewer)throw none();
+  return verified(def,{project:projectId,_staffing:c.hash});
+ }
+ function hostConfig(run:any){const binding=signedStaffingBinding(engine,run);if(!binding)throw new QueueRefusal('The review room host has no signed staffing binding');return projectReviewerConfig(run.params?.project,binding);}
+ const covers=(run:any)=>applies(run?.def)||isHost(run);
+ const configOf=(run:any)=>isHost(run)?hostConfig(run):verifyRun(run);
+ /** the project's crew reviewer the review room offers before its host exists (provider, model, effort and the staffing it comes from) */
+ engine.deps.projectReviewer=(projectId:string)=>{const c=projectReviewerConfig(projectId),r=c.roles.reviewer;return{provider:r.provider,model:r.model,effort:r.effort,config:c.hash};};
  function verifyRun(run:any){const binding=signedStaffingBinding(engine,run);if(!binding)throw Object.assign(new QueueRefusal('Historical or changed staffing lacks task approval; propose an explicit configuration upgrade / 舊任務或已變更配置缺少任務核准，請提出配置升級'),{staffingUnapproved:true});return verified(run.def,{...run.params,_staffing:binding});}
  // "another model" on an escalation: a staffed run runs only its approved picks, so Firstmate is offered none (the captain re-staffs)
  const previousPicks=engine.firstmatePicks;engine.firstmatePicks=(run:any,node:any)=>applies(run?.def)?[]:previousPicks(run,node);
@@ -321,7 +339,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
   return true;};
  const previousBinding=engine.deps.staffingBinding;engine.deps.staffingBinding=(run:any)=>applies(run?.def)?verifyRun(run).hash:previousBinding?.(run);
  const previousPick=engine.deps.approvedPick;
- engine.deps.approvedPick=(run:any,node:any,roleOverride?:string)=>{if(!applies(run?.def))return previousPick?.(run,node,roleOverride);const c=verifyRun(run),id=roleOverride??node.role??node.args?.role;const pick=effectivePick(c,run.def,node,id);if(!pick)throw new Error('Approved agent role is missing');return pick;};
+ engine.deps.approvedPick=(run:any,node:any,roleOverride?:string)=>{if(!covers(run))return previousPick?.(run,node,roleOverride);const c=configOf(run),id=roleOverride??node.role??node.args?.role;const pick=effectivePick(c,run.def,node,id);if(!pick)throw new Error('Approved agent role is missing');return pick;};
  // the named skills a node loads come from the approved configuration when it overrides them (verified by version and hash when loaded)
  const previousPins=engine.deps.approvedNodePins;
  engine.deps.approvedNodePins=(run:any,node:any)=>{if(!applies(run?.def))return previousPins?.(run,node);const skills=verifyRun(run).nodes?.[node.id]?.skills;return skills?skills.map(p=>({id:p.ref.slice('skill:'.length),v:p.version,sha256:p.sha256})):undefined;};
@@ -339,11 +357,11 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  const auxSkill=(id:string,system:string,aux:any)=>{const seat=engine.deps.auxiliarySeats?.[aux?.seat];const texts=Array.isArray(aux?.texts)?aux.texts:[];
   if(!seat||seat.role!==id||texts.length!==seat.pins.length||texts.some((t:any,i:number)=>typeof t?.text!=='string'||createHash('sha256').update(t.text).digest('hex')!==seat.pins[i])||!aux?.rules||system!==jobInstructions(texts.map((t:any)=>t.text).join('\n'),aux.rules))throw new Error('Auxiliary seat instructions differ from its pinned skills');
   return createHash('sha256').update(seat.pins.join('\n')).digest('hex');};
- engine.deps.instructionReceipt=(x:any,id:string,system:string,provider:any,aux?:any)=>{const prior=previousReceipt?.(x,id,system,provider,aux);if(!applies(x.run?.def))return prior;const c=verifyRun(x.run),r=effectivePick(c,x.run.def,x.node,id);if(!r||provider.id!==r.provider||provider.model!==r.model||(provider.reasoningEffort??null)!==r.effort||(!aux&&!system.includes(currentSkill(x.run.def,id))))throw new Error('Actual provider instructions or role selection differ from approved staffing');const skill=aux?auxSkill(id,system,aux):createHash('sha256').update(currentSkill(x.run.def,id)).digest('hex');const hash=createHash('sha256').update(system).digest('hex');engine.record(x,'staffing-instructions',{data:{schema:1,config:c.hash,role:id,...(aux?{seat:aux.seat}:{}),skill,instructionsSha256:hash,provider:r.provider,model:r.model,effort:r.effort,node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null}});const token=Object.freeze({});jobReceipts.set(token,{x,config:c.hash,role:id,hash,node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null,used:false});return token;};
+ engine.deps.instructionReceipt=(x:any,id:string,system:string,provider:any,aux?:any)=>{const prior=previousReceipt?.(x,id,system,provider,aux);if(!covers(x.run))return prior;if(isHost(x.run)&&!aux)throw new Error('The review room host runs only the tutor seat');const c=configOf(x.run),r=effectivePick(c,x.run.def,x.node,id);if(!r||provider.id!==r.provider||provider.model!==r.model||(provider.reasoningEffort??null)!==r.effort||(!aux&&!system.includes(currentSkill(x.run.def,id))))throw new Error('Actual provider instructions or role selection differ from approved staffing');const skill=aux?auxSkill(id,system,aux):createHash('sha256').update(currentSkill(x.run.def,id)).digest('hex');const hash=createHash('sha256').update(system).digest('hex');engine.record(x,'staffing-instructions',{data:{schema:1,config:c.hash,role:id,...(aux?{seat:aux.seat}:{}),skill,instructionsSha256:hash,provider:r.provider,model:r.model,effort:r.effort,node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null}});const token=Object.freeze({});jobReceipts.set(token,{x,config:c.hash,role:id,hash,node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null,used:false});return token;};
  const previousJob=engine.deps.authorizeProviderJob;
- engine.deps.authorizeProviderJob=(run:any,provider:any,o:any,phase:'before'|'launch')=>{previousJob?.(run,provider,o,phase);if(!applies(run?.def))return;
+ engine.deps.authorizeProviderJob=(run:any,provider:any,o:any,phase:'before'|'launch')=>{previousJob?.(run,provider,o,phase);if(!covers(run))return;
   const pin=o.admissionReceipt&&jobReceipts.get(o.admissionReceipt);if(!pin||pin.used||o.ref!==run.id||pin.x.run!==run||!engine.owns(pin.x)||pin.node!==pin.x.node.id||pin.visit!==pin.x.rn.visits||pin.attempt!==pin.x.rn.attempt||pin.head!==(run.ctx.head??null))throw new QueueRefusal('Native job staffing/owner receipt is missing, changed or consumed');
-  const c=verifyRun(run),role=effectivePick(c,run.def,pin.x.node,pin.role);if(c.hash!==pin.config||!role||provider.id!==role.provider||provider.model!==role.model||(provider.reasoningEffort??null)!==role.effort||!o.rules||createHash('sha256').update(jobInstructions(o.system,o.rules)).digest('hex')!==pin.hash)throw new QueueRefusal('Queued job configuration, role or actual instructions changed; confirm fresh staffing');
+  const c=configOf(run),role=effectivePick(c,run.def,pin.x.node,pin.role);if(c.hash!==pin.config||!role||provider.id!==role.provider||provider.model!==role.model||(provider.reasoningEffort??null)!==role.effort||!o.rules||createHash('sha256').update(jobInstructions(o.system,o.rules)).digest('hex')!==pin.hash)throw new QueueRefusal('Queued job configuration, role or actual instructions changed; confirm fresh staffing');
   if(phase==='launch')pin.used=true;
  };
 

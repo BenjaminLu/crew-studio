@@ -194,6 +194,8 @@ export function createRuntime(d: RuntimeDeps) {
   library:()=>engine.skillLibrary().library(),skillPackages:()=>skillPackages});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
+  // the review room asks for a project's crew reviewer (a pull request no Task made): a team that covers code-firstmate gives it
+  (engine.deps as any).teamStaffing=teamStaffing;
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
    *  A Claude role that is signed in but not verified by a bounded request cannot start: the form never pays for it. */
   const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);

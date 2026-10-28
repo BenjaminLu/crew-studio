@@ -216,11 +216,77 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   sim.pulls.set(2, { number: 2, state: "open", draft: false, merged: false, title: "From a fork", body: "", html_url: "https://github.com/fixture/project/pull/2", user: { login: "contrib" }, head: { ref: "main" }, base: { ref: "main" } });
   lists(2, {}); sim.transformNext("GET", (v: any) => ({ ...v, head: { ref: "patch-1", sha: C, repo: { full_name: "contrib/project" } } }), "/pulls/2");
   const fork: any = await room.openPr("https://github.com/fixture/project/pull/2"), fv: any = room.view(fork.id), noHost = await refused(() => room.start(fork.id, { action: "how", confirm: "x" }, "captain"));
-  ok(fv.head === C && fv.prState.headRepo === "contrib/project" && fv.task === null && fv.offer?.code === "no_host" && noHost?.code === "no_host" && (await room.cite(fork.id, "diff:b.txt")).text.includes("+from a fork"),
-    "a fork's pull request (refs/pull/n/head) no Studio Task made opens readable, its diff cited, but takes no paid turn: no reviewer seat hosts a tutor", JSON.stringify([fv.head, fv.prState?.headRepo, fv.offer]));
+  ok(fv.head === C && fv.prState.headRepo === "contrib/project" && fv.task === null && (await room.cite(fork.id, "diff:b.txt")).text.includes("+from a fork"),
+    "a fork's pull request (refs/pull/n/head) no Studio Task made opens readable, its diff cited", JSON.stringify([fv.head, fv.prState?.headRepo]));
+  ok(fv.offer?.code === "no_crew" && /Approve this project's crew first/.test(fv.offer.error) && noHost?.code === "no_crew" && /Approve this project's crew first/.test(noHost.message) && !E.list().some((r: any) => r.workflow === "review-room-host"),
+    "with no approved crew for the project, its turn is refused, saying to approve the project's crew first; no host Task is made", JSON.stringify([fv.offer, noHost?.message]));
   ok(localState() === localBefore && remoteRefs() === remoteNow && sim.calls.every((c) => c.method === "GET"),
     "through all of it: the project's checkout untouched, nothing pushed by Studio, every GitHub call a GET");
   for (const r of E.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await E.cancel(r.id, "cleanup");
+  sim.stop(); H.stop();
+}
+
+// ========== an external pull request with the project's approved crew: its first paid turn makes one host Task ==========
+{
+  const { bundledText } = await import("../src/bundled");
+  const { installStaffingGuard, StaffingStore } = await import("../src/domain/staffing");
+  const { staffingHash } = await import("../src/domain/staffing");
+  const tmp = checkedTempDir("crew-room-host-"); setGitHome(join(tmp, "git-home"));
+  const bare = join(tmp, "remote.git"), local = join(tmp, "project"), scratch = join(tmp, "scratch"); mkdirSync(local); mkdirSync(scratch);
+  for (const d of [bare, local, scratch]) assertTempRepo(d);
+  const id = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"];
+  must(tmp, ["init", "-q", "--bare", bare]); must(local, ["init", "-qb", "main"]); writeFileSync(join(local, "a.txt"), "one\n"); must(local, ["add", "a.txt"]); must(local, [...id, "commit", "-qm", "base"]);
+  must(local, ["remote", "add", "origin", "https://github.com/fixture/project.git"]); must(local, ["push", "-q", bare, "main"]);
+  must(scratch, ["clone", "-q", bare, "."]); must(scratch, ["checkout", "-qb", "patch"]); writeFileSync(join(scratch, "a.txt"), "one\ntwo\n"); must(scratch, [...id, "commit", "-qam", "Add two"]);
+  const A = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", bare, `${A}:refs/pull/5/head`]);
+  const sim = githubSimulator(bare, "fixture/project");
+  sim.pulls.set(5, { number: 5, state: "open", draft: false, merged: false, title: "Add two", body: "From outside.", html_url: "https://github.com/fixture/project/pull/5", user: { login: "outsider" }, head: { ref: "main" }, base: { ref: "main" } });
+  for (const p of ["/pulls/5/reviews", "/pulls/5/comments", "/issues/5/comments", "/pulls/5/files"]) sim.expect("GET", `${p}?per_page=100&page=1`, []);
+  const headAs = (sha: string) => sim.transformNext("GET", (v: any) => ({ ...v, head: { ref: "patch", sha, repo: { full_name: "outsider/project" } } }), "/pulls/5");
+  const grant = { mode: "simulator" as const, repository: "fixture/project", localPath: local, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: "2026-10-28T00:00:00Z", approvalId: "fixture" };
+  // the project's code workflow, whose approved crew staffs the tutor (never run here)
+  const code = { id: "code-flow", name: "Code", kind: "code", version: 1, roles: [{ id: "worker", label: "Worker", skill: "pack:firstmate/skills/worker.md" }, { id: "reviewer", label: "Reviewer", skill: "pack:firstmate/skills/reviewer.md" }],
+    nodes: [{ id: "build", kind: "agent", mode: "build", role: "worker", label: "Build", x: 1, y: 1 }, { id: "review", kind: "agent", mode: "review", role: "reviewer", label: "Review", x: 2, y: 1 }], edges: [{ from: "build", to: "review" }] };
+  const H = await harness([Y(code), bundledText("workflows/v2/review-room-host.wf.yaml")!]), E = H.engine, store = new StaffingStore(H.data);
+  const identity = (pid: string) => ({ namespace: "git" as const, id: pid, identity: `room-host-${pid}` });
+  installStaffingGuard(E, store, identity);
+  writeFileSync(join(H.data, "projects.json"), JSON.stringify([{ id: "proj", name: "project", path: local, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true, github: grant }]));
+  const def = E.defs.get("code-flow")!, skill = (ref: string) => store.remember({ ref, version: 1, text: E.deps.skillText(ref) });
+  const crew = store.approve({ schema: 1, algorithm: "sha256-canonical-v1", project: identity("proj"), workflow: { id: def.id, version: def.version, sha256: staffingHash(def) },
+    roles: { worker: { provider: "codex", model: "worker-model", effort: "low", skill: skill(code.roles[0].skill) }, reviewer: { provider: "claude", model: "reviewer-model", effort: "high", skill: skill(code.roles[1].skill) } },
+    review: { freshContexts: 3, distinctProviders: false } } as any, null, { run: "R-source", card: "SC-source", answerSeq: 1 });
+  const adapter = new GitHubPrAdapter(grant, () => "fake-test-token", 15_000, H.data);
+  const room = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data), github: () => adapter, web: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
+  const script: any[][] = [], prompts: { text: string }[] = [], selects: any[] = [], tutor = scriptedTutor(H, script, prompts);
+  E.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ run: x.run.id, node: x.node.id, role: c?.role, pick: p }); return { ...tutor(p.provider, p.model), reasoningEffort: p.effort ?? null } as any; };
+  const localBefore = JSON.stringify({ refs: must(local, ["for-each-ref"]), objects: must(local, ["count-objects", "-v"]), status: must(local, ["status", "--porcelain"]) });
+  headAs(A); const opened: any = await room.openPr("https://github.com/fixture/project/pull/5"), v0: any = room.view(opened.id);
+  ok(v0.task === null && v0.offer?.provider === "claude" && v0.offer.model === "reviewer-model" && v0.offer.effort === "high" && !E.list().some((r: any) => r.workflow === "review-room-host"),
+    "an external pull request's room offers the project's approved crew reviewer; nothing is made before the captain confirms", JSON.stringify(v0.offer));
+  const unconfirmed = await refused(() => room.start(opened.id, { action: "how" }, "captain"));
+  ok(unconfirmed?.code === "confirm_required" && !E.list().some((r: any) => r.workflow === "review-room-host"), "without the confirmation nothing starts: no host Task, nothing paid");
+  script.push([["board_draw", { items: [{ type: "diff", title: "Its diff", path: "a.txt" }] }], ["say", "It adds a second line [diff:a.txt]."]]);
+  await room.start(opened.id, { action: "how", confirm: v0.offer.hash }, "captain"); await room.settle(opened.id);
+  const hosts = E.list().filter((r: any) => r.workflow === "review-room-host"), host = hosts[0], v1: any = room.view(opened.id);
+  ok(hosts.length === 1 && host.params.project === "proj" && host.params.pr === "https://github.com/fixture/project/pull/5" && v1.task?.id === host.id && v1.turns.at(-1).status === "done" && v1.turns.at(-1).claims.every((c: any) => c.basis === "cited"),
+    "the first confirmed turn makes one host Task for this pull request, and the turn answers on it, cited", JSON.stringify([hosts.map((r: any) => r.id), v1.turns.at(-1)?.status, v1.turns.at(-1)?.error]));
+  const start = E.trusted(host.id).entries.find((e: any) => e.record === "staffing-start") as any, receipt = E.trusted(host.id).entries.filter((e: any) => e.record === "staffing-instructions").at(-1) as any;
+  ok(start?.data.config === crew.hash && receipt?.data.role === "reviewer" && receipt.data.seat === "review-room-tutor" && receipt.data.provider === "claude" && receipt.data.model === "reviewer-model" && receipt.data.effort === "high" && receipt.data.config === crew.hash && receipt.node === "review-room",
+    "the host is bound to the project's approved crew, and the staffing receipt names the crew reviewer for the tutor seat", JSON.stringify([start?.data, receipt?.data]));
+  ok(selects.every((x) => x.run === host.id && x.node === "review-room" && x.role === "reviewer" && x.pick.model === "reviewer-model"), "the provider is selected as the reviewer on the host's node", JSON.stringify(selects));
+  const turnRec = E.trusted(host.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
+  ok(turnRec?.data.subject.url === "https://github.com/fixture/project/pull/5" && turnRec.data.subject.head === A && turnRec.data.provider === "claude", "the turn is on the host's ledger with the pull request and its head", JSON.stringify(turnRec?.data?.subject));
+  // the pull request moves on: the next turn opens with what changed, still on the same host
+  writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\n"); must(scratch, [...id, "commit", "-qam", "Add three"]); const B = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${B}:refs/pull/5/head`]);
+  headAs(B); const v2: any = await room.check(opened.id);
+  script.push([["say", "Now a third line too [diff:a.txt]."]]);
+  await room.start(opened.id, { action: "how", confirm: v2.offer.hash }, "captain"); await room.settle(opened.id);
+  const v3: any = room.view(opened.id), since = v3.turns.at(-2);
+  ok(v2.moved?.commits === 1 && since?.studio && since.action === "since" && since.from === A && since.head === B && v3.turns.at(-1).status === "done" && E.list().filter((r: any) => r.workflow === "review-room-host").length === 1,
+    "the moved head opens the next turn with what changed since last time, on the same host Task (still one)", JSON.stringify([v2.moved, since?.claims?.[0]?.text, v3.turns.at(-1)?.error]));
+  const hr = E.get(host.id)!;
+  ok(!hr.ctx.worktree && !hr.ctx.repo && JSON.stringify({ refs: must(local, ["for-each-ref"]), objects: must(local, ["count-objects", "-v"]), status: must(local, ["status", "--porcelain"]) }) === localBefore && sim.calls.every((c) => c.method === "GET"),
+    "no writes anywhere: the host has no worktree or repository, the project's checkout is untouched, every GitHub call a GET", JSON.stringify(sim.calls.filter((c) => c.method !== "GET")));
   sim.stop(); H.stop();
 }
 end();

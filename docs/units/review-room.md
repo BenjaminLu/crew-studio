@@ -79,8 +79,17 @@ whose recorded pull request is that URL): `tutorPick` on the Task's review node,
 selection as the reviewer, the staffing receipt for the tutor seat, one of the Task's jobs). The node is held through an
 **auxiliary owner** (`engine.auxOwner`): `owns()` accepts it while the Task is kept (also once it ended) and the node's record
 and visit are unchanged; it never starts or finishes a step, edge, card or check, and the job queue admits its job on a
-Task that ended. A pull request no Studio Task made (a contributor's, a fork's) opens readable, with its reviewers' scene and
-what changed, but takes no paid turn (`no_host`): there is no approved reviewer seat to host a tutor.
+Task that ended.
+
+A pull request no Studio Task made (a contributor's, a fork's) takes turns too, on the **project's approved crew reviewer**:
+the reviewer role of the project's approved staffing of a code workflow (a Studio team that covers code-firstmate derives it
+first). The room offers that member; the captain's confirmed first paid turn (the same confirmation hash) makes a **host
+Task** once for that pull request, from the source-owned `review-room-host` workflow (`workflows/v2/review-room-host.wf.yaml`,
+internal, one hook node and no edges: it runs no agent and writes nothing). The host is bound at start to the project's crew
+(a signed `staffing-start`, refused before it starts when the project has none), and its turns are admitted exactly like the
+other rooms': an auxiliary owner of its node, the native selection as the reviewer, the staffing receipt for the tutor seat
+naming the crew reviewer, the round record and the ledger on the host. Later turns, and the "what changed" scene, use the same
+host. A project with no approved crew is refused with "Approve this project's crew first" (`no_crew`) and no host is made.
 
 **What reviewers asked.** Each read of a pull request turns the reviewer notes not shown yet (reviews with a body or a
 verdict, inline comments, comments) into a Studio scene: each note is a point labelled "Reviewer's words", Studio's own
@@ -93,7 +102,7 @@ request again; a branch's head is read from its Task. No background loop. When t
 commits since you last looked" (or that the branch was rewritten), and the next turn's first scene is Studio's **what
 changed since last time**: the diff old head..new head on the board, the new commits (their messages as text), the files,
 and for each inline reviewer comment whether the lines it points at changed since (the captain judges whether that answers
-it). The tutor's prompt carries that diff and starts from it. A room no Task hosts makes that scene at the check itself.
+it). The tutor's prompt carries that diff and starts from it. A room with no host yet (before its first paid turn) makes that scene at the check itself.
 Studio's scenes cost nothing: no model, git and GitHub's answer only.
 
 **Approved, merged, closed.** The room shows the pull request's state as GitHub does: open, draft, each reviewer's latest
@@ -285,12 +294,17 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     new commits reads it again: merged …".
 20. The subject is on the record. — review-room-anywhere "… its ledger entry names the branch and the head", "the turn's ledger
     entry carries the pull request's URL …", "each head's comprehension is on the ledger …".
+21. A pull request no Task made takes turns on the project's crew reviewer: the first confirmed turn makes one host Task bound
+    to the crew, whose receipt names the crew reviewer; nothing is written; no crew is a clear refusal. — review-room-anywhere
+    "an external pull request's room offers …", "without the confirmation nothing starts …", "the first confirmed turn makes one
+    host Task …", "the host is bound to the project's approved crew …", "the moved head opens the next turn …", "no writes
+    anywhere …", "with no approved crew for the project …"; review-room-ui "a Task whose branch passed …", "a project connected
+    to GitHub offers the pull request box …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 
-Not in this unit: Firstmate offering to open a room from its chat; a paid tutor for a pull request no Studio Task made (no
-approved reviewer seat hosts it); background polling of a pull request; a per-room model switch (the tutor is the reviewer
+Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request; a per-room model switch (the tutor is the reviewer
 seat's member); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
 same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
 render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice

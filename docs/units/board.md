@@ -363,4 +363,4 @@ registered project connected to GitHub only; anything else is refused with the r
 (`#/review/PR-…`): its state on GitHub (open, draft, approved at this head and by whom, merged, closed, from a fork), how
 many commits came since the captain last looked, "Check for new commits" (an explicit read, never a polling loop), what
 reviewers asked as a scene of their words, and what changed since last time as the next turn's first scene. Merged or
-closed, the room stays readable and takes no turn. Unit spec: [review-room.md](review-room.md), "Subjects".
+closed, the room stays readable and takes no turn. A pull request no Studio Task made asks on the project's approved crew reviewer (its first confirmed turn makes a small host Task; no approved crew: "Approve this project's crew first"). Unit spec: [review-room.md](review-room.md), "Subjects".

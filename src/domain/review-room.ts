@@ -89,6 +89,8 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   pr?: PrSnap;
   /** reviewer notes already shown in a "what reviewers asked" scene */
   shown?: string[];
+  /** the host Task Studio made for a pull request no Task made (workflow review-room-host), on its first paid turn */
+  host?: string;
   /** the opening illustration was started (once per card, when the captain first opened the room) */
   opening?: { at: string };
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
@@ -164,9 +166,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   // ---------- the room's key: its id, where it is kept, whose Task hosts its turns, and whether it still takes them ----------
   type Key = { id: string; kind: Subject["kind"]; run: string | null; node: string | null; file: string; dir: string; stat: string; open: () => boolean; card?: SCard };
   const inRun = (run: string, id: string) => ({ file: join(engine.rdir(run), "review-room", `${id.replace(/[^\w-]/g, "")}.json`), dir: join(engine.rdir(run), "review-room", `${id.replace(/[^\w-]/g, "")}-images`) });
+  /** a review-room-host Task: hosts a pull request's turns when no Task made it; its tutor is the project's crew reviewer */
+  const HOST_WORKFLOW = "review-room-host", HOST_NODE = "review-room", isHostRun = (run: any) => run?.def?.kind === HOST_WORKFLOW;
   /** the Task that published a pull request (its reviewer seat hosts the room's turns), the newest one */
   const hostOf = (url: string) => engine.list().filter((r: any) => r.ctx?.pr?.adapter === "github" && String(r.ctx.pr.url ?? "").toLowerCase() === url.toLowerCase() && reviewNode(r)).sort((a: any, b: any) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""))).at(0) ?? null;
   const prFile = (id: string) => join(prDir, `${id}.json`);
+  /** a pull request room's host: the Task that published it, else the host Task Studio made for it on its first paid turn */
+  const hostInto = (k: Key, room: Room | null) => { const url = room?.subject?.url, made = room?.host ? engine.get(room.host) : null;
+    const host = (url ? hostOf(url) : null) ?? (made && isHostRun(made) && made.params?.pr === url ? made : null);
+    k.run = host?.id ?? null; k.node = host ? (isHostRun(host) ? HOST_NODE : reviewNode(host).id) : null; return host; };
   const keyOf = (id: string): Key => {
     if (!ROOM_ID.test(id)) throw refuse("No such review room", "not_found");
     if (id.startsWith("SC-")) { const c = cardOf(id); if (c.kind !== "merge") throw refuse("A review room belongs to a merge card / 審查室只屬於合併卡", "not_merge");
@@ -175,8 +183,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       return { id, kind: "branch", run: id, node: n.id, ...inRun(id, id), stat: `branch:${id}`, open: () => !!engine.get(id) }; }
     const f = prFile(id); if (!existsSync(f)) throw refuse("Paste the pull request's URL to open its room / 請貼上 pull request 的網址來開啟審查室", "not_found");
     const k: Key = { id, kind: "pr", run: null, node: null, file: f, dir: join(prDir, `${id}-images`), stat: `pr:${id}`, open: () => load(k)?.pr?.state === "open" };
-    const url = load(k)?.subject?.url, host = url ? hostOf(url) : null; if (host) { k.run = host.id; k.node = reviewNode(host).id; }
-    return k;
+    hostInto(k, load(k)); return k;
   };
   // one object per room in memory: a turn's tools and a background illustration change the same room, never two copies
   const cache = new Map<string, Room>();
@@ -226,11 +233,21 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     if (makers.some((m) => m.provider === pick.provider && ((m.model ?? null) === (pick.model ?? null) || !m.model || !pick.model))) throw refuse(`The tutor would run on the maker's model (${pick.provider} ${pick.model ?? "default"}); give the reviewer seat a different model / 導師會用到作者的同一個模型，請讓 reviewer 座位用不同模型`, "same_model");
     return pick;
   };
+  /** the seat a turn runs on: the hosting Task's reviewer (tutorPick); on a review-room-host Task, the project's approved crew reviewer */
+  const seatPick = (run: any, node: any): AgentPick => { if (!isHostRun(run)) return tutorPick(run, node);
+    let p: AgentPick | null = null; try { p = engine.deps.approvedPick?.(run, node, TUTOR_ROLE) ?? null; } catch (e: any) { throw refuse(String(e?.message ?? e), e?.code ?? "no_crew"); }
+    if (!p) throw refuse("Approve this project's crew first: the tutor runs on its approved reviewer / 請先核准這個專案的船員：導師用它核准的審查者", "no_crew"); return p; };
+  /** before a pull request room has a host: the project's approved crew reviewer (a team that covers code-firstmate is derived first) */
+  const crewPick = (project: string | null | undefined): AgentPick => {
+    try { const def = engine.defs.get("code-firstmate"); if (def && project) engine.deps.teamStaffing?.(def, project); } catch {}
+    const reviewerOf = engine.deps.projectReviewer; if (!reviewerOf) throw refuse("Approve this project's crew first: the tutor runs on its approved reviewer / 請先核准這個專案的船員：導師用它核准的審查者", "no_crew");
+    try { const r = reviewerOf(String(project ?? "")); return { provider: r.provider, model: r.model, effort: r.effort }; } catch (e: any) { throw refuse(String(e?.message ?? e), e?.code ?? "no_crew"); } };
   const noHost = () => refuse("No Studio Task made this pull request, so no reviewer seat can host a tutor here: the room shows the pull request, its reviewers' comments and what changed, without paid turns / 這個 pull request 不是 Studio 的任務開的，沒有審查座位可以當導師：審查室只顯示 PR、審查者的意見和改了什麼，不能付費提問", "no_host");
   const offerOf = (k: Key) => {
-    try { const s = subjectOf(k); if (!s.run || !s.node) throw noHost();
+    try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr") throw noHost();
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
-      const p = tutorPick(s.run, s.node); const effort = p.effort ?? null;
+      // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
+      const p = s.run ? seatPick(s.run, s.node) : crewPick(load(k)?.subject?.project); const effort = p.effort ?? null;
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
       return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
@@ -560,8 +577,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           files: files.out.slice(0, 300).map((f: any) => ({ path: normPath(String(f?.filename ?? "")) ?? "?", status: /^[a-z]{1,12}$/.test(String(f?.status)) ? f.status : "?", added: Number(f?.additions) || 0, removed: Number(f?.deletions) || 0 })),
           notes, checkedAt: new Date().toISOString(), truncated: [reviews, inline, comments, files].some((x) => x.more) };
         const k: Key = { id, kind: "pr", run: null, node: null, file: prFile(id), dir: join(prDir, `${id}-images`), stat: `pr:${id}`, open: () => load(k)?.pr?.state === "open" };
-        const host = hostOf(canonical); if (host) { k.run = host.id; k.node = reviewNode(host).id; }
-        const prior = load(k); if (prior && prior.subject?.repository?.toLowerCase() !== repository.toLowerCase()) throw refuse("Another pull request's room has this id", "conflict");
+        const prior = load(k), host = hostInto(k, prior ?? { subject: { url: canonical } } as any); if (prior && prior.subject?.repository?.toLowerCase() !== repository.toLowerCase()) throw refuse("Another pull request's room has this id", "conflict");
         const room: Room = prior ?? { ...fresh(k, { run: host, head: snap.head, base }), subject: { kind: "pr", room: id, url: canonical, repository, number: p.n, project: project.id, task: host?.id ?? null } };
         room.pr = snap; room.run = host?.id ?? ""; room.node = k.node ?? ""; room.subject = { ...room.subject!, task: host?.id ?? null };
         if (!(room.heads ?? []).some((h) => h.head === snap.head)) room.heads = [...(room.heads ?? []), { head: snap.head, base, at: snap.checkedAt }];
@@ -665,6 +681,20 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ROOM_ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
       if (live.has(k.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
+      if ((!s.run || !s.node) && k.kind === "pr") {
+        // a pull request no Studio Task made: the captain's confirmed first turn makes its host Task once (review-room-host, which
+        // writes nothing), bound to the project's approved crew; the turn then runs on it like any other
+        const offer0 = offerOf(k); if ("error" in offer0) throw refuse(offer0.error!, offer0.code ?? "no_crew");
+        if (a.confirm !== offer0.hash) throw refuse(`Each turn is a paid model round on ${offer0.provider} ${offer0.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer0.provider} ${offer0.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer: offer0 });
+        const room0 = load(k)!, project = room0.subject?.project ?? null;
+        if (engine.grants.open("sandbox-off", project)) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
+        if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
+        live.set(k.id, -1);
+        try { const h = engine.start({ workflow: HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { project: String(project ?? ""), pr: String(room0.subject?.url ?? "") } } as any); room0.host = h.id; save(k, room0); }
+        catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_crew"); }
+        finally { live.delete(k.id); }
+        return this.start(id, a, by);
+      }
       if (!s.run || !s.node) throw noHost();
       const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
       if (a.confirm !== offer.hash) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
@@ -675,7 +705,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it (a branch or
       // pull request room: an auxiliary owner of the review node, which never advances the Task), the native selection verifies
       // the reviewer member's capability, and staffing issues its receipt for the tutor seat
-      const run = s.run, held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]), pick = tutorPick(run, s.node); let provider: any;
+      const run = s.run, held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]), pick = seatPick(run, s.node); let provider: any;
       try {
         if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
         try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
@@ -721,7 +751,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
       if (!s.run || !s.node) throw noHost();
       // the vendor that answered this scene, as recorded; it must still be the seat's vendor, or nothing is sent anywhere
-      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[tutorPick(s.run, s.node).provider];
+      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[seatPick(s.run, s.node).provider];
       if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
       if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
       const key = `${k.id}/${t.n}`, running = speaking.get(key); if (running) return running;
