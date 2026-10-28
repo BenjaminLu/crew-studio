@@ -266,7 +266,7 @@ export function createRuntime(d: RuntimeDeps) {
     const continuable = who?.kind === "desktop" && engine.continuable(id);
     // Merged (reconciled) only while the ledger verifies and holds the entry it names
     const reconciled = r.reconciled && t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger) ? r.reconciled : null;
-    return { ...r, reconciled, logFault: engine.logFault(id), reconcilable: who?.kind === "desktop" && !!engine.reconcilable?.(r), title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    return { ...r, reconciled, logFault: engine.logFault(id), reconcilable: who?.kind === "desktop" && !!engine.reconcilable?.(r), reviewRoom: engine.reviewRoom?.taskEntry(r) ?? null, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -592,15 +592,24 @@ export function createRuntime(d: RuntimeDeps) {
       }
       // ---------- a merge card's review room (src/domain/review-room.ts): read on any authenticated page; a turn is a paid
       // round only the desktop captain starts, confirming its provider and model; nothing here answers the card ----------
-      const room = /^\/api\/review-room\/(SC-\d+)(?:\/(turn|cite|image|audio|speech)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
+      // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
+      // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
+      if (p === "/api/review-room/open-pr") {
+        const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a pull request's room / 只有這台 Mac 上的船長能開啟 pull request 的審查室", code: "desktopOnly" }, 403);
+        try { return json(await rr.openPr(b?.url)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
+      }
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})(?:\/(turn|cite|image|audio|speech|check)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         if (!writing && room[2] === "audio") { try { return new Response(rr.audio(room[1], room[3] ?? ""), { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
-        if ((room[2] !== "turn" && room[2] !== "speech") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
+        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
+        if (room[2] === "check") { try { return json(await rr.check(room[1])); } catch (e: any) { return fail(e); } }
         if (room[2] === "speech") { try { return json(await rr.speech(room[1], b?.scene)); } catch (e: any) { return fail(e); } }
         try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm }, by)); } catch (e: any) { return fail(e); }
       }

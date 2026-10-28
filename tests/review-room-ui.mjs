@@ -179,6 +179,55 @@ try {
     await p.screenshot({ path: join(shots, "room-390-zh.png") });
     await ctx.close(); }
 
+  // ---------- a pull request by its URL: the URL box, its room (state, new commits, what reviewers asked, what changed) ----------
+  { const PRID = "PR-0123456789ab-7", EVIL = 'Why? <img src=x onerror="window.__pwned=1"> [diff:a.txt]';
+    const rq = (text, ref, quote) => ({ text, kind: "claim", basis: "reviewer", cites: [ok1(ref)], quote });
+    const PRROOM = { ...ROOM, card: { id: PRID, run: "R-050", node: "review", title: { en: "Pull request #7: Shout", "zh-TW": "Pull request #7：Shout" }, status: "open" }, task: { id: "R-050", title: "Add percent" },
+      subject: { kind: "pr", room: PRID, url: "https://github.com/fixture/project/pull/7", repository: "fixture/project", number: 7 }, pr: { id: "7", url: "https://github.com/fixture/project/pull/7" }, summary: null,
+      prState: { state: "open", draft: false, approved: true, checkedAt: "2026-10-28T12:00:00Z", headRepo: "contrib/project", verdicts: [{ author: "rita", state: "APPROVED", commit: H, current: true }] }, moved: { from: B, to: H, commits: 2, rewritten: false },
+      board: [{ id: "B2-1", turn: 2, type: "diff", title: "What changed since you last looked", path: "", range: { from: B, to: H }, commit: H, base: B, header: "bbbbbbbb..aaaaaaaa", text: "@@ -1 +1 @@\n-TWO\n+Two", basis: "cited", cites: [ok1(`commit:${H}`)] }],
+      turns: [{ n: 1, action: "reviewers", studio: true, title: "What reviewers asked", status: "done", provider: "studio", model: "", text: "", answer: "x", claims: [rq("rita · on a.txt:L2 [review:c11]", "review:c11", EVIL)] },
+        { n: 2, action: "since", studio: true, title: "What changed since last time", status: "done", provider: "studio", model: "", text: "", from: B, answer: "y", claims: [cl(`2 new commits since you last looked (bbbbbbbb → aaaaaaaa) [commit:${H}]`, [ok1(`commit:${H}`)]), rq("Changed since: the code this comment points at: rita on a.txt:L2 [review:c11]", "review:c11", EVIL)] }],
+      sources: [], check: { questions: [] } };
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+    await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); });
+    await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const opens = [], checks = [];
+    await ctx.route(/\/api\/review-room\/open-pr$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); opens.push(b.url);
+      if (!/^https:\/\/github\.com\/fixture\/project\/pull\/7$/.test(b.url)) return r.fulfill({ status: 400, json: { error: "github.com/someone/else is not the GitHub repository of a registered project connected to GitHub; Studio reads only those", code: "not_connected" } });
+      r.fulfill({ json: { id: PRID, href: `#/review/${PRID}`, room: PRROOM } }); });
+    await ctx.route(new RegExp(`/api/review-room/${PRID}(\\?open=1)?$`), (r) => r.fulfill({ json: PRROOM }));
+    await ctx.route(new RegExp(`/api/review-room/${PRID}/check$`), (r) => { checks.push(1); r.fulfill({ json: { ...PRROOM, moved: null, prState: { ...PRROOM.prState, state: "merged" }, open: false, offer: null, closed: { en: "This pull request is merged on GitHub: the room stays readable and takes no turn.", zh: "已合併" } } }); });
+    await ctx.route(new RegExp(`/api/review-room/${PRID}/cite\\?`), (r) => r.fulfill({ json: { kind: "review", note: "inline", id: "c11", author: "rita", body: EVIL, path: "a.txt", line: 2, url: "https://github.com/fixture/project/pull/7#discussion_r11" } }));
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
+    await p.goto(`${base}/#/review`); await p.waitForSelector('[data-pr-box="home"]', { timeout: 15000 });
+    await p.fill('[data-pr-url="home"]', "https://github.com/someone/else/pull/1"); await p.click('[data-pr-open="home"]'); await p.waitForSelector('[data-pr-error="home"]');
+    ok(/not the GitHub repository of a registered project connected to GitHub/.test(await p.textContent('[data-pr-error="home"]')), "the Review Room's home takes a pull request's URL; a repository not connected is refused with the reason");
+    await p.fill('[data-pr-url="home"]', "https://github.com/fixture/project/pull/7"); await p.click('[data-pr-open="home"]'); await p.waitForSelector(`[data-review-room="${PRID}"]`);
+    ok(opens.length === 2 && (await p.evaluate(() => location.hash)) === `#/review/${PRID}`, "a connected repository's URL opens its room", JSON.stringify(opens));
+    ok(/Open · approved at this head/.test(await p.textContent("[data-pr-state]")) && /from the fork contrib\/project/.test(await p.textContent("[data-room-subject]")) && /rita: approved/.test(await p.textContent("[data-pr-verdicts]")),
+      "the room shows the pull request's state on GitHub: open, approved at this head by whom, from a fork");
+    ok(/2 new commits since you last looked/.test(await p.textContent("[data-room-moved]")) && !!(await p.$('[data-room-github]')) && (await p.getAttribute("[data-room-github]", "href")) === "https://github.com/fixture/project/pull/7", "it says how many commits came since the captain last looked, with a link to GitHub");
+    let s = await stage(p);
+    ok(s.scene === "t2" && /What changed since last time/.test(s.title) && s.visual === "B2-1" && !!(await p.$('[data-studio-scene="since"]')), "the scene of what changed since last time is Studio's own, its picture the diff between the two heads", JSON.stringify(s));
+    await p.click("[data-scene-prev]"); s = await stage(p);
+    const q = await p.evaluate(() => ({ quote: document.querySelector('[data-untrusted="review"]')?.textContent, imgs: document.querySelectorAll(".rr-quote img, .rr-point img").length, pwned: !!window.__pwned, badge: document.querySelector('[data-basis="reviewer"]')?.textContent, chips: [...document.querySelectorAll(".rr-point [data-cite]")].map((e) => e.dataset.cite) }));
+    ok(/What reviewers asked/.test(s.title) && q.quote?.includes('<img src=x onerror="window.__pwned=1">') && q.quote.includes("[diff:a.txt]") && q.imgs === 0 && !q.pwned && /Reviewer's words/.test(q.badge) && JSON.stringify(q.chips) === JSON.stringify(["review:c11"]),
+      "what reviewers asked: each comment is its words as text (markup stays text, a citation-looking text is no link), labelled a reviewer's words, cited to the comment", JSON.stringify(q));
+    await p.click('[data-cite="review:c11"]'); await p.waitForSelector('[data-cite-panel="review:c11"] [data-untrusted="review"]');
+    ok(/rita/.test(await p.textContent("[data-cite-panel]")) && (await p.getAttribute("[data-review-link]", "href")) === "https://github.com/fixture/project/pull/7#discussion_r11" && await p.evaluate(() => !document.querySelector("[data-cite-panel] img")), "the citation opens the comment, as text, with a link to it on GitHub");
+    const shown = await p.evaluate(() => [...document.querySelectorAll("[data-stage] .rr-point")].map((e) => { const b = e.getBoundingClientRect(); return [b.height > 0, e.textContent.slice(0, 40)]; }));
+    ok(shown.length === 1 && shown[0][0] && /rita · on a\.txt:L2/.test(shown[0][1]), "the scene's point is on the stage, visible", JSON.stringify(shown));
+    ok(await noScroll(p), "no sideways scroll in a pull request's room at 1440");
+    await p.screenshot({ path: join(shots, "room-pr-1440.png") });
+    await p.click(`[data-room-check="${PRID}"]`); await p.waitForSelector('[data-pr-state="merged"]');
+    ok(checks.length === 1 && /Merged on GitHub/.test(await p.textContent("[data-pr-state]")) && /merged on GitHub: the room stays readable/.test(await p.textContent("[data-room-closed]")) && !(await p.$("[data-room-moved]")) && !!(await p.$("[data-stage]")),
+      "Check for new commits reads it again: merged on GitHub, the room says so and stays readable, no prompt");
+    await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(100);
+    ok(await noScroll(p), "no sideways scroll in a pull request's room at 390");
+    await p.screenshot({ path: join(shots, "room-pr-390.png") });
+    await ctx.close(); }
+
   // ---------- the real routes: a card that does not exist, a write needs the desktop session ----------
   { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(`${base}/#/board`);
     const r = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999"); const b = await fetch("/api/review-room/SC-999/turn", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); const c = await fetch("/api/review-room/SC-999/speech", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code, c.status]; });

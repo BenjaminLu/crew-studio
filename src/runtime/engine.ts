@@ -236,7 +236,19 @@ export class Engine {
   trackExternal(x: X, work: Promise<void>) { return this.track(x.run, "external presentation", work); }
   disposeExternal() { for (const owner of this.externalOwners.values()) owner.cancel(); this.externalOwners.clear(); }
   private edgeOwners = new Map<symbol, { run: Run; node: WNode; rn: NodeRun; visit: number; head: string | null }>();
+  // auxiliary owners: an X a read-only side round holds on one node of a run (auxOwner)
+  private auxOwners = new WeakMap<object, { released: boolean }>();
+  /** An auxiliary owner of one node of a run, for a read-only round that never advances the run (the review room's tutor on a
+   *  Task's reviewed branch or its pull request: src/domain/review-room.ts). owns() accepts it while the run is kept (also once
+   *  it ended), the node's record and visit are what they were, and release() was not called. It owns nothing else: no step,
+   *  edge, card or check of the run is started or finished through it. */
+  auxOwner(r: Run, node: WNode): { x: X; release: () => void } {
+    const rn = r.nodes[node.id]; if (!rn || this.runs.get(r.id) !== r || this.gone.has(r.id)) throw new Error("no such node to own");
+    const x = this.x(r, node, rn), s = { released: false }; this.auxOwners.set(x, s); return { x, release: () => { s.released = true; } };
+  }
   owns(x: X) {
+    const aux = this.auxOwners.get(x);
+    if (aux) return !aux.released && this.runs.get(x.run.id) === x.run && !this.gone.has(x.run.id) && x.run.nodes[x.node.id] === x.rn && x.rn.visits === x.visit;
     const common = this.runs.get(x.run.id) === x.run && !this.gone.has(x.run.id) && !TERMINAL.includes(x.run.status) && x.run.nodes[x.node.id] === x.rn && x.rn.visits === x.visit;
     if (!common) return false;
     if (!x.edgeOwner) return x.rn.state === "running";
@@ -622,7 +634,7 @@ export class Engine {
   private jobAdmission(o: any, key: string): QueueRequest {
     const r = o.ref ? this.get(o.ref) : null;
     return { key, task: r?.id ?? o.ref ?? key, project: r ? this.queueProject(r) : "studio", deadline: Date.now() + this.queueTimeout(r ?? undefined), signal: r ? this.abortOf(r).signal : undefined,
-      limits: () => this.queueLimits(r ?? undefined), ready: () => ({ ready: !r || !TERMINAL.includes(r.status), reason: "task ended" }), waiting() {}, admitted() {} };
+      limits: () => this.queueLimits(r ?? undefined), ready: () => ({ ready: !r || !TERMINAL.includes(r.status) || (!!o.auxOwner && this.owns(o.auxOwner)), reason: "task ended" }), waiting() {}, admitted() {} };
   }
   private roundAdmission(x: X, mode: string): QueueRequest {
     const worker = this.queueDomain?.worker(x, mode) ?? false;

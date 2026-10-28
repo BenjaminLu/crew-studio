@@ -50,6 +50,61 @@ options and its evidence are untouched (`cards.view` adds `reviewRoom`).
 Why: the captain wants to understand a pull request (how it works, why it is built this way, what to check) before
 deciding its merge, without anything leaving Studio.
 
+## Subjects
+
+A room has one subject and keeps one identity across that subject's heads:
+
+- **A merge card** (`#/review/SC-n`), as above. Unchanged.
+- **A Task's local branch** (`#/review/R-n`), once Studio's internal review passed at the Task's head (its signed
+  `firstmate/review-verdict` pass at that head, or a tainted Task's `tainted-ready` end on the ledger). The Task page shows
+  "Open review room" then: on the way to the merge card, and on a tainted Task that ends "ready on branch, not published"
+  (its room reads the local branch only; nothing goes to GitHub). Before the review passes the room is refused
+  (`not_reviewed`); a branch whose head later moves keeps its room, and a turn needs the review passed at the new head.
+- **A pull request on GitHub** (`#/review/PR-<12 hex of the repository>-<n>`), opened by pasting its URL on the Review
+  Room's home (`#/review`) or a connected project's page (`POST /api/review-room/open-pr {url}`, the desktop captain only).
+  Only `https://github.com/<owner>/<repo>/pull/<n>` (no other host, scheme, path, query or fragment), and only a repository
+  that a registered, enabled project is connected to (its grant's repository; the grant is verified as for any GitHub use):
+  anything else is refused with the reason (`bad_url`, `not_connected`) before GitHub is read. Studio reads the pull
+  request with GET only, through the project's own adapter (`remoteRead`: the pull request, its reviews, review comments,
+  issue comments and files, at most three pages of 100 each), and fetches `refs/pull/<n>/head` (a fork's head too) and the
+  base branch into a bare repository Studio owns, `data/review-room/cache/<hash>.git` (`GitHubPrAdapter.fetchPull`: the
+  grant's credential path, a time limit, no gc, a size cap, `CREW_REVIEW_PR_CACHE_MB`, default 1024, over which the cache
+  is removed and the read refused). Never the project's checkout or its object store, no worktree, nothing pushed. The
+  room's base is the merge base of the head and the base branch. Every text GitHub returns (title, body, branch names,
+  reviews, comments) is untrusted: cleaned like issue text (`cleanText`, nothing that could close its fence) and fenced in
+  the tutor's prompt (`<untrusted-pr-text>`, `<untrusted-review-comments>`), data, never instructions.
+
+A branch's or a pull request's turns run on the reviewer seat of the Task that made it (a pull request: the newest Task
+whose recorded pull request is that URL): `tutorPick` on the Task's review node, admitted like the merge card's (native
+selection as the reviewer, the staffing receipt for the tutor seat, one of the Task's jobs). The node is held through an
+**auxiliary owner** (`engine.auxOwner`): `owns()` accepts it while the Task is kept (also once it ended) and the node's record
+and visit are unchanged; it never starts or finishes a step, edge, card or check, and the job queue admits its job on a
+Task that ended. A pull request no Studio Task made (a contributor's, a fork's) opens readable, with its reviewers' scene and
+what changed, but takes no paid turn (`no_host`): there is no approved reviewer seat to host a tutor.
+
+**What reviewers asked.** Each read of a pull request turns the reviewer notes not shown yet (reviews with a body or a
+verdict, inline comments, comments) into a Studio scene: each note is a point labelled "Reviewer's words", Studio's own
+line (who, where, which verdict) cited `[review:<id>]` (`r…` a review, `c…` an inline comment, `i…` a comment), and the
+words themselves as plain text beside it (`quote`: never parsed for citations or markup). A citation opens the note.
+
+**Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
+re-entry (the desktop page, at most once a minute) or "Check for new commits" (`POST …/check`) Studio reads the pull
+request again; a branch's head is read from its Task. No background loop. When the head moved, the room says "N new
+commits since you last looked" (or that the branch was rewritten), and the next turn's first scene is Studio's **what
+changed since last time**: the diff old head..new head on the board, the new commits (their messages as text), the files,
+and for each inline reviewer comment whether the lines it points at changed since (the captain judges whether that answers
+it). The tutor's prompt carries that diff and starts from it. A room no Task hosts makes that scene at the check itself.
+Studio's scenes cost nothing: no model, git and GitHub's answer only.
+
+**Approved, merged, closed.** The room shows the pull request's state as GitHub does: open, draft, each reviewer's latest
+verdict and at which head (approved counts only at the current head and with no changes requested), merged or closed. A
+merged or closed pull request's room stays readable (its scenes, board and citations) and takes no turn.
+
+**The record.** Every `review-room-turn` ledger entry and round record header carries the subject: its kind, the branch or
+the URL, the head and the base (merge cards too). A "what changed" scene is a `review-room-scene` entry (from, to, the
+number of commits). A pull request room is `data/review-room/pr/<id>.json`; a branch's `data/runs/<task>/review-room/R-n.json`;
+the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` and a pull request as `pr:<id>`.
+
 ## The tutor
 
 - Its own read-only role (`workflows/skills/review-room-tutor.md`), with pstack's `how`, `why` and `teach` skills adapted
@@ -189,7 +244,7 @@ and page do not exist):
 
 Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
 tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; screenshots in `tests/out/review-room`
-or `ROOM_SHOTS`). `bun run test:review-room` runs all four.
+or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull request subjects. `bun run test:review-room` runs all five.
 
 11. Pictures: screenshots come only from Studio's captures of this head (before / after toggle); a diffstat chart is
     counted by git; an uncited chart is an inference; illustrations are made in the background (the turn does not wait),
@@ -209,7 +264,33 @@ or `ROOM_SHOTS`). `bun run test:review-room` runs all four.
     "the points appear as the narration reaches them", "the mic is offered only after …", "holding the mic fills the
     question …", "without on-device recognition the mic stays off …".
 
-Not in this unit: Firstmate offering to open a room from its chat; a per-room model switch (the tutor is the reviewer
+14. A Task's branch has a room once Studio's review passed at its head, also a tainted Task ready on its branch; its turns
+    run on the Task's reviewer seat through an auxiliary owner that never moves the Task. — review-room-anywhere "before
+    Studio's review passes …", "once Studio's review passed …", "the turn's round record sits under the review node …",
+    "the Task did not move …", "a tainted Task ready on its branch …", "its turn runs on the ended Task's reviewer seat …".
+15. A pull request URL is accepted only in its exact form and only for a connected project's repository. — review-room-anywhere
+    "a malformed address …", "a repository no registered project is connected to …", "a refused address reads nothing";
+    review-room-ui "the Review Room's home takes a pull request's URL …".
+16. GitHub is only read (GET), the head's commits go only into Studio's cache, the checkout is untouched, nothing is pushed.
+    — review-room-anywhere "GitHub is only read …", "the head's commits are in a bare repository …", "the project's
+    checkout is untouched …", "through all of it …".
+17. Reviewers' comments are a scene of their words as text, cited to the comment, fenced for the tutor. — review-room-anywhere
+    "the reviewers' review, inline comment and comment …", "a comment is kept as its words …", "the tutor reads the
+    reviewers' words fenced …"; review-room-ui "what reviewers asked: …", "the citation opens the comment …".
+18. A moved head is announced and the next turn opens with what changed since last time. — review-room-anywhere "Check for
+    new commits reads GitHub again …", "the next turn's first scene …", "its picture is the diff …", "it names the reviewer
+    comment …", "the tutor starts from that diff …"; review-room-ui "it says how many commits came …".
+19. Approved, merged and closed show, and the room stays readable. — review-room-anywhere "an approval at the current head …",
+    "merged on GitHub: …", "a fork's pull request …"; review-room-ui "the room shows the pull request's state …", "Check for
+    new commits reads it again: merged …".
+20. The subject is on the record. — review-room-anywhere "… its ledger entry names the branch and the head", "the turn's ledger
+    entry carries the pull request's URL …", "each head's comprehension is on the ledger …".
+
+`tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
+a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
+
+Not in this unit: Firstmate offering to open a room from its chat; a paid tutor for a pull request no Studio Task made (no
+approved reviewer seat hosts it); background polling of a pull request; a per-room model switch (the tutor is the reviewer
 seat's member); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
 same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
 render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice
