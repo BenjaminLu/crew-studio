@@ -72,18 +72,19 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/\/api\/team\?project=wallet/, (r) => r.fulfill({ json: TEAM }));
   if (o.empty) await ctx.route(/\/api\/issue-triage\/wallet$/, (r) => r.fulfill({ json: { state: "none", investigators: { a: { provider: "claude", model: "claude-opus-5-5" }, b: { provider: "codex", model: "gpt-6" } } } }));
   if (o.same) await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, investigators: { a: { provider: "claude", model: "same" }, b: { provider: "claude", model: "same" } } } }); });
-  const posts = [];
+  const posts = [], approvals = [];
+  await ctx.route(/\/api\/issue-triage\/wallet\/approve$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); approvals.push(b); r.fulfill(o.refuseApprove ? { status: 409, json: { error: `${b.packages[0]} is approved, not waiting for approval` } } : { json: o.staleApprove ? { ok: true, approved: [], stale: b.packages } : { ok: true, approved: b.packages, stale: [] } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/start$/, (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, task: "R-77", href: "#/run/R-77" } }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
   await p.goto(`${base}/${hash}`); await p.waitForTimeout(800);
-  return { ctx, p, posts };
+  return { ctx, p, posts, approvals };
 }
 const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.querySelector("#main").scrollWidth <= document.querySelector("#main").clientWidth + 1);
 try {
   { const { ctx, p } = await open(1440, "en", "#/board");
     ok(await p.locator(".is-views").count() === 0 && !(await p.locator('a[href="#/board/issues"]').count()), "the Board shows Tasks only: issues live on their project's page");
     await ctx.close(); }
-  { const { ctx, p, posts } = await open(1440);
+  { const { ctx, p, posts, approvals } = await open(1440);
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
     ok(await p.locator('.pj-jump a[href="#s-issues"]').count() === 1, "a connected project's page has an Issues section to jump to");
     ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 3, "the project's stored work packages are listed on its page");
@@ -97,7 +98,11 @@ try {
     ok(/Ended without a merge/.test(await p.locator('[data-detail="P-1"] [data-issue="11"] .is-work').textContent()) && !(await p.locator('[data-detail="P-1"] [data-issue="12"] .is-work').count()), "an issue with a Task shows where it stands; one without shows nothing");
     ok(/work on P-1/.test(await p.locator('[data-detail="P-1"] .is-next').textContent()), "an approved package says how to start its next issue");
     ok(/An issue changed: triage again/.test(await p.locator('[data-pack="P-3"]').textContent()) && /Waiting for approval/.test(await p.locator('[data-pack="P-2"]').textContent()), "each package says where it stands");
+    ok(!(await p.locator('[data-detail="P-1"] [data-approve]').count()), "an approved package offers no approval");
     await p.click('[data-pack="P-2"]');
+    ok(await p.locator('[data-detail="P-2"] [data-approve="P-2"]').count() === 1 && /reads its issues again/.test(await p.locator('[data-detail="P-2"] .is-approve').textContent()), "a package waiting for approval can be approved on the page, which reads its issues again first");
+    await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
+    ok(approvals.length === 1 && approvals[0].packages.join() === "P-2" && /Approved P-2/.test(await p.locator('[data-project-issues="wallet"] [role="status"]').textContent()), "approving sends that package and says it was approved", JSON.stringify(approvals));
     ok(await p.evaluate(() => !document.querySelector("#view img") && !window.__pwned && /<img src=x/.test(document.querySelector('[data-detail="P-2"] .is-title').textContent)), "an issue title with markup shows as text and runs nothing");
     await p.click('[data-pack="P-3"]');
     ok(/Do not change code/.test(await p.locator('[data-detail="P-3"] .is-how').textContent()), "a maybe-fixed issue is a recheck, not a close");
@@ -119,6 +124,15 @@ try {
     ok(posts.length === 1 && posts[0].size === 30 && posts[0].issues.length === 0 && /#\/run\/R-77/.test(await p.evaluate(() => location.hash)), "triaging sends the batch size the captain chose and opens the Task, whose card shows the batch", JSON.stringify(posts));
     await p.goto(`${base}/#/project/wallet`); await p.waitForSelector('[data-project-issues="wallet"] [data-issue-start]'); await p.fill("[data-issue-size]", "70"); await p.click("[data-issue-triage]"); await p.waitForTimeout(300);
     ok(posts.length === 1 && /1 to 50/.test(await p.locator('[data-project-issues="wallet"] [role="alert"]').textContent()), "a batch over 50 is refused before anything is sent");
+    await ctx.close(); }
+  { const { ctx, p, approvals } = await open(1440, "en", "#/project/wallet", { staleApprove: true });
+    await p.waitForSelector('[data-pack="P-2"]'); await p.click('[data-pack="P-2"]'); await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
+    ok(approvals.length === 1 && /P-2 is stale/.test(await p.locator('[data-project-issues="wallet"] [role="status"]').textContent()), "a package whose issue changed is reported stale, not approved");
+    await ctx.close(); }
+  { const { ctx, p } = await open(1440, "en", "#/project/wallet", { refuseApprove: true });
+    await p.waitForSelector('[data-pack="P-2"]'); await p.click('[data-pack="P-2"]'); await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
+    const said = await p.locator('[data-project-issues="wallet"] [role="status"]').textContent();
+    ok(/not waiting for approval/.test(said) && !/stale/.test(said), "a refused approval says why, and never calls the package stale", said);
     await ctx.close(); }
   { const { ctx, p, posts } = await open(1440, "en", "#/project/wallet", { same: true });
     await p.waitForSelector("[data-issue-triage]");

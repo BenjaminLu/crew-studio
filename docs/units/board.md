@@ -149,6 +149,9 @@ Issues belong to their project: a project connected to GitHub has a "GitHub issu
 - **The latest triage** (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
   `data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`, which
   also names the investigators): work packages, what the investigators disagreed on, the issues not investigated.
+  A package kept as a proposal (its approval card closed with "Keep as proposals") is approved later right there:
+  `POST /api/issue-triage/<project>/approve {packages}` (the desktop captain only) reads the issues again first; a
+  package whose issue changed is stale, never approved, and an approved one records who approved it and when.
 
 The page's Crew section lists each team seat the way this project runs it (`GET /api/team?project=<id>`): provider,
 model and effort, marking a change this project makes to the team.

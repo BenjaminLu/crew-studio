@@ -535,6 +535,16 @@ export function createRuntime(d: RuntimeDeps) {
           try { const run = issueTriageFlow.start({ project: start[1], size, issues, by: "captain (project page)" }); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
           catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
         }
+        // packages kept as proposals, approved later on the project page (the issues are read again first)
+        const approve = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/approve$/.exec(p);
+        if (approve) {
+          if (!writing) return json({ error: "use POST" }, 405);
+          if (who.kind !== "desktop") return json({ error: "only the desktop captain approves work packages" }, 403);
+          const ids = b?.packages;
+          if (!Array.isArray(ids) || !ids.length || ids.length > 50 || !ids.every((x: any) => typeof x === "string" && /^P-[1-9][0-9]{0,5}$/.test(x))) return json({ error: "name the work packages to approve (P-n)" }, 400);
+          try { return json({ ok: true, ...(await issueTriageFlow.approve(approve[1], ids, "captain (project page)", req.signal)) }); }
+          catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+        }
         if (writing) return json({ error: "read only" }, 405);
         if (p === "/api/issue-triage") return json({ projects: issueTriage.list() });
         try { const id = decodeURIComponent(p.slice("/api/issue-triage/".length)), rec = issueTriage.get(id), investigators = issueTriageFlow.investigators(id);

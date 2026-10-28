@@ -234,5 +234,18 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const one=(id:string)=>{const n=nodes?.find(x=>x.node===id),role=def.roles.find((r:any)=>r.id===def.nodes.find((m:any)=>m.id===id)?.role);
    return n?.provider?{provider:n.provider,model:n.model??null,effort:n.effort??null,from:'team'}:{provider:role?.provider??null,model:role?.model??null,effort:null,from:'workflow'};};
   return{a:one('a'),b:one('b')};}
- return{start,progress,investigators,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
+ /** The captain approves packages kept as proposals, later, from the project page: the issues are read again first, and a
+  *  package whose issue changed since it was investigated is stale, never approved. */
+ async function approve(project:string,ids:string[],by:string,signal?:AbortSignal){
+  // checked against the store as it is when written (a triage or another approval may have changed it while GitHub was read)
+  const check=()=>{const rec=store.get(project);if(!rec)throw new Error(`${project} has no issue triage`);
+   for(const id of ids){const p=rec.packages.find(x=>x.id===id);if(!p)throw new Error(`No work package ${id}`);if(p.status!=='proposed')throw new Error(`${id} is ${p.status}, not waiting for approval`);}return rec;};
+  check();const fresh=await snapshotIssues(selected(project).adapter,{signal}),cur=check(),at=new Date().toISOString();
+  // an issue missing from this read: closed, or moved between pages while read; refused this once, the packages left waiting
+  const open=new Set(fresh.issues.map(i=>i.n)),absent=cur.packages.filter(p=>ids.includes(p.id)).flatMap(p=>p.members).filter(n=>!open.has(n));
+  if(absent.length)throw new Error(`${absent.map(n=>'#'+n).join(' ')} is not among the open issues GitHub just listed (closed, or moved while it was read): check again`);
+  const out=approvePackages(cur,ids,fresh);
+  store.write({...out.record,packages:out.record.packages.map(p=>out.approved.includes(p.id)?{...p,approvedBy:by,approvedAt:at}:p)});
+  return{approved:out.approved,stale:out.stale};}
+ return{start,progress,investigators,approve,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
 }

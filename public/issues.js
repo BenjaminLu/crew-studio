@@ -6,7 +6,7 @@
 (() => {
 const IS = { rec: new Map(), busy: new Set(), forms: new Map(), sel: null, tab: "packages" };
 // each project's batch form: what was typed (kept as typed, checked when sent), whether it is sending, its last error
-const formOf = (project) => { let f = IS.forms.get(project); if (!f) IS.forms.set(project, (f = { size: "15", numbers: "", starting: false, error: null })); return f; };
+const formOf = (project) => { let f = IS.forms.get(project); if (!f) IS.forms.set(project, (f = { size: "15", numbers: "", starting: false, error: null, approving: null, note: null })); return f; };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const ghIssue = (repo, n) => `https://github.com/${repo}/issues/${n}`;
@@ -55,6 +55,15 @@ function packRow(rec, p, on) {
     h("span", { class: "is-status" }, h("i", { class: "tb-dot" }), T(st[0], st[1]), p.security ? h("span", { class: "is-sec" }, T("Security", "安全")) : null));
 }
 
+// a package kept as a proposal, approved later here: Studio reads its issues again first (one that changed: stale)
+async function approvePack(project, id) {
+  const f = formOf(project); f.approving = id; f.note = null; rerender();
+  try { const r = await postJ(`/api/issue-triage/${encodeURIComponent(project)}/approve`, { packages: [id] });
+    f.note = !r.stale?.includes(id) ? T(`Approved ${id}. Tell Firstmate “work on ${id}” to start its first issue.`, `已核准 ${id}。跟 Firstmate 說「做 ${id}」就會開始第一張。`)
+      : T(`${id} is stale: an issue changed since it was investigated. Triage it again.`, `${id} 已過期：調查之後有 issue 被改過，請重新分類。`); }
+  catch (e) { f.note = e.message; }
+  finally { f.approving = null; await load(project); }
+}
 function packDetail(rec, p) {
   if (!p) return h("aside", { class: "tb-detail is-detail" }, h("p", { class: "faint" }, T("Pick a work package.", "選一個工作包。")));
   const order = p.order.length ? p.order : p.members;
@@ -64,6 +73,9 @@ function packDetail(rec, p) {
     h("p", { class: "is-how" }, p.kind === "recheck"
       ? T("Do not change code. A person rechecks it with the issue's own input; only then is it closed.", "不改程式碼。由人用 issue 原本的輸入複測，通過後才關。")
       : T("One person works these in order, one pull request each. Each issue's repro becomes its test: it fails before the fix and passes after.", "同一個人照順序做，一張一個 PR。每張的重現方式就是它的測試：修之前失敗，修之後通過。") + (p.security ? T(" Security issues are referenced, not closed, by the pull request; they close after a recheck.", " 安全 issue 在 PR 裡只寫 Refs，合併後複測通過才關。") : "")),
+    p.status === "proposed" ? h("div", { class: "is-approve" },
+      h("button", { type: "button", class: "btn primary", "data-approve": p.id, disabled: formOf(rec.project).approving ? true : null, onclick: () => approvePack(rec.project, p.id) }, T(`Approve ${p.id}`, `核准 ${p.id}`)),
+      h("span", { class: "faint" }, (p.security ? T("It holds security issues: approve it once whoever owns security for this repository agrees. ", "含安全 issue：請先取得這個 repo 的安全負責人同意再核准。") : "") + T("Studio reads its issues again first.", "核准前 Studio 會再讀一次 issue。"))) : null,
     p.status === "approved" && p.kind !== "recheck" ? h("p", { class: "is-next" }, T(`To start the next issue, tell Firstmate: “work on ${p.id}”. You approve its Task on the dispatch card.`, `要開始下一張，跟 Firstmate 說：「做 ${p.id}」。任務會出 dispatch 卡給你核准。`)) : null,
     h("ol", { class: "is-list" }, order.map((n, i) => issueLine(rec, n, order.length > 1 && p.kind === "ordered" ? String(i + 1) : "·", p.id))),
     p.members.filter((n) => !order.includes(n)).length ? h("p", { class: "faint" }, T("Tracking issue: ", "總卡：") + p.members.filter((n) => !order.includes(n)).map((n) => `#${n}`).join(" ")) : null);
@@ -120,6 +132,7 @@ function projectIssues(project, repository) {
   return h("section", { id: "s-issues", "aria-labelledby": "hIssues", "data-project-issues": project },
     head,
     h("div", { class: "card x-pad" }, startForm(project, rec)),
+    formOf(project).note ? h("p", { class: "note", role: "status" }, formOf(project).note) : null,
     !has ? h("div", { class: "card x-pad" }, h("p", { class: "faint", "data-issues-empty": "1" }, T(`No triage of ${repository} yet. Triage a batch above: two investigators read the code, and the work packages they agree on appear here.`, `${repository} 還沒有分類。從上面開始分類一批：兩位調查員會讀程式碼，他們有共識的工作包會出現在這裡。`)))
       : [h("p", { class: "faint" }, T(`Code read at ${rec.commit.slice(0, 7)} · issues read ${rec.snapshot.fetchedAt.slice(0, 16).replace("T", " ")}`, `程式碼版本 ${rec.commit.slice(0, 7)}・issue 讀取於 ${rec.snapshot.fetchedAt.slice(0, 16).replace("T", " ")}`)),
         h("div", { class: "tb-tabs", role: "tablist" }, tabs.map(([k, en, zh, n]) => h("button", { type: "button", role: "tab", class: "tb-tab", "aria-selected": String(IS.tab === k), "data-is-tab": k, onclick: () => { IS.tab = k; rerender(); } }, T(en, zh), h("span", { class: "tb-count num" }, String(n))))),
