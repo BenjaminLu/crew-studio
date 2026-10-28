@@ -38,7 +38,9 @@ export class IssueEvalStore{
    const a=json(join(d,'issue-report-a.json'))??r.nodes?.a?.data?.triageReport,b=json(join(d,'issue-report-b.json'))??r.nodes?.b?.data?.triageReport;
    if(!snap||!a||!b){if(snap)missing.push(r.id);continue;}
    const skills=['a','b'].map(n=>skillOf(r,n)).filter((s):s is string=>!!s);
-   batches.push({run:r.id,at:r.createdAt,a,b,snapshot:snap,read:read(String(a.commit??'')),skills});}
+      // what fs_read showed each investigator, where the run recorded it (rounds since Studio records reads)
+   const seen=(n:string)=>{const v=r.nodes?.[n]?.data?.triageReads;return v&&typeof v==='object'&&!Array.isArray(v)?v:undefined;};
+   batches.push({run:r.id,at:r.createdAt,a,b,snapshot:snap,read:read(String(a.commit??'')),reads:{a:seen('a'),b:seen('b')},skills});}
   return{batches,missing};}
  /** The categorizer's stored reports for the project, and the skill each ran with. */
  categoryReports(project:string){return this.runs('issue-categories',project).flatMap(r=>{const c=r.nodes?.categorize?.data?.categoriesReport;
