@@ -12,7 +12,7 @@ import { must, setGitHome } from "../src/git";
 const T = await import("../src/domain/issue-triage");
 const C = await import("../src/domain/issue-categories");
 const E = await import("../src/domain/issue-eval");
-const { IssueEvalStore, commitReader, privatePathProblem } = await import("../src/issue-eval-store");
+const { IssueEvalStore, commitReader, privatePathProblem, readsOf } = await import("../src/issue-eval-store");
 const { IssueTriageStore } = await import("../src/issue-triage-store");
 const { IssueCategoriesStore } = await import("../src/issue-categories-store");
 let pass = 0; const ok = (v: unknown, n: string, extra = "") => { assert.ok(v, `${n} ${extra}`); pass++; console.log("PASS " + n); };
@@ -32,8 +32,8 @@ const commit = must(repo, ["rev-parse", "HEAD"]);
 const at = "2026-10-28T10:00:00Z", project = "fixture";
 const issues = [1, 2, 3, 4, 5, 6].map((n) => ({ n, title: `Issue ${n}`, body: `Body ${n}`, labels: [] as string[], author: "someone", association: "NONE", updatedAt: at, hash: `h${n}` }));
 const snapshot = { schema: 1 as const, repository: "fixture/project", fetchedAt: at, issues, hash: "snap" };
-const A = (o: any = {}) => ({ locus: [{ file: "src/a.ts", symbol: "alpha", lines: "1-3" }], tag: "t", state: "present", evidence: "return x + 1", repro: "call alpha", security: "no", links: [], ...o });
-const B = { locus: [{ file: "src/b.ts", symbol: "beta", lines: "1" }], evidence: "s.trim().length" };
+const A = (o: any = {}) => ({ locus: [{ file: "src/a.ts", symbol: "alpha", lines: "1-3" }], tag: "t", state: "present", evidence: "export function alpha(x: number) {", repro: "call alpha", security: "no", links: [], ...o });
+const B = { locus: [{ file: "src/b.ts", symbol: "beta", lines: "1" }], evidence: "export const beta = (s: string) => s.trim().length" };
 const none = { locus: [], evidence: "", state: "not-code" };
 // #1 agreed single; #2 #3 an agreed ordered set; #4 disagrees (state); #5 agreed not-code; #6 disagrees (fixed? / present)
 const reportA = { commit, groups: [], related: [{ members: [2, 3], order: [2, 3], why: "same flow" }], alone: [1, 4, 5, 6],
@@ -50,7 +50,7 @@ try {
 
   // --- the stored triage and categories the records hold ---
   let triage = T.triageRecord({ project, snapshot, a: T.parseReport(reportA), b: T.parseReport(reportB), read, by: "issue-triage R-tri", now: () => at });
-  ok(triage.packages.map((p) => `${p.id}:${p.members.join(",")}`).join(" ") === "P-1:2,3 P-2:1 P-3:5" && triage.toHuman.length === 2, "the fixture gives three packages and two items for a person", JSON.stringify(triage.packages.map((p) => p.members)));
+  ok(triage.packages.map((p) => `${p.id}:${p.members.join(",")}`).join(" ") === "P-1:2,3 P-2:1" && triage.toHuman.length === 2 && JSON.stringify(triage.noCode?.map((x) => [x.state, x.issues])) === '[["not-code",[5]]]', "the fixture gives two packages, two items for a person and one agreed not-code issue", JSON.stringify([triage.packages.map((p) => p.members), triage.toHuman, triage.noCode]));
   triage = T.approvePackages(triage, ["P-1"], snapshot).record;
   triage = { ...triage, packages: triage.packages.map((p) => p.id === "P-2" ? { ...p, joins: [{ id: "X-1", issues: [1], by: "captain", at, wasApproved: false }] } : p.id === "P-1" ? { ...p, work: { "2": { proposal: "R-prop", at } } } : p) };
   let cats = C.applyBuild(null, { categories: [{ name: "Alpha", scope: "the alpha part", issues: [1, 2, 3] }, { name: "Beta", scope: "the beta part", issues: [5, 6] }], planned: [{ n: 4, why: "a roadmap item" }] },
@@ -62,7 +62,8 @@ try {
   // the runs Studio keeps: the triage batch (snapshot, both reports, the skill each investigator got), the categorizer's
   // report, and a package issue's proposal whose Task merged
   const run = (id: string, v: any, files: Record<string, unknown> = {}) => { const d = join(data, "runs", id); mkdirSync(d, { recursive: true }); writeFileSync(join(d, "run.json"), JSON.stringify({ id, params: { project }, createdAt: at, nodes: {}, ...v })); for (const [f, x] of Object.entries(files)) writeFileSync(join(d, f), JSON.stringify(x)); };
-  run("R-tri", { workflow: "issue-triage", status: "succeeded", steps: [{ node: "snapshot", roleSkill: null }, { node: "a", roleSkill: { sha256: "a".repeat(64) } }, { node: "b", roleSkill: { sha256: "a".repeat(64) } }] }, { "issue-snapshot.json": snapshot, "issue-report-a.json": reportA, "issue-report-b.json": reportB });
+  const seenAll = { "src/a.ts": [[1, 3]], "src/b.ts": [[1, 1]] };
+  run("R-tri", { workflow: "issue-triage", status: "succeeded", nodes: { a: { data: { triageReads: seenAll } }, b: { data: { triageReads: seenAll } } }, steps: [{ node: "snapshot", roleSkill: null }, { node: "a", roleSkill: { sha256: "a".repeat(64) } }, { node: "b", roleSkill: { sha256: "a".repeat(64) } }] }, { "issue-snapshot.json": snapshot, "issue-report-a.json": reportA, "issue-report-b.json": reportB });
   run("R-cat", { workflow: "issue-categories", status: "succeeded", steps: [{ node: "categorize", roleSkill: { sha256: "b".repeat(64) } }, { node: "categorize", roleSkill: { sha256: "c".repeat(64) } }], nodes: { categorize: { data: { categoriesReport: { mode: "build", report: { categories: [{ name: "Alpha", issues: [1, 2, 3] }, { name: "Beta", issues: [5, 6] }], planned: [{ n: 4 }] } } } } } });
   run("R-prop", { workflow: "firstmate-proposal", status: "succeeded", ctx: { childRun: "R-child" } });
   run("R-child", { workflow: "code-firstmate", status: "succeeded", nodes: { done: { visits: 1 } } });
@@ -110,7 +111,7 @@ try {
   const r1 = all.rows.find((r) => r.n === 1)!, r4 = all.rows.find((r) => r.n === 4)!, r6 = all.rows.find((r) => r.n === 6)!;
   ok(all.rows.length === 6 && r1.gold.state === "present" && r1.gold.files?.[0] === "src/a.ts" && r1.gold.security === "no" && r1.reviewed === false, "an agreed row is prefilled with the current answer and is not reviewed");
   ok((r4.model as any).a.state === "present" && (r4.model as any).b.state === "not-found" && (r4.model as any).a.security === "yes" && (r4.model as any).b.security === "no", "each row shows both investigators' answers");
-  ok(r4.gold.state === undefined && r4.gold.files === undefined && r4.gold.security === undefined && r6.gold.state === undefined && r6.gold.files?.[0] === "src/a.ts", "a field the investigators disagree on is left for the captain to decide", JSON.stringify([r4.gold, r6.gold]));
+  ok(r4.gold.state === undefined && r4.gold.files === undefined && r4.gold.security === undefined && r6.gold.state === undefined && r6.gold.files === undefined && r6.gold.security === "no", "a field the investigators disagree on (state, and then its files; security answered apart) is left for the captain to decide", JSON.stringify([r4.gold, r6.gold]));
   // one investigator did not report #6: nothing about it is prefilled
   const bOnly = { ...reportB, alone: [1, 4, 5], issues: reportB.issues.filter((f) => f.n !== 6) };
   const lone = T.triageRecord({ project, snapshot, a: T.parseReport(reportA), b: T.parseReport(bOnly), read, by: "issue-triage R-lone", now: () => at });
@@ -174,6 +175,7 @@ try {
   // package: gold puts #1 with #5 and #2 with #3; Studio has #2 #3 together and #1, #5 apart
   ok(s.package.pairs.gold === 2 && s.package.pairs.predicted === 1 && near(s.package.pairs.precision, 1) && near(s.package.pairs.recall, 0.5) && near(s.package.exact, 0.5), "package membership as pairs, and exact sets", JSON.stringify(s.package));
   ok(s.bySource.captain.state.studio.gold === 6 && s.bySource.captain.category.gold === 2 && s.category.gold === 3 && near(s.bySource.captain.package.pairs.recall, 0.5) && s.bySource.derived.package.pairs.gold === 1 && near(s.bySource.derived.package.pairs.recall, 1) && s.bySource.derived.state.studio.gold === 1, "the captain's labels and the derived ones are scored apart", JSON.stringify(s.bySource.derived.package));
+  ok(replayed.preds.get(5)?.noCode === "not-code" && replayed.preds.get(5)?.studio?.state === "not-code" && replayed.preds.get(5)?.human === false && s.human.noCode === 1, "an issue both find not-code is Studio's answer, not routed to a person", JSON.stringify(replayed.preds.get(5)));
   ok(s.human.investigated === 6 && s.human.routed === 2 && near(s.human.share, 2 / 6) && s.human.toHumanItems === 2, "the share routed to a person", JSON.stringify(s.human));
   ok(JSON.stringify(E.score({ gold, replayed: E.replay([{ run: "R-tri", at, a: reportA, b: reportB, snapshot, read }]), categories: answers, follow: E.followMerged(cats) })) === JSON.stringify(s), "the score is deterministic");
   // a gold category merged since: the gold follows the merge as the answers do
@@ -190,6 +192,17 @@ try {
   const split = E.replay([{ run: "R-x", at, a: only(reportA, [1]), b: only(reportB, [1]), snapshot, read }, { run: "R-y", at: "2026-10-29T00:00:00Z", a: only(reportA, [5]), b: only(reportB, [5]), snapshot, read }]);
   const sx = E.score({ gold: { ...E.emptyGold(project, at), captain: { "1": { n: 1, package: "K", source: "captain", at }, "5": { n: 5, package: "K", source: "captain", at } } } as any, replayed: split, categories: answers });
   ok(sx.package.pairs.crossBatch === 1 && sx.package.pairs.gold === 0 && sx.package.pairs.recall === null && sx.package.exactOf === 0, "a gold pair across batches is reported apart from the package metrics", JSON.stringify(sx.package));
+  // an issue a later batch took again is counted once, by its latest answer
+  const twice = E.score({ gold, replayed: E.replay([{ run: "R-1", at, a: reportA, b: reportB, snapshot, read, reads: { a: seenAll, b: seenAll } }, { run: "R-2", at: "2026-10-29T00:00:00Z", a: reportA, b: reportB, snapshot, read, reads: { a: seenAll, b: seenAll } }]), categories: answers });
+  ok(twice.human.noCode === 1 && twice.human.investigated === 6 && twice.human.routed === 2, "no-code is counted on the latest answer per issue, not once per batch", JSON.stringify(twice.human));
+  // old and new data side by side: the same metrics over only the batches with recorded reads
+  const mixed = E.replay([{ run: "R-old", at, a: only(reportA, [1]), b: only(reportB, [1]), snapshot, read }, { run: "R-new", at: "2026-10-29T00:00:00Z", a: only(reportA, [5]), b: only(reportB, [5]), snapshot, read, reads: { a: seenAll, b: seenAll } }]);
+  const sm = E.score({ gold: { ...E.emptyGold(project, at), captain: { "1": { n: 1, state: "present", source: "captain", at }, "5": { n: 5, state: "not-code", source: "captain", at } } } as any, replayed: mixed, categories: answers });
+  ok(mixed.preds.get(1)?.withoutReads === true && mixed.preds.get(5)?.withoutReads === false && mixed.withoutReads === 1, "each answer says whether its batch had recorded reads");
+  ok(sm.state.studio.gold === 2 && sm.withReads.issues === 1 && sm.withReads.gold === 1 && sm.withReads.state.studio.gold === 1 && near(sm.withReads.state.studio.accuracy, 1) && sm.withReads.human.investigated === 1, "a second metric set covers only the batches with recorded reads", JSON.stringify(sm.withReads.human));
+  // one batch the rules cannot judge is skipped and named; the others are still scored
+  const broken = E.replay([{ run: "R-broken", at, a: reportA, b: reportB, snapshot: { ...snapshot, issues: null } as any, read }, { run: "R-fine", at: "2026-10-29T00:00:00Z", a: reportA, b: reportB, snapshot, read }]);
+  ok(broken.skipped.map((x) => x.run).join() === "R-broken" && broken.preds.size === 6 && broken.preds.get(1)?.run === "R-fine", "a batch the rules throw on is skipped and counted, the rest scored", JSON.stringify(broken.skipped));
   const bad = E.replay([{ run: "R-bad", at, a: { commit: "nope" }, b: reportB, snapshot, read }]);
   ok(bad.skipped.length === 1 && bad.preds.size === 0, "a stored report the current parser refuses is skipped and named");
   const later = E.replay([{ run: "R-2", at: "2026-10-29T00:00:00Z", a: { ...reportA, related: [], alone: [1, 2, 3, 4, 5, 6] }, b: { ...reportB, related: [], alone: [1, 2, 3, 4, 5, 6] }, snapshot, read }, { run: "R-tri", at, a: reportA, b: reportB, snapshot, read }]);
@@ -201,6 +214,17 @@ try {
   ok(!/function\s+(compareReports|verifyReport|proposePackages|parseReport)\b/.test(src) && /from '\.\/issue-triage'/.test(src), "src/domain/issue-eval.ts defines none of the rules it scores");
   const strict = E.replay([{ run: "R-tri", at, a: reportA, b: reportB, snapshot, read }], { ...E.RULES, proposePackages: () => ({ packages: [], toHuman: [] }) });
   ok(E.score({ gold, replayed: strict, categories: answers }).human.share === 1, "a changed packaging rule changes the score (the human-routed share)");
+  // what fs_read showed each investigator, where the run recorded it: the live check uses it
+  const withReads = (reads: any) => E.replay([{ run: "R-tri", at, a: reportA, b: reportB, snapshot, read, reads }]);
+  const full = withReads({ a: seenAll, b: seenAll }), blind = withReads({ a: {}, b: {} }), old = withReads(undefined);
+  ok(full.packages === 2 && full.withoutReads === 0 && blind.packages === 0 && [1, 2, 3].every((n) => blind.preds.get(n)?.human), "recorded reads are checked: a quote nobody was shown packages nothing", JSON.stringify([full.packages, blind.packages]));
+  ok(old.packages === 2 && old.withoutReads === 1, "a report from before reads were recorded is replayed without that one check, and counted");
+  ok(JSON.stringify(readsOf(seenAll)) === JSON.stringify(seenAll) && [{ "src/a.ts": [[3, 1]] }, { "src/a.ts": "1-3" }, { "src/a.ts": [[0, 2]] }, { "src/a.ts": [[1, 2, 3]] }, [[1, 2]], "x", null].every((v) => readsOf(v) === undefined), "recorded reads are taken only as {file: [[start, end]]}");
+  const stored = store.triageBatches(project, () => read).batches[0];
+  ok(JSON.stringify(stored.reads?.a) === JSON.stringify(seenAll) && E.replay([stored]).withoutReads === 0, "the store gives each investigator's recorded reads to the replay");
+  run("R-malformed", { workflow: "issue-triage", status: "succeeded", params: { project: "malformed" }, nodes: { a: { data: { triageReads: { "src/a.ts": "everything" } } }, b: { data: { triageReads: seenAll } } } }, { "issue-snapshot.json": snapshot, "issue-report-a.json": reportA, "issue-report-b.json": reportB });
+  const mal = store.triageBatches("malformed", () => read).batches[0], malReplay = E.replay([mal]);
+  ok(mal.reads?.a === undefined && mal.reads?.b !== undefined && malReplay.withoutReads === 1 && malReplay.skipped.length === 0 && malReplay.preds.size === 6, "malformed recorded reads make that batch one without reads, not a crash");
   const noCode = E.replay([{ run: "R-tri", at, a: reportA, b: reportB, snapshot, read: () => null }]);
   ok([1, 2, 3].every((n) => noCode.preds.get(n)?.human), "without the code every quoted line fails the live check, so nothing with a location is packaged");
 
