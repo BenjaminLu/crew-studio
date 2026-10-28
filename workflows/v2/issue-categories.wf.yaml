@@ -1,0 +1,20 @@
+{
+ "id":"issue-categories","name":"File GitHub issues into categories","kind":"issue-categories","version":1,
+ "description":"A connected project's open GitHub issues filed into categories kept in Studio: the first run builds the list, every later run files only the issues not filed yet and proposes a new category only when none fits; the captain approves new categories.",
+ "params":{"project":{"label":"Connected project"}},
+ "roles":[{"id":"categorizer","label":"Categorizer","seat":"maker","provider":"claude","skill":"bundled:workflows/skills/issue-categorizer.md"}],
+ "nodes":[
+  {"id":"snapshot","kind":"hook","label":"Read the open issues","do":"categories.snapshot","x":120,"y":200},
+  {"id":"confirm","kind":"hook","label":"Start filing","do":"categories.confirm-card","x":300,"y":200},
+  {"id":"categorize","kind":"agent","label":"Categorizer","role":"categorizer","mode":"issue-categorize","timeout_s":1800,"x":480,"y":200},
+  {"id":"record","kind":"hook","label":"Check and file","do":"categories.record","x":660,"y":200},
+  {"id":"approve","kind":"hook","label":"Approve new categories","do":"categories.approve-card","x":840,"y":200},
+  {"id":"apply","kind":"hook","label":"Write the decision","do":"categories.apply","x":1020,"y":200},
+  {"id":"done","kind":"hook","label":"Categories updated","x":1200,"y":200},
+  {"id":"filed","kind":"hook","label":"Filed into existing categories","x":840,"y":340},
+  {"id":"empty","kind":"hook","label":"Nothing to file","args":{"result":"closed"},"x":300,"y":340},
+  {"id":"cancelled","kind":"hook","label":"Not filed","args":{"result":"closed"},"x":480,"y":340}
+ ],
+ "edges":[["snapshot","confirm","ok"],["snapshot","empty","empty"],["confirm","categorize","start"],["confirm","cancelled","close"],
+  ["categorize","record","ok"],["record","approve","ok"],["record","filed","none"],["approve","apply","approve"],["approve","apply","decline"],["apply","done","ok"]]
+}
