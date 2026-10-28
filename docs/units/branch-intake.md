@@ -56,8 +56,8 @@ The graph gains one node (`adopt`) and three edges; every other step is the one 
 7. **Independent review**, the **fix loop** (a failing check or review sends an ordinary build round, in the same worktree,
    on top of the agent's commits, with the build checks again), the designer for UI
    paths, remote readiness and the seven gates, exactly as for any Task.
-8. **Review Room**: available on the merge card, on the branch's head (it opens from any merge card; there is no separate
-   one before the pull request).
+8. **Review Room**: as for any Task (docs/units/review-room.md), the Task's branch room (`#/room/R-n`) opens once
+   Studio's internal review has passed at the branch's head, before any pull request, and the merge card opens it too.
 9. **Pull request card** (GitHub projects with a grant: the publish card) and the **merge card**, as for any Task.
 
 ## Small changes
