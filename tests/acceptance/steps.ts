@@ -103,7 +103,9 @@ export const STEPS: Record<string, Step> = {
   /** the simulator's open issues: one, then an empty page (src/issue-triage-workflow.ts reads them page by page) */
   async "github-issues"(h) { const sim = simulators.get(h.vars.project); if (!sim) throw new Error("github-issues needs github-sim");
     const page = (n: number) => `/issues?state=open&sort=created&direction=asc&per_page=50&page=${n}`;
-    sim.expect("GET", page(1), [{ number: 1, title: "Allowlist matches substrings", body: "A host check uses includes", labels: [], user: { login: "reporter" }, author_association: "NONE", updated_at: "2026-10-20T00:00:00Z" }]); sim.expect("GET", page(2), []); },
+    sim.expect("GET", page(1), [{ number: 1, title: "Allowlist matches substrings", body: "A host check uses includes", labels: [], user: { login: "reporter" }, author_association: "NONE", updated_at: "2026-10-20T00:00:00Z" }]); sim.expect("GET", page(2), []);
+    // what the investigators check before locating code (GET only): the recently closed issues; the simulator lists its own open pull requests
+    sim.expect("GET", "/issues?state=closed&sort=updated&direction=desc&per_page=50&page=1", []); },
   /** no open issue at all */
   async "github-no-issues"(h) { const sim = simulators.get(h.vars.project); if (!sim) throw new Error("github-no-issues needs github-sim"); sim.expect("GET", "/issues?state=open&sort=created&direction=asc&per_page=50&page=1", []); },
   /** the same with the operations grant: Studio merges the pull request on GitHub itself */

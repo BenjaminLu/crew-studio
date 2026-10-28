@@ -272,7 +272,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const known=this.communityPins.get(pin?.repository+'@'+pin?.head);if(!known||JSON.stringify(known)!==JSON.stringify(pin)||typeof path!=='string'||path.length>300||path.split('/').some(p=>p==='..'||p==='.'||!p)||!/^((\.github|docs)\/)?(pull_request_template\.md|PULL_REQUEST_TEMPLATE(\/[A-Za-z0-9_.-]+\.md)?|CONTRIBUTING\.md|ISSUE_TEMPLATE(\.[Mm][Dd]|\/[A-Za-z0-9_.-]+\.(md|ya?ml))?|AGENTS\.md)$/i.test(path))throw new Error('Community content target is not allowlisted');
     return this.communityRequest(pin.source,`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pin.head}`,signal);
   }
-  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "pull-files", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
+  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "closed-issues" | "open-pulls" | "pull-files", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
     const approvedHead = typeof approvedHeadOrFresh === "string" ? approvedHeadOrFresh : undefined;
     if (typeof approvedHeadOrFresh === "boolean") fresh = approvedHeadOrFresh;
     signal?.throwIfAborted();
@@ -286,6 +286,9 @@ export class GitHubPrAdapter implements PrAdapter {
     else if (kind === "pull-files" && /^[1-9][0-9]*$/.test(target)) suffix = `/pulls/${target}/files?per_page=100&page=${page}`;
     // the open issues of the granted repository, oldest first (src/domain/issue-triage.ts snapshots them)
     else if (kind === "issues" && target === this.grant.repository) suffix = `/issues?state=open&sort=created&direction=asc&per_page=50&page=${page}`;
+    // what triage checks before investigating (read only): the recently closed issues (one page) and the open pull requests
+    else if (kind === "closed-issues" && target === this.grant.repository && page === 1) suffix = `/issues?state=closed&sort=updated&direction=desc&per_page=50&page=1`;
+    else if (kind === "open-pulls" && target === this.grant.repository) suffix = `/pulls?state=open&per_page=30&page=${page}`;
     else if (kind === "ref" && ref(target) && this.branchAllowed(target, approvedHead) && page === 1) suffix = `/git/ref/heads/${encodeURIComponent(target)}`;
     else if (kind === "protection" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection`;
     else if (kind === "policy" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection/required_status_checks`;
@@ -307,10 +310,12 @@ export class GitHubPrAdapter implements PrAdapter {
           if (response.status === 403 && /upgrade to github pro|make this repository public/i.test(message)) throw new Error("GitHub 403 protection-plan");
           if (response.status === 404 && /branch not protected/i.test(message)) throw new Error("GitHub 404 protection-none");
         }
+        // out of API calls, not out of permission: the caller can say which (issue triage's pull request read does)
+        if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") throw new Error("GitHub 403 rate-limited");
         throw new Error(`GitHub ${response.status}`);
       }
       return JSON.parse(await boundedResponse(response, 1_000_000));
-    } catch (e: any) { throw new Error(/^GitHub \d+(?: protection-(?:plan|none))?$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
+    } catch (e: any) { throw new Error(/^GitHub \d+(?: protection-(?:plan|none)| rate-limited)?$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
     finally { await disposeOwnedResponse(response,controller);clearTimeout(timer); }
   }
   /** The read-only probe before the captain grants merging (src/github-merge-grant.ts): one GET of the granted repository with

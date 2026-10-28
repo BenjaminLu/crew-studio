@@ -152,6 +152,7 @@ try {
   ok(Object.keys(loose.labels).length === 0 && loose.skipped === 2, "only reviewed: true imports a row");
   const good = parse(file([{ n: 1, reviewed: true, gold: { state: "present", files: ["./src/a.ts"] } }, { n: 2, reviewed: false, gold: { state: "present" } }]));
   ok(Object.keys(good.labels).join() === "1" && good.skipped === 1 && good.labels["1"].files![0] === "src/a.ts" && good.labels["1"].source === "captain", "reviewed rows are imported as the captain's, the rest skipped");
+  ok(parse(file([{ n: 1, reviewed: true, gold: { state: "needs-info" } }])).labels["1"].state === "needs-info", "needs-info (the issue lacks what is needed to locate it) is a gold state");
 
   // --- scoring on a tiny hand-computed case ---
   const gold = { ...E.emptyGold(project, at), derived: E.mineDerived({ triage, categories: cats, work: (p) => store.work(p), at }), captain: Object.fromEntries([
@@ -166,6 +167,10 @@ try {
   // state: A misses #4, B misses #6; Studio answers only the packaged #1 #2 #3 #5, all right
   ok(near(s.state.a.accuracy, 5 / 6) && near(s.state.b.accuracy, 5 / 6) && s.state.studio.answered === 4 && near(s.state.studio.accuracy, 1) && near(s.state.studio.recall, 4 / 6), "state accuracy and recall per predictor", JSON.stringify(s.state.studio));
   ok(near(s.state.a.classes.present.precision, 3 / 4) && near(s.state.a.classes.present.recall, 1) && s.state.a.classes["not-found"].precision === null, "state precision and recall per class");
+  ok(s.state.a.classes["needs-info"]?.support === 0 && s.state.a.classes["needs-info"].precision === null, "needs-info is scored as a class of its own");
+  { const ask = { ...none, state: "needs-info", questions: ["Which version?"] }, ra = { ...reportA, issues: reportA.issues.map((f: any) => f.n === 4 ? { n: 4, ...A(ask) } : f) }, rb = { ...reportB, issues: reportB.issues.map((f: any) => f.n === 4 ? { n: 4, ...A({ ...none, state: "not-found" }) } : f) };
+    const rp = E.replay([{ run: "R-ni", at, a: ra, b: rb, snapshot, read }]);
+    ok(!rp.skipped.length && rp.preds.get(4)?.a?.state === "needs-info" && rp.preds.get(4)?.agree === true && rp.preds.get(4)?.package === null, "a stored needs-info report replays: agreed with not-found, never a package", JSON.stringify(rp.preds.get(4))); }
   // files: #1 right for both; #4 A names src/a.ts (wrong), B names none
   ok(near(s.files.a.hit, 0.5) && near(s.files.a.precision, 0.5) && near(s.files.a.recall, 0.5) && near(s.files.b.precision, 1) && near(s.files.b.recall, 0.5) && s.files.studio.answered === 1 && near(s.files.studio.coverage, 0.5), "location file overlap", JSON.stringify(s.files));
   // security: A says yes on #4 (wrong), so Studio's flag (either report) is wrong there too
