@@ -88,6 +88,61 @@ try{
  const e=report([finding(4,{state:'fixed?'})],{alone:[4]}),f=report([finding(4,{state:'fixed?'})],{alone:[4]});
  const re=T.proposePackages(e,f,snap,read);
  ok(re.packages[0]?.kind==='recheck','an issue both reports find already fixed becomes a recheck, never a close');
+
+ // --- what "verified against the code" means: the stated lines, the symbol, a distinctive quote, read in the round ---
+ writeFileSync(join(repo,'src/a/long.ts'),[...Array.from({length:44},(_,i)=>`// filler ${i+1}`),'export function pickRoute(table: Route[], path: string) {','  try {','    return table.find((r) => r.prefix.startsWith(path))','  } catch (e) {','    return null','  }','}',...Array.from({length:20},(_,i)=>`// tail ${i+1}`)].join('\n'));
+ const at=(o:any={})=>finding(1,{locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines:'45-51'}],evidence:'return table.find((r) => r.prefix.startsWith(path))',...o});
+ const vone=(f:any,reads?:any)=>T.verifyReport(report([f]),snap,read,reads)[0];
+ ok(vone(at()).ok,'a quote inside its locus\'s stated lines, at a symbol the file has, passes');
+ ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines:'60-62'}]})).ok,'a quote up to 15 lines outside the stated range still counts');
+ { const far=vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines:'1-5'}]}));
+  ok(!far.ok&&far.problems.some(p=>/not within 15 lines of its locus's stated range/.test(p)),'a quote that is in the file but far from the stated lines fails',JSON.stringify(far.problems)); }
+ for(const lines of ['','near the top','45-','1-500'])ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'pickRoute',lines}]})).problems.some(p=>/is not a line range/.test(p)),`a locus whose lines are "${lines}" fails: no range to check the quote against`);
+ ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'route declarations',lines:'45-51'}]})).problems.some(p=>/symbol "route declarations" is not in the file/.test(p)),'a symbol the file never names (a description) fails');
+ ok(vone(at({locus:[{file:'src/a/long.ts',symbol:'Router.pickRoute',lines:'45-51'}]})).ok&&!vone(at({locus:[{file:'src/a/long.ts',symbol:'pick',lines:'45-51'}]})).ok,'a dotted symbol counts by its last name, as a whole word only');
+ { const generic=vone(at({evidence:'} catch (e) { ; return null'}));
+  ok(!generic.ok&&generic.problems.some(p=>/no distinctive quoted code/.test(p)),'quotes that only say "} catch (e) {" or "return null" are not evidence on their own',JSON.stringify(generic.problems)); }
+ ok(vone(at({evidence:'return table.find((r) => r.prefix.startsWith(path)) ; return null'})).ok,'a generic line beside a distinctive one is fine');
+ ok(vone(at(),{'src/a/long.ts':[[40,60]]}).ok,'a quote from lines fs_read returned to the investigator passes');
+ for(const[why,reads]of[['nothing read',{}],['another stretch of the file',{'src/a/long.ts':[[1,30]]}],['another file',{'src/a/url.ts':[[1,2]]}]] as const)
+  ok(vone(at(),reads).problems.some(p=>/not in what fs_read returned to you/.test(p)),`a quote fs_read never showed the investigator fails (${why})`);
+ ok(vone(at(),{'src/a/long.ts':[[40,46],[47,60]]}).ok,'two reads that meet are one stretch');
+ ok(vone(finding(1,{state:'not-found',locus:[{file:'src/a/long.ts',symbol:'a guess',lines:'?'}],evidence:'no request URL in the issue'})).ok,'a not-found finding states no range and quotes no code');
+
+ // --- agreement: two not-found answers agree, security never disagrees, sets match by overlap ---
+ const nf=(n:number,o:any={})=>finding(n,{state:'not-found',locus:[],evidence:'the issue names no file and no message the code has',security:'yes',...o});
+ { const x=report([nf(1),nf(3,{state:'not-code'}),finding(4)],{alone:[1,3,4]}),y=report([nf(1,{locus:[{file:'src/a/clip.ts',symbol:'x',lines:'1'}]}),nf(3,{state:'not-code',security:'no'}),finding(4,{security:'yes'})],{alone:[1,3,4]});
+  const cm=T.compareReports(x,y);
+  ok(cm.every(c=>c.agree)&&cm.find(c=>c.n===1)!.state==='not-found','two not-found answers agree, with or without a location; so do two not-code answers');
+  ok(!cm.some(c=>c.diff.includes('security')),'a different security answer is not a disagreement');
+  const pl=T.proposePackages(x,y,snap,read);
+  ok(pl.packages.length===1&&pl.packages[0].members.join()==='4'&&pl.packages[0].security===true,'either investigator\'s yes makes a package security');
+  ok(pl.noCode.find(z=>z.state==='not-found')?.issues.join()==='1'&&pl.noCode.find(z=>z.state==='not-code')?.issues.join()==='3'&&/needs more information/.test(pl.noCode[0].reason),'issues both find not-found, or both not-code, are their own agreed outcome',JSON.stringify(pl.noCode));
+  ok(!pl.toHuman.length&&!pl.packages.some(p=>p.members.includes(1)||p.members.includes(3)),'an agreed not-found issue goes neither to a person as a disagreement nor into a package',JSON.stringify(pl.toHuman));
+  const half=T.proposePackages(x,report([finding(1),nf(3,{state:'not-code'}),finding(4)],{alone:[1,3,4]}),snap,read);
+  ok(half.toHuman.some(h=>h.issues.includes(1))&&!half.noCode.some(z=>z.issues.includes(1)),'not-found against present is a disagreement, for a person'); }
+ { const x=report([finding(1),finding(3),finding(4)],{related:[{members:[1,3,4],order:[],why:'one area'}]}),y=report([finding(1),finding(3),finding(4)],{related:[{members:[3,1],order:[],why:'one area'}],alone:[4]});
+  const pl=T.proposePackages(x,y,snap,read);
+  ok(pl.packages.length===1&&pl.packages[0].members.join()==='1,3'&&pl.packages[0].kind==='unordered'&&pl.packages[0].agreement==='overlap'&&pl.packages[0].left?.join()==='4','two sets one issue apart: the issues both name become the package, marked as an overlap',JSON.stringify(pl.packages));
+  ok(pl.toHuman.length===1&&pl.toHuman[0].issues.join()==='4'&&/only one report puts #4 with #1 #3/.test(pl.toHuman[0].reason),'the issue only one report puts in the set goes to a person, with the reason',JSON.stringify(pl.toHuman));
+  const wide=T.proposePackages(x,report([finding(1),finding(3),finding(4)],{related:[{members:[1],order:[],why:'x'}],alone:[3,4]}),snap,read);
+  ok(!wide.packages.length&&wide.toHuman.some(h=>h.issues.join()==='1,3,4'),'sets two or more issues apart stay with a person',JSON.stringify(wide));
+  const ord=T.proposePackages(report([finding(1),finding(3),finding(4)],{related:[{members:[1,3,4],order:[4,3,1],why:'x'}]}),report([finding(1),finding(3),finding(4)],{related:[{members:[1,3],order:[3,1],why:'x'}],alone:[4]}),snap,read);
+  ok(ord.packages[0]?.kind==='ordered'&&ord.packages[0].order.join()==='3,1','an overlap keeps the order both reports give its issues');
+  const weak=T.proposePackages(x,report([finding(1),finding(3,{evidence:'not in the code at all'}),finding(4)],{related:[{members:[1,3],order:[],why:'x'}],alone:[4]}),snap,read);
+  ok(!weak.packages.length&&weak.toHuman.some(h=>h.issues.join()==='1,3'&&/code check fails/.test(h.reason)),'an overlap package still needs every member to pass the code check in both reports');
+  const grp=(members:number[],file='src/a/url.ts')=>({id:'g',fix_at:{file,symbol:'match'},members,why_one_change:'one fix'});
+  const g=T.proposePackages(report([finding(1),finding(3),finding(4)],{groups:[grp([1,3,4])]}),report([finding(1),finding(3),finding(4)],{groups:[grp([1,3])],alone:[4]}),snap,read);
+  ok(g.packages[0]?.kind==='one-change'&&g.packages[0].members.join()==='1,3'&&g.packages[0].left?.join()==='4','one-change groups match by overlap too, at the same file');
+  ok(!T.proposePackages(report([finding(1),finding(3),finding(4)],{groups:[grp([1,3,4])]}),report([finding(1),finding(3),finding(4)],{groups:[grp([1,3],'src/a/clip.ts')],alone:[4]}),snap,read).packages.length,'groups at different files never match');
+  const fixedSet=T.proposePackages(report([finding(1,{state:'fixed?'}),finding(3),nf(4)],{related:[{members:[1,4],order:[],why:'x'}],alone:[3]}),report([finding(1,{state:'fixed?'}),finding(3),nf(4)],{related:[{members:[1,4],order:[],why:'x'}],alone:[3]}),snap,read);
+  ok(fixedSet.packages.find(p=>p.members.join()==='1')?.kind==='recheck'&&fixedSet.noCode[0]?.issues.join()==='4','a set left with one issue once its not-found issue is set aside is a single, and one fixed in both a recheck',JSON.stringify(fixedSet)); }
+ { const x=report([nf(1),finding(4)],{alone:[1,4]}),rec1=T.triageRecord({project:'fixture',snapshot:snap,a:x,b:x,read,by:'t'});
+  ok(rec1.noCode?.[0]?.issues.join()==='1'&&rec1.issues['1'].agree===true,'the stored triage keeps the agreed no-code issues');
+  ok(T.withoutChanged(rec1,[1]).toHuman.some(h=>h.issues.join()==='1'&&/changed on GitHub/.test(h.reason))&&!T.withoutChanged(rec1,[1]).noCode?.length,'an agreed no-code issue edited meanwhile goes to a person');
+  const later=T.atSnapshot(rec1,{...snap,issues:snap.issues.filter(i=>i.n!==1)});
+  ok(!later.noCode?.length,'a closed issue leaves the no-code list');
+  ok(T.mergeTriage(rec1,T.triageRecord({project:'fixture',snapshot:snap,a:report([finding(4)],{alone:[4]}),b:report([finding(4)],{alone:[4]}),read,by:'t2'})).noCode?.[0]?.issues.join()==='1','a later batch keeps the earlier no-code issues it did not investigate again'); }
  // --- the stored triage of a project, and what the Board reads ---
  const rec=T.triageRecord({project:'fixture',snapshot:snap,a,b,read,by:'issue-triage R-1',now:()=>'2026-10-28T01:00:00Z'});
  ok(rec.packages[0].id==='P-1'&&rec.packages[0].status==='proposed','packages are numbered and start as proposals');
