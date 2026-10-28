@@ -17,6 +17,11 @@ const E = H.engine;
 const { Ledger } = await import("../src/runtime/checks");
 { const r = E.start({ workflow: "prove", text: "x" }); await until(() => E.get(r.id)!.status === "succeeded", 8000);
   ok(E.doneLines(E.get(r.id)!)[0].proved, "an intact ledger proves the line");
+  // a check result names its ledger entry beside the event's own seq: the ledger's number never becomes the event's
+  // (it once reset the run's event count, so later events reused seqs and the Board dropped the run's fresh detail)
+  { const evs = E.events(r.id), seqs = evs.map((e: any) => e.seq), led = new Ledger(H.data, r.id).all(), proof = evs.filter((e: any) => e.type === "check_result" || e.type === "evidence");
+    ok(seqs.every((s: number, i: number) => i === 0 || s > seqs[i - 1]) && E.get(r.id)!.events === seqs.at(-1), "the run's events are numbered in order, each seq once, and the run's count is the last", seqs.join(" "));
+    ok(proof.length > 0 && proof.every((e: any) => led.some((l: any) => l.seq === e.ledger && l.sig === e.sig)), "each check result and evidence event names its ledger entry (ledger, sig)", JSON.stringify(proof.map((e: any) => [e.seq, e.ledger]))); }
   const f = new Ledger(H.data, r.id).file(); const orig = readFileSync(f, "utf8");
   writeFileSync(f, orig + "{malformed-ledger-row\n");
   ok(!E.trusted(r.id).ok, "a malformed raw ledger line cannot disappear from full trust");
@@ -43,7 +48,7 @@ const { Ledger } = await import("../src/runtime/checks");
     ok(before.prefix.length > 0 && broken.malformed && broken.prefix.length === before.prefix.length && broken.bad.length > 0 && !E.trusted(r.id).ok, "a raw failure closes prefix permanently before later parseable signed objects");
     writeFileSync(f, orig);
     const eventsFile = E.rdir(r.id) + "/events.jsonl", events = readFileSync(eventsFile, "utf8");
-    const altered = events.trim().split("\n").map(line => { const e = JSON.parse(line); if ((e.type === "check_result" || e.type === "evidence") && e.seq === before.prefix[0].seq) e.sig = "0".repeat(64); return JSON.stringify(e); });
+    const altered = events.trim().split("\n").map(line => { const e = JSON.parse(line); if ((e.type === "check_result" || e.type === "evidence") && (e.ledger ?? e.seq) === before.prefix[0].seq) e.sig = "0".repeat(64); return JSON.stringify(e); });
     writeFileSync(eventsFile, altered.join("\n") + "\n");
     const conflict = E.trusted(r.id);
     ok(L.authenticatedPrefix().prefix.length === before.prefix.length && !conflict.ok && conflict.prefix.length === 0, "host event signature disagreement cuts the authenticated prefix at the verified object position");
