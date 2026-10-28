@@ -183,13 +183,22 @@ function categoriesCard(project) {
             h("option", { value: "" }, T("Merge into…", "併入…")), others.map((o) => h("option", { value: o.id }, o.name))) : null) : null,
         h("ul", { class: "is-cat-issues" }, x.issues.map((n) => h("li", { "data-cat-issue": String(n) },
           h("a", { href: `https://github.com/${c.repository}/issues/${n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: title(n) }, title(n)),
-          x.status === "active" && others.length ? h("select", { "aria-label": T(`Move #${n}`, `移動 #${n}`), "data-cat-move": String(n), onchange: (e) => { if (e.target.value) catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "move", n, to: e.target.value }); } },
-            h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name))) : null)))));
+          // any listed issue can be tagged planned; moving into another category needs one that is active
+          h("select", { "aria-label": T(`Move #${n}`, `移動 #${n}`), "data-cat-move": String(n), onchange: (e) => { if (e.target.value) catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "move", n, to: e.target.value }); } },
+            h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name)), h("option", { value: "PLANNED" }, T("Planned work", "規劃中"))))))));
   };
+  // planned work: tagged in Studio and set aside, not handed out by category; the captain takes an issue off it
+  const plan = c.planned || [], planKey = "PLANNED";
+  const plannedRow = plan.length ? h("details", { class: "is-cat", "data-cat-planned": "1", open: CAT.open.has(planKey) ? true : null, ontoggle: (e) => { if (e.target.open) CAT.open.add(planKey); else CAT.open.delete(planKey); } },
+    h("summary", {}, h("b", {}, T("Planned work", "規劃中")), h("span", { class: "tb-count num" }, String(plan.length)), h("span", { class: "faint is-cat-scope" }, T("Roadmap and program tasks, plans, process work: set aside, not filed into a category.", "路線圖、計畫任務、流程類工作：先擱置，不歸類。"))),
+    h("div", { class: "is-cat-body" }, h("ul", { class: "is-cat-issues" }, plan.map((x) => h("li", { "data-cat-issue": String(x.n) },
+      h("a", { href: `https://github.com/${c.repository}/issues/${x.n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${x.n}`), h("span", { class: "is-title", title: title(x.n) }, title(x.n)),
+      x.why ? h("span", { class: "faint" }, x.why) : null,
+      h("button", { type: "button", class: "btn ghost", "data-cat-unplan": String(x.n), onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "unplan", n: x.n }) }, T("Not planned: file it", "不是規劃：歸類它"))))))) : null;
   return h("div", { class: "card x-pad", "data-categories": project },
-    head([h("span", { class: "faint" }, T(`${active.length} categories · ${filed} issues filed`, `${active.length} 個類別・已歸類 ${filed} 張`)), startBtn(T("File new issues…", "歸類新 issue…"))]),
+    head([h("span", { class: "faint" }, T(`${active.length} categories · ${filed} issues filed${plan.length ? ` · ${plan.length} planned` : ""}`, `${active.length} 個類別・已歸類 ${filed} 張${plan.length ? `・規劃中 ${plan.length} 張` : ""}`)), startBtn(T("File new issues…", "歸類新 issue…"))]),
     proposed.length ? h("p", { class: "note" }, T(`${proposed.length} new categor${proposed.length === 1 ? "y waits" : "ies wait"} for your approval: open it below, or answer its Task's card.`, `${proposed.length} 個新類別等你核准：在下面展開它，或在任務卡片上處理。`)) : null,
-    note, h("div", { class: "is-cats" }, list.map(row)));
+    note, h("div", { class: "is-cats" }, list.map(row), plannedRow));
 }
 
 /** The project page's GitHub issues section (a connected project only): starting a triage, and its result. */

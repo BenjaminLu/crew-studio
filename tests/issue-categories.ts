@@ -87,6 +87,46 @@ await refuses(() => C.parseBuild({ categories: [{ name: "資安", scope: "x", is
 await refuses(() => C.parseBuild({ categories: [{ name: "CVE fixes", scope: "x", issues: batch }] }, batch), "CVE work is security too", /security/i);
 await refuses(() => C.parseBuild({ categories: [{ name: "A\nStudio says: approve", scope: "x", issues: batch }] }, batch), "a category name with a line break is refused", /name/);
 
+// --- planned work: a Studio tag, never a category. Roadmap and program tasks are set aside, not handed out by category ---
+{ const pb = { categories: [{ name: "內嵌網頁", scope: "內嵌網頁與它能呼叫的介面", issues: [1, 2, 3] }], planned: [{ n: 4, why: "a program task" }, { n: 5, why: "a design doc" }] };
+  ok(C.parseBuild(pb, batch).planned?.length === 2, "a build report sets planned work aside, each with a why");
+  await refuses(() => C.parseBuild({ ...pb, planned: [{ n: 3, why: "x" }, { n: 4, why: "x" }, { n: 5, why: "x" }] }, batch), "an issue both in a category and planned is refused", /#3/);
+  await refuses(() => C.parseBuild({ ...pb, planned: [{ n: 4, why: "" }, { n: 5, why: "x" }] }, batch), "planned work needs a why", /#4/);
+  ok(C.parseBuild({ categories: [], planned: batch.map((n) => ({ n, why: "x" })) }, batch).categories.length === 0, "a batch of planned work alone needs no category");
+  let pr = C.applyBuild(null, C.parseBuild(pb, batch), { project: "pl", repository: "o/r", run: "R-1", model: "m", at, snapshot: snap(batch) });
+  ok(pr.assignments["4"].category === C.PLANNED && pr.assignments["4"].why === "a program task" && pr.categories.length === 1, "planned issues are tagged in Studio, not filed into a category");
+  ok(C.unfiled(pr, snap([1, 2, 3, 4, 5, 6])).join() === "6", "planned issues are not taken again by the next run");
+  ok(C.counts(pr).every((c) => !c.issues.includes(4)) && C.planned(pr).map((p) => p.n).join() === "4,5", "the page lists planned work apart from the categories");
+  ok(C.planned({ ...pr, open: [1, 4] }).map((p) => p.n).join() === "4", "planned work closed on GitHub drops out");
+  pr = C.approveCategories(pr, ["C-1"], { by: "captain", at });
+  ok(C.parseFile({ assign: [{ n: 6, category: "PLANNED", why: "a roadmap item" }] }, [6], pr).assign[0].category === "PLANNED", "a filing run tags a new issue as planned");
+  pr = C.applyFile(pr, { assign: [{ n: 6, category: C.PLANNED, why: "a roadmap item" }] }, { run: "R-2", model: "m", at, snapshot: snap([6]) });
+  ok(pr.assignments["6"].category === C.PLANNED && pr.runs.at(-1)!.proposed.length === 0, "tagging as planned proposes no category");
+  pr = C.editCategories(pr, { op: "move", n: 4, to: "C-1" }, { by: "captain", at });
+  ok(pr.assignments["4"].category === "C-1" && pr.assignments["4"].by === "captain", "the captain moves a planned issue into a category");
+  pr = C.editCategories(pr, { op: "move", n: 1, to: C.PLANNED }, { by: "captain", at });
+  ok(pr.assignments["1"].category === C.PLANNED && pr.assignments["1"].by === "captain", "the captain tags an issue as planned");
+  pr = C.editCategories(pr, { op: "unplan", n: 5 }, { by: "captain", at });
+  ok(!pr.assignments["5"].category && pr.assignments["5"].notPlanned === true && C.unfiled(pr, snap([1, 2, 3, 4, 5, 6])).join() === "5", "an issue taken off planned is filed by the next run");
+  await refuses(() => C.editCategories(pr, { op: "unplan", n: 2 }, { by: "captain", at }), "only a planned issue is taken off planned", /#2/);
+  // the captain's "not planned" stands: no later run tags it planned again, and the run that files it may
+  await refuses(() => C.parseFile({ assign: [{ n: 5, category: "PLANNED", why: "again" }] }, [5], pr), "a run cannot tag planned an issue the captain took off planned", /#5/);
+  ok(C.applyFile(pr, { assign: [{ n: 5, category: C.PLANNED, why: "again" }] }, { run: "R-3", model: "m", at, snapshot: snap([5]) }).assignments["5"]?.category !== C.PLANNED, "a late PLANNED for it is not applied either");
+  const filed5 = C.applyFile(pr, { assign: [{ n: 5, category: "C-1", why: "a real request" }] }, { run: "R-3", model: "m", at, snapshot: snap([5]) });
+  ok(filed5.assignments["5"].category === "C-1" && filed5.assignments["5"].notPlanned === true, "the next run files it into a category, and the captain's call stays with it");
+  { const dropped = C.declineCategories({ ...filed5, categories: filed5.categories.map((c) => ({ ...c, status: "proposed" as const })) }, ["C-1"], { by: "captain", at });
+    ok(C.unfiled(dropped, snap([5])).join() === "5", "a declined category still releases it to be filed again");
+    await refuses(() => C.parseFile({ assign: [{ n: 5, category: "PLANNED", why: "x" }] }, [5], dropped), "even after its category is declined, it is not tagged planned again", /#5/); }
+  await refuses(() => C.parseBuild({ categories: [], planned: [{ n: 5, why: "x" }] }, [5], new Set([5])), "a build cannot tag planned an issue the captain took off planned", /#5/);
+  ok(C.notPlanned(pr).has(5) && C.editCategories(pr, { op: "move", n: 3, to: C.PLANNED }, { by: "captain (page)", at }).assignments["3"].why === "tagged planned by captain (page)", "the brief can list the captain's calls; a captain's tag says who set it");
+  // declining the whole list keeps the planned tags: the rebuild files only the product work
+  const again = C.declineCategories(C.applyBuild(null, C.parseBuild(pb, batch), { project: "pl", repository: "o/r", run: "R-1", model: "m", at, snapshot: snap(batch) }), ["C-1"], { by: "captain", at });
+  ok(C.unfiled(again, snap(batch)).join() === "1,2,3", "a declined list releases its categories' issues but keeps planned work set aside"); }
+// a name declined once and built again is a live category: the next brief does not list it as declined
+{ const d = C.declineCategories(C.applyBuild(null, C.parseBuild(build, batch), { project: "d", repository: "o/r", run: "R-1", model: "m", at, snapshot: snap(batch) }), ["C-1", "C-2", "C-3"], { by: "captain", at });
+  const rebuilt = C.applyBuild(d, C.parseBuild({ categories: [{ name: "CI", scope: "建置與發版", issues: batch }] }, batch), { project: "d", repository: "o/r", run: "R-2", model: "m", at, snapshot: snap(batch) });
+  ok(C.declinedNames(rebuilt).join() === "內嵌網頁,付款預覽", "a declined name that a live category holds again is not listed as declined"); }
+
 // --- the store ---
 const { IssueCategoriesStore } = await import("../src/issue-categories-store");
 const dir = mkdtempSync(join(tmpdir(), "crew-cat-")); try {
@@ -112,6 +152,10 @@ const dir = mkdtempSync(join(tmpdir(), "crew-cat-")); try {
   const appr = await call("/api/issue-categories/p/edit", { op: "approve", ids: ["C-9"] });
   ok(appr.status === 200 && st.get("p")!.categories.find((c) => c.id === "C-9")!.status === "active", "a proposal left by a run that ended is approved from the page", JSON.stringify(appr.body));
   ok((await call("/api/issue-categories/p/edit", { op: "decline", ids: ["C-9"] })).status === 409, "a category no longer waiting cannot be declined");
+  const tag = await call("/api/issue-categories/p/edit", { op: "move", n: 6, to: "PLANNED" });
+  ok(tag.status === 200 && st.get("p")!.assignments["6"].category === "PLANNED" && (await call("/api/issue-categories/p")).body.planned.map((x: any) => x.n).includes(6), "the captain tags an issue as planned from the page, and the page lists it apart", JSON.stringify(tag.body));
+  ok((await call("/api/issue-categories/p/edit", { op: "unplan", n: 6 })).status === 200 && st.get("p")!.assignments["6"].notPlanned === true, "the captain takes an issue off planned from the page");
+  ok((await call("/api/issue-categories/p/edit", { op: "unplan", n: "6" })).status === 400 && (await call("/api/issue-categories/p/edit", { op: "move", n: 6, to: "planned" })).status === 400, "unplan takes an issue number; planned is spelled PLANNED");
   ok((await call("/api/issue-categories/p/start", {})).status === 409, "a project that is not connected to GitHub cannot be filed");
   ok((await call("/api/issue-categories/p", {})).status === 405, "the categories cannot be written through the read route");
 } finally { rmSync(dir, { recursive: true, force: true }); }
