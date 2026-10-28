@@ -42,6 +42,8 @@ import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailab
 import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
 import { unverifiedClaim } from "./report-verification";
+import { installReviewRoom } from "./review-room";
+import type { WebBackend } from "../review-web";
 
 export { git, must };
 
@@ -162,8 +164,14 @@ const scopePaths = (scope: string[]): ChangedPath[] => scope.map((p) => ({ path:
 
 export function installCode(engine: Engine, o: { dataDir: string; projects: Projects; adapter?: PrAdapter; poller?:GitHubPoller; mergeWatchMs?: number; improve?: { checkTriggers?: () => Promise<any> } | null;
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
-  seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> } }) {
+  seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> };
+  /** the review room's web tools (tests stub them; production goes through Studio's egress proxy) */
+  reviewWeb?: WebBackend | ((check: (url: string) => string | null) => WebBackend);
+  /** the review room's vendor voice (tests stub it; production calls the tutor vendor's own speech endpoint) */
+  reviewSpeak?: import("./review-room").Speaker }) {
   installCodeQueue(engine);
+  // the merge card's review room: a view on the card (its summary), never its answer or its readiness
+  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, speak: o.reviewSpeak });
   const priorCardView = engine.cards.view;
   const evidenceFor = (card: any) => {
     const run = engine.get(card.run), detail = card.detail;
@@ -178,8 +186,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       filePresent:(entry,file)=>{try{if(!entry.dir||!entry.evidence.includes(file))return false;const root=realpathSync(entry.dir),f=normalize(join(root,file));return f.startsWith(root+"/")&&realpathSync(f).startsWith(root+"/")&&statSync(f).isFile();}catch{return false;}}});
   };
   engine.cards.view = card => {
-    const viewed=codeHandoffView(priorCardView(card)), evidence=evidenceFor(viewed);
-    return evidence ? {...viewed,detail:{...viewed.detail!,codeEvidence:evidence}} : viewed;
+    const viewed=codeHandoffView(priorCardView(card)), evidence=evidenceFor(viewed), room=viewed.kind==="merge"?engine.reviewRoom?.summary(viewed)??null:null;
+    const out = evidence ? {...viewed,detail:{...viewed.detail!,codeEvidence:evidence}} : viewed;
+    return room ? {...out,reviewRoom:room} : out;
   };
   const evidenceAnswerGuard=engine.deps.authorizeAnswer;
   engine.deps.authorizeAnswer=(run,card,answer)=>{
