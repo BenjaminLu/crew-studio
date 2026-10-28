@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePort, waitUp, withSession } from "./boot.mjs";
+import { checkedTempDir } from "./lib/git-hygiene.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, ".."), tmp = mkdtempSync(join(tmpdir(), "crew-terminals-ui-"));
 const home = join(tmp, "home"), proj = join(tmp, "proj"), state = join(tmp, "state"), data = join(tmp, "data"), bin = join(tmp, "bin");
@@ -33,7 +34,14 @@ const until = async (f, ms = 8000) => { const t0 = Date.now(); while (Date.now()
   ok(/xterm\.js 5\.5\.0/.test(readFileSync(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")) && /MIT/.test(readFileSync(join(root, "public/vendor/xterm-LICENSE.txt"), "utf8")), "THIRD_PARTY_NOTICES.md and the license file name it");
 }
 
-writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "demo", name: "Demo", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
+// a project that is a git repository, for Send for review (the repository lives in a checked temp folder)
+const ck = checkedTempDir("crew-terminals-ui-repo-"), repoDir = join(ck, "repo"); mkdirSync(repoDir, { recursive: true });
+execFileSync("git", ["init", "-q", "-b", "main", repoDir]);
+writeFileSync(join(repoDir, "README.md"), "fixture\n");
+execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "add", "README.md"], { cwd: repoDir });
+execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "init"], { cwd: repoDir });
+writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "demo", name: "Demo", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true },
+  { id: "repo", name: "Repo", path: repoDir, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
 writeFileSync(join(bin, "claude"), `#!/bin/sh
 if [ "$1" = "--help" ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; exit 0; fi
 for a in "$@"; do [ "$a" = "--remote-control" ] && printf 'Remote Control active: https://claude.ai/code/rc-UIFAKE789\\r\\n'; done
@@ -91,6 +99,21 @@ try {
   ok((await p.locator("[data-term-remote-url]").innerText()) === "https://claude.ai/code/rc-UIFAKE789" && await p.locator(".wt-qr svg").count() === 1, "with the link and a QR code drawn on the page");
   const claudeId = decodeURIComponent(p.url().split("/terminals/")[1] || "");
   if (shots) await p.screenshot({ path: join(shots, "terminals-desktop-remote.png") });
+
+  // ---------- Send for review: a finished terminal whose branch has commits ----------
+  await p.locator("#termProject").selectOption("repo");
+  const G = "git -c user.name=A -c user.email=a@example.invalid";
+  await p.locator("#termCmd").fill(`${G} checkout -q -b agent/ui && echo x > f.txt && ${G} add f.txt && ${G} commit -q -m 'feat: f' && echo COMMITTED && read y`);
+  await p.locator("[data-term-run]").click();
+  ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("COMMITTED"), 10000), "an agent commits on a branch in the project's folder", await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => ""));
+  ok(await seen(p.locator("[data-term-send][disabled]")) && /once the agent has finished/.test(await p.locator("[data-term-review]").innerText()), "Send for review waits until the agent has finished");
+  await p.locator(".wt-xterm").click(); await p.keyboard.press("Enter");
+  ok(await seen(p.locator("[data-term-send]:not([disabled])"), 8000) && /agent\/ui · 1 commit\(s\) beyond main/.test(await p.locator("[data-term-review]").innerText()), "finished, with a commit beyond main: Send for review is offered, with the branch", await p.locator("[data-term-review]").innerText().catch(() => ""));
+  await p.locator("[data-term-send]").click();
+  // this Studio has no approved crew for code-firstmate: the refusal says why, and the terminal stays as it was
+  ok(await seen(p.locator(".toast").filter({ hasText: /registered project|已登錄|crew|staff|approv/i }), 8000), "without an approved crew the send is refused with the reason", (await p.locator(".toast").allInnerTexts().catch(() => [])).join(" | "));
+  ok(await p.locator("[data-term-send]:not([disabled])").count() === 1, "and Send for review stays available");
+  if (shots) await p.screenshot({ path: join(shots, "terminals-send-review.png") });
 
   // ---------- a paired phone ----------
   const code = (await post(port, "/api/remote/pair/start", {}))?.code;

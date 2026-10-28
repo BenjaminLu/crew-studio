@@ -745,6 +745,26 @@ export function createRuntime(d: RuntimeDeps) {
       return json({ error: "not found" }, 404);
     } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined, refusal: e?.refusal ?? undefined, failure: e?.refusal ? undefined : fromError(e, { source: "params" }) }, 400); }
   }
-  return { handle, engine, defs, projects, firstmate, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  /**
+   * Send for review (docs/units/branch-intake.md): code-firstmate from an existing branch, through the same staffing guard
+   * as a board start. Studio pins `_adopt` (the commit, its branch, the terminal); no caller-supplied "_" param reaches it.
+   */
+  const startFromBranch = async (o: { project: string; commit: string; branch: string | null; terminal: string; label: string; by: string }) => {
+    const wf = "code-firstmate", def = defs.get(wf);
+    if (!def) throw Object.assign(new Error("code-firstmate is not installed"), { code: "workflow_unavailable" });
+    const p = projects.get(o.project); if (!p?.path) throw Object.assign(new Error("choose a registered project"), { code: "project_required" });
+    if (!/^[0-9a-f]{40,64}$/.test(o.commit)) throw Object.assign(new Error("no commit to review"), { code: "commit" });
+    let params: Record<string, string> = { project: p.id, base: p.base };
+    if (boardStaffed(def)) {
+      await staffingFacts(); const crew = boardStaffing(def, p.id);
+      if (crew.state !== "approved") throw Object.assign(new Error(`${crew.reason.en} / ${crew.reason.zh}`), { code: crew.code });
+      params = { ...params, base: p.base, _staffing: crew.hash };
+    }
+    params._adopt = JSON.stringify({ commit: o.commit, branch: o.branch, terminal: o.terminal });
+    const what = o.branch ?? o.commit.slice(0, 12);
+    const text = `Review ${what}, the work a web terminal (${o.label}) committed in ${p.name || p.id} (${o.commit.slice(0, 12)}): draft the spec from its diff, check it, review it and merge it.`;
+    return ownClaude.start({ workflow: wf, title: `Review ${what} from a web terminal (${o.label})`.slice(0, 120), text, params, by: o.by });
+  };
+  return { handle, engine, defs, projects, firstmate, startFromBranch, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

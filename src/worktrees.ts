@@ -158,18 +158,21 @@ export class Worktrees {
     const twin = readdirSync(dir).find((x) => x.replace(/\.(json|marker|lock)$/, "") !== name && x.replace(/\.(json|marker|lock)$/, "").toLowerCase() === name.toLowerCase());
     if (twin) throw new Error(`"${name}" differs only by case from "${twin.replace(/\.(json|marker|lock)$/, "")}", which already has a worktree: ids that differ only by case would share a folder`);
   }
-  ensure(a: { project: string; task: string; repo: string; base: string; branchPrefix: string; run?: string | null }): WorktreeRecord {
+  /** `start` (an existing commit of the repository, e.g. a branch an agent wrote in a web terminal): the task's branch starts
+   * there instead of at base, and the base commit is where it forked from base (their merge base). */
+  ensure(a: { project: string; task: string; repo: string; base: string; branchPrefix: string; run?: string | null; start?: string | null }): WorktreeRecord {
     const path = this.pathOf(a.project, a.task); this.assertPlace(path, a.repo);
     assertSharedGitConfig(a.repo); // a shared config git would stop on (core.bare, a wrong core.worktree, an unreadable file) refuses here as BLOCKED; hooksPath is only reported
     this.assertNoCaseTwin(this.root, safe(a.project)); this.assertNoCaseTwin(this.dir(a.project), safe(a.task));
     let r = this.get(a.project, a.task);
     if (r && !r.removedAt && existsSync(path)) return r;
     const branch = r?.branch ?? `${a.branchPrefix}${safe(a.task)}`;
-    const baseCommit = r?.baseCommit ?? must(a.repo, ["rev-parse", `${a.base}^{commit}`]);
+    const start = a.start ? must(a.repo, ["rev-parse", "--verify", `${a.start}^{commit}`]) : null;
+    const baseCommit = r?.baseCommit ?? (start ? must(a.repo, ["merge-base", `${a.base}^{commit}`, start]) : must(a.repo, ["rev-parse", `${a.base}^{commit}`]));
     mkdirSync(dirname(path), { recursive: true });
     git(a.repo, ["worktree", "prune"]);
     if (git(a.repo, ["rev-parse", "--verify", `refs/heads/${branch}`]).ok) must(a.repo, ["worktree", "add", "-q", path, branch]);
-    else must(a.repo, ["worktree", "add", "-q", "-b", branch, path, baseCommit]);
+    else must(a.repo, ["worktree", "add", "-q", "-b", branch, path, start ?? baseCommit]);
     const head = must(path, ["rev-parse", "HEAD"]);
     writeFileSync(this.markFile(a.project, a.task), JSON.stringify({ kind: "crew-worktree", path, at: now() }));
     r = { kind: "crew-worktree", project: a.project, task: a.task, repo: a.repo, base: a.base, baseCommit, branch, path, head: r?.head ?? head, run: a.run ?? r?.run ?? null, kept: r?.kept ?? [], history: r?.history ?? [], createdAt: r?.createdAt ?? now(), removedAt: null };

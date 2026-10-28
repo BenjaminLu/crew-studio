@@ -83,8 +83,8 @@ try {
     const ids = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.map((g) => g.dataset.node));
     const actualDef=(await (await p.request.get(`${base}/api/wf/code-firstmate`)).json()).def;
     const allEdges = p.locator("[data-graph-all-edges]");
-    ok(ids.length === 19 && ids.includes("pr-open") && !ids.some((x) => ["spec-fix", "fix", "plan-fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].includes(x)), "the editor Overview is the default and shows the main path with publication and the designer round (19 nodes)", ids.join(","));
-    ok(await p.locator("svg.rt-graph .rt-edge").count() === 20 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await p.locator('svg.rt-graph .rt-edge[data-edge*="step-back"], svg.rt-graph .rt-edge[data-edge*="scope-card"], svg.rt-graph .rt-edge[data-edge*="→spec["]').count() === 0, "editor Overview draws the 20 main-path edges: no back edges and no escalation edges", String(await p.locator("svg.rt-graph .rt-edge").count()));
+    ok(ids.length === 20 && ids.includes("pr-open") && !ids.some((x) => ["spec-fix", "fix", "plan-fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].includes(x)), "the editor Overview is the default and shows the main path with publication and the designer round (20 nodes)", ids.join(","));
+    ok(await p.locator("svg.rt-graph .rt-edge").count() === 22 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await p.locator('svg.rt-graph .rt-edge[data-edge*="step-back"], svg.rt-graph .rt-edge[data-edge*="scope-card"], svg.rt-graph .rt-edge[data-edge*="→spec["]').count() === 0, "editor Overview draws the 22 main-path edges: no back edges and no escalation edges", String(await p.locator("svg.rt-graph .rt-edge").count()));
     const bt = async (k) => (await p.textContent(`[data-badge="${k}"]`).catch(() => "")) || "";
     ok(await bt("loop:spec") === "↻ refine ≤3" && await bt("loop:build") === "↻ fix ≤3" && await bt("ask:door") === "? asks you if unsure" && await bt("s:build:escalations") === "⚑ 8 escalations" && await bt("s:intake:escalations") === "⚑ 3 escalations",
       "editor Overview badges show the loops (with their cap), the door question and the escalation counts", [await bt("loop:spec"), await bt("loop:build"), await bt("ask:door"), await bt("s:build:escalations")].join(" | "));
@@ -105,10 +105,10 @@ try {
       ok(await p.evaluate(() => localStorage.getItem("crew.graphAllEdges")) === "1", "Show all connections is remembered");
       await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec-fix"]');
       ok(await p.locator("[data-graph-all-edges]").getAttribute("aria-pressed") === "true" && await actualShown(), "Show all connections persists across a reload");
-      await p.locator("[data-graph-all-edges]").click(); await p.waitForFunction(() => document.querySelectorAll("svg.rt-graph [data-node]").length === 19);
-      ok(await allEdges.getAttribute("aria-pressed") === "false" && await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await bt("loop:spec") === "↻ refine ≤3" && await p.evaluate(() => localStorage.getItem("crew.graphAllEdges")) === "0", "turning Show all connections off returns to the main path with badges");
+      await p.locator("[data-graph-all-edges]").click(); await p.waitForFunction(() => document.querySelectorAll("svg.rt-graph [data-node]").length === 20);
+      ok(await allEdges.getAttribute("aria-pressed") === "false" && await p.locator("svg.rt-graph [data-node]").count() === 20 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await bt("loop:spec") === "↻ refine ≤3" && await p.evaluate(() => localStorage.getItem("crew.graphAllEdges")) === "0", "turning Show all connections off returns to the main path with badges");
       await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]');
-      ok(await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("[data-graph-all-edges]").getAttribute("aria-pressed") === "false", "the main path stays after a reload once Show all connections is off");
+      ok(await p.locator("svg.rt-graph [data-node]").count() === 20 && await p.locator("[data-graph-all-edges]").getAttribute("aria-pressed") === "false", "the main path stays after a reload once Show all connections is off");
     }
     const minFont = await p.evaluate(() => { const svg = document.querySelector("svg.rt-graph"); const k = svg.getScreenCTM().a; return Math.min(...[...svg.querySelectorAll("[data-node] .rt-label")].map((t) => parseFloat(getComputedStyle(t).fontSize) * k)); });
     ok(minFont >= 11, "node titles render at 11 px or more in the simple view at Fit (1440)", `${minFont.toFixed(1)} px`);
@@ -116,10 +116,10 @@ try {
     await p.screenshot({ path: join(shots, "editor-simple-1440-light.png") });
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]');
     const detailIds = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.length);
-    ok(detailIds === 32 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-port]").count() === 32 && await p.locator('svg.rt-graph [data-node="pr-open"]').count() === 1, "toggling to Detail view restores every node, back edge and port", String(detailIds));
+    ok(detailIds === 33 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-port]").count() === 33 && await p.locator('svg.rt-graph [data-node="pr-open"]').count() === 1, "toggling to Detail view restores every node, back edge and port", String(detailIds));
     ok(await p.locator("[data-graph-all-edges]").isHidden(), "Show all connections belongs to Overview: Edit graph always draws the complete graph");
     await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.click('[data-view-toggle="simple"]'); await p.waitForSelector('svg.rt-graph[data-view="simple"]');
-    ok(await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]") && await p.locator("[data-graph-all-edges]").isVisible(), "back in editor Overview: the main path again, connection ports stay in Edit graph");
+    ok(await p.locator("svg.rt-graph [data-node]").count() === 20 && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]") && await p.locator("[data-graph-all-edges]").isVisible(), "back in editor Overview: the main path again, connection ports stay in Edit graph");
     await p.context().close();
   }
   // ---------- a column reflow keeps an unfitted Overview's scale; a fitted Overview fits again ----------

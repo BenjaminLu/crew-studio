@@ -9,7 +9,7 @@ id: code-firstmate
 name: code-firstmate
 kind: code
 version: 1
-description: "firstmate's coding pipeline: spec (refined until its checks pass) → dispatch → door → plan (one-way) → build ⇄ fix → CI, fail-first → fresh reviewer → designer (UI changes: the before / after captures) → the six gates and the design gate on the edge into the merge card → local merge → after-merge hooks."
+description: "firstmate's coding pipeline: spec (refined until its checks pass) → dispatch → door → plan (one-way) → build ⇄ fix → CI, fail-first → fresh reviewer → designer (UI changes: the before / after captures) → the six gates and the design gate on the edge into the merge card → local merge → after-merge hooks. Also from an existing branch (Send for review on a web terminal): the branch copied into a worktree → drafted spec → spec card → door → no build round, the diff checked against the spec → the same review path."
 intent:
   keywords: [fix, bug, add, feature, refactor, code, function, test, tests, implement, change, migration, schema, endpoint, api, repo, repository, rename]
 params:
@@ -24,6 +24,11 @@ roles:
 nodes:
   - { id: intake, kind: hook, label: Capture intent, do: intent.capture, x: 170, y: 220 }
   - { id: prepare, kind: hook, label: Worktree, detail: "branch on base", do: repo.prepare, x: 340, y: 220 }
+  # From existing branch (docs/units/branch-intake.md): Send for review on a finished web terminal. The commits are copied
+  # into Studio's worktree and the spec is drafted from the diff; after the spec card and the door, the first build visit
+  # runs no round ("adopted": the change is already there) and the branch is checked on the edge to the review request
+  # with the build node's deterministic checks (its diff against the approved spec, lints, file size, suites, fixtures); then the usual CI (fail-first at base and head), review, fix loop, gates, merge card.
+  - { id: adopt, kind: hook, label: From existing branch, detail: "copy the branch into a worktree", do: branch.adopt, x: 340, y: 40 }
   - id: spec
     kind: agent
     label: Spec
@@ -206,6 +211,18 @@ nodes:
   - { id: dropped, kind: hook, label: Dropped, args: { result: closed, summary: "dropped at dispatch" }, x: 680, y: 400 }
 edges:
   - [intake, prepare]
+  - [intake, adopt, adopt]
+  - [adopt, spec]
+  - - build
+    - pr-open
+    - adopted
+    - checks:
+        # the build node's deterministic checks (its report-schema aside: no round, no report), on the branch as adopted
+        - { use: firstmate/scope }
+        - { use: firstmate/lints }
+        - { use: firstmate/file-size-cap }
+        - { use: firstmate/covering-suites }
+        - { use: firstmate/fixture-modules }
   - [prepare, spec]
   - [spec, dispatch, ok]
   - [spec, spec-fix, fail]

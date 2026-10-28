@@ -410,7 +410,7 @@ try {
     for (const a of ["library.publish", "github.review.wait", "deliver.render", "hello.web"]) { E.actions[a] ??= () => "ok"; ok(!at(withEffect(a)).some((p: any) => p.code === "external-unguarded"), `r2 ${a} is local or read-only`); }
     // 25: built-in steps that carry the captain's guard in their own code, each with its reason; anything else stays deny by default
     const { GATE_SELF_GUARDED, GATE_MODEL_ACTIONS } = await import("../src/readiness/stages");
-    ok(Object.keys(GATE_SELF_GUARDED).sort().join() === "pr.open,remote.ready,repo.prepare" && Object.values(GATE_SELF_GUARDED).every((r) => r.length > 40), "25 only reviewed built-in steps are self-guarded, each naming its guard", JSON.stringify(GATE_SELF_GUARDED));
+    ok(Object.keys(GATE_SELF_GUARDED).sort().join() === "branch.adopt,pr.open,remote.ready,repo.prepare" && Object.values(GATE_SELF_GUARDED).every((r) => r.length > 40), "25 only reviewed built-in steps are self-guarded, each naming its guard", JSON.stringify(GATE_SELF_GUARDED));
     for (const a of Object.keys(GATE_SELF_GUARDED)) { E.actions[a] ??= () => "ok"; ok(!at(withEffect(a)).some((p: any) => p.code === "external-unguarded"), `25 ${a} is self-guarded (no card needed in the graph)`); }
     // a paid job run as a hook (an image job) is checked like an agent node: its vendor must be signed in
     E.actions["image.generate"] ??= () => "ok";

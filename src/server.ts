@@ -81,7 +81,7 @@ import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
 import { amendmentsNotice } from "./runtime/refine";
-import { Terminals, terminalRoutes } from "./terminals";
+import { Terminals, TermError, terminalRoutes } from "./terminals";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
 import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
 import { ChatLog } from "./host/chat-log";
@@ -382,7 +382,10 @@ const fmRaw = new RawLog(join(STATE, "events.jsonl"));
 const studioLog = new StudioLog(join(DATA, "events.jsonl"));
 // web terminals (src/terminals.ts): unsandboxed agent CLIs in a project's folder, input from this Mac's page only
 const terminals = new Terminals({ dataDir: DATA,
-  projects: () => new Projects(DATA).list().filter((p) => p.enabled !== false && typeof p.path === "string" && p.path).map((p) => ({ id: p.id, name: p.name || p.id, path: p.path as string })),
+  projects: () => new Projects(DATA).list().filter((p) => p.enabled !== false && typeof p.path === "string" && p.path).map((p) => ({ id: p.id, name: p.name || p.id, path: p.path as string, base: p.base })),
+  // Send for review: code-firstmate's "From existing branch" (docs/units/branch-intake.md), staffed like a board start
+  review: async (r) => { try { const run = await runtime.startFromBranch({ project: r.project, commit: r.commit, branch: r.branch, terminal: r.terminal, label: r.label, by: r.by }); return { run: run.id }; }
+    catch (e: any) { throw new TermError(409, String(e?.message ?? e), String(e?.code ?? "review")); } },
   secrets: () => { let lk: string | null = null; try { lk = readFileSync(join(DATA, "ledger.key"), "utf8"); } catch {} return [SESSION, lk]; },
   log: (type, summary, data) => { try { studioLog.emit({ type, workflow: "terminal", summary, data }); } catch {} },
   changed: (list) => send("terminals", { terminals: list }) });

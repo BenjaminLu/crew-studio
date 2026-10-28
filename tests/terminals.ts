@@ -190,6 +190,7 @@ try {
   ok((await raw("POST", `/api/terminals/${id4}/input`, { data: "y\r" })).body?.ok, "the desktop page answers the question");
   ok(await until(() => ps.out.includes("answer:y") && ps.exit), "the phone sees the answer and the end"); ps.close();
   ok(readFileSync(join(data, "terminals", `${id4}.log`), "utf8").includes("answer:y") && !calls().includes("y\r"), "phone attach did not disturb the transcript");
+  ok(!existsSync(join(data, "terminals", `${id4}.inputs.json`)), "what is typed into a command (an answer, maybe a password) is never kept");
 
   // ---------- bounds ----------
   const c5 = await create({ command: "head -c 300000 /dev/zero | tr '\\000' 'a'; echo; echo TAIL_MARK" }); const id5 = c5.body.terminal.id;
@@ -233,6 +234,13 @@ try {
   ok(await until(async () => (await term(id6))?.state === "waiting" && (await term(id6)).reason === "prompt"), "Claude at its prompt: waiting (prompt)");
   await sleep(900);
   ok(!calls().includes("input: /remote-control"), "with the flag, no /remote-control is typed");
+  // what the captain types at the agent's own prompt is kept (for Send for review's spec writer), redacted, as data
+  await raw("POST", `/api/terminals/${id6}/input`, { data: "add a percent() helper" }); await raw("POST", `/api/terminals/${id6}/input`, { data: "\x7f\x7f with a test\r" });
+  await sleep(300); await until(async () => (await term(id6))?.reason === "prompt");
+  await raw("POST", `/api/terminals/${id6}/input`, { data: "token ghp_" + "a".repeat(36) + "\r" });
+  const inputs6 = await until(() => { try { const v = JSON.parse(readFileSync(join(data, "terminals", `${id6}.inputs.json`), "utf8")); return v.lines.length === 2 && v; } catch { return null; } });
+  ok(inputs6?.lines?.[0] === "add a percent() help with a test" && inputs6.lines.length === 2 && !JSON.stringify(inputs6).includes("a".repeat(36)) && (statSync(join(data, "terminals", `${id6}.inputs.json`)).mode & 0o777) === 0o600,
+    "lines typed at the agent's prompt are kept (backspace applied, a token removed, 0600)", JSON.stringify(inputs6));
   await raw("POST", `/api/terminals/${id6}/kill`, {}); await until(async () => !(await term(id6))?.running);
   const log6 = readFileSync(join(data, "terminals", `${id6}.log`), "utf8");
   ok(!log6.includes("FAKEFLAG123") && log6.includes(REMOTE_REMOVED), "the stored transcript has the link removed", JSON.stringify(log6.slice(0, 200)));
