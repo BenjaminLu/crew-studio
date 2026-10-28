@@ -88,9 +88,9 @@ left out, and `runs.withoutReads` counts such batches. Recorded reads not shaped
 treated as none. `withReads` repeats the metrics over only the issues answered by batches with recorded reads, so old
 and new data can be read apart. A batch the current rules throw on is skipped and named in `runs.skipped`. The ledger
 digest the workflow demands of a live round is not checked here: the scorer measures rules on stored reports, it does
-not admit them. An issue investigated twice is answered by its latest batch. Packages are each batch's own: the cross-batch match
-(and a captain's join of one) is not replayed, so a gold pair whose issues were answered by different batches is not
-scored as a miss but counted apart (`package.pairs.crossBatch`), and an issue whose gold package spans batches is left
+not admit them. An issue investigated twice is answered by its latest batch. Packages are each batch's own: the
+cross-batch match (and a captain's join of one) is not replayed, so a gold pair whose issues were answered by different
+batches is not scored as a miss but counted apart (`package.pairs.crossBatch`), and an issue whose gold package spans batches is left
 out of `exact` (`exactOf` says how many count). Categories are the current categories record; where the captain changed
 an issue's category, the categorizer's own answer comes from its stored report in the run's `run.json`. A merged
 category, in an answer or in the gold, is followed to the one it was merged into.
