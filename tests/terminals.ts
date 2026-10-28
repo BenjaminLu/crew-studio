@@ -35,6 +35,11 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   const wrapped = `Remote Control active · ${URL_.slice(0, 30)}\x1b[1m${URL_.slice(30, 50)}\x1b[22m\r\n  ${URL_.slice(50)}\r\nnext\r\n`;
   ok(findLink(wrapped, 74) === URL_, "a link Ink wrapped at the terminal's width, with an escape inside it, is found whole", String(findLink(wrapped, 74)));
   ok(findLink("go to HTTPS://CLAUDE.AI/code/rc-UPPERCASE0123456789 now\r\n", 120) === "HTTPS://CLAUDE.AI/code/rc-UPPERCASE0123456789", "an upper-case link is found");
+  // review S1: a link that merely ends near the width, followed by prose, or on a line longer than the terminal, is not glued
+  const L1 = "https://claude.ai/code/rc-NEARWIDTH0123456789";
+  ok(findLink(`${"x".repeat(80 - 2 - L1.length - 1)} ${L1}\r\nand then it continues\r\n`, 80) === L1, "a link ending near the width, then a line of prose: the prose is not part of it", String(findLink(`${"x".repeat(80 - 2 - L1.length - 1)} ${L1}\r\nand then it continues\r\n`, 80)));
+  ok(findLink(`${"y".repeat(120)} ${L1}\r\ntail\r\n`, 80) === L1, "a line longer than the terminal was not wrapped by it: nothing is glued");
+  ok(findLink(`see ${L1}).\r\n`, 80) === L1 && findLink(`open ${L1}?\r\n`, 80) === L1, "trailing punctuation is not part of the link");
   const w = new SecretWindow(true); let wout = w.push(wrapped.slice(0, 40)) + w.push(wrapped.slice(40));
   ok(wout === "", "with Remote Control on, nothing leaves the window before the link is known");
   w.know(URL_);
@@ -211,6 +216,20 @@ try {
   const views = [1, 2, 3, 4].map(() => attach(id6)); await sleep(400);
   const fifth = await raw("GET", `/api/terminals/${id6}/stream`); views.forEach((v) => v.close());
   ok(fifth.status === 429 && fifth.body?.code === "tooManyViews", "at most four views of one terminal at once", JSON.stringify(fifth));
+  // review N3: one slot is the Mac's; phones share the rest, and the Mac's page takes the oldest phone's when all are taken
+  await sleep(300);
+  const ph3 = [1, 2, 3].map(() => attach(id6, { as: "phone", token: ptok })); await sleep(400);
+  const ph4 = await raw("GET", `/api/terminals/${id6}/stream?token=${ptok}`, undefined, { as: "none", host: TAILNET });
+  ok(ph4.status === 429 && ph4.body?.code === "tooManyViews", "a fourth phone view is refused: one slot stays the Mac's", JSON.stringify(ph4));
+  const mac1 = attach(id6), mac2 = attach(id6); await sleep(500);
+  ok(mac1.status === 200 && mac2.status === 200 && ph3.filter((x) => x.status === 200).length === 3, "with three phones watching, the Mac still opens its view, and another (the oldest phone's slot goes)", `${mac1.status} ${mac2.status}`);
+  [...ph3, mac1, mac2].forEach((v) => v.close());
+  // review N1: a shell that prints a Remote Control link (claude started by hand): hidden from phones from then on, redacted
+  const c11 = await create({ command: "sleep 1; printf 'started https://claude.ai/code/rc-SHELLLINK0123456789abc\\r\\n'; sleep 1; echo after-the-link; sleep 2" }); const id11 = c11.body.terminal.id;
+  const p11 = attach(id11, { as: "phone", token: ptok });
+  await until(async () => !(await term(id11))?.running, 8000); await sleep(300); p11.close();
+  ok(!/SHELLLINK/i.test(p11.out) && !p11.out.includes("after-the-link") && (await term(id11))?.remote === null, "a shell that prints a link: the phone gets none of it and nothing after it", JSON.stringify(p11.out));
+  ok(!/SHELLLINK/i.test(readFileSync(join(data, "terminals", `${id11}.log`), "utf8")) && readFileSync(join(data, "terminals", `${id11}.log`), "utf8").includes("after-the-link"), "and its transcript keeps the output without the link");
   ok(await until(async () => (await term(id6))?.state === "waiting" && (await term(id6)).reason === "prompt"), "Claude at its prompt: waiting (prompt)");
   await sleep(900);
   ok(!calls().includes("input: /remote-control"), "with the flag, no /remote-control is typed");
@@ -222,15 +241,16 @@ try {
   // B1: a question that carries the link; B2: the link wrapped, coloured, upper-case, encoded, and the id alone, in a real PTY
   await sleep(300);
   const W90 = "https://claude.ai/code/rc-PTYLEAK0123456789abcdefghijkl?env=pty";
-  writeFileSync(join(bin, "print"), `Remote Control active \u00b7 ${W90.slice(0, 40)}\x1b[1m${W90.slice(40, 64)}\x1b[22m\r\n  ${W90.slice(64)}\r\n` +
+  writeFileSync(join(bin, "print"), `Remote Control active \u00b7 ${W90.slice(0, 40)}\x1b[1m${W90.slice(40, 62)}\x1b[22m\r\n  ${W90.slice(62)}\r\n` +
     `session: rc-PTYLEAK0123456789abcdefghijkl\r\nHTTPS://CLAUDE.AI/code/rc-PTYLEAK0123456789abcdefghijkl\r\nhttps%3A%2F%2Fclaude.ai%2Fcode%2Frc-PTYLEAK0123456789abcdefghijkl\r\n` +
-    `Open ${W90} to continue? Do you want to proceed? (y/n) `);
+    `Open ${W90} now? [y/N] `);
   const cw = await create({ preset: "claude", cols: 86 }); const idw = cw.body.terminal.id;
   const tw = await until(async () => { const t = await term(idw); return t?.remote?.url && t; });
   ok(tw?.remote.url === W90, "the page gets the whole link even when the terminal wrapped it", JSON.stringify(tw?.remote));
   const askW = await until(async () => { const t = await term(idw, { as: "phone", token: ptok }); return t?.state === "waiting" && t; });
   const phoneView = JSON.stringify(await list({ as: "phone", token: ptok }));
-  ok(askW?.reason === "question" && /Do you want to proceed/.test(askW.ask ?? "") && !/PTYLEAK|claude\.ai/i.test(phoneView), "a question carrying the link reaches the phone's list without it", phoneView.slice(0, 400));
+  ok(askW?.reason === "question" && /^Open \[remote-control link removed\] now\? \[y\/N\]$/.test(askW.ask ?? "") && !/PTYLEAK|claude\.ai/i.test(phoneView), "a question whose own line carries the link reaches the phone's list without it", `${askW?.ask} ${phoneView.slice(0, 300)}`);
+  ok(/\[remote-control link removed\]/.test((await term(idw))?.ask ?? "") && !/PTYLEAK/i.test((await term(idw))?.ask ?? ""), "and the Mac's list shows the question without it too");
   const pm = attach(idw, { as: "phone", token: ptok }); await until(() => pm.meta); await sleep(300); pm.close();
   ok(!/PTYLEAK|claude\.ai/i.test(JSON.stringify(pm.events)), "nor in the phone's stream (meta or output)");
   await raw("POST", `/api/terminals/${idw}/kill`, {}); await until(async () => !(await term(idw))?.running);

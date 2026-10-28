@@ -126,21 +126,26 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
   const lines = screenLines(raw), edge = (l: string) => l.replace(/[\s│|]+$/, "");
   for (let i = lines.length - 1; i >= 0; i--) {
     const ms = [...lines[i].matchAll(REMOTE_URL)]; const m = ms.at(-1); if (!m) continue;
+    // a wrapped line is one the terminal filled to its width: within [cols - 4, cols] (a box border or padding may take
+    // the last columns); a longer line was not wrapped by the terminal, and a shorter one ended where the link ends
+    const full = (l: string) => { const n = [...edge(l)].length; return n >= cols - 4 && n <= cols; };
     let url = m[0]; const atEnd = (m.index ?? 0) + url.length >= edge(lines[i]).length;
-    let j = i, wrapped = atEnd && edge(lines[i]).length >= cols - 4;
+    let j = i, wrapped = atEnd && full(lines[i]);
     while (wrapped && j + 1 < lines.length) {
       const next = lines[j + 1].replace(/^[\s│|]+/, ""), c = /^[^\s"'<>`\\│|]+/.exec(next); if (!c) break;
-      url += c[0]; j++; wrapped = c[0].length >= edge(next).length && edge(lines[j]).length >= cols - 4;
+      // the rest of a wrapped link stands alone on its line (or fills that line too); a word followed by more text is prose
+      if (c[0].length < edge(next).length && !full(lines[j + 1])) break;
+      url += c[0]; j++; wrapped = c[0].length >= edge(next).length && full(lines[j]);
     }
     if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4)) && !/[\s│|]$/.test(raw)) return null;
-    return url;
+    return url.replace(/[?.,);:!'"\]]+$/, "");
   }
   return null;
 }
 
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec; killTimer?: any; remoteUrl: string | null; stopped?: string };
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec; killTimer?: any; remoteUrl: string | null; stopped?: string; seen: Set<string>; linkSeen: boolean };
 export type CreateSpec = { project: string; preset?: string | null; command?: string | null; args?: string[]; remoteControl?: boolean; cols?: number; rows?: number };
 export class TermError extends Error { constructor(readonly status: number, message: string, readonly code: string) { super(message); } }
 
@@ -228,7 +233,7 @@ export class Terminals {
     const t: Term = { id, project, preset, kind, label, command: shown, by, startedAt: new Date().toISOString(), endedAt: null, exitCode: null, signal: null,
       state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false,
       proc: null, ring: new Ring(this.cap), tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: false, subs: new Set(),
-      decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null };
+      decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null, seen: new Set(), linkSeen: false };
     if (t.tFile) writeFileSync(t.tFile, "", { mode: 0o600 });
     try {
       t.proc = Bun.spawn(argv, { cwd: project.path, env: terminalEnv(this.env(), this.o.secrets?.() ?? []),
@@ -259,13 +264,17 @@ export class Terminals {
   }
   /** The newest Remote Control link in the recent output; one still at the very end counts once the output pauses. */
   private scanLink(t: Term, trailing: boolean) {
-    if (!t.remote) return;
     const u = findLink(t.rawTail, t.cols, trailing);
-    if (u && u !== t.remoteUrl) { t.remoteUrl = u; t.redactor.know(u); if (t.ask) t.ask = this.scrubAsk(t, t.ask); this.writeTranscript(t, t.redactor.push("")); this.pushMeta(t); this.changed(); }
+    if (!u || u === t.remoteUrl || t.seen.has(u)) return;
+    // any terminal that prints a Remote Control link (a shell running claude, Remote Control turned on by hand): its link is
+    // redacted from then on and a phone gets no more of its output; only the Claude preset shows the link on the Mac's page
+    t.seen.add(u); t.linkSeen = true; t.redactor.know(u); if (t.ask) t.ask = this.scrubAsk(t, t.ask);
+    if (t.remote) t.remoteUrl = u;
+    this.writeTranscript(t, t.redactor.push("")); this.pushMeta(t); this.changed();
   }
-  private phoneHidden(t: Term) { return !!t.remote?.enabled; }
+  private phoneHidden(t: Term) { return !!t.remote?.enabled || t.linkSeen; }
   /** A question shown in lists and to phones: the known link and anything link-like are removed first. */
-  private scrubAsk(t: Term, ask: string) { let a = t.redactor.scrub(ask); if (t.remote) a = a.replace(/\S*(?:claude\.(?:ai|com)|https?:\/\/)\S*/gi, REMOTE_REMOVED); return a; }
+  private scrubAsk(t: Term, ask: string) { let a = t.redactor.scrub(ask); if (t.remote || t.linkSeen) a = a.replace(/\S*(?:claude\.(?:ai|com)|https?:\/\/)\S*/gi, REMOTE_REMOVED); return a; }
   private emit(t: Term, s: Sub, chunk: Uint8Array) {
     // a reader that stopped reading (backpressure past 8 MiB) is cut; it can attach again and gets the replay
     try { if ((s.ctl.desiredSize ?? 0) < -8 * MIB) { t.subs.delete(s); s.ctl.close(); return; } s.ctl.enqueue(chunk); } catch { t.subs.delete(s); }
@@ -348,7 +357,10 @@ export class Terminals {
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {
     const t = this.need(id); let sub: Sub;
-    if (t.subs.size >= this.maxSubs) throw new TermError(429, `at most ${this.maxSubs} views of one terminal at once`, "tooManyViews");
+    // one slot is always the Mac's: phones share the others, and when all are taken the Mac's page takes the oldest phone's
+    const phones = [...t.subs].filter((x) => x.phone);
+    if (phone && (phones.length >= this.maxSubs - 1 || t.subs.size >= this.maxSubs)) throw new TermError(429, `at most ${this.maxSubs - 1} phone views of one terminal at once`, "tooManyViews");
+    if (!phone && t.subs.size >= this.maxSubs) { const old = phones[0]; if (!old) throw new TermError(429, `at most ${this.maxSubs} views of one terminal at once`, "tooManyViews"); t.subs.delete(old); try { old.ctl.close(); } catch {} }
     const hidden = phone && this.phoneHidden(t);
     const stream = new ReadableStream<Uint8Array>({
       start: (ctl) => { sub = { phone, ctl, device };
