@@ -26,9 +26,13 @@ The graph gains one node (`adopt`) and three edges; every other step is the one 
 
 1. **From existing branch** (`branch.adopt`): the terminal's end head must be a commit with commits beyond the project's
    base. It is **copied into a Studio worktree**: the Task's own branch (`branch_prefix` + Task id) starts at that commit
-   (`Worktrees.ensure({start})`), and the base commit is where it forked from base (their merge base). Nothing after this
-   reads or writes the project folder the terminal wrote: every check, review and fix runs on Studio's copy, in the
-   sandbox, as for any Task. Uncommitted files in the project folder are not part of it. The readiness gate lists it as
+   (`Worktrees.ensure({start})`), and the base commit is where it forked from base (their merge base). Every check,
+   review and fix runs on Studio's copy, in the sandbox, as for any Task. The project folder's working tree, the agent's
+   branch and its uncommitted files are never read for the review or written; uncommitted files are not part of it. In
+   the project's `.git`, Studio writes what it writes for any Task: the Task's branch ref and the worktree's admin data
+   (`worktree add`/`prune`), and at the merge card the local fast-forward of the base branch. The commit adopted is the
+   head the terminal ended on: if the checkout moved since (another terminal, the captain's own shell), Send for review
+   is refused (`moved`). The readiness gate lists it as
    self-guarded: it runs only with the `_adopt` pin Studio sets from Send for review.
 2. **Spec** (the coordinator, as always): drafted from the diff and from what the captain typed to the agent. The spec
    writer is told the change exists, gets the diff's stat, and is asked to describe *this* change: its scope (the paths it
@@ -43,12 +47,14 @@ The graph gains one node (`adopt`) and three edges; every other step is the one 
    through the plan round and its acceptance first, as for any one-way change, and the merge card asks for the one-way
    confirmation.
 5. **Build, first visit: no round.** The change is already there, so the build node ends `adopted` before any agent starts
-   (nothing is spent). On the edge to the review request, **`firstmate/scope` checks the branch's diff against the approved
-   spec**; a path outside it fails, and the failure goes to the fix loop as a build round's scope failure would.
+   (nothing is spent). On the edge to the review request the branch gets the build node's deterministic checks:
+   **`firstmate/scope`** (the diff against the approved spec), `firstmate/lints` (the repository's declared lint),
+   `firstmate/file-size-cap`, `firstmate/covering-suites` and `firstmate/fixture-modules`; only `report-schema` is left out,
+   as there is no round and no report. A failure goes to the fix loop as a build round's would.
 6. **CI with fail-first at base and head** (`firstmate/ci`, `firstmate/fail-first`): the head's tests run over the base's
    behaviour; a new test must fail at base and pass at head. This is fail-first done afterwards.
 7. **Independent review**, the **fix loop** (a failing check or review sends an ordinary build round, in the same worktree,
-   on top of the agent's commits, with the build checks: lints, file size, covering suites, report), the designer for UI
+   on top of the agent's commits, with the build checks again), the designer for UI
    paths, remote readiness and the seven gates, exactly as for any Task.
 8. **Review Room**: available on the merge card, on the branch's head (it opens from any merge card; there is no separate
    one before the pull request).

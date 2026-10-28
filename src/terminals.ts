@@ -384,8 +384,11 @@ export class Terminals {
     if (!this.o.review) throw new TermError(501, "Send for review is not available here", "noReview");
     if (t.running) throw new TermError(409, "the agent is still running: send it for review once it has finished", "running");
     if (t.review) throw new TermError(409, `already sent for review as ${t.review.run}`, "sent");
-    const end = gitFacts(t.project.path, t.project.base); t.git.end = end ?? t.git.end;
-    if (!end) throw new TermError(409, "the project's folder is not a git checkout with a commit", "noGit");
+    // the head this terminal ended on: the checkout may have moved since (another terminal, the captain's own Terminal), and
+    // Send for review on this terminal must not hand that other work over under this terminal's intent
+    const end = t.git.end, live = gitFacts(t.project.path, t.project.base);
+    if (!end || !live) throw new TermError(409, "the project's folder is not a git checkout with a commit", "noGit");
+    if (live.head !== end.head) throw new TermError(409, `the project's checkout moved since this terminal ended (it ended on ${end.head.slice(0, 10)}, it is now on ${live.head.slice(0, 10)}): start a new terminal for the work now there`, "moved");
     if (!end.commits) throw new TermError(409, `no commits beyond ${t.project.base ?? "the base"}: commit the work on a branch first`, "noCommits");
     const { run } = await this.o.review({ terminal: t.id, project: t.project.id, commit: end.head, branch: end.branch, label: t.label, command: t.command, by });
     t.review = { run, at: new Date().toISOString() }; this.saveMeta(t); this.changed();

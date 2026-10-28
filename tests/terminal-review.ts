@@ -54,6 +54,21 @@ try {
   ok(copied === ended.git.end.head, "From existing branch copied the agent's commit into Studio's worktree", `${copied} ${wt}`);
   ok(Bun.spawnSync(["git", "branch", "--show-current"], { cwd: sandbox.path, stdout: "pipe" }).stdout.toString().trim() === "agent/rev", "the project folder stays on the agent's branch");
   ok((await term(id))?.review?.run === run, "the terminal shows the Task it was sent as");
+  // review N2: a terminal's button adopts the head it ended on; if another terminal moved the checkout since, it is refused
+  const cA = await raw("POST", "/api/terminals", { project: "sandbox", command: `${G} checkout -q -b agent/a main && echo a > a.txt && ${G} add a.txt && ${G} commit -q -m 'feat: a' && echo A-DONE` });
+  const endA = await until(async () => { const t = await term(cA.body.terminal.id); return t && !t.running && t; }, 10000);
+  const cB = await raw("POST", "/api/terminals", { project: "sandbox", command: `${G} checkout -q -b agent/b main && echo b > b.txt && ${G} add b.txt && ${G} commit -q -m 'feat: b' && echo B-DONE` });
+  await until(async () => { const t = await term(cB.body.terminal.id); return t && !t.running; }, 10000);
+  const moved = await raw("POST", `/api/terminals/${cA.body.terminal.id}/review`, {});
+  ok(endA?.git?.end?.branch === "agent/a" && moved.status === 409 && moved.body?.code === "moved", "a terminal whose checkout another terminal moved since is refused: it would hand over that other work", JSON.stringify(moved.body));
+  // review N1: _adopt is Studio's own pin: a caller's POST /api/wruns carrying it starts an ordinary Task at the worktree step
+  const forged = await raw("POST", "/api/wruns", { workflow: "code-firstmate", text: "forged adopt", params: { project: "sandbox", _adopt: JSON.stringify({ commit: ended.git.end.head, branch: "agent/rev" }) } }, "script");
+  const fid = forged.body?.id ?? forged.body?.run?.id;
+  const fwt = join(s.data, "work", "wt", "sandbox", String(fid));
+  const fhead = await until(() => existsSync(fwt) && Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: fwt, stdout: "pipe" }).stdout.toString().trim(), 30000);
+  const mainHead = Bun.spawnSync(["git", "rev-parse", "main"], { cwd: sandbox.path, stdout: "pipe" }).stdout.toString().trim();
+  ok(/^R-\d+$/.test(String(fid)) && fhead === mainHead && fhead !== ended.git.end.head, "a forged _adopt in POST /api/wruns is dropped: the Task's worktree starts on base, not the named commit", `${forged.status} ${JSON.stringify(forged.body).slice(0, 200)} ${fhead}`);
+
   // nothing beyond base: refused
   const c2 = await raw("POST", "/api/terminals", { project: "sandbox", command: `${G} checkout -q main && echo back` });
   await until(async () => { const t = await term(c2.body.terminal.id); return t && !t.running; }, 10000);

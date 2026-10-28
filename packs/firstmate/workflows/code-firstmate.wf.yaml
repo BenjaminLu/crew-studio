@@ -26,8 +26,8 @@ nodes:
   - { id: prepare, kind: hook, label: Worktree, detail: "branch on base", do: repo.prepare, x: 340, y: 220 }
   # From existing branch (docs/units/branch-intake.md): Send for review on a finished web terminal. The commits are copied
   # into Studio's worktree and the spec is drafted from the diff; after the spec card and the door, the first build visit
-  # runs no round ("adopted": the change is already there) and the branch's diff is checked against the approved spec on
-  # the edge to the review request; then the usual CI (fail-first at base and head), review, fix loop, gates, merge card.
+  # runs no round ("adopted": the change is already there) and the branch is checked on the edge to the review request
+  # with the build node's deterministic checks (its diff against the approved spec, lints, file size, suites, fixtures); then the usual CI (fail-first at base and head), review, fix loop, gates, merge card.
   - { id: adopt, kind: hook, label: From existing branch, detail: "copy the branch into a worktree", do: branch.adopt, x: 340, y: 40 }
   - id: spec
     kind: agent
@@ -217,7 +217,12 @@ edges:
     - pr-open
     - adopted
     - checks:
+        # the build node's deterministic checks (its report-schema aside: no round, no report), on the branch as adopted
         - { use: firstmate/scope }
+        - { use: firstmate/lints }
+        - { use: firstmate/file-size-cap }
+        - { use: firstmate/covering-suites }
+        - { use: firstmate/fixture-modules }
   - [prepare, spec]
   - [spec, dispatch, ok]
   - [spec, spec-fix, fail]
