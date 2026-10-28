@@ -13,12 +13,13 @@ import {localUnrestricted} from "../local-execution";
 //   data/evidence/<R-id>/ledger.jsonl                  one signed line per check result, verdict, plan acceptance and card answer
 //   data/evidence/<R-id>/<seq>-<id>/out/               what a check wrote (its evidence)
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
 import { bundledBytes, bundledList, bundledText, parseYaml } from "../bundled";
 import { withLock } from "../ids";
+import { appendLines, endCleanly } from "./durable-log";
 import { runtimeDir } from "../instance";
 import type { AgentTool } from "../agent";
 import { parseFinding, type Finding } from "./locator";
@@ -603,10 +604,12 @@ export class Ledger {
     mkdirSync(this.dir, { recursive: true });
     // the seq and the chain link are read and written under a lock: two writers never share a seq
     return withLock(this.dir, "ledger", () => {
+      // a torn last entry (a crash inside its write) is cut first, so this entry never lands behind half a line
+      endCleanly(this.file());
       const all = this.all(); const last = all.at(-1);
       const rec: any = { ...e, seq: (last?.seq ?? 0) + 1, at: now(), prev: last?.sig ?? null };
       rec.sig = this.sign(rec);
-      appendFileSync(this.file(), JSON.stringify(rec) + "\n"); return rec;
+      appendLines(this.file(), [JSON.stringify(rec)]); return rec; // one write, one fsync
     });
   }
   /** One raw snapshot; only consecutive authenticated objects enter prefix.
@@ -615,7 +618,11 @@ export class Ledger {
     const raw = existsSync(this.file()) ? readFileSync(this.file(), "utf8") : "";
     const entries: LedgerEntry[] = [], prefix: LedgerEntry[] = [], bad: number[] = [];
     let malformed = false, open = true, position = 0, prev: string | null = null;
-    for (const line of raw.split("\n")) {
+    const lines = raw.split("\n");
+    // a last line with no newline that is not JSON is a write a crash cut short (its add never returned): not an entry,
+    // and the next add cuts it off. Any other line that does not parse breaks the chain and is reported in bad.
+    if (lines.length && lines.at(-1)!.trim()) { try { JSON.parse(lines.at(-1)!); } catch { lines.pop(); } }
+    for (const line of lines) {
       if (!line.trim()) continue;
       position++;
       let entry: any;
