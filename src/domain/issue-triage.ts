@@ -412,7 +412,8 @@ const sameComments=(p:TriageIssue,i:{comments?:number})=>p.comments===undefined|
 export function pickBatch(snap:Snapshot,prev:TriageRecord|null,o:{size:number;issues?:number[]}):number[]{
  const open=new Set(snap.issues.map(i=>i.n)),size=Math.max(1,Math.min(o.size,50));
  // an issue an approved package holds, unchanged, keeps its findings: investigating it again would drop work in progress
- const held=new Set((prev?.packages??[]).filter(committed).flatMap(p=>p.members).filter(n=>prev!.issues[String(n)]?.hash===snap.issues.find(i=>i.n===n)?.hash));
+ // a stale package holds nothing, nor does an issue not investigated now (changed while it was): those are taken again
+ const held=new Set((prev?.packages??[]).filter(p=>committed(p)&&p.status!=='stale').flatMap(p=>p.members).filter(n=>prev!.issues[String(n)]?.investigated&&prev!.issues[String(n)]?.hash===snap.issues.find(i=>i.n===n)?.hash));
  if(o.issues?.length)return[...new Set(o.issues)].filter(n=>open.has(n)&&!held.has(n)).sort((x,y)=>x-y).slice(0,size);
  const done=(i:IssueSnap)=>{const p=prev?.issues[String(i.n)];return held.has(i.n)||!!p?.investigated&&p.hash===i.hash&&sameComments(p,i);};
  return snap.issues.filter(i=>!done(i)).map(i=>i.n).sort((x,y)=>x-y).slice(0,size);

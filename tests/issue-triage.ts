@@ -504,6 +504,17 @@ try{
    ok(split.toHuman.some(h=>h.issues.includes(1)&&!h.kind)&&!split.toHuman.some(h=>h.kind==='human-fit'),'a disagreement (needs-info against present) stays a disagreement, even when both say it is a person\'s work',JSON.stringify(split.toHuman));
    const flat=T.proposePackages(report([ni(1,{questions:['Which\nversion?']})],{alone:[1]}),report([ni(1,{questions:['Which version?  ']})],{alone:[1]}),snap,read).noCode[0].questions?.['1'];
    ok(flat?.length===1&&flat[0]==='Which version?','a question is kept on one line, and the same question once',JSON.stringify(flat)); }
+  // a committed package's issue edited, then investigated again while a comment changed: it is taken again, never stuck
+  { const iss=(n:number,hash:string,comments=0)=>({n,title:`I${n}`,body:'b',labels:[],author:'a',association:'NONE',updatedAt:'t',hash,...(comments?{comments}:{})});
+   const snapOf=(xs:any[])=>({schema:1 as const,repository:'o/r',fetchedAt:'t',hash:'h',issues:xs});
+   const prev:any={schema:1,project:'p',repository:'o/r',commit:'c'.repeat(40),snapshot:{hash:'x',fetchedAt:'t'},open:1,investigated:[2],
+    issues:{'2':{title:'I2',labels:[],hash:'H1',investigated:true,security:false,agree:true,state:'present',checked:true,comments:0}},
+    packages:[{id:'P-1',kind:'single',members:[2],order:[2],why:'',security:false,commit:'c'.repeat(40),status:'approved',work:{'2':{proposal:'r',at:'t'}}}],lastPackage:1,toHuman:[],createdAt:'t',by:'x'};
+   ok(T.pickBatch(snapOf([iss(2,'H2')]),prev,{size:15}).join()==='2','an edited issue of committed work is taken again');
+   const batch:any={...prev,investigated:[2],issues:{'2':{...prev.issues['2'],hash:'H2'}},packages:[{id:'P-1',kind:'single',members:[2],order:[2],why:'',security:false,commit:'c'.repeat(40),status:'proposed'}],toHuman:[],noCode:[]};
+   const fresh=snapOf([iss(2,'H2',1)]),m=T.mergeTriage(prev,T.atSnapshot(T.withoutChanged(batch,[2]),fresh));
+   ok(m.packages.find((p:any)=>p.id==='P-1')?.status==='stale'&&T.pickBatch(fresh,m,{size:15}).join()==='2'&&T.pickBatch(fresh,m,{size:15,issues:[2]}).join()==='2','its package stale and the issue changed again during that triage: the next batch takes it again, named or not',JSON.stringify(m.issues['2'])); }
+  ok(vd(dup(1,3,{symptom:{here:'saveDraft',there:'saveDraft'}})).problems.some(p=>/at least 16 characters/.test(p)),'a symptom found in both issues\' text but shorter than 16 characters fails');
   // the captain takes an in-progress issue anyway
   { const busyRec=T.triageRecord({project:'fixture',snapshot:full,a:report([finding(1)],{alone:[1]}),b:report([finding(1)],{alone:[1]}),read,by:'t'});
    ok(busyRec.toHuman.some(h=>h.kind==='in-progress'&&h.issues.join()==='1'&&h.pullInfo?.[0]?.author==='dev21'),'an in-progress item names each pull request\'s author',JSON.stringify(busyRec.toHuman));
