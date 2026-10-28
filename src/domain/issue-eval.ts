@@ -10,7 +10,8 @@ import * as triage from './issue-triage';
 import type {Checked,Finding,Reads,Report,Snapshot,TriageRecord,WorkState} from './issue-triage';
 import {PLANNED,type CategoryRecord} from './issue-categories';
 
-export type GoldState=Finding['state'];
+/** the triager's states, and needs-info: the captain's ruling that an issue needs more from its reporter (src/domain/issue-court.ts) */
+export type GoldState=Finding['state']|'needs-info';
 /** One issue's gold answer. Every field is optional: a field is scored only where it is labeled. */
 export type GoldLabel={n:number;state?:GoldState;files?:string[];security?:'yes'|'no';
  /** a category id (C-n) or PLANNED */
@@ -24,7 +25,7 @@ export type GoldLabel={n:number;state?:GoldState;files?:string[];security?:'yes'
  from?:string[]};
 export type GoldSet={schema:1;project:string;captain:Record<string,GoldLabel>;derived:Record<string,GoldLabel>;updatedAt:string};
 export const GOLD_SCHEMA=1, TEMPLATE_SCHEMA=1, SCORE_SCHEMA=1;
-const STATES:GoldState[]=['present','fixed?','not-code','not-found'];
+const STATES:GoldState[]=['present','fixed?','not-code','not-found','needs-info'];
 const FIELDS=['state','files','security','category','notPlanned','package'] as const;
 const cmp=(x:string,y:string)=>x<y?-1:x>y?1:0;
 
@@ -93,7 +94,7 @@ export function labelTemplate(o:{project:string;triage:TriageRecord|null;categor
    model:{investigated:!!i?.investigated,agree:i?.agree??null,diff:[...diff],checked:i?.checked??null,a:r?.a??null,b:r?.b??null,studio:{state:i?.state??null,files,security:i?.security?'yes':'no'},category:a?.category||null,categoryBy:a?.by??null,
     categoryName:c?.categories.find(x=>x.id===a?.category)?.name??(a?.category===PLANNED?PLANNED:null),package:pkg.get(n)??null},
    gold:{...(i?.state&&both&&!diff.has('state')?{state:i.state}:{}),...(files.length&&both&&!diff.has('state')&&!diff.has('location')?{files}:{}),...(i?.investigated&&both&&!(r?.a&&r?.b&&r.a.security!==r.b.security)?{security:(i.security?'yes':'no') as 'yes'|'no'}:{}),...(a?.category?{category:a.category}:{}),...(pkg.has(n)?{package:pkg.get(n)}:{})}};});
- return{schema:1,kind:'issue-eval-labels',project:o.project,createdAt:o.at,note:'Prefilled with the current answers, except where the two investigators disagree (model.diff): decide those. Correct each row\'s gold (state: present | fixed? | not-code | not-found; files: paths in the checkout; security: yes | no; category: C-n or PLANNED, or notPlanned: true; package: any key, one key per work package), drop a field you cannot judge, set reviewed: true, then import. Rows not reviewed are skipped.',rows};
+ return{schema:1,kind:'issue-eval-labels',project:o.project,createdAt:o.at,note:'Prefilled with the current answers, except where the two investigators disagree (model.diff): decide those. Correct each row\'s gold (state: present | fixed? | not-code | not-found | needs-info; files: paths in the checkout; security: yes | no; category: C-n or PLANNED, or notPlanned: true; package: any key, one key per work package), drop a field you cannot judge, set reviewed: true, then import. Rows not reviewed are skipped.',rows};
 }
 
 const inside=(f:string)=>!!f&&!isAbsolute(f)&&!normalize(f).split(/[\\/]/).some(p=>p==='..'||p==='.git');

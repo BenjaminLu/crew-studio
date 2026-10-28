@@ -286,10 +286,63 @@ Categories card), `tests/acceptance/issue-categories.yaml`.
 4. **Record.** Studio checks both reports (refused when both ran on the same model), reads the issues again (a package
    with an issue edited meanwhile goes to "For you to judge"), joins the batch to the stored triage (a closed issue's
    package is dropped, an edited issue's package becomes stale and the issue is taken again by a later batch) and
-   removes the checkout.
-5. **Approval card.** Captain-only, naming the security packages and that whoever owns security must agree. Approving
-   reads the issues once more: a package whose issue changed is stale, never approved. Every step is on the Task's
-   signed ledger (`issue-triage-snapshot`, `issue-triage-report`, `issue-triage-written`, `issue-triage-approved`).
+   removes the checkout. Before removing it, Studio writes the batch's docket for the disagreement court (below).
+5. **Disagreement court.** When the batch left items for a person, a captain-only card waits for the captain's rulings
+   (no timer); with none, the step passes on. Applying them is its own step (`rulings`); then the batch goes on.
+6. **Approval card.** Captain-only, naming the security packages and that whoever owns security must agree. It holds the
+   packages the batch proposed and those the rulings made. Approving reads the issues once more: a package whose issue
+   changed is stale, never approved. Every step is on the Task's signed ledger (`issue-triage-snapshot`,
+   `issue-triage-report`, `issue-triage-written`, `issue-triage-docket`, `issue-triage-ruled`, `issue-triage-approved`).
+
+The definition is version 2 (the court added). A Task pinned to version 1, started before, runs on: its steps accept
+either definition, and a version 1 Task has no court.
+
+### The disagreement court
+
+`src/domain/issue-court.ts` (the docket and the rulings), the `court` and `rulings` steps of `src/issue-triage-workflow.ts`,
+the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the court card's "Open the docket").
+
+- **The docket.** The record step turns the batch's items for a person into cases, each issue in one case; an issue
+  edited on GitHub meanwhile, or closed, is left out (a later batch takes it again). An issue the two reports disagree
+  on, or whose finding Studio's check refused, is a finding case, named by what differs: the state, the place in the
+  code (no shared file), whether it can be located at all (one side not-found or needs-info), one report missing it,
+  or the check. The issues of an item both reports agree on and both pass are one grouping case. An item set aside
+  before packaging (a likely duplicate, an open pull request naming it, a person's work) is a case of its kind. Each
+  side carries what Studio checked: its state, its locus (a file that exists, a symbol only when it is a code name, line
+  numbers), the code around the stated range as read at the pinned commit with the quoted lines marked (at most 60 lines
+  a locus), Studio's check (or its problems), and its repro and questions as model-written text. The docket is a file
+  beside the Task with its digest on the ledger; a changed docket is refused.
+- **The page.** One case per screen: the issue numbers and titles (untrusted text), what differs, A and B side by side
+  with their checked code, and the rulings docked below (keys 1 to 4, R for a one-line reason, Z to undo; on the phone,
+  taps). No suggestion is shown. The issue button opens the issue as the snapshot holds it (its text, labels, and the
+  comments the snapshot read, as text; the snapshot holds none unless it read them) and a link to it on GitHub. A locus or
+  an excerpt opens the file at the pinned commit (`GET /api/issue-triage/<project>/court/<task>/file?path=`), read from
+  the project repository's git objects (never a checkout; nothing written): a regular file inside the repository, not
+  under `.git`, at most 512 KB, text; it scrolls to the quoted lines and links to them on GitHub at that commit.
+  Escape, the backdrop or the close button closes a popup. Every text is a text node; the only links are https to
+  `github.com/<repository>`, built from the docket's checked repository and commit. Rulings not sent yet are kept in the
+  tab (sessionStorage) until they are.
+- **Rulings.** A finding: A, B (that side's finding must pass Studio's check), neither, or needs information. A
+  grouping: A's grouping, B's, all separate, or needs information. A duplicate: confirm, not a duplicate, or needs
+  information; a pull request open: wait, take it anyway, or needs information; a person's work: agree, give it to an
+  agent, or needs information. The page sends them once (`POST /api/issue-triage/<project>/court/<task> {rulings}`, the
+  captain on the desktop or the phone: they are the court card's answer). Studio checks them against the docket (each
+  case of the docket, once, a pick its kind offers, a reason of one line) and refuses the whole set otherwise, keeps them
+  beside the Task under their digest, and answers the card with that digest; a bare answer of the card (without the
+  rulings) is refused, and only the captain answers it. "Leave them for the project page" applies nothing.
+- **Applied** (the `rulings` step, once per card: a step run again after a restart finds them on the record). A or B:
+  that finding becomes the issue's state and locus; code to change makes a single package (a recheck when maybe fixed)
+  waiting for approval; nothing to change puts it with the agreed no-code issues. A grouping: each part a package
+  waiting for approval; a part that holds all of a package this batch proposed takes it in (the issue one report left
+  out joins it). Neither: the issue is released, triaged again later. Needs information: with the no-code issues as
+  needs-info, the reports' questions for the reporter kept (shown only in Studio). A confirmed duplicate, a pull request
+  to wait for, a person's work: recorded, nothing packaged. Not a duplicate, take it anyway, give it to an agent: what
+  both reports agree on is adopted (a single package, or the agreed no-code state); where they disagree the issue stays
+  under "For you to judge" with why. Each ruling is kept on the triage record (`rulings`: case, issues, pick, reason,
+  packages, who, when) and on the ledger (`issue-triage-ruled`), and written to the project's gold set as the captain's
+  label (`IssueEvalStore.addCaptain`, docs/units/issue-eval.md): the state, the files and the package where the ruling
+  says them (nothing for neither, a duplicate, a pull request or a person's work). Nothing is written to GitHub: no
+  comment, label, close or request.
 
 ### Working a package
 
@@ -331,14 +384,16 @@ holding it is always allowed (one rule, `taintRefusal` in `src/runtime/engine.ts
 proposal; the Board shows where its Task stands (in progress, ready on its branch, merged, ended without either) and how
 to start the next one: an issue whose Task is ready counts as done for the package's order.
 
-Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, declining, next issue, brief, store, routes),
+Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, declining, next issue, brief, store, routes; the court's docket, groupings, set-aside cases, rulings, needs-info questions and routes),
 `tests/issue-triage-workflow.ts` (the workflow end to end against a local GitHub stand-in with scripted investigators:
-both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (the
+both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool; the court passing on, its card, each ruling applied, gold labels, who may rule, the issue and file views), `tests/issues-ui.mjs` (the
 project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
 links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the empty state, the Crew section's seats; the
 Board has no Issues view), `tests/tainted-task.ts` (a tainted Task: only Studio marks it and the dispatched Task keeps it,
 no GitHub call through the whole code-firstmate flow and an end on its local branch, no issue reference or @mention in
-its commits, run-mode review, no step, agent turn, check or carrying answer outside the OS sandbox). Both workflow tests
+its commits, run-mode review, no step, agent turn, check or carrying answer outside the OS sandbox). `tests/issues-ui.mjs`
+also drives the docket page at 1440 and 390 zh-TW: one case per screen, the popups, the keys, the rulings sent, no
+request to GitHub. Both workflow tests
 check that GitHub is only ever read (no POST, PATCH, PUT or DELETE).
 
 ### Measuring triage and categories

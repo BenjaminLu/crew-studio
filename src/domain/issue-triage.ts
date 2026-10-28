@@ -65,6 +65,12 @@ export function parseReport(raw:any):Report{
 const squash=(s:string)=>s.replace(/[\s,;]+/g,'');
 /** Quoted code, split where the skill's reports join several lines: " ; ", " / ", " ... ". */
 const fragments=(evidence:string)=>evidence.split(/\s+(?:;|\/|\.\.\.|…)\s+/).map(s=>s.trim()).filter(s=>squash(s).length>=8);
+/** The line numbers (1-based, from `from` to `to`) of a file's lines that a finding's quoted code covers: a line whose
+ *  text (squashed, at least 4 characters) is part of a quote, or a line a whole quote sits in. For display only. */
+export function quotedLines(evidence:string,lines:string[],from:number,to:number):number[]{
+ const qs=fragments(evidence).map(squash),out:number[]=[];
+ for(let n=Math.max(1,from);n<=Math.min(lines.length,to);n++){const l=squash(lines[n-1]??'');if(l.length>=4&&qs.some(q=>q.includes(l)||l.includes(q)))out.push(n);}
+ return out;}
 // inside the checkout, and code: git's own metadata is not
 const inside=(file:string)=>!!file&&!isAbsolute(file)&&!normalize(file).split(/[\\/]/).some(p=>p==='..'||p==='.git');
 /** a quote counts within NEAR lines of its locus's stated range; a stated range spans at most SPAN lines; a quote of fewer
@@ -120,7 +126,7 @@ export function verifyReport(r:Report,snap:Snapshot,read:(file:string)=>string|n
 }
 
 const files=(f:Finding)=>new Set(f.locus.map(l=>normalize(l.file)));
-const needsCode=(s?:string)=>s==='present'||s==='fixed?';
+export const needsCode=(s?:string)=>s==='present'||s==='fixed?';
 /** Two findings on the same issue agree when they give the same state and, when that state needs code (present, fixed?),
  *  share a file. Two not-found (or two not-code) answers agree: neither has a place to compare. Security is never a
  *  disagreement: either answer (or a security label) makes the issue security. */
@@ -131,10 +137,13 @@ export function compareReports(a:Report,b:Report){
   return{n,agree:!diff.length,diff,...(x&&y&&!diff.length?{state:x.state}:{})};});
 }
 
-/** issues both reports find not-found, or both not-code: agreed, with nothing in the code to change */
-export type NoCode={issues:number[];state:'not-found'|'not-code';reason:string};
-const NO_CODE:Record<NoCode['state'],string>={'not-found':'both investigators looked and could not find it in the code: it needs more information (a stack trace, a URL, steps) before anyone can fix it',
+/** issues both reports find not-found, both not-code, or both unlocatable with one asking the reporter (needs-info):
+ *  agreed, with nothing in the code to change. needs-info keeps each issue's questions, shown only in Studio. */
+export type NoCode={issues:number[];state:'not-found'|'not-code'|'needs-info';reason:string;questions?:Record<string,string[]>};
+const NO_CODE:Record<NoCode['state'],string>={'needs-info':'the issue lacks what is needed to locate it (steps, expected and actual result, logs, environment or version): the questions for the reporter are kept in Studio; nothing is posted to GitHub',
+ 'not-found':'both investigators looked and could not find it in the code: it needs more information (a stack trace, a URL, steps) before anyone can fix it',
  'not-code':'both investigators say it is not a code change (research, design, process or tracking)'};
+const NO_CODE_STATES=['needs-info','not-found','not-code'] as const;
 const sorted=(ns:number[])=>[...ns].sort((x,y)=>x-y);
 /** Packages both reports agree on: a related set, a one-change group (at the same file) or a single issue; every member
  *  must pass the code check in both reports and need code in both. Sets match by overlap: when the two reports' sets
@@ -203,7 +212,11 @@ export type StoredPackage=Package&{id:string;commit:string;status:PackageStatus;
  joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[]};
 export type CrossEntry={id:string;issues:number[];package:Package&{commit:string};with:string;where:string};
 export type PackageStatus='proposed'|'approved'|'declined'|'stale';
-export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:string;investigated:boolean;security:boolean;agree?:boolean;diff?:string[];state?:Finding['state'];tag?:string;locus?:Locus[];repro?:string;checked?:boolean};
+export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:string;investigated:boolean;security:boolean;agree?:boolean;diff?:string[];state?:Finding['state']|'needs-info';tag?:string;locus?:Locus[];repro?:string;checked?:boolean;
+ /** the captain's ruling on the two investigators' disagreement (src/domain/issue-court.ts) */
+ ruled?:{pick:string;case:string;run:string;by:string;at:string}};
+/** One ruling of the captain's disagreement court, as the triage record keeps it. */
+export type RulingEntry={case:string;kind:string;duplicateOf?:number;issues:number[];pick:string;reason?:string;packages:string[];run:string;card:string;by:string;at:string};
 export type TriageRecord={schema:1;project:string;repository:string;commit:string;snapshot:{hash:string;fetchedAt:string};open:number;investigated:number[];
  issues:Record<string,TriageIssue>;packages:StoredPackage[];lastPackage?:number;
  /** new findings at the same function as an earlier package not started yet: the captain joins them to it or keeps them apart */
@@ -211,13 +224,15 @@ export type TriageRecord={schema:1;project:string;repository:string;commit:strin
  /** issues joined to an earlier package instead of becoming one of their own: a repeat fix avoided */
  dedup?:number;toHuman:{issues:number[];reason:string}[];
  /** issues both investigators agree have nothing in the code to change: not found there (needs information), or not code */
- noCode?:NoCode[];createdAt:string;by:string};
+ noCode?:NoCode[];
+ /** the captain's rulings on disagreements, oldest first (src/domain/issue-court.ts) */
+ rulings?:RulingEntry[];createdAt:string;by:string};
 // a line range as numbers and a tag as a short slug: anything else is prose. A symbol follows symbolName.
 const LINES=/^\d{1,6}(?:\s*[-–]\s*\d{1,6})?$/,TAG=/^[a-z0-9][a-z0-9-]{0,40}(?::[a-z0-9][a-z0-9-]{0,36})?$/i;
 /** Where both investigators point, as Studio checked it: each file both name that exists at the commit, its symbol only
  *  when it is one name as code writes it (symbolName) that the file contains, its lines only as numbers. No free text of
  *  either model is kept. */
-function sharedLocus(x:Finding|undefined,y:Finding|undefined,read:(file:string)=>string|null):Locus[]{
+export function sharedLocus(x:Finding|undefined,y:Finding|undefined,read:(file:string)=>string|null):Locus[]{
  if(!x||!y)return[];const other=new Map(y.locus.filter(l=>inside(l.file)).map(l=>[normalize(l.file),l])),out:Locus[]=[],seen=new Set<string>();
  for(const l of x.locus){const file=inside(l.file)?normalize(l.file):'',m=other.get(file);if(!m||seen.has(file))continue;const text=read(file);if(text===null)continue;seen.add(file);
   const symbol=[l.symbol,m.symbol].map(s=>s.trim()).find(s=>{const nm=s.length<=120?symbolName(s):null;return!!nm&&(word(nm.name,text)||word(nm.last,text));})??'';
@@ -254,9 +269,14 @@ export function pickBatch(snap:Snapshot,prev:TriageRecord|null,o:{size:number;is
  return snap.issues.filter(i=>!done(i)).map(i=>i.n).sort((x,y)=>x-y).slice(0,size);
 }
 /** issues kept in each no-code entry, the empty entries dropped */
-const noCodeOf=(xs:NoCode[]|undefined,keep:(n:number)=>boolean)=>(xs??[]).map(x=>({...x,issues:x.issues.filter(keep)})).filter(x=>x.issues.length);
+const noCodeOf=(xs:NoCode[]|undefined,keep:(n:number)=>boolean)=>(xs??[]).map(x=>({...x,issues:x.issues.filter(keep),...(x.questions?{questions:Object.fromEntries(Object.entries(x.questions).filter(([n])=>keep(Number(n))))}:{})})).filter(x=>x.issues.length);
 /** one entry per state, its issues once each, in order */
-const noCodeMerged=(xs:NoCode[])=>(['not-found','not-code'] as const).map(state=>({issues:sorted([...new Set(xs.filter(x=>x.state===state).flatMap(x=>x.issues))]),state,reason:NO_CODE[state]})).filter(x=>x.issues.length);
+const noCodeMerged=(xs:NoCode[])=>NO_CODE_STATES.map(state=>{const of=xs.filter(x=>x.state===state),issues=sorted([...new Set(of.flatMap(x=>x.issues))]);
+ // the later batch's questions for an issue replace the earlier ones
+ const questions=Object.assign({},...of.map(x=>x.questions??{}));
+ return{issues,state,reason:NO_CODE[state],...(state==='needs-info'?{questions:Object.fromEntries(Object.entries(questions as Record<string,string[]>).filter(([n])=>issues.includes(Number(n))))}:{})};}).filter(x=>x.issues.length);
+/** The no-code entries merged: one per state, each issue once, questions kept (the disagreement court adds to them). */
+export const mergeNoCode=(xs:NoCode[])=>noCodeMerged(xs);
 /** Issues edited on GitHub while they were investigated: their packages go to a person (the next batch takes them again). */
 export function withoutChanged(rec:TriageRecord,changed:number[]):TriageRecord{
  const c=new Set(changed),hit=rec.packages.filter(p=>p.members.some(n=>c.has(n))),gone=(rec.noCode??[]).flatMap(x=>x.issues).filter(n=>c.has(n));if(!hit.length&&!gone.length)return rec;
@@ -295,7 +315,7 @@ export function mergeTriage(prev:TriageRecord|null,next:TriageRecord):TriageReco
   if(!started(old))cross.push({id:`X-${++lastX}`,issues:np.members,package:{...np},with:old.id,where});
   else added.push(recheckOf(np,old,where));}
  const investigated=Object.entries(issues).filter(([,v])=>v.investigated).map(([n])=>Number(n)).sort((x,y)=>x-y);
- return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman],noCode:noCodeMerged([...noCodeOf(prev.noCode,n=>open(n)&&!redone.has(n)),...(next.noCode??[])])};
+ return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman],noCode:noCodeMerged([...noCodeOf(prev.noCode,n=>open(n)&&!redone.has(n)),...(next.noCode??[])]),...(prev.rulings?.length?{rulings:prev.rulings}:{})};
 }
 /** The captain's approval of proposed packages, against the issues as GitHub has them now: a package whose issue was closed or
  *  edited since it was investigated is stale, never approved. */

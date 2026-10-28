@@ -45,9 +45,14 @@ does this too):
   as `src/issue-triage-workflow.ts` reads it) gets `state: present`; a recheck package's issue gets only its `package`
   (a recheck asks whether earlier work fixed it, so its Task merging says nothing about the state).
 
+**The captain's rulings.** A ruling of the triage's disagreement court (docs/units/board.md, "The disagreement court") is
+written as the captain's own label (`source: captain`, `from` naming the ruling) through `IssueEvalStore.addCaptain`:
+the state, files and package it decides, `needs-info` included. It replaces that issue's earlier captain label; derived
+labels are left as they are.
+
 Not derivable: a declined package (the triage record drops it and keeps no trace beyond its id never being reused), a
 declined category's former members (the record releases them), a match the captain kept apart (the new package does
-not record it), and the items under "For you to judge" (the captain does not answer them in the record). The pull
+not record it), and the items under "For you to judge" left there (the court's rulings are the captain's labels above). The pull
 request a package's Task opened is not linked from the triage record; only the Task's merged state is. A captain's move
 into a category that is later merged is overwritten by the merge (`merged by …`), so that move is no longer read.
 

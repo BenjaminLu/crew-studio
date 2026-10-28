@@ -152,6 +152,14 @@ try {
   ok(Object.keys(loose.labels).length === 0 && loose.skipped === 2, "only reviewed: true imports a row");
   const good = parse(file([{ n: 1, reviewed: true, gold: { state: "present", files: ["./src/a.ts"] } }, { n: 2, reviewed: false, gold: { state: "present" } }]));
   ok(Object.keys(good.labels).join() === "1" && good.skipped === 1 && good.labels["1"].files![0] === "src/a.ts" && good.labels["1"].source === "captain", "reviewed rows are imported as the captain's, the rest skipped");
+  ok(parse(file([{ n: 1, reviewed: true, gold: { state: "needs-info" } }])).labels["1"].state === "needs-info", "needs-info, the captain's ruling that an issue needs more from its reporter, is a state the gold set takes");
+  // the disagreement court adds the captain's rulings to the gold set through the store, the derived labels untouched
+  { const scratch = new IssueEvalStore(join(temp, "court-gold"));
+    scratch.writeGold({ ...E.emptyGold(project, at), derived: { "3": { n: 3, package: "P-1", source: "derived", at } }, captain: { "2": { n: 2, state: "present", source: "captain", at } } });
+    scratch.addCaptain(project, { "1": { n: 1, state: "needs-info", source: "captain", at }, "2": { n: 2, state: "fixed?", files: ["src/b.ts"], package: "P-4", source: "captain", at } }, at);
+    const g = scratch.gold(project)!;
+    ok(g.captain["1"].state === "needs-info" && g.captain["2"].state === "fixed?" && g.captain["2"].package === "P-4" && g.derived["3"].package === "P-1", "a court's labels are added as the captain's, replacing that issue's earlier captain label, the derived ones kept", JSON.stringify(g));
+    refuses(() => scratch.addCaptain(project, { "5": { n: 5, state: "present", source: "derived", at } as any }, at), "only the captain's labels are added that way", /captain/); }
 
   // --- scoring on a tiny hand-computed case ---
   const gold = { ...E.emptyGold(project, at), derived: E.mineDerived({ triage, categories: cats, work: (p) => store.work(p), at }), captain: Object.fromEntries([
