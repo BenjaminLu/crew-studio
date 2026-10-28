@@ -65,21 +65,34 @@ let refusal: any = null; try { await room.start(merge.id, { action: "teach" }, "
 ok(refusal?.code === "confirm_required" && refusal.offer?.provider === "tutor" && refusal.offer?.model === "t-1" && typeof refusal.offer.hash === "string", "a turn without the confirmation is refused and offers the tutor's provider and model", JSON.stringify(refusal?.offer ?? refusal?.message));
 const offer = room.view(merge.id).offer as any;
 ok(offer.independence?.level === "vendor" && offer.independence.adaptive === false && /Different vendor/.test(offer.independence.en) && !!offer.independence.zh, "the offer labels the tutor's independence from the author: a different vendor", JSON.stringify(offer.independence));
-// the tutor adapts to what is usable; it is never refused because only one vendor or model is (src/domain/independence.ts)
+// the tutor adapts to what this machine has (src/domain/independence.ts): the approved reviewer while it can run and differs
+// from the author; otherwise another member, labelled when it is not in this project's crew; never refused for one model
 const reviewer = run.def.roles.find((x: any) => x.id === "reviewer")!; const saved = { ...reviewer }; Object.assign(reviewer, { provider: undefined, model: undefined });
+const U = (...m: [string, string, any?][]) => m.map(([provider, model, o]) => ({ provider, model, efforts: provider === "codex" ? ["low", "medium"] : [], verified: true, runnable: true, ...o }));
 let o2: any = room.view(merge.id).offer;
-ok(!o2.error && o2.provider === "stub" && o2.independence?.level === "same" && /Same model as the author/.test(o2.independence.en), "with no other model known, the tutor runs on the author's own model and says so, never refused", JSON.stringify(o2));
-E.deps.usableModels = () => [{ provider: "stub", model: "m-2", efforts: [], verified: true }, { provider: "codex", model: "c-1", efforts: ["low", "medium"], verified: true }];
+ok(o2.code === "no_tutor" && /differs from the author/.test(o2.error ?? ""), "without provider facts nothing is relaxed: a tutor on the author's own model is refused, as before", JSON.stringify(o2));
+E.deps.usableModels = () => U(["stub", "m-2", { isDefault: true }], ["codex", "c-1"]);
 o2 = room.view(merge.id).offer;
-ok(o2.provider === "codex" && o2.model === "c-1" && o2.effort === "medium" && o2.independence?.level === "vendor" && o2.independence.adaptive === true, "with another vendor usable, the tutor moves to it (at medium effort)", JSON.stringify(o2));
+ok(o2.provider === "codex" && o2.model === "c-1" && o2.effort === "medium" && o2.independence?.level === "vendor" && o2.independence.adaptive === true && o2.independence.outside === true && /Not in this project's crew/.test(o2.independence.en) && /不在這個專案的人員配置裡/.test(o2.independence.zh),
+  "a reviewer seat on the author's model moves to a model outside the crew, labelled as such (at medium effort)", JSON.stringify(o2));
+// a member left to the vendor's default is that default: here the author's own, so the tutor takes another model of it
+E.deps.usableModels = () => U(["stub", "m-2", { isDefault: true }], ["stub", "m-3"]);
+o2 = room.view(merge.id).offer;
+ok(o2.provider === "stub" && o2.model === "m-3" && o2.independence?.level === "model", "a vendor-default member resolves to the vendor's actual default before it is judged", JSON.stringify(o2));
+E.deps.usableModels = () => U(["stub", "m-2", { isDefault: true }]);
+o2 = room.view(merge.id).offer;
+ok(!o2.error && o2.provider === "stub" && o2.independence?.level === "same" && /Same model as the author/.test(o2.independence.en) && /Only one model is usable/.test(o2.independence.en), "with one model on this machine, the tutor runs on the author's own model and says so, never refused", JSON.stringify(o2));
+E.deps.usableModels = () => U(["stub", "m-2", { isDefault: true }], ["codex", "c-1", { runnable: false, held: "codex's quota could not be read" }]);
+o2 = room.view(merge.id).offer;
+ok(o2.code === "no_tutor" && /The tutor waits: codex's quota could not be read/.test(o2.error ?? ""), "another vendor signed in but held for now: the tutor waits, it never falls back to the author's model", JSON.stringify(o2));
 E.deps.usableModels = () => [];
 o2 = room.view(merge.id).offer;
 ok(o2.code === "no_tutor" && /No signed-in model/.test(o2.error ?? ""), "with nothing usable at all, the room says so", JSON.stringify(o2));
 delete E.deps.usableModels; Object.assign(reviewer, saved);
-// the approved reviewer member wins a tie: it stays the tutor when it is usable and as independent as any other
-E.deps.usableModels = () => [{ provider: "codex", model: "c-1", efforts: ["medium"], verified: true }, { provider: "tutor", model: "t-1", efforts: [], verified: true }];
+// the approved reviewer stays the tutor while it can run and differs from the author: another vendor signed in changes nothing
+E.deps.usableModels = () => U(["codex", "c-1"], ["tutor", "t-1"]);
 o2 = room.view(merge.id).offer;
-ok(o2.provider === "tutor" && o2.model === "t-1" && o2.independence.adaptive === false && o2.hash === offer.hash, "a usable approved reviewer member stays the tutor on a tie", JSON.stringify(o2));
+ok(o2.provider === "tutor" && o2.model === "t-1" && o2.independence.adaptive === false && o2.independence.outside === false && o2.hash !== undefined, "the approved reviewer stays the tutor when it can run, whatever else is signed in", JSON.stringify(o2));
 delete E.deps.usableModels;
 // a sandbox-off grant refuses the turn
 const grant = E.grants.add({ kinds: ["sandbox-off"], until: new Date(Date.now() + 3600_000).toISOString(), project: null } as any, "captain (desktop)") as any;

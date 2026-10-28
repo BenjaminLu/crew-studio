@@ -27,7 +27,7 @@ import { keys } from "../keys";
 import { openScopedProxy, type ProxyAuthority } from "../egress-client";
 import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
-import { bestOf, defaultEffort, degradedWhy, LEVEL_TEXT, type Level, type Usable } from "./independence";
+import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -138,33 +138,62 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
    *  independent of the change's author: another vendor, else another model of the author's vendor, else the author's own model.
    *  The reviewer's approved member comes first and wins a tie. Never refused because only one vendor or one model is usable. */
   const reviewNode = (run: any) => run.def.nodes.find((n: any) => n.kind === "agent" && (n.mode === "review" || n.role === "reviewer"));
-  type Tutor = { pick: AgentPick; level: Level; adaptive: boolean; label: { en: string; zh: string } };
+  type Tutor = { pick: AgentPick; level: Level; adaptive: boolean; outside: boolean; label: { en: string; zh: string } };
   const tutorPick = (run: any, node?: any): Tutor => {
     const review = reviewNode(run);
     if (!review) throw refuse("This workflow has no reviewer seat for the tutor", "no_seat");
     // the approved staffing's reviewer member as admitted on the merge card's node (the node the tutor's rounds belong to)
     const card = node ?? run.def.nodes.find((n: any) => n.kind === "card" && n.args?.card_kind === "merge");
-    const approved = (card && engine.deps.approvedPick?.(run, card, TUTOR_ROLE)) || engine.x(run, review, run.nodes[review.id]).pick();
+    const pickOf = (n: any, role?: string): AgentPick | null => { try { return (engine.deps.approvedPick?.(run, n, role) as AgentPick | null) || (role ? null : engine.x(run, n, run.nodes[n.id]).pick()); } catch { return null; } };
+    const approved0 = (card && pickOf(card, TUTOR_ROLE)) || engine.x(run, review, run.nodes[review.id]).pick();
     // every node that wrote the change (build, fix, rework: the maker's role), as staffed and as it really ran
     const makerRole = run.def.nodes.find((n: any) => n.kind === "agent" && n.mode === "build")?.role ?? "worker";
     const writers = run.def.nodes.filter((n: any) => (n.kind === "agent" || n.kind === "loop") && (n.mode === "build" || n.role === makerRole || n.args?.producer === "build"));
     const makers = [...writers.flatMap((n: any) => { try { return [engine.x(run, n, run.nodes[n.id]).pick()]; } catch { return []; } }),
       ...run.steps.filter((s: any) => writers.some((n: any) => n.id === s.node) && s.provider).map((s: any) => ({ provider: s.provider, model: s.model }))] as AgentPick[];
-    // usable now (signed in, not out of quota, verified or verifiable); unknown (no facts read): only the approved member
+    // what this machine has (src/domain/independence.ts): runnable now, or held (out of quota, quota unreadable, stale facts)
     const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null;
-    const isUsable = (p: AgentPick) => !usable || usable.some((u) => u.provider === p.provider && u.model === p.model);
-    const candidates: AgentPick[] = [...(isUsable(approved) ? [approved] : []), ...(usable ?? []).filter((u) => !(u.provider === approved.provider && u.model === approved.model)).map((u) => ({ provider: u.provider, model: u.model, effort: defaultEffort(u) }))];
-    const best = bestOf(candidates.map((c) => ({ ...c, model: c.model ?? null })), makers.map((m) => ({ provider: m.provider, model: m.model ?? null })));
-    if (!best) throw refuse("No signed-in model can run the tutor on this machine now: sign in to a vendor, then open the room again / 這台機器目前沒有已登入、可用的模型能當導師：請先登入一個供應商，再打開審查室", "no_tutor");
-    const pick = best.pick as AgentPick, adaptive = !(pick.provider === approved.provider && (pick.model ?? null) === (approved.model ?? null) && (pick.effort ?? null) === (approved.effort ?? null));
-    const why = best.level === "vendor" ? { en: "", zh: "" } : degradedWhy(usable);
-    return { pick, level: best.level, adaptive, label: { en: `${LEVEL_TEXT[best.level].en}.${why.en}`, zh: `${LEVEL_TEXT[best.level].zh}。${why.zh}` } };
+    // a member left to the vendor's default model is that vendor's actual default, before anything is judged
+    const resolve = (p: AgentPick): AgentPick => p.model || !usable ? p : { ...p, model: usable.find((u) => u.provider === p.provider && u.isDefault)?.model ?? null };
+    const approved = resolve(approved0);
+    const group = makers.map((m) => resolve(m)).map((m) => ({ provider: m.provider, model: m.model ?? null }));
+    const runnable = (p: AgentPick) => !usable ? true : usable.some((u) => u.provider === p.provider && u.model === p.model && u.runnable);
+    const free = (p: AgentPick) => !engine.deps.verifyBackoff?.(p);
+    const ok = (p: AgentPick) => !!p.model && runnable(p) && free(p) || !usable && p === approved;
+    const label = (level: Level, outside: boolean, why = { en: "", zh: "" }) => ({ en: `${LEVEL_TEXT[level].en}.${why.en}${outside ? " Not in this project's crew: Studio chose it from the models this machine can run." : ""}`, zh: `${LEVEL_TEXT[level].zh}。${why.zh}${outside ? "不在這個專案的人員配置裡：是 Studio 從這台機器可用的模型中挑的。" : ""}` });
+    const same = (a: AgentPick, b: AgentPick) => a.provider === b.provider && (a.model ?? null) === (b.model ?? null) && (a.effort ?? null) === (b.effort ?? null);
+    const done = (pick: AgentPick, level: Level, outside: boolean, why?: { en: string; zh: string }): Tutor => ({ pick, level, adaptive: !same(pick, approved0), outside, label: label(level, outside, why) });
+    // 1. the approved reviewer, when it can run and differs from the author at least by model: kept, whatever else is signed in
+    const approvedLevel = levelAgainst({ provider: approved.provider, model: approved.model ?? null }, group);
+    if (ok(approved) && approvedLevel !== "same") return done(approved, approvedLevel, false);
+    // 2. otherwise a member already approved in this project's crew (another role, a node override), then a model this machine
+    //    can run outside the crew (a verified Claude model before an unverified one): the most independent one first
+    const crew: AgentPick[] = []; for (const n of run.def.nodes) if (n.kind === "agent" || n.kind === "loop") { const p = pickOf(n); if (p) crew.push(resolve(p)); }
+    for (const r of run.def.roles ?? []) { const p = card && pickOf(card, r.id); if (p) crew.push(resolve(p)); }
+    const inCrew = crew.filter((p, i) => ok(p) && crew.findIndex((q) => same(p, q)) === i && !same(p, approved));
+    const verifiedClaude = (usable ?? []).some((u) => u.provider === "claude" && u.verified && u.runnable);
+    const outsideOf = (usable ?? []).filter((u) => u.runnable && !(u.provider === "claude" && !u.verified && verifiedClaude) && !crew.some((p) => p.provider === u.provider && p.model === u.model))
+      .map((u) => ({ provider: u.provider, model: u.model, effort: defaultEffort(u) } as AgentPick)).filter(free);
+    const m = (p: AgentPick) => ({ ...p, model: p.model ?? null });
+    const inside = bestOf(inCrew.map(m), group); if (inside && inside.level !== "same") return done(inside.pick as AgentPick, inside.level, false);
+    const outside = bestOf(outsideOf.map(m), group); if (outside && outside.level !== "same") return done(outside.pick as AgentPick, outside.level, true);
+    // 3. nothing that differs from the author can run now. The author's own model only when this machine has no other model at
+    //    all; a vendor that is signed in but held (out of quota, quota unreadable) is waited for, never worked around
+    const need = required("model", usable);
+    if (need !== "same") { const heldOne = (usable ?? []).find((u) => !u.runnable && levelAgainst({ provider: u.provider, model: u.model }, group) !== "same");
+      throw refuse(heldOne ? `The tutor waits: ${heldOne.held ?? "it cannot run now"} (${heldOne.provider} ${heldOne.model}), and every model that can run now is the author's own. Try again later / 導師需等待：${heldOne.provider} ${heldOne.model} 目前無法使用，能用的模型都和作者相同，請稍後再試`
+        : "No model that differs from the author can run the tutor now: sign in, or wait for a verification to be retried / 目前沒有和作者不同、且能執行的模型可當導師", "no_tutor"); }
+    const why = degradedWhy(usable);
+    if (ok(approved)) return done(approved, "same", false, why);
+    const fallback = inCrew[0] ?? outsideOf[0];
+    if (!fallback) throw refuse("No signed-in model can run the tutor on this machine now: sign in to a vendor, then open the room again / 這台機器目前沒有已登入、可用的模型能當導師：請先登入一個供應商，再打開審查室", "no_tutor");
+    return done(fallback, "same", !inCrew.length, why);
   };
   const offerOf = (c: SCard) => {
     try { const { run, head, node } = subject(c); const t = tutorPick(run, node), p = t.pick; const effort = p.effort ?? null;
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
-      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, independence: { level: t.level, adaptive: t.adaptive, ...t.label },
-        hash: sha(JSON.stringify({ card: c.id, head, provider: p.provider, model: p.model ?? null, effort, level: t.level })).slice(0, 16) }; }
+      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label },
+        hash: sha(JSON.stringify({ card: c.id, head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
   const skills = () => ROOM_SKILLS.map((s) => { const t = bundledText(s.ref); if (t == null || sha(t) !== s.sha256) throw refuse(`The pinned skill ${s.id} changed or is missing; Studio refuses the turn`, "skill_pin"); return { ...s, text: t }; });
@@ -464,13 +493,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!engine.owns(x)) throw refuse("The merge card's step is no longer live", "closed");
       // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
       // signed in, out of quota or not offered is refused with the reason
-      if (pick.model) try { await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${c.id}` }); }
+      if (pick.model) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${c.id}` });
+        // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
+        if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${c.id}`, at: new Date().toISOString() } } as any); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
       try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
       const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
       // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
-      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level } } : {}) };
+      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level, crew: !tutor.outside } } : {}) };
       const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
       let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
       if (live.has(c.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");

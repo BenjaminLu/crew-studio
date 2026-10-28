@@ -145,8 +145,8 @@ Issues belong to their project: a project connected to GitHub has a "GitHub issu
   investigators' models as a triage of this project would run them (the team's seats in this project, else the
   workflow's Claude and Codex roles). Triaging posts `POST /api/issue-triage/<project>/start` (the desktop captain only)
   and opens the Task, which reads the issues and waits at its start card before any model runs. When both investigators
-  would run on one model while this machine has another usable model, the form says so and cannot start; when that one
-  model is all this machine can run (docs/architecture.md, "Adaptive staffing"), it starts and the form says
+  would run on one model while this machine has another model (signed in, even if held for now), the form says so and cannot start; when that one
+  model is all this machine has (docs/architecture.md, "Adaptive staffing"), it starts and the form says
   "Investigators ran on the same model; agreement is weaker evidence".
 - **The latest triage** (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
   `data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`, which
@@ -279,9 +279,10 @@ Categories card), `tests/acceptance/issue-categories.yaml`.
    `egress.allow` policy, local unrestricted mode).
 3. **Two investigators** on the maker and reviewer seats (Claude and Codex without a Studio team; the team decides
    otherwise) follow `workflows/skills/issue-triager.md`. They run on two different models, of one vendor when only one
-   is usable. Only when this machine has one usable model do both run on it: the start card says so ("Investigators ran
+   is signed in. Only when this machine has one model at all (a vendor out of quota or with unreadable quota still counts;
+   the facts are read again first) do both run on it: the start card says so ("Investigators ran
    on the same model; agreement is weaker evidence", with why), Studio's ledger records it (`issue-triage-independence`),
-   the record step accepts the two reports only then, the approval card says it, and each package the batch adds keeps
+   the record step accepts the two reports only from exactly the pair that card confirmed, the approval card says it, and each package the batch adds keeps
    `investigators: {level: same, by, en, zh}`, shown on the project page beside the package.
    They read issue text only through `issue_read` (this batch only, marked untrusted) and the code only through
    `fs_list`, `fs_search` and `fs_read` on the checkout, in the round sandbox with no network and no token. They submit

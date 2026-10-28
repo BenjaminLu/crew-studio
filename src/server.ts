@@ -110,6 +110,7 @@ import { CodexAccount } from "./host/codex-account";
 import { generateCodexImage } from "./providers/codex-image";
 import { generateCursorImage } from "./providers/cursor-image";
 import { probeCodex } from "./providers/codex-probe";
+import { staffingVerify } from "./providers/staffing-verify";
 import { cursorKeyCheck, cursorModel, probeCursor, probeCursorChecked, verifyCursor } from "./providers/cursor";
 import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,admitSignedInClaude,validClaudePair,claudeEfforts,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
 import { ProviderRefusal, nativeChain, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
@@ -447,14 +448,6 @@ const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;
 const coffeeTools = (()=>{const rendering=renderEnv();return discoverCoffeeFilmCapability([process.env.CREW_HYPERFRAMES_ROOT,TOOLS_DIR,!COMPILED?ROOT:null,join(dirname(process.execPath),"..")].filter(Boolean)as string[],{browser:process.env.HYPERFRAMES_BROWSER_PATH,playwright:rendering.playwright,ffmpeg:process.env.CREW_FFMPEG||Bun.which("ffmpeg"),ffprobe:Bun.which("ffprobe")});})();
 let staffingClaudeCapabilities:ProviderCapability[]=[];
-/** Studio's own verification of one staffed model before a start (src/runtime/index.ts autoVerify): a signed-in Claude pair gets
- *  #44's bounded request (its receipt serves half an hour); Cursor's key is checked again (`cursor-agent models`, no model request);
- *  Codex reads its free probe again. The facts are read again afterwards; this only says whether the verification ran and passed. */
-const staffingVerify=async(role:{provider:string;model:string;effort:string|null},o?:{signal?:AbortSignal})=>{
-  if(role.provider==='claude'){const pair={model:role.model,effort:role.effort};if(!validClaudePair(pair))return false;const cap=await probeClaudeNative(pair,o?.signal);return isClaudeExecutionAdmission(await admitSignedInClaude(cap,pair,undefined,o?.signal),pair);}
-  if(role.provider==='cursor')return !!(await verifyCursor({fresh:true}))?.ok;
-  if(role.provider==='codex')return (await probeCodex(undefined,o?.signal)).auth==='verified';
-  return false;};
 /** Login presence per provider for the readiness gate, read once per gate run and kept 30 s: environment and files are read
  *  directly; Claude's keychain items are asked about with an async `security find-generic-password` (existence only, no secret
  *  read), so the event loop never waits on it. Nothing is written and no sign-in is ever started. */

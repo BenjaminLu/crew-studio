@@ -31,15 +31,15 @@ if(process.env.BOARD_START_FIXTURE_DATA){
  console.log('board-start fixture ready');process.exit(0);
 }
 const H=await harness([]);
-let codexAuth='verified',factsCalls=0;
+let codexAuth='verified',codexQuota='available',factsCalls=0,verifyGate:Promise<void>=Promise.resolve();
 // Claude as the server reads it: signed in, its offered models (candidates), and only the models Studio verified as models
 let claude={auth:'verified',login:'logged-in',quota:'unknown',candidates:[] as {id:string;efforts:string[]}[]},verifyPasses=true;
 const claudeVerified=new Set<string>(),verifyCalls:string[]=[];
-const facts=async()=>{factsCalls++;return[{provider:'codex',support:'supported' as const,auth:codexAuth,quota:'available',expires:Date.now()+60000,models:[{id:'fixture-model',efforts:['low']}]},{provider:'claude',support:'supported' as const,auth:claude.auth,quota:claude.quota,login:claude.login,expires:Date.now()+60000,models:claude.candidates.filter(m=>claudeVerified.has(m.id)),candidates:claude.candidates}];};
+const facts=async()=>{factsCalls++;return[{provider:'codex',support:'supported' as const,auth:codexAuth,quota:codexQuota,expires:Date.now()+60000,models:[{id:'fixture-model',efforts:['low']}]},{provider:'claude',support:'supported' as const,auth:claude.auth,quota:claude.quota,login:claude.login,expires:Date.now()+60000,models:claude.candidates.filter(m=>claudeVerified.has(m.id)),candidates:claude.candidates}];};
 let projects:any;
 const rt=createRuntime({dataDir:H.data,agents:H.agents,provider:H.engine.deps.provider,defaultProvider:()=>({provider:'claude',model:'studio-default'}),log:H.engine.deps.log,send(){},fmRoot:root,protectedRoots:[root],studioUrl:()=>H.toolUrl,staffingFacts:facts,
  // stands in for the server's bounded verification (#44's request for Claude): counted, never a model call
- staffingAdmission:(role:any)=>role.provider==='claude'&&claudeVerified.has(role.model),staffingVerify:async(role:any)=>{verifyCalls.push(`${role.provider}/${role.model}`);if(verifyPasses)claudeVerified.add(role.model);return verifyPasses;},
+ staffingAdmission:(role:any)=>role.provider==='claude'&&claudeVerified.has(role.model),staffingVerify:async(role:any,o:any)=>{verifyCalls.push(`${role.provider}/${role.model}`);await verifyGate;if(o?.signal?.aborted)return false;if(verifyPasses)claudeVerified.add(role.model);return verifyPasses;},
  install:[(engine:any,c:any)=>{projects=c.projects;installCode(engine,{dataDir:c.dataDir,projects:c.projects});}]} as any);
 const E=rt.engine;
 // a provider that answers the spec round the way a coordinator does, and records who it ran as
@@ -84,11 +84,25 @@ try{
   ok(rec?.data?.verified?.length===2&&rec.data.verified.every((v:string)=>/claude claude-(sonnet|opus)-5-5/.test(v)),'what Studio verified is on the Task\'s signed ledger',JSON.stringify(rec?.data));
   if(r.body.id)await E.cancel(r.body.id,'test');}
  {const r=await startClaude();ok(r.status===200&&verifyCalls.length===2,'a model verified once is not paid for again within its window');if(r.body.id)await E.cancel(r.body.id,'test');}
- // the receipt ran out and the verification fails: blocked with the reason, and not paid for again right away
+ // the receipt ran out and the verification fails: blocked with the reason; a tutor's or a dispatch's retry waits ten minutes,
+ // but the captain's own Start tries again at once
  claudeVerified.clear();verifyPasses=false;
- {const runs=E.list().length,r=await startClaude(),again=await startClaude();
+ {const runs=E.list().length,r=await startClaude();
   ok(r.status===409&&r.body.code==='staffing_not_ready'&&/did not pass/.test(r.body.staffing?.reason?.en??'')&&!!r.body.staffing.reason.zh&&E.list().length===runs,'a verification that fails is a bilingual refusal and creates no Task',JSON.stringify(r.body).slice(0,300));
-  ok(again.status===409&&/failed a few minutes ago/.test(again.body.staffing?.reason?.en??'')&&verifyCalls.length===3,'a failed verification is not paid for again within minutes',JSON.stringify({calls:verifyCalls,body:again.body}).slice(0,300));}
+  const calls=verifyCalls.length;let held='';try{await E.deps.ensurePick({provider:'claude',model:'claude-sonnet-5-5',effort:'low'});}catch(e:any){held=String(e?.message);}
+  ok(/did not pass a few minutes ago/.test(held)&&verifyCalls.length===calls,'a failed verification is not paid for again within minutes by Studio itself (the tutor)',held);
+  const again=await startClaude();
+  ok(again.status===409&&/did not pass/.test(again.body.staffing?.reason?.en??'')&&verifyCalls.length===calls+1,'the captain pressing Start again retries it at once',JSON.stringify({calls:verifyCalls,body:again.body}).slice(0,300));}
+ // a verification whose caller left ends without a backoff: the next caller verifies
+ {verifyPasses=true;let release!:()=>void;const gate=new Promise<void>(r=>release=r);const base=verifyGate;verifyGate=gate;
+  const ac=new AbortController(),calls=verifyCalls.length,first=E.deps.ensurePick({provider:'claude',model:'claude-opus-5-5',effort:'low'},{signal:ac.signal}).then(()=>'ready',(e:any)=>String(e?.message));
+  await new Promise(r=>setTimeout(r,20));ac.abort();release();const said=await first;verifyGate=base;claudeVerified.delete('claude-opus-5-5');
+  const next=await E.deps.ensurePick({provider:'claude',model:'claude-opus-5-5',effort:'low'}).then(()=>'ready',(e:any)=>String(e?.message));
+  ok(/ended before it finished/.test(said)&&next==='ready'&&verifyCalls.length===calls+2,'a verification ended by its caller leaves no backoff: the next one verifies',JSON.stringify({said,next,calls:verifyCalls.slice(calls)}));}
+ claudeVerified.clear();verifyPasses=false;
+ // Codex whose quota cannot be read now: a hold with that reason, never a failed verification and no backoff
+ {const keep=codexQuota;codexQuota='unknown';const calls=verifyCalls.length,o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'}});
+  ok(o?.state==='blocked'&&/quota could not be read just now/.test(o.reason?.en??'')&&r.status===409&&/quota could not be read just now/.test(r.body.staffing?.reason?.en??'')&&!/did not pass/.test(r.body.error)&&verifyCalls.length===calls,'Codex with unreadable quota holds with that reason, nothing is verified and nothing is backed off',JSON.stringify({o,r:r.body}).slice(0,400));codexQuota=keep;}
  // never verified: a Claude that is not signed in, one out of quota, a model it does not offer
  for(const [what,set,re] of [['not signed in',()=>{claude={...claude,auth:'missing',login:'not-logged-in'};},/not signed in/],['out of quota',()=>{claude={...claude,quota:'exhausted'};},/out of quota/],['not offered',()=>{claude={...claude,candidates:[{id:'claude-haiku-5-5',efforts:['low']}]};},/does not offer/]] as const){
   const keep={...claude};(set as any)();const calls=verifyCalls.length,o=await claudeOptions(),r=await startClaude();
@@ -97,7 +111,7 @@ try{
  // the reviewer on the worker's own model: never refused, always said; with another usable model, the form says which one to give it
  claude.candidates=[{id:'claude-sonnet-5-5',efforts:['low']}];
  {const o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing;
-  ok(o?.state==='approved'&&o.readiness?.state==='ready'&&o.readiness.independence?.level==='same'&&/another usable model \(claude claude-sonnet-5-5\)/.test(o.readiness.independence.en)&&!!o.readiness.independence.zh,'a reviewer on the worker\'s own model can start; the form names another usable model for an independent review',JSON.stringify(o).slice(0,400));}
+  ok(o?.state==='approved'&&o.readiness?.state==='ready'&&o.readiness.independence?.level==='same'&&/another model \(claude claude-sonnet-5-5\)/.test(o.readiness.independence.en)&&!!o.readiness.independence.zh,'a reviewer on the worker\'s own model can start; the form names another usable model for an independent review',JSON.stringify(o).slice(0,400));}
  claude.candidates=[];
  {const o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing;
   ok(o?.readiness?.independence?.level==='same'&&/Only one model is usable on this machine \(codex fixture-model\)/.test(o.readiness.independence.en),'on one usable model the form says the reviewer runs on the worker\'s model because nothing else is usable',JSON.stringify(o?.readiness));}

@@ -5,7 +5,9 @@
 import type {StaffingFacts} from '../firstmate-staffing';
 
 export type Member={provider:string;model:string|null};
-export type Usable={provider:string;model:string;efforts:string[];verified:boolean};
+/** A model on this machine: verified (or verifiable by Studio itself), runnable now or held with its reason. A held model
+ *  still counts for every independence rule: a vendor out of quota or with stale facts is waited for, never worked around. */
+export type Usable={provider:string;model:string;efforts:string[];verified:boolean;runnable:boolean;held?:string;isDefault?:boolean};
 export type Level='vendor'|'model'|'same';
 const RANK:Record<Level,number>={same:0,model:1,vendor:2};
 /** a model left to the vendor's default is unknown: on the same vendor it may be the other one's, so it counts as the same */
@@ -13,16 +15,18 @@ export const levelOf=(a:Member,b:Member):Level=>a.provider!==b.provider?'vendor'
 /** the weakest level against every member of a group (a tutor against every node that wrote the change) */
 export const levelAgainst=(c:Member,group:Member[]):Level=>group.reduce<Level>((l,m)=>{const n=levelOf(c,m);return RANK[n]<RANK[l]?n:l;},'vendor');
 export const atLeast=(l:Level,need:Level)=>RANK[l]>=RANK[need];
-/** The models this machine can run now, from the provider facts: a signed-in vendor that is not out of quota, each model it
- *  verified (verified) or offers for a verification Studio runs itself (a signed-in Claude's candidates). */
-export function usableModels(facts:StaffingFacts[]):Usable[]{
+/** The models on this machine, from the provider facts: every vendor that is installed and signed in (out of quota still counts
+ *  as signed in), each model it verified or offers for a verification Studio runs itself (a signed-in Claude's candidates).
+ *  runnable: fresh facts and quota available (Claude: unknown quota is its normal state, admitted by its execution receipt);
+ *  otherwise held, with why. Only a vendor that is not here at all (not installed, not signed in) lets a rule relax. */
+export function usableModels(facts:StaffingFacts[],now=Date.now()):Usable[]{
  const out:Usable[]=[];
- for(const f of facts){if(f.support!=='supported'||f.quota==='exhausted')continue;
+ for(const f of facts){if(f.support!=='supported')continue;
   const signedIn=f.auth==='verified'||f.login==='logged-in';if(!signedIn)continue;
-  // Codex reads quota for free; one it cannot read is not usable (a paid round would be a guess)
-  if(f.provider==='codex'&&f.quota!=='available')continue;
-  for(const m of f.models??[])if(m?.id&&!out.some(u=>u.provider===f.provider&&u.model===m.id))out.push({provider:f.provider,model:m.id,efforts:m.efforts??[],verified:true});
-  if(f.provider==='claude'||f.provider==='cursor')for(const m of f.candidates??[])if(m?.id&&!out.some(u=>u.provider===f.provider&&u.model===m.id))out.push({provider:f.provider,model:m.id,efforts:m.efforts??[],verified:false});}
+  const held=f.quota==='exhausted'?`${f.provider} is out of quota`:f.quota!=='available'&&!(f.provider==='claude'&&f.quota==='unknown')?`${f.provider}'s quota could not be read`:f.expires<=now?`${f.provider}'s facts expired`:undefined;
+  const add=(m:{id:string;efforts?:string[]},verified:boolean)=>{if(m?.id&&!out.some(u=>u.provider===f.provider&&u.model===m.id))out.push({provider:f.provider,model:m.id,efforts:m.efforts??[],verified,runnable:!held,...held?{held}:{},...f.default?.model===m.id?{isDefault:true}:{}});};
+  for(const m of f.models??[])add(m,true);
+  if(f.provider==='claude'||f.provider==='cursor')for(const m of f.candidates??[])add(m,false);}
  return out;}
 /** The best independence the machine can give: two usable vendors, else two models of the one vendor, else the same model. */
 export function reachable(usable:Usable[]):Level{const vendors=new Set(usable.map(u=>u.provider));if(vendors.size>=2)return'vendor';return new Set(usable.map(u=>`${u.provider}/${u.model}`)).size>=2?'model':'same';}

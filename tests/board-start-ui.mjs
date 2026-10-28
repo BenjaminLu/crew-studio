@@ -57,7 +57,7 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
   await p.screenshot({path:join(shots,`unverified-${width}-${theme}-${lang}.png`),fullPage:true});
   await p.locator('[data-run-project="code-firstmate"]').selectOption('codex');await p.locator('[data-run-crew="approved"]').waitFor();
   ok(!await p.locator('[data-run-start]').isDisabled(),'a ready approved crew lets the captain start '+tag);
-  ok(lang!=='en'||/Same model as the author[\s\S]*another usable model/.test(await p.locator('[data-run-crew-independence="same"]').textContent()),'a reviewer on the worker\'s own model is said on the Start form, with another usable model to give it '+tag);
+  ok(lang!=='en'||/Same model as the author[\s\S]*another model/.test(await p.locator('[data-run-crew-independence="same"]').textContent()),'a reviewer on the worker\'s own model is said on the Start form, with another usable model to give it '+tag);
   ok(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'no horizontal page scroll '+tag);
   await p.screenshot({path:join(shots,`approved-${width}-${theme}-${lang}.png`),fullPage:true});
   if(width===1440&&theme==='light'&&lang==='en'){

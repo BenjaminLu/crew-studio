@@ -95,9 +95,11 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  engine.actions['issues.confirm-card']=async x=>{
   bound(x);const t=state(x),snap=snapOf(x),pick=(id:string)=>{try{const p=pickOf(x,id);return`${p.provider} ${p.model??'(default model)'}`;}catch{return'(no model yet)';}};
   // refused before anything is paid: one model twice is not two independent reports, and a round outside the sandbox is not offline
+  // what this machine has is read again first: a rule relaxes only for a vendor that is not there, never for stale facts
+  try{await engine.deps.refreshUsable?.();}catch{}
   let same:{en:string;zh:string}|null=null;
   try{const a=pickOf(x,'a'),b=pickOf(x,'b'),rule=pairRule({provider:a.provider,model:a.model??null},{provider:b.provider,model:b.model??null});
-   if(!rule.allowed)throw new Error(`Both investigators would run on ${a.provider} ${a.model??'(default model)'}: the two reports must come from different models while this machine has another usable model; give the maker and reviewer seats different models`);
+   if(!rule.allowed)throw new Error(`Both investigators would run on ${a.provider} ${a.model??'(default model)'}: the two reports must come from different models while this machine has another model (signed in, even if it cannot run right now); give the maker and reviewer seats different models`);
    if(rule.level==='same'){same={en:`${SAME_NOTE.en}${rule.why.en}`,zh:`${SAME_NOTE.zh}${rule.why.zh}`};engine.record(x,'issue-triage-independence',{data:{schema:1,level:'same',a:{provider:a.provider,model:a.model??null},b:{provider:b.provider,model:b.model??null},usable:(engine.deps.usableModels?.()??[]).map((u:any)=>`${u.provider}/${u.model}`),...same}} as any);}}
   catch(e:any){if(/different models/.test(String(e?.message)))throw e;}
   box(x,'a');box(x,'b');
@@ -156,8 +158,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   bound(x);const t=state(x);
   try{
    const a=reportOf(x,'a'),b=reportOf(x,'b');
-   // the same model is accepted only as the start card allowed it (recorded on the ledger before anything was paid)
-   const sameModel=a.by.provider===b.by.provider&&a.by.model===b.by.model,allowedSame=sameModel&&engine.trusted(x.run.id).entries.some((e:any)=>e.record==='issue-triage-independence'&&e.data?.level==='same');
+   // the same model is accepted only as the start card allowed it, for exactly that pair (recorded before anything was paid)
+   const sameModel=a.by.provider===b.by.provider&&a.by.model===b.by.model,allowedSame=sameModel&&engine.trusted(x.run.id).entries.some((e:any)=>e.record==='issue-triage-independence'&&e.data?.level==='same'&&[['a',a.by],['b',b.by]].every(([k,by]:any)=>e.data?.[k]?.provider===by.provider&&e.data?.[k]?.model===by.model));
    if(sameModel&&!allowedSame)throw new Error(`Both investigators ran on ${a.by.provider} ${a.by.model}: the two reports must come from different models; give the maker and reviewer seats different models`);
    const snap=snapOf(x),{adapter}=selected(t.project),fresh=await snapshotIssues(adapter,{signal:engine.abortOf(x.run).signal});guard(x);
    const now=new Map(fresh.issues.map(i=>[i.n,i.hash])),changed=t.batch.filter(n=>now.get(n)!==snap.issues.find(i=>i.n===n)?.hash);

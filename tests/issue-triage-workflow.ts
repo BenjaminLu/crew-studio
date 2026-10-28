@@ -192,7 +192,14 @@ try {
   // the same, while this machine has another usable model: still refused
   reset2(); (E.deps as any).usableModels = () => [{ provider: "claude", model: "same", efforts: [], verified: true }, { provider: "claude", model: "other", efforts: [], verified: true }];
   r = await runOf({ issues: [1, 2, 3] });
-  ok(r.status === "failed" && /another usable model/.test(String(r.nodes.confirm?.error ?? r.error)) && H.agents.jobs.size === jobs4, "two investigators on one model are refused while this machine has another usable model", `${r.status} ${r.nodes.confirm?.error}`);
+  ok(r.status === "failed" && /another model/.test(String(r.nodes.confirm?.error ?? r.error)) && H.agents.jobs.size === jobs4, "two investigators on one model are refused while this machine has another usable model", `${r.status} ${r.nodes.confirm?.error}`);
+
+  // another vendor signed in but held for now (quota unreadable): it still counts, nothing relaxes, the facts read again first
+  reset2(); let refreshed = 0; (E.deps as any).refreshUsable = async () => { refreshed++; return null; };
+  (E.deps as any).usableModels = () => [{ provider: "claude", model: "same", efforts: [], verified: true, runnable: true }, { provider: "codex", model: "x", efforts: [], verified: true, runnable: false, held: "codex's quota could not be read" }];
+  r = await runOf({ issues: [1, 2, 3] });
+  ok(r.status === "failed" && /another model/.test(String(r.nodes.confirm?.error ?? r.error)) && H.agents.jobs.size === jobs4 && refreshed === 1, "a second vendor signed in but held for now does not relax the rule: one model twice is still refused, after the facts are read again", `${r.status} ${r.nodes.confirm?.error} ${refreshed}`);
+  delete (E.deps as any).refreshUsable;
 
   // --- 4b. one usable vendor: two of its models run, as before, and nothing is said to be weaker ---
   open = [...open, issue(12, { title: "Menu filter" }), issue(13, { title: "Menu filter again" })];
@@ -218,7 +225,15 @@ try {
       "the reports are checked and written as usual; the approval card and the stored package (the project page) say their agreement is weaker evidence", `${t.status} ${t.error} ${JSON.stringify(pack)}`);
     ok(!store.get("proj")!.packages.filter((p) => !p.members.includes(13)).some((p) => p.investigators), "packages from earlier batches are not marked");
     if (approve) await E.answer(approve.id, { choice: "close", by: "captain (card)" } as any); await until(() => E.get(t.id)!.status === "succeeded"); }
-  delete (E.deps as any).usableModels; open = open.filter((i) => i.number !== 12 && i.number !== 13);
+  // the start card allowed one pair on one model; the reports came from another model: not that pair, so not accepted
+  reset2(); open = [...open, issue(14, { title: "Theme again" })]; models = { a: ["claude", "only"], b: ["claude", "only"] };
+  script = () => [...reading("src/host.ts"), { tool: "triage_submit", args: { report: { commit, issues: [finding(14, { locus: [{ file: "src/host.ts", symbol: "allowed", lines: "1" }], evidence: "u.protocol === 'https:' && HOSTS.includes(u.hostname)" })], groups: [], related: [], alone: [14] } } }];
+  { const t = flow.start({ project: "proj", by: "captain (board)", issues: [14] }); await settled(t.id); const c = confirmCard(t.id)!;
+    models = { a: ["claude", "only2"], b: ["claude", "only2"] };
+    await E.answer(c.id, { choice: "start", by: "captain (card)" } as any); await until(() => ["failed", "succeeded"].includes(E.get(t.id)!.status) || E.cards.list({ run: t.id, open: true }).some((x) => x.node === "approve"));
+    const rr = E.get(t.id)!;
+    ok(rr.status === "failed" && /different models/.test(JSON.stringify(rr.nodes.record?.error ?? rr.error)) && !store.get("proj")!.investigated.includes(14), "a same-model release covers only the pair the start card confirmed", `${rr.status} ${JSON.stringify(rr.nodes.record?.error ?? rr.error)}`); }
+  delete (E.deps as any).usableModels; open = open.filter((i) => i.number !== 12 && i.number !== 13 && i.number !== 14);
   models = { a: ["claude", "model-a"], b: ["codex", "model-b"] };
 
   // --- 5. one triage at a time per project ---

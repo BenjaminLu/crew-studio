@@ -66,9 +66,9 @@ export function probeCursor(models: string[], bin = process.env.CREW_CURSOR_BIN 
 /** The bounded real check: `cursor-agent models` signed in with the crew's key, in a throwaway root (private HOME, config and
  *  data, an in-memory credential store), at most `timeoutMs` and 256 KB of output. It lists the account's models and fails
  *  when the key is refused; it makes no model request. One check runs at a time; a recent result is reused unless `fresh`. */
-export async function verifyCursor(o: { bin?: string; fresh?: boolean; timeoutMs?: number } = {}): Promise<CursorCheck | null> {
+export async function verifyCursor(o: { bin?: string; fresh?: boolean; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<CursorCheck | null> {
   const bin = o.bin ?? process.env.CREW_CURSOR_BIN ?? "cursor-agent";
-  if (!installed(bin)) return null;
+  if (!installed(bin) || o.signal?.aborted) return null;
   const probe = cursorLogin({ probe: true });
   if (!probe.ok) return null;
   if (!o.fresh) { const c = checkFor(bin, probe.source); if (c) return c; }
@@ -81,13 +81,16 @@ export async function verifyCursor(o: { bin?: string; fresh?: boolean; timeoutMs
     const env = { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "en_US.UTF-8", NO_COLOR: "1", HOME: join(root, "h"), XDG_CONFIG_HOME: join(root, "h", ".config"), CURSOR_DATA_DIR: join(root, "d"), TMPDIR: join(root, "t"), AGENT_CLI_CREDENTIAL_STORE: "memory", ...login.env };
     let result: CursorCheck = { bin, source: login.source ?? "", ok: false, models: [], reason: "the check did not finish", at: Date.now() }, clean = true;
     const proc = probeProcess(/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, "models"] : [bin, "models"], root, env, undefined, { timeoutMs: o.timeoutMs ?? 20_000, bytes: 256 * 1024 });
+    // the caller left (its round or turn ended): the check stops, and an ended check is not remembered as a result
+    const stop = () => { void proc.stop().catch(() => {}); }; o.signal?.addEventListener("abort", stop, { once: true });
     try {
       const code = await proc.exited; await proc.stop();
       const { out, err, failure } = proc.output();
       const why = failure ?? (code !== 0 ? (LOGIN_RE.test(out + err) ? "authentication failed" : `cursor-agent models exited ${code}`) : null);
       result = { ...result, ok: !why, models: why ? [] : parseCursorModels(out), reason: why, at: Date.now() };
-    } catch { clean = false; }
+    } catch { clean = false; } finally { o.signal?.removeEventListener("abort", stop); }
     if (clean) try { rmSync(root, { recursive: true, force: true }); } catch {}
+    if (o.signal?.aborted) return null;
     lastCheck = result; return result;
   })().finally(() => { checking = null; });
   return checking;
