@@ -135,3 +135,74 @@ Tests:
 - tests/board-ui.mjs: the parallel runs and their milestone states, labels, subtitle and spend, live updates and one stream, and the waiting decisions' links. The answering checks that ran in Needs you (refusal inline, one answer in flight, the door tick, note and tick kept across a re-render, a late refusal, the firstmate door confirmation, answers through the board) now run in the Inbox, where the cards are answered. The Board's per-card state checks (`crewBoard.held`) went with the code they tested.
 - tests/workflow-overview-ui.mjs, -races.mjs, -fold-ui.mjs: ported from the graph to the rows on the real engine. They cover card identity per Task, a stale-visit card, failure cards, parallel waits ringed, done today, archive/unarchive/delete live, stale details that cannot bring back a left card, the first viewport, a live move with the viewer's scroll and selection kept, storage blocked, and the live cue captures.
 - run-end-ui, smoke, inbox-live-ui, studio-agents-ui, task-round-ui, crew-visibility-ui: their selectors follow the new rows.
+
+## Issues: open GitHub issues as work packages
+
+The Board has two views, Tasks (`#/board`) and Issues (`#/board/issues`), switched from its header. Issues shows a
+project's latest issue triage (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
+`data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`; the
+routes refuse writes).
+
+- A triage is two independent investigators' reports on one snapshot of the open issues, read against the code at one
+  commit. Studio checks every finding mechanically (the issue is in the snapshot, every file exists inside the checkout,
+  every quoted line is in those files, whitespace, commas and semicolons aside) and compares the two reports (same file,
+  state and security answer).
+- A work package is what both reports agree on and every member passes the check: an ordered set (worked in that order,
+  one pull request each), an unordered set (its owner picks the order), a one-change group, a single issue, or a recheck
+  (both find it already fixed: a person rechecks it, it is never closed on that evidence). Everything else is listed
+  under "For you to judge" with the reason; issues nobody investigated are listed under "Not investigated".
+- Security comes from the issue's labels or either report; a security package says its issues are referenced, not
+  closed, by a pull request and close only after a recheck.
+- A package is waiting for approval, approved, or stale (an issue's title, text or labels changed since it was
+  investigated: any label, `good first issue` too, since a label can change how its pull request names it).
+- The stored triage keeps each issue's title, labels and content hash, never its body. Titles are untrusted text and
+  only ever go into text nodes.
+
+### The issue-triage workflow
+
+`workflows/v2/issue-triage.wf.yaml` (`src/issue-triage-workflow.ts`, internal: Firstmate starts it with
+`studio_triage_issues`) triages one batch of a connected project's open issues:
+
+1. **Snapshot.** Studio reads the open issues through the project's GitHub grant (GET only) and pins the code: the commit
+   the base branch is at, cloned read-only under `data/work/issue-triage/<task>/checkout`, never touching the project's
+   own repository. The batch is the issues named, else the oldest open issues not investigated at their current text
+   (15 by default, at most 50).
+2. **Start card.** Captain-only: the batch, the commit and both investigators' models. Nothing paid runs before it;
+   closing it removes the checkout. It is refused before it is shown when both investigators would run on one model, or
+   when their rounds would not be in the round sandbox with no network beyond the model (a sandbox-off grant, an
+   `egress.allow` policy, local unrestricted mode).
+3. **Two investigators** on the maker and reviewer seats (Claude and Codex without a Studio team; the team decides otherwise; always two different models) follow `workflows/skills/issue-triager.md`.
+   They read issue text only through `issue_read` (this batch only, marked untrusted) and the code only through
+   `fs_list`, `fs_search` and `fs_read` on the checkout, in the round sandbox with no network and no token. They submit
+   with `triage_submit`: Studio refuses a report for another commit or one that does not cover the batch exactly once,
+   and answers with every finding whose file or quote it cannot find, so the investigator can correct it.
+4. **Record.** Studio checks both reports (refused when both ran on the same model), reads the issues again (a package
+   with an issue edited meanwhile goes to "For you to judge"), joins the batch to the stored triage (a closed issue's
+   package is dropped, an edited issue's package becomes stale and the issue is taken again by a later batch) and
+   removes the checkout.
+5. **Approval card.** Captain-only, naming the security packages and that whoever owns security must agree. Approving
+   reads the issues once more: a package whose issue changed is stale, never approved. Every step is on the Task's
+   signed ledger (`issue-triage-snapshot`, `issue-triage-report`, `issue-triage-written`, `issue-triage-approved`).
+
+### Working a package
+
+`studio_work_package {project, package}` (Firstmate, in a captain's turn) proposes the next issue of an approved package
+on code-firstmate, through Studio's own proposal path: the captain approves the Task on its dispatch card, and the
+code-firstmate definition is unchanged. One person works a package one issue at a time: an ordered package in its
+order, the next issue only once the one before is merged; a one-change group is one Task for all its issues; an issue
+whose Task ended without a merge is offered again; a recheck package is not code work. Studio reads the issues again
+first: one edited since it was investigated (its title, text or any label) makes the package stale and nothing is
+proposed; one missing from that read (closed, or moved between pages while read) is refused once, the package unchanged.
+
+The Task's request is built from the triage's fields only (`issueBrief`): the location at the triaged commit, the tag,
+the step in the package, a done line that must fail before the change and pass after (the triage's repro), and how the
+pull request names the issue: `Fixes #n`, or `Refs #n` for a security issue (it closes after a recheck), with no exploit
+detail in the branch, commits or pull request. The issue's title is quoted on one line as untrusted text; its body never
+goes in. The package records each issue's proposal; the Board shows where its Task stands (in progress, merged, ended
+without a merge) and how to start the next one.
+
+Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, next issue, brief, store, routes),
+`tests/issue-triage-workflow.ts` (the workflow end to end against a local GitHub stand-in with scripted investigators:
+both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (1440
+and 390 zh-TW: the switch, packages, order and locations, links, a title with markup, status, the other tabs, the empty
+state).

@@ -44,6 +44,8 @@ const STUDIO: Record<string, (input: unknown) => Activity> = {
   studio_workflow_gate: () => pair("Reading the readiness check", "查看就緒檢查結果"),
   studio_answer_agent_question: () => pair("Answering a crew member's question", "回答船員的問題"),
   studio_connect_github: () => pair("Proposing a GitHub connection", "提出連接 GitHub"),
+  studio_triage_issues: () => pair("Starting an issue triage", "開始分類 issue"),
+  studio_work_package: () => pair("Proposing the next issue of a work package", "提出工作包的下一張 issue"),
   studio_crew_assignments: () => pair("Looking at the crew assignments", "查看船員分派"),
   studio_propose_crew_change: () => pair("Proposing a crew change", "提出船員調整"),
 };

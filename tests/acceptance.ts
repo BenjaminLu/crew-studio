@@ -79,7 +79,7 @@ function expectFor(r: StubRun): Expect {
 
 async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }> {
   // Team approvals and merge-grant token fixtures must not change another scenario's Studio.
-  const s = await serverFor(r.server, ["crew", "grant-merge", "local-register"].includes(r.how) ? `${r.workflow}-${r.name}` : ""), h: Ctx = { s, vars: {}, firstmate: firstmate(s) }, failures: string[] = [];
+  const s = await serverFor(r.server, ["crew", "grant-merge", "triage", "local-register"].includes(r.how) ? `${r.workflow}-${r.name}` : ""), h: Ctx = { s, vars: {}, firstmate: firstmate(s) }, failures: string[] = [];
   for (const step of r.setup) { const f = STEPS[step]; if (!f) return { failures: [`no setup step ${step} (tests/acceptance/steps.ts)`] }; await f(h); }
   const params: Record<string, string> = { ...Object.fromEntries(Object.entries(r.shared.start.params).map(([k, v]) => [k, fill(v, h.vars)])), ...(r.provider ? { provider: r.provider } : {}), ...Object.fromEntries(Object.entries(r.params).map(([k, v]) => [k, fill(v, h.vars)])) };
   // the sandbox probe's arguments (setup step probe) go into the intent, where the scripted agent reads them
@@ -123,10 +123,11 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     if (r.how === "register") { if (!h.vars.repo) await STEPS.repo(h); created = await h.firstmate("NATIVE-PROJECT ", { path: h.vars.repo, name: "Acceptance repo", workflow: target.workflow, version, text: r.topic, params: {} }); }
     else if (r.how === "connect") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project } });
     else if (r.how === "grant-merge") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project, merge: true } });
+    else if (r.how === "triage") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_triage_issues", args: { project: h.vars.project } });
     else if (r.how === "crew") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_propose_crew_change", args: { change: { kind: "member", seat: "maker", set: ON_CURSOR ? { provider: "cursor", model: CURSOR_MODEL, effort: null } : { provider: "codex", model: "acceptance-model", effort: "medium" } } } });
     else if (r.how === "staffing") { const id = await approveStaffing(h, tparams.project ?? "sandbox", target.workflow); created = [{ id, workflow: "firstmate-staffing" }]; }
     else created = await h.firstmate("NATIVE-PROPOSE ", { workflow: target.workflow, version, text: body.text, params: tparams });
-    const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : r.how === "connect" ? "firstmate-connect-github" : r.how === "grant-merge" ? "firstmate-grant-merge" : r.how === "crew" ? "crew-change" : "firstmate-staffing";
+    const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : r.how === "connect" ? "firstmate-connect-github" : r.how === "grant-merge" ? "firstmate-grant-merge" : r.how === "triage" ? "issue-triage" : r.how === "crew" ? "crew-change" : "firstmate-staffing";
     const own = created.find((x) => x.workflow === want);
     if (!own) return { failures: [...failures, `Firstmate created no ${want} Task (it created: ${created.map((x) => `${x.id} ${x.workflow}`).join(", ") || "nothing"})`] };
     if (r.how !== "firstmate") task = own.id;
@@ -140,7 +141,7 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   const exp = expectFor(r);
   const d = await drive(s, task, decide, { timeoutMs: r.timeout_s * 1000, until: exp.status === "waiting" ? (v) => (v.cards ?? []).some((c: any) => c.status === "open" && c.node === exp.waitingOn) : undefined });
   failures.push(...await verify(s, d, exp));
-  if ((["crew", "grant-merge", "local-register"].includes(r.how) || r.workflow === "file-organization") && defHash(d.view?.def) !== r.shared.pin.sha256) failures.push("the approval Task definition differs from the reviewed scenario pin");
+  if ((["crew", "grant-merge", "triage", "local-register"].includes(r.how) || r.workflow === "file-organization") && defHash(d.view?.def) !== r.shared.pin.sha256) failures.push("the approval Task definition differs from the reviewed scenario pin");
   // the real side effects: a proof that needs the real renderer only where the renderer is real (the e2e profile)
   for (const p of r.proves) if (SANDBOXED_E2E || !RENDERER_PROVES.includes(p)) {
     const context = { sinkHits: h.sinkHits, github: h.github, fileorg: h.fileorg }, proof = await prove(s, d.view, p, context);

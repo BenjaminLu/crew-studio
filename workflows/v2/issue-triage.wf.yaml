@@ -1,0 +1,27 @@
+{
+ "id":"issue-triage","name":"Triage open GitHub issues","kind":"issue-triage","version":1,
+ "description":"A batch of a connected project's open GitHub issues: two investigators on different models read the code at one pinned commit, offline; Studio checks every file and quoted line, keeps only the work packages both agree on, and the captain approves them.",
+ "params":{"project":{"label":"Connected project"},"issues":{"label":"Issue numbers to investigate (optional)"},"size":{"label":"Batch size","default":"15"}},
+ "roles":[
+  {"id":"investigator-a","label":"Investigator A","seat":"maker","provider":"claude","skill":"bundled:workflows/skills/issue-triager.md"},
+  {"id":"investigator-b","label":"Investigator B","seat":"reviewer","provider":"codex","skill":"bundled:workflows/skills/issue-triager.md"}
+ ],
+ "compare":[["investigator-a","investigator-b"]],
+ "nodes":[
+  {"id":"snapshot","kind":"hook","label":"Read the open issues and pin the code","do":"issues.snapshot","x":120,"y":200},
+  {"id":"confirm","kind":"hook","label":"Start the investigation","do":"issues.confirm-card","x":250,"y":200},
+  {"id":"a","kind":"agent","label":"Investigator A","role":"investigator-a","mode":"issue-investigate","timeout_s":1800,"x":380,"y":120},
+  {"id":"b","kind":"agent","label":"Investigator B","role":"investigator-b","mode":"issue-investigate","timeout_s":1800,"x":380,"y":280},
+  {"id":"record","kind":"hook","label":"Check the reports against the code","do":"issues.record","join":"all","x":640,"y":200},
+  {"id":"approve","kind":"hook","label":"Approve the work packages","do":"issues.approve-card","x":880,"y":200},
+  {"id":"apply","kind":"hook","label":"Write the approved packages","do":"issues.approve","x":1120,"y":200},
+  {"id":"done","kind":"hook","label":"Work packages approved","x":1360,"y":200},
+  {"id":"empty","kind":"hook","label":"Nothing new to triage","args":{"result":"closed"},"x":380,"y":420},
+  {"id":"none","kind":"hook","label":"No package both agree on","args":{"result":"closed"},"x":880,"y":340},
+  {"id":"closed","kind":"hook","label":"Kept as proposals","args":{"result":"closed"},"x":1120,"y":340},
+  {"id":"drop","kind":"hook","label":"Remove the pinned checkout","do":"issues.drop","x":250,"y":340},
+  {"id":"cancelled","kind":"hook","label":"Not investigated","args":{"result":"closed"},"x":250,"y":460}
+ ],
+ "edges":[["snapshot","confirm","ok"],["confirm","a","start"],["confirm","b","start"],["confirm","drop","close"],["drop","cancelled","ok"],["snapshot","empty","empty"],["a","record","ok"],["b","record","ok"],
+  ["record","approve","ok"],["record","none","none"],["approve","apply","approve"],["approve","closed","close"],["apply","done","ok"]]
+}

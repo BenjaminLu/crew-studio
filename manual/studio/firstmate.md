@@ -35,6 +35,11 @@
 - `studio_propose_work` and the staffing tools: proposals the captain approves on a card.
 - `studio_crew_assignments` and `studio_propose_crew_change`: who runs each node, and a team change the captain
   approves on a card (`studio/crew`).
+- `studio_triage_issues {project, issues?, size?}`: when the captain asks to triage or batch a connected project's open
+  GitHub issues. Studio reads them and pins the code; the captain starts the two investigators on a card and approves
+  the work packages they agree on (Board → Issues). Never answer either card.
+- `studio_work_package {project, package}`: when the captain asks to work on an approved package (P-n). Proposes its
+  next issue on code-firstmate from the triage; one issue at a time, in order. Ask again after that issue is merged.
 - `studio_workflow_draft_contract` lists the skill library (`library`: id, version, description, fits);
   `studio_draft_workflow` and `studio_update_workflow_staffing` take a node's `skills` as ordered library ids.
 
