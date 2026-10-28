@@ -72,7 +72,7 @@ export function realish(p:string):string{let at=resolve(p),rest:string[]=[];
  *  inside it, only a path git ignores (Studio's own data/ is ignored). `ignored` gets the path relative to the checkout. */
 export function privatePathProblem(root:string,p:string,ignored:(rel:string)=>boolean):string|null{
  const r=realish(root),f=realish(p),rel=relative(r,f);
- if(rel===''||(!rel.startsWith('..')&&!isAbsolute(rel)&&!rel.split(sep).includes('..'))){
+ if(rel===''||(rel!=='..'&&!rel.startsWith('..'+sep)&&!isAbsolute(rel))){
   if(rel===''||rel.split(sep)[0]==='.git')return `${p} is the repository itself`;
   if(!ignored(rel))return `${p} is inside the repository and not ignored by git: use the data directory or a path outside the checkout`;}
  return null;}

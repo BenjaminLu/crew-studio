@@ -46,7 +46,7 @@ if(cmd==='mine'){const g=mined();evals.writeGold(g);console.log(`${project}: ${O
 if(cmd==='label'){
  const sample=Number(flag('--sample')??50);if(!Number.isSafeInteger(sample)||sample<1||sample>2000)die('--sample is 1 to 2000');
  // each investigator's own answer, from the stored reports (the code is not needed for the answers)
-const reports=replay(evals.triageBatches(project,()=>()=>null).batches).preds;
+ const reports=replay(evals.triageBatches(project,()=>()=>null).batches).preds;
  const t=labelTemplate({project,triage:triageRec,categories:catRec,gold:evals.gold(project),sample,seed:flag('--seed')??project,at:now,reports});
  const out=flag('--out')?outside(flag('--out')!):null;
  if(out)writeFileSync(out,JSON.stringify(t,null,1),{mode:0o600});

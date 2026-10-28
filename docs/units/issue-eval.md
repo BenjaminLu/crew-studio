@@ -27,9 +27,9 @@ A gold label is one issue's answer; every field is optional and scored only wher
 `gold.json` keeps the captain's labels and the derived ones apart (`captain`, `derived`); the captain's fields win over
 derived ones, field by field. `package` is a group key: issues with one key belong in one work package.
 
-The states are the triager's own words (`Finding['state']` in `src/domain/issue-triage.ts`). A new state the skill
-gains later (such as `needs-info`) is added to `STATES` in `src/domain/issue-eval.ts`; existing gold stays valid, and the
-schema number changes only if a field changes meaning.
+The states are the triager's own words (`Finding['state']` in `src/domain/issue-triage.ts`). A new state the
+skill gains later (such as `needs-info`) is added to `STATES` in `src/domain/issue-eval.ts`; existing gold stays
+valid, and the schema number changes only if a field changes meaning.
 
 ## Derived labels (free)
 
@@ -107,8 +107,8 @@ The result (`schema 1`, `kind: issue-eval-score`) is keyed by `<skills>-<commit>
 sha256s the replayed reports' steps recorded (and the categorizer's, each step's latest turn), the Studio commit, and a
 hash of the gold labels (so a grown gold set never replaces an earlier score). Uncommitted changes to the scoring code
 (`src/domain/issue-triage.ts`, `src/domain/issue-categories.ts`, `src/domain/issue-eval.ts`,
-`src/issue-eval-store.ts`, `scripts/issue-eval.ts`) add a hash of them. It also records the current bundled skills' hashes. Comparing two score files compares two
-skill sets or two rule sets on the same reports.
+`src/issue-eval-store.ts`, `scripts/issue-eval.ts`) add a hash of them. It also records the current bundled skills'
+hashes. Comparing two score files compares two skill sets or two rule sets on the same reports.
 
 Tests: `tests/issue-eval.ts` (the reader, mining, the template, import refusals, the scoring math on a hand-computed
 case, that the scorer runs the live rules, the script end to end).

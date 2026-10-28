@@ -82,6 +82,8 @@ try {
   ok(privatePathProblem(fakeRoot, join(fakeRoot, "data/issue-eval/p/gold.json"), ign) === null, "the checkout's ignored data directory may hold private data");
   ok(/not ignored/.test(privatePathProblem(fakeRoot, join(fakeRoot, "docs/gold.json"), ign) ?? ""), "a tracked path inside the checkout may not");
   ok(/not ignored/.test(privatePathProblem(fakeRoot, join(elsewhere, "into-checkout/gold.json"), ign) ?? ""), "nor one that reaches the checkout through a symbolic link");
+  ok(/not ignored/.test(privatePathProblem(fakeRoot, join(fakeRoot, "..x/gold.json"), ign) ?? ""), "a folder whose name starts with two dots is still inside the checkout");
+  ok(privatePathProblem(fakeRoot, join(temp, "checkout-sibling/gold.json"), ign) === null, "a sibling folder of the checkout is outside it");
   ok(!!privatePathProblem(fakeRoot, fakeRoot, () => true) && !!privatePathProblem(fakeRoot, join(fakeRoot, ".git/x"), () => true), "the checkout itself and its .git never may");
 
   // --- derived labels ---
@@ -109,6 +111,11 @@ try {
   ok(all.rows.length === 6 && r1.gold.state === "present" && r1.gold.files?.[0] === "src/a.ts" && r1.gold.security === "no" && r1.reviewed === false, "an agreed row is prefilled with the current answer and is not reviewed");
   ok((r4.model as any).a.state === "present" && (r4.model as any).b.state === "not-found" && (r4.model as any).a.security === "yes" && (r4.model as any).b.security === "no", "each row shows both investigators' answers");
   ok(r4.gold.state === undefined && r4.gold.files === undefined && r4.gold.security === undefined && r6.gold.state === undefined && r6.gold.files?.[0] === "src/a.ts", "a field the investigators disagree on is left for the captain to decide", JSON.stringify([r4.gold, r6.gold]));
+  // one investigator did not report #6: nothing about it is prefilled
+  const bOnly = { ...reportB, alone: [1, 4, 5], issues: reportB.issues.filter((f) => f.n !== 6) };
+  const lone = T.triageRecord({ project, snapshot, a: T.parseReport(reportA), b: T.parseReport(bOnly), read, by: "issue-triage R-lone", now: () => at });
+  const r6lone = E.labelTemplate({ project, triage: lone, categories: null, gold: null, sample: 50, seed: "s", at }).rows.find((r) => r.n === 6)!;
+  ok(JSON.stringify(r6lone.gold) === "{}" && (r6lone.model as any).diff.includes("missing"), "an issue only one investigator reported is left wholly for the captain", JSON.stringify(r6lone.gold));
   // within a stratum the seed's order decides: C-1|agree holds #1 #2, C-2|agree holds #3 #5
   const rk = (seed: string, n: number) => createHash("sha256").update(`${seed}\0${n}`).digest("hex");
   const first = (seed: string, ns: number[]) => [...ns].sort((x, y) => (rk(seed, x) < rk(seed, y) ? -1 : 1))[0];
@@ -230,6 +237,7 @@ try {
   const nr = cli("score", project, "--no-write");
   ok(nr.code === 0 && /no repository/.test(nr.out) && store.scores(project).length === 2, "without a repository the score warns that every code check fails, and --no-write writes nothing", nr.out);
 } finally {
+  rmSync(join(ROOT, "docs", "issue-eval-test-data"), { recursive: true, force: true });
   rmSync(temp, { recursive: true, force: true });
 }
 console.log(`\n${pass} passed`);
