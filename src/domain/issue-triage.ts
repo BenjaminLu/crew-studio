@@ -349,6 +349,8 @@ export type StoredPackage=Package&{id:string;commit:string;status:PackageStatus;
  match?:{with:string;where:string};
  /** cross-batch matches the captain joined to this package: which, who, when, and whether that withdrew its approval */
  joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[];
+ /** both reports came from one model (allowed on a machine with one usable model): their agreement is weaker evidence */
+ investigators?:{level:'same';by:string;en:string;zh:string};
  /** taken into a package by the captain although an open pull request names it */
  taken?:{by:string;at:string;pulls:number[]}};
 export type CrossEntry={id:string;issues:number[];package:Package&{commit:string};with:string;where:string};

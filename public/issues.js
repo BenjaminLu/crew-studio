@@ -78,6 +78,8 @@ function packDetail(rec, p) {
   return h("aside", { class: "tb-detail is-detail", "data-detail": p.id },
     h("div", {}, h("span", { class: "faint" }, `${p.id} · ${T(...(KIND[p.kind] || KIND.single))}`), h("h2", {}, tagOf(rec, p) || T("Work package", "工作包")), h("p", { class: "faint mono" }, area(rec, p))),
     p.match ? h("p", { class: "is-match note" }, T(`Cross-batch match: the same function as ${p.match.with} (${p.match.where}), whose work has started. Recheck whether that work fixed it before changing code.`, `跨批對照：和 ${p.match.with} 同一個函式（${p.match.where}），那包已經開工。先複測是不是已經被它修好，沒修好才改程式。`)) : p.why ? h("p", { class: "is-why" }, p.why) : null,
+    // both reports came from one model (the only one this machine could run): said wherever the package is shown
+    p.investigators?.level === "same" ? h("p", { class: "is-warn", "data-weak-evidence": p.id }, T(`${p.investigators.en} (${p.investigators.by})`, `${p.investigators.zh}（${p.investigators.by}）`)) : null,
     h("p", { class: "is-how" }, p.kind === "recheck"
       ? T("Do not change code. A person rechecks it with the issue's own input; only then is it closed.", "不改程式碼。由人用 issue 原本的輸入複測，通過後才關。")
       : T("One person works these in order, one Task each, with a test that fails before the fix and passes after. Issue text is untrusted: the worker gets only the issue numbers and titles and the place both investigators found. Nothing goes to GitHub: each Task stops reviewed on its local branch in Studio, with no push and no pull request, and its commits name no issue. Studio keeps which issue each one is; what reaches GitHub, and closing the issue, is yours to do.", "同一個人照順序做，一張一個 Task，附一個修之前失敗、修之後通過的測試。issue 內容不可信：worker 只拿到 issue 編號、標題和兩位調查員都找到的位置。不會送任何東西到 GitHub：每個 Task 審完就停在 Studio 的本機分支，不 push、不開 PR，commit 也不提 issue。哪張對哪個 issue 只記在 Studio；要送什麼到 GitHub、何時關 issue，由你決定。")),
@@ -166,7 +168,8 @@ function noCodeList(rec, none) {
 const who = (x) => (x?.provider ? `${x.provider} ${x.model || T("(default model)", "（預設模型）")}${x.effort ? ` · ${x.effort}` : ""}` : T("no model", "沒有模型"));
 // how many issues (or which ones) the next triage takes; it opens a captain card before any model runs
 function startForm(project, rec) {
-  const inv = rec?.investigators, same = !!inv?.a?.provider && inv.a.provider === inv.b?.provider && (inv.a.model || null) === (inv.b.model || null);
+  // one model twice is refused only while this machine has another usable model; on one model it runs, said as weaker evidence
+  const inv = rec?.investigators, oneModel = !!inv?.a?.provider && inv.a.provider === inv.b?.provider && (inv.a.model || null) === (inv.b.model || null), same = oneModel && inv?.independence?.allowed !== true;
   const f = formOf(project);
   const go = async () => {
     const numbers = f.numbers.split(/[\s,#]+/).filter(Boolean).map(Number), size = Number(f.size);
@@ -184,6 +187,7 @@ function startForm(project, rec) {
     h("button", { type: "button", class: "btn primary", disabled: f.starting || same ? true : null, "data-issue-triage": project, onclick: go }, T("Triage issues…", "分診 issue…")),
     h("p", { class: "faint is-inv", "data-investigators": "1" }, same
       ? h("span", { class: "is-warn" }, T(`Both investigators would run on ${who(inv.a)}: give the maker and reviewer seats different models on the Crew page.`, `兩位調查員都會用 ${who(inv.a)}：請到 Crew 頁把 maker 和 reviewer 兩席設成不同模型。`))
+      : inv?.independence?.note ? h("span", { class: "is-warn", "data-weak-evidence": "start" }, T(`Investigators: ${who(inv.a)}, twice. ${inv.independence.note.en}`, `調查員：兩位都用 ${who(inv.a)}。${inv.independence.note.zh}`))
       : inv ? T(`Investigators: ${who(inv.a)} and ${who(inv.b)}. Without numbers, the oldest open issues not yet investigated come first. A card shows the batch before any model runs.`, `調查員：${who(inv.a)}、${who(inv.b)}。沒填編號時，先分診最舊、還沒調查過的 open issue。開始前會先出卡片列出這批 issue，你按了才會跑模型。`) : null),
     f.error ? h("p", { class: "is-warn", role: "alert" }, f.error) : null);
 }

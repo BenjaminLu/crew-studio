@@ -145,7 +145,9 @@ Issues belong to their project: a project connected to GitHub has a "GitHub issu
   investigators' models as a triage of this project would run them (the team's seats in this project, else the
   workflow's Claude and Codex roles). Triaging posts `POST /api/issue-triage/<project>/start` (the desktop captain only)
   and opens the Task, which reads the issues and waits at its start card before any model runs. When both investigators
-  would run on one model the form says so and cannot start.
+  would run on one model while this machine has another model (signed in, even if held for now), the form says so and cannot start; when that one
+  model is all this machine has (docs/architecture.md, "Adaptive staffing"), it starts and the form says
+  "Investigators ran on the same model; agreement is weaker evidence".
 - **The latest triage** (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
   `data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`, which
   also names the investigators): work packages and what the investigators disagreed on. With categories, each
@@ -317,10 +319,16 @@ Categories card), `tests/acceptance/issue-categories.yaml`.
    comments), the 50 most recently updated closed issues (title and the first 2000 characters, for duplicates) and the
    trusted open pull requests that name an open issue on purpose. The snapshot's hash covers all of it.
 2. **Start card.** Captain-only: the batch, the commit and both investigators' models. Nothing paid runs before it;
-   closing it removes the checkout. It is refused before it is shown when both investigators would run on one model, or
-   when their rounds would not be in the round sandbox with no network beyond the model (a sandbox-off grant, an
+   closing it removes the checkout. It is refused before it is shown when both investigators would run on one model while
+   this machine has another usable model (or no provider facts were read), or when their rounds would not be in the round sandbox with no network beyond the model (a sandbox-off grant, an
    `egress.allow` policy, local unrestricted mode).
-3. **Two investigators** on the maker and reviewer seats (Claude and Codex without a Studio team; the team decides otherwise; always two different models) follow `workflows/skills/issue-triager.md`.
+3. **Two investigators** on the maker and reviewer seats (Claude and Codex without a Studio team; the team decides
+   otherwise) follow `workflows/skills/issue-triager.md`. They run on two different models, of one vendor when only one
+   is signed in. Only when this machine has one model at all (a vendor out of quota or with unreadable quota still counts;
+   the facts are read again first) do both run on it: the start card says so ("Investigators ran
+   on the same model; agreement is weaker evidence", with why), Studio's ledger records it (`issue-triage-independence`),
+   the record step accepts the two reports only from exactly the pair that card confirmed, the approval card says it, and each package the batch adds keeps
+   `investigators: {level: same, by, en, zh}`, shown on the project page beside the package.
    They read issue text and comments only through `issue_read` (this batch and the closed issues the brief lists, marked
    untrusted; it also names the open pull requests found for an issue) and the code only through
    `fs_list`, `fs_search` and `fs_read` on the checkout, in the round sandbox with no network and no token. They submit

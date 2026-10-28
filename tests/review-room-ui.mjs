@@ -36,7 +36,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 const cl = (text, cites = [], basis = cites.some((c) => c.ok) ? "cited" : "inference") => ({ text, kind: "claim", basis, cites });
 const ok1 = (ref) => ({ ref, ok: true });
 const ROOM = { card: { id: "SC-50", run: "R-050", node: "merge-card", title: { en: "Merge: Add percent", "zh-TW": "合併：新增 percent" }, status: "open" }, task: { id: "R-050", title: "Add percent" }, pr: { id: 7, url: null }, head: H, base: B, open: true, running: null,
-  offer: { provider: "codex", model: "gpt-6", effort: "high", paid: true, hash: "feedc0ffee123456", voice: { vendor: "openai", model: "gpt-4o-mini-tts", voice: "alloy" } },
+  offer: { provider: "codex", model: "gpt-6", effort: "high", paid: true, independence: { level: "same", adaptive: true, en: "Same model as the author: a fresh context, not an independent opinion. Only one model is usable on this machine (codex gpt-6).", zh: "和作者同一個模型：是新的脈絡，不是獨立意見。這台機器只有一個可用的模型（codex gpt-6）。" }, hash: "feedc0ffee123456", voice: { vendor: "openai", model: "gpt-4o-mini-tts", voice: "alloy" } },
   actions: [["how", "How does this change work?", "這個改動是怎麼運作的？"], ["why", "Why?", "為什麼？"], ["teach", "Teach me", "教我"], ["merge-check", "Check", "檢查"], ["quiz", "Quiz", "考我"]].map(([id, en, zh]) => ({ id, en, zh })),
   board: [
     { id: "B0-1", turn: 0, type: "image", kind: "illustration", title: "This change at a glance", status: "pending", src: null, basis: "illustration", cites: [] },
@@ -158,6 +158,7 @@ try {
     ok((await p.inputValue("[data-room-text]")) === "why do halves round up" && await p.evaluate(() => window.__recStarted.local === true) && !posts.length, "holding the mic fills the question with what it heard, recognised on this device; nothing is sent yet");
     await p.dispatchEvent("[data-mic]", "pointerup");
     await p.click("[data-room-send]"); await p.waitForSelector('[data-room-confirm="ask"]');
+    ok(await p.getAttribute("[data-independence]", "data-independence") === "same" && /Tutor: codex · gpt-6 — Same model as the author: a fresh context, not an independent opinion\. Only one model is usable/.test(await p.textContent("[data-independence]")), "the room labels the tutor and its independence from the author");
     ok(/paid model round on codex · gpt-6 \(high\)/.test(await p.textContent("[data-room-confirm]")) && /up to two illustrations, each a paid image job/.test(await p.textContent("[data-room-confirm]")) && /nothing is sent to GitHub/.test(await p.textContent("[data-room-confirm]")) && !posts.length, "Ask first asks to confirm the paid round on its provider and model, illustrations included");
     await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector('[data-room-action="why"]')?.disabled);
     ok(posts.length === 1 && posts[0].action === "ask" && posts[0].text === "why do halves round up" && posts[0].confirm === "feedc0ffee123456" && posts[0].lang === "en", "Start sends the spoken question with the confirmation and the captain's language", JSON.stringify(posts));

@@ -273,6 +273,8 @@ function promptBar(r) {
     finally { RR.posting.delete(card); rerender(); schedule(); } };
   const talk = !!RR.rec;
   return h("div", { class: "rr-bar", "data-chat": card },
+    // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
+    offer?.independence ? h("p", { class: `faint rr-indep${offer.independence.level === "same" ? " rr-warn" : ""}`, "data-independence": offer.independence.level }, T(`Tutor: ${offer.provider} · ${offer.model ?? "default model"} — ${offer.independence.en}`, `導師：${offer.provider} · ${offer.model ?? "預設模型"}：${offer.independence.zh}`)) : null,
     h("div", { class: "rr-quick", role: "group", "aria-label": T("Quick actions", "快速動作") }, r.actions.map((a) => h("button", { type: "button", class: "btn", "data-room-action": a.id, disabled: busy, onclick: () => ask(a.id) }, T(...(ACTION_LABEL[a.id] || [a.en, a.zh]))))),
     h("div", { class: "rr-askrow" },
       h("input", { class: "input", type: "text", maxlength: 4000, "data-room-text": card, disabled: busy, "aria-label": T("Ask anything about this change", "問任何關於這個改動的問題"), placeholder: T("Ask anything about this change, or interrupt with a question…", "問任何關於這個改動的問題，或隨時打斷發問…"), value: RR.draft.get(card) || "",
