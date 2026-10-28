@@ -415,7 +415,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
    */
   const codeFacts = (x: X, role: "coordinator" | "worker" | "reviewer" | "designer", f: { runs?: number; deliverable: string[] }): SkeletonFacts => {
     const manual = [`code-firstmate/${role}`];
-    const github = !!(x.ctx.project && o.projects.get(x.ctx.project)?.github); if (github) manual.push("code-firstmate/github");
+    // a tainted Task never goes to GitHub, so its briefs carry no GitHub manual and no push facts
+    const github = !tainted(x) && !!(x.ctx.project && o.projects.get(x.ctx.project)?.github); if (github) manual.push("code-firstmate/github");
     let cfg: RepoCfg | null = null; try { cfg = cfgOf(x); } catch {}
     const tests = !cfg ? ["Test command: unknown (the repository's configuration could not be read at the base)."]
       : cfg.testError ? [`Test command: invalid (${cfg.testError}).`]
@@ -435,6 +436,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     deps.push(gaps.length ? `Open preflight gaps: ${gaps.map((g) => `${g.code}: ${g.message}`).join("; ")}.` : "Environment preflight: no open gap.");
     const env = [`Branch ${x.ctx.branch ?? "(not made yet)"} on base ${x.ctx.base ?? "(unknown)"}${x.ctx.baseCommit ? ` at ${String(x.ctx.baseCommit).slice(0, 12)}` : ""}${x.ctx.head ? `, head ${String(x.ctx.head).slice(0, 12)}` : ""}.`];
     if (github) env.push("GitHub project: Studio rebases this branch every round and pushes only it, with a lease; you never push.");
+    else if (tainted(x)) env.push("Local only: this Task comes from issue text and stops on its local branch; nothing is pushed or published.");
     return { manual, ENVIRONMENT: env, TESTS: tests, DEPENDENCIES: deps, DELIVERABLE: f.deliverable };
   };
   engine.natives["env-preflight"] = (_i, h) => {

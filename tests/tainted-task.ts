@@ -20,11 +20,12 @@ const { RoundBlocked } = await import("../src/round-blocked");
 const refs = /#\d|GH-\d|\/issues\/\d|\/pulls?\/\d|\/discussions\/\d|(^|[^\w`])@\w/im;
 for (const [t, why] of [["Fixes #12", "a closing keyword"], ["Refs #12", "a plain reference"], ["see #3 and #4", "two bare references"], ["**Closes**: fixture/project#7", "another repository's form, with emphasis"],
   ["Resolved https://github.com/fixture/project/issues/9#issuecomment-1", "an issue URL"], ["like https://ghe.example/o/r/pull/5", "a pull request URL on another host"], ["GH-21 again", "GH-n"],
-  ["see www.github.com/o/r/issues/12", "a www. URL without a scheme"], ["https://github.com/o/r/discussions/12", "a discussion"], ["as in ../../issues/12 above", "a relative issues path"], ["(#5)", "a reference in parentheses"]] as const)
+  ["see www.github.com/o/r/issues/12", "a www. URL without a scheme"], ["https://github.com/o/r/discussions/12", "a discussion"], ["as in ../../issues/12 above", "a relative issues path"], ["(#5)", "a reference in parentheses"],
+  ["Fixes:#12", "a colon with no space"], ["Fixes #12;", "a semicolon after it"], ["|#12|", "a table cell"], ["a=#12", "after ="], ["see—#12", "after a dash"], ["<#12>", "in angle brackets"], ["參見、#12", "after an ideographic comma"]] as const)
   ok(!refs.test(W(t)) && /an issue/.test(W(t)), `no issue reference survives: ${why}`, W(t));
 for (const [t, want, why] of [["thanks @octocat", "thanks octocat", "a user"], ["cc @fixture-org/core-team please", "cc fixture-org/core-team please", "a team"]] as const)
   ok(W(t) === want, `an @mention loses its @: ${why}`, W(t));
-for (const [t, why] of [["## Door\ntwo-way\n\n# Title", "markdown headings"], ["color: #123456;", "a CSS color"], ["a &#123; entity", "an HTML entity"], ["mail me@example.com", "an email address"],
+for (const [t, why] of [["## Door\ntwo-way\n\n# Title", "markdown headings"], ["color: #123456;", "a CSS color"], ["a &#123; entity", "an HTML entity"], ["mail me@example.com", "an email address"], ["background:#123456", "a CSS color with no space"], ["a &#x1F600; and &#9731; entity", "hex and decimal entities"],
   ["https://github.com/o/r/blob/main/src/url.ts#12", "a blob URL's anchor"], ["run `git log #12 @octocat` here", "an inline code span"], ["```\nFixes #12 @octocat\n```", "a fenced code block"]] as const)
   ok(W(t) === t, `left as written: ${why}`, W(t));
 
@@ -57,9 +58,15 @@ const cardFlow = Y({ id: "plain-card", name: "plain-card", version: 1, params: {
   const g2 = E.grants.add({ kinds: ["sandbox-off"], until: "2099-01-01T00:00:00Z" }, "captain (desktop)"), card = E.cards.list({ run: asked.id, open: true })[0];
   let refused = ""; try { await E.answer(card.id, { choice: "go", by: "captain" }); } catch (e: any) { refused = String(e?.message); }
   ok(/sandbox-off grant/.test(refused) && E.cards.get(card.id)?.status === "open", "under a sandbox-off grant an answer that carries a tainted run on is refused, the card left open", refused);
+  // an answer recorded in the sandbox and carried on later (after a restart) outside it: the node stops, blocked
+  E.grants.revoke(g2.id, "captain (desktop)"); const later = E.start({ workflow: "plain-card", params: { _tainted: "issue-text" } }); await until(() => E.cards.list({ run: later.id, open: true }).length === 1);
+  const lc = E.cards.list({ run: later.id, open: true })[0]; E.cards.answer(lc.id, { choice: "go", by: "captain" });
+  const g3 = E.grants.add({ kinds: ["sandbox-off"], until: "2099-01-01T00:00:00Z" }, "captain (desktop)");
+  await E.carryAnswer(E.get(later.id)!, "ask"); await done(later.id);
+  ok(E.get(later.id)!.status === "failed" && /sandbox-off grant/.test(String(E.get(later.id)!.nodes.ask?.error)) && !E.get(later.id)!.nodes.end?.visits, "an answer carried on outside the OS sandbox (carryAnswer) stops the node instead of going on", JSON.stringify([E.get(later.id)!.status, E.get(later.id)!.nodes.ask?.error]));
   await E.answer(card.id, { choice: "stop", by: "captain" }); await done(asked.id);
   ok(E.get(asked.id)!.status === "succeeded" && E.get(asked.id)!.result === "closed", "holding it is always allowed", JSON.stringify([E.get(asked.id)!.status, E.get(asked.id)!.result, E.get(asked.id)!.error]));
-  E.grants.revoke(g2.id, "captain (desktop)");
+  E.grants.revoke(g3.id, "captain (desktop)");
   const back = E.start({ workflow: "plain-hook", params: { _tainted: "issue-text" } }); await done(back.id);
   ok(E.get(back.id)!.status === "succeeded" && ran === 3, "in the OS sandbox a tainted run runs");
   // a new Task from its failure card repeats as a tainted one
@@ -106,13 +113,15 @@ const intent = ["Add a percent function to money-kit, fixes #12 (https://github.
   "STUB_FILE src/percent.ts :: export function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n",
   'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent.ts"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");
 // a GitHub adapter that records every call: a tainted Task must make none, whatever the project's grant
-const calls: string[] = [];
+const calls: string[] = [], at0 = "2026-10-28T00:00:00Z";
 const github = new Proxy(Object.create(GitHubPrAdapter.prototype), { get(_t, k) {
   if (k === "grant") return { mode: "simulator", repository: "fixture/project", approvalId: "fixture", base: "main", branchPrefix: "crew/" };
   if (typeof k === "symbol" || k === "then" || k === "toJSON" || k === "constructor") return undefined;
   return (...a: unknown[]) => { calls.push(String(k)); throw new Error(`GitHub adapter called: ${String(k)}`); }; } });
 for (const tainted of [false, true]) {
   const data = checkedTempDir("crew-tainted-"); prepareSandbox(data); registerSandbox(data);
+  // the tainted Task's project has a GitHub grant: none of it reaches the Task
+  if (tainted) { const f = join(data, "projects.json"), list = JSON.parse(readFileSync(f, "utf8")); list[0].github = { mode: "simulator", repository: "fixture/project", localPath: list[0].path, pushUrl: join(data, "nowhere.git"), apiOrigin: "http://127.0.0.1:9", base: "main", branchPrefix: "crew/", approvedAt: at0, approvalId: "fixture" }; writeFileSync(f, JSON.stringify(list)); }
   const H = await harness([WF], { data, checkRoots: [], policies: "reviewer:\n  mode: diff\n" }), E = H.engine; installCode(E, { dataDir: data, projects: new Projects(data), ...(tainted ? { adapter: github } : {}) });
   const r = E.start({ workflow: "code-firstmate", params: tainted ? { _tainted: "issue-text" } : {}, text: intent });
   const fin = () => ["succeeded", "failed", "cancelled"].includes(E.get(r.id)!.status);
@@ -129,6 +138,10 @@ for (const tainted of [false, true]) {
     ok(main === run.ctx.baseCommit && must(run.ctx.repo, ["rev-parse", run.ctx.branch]) === run.ctx.taintedReady?.head, "the base branch is untouched; the work is on the Task's branch", JSON.stringify([main, run.ctx.baseCommit]));
     ok(calls.length === 0 && run.ctx.pr?.adapter === "local", "the project's GitHub adapter is never called: no push, no pull request, no read", calls.join(", "));
     ok(dep?.data?.mode === "run", "the review runs in run mode whatever reviewer.mode says", JSON.stringify(dep?.data?.mode));
+    const briefs = [run.ctx.lastPrompt?.build, run.ctx.lastPrompt?.review].map(String);
+    ok(briefs.every((b) => b.length > 100 && !/code-firstmate\/github/.test(b) && !/pushes only it/.test(b) && /Local only: this Task comes from issue text/.test(b)), "its worker and reviewer briefs carry no GitHub manual and no push facts, and say it stays local", briefs.map((b) => b.slice(0, 120)).join(" | "));
+    let merged = ""; try { await E.actions["git.merge"](E.x(run, run.def.nodes.find((n: any) => n.id === "merge")!, run.nodes.merge)); } catch (e: any) { merged = String(e?.message); }
+    ok(/never merged/.test(merged), "its merge step refuses it, whatever reaches it", merged);
     ok(!!log && !refs.test(log) && /an issue/.test(log), "its round commits name no issue and mention no one", log.slice(0, 400));
     // a check of it under a sandbox-off grant (an edge's, a card's, one run after an answer) records an error instead of running
     const g = E.grants.add({ kinds: ["sandbox-off"], until: "2099-01-01T00:00:00Z" }, "captain (desktop)");

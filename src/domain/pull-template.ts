@@ -123,11 +123,11 @@ export const withoutSessionLinks = (text: string) => String(text ?? "").split("\
 /** A Task drawn from an issue triage leaves no trace on GitHub: any reference GitHub would link back to an issue, a pull
  *  request or a discussion (#n, GH-n, owner/repo#n; an issues, pull or discussions URL, with or without https:// or www.,
  *  or a relative issues/n path) becomes "an issue", and an @mention (@user, @org/team) loses its @, so its text neither
- *  closes an issue, nor cross-references one, nor notifies anyone. A #n counts only where GitHub links it (at the start or
- *  after a space or punctuation): an HTML entity (&#123;), a CSS color (color: #123456;) and a URL's anchor (file.ts#12)
- *  stay. Code (a fenced block or an inline span) stays as written. The issues stay named in Studio's own records only. */
+ *  closes an issue, nor cross-references one, nor notifies anyone. A #n counts wherever GitHub may link it: anywhere but
+ *  right after a letter, a digit, "&", "/" or "#", so an HTML entity (&#123;) and a URL's anchor (file.ts#12) stay, and so
+ *  does a CSS color after its property (color: #123456;). Code (a fenced block or an inline span) stays as written. The issues stay named in Studio's own records only. */
 const LINK_URL = /(?:https?:\/\/|\bwww\.)[^\s)>\]]+?\/(?:issues|pulls?|discussions)\/\d+[^\s)>\]]*|(?<![\w/.-])(?:\.\.?\/)*(?:issues|pulls?|discussions)\/\d+\b/gi;
-const SHORT_REF = /(?<=^|[\s(\[{,;!?"'*_~>])(?:[\w.-]+\/[\w.-]+)?#\d+\b(?!;)|(?<![\w-])GH-\d+\b/gim;
+const SHORT_REF = /(?<![\w&\/#])(?:[\w.-]+\/[\w.-]+)?#\d+\b|(?<![\w-])GH-\d+\b/gi;
 const CSS_COLOR = /\b(?:color|background(?:-color)?|fill|stroke|border(?:-[a-z]+)*|outline)\s*:\s*$/i;
 const MENTION = /(?<![\w`@.\/-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[\w.-]+)?)\b/g;
 const CODE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
