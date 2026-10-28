@@ -284,3 +284,8 @@ both cards, the tool limits, refused reports, changed issues, one model, Firstma
 project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
 links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the empty state, the Crew section's seats; the
 Board has no Issues view).
+
+### Measuring triage and categories
+
+A gold set per project (in the data directory only) and an offline scorer that replays the stored investigator reports
+through the current rules: `bun scripts/issue-eval.ts label|import|score <project>` (docs/units/issue-eval.md).
