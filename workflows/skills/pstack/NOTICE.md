@@ -9,7 +9,8 @@ references/explorer-prompt.md), skills/why (SKILL.md, references/epistemics.md, 
 references/synthesizer-prompt.md, references/source-playbook.md, references/sources/code-archaeology.md) and
 skills/teach (SKILL.md). Crew Studio's changes: one round instead of subagents, no model settings file, no MCP or Cursor
 discovery, Studio's read-only tools instead of a shell and `gh`, local git history only for `why` (the other evidence
-categories are recorded as gaps), and the board's diagram build-up instead of image generation.
+categories are recorded as gaps), the board's diagram build-up, real screenshots, charts and labelled generated
+illustrations for `teach`'s pictures, and answers as long as the question needs.
 
 MIT License
 

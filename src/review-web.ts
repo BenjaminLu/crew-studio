@@ -50,6 +50,15 @@ export function queryRefusal(q: unknown, c: WebContext): string | null {
   if (/[{};`]|=>|::|\(\)|\[\]|<\/?[a-z]/i.test(t)) return "it looks like code; ask in general words";
   return leak(t, c);
 }
+/** Why an illustration prompt is refused, or null: the image model gets the same filter as a web query (no code, no
+ *  paths, no repository, owner or project names, no private hosts), in a few sentences of plain words. */
+export function illustrationRefusal(p: unknown, c: WebContext): string | null {
+  const t = typeof p === "string" ? p.trim() : "";
+  if (!t) return "the prompt is empty";
+  if (t.length > 600) return "a prompt is at most 600 characters of plain words";
+  if (/[{};`]|=>|::|\(\)|\[\]|<\/?[a-z]/i.test(t)) return "it looks like code; describe the idea in general words";
+  return leak(t, c);
+}
 /** Why an address is refused, or null: http(s), a public host by name, its standard port, no credentials, no leak. */
 export function urlRefusal(raw: unknown, c: WebContext): string | null {
   let u: URL; try { u = new URL(String(raw ?? "")); } catch { return "not an address"; }

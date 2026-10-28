@@ -4,7 +4,8 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), steps: new Map(), cite: new Map(), poll: null };
+const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+  scene: new Map(), reveal: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -103,79 +104,198 @@ function citePanel(r) {
 const diffPre = (text) => h("pre", { class: "rr-pre rr-diff" }, String(text || "").split("\n").map((l) => h("span", { class: l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : l.startsWith("@@") ? "hunk" : "" }, l || " ")));
 const linesPre = (x, hl = []) => !x ? h("p", { class: "faint" }, T("(not in this commit)", "（這個 commit 沒有）")) : x.binary ? h("p", { class: "faint" }, T("(a binary file)", "（二進位檔）"))
   : h("pre", { class: "rr-pre rr-code" }, x.lines.map((l, i) => h("span", { class: hl.includes(x.start + i) ? "hl" : "", "data-line": x.start + i }, h("i", {}, String(x.start + i).padStart(4)), " ", l)));
-function basisRow(card, it) { return it.basis === "inference" ? h("div", { class: "rr-basis" }, inferenceBadge()) : it.cites?.length ? h("div", { class: "rr-basis" }, it.cites.map((c) => citeChip(card, c.ref, c.ok))) : null; }
+// ---------- pictures: real screenshots (before / after), charts from real numbers, generated illustrations ----------
+const KIND_LABEL = { screenshot: ["screenshot · base and head", "截圖 · base 與 head"], chart: ["chart", "圖表"], illustration: ["illustration · generated", "插圖 · 生成"] };
+const kindBadge = (k, extra) => h("span", { class: `rr-kind ${k}`, "data-kind": k }, T(KIND_LABEL[k][0], KIND_LABEL[k][1]), extra ? ` · ${extra}` : "");
+const zoom = (src, alt) => { RR.zoom = { src, alt }; rerender(); requestAnimationFrame(() => document.querySelector("[data-zoom] button")?.focus()); };
+function shotView(card, it) {
+  const key = `${card}/${it.id}`, side = RR.shot.get(key) || "after", pick = (p) => side === "before" ? p.before : p.after;
+  return h("div", { class: "rr-shots", "data-shot-side": side },
+    h("div", { class: "rr-toggle", role: "group", "aria-label": T("Before or after", "之前或之後") }, ["before", "after"].map((sd) => h("button", { type: "button", class: "btn ghost", "data-shot-toggle": sd, "aria-pressed": String(side === sd), onclick: () => { RR.shot.set(key, sd); rerender(); } }, sd === "before" ? T("Before (base)", "之前（base）") : T("After (head)", "之後（head）")))),
+    it.pages.map((p) => h("figure", { class: "rr-fig", "data-shot-page": p.label }, pick(p) ? h("img", { src: pick(p), alt: `${p.label} · ${side}`, loading: "lazy", "data-shot-img": side, onclick: () => zoom(pick(p), `${p.label} · ${side}`) }) : h("p", { class: "faint" }, T("(this side has no picture: the page did not build)", "（這一側沒有圖：頁面沒有建置出來）")),
+      h("figcaption", {}, p.label, p.changed && (p.changed.added?.length || p.changed.removed?.length) ? h("span", { class: "faint" }, ` · ${T("text changed", "文字有變")}: ${(p.changed.removed || []).slice(0, 2).join(", ") || "—"} → ${(p.changed.added || []).slice(0, 2).join(", ") || "—"}`) : null))));
+}
+function chartView(it) {
+  const rows = it.rows || [], two = it.mode === "diffstat" || it.mode === "before-after";
+  const vals = rows.flatMap((r) => it.mode === "diffstat" ? [r.added, r.removed] : [r.before, r.after, r.value]).filter((v) => typeof v === "number");
+  const max = Math.max(1, ...vals.map(Math.abs)), LW = 170, BW = 260, RH = two ? 34 : 22, W = LW + BW + 70, Hh = 18 + rows.length * RH;
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${Hh}`, width: W, class: "rr-chart", role: "img", "data-chart": it.mode });
+  const bar = (y, v, cls) => { if (typeof v !== "number") return; const w = Math.max(1, Math.round(Math.abs(v) / max * BW)); svg.append(sv("rect", { x: LW, y, width: w, height: 12, class: cls, "data-value": v })); const t = sv("text", { x: LW + w + 6, y: y + 10, class: "rr-chart-v" }); t.textContent = `${v}${it.unit ? " " + it.unit : ""}`; svg.append(t); };
+  rows.forEach((r, i) => { const y = 14 + i * RH, l = sv("text", { x: LW - 8, y: y + 10, "text-anchor": "end", class: "rr-chart-l" }); l.textContent = r.label.length > 26 ? "…" + r.label.slice(-25) : r.label; svg.append(l);
+    if (it.mode === "diffstat") { bar(y, r.added, "add"); bar(y + 14, r.removed, "del"); } else if (it.mode === "before-after") { bar(y, r.before, "before"); bar(y + 14, r.after, "after"); } else bar(y, r.value, "after"); });
+  const legend = it.mode === "diffstat" ? [["add", T("lines added", "新增行數")], ["del", T("lines removed", "刪除行數")]] : it.mode === "before-after" ? [["before", T("before", "之前")], ["after", T("after", "之後")]] : [];
+  return h("div", { class: "rr-chart-wrap" }, svg, legend.length ? h("div", { class: "rr-legend" }, legend.map(([c, l]) => h("span", {}, h("i", { class: c }), l))) : null);
+}
+function imageView(it) {
+  if (it.status === "pending" || !it.src) return h("figure", { class: "rr-fig rr-pending", "data-illustration-pending": it.id }, h("div", { class: "rr-ph", role: "img", "aria-label": T("Illustration being drawn", "插圖繪製中") }, it.status === "failed" ? T(`The illustration could not be made: ${it.error || ""}`, `插圖沒有畫成：${it.error || ""}`) : T("Drawing the illustration in the background (a minute or two)…", "正在背景繪製插圖（約一兩分鐘）…")));
+  return h("figure", { class: "rr-fig" }, h("img", { src: it.src, alt: it.title, loading: "lazy", "data-illustration": it.id, onclick: () => zoom(it.src, it.title) }),
+    h("figcaption", { class: "faint" }, T("A generated sketch of the idea, not evidence: the claims it shows cite the diff, a check or a commit.", "生成的示意圖，不是證據：它畫的每個說法都引用 diff、檢查或 commit。")));
+}
+function basisRow(card, it) { return it.basis === "illustration" ? h("div", { class: "rr-basis" }, h("span", { class: "rr-inference", "data-basis": "illustration" }, T("Not evidence", "不是證據"))) : it.basis === "inference" ? h("div", { class: "rr-basis" }, inferenceBadge()) : it.cites?.length ? h("div", { class: "rr-basis" }, it.cites.map((c) => citeChip(card, c.ref, c.ok))) : null; }
 function itemView(card, it, prev) {
-  const head = h("div", { class: "rr-item-h" }, h("span", { class: "vbadge" }, it.type), h("b", {}, it.title || ""), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
+  const head = h("div", { class: "rr-item-h" }, it.kind ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge" }, it.type), h("b", {}, it.title || ""), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
   let body;
   if (it.type === "mermaid") { const g = parseFlow(it.code), p = prev ? parseFlow(prev.code) : null; body = g ? h("div", { class: "rr-flow-wrap", "data-flow": it.id }, flowSvg(g, p)) : [h("p", { class: "faint" }, T("Diagram source (Studio draws flowcharts; this kind is shown as text)", "圖表原始碼（Studio 會畫 flowchart；這種圖以文字顯示）")), h("pre", { class: "rr-pre" }, it.code)]; }
   else if (it.type === "diff") body = [it.header ? h("p", { class: "faint" }, it.header) : null, diffPre(it.text)];
   else if (it.type === "code") body = linesPre(it, it.highlight || []);
+  else if (it.type === "screenshot") body = shotView(card, it);
+  else if (it.type === "chart") body = chartView(it);
+  else if (it.type === "image") body = imageView(it);
   else if (it.type === "compare") body = h("div", { class: "rr-compare" }, h("div", {}, h("b", {}, T("Before (base)", "之前（base）")), linesPre(it.before)), h("div", {}, h("b", {}, T("After (head)", "之後（head）")), linesPre(it.after)));
   else body = h("p", { class: "rr-note" }, inline(card, it.text || "", it.cites));
   return h("article", { class: "rr-item", id: `rr-${it.id}`, "data-board-item": it.id, "data-item-type": it.type }, head, body, basisRow(card, it));
 }
-function boardView(r) {
-  const card = r.card.id, out = [], groups = new Map();
-  for (const it of r.board) if (it.group) { const k = `${it.turn}/${it.group}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); }
-  const shown = new Set();
-  for (const it of r.board) {
-    if (!it.group) { out.push(itemView(card, it, null)); continue; }
-    const k = `${it.turn}/${it.group}`; if (shown.has(k)) continue; shown.add(k);
-    const steps = groups.get(k).slice().sort((a, b) => (a.step || 0) - (b.step || 0)), key = `${card}/${k}`, at = Math.min(RR.steps.get(key) ?? steps.length - 1, steps.length - 1), cur = steps[at];
-    const go = (n) => { RR.steps.set(key, Math.max(0, Math.min(steps.length - 1, n))); rerender(); };
-    out.push(h("section", { class: "rr-steps", "data-build-up": it.group, "data-step": at + 1, "data-steps": steps.length },
-      h("div", { class: "rr-step-bar" }, h("b", {}, T(`Step ${at + 1} of ${steps.length}`, `第 ${at + 1} 步，共 ${steps.length} 步`)),
-        h("button", { type: "button", class: "btn ghost", "data-step-prev": "", disabled: at === 0, onclick: () => go(at - 1) }, T("← Back", "← 上一步")),
-        h("button", { type: "button", class: "btn ghost", "data-step-next": "", disabled: at === steps.length - 1, onclick: () => go(at + 1) }, T("Next part →", "下一部分 →"))),
-      itemView(card, cur, at ? steps[at - 1] : null)));
-  }
-  return h("section", { class: "card x-pad rr-board", "data-board": card, "aria-label": T("Board", "白板") }, h("h2", {}, T("Board", "白板")),
-    out.length ? out : h("p", { class: "faint", "data-board-empty": "" }, T("The tutor draws here: diagrams built up one part at a time, the diff, code at the head, before and after.", "導師會在這裡畫：一步一步組起來的圖、diff、head 的程式碼、改動前後。")));
-}
-
-// ---------- the chat ----------
+// ---------- the stage: each answer is a scene, a visual beside the tutor's points, revealed step by step ----------
 const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"] };
-function answerView(card, t) {
-  if (t.status === "running") return h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${t.provider} · ${t.model})…`, `導師作答中（${t.provider} · ${t.model}）…`));
-  if (t.status !== "done") return h("p", { class: "rr-err", "data-turn-failed": t.status }, t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${t.error || ""}`);
-  const claims = t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }];
-  return h("div", { class: "rr-answer" }, claims.map((c) => c.kind === "heading" ? h("h4", {}, c.text.replace(/^\s*#+\s*/, "")) : c.kind === "code" ? h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, ""))
-    : h("p", { class: `rr-claim${c.basis === "inference" ? " inference" : ""}`, "data-claim": c.basis || c.kind }, c.basis === "inference" ? inferenceBadge() : null, inline(card, c.text.replace(/^\s*[-*+]\s+/, "• "), c.cites))));
+const plain = (s) => String(s || "").replace(CITE, "").replace(/\*\*|`/g, "").replace(/^\s*([-*+]|\d+\.)\s+/, "").replace(/\s+/g, " ").trim();
+/** the room's scenes: the opening picture (turn 0), then one per turn, its points the answer's claims */
+function scenesOf(r) {
+  const out = [], opening = r.board.filter((b) => b.turn === 0);
+  if (opening.length) out.push({ key: "t0", turn: 0, title: T("This change at a glance", "一眼看懂這個改動"), question: null, visuals: opening, points: [], questions: [] });
+  for (const t of r.turns) {
+    const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]) : [];
+    const heading = claims.find((c) => c.kind === "heading"), [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action];
+    out.push({ key: `t${t.n}`, turn: t.n, t, title: heading ? plain(heading.text.replace(/^\s*#+\s*/, "")) : `${T(en, zh)}: ${t.text.slice(0, 80)}`, question: t.text,
+      visuals: r.board.filter((b) => b.turn === t.n), points: claims.filter((c) => c.kind !== "heading"), questions: r.check.questions.filter((q) => q.turn === t.n) });
+  }
+  return out;
 }
-function chatView(r) {
+const sceneState = (card, scenes) => { let i = RR.scene.get(card); if (i == null || i >= scenes.length) i = scenes.length - 1; return Math.max(0, i); };
+const revealOf = (card, sc) => Math.min(sc.points.length, RR.reveal.get(`${card}/${sc.key}`) ?? sc.points.length);
+/** the visual a scene shows after k points: the last board item a shown point cites, else the scene's first */
+function visualAt(r, sc, k) {
+  let v = sc.visuals[0] || null;
+  for (const p of sc.points.slice(0, k)) for (const c of p.cites || []) if (c.ref.startsWith("board:")) { const b = r.board.find((x) => x.id === c.ref.slice(6)); if (b) v = b; }
+  return v;
+}
+// ---------- narration: captions always; a voice only when the captain picks one (off by default) ----------
+// The voice is the tutor vendor's own neural voice when it has one (the narration goes only to that vendor, the one the
+// tutor already uses; generated once per scene and kept in the room), else a voice of this Mac (on-device only: a voice
+// the browser would send to a server is never offered), the best first (Premium, Enhanced, Siri).
+const prefs = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+const voiceRank = (v) => /premium/i.test(v.name) ? 3 : /enhanced|siri/i.test(v.name) ? 2 : /neural|natural/i.test(v.name) ? 1 : 0;
+const localVoices = () => { try { const l = uiLang().slice(0, 2).toLowerCase(); return (window.speechSynthesis?.getVoices?.() || []).filter((v) => v.localService && v.lang?.toLowerCase().startsWith(l)).sort((a, b) => voiceRank(b) - voiceRank(a)); } catch { return []; } };
+const voicePref = () => prefs.get("crew.room.voice") || "off";
+const chosenLocal = () => { const p = voicePref(); if (!p.startsWith("local:")) return null; const vs = localVoices(); return vs.find((v) => v.voiceURI === p.slice(6)) || null; };
+function speak(text, done) {
+  const v = chosenLocal(); if (!v) return false;
+  try { const u = new SpeechSynthesisUtterance(text); u.voice = v; u.lang = v.lang; u.onend = done; u.onerror = done; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); return true; } catch { return false; }
+}
+function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; }
+/** show one more point of the current scene; while playing, the next one follows when its caption has been read (or spoken) */
+function advance(card) {
+  const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), sc = scenes[sceneState(card, scenes)]; if (!sc) return;
+  const k = revealOf(card, sc); if (k >= sc.points.length) { stopPlay(); rerender(); return; }
+  RR.pick.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
+  if (RR.playing !== card || RR.audio) return;
+  const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
+  if (speak(text, next)) return;
+  RR.timer = setTimeout(() => advance(card), Math.min(9000, 1600 + text.length * 35));
+}
+/** the vendor's voice for a whole scene: the points appear as the audio reaches them (by their share of the text) */
+async function playVendor(card, sc) {
+  try { const out = await postJ(`/api/review-room/${enc(card)}/speech`, { scene: sc.key }); if (RR.playing !== card) return;
+    const texts = sc.points.map((p) => plain(p.text)), total = texts.reduce((n, t) => n + t.length, 0) || 1; let acc = 0; const at = texts.map((t) => { const s = acc / total; acc += t.length; return s; });
+    const a = new Audio(out.src); RR.audio = a;
+    a.ontimeupdate = () => { if (RR.audio !== a || !a.duration) return; const f = a.currentTime / a.duration, k = at.filter((s) => s <= f + 1e-6).length; if (k > revealOf(card, sc)) { RR.reveal.set(`${card}/${sc.key}`, k); rerender(); } };
+    a.onended = () => { if (RR.audio === a) { RR.reveal.set(`${card}/${sc.key}`, sc.points.length); stopPlay(); rerender(); } };
+    await a.play(); }
+  catch (e) { RR.err.set(card, T(`The voice could not play: ${e.message}`, `語音無法播放：${e.message}`)); RR.audio = null; advance(card); }
+}
+function play(card, sc) {
+  stopPlay(); RR.playing = card; RR.reveal.set(`${card}/${sc.key}`, 0);
+  const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
+  advance(card);
+}
+function voicePicker(r) {
+  const vs = localVoices(), vendor = r.offer?.voice, cur = voicePref();
+  const opts = [["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
+  return h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"),
+    onchange: (e) => { prefs.set("crew.room.voice", e.target.value === "off" ? null : e.target.value); stopPlay(); rerender(); } }, opts.map(([v, l]) => h("option", { value: v, selected: v === cur || (v === "off" && !opts.some(([x]) => x === cur)) }, l))));
+}
+function stageView(r) {
+  const card = r.card.id, scenes = scenesOf(r);
+  if (!scenes.length) return h("section", { class: "card rr-stage", "data-stage": card, "aria-label": T("Board", "白板") }, h("div", { class: "rr-empty", "data-board-empty": "" },
+    h("h2", {}, T("Board", "白板")), h("p", { class: "faint" }, T("Ask below. Each answer becomes a scene here: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, revealed one at a time.", "在下方提問。每個回答會在這裡變成一個場景：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個出現。"))));
+  const i = sceneState(card, scenes), sc = scenes[i], k = revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`), v = (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, k);
+  const goScene = (n) => { stopPlay(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
+  const prev = v?.group ? r.board.filter((b) => b.turn === v.turn && b.group === v.group && (b.step || 0) < (v.step || 0)).sort((a, b) => (a.step || 0) - (b.step || 0)).at(-1) : null;
+  const caption = sc.points[k - 1] ? plain(sc.points[k - 1].text) : sc.t?.status === "running" ? T("The tutor is working…", "導師作答中…") : "";
+  return h("section", { class: "card rr-stage", "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") },
+    h("div", { class: "rr-scene-bar" },
+      h("button", { type: "button", class: "btn ghost", "data-scene-prev": "", disabled: i === 0, onclick: () => goScene(i - 1), "aria-label": T("Previous scene", "上一個場景") }, "←"),
+      h("div", { class: "rr-scene-title" }, h("span", { class: "faint", "data-scene-pos": `${i + 1}/${scenes.length}` }, T(`Scene ${i + 1} of ${scenes.length}`, `場景 ${i + 1} / ${scenes.length}`)), h("b", { "data-scene-title": "" }, sc.title)),
+      h("button", { type: "button", class: "btn ghost", "data-scene-next": "", disabled: i === scenes.length - 1, onclick: () => goScene(i + 1), "aria-label": T("Next scene", "下一個場景") }, "→")),
+    h("div", { class: "rr-scene" },
+      h("div", { class: "rr-visual", "data-visual": v?.id || "" }, v ? itemView(card, v, prev) : h("p", { class: "faint rr-novisual" }, sc.t?.status === "running" ? T("The tutor is drawing…", "導師正在畫…") : T("No picture for this answer.", "這個回答沒有圖。")),
+        sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : b.type, ` ${b.title.slice(0, 24)}`))) : null),
+      h("div", { class: "rr-points" },
+        sc.question ? h("p", { class: "rr-q", "data-scene-question": "" }, h("span", { class: "vbadge" }, T(...(ACTION_LABEL[sc.t.action] || [sc.t.action, sc.t.action]))), " ", sc.question) : null,
+        sc.t && sc.t.status !== "done" ? (sc.t.status === "running" ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
+        h("ol", { class: "rr-pointlist", "data-points": sc.points.length }, sc.points.slice(0, k).map((c, n) => c.kind === "code" ? h("li", { class: "rr-point code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")))
+          : h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${n === k - 1 ? " now" : ""}`, "data-claim": c.basis || c.kind }, c.basis === "inference" ? inferenceBadge() : null, inline(card, c.text.replace(/^\s*[-*+]\s+/, ""), c.cites)))),
+        sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
+        sc.t?.status === "done" && sc.t.cost?.usd != null ? h("p", { class: "faint rr-cost" }, `$${Number(sc.t.cost.usd).toFixed(2)} · ${sc.t.provider} · ${sc.t.model}`) : null)),
+    h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, caption),
+    h("div", { class: "rr-playbar" },
+      h("button", { type: "button", class: "btn ghost", "data-point-next": "", disabled: k >= sc.points.length, onclick: () => { stopPlay(); advance(card); } }, T(`Next point (${k}/${sc.points.length})`, `下一點（${k}/${sc.points.length}）`)),
+      h("button", { type: "button", class: "btn ghost", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !sc.points.length, onclick: () => RR.playing === card ? (stopPlay(), rerender()) : play(card, sc) }, RR.playing === card ? T("Pause", "暫停") : T("Play from the start", "從頭播放")),
+      voicePicker(r)));
+}
+// ---------- the prompt bar: quick actions, a question (typed or spoken), the paid-round confirmation ----------
+const SR = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
+/** push-to-talk, on-device only: the browser must recognise speech locally (processLocally), or the mic stays off */
+async function micReady() {
+  const C = SR(); if (!C) return false; if (RR.mic != null) return RR.mic;
+  try { if (typeof C.available !== "function") return (RR.mic = false); const a = await C.available({ langs: [uiLang()], processLocally: true }); RR.mic = a === "available"; } catch { RR.mic = false; }
+  rerender(); return RR.mic;
+}
+function listen(card) {
+  const C = SR(); if (!C || !RR.mic) return; try { const rec = new C(); rec.lang = uiLang(); rec.processLocally = true; rec.interimResults = true; rec.continuous = true;
+    rec.onresult = (e) => { RR.draft.set(card, [...e.results].map((x) => x[0]?.transcript || "").join(" ").trim()); RR.heard = true; rerender(); };
+    rec.onend = () => { RR.rec = null; rerender(); }; rec.onerror = () => { RR.rec = null; rerender(); };
+    RR.rec = rec; rec.start(); rerender(); } catch { RR.rec = null; }
+}
+function promptBar(r) {
   const card = r.card.id, busy = r.running != null || RR.posting.has(card), offer = r.offer, conf = RR.confirm.get(card), err = RR.err.get(card);
+  if (!r.open) return h("div", { class: "rr-bar" }, h("p", { class: "faint", "data-room-closed": "" }, T("The merge card is answered: this room is read-only now.", "合併卡已回覆：審查室現在只能閱讀。")));
+  if (offer?.error) return h("div", { class: "rr-bar" }, h("p", { class: "rr-err", "data-room-unavailable": "" }, offer.error));
+  if (RR.mic == null) void micReady();
   const ask = (action) => { const text = action === "ask" ? (RR.draft.get(card) || "").trim() : ""; if (action === "ask" && !text) return; RR.confirm.set(card, { action, text }); rerender(); };
   const start = async () => { const c = RR.confirm.get(card); if (!c || busy) return; RR.posting.add(card); RR.err.delete(card); rerender();
-    try { const room = await postJ(`/api/review-room/${enc(card)}/turn`, { action: c.action, text: c.text, lang: uiLang(), confirm: offer?.hash }); RR.rooms.set(card, room); RR.confirm.delete(card); if (c.action === "ask") RR.draft.delete(card); }
+    try { const room = await postJ(`/api/review-room/${enc(card)}/turn`, { action: c.action, text: c.text, lang: uiLang(), confirm: offer?.hash }); RR.rooms.set(card, room); RR.confirm.delete(card); if (c.action === "ask") RR.draft.delete(card); RR.heard = false; RR.scene.delete(card); }
     catch (e) { RR.err.set(card, e.message); if (e.offer) RR.rooms.set(card, { ...r, offer: e.offer }); }
     finally { RR.posting.delete(card); rerender(); schedule(); } };
-  const turns = r.turns.map((t) => h("li", { class: "rr-turn", "data-turn": t.n, "data-turn-status": t.status },
-    h("div", { class: "rr-msg captain" }, h("span", { class: "vbadge" }, T(...(ACTION_LABEL[t.action] || [t.action, t.action]))), " ", t.text),
-    h("div", { class: "rr-msg tutor" }, answerView(card, t), t.status === "done" && t.cost?.usd != null ? h("span", { class: "faint rr-cost" }, `$${Number(t.cost.usd).toFixed(2)} · ${t.provider} · ${t.model}`) : null)));
-  const controls = !r.open ? [h("p", { class: "faint", "data-room-closed": "" }, T("The merge card is answered: this room is read-only now.", "合併卡已回覆：審查室現在只能閱讀。"))]
-    : offer?.error ? [h("p", { class: "rr-err", "data-room-unavailable": "" }, offer.error)]
-    : [h("div", { class: "rr-quick", role: "group", "aria-label": T("Quick actions", "快速動作") }, r.actions.map((a) => h("button", { type: "button", class: "btn", "data-room-action": a.id, disabled: busy, onclick: () => ask(a.id) }, T(...(ACTION_LABEL[a.id] || [a.en, a.zh]))))),
-      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Ask anything about this change", "問任何關於這個改動的問題")),
-        h("textarea", { class: "input", rows: 3, maxlength: 4000, "data-room-text": card, disabled: busy, oninput: (e) => { RR.draft.set(card, e.target.value); } }, RR.draft.get(card) || "")),
-      h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-room-send": "", disabled: busy, onclick: () => ask("ask") }, T("Ask", "送出問題"))),
-      conf ? h("div", { class: "rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
-        h("p", {}, T(`This starts a paid model round on ${offer.provider} · ${offer.model ?? "default model"}${offer.effort ? ` (${offer.effort})` : ""}. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
-          `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
-        h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-room-start": "", disabled: busy, onclick: start }, T("Start the round", "開始這一回合")),
-          h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", disabled: RR.posting.has(card), onclick: () => { RR.confirm.delete(card); rerender(); } }, T("Cancel", "取消")))) : null,
-      busy ? h("p", { class: "faint", role: "status", "data-room-busy": "" }, T("The tutor is working; one turn at a time.", "導師作答中；一次一回合。")) : null];
-  return h("section", { class: "card x-pad rr-chat", "data-chat": card, "aria-label": T("Chat", "對話") }, h("h2", {}, T("Chat", "對話")),
-    r.turns.length ? h("ol", { class: "rr-turns" }, turns) : h("p", { class: "faint" }, T("Ask the tutor how this change works, why it is built this way, or what to check before you merge.", "可以問導師：這個改動怎麼運作、為什麼這樣做、合併前要檢查什麼。")),
-    err ? h("p", { class: "rr-err", role: "alert", "data-room-error": "" }, err) : null, ...controls);
+  const talk = !!RR.rec;
+  return h("div", { class: "rr-bar", "data-chat": card },
+    h("div", { class: "rr-quick", role: "group", "aria-label": T("Quick actions", "快速動作") }, r.actions.map((a) => h("button", { type: "button", class: "btn", "data-room-action": a.id, disabled: busy, onclick: () => ask(a.id) }, T(...(ACTION_LABEL[a.id] || [a.en, a.zh]))))),
+    h("div", { class: "rr-askrow" },
+      h("input", { class: "input", type: "text", maxlength: 4000, "data-room-text": card, disabled: busy, "aria-label": T("Ask anything about this change", "問任何關於這個改動的問題"), placeholder: T("Ask anything about this change, or interrupt with a question…", "問任何關於這個改動的問題，或隨時打斷發問…"), value: RR.draft.get(card) || "",
+        oninput: (e) => { RR.draft.set(card, e.target.value); }, onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing) { RR.draft.set(card, e.target.value); ask("ask"); } } }),
+      h("button", { type: "button", class: `btn${talk ? " primary" : ""}`, "data-mic": "", "aria-pressed": String(talk), disabled: busy || !RR.mic, title: RR.mic ? T("Hold to talk (this Mac recognises your voice; nothing is sent)", "按住說話（由這台 Mac 辨識，不送出任何聲音）") : T("No on-device speech recognition in this browser", "這個瀏覽器沒有裝置上的語音辨識"),
+        onpointerdown: (e) => { e.preventDefault(); listen(card); }, onpointerup: () => { try { RR.rec?.stop(); } catch {} }, onpointerleave: () => { try { RR.rec?.stop(); } catch {} } }, talk ? T("Listening…", "聆聽中…") : T("Hold to talk", "按住說話")),
+      h("button", { type: "button", class: "btn primary", "data-room-send": "", disabled: busy, onclick: () => ask("ask") }, T("Ask", "送出"))),
+    RR.heard && RR.draft.get(card) ? h("p", { class: "faint", "data-heard": "" }, T("Heard you: check the text above, then Ask.", "已聽到：請先檢查上面的文字，再按送出。")) : null,
+    conf ? h("div", { class: "rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
+      h("p", {}, T(`This starts a paid model round on ${offer.provider} · ${offer.model ?? "default model"}${offer.effort ? ` (${offer.effort})` : ""}; the tutor may also ask for up to two illustrations, each a paid image job made in the background. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
+        `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}；導師也可能要求最多兩張插圖，每張都是在背景進行的付費圖片工作。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-room-start": "", disabled: busy, onclick: start }, T("Start the round", "開始這一回合")),
+        h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", disabled: RR.posting.has(card), onclick: () => { RR.confirm.delete(card); rerender(); } }, T("Cancel", "取消")))) : null,
+    busy ? h("p", { class: "faint", role: "status", "data-room-busy": "" }, T("The tutor is working; one turn at a time.", "導師作答中；一次一回合。")) : null,
+    err ? h("p", { class: "rr-err", role: "alert", "data-room-error": "" }, err) : null);
 }
-function sideView(r) {
-  const q = r.check.questions, graded = q.filter((x) => x.result), right = graded.filter((x) => x.result.correct).length;
-  return h("section", { class: "card x-pad rr-side" },
-    h("h2", {}, T("Understanding check", "理解檢查")),
-    q.length ? [h("p", { "data-check-score": "" }, graded.length ? T(`${right} of ${graded.length} correct`, `答對 ${right}/${graded.length}`) : T("Not answered yet: answer in the chat.", "還沒作答：請在對話裡回答。")),
-      h("ol", { class: "rr-check" }, q.map((x) => h("li", { "data-check": x.n, "data-check-result": x.result ? (x.result.correct ? "correct" : "missed") : "open" }, x.q, x.result ? h("span", { class: `rr-mark ${x.result.correct ? "ok" : "miss"}` }, x.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null, x.result?.note ? h("div", { class: "faint" }, x.result.note) : null)))]
+// ---------- the transcript drawer (closed by default): questions and scene titles, the check and the sources ----------
+function drawer(r) {
+  const card = r.card.id, scenes = scenesOf(r), q = r.check.questions, graded = q.filter((x) => x.result), right = graded.filter((x) => x.result.correct).length;
+  return h("details", { class: "card x-pad rr-drawer", "data-transcript": card, open: RR.drawer.has(card), ontoggle: (e) => { e.target.open ? RR.drawer.add(card) : RR.drawer.delete(card); } },
+    h("summary", {}, T(`Transcript · ${r.turns.length} question${r.turns.length === 1 ? "" : "s"} · check ${graded.length ? `${right}/${graded.length}` : "—"} · ${r.sources.filter((s) => s.ok).length} sources`, `紀錄 · ${r.turns.length} 個問題 · 檢查 ${graded.length ? `${right}/${graded.length}` : "—"} · ${r.sources.filter((s) => s.ok).length} 個來源`)),
+    h("ol", { class: "rr-turns" }, scenes.map((sc, i) => h("li", { "data-turn": sc.turn, "data-turn-status": sc.t?.status || "opening" }, h("button", { type: "button", class: "rr-jump", "data-jump": sc.key, onclick: () => { stopPlay(); RR.scene.set(card, i); rerender(); document.querySelector("[data-stage]")?.scrollIntoView({ block: "start" }); } },
+      sc.question ? h("span", { class: "rr-jq" }, sc.question.slice(0, 160)) : null, h("span", { class: "faint" }, ` → ${sc.title}`))))),
+    h("h3", {}, T("Understanding check", "理解檢查")),
+    q.length ? [h("p", { "data-check-score": "" }, graded.length ? T(`${right} of ${graded.length} correct`, `答對 ${right}/${graded.length}`) : T("Not answered yet: answer in the prompt.", "還沒作答：請在輸入框回答。")),
+      h("ol", { class: "rr-check" }, q.map((x) => h("li", { "data-check": x.n, "data-check-result": x.result ? (x.result.correct ? "correct" : "missed") : "open" }, x.q, x.result?.note ? h("div", { class: "faint" }, x.result.note) : null)))]
       : h("p", { class: "faint" }, T("Press “Check me” for 2 to 4 short questions. Display only: it never blocks the merge.", "按「考考我」會有 2 到 4 個小問題。僅供參考，不會擋合併。")),
-    h("h2", {}, T("Sources", "來源")),
+    h("h3", {}, T("Sources", "來源")),
     r.sources.length ? h("ul", { class: "rr-sources" }, r.sources.map((s) => h("li", { "data-source": s.n, "data-source-ok": String(s.ok) }, h("span", { class: "vbadge" }, `${s.n} ${s.kind === "search" ? T("search", "搜尋") : T("page", "網頁")}`), " ",
       s.kind === "search" ? s.query : s.url && s.ok ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, s.url) : s.url, s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
       : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")));
@@ -185,11 +305,17 @@ routes.review = (arg) => {
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
+  // a scene that arrives while the page is open is revealed point by point; scenes already there show whole
+  const scenes = scenesOf(r), seen = RR.seen.get(arg);
+  if (!seen) RR.seen.set(arg, new Set(scenes.filter((s) => !s.t || s.t.status !== "running").map((s) => s.key)));
+  else for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key); RR.scene.delete(arg); RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); }
   const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
   return page(T("Review room", "審查室"), T(`${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room never answers the merge card.`, `${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不會回覆合併卡。`),
     h("div", { class: "rr-top" }, h("b", {}, title), h("a", { class: "btn ghost", href: `#/run/${enc(r.card.run)}`, "data-room-task": "" }, T("Back to the Task", "回到任務")), h("a", { class: "btn ghost", href: `#/inbox/${enc(r.card.id)}` }, T("The merge card", "合併卡"))),
     citePanel(r),
-    h("div", { class: "rr-wrap", "data-review-room": r.card.id }, boardView(r), h("div", { class: "rr-right" }, chatView(r), sideView(r))));
+    RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } }, onkeydown: (e) => { if (e.key === "Escape") { RR.zoom = null; rerender(); } } },
+      h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null,
+    h("div", { class: "rr-wrap", "data-review-room": r.card.id }, stageView(r), promptBar(r), drawer(r)));
 };
-window.crewReviewRoom = { parseFlow };
+window.crewReviewRoom = { parseFlow, scenesOf };
 })();

@@ -1,20 +1,42 @@
 # Unit review-room: learn a pull request before you merge it
 
 What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/review/<merge card>`,
-`public/review-room.js`) is one page per pull request with two panes:
+`public/review-room.js`) works like an interactive whiteboard tutor:
 
-- **Board**: what the tutor draws, step by step. A flowchart is a series of steps (one `group`, steps 1, 2, 3), each
-  redrawing the last and adding one part, which the page marks as new; Studio draws mermaid's `flowchart` subset itself
-  (no library, text only through text nodes) and shows any other diagram kind as its source. A `diff` item is a changed
-  file's real hunks, a `code` item real lines at the head (highlighted lines marked), a `compare` item the same range at
-  the base and at the head, a `note` a short text. The tutor names the path and the lines; Studio fills every excerpt from
-  the commits, so no excerpt is text the model wrote.
-- **Chat**: the captain asks anything, or presses How, Why, Teach me, Before merging or Check me. Each turn is answered in
-  the captain's language.
+- **The board is the stage** and takes most of the screen. Each tutor answer is a **scene**: a visual on the left and the
+  tutor's points beside it, revealed one at a time (Next point, or Play from the start), with the current point as a
+  **caption** under the stage. A point that cites a board item (`[board:B1-2]`) brings that item into view, so a diagram
+  builds up as the points reach its steps. Scenes are paged (← →). A scene that arrives while the page is open plays
+  itself; scenes already there show whole.
+- **Visuals Studio draws at once** from what the tutor emits: a flowchart built up step by step (one `group`, steps 1, 2,
+  3, the part each step adds marked new; Studio draws mermaid's `flowchart` subset itself, no library, text only through
+  text nodes, any other diagram kind as its source), a `diff` item (a changed file's real hunks), a `code` item (real head
+  lines, highlighted lines marked), a `compare` item (the same range at the base and the head), a chart from real numbers
+  (`chart_draw`: git's line counts per file, or numbers the tutor cites; uncited numbers read as an inference), the app's
+  **screenshots** at the base and the head with a before / after toggle (`screenshots_show`: the Task's own captures of
+  this head, shot by Studio's sandboxed renderer from the app's fixture build), and a `note`. The tutor names paths and
+  lines; Studio fills every excerpt from the commits, so no excerpt is text the model wrote.
+- **Generated illustrations** (`illustrate`, at most two a turn): a whiteboard-marker sketch from Studio's image job (the
+  same one image steps use, `generateImage`), made in the background (a minute or two) with a placeholder until ready,
+  stored in the room's folder, labelled "illustration · generated" and "Not evidence". A citation of an illustration never
+  grounds a claim. Its prompt passes the same privacy filter as a web query. The first time the captain opens the room,
+  one opening illustration of the spec's intent is made in the background the same way.
+- Every picture is labelled with its kind; a click enlarges it. A scene's answer lists its pictures as chips to switch to.
+- **The prompt bar** under the stage is slim: How, Why, Teach me, Before merging, Check me, a question field, Hold to talk
+  and Ask. The **transcript** is a drawer, closed by default: each question with its scene's title (a click jumps to the
+  scene), the understanding check and the sources.
+- **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
+  Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
+  folder, a ledger entry `review-room-voice`; the narration goes only to the vendor the tutor already uses, never to
+  another), or one of this Mac's on-device voices, the best first (Premium, Enhanced, Siri). A voice the browser would send
+  to a server is never offered. While a voice plays, the points appear as it reaches them.
+- **Voice questions**: push to talk, only where the browser recognises speech on this device
+  (`SpeechRecognition.available({processLocally: true})`); the transcript fills the question field and is sent only when
+  the captain presses Ask. Without on-device recognition the mic stays off and says why.
 
-Beside them: the **understanding check** (2 to 4 short questions on what the change does differently and where its risk
-is; the tutor grades each answer and re-explains a missed one) and the **sources** (every web query and page, refused
-ones with the reason).
+The **understanding check** (2 to 4 short questions on what the change does differently and where its risk is) appears in
+the scene that asks it; the tutor grades each answer and re-explains a missed one. Answers are as long as the question
+needs: to the point, no filler, not limited to one line.
 
 The merge card shows a summary: questions asked in the room, the check score, sources consulted. Display only: the room
 never answers the merge card, never holds or releases it, and never changes merge readiness. The card's stored file, its
@@ -50,7 +72,7 @@ deciding its merge, without anything leaving Studio.
 - Read-only. The round runs in the round sandbox with nothing to write (`writes: []`) and no host beyond its model
   (`allow: []`, `egress.allow` is not carried); a sandbox-off grant or local unrestricted mode refuses the turn. Its tools
   (`ROOM_TOOLS`): `fs_list`, `fs_search`, `fs_read` (the head commit, through `git ls-tree`, `git grep`, `git show`),
-  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `check_ask`, `check_grade`, `web_search`,
+  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `screenshots_show`, `chart_draw`, `illustrate`, `check_ask`, `check_grade`, `web_search`,
   `web_fetch`. Nothing reads or writes the worktree's files, index or refs. Nothing goes to GitHub: no comment, review or
   request of any kind.
 - Recorded like any round: `data/runs/<task>/nodes/<merge node>/room-<card>-<n>/` (`prompt.md` with the skill pins in its
@@ -125,6 +147,27 @@ Tests: `tests/review-web.ts`, `tests/review-room.ts` (a real code-firstmate Task
 tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; screenshots in `tests/out/review-room`
 or `ROOM_SHOTS`). `bun run test:review-room` runs all three.
 
+11. Pictures: screenshots come only from Studio's captures of this head (before / after toggle); a diffstat chart is
+    counted by git; an uncited chart is an inference; illustrations are made in the background (the turn does not wait),
+    labelled generated and never evidence, their prompts filtered (a refused prompt never reaches the image model), at
+    most two a turn, stored in the room and served from it; opening the room makes its opening picture. — review-room
+    "screenshots come from …", "a diffstat chart is counted by git …", "the turn ends without waiting …", "two
+    illustrations are on the board …", "an illustration prompt naming a repository file never reaches …", "opening the
+    room makes its opening picture …"; review-room-ui "a chart is drawn by Studio …", "a generated illustration is
+    labelled …", "the opening picture still being drawn shows a placeholder", "Before shows the base's screenshot".
+12. The stage: scenes paged, points revealed with the visual and caption following them, the transcript drawer closed by
+    default, the prompt bar slim. — review-room-ui "the stage opens on the latest scene …", "the board takes most of the
+    screen …", "the transcript lists each question …", "Play starts the scene again …", "the next point brings the next
+    step …".
+13. Voice and voice questions: off by default; on-device voices only; the vendor's voice once per scene, the points
+    following it; push to talk on-device only, the transcript shown before it is sent. — review-room-ui "voice is off by
+    default …", "with this Mac's voice each point is spoken …", "the vendor's voice is asked for the whole scene once …",
+    "the points appear as the narration reaches them", "the mic is offered only after …", "holding the mic fills the
+    question …", "without on-device recognition the mic stays off …".
+
 Not in this unit: Firstmate offering to open a room from its chat; a per-room model switch (the tutor is the reviewer
 seat's member); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
-same way for every vendor).
+same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
+render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice
+questions are recognised on this device only); illustrations made when the merge card is created (they start when the
+captain first opens the room, so no image is paid for a room nobody opens).

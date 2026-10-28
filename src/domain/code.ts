@@ -166,10 +166,12 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> };
   /** the review room's web tools (tests stub them; production goes through Studio's egress proxy) */
-  reviewWeb?: WebBackend | ((check: (url: string) => string | null) => WebBackend) }) {
+  reviewWeb?: WebBackend | ((check: (url: string) => string | null) => WebBackend);
+  /** the review room's vendor voice (tests stub it; production calls the tutor vendor's own speech endpoint) */
+  reviewSpeak?: import("./review-room").Speaker }) {
   installCodeQueue(engine);
   // the merge card's review room: a view on the card (its summary), never its answer or its readiness
-  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb });
+  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, speak: o.reviewSpeak });
   const priorCardView = engine.cards.view;
   const evidenceFor = (card: any) => {
     const run = engine.get(card.run), detail = card.detail;

@@ -26,10 +26,11 @@ ok(def.includes("provider: tutor"), "fixture: the reviewer seat has its own mode
 const H = await harness([def], { data, checkRoots: [] });
 const E = H.engine;
 // the web tools, stubbed: no real network in any test
-const webCalls: [string, string][] = [];
+const webCalls: [string, string][] = [], spoken: string[] = [];
 installCode(E, { dataDir: data, projects: new Projects(data), reviewWeb: (check) => ({
   search: async (q) => { webCalls.push(["search", q]); return { configured: true, status: 200, url: "https://search.example/?q=x", text: "Math.round rounds half up" }; },
-  fetch: async (u) => { const why = check(u); if (why) throw new Error(`refused: ${why}`); webCalls.push(["fetch", u]); return { status: 200, type: "text/html", url: u, text: "MDN page" }; } }) });
+  fetch: async (u) => { const why = check(u); if (why) throw new Error(`refused: ${why}`); webCalls.push(["fetch", u]); return { status: 200, type: "text/html", url: u, text: "MDN page" }; } }),
+  reviewSpeak: async (text) => { spoken.push(text); return { bytes: Buffer.alloc(256, 7), model: "tts-stub", voice: "alloy" }; } });
 E.policies.setProject("sandbox", { install: false });
 
 // ---------- a real Task to its merge card ----------
@@ -106,14 +107,30 @@ script.push([
   ["web_fetch", { url: "http://localhost/x" }],
   ["web_fetch", { url: "https://wiki.intranet.local/page" }],
   ["web_fetch", { url: MDN }],
+  ["screenshots_show", { title: "The page, before and after" }],
+  ["chart_draw", { source: "diffstat", title: "What changed, by file" }],
+  ["chart_draw", { title: "Rounding", unit: "cents", rows: [{ label: "1999 at 15%", before: 299, after: 300 }] }],
+  ["illustrate", { title: "Leak", prompt: "how src/percent.ts rounds" }],
+  ["illustrate", { title: "Rounding", prompt: "a value flowing through a rounding step into whole cents" }],
+  ["illustrate", { title: "Halves", prompt: "a number line where halves go up" }],
+  ["illustrate", { title: "One too many", prompt: "a third sketch" }],
   ["check_ask", { questions: ["What does percent(1999, 15) return, and why?", "Where could rounding go wrong for a user?"] }],
   ["fs_write", { path: "src/percent.ts", content: "x" }],
-  ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nWant me to go deeper?`]]);
+  ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nThe sketch shows the rounding [board:B1-11].\n\nWant me to go deeper?`]]);
+// the renderer's captures for this head (the Task's capture check makes them; stubbed here) and the image generator, stubbed
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+let releaseImages!: () => void; const imagesGate = new Promise<void>((res) => (releaseImages = res));
+const imagePrompts: string[] = []; E.deps.generateImage = async (prompt: string, authorize: () => void) => { authorize(); imagePrompts.push(prompt); await imagesGate; return { bytes: PNG, model: "img-1", provider: "codex" }; };
+run.ctx.captures = { head, base: run.ctx.baseCommit, rendered: true, skipped: null, pages: [{ label: "Checkout", file: "index.html", before: `/api/wruns/${r.id}/captures/x/before/index.html.png`, after: `/api/wruns/${r.id}/captures/x/after/index.html.png`, changed: { removed: ["$19.99"], added: ["$20.00"] } }, { label: "Evil", before: "https://example.com/x.png", after: null }] };
 const started = await room.start(merge.id, { action: "teach", lang: "zh-TW", confirm: offer.hash }, "captain");
 let busy = ""; try { await room.start(merge.id, { action: "how", confirm: offer.hash }, "captain"); } catch (e: any) { busy = e.code; }
 ok(started.running === 1 && started.turns[0].status === "running" && busy === "busy", "a confirmed turn starts at once, and a second one waits: one turn at a time per room", busy);
-await room.settle(merge.id);
-const v1 = room.view(merge.id, true) as any, t1 = v1.turns[0];
+await until(() => (room.view(merge.id) as any).running == null, 60000);
+const early = room.view(merge.id) as any;
+ok(early.turns[0].status === "done" && early.board.filter((b: any) => b.type === "image").every((b: any) => b.status === "pending" && b.src === null), "the turn ends without waiting for its illustrations: they are placeholders until ready");
+releaseImages(); await room.settle(merge.id);
+room.view(merge.id, true); await room.settle(merge.id); // the captain opens the room: its opening picture is made in the background
+const v1 = room.view(merge.id) as any, t1 = v1.turns[0];
 ok(t1.status === "done" && /rounds to the cent/.test(t1.answer) && t1.provider === "tutor" && t1.model === "t-1" && t1.lang === "zh-TW", "the answer is stored with its provider, model and the captain's language", JSON.stringify(t1).slice(0, 400));
 
 // ---------- the round: read-only, sandboxed, no egress beyond the model, the pinned skills ----------
@@ -143,6 +160,22 @@ ok(board.find((b) => b.type === "note")?.basis === "inference" && !board.some((b
 const claims = t1.claims as any[], find = (re: RegExp) => claims.find((c) => re.test(c.text));
 ok(find(/rounds to the cent/)?.basis === "cited" && find(/test pins/)?.basis === "cited", "claims with a valid diff or ledger citation are cited", JSON.stringify(claims));
 ok(find(/probably added for invoices/)?.basis === "inference", "a claim with no citation is shown as an inference");
+ok(find(/sketch shows/)?.basis === "inference" && find(/sketch shows/)?.cites[0].ok === false, "an illustration is not evidence: a claim citing only it is an inference");
+const shot = board.find((b) => b.type === "screenshot");
+ok(shot?.kind === "screenshot" && shot.pages.length === 1 && shot.pages[0].before.endsWith("/before/index.html.png") && shot.pages[0].after.endsWith("/after/index.html.png"), "screenshots come from Studio's captures of this head, before and after; an outside picture is dropped", JSON.stringify(shot));
+const numstat = sh(["git", "diff", "--numstat", run.ctx.baseCommit, head]).split("\n").filter(Boolean).map((l) => l.split("\t"));
+const ds = board.find((b) => b.type === "chart" && b.mode === "diffstat"), own = board.find((b) => b.type === "chart" && b.mode === "before-after");
+ok(ds?.basis === "cited" && JSON.stringify(ds.rows.map((x: any) => [String(x.added), String(x.removed), x.label])) === JSON.stringify(numstat), "a diffstat chart is counted by git, not by the tutor", JSON.stringify(ds?.rows));
+ok(own?.basis === "inference" && own.rows[0].after === 300, "a chart of the tutor's own numbers without a citation is shown as an inference");
+const pics = board.filter((b) => b.type === "image" && b.turn === 1), imgRes = results.filter(([n]) => n === "illustrate").map(([, j]) => j);
+ok(pics.length === 2 && pics.every((b) => b.kind === "illustration" && b.status === "ready" && b.basis === "illustration" && b.model === "img-1" && b.src === `/api/review-room/${merge.id}/image/${b.id}.png`), "two illustrations are on the board, labelled generated, never evidence", JSON.stringify(pics));
+ok(/refused: it names a file of this repository/.test(imgRes[0].error) && /at most 2 illustrations/.test(imgRes[3].error) && imagePrompts.length === 3 && imagePrompts.every((x) => !/percent\.ts/.test(x)) && (v1.illustrations ?? []).length === 1, "an illustration prompt naming a repository file never reaches the image model; at most two a turn", JSON.stringify(imgRes));
+ok(Buffer.compare(room.image(merge.id, `${pics[0].id}.png`), PNG) === 0 && (() => { try { room.image(merge.id, "../x.png"); return false; } catch { return true; } })(), "an illustration is stored in the room's record and served from it only");
+const imgRec = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-image");
+ok(rec[0].data.images.length === 5 && imgRec.length === 3 && imgRec.every((e: any) => /^[0-9a-f]{64}$/.test(e.data.sha256) && e.data.model === "img-1"), "the turn's ledger entry lists its pictures; each finished illustration has its own entry with its sha256", JSON.stringify(imgRec.map((e: any) => e.data)));
+const opening = board.find((b) => b.turn === 0);
+ok(opening?.type === "image" && opening.status === "ready" && imagePrompts.some((x) => /percent function/.test(x)), "opening the room makes its opening picture in the background, from the spec's intent through the privacy filter", JSON.stringify(opening ?? v1.illustrations));
+delete run.ctx.captures;
 ok(find(/old commit/)?.basis === "inference" && find(/old commit/)?.cites[0].ok === false, "a citation Studio cannot verify (no such commit) leaves the claim an inference");
 ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "headings and offers are not claims");
 const cDiff: any = await room.cite(merge.id, "diff:src/percent.ts:L2-3"), cLedger: any = await room.cite(merge.id, `ledger:#${ledgerSeq}`), cSource: any = await room.cite(merge.id, "source:8");
@@ -172,6 +205,14 @@ ok(fetched.every((u) => u.startsWith(H.toolUrl)) && !fetched.some((u) => /github
 const stats = JSON.parse(readFileSync(join(data, "review-room-stats.json"), "utf8"))[r.id];
 ok(stats?.card === merge.id && !!stats.openedAt && stats.turns === 2 && stats.check.correct === 1, "the per pull request record keeps: room opened, turns, check score", JSON.stringify(stats));
 
+// ---------- narration: only the tutor's own vendor speaks, once per scene ----------
+let noVoice: any = null; try { await room.speech(merge.id, "t1"); } catch (e) { noVoice = e; }
+ok(noVoice?.code === "no_voice" && !spoken.length && (room.view(merge.id) as any).offer.voice === null, "a tutor whose vendor has no voice of its own sends its narration nowhere", noVoice?.message);
+Object.assign(reviewer, { provider: "codex", model: "t-2" });
+const say1: any = await room.speech(merge.id, "t1"), say2: any = await room.speech(merge.id, "t1");
+ok(say1.cached === false && say2.cached === true && spoken.length === 1 && /rounds to the cent/.test(spoken[0]) && !/\[diff:|\[ledger:|##/.test(spoken[0]) && (room.view(merge.id) as any).offer.voice?.vendor === "openai", "a Codex tutor's scene is narrated by its own vendor once, without citations, then served from the room", JSON.stringify({ say1, spoken }));
+ok(Buffer.compare(room.audio(merge.id, say1.src.split("/").at(-1)), Buffer.alloc(256, 7)) === 0 && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-voice" && e.data.vendor === "openai" && e.data.turn === 1), "the narration is stored in the room and on the ledger");
+Object.assign(reviewer, saved);
 // ---------- a changed skill text refuses the turn ----------
 const pin = ROOM_SKILLS[1] as any, real = pin.sha256; pin.sha256 = "0".repeat(64);
 refusal = null; try { await room.start(merge.id, { action: "why", confirm: offer.hash }, "captain"); } catch (e) { refusal = e; } pin.sha256 = real;

@@ -2,7 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The review room's web tools (src/review-web.ts; docs/units/review-room.md): which queries and addresses Studio refuses,
 // and the fetcher's own guards (resolved address, redirects, no search configured). No real network: the lookup, the
 // proxy lease and fetch are stubs.        bun tests/review-web.ts
-import { leak, proxiedWeb, queryRefusal, urlRefusal, type WebContext } from "../src/review-web";
+import { illustrationRefusal, leak, proxiedWeb, queryRefusal, urlRefusal, type WebContext } from "../src/review-web";
 let pass = 0, fail = 0;
 const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const ctx: WebContext = {
@@ -32,6 +32,7 @@ urlRefused("file:///etc/passwd", /only http/); urlRefused("https://user:pw@examp
 urlRefused("https://example.com/search?q=priceWithTax", /identifier from this change/); urlRefused("https://github.com/acme-org/ledger-kit/pull/3", /repository/);
 ok(urlRefusal("https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/round", ctx) === null, "allowed address: a public documentation page");
 ok(leak("plain words", ctx) === null, "plain words carry nothing");
+ok(/identifier from this change/.test(String(illustrationRefusal("a sketch of priceWithTax", ctx))) && /file of this repository/.test(String(illustrationRefusal("boxes for src/billing/tax-table.ts", ctx))) && /looks like code/.test(String(illustrationRefusal("draw x => y;", ctx))) && illustrationRefusal("a value flowing through a rounding step into whole cents, drawn as three boxes", ctx) === null, "an illustration prompt gets the same filter as a web query: plain words only");
 
 // ---------- the fetcher: resolved-address guard, every redirect hop checked, no search configured ----------
 const check = (u: string) => urlRefusal(u, ctx);
