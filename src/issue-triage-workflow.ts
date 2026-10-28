@@ -235,7 +235,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(!written){
    // the issues as GitHub has them now (GET only): a ruling on one changed since the docket was made is not applied
    const fresh=await snapshotIssues(selected(t.project).adapter,{signal:engine.abortOf(x.run).signal});guard(x);
-   const now=new Map(fresh.issues.map(i=>[i.n,i.hash])),moved=d.cases.flatMap(c=>c.issues.filter(n=>c.hashes?.[String(n)]!==undefined&&now.get(n)!==c.hashes[String(n)]));
+   // changed as the triage counts it: its title, text or labels (the hash), or its comment count
+   const now=new Map(fresh.issues.map(i=>[i.n,i])),moved=d.cases.flatMap(c=>c.issues.filter(n=>c.hashes?.[String(n)]!==undefined&&(now.get(n)?.hash!==c.hashes[String(n)]||(c.comments?(Number((now.get(n) as any)?.comments)||0)!==(c.comments[String(n)]??0):false))));
    const at=new Date().toISOString(),out=applyRulings(rec,d,rulings,{run:x.run.id,card:card.id,by:String(entry.actor),at,changed:moved});
    plan={at,head:digest(out.record),added:out.added,removed:out.removed,released:out.released,needsInfo:out.needsInfo,skipped:out.skipped,gold:out.gold};
    writeAtomic(planFile,JSON.stringify(plan));store.write(out.record);}

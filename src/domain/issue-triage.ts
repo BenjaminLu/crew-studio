@@ -368,7 +368,9 @@ export type Quote={n:number;text:string;from:string};
 /** One ruling of the captain's disagreement court, as the triage record keeps it. */
 export type RulingEntry={case:string;kind:string;duplicateOf?:number;issues:number[];pick:string;reason?:string;packages:string[];run:string;card:string;by:string;at:string;
  /** changed: the issue changed on GitHub while the court waited, so the ruling was not applied */
- skipped?:'changed'};
+ skipped?:'changed';
+ /** take it anyway, refused for the reason the project page refuses it (takeRefusal): the issue stays set aside */
+ refused?:string};
 export type TriageRecord={schema:1;project:string;repository:string;commit:string;snapshot:{hash:string;fetchedAt:string};open:number;investigated:number[];
  issues:Record<string,TriageIssue>;packages:StoredPackage[];lastPackage?:number;
  /** new findings at the same function as an earlier package not started yet: the captain joins them to it or keeps them apart */
@@ -573,12 +575,17 @@ export function joinCross(rec:TriageRecord,id:string,o:{by?:string;at?:string}={
 }
 /** The captain takes an issue set aside as in progress anyway: it becomes a package of its own, waiting for approval, and
  *  records the pull request it went past. Only an issue both reports agree has code to change, an agent's work, no duplicate. */
+/** Why an issue set aside as in progress cannot be taken into a package anyway (null: it can): the two reports must
+ *  agree on code to change, and it is not a person's work nor a duplicate. The project page and the disagreement court
+ *  (src/domain/issue-court.ts) both follow it. */
+export function takeRefusal(i:TriageIssue|undefined,n:number):string|null{
+ if(!i?.investigated||!i.agree||!i.checked||!needsCode(i.state))return `#${n}: the two reports do not agree on code to change, so it cannot become a package`;
+ if(i.fit==='human')return `#${n} is a person's work (${(i.fitReason??[]).join(', ')}), not a package`;
+ if(i.duplicateOf!==undefined)return `#${n} is a duplicate of #${i.duplicateOf}`;
+ return null;}
 export function takeAnyway(rec:TriageRecord,n:number,o:{by:string;at?:string}):TriageRecord{
  const h=rec.toHuman.find(x=>x.kind==='in-progress'&&x.issues.includes(n));if(!h)throw new Error(`#${n} is not set aside as in progress`);
- const i=rec.issues[String(n)];
- if(!i?.investigated||!i.agree||!i.checked||!needsCode(i.state))throw new Error(`#${n}: the two reports do not agree on code to change, so it cannot become a package`);
- if(i.fit==='human')throw new Error(`#${n} is a person's work (${(i.fitReason??[]).join(', ')}), not a package`);
- if(i.duplicateOf!==undefined)throw new Error(`#${n} is a duplicate of #${i.duplicateOf}`);
+ const i=rec.issues[String(n)],no=takeRefusal(i,n);if(no)throw new Error(no);
  const last=Math.max(rec.lastPackage??0,...rec.packages.map(p=>Number(p.id.slice(2))||0))+1;
  const pk:StoredPackage={kind:i.state==='fixed?'?'recheck':'single',members:[n],order:[n],why:'',security:i.security,agreement:'exact',id:`P-${last}`,commit:rec.commit,status:'proposed',taken:{by:o.by,at:o.at??new Date().toISOString(),pulls:h.pulls??[]}};
  return{...rec,packages:[...rec.packages,pk],toHuman:rec.toHuman.filter(x=>x!==h),lastPackage:last};

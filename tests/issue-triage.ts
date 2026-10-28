@@ -507,6 +507,15 @@ try{
    const busy=T.proposePackages(report([finding(1),finding(3)],{related:[{members:[1,3],order:[],why:'x'}]}),report([finding(1),finding(3)],{related:[{members:[1,3],order:[],why:'x'}]}),full,read);
    ok(!busy.packages.length&&busy.toHuman.filter(h=>h.kind==='in-progress').map(h=>h.issues.join()+':'+h.pulls?.join()).join()==='1:21,3:24','an issue an open pull request names is never packaged: in progress, for a person',JSON.stringify(busy));
    const d2=T.proposePackages(report([dup(1,3),finding(4)],{alone:[1,4]}),report([dup(1,3),finding(4)],{alone:[1,4]}),dsnap,read);
+   // ruled not a duplicate, the issue meets the rules the duplicate went before: an open pull request, then a person's work
+   { const C=await import('../src/domain/issue-court');
+     const notDup=(snapshot:any)=>{const ra=report([dup(1,3),finding(4)],{alone:[1,4]}),rb=report([dup(1,3,{fit:'human',fitReason:'too-large'}),finding(4)],{alone:[1,4]});
+      const rec=T.triageRecord({project:'fixture',snapshot,a:ra,b:rb,read,by:'t'}),d=C.buildDocket({project:'fixture',repository:'fixture/project',commit:'c'.repeat(40),snapshot,a:ra,b:rb,read,toHuman:rec.toHuman,added:rec.packages,by:{a:'x',b:'y'}});
+      return C.applyRulings(rec,d,C.parseRulings(d,d.cases.map(c=>({case:c.id,pick:c.kind==='duplicate'?'not-duplicate':c.kind==='finding'?'neither':c.kind==='package'?'separate':c.kind==='in-progress'?'wait':'human'}))),{run:'R-1',card:'SC-1',by:'captain',at:'2026-10-29T00:00:00Z'});};
+     const busy=notDup({...dsnap,issues:dsnap.issues.map(i=>i.n===1?{...i,prs:[21]}:i),pulls:full.pulls});
+     ok(!busy.record.packages.some(p=>p.members.includes(1))&&busy.record.issues['1'].duplicateOf===undefined&&busy.record.toHuman.some(h=>h.kind==='in-progress'&&h.issues.join()==='1'&&h.pulls?.join()==='21'),'not a duplicate, an issue an open pull request names is set aside as in progress, not packaged',JSON.stringify(busy.record.toHuman));
+     const person=notDup(dsnap);
+     ok(!person.record.packages.some(p=>p.members.includes(1))&&person.record.toHuman.some(h=>h.kind==='human-fit'&&h.issues.join()==='1'&&h.fit?.join()==='too-large'),'not a duplicate, a person\'s work is set aside as human-fit, not packaged',JSON.stringify(person.record.toHuman)); }
    ok(!d2.packages.some(p=>p.members.includes(1))&&d2.toHuman.some(h=>h.kind==='duplicate'&&h.issues.join()==='1'&&h.duplicateOf===3&&/#3/.test(h.reason)),'an agreed duplicate is never packaged: it is listed for a person with the issue it duplicates',JSON.stringify(d2));
    const d3=T.proposePackages(report([dup(1,3),finding(4)],{alone:[1,4]}),report([finding(1),finding(4)],{alone:[1,4]}),dsnap,read);
    ok(!d3.packages.some(p=>p.members.includes(1))&&d3.toHuman.some(h=>h.issues.includes(1)&&!h.kind),'a duplicate only one report names is a disagreement, for a person');
@@ -574,7 +583,13 @@ try{
    const disagreeing=T.triageRecord({project:'fixture',snapshot:full,a:report([finding(1)],{alone:[1]}),b:report([finding(1,{state:'fixed?'})],{alone:[1]}),read,by:'t'});
    await refuses(()=>T.takeAnyway(disagreeing,1,{by:'c'}),'an in-progress issue the reports disagree on cannot be taken into a package');
    const human=T.triageRecord({project:'fixture',snapshot:full,a:report([finding(1,{fit:'human',fitReason:'too-large'})],{alone:[1]}),b:report([finding(1)],{alone:[1]}),read,by:'t'});
-   await refuses(()=>T.takeAnyway(human,1,{by:'c'}),'an in-progress issue that is a person\'s work cannot be taken into a package'); }
+   await refuses(()=>T.takeAnyway(human,1,{by:'c'}),'an in-progress issue that is a person\'s work cannot be taken into a package');
+   // the court's "take it anyway" follows the same rule: a person's work set aside as in progress is not packaged
+   { const C=await import('../src/domain/issue-court');const ra=report([finding(1,{fit:'human',fitReason:'too-large'})],{alone:[1]}),rb=report([finding(1)],{alone:[1]});
+     const d=C.buildDocket({project:'fixture',repository:'fixture/project',commit:'c'.repeat(40),snapshot:full,a:ra,b:rb,read,toHuman:human.toHuman,added:human.packages,by:{a:'x',b:'y'}});
+     const take=d.cases.find(c=>c.kind==='in-progress'&&c.issues.join()==='1')!;
+     const out=C.applyRulings(human,d,C.parseRulings(d,d.cases.map(c=>({case:c.id,pick:c===take?'take':c.kind==='in-progress'?'wait':c.kind==='finding'?'neither':c.kind==='package'?'separate':c.kind==='duplicate'?'confirm':'human'}))),{run:'R-1',card:'SC-1',by:'captain',at:'2026-10-29T00:00:00Z'});
+     ok(!out.record.packages.some(p=>p.members.includes(1))&&out.record.issues['1'].fit==='human'&&out.record.toHuman.some(h=>h.kind==='in-progress'&&h.issues.includes(1))&&/person's work/.test(out.record.rulings!.find(r=>r.issues.includes(1))!.refused??''),'taking an in-progress issue anyway in the court is refused as on the project page when it is a person\'s work: it stays set aside, with why',JSON.stringify(out.record.packages)); } }
    ok(!T.atSnapshot(rec,{...full,issues:full.issues.filter(i=>i.n!==1)}).noCode?.length,'a closed needs-info issue leaves the list'); }
  }
  console.log(`issue-triage: ${pass} passed, 0 failed`);

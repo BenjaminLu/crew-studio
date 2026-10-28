@@ -6,7 +6,7 @@
 // it, or not an agent's work). What a case shows comes from Studio's own check: each side's locus as checked against the
 // code, the quoted lines as they are in the file. Nothing here writes to GitHub, and no suggestion is made.
 import {normalize} from 'node:path';
-import {cleanText,compareReports,lineRange,mergeNoCode,needsCode,quotedLines,sharedLocus,verifyReport,NEAR,
+import {cleanText,compareReports,lineRange,mergeNoCode,needsCode,quotedLines,sharedLocus,takeRefusal,verifyReport,NEAR,
  type Finding,type Locus,type NoCode,type Package,type Reads,type Report,type RulingEntry,type Snapshot,type StoredPackage,type TriageRecord} from './issue-triage';
 import type {GoldLabel} from './issue-eval';
 
@@ -26,6 +26,8 @@ export type CourtCase={id:string;kind:CaseKind;issues:number[];
  diff:string[];reason:string;a:Record<string,Side|null>;b:Record<string,Side|null>;
  /** each issue's content hash as it was investigated: a ruling on an issue changed since is not applied */
  hashes?:Record<string,string>;
+ /** each issue's comment count as it was investigated: a comment added since makes it changed too */
+ comments?:Record<string,number>;
  /** per issue, what both reports agree on and both pass Studio's check for (null: they do not) */
  agreed:Record<string,{state:string}|null>;
  groupings?:{a:Part[];b:Part[];separate:Part[]};
@@ -77,7 +79,8 @@ export function buildDocket(o:{project:string;repository:string;commit:string;sn
    ...(f.symptom&&typeof f.symptom.here==='string'&&typeof f.symptom.there==='string'?{symptom:{here:oneLine(f.symptom.here,500),there:oneLine(f.symptom.there,500)}}:{}),
    ...(f.fit==='human'||f.fit==='agent'?{fit:f.fit,...(f.fit==='human'&&typeof f.fitReason==='string'?{fitReason:oneLine(f.fitReason,40)}:{})}:{})};};
  const hashOf=new Map(o.snapshot.issues.map(i=>[i.n,i.hash]));
- const sides=(ns:number[])=>({hashes:Object.fromEntries(ns.map(n=>[n,hashOf.get(n)??''])),a:Object.fromEntries(ns.map(n=>[n,side(a,va,n)])),b:Object.fromEntries(ns.map(n=>[n,side(b,vb,n)])),agreed:Object.fromEntries(ns.map(n=>[n,agreedOn(n)]))});
+ const commentsOf=new Map(o.snapshot.issues.map(i=>[i.n,Number((i as any).comments)||0]));
+ const sides=(ns:number[])=>({hashes:Object.fromEntries(ns.map(n=>[n,hashOf.get(n)??''])),comments:Object.fromEntries(ns.map(n=>[n,commentsOf.get(n)??0])),a:Object.fromEntries(ns.map(n=>[n,side(a,va,n)])),b:Object.fromEntries(ns.map(n=>[n,side(b,vb,n)])),agreed:Object.fromEntries(ns.map(n=>[n,agreedOn(n)]))});
  const both=(n:number,s:string)=>a.issues.find(f=>f.n===n)?.state===s&&b.issues.find(f=>f.n===n)?.state===s;
  const cases:CourtCase[]=[],placed=new Set<number>();let k=0;
  const grouping=(r:Report,R:number[]):Part[]=>{const parts:Part[]=[],done=new Set<number>();
@@ -151,7 +154,7 @@ export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:s
  const mark=(n:number,f:Partial<typeof issues[string]>,r:Ruling)=>{const i=issues[String(n)];if(!i)return;const next:any={...i,...f,ruled:{pick:r.pick,case:r.case,run:o.run,by:o.by,at:o.at}};
   for(const k of Object.keys(next))if(next[k]===undefined)delete next[k];issues[String(n)]=next;};
  const newPack=(p:{kind:Package['kind'];members:number[];order:number[]}):string=>{const id=`P-${++last}`,security=p.members.some(n=>issues[String(n)]?.security);
-  packages.push({...p,why:'',security,id,commit:d.commit,status:'proposed'});added.push(id);return id;};
+  packages.push({...p,why:'',security,agreement:'exact',id,commit:d.commit,status:'proposed'});added.push(id);return id;};
  const label=(n:number,l:Omit<GoldLabel,'n'|'source'|'at'>,r:Ruling)=>{gold[String(n)]={n,...l,source:'captain',at:o.at,from:[`captain: ruled ${r.pick} on ${r.case} of ${o.run}`]};};
  const toNoCode=(n:number,state:NoCode['state'],questions?:string[])=>noCode.push({issues:[n],state,reason:'',...(questions?.length?{questions:{[String(n)]:questions}}:{})});
  /** what both reports agree on, adopted: code to change, a single package; nothing to change, the no-code state; else for a person */
@@ -177,7 +180,17 @@ export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:s
   else if(r.pick==='confirm'||r.pick==='human'){for(const n of live)mark(n,{},r);}
   // still in progress: recorded, and left set aside, so the captain can still take it on the project page once that work ends
   else if(r.pick==='wait'){for(const n of live)mark(n,{},r);entries.push({case:c.id,kind:c.kind,issues:c.issues,pick:r.pick,...(r.reason?{reason:r.reason}:{}),packages:[],run:o.run,card:o.card,by:o.by,at:o.at});continue;}
-  else if(r.pick==='not-duplicate'||r.pick==='take'||r.pick==='agent'){for(const n of live)adopt(c,n,r,made);}
+  // take it anyway: refused as the project page refuses it (a person's work, a duplicate, no agreed code): it stays set aside
+  else if(r.pick==='take'){const no=live.map(n=>takeRefusal(issues[String(n)],n)).find(Boolean);
+   if(no){for(const n of live)mark(n,{},r);entries.push({case:c.id,kind:c.kind,issues:c.issues,pick:r.pick,...(r.reason?{reason:r.reason}:{}),packages:[],run:o.run,card:o.card,by:o.by,at:o.at,refused:no});continue;}
+   for(const n of live)adopt(c,n,r,made);}
+  // not a duplicate: the rules the duplicate went before apply now, in the triage's order: an open pull request naming it
+  // sets it aside as in progress, a person's work as human-fit; only then is what both reports agree on adopted
+  else if(r.pick==='not-duplicate'){for(const n of live){const i=issues[String(n)];
+    if(i?.inProgress?.length){mark(n,{duplicateOf:undefined},r);back.push({issues:[n],reason:`ruled not a duplicate; open pull request ${i.inProgress.map(p=>'#'+p).join(' ')} names #${n}: work may be in progress; check it before anyone starts`,kind:'in-progress',pulls:i.inProgress} as any);}
+    else if(i?.fit==='human'){mark(n,{duplicateOf:undefined},r);back.push({issues:[n],reason:`ruled not a duplicate; not an agent's work (${(i.fitReason??[]).join(', ')}): a person takes it`,kind:'human-fit',fit:i.fitReason??[]} as any);}
+    else adopt(c,n,r,made);}}
+  else if(r.pick==='agent'){for(const n of live)adopt(c,n,r,made);}
   else if(c.kind==='finding'){const n=live[0],s=n!==undefined?c[r.pick as 'a'|'b'][String(n)]:null;
    if(n!==undefined&&s){mark(n,{state:s.state as any,locus:s.locus,checked:true,security:!!issues[String(n)]?.security||s.security},r);
     if(needsCode(s.state)){const id=newPack({kind:s.state==='fixed?'?'recheck':'single',members:[n],order:[n]});made.push(id);label(n,{state:s.state as GoldLabel['state'],...(files(s).length?{files:files(s)}:{}),package:id},r);}

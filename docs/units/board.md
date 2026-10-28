@@ -360,7 +360,7 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
   before packaging (a likely duplicate, an open pull request naming it, a person's work) is a case of its kind. Each
   side carries what Studio checked: its state, its locus (a file that exists, a symbol only when it is a code name, line
   numbers), the code around the stated range as read at the pinned commit with the quoted lines marked (at most 60 lines
-  a locus), Studio's check (or its problems), its repro and questions as model-written text, and each issue's hash as
+  a locus), Studio's check (or its problems), its repro and questions as model-written text, and each issue's hash and comment count as
   investigated. The docket is a file beside the Task with its digest on the ledger, recorded before the triage is
   written; a changed docket is refused, and a triage with a court whose docket is not on the ledger stops there (it is
   never taken for one with nothing to rule on).
@@ -385,7 +385,7 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
   beside the Task under their digest, and answers the card with that digest; a bare answer of the card (without the
   rulings) is refused, and only the captain answers it. "Leave them for the project page" applies nothing.
 - **Applied** (the `rulings` step, once per card). Studio reads the issues again first (GET only): a case whose issue
-  changed on GitHub since it was investigated (its title, text or labels), or closed, is not applied and writes no gold; it stays under "For you to
+  changed on GitHub since it was investigated (its title, text or labels, or its comment count), or closed, is not applied and writes no gold; it stays under "For you to
   judge" with why, and the next triage takes it again. What the rulings decide is kept beside the Task, then the triage,
   the gold set and the ledger are each written unless already there, so a step run again after a failure or a restart
   completes them without applying anything twice. A or B:
@@ -397,10 +397,13 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
   needs-info, the reports' questions for the reporter kept (shown only in Studio). A confirmed duplicate or a person's
   work: recorded, nothing packaged, nothing closed or labeled on GitHub. Waiting for the pull request: recorded, and the
   issue stays set aside as in progress, so it can still be taken on the project page. Not a duplicate, take it anyway,
-  give it to an agent: what both reports agree on is adopted (a single package, or the agreed no-code state; taken
-  anyway, the package records the pull requests, as taking it on the project page does; given to an agent, the issue's
-  fit becomes agent; not a duplicate, its duplicate mark is dropped); where they disagree the issue stays under "For you
-  to judge" with why. A case set aside shows why: the pull requests and their authors, the fit reasons and whether one
+  give it to an agent: what both reports agree on is adopted (a single package marked as both reports' agreement, or the
+  agreed no-code state; given to an agent, the issue's fit becomes agent); where they disagree the issue stays under
+  "For you to judge" with why. Taking it anyway follows the project page's rule (`takeRefusal`): a person's work, a
+  duplicate, or no agreed code to change is refused and stays set aside, the refusal recorded; taken, the package
+  records the pull requests. Not a duplicate drops the duplicate mark and applies the rules the duplicate went before,
+  in the triage's order: an open pull request naming it sets it aside as in progress, a person's work as human-fit;
+  only then is the agreement adopted. A case set aside shows why: the pull requests and their authors, the fit reasons and whether one
   or both investigators gave them, the symptom each issue's text quotes. Each ruling is kept on the triage record (`rulings`: case, issues, pick, reason,
   packages, who, when) and on the ledger (`issue-triage-ruled`), and written to the project's gold set as the captain's
   label (`IssueEvalStore.addCaptain`, the answer replaced whole, docs/units/issue-eval.md): the state, the files and the package where the ruling
