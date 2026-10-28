@@ -52,11 +52,17 @@ import a48 from "../public/takeover.css" with { type: "file" };
 import a49 from "../public/takeover.js" with { type: "file" };
 import a50 from "../public/team.css" with { type: "file" };
 import a51 from "../public/team.js" with { type: "file" };
-import a52 from "../public/transcripts.css" with { type: "file" };
-import a53 from "../public/transcripts.js" with { type: "file" };
-import a54 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
-import a55 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
-import a56 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a52 from "../public/terminals.css" with { type: "file" };
+import a53 from "../public/terminals.js" with { type: "file" };
+import a54 from "../public/transcripts.css" with { type: "file" };
+import a55 from "../public/transcripts.js" with { type: "file" };
+import a56 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a57 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a58 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a59 from "../public/vendor/xterm-5.5.0.css" with { type: "file" };
+import a60 from "../public/vendor/xterm-5.5.0.min.js" with { type: "file" };
+import a61 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
+import a62 from "../public/vendor/xterm-addon-fit-0.10.0.min.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -111,9 +117,15 @@ export const ASSETS: Record<string, string> = {
   "/takeover.js": a49,
   "/team.css": a50,
   "/team.js": a51,
-  "/transcripts.css": a52,
-  "/transcripts.js": a53,
-  "/vendor/opencc-js-1.4.2-t2cn.min.js": a54,
-  "/vendor/opencc-js-LICENSE.txt": a55,
-  "/vendor/qrcode-1.4.4.min.js": a56,
+  "/terminals.css": a52,
+  "/terminals.js": a53,
+  "/transcripts.css": a54,
+  "/transcripts.js": a55,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a56,
+  "/vendor/opencc-js-LICENSE.txt": a57,
+  "/vendor/qrcode-1.4.4.min.js": a58,
+  "/vendor/xterm-5.5.0.css": a59,
+  "/vendor/xterm-5.5.0.min.js": a60,
+  "/vendor/xterm-LICENSE.txt": a61,
+  "/vendor/xterm-addon-fit-0.10.0.min.js": a62,
 };

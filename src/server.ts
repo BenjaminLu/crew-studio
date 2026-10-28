@@ -81,6 +81,7 @@ import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
 import { amendmentsNotice } from "./runtime/refine";
+import { Terminals, terminalRoutes } from "./terminals";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
 import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
 import { ChatLog } from "./host/chat-log";
@@ -228,7 +229,7 @@ main.onEvent = (e: HostEvent) => {
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>{const v=main.view();return v.state!=="detached"&&v.host!=="claude"&&v.host!=="cursor";},configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 // Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{try{terminals.shutdown();}catch{}void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
 // a fresh Claude primary: the model the Claude account card checks, Studio's own config folder, the crew token
 const claudePrimaryPair = () => { const model = chatSettings().models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5"; let effort: string | null = null; try { effort = configuredClaudeEffort(model); } catch {} return { model, effort }; };
 // a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone
@@ -378,6 +379,14 @@ agents.egress = egress; agents.toolUrl = () => `http://127.0.0.1:${toolListener.
 agents.onChange = (j) => send("agent", { id: j.id, kind: j.kind, status: j.status, ref: j.ref, tools: j.tools });
 const fmRaw = new RawLog(join(STATE, "events.jsonl"));
 const studioLog = new StudioLog(join(DATA, "events.jsonl"));
+// web terminals (src/terminals.ts): unsandboxed agent CLIs in a project's folder, input from this Mac's page only
+const terminals = new Terminals({ dataDir: DATA,
+  projects: () => new Projects(DATA).list().filter((p) => p.enabled !== false && typeof p.path === "string" && p.path).map((p) => ({ id: p.id, name: p.name || p.id, path: p.path as string })),
+  secrets: () => { let lk: string | null = null; try { lk = readFileSync(join(DATA, "ledger.key"), "utf8"); } catch {} return [SESSION, lk]; },
+  log: (type, summary, data) => { try { studioLog.emit({ type, workflow: "terminal", summary, data }); } catch {} },
+  changed: (list) => send("terminals", { terminals: list }) });
+process.on("exit", () => { try { terminals.shutdown(); } catch {} });
+{ const prev = remote.onRevoke; remote.onRevoke = (id) => { prev(id); terminals.cutDevice(id); }; }
 const flows = new Workflows(dirname(STATE));
 // A clean CLI home may omit model settings. Only a verified official catalog can supply them.
 const runtimeCodexConfig = () => {const c=codexConfig(PROJECT),a=codexAccount.view();return {...c,model:c.model??(a.authenticated?a.model:null),effort:c.effort??(a.authenticated&&(!c.model||c.model===a.model)?a.effort:null)};};
@@ -626,6 +635,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if(p==='/api/claude/account'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);return json(claudeLogin.view());}
     if((p==='/api/claude/account/login'||p==='/api/claude/account/cancel')&&writing){if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);if(p.endsWith('/cancel'))return json(await claudeLogin.cancel());try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
+    { const rt = await terminalRoutes(terminals, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rt) return rt; }
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
     { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }

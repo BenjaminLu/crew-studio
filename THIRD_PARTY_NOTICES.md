@@ -13,3 +13,7 @@
   37d989cabf310ea2d7631f1d006117ca4cc8a799): its `how`, `why` and `teach` skills (with their references) are adapted, not
   vendored as is, in `workflows/skills/pstack/` (how.md, why.md, teach.md) for the merge card's review room. The changes
   and the full MIT License text are in `workflows/skills/pstack/NOTICE.md`.
+- **xterm.js 5.5.0** (`@xterm/xterm`, `public/vendor/xterm-5.5.0.min.js` and `xterm-5.5.0.css`) and **@xterm/addon-fit 0.10.0**
+  (`public/vendor/xterm-addon-fit-0.10.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the web
+  terminal's renderer (docs/units/web-terminal.md). MIT License, copyright the xterm.js authors, SourceLair Private Company and
+  Christopher Jeffrey; both texts are in `public/vendor/xterm-LICENSE.txt`.
