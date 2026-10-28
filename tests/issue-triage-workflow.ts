@@ -22,6 +22,8 @@ const repo = join(temp, "source"), bare = join(temp, "remote.git"); mkdirSync(jo
 must(repo, ["init", "-qb", "main"]);
 writeFileSync(join(repo, "src/url.ts"), "export const match = (url: string) =>\n  list.find((d) => d.url.startsWith(url))\n");
 writeFileSync(join(repo, "src/clip.ts"), "export function setClipboard(payload: string) {\n  Clipboard.setString(payload)\n}\n");
+writeFileSync(join(repo, "src/menu.ts"), "export function openMenu(items: Item[]) {\n  return items.filter((i) => i.visible && !i.hidden)\n}\n");
+writeFileSync(join(repo, "src/theme.ts"), "export const pickTheme = (name: string) => THEMES[name] ?? THEMES.light\n");
 writeFileSync(join(repo, "src/host.ts"), "export const allowed = (u: URL) => u.protocol === 'https:' && HOSTS.includes(u.hostname)\n");
 must(repo, ["add", "."]); must(repo, ["commit", "-qm", "base"]); must(temp, ["clone", "--bare", "-q", repo, bare]); must(repo, ["remote", "add", "origin", bare]);
 const commit = must(repo, ["rev-parse", "HEAD"]);
@@ -65,7 +67,10 @@ H.engine.deps.provider = ((id = "stub", model = "m") => ({ id, model, sandboxFre
 const happy = (): Step[] => [{ tool: "issue_read", args: { n: 1 } }, { tool: "issue_read", args: { n: 9 } }, { tool: "fs_read", args: { path: "src/url.ts" } }, { tool: "fs_read", args: { path: "../outside" } },
   { tool: "triage_submit", args: { report: { ...goodReport(), commit: "f".repeat(40) } } }, { tool: "triage_submit", args: { report: { ...goodReport(), issues: goodReport().issues.slice(0, 2), alone: [1, 2] } } },
   { tool: "triage_submit", args: { report: { ...goodReport(), issues: [finding(1, { evidence: "list.find(d => d.url.includes(url))" }), ...goodReport().issues.slice(1)] } } },
+  { tool: "fs_read", args: { path: "src/clip.ts" } }, { tool: "fs_read", args: { path: "src/host.ts" } },
   { tool: "triage_submit", args: { report: goodReport() } }, { tool: "fs_read", args: { path: ".git/config" } }];
+/** the files a script's report quotes, read first: a quote counts only from what fs_read returned in the round */
+const reading = (...paths: string[]): Step[] => paths.map((path) => ({ tool: "fs_read", args: { path } }));
 const settled = (id: string) => until(() => ["waiting", "succeeded", "failed"].includes(E.get(id)!.status) && (E.get(id)!.status !== "waiting" || E.cards.list({ run: id, open: true }).length > 0));
 const confirmCard = (id: string) => E.cards.list({ run: id, open: true }).find((c) => c.node === "confirm" && c.options.some((o: any) => o.id === "start"));
 /** a triage started and, at its first card, started by the captain */
@@ -105,11 +110,18 @@ try {
   ok(/not in this batch/.test(JSON.stringify(results.a?.[1])), "issue_read refuses an issue outside the batch");
   ok(/Clipboard|startsWith/.test(JSON.stringify(results.a?.[2])) && /not allowed|outside|error/.test(JSON.stringify(results.a?.[3])), "the investigator reads the checkout, and nothing outside it");
   ok(/pinned commit/.test(JSON.stringify(results.a?.[4])) && /exactly once/.test(JSON.stringify(results.a?.[5])), "a report for another commit, or missing an issue of the batch, is refused");
-  ok(/no such file|not allowed|not reachable/.test(JSON.stringify(results.a?.[8])), "git metadata cannot be read from the checkout", JSON.stringify(results.a?.[8]));
-  ok(/quoted code not found/.test(JSON.stringify(results.a?.[6])) && results.a?.[7]?.saved && !results.a?.[7]?.problems?.length, "Studio answers with the findings it cannot find in the code, and takes the corrected report");
+  ok(/no such file|not allowed|not reachable/.test(JSON.stringify(results.a?.[10])), "git metadata cannot be read from the checkout", JSON.stringify(results.a?.[10]));
+  ok(/quoted code not found/.test(JSON.stringify(results.a?.[6])) && results.a?.[9]?.saved && !results.a?.[9]?.problems?.length, "Studio answers with the findings it cannot find in the code, and takes the corrected report", JSON.stringify(results.a?.[9]));
+  { const said = results.a?.[6]?.problems ?? [], two = said.find((p: any) => p.n === 2)?.problems ?? [];
+    ok(two.some((p: string) => /not in what fs_read returned to you/.test(p)) && !said.some((p: any) => p.n === 1 && p.problems.some((q: string) => /fs_read returned/.test(q))), "a quote from a file the investigator never read with fs_read this round is refused, by name; one it read is not", JSON.stringify(said)); }
+  { const reports = E.trusted(r.id).entries.filter((e: any) => e.record === "issue-triage-report");
+  ok(reports.length === 2 && reports.every((e: any) => /^[a-f0-9]{64}$/.test(e.data.reads)), "the ledger records a digest of what fs_read showed each investigator, next to its report"); }
   const rec = store.get("proj")!;
   ok(rec.commit === commit && rec.packages.map((p) => `${p.id}:${p.kind}:${p.members.join("+")}`).join(",") === "P-1:single:1,P-2:single:2,P-3:recheck:3", "the packages both agree on are written, each a proposal", JSON.stringify(rec.packages));
   ok(rec.packages.find((p) => p.id === "P-2")!.security && /P-2 · single · security/.test(card.body) && /owns security for this repository/.test(JSON.stringify(card)) && /安全負責人/.test(JSON.stringify(card)), "a security package is named on the card, with who else must agree");
+  { const said = JSON.stringify(card.sections);
+    ok(/each named symbol is a name \(not a description\) written from 200 lines above its stated range to 15 lines after it/.test(said) && /上方 200 行到下方 15 行/.test(said) && /at most 200 lines in a file/.test(said) && /within 15 lines of the stated range and in what fs_read showed that investigator/.test(said) && /distinctive line/.test(said) && /前後 15 行/.test(said) && !/found every file and quoted line/.test(said), "the approval card says exactly what Studio checked", said); }
+  ok(/P-1 · single · both reports alike/.test(card.body), "each package on the card says how the two reports agree on it", card.body);
   ok(!existsSync(join(H.data, "work", "issue-triage", r.id)), "the pinned checkout is removed once the reports are checked");
   ok(card.links?.[0]?.href === "#/project/proj" && /project page/.test(card.body), "the approval card links to the project's page, where the packages are listed", JSON.stringify(card.links));
   ok(!JSON.stringify(rec).includes("IGNORE ALL RULES"), "the stored triage keeps no issue text");
@@ -135,7 +147,7 @@ try {
 
   // --- 3. an issue edited while it is investigated goes to a person ---
   reset2(); open = [...open, issue(4, { title: "Second url match" })];
-  script = () => [{ tool: "issue_read", args: { n: 1 } }, { tool: "triage_submit", args: { report: { commit, issues: [finding(2, { locus: [{ file: "src/clip.ts", symbol: "setClipboard", lines: "1-3" }], evidence: "Clipboard.setString(payload)", security: "yes" }), finding(4)], groups: [], related: [], alone: [2, 4] } } }];
+  script = () => [{ tool: "issue_read", args: { n: 1 } }, ...reading("src/clip.ts", "src/url.ts"), { tool: "triage_submit", args: { report: { commit, issues: [finding(2, { locus: [{ file: "src/clip.ts", symbol: "setClipboard", lines: "1-3" }], evidence: "Clipboard.setString(payload)", security: "yes" }), finding(4)], groups: [], related: [], alone: [2, 4] } } }];
   during.a = () => { open = open.map((i) => i.number === 4 ? { ...i, body: "edited during the investigation" } : i); };
   r = await runOf();
   const third = store.get("proj")!;
@@ -146,6 +158,32 @@ try {
   const c3 = E.cards.list({ run: r.id, open: true })[0]; if (c3) await E.answer(c3.id, { choice: "close", by: "captain (card)" } as any);
   await until(() => E.get(r.id)!.status === "succeeded");
   ok(store.get("proj")!.packages.find((p) => p.id === "P-4")?.status === "proposed", "keeping them as proposals approves nothing");
+
+  // --- 3b. a set with a member already fixed, and agreed not-found issues, one edited meanwhile ---
+  reset2(); open = [...open, issue(6, { title: "Hidden menu items shown" }), issue(7, { title: "Theme falls back wrong" }), issue(8, { title: "Crash with no trace" }), issue(10, { title: "Freeze with no trace" })];
+  { const nf = (n: number) => finding(n, { state: "not-found", locus: [], evidence: "the issue names no screen and no message the code has", repro: "none" });
+    script = () => [...reading("src/menu.ts", "src/theme.ts"), { tool: "triage_submit", args: { report: { commit, issues: [finding(6, { locus: [{ file: "src/menu.ts", symbol: "openMenu", lines: "1-3" }], evidence: "return items.filter((i) => i.visible && !i.hidden)" }),
+      finding(7, { locus: [{ file: "src/theme.ts", symbol: "pickTheme", lines: "1" }], state: "fixed?", evidence: "THEMES[name] ?? THEMES.light", repro: "none" }), nf(8), nf(10)], groups: [], related: [{ members: [6, 7], order: [], why: "menu and theme" }], alone: [8, 10] } } }];
+    during.a = () => { open = open.map((i) => i.number === 8 ? { ...i, body: "edited during the investigation" } : i); };
+    r = await runOf({ issues: [6, 7, 8, 10] });
+    const c3b = E.cards.list({ run: r.id, open: true }).find((c) => c.node === "approve"), w = store.get("proj")!;
+    ok(!c3b && !w.packages.some((p) => p.members.includes(6)) && w.toHuman.some((h) => h.issues.join() === "6,7" && /already fixed/.test(h.reason)), "a set both find partly fixed goes to a person, never to a worker", JSON.stringify(w.toHuman));
+    ok(/; 1 agreed to have nothing to change in the code/.test(String(r.nodes.record?.note)) && w.noCode?.flatMap((x) => x.issues).join() === "10" && w.toHuman.some((h) => h.issues.includes(8)), "the record's note counts the agreed no-code issues that were written, not one edited meanwhile", String(r.nodes.record?.note));
+    if (c3b) await E.answer(c3b.id, { choice: "close", by: "captain (card)" } as any); await until(() => E.get(r.id)!.status === "succeeded"); }
+
+  // --- 3c. what fs_read showed an investigator is checked as recorded: changed, or never recorded, the record stops ---
+  { const record = E.actions["issues.record"], ledger = E.record.bind(E); let tamper: ((x: any) => void) | null = null, strip = false;
+    E.actions["issues.record"] = async (x: any) => { tamper?.(x); return record(x); };
+    (E as any).record = (x: any, kind: string, o: any) => { if (strip && kind === "issue-triage-report") { const { reads: _r, ...data } = o.data; o = { ...o, data }; } return ledger(x, kind, o); };
+    open = [...open, issue(11, { title: "Menu filter" })];
+    script = () => [...reading("src/menu.ts"), { tool: "triage_submit", args: { report: { commit, issues: [finding(11, { locus: [{ file: "src/menu.ts", symbol: "openMenu", lines: "1-3" }], evidence: "return items.filter((i) => i.visible && !i.hidden)" })], groups: [], related: [], alone: [11] } } }];
+    reset2(); tamper = (x) => { x.run.nodes.a.data.triageReads = { "src/menu.ts": [[1, 3]], "src/url.ts": [[1, 2]] }; };
+    r = await runOf({ issues: [11] }); await until(() => ["failed", "succeeded"].includes(E.get(r.id)!.status)); r = E.get(r.id)!;
+    ok(r.status === "failed" && /Investigator A's report is missing or changed/.test(JSON.stringify(r.nodes.record?.error ?? r.error)) && !store.get("proj")!.investigated.includes(11), "reads changed after the investigator finished are refused, and nothing is written", JSON.stringify(r.nodes.record?.error ?? r.error));
+    reset2(); strip = true; tamper = (x) => { delete x.run.nodes.a.data.triageReads; delete x.run.nodes.b.data.triageReads; };
+    r = await runOf({ issues: [11] }); await until(() => ["failed", "succeeded"].includes(E.get(r.id)!.status)); r = E.get(r.id)!;
+    ok(r.status === "failed" && /ran before Studio recorded what fs_read showed it[\s\S]*triage these issues again/.test(JSON.stringify(r.nodes.record?.error ?? r.error)) && !store.get("proj")!.investigated.includes(11), "a round that ran before Studio recorded reads is named as such, never checked without them", JSON.stringify(r.nodes.record?.error ?? r.error));
+    E.actions["issues.record"] = record; (E as any).record = ledger; open = open.filter((i) => i.number !== 11); }
 
   // --- 4. both investigators on one model: no record ---
   reset2(); models = { a: ["claude", "same"], b: ["claude", "same"] }; script = happy; const before = JSON.stringify(store.get("proj")), jobs4 = H.agents.jobs.size;
