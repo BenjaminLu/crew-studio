@@ -7,7 +7,7 @@
 // ("terminals"). Loaded before backbone.js.
 (() => {
 const XV = "5.5.0", FITV = "0.10.0";
-const TM = { list: null, presets: [], projects: [], canWrite: false, err: null, panes: new Map(), prev: new Map(), busy: false, cmd: "", args: "",
+const TM = { refused: new Map(), list: null, presets: [], projects: [], canWrite: false, err: null, panes: new Map(), prev: new Map(), busy: false, cmd: "", args: "",
   project: store.get("crew.term.project", ""), rc: store.get("crew.term.rc", "1") !== "0", tab: store.get("crew.chat.tab", "chat") };
 window.crewTerminals = TM;
 const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
@@ -42,7 +42,9 @@ function apply(list) {
 let redrawT = null;
 function redraw() {
   badgeNav(); drawTab();
-  if (onPage()) { clearTimeout(redrawT); redrawT = setTimeout(() => (document.activeElement?.closest?.(".wt-xterm") ? patchPage() : soft()), 0); }
+  // once a terminal is shown, its list and header are patched in place: a full re-render waits while any field has the focus
+  // (the command field, the terminal), and a state change, an exit or a review row must not wait for a blur (live bug)
+  if (onPage()) { clearTimeout(redrawT); redrawT = setTimeout(() => (document.querySelector("[data-term-detail]") ? patchPage() : soft()), 0); }
 }
 window.liveListen?.("terminals", (m) => { try { const d = JSON.parse(m.data); const known = new Map((TM.list || []).map((t) => [t.id, t]));
   // the stream carries the phone-safe summary (no Remote Control link): keep the link the page already has
@@ -129,10 +131,11 @@ async function start(body) {
   catch (e) { toast(String(e.message || e)); } finally { TM.busy = false; redraw(); }
 }
 async function termOp(id, op) {
+  if (op === "review") { TM.refused.delete(id); redraw(); }
   try { const j = await postJ(`/api/terminals/${id}/${op}`, {}); if (op === "restart") { closePane(id); await load(); location.hash = `#/terminals/${encodeURIComponent(j.terminal.id)}`; return; }
     if (op === "review") { toast(T(`Sent for review as ${j.terminal.review.run}`, `已送審：${j.terminal.review.run}`)); await load(); location.hash = `#/run/${j.terminal.review.run}`; return; }
     if (op === "dismiss") { closePane(id); TM.list = (TM.list || []).filter((t) => t.id !== id); location.hash = "#/terminals"; } await load(); }
-  catch (e) { toast(String(e.message || e)); }
+  catch (e) { const msg = String(e.message || e); toast(msg); if (op === "review") { TM.refused.set(id, msg); redraw(); } }
 }
 
 // ---------- the page ----------
@@ -166,6 +169,8 @@ function launcher() {
 // terminal's header are patched in place, the terminal itself stays where it is
 function patchPage() {
   const list = document.querySelector(".wt-list"); if (list) list.replaceChildren(...listRows(selected(cur())));
+  // the launcher too (busy, presets), unless the captain is in it
+  const nw = document.querySelector(".wt-new"); if (nw && !nw.contains(document.activeElement)) nw.replaceWith(launcher());
   const sec = document.querySelector("[data-term-detail]"), t = sec && (TM.list || []).find((x) => x.id === sec.dataset.termDetail), p = t && TM.panes.get(t.id);
   if (!sec || !t || !p || p.host.parentElement !== sec) return soft();
   for (const k of [...sec.children]) if (k !== p.host) k.remove();
@@ -179,8 +184,11 @@ function reviewRow(t) {
   if (t.review) return h("div", { class: "wt-review", "data-term-review": t.id }, where, h("a", { class: "btn sm", "data-term-review-run": t.review.run, href: `#/run/${encodeURIComponent(t.review.run)}` }, T(`In review: ${t.review.run}`, `審查中：${t.review.run}`)));
   if (!TM.canWrite) return where ? h("div", { class: "wt-review" }, where) : null;
   const why = t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審") : !t.git?.end?.commits ? T("No commits beyond the base to review: commit the work on a branch", "沒有比 base 新的 commit 可送審：先在 branch 上 commit") : null;
+  // a refusal stays here, in the captain's language, until the next try (a toast alone passed unseen on the live board)
+  const refused = TM.refused.get(t.id), [en, zh] = refused ? refused.split(" / ") : [];
   return h("div", { class: "wt-review", "data-term-review": t.id }, where, why ? h("span", { class: "faint" }, why) : null,
-    h("button", { type: "button", class: "btn primary sm", "data-term-send": t.id, disabled: !!why, onclick: () => termOp(t.id, "review") }, T("Send for review", "送審")));
+    h("button", { type: "button", class: "btn primary sm", "data-term-send": t.id, disabled: !!why, onclick: () => termOp(t.id, "review") }, T("Send for review", "送審")),
+    refused ? h("p", { class: "wt-refused", role: "alert", "data-term-review-error": t.id }, T("Send for review was refused: ", "送審被拒："), T(en, zh || en)) : null);
 }
 function detail(t) {
   const p = pane(t);
