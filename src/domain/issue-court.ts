@@ -14,7 +14,9 @@ import type {GoldLabel} from './issue-eval';
 export type Excerpt={file:string;start:number;lines:string[];quoted:number[]};
 /** One investigator's finding on one issue, as Studio checked it. The repro and questions are model-written text: shown
  *  as text, never acted on. */
-export type Side={state:string;locus:Locus[];ok:boolean;problems:string[];repro:string;security:boolean;excerpts:Excerpt[];questions?:string[];duplicateOf?:number};
+export type Side={state:string;locus:Locus[];ok:boolean;problems:string[];repro:string;security:boolean;excerpts:Excerpt[];questions?:string[];duplicateOf?:number;
+ /** a duplicate's matching symptom as this investigator quoted it from both issues' text (checked by Studio) */
+ symptom?:{here:string;there:string};fit?:'agent'|'human';fitReason?:string};
 /** One way to group a package case's issues: each part a package (joins: packages of this batch it takes in). */
 export type Part={members:number[];order:number[];kind:Package['kind'];joins:string[]};
 export type CaseKind='finding'|'package'|'duplicate'|'in-progress'|'human-fit';
@@ -28,7 +30,9 @@ export type CourtCase={id:string;kind:CaseKind;issues:number[];
  agreed:Record<string,{state:string}|null>;
  groupings?:{a:Part[];b:Part[];separate:Part[]};
  /** a duplicate case: the issue both name; an in-progress case: the open pull requests naming it; human-fit: why */
- duplicateOf?:number;pulls?:number[];fit?:string[]};
+ duplicateOf?:number;pulls?:number[];fit?:string[];
+ /** human-fit: how many investigators said so; in-progress: each pull request's author and their relation */
+ fitFrom?:number;pullInfo?:{n:number;author:string;association:string}[]};
 export type Docket={schema:1;project:string;repository:string;commit:string;by:{a:string;b:string};cases:CourtCase[]};
 export type Pick='a'|'b'|'neither'|'needs-info'|'separate'|'confirm'|'not-duplicate'|'wait'|'take'|'human'|'agent';
 export type Ruling={case:string;pick:Pick;reason?:string};
@@ -36,7 +40,7 @@ export type Ruling={case:string;pick:Pick;reason?:string};
 export const PICKS:Record<CaseKind,Pick[]>={finding:['a','b','neither','needs-info'],package:['a','b','separate','needs-info'],
  duplicate:['confirm','not-duplicate','needs-info'],'in-progress':['wait','take','needs-info'],'human-fit':['human','agent','needs-info']};
 /** an item a batch set aside for a person, as the triage writes it (a plain disagreement has no kind) */
-type HumanItem={issues:number[];reason:string;kind?:string;duplicateOf?:number;pulls?:number[];fit?:string[]};
+type HumanItem={issues:number[];reason:string;kind?:string;duplicateOf?:number;pulls?:number[];fit?:string[];fitFrom?:number;pullInfo?:{n:number;author:string;association:string}[]};
 
 const sorted=(ns:number[])=>[...new Set(ns)].sort((x,y)=>x-y);
 const oneLine=(s:unknown,max:number)=>cleanText(s,max*2).replace(/[\r\n\t]+/g,' ').replace(/\s{2,}/g,' ').trim().slice(0,max);
@@ -69,7 +73,9 @@ export function buildDocket(o:{project:string;repository:string;commit:string;sn
  const sound=(n:number)=>needsCode(agreedOn(n)?.state);
  const side=(r:Report,v:typeof va,n:number):Side|null=>{const f:any=r.issues.find(x=>x.n===n);if(!f)return null;const c=v.get(n),locus=sharedLocus(f,f,read),qs=questionsOf(f);
   return{state:String(f.state),locus,ok:!!c?.ok,problems:(c?.problems??[]).slice(0,10).map(p=>oneLine(p,300)),repro:oneLine(f.repro,500),security:f.security==='yes'||!!c?.security,excerpts:excerpts(f,locus,read),
-   ...(qs.length?{questions:qs}:{}),...(Number.isSafeInteger(f.duplicateOf)?{duplicateOf:f.duplicateOf}:{})};};
+   ...(qs.length?{questions:qs}:{}),...(Number.isSafeInteger(f.duplicateOf)?{duplicateOf:f.duplicateOf}:{}),
+   ...(f.symptom&&typeof f.symptom.here==='string'&&typeof f.symptom.there==='string'?{symptom:{here:oneLine(f.symptom.here,500),there:oneLine(f.symptom.there,500)}}:{}),
+   ...(f.fit==='human'||f.fit==='agent'?{fit:f.fit,...(f.fit==='human'&&typeof f.fitReason==='string'?{fitReason:oneLine(f.fitReason,40)}:{})}:{})};};
  const hashOf=new Map(o.snapshot.issues.map(i=>[i.n,i.hash]));
  const sides=(ns:number[])=>({hashes:Object.fromEntries(ns.map(n=>[n,hashOf.get(n)??''])),a:Object.fromEntries(ns.map(n=>[n,side(a,va,n)])),b:Object.fromEntries(ns.map(n=>[n,side(b,vb,n)])),agreed:Object.fromEntries(ns.map(n=>[n,agreedOn(n)]))});
  const both=(n:number,s:string)=>a.issues.find(f=>f.n===n)?.state===s&&b.issues.find(f=>f.n===n)?.state===s;
@@ -87,7 +93,8 @@ export function buildDocket(o:{project:string;repository:string;commit:string;sn
   return parts;};
  for(const h of o.toHuman){const S=sorted(h.issues).filter(n=>!skip.has(n)&&inSnap.has(n)&&!placed.has(n));if(!S.length)continue;S.forEach(n=>placed.add(n));
   if(h.kind&&KINDS.includes(h.kind)){for(const n of S)cases.push({id:`C-${++k}`,kind:h.kind as CaseKind,issues:[n],diff:[h.kind],reason:oneLine(h.reason,300),...sides([n]),
-   ...(Number.isSafeInteger(h.duplicateOf)?{duplicateOf:h.duplicateOf}:{}),...(Array.isArray(h.pulls)?{pulls:h.pulls.filter(Number.isSafeInteger).slice(0,20)}:{}),...(Array.isArray(h.fit)?{fit:h.fit.map(x=>oneLine(x,40)).slice(0,6)}:{})});continue;}
+   ...(Number.isSafeInteger(h.duplicateOf)?{duplicateOf:h.duplicateOf}:{}),...(Array.isArray(h.pulls)?{pulls:h.pulls.filter(Number.isSafeInteger).slice(0,20)}:{}),...(Array.isArray(h.fit)?{fit:h.fit.map(x=>oneLine(x,40)).slice(0,6)}:{}),
+   ...(Number.isSafeInteger(h.fitFrom)?{fitFrom:h.fitFrom}:{}),...(Array.isArray(h.pullInfo)?{pullInfo:h.pullInfo.filter(p=>Number.isSafeInteger(p?.n)).slice(0,20).map(p=>({n:p.n,author:oneLine(p.author,100),association:oneLine(p.association,40)}))}:{})});continue;}
   for(const n of S.filter(n=>!sound(n))){const c=cmp.get(n),fa=a.issues.find(f=>f.n===n),fb=b.issues.find(f=>f.n===n),diff=[...(c?.diff??[])];
    const unlocated=(s?:string)=>s==='not-found'||s==='needs-info';
    if(diff.includes('state')&&unlocated(fa?.state)!==unlocated(fb?.state))diff.push('locate');
@@ -141,17 +148,22 @@ export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:s
  let packages=[...rec.packages],noCode:NoCode[]=[...(rec.noCode??[])],last=lastId(rec);
  const ruled=new Set<number>();
  const files=(...ss:(Side|null|undefined)[])=>[...new Set(ss.flatMap(s=>(s?.locus??[]).map(l=>normalize(l.file))))].sort();
- const mark=(n:number,f:Partial<typeof issues[string]>,r:Ruling)=>{const i=issues[String(n)];if(!i)return;issues[String(n)]={...i,...f,ruled:{pick:r.pick,case:r.case,run:o.run,by:o.by,at:o.at}};};
+ const mark=(n:number,f:Partial<typeof issues[string]>,r:Ruling)=>{const i=issues[String(n)];if(!i)return;const next:any={...i,...f,ruled:{pick:r.pick,case:r.case,run:o.run,by:o.by,at:o.at}};
+  for(const k of Object.keys(next))if(next[k]===undefined)delete next[k];issues[String(n)]=next;};
  const newPack=(p:{kind:Package['kind'];members:number[];order:number[]}):string=>{const id=`P-${++last}`,security=p.members.some(n=>issues[String(n)]?.security);
   packages.push({...p,why:'',security,id,commit:d.commit,status:'proposed'});added.push(id);return id;};
  const label=(n:number,l:Omit<GoldLabel,'n'|'source'|'at'>,r:Ruling)=>{gold[String(n)]={n,...l,source:'captain',at:o.at,from:[`captain: ruled ${r.pick} on ${r.case} of ${o.run}`]};};
  const toNoCode=(n:number,state:NoCode['state'],questions?:string[])=>noCode.push({issues:[n],state,reason:'',...(questions?.length?{questions:{[String(n)]:questions}}:{})});
  /** what both reports agree on, adopted: code to change, a single package; nothing to change, the no-code state; else for a person */
  const adopt=(c:typeof d.cases[number],n:number,r:Ruling,made:string[])=>{const ag=c.agreed[String(n)],sa=c.a[String(n)],sb=c.b[String(n)];
-  if(ag&&needsCode(ag.state)){const id=newPack({kind:ag.state==='fixed?'?'recheck':'single',members:[n],order:[n]});made.push(id);mark(n,{checked:true},r);
+  // the captain's ruling overrides what set it aside: not a duplicate after all, or an agent's work
+  const over:Partial<typeof issues[string]>=r.pick==='not-duplicate'?{duplicateOf:undefined}:r.pick==='agent'?{fit:'agent',fitReason:undefined}:{};
+  if(ag&&needsCode(ag.state)){const id=newPack({kind:ag.state==='fixed?'?'recheck':'single',members:[n],order:[n]});made.push(id);mark(n,{checked:true,...over},r);
+   // taken although an open pull request names it: the package records it, as taking it on the project page does
+   if(r.pick==='take')packages=packages.map(p=>p.id===id?{...p,taken:{by:o.by,at:o.at,pulls:c.pulls??[]}}:p);
    label(n,{state:ag.state as GoldLabel['state'],...(files(sa,sb).length?{files:files(sa,sb)}:{}),package:id},r);}
-  else if(ag){mark(n,{checked:true,state:ag.state as any},r);toNoCode(n,ag.state as NoCode['state'],[...(sa?.questions??[]),...(sb?.questions??[])]);if(ag.state==='needs-info')needsInfo.push(n);label(n,{state:ag.state as GoldLabel['state']},r);}
-  else{mark(n,{},r);back.push({issues:[n],reason:`the captain ruled ${r.pick} on #${n}, but the two reports disagree on it (or Studio's check fails): decide it here`});}};
+  else if(ag){mark(n,{checked:true,state:ag.state as any,...over},r);toNoCode(n,ag.state as NoCode['state'],[...(sa?.questions??[]),...(sb?.questions??[])]);if(ag.state==='needs-info')needsInfo.push(n);label(n,{state:ag.state as GoldLabel['state']},r);}
+  else{mark(n,over,r);back.push({issues:[n],reason:`the captain ruled ${r.pick} on #${n}, but the two reports disagree on it (or Studio's check fails): decide it here`});}};
  for(const r of rulings){const c=d.cases.find(x=>x.id===r.case)!;const made:string[]=[];
   // decided on text that is no longer the issue's: left for the next triage, which investigates it again
   if(c.issues.some(n=>moved.has(n))){const ns=c.issues.filter(n=>!!issues[String(n)]);skipped.push(...ns);c.issues.forEach(n=>ruled.add(n));
@@ -162,7 +174,9 @@ export function applyRulings(rec:TriageRecord,d:Docket,rulings:Ruling[],o:{run:s
   if(r.pick==='needs-info'){for(const n of live){const qs=[...new Set([...(c.a[String(n)]?.questions??[]),...(c.b[String(n)]?.questions??[])])].slice(0,5);
     mark(n,{state:'needs-info',checked:true},r);toNoCode(n,'needs-info',qs);needsInfo.push(n);label(n,{state:'needs-info'},r);}}
   else if(r.pick==='neither'){for(const n of live){mark(n,{investigated:false},r);released.push(n);}}
-  else if(r.pick==='confirm'||r.pick==='wait'||r.pick==='human'){for(const n of live)mark(n,{},r);}
+  else if(r.pick==='confirm'||r.pick==='human'){for(const n of live)mark(n,{},r);}
+  // still in progress: recorded, and left set aside, so the captain can still take it on the project page once that work ends
+  else if(r.pick==='wait'){for(const n of live)mark(n,{},r);entries.push({case:c.id,kind:c.kind,issues:c.issues,pick:r.pick,...(r.reason?{reason:r.reason}:{}),packages:[],run:o.run,card:o.card,by:o.by,at:o.at});continue;}
   else if(r.pick==='not-duplicate'||r.pick==='take'||r.pick==='agent'){for(const n of live)adopt(c,n,r,made);}
   else if(c.kind==='finding'){const n=live[0],s=n!==undefined?c[r.pick as 'a'|'b'][String(n)]:null;
    if(n!==undefined&&s){mark(n,{state:s.state as any,locus:s.locus,checked:true,security:!!issues[String(n)]?.security||s.security},r);

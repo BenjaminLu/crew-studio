@@ -137,8 +137,8 @@ export function parseLabels(raw:any,o:{project:string;triage:TriageRecord|null;c
 export type Replay={run:string;at:string;a:unknown;b:unknown;snapshot:Snapshot;read:(file:string)=>string|null;reads?:{a?:Reads;b?:Reads};skills?:string[]};
 export type Prediction={run:string;a?:Answer;b?:Answer;
  /** what Studio does with the issue: answered when it is in a work package both reports agree on, or when both agree it
-  *  has nothing to change in the code (noCode: not-found or not-code, no files) */
- studio?:Answer;securityFlag:boolean;agree:boolean;package:string|null;noCode:'not-found'|'not-code'|null;human:boolean;
+  *  has nothing to change in the code (noCode: not-found, not-code or needs-info, no files) */
+ studio?:Answer;securityFlag:boolean;agree:boolean;package:string|null;noCode:triage.NoCode['state']|null;human:boolean;
  /** its batch was replayed without recorded reads (from before Studio recorded them, or unreadable) */
  withoutReads:boolean};
 const answer=(f?:Finding):Answer|undefined=>f&&{state:f.state,files:[...new Set(f.locus.map(l=>normalize(l.file)))],security:f.security};
@@ -155,7 +155,7 @@ export function replay(batches:Replay[],rules:Rules=RULES){
    cmpd=new Map(rules.compareReports(a,b).map(c=>[c.n,c]));plan=rules.proposePackages(a,b,r.snapshot,r.read,reads);}
   catch(e:any){skipped.push({run:r.run,why:String(e?.message??e).slice(0,200)});continue;}
   if(blind)withoutReads++;
-  const none=new Map<number,'not-found'|'not-code'>();for(const x of plan.noCode??[])for(const n of x.issues)none.set(n,x.state);
+  const none=new Map<number,triage.NoCode['state']>();for(const x of plan.noCode??[])for(const n of x.issues)none.set(n,x.state);
   const inPkg=new Map<number,string>();plan.packages.forEach((p,i)=>p.members.forEach(n=>inPkg.set(n,`${r.run}#${i+1}`)));
   packages+=plan.packages.length;toHuman+=plan.toHuman.length;
   for(const n of new Set([...a.issues,...b.issues].map(f=>f.n))){const fa=a.issues.find(f=>f.n===n),fb=b.issues.find(f=>f.n===n),key=inPkg.get(n)??null;

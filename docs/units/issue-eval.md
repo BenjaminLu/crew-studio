@@ -21,15 +21,20 @@ in folders made 0700. Tests use neutral synthetic fixtures in a temporary data d
 
 A gold label is one issue's answer; every field is optional and scored only where it is given:
 
-    { n, state: present | fixed? | not-code | not-found, files: [paths], security: yes | no,
+    { n, state: present | fixed? | not-code | not-found | needs-info, files: [paths], security: yes | no,
       category: C-n | PLANNED, notPlanned: true, package: <group key>, source: captain | derived, at, from }
 
 `gold.json` keeps the captain's labels and the derived ones apart (`captain`, `derived`); the captain's fields win over
 derived ones, field by field. `package` is a group key: issues with one key belong in one work package.
 
-The states are the triager's own words (`Finding['state']` in `src/domain/issue-triage.ts`). A new state the
-skill gains later (such as `needs-info`) is added to `STATES` in `src/domain/issue-eval.ts`; existing gold stays
-valid, and the schema number changes only if a field changes meaning.
+The states are the triager's own words (`Finding['state']` in `src/domain/issue-triage.ts`), `STATES` in
+`src/domain/issue-eval.ts`. `needs-info` (the issue lacks what is needed to locate it: steps, expected and actual
+result, logs, environment or version) is a state of its own in the gold and in the score: label it where the issue
+as written cannot be located, `not-found` where it can be read but the code is not there. Studio's agreement puts a
+needs-info answer against a not-found one in the needs-info bucket (`studio` answers `needs-info` for both), so a
+gold `not-found` there counts as a miss for `studio`, while each investigator is scored on its own answer. Existing
+gold stays valid, and the schema number changes only if a field changes meaning. A new state the skill gains later
+is added the same way.
 
 ## Derived labels (free)
 
@@ -102,7 +107,8 @@ issue's category, the categorizer's own answer comes from its stored report in t
 in an answer or in the gold, is followed to the one it was merged into.
 
 Per predictor (investigator A, investigator B, and `studio`: what Studio does with the two, answering for issues in a
-package both agree on, and for issues both find not-found or both not-code (`noCode`: that state, no files); for
+package both agree on, and for issues both agree have nothing to change in the code (`noCode`: not-found, not-code or
+needs-info, that state, no files); for
 security, Studio's flag from either report or a label):
 
 - **state** and **security**: gold, answered, coverage, accuracy (right among answered), recall (right among labeled),
