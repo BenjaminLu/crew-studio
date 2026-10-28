@@ -111,6 +111,7 @@ export const GATE_LOCAL_ACTIONS = new Set([
  */
 export const GATE_SELF_GUARDED: Record<string, string> = {
   "repo.prepare": "makes only the Task's own worktree and branch under Studio's data; the captain's checkout and branches stay untouched, and cancel or delete removes it",
+  "branch.adopt": "runs only with the _adopt pin Studio sets from the Mac page's Send for review (never a caller's param); makes only the Task's own worktree and branch under Studio's data, starting at the terminal's commit; reads the project's repository and never writes the captain's checkout or branches; cancel or delete removes it",
   "pr.open": "locally writes only Studio's review record; on GitHub it pushes only the Task's own branch under the captain-approved project grant, and a branch outside the grant waits on a captain-only naming card",
   "remote.ready": "locally does nothing; on GitHub a conflict or an update outside the grant waits on a captain-only card, and the push uses the captain-approved project grant",
 };

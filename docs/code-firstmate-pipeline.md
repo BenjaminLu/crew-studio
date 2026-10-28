@@ -22,6 +22,10 @@ intent ─▶ spec ─▶ dispatch(H) ─▶ door ─┬─ one-way ─▶ plan 
                                                                          └──── fix (refine loop) ◀┘
 ```
 
+A second way in, **From existing branch** (docs/units/branch-intake.md): Send for review on a finished web terminal copies
+the branch into a worktree, the spec is drafted from its diff, and after the spec card and the door the first build visit
+runs no round (`adopted`): the branch's diff is checked against the spec on the edge to pr-open, and on as above.
+
 ## Nodes and their checks
 
 ### 1. spec (A: coordinator; output artifact type `spec`)

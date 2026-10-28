@@ -130,6 +130,7 @@ async function start(body) {
 }
 async function termOp(id, op) {
   try { const j = await postJ(`/api/terminals/${id}/${op}`, {}); if (op === "restart") { closePane(id); await load(); location.hash = `#/terminals/${encodeURIComponent(j.terminal.id)}`; return; }
+    if (op === "review") { toast(T(`Sent for review as ${j.terminal.review.run}`, `已送審：${j.terminal.review.run}`)); await load(); location.hash = `#/run/${j.terminal.review.run}`; return; }
     if (op === "dismiss") { closePane(id); TM.list = (TM.list || []).filter((t) => t.id !== id); location.hash = "#/terminals"; } await load(); }
   catch (e) { toast(String(e.message || e)); }
 }
@@ -141,18 +142,21 @@ function qrBox(text) {
   const box = h("div", { class: "wt-qr", "aria-label": T("QR code for this session's Remote Control link", "這個 session 的 Remote Control 連結 QR code") });
   box.innerHTML = q.createSvgTag({ cellSize: 3, margin: 0, scalable: false }); return box;
 }
+const warnText = (proj) => T(`Not sandboxed: runs with your user's full permissions in ${proj.path}`, `不在沙箱內：以你的使用者完整權限在 ${proj.path} 執行`);
 function launcher() {
   if (!TM.canWrite) return h("div", { class: "card x-pad wt-ro", "data-term-readonly": "1" }, h("b", {}, T("View only", "只能檢視")),
     h("p", { class: "faint" }, T("On a phone you can watch terminals and their state. Typing, starting and stopping happen on the Mac.", "手機上可以看終端機與狀態；輸入、啟動和停止要在 Mac 上做。")));
   const proj = TM.projects.find((p) => p.id === TM.project);
   const hasClaude = TM.presets.some((p) => p.remoteControl);
-  const sel = h("select", { id: "termProject", "aria-label": T("Project", "專案"), onchange: (e) => { TM.project = e.target.value; store.set("crew.term.project", TM.project); soft(); } },
+  const sel = h("select", { id: "termProject", "aria-label": T("Project", "專案"), onchange: (e) => { TM.project = e.target.value; store.set("crew.term.project", TM.project);
+      // the warning follows the project in place: a re-render now would replace a command field the captain is typing in
+      const w = document.querySelector("[data-term-warning]"), pj = TM.projects.find((x) => x.id === TM.project); if (w && pj) w.textContent = warnText(pj); } },
     TM.projects.map((p) => h("option", { value: p.id, selected: p.id === TM.project }, p.name)));
   const cmd = h("input", { id: "termCmd", type: "text", placeholder: T("Custom command, e.g. npm run dev", "自訂指令，例如 npm run dev"), value: TM.cmd, autocomplete: "off", spellcheck: "false",
     oninput: (e) => { TM.cmd = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter" && TM.cmd.trim()) { e.preventDefault(); start({ command: TM.cmd }); } } });
   return h("div", { class: "card x-pad wt-new" },
     h("div", { class: "wt-row" }, h("label", { for: "termProject" }, T("Project", "專案")), TM.projects.length ? sel : h("span", { class: "faint" }, T("Register a project first (Projects).", "請先註冊專案（專案頁）。"))),
-    proj ? h("p", { class: "wt-warn", "data-term-warning": "1" }, T(`Not sandboxed: runs with your user's full permissions in ${proj.path}`, `不在沙箱內：以你的使用者完整權限在 ${proj.path} 執行`)) : null,
+    proj ? h("p", { class: "wt-warn", "data-term-warning": "1" }, warnText(proj)) : null,
     h("div", { class: "wt-presets" }, TM.presets.map((p) => h("button", { type: "button", class: "btn", "data-preset": p.id, disabled: TM.busy || !proj, title: p.path, onclick: () => start({ preset: p.id, ...(p.remoteControl ? { remoteControl: TM.rc } : {}) }) }, p.label))),
     hasClaude ? h("label", { class: "wt-rc" }, h("input", { type: "checkbox", id: "termRc", checked: TM.rc, onchange: (e) => { TM.rc = e.target.checked; store.set("crew.term.rc", TM.rc ? "1" : "0"); } }),
       T(" Claude Code: turn on Remote Control (take the session over from the Claude app)", " Claude Code：開啟 Remote Control（可從 Claude app 接手這個 session）")) : null,
@@ -166,6 +170,17 @@ function patchPage() {
   if (!sec || !t || !p || p.host.parentElement !== sec) return soft();
   for (const k of [...sec.children]) if (k !== p.host) k.remove();
   for (const k of detailHead(t)) if (k) sec.insertBefore(k, p.host);
+}
+// Send for review (docs/units/branch-intake.md): a finished terminal whose checkout is a branch with commits beyond base
+// goes to code-firstmate's "From existing branch": spec card, scope, checks at base and head, review, fixes, merge card
+function reviewRow(t) {
+  const g = t.git?.end || t.git?.start; if (!g && !t.review) return null;
+  const where = g ? h("span", { class: "faint" }, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : g.head.slice(0, 10)) : null;
+  if (t.review) return h("div", { class: "wt-review", "data-term-review": t.id }, where, h("a", { class: "btn sm", "data-term-review-run": t.review.run, href: `#/run/${encodeURIComponent(t.review.run)}` }, T(`In review: ${t.review.run}`, `審查中：${t.review.run}`)));
+  if (!TM.canWrite) return where ? h("div", { class: "wt-review" }, where) : null;
+  const why = t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審") : !t.git?.end?.commits ? T("No commits beyond the base to review: commit the work on a branch", "沒有比 base 新的 commit 可送審：先在 branch 上 commit") : null;
+  return h("div", { class: "wt-review", "data-term-review": t.id }, where, why ? h("span", { class: "faint" }, why) : null,
+    h("button", { type: "button", class: "btn primary sm", "data-term-send": t.id, disabled: !!why, onclick: () => termOp(t.id, "review") }, T("Send for review", "送審")));
 }
 function detail(t) {
   const p = pane(t);
@@ -181,6 +196,7 @@ function detailHead(t) {
         t.running ? h("button", { type: "button", class: "btn", "data-term-kill": t.id, onclick: () => termOp(t.id, "kill") }, T("Stop", "停止")) : null,
         h("button", { type: "button", class: "btn", "data-term-restart": t.id, onclick: () => termOp(t.id, "restart") }, T("Restart", "重新啟動")),
         t.running ? null : h("button", { type: "button", class: "btn ghost", "data-term-dismiss": t.id, onclick: () => termOp(t.id, "dismiss") }, T("Remove", "移除"))) : null),
+    reviewRow(t),
     t.ask && t.state === "waiting" ? h("div", { class: "wt-ask", "data-term-ask": "1" }, T("Asks: ", "問你："), t.ask) : null,
     url ? h("div", { class: "wt-remote", "data-term-remote": "1" }, qrBox(url),
       h("div", {}, h("b", {}, T("Remote Control is on", "Remote Control 已開啟")), h("p", { class: "faint" }, T("Open this link in the Claude app or claude.ai to take the session over. Anyone with the link and your account can drive it.", "在 Claude app 或 claude.ai 開這個連結就能接手這個 session。有這個連結又登入你帳號的人都能操作它。")),

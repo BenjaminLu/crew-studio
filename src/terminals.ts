@@ -21,6 +21,8 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, rea
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { detectState, screenLines, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
+import { git } from "./git";
+import { redactText } from "./secure";
 
 export type Preset = { id: string; label: string; bin: string; kind: AgentKind; remoteControl?: boolean };
 export const PRESETS: Preset[] = [
@@ -32,10 +34,14 @@ export const PRESETS: Preset[] = [
   { id: "gemini", label: "Gemini CLI", bin: "gemini", kind: "gemini" },
   { id: "amp", label: "Amp", bin: "amp", kind: "amp" },
 ];
-export type TermProject = { id: string; name: string; path: string };
+export type TermProject = { id: string; name: string; path: string; base?: string };
+/** Where the project's checkout stood (its branch and head), and how many commits that head has beyond the project's base. */
+export type TermGit = { branch: string | null; head: string; commits: number | null; base: string | null };
+/** Send for review (docs/units/branch-intake.md): what the terminal hands to code-firstmate's "From existing branch". */
+export type ReviewRequest = { terminal: string; project: string; commit: string; branch: string | null; label: string; command: string; by: string };
 export type TermView = { id: string; project: TermProject; preset: string | null; kind: AgentKind; label: string; command: string; by: string;
   startedAt: string; endedAt: string | null; exitCode: number | null; signal: string | null; state: TermState; reason: StateReason; ask: string | null;
-  cols: number; rows: number; running: boolean; remote: { enabled: boolean; mode: "flag" | "slash" | null; sent: boolean; url?: string | null } | null; transcriptTruncated: boolean };
+  cols: number; rows: number; running: boolean; git: { start: TermGit | null; end: TermGit | null }; review: { run: string; at: string } | null; remote: { enabled: boolean; mode: "flag" | "slash" | null; sent: boolean; url?: string | null } | null; transcriptTruncated: boolean };
 
 // Claude Code's Remote Control link: whoever holds it can drive the session from the Claude app, so it is a secret here
 export const REMOTE_URL = /https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code[^\s\x00-\x1f\x7f"'<>`\\│|]*/gi;
@@ -145,7 +151,8 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
 
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec; killTimer?: any; remoteUrl: string | null; stopped?: string; seen: Set<string>; linkSeen: boolean };
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec; killTimer?: any; remoteUrl: string | null; stopped?: string; seen: Set<string>; linkSeen: boolean;
+  line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[] };
 export type CreateSpec = { project: string; preset?: string | null; command?: string | null; args?: string[]; remoteControl?: boolean; cols?: number; rows?: number };
 export class TermError extends Error { constructor(readonly status: number, message: string, readonly code: string) { super(message); } }
 
@@ -156,12 +163,23 @@ export type TerminalsOpts = {
   transcripts?: boolean;
   /** Studio's own secret values that must never reach a child under any name (its session token, its ledger key). */
   secrets?: () => (string | null | undefined)[];
-  log?: (type: "terminal.start" | "terminal.exit", summary: string, data: Record<string, unknown>) => void;
+  log?: (type: "terminal.start" | "terminal.exit" | "terminal.review", summary: string, data: Record<string, unknown>) => void;
   /** a terminal's summary changed (state, exit, a new one): the page's live stream carries it */
   changed?: (list: TermView[]) => void;
   env?: Record<string, string | undefined>;
   shell?: string;
+  /** Send for review: start code-firstmate from the terminal's branch; answers the run's id */
+  review?: (r: ReviewRequest) => Promise<{ run: string }>;
 };
+/** The project's checkout: its branch, head and commits beyond base (Studio's own git: no hooks, no user config). */
+export function gitFacts(path: string, base?: string | null): TermGit | null {
+  const head = git(path, ["rev-parse", "--verify", "HEAD^{commit}"]); if (!head.ok || !/^[0-9a-f]{40,64}$/.test(head.out)) return null;
+  const br = git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  let commits: number | null = null;
+  if (base && git(path, ["rev-parse", "--verify", `${base}^{commit}`]).ok) { const c = git(path, ["rev-list", "--count", `${base}..${head.out}`]); if (c.ok) commits = Number(c.out) || 0; }
+  return { branch: br.ok && br.out ? br.out : null, head: head.out, commits, base: base ?? null };
+}
+const AGENT_KINDS = new Set<AgentKind>(["claude", "codex", "cursor", "aider", "opencode", "gemini", "amp"]);
 
 export class Terminals {
   private terms = new Map<string, Term>();
@@ -196,13 +214,13 @@ export class Terminals {
     return p;
   }
   view(t: Term, desktop: boolean): TermView {
-    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, remote, transcriptTruncated } = t;
-    return { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, transcriptTruncated,
+    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, remote, transcriptTruncated, git, review } = t;
+    return { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, transcriptTruncated, git, review,
       remote: remote ? { enabled: remote.enabled, mode: remote.mode, sent: remote.sent, ...(desktop ? { url: t.remoteUrl } : {}) } : null };
   }
   list(desktop = true): TermView[] { return [...this.terms.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt)).map((t) => this.view(t, desktop)); }
   get(id: string) { return this.terms.get(id) ?? null; }
-  projects(): TermProject[] { return this.o.projects().map((p) => ({ id: p.id, name: p.name, path: p.path })); }
+  projects(): TermProject[] { return this.o.projects().map((p) => ({ id: p.id, name: p.name, path: p.path, base: p.base })); }
   private changed() { try { this.o.changed?.(this.list(false)); } catch {} }
 
   async create(spec: CreateSpec, by = "desktop"): Promise<TermView> {
@@ -231,7 +249,7 @@ export class Terminals {
     const command = spec.preset ? [preset === "shell" ? this.shell() : PRESETS.find((p) => p.id === preset)!.bin, ...argv.slice(1)].join(" ") : String(spec.command).trim();
     const shown = new LinkRedactor().whole(command);
     const t: Term = { id, project, preset, kind, label, command: shown, by, startedAt: new Date().toISOString(), endedAt: null, exitCode: null, signal: null,
-      state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false,
+      state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false, git: { start: gitFacts(project.path, project.base), end: null }, review: null, line: "", lineAt: null, inputs: [],
       proc: null, ring: new Ring(this.cap), tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: false, subs: new Set(),
       decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null, seen: new Set(), linkSeen: false };
     if (t.tFile) writeFileSync(t.tFile, "", { mode: 0o600 });
@@ -306,6 +324,7 @@ export class Terminals {
     this.writeTranscript(t, t.redactor.push(t.decoder.decode()) + t.redactor.flush());
     const sig = t.proc?.signalCode ?? null;
     t.exitCode = sig ? null : (typeof code === "number" ? code : null); t.signal = sig; t.endedAt = new Date().toISOString();
+    t.git.end = gitFacts(t.project.path, t.project.base);
     try { t.proc.terminal?.close?.(); } catch {}
     this.evaluate(t); this.saveMeta(t);
     for (const s of t.subs) this.emit(t, s, enc.encode(`event: exit\ndata: ${JSON.stringify({ exitCode: t.exitCode, signal: t.signal })}\n\n`));
@@ -313,8 +332,8 @@ export class Terminals {
     this.changed();
   }
   private saveMeta(t: Term) {
-    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated } = t;
-    try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows,
+    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated, git, review } = t;
+    try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, git, review,
       transcript: t.tFile ? `${id}.log` : null, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
       sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}) }, null, 1), { mode: 0o600 }); } catch {}
   }
@@ -335,6 +354,43 @@ export class Terminals {
     const t = this.need(id); if (!t.running) throw new TermError(409, "this terminal has ended", "ended");
     if (typeof data !== "string" || !data || data.length > 65536) throw new TermError(400, "input: a string of at most 64 KiB", "input");
     t.proc.terminal.write(data);
+    this.recordInput(t, data);
+  }
+  /**
+   * The lines the captain types to an agent at its own prompt (not at a question, never in a shell or a custom command,
+   * where a password may be typed): Send for review hands them to the spec writer as data. Redacted, 40 lines kept.
+   */
+  private recordInput(t: Term, data: string) {
+    if (!AGENT_KINDS.has(t.kind)) return;
+    const text = data.replace(/\x1b\[20[01]~/g, "").replace(/\x1b(?:\[[0-?]*[ -\/]*[@-~]|O.|.)/g, "");
+    for (const ch of text) {
+      if (ch === "\r" || ch === "\n") {
+        const line = t.line.trim(), at = t.lineAt; t.line = ""; t.lineAt = null;
+        if (line && at?.state === "waiting" && at.reason !== "question") {
+          t.inputs = [...t.inputs, redactText(t.redactor.scrub(line)).slice(0, 2000)].slice(-40);
+          try { writeFileSync(join(this.dir, `${t.id}.inputs.json`), JSON.stringify({ version: 1, terminal: t.id, lines: t.inputs }), { mode: 0o600 }); } catch {}
+        }
+        continue;
+      }
+      if (ch === "\x7f" || ch === "\b") { t.line = t.line.slice(0, -1); continue; }
+      if (ch < " ") continue;
+      if (!t.lineAt) t.lineAt = { state: t.state, reason: t.reason };
+      if (t.line.length < 4000) t.line += ch;
+    }
+  }
+  /** Send for review: a finished terminal whose checkout is a branch with commits beyond the project's base. */
+  async sendForReview(id: string, by = "desktop"): Promise<TermView> {
+    const t = this.need(id);
+    if (!this.o.review) throw new TermError(501, "Send for review is not available here", "noReview");
+    if (t.running) throw new TermError(409, "the agent is still running: send it for review once it has finished", "running");
+    if (t.review) throw new TermError(409, `already sent for review as ${t.review.run}`, "sent");
+    const end = gitFacts(t.project.path, t.project.base); t.git.end = end ?? t.git.end;
+    if (!end) throw new TermError(409, "the project's folder is not a git checkout with a commit", "noGit");
+    if (!end.commits) throw new TermError(409, `no commits beyond ${t.project.base ?? "the base"}: commit the work on a branch first`, "noCommits");
+    const { run } = await this.o.review({ terminal: t.id, project: t.project.id, commit: end.head, branch: end.branch, label: t.label, command: t.command, by });
+    t.review = { run, at: new Date().toISOString() }; this.saveMeta(t); this.changed();
+    this.o.log?.("terminal.review", `terminal ${t.id} (${t.label}) sent for review as ${run}`, { id: t.id, project: t.project.id, run, commit: end.head, branch: end.branch });
+    return this.view(t, true);
   }
   resize(id: string, cols: unknown, rows: unknown) {
     const t = this.need(id); if (!t.running) return this.view(t, true);
@@ -399,7 +455,7 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
         ...(desktop ? { presets: svc.presets().map(({ id, label, kind, remoteControl, path }) => ({ id, label, kind, remoteControl: !!remoteControl, path })), projects: svc.projects() } : {}) });
     }
     if (p === "/api/terminals" && writing) { const b = await req.json().catch(() => null); return json({ terminal: await svc.create(b ?? {}, "desktop") }); }
-    const m = /^\/api\/terminals\/([\w-]{1,64})\/(stream|input|resize|kill|restart|dismiss)$/.exec(p);
+    const m = /^\/api\/terminals\/([\w-]{1,64})\/(stream|input|resize|kill|restart|dismiss|review)$/.exec(p);
     if (!m) return json({ error: "not found" }, 404);
     const [, id, op] = m;
     if (op === "stream" && !writing) return svc.attach(id, !desktop, who.device?.id);
@@ -410,6 +466,7 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
     if (op === "kill") return json({ terminal: svc.kill(id) });
     if (op === "restart") return json({ terminal: await svc.restart(id, "desktop") });
     if (op === "dismiss") { svc.dismiss(id); return json({ ok: true }); }
+    if (op === "review") return json({ terminal: await svc.sendForReview(id, "desktop") });
     return json({ error: "not found" }, 404);
   } catch (e: any) {
     if (e instanceof TermError) return json({ error: e.message, code: e.code }, e.status);

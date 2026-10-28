@@ -114,3 +114,10 @@ fake link, with and without the flag in its help.
 View only: the page lists terminals and states and draws the output (none for Claude Code with Remote Control on) with
 xterm.js created with `disableStdin`, and the input element xterm makes is removed, so a tap never opens a keyboard. No launcher, no Stop or Restart, no Remote Control
 link. A revoked phone's streams end.
+
+## Send for review
+
+A finished terminal whose project checkout is on a branch with commits beyond the project's base offers **Send for
+review**: code-firstmate reviews the branch from a copy in a Studio worktree (docs/units/branch-intake.md). The terminal
+records the checkout's branch and head at start and at end (Studio's own git: no hooks, no user config), and the lines the
+captain typed at an agent's own prompt, for the spec writer, as data.

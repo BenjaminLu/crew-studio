@@ -95,8 +95,8 @@ await section("the simple view lays every built-in workflow out", () => { for (c
 } });
 await section("the simple view of code-firstmate", () => {
   const cf = defs[0]; const g = L.layoutSimple(cf, { wrap: 6 }); const ids = g.nodes.map((n: any) => n.id);
-  const main = ["intake", "prepare", "spec", "dispatch", "door", "plan", "plan-accept", "build", "pr-open", "ci", "review", "design-scope", "designer", "remote-ready", "merge-card", "merge", "after-merge", "cleanup", "done"];
-  ok(ids.length === 19 && main.every((x) => ids.includes(x)), "the simple view of code-firstmate holds only the main path through the stages (19 nodes: the designer round is on it)", ids.join(","));
+  const main = ["intake", "prepare", "adopt", "spec", "dispatch", "door", "plan", "plan-accept", "build", "pr-open", "ci", "review", "design-scope", "designer", "remote-ready", "merge-card", "merge", "after-merge", "cleanup", "done"];
+  ok(ids.length === 20 && main.every((x) => ids.includes(x)), "the simple view of code-firstmate holds only the main path through the stages (20 nodes: the designer round is on it, and From existing branch beside Worktree)", ids.join(","));
   ok(["spec-fix", "plan-fix", "fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].every((x) => g.hidden.includes(x)), "loop, door-question and escalation nodes are hidden in simple view", g.hidden.join(","));
   const b = g.badges, txt = (k: string, kind: string) => (b[k] || []).find((x: any) => x.kind === kind);
   ok(txt("node:spec", "loop")?.text === "↻ refine" && txt("node:spec", "loop")?.cap === 3 && txt("node:build", "loop")?.text === "↻ fix" && txt("node:plan", "loop")?.text === "↻ refine", "loops become ↻ badges with their round cap");
@@ -161,9 +161,9 @@ await section("layout modes", async () => {
   const directions=new Set(compact.edges.filter((e:any)=>e.back).map((e:any)=>Math.sign(e.segs[2].b[0]-e.segs[2].a[0])));
   ok(directions.has(-1)&&directions.has(1),"Show all connections: compact routing regression covers buses in both horizontal directions");
   ok(JSON.stringify(compactDef)===compactBytes&&JSON.stringify(compact.edges.flatMap((e:any)=>e.index).sort((a:number,b:number)=>a-b))===JSON.stringify(compactDef.edges.map((_:any,i:number)=>i)),"Show all connections: bus routing preserves every original node, endpoint, condition/check object and edge identity");
-  ok(compact.nodes.length===32&&compact.edges.flatMap((e:any)=>e.index).length===75&&compact.edges.some((e:any)=>e.back),"Show all connections: code-firstmate draws all 32 steps and 75 connections, back edges included");
+  ok(compact.nodes.length===33&&compact.edges.flatMap((e:any)=>e.index).length===78&&compact.edges.some((e:any)=>e.back),"Show all connections: code-firstmate draws all 33 steps and 78 connections, back edges included",`${compact.nodes.length}/${compact.edges.flatMap((e:any)=>e.index).length}`);
   const editorDefault=L.layoutSimple(compactDef,{keepDisconnected:true,wrap:6}),edBadge=(k:string,kind:string)=>(editorDefault.badges[k]||[]).find((b:any)=>b.kind===kind);
-  ok(editorDefault.nodes.length===19&&editorDefault.edges.length===20&&!editorDefault.edges.some((e:any)=>e.back)&&(editorDefault.disconnected||[]).length===0,"editable Overview default: code-firstmate is the 19-node / 20-edge main path with no back edges",`${editorDefault.nodes.length}/${editorDefault.edges.length}`);
+  ok(editorDefault.nodes.length===20&&editorDefault.edges.length===22&&!editorDefault.edges.some((e:any)=>e.back)&&(editorDefault.disconnected||[]).length===0,"editable Overview default: code-firstmate is the 20-node / 22-edge main path with no back edges",`${editorDefault.nodes.length}/${editorDefault.edges.length}`);
   ok(edBadge("node:spec","loop")?.text==="↻ refine"&&edBadge("node:build","loop")?.text==="↻ fix"&&edBadge("node:door","ask")&&edBadge("stage:build","escalations")?.nodes.length===8,"editable Overview default: loops, the door question and escalations are badges");
   const def: any = {id:"delete-projection",nodes:["start","middle","tail","done"].map(id=>({id,kind:"hook",do:"note",label:"Repeated label"})),edges:[{from:"start",to:"middle"},{from:"middle",to:"tail"},{from:"tail",to:"done",when:"ok",checks:[{use:"fixture-check"}]}],roles:[]};
   for(const removed of ["start","middle","done"]){const after={...def,nodes:def.nodes.filter((n:any)=>n.id!==removed),edges:def.edges.filter((e:any)=>e.from!==removed&&e.to!==removed)};
