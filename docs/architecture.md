@@ -242,9 +242,11 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     HOME.
 - Web terminals are deliberately not sandboxed (docs/units/web-terminal.md): at the captain's request, Studio runs any
   agent CLI or command the captain starts, as the captain's user, in a registered project's folder, as the captain's own
-  Terminal would. The boundary is who may drive it, not what it may do: only the Mac's own page (Studio's session cookie
-  on loopback, same origin, JSON) creates, types into, resizes or stops a terminal; a script's `x-crew-session` and every
-  paired phone are refused, and a phone may only watch. The child's environment loses every `CREW_*`/`FM_*` variable and
+  Terminal would. The boundary is who may drive it, not what it may do: loopback and the phone's read-only rule. Only the
+  Mac's own page (Studio's session cookie on loopback, Origin and Sec-Fetch-Site same-origin, JSON) creates, types into,
+  resizes or stops a terminal; a script's `x-crew-session` and every paired phone are refused, and a phone may only watch
+  (no output at all from Claude Code with Remote Control on: its session link is printed there). The page-only rule is not
+  a boundary against local processes: a process of this user, a terminal included, can read `data/session-token`. The child's environment loses every `CREW_*`/`FM_*` variable and
   any variable holding Studio's session token or ledger key. Transcripts are logs, never evidence.
 - Not in the agent sandbox, and why: Studio's own renderer (headless Chromium for captures, film frames, PDF prints and
   the interaction smoke) and ffmpeg run as Studio's tools, outside sandbox-exec. A page they load is served from one

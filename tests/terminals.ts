@@ -11,7 +11,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { freePort, waitUp } from "./boot.mjs";
-import { LinkRedactor, Ring, terminalEnv, REMOTE_REMOVED } from "../src/terminals";
+import { LinkRedactor, Ring, SecretWindow, Terminals, findLink, terminalEnv, REMOTE_REMOVED } from "../src/terminals";
 import { sessionCookieName } from "../src/csrf";
 
 let pass = 0, fail = 0;
@@ -29,8 +29,33 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   const out = parts.map((p) => red.push(p)).join("") + red.flush();
   ok(!out.includes("session_ABC123") && out.includes(REMOTE_REMOVED) && out.includes("next line"), "a link split over four chunks is still removed", JSON.stringify(out));
   ok(new LinkRedactor().push("plain text http-ish but no link") === "plain text http-ish but no link", "ordinary text passes untouched");
+  // each way a terminal can print the link (review B2): wrapped by Ink at the width, an escape inside it, upper case,
+  // percent-encoded, the session id alone later; and the phone/transcript window holds everything until the link is known
+  const URL_ = "https://claude.ai/code/rc-LEAKTEST0123456789abcdefghij?env=w";
+  const wrapped = `Remote Control active · ${URL_.slice(0, 30)}\x1b[1m${URL_.slice(30, 50)}\x1b[22m\r\n  ${URL_.slice(50)}\r\nnext\r\n`;
+  ok(findLink(wrapped, 74) === URL_, "a link Ink wrapped at the terminal's width, with an escape inside it, is found whole", String(findLink(wrapped, 74)));
+  ok(findLink("go to HTTPS://CLAUDE.AI/code/rc-UPPERCASE0123456789 now\r\n", 120) === "HTTPS://CLAUDE.AI/code/rc-UPPERCASE0123456789", "an upper-case link is found");
+  const w = new SecretWindow(true); let wout = w.push(wrapped.slice(0, 40)) + w.push(wrapped.slice(40));
+  ok(wout === "", "with Remote Control on, nothing leaves the window before the link is known");
+  w.know(URL_);
+  wout += w.push("") + w.push(`id again: rc-LEAKTEST0123456789abcdefghij\r\nHTTPS://CLAUDE.AI/CODE/RC-LEAKTEST0123456789ABCDEFGHIJ?ENV=W\r\n`)
+    + w.push(`encoded: https%3A%2F%2Fclaude.ai%2Fcode%2Frc-LEAKTEST0123456789abcdefghij%3Fenv%3Dw\r\nmoved: rc-LEAK\x1b[3Ctest0123456789\x1b[0mabcdefghij\r\nend\r\n`) + w.flush();
+  ok(!/LEAKTEST|leaktest|0123456789abcdefghij/i.test(wout.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")) && wout.includes("next") && wout.includes("end") && (wout.match(/\[remote-control link removed\]/g) ?? []).length >= 5,
+    "wrapped, escaped, upper-case, percent-encoded and the bare session id: none survives", JSON.stringify(wout));
   const env = terminalEnv({ PATH: "/bin", HOME: "/h", CREW_SESSION_TOKEN: "s".repeat(24), CREW_DATA: "/d", FM_IN_ROUND: "1", COPY: "secret-session-value-xyz", MINE: "kept" }, ["secret-session-value-xyz"]);
   ok(env.PATH === "/bin" && env.MINE === "kept" && !("CREW_SESSION_TOKEN" in env) && !("CREW_DATA" in env) && !("FM_IN_ROUND" in env) && !("COPY" in env) && env.TERM === "xterm-256color", "terminalEnv drops CREW_*, FM_* and Studio's secret values under any name", JSON.stringify(env));
+}
+
+// ---------- transcripts off; the records folder is private ----------
+{
+  const d = mkdtempSync(join(tmpdir(), "crew-terminals-off-")), pr = join(d, "p"); mkdirSync(pr); mkdirSync(join(d, "terminals"), { mode: 0o755 }); chmodSync(join(d, "terminals"), 0o755);
+  const svc = new Terminals({ dataDir: d, projects: () => [{ id: "p", name: "P", path: pr }], transcripts: false, shell: "/bin/sh", env: { PATH: "/usr/bin:/bin" } });
+  ok((statSync(join(d, "terminals")).mode & 0o777) === 0o700, "an existing records folder is made private (0700) on start");
+  const v = await svc.create({ project: "p", command: "echo hello" });
+  await until(() => svc.get(v.id)?.running === false, 5000);
+  const meta = JSON.parse(readFileSync(join(d, "terminals", `${v.id}.json`), "utf8"));
+  ok(!existsSync(join(d, "terminals", `${v.id}.log`)) && meta.transcript === null && meta.exitCode === 0, "transcripts off: no transcript file, the record stays", JSON.stringify(meta));
+  rmSync(d, { recursive: true, force: true });
 }
 
 // ---------- a real Studio ----------
@@ -45,7 +70,7 @@ writeFileSync(join(bin, "claude"), `#!/bin/sh
 d=$(dirname "$0")
 if [ "$1" = "--help" ]; then if [ "$(cat "$d/mode")" = flag ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; else echo "  -p, --print"; fi; exit 0; fi
 echo "$$ start: $*" >> "$d/calls.log"
-for a in "$@"; do [ "$a" = "--remote-control" ] && printf 'Remote Control active \\342\\200\\242 https://claude.ai/code/rc-FAKEFLAG123?env=x\\r\\n'; done
+for a in "$@"; do [ "$a" = "--remote-control" ] && { if [ -f "$d/print" ]; then cat "$d/print"; else printf 'Remote Control active \\342\\200\\242 https://claude.ai/code/rc-FAKEFLAG123?env=x\\r\\n'; fi; }; done
 while :; do printf '\\r\\n> '; IFS= read -r line || exit 0; echo "$$ input: $line" >> "$d/calls.log"
   case "$line" in /remote-control*) printf 'Remote Control enabled: https://claude.ai/code/rc-FAKESLASH456\\r\\n';; quit) exit 0;; *) printf 'you said %s\\r\\n' "$line";; esac; done
 `); chmodSync(join(bin, "claude"), 0o755); writeFileSync(join(bin, "mode"), "flag");
@@ -120,12 +145,12 @@ try {
   ok((await raw("POST", `/api/terminals/${id1}/dismiss`, {})).body?.ok && !(await term(id1)), "an ended terminal can be dismissed from the list");
 
   // ---------- kill takes the whole process group ----------
-  const c2 = await create({ command: "sleep 300 & echo $! > child.pid; echo started; wait" }); const id2 = c2.body.terminal.id;
+  const c2 = await create({ command: "sh -c 'sleep 300 & echo $! > child.pid; wait'; echo never" }); const id2 = c2.body.terminal.id;
   const childPid = Number(await until(() => { try { return readFileSync(join(proj, "child.pid"), "utf8").trim(); } catch { return ""; } }));
-  ok(childPid > 0 && alive(childPid), "a background child is running");
+  ok(childPid > 0 && alive(childPid), "a background grandchild is running");
   ok((await raw("POST", `/api/terminals/${id2}/kill`, {})).status === 200, "kill");
   ok(await until(async () => (await term(id2))?.running === false), "the terminal ends");
-  ok(await until(() => !alive(childPid), 4000), "its background child is gone too");
+  ok(await until(() => !alive(childPid), 4000), "its background grandchild is gone too");
   rmSync(join(proj, "child.pid"), { force: true });
 
   // ---------- the child's environment ----------
@@ -154,6 +179,7 @@ try {
   const sc = await raw("POST", `/api/terminals/${id4}/input`, { data: "y\r" }, { as: "script" });
   ok(sc.status === 403 && sc.body?.code === "pageOnly", "a script with x-crew-session cannot type (the page's cookie only)", JSON.stringify(sc));
   ok((await raw("POST", "/api/terminals", { project: "demo", command: "true" }, { as: "script" })).body?.code === "pageOnly", "nor start a terminal");
+  ok((await raw("POST", `/api/terminals/${id4}/input`, { data: "y\r" }, { headers: { "sec-fetch-site": "" } })).body?.code === "pageOnly", "the cookie without the browser's same-origin mark is refused too");
   ok((await raw("POST", `/api/terminals/${id4}/input`, { data: "y\r" }, { headers: { origin: "https://evil.example" } })).body?.code === "crossSite", "a cross-site page carrying the cookie is refused");
   ok((await raw("GET", "/api/terminals", undefined, { as: "none" })).status === 401 && (await raw("GET", `/api/terminals/${id4}/stream`, undefined, { as: "none" })).status === 401, "no session: no list, no stream");
   ok((await raw("POST", `/api/terminals/${id4}/input`, { data: "y\r" })).body?.ok, "the desktop page answers the question");
@@ -180,8 +206,11 @@ try {
   const t6 = await until(async () => { const t = await term(id6); return t?.remote?.url && t; });
   ok(t6?.remote.url === "https://claude.ai/code/rc-FAKEFLAG123?env=x", "the page gets the session's Remote Control link", JSON.stringify(t6?.remote));
   ok((await term(id6, { as: "phone", token: ptok }))?.remote && !("url" in (await term(id6, { as: "phone", token: ptok })).remote), "the phone does not get the link");
-  const pw = attach(id6, { as: "phone", token: ptok }); await until(() => pw.out.includes("Remote Control active")); pw.close();
-  ok(pw.out.includes(REMOTE_REMOVED) && !pw.out.includes("FAKEFLAG123"), "the phone's stream carries the output with the link removed", JSON.stringify(pw.out));
+  const pw = attach(id6, { as: "phone", token: ptok }); await until(() => pw.events.some((e) => e.ev === "replay")); await sleep(600); pw.close();
+  ok(pw.events.find((e) => e.ev === "replay")?.data?.hidden === "remote-control" && pw.out === "" && !pw.events.some((e) => e.ev === "out") && pw.events.some((e) => e.ev === "meta"), "with Remote Control on, a phone gets the states and no output at all", JSON.stringify(pw.events.map((e) => e.ev)));
+  const views = [1, 2, 3, 4].map(() => attach(id6)); await sleep(400);
+  const fifth = await raw("GET", `/api/terminals/${id6}/stream`); views.forEach((v) => v.close());
+  ok(fifth.status === 429 && fifth.body?.code === "tooManyViews", "at most four views of one terminal at once", JSON.stringify(fifth));
   ok(await until(async () => (await term(id6))?.state === "waiting" && (await term(id6)).reason === "prompt"), "Claude at its prompt: waiting (prompt)");
   await sleep(900);
   ok(!calls().includes("input: /remote-control"), "with the flag, no /remote-control is typed");
@@ -189,6 +218,25 @@ try {
   const log6 = readFileSync(join(data, "terminals", `${id6}.log`), "utf8");
   ok(!log6.includes("FAKEFLAG123") && log6.includes(REMOTE_REMOVED), "the stored transcript has the link removed", JSON.stringify(log6.slice(0, 200)));
   ok(!readFileSync(join(data, "terminals", `${id6}.json`), "utf8").includes("FAKEFLAG") && !readFileSync(join(data, "events.jsonl"), "utf8").includes("FAKEFLAG"), "the record and the activity log never hold the link");
+
+  // B1: a question that carries the link; B2: the link wrapped, coloured, upper-case, encoded, and the id alone, in a real PTY
+  await sleep(300);
+  const W90 = "https://claude.ai/code/rc-PTYLEAK0123456789abcdefghijkl?env=pty";
+  writeFileSync(join(bin, "print"), `Remote Control active \u00b7 ${W90.slice(0, 40)}\x1b[1m${W90.slice(40, 64)}\x1b[22m\r\n  ${W90.slice(64)}\r\n` +
+    `session: rc-PTYLEAK0123456789abcdefghijkl\r\nHTTPS://CLAUDE.AI/code/rc-PTYLEAK0123456789abcdefghijkl\r\nhttps%3A%2F%2Fclaude.ai%2Fcode%2Frc-PTYLEAK0123456789abcdefghijkl\r\n` +
+    `Open ${W90} to continue? Do you want to proceed? (y/n) `);
+  const cw = await create({ preset: "claude", cols: 86 }); const idw = cw.body.terminal.id;
+  const tw = await until(async () => { const t = await term(idw); return t?.remote?.url && t; });
+  ok(tw?.remote.url === W90, "the page gets the whole link even when the terminal wrapped it", JSON.stringify(tw?.remote));
+  const askW = await until(async () => { const t = await term(idw, { as: "phone", token: ptok }); return t?.state === "waiting" && t; });
+  const phoneView = JSON.stringify(await list({ as: "phone", token: ptok }));
+  ok(askW?.reason === "question" && /Do you want to proceed/.test(askW.ask ?? "") && !/PTYLEAK|claude\.ai/i.test(phoneView), "a question carrying the link reaches the phone's list without it", phoneView.slice(0, 400));
+  const pm = attach(idw, { as: "phone", token: ptok }); await until(() => pm.meta); await sleep(300); pm.close();
+  ok(!/PTYLEAK|claude\.ai/i.test(JSON.stringify(pm.events)), "nor in the phone's stream (meta or output)");
+  await raw("POST", `/api/terminals/${idw}/kill`, {}); await until(async () => !(await term(idw))?.running);
+  const logW = readFileSync(join(data, "terminals", `${idw}.log`), "utf8");
+  ok(!/PTYLEAK/i.test(logW.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")) && logW.includes(REMOTE_REMOVED), "the transcript has every form of the link removed", JSON.stringify(logW.slice(0, 400)));
+  rmSync(join(bin, "print"), { force: true });
 
   // an older Claude Code without the flag: /remote-control, typed once, when it first sits at its prompt
   writeFileSync(join(bin, "mode"), "slash"); const later = new Date(Date.now() + 5000); utimesSync(join(bin, "claude"), later, later); writeFileSync(join(bin, "calls.log"), "");

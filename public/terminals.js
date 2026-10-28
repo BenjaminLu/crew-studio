@@ -108,7 +108,8 @@ function pane(t) {
     try { fit.fit(); } catch {}
     const es = new EventSource(`/api/terminals/${encodeURIComponent(t.id)}/stream`); p.es = es;
     const write = (d) => { if (d.b64 !== undefined) term.write(b64bytes(d.b64)); else if (d.text) term.write(d.text); };
-    es.addEventListener("replay", (m) => { const d = JSON.parse(m.data); term.reset(); if (d.dropped) term.write(`\x1b[2m${T(`[earlier output dropped: ${d.dropped} bytes]`, `[較早的輸出已捨棄：${d.dropped} bytes]`)}\x1b[0m\r\n`); write(d); });
+    es.addEventListener("replay", (m) => { const d = JSON.parse(m.data); term.reset(); if (d.hidden === "remote-control") { term.write(`\x1b[2m${T("Output is not shown on a phone while Claude Code's Remote Control is on: its session link is printed in it. The state above stays live; take the session over in the Claude app.", "Claude Code 開著 Remote Control 時，手機上不顯示輸出（裡面有 session 連結）。上面的狀態照常更新；要操作請用 Claude app 接手。")}\x1b[0m\r\n`); return; }
+      if (d.dropped) term.write(`\x1b[2m${T(`[earlier output dropped: ${d.dropped} bytes]`, `[較早的輸出已捨棄：${d.dropped} bytes]`)}\x1b[0m\r\n`); write(d); });
     es.addEventListener("out", (m) => write(JSON.parse(m.data)));
     es.addEventListener("meta", (m) => { const v = JSON.parse(m.data); const i = (TM.list || []).findIndex((x) => x.id === v.id); if (i >= 0) { const before = TM.list[i]; TM.list[i] = v; if (before.state !== v.state || before.remote?.url !== v.remote?.url) redraw(); } });
     es.addEventListener("exit", (m) => { const d = JSON.parse(m.data); term.write(`\r\n\x1b[2m${T(`[process ended: ${d.signal || `exit ${d.exitCode}`}]`, `[程序已結束：${d.signal || `exit ${d.exitCode}`}]`)}\x1b[0m\r\n`); es.close(); load(); });

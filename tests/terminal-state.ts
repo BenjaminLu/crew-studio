@@ -43,7 +43,11 @@ ok(d.state === "working", "the question just drawn, output still flowing: not ye
 d = detectState({ kind: "shell", tail: shell, quietMs: 3000, sawOutput: true });
 ok(d.state === "waiting" && d.reason === "prompt", "shell prompt: waiting (prompt)", JSON.stringify(d));
 d = detectState({ kind: "custom", tail: "compiling 3/9 …", quietMs: 5000, sawOutput: true });
-ok(d.state === "waiting" && d.reason === "quiet", "an unknown program gone quiet: waiting (quiet)", JSON.stringify(d));
+ok(d.state === "working" && d.reason === "quiet", "a command gone quiet (a dev server, a build) is still running, not waiting for you", JSON.stringify(d));
+d = detectState({ kind: "shell", tail: "server listening on :3000", quietMs: 5000, sawOutput: true });
+ok(d.state === "working" && d.reason === "quiet", "a shell running something quiet: not waiting for you either", JSON.stringify(d));
+d = detectState({ kind: "amp", tail: "thinking about it", quietMs: 5000, sawOutput: true });
+ok(d.state === "waiting" && d.reason === "quiet", "an agent gone quiet: waiting (quiet)", JSON.stringify(d));
 d = detectState({ kind: "custom", tail: "x", quietMs: 0, sawOutput: true, exited: true, exitCode: 0 });
 ok(d.state === "done", "exit 0: done");
 d = detectState({ kind: "custom", tail: "x", quietMs: 0, sawOutput: true, exited: true, exitCode: 2 });

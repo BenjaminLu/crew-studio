@@ -59,5 +59,7 @@ export function detectState(o: { kind: AgentKind; tail: string; lastChunk?: stri
   if (o.lastChunk && BUSY.test(screenLines(o.lastChunk).filter((l) => l.trim()).slice(-3).join("\n")) && o.quietMs < idle * 4) return { state: "working", reason: "busy", ask: null };
   const last = lines.slice(-6).join("\n"), pr = PROMPT[o.kind];
   if (pr && pr.test(last)) return { state: "waiting", reason: "prompt", ask: null };
+  // a shell or a command that went quiet (a dev server, a build) is running, not asking for you
+  if (o.kind === "shell" || o.kind === "custom") return { state: "working", reason: "quiet", ask: null };
   return { state: "waiting", reason: "quiet", ask: null };
 }

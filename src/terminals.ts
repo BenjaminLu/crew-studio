@@ -8,18 +8,19 @@
 //   Wire: server-sent events out (GET …/stream, the replay first), JSON POSTs in. Both go through the server's one guard
 //   (src/server.ts handle → guardWrite), on the loopback listener (or the LAN one, which only phones reach).
 //   Who: every write here (create, input, resize, kill, restart, dismiss) needs the desktop page's own session COOKIE on
-//   loopback; x-crew-session (a script) and a paired phone's token are refused. A phone may list and watch, and sees what
-//   the transcript keeps (the Remote Control link removed), never the link itself.
+//   loopback with Origin and Sec-Fetch-Site same-origin; x-crew-session (a script) and a paired phone's token are refused.
+//   Not a boundary against local processes (they can read data/session-token). A phone may list and watch: the output with
+//   the generic link rule, and none at all from Claude Code with Remote Control on (states only), never the link itself.
 //   Bounds: a scrollback ring per terminal (CREW_TERMINAL_SCROLLBACK bytes, default 2 MiB), at most CREW_TERMINAL_MAX
 //   running (default 8), a transcript file per terminal capped at CREW_TERMINAL_TRANSCRIPT bytes (default 5 MiB), the 100
 //   newest records kept. Studio stopping kills every terminal (the process group, SIGHUP then SIGKILL); nothing is
 //   re-attached on restart: a record left open is closed as `studio-stopped` on the next start.
 //   Record: data/terminals/<id>.json (who, project, command, start, end, exit code) and <id>.log (the transcript), and a
 //   `terminal.start` / `terminal.exit` line in Studio's activity log. A log only: never evidence for a merge or a gate.
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { detectState, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
+import { detectState, screenLines, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
 
 export type Preset = { id: string; label: string; bin: string; kind: AgentKind; remoteControl?: boolean };
 export const PRESETS: Preset[] = [
@@ -37,7 +38,7 @@ export type TermView = { id: string; project: TermProject; preset: string | null
   cols: number; rows: number; running: boolean; remote: { enabled: boolean; mode: "flag" | "slash" | null; sent: boolean; url?: string | null } | null; transcriptTruncated: boolean };
 
 // Claude Code's Remote Control link: whoever holds it can drive the session from the Claude app, so it is a secret here
-export const REMOTE_URL = /https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code[^\s\x00-\x1f\x7f"'<>`\\]*/g;
+export const REMOTE_URL = /https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code[^\s\x00-\x1f\x7f"'<>`\\│|]*/gi;
 export const REMOTE_REMOVED = "[remote-control link removed]";
 const ENV_INTERNAL = /^(?:CREW_|FM_)/;
 const MIB = 1024 * 1024;
@@ -72,8 +73,8 @@ export class LinkRedactor {
   push(s: string): string {
     const all = this.held + s; this.held = "";
     // an unfinished link at the end (no terminator yet), or the end being a prefix of "https://"
-    const m = /https?:\/\/[^\s\x00-\x1f\x7f"'<>`\\]*$/.exec(all); let cut = m ? m.index : -1;
-    if (cut < 0) for (let k = Math.min(8, all.length); k > 0; k--) if ("https://".startsWith(all.slice(-k))) { cut = all.length - k; break; }
+    const m = /https?:\/\/[^\s\x00-\x1f\x7f"'<>`\\]*$/i.exec(all); let cut = m ? m.index : -1;
+    if (cut < 0) for (let k = Math.min(8, all.length); k > 0; k--) if ("https://".startsWith(all.slice(-k).toLowerCase())) { cut = all.length - k; break; }
     if (cut >= 0 && all.length - cut <= 4096) { this.held = all.slice(cut); return this.scrub(all.slice(0, cut)); }
     return this.scrub(all);
   }
@@ -81,15 +82,73 @@ export class LinkRedactor {
   whole(s: string) { return this.scrub(s); }
 }
 
+// Between any two characters of a known link a terminal may put an escape (colour, cursor move), a line break and the
+// indentation Ink wraps with, or a box border; a character may also come percent-encoded. A known link and its session id
+// are matched through all of that, in any letter case.
+const GAP = "(?:\\x1b\\[[0-?]*[ -\\/]*[@-~]|\\x1b\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)|\\x1b[@-Z\\\\-_]|[\\s│|╭╮╰╯─])*";
+export function fuzzy(secret: string): RegExp {
+  const one = (c: string) => { const e = c.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&"), n = c.charCodeAt(0); return n < 128 ? `(?:${e}|%${n.toString(16).padStart(2, "0")})` : `(?:${e})`; };
+  return new RegExp([...secret].map(one).join(GAP), "gi");
+}
+/** What must never be shown once a link is known: the link, the link without its scheme, and each long path segment (the session id). */
+export function linkSecrets(url: string): string[] {
+  const out = new Set<string>([url, url.replace(/^https:\/\//i, "")]);
+  try { const u = new URL(url); for (const seg of u.pathname.split("/")) if (seg.length >= 10) out.add(seg); for (const v of u.searchParams.values()) if (v.length >= 10) out.add(v); } catch {}
+  return [...out].sort((a, b) => b.length - a.length);
+}
+/**
+ * The transcript's and the phone's view of a terminal's output: the generic link rule (LinkRedactor), and once the session's
+ * own link is known, that link and its session id matched through escapes, wraps and encodings. A window at the end is held
+ * back so a match that is still arriving is never cut in two. `holdUntilKnown` (Claude Code with Remote Control on): nothing
+ * is let out before the link is known, so a link printed wrapped, coloured or encoded before Studio recognised it is still
+ * removed. If the link never comes, the end flushes with the generic rule only.
+ */
+export class SecretWindow {
+  private buf = ""; private pats: RegExp[] = []; private W = 0; private link = new LinkRedactor();
+  constructor(private holdUntilKnown = false, private cap = 8 * MIB) {}
+  get known() { return this.pats.length > 0; }
+  know(url: string) { const sec = linkSecrets(url); this.pats = sec.map(fuzzy); this.W = Math.min(32768, Math.max(...sec.map((x) => x.length)) * 24); }
+  scrub(s: string) { let t = s; for (const p of this.pats) t = t.replace(p, REMOTE_REMOVED); return this.link.whole(t); }
+  push(s: string): string {
+    this.buf += s;
+    if (this.holdUntilKnown && !this.known) { if (this.buf.length > this.cap) this.buf = this.buf.slice(-this.cap); return ""; }
+    let t = this.buf; for (const p of this.pats) t = t.replace(p, REMOTE_REMOVED);
+    const cut = Math.max(0, t.length - this.W); this.buf = t.slice(cut);
+    return this.link.push(t.slice(0, cut));
+  }
+  flush() { let t = this.buf; this.buf = ""; for (const p of this.pats) t = t.replace(p, REMOTE_REMOVED); return this.link.push(t) + this.link.flush(); }
+}
+/**
+ * The newest Remote Control link in raw terminal output, rejoined when the terminal wrapped it at its width (Ink breaks a long
+ * link over lines, each continuation indented or inside a box border). `trailing`: a link at the very end counts too.
+ */
+export function findLink(raw: string, cols: number, trailing = true): string | null {
+  const lines = screenLines(raw), edge = (l: string) => l.replace(/[\s│|]+$/, "");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const ms = [...lines[i].matchAll(REMOTE_URL)]; const m = ms.at(-1); if (!m) continue;
+    let url = m[0]; const atEnd = (m.index ?? 0) + url.length >= edge(lines[i]).length;
+    let j = i, wrapped = atEnd && edge(lines[i]).length >= cols - 4;
+    while (wrapped && j + 1 < lines.length) {
+      const next = lines[j + 1].replace(/^[\s│|]+/, ""), c = /^[^\s"'<>`\\│|]+/.exec(next); if (!c) break;
+      url += c[0]; j++; wrapped = c[0].length >= edge(next).length && edge(lines[j]).length >= cols - 4;
+    }
+    if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4)) && !/[\s│|]$/.test(raw)) return null;
+    return url;
+  }
+  return null;
+}
+
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: LinkRedactor; tFile: string; tBytes: number; timer: any; spec: CreateSpec; killTimer?: any; remoteUrl: string | null; stopped?: string };
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec; killTimer?: any; remoteUrl: string | null; stopped?: string };
 export type CreateSpec = { project: string; preset?: string | null; command?: string | null; args?: string[]; remoteControl?: boolean; cols?: number; rows?: number };
 export class TermError extends Error { constructor(readonly status: number, message: string, readonly code: string) { super(message); } }
 
 export type TerminalsOpts = {
   dataDir: string;
   projects: () => TermProject[];
+  /** CREW_TERMINAL_TRANSCRIPTS=0 turns transcripts off (the record still keeps who, what, when and the exit) */
+  transcripts?: boolean;
   /** Studio's own secret values that must never reach a child under any name (its session token, its ledger key). */
   secrets?: () => (string | null | undefined)[];
   log?: (type: "terminal.start" | "terminal.exit", summary: string, data: Record<string, unknown>) => void;
@@ -102,9 +161,11 @@ export type TerminalsOpts = {
 export class Terminals {
   private terms = new Map<string, Term>();
   private probe = new Map<string, Promise<"flag" | "slash">>();
+  readonly keepTranscripts: boolean; readonly maxSubs = 4;
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
   constructor(private o: TerminalsOpts) {
-    this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
+    this.keepTranscripts = o.transcripts ?? process.env.CREW_TERMINAL_TRANSCRIPTS !== "0";
     this.cap = envNum("CREW_TERMINAL_SCROLLBACK", 2 * MIB); this.max = envNum("CREW_TERMINAL_MAX", 8);
     this.tMax = envNum("CREW_TERMINAL_TRANSCRIPT", 5 * MIB); this.idleMs = envNum("CREW_TERMINAL_IDLE_MS", DEFAULT_IDLE_MS);
     this.closeLeftovers(); this.prune();
@@ -167,12 +228,12 @@ export class Terminals {
     const t: Term = { id, project, preset, kind, label, command: shown, by, startedAt: new Date().toISOString(), endedAt: null, exitCode: null, signal: null,
       state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false,
       proc: null, ring: new Ring(this.cap), tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: false, subs: new Set(),
-      decoder: new TextDecoder(), redactor: new LinkRedactor(), tFile: join(this.dir, `${id}.log`), tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null };
-    writeFileSync(t.tFile, "", { mode: 0o600 });
+      decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null };
+    if (t.tFile) writeFileSync(t.tFile, "", { mode: 0o600 });
     try {
       t.proc = Bun.spawn(argv, { cwd: project.path, env: terminalEnv(this.env(), this.o.secrets?.() ?? []),
         terminal: { cols, rows, data: (_term: any, d: Uint8Array) => this.onData(t, d) } } as any);
-    } catch (e: any) { rmSync(t.tFile, { force: true }); throw new TermError(500, `could not start ${label}: ${e?.message ?? e}`, "spawn"); }
+    } catch (e: any) { if (t.tFile) rmSync(t.tFile, { force: true }); throw new TermError(500, `could not start ${label}: ${e?.message ?? e}`, "spawn"); }
     this.terms.set(id, t); this.saveMeta(t);
     this.o.log?.("terminal.start", `terminal ${id} started ${label} in ${project.name}`, { id, project: project.id, preset, command: shown, by, unsandboxed: true });
     t.proc.exited.then((code: number) => setTimeout(() => this.onExit(t, code), 60));
@@ -190,7 +251,8 @@ export class Terminals {
     const safe = t.redactor.push(text);
     this.writeTranscript(t, safe);
     const b64 = enc.encode(`event: out\ndata: ${JSON.stringify({ b64: Buffer.from(d).toString("base64") })}\n\n`);
-    const ph = safe ? enc.encode(`event: out\ndata: ${JSON.stringify({ text: safe })}\n\n`) : null;
+    // Claude Code with Remote Control on: a phone gets states only, never output (the session link is printed in it)
+    const ph = safe && !this.phoneHidden(t) ? enc.encode(`event: out\ndata: ${JSON.stringify({ text: safe })}\n\n`) : null;
     for (const s of t.subs) { if (s.phone) { if (ph) this.emit(t, s, ph); } else this.emit(t, s, b64); }
     this.evaluate(t);
     clearTimeout(t.timer); t.timer = setTimeout(() => this.evaluate(t), this.idleMs + 50);
@@ -198,9 +260,12 @@ export class Terminals {
   /** The newest Remote Control link in the recent output; one still at the very end counts once the output pauses. */
   private scanLink(t: Term, trailing: boolean) {
     if (!t.remote) return;
-    const links = [...t.rawTail.matchAll(REMOTE_URL)].filter((m) => trailing || (m.index ?? 0) + m[0].length < t.rawTail.length).map((m) => m[0]);
-    const u = links.at(-1); if (u && u !== t.remoteUrl) { t.remoteUrl = u; this.pushMeta(t); this.changed(); }
+    const u = findLink(t.rawTail, t.cols, trailing);
+    if (u && u !== t.remoteUrl) { t.remoteUrl = u; t.redactor.know(u); if (t.ask) t.ask = this.scrubAsk(t, t.ask); this.writeTranscript(t, t.redactor.push("")); this.pushMeta(t); this.changed(); }
   }
+  private phoneHidden(t: Term) { return !!t.remote?.enabled; }
+  /** A question shown in lists and to phones: the known link and anything link-like are removed first. */
+  private scrubAsk(t: Term, ask: string) { let a = t.redactor.scrub(ask); if (t.remote) a = a.replace(/\S*(?:claude\.(?:ai|com)|https?:\/\/)\S*/gi, REMOTE_REMOVED); return a; }
   private emit(t: Term, s: Sub, chunk: Uint8Array) {
     // a reader that stopped reading (backpressure past 8 MiB) is cut; it can attach again and gets the replay
     try { if ((s.ctl.desiredSize ?? 0) < -8 * MIB) { t.subs.delete(s); s.ctl.close(); return; } s.ctl.enqueue(chunk); } catch { t.subs.delete(s); }
@@ -209,9 +274,9 @@ export class Terminals {
     const before = `${t.state}/${t.reason}/${t.ask}`;
     if (Date.now() - t.lastOutAt >= 300) this.scanLink(t, true);
     const d = detectState({ kind: t.kind, tail: t.tail, lastChunk: t.lastChunk, quietMs: Date.now() - t.lastOutAt, idleMs: this.idleMs, sawOutput: t.sawOutput, exited: !t.running, exitCode: t.exitCode });
-    t.state = d.state; t.reason = d.reason; t.ask = d.ask;
+    t.state = d.state; t.reason = d.reason; t.ask = d.ask ? this.scrubAsk(t, d.ask) : null;
     // an older Claude Code without the launch flag: /remote-control, once, when it first sits idle at its prompt
-    if (t.running && t.remote?.enabled && t.remote.mode === "slash" && !t.remote.sent && d.state === "waiting" && d.reason !== "question") {
+    if (t.running && t.remote?.enabled && t.remote.mode === "slash" && !t.remote.sent && d.state === "waiting" && d.reason === "prompt") {
       t.remote.sent = true; try { t.proc.terminal.write("/remote-control"); setTimeout(() => { try { if (t.running) t.proc.terminal.write("\r"); } catch {} }, 200); } catch {}
     }
     if (`${t.state}/${t.reason}/${t.ask}` !== before) { this.pushMeta(t); this.changed(); }
@@ -221,7 +286,7 @@ export class Terminals {
     for (const s of t.subs) this.emit(t, s, enc.encode(`event: meta\ndata: ${JSON.stringify(this.view(t, !s.phone))}\n\n`));
   }
   private writeTranscript(t: Term, s: string) {
-    if (!s || t.transcriptTruncated) return;
+    if (!s || t.transcriptTruncated || !t.tFile) return;
     let b = Buffer.from(s, "utf8");
     if (t.tBytes + b.length > this.tMax) { b = b.subarray(0, Math.max(0, this.tMax - t.tBytes)); t.transcriptTruncated = true; }
     try { const fd = openSync(t.tFile, "a", 0o600); try { writeSync(fd, b); if (t.transcriptTruncated) writeSync(fd, `\n[transcript stopped at ${this.tMax} bytes]\n`); } finally { closeSync(fd); } t.tBytes += b.length; } catch {}
@@ -241,7 +306,7 @@ export class Terminals {
   private saveMeta(t: Term) {
     const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated } = t;
     try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows,
-      transcript: `${id}.log`, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
+      transcript: t.tFile ? `${id}.log` : null, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
       sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}) }, null, 1), { mode: 0o600 }); } catch {}
   }
   private closeLeftovers() {
@@ -283,11 +348,13 @@ export class Terminals {
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {
     const t = this.need(id); let sub: Sub;
+    if (t.subs.size >= this.maxSubs) throw new TermError(429, `at most ${this.maxSubs} views of one terminal at once`, "tooManyViews");
+    const hidden = phone && this.phoneHidden(t);
     const stream = new ReadableStream<Uint8Array>({
       start: (ctl) => { sub = { phone, ctl, device };
         const bytes = t.ring.bytes();
         ctl.enqueue(enc.encode(`event: meta\ndata: ${JSON.stringify(this.view(t, !phone))}\n\n`));
-        ctl.enqueue(enc.encode(`event: replay\ndata: ${JSON.stringify(phone ? { text: t.redactor.whole(new TextDecoder().decode(bytes)), dropped: t.ring.dropped } : { b64: Buffer.from(bytes).toString("base64"), dropped: t.ring.dropped })}\n\n`));
+        ctl.enqueue(enc.encode(`event: replay\ndata: ${JSON.stringify(phone ? (hidden ? { text: "", hidden: "remote-control" } : { text: t.redactor.scrub(new TextDecoder().decode(bytes)), dropped: t.ring.dropped }) : { b64: Buffer.from(bytes).toString("base64"), dropped: t.ring.dropped })}\n\n`));
         if (!t.running) ctl.enqueue(enc.encode(`event: exit\ndata: ${JSON.stringify({ exitCode: t.exitCode, signal: t.signal })}\n\n`));
         t.subs.add(sub); },
       cancel: () => { t.subs.delete(sub); },
@@ -310,7 +377,10 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
   try {
     if (writing) {
       if (!desktop) return json({ error: "a phone can watch terminals but not type, start or stop them: do this on the Mac", code: "desktopOnly" }, 403);
-      if (!cookie) return json({ error: "terminals take input only from Studio's own page on this Mac (its session cookie); a script's x-crew-session is not enough", code: "pageOnly" }, 403);
+      // the page's own request: its cookie, sent by a browser that says it is same-origin (Origin and Sec-Fetch-Site present
+      // and Studio's own). Not a boundary against a local process (an unsandboxed terminal can read data/session-token); it
+      // keeps a script's x-crew-session and other sites from typing into a terminal
+      if (!cookie || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin") return json({ error: "terminals take input only from Studio's own page on this Mac (its session cookie, same origin); a script's x-crew-session is not enough", code: "pageOnly" }, 403);
     }
     if (p === "/api/terminals" && !writing) {
       return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs,

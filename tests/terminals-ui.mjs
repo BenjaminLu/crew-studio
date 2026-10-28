@@ -69,6 +69,7 @@ try {
   await p.locator("#termCmd").fill("printf 'Proceed with deploy? [y/N] '; read a; echo answer:$a; sleep 1");
   await p.locator("[data-term-run]").click();
   ok(await until(async () => /#\/terminals\/T-/.test(p.url())), "Run opens the new terminal", p.url());
+  const firstId = decodeURIComponent(p.url().split("/terminals/")[1] || "");
   ok(await seen(p.locator(".wt-xterm .xterm-rows"), 10000), "xterm.js draws it");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText()).includes("Proceed with deploy?")), "the program's output is on screen");
   ok(await seen(p.locator('.wt-detail [data-term-state="waiting"]'), 6000), "the badge says waiting for you");
@@ -101,12 +102,15 @@ try {
   const q = await pctx.newPage(); q.on("pageerror", (e) => errors.push(`phone: ${e}`));
   await q.goto(`${phoneBase}/#/terminals/${encodeURIComponent(claudeId)}`);
   ok(await seen(q.locator("[data-term-readonly]"), 10000), "the phone gets the page, view only");
-  ok(await seen(q.locator(".wt-xterm .xterm-rows"), 10000) && await until(async () => (await q.locator(".wt-xterm .xterm-rows").innerText()).includes("Remote Control active")), "it draws the terminal's output");
+  ok(await seen(q.locator(".wt-xterm .xterm-rows"), 10000) && await until(async () => (await q.locator(".wt-xterm .xterm-rows").innerText()).includes("not shown on a phone")), "with Remote Control on, the phone says why it shows no output");
   ok(await q.locator(".wt-xterm textarea, .wt-xterm input, .wt-xterm [contenteditable]").count() === 0, "the phone's terminal has no input element (no keyboard)");
   ok(await q.locator("[data-term-run], [data-preset], #termCmd, [data-term-kill], [data-term-restart], [data-term-dismiss]").count() === 0, "no launcher and no Stop or Restart on the phone");
   ok(await q.locator("[data-term-remote]").count() === 0 && !(await q.content()).includes("UIFAKE789"), "the phone never gets the Remote Control link", "");
   ok(await seen(q.locator('.wt-detail [data-term-state="waiting"]'), 6000), "and sees the same state as the Mac (waiting at Claude's prompt)");
   ok(await q.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no horizontal scroll at 390 px");
+  const q2 = await pctx.newPage(); q2.on("pageerror", (e) => errors.push(`phone2: ${e}`));
+  await q2.goto(`${phoneBase}/#/terminals/${encodeURIComponent(firstId)}`);
+  ok(await until(async () => (await q2.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("answer:y"), 10000), "a terminal without Remote Control: the phone draws its output"); await q2.close();
   await q.locator(".wt-xterm").tap().catch(() => {}); await q.keyboard.type("hijack\n").catch(() => {});
   await new Promise((r) => setTimeout(r, 600));
   ok(!(await p.locator(".wt-xterm .xterm-rows").innerText()).includes("hijack"), "tapping and typing on the phone sends nothing");
@@ -121,7 +125,7 @@ try {
   await sp.goto(`${phoneBase}/#/terminals/${encodeURIComponent(claudeId)}`);
   const xt = await until(async () => { const v = await sp.evaluate(() => window.__xt); return v?.writes?.length && v; });
   ok(xt?.opts?.disableStdin === true && xt.onData === 0, "on a phone the page creates xterm with stdin disabled and listens to no keys", JSON.stringify(xt?.opts));
-  ok(xt && xt.writes.join("").includes("[remote-control link removed]") && !xt.writes.join("").includes("UIFAKE789"), "the phone's replay has the link removed before xterm sees it");
+  ok(xt && !xt.writes.join("").includes("UIFAKE789") && !xt.writes.join("").includes("Remote Control active"), "with Remote Control on, xterm on the phone never receives the output");
   ok(await sp.locator(".wt-xterm textarea").count() === 0, "the input element xterm made is removed");
   await post(port, `/api/terminals/${claudeId}/kill`, {}, { cookie: "", "x-crew-session": TOKEN }).catch(() => {});
   ok(!errors.length, "no page errors", errors.join(" | "));
