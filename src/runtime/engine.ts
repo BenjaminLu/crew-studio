@@ -334,7 +334,7 @@ export class Engine {
   /** A run that takes no more writes: deleted, or its event log is corrupt (sealed: nothing is appended behind a bad line). */
   private closed(id: string) { return this.gone.has(id) || this.sealed.has(id); }
   /** The k-th event of the write being built: r.events moves only once the write lands (write). */
-  private event(r: Run, e: Record<string, any>, k = 0) { return { seq: r.events + 1 + k, ts: now(), run: r.id, ...e }; }
+  private event(r: Run, e: Record<string, any>, k = 0) { return Object.assign({ seq: 0, ts: now(), run: r.id }, e, { seq: r.events + 1 + k }); } // the data never sets seq (a ledger entry is named by `ledger`)
   /**
    * Write events as one write (and, unless sync is false, one sync): a commit's events are one durable step, framed by
    * `tx` on its first line (src/runtime/durable-log.ts). A write that failed and could not be cut back may have left
@@ -984,7 +984,7 @@ export class Engine {
     if (this.gone.has(x.run.id)) return null; // stale native/agent holders never append after deletion
     const rec = new Ledger(this.deps.dataDir, x.run.id).add({ run: x.run.id, node: x.node.id, edge: null, round: x.visit, head: x.ctx.head ?? null, check: `runtime/${record}`, version: "1", kind: "record", attempt: 0,
       verdict: "pass", score: null, findings: [], evidence: [], proves: [], blocking: false, inputHash: "", params: {}, ms: 0, dir: null, record, ...e } as any);
-    this.emit(x.run, "evidence", `${record} recorded (#${rec.seq})`, { node: x.node.id, record, seq: rec.seq, sig: rec.sig });
+    this.emit(x.run, "evidence", `${record} recorded (#${rec.seq})`, { node: x.node.id, record, ledger: rec.seq, sig: rec.sig });
     return rec;
   }
   /** A record a hook may write again when it runs again after a restart (resume semantics): kept once per node, visit and head. */
@@ -1001,7 +1001,8 @@ export class Engine {
   trusted(id: string): { entries: LedgerEntry[]; prefix: LedgerEntry[]; bad: Set<number>; truncated: boolean; ok: boolean } {
     const scan = new Ledger(this.deps.dataDir, id).authenticatedPrefix(), entries = scan.entries, bad = new Set(scan.bad);
     let prefix = scan.prefix;
-    const seen = this.events(id).filter((e) => (e.type === "check_result" || e.type === "evidence") && Number.isSafeInteger(e.seq) && e.seq > 0);
+    // the ledger entry an event names: `ledger`, or, in a log written before it had one, the seq the data then overrode
+    const seen = this.events(id).filter((e) => e.type === "check_result" || e.type === "evidence").map((e) => ({ seq: e.ledger !== undefined ? e.ledger : e.seq, sig: e.sig })).filter((e) => Number.isSafeInteger(e.seq) && e.seq > 0);
     const tip = seen.reduce((m, e) => Math.max(m, e.seq), 0), tail = entries.at(-1)?.seq;
     const last = Number.isSafeInteger(tail) && tail! > 0 ? tail! : 0;
     for (const e of seen) {
@@ -1057,7 +1058,7 @@ export class Engine {
     if ((x.edgeOwner && !this.owns(x)) || this.gone.has(x.run.id) || (TERMINAL.includes(x.run.status) && !String(e.edge ?? "").startsWith("hook:"))) return { ...e, seq: 0, sig: "", error: "late check result refused" }; // no ordinary check writes after its owner ends
     const rec = L.add(e.inputHash ? { ...e, inputHashAlgorithm: INPUT_HASH_ALGORITHM } : e);
     this.emit(x.run, "check_result", `${e.edge ? `${e.edge} · ` : `${x.node.label} · `}${e.check}: ${e.verdict}${e.findings.length ? ` (${e.findings.length} finding${e.findings.length > 1 ? "s" : ""})` : ""}${e.error ? ` — ${String(e.error).slice(0, 160)}` : ""}`,
-      { node: x.node.id, check: e.check, verdict: e.verdict, seq: rec.seq, sig: rec.sig, blocking: e.blocking, edge: e.edge ?? null });
+      { node: x.node.id, check: e.check, verdict: e.verdict, ledger: rec.seq, sig: rec.sig, blocking: e.blocking, edge: e.edge ?? null });
     return rec;
   }
   async input(x: X, man: CheckManifest, params: Record<string, any>, out: string, given: string[] = []): Promise<CheckInput> {
@@ -1264,7 +1265,7 @@ export class Engine {
     if (!rec) {
       rec = new Ledger(this.deps.dataDir, r.id).add({ run: r.id, node: "", edge: null, round: 0, head: fact.head ?? null, check: "run/reconciled-merge", version: "1", kind: "record", attempt: 0, record: "reconciled-merge",
         actor: "studio (observed on GitHub)", verdict: "pass", score: null, findings: [], evidence: [], proves: [], blocking: false, inputHash: "", params: {}, ms: 0, dir: null, data: fact } as any);
-      this.emit(r, "evidence", `reconciled-merge recorded (#${rec.seq})`, { node: "", record: "reconciled-merge", seq: rec.seq, sig: rec.sig });
+      this.emit(r, "evidence", `reconciled-merge recorded (#${rec.seq})`, { node: "", record: "reconciled-merge", ledger: rec.seq, sig: rec.sig });
     }
     const d = rec.data ?? {}, reconciled = { ...d, ledger: rec.seq };
     r.reconciled = reconciled; r.updatedAt = now();

@@ -1,4 +1,4 @@
-// The review room (#/review/<merge card | Task | pull request>; docs/units/review-room.md, src/domain/review-room.ts): a BOARD the tutor draws
+// The review room (#/room/<merge card | Task | pull request>; docs/units/review-room.md, src/domain/review-room.ts): a BOARD the tutor draws
 // on step by step (flowcharts built up one part at a time, diff hunks, code excerpts and before / after from the real
 // commits) and a CHAT where the captain asks. Each turn is a paid model round: the captain confirms the provider and
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
@@ -9,7 +9,7 @@ const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
-const rerender = () => { if (S.route?.name === "review") render(); };
+const rerender = () => { if (S.route?.name === "room") render(); };
 const enc = encodeURIComponent;
 const page = (title, sub, ...kids) => h("div", { class: "page rr-page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, title), sub ? h("p", {}, sub) : null)), ...kids);
 async function load(id, open = false) {
@@ -19,7 +19,7 @@ async function load(id, open = false) {
   finally { RR.loading.delete(id); rerender(); schedule(); }
 }
 // while a turn runs, the page follows it (the live stream says when it ends; a slow poll covers a missed event)
-function schedule() { clearTimeout(RR.poll); const id = S.route?.name === "review" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null) RR.poll = setTimeout(() => load(id), 2500); }
+function schedule() { clearTimeout(RR.poll); const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null) RR.poll = setTimeout(() => load(id), 2500); }
 window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card); });
 
 // ---------- the board's flowcharts: Studio draws mermaid's flowchart subset itself (no library, no markup) ----------
@@ -282,6 +282,8 @@ function promptBar(r) {
     finally { RR.posting.delete(card); rerender(); schedule(); } };
   const talk = !!RR.rec;
   return h("div", { class: "rr-bar", "data-chat": card },
+    // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
+    offer?.independence ? h("p", { class: `faint rr-indep${offer.independence.level === "same" ? " rr-warn" : ""}`, "data-independence": offer.independence.level }, T(`Tutor: ${offer.provider} · ${offer.model ?? "default model"} — ${offer.independence.en}`, `導師：${offer.provider} · ${offer.model ?? "預設模型"}：${offer.independence.zh}`)) : null,
     h("div", { class: "rr-quick", role: "group", "aria-label": T("Quick actions", "快速動作") }, r.actions.map((a) => h("button", { type: "button", class: "btn", "data-room-action": a.id, disabled: busy, onclick: () => ask(a.id) }, T(...(ACTION_LABEL[a.id] || [a.en, a.zh]))))),
     h("div", { class: "rr-askrow" },
       h("input", { class: "input", type: "text", maxlength: 4000, "data-room-text": card, disabled: busy, "aria-label": T("Ask anything about this change", "問任何關於這個改動的問題"), placeholder: T("Ask anything about this change, or interrupt with a question…", "問任何關於這個改動的問題，或隨時打斷發問…"), value: RR.draft.get(card) || "",
@@ -330,7 +332,7 @@ function prBox(where, repository) {
     h("p", { class: "faint" }, T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
     err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);
 }
-const rerenderAny = () => { if (S.route?.name === "review" || S.route?.name === "project") render(); };
+const rerenderAny = () => { if (S.route?.name === "room" || S.route?.name === "project") render(); };
 window.crewReviewRoomPrBox = (project, repository) => h("section", { class: "card x-pad", "data-project-review-room": project }, prBox(`project:${project}`, repository));
 async function checkNow(id) {
   if (PR.checking.has(id)) return; PR.checking.add(id); RR.err.delete(id); rerender();
@@ -350,7 +352,7 @@ function subjectBar(r) {
       : T(`The branch was rewritten since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `你上次看過之後分支被改寫了（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)) : null,
     kind === "pr" ? h("button", { type: "button", class: "btn", "data-room-check": id, disabled: PR.checking.has(id) || r.checking || null, onclick: () => checkNow(id) }, PR.checking.has(id) || r.checking ? T("Reading GitHub…", "正在讀取 GitHub…") : T("Check for new commits", "檢查新的 commit")) : null);
 }
-routes.review = (arg) => {
+routes.room = (arg) => {
   if (!arg) return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 的網址。"),
     h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null)));
   const r = RR.rooms.get(arg);

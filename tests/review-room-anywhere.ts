@@ -77,7 +77,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const gitState = (wt: string) => JSON.stringify({ status: sh(wt, ["status", "--porcelain", "--untracked-files=all"]), head: sh(wt, ["rev-parse", "HEAD"]), refs: sh(wt, ["for-each-ref"]) });
   const reviewNode0 = ur.def.nodes.find((n: any) => n.mode === "review")!.id, visits0 = ur.nodes[reviewNode0].visits, before = gitState(ur.ctx.worktree), cardFile = join(E.cards.dir, merge.id + ".json"), cardBefore = readFileSync(cardFile, "utf8"), entry = room.taskEntry(ur);
   const v0: any = room.view(u.id, true);
-  ok(entry?.href === `#/review/${u.id}` && entry.reviewed && v0.subject.kind === "branch" && v0.reviewed === true && v0.head === uh && v0.offer?.provider === "tutor" && v0.open, "once Studio's review passed, the Task page offers its branch's room: reviewed at this head, the tutor offered", JSON.stringify({ entry, s: v0.subject, offer: v0.offer }));
+  ok(entry?.href === `#/room/${u.id}` && entry.reviewed && v0.subject.kind === "branch" && v0.reviewed === true && v0.head === uh && v0.offer?.provider === "tutor" && v0.open, "once Studio's review passed, the Task page offers its branch's room: reviewed at this head, the tutor offered", JSON.stringify({ entry, s: v0.subject, offer: v0.offer }));
   e = await refused(() => room.start(u.id, { action: "how" }, "captain"));
   ok(e?.code === "confirm_required" && e.offer?.hash === v0.offer.hash, "a branch room's turn is paid and needs the captain's confirmation too", e?.message);
   script.push([["board_draw", { items: [{ type: "diff", title: "Its diff", path: "src/percent.ts" }] }], ["say", "The change adds `percent` [diff:src/percent.ts]."]]);
@@ -171,7 +171,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   sim.transformNext("GET", (v: any) => ({ ...v, head: { ...v.head, ref: EVIL_REF } }), "/pulls/1");
   const opened: any = await room.openPr("https://github.com/fixture/project/pull/1/"), pid = prRoomId("fixture/project", 1);
   const v1: any = room.view(pid, true), cacheDir = join(H.data, "review-room", "cache"), caches = existsSync(cacheDir) ? Bun.spawnSync(["ls", cacheDir]).stdout.toString().trim().split("\n") : [];
-  ok(opened.id === pid && opened.href === `#/review/${pid}` && v1.subject.url === "https://github.com/fixture/project/pull/1" && v1.head === A && v1.prState.state === "open" && v1.task?.id === host.id, "the pasted URL opens the pull request's room at its head, hosted by the Task that published it", JSON.stringify({ s: v1.subject, head: v1.head, task: v1.task }));
+  ok(opened.id === pid && opened.href === `#/room/${pid}` && v1.subject.url === "https://github.com/fixture/project/pull/1" && v1.head === A && v1.prState.state === "open" && v1.task?.id === host.id, "the pasted URL opens the pull request's room at its head, hosted by the Task that published it", JSON.stringify({ s: v1.subject, head: v1.head, task: v1.task }));
   ok(sim.calls.length > 0 && sim.calls.every((c) => c.method === "GET") && ["/pulls/1", "/pulls/1/reviews?per_page=100&page=1", "/pulls/1/comments?per_page=100&page=1", "/issues/1/comments?per_page=100&page=1", "/pulls/1/files?per_page=100&page=1"].every((p) => sim.calls.some((c) => c.path === p)),
     "GitHub is only read: every API call is a GET of the pull request, its reviews, comments and files", JSON.stringify(sim.calls.map((c) => `${c.method} ${c.path}`)));
   const cache = join(cacheDir, caches[0] ?? "-");
@@ -332,7 +332,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
     try { E.deps.instructionReceipt(hx, "reviewer", "Role: reviewer", { id: "claude", model: "reviewer-model", reasoningEffort: "high" }); } catch (e: any) { refusal = String(e?.message ?? e); }
     ok(/only the tutor seat/.test(refusal), "the host Task gives no receipt for anything but the tutor seat", refusal); }
   ok(teamWrites === 1, "the team's staffing is written only once the captain confirmed, as the host is made", String(teamWrites));
-  ok(host.by === "captain (desktop test)" && room.taskEntry(host)?.href === `#/review/${opened.id}` && room.taskEntry(host)?.host === true, "the host Task is started by the captain who confirmed, and its page links back to the pull request's room", JSON.stringify([host.by, room.taskEntry(host)]));
+  ok(host.by === "captain (desktop test)" && room.taskEntry(host)?.href === `#/room/${opened.id}` && room.taskEntry(host)?.host === true, "the host Task is started by the captain who confirmed, and its page links back to the pull request's room", JSON.stringify([host.by, room.taskEntry(host)]));
   const turnRec = E.trusted(host.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
   ok(turnRec?.data.subject.url === "https://github.com/fixture/project/pull/5" && turnRec.data.subject.head === A && turnRec.data.provider === "claude", "the turn is on the host's ledger with the pull request and its head", JSON.stringify(turnRec?.data?.subject));
   // the pull request moves on: the next turn opens with what changed, still on the same host

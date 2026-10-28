@@ -40,6 +40,7 @@ import { keys } from "../keys";
 import { openScopedProxy, type ProxyAuthority } from "../egress-client";
 import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
+import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -70,6 +71,8 @@ type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "com
 type Question = { n: number; q: string; turn: number; at: string; result?: { correct: boolean; note: string; turn: number } };
 type Turn = { n: number; action: string; text: string; lang: string; by: string; at: string; status: "running" | "done" | "failed" | "interrupted"; ended: string | null;
   job: string | null; provider: string; model: string; effort: string | null; answer: string; error: string | null; cost: any; round: string; head: string;
+  /** how independent this turn's tutor was from the change's author (src/domain/independence.ts); none for a pull request no Task made */
+  independence?: Level;
   /** the answer as claims, each cited or an inference (ground) */
   claims?: Claim[];
   /** a scene Studio made itself, no model and nothing paid: "since" (what changed since the captain last looked) or "reviewers" (what GitHub reviewers asked) */
@@ -138,7 +141,8 @@ const SPEECH_VENDORS: Record<string, string> = { codex: "openai", openai: "opena
 const TTS_MODEL = "gpt-4o-mini-tts", TTS_VOICE = "alloy";
 /** a claim as narration: citations, markup and list marks out */
 export const narration = (t: string) => String(t ?? "").replace(CITE, "").replace(/\[(inference|inferred|speculative|direct|supported)\]/gi, "").replace(/\*\*|`|^#+\s*/gm, "").replace(/^\s*([-*+]|\d+\.)\s+/gm, "").replace(/\s+/g, " ").trim();
-/** the tutor's seat: it runs on the reviewer role's approved member with its own pinned instructions (staffing's auxiliary seats) */
+/** the tutor's seat: it runs with its own pinned instructions (staffing's auxiliary seats) on the reviewer role's approved member,
+ *  or, adaptive, on another usable member Studio chose for independence from the author (the receipt names the member used) */
 export const TUTOR_SEAT = "review-room-tutor", TUTOR_ROLE = "reviewer";
 /** a pull request's address, exactly https://github.com/<owner>/<repo>/pull/<n>: no other host, path, query or fragment */
 export function parsePrUrl(u: unknown): { repository: string; n: number; url: string } | null {
@@ -167,7 +171,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   github?: (project: any) => GitHubPrAdapter | null }) {
   const live = new Map<string, number>(), speaking = new Map<string, Promise<any>>();
   // the seat staffing admits: the reviewer's approved member, with exactly these pinned texts as its instructions
-  engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256) } };
+  engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256), adaptive: true } };
   /** The tutor's seat: the reviewer's member (its own read-only role and skill), on a different model from the maker. */
   const reviewNode = (run: any) => run.def.nodes.find((n: any) => n.kind === "agent" && (n.mode === "review" || n.role === "reviewer"));
   const prDir = join(o.dataDir, "review-room", "pr"), cacheDir = (repository: string) => join(o.dataDir, "review-room", "cache", `${sha(repository.toLowerCase()).slice(0, 16)}.git`);
@@ -226,26 +230,63 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const subjectRecord = (k: Key, s: { run: any; head: string; base: string }, room: Room | null): Subject & { head: string; base: string } =>
     k.kind === "pr" ? { ...(room?.subject ?? { kind: "pr", room: k.id }), task: s.run?.id ?? null, head: s.head, base: s.base }
     : { kind: k.kind, room: k.id, task: s.run?.id ?? null, branch: s.run?.ctx.branch ?? null, url: s.run?.ctx.pr?.url ?? null, head: s.head, base: s.base };
-  const tutorPick = (run: any, node?: any): AgentPick => {
+  type Tutor = { pick: AgentPick; level: Level; adaptive: boolean; outside: boolean; label: { en: string; zh: string } };
+  const tutorPick = (run: any, node?: any): Tutor => {
     const review = reviewNode(run);
     if (!review) throw refuse("This workflow has no reviewer seat for the tutor", "no_seat");
     // the approved staffing's reviewer member as admitted on the merge card's node (the node the tutor's rounds belong to)
     const card = node ?? run.def.nodes.find((n: any) => n.kind === "card" && n.args?.card_kind === "merge");
-    const pick = (card && engine.deps.approvedPick?.(run, card, TUTOR_ROLE)) || engine.x(run, review, run.nodes[review.id]).pick();
+    const pickOf = (n: any, role?: string): AgentPick | null => { try { return (engine.deps.approvedPick?.(run, n, role) as AgentPick | null) || (role ? null : engine.x(run, n, run.nodes[n.id]).pick()); } catch { return null; } };
+    const approved0 = (card && pickOf(card, TUTOR_ROLE)) || engine.x(run, review, run.nodes[review.id]).pick();
     // every node that wrote the change (build, fix, rework: the maker's role), as staffed and as it really ran
     const makerRole = run.def.nodes.find((n: any) => n.kind === "agent" && n.mode === "build")?.role ?? "worker";
     const writers = run.def.nodes.filter((n: any) => (n.kind === "agent" || n.kind === "loop") && (n.mode === "build" || n.role === makerRole || n.args?.producer === "build"));
     const makers = [...writers.flatMap((n: any) => { try { return [engine.x(run, n, run.nodes[n.id]).pick()]; } catch { return []; } }),
       ...run.steps.filter((s: any) => writers.some((n: any) => n.id === s.node) && s.provider).map((s: any) => ({ provider: s.provider, model: s.model }))] as AgentPick[];
-    // a model left to the vendor's default is unknown: on the same vendor it may be the maker's, so it counts as the same
-    if (makers.some((m) => m.provider === pick.provider && ((m.model ?? null) === (pick.model ?? null) || !m.model || !pick.model))) throw refuse(`The tutor would run on the maker's model (${pick.provider} ${pick.model ?? "default"}); give the reviewer seat a different model / 導師會用到作者的同一個模型，請讓 reviewer 座位用不同模型`, "same_model");
-    return pick;
+    // what this machine has (src/domain/independence.ts): runnable now, or held (out of quota, quota unreadable, stale facts)
+    const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null;
+    // a member left to the vendor's default model is that vendor's actual default, before anything is judged
+    const resolve = (p: AgentPick): AgentPick => p.model || !usable ? p : { ...p, model: usable.find((u) => u.provider === p.provider && u.isDefault)?.model ?? null };
+    const approved = resolve(approved0);
+    const group = makers.map((m) => resolve(m)).map((m) => ({ provider: m.provider, model: m.model ?? null }));
+    const runnable = (p: AgentPick) => !usable ? true : usable.some((u) => u.provider === p.provider && u.model === p.model && u.runnable);
+    const free = (p: AgentPick) => !engine.deps.verifyBackoff?.(p);
+    const ok = (p: AgentPick) => !!p.model && runnable(p) && free(p) || !usable && p === approved;
+    const label = (level: Level, outside: boolean, why = { en: "", zh: "" }) => ({ en: `${LEVEL_TEXT[level].en}.${why.en}${outside ? " Not in this project's crew: Studio chose it from the models this machine can run." : ""}`, zh: `${LEVEL_TEXT[level].zh}。${why.zh}${outside ? "不在這個專案的人員配置裡：是 Studio 從這台機器可用的模型中挑的。" : ""}` });
+    const same = (a: AgentPick, b: AgentPick) => a.provider === b.provider && (a.model ?? null) === (b.model ?? null) && (a.effort ?? null) === (b.effort ?? null);
+    const done = (pick: AgentPick, level: Level, outside: boolean, why?: { en: string; zh: string }): Tutor => ({ pick, level, adaptive: !same(pick, approved0), outside, label: label(level, outside, why) });
+    // 1. the approved reviewer, when it can run and differs from the author at least by model: kept, whatever else is signed in
+    const approvedLevel = levelAgainst({ provider: approved.provider, model: approved.model ?? null }, group);
+    if (ok(approved) && approvedLevel !== "same") return done(approved, approvedLevel, false);
+    // 2. otherwise a member already approved in this project's crew (another role, a node override), then a model this machine
+    //    can run outside the crew (a verified Claude model before an unverified one): the most independent one first
+    const crew: AgentPick[] = []; for (const n of run.def.nodes) if (n.kind === "agent" || n.kind === "loop") { const p = pickOf(n); if (p) crew.push(resolve(p)); }
+    for (const r of run.def.roles ?? []) { const p = card && pickOf(card, r.id); if (p) crew.push(resolve(p)); }
+    const inCrew = crew.filter((p, i) => ok(p) && crew.findIndex((q) => same(p, q)) === i && !same(p, approved));
+    const verifiedClaude = (usable ?? []).some((u) => u.provider === "claude" && u.verified && u.runnable);
+    const outsideOf = (usable ?? []).filter((u) => u.runnable && !(u.provider === "claude" && !u.verified && verifiedClaude) && !crew.some((p) => p.provider === u.provider && p.model === u.model))
+      .map((u) => ({ provider: u.provider, model: u.model, effort: defaultEffort(u) } as AgentPick)).filter(free);
+    const m = (p: AgentPick) => ({ ...p, model: p.model ?? null });
+    const inside = bestOf(inCrew.map(m), group); if (inside && inside.level !== "same") return done(inside.pick as AgentPick, inside.level, false);
+    const outside = bestOf(outsideOf.map(m), group); if (outside && outside.level !== "same") return done(outside.pick as AgentPick, outside.level, true);
+    // 3. nothing that differs from the author can run now. The author's own model only when this machine has no other model at
+    //    all; a vendor that is signed in but held (out of quota, quota unreadable) is waited for, never worked around
+    const need = required("model", usable);
+    if (need !== "same") { const heldOne = (usable ?? []).find((u) => !u.runnable && levelAgainst({ provider: u.provider, model: u.model }, group) !== "same");
+      throw refuse(heldOne ? `The tutor waits: ${heldOne.held ?? "it cannot run now"} (${heldOne.provider} ${heldOne.model}), and every model that can run now is the author's own. Try again later / 導師需等待：${heldOne.provider} ${heldOne.model} 目前無法使用，能用的模型都和作者相同，請稍後再試`
+        : "No model that differs from the author can run the tutor now: sign in, or wait for a verification to be retried / 目前沒有和作者不同、且能執行的模型可當導師", "no_tutor"); }
+    const why = degradedWhy(usable);
+    if (ok(approved)) return done(approved, "same", false, why);
+    const fallback = inCrew[0] ?? outsideOf[0];
+    if (!fallback) throw refuse("No signed-in model can run the tutor on this machine now: sign in to a vendor, then open the room again / 這台機器目前沒有已登入、可用的模型能當導師：請先登入一個供應商，再打開審查室", "no_tutor");
+    return done(fallback, "same", !inCrew.length, why);
   };
   /** the seat a turn runs on: the hosting Task's reviewer (tutorPick); on a review-room-host Task, the project's approved crew reviewer */
-  const seatPick = (run: any, node: any): AgentPick => { if (!isHostRun(run)) return tutorPick(run, node);
+  const crewTutor = (pick: AgentPick): Tutor => ({ pick, level: null as unknown as Level, adaptive: false, outside: false,
+    label: { en: "The project's crew reviewer. The change's author is outside Studio, so its independence is not measured.", zh: "專案船員的審查者。改動的作者不在 Studio 裡，所以不衡量獨立程度。" } });
+  const seatPick = (run: any, node: any): Tutor => { if (!isHostRun(run)) return tutorPick(run, node);
     let p: AgentPick | null = null; try { p = engine.deps.approvedPick?.(run, node, TUTOR_ROLE) ?? null; } catch (e: any) { throw refuse(String(e?.message ?? e), e?.code ?? "no_crew"); }
-    if (!p) throw refuse("Approve this project's crew first: the tutor runs on its approved reviewer / 請先核准這個專案的船員：導師用它核准的審查者", "no_crew"); return p; };
-  /** before a pull request room has a host: the project's approved crew reviewer (a team that covers code-firstmate is derived first) */
+    if (!p) throw refuse("Approve this project's crew first: the tutor runs on its approved reviewer / 請先核准這個專案的船員：導師用它核准的審查者", "no_crew"); return crewTutor(p); };
   /** Read only (an offer, a page read): the project's approved crew reviewer, else what the Studio team would give code-firstmate's
    *  reviewer, derived without writing anything. Nothing is persisted until the captain confirms a turn (hostFor). */
   /** the code workflow whose crew staffs a pull request's tutor: code-firstmate, else the first code workflow with a reviewer role */
@@ -262,9 +303,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr") throw noHost();
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
-      const p = s.run ? seatPick(s.run, s.node) : crewPick(load(k)?.subject?.project); const effort = p.effort ?? null;
+      const t = s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)), p = t.pick, effort = p.effort ?? null;
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
-      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort })).slice(0, 16) }; }
+      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label },
+        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
   const skills = () => ROOM_SKILLS.map((s) => { const t = bundledText(s.ref); if (t == null || sha(t) !== s.sha256) throw refuse(`The pinned skill ${s.id} changed or is missing; Studio refuses the turn`, "skill_pin"); return { ...s, text: t }; });
@@ -513,9 +555,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       Object.assign(turn, { status: job.status === "done" ? "done" : "failed", job: job.id, answer: String(job.said ?? "").trim().slice(0, 20000), error: job.status === "done" ? null : String(job.error ?? job.status), cost: job.cost ?? null });
     } catch (e: any) { Object.assign(turn, { status: "failed", error: String(e?.message ?? e).slice(0, 500) }); }
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
-    turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room) });
+    turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
-    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, cost: turn.cost, confirm,
+    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }
@@ -654,16 +696,16 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** the summary a merge card shows: never readiness, never an answer */
     summary(c: SCard) {
       if (c.kind !== "merge") return null; const r0 = load(keyOf(c.id)), r = r0 ? settled(r0) : null;
-      return { href: `#/review/${c.id}`, opened: !!stats()[c.run]?.openedAt, turns: r?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, questions: r?.turns.filter((t) => !t.studio).length ?? 0, running: live.has(c.id), check: checkOf(r),
+      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, turns: r?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, questions: r?.turns.filter((t) => !t.studio).length ?? 0, running: live.has(c.id), check: checkOf(r),
         sources: { consulted: r?.sources.filter((s) => s.ok).length ?? 0, refused: r?.sources.filter((s) => s.refused).length ?? 0 } };
     },
     /** A Task's entry to the room on its reviewed branch (the Task page): once Studio's review passed at its head, or a room exists. */
     taskEntry(run: any) {
       // a review room's host Task: its page links back to the pull request's room
-      if (isHostRun(run)) { const p = parsePrUrl(run.params?.pr); return p ? { href: `#/review/${prRoomId(p.repository, p.n)}`, host: true, pr: p.url, reviewed: true, head: null, branch: null, local: false, turns: 0, moved: false } : null; }
+      if (isHostRun(run)) { const p = parsePrUrl(run.params?.pr); return p ? { href: `#/room/${prRoomId(p.repository, p.n)}`, host: true, pr: p.url, reviewed: true, head: null, branch: null, local: false, turns: 0, moved: false } : null; }
       try { if (!run?.ctx?.repo || !reviewNode(run)) return null; const k = keyOf(run.id), head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? ""), ok = SHA.test(head) && reviewed(run, head), room = load(k);
         if (!ok && !room) return null;
-        return { href: `#/review/${run.id}`, reviewed: ok, head, branch: run.ctx.branch ?? null, local: !!run.ctx.taintedReady, turns: room?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, moved: !!room?.seen && room.seen.head !== head }; } catch { return null; }
+        return { href: `#/room/${run.id}`, reviewed: ok, head, branch: run.ctx.branch ?? null, local: !!run.ctx.taintedReady, turns: room?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, moved: !!room?.seen && room.seen.head !== head }; } catch { return null; }
     },
     /** the room as its page reads it; opened: the captain opened the page (recorded once per subject; a pull request is read again) */
     view(id: string, opened = false) {
@@ -691,7 +733,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, summary: null };
     },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
-    async openPr(url: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); return { id, href: `#/review/${id}`, room: this.view(id) }; },
+    async openPr(url: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); return { id, href: `#/room/${id}`, room: this.view(id) }; },
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
@@ -707,6 +749,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ROOM_ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
       if (live.has(k.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
+      // what is usable is read again first: the tutor the captain confirms is the one this machine can run now
+      try { await engine.deps.refreshUsable?.(); } catch {}
       if ((!s.run || !s.node) && k.kind === "pr") {
         // a pull request no Studio Task made: the captain's confirmed first turn makes its host Task once (review-room-host, which
         // writes nothing), bound to the project's approved crew; the turn then runs on it like any other
@@ -733,14 +777,21 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it (a branch or
       // pull request room: an auxiliary owner of the review node, which never advances the Task), the native selection verifies
       // the reviewer member's capability, and staffing issues its receipt for the tutor seat
-      const run = s.run, pick = seatPick(run, s.node), held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]); let provider: any;
+      const run = s.run, tutor = seatPick(run, s.node), pick = tutor.pick, held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]); let provider: any;
       try {
         if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
-        try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
+        // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
+        // signed in, out of quota or not offered is refused with the reason
+        if (pick.model) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
+          // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
+          if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${k.id}`, at: new Date().toISOString() } } as any); }
+        catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
+        try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
         catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
       } catch (e) { held?.release(); throw e; }
       const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
-      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })) };
+      // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
+      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level, crew: !tutor.outside } } : {}) };
       const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
       let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
@@ -749,7 +800,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
-      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head };
+      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head };
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
       void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); });
       return this.view(k.id);
@@ -779,7 +830,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
       if (!s.run || !s.node) throw noHost();
       // the vendor that answered this scene, as recorded; it must still be the seat's vendor, or nothing is sent anywhere
-      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[seatPick(s.run, s.node).provider];
+      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[seatPick(s.run, s.node).pick.provider];
       if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
       if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
       const key = `${k.id}/${t.n}`, running = speaking.get(key); if (running) return running;

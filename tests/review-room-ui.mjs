@@ -29,14 +29,14 @@ const browser = withSession(await chromium.launch(), base);
 const errors = [];
 const shots = process.env.ROOM_SHOTS || join(root, "tests/out/review-room"); mkdirSync(shots, { recursive: true });
 const H = "a".repeat(40), B = "b".repeat(40);
-const summary = { href: "#/review/SC-50", opened: true, turns: 2, questions: 2, running: false, check: { asked: 2, graded: 2, correct: 1 }, sources: { consulted: 1, refused: 1 } };
+const summary = { href: "#/room/SC-50", opened: true, turns: 2, questions: 2, running: false, check: { asked: 2, graded: 2, correct: 1 }, sources: { consulted: 1, refused: 1 } };
 const card = (kind, extra = {}) => ({ id: kind === "merge" ? "SC-50" : "SC-49", run: "R-050", node: kind === "merge" ? "merge-card" : "dispatch", workflow: "code-firstmate", kind, status: "open", title: { en: `${kind} card`, "zh-TW": `${kind} 卡` }, body: "", sections: { en: { why: "w" }, "zh-TW": { why: "w" } },
   options: [{ id: "merge", label: "Merge", labelZh: "合併", primary: true }, { id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true }], createdAt: "2026-10-28T10:00:00Z", answer: null, ...extra });
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const cl = (text, cites = [], basis = cites.some((c) => c.ok) ? "cited" : "inference") => ({ text, kind: "claim", basis, cites });
 const ok1 = (ref) => ({ ref, ok: true });
 const ROOM = { card: { id: "SC-50", run: "R-050", node: "merge-card", title: { en: "Merge: Add percent", "zh-TW": "合併：新增 percent" }, status: "open" }, task: { id: "R-050", title: "Add percent" }, pr: { id: 7, url: null }, head: H, base: B, open: true, running: null,
-  offer: { provider: "codex", model: "gpt-6", effort: "high", paid: true, hash: "feedc0ffee123456", voice: { vendor: "openai", model: "gpt-4o-mini-tts", voice: "alloy" } },
+  offer: { provider: "codex", model: "gpt-6", effort: "high", paid: true, independence: { level: "same", adaptive: true, en: "Same model as the author: a fresh context, not an independent opinion. Only one model is usable on this machine (codex gpt-6).", zh: "和作者同一個模型：是新的脈絡，不是獨立意見。這台機器只有一個可用的模型（codex gpt-6）。" }, hash: "feedc0ffee123456", voice: { vendor: "openai", model: "gpt-4o-mini-tts", voice: "alloy" } },
   actions: [["how", "How does this change work?", "這個改動是怎麼運作的？"], ["why", "Why?", "為什麼？"], ["teach", "Teach me", "教我"], ["merge-check", "Check", "檢查"], ["quiz", "Quiz", "考我"]].map(([id, en, zh]) => ({ id, en, zh })),
   board: [
     { id: "B0-1", turn: 0, type: "image", kind: "illustration", title: "This change at a glance", status: "pending", src: null, basis: "illustration", cites: [] },
@@ -93,14 +93,24 @@ try {
     const r = await p.evaluate(([m, d]) => { const a = document.createElement("div"), b = document.createElement("div"); document.body.append(a, b); window.crewCard.mountCard(a, m); window.crewCard.mountCard(b, d);
       return { link: a.querySelector("[data-review-room-open]")?.getAttribute("href"), text: a.querySelector("[data-review-room-open]")?.textContent, summary: a.querySelector("[data-review-room-summary]")?.textContent, merge: !!a.querySelector('[data-option="merge"]'), other: !!b.querySelector("[data-review-room]") }; },
       [card("merge", { reviewRoom: summary }), card("dispatch")]);
-    ok(r.link === "#/review/SC-50" && r.text === "Open review room" && r.merge, "a merge card shows Open review room beside its own options", JSON.stringify(r));
+    ok(r.link === "#/room/SC-50" && r.text === "Open review room" && r.merge, "a merge card shows Open review room beside its own options", JSON.stringify(r));
     ok(/2 questions asked in the room · check 1\/2 correct · 1 source consulted/.test(r.summary) && /never answers this card or changes whether it can merge/.test(r.summary), "the card shows the room's summary: questions, check score, sources; display only", r.summary);
     ok(!r.other, "a card that is not a merge card has no review room");
     await ctx.close(); }
 
+  // ---------- two routes, two pages: #/review is the Library's artifact review, #/room the review room ----------
+  { const { ctx, p } = await open(1440, "en");
+    await p.goto(`${base}/#/review/ART-404/1`); await p.waitForFunction(() => S.route?.name === "review", null, { timeout: 15000 }).catch(() => {}); await p.waitForTimeout(800);
+    const lib = await p.evaluate(() => ({ route: S.route?.name, room: !!document.querySelector(".rr-page"), err: document.querySelector("[data-room-error]")?.textContent ?? null }));
+    ok(lib.route === "review" && !lib.room && lib.err === null, "#/review/<artifact>/<n> stays the Library's review page, never the review room", JSON.stringify(lib));
+    await p.goto(`${base}/#/room`); await p.waitForSelector(".rr-page", { timeout: 15000 }).catch(() => {});
+    const home = await p.evaluate(() => ({ route: S.route?.name, h1: document.querySelector(".rr-page h1")?.textContent ?? null }));
+    ok(home.route === "room" && home.h1 === "Review room", "#/room is the review room's home", JSON.stringify(home));
+    await ctx.close(); }
+
   // ---------- the room at 1440: the board is the stage ----------
   { const { ctx, p, posts, cites, speech, release } = await open(1440, "en");
-    await p.goto(`${base}/#/review/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
     let s = await stage(p);
     ok(s.scene === "t2" && s.pos === "3/3" && s.points === 3, "the stage opens on the latest scene, whole (scenes already there are not replayed)", JSON.stringify(s));
     ok(!!(await p.$('[data-cite-invalid="commit:deadbeef"]')) && !(await p.$('button[data-cite="commit:deadbeef"]')), "a citation Studio could not verify is plain text: nothing to click");
@@ -158,6 +168,7 @@ try {
     ok((await p.inputValue("[data-room-text]")) === "why do halves round up" && await p.evaluate(() => window.__recStarted.local === true) && !posts.length, "holding the mic fills the question with what it heard, recognised on this device; nothing is sent yet");
     await p.dispatchEvent("[data-mic]", "pointerup");
     await p.click("[data-room-send]"); await p.waitForSelector('[data-room-confirm="ask"]');
+    ok(await p.getAttribute("[data-independence]", "data-independence") === "same" && /Tutor: codex · gpt-6 — Same model as the author: a fresh context, not an independent opinion\. Only one model is usable/.test(await p.textContent("[data-independence]")), "the room labels the tutor and its independence from the author");
     ok(/paid model round on codex · gpt-6 \(high\)/.test(await p.textContent("[data-room-confirm]")) && /up to two illustrations, each a paid image job/.test(await p.textContent("[data-room-confirm]")) && /nothing is sent to GitHub/.test(await p.textContent("[data-room-confirm]")) && !posts.length, "Ask first asks to confirm the paid round on its provider and model, illustrations included");
     await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector('[data-room-action="why"]')?.disabled);
     ok(posts.length === 1 && posts[0].action === "ask" && posts[0].text === "why do halves round up" && posts[0].confirm === "feedc0ffee123456" && posts[0].lang === "en", "Start sends the spoken question with the confirmation and the captain's language", JSON.stringify(posts));
@@ -171,7 +182,7 @@ try {
 
   // ---------- no on-device recognition: no mic; 390, zh-TW ----------
   { const { ctx, p } = await open(390, "zh-TW", "unavailable");
-    await p.goto(`${base}/#/review/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
     await p.waitForFunction(() => document.querySelector("[data-mic]")?.disabled === true);
     ok(/裝置上的語音辨識/.test(await p.getAttribute("[data-mic]", "title")), "without on-device recognition the mic stays off and says why");
     ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] summary")) && /語音關/.test(await p.textContent("[data-voice]")), "zh-TW: the stage, the transcript and the voice choice read in Chinese");
@@ -195,16 +206,16 @@ try {
     const opens = [], checks = [];
     await ctx.route(/\/api\/review-room\/open-pr$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); opens.push(b.url);
       if (!/^https:\/\/github\.com\/fixture\/project\/pull\/7$/.test(b.url)) return r.fulfill({ status: 400, json: { error: "github.com/someone/else is not the GitHub repository of a registered project connected to GitHub; Studio reads only those", code: "not_connected" } });
-      r.fulfill({ json: { id: PRID, href: `#/review/${PRID}`, room: PRROOM } }); });
+      r.fulfill({ json: { id: PRID, href: `#/room/${PRID}`, room: PRROOM } }); });
     await ctx.route(new RegExp(`/api/review-room/${PRID}(\\?open=1)?$`), (r) => r.fulfill({ json: PRROOM }));
     await ctx.route(new RegExp(`/api/review-room/${PRID}/check$`), (r) => { checks.push(1); r.fulfill({ json: { ...PRROOM, moved: null, prState: { ...PRROOM.prState, state: "merged" }, open: false, offer: null, closed: { en: "This pull request is merged on GitHub: the room stays readable and takes no turn.", zh: "已合併" } } }); });
     await ctx.route(new RegExp(`/api/review-room/${PRID}/cite\\?`), (r) => r.fulfill({ json: { kind: "review", note: "inline", id: "c11", author: "rita", body: EVIL, path: "a.txt", line: 2, url: "https://github.com/fixture/project/pull/7#discussion_r11" } }));
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
-    await p.goto(`${base}/#/review`); await p.waitForSelector('[data-pr-box="home"]', { timeout: 15000 });
+    await p.goto(`${base}/#/room`); await p.waitForSelector('[data-pr-box="home"]', { timeout: 15000 });
     await p.fill('[data-pr-url="home"]', "https://github.com/someone/else/pull/1"); await p.click('[data-pr-open="home"]'); await p.waitForSelector('[data-pr-error="home"]');
     ok(/not the GitHub repository of a registered project connected to GitHub/.test(await p.textContent('[data-pr-error="home"]')), "the Review Room's home takes a pull request's URL; a repository not connected is refused with the reason");
     await p.fill('[data-pr-url="home"]', "https://github.com/fixture/project/pull/7"); await p.click('[data-pr-open="home"]'); await p.waitForSelector(`[data-review-room="${PRID}"]`);
-    ok(opens.length === 2 && (await p.evaluate(() => location.hash)) === `#/review/${PRID}`, "a connected repository's URL opens its room", JSON.stringify(opens));
+    ok(opens.length === 2 && (await p.evaluate(() => location.hash)) === `#/room/${PRID}`, "a connected repository's URL opens its room", JSON.stringify(opens));
     ok(/Open · approved at this head/.test(await p.textContent("[data-pr-state]")) && /from the fork contrib\/project/.test(await p.textContent("[data-room-subject]")) && /rita: approved/.test(await p.textContent("[data-pr-verdicts]")),
       "the room shows the pull request's state on GitHub: open, approved at this head by whom, from a fork");
     ok(/2 new commits since you last looked/.test(await p.textContent("[data-room-moved]")) && !!(await p.$('[data-room-github]')) && (await p.getAttribute("[data-room-github]", "href")) === "https://github.com/fixture/project/pull/7", "it says how many commits came since the captain last looked, with a link to GitHub");
@@ -234,11 +245,11 @@ try {
     await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const def = { id: "code-firstmate", name: "Code", version: 1, kind: "code", roles: [], nodes: [{ id: "review", kind: "agent", mode: "review", role: "reviewer", label: "Review", x: 0, y: 0 }], edges: [] };
     const task = (id, reviewRoom) => ({ id, title: "Add percent", status: "succeeded", result: "closed", workflow: "code-firstmate", version: 1, def, params: {}, ctx: {}, nodes: { review: { state: "passed", visits: 1 } }, cards: [], events: [], ledger: [], ledgerOk: true, ledgerBad: [], done: [], outputs: [], walked: [], steps: [], reviewRoom, createdAt: "2026-10-28T10:00:00Z", updatedAt: "2026-10-28T10:00:00Z" });
-    await ctx.route(/\/api\/tasks\/R-061$/, (r) => r.fulfill({ json: task("R-061", { href: "#/review/R-061", reviewed: true, head: H, branch: "crew/percent", local: true, turns: 0, moved: true }) }));
+    await ctx.route(/\/api\/tasks\/R-061$/, (r) => r.fulfill({ json: task("R-061", { href: "#/room/R-061", reviewed: true, head: H, branch: "crew/percent", local: true, turns: 0, moved: true }) }));
     await ctx.route(/\/api\/tasks\/R-062$/, (r) => r.fulfill({ json: task("R-062", null) }));
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
     await p.goto(`${base}/#/run/R-061`); await p.waitForSelector('[data-task-review-room="R-061"]', { timeout: 15000 });
-    ok((await p.getAttribute('[data-task-review-room="R-061"]', "href")) === "#/review/R-061" && /Open review room · new commits/.test(await p.textContent('[data-task-review-room="R-061"]')) && /local branch, not published/.test(await p.getAttribute('[data-task-review-room="R-061"]', "title")),
+    ok((await p.getAttribute('[data-task-review-room="R-061"]', "href")) === "#/room/R-061" && /Open review room · new commits/.test(await p.textContent('[data-task-review-room="R-061"]')) && /local branch, not published/.test(await p.getAttribute('[data-task-review-room="R-061"]', "title")),
       "a Task whose branch passed Studio's review shows Open review room (new commits marked; a local-only branch says so)");
     await p.goto(`${base}/#/run/R-062`); await p.waitForSelector('[data-runview="R-062"]', { timeout: 15000 });
     ok(!(await p.$("[data-task-review-room]")), "a Task with no reviewed branch has no review room button");

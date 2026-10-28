@@ -18,7 +18,7 @@ const { createNativeProviderAdmission } = await import("../src/providers/native-
 const { jobInstructions } = await import("../src/operating-rules");
 
 const flow = { id: "code-firstmate", name: "Tutor admission", kind: "code", version: 1,
-  roles: [{ id: "worker", label: "Worker", skill: "pack:firstmate/skills/worker.md" }, { id: "reviewer", label: "Reviewer", skill: "pack:firstmate/skills/reviewer.md" }],
+  roles: [{ id: "worker", label: "Worker", skill: "pack:firstmate/skills/worker.md" }, { id: "reviewer", label: "Reviewer", skill: "pack:firstmate/skills/reviewer.md" }, { id: "designer", label: "Designer", skill: "pack:firstmate/skills/designer.md" }],
   nodes: [{ id: "prep", kind: "hook", do: "prep", label: "Prepare", x: 1, y: 1 }, { id: "merge-card", kind: "card", label: "Merge", args: { card_kind: "merge" }, card: { title: { en: "Merge the change to a.txt", "zh-TW": "合併 a.txt 的改動" }, body: { en: "The change adds one line to a.txt; merging lands it on main.", "zh-TW": "這個改動在 a.txt 加了一行；合併後會進 main。" }, options: [{ id: "merge", label: "Merge", labelZh: "合併", primary: true }, { id: "close", label: "Close", labelZh: "關閉", hold: true }] }, x: 2, y: 1 },
     { id: "build", kind: "agent", mode: "build", role: "worker", label: "Build", x: 3, y: 1 }, { id: "review", kind: "agent", mode: "review", role: "reviewer", label: "Review", x: 4, y: 1 }, { id: "done", kind: "hook", label: "Done", x: 5, y: 1 }],
   edges: [{ from: "prep", to: "merge-card" }, { from: "merge-card", to: "build", when: "changes" }, { from: "build", to: "review" }, { from: "review", to: "merge-card", when: "pass" }, { from: "merge-card", to: "done", when: "merge" }] };
@@ -31,7 +31,7 @@ try {
   installStaffingGuard(e, store, () => project);
   const def = e.defs.get(flow.id)!, skill = (ref: string) => store.remember({ ref, version: 1, text: e.deps.skillText(ref) });
   const config = store.approve({ schema: 1, algorithm: "sha256-canonical-v1", project, workflow: { id: def.id, version: def.version, sha256: staffingHash(def) },
-    roles: { worker: { provider: "codex", model: "worker-model", effort: "low", skill: skill(flow.roles[0].skill) }, reviewer: { provider: "codex", model: "reviewer-model", effort: "high", skill: skill(flow.roles[1].skill) } },
+    roles: { worker: { provider: "codex", model: "worker-model", effort: "low", skill: skill(flow.roles[0].skill) }, reviewer: { provider: "codex", model: "reviewer-model", effort: "high", skill: skill(flow.roles[1].skill) }, designer: { provider: "codex", model: "designer-model", effort: "medium", skill: skill(flow.roles[2].skill) } },
     review: { freshContexts: 3, distinctProviders: false } } as any, null, { run: "R-source", card: "SC-source", answerSeq: 1 });
   e.actions.prep = async (x: any) => { Object.assign(x.ctx, { worktree: repo, repo, baseCommit: base, head }); x.save(); return "ok"; };
   // the server's native admission, with a certified stub selection: an uncertified provider is never picked silently
@@ -83,5 +83,62 @@ try {
       "instructions with text added before or after the pins, a changed line, or the pins reordered get no receipt"); }
   // the receipt is spent at launch: the same receipt cannot start a second job
   ok(e.ledger(run.id).some((x) => x.record === "review-room-turn" && x.data.status === "done"), "the turn is on the ledger as done");
+
+  // ---------- the adaptive tutor (src/domain/independence.ts): the approved reviewer while it can run and differs from the
+  // author; otherwise another member of this project's crew; only then a model outside it, labelled; the receipt names it ----------
+  const U = (...m: [string, string, any?][]) => m.map(([provider, model, o]) => ({ provider, model, efforts: provider === "codex" ? ["low", "medium", "high"] : [], verified: true, runnable: true, ...o }));
+  const turn = async () => { const o: any = room.view(card.id).offer; await room.start(card.id, { action: "how", confirm: o.hash }, "captain"); await room.settle(card.id); return { o, t: (room.view(card.id) as any).turns.at(-1), rec: e.ledger(run.id).filter((x) => x.record === "staffing-instructions").at(-1) as any }; };
+  // the approved reviewer runs and differs from the worker by model: kept, even with another vendor signed in
+  e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x"]);
+  { const { o, t, rec } = await turn();
+    ok(o.provider === "codex" && o.model === "reviewer-model" && o.independence.level === "model" && o.independence.adaptive === false && o.independence.outside === false && /Same vendor as the author, different model/.test(o.independence.en), "the approved reviewer on another model of the author's vendor stays the tutor, with Claude signed in too", JSON.stringify(o.independence));
+    ok(t.status === "done" && t.independence === "model" && rec.data.model === "reviewer-model" && !rec.data.adaptive, "its receipt is the reviewer's own, as before", JSON.stringify(rec?.data)); }
+  // the approved reviewer cannot run: another member of this project's crew first (the designer), before any vendor outside it
+  e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "designer-model"], ["claude", "claude-x"]);
+  { const { o, t, rec } = await turn();
+    ok(o.provider === "codex" && o.model === "designer-model" && o.effort === "medium" && o.independence.level === "model" && o.independence.adaptive === true && o.independence.outside === false && !/Not in this project's crew/.test(o.independence.en), "with the reviewer unable to run, a member already in the crew is preferred to a model outside it", JSON.stringify(o));
+    ok(t.status === "done" && rec.data.model === "designer-model" && rec.data.adaptive?.crew === true && rec.data.adaptive.approved?.model === "reviewer-model", "the receipt names the crew member used, and the approved one it stands in for", JSON.stringify(rec?.data)); }
+  // nothing in the crew differs from the author: a model outside it, labelled, recorded; a verified Claude before an unverified one
+  e.deps.usableModels = () => U(["codex", "worker-model"], ["claude", "claude-new", { verified: false }], ["claude", "claude-x"]);
+  { const { o, t, rec } = await turn();
+    ok(o.provider === "claude" && o.model === "claude-x" && o.effort === null && o.independence.level === "vendor" && o.independence.outside === true && /Not in this project's crew/.test(o.independence.en), "otherwise a verified model outside the crew, never an unverified Claude candidate beside a verified one, labelled", JSON.stringify(o));
+    ok(t.status === "done" && t.provider === "claude" && t.independence === "vendor" && selects.at(-1)?.pick.provider === "claude", "the turn runs on that member through the native selection", JSON.stringify({ t: { status: t.status, provider: t.provider, error: t.error }, sel: selects.at(-1) }));
+    ok(rec.data.seat === TUTOR_SEAT && rec.data.provider === "claude" && rec.data.model === "claude-x" && rec.data.effort === null && rec.data.adaptive?.independence === "vendor" && rec.data.adaptive.crew === false && rec.data.adaptive.approved?.model === "reviewer-model" && rec.data.config === config.hash,
+      "the tutor seat's receipt names the member actually used, that it is outside the crew, and the approved member it stands in for", JSON.stringify(rec?.data));
+    const job: any = [...h.agents.jobs.values()].filter((j: any) => j.kind === "review-room").at(-1);
+    ok(job?.provider === "claude" && job.model === "claude-x", "the job admitted is that member's", JSON.stringify(job && { provider: job.provider, model: job.model })); }
+  // a model whose verification is in its backoff is skipped: the next one is tried
+  e.deps.usableModels = () => U(["codex", "worker-model"], ["claude", "claude-x"], ["claude", "claude-y"]); e.deps.verifyBackoff = (p: any) => p?.model === "claude-x";
+  { const o: any = room.view(card.id).offer; ok(o.provider === "claude" && o.model === "claude-y", "a model in its verification backoff is skipped for the next one", JSON.stringify(o)); delete e.deps.verifyBackoff; }
+  // another vendor signed in but held (quota unreadable): the tutor waits, it never falls back to the author's model
+  e.deps.usableModels = () => U(["codex", "worker-model"], ["claude", "claude-x", { runnable: false, held: "claude is out of quota" }]);
+  { const o: any = room.view(card.id).offer; ok(o.code === "no_tutor" && /The tutor waits: claude is out of quota/.test(o.error ?? ""), "a held vendor relaxes nothing: the tutor waits with the reason", JSON.stringify(o)); }
+  // one model on this machine: the tutor runs on the author's own model, never refused, said plainly
+  e.deps.usableModels = () => U(["codex", "worker-model"]);
+  { const { o, t, rec } = await turn();
+    ok(o.provider === "codex" && o.model === "worker-model" && o.independence.level === "same" && /Same model as the author/.test(o.independence.en) && /Only one model is usable/.test(o.independence.en), "one model on this machine: the tutor runs on the author's own model, labelled", JSON.stringify(o));
+    ok(t.status === "done" && t.independence === "same" && rec.data.model === "worker-model" && rec.data.adaptive?.independence === "same", "and the receipt says so", JSON.stringify(rec?.data)); }
+  // a member that is not usable, or a seat that is not adaptive, gets no receipt
+  { const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]), { OperatingRules } = await import("../src/operating-rules"), rules = new OperatingRules(h.data).section("p");
+    const texts = ROOM_SKILLS.map((k) => ({ sha256: k.sha256, text: readFileSync(join(import.meta.dir, "..", k.ref), "utf8") })), sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
+    const issue = (member: any) => { try { e.deps.instructionReceipt(x, "reviewer", sys, { id: member.provider, model: member.model, reasoningEffort: member.effort }, { seat: TUTOR_SEAT, texts, rules, member }); return "issued"; } catch (err: any) { return String(err?.message ?? err); } };
+    ok(/not usable/.test(issue({ provider: "cursor", model: "composer", effort: null, independence: "vendor" })), "a member this machine cannot run gets no receipt");
+    e.deps.usableModels = () => U(["codex", "worker-model", { runnable: false, held: "codex's facts expired" }]);
+    ok(/not usable/.test(issue({ provider: "codex", model: "worker-model", effort: null, independence: "same" })), "nor one that is held right now");
+    e.deps.usableModels = () => U(["codex", "worker-model"]);
+    const seats = e.deps.auxiliarySeats; e.deps.auxiliarySeats = { [TUTOR_SEAT]: { ...seats[TUTOR_SEAT], adaptive: false } };
+    ok(/approved member/.test(issue({ provider: "codex", model: "worker-model", effort: null, independence: "same" })), "a seat that is not adaptive runs only on its role's approved member"); e.deps.auxiliarySeats = seats;
+    delete e.deps.usableModels;
+    ok(/not usable/.test(issue({ provider: "codex", model: "worker-model", effort: null, independence: "same" })) && issue({ provider: "codex", model: "reviewer-model", effort: "high", independence: "model" }) === "issued", "without provider facts only the approved member is admitted"); }
+  // Studio verifies the chosen member before the paid turn: what it verified is on the Task's ledger; one it cannot admit is refused
+  { e.deps.usableModels = () => U(["codex", "worker-model"], ["claude", "claude-x"]); const before = e.ledger(run.id).filter((x) => x.record === "staffing-auto-verify").length;
+    e.deps.ensurePick = async (p: any) => ({ state: "ready", verified: [`tutor: ${p.provider} ${p.model}`] });
+    await turn(); const rec: any = e.ledger(run.id).filter((x) => x.record === "staffing-auto-verify").slice(before);
+    ok(rec.length === 1 && rec[0].data.verified.join() === "tutor: claude claude-x" && /review room/.test(rec[0].data.for), "the tutor's verification by Studio is recorded on the Task's ledger", JSON.stringify(rec[0]?.data));
+    const runs = h.agents.jobs.size, checked: any[] = [];
+    e.deps.ensurePick = async (p: any) => { checked.push(p); throw new Error("The tutor role's claude is out of quota. / 額度已用完"); };
+    const o: any = room.view(card.id).offer; let refusal: any = null; try { await room.start(card.id, { action: "how", confirm: o.hash }, "captain"); } catch (x) { refusal = x; }
+    ok(refusal?.code === "no_tutor" && /out of quota/.test(refusal.message) && checked[0]?.provider === "claude" && checked[0].model === "claude-x" && h.agents.jobs.size === runs, "the chosen member is verified first; one that cannot run is refused with the reason and nothing is paid", refusal?.message);
+    delete e.deps.ensurePick; delete e.deps.usableModels; }
 } finally { for (const r of e.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await e.cancel(r.id, "cleanup"); h.stop(); rmSync(repo, { recursive: true, force: true }); }
 end();

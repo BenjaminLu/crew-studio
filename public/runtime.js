@@ -1255,7 +1255,11 @@ function startProjectPicker(id) {
   const crewLink = chosen && o.crewHref ? `${o.crewHref}?staffing=${encodeURIComponent(chosen.id)}&workflow=${encodeURIComponent(o.workflow)}` : o.crewHref;
   const crew = !o.projects.length ? h("span", { class: "faint", "data-run-crew": "no-project" }, T("No registered project yet. Ask Firstmate to register one.", "尚無已登錄專案；請請 Firstmate 登錄專案。"))
     : !s ? null
-    : s.state === "approved" ? h("span", { class: "badge ok", "data-run-crew": "approved" }, T(`Crew approved · v${s.version}`, `代理配置已核准 · v${s.version}`))
+    // approved: a model signed in but not verified yet is verified by Studio on Start (said here, with what it costs); a reviewer
+    // on the worker's own model (this machine has one usable model) is said too
+    : s.state === "approved" ? h("span", { class: "rt-crew" }, h("span", { class: "badge ok", "data-run-crew": "approved" }, T(`Crew approved · v${s.version}`, `代理配置已核准 · v${s.version}`)),
+        s.readiness?.note ? h("span", { class: "faint", "data-run-crew-verify": String(s.readiness.verify?.length ?? 0) }, " ", T(s.readiness.note.en, s.readiness.note.zh)) : null,
+        s.readiness?.independence ? h("span", { class: "faint", "data-run-crew-independence": s.readiness.independence.level }, " ", T(s.readiness.independence.en, s.readiness.independence.zh)) : null)
     : s.state === "missing" ? h("span", { class: "rt-crew", "data-run-crew": "missing" }, T("No crew approved for this project. ", "此專案尚未核准代理配置。"), h("a", { href: crewLink, "data-run-crew-link": "1" }, T("Approve its crew on the Crew page", "到船員頁核准人員")))
     : h("span", { class: "rt-crew", role: "alert", "data-run-crew": "blocked", "data-run-crew-code": s.code }, h("b", {}, T("Cannot start", "無法開始")), ` · ${s.code} · `, T(s.reason.en, s.reason.zh), s.code === "staffing_changed" ? h("a", { href: crewLink, "data-run-crew-link": "1" }, " ", T("Choose your crew again", "重新決定代理配置")) : null);
   return h("div", { class: "rt-row rt-start-project", "data-run-project-row": id }, h("span", { class: "lbl" }, T("Project", "專案")), sel, crew);

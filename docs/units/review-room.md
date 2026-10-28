@@ -1,6 +1,6 @@
 # Unit review-room: learn a pull request before you merge it
 
-What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/review/<merge card>`,
+What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/room/<merge card>`; `#/room/…` is the Library's artifact review,
 `public/review-room.js`) works like an interactive whiteboard tutor:
 
 - **The board is the stage** and takes most of the screen. Each tutor answer is a **scene**: a visual on the left and the
@@ -54,14 +54,14 @@ deciding its merge, without anything leaving Studio.
 
 A room has one subject and keeps one identity across that subject's heads:
 
-- **A merge card** (`#/review/SC-n`), as above. Unchanged.
-- **A Task's local branch** (`#/review/R-n`), once Studio's internal review passed at the Task's head (its signed
+- **A merge card** (`#/room/SC-n`), as above. Unchanged.
+- **A Task's local branch** (`#/room/R-n`), once Studio's internal review passed at the Task's head (its signed
   `firstmate/review-verdict` pass at that head, or a tainted Task's `tainted-ready` end on the ledger). The Task page shows
   "Open review room" then: on the way to the merge card, and on a tainted Task that ends "ready on branch, not published"
   (its room reads the local branch only; nothing goes to GitHub). Before the review passes the room is refused
   (`not_reviewed`); a branch whose head later moves keeps its room, and a turn needs the review passed at the new head.
-- **A pull request on GitHub** (`#/review/PR-<12 hex of the repository>-<n>`), opened by pasting its URL on the Review
-  Room's home (`#/review`) or a connected project's page (`POST /api/review-room/open-pr {url}`, the desktop captain only).
+- **A pull request on GitHub** (`#/room/PR-<12 hex of the repository>-<n>`), opened by pasting its URL on the Review
+  Room's home (`#/room`) or a connected project's page (`POST /api/review-room/open-pr {url}`, the desktop captain only).
   Only `https://github.com/<owner>/<repo>/pull/<n>` (no other host, scheme, path, query or fragment), and only a repository
   that a registered, enabled project is connected to (its grant's repository; the grant is verified as for any GitHub use):
   anything else is refused with the reason (`bad_url`, `not_connected`) before GitHub is read. Studio reads the pull
@@ -133,18 +133,43 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
   `why` on local history only (the issue tracker, documents, chat, observability, error tracking and analytics categories
   are recorded as gaps, per its own contract), `why`'s confidence tiers kept end to end, and the board's build-up instead
   of image generation. The four texts are pinned by sha256 (`ROOM_SKILLS`); a changed text refuses the turn.
-- Not Firstmate, not the worker, not the reviewer. It is the **tutor seat**, staffed on the reviewer role's member (the
-  approved staffing's reviewer as admitted on the merge card's node, else the Task's own pick for its review node), so it
-  inherits the reviewer-differs-from-maker rule; Studio also refuses a tutor whose provider and model equal the maker's
-  (every node that wrote the change, build, fix or rework, as staffed and as it ran; a model left to the vendor's default
-  counts as possibly the same).
+- Not Firstmate, not the worker, not the reviewer. It is the **tutor seat**, and it adapts to what this machine has
+  (docs/architecture.md, "Adaptive staffing"), judged against the change's author (every node that wrote it, build, fix or
+  rework, as staffed and as it ran). A member left to its vendor's default model is that vendor's actual default first.
+  1. **The approved reviewer** (the approved staffing's reviewer as admitted on the merge card's node, else the Task's own
+     pick for its review node) stays the tutor whenever it can run now and differs from the author at least by model:
+     another vendor being signed in changes nothing.
+  2. Otherwise (it is the author's own model, cannot run now, or its verification is in its backoff), **another member
+     already in this project's crew** (another role, a node override), the most independent one first; only if none
+     differs from the author, **a model outside the crew** that this machine can run (a verified Claude model before an
+     unverified candidate; a Codex model at medium effort, Claude and Cursor at their own default), labelled "Not in this
+     project's crew".
+  3. When nothing that differs from the author can run, the author's own model is used only when this machine has no
+     other model at all ("Same model as the author: a fresh context, not an independent opinion. Only one model is
+     usable…"). Another vendor that is signed in but held (out of quota, quota unreadable, stale facts) is waited for: the
+     room says "The tutor waits: …" and runs nothing. Without provider facts nothing is relaxed; with nothing usable at all
+     the room says so (`no_tutor`).
+  The offer carries the level (`independence: {level: vendor | model | same, adaptive, outside, en, zh}`), the room shows
+  it as "Tutor: … — Different vendor from the author" (or "Same vendor as the author, different model", or the same-model
+  text, with why, and "Not in this project's crew" when it is not), and each turn records it: on the turn, its
+  `review-room-turn` ledger entry and the room's stats (`review-room-stats.json`, with the tutor's provider and model).
+- **Verified by Studio.** Before the paid turn, Studio reads what this machine has again (the offer may change: a changed
+  offer is answered with the current one) and verifies the chosen member itself when it is signed in but not verified yet
+  (`engine.deps.ensurePick`: one bounded request per model, kept for its window), recorded on the Task's ledger
+  (`staffing-auto-verify`). One that is not signed in, out of quota or not offered is refused with the reason, before
+  anything is paid.
 - **Admission, like any role's.** A turn belongs to the merge card's live node: the provider is chosen through the native
   selection on that node as the reviewer (capability verified, certified for that owner), and staffing issues a receipt
   for the tutor seat. Staffing knows the seat (`engine.deps.auxiliarySeats`: the seat, the role whose approved member it
-  runs on, the sha256 of each pinned text) and checks the provider, model and effort against the approved reviewer and
+  runs on, the sha256 of each pinned text, `adaptive: true`) and checks the provider, model and effort against the approved
+  reviewer, or, for an adaptive member (`aux.member`), against that member, which must be runnable on this machine now
+  (without provider facts only the approved member is admitted; a seat that is not adaptive takes no member), and
   that the instructions are exactly the pinned texts, in order, under the safety and operating rules (nothing added,
   nothing left out, nothing reordered); the receipt records the seat and the hash of its texts
-  (`staffing-instructions`, with `seat: review-room-tutor`). The round is one of the Task's jobs (`ref` is the Task): the
+  (`staffing-instructions`, with `seat: review-room-tutor`), and names the member actually used: its provider, model and
+  effort, plus `adaptive: {independence, crew, approved}` when it stands in for the approved reviewer. The native selection runs
+  on that member (`adaptive: true` keeps it from being replaced by the role's approved pick), and the job's admission
+  checks the provider against it. The round is one of the Task's jobs (`ref` is the Task): the
   same queue, cancel and provider admission as other roles, which recheck the receipt, the owner and the instructions'
   hash at launch. A seat staffing does not know, or instructions that differ from the pins, are refused before anything
   is paid.
@@ -233,9 +258,16 @@ and page do not exist):
 1. Only merge cards have a room; any other card has no summary and its room and turns are refused. — review-room
    "a dispatch card has no review room …", "a turn on a card that is not a merge card is refused"; review-room-ui "a card
    that is not a merge card has no review room".
-2. A turn needs the captain's confirmation of the exact provider and model; a tutor on the maker's model and a sandbox-off
-   grant refuse it; one turn at a time. — review-room "a turn without the confirmation …", "a tutor on the maker's model
-   is refused", "with a sandbox-off grant …", "a confirmed turn starts at once, and a second one waits …"; review-room-ui
+2. A turn needs the captain's confirmation of the exact provider and model; a sandbox-off grant refuses it; one turn at a
+   time. The tutor keeps the approved reviewer while it can run and differs from the author, else adapts (a crew member,
+   then a model outside the crew, labelled), waits for a held vendor, and is never refused for having one model. —
+   review-room "a turn without the confirmation …", "the offer labels the tutor's independence …", "without provider
+   facts nothing is relaxed …", "a reviewer seat on the author's model moves to a model outside the crew …", "a
+   vendor-default member resolves …", "with one model on this machine …", "another vendor signed in but held for now …",
+   "the approved reviewer stays the tutor when it can run …", "the turn's independence level is on the ledger …";
+   review-room-admission "the approved reviewer on another model … stays the tutor …", "… a member already in the crew is
+   preferred …", "otherwise a verified model outside the crew …", "a model in its verification backoff is skipped …";
+   review-room "with a sandbox-off grant …", "a confirmed turn starts at once, and a second one waits …"; review-room-ui
    "a quick action first asks to confirm …", "Start sends the turn …".
 3. The round is read-only with no write tools, sandboxed with no host beyond its model, with the pinned skills, and leaves
    its round record and ledger entry. — review-room "the round gets only the room's … tools", "… nothing to write and no
@@ -262,9 +294,9 @@ and page do not exist):
    refs are untouched by the room".
 10. The per pull request record is kept. — review-room "the per pull request record keeps …".
 
-Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
-tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; screenshots in `tests/out/review-room`
-or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull request subjects. `bun run test:review-room` runs all five.
+Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission, the adaptive tutor on one vendor, two vendors and one model, a member that is not usable, verification before the turn), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
+tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; the room and the Library review each on its own route, `tests/route-names.ts` keeps route names apart; screenshots in `tests/out/review-room`
+or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull request subjects. `bun run test:review-room` runs all six.
 
 11. Pictures: screenshots come only from Studio's captures of this head (before / after toggle); a diffstat chart is
     counted by git; an uncited chart is an inference; illustrations are made in the background (the turn does not wait),
@@ -321,8 +353,7 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 
-Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request; a per-room model switch (the tutor is the reviewer
-seat's member); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
+Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request; a per-room model switch (Studio picks the tutor); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
 same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
 render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice
 questions are recognised on this device only); illustrations made when the merge card is created (they start when the

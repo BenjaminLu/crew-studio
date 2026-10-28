@@ -78,6 +78,8 @@
 .rr-confirm { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: var(--accent-soft); }
 .rr-confirm p { margin: 0 0 6px; }
 .rr-err { color: var(--bad, #c33); }
+.rr-indep { margin: 0 0 6px; }
+.rr-indep.rr-warn { color: var(--warn, #b26b00); }
 .rr-cost { display: block; font-size: 11px; margin-top: 4px; }
 .rr-check, .rr-sources { margin: 0 0 10px; padding-left: 18px; }
 .rr-sources { list-style: none; padding-left: 0; }

@@ -160,6 +160,12 @@ export function parseReport(raw:any,o:{strict?:boolean}={}):Report{
 const squash=(s:string)=>s.replace(/[\s,;]+/g,'');
 /** Quoted code, split where the skill's reports join several lines: " ; ", " / ", " ... ". */
 const fragments=(evidence:string)=>evidence.split(/\s+(?:;|\/|\.\.\.|…)\s+/).map(s=>s.trim()).filter(s=>squash(s).length>=8);
+/** The line numbers (1-based, from `from` to `to`) of a file's lines that a finding's quoted code covers: a line whose
+ *  text (squashed, at least 4 characters) is part of a quote, or a line a whole quote sits in. For display only. */
+export function quotedLines(evidence:string,lines:string[],from:number,to:number):number[]{
+ const qs=fragments(evidence).map(squash),out:number[]=[];
+ for(let n=Math.max(1,from);n<=Math.min(lines.length,to);n++){const l=squash(lines[n-1]??'');if(l.length>=4&&qs.some(q=>q.includes(l)||l.includes(q)))out.push(n);}
+ return out;}
 // inside the checkout, and code: git's own metadata is not
 const inside=(file:string)=>!!file&&!isAbsolute(file)&&!normalize(file).split(/[\\/]/).some(p=>p==='..'||p==='.git');
 /** a quote counts within NEAR lines of its locus's stated range; a stated range spans at most SPAN lines; a quote of fewer
@@ -223,7 +229,7 @@ export function verifyReport(r:Report,snap:Snapshot,read:(file:string)=>string|n
 }
 
 const files=(f:Finding)=>new Set(f.locus.map(l=>normalize(l.file)));
-const needsCode=(s?:string)=>s==='present'||s==='fixed?';
+export const needsCode=(s?:string)=>s==='present'||s==='fixed?';
 /** neither could locate it: needs-info (the issue lacks what is needed) and not-found (looked, not there) */
 const unlocated=(s?:string)=>s==='needs-info'||s==='not-found';
 /** Two findings on the same issue agree when they give the same state and, when that state needs code (present, fixed?),
@@ -343,6 +349,8 @@ export type StoredPackage=Package&{id:string;commit:string;status:PackageStatus;
  match?:{with:string;where:string};
  /** cross-batch matches the captain joined to this package: which, who, when, and whether that withdrew its approval */
  joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[];
+ /** both reports came from one model (allowed on a machine with one usable model): their agreement is weaker evidence */
+ investigators?:{level:'same';by:string;en:string;zh:string};
  /** taken into a package by the captain although an open pull request names it */
  taken?:{by:string;at:string;pulls:number[]}};
 export type CrossEntry={id:string;issues:number[];package:Package&{commit:string};with:string;where:string};
@@ -355,8 +363,16 @@ export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:strin
  /** the comment count when it was investigated: an issue not in committed work is taken again when it changes */
  comments?:number;
  /** changed on GitHub while it was investigated (a comment edited, say): taken again by the next batch */
- changed?:true};
+ changed?:true;
+ /** the captain's ruling on the two investigators' disagreement (src/domain/issue-court.ts) */
+ ruled?:{pick:string;case:string;run:string;by:string;at:string}};
 export type Quote={n:number;text:string;from:string};
+/** One ruling of the captain's disagreement court, as the triage record keeps it. */
+export type RulingEntry={case:string;kind:string;duplicateOf?:number;issues:number[];pick:string;reason?:string;packages:string[];run:string;card:string;by:string;at:string;
+ /** changed: the issue changed on GitHub while the court waited, so the ruling was not applied */
+ skipped?:'changed';
+ /** take it anyway, refused for the reason the project page refuses it (takeRefusal): the issue stays set aside */
+ refused?:string};
 export type TriageRecord={schema:1;project:string;repository:string;commit:string;snapshot:{hash:string;fetchedAt:string};open:number;investigated:number[];
  issues:Record<string,TriageIssue>;packages:StoredPackage[];lastPackage?:number;
  /** new findings at the same function as an earlier package not started yet: the captain joins them to it or keeps them apart */
@@ -364,13 +380,15 @@ export type TriageRecord={schema:1;project:string;repository:string;commit:strin
  /** issues joined to an earlier package instead of becoming one of their own: a repeat fix avoided */
  dedup?:number;toHuman:Human[];
  /** issues both investigators agree have nothing in the code to change: not found there (needs information), or not code */
- noCode?:NoCode[];createdAt:string;by:string};
+ noCode?:NoCode[];
+ /** the captain's rulings on disagreements, oldest first (src/domain/issue-court.ts) */
+ rulings?:RulingEntry[];createdAt:string;by:string};
 // a line range as numbers and a tag as a short slug: anything else is prose. A symbol follows symbolName.
 const LINES=/^\d{1,6}(?:\s*[-–]\s*\d{1,6})?$/,TAG=/^[a-z0-9][a-z0-9-]{0,40}(?::[a-z0-9][a-z0-9-]{0,36})?$/i;
 /** Where both investigators point, as Studio checked it: each file both name that exists at the commit, its symbol only
  *  when it is one name as code writes it (symbolName) that the file contains, its lines only as numbers. No free text of
  *  either model is kept. */
-function sharedLocus(x:Finding|undefined,y:Finding|undefined,read:(file:string)=>string|null):Locus[]{
+export function sharedLocus(x:Finding|undefined,y:Finding|undefined,read:(file:string)=>string|null):Locus[]{
  if(!x||!y)return[];const other=new Map(y.locus.filter(l=>inside(l.file)).map(l=>[normalize(l.file),l])),out:Locus[]=[],seen=new Set<string>();
  for(const l of x.locus){const file=inside(l.file)?normalize(l.file):'',m=other.get(file);if(!m||seen.has(file))continue;const text=read(file);if(text===null)continue;seen.add(file);
   const symbol=[l.symbol,m.symbol].map(s=>s.trim()).find(s=>{const nm=s.length<=120?symbolName(s):null;return!!nm&&(word(nm.name,text)||word(nm.last,text));})??'';
@@ -425,6 +443,8 @@ const noCodeMerged=(xs:NoCode[])=>NO_CODE_STATES.map(state=>{const of=xs.filter(
  // the later batch's questions for an issue replace the earlier ones
  const questions=Object.assign({},...of.map(x=>x.questions??{}));
  return{issues,state,reason:NO_CODE[state],...(state==='needs-info'?{questions:Object.fromEntries(Object.entries(questions as Record<string,string[]>).filter(([n])=>issues.includes(Number(n))))}:{})};}).filter(x=>x.issues.length);
+/** The no-code entries merged: one per state, each issue once, questions kept (the disagreement court adds to them). */
+export const mergeNoCode=(xs:NoCode[])=>noCodeMerged(xs);
 /** Issues edited on GitHub while they were investigated: their packages go to a person (the next batch takes them again). */
 export function withoutChanged(rec:TriageRecord,changed:number[]):TriageRecord{
  const c=new Set(changed),hit=rec.packages.filter(p=>p.members.some(n=>c.has(n))),aside=rec.toHuman.filter(h=>h.kind&&h.issues.some(n=>c.has(n)));
@@ -470,7 +490,7 @@ export function mergeTriage(prev:TriageRecord|null,next:TriageRecord):TriageReco
   else added.push(recheckOf(np,old,where));}
  const investigated=Object.entries(issues).filter(([,v])=>v.investigated).map(([n])=>Number(n)).sort((x,y)=>x-y);
  return{...next,issues,investigated,packages:[...earlier,...added],lastPackage:last,cross,lastCross:lastX,dedup:prev.dedup??0,toHuman:[...prev.toHuman.filter(h=>kept(h.issues)),...next.toHuman],// an earlier no-code issue changed since (a reporter answered the questions, or edited it) leaves the list: it is taken again
-  noCode:noCodeMerged([...noCodeOf(prev.noCode,n=>open(n)&&!redone.has(n)&&issues[String(n)].investigated),...(next.noCode??[])])};
+  noCode:noCodeMerged([...noCodeOf(prev.noCode,n=>open(n)&&!redone.has(n)&&issues[String(n)].investigated),...(next.noCode??[])]),...(prev.rulings?.length?{rulings:prev.rulings}:{})};
 }
 /** The captain's approval of proposed packages, against the issues as GitHub has them now: a package whose issue was closed or
  *  edited since it was investigated is stale, never approved. */
@@ -557,12 +577,17 @@ export function joinCross(rec:TriageRecord,id:string,o:{by?:string;at?:string}={
 }
 /** The captain takes an issue set aside as in progress anyway: it becomes a package of its own, waiting for approval, and
  *  records the pull request it went past. Only an issue both reports agree has code to change, an agent's work, no duplicate. */
+/** Why an issue set aside as in progress cannot be taken into a package anyway (null: it can): the two reports must
+ *  agree on code to change, and it is not a person's work nor a duplicate. The project page and the disagreement court
+ *  (src/domain/issue-court.ts) both follow it. */
+export function takeRefusal(i:TriageIssue|undefined,n:number):string|null{
+ if(!i?.investigated||!i.agree||!i.checked||!needsCode(i.state))return `#${n}: the two reports do not agree on code to change, so it cannot become a package`;
+ if(i.fit==='human')return `#${n} is a person's work (${(i.fitReason??[]).join(', ')}), not a package`;
+ if(i.duplicateOf!==undefined)return `#${n} is a duplicate of #${i.duplicateOf}`;
+ return null;}
 export function takeAnyway(rec:TriageRecord,n:number,o:{by:string;at?:string}):TriageRecord{
  const h=rec.toHuman.find(x=>x.kind==='in-progress'&&x.issues.includes(n));if(!h)throw new Error(`#${n} is not set aside as in progress`);
- const i=rec.issues[String(n)];
- if(!i?.investigated||!i.agree||!i.checked||!needsCode(i.state))throw new Error(`#${n}: the two reports do not agree on code to change, so it cannot become a package`);
- if(i.fit==='human')throw new Error(`#${n} is a person's work (${(i.fitReason??[]).join(', ')}), not a package`);
- if(i.duplicateOf!==undefined)throw new Error(`#${n} is a duplicate of #${i.duplicateOf}`);
+ const i=rec.issues[String(n)],no=takeRefusal(i,n);if(no)throw new Error(no);
  const last=Math.max(rec.lastPackage??0,...rec.packages.map(p=>Number(p.id.slice(2))||0))+1;
  const pk:StoredPackage={kind:i.state==='fixed?'?'recheck':'single',members:[n],order:[n],why:'',security:i.security,agreement:'exact',id:`P-${last}`,commit:rec.commit,status:'proposed',taken:{by:o.by,at:o.at??new Date().toISOString(),pulls:h.pulls??[]}};
  return{...rec,packages:[...rec.packages,pk],toHuman:rec.toHuman.filter(x=>x!==h),lastPackage:last};
