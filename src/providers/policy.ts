@@ -42,9 +42,7 @@ export async function selectNativeProvider(i: ProviderSelection, probe: (id: str
     const classifiedExhaustion = cap.refusal === "exhausted" && cap.auth === "verified" && cap.quota === "exhausted";
     const fallbackAllowed = classifiedUnavailable || classifiedMissingLogin || classifiedExhaustion;
     const execution=id==='claude'&&isClaudeExecutionAdmission(cap,{model:selected.model,effort:selected.effort??null});
-    // signed in is enough for Claude: its quota is not knowable before a run, and a run that hits a limit fails with that
-    // cause (claudeFailureCode); a separate execution check per model and effort is not required first
-    const admittedQuota=cap.quota==='available'||execution||(id==='claude'&&cap.available&&cap.auth==='verified'&&cap.quota==='unknown');
+    const admittedQuota=cap.quota==='available'||execution;
     if ((!cap.available || cap.auth !== "verified" || !admittedQuota) && !fallbackAllowed) throw new ProviderRefusal(`provider capability is unverified: ${id}; hold without fallback`);
     if (cap.refusal !== undefined && !["unavailable", "missing-login", "exhausted", "unverified"].includes(cap.refusal)) throw new ProviderRefusal("provider refusal classification is invalid");
     // Model typos never change vendor or silently use a CLI default.
