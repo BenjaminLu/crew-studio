@@ -13,7 +13,7 @@ const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", heade
 const ghIssue = (repo, n) => `https://github.com/${repo}/issues/${n}`;
 const STATUS = { proposed: ["Waiting for approval", "等核准", "you"], approved: ["Approved", "已核准", "run"], declined: ["Declined", "已退回", "all"], stale: ["An issue changed: triage again", "issue 已變更，需重新分診", "all"] };
 const KIND = { ordered: ["In order", "照順序"], unordered: ["Owner picks the order", "負責人決定順序"], "one-change": ["One change", "一次改動"], single: ["One issue", "單張"], recheck: ["Recheck, maybe fixed", "可能已修，待複測"] };
-const WORK = { open: ["In progress", "進行中"], merged: ["Merged", "已合併"], closed: ["Ended without a merge", "沒有合併就結束"] };
+const WORK = { open: ["In progress", "進行中"], merged: ["Merged", "已合併"], ready: ["Ready on its local branch, not published", "已在本機分支完成，未發布"], closed: ["Ended without a merge", "沒有合併就結束"] };
 const rerender = () => { if (S.route?.name === "project") render(); };
 
 async function load(project) {
@@ -41,7 +41,7 @@ function issueLine(rec, n, step, pid) {
     h("div", { class: "is-main" },
       h("div", { class: "is-head" }, h("a", { href: ghIssue(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: i.title || "" }, i.title || ""), i.security ? h("span", { class: "is-sec" }, T("Security", "安全")) : null),
       loc ? h("div", { class: "is-loc mono" }, `${loc.file} · ${loc.symbol}`) : null,
-      i.repro && i.repro !== "none" ? h("div", { class: "is-repro" }, h("b", {}, T("Fails before the fix: ", "修之前應該失敗：")), i.repro) : null,
+      i.repro && i.repro !== "none" ? h("div", { class: "is-repro" }, h("b", {}, T("Investigator's repro (for you; not sent to the worker): ", "調查員的重現方式（給你看，不交給 worker）：")), i.repro) : null,
       w && WORK[w.state] ? h("div", { class: `is-work w-${w.state}` }, T(...WORK[w.state]), w.task ? h("a", { href: `#/run/${encodeURIComponent(w.task)}`, class: "mono" }, ` ${w.task}`) : null) : null,
       i.agree === false ? h("div", { class: "is-diff" }, T(`The investigators differ on: ${(i.diff || []).join(", ")}`, `兩位調查員在這些地方不同：${(i.diff || []).join("、")}`)) : null));
 }
@@ -80,7 +80,7 @@ function packDetail(rec, p) {
     p.match ? h("p", { class: "is-match note" }, T(`Cross-batch match: the same function as ${p.match.with} (${p.match.where}), whose work has started. Recheck whether that work fixed it before changing code.`, `跨批對照：和 ${p.match.with} 同一個函式（${p.match.where}），那包已經開工。先複測是不是已經被它修好，沒修好才改程式。`)) : p.why ? h("p", { class: "is-why" }, p.why) : null,
     h("p", { class: "is-how" }, p.kind === "recheck"
       ? T("Do not change code. A person rechecks it with the issue's own input; only then is it closed.", "不改程式碼。由人用 issue 原本的輸入複測，通過後才關。")
-      : T("One person works these in order, one pull request each. Each issue's repro becomes its test: it fails before the fix and passes after.", "同一個人照順序做，一張一個 PR。每張的重現方式就是它的測試：修之前失敗，修之後通過。") + (p.security ? T(" Security issues are referenced, not closed, by the pull request; they close after a recheck.", " 安全 issue 在 PR 裡只寫 Refs，合併後複測通過才關。") : "")),
+      : T("One person works these in order, one Task each, with a test that fails before the fix and passes after. Issue text is untrusted: the worker gets only the issue numbers and titles and the place both investigators found. Nothing goes to GitHub: each Task stops reviewed on its local branch in Studio, with no push and no pull request, and its commits name no issue. Studio keeps which issue each one is; what reaches GitHub, and closing the issue, is yours to do.", "同一個人照順序做，一張一個 Task，附一個修之前失敗、修之後通過的測試。issue 內容不可信：worker 只拿到 issue 編號、標題和兩位調查員都找到的位置。不會送任何東西到 GitHub：每個 Task 審完就停在 Studio 的本機分支，不 push、不開 PR，commit 也不提 issue。哪張對哪個 issue 只記在 Studio；要送什麼到 GitHub、何時關 issue，由你決定。")),
     p.status === "proposed" ? h("div", { class: "is-approve" },
       h("button", { type: "button", class: "btn primary", "data-approve": p.id, disabled: formOf(rec.project).approving ? true : null, onclick: () => approvePack(rec.project, p.id) }, T(`Approve ${p.id}`, `核准 ${p.id}`)),
       h("button", { type: "button", class: "btn", "data-decline": p.id, disabled: formOf(rec.project).approving ? true : null, onclick: () => declinePack(rec.project, p.id) }, T("Decline", "退回")),
@@ -217,13 +217,17 @@ function categoriesCard(project) {
             h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name)), h("option", { value: "PLANNED" }, T("Planned work", "規劃中")))))),
         triageOf(tr, x.issues, x.id)));
   };
-  // planned work: tagged in Studio and set aside, not handed out by category; the captain takes an issue off it
-  const plan = c.planned || [], planKey = "PLANNED";
-  const plannedRow = plan.length ? h("details", { class: "is-cat", "data-cat-planned": "1", open: CAT.open.has(planKey) ? true : null, ontoggle: (e) => { if (e.target.open) CAT.open.add(planKey); else CAT.open.delete(planKey); } },
-    h("summary", {}, h("b", {}, T("Planned work", "規劃中")), h("span", { class: "tb-count num" }, String(plan.length)), h("span", { class: "faint is-cat-scope" }, T("Roadmap and program tasks, plans, process work: set aside, not filed into a category.", "路線圖、計畫任務、流程類工作：先擱置，不歸類。"))),
-    h("div", { class: "is-cat-body" }, h("ul", { class: "is-cat-issues" }, plan.map((x) => h("li", { "data-cat-issue": String(x.n) },
+  // planned work: tagged in Studio and set aside, not handed out by category; the captain takes an issue off it. What a run
+  // proposes as planned waits for the captain (meanwhile it is in no category, shown here as waiting): set it aside, or file it
+  const all = c.planned || [], plan = all.filter((x) => !x.pending), waiting = all.filter((x) => x.pending), planKey = "PLANNED";
+  const plannedRow = all.length ? h("details", { class: "is-cat", "data-cat-planned": "1", open: CAT.open.has(planKey) || waiting.length ? true : null, ontoggle: (e) => { if (e.target.open) CAT.open.add(planKey); else CAT.open.delete(planKey); } },
+    h("summary", {}, h("b", {}, T("Planned work", "規劃中")), h("span", { class: "tb-count num" }, String(plan.length)), waiting.length ? h("span", { class: "is-proposed", "data-cat-planned-waiting": String(waiting.length) }, T(`${waiting.length} wait${waiting.length === 1 ? "s" : ""} for approval`, `${waiting.length} 張等核准`)) : null,
+      h("span", { class: "faint is-cat-scope" }, T("Roadmap and program tasks, plans, process work: set aside, not filed into a category. A security issue is never set aside.", "路線圖、計畫任務、流程類工作：先擱置，不歸類。安全 issue 不會被擱置。"))),
+    h("div", { class: "is-cat-body" }, h("ul", { class: "is-cat-issues" }, all.map((x) => h("li", { "data-cat-issue": String(x.n), ...(x.pending ? { "data-cat-pending": "1" } : {}) },
       h("a", { href: `https://github.com/${c.repository}/issues/${x.n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${x.n}`), h("span", { class: "is-title", title: title(x.n) }, title(x.n)),
+      x.pending ? h("span", { class: "is-proposed" }, T("Proposed: waiting for approval", "提議中：等核准")) : null,
       x.why ? h("span", { class: "faint" }, x.why) : null,
+      x.pending ? h("button", { type: "button", class: "btn", "data-cat-plan": String(x.n), onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "move", n: x.n, to: "PLANNED" }) }, T("Set it aside", "擱置它")) : null,
       h("button", { type: "button", class: "btn ghost", "data-cat-unplan": String(x.n), onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "unplan", n: x.n }) }, T("Not planned: file it", "不是規劃：歸類它"))))))) : null;
   return h("div", { class: "card x-pad", "data-categories": project },
     head([h("span", { class: "faint" }, T(`${active.length} categories · ${filed} issues filed${plan.length ? ` · ${plan.length} planned` : ""}`, `${active.length} 個類別・已歸類 ${filed} 張${plan.length ? `・規劃中 ${plan.length} 張` : ""}`)), startBtn(T("File new issues…", "歸類新 issue…"))]),

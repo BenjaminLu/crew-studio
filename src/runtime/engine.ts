@@ -23,6 +23,8 @@ import type { AgentJob, AgentTool, Agents } from "../agent";
 import type { Provider } from "../providers";
 import type { StudioLog } from "../rawlog";
 import { ProviderRefusal } from "../providers/policy";
+import { localUnrestricted } from "../local-execution";
+import { RoundBlocked } from "../round-blocked";
 import { QueueRefusal, capacity, type QueueRequest } from "./queue";
 import { Grants } from "./grants";
 import { Cards, emptySections, type CardKind, type SCard, type Sections, type LocalRescope } from "./cards";
@@ -209,6 +211,8 @@ export function projectOf(r: Pick<Run, "workflow" | "params" | "ctx"> & { def?: 
 /** A judged check may block only with a quorum: n ≥ 2 failing votes out of of ≥ n independent runs. */
 export const quorumOk = (q: { n: number; of: number } | null | undefined) => !!q && Number.isInteger(q.n) && Number.isInteger(q.of) && q.n >= 2 && q.of >= q.n;
 
+/** an end node that runs nothing (no action, no checks, no way on): ending a run is always allowed */
+const endOnly = (x: X) => !x.node.do && !x.node.checks?.length && !x.run.def.edges.some((e) => e.from === x.node.id);
 export class Engine {
   runs = new Map<string, Run>();
   private committed = new Map<string, Run>();
@@ -224,7 +228,8 @@ export class Engine {
   /** Where a round's source lives (the directory whose head a brief's file evidence is read from); a domain registers it, the first answer wins. */
   sourceRoots: Record<string,(x:X)=>string|null> = {};
   cardPrepared: Record<string, (x: X, card: SCard, body: Body) => void> = {};
-  beforeStart: Record<string, (x: X) => Promise<Result | null> | Result | null> = {};
+  // a tainted run (work drawn from untrusted issue text) starts no step outside the OS sandbox (taintRefusal)
+  beforeStart: Record<string, (x: X) => Promise<Result | null> | Result | null> = { "tainted-sandbox": (x) => { if (endOnly(x)) return null; const why = this.taintRefusal(x.run); if (why) throw new RoundBlocked(why); return null; } };
   externalValidators: Record<string, (x: X, descriptor: any) => boolean> = {};
   externalHandlers: Record<string, (x: X, descriptor: any, wake: (result: Result) => void) => () => void> = {};
   private externalOwners = new Map<string, { cancel: () => void }>();
@@ -940,7 +945,7 @@ export class Engine {
     // a run the captain rejected at its acceptance card ends closed whatever its end node says (R-047: a drafted "closed" hook had no result)
     r.status = "succeeded"; r.result = node.args?.result ?? (r.ctx.acceptRejected ? "closed" : FAILED_OUTCOMES.has(outcome) ? outcome : "done"); r.endedAt = now();
     this.stopAll(r, "the run ended");
-    this.commit(r, `ended at ${node.id}`); this.emit(r, r.result === "done" ? "done" : "closed", node.args?.summary ? fill(node.args.summary, r) : `${node.label}`, { result: r.result });
+    this.commit(r, `ended at ${node.id}`); this.emit(r, r.result === "done" ? "done" : "closed", typeof r.ctx.endSummary === "string" ? r.ctx.endSummary : node.args?.summary ? fill(node.args.summary, r) : `${node.label}`, { result: r.result });
     if (FAILED_OUTCOMES.has(outcome) && !node.args?.result) this.raiseFailure(r, node, this.failureOf(r, node, outcome)); // a run that ends on a failed outcome is a failure too, never only a word in its result
   }
 
@@ -1005,6 +1010,9 @@ export class Engine {
     if (TERMINAL.includes(x.run.status) && !String(edge ?? "").startsWith("hook:")) return ({ run: x.run.id, node: x.node.id, edge, round: x.visit, head: x.ctx.head ?? null, check: ref.use, version: man?.version ?? "?", kind: man?.kind ?? "deterministic", attempt: 0, record: "check", verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `not run: the run is ${x.run.status}`, blocking: false, inputHash: "", params: {}, ms: 0, dir: null } as any);
     const base = { run: x.run.id, node: x.node.id, edge, round: x.visit, head: x.ctx.head ?? null, check: ref.use, version: man?.version ?? "?", kind: man?.kind ?? "deterministic", attempt: 0, record: "check", actor: null as string | null };
     if (!man) return this.recordCheck(x, L, { ...base, verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `no check ${ref.use}`, blocking: ref.blocking ?? true, inputHash: "", params: {}, ms: 0, dir: null });
+    // a check of a tainted run (a node's, an edge's, a card's, one a domain runs after an answer) runs in the OS sandbox or not at all
+    const taint = this.taintRefusal(x.run);
+    if (taint) return this.recordCheck(x, L, { ...base, verdict: "error", score: null, findings: [], evidence: [], proves: [], error: taint, blocking: true, inputHash: "", params: {}, ms: 0, dir: null });
     const pr = this.params(man, ref, { project: x.ctx.project ?? x.run.params.project ?? null, workflow: x.run.def.policies ?? null, run: x.run });
     let blocking = ref.blocking ?? man.blocking;
     const quorum = ref.quorum ?? man.judge?.quorum ?? null;
@@ -1319,6 +1327,8 @@ export class Engine {
     if(this.repreparing.has(`${r.id}/${c0.node}`))throw new Error("Captain card preparation is still running; no answer was submitted");
     const rn = r.nodes[c0.node]; if (rn?.state !== "running" || rn.waiting !== "card" || rn.card !== c0.id) throw new Error("this card is not the one its node waits on");
     this.deps.authorizeAnswer?.(r,c0,a);
+    // an answer that carries a tainted run on (anything but holding it) waits until Studio runs in the OS sandbox again
+    { const taint = this.taintRefusal(r); if (taint && !c0.options.find((o) => o.id === a.choice)?.hold) throw new Error(taint); }
     // a rescope with the very note of the last rescope on this run changes nothing: refused, with why (runtime/failures.ts)
     if (a.choice === ACT.rescope && c0.status === "open" && c0.options.some((o) => o.id === ACT.rescope)) {
       const last = Object.values(r.ctx.answers ?? {}).filter((x: any) => x?.choice === ACT.rescope && x.note).sort((x: any, y: any) => String(x.at).localeCompare(String(y.at))).at(-1) as any;
@@ -1382,8 +1392,9 @@ export class Engine {
     const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
     let res: Result | null = null, err: string | null = null;
     const key = `${r.id}/${node.id}`; this.live.add(key);
-    try { res = node.kind === "loop" && rn.data.nativeQueueCapability ? await this.kinds.agent.answer!(x, c) : h.answer ? await h.answer(x, c) : { outcome: c.answer!.choice, note: c.answer!.note }; } catch (e: any) { err = String(e?.message ?? e); } finally { this.live.delete(key); }
-    this.finish(r, node, rn, step ?? { seq: r.steps.length + 1, node: node.id, kind: node.kind, visit: rn.visits, state: "waiting", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: null, model: null, note: null }, res, err);
+    const taint = c.options.find((o) => o.id === c.answer!.choice)?.hold ? null : this.taintRefusal(r); let blockedAnswer = false;
+    try { if (taint) { blockedAnswer = true; throw new RoundBlocked(taint); } res = node.kind === "loop" && rn.data.nativeQueueCapability ? await this.kinds.agent.answer!(x, c) : h.answer ? await h.answer(x, c) : { outcome: c.answer!.choice, note: c.answer!.note }; } catch (e: any) { err = String(e?.message ?? e); } finally { this.live.delete(key); }
+    this.finish(r, node, rn, step ?? { seq: r.steps.length + 1, node: node.id, kind: node.kind, visit: rn.visits, state: "waiting", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: null, model: null, note: null }, res, err, blockedAnswer);
   }
   private must(id: string) { const r = this.runs.get(id); if (!r) throw new Error("no such run"); return r; }
 
@@ -1644,7 +1655,8 @@ export class Engine {
       const reach = this.newTaskReach(r);
       if (!reach.newTaskAllowed) refuse({ en: "New task refused: this workflow is internal or retired. Ask Firstmate to prepare the work again.", "zh-TW": "已拒絕開始新任務：此流程為內部或已退役流程。請 Firstmate 重新準備這項工作。" });
       // the staffing pins travel with the task: start() checks them against the current staffing like any new task
-      const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing"));
+      // so does the taint: a Task drawn from untrusted issue text repeats as one
+      const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing" || k === "_tainted"));
       // the new task runs the current release of the workflow (a run pinned to a replaced version keeps its old routes); the captain starts it, Firstmate is not involved
       let next: Run; try { next = this.start({ workflow: r.workflow, version: reach.newerVersion ? undefined : r.version, title: r.title, text: r.text, params, by: a.by }); }
       catch (e: any) { refuse({ en: `New task refused: ${e?.message ?? e}`, "zh-TW": `已拒絕開始新任務：${e?.message ?? e}` }); throw e; }
@@ -1961,11 +1973,24 @@ export class Engine {
    * global) runs a round outside it, and the run's log says so.
    */
   roundSandbox(x: X, b: { writes: string[]; reads?: string[]; cwd?: string } | null, label = "agent") {
+    const tainted = this.taintRefusal(x.run); if (tainted) throw new RoundBlocked(tainted);
     const off = this.grants.open("sandbox-off", x.run.ctx.project ?? x.run.params?.project ?? null);
     if (off) { x.log(`this round runs outside the round sandbox: the captain's grant ${off.id} (until ${off.until})`); return null; }
     // a round with no folder of its own (judges, designers, coordinators) still opens in a scratch folder of its own under data/work
     const own = b ?? this.roundScratch(x, label);
     return { ...own, allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) };
+  }
+  /** Work drawn from untrusted text (params._tainted, set only by Studio: src/firstmate.ts proposeTainted, from an issue
+   * triage's work package) runs only in the OS sandbox: never in local unrestricted mode (CREW_LOCAL_UNRESTRICTED) and never
+   * under a sandbox-off grant. The one rule, checked at every way such a run goes on: before each step starts
+   * (beforeStart), for each agent turn (roundSandbox), for each check (runCheck: node, edge, card and domain checks), and for
+   * each card answer that carries it on (answer, carryAnswer; holding it is always allowed). The reason, or null. */
+  taintRefusal(r: Run): string | null {
+    if (!r.params?._tainted) return null;
+    let unrestricted = true; try { unrestricted = localUnrestricted(); } catch {}
+    if (unrestricted) return "this Task comes from untrusted issue text and runs only in the OS sandbox, but Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED): restart Studio without it";
+    const off = this.grants.open("sandbox-off", r.ctx?.project ?? r.params?.project ?? null);
+    return off ? `this Task comes from untrusted issue text and runs only in the OS sandbox, but the captain's sandbox-off grant ${off.id} is open: end it first` : null;
   }
   /** The one place a round's working folder is made: <data>/work/<area>/<run>/<node>-<visit>-<attempt>[-label] (fresh unless kept). */
   roundDir(x: X, area: string, o: { prefix?: string; label?: string; fresh?: boolean } = {}) {

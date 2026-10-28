@@ -30,8 +30,8 @@ quote must be in that file within 15 lines of that range, in what `fs_read` show
    shorten, retype or drop parts of a line: a quote that is not the code fails the check. Quote at least one
    distinctive line, one that names what is wrong (`if (url.startsWith(prefix))`); `return null` or `} catch (e) {`
    alone is not evidence.
-5. **Repro.** The function to call and the input that fails today, in one line: it becomes the test that must fail
-   before the fix. `none` if you cannot name one.
+5. **Repro.** The function to call and the input that fails today, in one line, for the captain to read. It is never
+   sent to the worker: the worker gets only what Studio checks (the files both reports name). `none` if you cannot name one.
 6. **Security.** `yes` if it could be exploited or is labeled security; when unsure, `yes`. Either investigator's `yes`
    makes the issue security.
 7. **Links.** Only structure the issue states (parent, child, depends on). Never infer links from similar wording.
