@@ -573,6 +573,16 @@ export function createRuntime(d: RuntimeDeps) {
           try { return json({ ok: true, ...(await issueTriageFlow.approve(approve[1], ids, "captain (project page)", req.signal)) }); }
           catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
         }
+        // packages not worked yet, declined on the project page: their issues are released to be triaged again
+        const decline = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/decline$/.exec(p);
+        if (decline) {
+          if (!writing) return json({ error: "use POST" }, 405);
+          if (who.kind !== "desktop") return json({ error: "only the desktop captain declines work packages" }, 403);
+          const ids = b?.packages;
+          if (!Array.isArray(ids) || !ids.length || ids.length > 50 || !ids.every((x: any) => typeof x === "string" && /^P-[1-9][0-9]{0,5}$/.test(x))) return json({ error: "name the work packages to decline (P-n)" }, 400);
+          try { return json(issueTriageFlow.decline(decline[1], ids)); }
+          catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+        }
         if (writing) return json({ error: "read only" }, 405);
         if (p === "/api/issue-triage") return json({ projects: issueTriage.list() });
         try { const id = decodeURIComponent(p.slice("/api/issue-triage/".length)), rec = issueTriage.get(id), investigators = issueTriageFlow.investigators(id);

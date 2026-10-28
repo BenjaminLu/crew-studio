@@ -204,6 +204,17 @@ export function approvePackages(rec:TriageRecord,ids:string[],now:Snapshot){
   const same=p.members.every(n=>cur.get(n)===rec.issues[String(n)]?.hash);(same?approved:stale).push(p.id);return{...p,status:same?'approved' as const:'stale' as const};});
  return{record:{...rec,packages},approved,stale};
 }
+/** The captain declines packages not worked yet (proposed or stale): each is dropped, its id never given out again, and its
+ *  issues released, so a later batch (or a category's triage) investigates them again. */
+export function declinePackages(rec:TriageRecord,ids:string[]):TriageRecord{
+ for(const id of ids){const p=rec.packages.find(x=>x.id===id);if(!p)throw new Error(`No work package ${id}`);
+  if(committed(p)||(p.status!=='proposed'&&p.status!=='stale'))throw new Error(`${id} is ${p.status}: only a package not worked yet is declined`);}
+ // a match waiting on a declined package goes with it: its issues are investigated again alongside the package's
+ const out=rec.packages.filter(p=>ids.includes(p.id)),gone=(rec.cross??[]).filter(c=>ids.includes(c.with)),freed=new Set([...out.flatMap(p=>p.members),...gone.flatMap(c=>c.issues)]);
+ const issues=Object.fromEntries(Object.entries(rec.issues).map(([n,i])=>[n,freed.has(Number(n))?{...i,investigated:false}:i]));
+ return{...rec,issues,investigated:rec.investigated.filter(n=>!freed.has(n)),packages:rec.packages.filter(p=>!ids.includes(p.id)),cross:(rec.cross??[]).filter(c=>!gone.includes(c)),
+  lastPackage:Math.max(rec.lastPackage??0,...rec.packages.map(p=>Number(p.id.slice(2))||0))};
+}
 /** A batch's record moved onto the issues GitHub has open now: a closed issue leaves; an investigated issue keeps its
  *  findings and the hash it was investigated at (so an edited one is taken again); any other open issue is listed fresh. */
 export function atSnapshot(rec:TriageRecord,now:Snapshot):TriageRecord{

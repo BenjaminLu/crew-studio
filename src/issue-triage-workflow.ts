@@ -18,7 +18,7 @@ import {must} from './git';
 import {localUnrestricted} from './local-execution';
 import {realInside} from './secure';
 import {listTree,searchTree,typedRead,LINES_PER_READ} from './review-read';
-import {approvePackages,atSnapshot,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,triageRecord,verifyReport,withoutChanged,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
+import {approvePackages,atSnapshot,declinePackages,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,triageRecord,verifyReport,withoutChanged,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
 import type {IssueTriageStore} from './issue-triage-store';
 import {NativeToolFailure} from './host/types';
 import type {Engine,X} from './runtime/engine';
@@ -249,11 +249,14 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const out=approvePackages(cur,ids,fresh);
   store.write({...out.record,packages:out.record.packages.map(p=>out.approved.includes(p.id)?{...p,approvedBy:by,approvedAt:at}:p)});
   return{approved:out.approved,stale:out.stale};}
+ /** The captain declines packages not worked yet, on the project page: their issues are triaged again later. */
+ function decline(project:string,ids:string[]){const rec=store.get(project);if(!rec)throw new Error(`${project} has no issue triage`);
+  store.write(declinePackages(rec,ids));return{ok:true,declined:ids};}
  /** The captain decides a cross-batch match on the project page: join it to the earlier package, or keep it apart. */
  function cross(project:string,id:string,action:string,by:string){
   if(action!=='join'&&action!=='apart')throw new Error('Decide a match: join or apart');
   const rec=store.get(project);if(!rec)throw new Error(`${project} has no issue triage`);
   const next=action==='join'?joinCross(rec,id,{by}):splitCross(rec,id);store.write(next);
   return{ok:true,...(action==='join'?{joined:(rec.cross??[]).find(c=>c.id===id)?.with}:{package:`P-${next.lastPackage}`})};}
- return{start,progress,investigators,approve,cross,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
+ return{start,progress,investigators,approve,decline,cross,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
 }

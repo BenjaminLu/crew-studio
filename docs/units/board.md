@@ -148,10 +148,16 @@ Issues belong to their project: a project connected to GitHub has a "GitHub issu
   would run on one model the form says so and cannot start.
 - **The latest triage** (`src/domain/issue-triage.ts`, stored by `src/issue-triage-store.ts` under
   `data/issue-triage/<project>.json`, read through `GET /api/issue-triage` and `GET /api/issue-triage/<project>`, which
-  also names the investigators): work packages, what the investigators disagreed on, the issues not investigated.
+  also names the investigators): work packages and what the investigators disagreed on. With categories, each
+  category shows the triage of its own issues (its packages, the open one's detail, what waits for judgement) and its
+  issue lines name their package; the triage of issues no category holds, with the batch form, follows the categories.
+  There is no project-wide list of issues nobody investigated: a category's triage button takes its untriaged issues.
   A package kept as a proposal (its approval card closed with "Keep as proposals") is approved later right there:
   `POST /api/issue-triage/<project>/approve {packages}` (the desktop captain only) reads the issues again first; a
   package whose issue changed is stale, never approved, and an approved one records who approved it and when.
+  A package not worked yet (waiting for approval, or stale) can be declined there:
+  `POST /api/issue-triage/<project>/decline {packages}` (the desktop captain only) drops it, never gives its id out
+  again, and releases its issues, so a later triage investigates them again.
 
 **Matching across batches.** A batch's packages are matched against the earlier ones by a fixed rule, never by a
 model: a new package with an issue at the same file and symbol as an earlier package (waiting for approval or approved)
@@ -178,7 +184,7 @@ model and effort, marking a change this project makes to the team.
 - A work package is what both reports agree on and every member passes the check: an ordered set (worked in that order,
   one pull request each), an unordered set (its owner picks the order), a one-change group, a single issue, or a recheck
   (both find it already fixed: a person rechecks it, it is never closed on that evidence). Everything else is listed
-  under "For you to judge" with the reason; issues nobody investigated are listed under "Not investigated".
+  under "For you to judge" with the reason.
 - Security comes from the issue's labels or either report; a security package says its issues are referenced, not
   closed, by a pull request and close only after a recheck.
 - A package is waiting for approval, approved, or stale (an issue's title, text or labels changed since it was
@@ -272,9 +278,9 @@ detail in the branch, commits or pull request. The issue's title is quoted on on
 goes in. The package records each issue's proposal; the Board shows where its Task stands (in progress, merged, ended
 without a merge) and how to start the next one.
 
-Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, next issue, brief, store, routes),
+Tests: `tests/issue-triage.ts` (snapshot, checks, comparison, packages, batches, merging, approval, declining, next issue, brief, store, routes),
 `tests/issue-triage-workflow.ts` (the workflow end to end against a local GitHub stand-in with scripted investigators:
 both cards, the tool limits, refused reports, changed issues, one model, Firstmate's tool), `tests/issues-ui.mjs` (the
 project page at 1440 and 390 zh-TW: the batch form and what it sends, one model refused, packages, order and locations,
-links, a title with markup, status and Task progress, the other tabs, the empty state, the Crew section's seats; the
+links, a title with markup, status and Task progress, each package and match in its category and the rest after them, approve and decline, the empty state, the Crew section's seats; the
 Board has no Issues view).
