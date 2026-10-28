@@ -22,38 +22,39 @@ import a18 from "../public/gates.js" with { type: "file" };
 import a19 from "../public/graph-layout.js" with { type: "file" };
 import a20 from "../public/i18n.js" with { type: "file" };
 import a21 from "../public/index.html" with { type: "file" };
-import a22 from "../public/kit.js" with { type: "file" };
-import a23 from "../public/m2.js" with { type: "file" };
-import a24 from "../public/m25.js" with { type: "file" };
-import a25 from "../public/m3.css" with { type: "file" };
-import a26 from "../public/m3.js" with { type: "file" };
-import a27 from "../public/m6.js" with { type: "file" };
-import a28 from "../public/m7.js" with { type: "file" };
-import a29 from "../public/m8.js" with { type: "file" };
-import a30 from "../public/onboarding.css" with { type: "file" };
-import a31 from "../public/onboarding.js" with { type: "file" };
-import a32 from "../public/ootb.js" with { type: "file" };
-import a33 from "../public/pack-genesis.css" with { type: "file" };
-import a34 from "../public/pack-genesis.js" with { type: "file" };
-import a35 from "../public/projects.css" with { type: "file" };
-import a36 from "../public/projects.js" with { type: "file" };
-import a37 from "../public/runstate.js" with { type: "file" };
-import a38 from "../public/runtime.css" with { type: "file" };
-import a39 from "../public/runtime.js" with { type: "file" };
-import a40 from "../public/scard.js" with { type: "file" };
-import a41 from "../public/skills.css" with { type: "file" };
-import a42 from "../public/skills.js" with { type: "file" };
-import a43 from "../public/skins.js" with { type: "file" };
-import a44 from "../public/styles.css" with { type: "file" };
-import a45 from "../public/takeover.css" with { type: "file" };
-import a46 from "../public/takeover.js" with { type: "file" };
-import a47 from "../public/team.css" with { type: "file" };
-import a48 from "../public/team.js" with { type: "file" };
-import a49 from "../public/transcripts.css" with { type: "file" };
-import a50 from "../public/transcripts.js" with { type: "file" };
-import a51 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
-import a52 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
-import a53 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a22 from "../public/issues.js" with { type: "file" };
+import a23 from "../public/kit.js" with { type: "file" };
+import a24 from "../public/m2.js" with { type: "file" };
+import a25 from "../public/m25.js" with { type: "file" };
+import a26 from "../public/m3.css" with { type: "file" };
+import a27 from "../public/m3.js" with { type: "file" };
+import a28 from "../public/m6.js" with { type: "file" };
+import a29 from "../public/m7.js" with { type: "file" };
+import a30 from "../public/m8.js" with { type: "file" };
+import a31 from "../public/onboarding.css" with { type: "file" };
+import a32 from "../public/onboarding.js" with { type: "file" };
+import a33 from "../public/ootb.js" with { type: "file" };
+import a34 from "../public/pack-genesis.css" with { type: "file" };
+import a35 from "../public/pack-genesis.js" with { type: "file" };
+import a36 from "../public/projects.css" with { type: "file" };
+import a37 from "../public/projects.js" with { type: "file" };
+import a38 from "../public/runstate.js" with { type: "file" };
+import a39 from "../public/runtime.css" with { type: "file" };
+import a40 from "../public/runtime.js" with { type: "file" };
+import a41 from "../public/scard.js" with { type: "file" };
+import a42 from "../public/skills.css" with { type: "file" };
+import a43 from "../public/skills.js" with { type: "file" };
+import a44 from "../public/skins.js" with { type: "file" };
+import a45 from "../public/styles.css" with { type: "file" };
+import a46 from "../public/takeover.css" with { type: "file" };
+import a47 from "../public/takeover.js" with { type: "file" };
+import a48 from "../public/team.css" with { type: "file" };
+import a49 from "../public/team.js" with { type: "file" };
+import a50 from "../public/transcripts.css" with { type: "file" };
+import a51 from "../public/transcripts.js" with { type: "file" };
+import a52 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a53 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a54 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -78,36 +79,37 @@ export const ASSETS: Record<string, string> = {
   "/graph-layout.js": a19,
   "/i18n.js": a20,
   "/index.html": a21,
-  "/kit.js": a22,
-  "/m2.js": a23,
-  "/m25.js": a24,
-  "/m3.css": a25,
-  "/m3.js": a26,
-  "/m6.js": a27,
-  "/m7.js": a28,
-  "/m8.js": a29,
-  "/onboarding.css": a30,
-  "/onboarding.js": a31,
-  "/ootb.js": a32,
-  "/pack-genesis.css": a33,
-  "/pack-genesis.js": a34,
-  "/projects.css": a35,
-  "/projects.js": a36,
-  "/runstate.js": a37,
-  "/runtime.css": a38,
-  "/runtime.js": a39,
-  "/scard.js": a40,
-  "/skills.css": a41,
-  "/skills.js": a42,
-  "/skins.js": a43,
-  "/styles.css": a44,
-  "/takeover.css": a45,
-  "/takeover.js": a46,
-  "/team.css": a47,
-  "/team.js": a48,
-  "/transcripts.css": a49,
-  "/transcripts.js": a50,
-  "/vendor/opencc-js-1.4.2-t2cn.min.js": a51,
-  "/vendor/opencc-js-LICENSE.txt": a52,
-  "/vendor/qrcode-1.4.4.min.js": a53,
+  "/issues.js": a22,
+  "/kit.js": a23,
+  "/m2.js": a24,
+  "/m25.js": a25,
+  "/m3.css": a26,
+  "/m3.js": a27,
+  "/m6.js": a28,
+  "/m7.js": a29,
+  "/m8.js": a30,
+  "/onboarding.css": a31,
+  "/onboarding.js": a32,
+  "/ootb.js": a33,
+  "/pack-genesis.css": a34,
+  "/pack-genesis.js": a35,
+  "/projects.css": a36,
+  "/projects.js": a37,
+  "/runstate.js": a38,
+  "/runtime.css": a39,
+  "/runtime.js": a40,
+  "/scard.js": a41,
+  "/skills.css": a42,
+  "/skills.js": a43,
+  "/skins.js": a44,
+  "/styles.css": a45,
+  "/takeover.css": a46,
+  "/takeover.js": a47,
+  "/team.css": a48,
+  "/team.js": a49,
+  "/transcripts.css": a50,
+  "/transcripts.js": a51,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a52,
+  "/vendor/opencc-js-LICENSE.txt": a53,
+  "/vendor/qrcode-1.4.4.min.js": a54,
 };

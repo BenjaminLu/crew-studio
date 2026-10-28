@@ -23,6 +23,8 @@ import {installTeamStaffingGuard} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
 import {crewRoutes} from '../crew-routes';
 import {installCrewTools} from '../crew-tools';
+import {IssueTriageStore} from '../issue-triage-store';
+import {installIssueTriage} from '../issue-triage-workflow';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate,heldNotice} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
@@ -179,6 +181,7 @@ export function createRuntime(d: RuntimeDeps) {
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
   let seatFilled=(_run:string)=>{}; // set once Firstmate's tools exist: a seat card the captain approved resumes the proposals it held (S8)
+  const issueTriage=new IssueTriageStore(d.dataDir);
   const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,cached:()=>staffingCapabilities as any,send:d.send,onApproved:run=>seatFilled(run)});
   // no image pick to seed the image maker from: raise the seat card now, so the captain sees why image work waits (never a silent block)
   if(imageSeatUnfilled){const def=engine.defs.get('images');if(def)void crewTools.seatGate(def,{key:'crew-migration'}).catch(()=>{});}
@@ -212,7 +215,8 @@ export function createRuntime(d: RuntimeDeps) {
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
   const draftTools=installWorkflowDraftTools(drafts,readiness?.tools,def=>{readiness?.versionSaved(def);try{d.send('wf',{id:def.id,version:def.version});}catch{}});
-  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  const issueTriageFlow=installIssueTriage(engine,projects,issueTriage,d.dataDir,{propose:(args,owner)=>originalFirstmate.call('studio_propose_work',args,owner) as any});
+  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def,defs.ownCrew);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
@@ -265,7 +269,7 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) {
       if(p.startsWith('/api/workflow-packages')){
         const cap=12*1024*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
@@ -518,6 +522,12 @@ export function createRuntime(d: RuntimeDeps) {
           try { if (m[2] === "archive") return json(engine.archive(id, b?.archived !== false, by) && runView(id, who)); return json(engine.remove(id, String(b?.confirm ?? ""), by)); }
           catch (e: any) { const msg = String(e?.message ?? e); return json({ error: msg }, /only an ended run|still finishing/.test(msg) ? 409 : 400); }
         }
+      }
+      // ---------- issue triage (read-only here: the issue-triage workflow writes it) ----------
+      if (p === "/api/issue-triage" || p.startsWith("/api/issue-triage/")) {
+        if (writing) return json({ error: "read only" }, 405);
+        if (p === "/api/issue-triage") return json({ projects: issueTriage.list() });
+        try { const rec = issueTriage.get(decodeURIComponent(p.slice("/api/issue-triage/".length))); return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec) } : { state: "none" }); } catch { return json({ error: "invalid project id" }, 400); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });

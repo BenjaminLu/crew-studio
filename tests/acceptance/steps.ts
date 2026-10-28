@@ -100,6 +100,12 @@ export const STEPS: Record<string, Step> = {
     const project = JSON.parse(readFileSync(join(h.s.data, "projects.json"), "utf8")).find((p: any) => p.id === h.vars.project);
     if (!project?.github || project.github.operations) throw new Error("merge permission changed before captain approval");
   },
+  /** the simulator's open issues: one, then an empty page (src/issue-triage-workflow.ts reads them page by page) */
+  async "github-issues"(h) { const sim = simulators.get(h.vars.project); if (!sim) throw new Error("github-issues needs github-sim");
+    const page = (n: number) => `/issues?state=open&sort=created&direction=asc&per_page=50&page=${n}`;
+    sim.expect("GET", page(1), [{ number: 1, title: "Allowlist matches substrings", body: "A host check uses includes", labels: [], user: { login: "reporter" }, author_association: "NONE", updated_at: "2026-10-20T00:00:00Z" }]); sim.expect("GET", page(2), []); },
+  /** no open issue at all */
+  async "github-no-issues"(h) { const sim = simulators.get(h.vars.project); if (!sim) throw new Error("github-no-issues needs github-sim"); sim.expect("GET", "/issues?state=open&sort=created&direction=asc&per_page=50&page=1", []); },
   /** the same with the operations grant: Studio merges the pull request on GitHub itself */
   async "github-sim-ops"(h) { await githubSim(h, true); },
   /** the captain merges the open pull request on GitHub's own page, then answers the card */
