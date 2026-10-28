@@ -119,7 +119,7 @@ export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:strin
 export type PackageStatus='proposed'|'approved'|'declined'|'stale';
 export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:string;investigated:boolean;security:boolean;agree?:boolean;diff?:string[];state?:Finding['state'];tag?:string;locus?:Locus[];repro?:string;checked?:boolean};
 export type TriageRecord={schema:1;project:string;repository:string;commit:string;snapshot:{hash:string;fetchedAt:string};open:number;investigated:number[];
- issues:Record<string,TriageIssue>;packages:(Package&{id:string;commit:string;status:PackageStatus;work?:Record<string,{proposal:string;at:string}>})[];lastPackage?:number;toHuman:{issues:number[];reason:string}[];createdAt:string;by:string};
+ issues:Record<string,TriageIssue>;packages:(Package&{id:string;commit:string;status:PackageStatus;work?:Record<string,{proposal:string;at:string}>;approvedBy?:string;approvedAt?:string})[];lastPackage?:number;toHuman:{issues:number[];reason:string}[];createdAt:string;by:string};
 /** What a project's triage keeps: every open issue's title and labels (never its body), each investigated issue's
  *  location, repro, agreement and security answer, and the proposed packages. */
 export function triageRecord(o:{project:string;snapshot:Snapshot;a:Report;b:Report;read:(file:string)=>string|null;by:string;now?:()=>string}):TriageRecord{

@@ -122,6 +122,10 @@ try{
   ok(inv?.a?.model==='opus-5.5'&&inv.a.from==='team'&&inv?.b?.provider==='claude'&&inv.b.model==='sonnet-5.5'&&other?.b?.model==='gpt-6.1-sol','with a team, the investigators are its maker and reviewer seats, with this project\'s own change to a seat'); }
  ok((await post('/api/issue-triage/fixture/start',{size:20},'phone')).status===403,'only the desktop captain starts a triage');
  ok((await post('/api/issue-triage/fixture/start',{size:0})).status===400&&(await post('/api/issue-triage/fixture/start',{size:51})).status===400&&(await post('/api/issue-triage/fixture/start',{issues:['x']})).status===400,'the batch size is 1 to 50, and issue numbers are numbers');
+ ok((await post('/api/issue-triage/fixture/approve',{packages:['P-1']},'phone')).status===403,'only the desktop captain approves packages on the page');
+ ok((await post('/api/issue-triage/fixture/approve',{packages:[]})).status===400&&(await post('/api/issue-triage/fixture/approve',{packages:['../x']})).status===400&&(await post('/api/issue-triage/fixture/approve',{})).status===400,'approving names one or more package ids (P-n)');
+ const lateRefused=await post('/api/issue-triage/fixture/approve',{packages:['P-1']});
+ ok(lateRefused.status===409&&/registered project/.test(lateRefused.body.error)&&store.get('fixture')!.packages[0].status==='proposed','a project whose issues cannot be read again is refused, and nothing is approved',JSON.stringify(lateRefused));
  const notConnected=await post('/api/issue-triage/fixture/start',{size:20});
  ok(notConnected.status===409&&/registered project/.test(notConnected.body.error),'a project that is not a connected GitHub project is refused with the reason',JSON.stringify(notConnected));
 

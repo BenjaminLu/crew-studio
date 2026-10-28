@@ -173,6 +173,22 @@ try {
   ok(/^R-/.test(viaFm.task) && confirmCard(viaFm.task)?.captainOnly && E.get(viaFm.task)!.params.issues === "5", "Firstmate's triage waits for the captain's start card, with the issues it named");
   await E.answer(confirmCard(viaFm.task)!.id, { choice: "close", by: "captain (card)" } as any);
 
+  // --- 6b. approving packages kept as proposals, later, from the project page ---
+  { const a1: any = await flow.approve("proj", ["P-4"], "captain (project page)"), p4 = store.get("proj")!.packages.find((p) => p.id === "P-4")!;
+    ok(a1.approved.join() === "P-4" && p4.status === "approved" && p4.approvedBy === "captain (project page)" && !!p4.approvedAt, "a package kept as a proposal can be approved later, and says who approved it");
+    let again = ""; try { await flow.approve("proj", ["P-4"], "captain (project page)"); } catch (e: any) { again = e.message; }
+    ok(/P-4 is approved, not waiting for approval/.test(again), "approving a package that is no longer waiting is refused with where it stands", again);
+    let unknown = ""; try { await flow.approve("proj", ["P-99"], "captain (project page)"); } catch (e: any) { unknown = e.message; }
+    ok(/No work package P-99/.test(unknown), "approving a package that does not exist is refused", unknown);
+    { const cur = store.get("proj")!; store.write({ ...cur, packages: cur.packages.map((p) => p.id === "P-4" ? { ...p, status: "proposed" as const } : p) }); }
+    const was = open; open = open.map((i) => i.number === 2 ? { ...i, body: "edited before the late approval" } : i);
+    const a2: any = await flow.approve("proj", ["P-4"], "captain (project page)");
+    ok(a2.stale.join() === "P-4" && store.get("proj")!.packages.find((p) => p.id === "P-4")!.status === "stale", "a late approval reads the issues again: one that changed makes the package stale");
+    open = was; { const cur = store.get("proj")!; store.write({ ...cur, packages: cur.packages.map((p) => p.id === "P-4" ? { ...p, status: "proposed" as const } : p) }); }
+    open = open.filter((i) => i.number !== 2); let gone = ""; try { await flow.approve("proj", ["P-4"], "captain (project page)"); } catch (e: any) { gone = e.message; }
+    ok(/check again/.test(gone) && store.get("proj")!.packages.find((p) => p.id === "P-4")!.status === "proposed", "an issue missing from one read is refused once, the package left waiting", gone);
+    open = was; }
+
   // --- 7. working an approved package: one code Task per issue, through the captain's proposal ---
   const workErr = async (args: any, o: any = owner(true)) => { try { await flow.call("studio_work_package", args, o); return ""; } catch (e: any) { return `${e?.publicFailure?.code ?? ""} ${e.message}`; } };
   const decide = async (task: string, choice: string) => { await until(() => E.cards.list({ run: task, open: true }).length > 0); await E.answer(E.cards.list({ run: task, open: true })[0].id, { choice, by: "captain (card)" } as any); await until(() => E.get(task)!.status === "succeeded"); };
