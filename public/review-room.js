@@ -10,16 +10,22 @@ const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
 const rerender = () => { if (S.route?.name === "room") render(); };
-// what a room does in the background (its poll, its live updates, its playback) redraws only that room's page: never the
-// page the captain moved on to, where a redraw would replace the button being pressed and swallow the click
+// what a room finishes later (its poll, a live update, playback, a turn or a citation it sent, the mic) redraws only that
+// room's page (redraw): never the page the captain moved on to, where a redraw would replace the button being pressed
+// and swallow the click. Leaving a room stops its playback and its mic at once.
 const onRoom = (id) => S.route?.name === "room" && S.route.arg === id;
+const redraw = (id) => { if (onRoom(id)) render(); };
+addEventListener("hashchange", () => { // after app.js's own listener: S.route is already the new page
+  if (RR.playing && !onRoom(RR.playing)) stopPlay();
+  if (RR.rec && !onRoom(RR.recCard)) try { RR.rec.stop(); } catch {}
+});
 const enc = encodeURIComponent;
 const page = (title, sub, ...kids) => h("div", { class: "page rr-page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, title), sub ? h("p", {}, sub) : null)), ...kids);
 async function load(id, open = false) {
   if (RR.loading.has(id)) return; RR.loading.add(id);
   try { RR.rooms.set(id, await api(`/api/review-room/${enc(id)}${open ? "?open=1" : ""}`)); RR.err.delete(id); }
   catch (e) { if (!RR.rooms.has(id)) RR.rooms.set(id, { error: e.message }); else RR.err.set(id, e.message); }
-  finally { RR.loading.delete(id); if (onRoom(id)) render(); schedule(); }
+  finally { RR.loading.delete(id); redraw(id); schedule(); }
 }
 // while a turn runs, the page follows it (the live stream says when it ends; a slow poll covers a missed event)
 function schedule() { clearTimeout(RR.poll); const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null) RR.poll = setTimeout(() => load(id), 2500); }
@@ -94,7 +100,7 @@ const inferenceBadge = () => h("span", { class: "rr-inference", "data-basis": "i
 async function openCite(card, ref) {
   RR.cite.set(card, { ref, loading: true }); rerender();
   try { RR.cite.set(card, { ref, data: await api(`/api/review-room/${enc(card)}/cite?ref=${enc(ref)}`) }); } catch (e) { RR.cite.set(card, { ref, error: e.message }); }
-  rerender(); requestAnimationFrame(() => document.querySelector("[data-cite-panel]")?.focus?.());
+  if (!onRoom(card)) return; render(); requestAnimationFrame(() => document.querySelector("[data-cite-panel]")?.focus?.());
 }
 function citePanel(r) {
   const c = RR.cite.get(r.card.id); if (!c) return null; const d = c.data;
@@ -189,13 +195,17 @@ function visualAt(r, sc, k) {
 // tutor already uses; generated once per scene and kept in the room), else a voice of this Mac (on-device only: a voice
 // the browser would send to a server is never offered), the best first (Premium, Enhanced, Siri).
 const prefs = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
-// never offered: macOS's novelty voices and its robotic legacy ones (MacinTalk, Eloquence), by name or by where they live
-const ROBOTIC = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|jester|organ|pipe organ|superstar|trinoids|whisper|wobble|zarvox|agnes|bruce|fred|junior|kathy|princess|ralph|vicki|victoria|eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley)$/i;
-const robotic = (v) => ROBOTIC.test(String(v.name || "").replace(/\s*\(.*\)\s*$/, "").trim()) || /com\.apple\.(speech\.synthesis\.voice|eloquence)\./i.test(v.voiceURI || "");
+// never offered: macOS's novelty voices; left out while anything better is there: its robotic legacy ones (MacinTalk,
+// Eloquence). By name: an older macOS gives every voice, the good ones too, a com.apple.speech.synthesis.voice. address
+const NOVELTY = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|jester|organ|pipe organ|superstar|trinoids|whisper|wobble|zarvox)$/i;
+const LEGACY = /^(agnes|bruce|fred|junior|kathy|princess|ralph|vicki|victoria|eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley)$/i;
+const baseName = (v) => String(v.name || "").replace(/\s*\(.*\)\s*$/, "").trim();
 // the best first: Premium, then Enhanced (Safari says so only in the voice's address), Siri and neural voices, the compact ones last
 const voiceRank = (v) => { const s = `${v.name} ${v.voiceURI || ""}`; return /premium/i.test(s) ? 4 : /enhanced/i.test(s) ? 3 : /siri|neural|natural/i.test(s) ? 2 : /compact/i.test(s) ? 0 : 1; };
 const localVoices = () => { try { const want = uiLang().toLowerCase(), l = want.slice(0, 2), exact = (v) => (v.lang || "").toLowerCase().replace("_", "-") === want ? 1 : 0;
-  return (window.speechSynthesis?.getVoices?.() || []).filter((v) => v.localService && v.lang?.toLowerCase().startsWith(l) && !robotic(v)).sort((a, b) => voiceRank(b) - voiceRank(a) || exact(b) - exact(a)); } catch { return []; } };
+  const mine = (window.speechSynthesis?.getVoices?.() || []).filter((v) => v.localService && v.lang?.toLowerCase().startsWith(l) && !NOVELTY.test(baseName(v)));
+  const good = mine.filter((v) => !LEGACY.test(baseName(v)));
+  return (good.length ? good : mine).sort((a, b) => voiceRank(b) - voiceRank(a) || exact(b) - exact(a)); } catch { return []; } };
 const voicePref = () => prefs.get("crew.room.voice") || "off";
 /** the Mac voice to speak with: the one picked, or, when that one is no longer offered (a robotic voice picked before), the best there is */
 const chosenLocal = () => { const p = voicePref(); if (!p.startsWith("local:")) return null; const vs = localVoices(); return vs.find((v) => v.voiceURI === p.slice(6)) || vs[0] || null; };
@@ -271,27 +281,28 @@ function stageView(r) {
 // ---------- the prompt bar: quick actions, a question (typed or spoken), the paid-round confirmation ----------
 const SR = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
 /** push-to-talk, on-device only: the browser must recognise speech locally (processLocally), or the mic stays off */
-async function micReady() {
+async function micReady(card) {
   const C = SR(); if (!C) return false; if (RR.mic != null) return RR.mic;
   try { if (typeof C.available !== "function") return (RR.mic = false); const a = await C.available({ langs: [uiLang()], processLocally: true }); RR.mic = a === "available"; } catch { RR.mic = false; }
-  rerender(); return RR.mic;
+  redraw(card); return RR.mic;
 }
 function listen(card) {
   const C = SR(); if (!C || !RR.mic) return; try { const rec = new C(); rec.lang = uiLang(); rec.processLocally = true; rec.interimResults = true; rec.continuous = true;
-    rec.onresult = (e) => { RR.draft.set(card, [...e.results].map((x) => x[0]?.transcript || "").join(" ").trim()); RR.heard = true; rerender(); };
-    rec.onend = () => { RR.rec = null; rerender(); }; rec.onerror = () => { RR.rec = null; rerender(); };
-    RR.rec = rec; rec.start(); rerender(); } catch { RR.rec = null; }
+    // what is heard after the captain left the room is dropped with the recognizer (stopped on leaving)
+    rec.onresult = (e) => { if (RR.rec !== rec || !onRoom(card)) return; RR.draft.set(card, [...e.results].map((x) => x[0]?.transcript || "").join(" ").trim()); RR.heard = true; render(); };
+    rec.onend = () => { if (RR.rec === rec) RR.rec = null; redraw(card); }; rec.onerror = () => { if (RR.rec === rec) RR.rec = null; redraw(card); };
+    RR.rec = rec; RR.recCard = card; rec.start(); redraw(card); } catch { RR.rec = null; }
 }
 function promptBar(r) {
   const card = r.card.id, busy = r.running != null || RR.posting.has(card), offer = r.offer, conf = RR.confirm.get(card), err = RR.err.get(card);
   if (!r.open) return h("div", { class: "rr-bar" }, h("p", { class: "faint", "data-room-closed": "" }, r.closed ? T(r.closed.en, r.closed.zh) : T("The merge card is answered: this room is read-only now.", "合併卡已回覆：審查室現在只能閱讀。")));
   if (offer?.error) return h("div", { class: "rr-bar" }, h("p", { class: "rr-err", "data-room-unavailable": "" }, offer.error));
-  if (RR.mic == null) void micReady();
+  if (RR.mic == null) void micReady(card);
   const ask = (action) => { const text = action === "ask" ? (RR.draft.get(card) || "").trim() : ""; if (action === "ask" && !text) return; RR.confirm.set(card, { action, text }); rerender(); };
   const start = async () => { const c = RR.confirm.get(card); if (!c || busy) return; RR.posting.add(card); RR.err.delete(card); rerender();
     try { const room = await postJ(`/api/review-room/${enc(card)}/turn`, { action: c.action, text: c.text, lang: uiLang(), confirm: offer?.hash }); RR.rooms.set(card, room); RR.confirm.delete(card); if (c.action === "ask") RR.draft.delete(card); RR.heard = false; RR.scene.delete(card); }
     catch (e) { RR.err.set(card, e.message); if (e.offer) RR.rooms.set(card, { ...r, offer: e.offer }); }
-    finally { RR.posting.delete(card); rerender(); schedule(); } };
+    finally { RR.posting.delete(card); redraw(card); schedule(); } };
   const talk = !!RR.rec;
   return h("div", { class: "rr-bar", "data-chat": card },
     // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
@@ -348,7 +359,7 @@ const rerenderAny = () => { if (S.route?.name === "room" || S.route?.name === "p
 window.crewReviewRoomPrBox = (project, repository) => h("section", { class: "card x-pad", "data-project-review-room": project }, prBox(`project:${project}`, repository));
 async function checkNow(id) {
   if (PR.checking.has(id)) return; PR.checking.add(id); RR.err.delete(id); rerender();
-  try { RR.rooms.set(id, await postJ(`/api/review-room/${enc(id)}/check`, {})); } catch (e) { RR.err.set(id, e.message); } finally { PR.checking.delete(id); rerender(); }
+  try { RR.rooms.set(id, await postJ(`/api/review-room/${enc(id)}/check`, {})); } catch (e) { RR.err.set(id, e.message); } finally { PR.checking.delete(id); redraw(id); }
 }
 /** what the room is about, and its state: the pull request on GitHub (open, approved, merged, closed), new commits since the captain last looked */
 function subjectBar(r) {

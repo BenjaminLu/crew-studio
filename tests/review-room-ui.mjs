@@ -65,9 +65,9 @@ const stubs = ([mic]) => {
   const voices = [mac("Samantha", "com.apple.voice.compact.en-US.Samantha"), mac("Fred", "fred"), mac("Ava (Premium)", "ava"), { name: "Google US English", lang: "en-US", localService: false, voiceURI: "google" }, mac("Mei-Jia (Premium)", "mj", "zh-TW"),
     mac("Zarvox", "com.apple.speech.synthesis.voice.Zarvox"), mac("Bad News", "com.apple.speech.synthesis.voice.BadNews"), mac("Good News", "good-news"), mac("Bubbles", "bubbles"), mac("Whisper", "com.apple.speech.synthesis.voice.Whisper"),
     mac("Eddy (English (US))", "com.apple.eloquence.en-US.Eddy"), mac("Grandma (English (UK))", "com.apple.eloquence.en-GB.Grandma", "en-GB"), mac("Kathy", "kathy"), mac("Zoe", "com.apple.voice.enhanced.en-US.Zoe")];
-  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => voices, speak: (u) => { window.__spoken.push([u.text, u.voice?.voiceURI]); setTimeout(() => u.onend && u.onend(), 5); }, cancel: () => {} } });
+  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => window.__voices || voices, speak: (u) => { window.__spoken.push([u.text, u.voice?.voiceURI]); setTimeout(() => u.onend && u.onend(), 5); }, cancel: () => { window.__cancels = (window.__cancels || 0) + 1; } } });
   window.SpeechSynthesisUtterance = function (t) { this.text = t; };
-  class Rec { static async available(o) { window.__micAsked = o; return mic; } start() { window.__recStarted = { lang: this.lang, local: this.processLocally }; setTimeout(() => this.onresult && this.onresult({ results: [[{ transcript: "why do halves round up" }]] }), 10); } stop() { this.onend && this.onend(); } }
+  class Rec { static async available(o) { window.__micAsked = o; return mic; } start() { window.__rec = this; window.__recStarted = { lang: this.lang, local: this.processLocally }; setTimeout(() => this.onresult && this.onresult({ results: [[{ transcript: "why do halves round up" }]] }), 10); } stop() { window.__recStopped = true; this.onend && this.onend(); } }
   window.SpeechRecognition = Rec;
   window.Audio = function (src) { const a = { src, currentTime: 0, duration: 10, ontimeupdate: null, onended: null, play: async () => { window.__audio = a; }, pause() {} }; return a; };
 };
@@ -162,6 +162,14 @@ try {
     await p.evaluate(() => localStorage.setItem("crew.room.voice", "local:fred")); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t1"]'); });
     ok((await p.$eval("[data-voice]", (e) => e.value)) === "local:ava", "a saved voice no longer offered falls back to the best one on this Mac", await p.$eval("[data-voice]", (e) => e.value));
     await p.selectOption("[data-voice]", "off");
+    // an older macOS: Safari gives every voice, the good ones too, a com.apple.speech.synthesis.voice. address
+    const voicesWith = async (list) => { await p.evaluate((l) => { window.__voices = l; }, list); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t1"]'); }); return p.$$eval("[data-voice] option", (els) => els.map((e) => e.value)); };
+    const old = (n) => ({ name: n, lang: "en-US", localService: true, voiceURI: `com.apple.speech.synthesis.voice.${n.replace(/ /g, "")}` });
+    let vs = await voicesWith(["Samantha", "Zarvox", "Alex", "Fred", "Bad News"].map(old));
+    ok(JSON.stringify(vs) === JSON.stringify(["off", "vendor", "local:com.apple.speech.synthesis.voice.Samantha", "local:com.apple.speech.synthesis.voice.Alex"]), "on an older macOS the good voices are offered though they share the legacy address; novelty and legacy voices are still left out", JSON.stringify(vs));
+    vs = await voicesWith(["Fred", "Zarvox", "Ralph", "Bubbles"].map(old));
+    ok(JSON.stringify(vs) === JSON.stringify(["off", "vendor", "local:com.apple.speech.synthesis.voice.Fred", "local:com.apple.speech.synthesis.voice.Ralph"]), "when this Mac has only legacy voices, they are offered rather than none; a novelty voice never is", JSON.stringify(vs));
+    await voicesWith(null);
     await p.selectOption("[data-voice]", "local:ava"); await p.click("[data-play]"); await p.waitForFunction(() => window.__spoken.length >= 2);
     ok(await p.evaluate(() => window.__spoken[0][0] === "An amount in cents goes into percent ." || /^An amount in cents goes into percent/.test(window.__spoken[0][0])) && await p.evaluate(() => window.__spoken[0][1] === "ava"), "with this Mac's voice each point is spoken as it appears", JSON.stringify(await p.evaluate(() => window.__spoken)));
     await p.click("[data-play]").catch(() => {}); await p.evaluate(() => { window.__spoken = []; });
@@ -195,6 +203,23 @@ try {
     await p.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.querySelector("#view"), { childList: true }); document.querySelector('[data-pr-url="home"]').dataset.mark = "1"; });
     await p.waitForTimeout(4000);
     ok(await p.evaluate(() => window.__redraws === 0 && document.querySelector('[data-pr-url="home"]').dataset.mark === "1"), "once the captain leaves a room, its poll and its playback no longer redraw the page on screen", String(await p.evaluate(() => window.__redraws)));
+    await ctx.close(); }
+
+  // ---------- leaving a room mid-flight: a turn being sent, a citation loading, the mic listening, a scene playing ----------
+  { const { ctx, p, release } = await open(1440, "en");
+    let citeHold = null; await p.route(/\/api\/review-room\/SC-50\/cite\?/, async (r) => { await new Promise((res) => (citeHold = res)); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "@@ -1 +1 @@\n+x" } }); });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.waitForFunction(() => document.querySelector("[data-mic]")?.disabled === false);
+    await p.dispatchEvent("[data-mic]", "pointerdown"); await p.waitForSelector("[data-heard]");
+    await p.click("[data-cite]"); await p.click('[data-room-action="how"]'); await p.click("[data-room-start]"); await p.waitForSelector("[data-room-busy]");
+    await p.click("[data-play]");
+    await p.evaluate(() => { window.__cancels = 0; window.__recStopped = false; location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]');
+    const eager = await p.evaluate(() => ({ cancels: window.__cancels, rec: window.__recStopped }));
+    ok(eager.cancels > 0 && eager.rec === true, "leaving the room stops its playback and its mic at once", JSON.stringify(eager));
+    await p.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.querySelector("#view"), { childList: true }); document.querySelector('[data-pr-url="home"]').dataset.mark = "1"; });
+    release(); citeHold?.(); await p.evaluate(() => { window.__rec?.onresult?.({ results: [[{ transcript: "late words" }]] }); window.__rec?.onend?.(); });
+    await p.waitForTimeout(3000);
+    ok(await p.evaluate(() => window.__redraws === 0 && document.querySelector('[data-pr-url="home"]').dataset.mark === "1"), "what the room finishes after the captain left (the turn it sent, a citation, the mic) does not redraw the page now on screen", String(await p.evaluate(() => window.__redraws)));
     await ctx.close(); }
 
   // ---------- no on-device recognition: no mic; 390, zh-TW ----------
