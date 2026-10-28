@@ -13,9 +13,7 @@ export type Report={commit:string;issues:Finding[];groups:{id:string;fix_at:{fil
 export type Checked={n:number;ok:boolean;problems:string[];security:boolean};
 export type Package={kind:'ordered'|'unordered'|'one-change'|'single'|'recheck';members:number[];order:number[];why:string;security:boolean;
  /** exact: both reports name these issues alike; overlap: their sets differed by one issue (left), which went to a person */
- agreement?:'exact'|'overlap';left?:number[];
- /** members of a set both reports find already fixed: inside the package, each is a recheck, never a close */
- recheck?:number[]};
+ agreement?:'exact'|'overlap';left?:number[]};
 
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const PAGES=40, BODY_MAX=16000, TITLE_MAX=300;
@@ -160,9 +158,11 @@ export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:strin
  const security=(ms:number[])=>ms.some(n=>va.get(n)?.security||vb.get(n)?.security);
  const both=(n:number,s:Finding['state'])=>a.issues.find(f=>f.n===n)?.state===s&&b.issues.find(f=>f.n===n)?.state===s;
  const take=(kind:Package['kind'],members:number[],order:number[],why:string,left:number[]=[])=>{const weak=sound(members);
+  // a set both find partly fixed is not one piece of work: a person splits it; a set both find wholly fixed is a recheck
+  const fixed=members.filter(n=>both(n,'fixed?'));
   if(weak.length){toHuman.push({issues:members,reason:`the reports disagree on, or the code check fails for, ${weak.map(n=>'#'+n).join(' ')}`});}
-  else{const re=members.length>1?sorted(members.filter(n=>both(n,'fixed?'))):[];
-   packages.push({kind,members:sorted(members),order,why,security:security(members),agreement:left.length?'overlap':'exact',...(left.length?{left}:{}),...(re.length?{recheck:re}:{})});}
+  else if(fixed.length&&fixed.length<members.length)toHuman.push({issues:members,reason:`both reports find ${fixed.map(n=>'#'+n).join(' ')} already fixed, the rest of the set not: a person decides what is still work`});
+  else packages.push({kind:fixed.length?'recheck':kind,members:sorted(members),order,why,security:security(members),agreement:left.length?'overlap':'exact',...(left.length?{left}:{})});
   members.forEach(n=>placed.add(n));};
  const single=(n:number,left:number[]=[])=>take(both(n,'fixed?')?'recheck':'single',[n],[n],'',left);
  /** each of a's sets against an unused b set at most one issue apart, the one sharing most issues first; a set left
@@ -176,9 +176,10 @@ export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:strin
    const aside=()=>{if(left.length&&!placed.has(left[0])){toHuman.push({issues:left,reason:`only one report puts #${left[0]} with ${common.map(n=>'#'+n).join(' ')}; the issues both name are proposed without it`});placed.add(left[0]);}};
    on(x,m.t,common,left,aside);}};
  overlap(a.related,b.related,r=>r.members,()=>true,(r,other,common,left,aside)=>{
-  // the issue one report leaves out sits between others in an order: the order without it is not one both gave
-  const between=left.length&&[r.order,other.order].some(o=>{const i=o.indexOf(left[0]);return i>0&&i<o.length-1;});
-  if(between){const all=sorted([...common,...left]).filter(n=>!placed.has(n));toHuman.push({issues:all,reason:`only one report puts #${left[0]} in this set, between others in its order: the order without it is not one both reports gave`});all.forEach(n=>placed.add(n));return;}
+  // the issue one report leaves out is not last in an order: what came after it may need it first, so the order without it
+  // is not one both gave (a dropped last issue is safe)
+  const before=left.length&&[r.order,other.order].some(o=>{const i=o.indexOf(left[0]);return i>=0&&i<o.length-1;});
+  if(before){const all=sorted([...common,...left]).filter(n=>!placed.has(n));toHuman.push({issues:all,reason:`only one report puts #${left[0]} in this set, before others in its order: the order without it is not one both reports gave`});all.forEach(n=>placed.add(n));return;}
   aside();
   if(common.length<2){single(common[0],left);return;}
   const ox=r.order.filter(n=>common.includes(n)),oy=other.order.filter(n=>common.includes(n));

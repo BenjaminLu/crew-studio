@@ -167,7 +167,7 @@ try {
     during.a = () => { open = open.map((i) => i.number === 8 ? { ...i, body: "edited during the investigation" } : i); };
     r = await runOf({ issues: [6, 7, 8, 10] });
     const c3b = E.cards.list({ run: r.id, open: true }).find((c) => c.node === "approve"), w = store.get("proj")!;
-    ok(/: #6 → #7 \(recheck \/ 重新確認\) \(menu and theme\)/.test(c3b?.body ?? ""), "a member both find already fixed is marked a recheck on the approval card, inside its set", c3b?.body);
+    ok(!c3b && !w.packages.some((p) => p.members.includes(6)) && w.toHuman.some((h) => h.issues.join() === "6,7" && /already fixed/.test(h.reason)), "a set both find partly fixed goes to a person, never to a worker", JSON.stringify(w.toHuman));
     ok(/; 1 agreed to have nothing to change in the code/.test(String(r.nodes.record?.note)) && w.noCode?.flatMap((x) => x.issues).join() === "10" && w.toHuman.some((h) => h.issues.includes(8)), "the record's note counts the agreed no-code issues that were written, not one edited meanwhile", String(r.nodes.record?.note));
     if (c3b) await E.answer(c3b.id, { choice: "close", by: "captain (card)" } as any); await until(() => E.get(r.id)!.status === "succeeded"); }
 

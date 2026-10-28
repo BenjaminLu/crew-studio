@@ -192,8 +192,9 @@ model and effort, marking a change this project makes to the team.
   (both find it already fixed: a person rechecks it, it is never closed on that evidence). Sets match by overlap: when
   the two reports' sets (or one-change groups at one file) differ by one issue, the issues both name are the package (a
   single when one is left), marked as an overlap, and the other issue goes to "For you to judge"; a larger difference all
-  goes there. An issue one report leaves out of the middle of an order sends the whole set there: the order without it
-  is not one both gave. A member both find already fixed is marked a recheck inside its set, on the approval card too.
+  goes there. An issue one report leaves out anywhere but last in an order sends the whole set there: the order without it
+  is not one both gave. A set both find partly fixed goes there too (a person decides what is still work); a set both
+  find wholly fixed is a recheck.
   Everything else is listed under "For you to judge" with the reason.
 - Issues both reports find `not-found` (it needs more information) or both `not-code` are their own agreed outcome
   (`rec.noCode`, one entry per state), listed as "Agreed: nothing to change in the code": neither a package nor a
