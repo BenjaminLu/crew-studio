@@ -458,7 +458,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** the summary a merge card shows: never readiness, never an answer */
     summary(c: SCard) {
       if (c.kind !== "merge") return null; const r0 = load(c.run, c.id), r = r0 ? settled(r0) : null;
-      return { href: `#/review/${c.id}`, opened: !!stats()[c.run]?.openedAt, turns: r?.turns.filter((t) => t.status === "done").length ?? 0, questions: r?.turns.length ?? 0, running: live.has(c.id), check: checkOf(r),
+      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, turns: r?.turns.filter((t) => t.status === "done").length ?? 0, questions: r?.turns.length ?? 0, running: live.has(c.id), check: checkOf(r),
         sources: { consulted: r?.sources.filter((s) => s.ok).length ?? 0, refused: r?.sources.filter((s) => s.refused).length ?? 0 } };
     },
     /** the room as its page reads it; opened: the captain opened the page (recorded once per pull request) */

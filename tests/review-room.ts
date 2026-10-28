@@ -58,7 +58,7 @@ const cardFile = join(E.cards.dir, merge.id + ".json"), storedBefore = readFileS
 const viewBefore = E.cards.view(E.cards.get(merge.id)!);
 const gitState = () => JSON.stringify({ status: sh(["git", "status", "--porcelain", "--untracked-files=all"]), head: sh(["git", "rev-parse", "HEAD"]), refs: sh(["git", "for-each-ref"]), index: (() => { try { return statSync(join(sh(["git", "rev-parse", "--absolute-git-dir"]).trim(), "index")).mtimeMs; } catch { return null; } })() });
 const gitBefore = gitState();
-ok(viewBefore.reviewRoom?.href === `#/review/${merge.id}` && viewBefore.reviewRoom.turns === 0 && viewBefore.detail?.codeEvidence?.state === "success", "the merge card shows Open review room (no turn yet) beside ready evidence", JSON.stringify(viewBefore.reviewRoom));
+ok(viewBefore.reviewRoom?.href === `#/room/${merge.id}` && viewBefore.reviewRoom.turns === 0 && viewBefore.detail?.codeEvidence?.state === "success", "the merge card shows Open review room (no turn yet) beside ready evidence", JSON.stringify(viewBefore.reviewRoom));
 
 // ---------- a turn is paid: it needs the captain's confirmation of the exact model ----------
 let refusal: any = null; try { await room.start(merge.id, { action: "teach" }, "captain"); } catch (e) { refusal = e; }
