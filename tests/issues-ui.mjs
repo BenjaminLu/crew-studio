@@ -38,12 +38,16 @@ const record = {
     14: issue("Allowlist matches substrings", { state: "fixed?", security: true, locus: loc("src/web/helper.ts", "isAllowed"), repro: "none" }),
     15: issue("Navigation reuse", { agree: false, diff: ["security"], locus: loc("src/nav.ts", "toView") }),
     16: { title: "Research: batch signing", labels: [], hash: "1".repeat(64), investigated: false, security: false },
+    17: issue("Share link loses its fragment", { state: "fixed?", locus: loc("src/utils/url.ts", "addParams"), tag: "url-building-bug" }),
+    18: issue("Query string doubled on retry", { locus: loc("src/utils/url.ts", "addParams"), tag: "url-building-bug" }),
   },
   packages: [
     { id: "P-1", kind: "ordered", members: [11, 12], order: [11, 12], why: "Both decide which page a request really came from.", security: true, status: "approved", commit: "c".repeat(40), work: { 11: { proposal: "R-999", at: "2026-10-28T10:00:00Z" } } },
     { id: "P-2", kind: "single", members: [13], order: [13], why: "", security: false, status: "proposed", commit: "c".repeat(40) },
     { id: "P-3", kind: "recheck", members: [14], order: [14], why: "", security: true, status: "stale", commit: "c".repeat(40) },
+    { id: "P-4", kind: "recheck", members: [17], order: [17], why: "", security: false, status: "proposed", commit: "c".repeat(40), match: { with: "P-2", where: "src/utils/url.ts · addParams" } },
   ],
+  cross: [{ id: "X-1", issues: [18], package: { kind: "single", members: [18], order: [18], why: "", security: false, commit: "c".repeat(40) }, with: "P-2", where: "src/utils/url.ts · addParams" }], lastCross: 1, dedup: 2,
   toHuman: [{ issues: [15], reason: "the reports disagree on, or the code check fails for, #15" }],
   createdAt: "2026-10-28T09:40:00Z", by: "issue-triage R-9", lastPackage: 3,
 };
@@ -72,23 +76,25 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/\/api\/team\?project=wallet/, (r) => r.fulfill({ json: TEAM }));
   if (o.empty) await ctx.route(/\/api\/issue-triage\/wallet$/, (r) => r.fulfill({ json: { state: "none", investigators: { a: { provider: "claude", model: "claude-opus-5-5" }, b: { provider: "codex", model: "gpt-6" } } } }));
   if (o.same) await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, investigators: { a: { provider: "claude", model: "same" }, b: { provider: "claude", model: "same" } } } }); });
-  const posts = [], approvals = [];
+  const posts = [], approvals = [], crosses = [];
+  await ctx.route(/\/api\/issue-triage\/wallet\/cross$/, (r) => { crosses.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, joined: "P-2" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/approve$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); approvals.push(b); r.fulfill(o.refuseApprove ? { status: 409, json: { error: `${b.packages[0]} is approved, not waiting for approval` } } : { json: o.staleApprove ? { ok: true, approved: [], stale: b.packages } : { ok: true, approved: b.packages, stale: [] } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/start$/, (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, task: "R-77", href: "#/run/R-77" } }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
   await p.goto(`${base}/${hash}`); await p.waitForTimeout(800);
-  return { ctx, p, posts, approvals };
+  return { ctx, p, posts, approvals, crosses };
 }
 const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.querySelector("#main").scrollWidth <= document.querySelector("#main").clientWidth + 1);
 try {
   { const { ctx, p } = await open(1440, "en", "#/board");
     ok(await p.locator(".is-views").count() === 0 && !(await p.locator('a[href="#/board/issues"]').count()), "the Board shows Tasks only: issues live on their project's page");
     await ctx.close(); }
-  { const { ctx, p, posts, approvals } = await open(1440);
+  { const { ctx, p, posts, approvals, crosses } = await open(1440);
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
     ok(await p.locator('.pj-jump a[href="#s-issues"]').count() === 1, "a connected project's page has an Issues section to jump to");
-    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 3, "the project's stored work packages are listed on its page");
-    ok(/6 open · 5 investigated · 3 work packages/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()), "the section heading says the counts");
+    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4, "the project's stored work packages are listed on its page");
+    ok(/2 repeat fixes avoided/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()), "the heading counts the repeat fixes the cross-batch match avoided");
+    ok(/6 open · 5 investigated · 4 work packages/.test(await p.locator('[data-project-issues="wallet"] .sec-head').textContent()), "the section heading says the counts");
     ok(/ccccccc/.test(await p.locator('[data-project-issues="wallet"] > p.faint').first().textContent()), "the section names the commit the code was read at");
     ok(await p.locator("[data-issue-size]").inputValue() === "15" && /Investigators: claude .* and codex /.test(await p.locator("[data-investigators]").textContent()) && /codex/.test(await p.locator("[data-investigators]").textContent()), "the batch form offers a size (15 by default) and names both investigators' models");
     const steps = await p.$$eval('[data-detail="P-1"] .is-issue', (xs) => xs.map((x) => [x.dataset.issue, x.querySelector(".is-step").textContent, x.querySelector(".is-loc")?.textContent]));
@@ -108,7 +114,12 @@ try {
     ok(/Do not change code/.test(await p.locator('[data-detail="P-3"] .is-how').textContent()), "a maybe-fixed issue is a recheck, not a close");
     ok(/changed for this project/.test(await p.locator('[data-seat="reviewer"]').textContent()) && /claude-sonnet-5-5/.test(await p.locator('[data-seat="reviewer"]').textContent()) && /claude-opus-5-5/.test(await p.locator('[data-seat="maker"]').textContent()) && !(await p.locator('[data-seat="designer"]').count()), "the Crew section lists each seat's model as this project runs it, marking this project's own changes");
     await p.screenshot({ path: join(shots, "project-issues-1440.png"), fullPage: true });
+    await p.click('[data-pack="P-4"]');
+    ok(/same function as P-2/.test(await p.locator('[data-detail="P-4"] .is-match').textContent()) && /src\/utils\/url\.ts · addParams/.test(await p.locator('[data-detail="P-4"] .is-match').textContent()), "a recheck made by the cross-batch match says which earlier package and function it shares");
     await p.click('[data-is-tab="human"]');
+    ok(/#18/.test(await p.locator('[data-cross="X-1"]').textContent()) && /same function as P-2/.test(await p.locator('[data-cross="X-1"]').textContent()) && await p.locator('[data-is-tab="human"] .tb-count').textContent() === "2", "a cross-batch match waits for the captain under For you to judge, naming the earlier package and the function");
+    await p.click('[data-cross="X-1"] [data-cross-join]'); await p.waitForTimeout(300);
+    ok(crosses.length === 1 && crosses[0].id === "X-1" && crosses[0].action === "join", "joining sends that match to be joined", JSON.stringify(crosses));
     ok(/#15/.test(await p.locator(".is-human").textContent()) && /disagree/.test(await p.locator(".is-human").textContent()), "what the investigators disagreed on is listed with the reason");
     await p.click('[data-is-tab="pending"]');
     ok(/Research: batch signing/.test(await p.locator(".is-pending").textContent()) && await p.locator(".is-pending li").count() === 1, "issues nobody investigated are listed");
@@ -140,7 +151,7 @@ try {
     await ctx.close(); }
   { const { ctx, p } = await open(390, "zh-TW");
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
-    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 3 && /工作包/.test(await p.locator('[data-project-issues="wallet"] .tb-tabs').textContent()) && /這批要分類幾張/.test(await p.locator("[data-issue-start]").textContent()), "390 zh-TW: the packages and the batch form show, in Chinese");
+    ok(await p.locator('[data-project-issues="wallet"] [data-pack]').count() === 4 && /分診/.test(await p.locator('[data-project-issues="wallet"]').textContent()) && !/分類/.test(await p.locator('[data-project-issues="wallet"]').textContent()) && /工作包/.test(await p.locator('[data-project-issues="wallet"] .tb-tabs').textContent()) && /這批要分診幾張/.test(await p.locator("[data-issue-start]").textContent()), "390 zh-TW: the packages and the batch form show, in Chinese");
     ok(await noSideways(p), "390: no sideways scroll");
     await p.screenshot({ path: join(shots, "project-issues-390.png"), fullPage: true });
     await ctx.close(); }
