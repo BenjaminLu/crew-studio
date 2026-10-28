@@ -1,6 +1,6 @@
 # Unit review-room: learn a pull request before you merge it
 
-What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/room/<merge card>`; `#/room/…` is the Library's artifact review,
+What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/room/<merge card>`; `#/review/<artifact>/<n>` is the Library's artifact review,
 `public/review-room.js`) works like an interactive whiteboard tutor:
 
 - **The board is the stage** and takes most of the screen. Each tutor answer is a **scene**: a visual on the left and the

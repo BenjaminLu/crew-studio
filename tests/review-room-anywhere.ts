@@ -68,7 +68,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
 
   // the scripted tutor from here on (the Tasks' own rounds are done)
   const script: any[][] = [], prompts: { text: string }[] = [], runArgs: any[] = [];
-  const baseProvider = E.deps.provider, tutor = scriptedTutor(H, script, prompts); E.deps.provider = (id?: string, model?: string) => id === "tutor" ? tutor(id, model ?? "") : baseProvider(id, model);
+  const baseProvider = E.deps.provider, tutor = scriptedTutor(H, script, prompts); E.deps.provider = (id?: string, model?: string) => id === "tutor" || id === "codex" ? tutor(id, model ?? "") : baseProvider(id, model);
   const baseRun = E.deps.agents.run.bind(E.deps.agents); E.deps.agents.run = (o: any) => { if (o.kind === "review-room") runArgs.push(o); return baseRun(o); };
   const realFetch = globalThis.fetch, fetched: string[] = []; globalThis.fetch = (async (x: any, i: any) => { fetched.push(String(x?.url ?? x)); return realFetch(x, i); }) as any;
 
@@ -113,6 +113,18 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
     const mine = admit({ ref: t.id, auxOwner: own.x }, "probe-1").ready(), theirs = admit({ ref: t.id, auxOwner: other.x }, "probe-2").ready(), none = admit({ ref: t.id }, "probe-3").ready(); own.release(); other.release();
     ok(mine.ready === true && theirs.ready === false && none.ready === false, "the job queue admits a job on an ended Task only for an auxiliary owner of that same Task", JSON.stringify([mine, theirs, none])); }
   ok(!fetched.some((x) => /github/i.test(x)) && fetched.every((x) => x.startsWith(H.toolUrl)), "no request left Studio: nothing went to GitHub", JSON.stringify(fetched.filter((x) => !x.startsWith(H.toolUrl))));
+  // ---- a branch room's tutor is #57's adaptive pick: the approved reviewer cannot run now, another vendor can ----
+  { const deps = E.deps as any, auxes: any[] = [];
+    deps.usableModels = () => [{ provider: "tutor", model: "t-1", efforts: [], verified: true, runnable: false, held: "out of quota" }, { provider: "codex", model: "c-1", efforts: ["medium"], verified: true, runnable: true, isDefault: true }];
+    deps.instructionReceipt = (_x: any, _id: string, _s: string, _p: any, aux: any) => { auxes.push(aux); return undefined; };
+    const off: any = (room.view(u.id) as any).offer;
+    script.push([["say", "The function rounds to the cent [diff:src/percent.ts]."]]);
+    await room.start(u.id, { action: "why", confirm: off.hash }, "captain"); await room.settle(u.id);
+    const tt: any = (room.view(u.id) as any).turns.at(-1), trec = E.trusted(u.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
+    delete deps.usableModels; delete deps.instructionReceipt;
+    ok(off.provider === "codex" && off.model === "c-1" && off.independence?.adaptive === true && off.independence.level === "vendor" && tt.status === "done" && tt.provider === "codex" && tt.independence === "vendor" && trec.data.independence === "vendor"
+      && auxes.at(-1)?.member?.provider === "codex" && auxes.at(-1).member.independence === "vendor",
+      "a branch room picks its tutor with the adaptive selection (the approved reviewer held, another vendor runnable) and records its independence on the turn, the ledger and the seat's member", JSON.stringify([off, tt?.independence, trec?.data?.independence, auxes.at(-1)?.member])); }
   globalThis.fetch = realFetch; H.stop();
 }
 
@@ -314,6 +326,9 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const script: any[][] = [], prompts: { text: string }[] = [], selects: any[] = [], tutor = scriptedTutor(H, script, prompts);
   E.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ run: x.run.id, node: x.node.id, role: c?.role, pick: p }); return { ...tutor(p.provider, p.model), reasoningEffort: p.effort ?? null } as any; };
   const localBefore = JSON.stringify({ refs: must(local, ["for-each-ref"]), objects: must(local, ["count-objects", "-v"]), status: must(local, ["status", "--porcelain"]) });
+  // another vendor is usable too: a host room still runs on the project's crew reviewer, never adaptive
+  (E.deps as any).usableModels = () => [{ provider: "codex", model: "other-model", efforts: ["medium"], verified: true, runnable: true, isDefault: true }, { provider: "claude", model: "reviewer-model", efforts: [], verified: true, runnable: true }];
+  const auxes: any[] = [], realReceipt = E.deps.instructionReceipt; E.deps.instructionReceipt = (...a: any[]) => { auxes.push(a[4]); return (realReceipt as any)(...a); };
   headAs(A); const opened: any = await room.openPr("https://github.com/fixture/project/pull/5"), v0: any = room.view(opened.id);
   ok(v0.task === null && v0.offer?.provider === "claude" && v0.offer.model === "reviewer-model" && v0.offer.effort === "high" && !E.list().some((r: any) => r.workflow === "review-room-host"),
     "an external pull request's room offers the project's approved crew reviewer; nothing is made before the captain confirms", JSON.stringify(v0.offer));
@@ -334,6 +349,8 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   ok(teamWrites === 1, "the team's staffing is written only once the captain confirmed, as the host is made", String(teamWrites));
   ok(host.by === "captain (desktop test)" && room.taskEntry(host)?.href === `#/room/${opened.id}` && room.taskEntry(host)?.host === true, "the host Task is started by the captain who confirmed, and its page links back to the pull request's room", JSON.stringify([host.by, room.taskEntry(host)]));
   const turnRec = E.trusted(host.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
+  ok(v0.offer.independence?.adaptive === false && v0.offer.independence.level === null && v0.offer.independence.outside === false && v1.turns.at(-1).independence === undefined && turnRec?.data.independence === null && auxes.filter(Boolean).length > 0 && auxes.filter(Boolean).every((x) => !("member" in x)),
+    "a host room stays on the project's crew reviewer even with another vendor usable: not adaptive, no independence level, none written, and the seat names no other member", JSON.stringify([v0.offer.independence, v1.turns.at(-1).independence, turnRec?.data?.independence, auxes.map((x) => x && Object.keys(x))]));
   ok(turnRec?.data.subject.url === "https://github.com/fixture/project/pull/5" && turnRec.data.subject.head === A && turnRec.data.provider === "claude", "the turn is on the host's ledger with the pull request and its head", JSON.stringify(turnRec?.data?.subject));
   // the pull request moves on: the next turn opens with what changed, still on the same host
   writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\n"); must(scratch, [...id, "commit", "-qam", "Add three"]); const B = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${B}:refs/pull/5/head`]);
