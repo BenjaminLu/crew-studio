@@ -26,6 +26,7 @@ export type GoldSet={schema:1;project:string;captain:Record<string,GoldLabel>;de
 export const GOLD_SCHEMA=1, TEMPLATE_SCHEMA=1, SCORE_SCHEMA=1;
 const STATES:GoldState[]=['present','fixed?','not-code','not-found'];
 const FIELDS=['state','files','security','category','notPlanned','package'] as const;
+const cmp=(x:string,y:string)=>x<y?-1:x>y?1:0;
 
 /** The rules the scorer runs: the live functions of src/domain/issue-triage.ts, so a changed rule changes the score. */
 export const RULES={parseReport:triage.parseReport,verifyReport:triage.verifyReport,compareReports:triage.compareReports,proposePackages:triage.proposePackages};
@@ -44,7 +45,7 @@ export function effectiveGold(g:GoldSet):Record<string,GoldLabel&{sources:Partia
 // ---------- derived labels: from what Studio records already ----------
 /** Gold read from the records: on categories, the captain's moves, planned tags and "not planned" (a merge only follows the
  *  model's own category, so it is not a judgement); on the triage, every package the captain approved or joined a match
- *  to (its members belong together), and every issue whose Task merged (the problem was there). A decline is not kept by
+ *  to (its members belong together), and every issue whose Task merged (the problem was there; not for a recheck package). A decline is not kept by
  *  the triage record (the package is dropped), so it gives nothing. */
 export function mineDerived(o:{triage:TriageRecord|null;categories:CategoryRecord|null;work?:(proposal:string)=>WorkState;at:string}):Record<string,GoldLabel>{
  const out:Record<string,GoldLabel>={};
@@ -55,12 +56,15 @@ export function mineDerived(o:{triage:TriageRecord|null;categories:CategoryRecor
  for(const p of o.triage?.packages??[]){
   const judged=p.status==='approved'||!!p.approvedBy||!!p.joins?.length;
   if(judged)for(const n of p.members)put(n,{package:p.id},p.joins?.length?'captain: joined a match':'captain: approved');
-  for(const[k,w]of Object.entries(p.work??{}))if(o.work?.(w.proposal)==='merged')put(Number(k),{state:'present',package:p.id},'work merged');}
+  // a recheck asks whether earlier work already fixed the issue: its Task merging says nothing about the problem's state
+  for(const[k,w]of Object.entries(p.work??{}))if(o.work?.(w.proposal)==='merged')put(Number(k),p.kind==='recheck'?{package:p.id}:{state:'present',package:p.id},'work merged');}
  return out;
 }
 
 // ---------- the captain's labels: a template prefilled with the current answers, edited, imported ----------
 type Row={n:number;title:string;stratum:string;reviewed:boolean;model:Record<string,unknown>;gold:Partial<GoldLabel>};
+/** One investigator's answer on an issue, as the template and the scorer show it. */
+export type Answer={state:GoldState;files:string[];security:'yes'|'no'};
 export type Template={schema:1;kind:'issue-eval-labels';project:string;createdAt:string;note:string;rows:Row[]};
 const rank=(seed:string,n:number)=>createHash('sha256').update(`${seed}\0${n}`).digest('hex');
 /** The issues the records know: the triage's and the categories'. */
@@ -70,22 +74,26 @@ export function knownIssues(t:TriageRecord|null,c:CategoryRecord|null):Set<numbe
 /** A stratified sample to label: strata are category × whether the two investigators agreed (or nobody investigated),
  *  taken in turn so each is represented; within one, a fixed order from the seed. Issues the captain labeled are left out.
  *  Each row's gold is prefilled with the current answer; only rows marked reviewed are imported. */
-export function labelTemplate(o:{project:string;triage:TriageRecord|null;categories:CategoryRecord|null;gold:GoldSet|null;sample:number;seed:string;at:string}):Template{
+export function labelTemplate(o:{project:string;triage:TriageRecord|null;categories:CategoryRecord|null;gold:GoldSet|null;sample:number;seed:string;at:string;
+ /** each investigator's own answer per issue, from the stored reports (replay(...).preds) */
+ reports?:Map<number,{a?:Answer;b?:Answer}>}):Template{
  const t=o.triage,c=o.categories,done=new Set(Object.keys(o.gold?.captain??{}).map(Number));
  const pkg=new Map<number,string>();for(const p of t?.packages??[])for(const n of p.members)pkg.set(n,p.id);
  const strata=new Map<string,number[]>();
  for(const n of [...knownIssues(t,c)].filter(n=>!done.has(n)).sort((a,b)=>a-b)){const i=t?.issues[String(n)],cat=c?.assignments[String(n)]?.category||'-';
   const s=`${cat}|${i?.investigated&&i.agree!==undefined?(i.agree?'agree':'disagree'):'not investigated'}`;strata.set(s,[...(strata.get(s)??[]),n]);}
- for(const ns of strata.values())ns.sort((a,b)=>rank(o.seed,a)<rank(o.seed,b)?-1:1);
+ for(const ns of strata.values())ns.sort((a,b)=>cmp(rank(o.seed,a),rank(o.seed,b))||a-b);
  const keys=[...strata.keys()].sort(),picked:{n:number;s:string}[]=[];
  for(let round=0;picked.length<o.sample&&keys.some(k=>strata.get(k)!.length>round);round++)for(const k of keys){const n=strata.get(k)![round];if(n!==undefined&&picked.length<o.sample)picked.push({n,s:k});}
  const rows=picked.sort((a,b)=>a.n-b.n).map(({n,s})=>{const i=t?.issues[String(n)],a=c?.assignments[String(n)];
-  const files=[...new Set((i?.locus??[]).map(l=>normalize(l.file)))];
+  const files=[...new Set((i?.locus??[]).map(l=>normalize(l.file)))],diff=new Set(i?.diff??[]),r=o.reports?.get(n);
+  // where the two investigators disagree (the record's diff), the gold is left for the captain to decide
+  const both=!diff.has('missing');
   return{n,title:i?.title??c?.titles?.[String(n)]??'',stratum:s,reviewed:false,
-   model:{investigated:!!i?.investigated,agree:i?.agree??null,diff:i?.diff??[],checked:i?.checked??null,state:i?.state??null,files,security:i?.security?'yes':'no',category:a?.category||null,categoryBy:a?.by??null,
+   model:{investigated:!!i?.investigated,agree:i?.agree??null,diff:[...diff],checked:i?.checked??null,a:r?.a??null,b:r?.b??null,studio:{state:i?.state??null,files,security:i?.security?'yes':'no'},category:a?.category||null,categoryBy:a?.by??null,
     categoryName:c?.categories.find(x=>x.id===a?.category)?.name??(a?.category===PLANNED?PLANNED:null),package:pkg.get(n)??null},
-   gold:{...(i?.state?{state:i.state}:{}),...(files.length?{files}:{}),...(i?.investigated?{security:(i.security?'yes':'no') as 'yes'|'no'}:{}),...(a?.category?{category:a.category}:{}),...(pkg.has(n)?{package:pkg.get(n)}:{})}};});
- return{schema:1,kind:'issue-eval-labels',project:o.project,createdAt:o.at,note:'Prefilled with the current answers. Correct each row\'s gold (state: present | fixed? | not-code | not-found; files: paths in the checkout; security: yes | no; category: C-n or PLANNED, or notPlanned: true; package: any key, one key per work package), drop a field you cannot judge, set reviewed: true, then import. Rows not reviewed are skipped.',rows};
+   gold:{...(i?.state&&both&&!diff.has('state')?{state:i.state}:{}),...(files.length&&both&&!diff.has('location')?{files}:{}),...(i?.investigated&&both&&!diff.has('security')?{security:(i.security?'yes':'no') as 'yes'|'no'}:{}),...(a?.category?{category:a.category}:{}),...(pkg.has(n)?{package:pkg.get(n)}:{})}};});
+ return{schema:1,kind:'issue-eval-labels',project:o.project,createdAt:o.at,note:'Prefilled with the current answers, except where the two investigators disagree (model.diff): decide those. Correct each row\'s gold (state: present | fixed? | not-code | not-found; files: paths in the checkout; security: yes | no; category: C-n or PLANNED, or notPlanned: true; package: any key, one key per work package), drop a field you cannot judge, set reviewed: true, then import. Rows not reviewed are skipped.',rows};
 }
 
 const inside=(f:string)=>!!f&&!isAbsolute(f)&&!normalize(f).split(/[\\/]/).some(p=>p==='..'||p==='.git');
@@ -123,32 +131,35 @@ export function parseLabels(raw:any,o:{project:string;triage:TriageRecord|null;c
 // ---------- the scorer ----------
 /** One stored triage batch: its two reports, its snapshot and the code at the report's commit. */
 export type Replay={run:string;at:string;a:unknown;b:unknown;snapshot:Snapshot;read:(file:string)=>string|null;skills?:string[]};
-type Answer={state:GoldState;files:string[];security:'yes'|'no'};
 export type Prediction={run:string;a?:Answer;b?:Answer;
  /** what Studio does with the issue: answered only when it is in a work package both reports agree on */
- studio?:Answer;securityFlag:boolean;agree:boolean;checked:boolean;package:string|null;human:boolean};
+ studio?:Answer;securityFlag:boolean;agree:boolean;package:string|null;human:boolean};
 const answer=(f?:Finding):Answer|undefined=>f&&{state:f.state,files:[...new Set(f.locus.map(l=>normalize(l.file)))],security:f.security};
 /** Each stored batch through the current rules; an issue investigated twice is answered by its latest batch, as the
  *  stored triage keeps it. Packages are each batch's own (the cross-batch match is not replayed). */
 export function replay(batches:Replay[],rules:Rules=RULES){
  const preds=new Map<number,Prediction>(),skipped:{run:string;why:string}[]=[];let toHuman=0,packages=0;
- for(const r of [...batches].sort((x,y)=>x.at<y.at?-1:x.at>y.at?1:x.run<y.run?-1:1)){
+ for(const r of [...batches].sort((x,y)=>cmp(x.at,y.at)||cmp(x.run,y.run))){
   let a:Report,b:Report;try{a=rules.parseReport(r.a);b=rules.parseReport(r.b);}catch(e:any){skipped.push({run:r.run,why:String(e?.message??e).slice(0,200)});continue;}
   const va=new Map(rules.verifyReport(a,r.snapshot,r.read).map(c=>[c.n,c])),vb=new Map(rules.verifyReport(b,r.snapshot,r.read).map(c=>[c.n,c]));
-  const cmp=new Map(rules.compareReports(a,b).map(c=>[c.n,c])),plan=rules.proposePackages(a,b,r.snapshot,r.read);
+  const cmpd=new Map(rules.compareReports(a,b).map(c=>[c.n,c])),plan=rules.proposePackages(a,b,r.snapshot,r.read);
   const inPkg=new Map<number,string>();plan.packages.forEach((p,i)=>p.members.forEach(n=>inPkg.set(n,`${r.run}#${i+1}`)));
   packages+=plan.packages.length;toHuman+=plan.toHuman.length;
   for(const n of new Set([...a.issues,...b.issues].map(f=>f.n))){const fa=a.issues.find(f=>f.n===n),fb=b.issues.find(f=>f.n===n),key=inPkg.get(n)??null;
    const sa=answer(fa),sb=answer(fb),studio=key&&sa?{...sa,files:[...new Set([...sa.files,...(sb?.files??[])])].sort()}:undefined;
-   preds.set(n,{run:r.run,a:sa,b:sb,studio,securityFlag:!!(va.get(n)?.security||vb.get(n)?.security),agree:!!cmp.get(n)?.agree,checked:!!(va.get(n)?.ok&&vb.get(n)?.ok),package:key,human:!key});}}
+   preds.set(n,{run:r.run,a:sa,b:sb,studio,securityFlag:!!(va.get(n)?.security||vb.get(n)?.security),agree:!!cmpd.get(n)?.agree,package:key,human:!key});}}
  return{preds,skipped,packages,toHuman};
 }
 
 /** The categorizer's answer per issue: the record's own where the model filed it; where the captain changed it, what the
  *  categorizer's latest report said (given). Either way a merged category is followed to the one it was merged into. */
+/** A category id followed through merges to the category that holds its issues now (PLANNED and unknown ids unchanged). */
+export function followMerged(rec:CategoryRecord|null):(id:string)=>string{
+ return id=>{for(let i=0;i<20&&rec;i++){const c=rec.categories.find(x=>x.id===id);if(c?.status==='merged'&&c.mergedInto){id=c.mergedInto;continue;}return id;}return id;};
+}
 export function categoryAnswers(rec:CategoryRecord|null,fromReports:Map<number,string>=new Map()):Map<number,string>{
  const out=new Map<number,string>();if(!rec)return out;
- const follow=(id:string)=>{for(let i=0;i<20;i++){const c=rec.categories.find(x=>x.id===id);if(c?.status==='merged'&&c.mergedInto){id=c.mergedInto;continue;}return id;}return id;};
+ const follow=followMerged(rec);
  for(const[k,a]of Object.entries(rec.assignments)){const n=Number(k);if(a.by==='model'&&a.category)out.set(n,follow(a.category));else if(fromReports.has(n))out.set(n,follow(fromReports.get(n)!));}
  return out;
 }
@@ -156,7 +167,7 @@ export function categoryAnswers(rec:CategoryRecord|null,fromReports:Map<number,s
  *  a NEW name by the category that run made, or one already holding that name). */
 export function reportCategories(rec:CategoryRecord,runs:{run:string;at:string;mode:'build'|'file';report:any}[]):Map<number,string>{
  const out=new Map<number,string>();
- for(const r of [...runs].sort((x,y)=>x.at<y.at?-1:1)){const made=rec.categories.filter(c=>c.createdBy.startsWith(`${r.run} (`)),byName=(name:string)=>{const k=String(name??'').trim().toLowerCase();return(made.find(c=>c.name.trim().toLowerCase()===k)??rec.categories.find(c=>c.name.trim().toLowerCase()===k))?.id;};
+ for(const r of [...runs].sort((x,y)=>cmp(x.at,y.at)||cmp(x.run,y.run))){const made=rec.categories.filter(c=>c.createdBy.startsWith(`${r.run} (`)),byName=(name:string)=>{const k=String(name??'').trim().toLowerCase();return(made.find(c=>c.name.trim().toLowerCase()===k)??rec.categories.find(c=>c.name.trim().toLowerCase()===k))?.id;};
   if(r.mode==='build'){(r.report?.categories??[]).forEach((c:any,i:number)=>{const id=made[i]?.id??byName(c.name);if(id)for(const n of c.issues??[])out.set(Number(n),id);});for(const p of r.report?.planned??[])out.set(Number(p.n),PLANNED);}
   else for(const a of r.report?.assign??[]){const id=a.category==='NEW'?byName(a.new_name):a.category;if(id)out.set(Number(a.n),id);}}
  return out;
@@ -176,31 +187,47 @@ function fileOverlap(rows:{gold:string[];pred?:string[]}[]){const ans=rows.filte
  return{gold:rows.length,answered:ans.length,coverage:rate(ans.length,rows.length),hit:rate(hit,ans.length),precision:rate(inter,p),recall:rate(inter,g)};}
 const pairs=(ns:number[],key:(n:number)=>string|null|undefined)=>{const s=new Set<string>();for(let i=0;i<ns.length;i++)for(let j=i+1;j<ns.length;j++){const a=key(ns[i]),b=key(ns[j]);if(a&&a===b)s.add(`${ns[i]},${ns[j]}`);}return s;};
 
-/** Every field against the gold set: per predictor (investigator A, B, and what Studio does with the two), the share
- *  routed to a person, and package membership as pairs of issues put together. */
-export function score(o:{gold:GoldSet;replayed:ReturnType<typeof replay>;categories:Map<number,string>}){
- const gold=Object.values(effectiveGold(o.gold)),P=o.replayed.preds,who=['a','b','studio'] as const;
- const on=<K extends 'state'|'security'>(k:K)=>gold.filter(l=>l[k]!==undefined);
+type Eff=ReturnType<typeof effectiveGold>[string];
+/** The metrics of one gold list. Package pairs are counted only within one replayed batch: the replay does not repeat
+ *  the cross-batch match, so a gold pair whose issues were answered by different batches is counted apart (crossBatch)
+ *  instead of as a miss; an issue whose gold package spans batches is left out of `exact` the same way. */
+function metrics(gold:Eff[],P:Map<number,Prediction>,cats:Map<number,string>,follow:(id:string)=>string){
+ const who=['a','b','studio'] as const,on=<K extends 'state'|'security'>(k:K)=>gold.filter(l=>l[k]!==undefined);
  const state=Object.fromEntries(who.map(w=>[w,field(on('state').map(l=>({gold:l.state!,pred:P.get(l.n)?.[w]?.state})),STATES)]));
  const security=Object.fromEntries(who.map(w=>[w,field(on('security').map(l=>({gold:l.security!,pred:w==='studio'?(P.has(l.n)?(P.get(l.n)!.securityFlag?'yes':'no') as 'yes'|'no':undefined):P.get(l.n)?.[w]?.security})),['yes','no'])]));
  const files=Object.fromEntries(who.map(w=>[w,fileOverlap(gold.filter(l=>l.files?.length).map(l=>({gold:l.files!,pred:P.get(l.n)?.[w]?.files})))]));
- const catRows=gold.filter(l=>l.category!==undefined).map(l=>({gold:l.category!,pred:o.categories.get(l.n)}));
- const planRows=gold.filter(l=>l.category!==undefined||l.notPlanned).map(l=>({gold:l.category===PLANNED?'planned':'not planned',pred:o.categories.has(l.n)?(o.categories.get(l.n)===PLANNED?'planned':'not planned'):undefined}));
+ // a gold category merged since it was labeled is the category it was merged into, as the answers are
+ const catRows=gold.filter(l=>l.category!==undefined).map(l=>({gold:follow(l.category!),pred:cats.get(l.n)}));
+ const planRows=gold.filter(l=>l.category!==undefined||l.notPlanned).map(l=>({gold:l.category===PLANNED?'planned':'not planned',pred:cats.has(l.n)?(cats.get(l.n)===PLANNED?'planned':'not planned'):undefined}));
  const {classes:_none,...cat}=field(catRows,[] as string[]),category={...cat,planned:field(planRows,['planned','not planned']).classes.planned};
  const pk=gold.filter(l=>l.package!==undefined).map(l=>l.n).sort((a,b)=>a-b),gk=new Map(gold.map(l=>[l.n,l.package]));
- const gp=pairs(pk,n=>gk.get(n)),pp=pairs(pk,n=>P.get(n)?.package),both=[...pp].filter(x=>gp.has(x)).length;
- const same=(a:number[],b:number[])=>a.length===b.length&&a.every((x,i)=>x===b[i]);
- const exact=pk.filter(n=>{const k=P.get(n)?.package;if(!k)return false;return same(pk.filter(m=>gk.get(m)===gk.get(n)),pk.filter(m=>P.get(m)?.package===k));}).length;
+ const run=(n:number)=>P.get(n)?.run,apart=(x:string)=>{const[a,b]=x.split(',').map(Number);return!!run(a)&&!!run(b)&&run(a)!==run(b);};
+ const all=pairs(pk,n=>gk.get(n)),gp=new Set([...all].filter(x=>!apart(x))),pp=pairs(pk,n=>P.get(n)?.package),both=[...pp].filter(x=>gp.has(x)).length;
+ const same=(a:number[],b:number[])=>a.length===b.length&&a.every((x,i)=>x===b[i]),group=(n:number)=>pk.filter(m=>gk.get(m)===gk.get(n));
+ const one=pk.filter(n=>group(n).every(m=>!run(m)||!run(n)||run(m)===run(n)));
+ const exact=one.filter(n=>{const k=P.get(n)?.package;if(!k)return false;return same(group(n),pk.filter(m=>P.get(m)?.package===k));}).length;
+ return{state,files,security,category,
+  package:{gold:pk.length,pairs:{gold:gp.size,predicted:pp.size,precision:rate(both,pp.size),recall:rate(both,gp.size),crossBatch:all.size-gp.size},exact:rate(exact,one.length),exactOf:one.length}};
+}
+/** Every field against the gold set: per predictor (investigator A, B, and what Studio does with the two), the share
+ *  routed to a person, and package membership as pairs of issues put together. The headline uses the effective gold
+ *  (the captain's fields over derived ones); `bySource` scores the captain's labels and the derived ones apart, since
+ *  derived package gold comes from the very packages Studio proposed and is circular on its own. */
+export function score(o:{gold:GoldSet;replayed:ReturnType<typeof replay>;categories:Map<number,string>;follow?:(id:string)=>string}){
+ const eff=effectiveGold(o.gold),gold=Object.values(eff),P=o.replayed.preds,follow=o.follow??(id=>id);
+ const only=(src:'captain'|'derived')=>Object.values(o.gold[src]).map(l=>({...l,sources:{}}) as Eff);
  const investigated=P.size,human=[...P.values()].filter(p=>p.human).length;
  return{gold:{issues:gold.length,captain:gold.filter(l=>l.source==='captain').length,derived:gold.filter(l=>l.source==='derived').length,
    fields:Object.fromEntries(FIELDS.map(f=>[f,gold.filter(l=>l[f]!==undefined).length]))},
-  state,files,security,category,
-  package:{gold:pk.length,pairs:{gold:gp.size,predicted:pp.size,precision:rate(both,pp.size),recall:rate(both,gp.size)},exact:rate(exact,pk.length)},
+  ...metrics(gold,P,o.categories,follow),
+  bySource:{captain:metrics(only('captain'),P,o.categories,follow),derived:metrics(only('derived'),P,o.categories,follow)},
   human:{investigated,routed:human,share:rate(human,investigated),agreed:[...P.values()].filter(p=>p.agree).length,packages:o.replayed.packages,toHumanItems:o.replayed.toHuman},
   runs:{skipped:o.replayed.skipped}};
 }
-/** A score's key: the skills that wrote the replayed reports, and the code that judged them. */
-export function scoreKey(o:{skills:string[];commit:string;rules:string;dirty:boolean}){
+/** The gold set's own hash, so a score of a grown gold set never replaces an earlier one. */
+export const goldHash=(g:GoldSet)=>{const e=effectiveGold(g);return createHash('sha256').update(JSON.stringify(Object.keys(e).sort((a,b)=>Number(a)-Number(b)).map(n=>{const{at:_a,from:_f,sources:_s,...l}=e[n] as any;return l;}))).digest('hex');};
+/** A score's key: the skills that wrote the replayed reports, the code that judged them, and the gold it was scored on. */
+export function scoreKey(o:{skills:string[];commit:string;rules:string;dirty:boolean;gold:string}){
  const skills=createHash('sha256').update([...new Set(o.skills)].sort().join('\n')).digest('hex');
- return{key:`${skills.slice(0,12)}-${o.commit.slice(0,12)}${o.dirty?`-${o.rules.slice(0,8)}`:''}`,skills};
+ return{key:`${skills.slice(0,12)}-${o.commit.slice(0,12)}-g${o.gold.slice(0,8)}${o.dirty?`-${o.rules.slice(0,8)}`:''}`,skills};
 }

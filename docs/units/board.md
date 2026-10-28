@@ -288,4 +288,4 @@ Board has no Issues view).
 ### Measuring triage and categories
 
 A gold set per project (in the data directory only) and an offline scorer that replays the stored investigator reports
-through the current rules: `bun scripts/issue-eval.ts label|import|score <project>` (docs/units/issue-eval.md).
+through the current rules: `bun scripts/issue-eval.ts mine|label|import|score <project>` (docs/units/issue-eval.md).

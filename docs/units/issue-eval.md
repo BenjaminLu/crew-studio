@@ -15,8 +15,9 @@ Only in Studio's data directory, next to the project's triage and categories, ne
     data/issue-eval/<project>/labels-<time>.json templates written for labeling
     data/issue-eval/<project>/scores/<key>.json  one file per score
 
-The script refuses to write a template or a score into the checkout (outside the data directory). Tests use neutral
-synthetic fixtures in a temporary data directory.
+The script refuses a data directory (`--data`, `$CREW_DATA`) or an `--out` file inside the checkout unless git ignores
+that path (the checkout's own `data/` is ignored); symbolic links are resolved first. Files are written with mode 0600
+in folders made 0700. Tests use neutral synthetic fixtures in a temporary data directory.
 
 A gold label is one issue's answer; every field is optional and scored only where it is given:
 
@@ -41,7 +42,8 @@ does this too):
 - **Triage record.** Every package the captain approved (`approvedBy`, or status approved) or joined a cross-batch match
   to (`joins`): its members get that package's id as `package`.
 - **Merged work.** A package issue whose Task merged (its proposal's child Task succeeded through its done step, read
-  as `src/issue-triage-workflow.ts` reads it) gets `state: present`.
+  as `src/issue-triage-workflow.ts` reads it) gets `state: present`; a recheck package's issue gets only its `package`
+  (a recheck asks whether earlier work fixed it, so its Task merging says nothing about the state).
 
 Not derivable: a declined package (the triage record drops it and keeps no trace beyond its id never being reused), a
 declined category's former members (the record releases them), a match the captain kept apart (the new package does
@@ -55,15 +57,18 @@ into a category that is later merged is overwritten by the merge (`merged by …
 
 writes a template (JSON) of a stratified sample: strata are category × whether the two investigators agreed (or nobody
 investigated), taken in turn so each one is represented; within one, a fixed order from the seed (the project id by
-default). Issues the captain labeled before are left out. Each row shows the current answers (both investigators'
-agreement, the state, files, security, category and package) and a `gold` prefilled with them. The captain corrects
-`gold`, drops a field they cannot judge, sets `"reviewed": true`, and imports:
+default). Issues the captain labeled before are left out. Each row's `model` shows investigator A's and B's own answers
+(from the stored reports), where they disagree (`diff`), what Studio kept, the category and the package. `gold` is
+prefilled with the current answer, except for a field the two investigators disagree on (state, location, security, or
+everything when one did not report the issue): that one is left empty for the captain to decide. The captain corrects
+`gold`, drops a field they cannot judge, sets `"reviewed": true` (exactly `true`), and imports:
 
     bun scripts/issue-eval.ts import <project> <file>
 
 Rows not reviewed are skipped. Any bad row refuses the whole file, every problem listed: a state or security answer
 outside the skill's words, an issue neither the triage nor the categories know, a category that is not open, a path
-outside the checkout, a file for another project or of another schema.
+outside the checkout, an issue twice, an unknown field, planned and `notPlanned` together, a file for another project
+or of another schema. Only an active or proposed category is accepted (not a declined or merged one).
 
 ## Scoring
 
@@ -75,9 +80,12 @@ replays every stored triage batch of the project (`data/runs/<task>/issue-snapsh
 copied: a changed rule changes the score. The pinned checkout is removed after each triage, so the code is read from
 the project's repository at each report's commit (`git cat-file`, nothing written): `--repo`, else the project's
 GitHub folder. Without it, or for a commit the repository lacks, every quoted line fails the check and the score says
-so. An issue investigated twice is answered by its latest batch; packages are each batch's own (the cross-batch match
-is not replayed). Categories are the current categories record; where the captain changed an issue's category, the
-categorizer's own answer comes from its stored report in the run's `run.json`.
+so. An issue investigated twice is answered by its latest batch. Packages are each batch's own: the cross-batch match
+(and a captain's join of one) is not replayed, so a gold pair whose issues were answered by different batches is not
+scored as a miss but counted apart (`package.pairs.crossBatch`), and an issue whose gold package spans batches is left
+out of `exact` (`exactOf` says how many count). Categories are the current categories record; where the captain changed
+an issue's category, the categorizer's own answer comes from its stored report in the run's `run.json`. A merged
+category, in an answer or in the gold, is followed to the one it was merged into.
 
 Per predictor (investigator A, investigator B, and `studio`: what Studio does with the two, answering only for issues in
 a package both agree on; for security, Studio's flag from either report or a label):
@@ -90,9 +98,16 @@ a package both agree on; for security, Studio's flag from either report or a lab
   gold set;
 - **human**: the share of investigated issues routed to a person (in no package).
 
-The result (`schema 1`, `kind: issue-eval-score`) is keyed by `<skills>-<commit>`: a hash of the role-skill sha256s the
-replayed reports' steps recorded (and the categorizer's), and the Studio commit; uncommitted changes to the domain
-files add a hash of them. It also records the current bundled skills' hashes. Comparing two score files compares two
+The headline numbers use the effective gold (the captain's fields over derived ones). `bySource.captain` and
+`bySource.derived` score each source alone: derived package gold comes from packages Studio itself proposed (and the
+captain approved), so on its own it is circular and only shows what the captain accepted; read the captain's numbers
+for how good the rules are.
+
+The result (`schema 1`, `kind: issue-eval-score`) is keyed by `<skills>-<commit>-g<gold>`: a hash of the role-skill
+sha256s the replayed reports' steps recorded (and the categorizer's, each step's latest turn), the Studio commit, and a
+hash of the gold labels (so a grown gold set never replaces an earlier score). Uncommitted changes to the scoring code
+(`src/domain/issue-triage.ts`, `src/domain/issue-categories.ts`, `src/domain/issue-eval.ts`,
+`src/issue-eval-store.ts`, `scripts/issue-eval.ts`) add a hash of them. It also records the current bundled skills' hashes. Comparing two score files compares two
 skill sets or two rule sets on the same reports.
 
 Tests: `tests/issue-eval.ts` (the reader, mining, the template, import refusals, the scoring math on a hand-computed
