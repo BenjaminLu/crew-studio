@@ -4,8 +4,9 @@
 .nav-proj{display:flex;flex-direction:column;margin-top:10px;padding-top:0;border-top:1px solid var(--border);min-height:0;overflow:hidden}
 .nav-proj-h{flex:none;display:flex;align-items:center;gap:6px;padding:8px 4px 4px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);min-height:26px;background:var(--surface)}
 .nav-proj-list{display:flex;flex-direction:column;gap:2px;min-height:0;overflow:auto;overscroll-behavior:contain}
-/* the list scrolls above the footer: the heading stays, and a fade with a line marks rows below the fold */
-.nav-proj{flex:0 1 auto}
+/* the list takes the sidebar down to the footer and scrolls there: the heading stays, and a fade with a line marks rows
+   below the fold. In a short window the menu scrolls before the list goes below its heading and one row. */
+.nav-proj{flex:1 1 0;min-height:96px}.nav-proj-list{flex:1 1 0;min-height:46px}
 .nav-proj-list[data-more="1"]{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);border-bottom:1px solid var(--border)}
 .nav-proj-h a{color:inherit;text-decoration:none}
 .nav-proj-h a:hover{color:var(--text)}
@@ -29,7 +30,7 @@
 .pmark.p2{background:var(--a2);color:var(--a2t)}.pmark.p3{background:var(--a3);color:var(--a3t)}.pmark.p6{background:var(--a6);color:var(--a6t)}
 /* collapsed sidebar: marks only */
 @media (min-width: 761px){
-  body.side-collapsed .nav-proj{align-items:center;padding-top:8px}
+  body.side-collapsed .nav-proj{align-items:center;padding-top:8px;min-height:60px}
   body.side-collapsed .nav-proj-list{align-items:center}
   body.side-collapsed .nav-proj-h{display:none}
   body.side-collapsed .pj-item{width:40px;min-height:40px;padding:0;display:grid;place-items:center;grid-template-columns:1fr;position:relative}

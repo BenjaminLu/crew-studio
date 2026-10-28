@@ -78,6 +78,17 @@ try {
       const sr = sec.getBoundingClientRect(), fr = foot.getBoundingClientRect(), last = sec.querySelector('[data-project-row="studio"]').getBoundingClientRect();
       return { secBottom: sr.bottom, footTop: fr.top, lastTop: last.top, lastBottom: last.bottom, secTop: sr.top, scrolls: sec.scrollHeight > sec.clientHeight, moreAtTop, moreAtEnd: sec.dataset.more }; });
     ok(side.secBottom <= side.footTop + 0.5 && side.lastBottom <= side.secBottom + 0.5 && side.lastTop >= side.secTop, 'at 1280x900 the projects list scrolls above the footer; its last row is fully visible when scrolled', JSON.stringify(side));
+    ok(side.footTop - side.secBottom <= 24, 'a long projects list takes the sidebar down to its footer, not a fixed short box', JSON.stringify(side));
+    const navFit = await p.evaluate(() => { const n = document.querySelector('.side .nav'); return { sh: n.scrollHeight, ch: n.clientHeight }; });
+    ok(navFit.sh <= navFit.ch + 1, 'the long list takes only the space below the menu: every menu item still shows', JSON.stringify(navFit));
+    // a short window: the list shrinks first, but its heading and at least its first row still show, open and collapsed
+    for (const [w, hgt] of [[1280, 600], [1000, 500]]) for (const collapsed of [false, true]) {
+      await p.setViewportSize({ width: w, height: hgt }); await p.evaluate((c) => document.body.classList.toggle('side-collapsed', c), collapsed); await p.waitForTimeout(150);
+      const short = await p.evaluate(() => { const sec = document.querySelector('[data-projects-nav]'), list = sec.querySelector('[data-projects-list]'); list.scrollTop = 0; const hdr = sec.querySelector('.nav-proj-h'), row = list.querySelector('.pj-item');
+        const sr = sec.getBoundingClientRect(), lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect(), hr = hdr.getBoundingClientRect(), hidden = getComputedStyle(hdr).display === 'none';
+        return { hdrShows: hidden || (hr.top >= sr.top - 0.5 && hr.bottom <= sr.bottom + 0.5 && hr.height > 0), rowShows: rr.top >= lr.top - 0.5 && rr.bottom <= lr.bottom + 0.5, list: lr.height, sec: sr.height }; });
+      ok(short.hdrShows && short.rowShows, `at ${w}x${hgt}${collapsed ? ' collapsed' : ''} the projects heading and the first project still show`, JSON.stringify(short)); }
+    await p.evaluate(() => document.body.classList.remove('side-collapsed')); await p.setViewportSize({ width: 1280, height: 900 });
     ok(side.scrolls && side.moreAtTop === '1' && side.moreAtEnd === '0', 'a list that runs on past the footer says so (a fade and a "more" mark) until it is scrolled to the end', JSON.stringify(side));
     await p.evaluate(() => { document.querySelector('[data-projects-list]').scrollTop = 0; });
     await p.screenshot({ path: join(shots, 'sidebar-1280x900-overflowing.png'), clip: { x: 0, y: 0, width: 240, height: 900 } });

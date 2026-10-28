@@ -129,6 +129,9 @@ try {
   r = await runOf({ issues: [99] });
   ok(r.status === "succeeded" && r.nodes.empty?.visits === 1 && r.nodes.a?.visits === 0 && H.agents.jobs.size === jobs, "when none of the named issues is open the triage ends without an investigator", `${r.status} ${H.agents.jobs.size - jobs}`);
 
+  { const kept2 = open; open = []; const none = await runOf();
+    ok(none.status === "succeeded" && /no open issue/.test(String(none.nodes.snapshot?.note)), "a repository with no open issue says so", String(none.nodes.snapshot?.note)); open = kept2; }
+
   // --- 3. an issue edited while it is investigated goes to a person ---
   reset2(); open = [...open, issue(4, { title: "Second url match" })];
   script = () => [{ tool: "issue_read", args: { n: 1 } }, { tool: "triage_submit", args: { report: { commit, issues: [finding(2, { locus: [{ file: "src/clip.ts", symbol: "setClipboard", lines: "1-3" }], evidence: "Clipboard.setString(payload)", security: "yes" }), finding(4)], groups: [], related: [], alone: [2, 4] } } }];

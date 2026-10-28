@@ -66,7 +66,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const commit=must(record.github!.localPath,['rev-parse','--verify',`${record.github!.base}^{commit}`]);if(!SHA.test(commit))throw new Error('The base branch does not resolve to a commit');
   const named=String(x.run.params.issues??'').split(/[\s,#]+/).filter(Boolean).map(Number).filter(Number.isSafeInteger);
   const batch=pickBatch(snap,store.get(project),{size:Number(x.run.params.size)||15,issues:named});
-  if(!batch.length){x.rn.note=named.length?'none of the named issues is open':'every open issue is already investigated at its current text';return 'empty';}
+  if(!batch.length){x.rn.note=!snap.issues.length?`${snap.repository} has no open issue`:named.length?'none of the named issues is open':'every open issue is already investigated at its current text';return 'empty';}
   mkdirSync(x.dir,{recursive:true});writeFileSync(snapFile(x),JSON.stringify(snap));
   // the code both investigators read: a checkout of the pinned commit that never touches the project's own repository
   const tree=treeOf(x.run.id);sweep();dropTree(x.run.id);mkdirSync(join(tree,'..'),{recursive:true});
