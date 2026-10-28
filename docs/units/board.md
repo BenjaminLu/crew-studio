@@ -483,3 +483,15 @@ Every merge card, wherever it is shown (the Inbox, the Task page), carries the s
 room's summary (questions asked, the understanding check, sources). The room is its own page (`#/room/<card>`): a tutor
 on the reviewer seat explains the pull request on a board and in a chat, read-only, each turn a paid round the captain
 confirms; it never answers the card or changes merge readiness. Unit spec: [review-room.md](review-room.md).
+
+### A reviewed branch, and a pull request by its URL
+
+The review room is not only the merge card's. A Task page shows "Open review room" once Studio's review passed at the
+Task's head (`#/room/R-n`): on its way to the merge card, and on a tainted Task that ends ready on its local branch,
+never published ("· new commits" when the head moved since the captain last looked). The Review Room's home (`#/room`)
+and a connected project's page take a pull request's URL (`https://github.com/<owner>/<repo>/pull/<n>`, a repository of a
+registered project connected to GitHub only; anything else is refused with the reason) and open its room
+(`#/room/PR-…`): its state on GitHub (open, draft, approved at this head and by whom, merged, closed, from a fork), how
+many commits came since the captain last looked, "Check for new commits" (an explicit read, never a polling loop), what
+reviewers asked as a scene of their words, and what changed since last time as the next turn's first scene. Merged or
+closed, the room stays readable and takes no turn. A pull request no Studio Task made asks on the project's approved crew reviewer (its first confirmed turn makes a small host Task; no approved crew: "Approve this project's crew first"). Unit spec: [review-room.md](review-room.md), "Subjects".

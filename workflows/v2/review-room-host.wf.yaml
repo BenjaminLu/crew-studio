@@ -1,0 +1,8 @@
+{
+ "id":"review-room-host","name":"Review room host","kind":"review-room-host","version":1,
+ "description":"Hosts the review room's tutor turns on a GitHub pull request no Studio Task made: one node the room's auxiliary owner holds. It writes nothing and runs no agent; the tutor runs on the project's approved crew reviewer.",
+ "params":{"project":{"label":"Registered project"},"pr":{"label":"Pull request URL"}},
+ "roles":[],"nodes":[
+  {"id":"review-room","kind":"hook","label":"Review room host","x":160,"y":140}
+ ],"edges":[]
+}

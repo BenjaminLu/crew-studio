@@ -230,7 +230,7 @@ export function diff(a: WDef, b: WDef): DefDiff {
 export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved.length && !d.nodesChanged.length && !d.nodesMoved.length && !d.edgesAdded.length && !d.edgesRemoved.length && !(d.edgesChanged ?? []).length && !d.meta.length;
 
 const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
-const INTERNAL_WORKFLOWS=new Set(["local-project-register","firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github","firstmate-grant-merge","crew-change","issue-triage","issue-categories"]);
+const INTERNAL_WORKFLOWS=new Set(["local-project-register","firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github","firstmate-grant-merge","crew-change","issue-triage","issue-categories","review-room-host"]);
 /** Kept and editable, but no new Task starts until its runtime is activated. The reason is shown in the catalog. */
 const HELD_REASON={en:"held: GitHub review does not run end to end until it is rebuilt from code-firstmate",zh:"暫停：GitHub 審查改由 code-firstmate 重建前無法端到端執行"};
 /**

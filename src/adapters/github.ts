@@ -2,11 +2,12 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import {GitHubPoller,readAuthority,grantReadScope} from '../github-poller';
 // Local review remains the default. GitHub publication requires a trusted,
 // exact project grant; this interface exposes no review/comment/merge endpoint.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
+import { readdir, stat } from "node:fs/promises";
 import { gitArgv, gitEnv } from "../git";
 import { githubHeaders, findToken } from "../github";
 import type { RemoteGit } from "../worktrees";
@@ -102,6 +103,8 @@ export function validateGitHubGrant(g: GitHubProjectGrant) {
 // owned until cleanup; Studio exit kills only groups it actually created.
 // https://nodejs.org/api/child_process.html#optionsdetached
 const gitGroups = new Set<number>();
+/** one pull request fetch at a time per review room cache (GitHubPrAdapter.fetchPull) */
+const pullFetches = new Map<string, Promise<void>>();
 process.once("exit", () => { for (const pid of gitGroups) try { process.kill(-pid, "SIGKILL"); } catch {} });
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 export async function ownedGit(argv: string[], cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal) {
@@ -270,7 +273,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const known=this.communityPins.get(pin?.repository+'@'+pin?.head);if(!known||JSON.stringify(known)!==JSON.stringify(pin)||typeof path!=='string'||path.length>300||path.split('/').some(p=>p==='..'||p==='.'||!p)||!/^((\.github|docs)\/)?(pull_request_template\.md|PULL_REQUEST_TEMPLATE(\/[A-Za-z0-9_.-]+\.md)?|CONTRIBUTING\.md|ISSUE_TEMPLATE(\.[Mm][Dd]|\/[A-Za-z0-9_.-]+\.(md|ya?ml))?|AGENTS\.md)$/i.test(path))throw new Error('Community content target is not allowlisted');
     return this.communityRequest(pin.source,`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pin.head}`,signal);
   }
-  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "closed-issues" | "open-pulls", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
+  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "closed-issues" | "open-pulls" | "pull-files", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
     const approvedHead = typeof approvedHeadOrFresh === "string" ? approvedHeadOrFresh : undefined;
     if (typeof approvedHeadOrFresh === "boolean") fresh = approvedHeadOrFresh;
     signal?.throwIfAborted();
@@ -280,6 +283,8 @@ export class GitHubPrAdapter implements PrAdapter {
     else if (kind === "base" && target === this.grant.base && page === 1) suffix = `/git/ref/heads/${encodeURIComponent(target)}`;
     else if (kind === "pull" && /^[1-9][0-9]*$/.test(target) && page === 1) suffix = `/pulls/${target}`;
     else if (["reviews","inline-comments","issue-comments"].includes(kind) && /^[1-9][0-9]*$/.test(target)) suffix = kind==="issue-comments"?`/issues/${target}/comments?per_page=100&page=${page}`:`/pulls/${target}/${kind==="reviews"?"reviews":"comments"}?per_page=100&page=${page}`;
+    // the files a pull request changes (the review room reads a pull request by its URL: src/domain/review-room.ts)
+    else if (kind === "pull-files" && /^[1-9][0-9]*$/.test(target)) suffix = `/pulls/${target}/files?per_page=100&page=${page}`;
     // the open issues of the granted repository, oldest first (src/domain/issue-triage.ts snapshots them)
     else if (kind === "issues" && target === this.grant.repository) suffix = `/issues?state=open&sort=created&direction=asc&per_page=50&page=${page}`;
     // what triage checks before investigating (read only): the recently closed issues (one page) and the open pull requests
@@ -439,6 +444,41 @@ export class GitHubPrAdapter implements PrAdapter {
       const read = async (name: string) => ownedGit(gitArgv(["rev-parse", name]), dir, env, this.timeoutMs, signal);
       const head = await read("refs/crew/head"), base = await read("refs/crew/base"); if (head !== pr.head || !sha.test(base)) throw new Error("remote import head moved"); return { head, base };
     } catch (e: any) { retain = !!e.retainClient; throw e; } finally { if (!retain) rmSync(dir, { recursive: true, force: true }); }
+  }
+  /** The review room's copy of pull request n (src/domain/review-room.ts): GitHub's refs/pull/<n>/head (a fork's head too) and
+   *  the base branch, fetched read-only with the grant's credential into a bare repository Studio owns under its data
+   *  directory (cache). Never the project's checkout or its object store, no worktree, no hooks, no templates, nothing pushed,
+   *  no gc. Full history (the room reads merge-base, log and blame at the head). Bounded: a time limit, and the cache's size on
+   *  disk, watched while the fetch runs (over maxBytes the fetch is stopped) and checked after it, success or not; a fetch that
+   *  stops leaves no temporary pack behind. Over the cap the read is refused with overCap set (the caller decides whether the
+   *  cache may go: another room may be reading it). One fetch at a time per cache. Each head it saw is kept (refs/crew/seen/<sha>). */
+  async fetchPull(n: string, base: string, cache: string, o: { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number; watchMs?: number } = {}) {
+    validateGitHubGrant(this.grant); o.signal?.throwIfAborted();
+    if (!/^[1-9][0-9]{0,8}$/.test(n) || !ref(base) || !cache.startsWith("/") || /[\r\n]/.test(cache)) throw new Error("invalid pull request fetch target");
+    const prior = pullFetches.get(cache) ?? Promise.resolve(); let done!: () => void; const mine = new Promise<void>((r) => (done = r)), chain = prior.then(() => mine); pullFetches.set(cache, chain);
+    await prior.catch(() => {});
+    const max = o.maxBytes ?? 1024 ** 3, packs = join(cache, "objects", "pack");
+    // the watch's estimate: the pack folder only, read asynchronously. A fetch always keeps its pack (fetch.unpackLimit=1), so
+    // what it receives grows there as tmp_pack_* while it runs, never as loose objects the estimate would miss
+    const packBytes = async () => { let t = 0; try { for (const f of await readdir(packs)) { try { t += (await stat(join(packs, f))).size; } catch {} } } catch {} return t; };
+    const looseAndPacked = async (c: (a: string[]) => Promise<string>) => (await c(["count-objects", "-v"])).split("\n").reduce((t, l) => { const m = /^(size|size-pack|size-garbage): (\d+)$/.exec(l); return t + (m ? Number(m[2]) * 1024 : 0); }, 0);
+    const overCap = () => Object.assign(new Error(`the pull request's repository is larger than the review room keeps (${Math.round(max / 1024 ** 2)} MB)`), { overCap: true, stopped: over });
+    const clean = () => { try { for (const f of readdirSync(packs)) if (/^tmp_|\.keep$|\.lock$/.test(f)) rmSync(join(packs, f), { force: true }); } catch {} try { for (const f of readdirSync(join(cache, "objects"))) if (/^(incoming-|tmp_)/.test(f)) rmSync(join(cache, "objects", f), { recursive: true, force: true }); } catch {} };
+    const stop = new AbortController(), signal = o.signal ? AbortSignal.any([o.signal, stop.signal]) : stop.signal; let over = false;
+    let scanning = false; const watch = setInterval(() => { if (scanning || over) return; scanning = true; void packBytes().then((b) => { if (b > max) { over = true; stop.abort(); } }).finally(() => { scanning = false; }); }, Math.max(5, o.watchMs ?? 250));
+    try {
+      mkdirSync(cache, { recursive: true, mode: 0o700 });
+      if (!existsSync(join(cache, "HEAD"))) localMust(cache, ["-c", "core.hooksPath=/dev/null", "init", "--bare", "-q", "--template=", "."]);
+      const env = publicationEnv(this.gitAuth()), timeout = Math.max(1000, Math.min(600_000, o.timeoutMs ?? 120_000));
+      const c = (args: string[]) => ownedGit(gitArgv(["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.unpackLimit=1", ...args]), cache, env, timeout, signal);
+      try { await c(["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", this.grant.pushUrl, `+refs/pull/${n}/head:refs/crew/pull/${n}/head`, `+refs/heads/${base}:refs/crew/pull/${n}/base`]); }
+      catch (e) { clean(); if (over || (await packBytes()) > max) throw overCap(); throw e; }
+      if ((await looseAndPacked(c)) > max) throw overCap();
+      const head = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/head^{commit}`]), tip = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/base^{commit}`]);
+      if (!sha.test(head) || !sha.test(tip)) throw new Error("the fetched pull request head or base is invalid");
+      await c(["update-ref", `refs/crew/seen/${head}`, head]);
+      return { head, base: tip };
+    } finally { clearInterval(watch); clean(); done(); if (pullFetches.get(cache) === chain) pullFetches.delete(cache); }
   }
   /** Fetch the granted base branch head into the local object store (read only); the per-round rebase target before a PR exists. */
   async importBase(signal?: AbortSignal) {
