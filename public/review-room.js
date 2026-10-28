@@ -71,8 +71,12 @@ function flowSvg(g, prev) {
 // ---------- citations: a link to what a claim rests on ----------
 const CITE = /\[(diff|ledger|commit|source|board):([^\]\s]{1,300})\]|\[(inference|inferred|speculative|direct|supported)\]/gi;
 const KIND = { diff: ["diff", "diff"], ledger: ["ledger", "帳本"], commit: ["commit", "commit"], source: ["source", "來源"], board: ["board", "白板"] };
+// a link only to a page the server fetched and that is http(s): anything else (a refused address, any other scheme) is text
+const webLink = (s) => s && s.ok && typeof s.url === "string" && /^https?:\/\//i.test(s.url) ? s.url : null;
 function citeChip(card, ref, ok) {
-  const [k, v] = [ref.slice(0, ref.indexOf(":")), ref.slice(ref.indexOf(":") + 1)];
+  const [k, v] = [ref.slice(0, ref.indexOf(":")), ref.slice(ref.indexOf(":") + 1)], label = `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`;
+  // a citation Studio could not verify opens nothing
+  if (ok === false) return h("span", { class: "rr-cite bad", "data-cite-invalid": ref, title: T("Studio could not verify this citation", "Studio 無法驗證這個引用") }, label);
   return h("button", { type: "button", class: `rr-cite${ok === false ? " bad" : ""}`, "data-cite": ref, title: ok === false ? T("Studio could not verify this citation", "Studio 無法驗證這個引用") : T("Open what this rests on", "開啟依據"), onclick: () => openCite(card, ref) },
     `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`);
 }
@@ -94,7 +98,7 @@ function citePanel(r) {
     : d.kind === "diff" ? [h("div", { class: "rr-item-h" }, h("code", {}, `${d.path}${d.from ? `:${d.from}-${d.to}` : ""}`), h("span", { class: "faint" }, ` @ ${String(d.head).slice(0, 8)}`)), diffPre(d.text)]
     : d.kind === "ledger" ? [h("p", {}, h("b", {}, `#${d.seq} ${d.check}`), ` · ${d.verdict}`, d.head ? ` @ ${String(d.head).slice(0, 8)}` : ""), d.findings?.length ? h("ul", {}, d.findings.map((f) => h("li", {}, f))) : null, h("a", { href: `#/run/${enc(d.task)}`, "data-ledger-link": d.seq }, T("Open the Task's ledger", "開啟任務的帳本"))]
     : d.kind === "commit" ? h("pre", { class: "rr-pre" }, d.text)
-    : d.kind === "source" ? [h("p", {}, d.kind === "source" && d.query ? T(`Search: ${d.query}`, `搜尋：${d.query}`) : ""), d.url ? h("a", { href: d.url, target: "_blank", rel: "noopener noreferrer", "data-source-link": d.n }, d.url) : null, d.refused ? h("p", { class: "rr-err" }, T(`Refused: ${d.refused}`, `已拒絕：${d.refused}`)) : null]
+    : d.kind === "source" ? [h("p", {}, d.kind === "source" && d.query ? T(`Search: ${d.query}`, `搜尋：${d.query}`) : ""), webLink(d) ? h("a", { href: webLink(d), target: "_blank", rel: "noopener noreferrer", "data-source-link": d.n }, d.url) : (d.url || d.text) ? h("code", { "data-source-text": d.n }, d.url || d.text) : null, d.refused ? h("p", { class: "rr-err" }, T(`Refused: ${d.refused}`, `已拒絕：${d.refused}`)) : null]
     : d.kind === "board" ? h("a", { href: `#rr-${d.item.id}`, onclick: (e) => { e.preventDefault(); document.getElementById(`rr-${d.item.id}`)?.scrollIntoView({ block: "center" }); } }, T(`Board item ${d.item.id}: ${d.item.title}`, `白板項目 ${d.item.id}：${d.item.title}`)) : null;
   return h("section", { class: "card x-pad rr-cite-panel", "data-cite-panel": c.ref, tabindex: "-1", "aria-label": T("Citation", "引用") },
     h("div", { class: "rr-item-h" }, h("b", {}, T("Basis", "依據")), h("code", {}, c.ref), h("span", { class: "x-grow" }), h("button", { type: "button", class: "btn ghost", onclick: () => { RR.cite.delete(r.card.id); rerender(); } }, T("Close", "關閉"))), body);
@@ -127,8 +131,9 @@ function chartView(it) {
   return h("div", { class: "rr-chart-wrap" }, svg, legend.length ? h("div", { class: "rr-legend" }, legend.map(([c, l]) => h("span", {}, h("i", { class: c }), l))) : null);
 }
 function imageView(it) {
-  if (it.status === "pending" || !it.src) return h("figure", { class: "rr-fig rr-pending", "data-illustration-pending": it.id }, h("div", { class: "rr-ph", role: "img", "aria-label": T("Illustration being drawn", "插圖繪製中") }, it.status === "failed" ? T(`The illustration could not be made: ${it.error || ""}`, `插圖沒有畫成：${it.error || ""}`) : T("Drawing the illustration in the background (a minute or two)…", "正在背景繪製插圖（約一兩分鐘）…")));
+  if (it.status === "pending" || !it.src) return h("figure", { class: "rr-fig rr-pending", "data-illustration-pending": it.id }, it.turn === 0 ? h("figcaption", { class: "faint", "data-paid-image": "" }, T("A paid generated image, made once when this room was first opened.", "付費生成的圖片，在第一次開啟這個審查室時產生一次。")) : null, h("div", { class: "rr-ph", role: "img", "aria-label": T("Illustration being drawn", "插圖繪製中") }, it.status === "failed" ? T(`The illustration could not be made: ${it.error || ""}`, `插圖沒有畫成：${it.error || ""}`) : T("Drawing the illustration in the background (a minute or two)…", "正在背景繪製插圖（約一兩分鐘）…")));
   return h("figure", { class: "rr-fig" }, h("img", { src: it.src, alt: it.title, loading: "lazy", "data-illustration": it.id, onclick: () => zoom(it.src, it.title) }),
+    it.turn === 0 ? h("figcaption", { class: "faint", "data-paid-image": "" }, T("A paid generated image, made once when this room was first opened.", "付費生成的圖片，在第一次開啟這個審查室時產生一次。")) : null,
     h("figcaption", { class: "faint" }, T("A generated sketch of the idea, not evidence: the claims it shows cite the diff, a check or a commit.", "生成的示意圖，不是證據：它畫的每個說法都引用 diff、檢查或 commit。")));
 }
 function basisRow(card, it) { return it.basis === "illustration" ? h("div", { class: "rr-basis" }, h("span", { class: "rr-inference", "data-basis": "illustration" }, T("Not evidence", "不是證據"))) : it.basis === "inference" ? h("div", { class: "rr-basis" }, inferenceBadge()) : it.cites?.length ? h("div", { class: "rr-basis" }, it.cites.map((c) => citeChip(card, c.ref, c.ok))) : null; }
@@ -297,7 +302,7 @@ function drawer(r) {
       : h("p", { class: "faint" }, T("Press “Check me” for 2 to 4 short questions. Display only: it never blocks the merge.", "按「考考我」會有 2 到 4 個小問題。僅供參考，不會擋合併。")),
     h("h3", {}, T("Sources", "來源")),
     r.sources.length ? h("ul", { class: "rr-sources" }, r.sources.map((s) => h("li", { "data-source": s.n, "data-source-ok": String(s.ok) }, h("span", { class: "vbadge" }, `${s.n} ${s.kind === "search" ? T("search", "搜尋") : T("page", "網頁")}`), " ",
-      s.kind === "search" ? s.query : s.url && s.ok ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, s.url) : s.url, s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
+      s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
       : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")));
 }
 routes.review = (arg) => {

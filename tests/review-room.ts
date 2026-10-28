@@ -7,7 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // card shows the room's summary while its stored file, options, evidence and readiness stay as they were; nothing goes
 // to GitHub; the per pull request record is kept.        bun tests/review-room.ts
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harness, suite, until } from "./rt-harness";
@@ -28,7 +28,7 @@ const E = H.engine;
 // the web tools, stubbed: no real network in any test
 const webCalls: [string, string][] = [], spoken: string[] = [];
 installCode(E, { dataDir: data, projects: new Projects(data), reviewWeb: (check) => ({
-  search: async (q) => { webCalls.push(["search", q]); return { configured: true, status: 200, url: "https://search.example/?q=x", text: "Math.round rounds half up" }; },
+  search: async (q) => { webCalls.push(["search", q]); return { configured: true, status: 200, url: "https://search.example/?q=x", text: "Math.round rounds half up: https://example.org/rounding-guide?ref=1" }; },
   fetch: async (u) => { const why = check(u); if (why) throw new Error(`refused: ${why}`); webCalls.push(["fetch", u]); return { status: 200, type: "text/html", url: u, text: "MDN page" }; } }),
   reviewSpeak: async (text) => { spoken.push(text); return { bytes: Buffer.alloc(256, 7), model: "tts-stub", voice: "alloy" }; } });
 E.policies.setProject("sandbox", { install: false });
@@ -87,7 +87,7 @@ const scripted = (id: string, model: string) => ({ id, model, sandboxFree: true,
       const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json(); results.push([name, j]);
       yield { type: "toolStart", id: name, name, args } as any; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) } as any; }
     yield { type: "turnEnd", status: "ok", usage: { usd: 0.02, inTokens: 10, outTokens: 5 } } as any; } }; } });
-const baseProvider = E.deps.provider; E.deps.provider = (id?: string, model?: string) => id === "tutor" ? scripted(id, model ?? "") : baseProvider(id, model);
+const baseProvider = E.deps.provider; E.deps.provider = (id?: string, model?: string) => id === "tutor" || id === "codex" ? scripted(id, model ?? "") : baseProvider(id, model);
 const runArgs: any[] = []; const baseRun = E.deps.agents.run.bind(E.deps.agents); E.deps.agents.run = (o: any) => { if (o.kind === "review-room") runArgs.push(o); return baseRun(o); };
 const MDN = "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/round";
 script.push([
@@ -110,10 +110,10 @@ script.push([
   ["screenshots_show", { title: "The page, before and after" }],
   ["chart_draw", { source: "diffstat", title: "What changed, by file" }],
   ["chart_draw", { title: "Rounding", unit: "cents", rows: [{ label: "1999 at 15%", before: 299, after: 300 }] }],
-  ["illustrate", { title: "Leak", prompt: "how src/percent.ts rounds" }],
-  ["illustrate", { title: "Rounding", prompt: "a value flowing through a rounding step into whole cents" }],
-  ["illustrate", { title: "Halves", prompt: "a number line where halves go up" }],
-  ["illustrate", { title: "One too many", prompt: "a third sketch" }],
+  ["illustrate", { title: "Leak", concepts: ["src/percent.ts rounds"] }],
+  ["illustrate", { title: "Rounding", concepts: ["number", "rounding", "whole number"], layout: "flow" }],
+  ["illustrate", { title: "Halves", concepts: ["number line", "half"], layout: "comparison" }],
+  ["illustrate", { title: "One too many", concepts: ["number"] }],
   ["check_ask", { questions: ["What does percent(1999, 15) return, and why?", "Where could rounding go wrong for a user?"] }],
   ["fs_write", { path: "src/percent.ts", content: "x" }],
   ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nThe sketch shows the rounding [board:B1-11].\n\nWant me to go deeper?`]]);
@@ -169,12 +169,18 @@ ok(ds?.basis === "cited" && JSON.stringify(ds.rows.map((x: any) => [String(x.add
 ok(own?.basis === "inference" && own.rows[0].after === 300, "a chart of the tutor's own numbers without a citation is shown as an inference");
 const pics = board.filter((b) => b.type === "image" && b.turn === 1), imgRes = results.filter(([n]) => n === "illustrate").map(([, j]) => j);
 ok(pics.length === 2 && pics.every((b) => b.kind === "illustration" && b.status === "ready" && b.basis === "illustration" && b.model === "img-1" && b.src === `/api/review-room/${merge.id}/image/${b.id}.png`), "two illustrations are on the board, labelled generated, never evidence", JSON.stringify(pics));
-ok(/refused: it names a file of this repository/.test(imgRes[0].error) && /at most 2 illustrations/.test(imgRes[3].error) && imagePrompts.length === 3 && imagePrompts.every((x) => !/percent\.ts/.test(x)) && (v1.illustrations ?? []).length === 1, "an illustration prompt naming a repository file never reaches the image model; at most two a turn", JSON.stringify(imgRes));
+ok(/refused: not in the concept list/.test(imgRes[0].error) && /at most 2 illustrations/.test(imgRes[3].error) && imagePrompts.length === 3 && imagePrompts.every((x) => !/percent\.ts/.test(x)) && imagePrompts.some((x) => /a left-to-right flow showing: number, rounding, whole number$/.test(x)) && (v1.illustrations ?? []).length === 1, "the image model gets only listed concepts: a free-text concept never reaches it; at most two a turn", JSON.stringify(imgRes));
 ok(Buffer.compare(room.image(merge.id, `${pics[0].id}.png`), PNG) === 0 && (() => { try { room.image(merge.id, "../x.png"); return false; } catch { return true; } })(), "an illustration is stored in the room's record and served from it only");
 const imgRec = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-image");
 ok(rec[0].data.images.length === 5 && imgRec.length === 3 && imgRec.every((e: any) => /^[0-9a-f]{64}$/.test(e.data.sha256) && e.data.model === "img-1"), "the turn's ledger entry lists its pictures; each finished illustration has its own entry with its sha256", JSON.stringify(imgRec.map((e: any) => e.data)));
 const opening = board.find((b) => b.turn === 0);
-ok(opening?.type === "image" && opening.status === "ready" && imagePrompts.some((x) => /percent function/.test(x)), "opening the room makes its opening picture in the background, from the spec's intent through the privacy filter", JSON.stringify(opening ?? v1.illustrations));
+ok(opening?.type === "image" && opening.status === "ready" && imagePrompts.some((x) => /It explains: a before and after side by side showing: [a-z ,]*percent[a-z ,]*, change$/.test(x)), "opening the room makes its opening picture in the background, from listed concepts the spec names", JSON.stringify({ opening, imagePrompts }));
+// once per merge card: not again on a reload, nor after a restart (another room instance reads the same files)
+room.view(merge.id, true); await room.settle(merge.id);
+const { installReviewRoom } = await import("../src/domain/review-room");
+const again = installReviewRoom(E, { dataDir: data, illustrate: async () => { imagePrompts.push("restart"); return { bytes: PNG }; } });
+again.view(merge.id, true); await again.settle(merge.id);
+ok(imagePrompts.length === 3 && (again.view(merge.id) as any).board.filter((b: any) => b.turn === 0).length === 1, "the opening picture is made once per merge card: a reload or a restart does not make it again", JSON.stringify(imagePrompts));
 delete run.ctx.captures;
 ok(find(/old commit/)?.basis === "inference" && find(/old commit/)?.cites[0].ok === false, "a citation Studio cannot verify (no such commit) leaves the claim an inference");
 ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "headings and offers are not claims");
@@ -185,17 +191,25 @@ ok(/Math\.round/.test(cDiff.text) && cLedger.check === "firstmate/ci" && cLedger
 // ---------- the web tools: filtered, logged, nothing private out ----------
 const src = v1.sources as any[];
 ok(src.length === 8 && src.filter((s) => s.refused).length === 6 && src.filter((s) => s.ok).length === 2, "every web call is logged as a source, refused ones with the reason", JSON.stringify(src));
-ok(/file of this repository/.test(src[0].refused) && /line of this change/.test(src[1].refused) && /private address/.test(src[2].refused) && /by number/.test(src[4].refused) && /private host/.test(src[5].refused) && /private host/.test(src[6].refused), "refused: a repository path, a line of the diff, a private address, an IP address, localhost, a private domain", JSON.stringify(src.map((s) => s.refused)));
+ok(/only words/.test(src[0].refused) && /only words/.test(src[1].refused) && /private address/.test(src[2].refused) && /by number/.test(src[4].refused) && /private host/.test(src[5].refused) && /private host/.test(src[6].refused), "refused: a repository path, code, a private address, an IP address, localhost, a private domain", JSON.stringify(src.map((s) => s.refused)));
+ok(src.filter((s) => s.refused && s.kind === "fetch").every((s) => s.url === undefined && typeof s.text === "string"), "a refused address is kept as text only, never as a link", JSON.stringify(src.filter((s) => s.kind === "fetch")));
 ok(JSON.stringify(webCalls) === JSON.stringify([["search", "JavaScript Math.round rounding of halves"], ["fetch", MDN]]), "only the clean query and the public page reach the web backend", JSON.stringify(webCalls));
 
 // ---------- the next turn carries the history; the check is graded ----------
-script.push([["check_grade", { results: [{ n: 1, correct: true, note: "300 cents" }, { n: 2, correct: false, note: "missed half-cent rounding" }] }], ["say", "You missed how halves round [board:B1-3]. Math.round rounds 0.5 up [source:8]."]]);
+script.push([["check_grade", { results: [{ n: 1, correct: true, note: "300 cents" }, { n: 2, correct: false, note: "missed half-cent rounding" }] }],
+  ["web_fetch", { url: "javascript:alert(document.cookie)" }], ["web_fetch", { url: "https://example.org/rounding-guide" }],
+  ["web_search", { query: "half up rounding" }], ["web_fetch", { url: "https://example.org/rounding-guide" }], ["web_fetch", { url: "https://example.org/other-page" }],
+  ["web_search", { query: "bankers rounding" }], ["web_search", { query: "rounding modes" }], ["web_search", { query: "decimal rounding" }], ["web_search", { query: "one too many" }], ["say", "You missed how halves round [board:B1-3]. Math.round rounds 0.5 up [source:8]."]]);
 await room.start(merge.id, { action: "ask", text: "1: it returns 300. 2: I am not sure.", lang: "en", confirm: offer.hash }, "captain"); await room.settle(merge.id);
 const v2 = room.view(merge.id) as any;
 ok(prompts[1].text.includes("Captain [teach]: 教我這個改動。") && prompts[1].text.includes("Tutor: ## Overview") && /1\. What does percent\(1999, 15\) return, and why\? \[not graded yet\]/.test(prompts[1].text) && /B1-3 code/.test(prompts[1].text), "the next turn's prompt carries the conversation, the open check and the board", prompts[1].text.slice(-1500));
 ok(v2.turns[1].status === "done" && v2.turns[1].claims.every((c: any) => c.basis === "cited"), "a reply citing a board excerpt and a source is cited");
+const t2src = (v2.sources as any[]).filter((x) => x.turn === 2);
+ok(t2src[0].refused && t2src[0].url === undefined && t2src[0].text === "javascript:alert(document.cookie)", "a javascript: address is refused and kept as plain text, never an address", JSON.stringify(t2src[0]));
+ok(/search results or a documentation host/.test(t2src[1].refused) && t2src[3].ok && t2src[3].url === "https://example.org/rounding-guide" && /search results/.test(t2src[4].refused), "a page is read only after this turn's search returned it, and only that page", JSON.stringify(t2src.slice(1, 5)));
+ok(/at most 8 web calls a turn/.test(t2src[8].refused) && webCalls.filter(([k]) => k === "search").length === 5, "a turn makes at most eight web calls", JSON.stringify(t2src.map((x) => x.refused ?? "ok")));
 const after = E.cards.view(E.cards.get(merge.id)!);
-ok(after.reviewRoom?.questions === 2 && after.reviewRoom.turns === 2 && JSON.stringify(after.reviewRoom.check) === JSON.stringify({ asked: 2, graded: 2, correct: 1 }) && after.reviewRoom.sources.consulted === 2, "the merge card shows the room's summary: questions asked, the check score, sources consulted", JSON.stringify(after.reviewRoom));
+ok(after.reviewRoom?.questions === 2 && after.reviewRoom.turns === 2 && JSON.stringify(after.reviewRoom.check) === JSON.stringify({ asked: 2, graded: 2, correct: 1 }) && after.reviewRoom.sources.consulted === 7, "the merge card shows the room's summary: questions asked, the check score, sources consulted", JSON.stringify(after.reviewRoom));
 
 // ---------- the merge card and readiness untouched; nothing to GitHub; the worktree untouched ----------
 ok(readFileSync(cardFile, "utf8") === storedBefore && E.cards.get(merge.id)!.status === "open", "the stored merge card is unchanged and still open");
@@ -205,14 +219,20 @@ ok(fetched.every((u) => u.startsWith(H.toolUrl)) && !fetched.some((u) => /github
 const stats = JSON.parse(readFileSync(join(data, "review-room-stats.json"), "utf8"))[r.id];
 ok(stats?.card === merge.id && !!stats.openedAt && stats.turns === 2 && stats.check.correct === 1, "the per pull request record keeps: room opened, turns, check score", JSON.stringify(stats));
 
-// ---------- narration: only the tutor's own vendor speaks, once per scene ----------
+// ---------- narration: only the vendor that answered the scene speaks, once per scene ----------
 let noVoice: any = null; try { await room.speech(merge.id, "t1"); } catch (e) { noVoice = e; }
 ok(noVoice?.code === "no_voice" && !spoken.length && (room.view(merge.id) as any).offer.voice === null, "a tutor whose vendor has no voice of its own sends its narration nowhere", noVoice?.message);
 Object.assign(reviewer, { provider: "codex", model: "t-2" });
-const say1: any = await room.speech(merge.id, "t1"), say2: any = await room.speech(merge.id, "t1");
-ok(say1.cached === false && say2.cached === true && spoken.length === 1 && /rounds to the cent/.test(spoken[0]) && !/\[diff:|\[ledger:|##/.test(spoken[0]) && (room.view(merge.id) as any).offer.voice?.vendor === "openai", "a Codex tutor's scene is narrated by its own vendor once, without citations, then served from the room", JSON.stringify({ say1, spoken }));
-ok(Buffer.compare(room.audio(merge.id, say1.src.split("/").at(-1)), Buffer.alloc(256, 7)) === 0 && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-voice" && e.data.vendor === "openai" && e.data.turn === 1), "the narration is stored in the room and on the ledger");
+noVoice = null; try { await room.speech(merge.id, "t1"); } catch (e) { noVoice = e; }
+ok(noVoice?.code === "no_voice" && !spoken.length, "a scene keeps the vendor that answered it: switching the seat to a vendor with a voice does not send an older scene there", noVoice?.message);
+script.push([["say", "The function rounds to the cent [diff:src/percent.ts:L2-3]."]]);
+await room.start(merge.id, { action: "how", lang: "en", confirm: (room.view(merge.id) as any).offer.hash }, "captain"); await room.settle(merge.id);
+const [say1, sayDup]: any[] = await Promise.all([room.speech(merge.id, "t3"), room.speech(merge.id, "t3")]), say2: any = await room.speech(merge.id, "t3");
+ok(say1.cached === false && sayDup.src === say1.src && say2.cached === true && spoken.length === 1 && /rounds to the cent/.test(spoken[0]) && !/\[diff:|\[ledger:|##/.test(spoken[0]) && (room.view(merge.id) as any).offer.voice?.vendor === "openai", "a Codex tutor's scene is narrated by its own vendor once (two requests at once make one), without citations, then served from the room", JSON.stringify({ say1, spoken }));
+ok(Buffer.compare(room.audio(merge.id, say1.src.split("/").at(-1)), Buffer.alloc(256, 7)) === 0 && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-voice" && e.data.vendor === "openai" && e.data.turn === 3), "the narration is stored in the room and on the ledger");
 Object.assign(reviewer, saved);
+noVoice = null; try { await room.speech(merge.id, "t3"); } catch (e) { noVoice = e; }
+ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.length === 1, "when the seat's vendor changes after a scene, its narration is not sent anywhere", noVoice?.message);
 // ---------- a changed skill text refuses the turn ----------
 const pin = ROOM_SKILLS[1] as any, real = pin.sha256; pin.sha256 = "0".repeat(64);
 refusal = null; try { await room.start(merge.id, { action: "why", confirm: offer.hash }, "captain"); } catch (e) { refusal = e; } pin.sha256 = real;
@@ -223,5 +243,11 @@ await E.answer(merge.id, { choice: "merge", by: "captain", aligned: merge.detail
 await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status), 60000);
 ok(E.get(r.id)!.status === "succeeded", "the captain's merge answer goes through as before: the room changed nothing about readiness", `${E.get(r.id)!.status} ${E.get(r.id)!.error}`);
 refusal = null; try { await room.start(merge.id, { action: "how", confirm: offer.hash }, "captain"); } catch (e) { refusal = e; }
-ok(refusal?.code === "closed" && (room.view(merge.id) as any).turns.length === 2, "after the card is answered the room stays readable and takes no turn");
+ok(refusal?.code === "closed" && (room.view(merge.id) as any).turns.length === 3, "after the card is answered the room stays readable and takes no turn");
+refusal = null; try { await room.speech(merge.id, "t3"); } catch (e) { refusal = e; }
+ok(refusal?.code === "closed", "and it no longer speaks");
+// a restart while an illustration was being drawn: the room reads it as interrupted, never pending forever
+{ const f = join(data, "runs", r.id, "review-room", `${merge.id}.json`), rr = JSON.parse(readFileSync(f, "utf8")); rr.board.push({ id: "B9-1", turn: 9, type: "image", kind: "illustration", status: "pending", src: null, basis: "illustration", cites: [] });
+  writeFileSync(f, JSON.stringify(rr)); const fresh = installReviewRoom(E, { dataDir: data });
+  ok((fresh.view(merge.id) as any).board.find((b: any) => b.id === "B9-1")?.status === "failed", "after a restart an illustration left pending reads as interrupted"); }
 globalThis.fetch = realFetch; H.stop(); end();

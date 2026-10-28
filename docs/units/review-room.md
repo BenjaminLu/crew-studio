@@ -19,16 +19,21 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
 - **Generated illustrations** (`illustrate`, at most two a turn): a whiteboard-marker sketch from Studio's image job (the
   same one image steps use, `generateImage`), made in the background (a minute or two) with a placeholder until ready,
   stored in the room's folder, labelled "illustration · generated" and "Not evidence". A citation of an illustration never
-  grounds a claim. Its prompt passes the same privacy filter as a web query. The first time the captain opens the room,
-  one opening illustration of the spec's intent is made in the background the same way.
+  grounds a claim. The image model gets no words of the tutor's: the tutor picks 1 to 6 concepts from a fixed list
+  (`ILLUSTRATION_CONCEPTS`) and a layout, and Studio builds the prompt from them. The first time the captain opens the
+  room, one opening illustration is made in the background the same way, from the listed concepts the spec's intent
+  names; it is labelled on the page as a paid generated image made once. It is made once per merge card: the room
+  records that it started before anything is paid, so a reload, another device or a restart does not make it again. An
+  illustration still pending when Studio stopped reads as interrupted after the restart.
 - Every picture is labelled with its kind; a click enlarges it. A scene's answer lists its pictures as chips to switch to.
 - **The prompt bar** under the stage is slim: How, Why, Teach me, Before merging, Check me, a question field, Hold to talk
   and Ask. The **transcript** is a drawer, closed by default: each question with its scene's title (a click jumps to the
   scene), the understanding check and the sources.
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
   Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
-  folder, a ledger entry `review-room-voice`; the narration goes only to the vendor the tutor already uses, never to
-  another), or one of this Mac's on-device voices, the best first (Premium, Enhanced, Siri). A voice the browser would send
+  folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
+  scene recorded it, and only while the seat still runs on that vendor; one request per scene at a time; never on an
+  answered card), or one of this Mac's on-device voices, the best first (Premium, Enhanced, Siri). A voice the browser would send
   to a server is never offered. While a voice plays, the points appear as it reaches them.
 - **Voice questions**: push to talk, only where the browser recognises speech on this device
   (`SpeechRecognition.available({processLocally: true})`); the transcript fills the question field and is sent only when
@@ -93,14 +98,29 @@ entry (with a link to the Task), the commit, the web page.
 
 ## Web research (filtered)
 
-`web_search` and `web_fetch` are served by Studio (`src/review-web.ts`), never the round's own network. Studio refuses a
-query, or an address, that carries a code-like identifier or a 24-character stretch of the diff, code punctuation, a path
-or file name of the tree, the repository, owner, project or folder name, a private host or address, a home path, a
-session link, a denylisted name (policy `privacy.denylist`, `data/privacy-denylist.txt`) or anything that looks like a
-credential. A page is fetched only by host name, http or https on its standard port, without credentials, through
-Studio's egress proxy with a one-host credential: the resolved-address guard refuses loopback, private, link-local and
-metadata addresses, and each redirect hop is checked again. Search needs `CREW_REVIEW_SEARCH_URL` (a URL with `{q}`); with
-none the tool says so plainly and the room works offline. Every call, refused or not, is a source the room lists.
+`web_search` and `web_fetch` are served by Studio (`src/review-web.ts`), never the round's own network. The boundary is
+the destination and the shape, decided before any DNS lookup:
+
+- A query is plain words: after NFKC it is ASCII letters, digits and `.,'?+-` only (no other script, lookalike or
+  fullwidth letter, no code, path or address), at most twelve words, none of them encoded-looking (hex, base64, letters
+  and digits or cases switching back and forth, long consonant runs) and no run of single letters. It may not spell out
+  an identifier or file stem of the change, the repository, owner, project or folder name, or a denylisted name (policy
+  `privacy.denylist`, `data/privacy-denylist.txt`), compared with every separator stripped and the case folded (a short
+  name as a whole word), nor a 20-character stretch of the diff, a private host or address, or a credential.
+- A page is read only when its address came back in this turn's search results (exactly that page), or its host is a
+  documentation host (`DOCS_HOSTS`, plus policy `review_room.docs_hosts`). It is http(s), by host name (no IP, no
+  punycode, short human-looking labels), on its standard port, with no credentials and no query string; its path is at
+  most eight short human-looking segments, not one letter at a time, with nothing still percent-encoded after one decode,
+  and it passes the same name and identifier checks. A redirect stays on the host it started from.
+- A turn makes at most eight web calls (`WEB_CALLS_PER_TURN`).
+- The fetch goes through Studio's egress proxy with a one-host credential; the resolved-address guard refuses loopback,
+  private, link-local and metadata addresses.
+- Search needs `CREW_REVIEW_SEARCH_URL` (a URL with `{q}`) on a public host by name: a search server on this machine or
+  the LAN (a local SearXNG, say) is refused as a private host. With none the tool says so plainly and the room works
+  offline.
+- Every call, refused or not, is a source the room lists. A source's address is kept as an address only when it was
+  fetched and parses as http(s); a refused or unparsable one is kept as plain text, and the page renders a link only for
+  a fetched http(s) address. A citation Studio could not verify is plain text, not a link.
 
 ## The per pull request record
 

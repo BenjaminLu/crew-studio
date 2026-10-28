@@ -51,8 +51,11 @@ const ROOM = { card: { id: "SC-50", run: "R-050", node: "merge-card", title: { e
       claims: [{ text: "## How percent works", kind: "heading", basis: null, cites: [] }, cl("An amount in cents goes into `percent` [board:B1-1].", [ok1("board:B1-1")]),
         cl("It is rounded to whole cents [board:B1-2] [diff:src/percent.ts:L2-3].", [ok1("board:B1-2"), ok1("diff:src/percent.ts:L2-3")]),
         cl('It was probably added for invoices <img src=x onerror="window.__pwned=1">.'), cl("On the page the total moves by a cent [board:B1-7].", [ok1("board:B1-7")]), { text: "Want me to go deeper?", kind: "aside", basis: null, cites: [] }] },
-    { n: 2, action: "ask", text: "1: 300. 2: not sure.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "y", claims: [cl("Halves round up [source:1].", [ok1("source:1")])] }],
-  sources: [{ n: 1, turn: 1, kind: "fetch", url: "https://developer.mozilla.org/x", ok: true, status: 200, at: "t" }, { n: 2, turn: 1, kind: "search", query: "rounding in src/percent.ts", ok: false, refused: "it names a file of this repository", at: "t" }],
+    { n: 2, action: "ask", text: "1: 300. 2: not sure.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "y", claims: [cl("Halves round up [source:1].", [ok1("source:1")]), cl("An old commit explains it [commit:deadbeef].", [{ ref: "commit:deadbeef", ok: false }]), cl("Another page says so [source:4].", [ok1("source:4")])] }],
+  sources: [{ n: 1, turn: 1, kind: "fetch", url: "https://developer.mozilla.org/x", ok: true, status: 200, at: "t" }, { n: 2, turn: 1, kind: "search", query: "rounding in src/percent.ts", ok: false, refused: "it names a file of this repository", at: "t" },
+    { n: 3, turn: 2, kind: "fetch", text: "javascript:alert(document.cookie)", ok: false, refused: "only http and https addresses", at: "t" },
+    // defence in depth: even a stored record that claims an ok javascript: address must never become a link
+    { n: 4, turn: 2, kind: "fetch", url: "javascript:alert(2)", ok: true, status: 200, at: "t" }],
   check: { questions: [{ n: 1, q: "What does percent(1999, 15) return?", turn: 1, at: "t", result: { correct: true, note: "300", turn: 2 } }, { n: 2, q: "Where could rounding go wrong?", turn: 1, at: "t", result: { correct: false, note: "halves", turn: 2 } }] }, summary };
 
 // speech, stubbed: two on-device voices and one the browser would send to a server; on-device recognition; an audio player
@@ -74,7 +77,7 @@ async function open(width, lang, mic = "available") {
   await ctx.route(/\/api\/review-room\/SC-50\/image\/B1-9\.png$/, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/wruns\/R-050\/captures\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/review-room\/SC-50\/speech$/, (r) => { speech.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { src: "/api/review-room/SC-50/audio/voice-t1-0123456789ab.mp3", cached: false, vendor: "openai", model: "gpt-4o-mini-tts" } }); });
-  await ctx.route(/\/api\/review-room\/SC-50\/cite\?/, (r) => { const ref = new URL(r.request().url()).searchParams.get("ref"); cites.push(ref); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "@@ -0,0 +1,4 @@\n+  return Math.round((amount * pct) / 100);" } }); });
+  await ctx.route(/\/api\/review-room\/SC-50\/cite\?/, (r) => { const ref = new URL(r.request().url()).searchParams.get("ref"); cites.push(ref); if (ref === "source:4") return r.fulfill({ json: { kind: "source", n: 4, ok: true, url: "javascript:alert(2)" } }); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "@@ -0,0 +1,4 @@\n+  return Math.round((amount * pct) / 100);" } }); });
   await ctx.route(/\/api\/review-room\/SC-50\/turn$/, async (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); await new Promise((res) => (hold = res));
     roomNow = { ...ROOM, running: 3, turns: [...ROOM.turns, { n: 3, action: "ask", text: "why do halves round up", lang, status: "running", provider: "codex", model: "gpt-6", answer: "" }] }; r.fulfill({ json: roomNow }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
@@ -99,11 +102,17 @@ try {
   { const { ctx, p, posts, cites, speech, release } = await open(1440, "en");
     await p.goto(`${base}/#/review/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
     let s = await stage(p);
-    ok(s.scene === "t2" && s.pos === "3/3" && s.points === 1, "the stage opens on the latest scene, whole (scenes already there are not replayed)", JSON.stringify(s));
+    ok(s.scene === "t2" && s.pos === "3/3" && s.points === 3, "the stage opens on the latest scene, whole (scenes already there are not replayed)", JSON.stringify(s));
+    ok(!!(await p.$('[data-cite-invalid="commit:deadbeef"]')) && !(await p.$('button[data-cite="commit:deadbeef"]')), "a citation Studio could not verify is plain text: nothing to click");
+    await p.click('[data-cite="source:4"]'); await p.waitForSelector('[data-cite-panel="source:4"]');
+    ok(!(await p.$('[data-cite-panel] a')) && /javascript:alert\(2\)/.test(await p.textContent('[data-cite-panel] [data-source-text]')), "a source whose address is not http(s) shows as text in the citation panel, never a link");
+    await p.click('[data-cite-panel] .btn');
     const layout = await p.evaluate(() => { const st = document.querySelector("[data-stage]").getBoundingClientRect(), bar = document.querySelector("[data-chat]").getBoundingClientRect(), d = document.querySelector("[data-transcript]");
       return { stageH: st.height, barH: bar.height, below: bar.top >= st.bottom - 1, drawerOpen: d.open }; });
     ok(layout.stageH > layout.barH * 2 && layout.below && layout.drawerOpen === false, "the board takes most of the screen; a slim prompt bar sits under it; the transcript drawer starts closed", JSON.stringify(layout));
     await p.click("[data-transcript] summary"); const jumps = await p.$$eval("[data-jump]", (els) => els.map((e) => [e.dataset.jump, e.textContent]));
+    const links = await p.evaluate(() => ({ js: document.querySelectorAll('a[href^="javascript:" i]').length, src: [...document.querySelectorAll("[data-source]")].map((e) => [e.dataset.source, !!e.querySelector("a"), e.querySelector("[data-source-text]")?.textContent ?? null]) }));
+    ok(links.js === 0 && JSON.stringify(links.src) === JSON.stringify([["1", true, null], ["2", false, null], ["3", false, "javascript:alert(document.cookie)"], ["4", false, "javascript:alert(2)"]]), "only a fetched http(s) page is a link; a refused or non-http address is plain text, never an anchor", JSON.stringify(links));
     ok(jumps.length === 3 && /This change at a glance/.test(jumps[0][1]) && /Teach me this change\. → How percent works/.test(jumps[1][1]), "the transcript lists each question and its scene's title", JSON.stringify(jumps));
     await p.click('[data-jump="t1"]'); s = await stage(p);
     ok(s.scene === "t1" && s.pos === "2/3" && s.title === "How percent works" && s.points === 5 && s.visual === "B1-7", "a click in the transcript jumps to its scene; the visual is the one the last point cites", JSON.stringify(s));
@@ -118,7 +127,7 @@ try {
     await p.click("[data-play]"); await p.click("[data-point-next]"); s = await stage(p);
     ok(s.points === 2 && s.visual === "B1-2" && s.nodes.join() === "A,B,C*" && /rounded to whole cents/.test(s.caption), "the next point brings the next step of the diagram, the part it adds marked new", JSON.stringify(s));
     await p.click('[data-claim="cited"] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff");
-    ok(cites[0] === "diff:src/percent.ts:L2-3" && /Math\.round/.test(await p.textContent("[data-cite-panel]")), "a citation opens the diff hunk it rests on", JSON.stringify(cites));
+    ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && /Math\.round/.test(await p.textContent("[data-cite-panel]")), "a citation opens the diff hunk it rests on", JSON.stringify(cites));
     // the scene's other pictures: the chart from git numbers and the generated illustration, labelled, enlarged on click
     await p.click('[data-visual-pick="B1-8"]');
     ok(await p.$eval("[data-visual] [data-chart]", (e) => e.dataset.chart + " " + e.querySelectorAll("rect").length) === "diffstat 4" && /counted by git/.test(await p.textContent("[data-visual] [data-kind]")), "a chart is drawn by Studio from git's numbers, labelled so");
@@ -128,7 +137,7 @@ try {
     ok((await p.getAttribute("[data-zoom] img", "src")) === "/api/review-room/SC-50/image/B1-9.png", "a click enlarges the picture");
     await p.click("[data-zoom] button"); ok(!(await p.$("[data-zoom]")), "and Close puts it back");
     await p.click('[data-jump="t0"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t0"]'); });
-    ok(!!(await p.$("[data-visual] [data-illustration-pending]")), "the opening picture still being drawn shows a placeholder");
+    ok(!!(await p.$("[data-visual] [data-illustration-pending]")) && /paid generated image, made once/.test(await p.textContent("[data-visual] [data-paid-image]")), "the opening picture still being drawn shows a placeholder, labelled as a paid generated image made once");
     // voice: off by default; on-device voices only, the best first; the vendor's own voice for the whole scene
     await p.click('[data-jump="t1"]').catch(() => {});
     const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
