@@ -195,19 +195,31 @@ model and effort, marking a change this project makes to the team.
   reporter (each one line, at most 300 characters); research, roadmap and process issues are `not-code`. Neither needs a
   location or quoted code.
 - Each finding says who can do it: `fit: agent`, or `human` with a reason (`needs-info`, `product-decision`,
-  `too-large`, `external-dependency`, `security-owner`, `other`). Either report's `human` sets the issue aside before
-  packaging: it goes to "For you to judge" with both reasons, never into a package; the rest of its set is still
-  packaged. A report from before fit was asked reads as `agent`; a report submitted now must give every finding its fit.
+  `too-large`, `external-dependency`, `security-owner`, `other`). When the reports agree on the issue, either one's
+  `human` sets it aside before packaging: it goes to "For you to judge" (`kind: 'human-fit'`) with the reasons and
+  whether one investigator or both said so (`fitFrom`), never into a package; the rest of its set is still packaged.
+  When they disagree, it stays a disagreement, so the captain sees that. A report from before fit was asked reads as
+  `agent`; a report submitted now must give every finding its fit.
 - Duplicates: a finding may name `duplicateOf`, an open issue or one of the 50 most recently updated closed issues the
   snapshot read, with the matching symptom quoted from both issues' own text (`symptom.here`, `symptom.there`: body or
   comments, at least 16 characters each; a title is never a symptom), which Studio checks. It counts only when both
-  reports name the same issue and both pass the check: the issue goes to "For you to judge" as a duplicate, never into a
-  package. One report's duplicate, or two different ones, is a disagreement.
-- Work in progress: Studio reads the open pull requests (GET, up to 300) and marks an issue a pull request names (`#n`
-  on its own or the issue's URL, in its title or text, HTML comments removed; never another repository's `o/r#n`). Such
-  an issue is never packaged: it goes to "For you to judge" with the pull request. A token that may not read pull
-  requests (GitHub answers 403 or 404) does not stop the triage: the snapshot's note says none is known to be in
-  progress; any other failure does.
+  reports name the same issue and both pass the check: the issue goes to "For you to judge" as a duplicate
+  (`kind: 'duplicate'`), never into a package, and the page shows both quotes as text with where each was found (body,
+  or a comment and its writer's relation to the repository). Two issues found duplicates of each other: the older
+  (lower number) stays, only the newer is set aside. One report's duplicate, or two different ones, is a disagreement.
+- Work in progress: Studio reads the open pull requests (GET, 30 a page, at most 10 pages; the note says when there were
+  more) and counts only a trusted one: its author is the repository's OWNER, a MEMBER or a COLLABORATOR, or its branch
+  is in this repository (anyone can open a fork's pull request naming every issue). It must name the issue on purpose:
+  a closing keyword (`fixes`, `closes`, `resolves`) before `#n`, or an explicit reference to this repository
+  (`owner/repo#n`, the issue's URL), in its title or text with HTML comments removed. A bare `#n` ("Step #12", "a
+  regression from #12"), `&#12;`, `#12a` and another repository's references do not count. Each pull request is read
+  once and its references intersected with the open issues. Such an issue is never packaged: it goes to "For you to
+  judge" (`kind: 'in-progress'`) with each pull request and its author; the captain may take it anyway
+  (`POST /api/issue-triage/<project>/take {issue}`, the desktop captain only), which makes a package waiting for
+  approval and records the pull request it went past, only for an issue both reports agree has code to change, an
+  agent's work and no duplicate. A failed pull request read never stops the triage: the snapshot's note says why (the
+  token may not read them, the rate limit is used up, or GitHub did not answer) and that none is known to be in
+  progress.
 - A work package is what both reports agree on and every member passes the check: an ordered set (worked in that order,
   one pull request each), an unordered set (its owner picks the order), a one-change group, a single issue, or a recheck
   (both find it already fixed: a person rechecks it, it is never closed on that evidence). Sets match by overlap: when
@@ -223,12 +235,16 @@ model and effort, marking a change this project makes to the team.
   otherwise the issue goes to "For you to judge". A `needs-info` entry keeps each issue's questions from both reports,
   cleaned, each once, at most 5, shown under the issue as text. All of it is shown only in Studio: no comment, label,
   question or cross-reference is ever written to GitHub; the captain asks the reporter, if at all. A needs-info issue
-  that changes (an edit or a new comment, the reporter's answer) leaves the list and is triaged again.
+  that changes (an edit, or a new comment: the reporter's answer) leaves the list and is triaged again.
 - Security comes from the issue's labels or either report (one report's `yes` is never a disagreement); a security
   package says its issues are referenced, not closed, by a pull request and close only after a recheck.
-- A package is waiting for approval, approved, or stale (an issue's title, text, labels or number of comments changed
-  since it was investigated: any label, `good first issue` too, since a label can change how its pull request names
-  it). An issue with no comment hashes as it did before comments counted; one with comments is triaged again once.
+- A package is waiting for approval, approved, or stale (an issue's title, text or labels changed since it was
+  investigated: any label, `good first issue` too, since a label can change how its pull request names it). Comments
+  never make a package stale: the hash staleness, approval and working compare is the title, text and labels only, as
+  before comments were read. The comment count is kept apart: an issue not in committed work (approved, or with a Task)
+  whose count changed since it was investigated is taken again by the next batch; an issue triaged before counts were
+  kept is not taken again for comments it already had. An issue changed while it was investigated (a comment added,
+  removed or edited included) is marked and taken again by the next batch.
 - The stored triage keeps each issue's title, labels and content hash, never its body or comments; for an investigated
   issue also its fit and reasons, an agreed duplicate and the pull requests found. Titles and questions are untrusted
   text and only ever go into text nodes.
@@ -299,7 +315,7 @@ Categories card), `tests/acceptance/issue-categories.yaml`.
    (15 by default, at most 50). For the batch it also reads, GET only: each issue's latest comments (at most 20, each
    at most 4000 characters, 24000 together, cleaned like the text: NFKC, no zero-width or bidi characters, no HTML
    comments), the 50 most recently updated closed issues (title and the first 2000 characters, for duplicates) and the
-   open pull requests that name an open issue. The snapshot's hash covers all of it.
+   trusted open pull requests that name an open issue on purpose. The snapshot's hash covers all of it.
 2. **Start card.** Captain-only: the batch, the commit and both investigators' models. Nothing paid runs before it;
    closing it removes the checkout. It is refused before it is shown when both investigators would run on one model, or
    when their rounds would not be in the round sandbox with no network beyond the model (a sandbox-off grant, an

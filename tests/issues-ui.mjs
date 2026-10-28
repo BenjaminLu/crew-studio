@@ -43,7 +43,7 @@ const record = {
     20: issue("Crash report with no stack trace", { state: "not-found", locus: [], tag: "crash-report" }),
     21: issue("It does not work", { state: "needs-info", locus: [], tag: "unclear-report" }),
     22: issue("Rewrite the menu system", { fit: "human", fitReason: ["too-large"], locus: loc("src/menu.ts", "openMenu") }),
-    23: issue("Saving fails", { duplicateOf: 70, locus: [] }),
+    23: issue("Saving fails", { duplicateOf: 70, locus: [], symptom: { here: { n: 23, text: 'TypeError <img src=x onerror="window.__pwned3=1"> in saveDraft', from: "comment (MEMBER)" }, there: { n: 70, text: "TypeError in saveDraft on save", from: "body" } } }),
     24: issue("Theme fallback", { inProgress: [40], locus: loc("src/theme.ts", "pickTheme") }),
   },
   packages: [
@@ -54,9 +54,9 @@ const record = {
   ],
   cross: [{ id: "X-1", issues: [18], package: { kind: "single", members: [18], order: [18], why: "", security: false, commit: "c".repeat(40) }, with: "P-2", where: "src/utils/url.ts · addParams" }], lastCross: 1, dedup: 2,
   toHuman: [{ issues: [15], reason: "the reports disagree on, or the code check fails for, #15" },
-    { issues: [22], reason: "not an agent's work (too-large): a person takes it", kind: "human-fit", fit: ["too-large"] },
+    { issues: [22], reason: "not an agent's work (too-large): a person takes it", kind: "human-fit", fit: ["too-large"], fitFrom: 1 },
     { issues: [23], reason: "both reports find #23 a duplicate of #70", kind: "duplicate", duplicateOf: 70 },
-    { issues: [24], reason: "open pull request #40 names #24", kind: "in-progress", pulls: [40] }],
+    { issues: [24], reason: "open pull request #40 names #24", kind: "in-progress", pulls: [40], pullInfo: [{ n: 40, author: "maintainer", association: "MEMBER" }] }],
   noCode: [{ issues: [20], state: "not-found", reason: "both investigators looked and could not find it in the code" },
     { issues: [21], state: "needs-info", reason: "the issue lacks what is needed to locate it", questions: { 21: ["Which version are you on?", 'What does <img src=x onerror="window.__pwned2=1"> show?'] } }],
   createdAt: "2026-10-28T09:40:00Z", by: "issue-triage R-9", lastPackage: 3,
@@ -94,7 +94,8 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/\/api\/team\?project=wallet/, (r) => r.fulfill({ json: TEAM }));
   if (o.empty) await ctx.route(/\/api\/issue-triage\/wallet$/, (r) => r.fulfill({ json: { state: "none", investigators: { a: { provider: "claude", model: "claude-opus-5-5" }, b: { provider: "codex", model: "gpt-6" } } } }));
   if (o.same) await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, investigators: { a: { provider: "claude", model: "same" }, b: { provider: "claude", model: "same" } } } }); });
-  const posts = [], approvals = [], crosses = [], catCalls = [], declines = [];
+  const posts = [], approvals = [], crosses = [], catCalls = [], declines = [], takes = [];
+  await ctx.route(/\/api\/issue-triage\/wallet\/take$/, (r) => { takes.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, package: "P-9" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/decline$/, (r) => { declines.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, declined: [] } }); });
   await ctx.route(/\/api\/issue-categories\/[a-z]+\/(start|edit)$/, (r) => { catCalls.push([r.request().url().split("/").slice(-2).join("/"), JSON.parse(r.request().postData() || "{}")]); r.fulfill({ json: { ok: true, task: "R-88", href: "#/run/R-88" } }); });
   await ctx.route(/\/api\/issue-triage\/wallet\/cross$/, (r) => { crosses.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, joined: "P-2" } }); });
@@ -102,14 +103,14 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/\/api\/issue-triage\/wallet\/start$/, (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, task: "R-77", href: "#/run/R-77" } }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
   await p.goto(`${base}/${hash}`); await p.waitForTimeout(800);
-  return { ctx, p, posts, approvals, crosses, catCalls, declines };
+  return { ctx, p, posts, approvals, crosses, catCalls, declines, takes };
 }
 const noSideways = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.querySelector("#main").scrollWidth <= document.querySelector("#main").clientWidth + 1);
 try {
   { const { ctx, p } = await open(1440, "en", "#/board");
     ok(await p.locator(".is-views").count() === 0 && !(await p.locator('a[href="#/board/issues"]').count()), "the Board shows Tasks only: issues live on their project's page");
     await ctx.close(); }
-  { const { ctx, p, posts, approvals, crosses, declines } = await open(1440);
+  { const { ctx, p, posts, approvals, crosses, declines, takes } = await open(1440);
     const openCat = async (id) => { await p.waitForSelector(`[data-cat="${id}"]`, { timeout: 8000 }); if (!(await p.locator(`[data-cat="${id}"]`).evaluate((e) => e.open))) await p.click(`[data-cat="${id}"] summary`); };
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
     ok(await p.locator('.pj-jump a[href="#s-issues"]').count() === 1, "a connected project's page has an Issues section to jump to");
@@ -160,6 +161,13 @@ try {
     { const kind = async (k) => p.locator(`[data-tri-other] .is-human [data-human-kind="${k}"]`).textContent().catch(() => "");
       const fit = await kind("human-fit"), dup = await kind("duplicate"), busy = await kind("in-progress");
       ok(/#22/.test(fit) && /too large|太大/.test(fit) && /#23/.test(dup) && /#70/.test(dup) && /#24/.test(busy) && await p.locator('[data-human-kind="in-progress"] a[href="https://github.com/fixture/wallet/pull/40"]').count() === 1, "a person's issue says why (too large), a duplicate names the issue it repeats, and one in progress links its open pull request", JSON.stringify([fit, dup, busy])); }
+    { const kind = async (k) => p.locator(`[data-tri-other] .is-human [data-human-kind="${k}"]`).textContent().catch(() => "");
+      const fit = await kind("human-fit"), dup = await kind("duplicate"), busy = await kind("in-progress");
+      ok(/one investigator|一位調查員/.test(fit), "a person's issue says whether one investigator or both said so", fit);
+      ok(/in saveDraft/.test(dup) && /comment \(MEMBER\)/.test(dup) && /TypeError in saveDraft on save/.test(dup) && /<img src=x/.test(dup) && !(await p.evaluate(() => window.__pwned3)), "a duplicate shows the symptom quoted from each issue and where it was found, as text", dup);
+      ok(/maintainer/.test(busy) && /MEMBER/.test(busy), "an in-progress issue names the pull request's author", busy);
+      await p.click('[data-human-kind="in-progress"] [data-take="24"]'); await p.waitForTimeout(300);
+      ok(takes.length === 1 && takes[0].issue === 24, "the captain can take an in-progress issue anyway: it sends that issue to become a package", JSON.stringify(takes)); }
     await p.fill("[data-issue-numbers]", "12, x"); await p.click("[data-issue-triage]"); await p.waitForTimeout(200);
     ok(posts.length === 0 && /whole numbers/.test(await p.locator('[data-issue-start] [role="alert"]').textContent()), "issue numbers that are not numbers are refused before anything is sent");
     await p.goto(`${base}/#/project/vault`); await p.waitForSelector('[data-project-issues="vault"] [data-issue-start]', { timeout: 8000 }).catch(() => {});

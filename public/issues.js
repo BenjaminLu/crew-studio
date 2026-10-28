@@ -109,10 +109,24 @@ function crossList(rec, cross) {
 // why an issue was set aside before packaging (src/domain/issue-triage.ts Human): a person's work, a duplicate, work in progress
 const FIT = { "needs-info": ["needs information", "資訊不足"], "product-decision": ["a product decision", "要產品決定"], "too-large": ["too large", "太大"], "external-dependency": ["an outside dependency", "依賴外部"], "security-owner": ["for the security owner", "安全負責人處理"], other: ["other", "其他"] };
 const ghPull = (repo, n) => `https://github.com/${repo}/pull/${n}`;
+// the captain takes an issue set aside as in progress anyway: it becomes a package waiting for approval (Studio only)
+async function takeIssue(project, n) {
+  const f = formOf(project); f.note = null;
+  try { const r = await postJ(`/api/issue-triage/${encodeURIComponent(project)}/take`, { issue: n }); f.note = T(`#${n} is now ${r.package}, waiting for approval.`, `#${n} 已成為 ${r.package}，等你核准。`); }
+  catch (e) { f.note = e.message; }
+  await load(project);
+}
+// a quote an investigator copied from an issue: untrusted text, only ever in text nodes
+const quote = (rec, q) => q ? h("div", { class: "is-quote" }, h("a", { href: ghIssue(rec.repository, q.n), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${q.n}`), h("span", { class: "faint" }, ` ${q.from || ""}: `), h("q", {}, q.text)) : null;
 function asideLine(rec, x) {
-  if (x.kind === "human-fit") return T(`A person's work, not an agent's: ${(x.fit || []).map((f) => (FIT[f] || [f])[0]).join(", ")}.`, `適合人做，不適合交給 agent：${(x.fit || []).map((f) => (FIT[f] || [f, f])[1]).join("、")}。`);
-  if (x.kind === "duplicate") return [T("Both investigators find it a duplicate of ", "兩位調查員都認為它和這張重複："), h("a", { href: ghIssue(rec.repository, x.duplicateOf), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${x.duplicateOf}`), T(", quoting the same symptom from both. Close it or keep it on GitHub yourself.", "，兩張都引用了同一個症狀。要不要關掉，由你自己到 GitHub 處理。")];
-  if (x.kind === "in-progress") return [T("An open pull request names it: ", "已有開著的 PR 提到它："), ...(x.pulls || []).map((n) => h("a", { href: ghPull(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n} `)), T("Check it before anyone starts.", "開工前先看那個 PR。")];
+  if (x.kind === "human-fit") return T(`A person's work, not an agent's: ${(x.fit || []).map((f) => (FIT[f] || [f])[0]).join(", ")} (${x.fitFrom === 2 ? "both investigators" : "one investigator"}).`, `適合人做，不適合交給 agent：${(x.fit || []).map((f) => (FIT[f] || [f, f])[1]).join("、")}（${x.fitFrom === 2 ? "兩位調查員" : "一位調查員"}這麼說）。`);
+  if (x.kind === "duplicate") { const sym = rec.issues[x.issues[0]]?.symptom;
+    return [T("Both investigators find it a duplicate of ", "兩位調查員都認為它和這張重複："), h("a", { href: ghIssue(rec.repository, x.duplicateOf), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${x.duplicateOf}`), T(", quoting the same symptom from both. Close it or keep it on GitHub yourself.", "，兩張都引用了同一個症狀。要不要關掉，由你自己到 GitHub 處理。"),
+      ...(sym ? [quote(rec, sym.here), quote(rec, sym.there)] : [])]; }
+  if (x.kind === "in-progress") return [T("An open pull request names it: ", "已有開著的 PR 提到它："), ...(x.pulls || []).flatMap((n) => { const by = (x.pullInfo || []).find((p) => p.n === n);
+      return [h("a", { href: ghPull(rec.repository, n), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), by ? h("span", { class: "faint" }, ` ${T("by", "作者")} ${by.author} (${by.association}) `) : " "]; }),
+    T("Check it before anyone starts.", "開工前先看那個 PR。"), " ",
+    h("button", { type: "button", class: "btn", "data-take": String(x.issues[0]), onclick: () => takeIssue(rec.project, x.issues[0]) }, T("Take it anyway", "還是要做"))];
   return x.reason;
 }
 function humanList(rec, cross, toHuman) {

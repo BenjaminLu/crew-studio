@@ -28,7 +28,7 @@ reporter, your duplicates and your fit answers are shown to the captain in Studi
    - a feature or task: the problem, the outcome wanted, the scope.
    If what is missing keeps you from locating it, the state is `needs-info`: list 1 to 3 short, specific questions for
    the reporter in `questions` (each at most 300 characters, one line, plain text: "Which version are you on?", not
-   "please provide more details"), and do not spend effort searching the code. An issue missing details you do not
+   "please provide more details"), leave `locus` empty and do not search the code. An issue missing details you do not
    need (a version for a crash whose stack names the function) is complete enough.
    Research, roadmap, design, process or tracking issues are `not-code`; do not search the code for them either.
 2. **Duplicates and existing work.** Before locating, check the batch and the recently closed issues for one with the
@@ -60,7 +60,7 @@ reporter, your duplicates and your fit answers are shown to the captain in Studi
    one `fitReason`: `needs-info` (an answer from someone is needed first), `product-decision` (what it should do is a
    choice to make), `too-large` (more than one pull request's worth, or a redesign), `external-dependency` (the fix is
    in another project, a service or an upgrade), `security-owner` (whoever owns security must decide), `other`.
-   Either investigator's `human` makes it a person's: it is never in a package.
+   When the two reports agree on the issue, either investigator's `human` makes it a person's: it is never in a package.
 10. **Links.** Only structure the issue states (parent, child, depends on). Never infer links from similar wording.
 
 ## Grouping

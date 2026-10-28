@@ -5,10 +5,10 @@ import {createHash} from 'node:crypto';
 import {isAbsolute,normalize} from 'node:path';
 import {withoutGitHubLinks} from './pull-template';
 
-/** a comment on an issue, as data: who wrote it (their relation to the repository), when, and its cleaned text */
-export type Comment={author:string;association:string;at:string;body:string};
+/** a comment on an issue, as data: its writer's relation to the repository (never their login), when, and its cleaned text */
+export type Comment={association:string;at:string;body:string};
 export type IssueSnap={n:number;title:string;body:string;labels:string[];author:string;association:string;updatedAt:string;hash:string;
- /** how many comments GitHub counts (part of the hash: a new comment makes the issue changed) */
+ /** how many comments GitHub counts (not in the hash: an issue not in committed work is taken again when it changes) */
  comments?:number;
  /** the latest comments, read for a batch's issues only, and their hash (an edited comment changes it) */
  thread?:Comment[];threadHash?:string;
@@ -16,9 +16,13 @@ export type IssueSnap={n:number;title:string;body:string;labels:string[];author:
  prs?:number[]};
 /** a recently closed issue a batch may duplicate: its title and the start of its text */
 export type ClosedSnap={n:number;title:string;body:string;reason:string};
-export type Snapshot={schema:1;repository:string;fetchedAt:string;issues:IssueSnap[];hash:string;closed?:ClosedSnap[];pulls?:{n:number;title:string;issues:number[]}[];
+/** an open pull request that names an issue: by whom (login and relation to the repository) */
+export type PullRef={n:number;title:string;author:string;association:string;issues:number[]};
+export type Snapshot={schema:1;repository:string;fetchedAt:string;issues:IssueSnap[];hash:string;closed?:ClosedSnap[];pulls?:PullRef[];
  /** the open pull requests could not be read (the grant's token may not): no issue is known to be in progress */
- pullsUnread?:true};
+ pullsUnread?:'no-access'|'rate-limited'|'failed';
+ /** more open pull requests than Studio reads: only the first this many were looked at */
+ pullsCapped?:number};
 export type Locus={file:string;symbol:string;lines:string};
 /** why an issue is a person's work, not an agent's */
 export type FitReason='needs-info'|'product-decision'|'too-large'|'external-dependency'|'security-owner'|'other';
@@ -40,7 +44,7 @@ export type Package={kind:'ordered'|'unordered'|'one-change'|'single'|'recheck';
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const PAGES=40, BODY_MAX=16000, TITLE_MAX=300;
 /** comments kept per issue (its latest), each one's length, all of them together; closed issues kept; pull request pages */
-export const THREAD_MAX=20, COMMENT_MAX=4000, THREAD_TOTAL=24000, CLOSED_MAX=50, CLOSED_BODY=2000, PULL_PAGES=3;
+export const THREAD_MAX=20, COMMENT_MAX=4000, THREAD_TOTAL=24000, CLOSED_MAX=50, CLOSED_BODY=2000, PULL_PAGES=10, PULLS_PER_PAGE=30;
 export const SECURITY_LABEL=/^(security|sec)$/i;
 
 /** Issue text as data: NFKC, no zero-width or bidi controls, no HTML comments, bounded. */
@@ -48,17 +52,30 @@ export function cleanText(s:unknown,max:number){return String(s??'').normalize('
 
 type IssueReader={grant:{repository:string};remoteRead:(kind:any,target:string,page:number,signal?:AbortSignal,fresh?:boolean)=>Promise<any>};
 const list=(rows:any,what:string)=>{if(!Array.isArray(rows))throw new Error(`GitHub returned something other than ${what}`);return rows;};
-/** an issue's latest comments, cleaned and bounded: the first page, and the last one when there are more */
+/** an issue's latest comments, cleaned and bounded: the first page, and the last one when there are more (GitHub's page
+ *  limit: past 50 pages of 100, the 50th page stands for the last) */
 async function threadOf(adapter:IssueReader,n:number,count:number,signal?:AbortSignal):Promise<Comment[]>{
  const last=Math.min(50,Math.ceil(count/100)),rows=[...list(await adapter.remoteRead('issue-comments',String(n),1,signal,true),'a comment list'),...(last>1?list(await adapter.remoteRead('issue-comments',String(n),last,signal,true),'a comment list'):[])];
- const kept=rows.slice(-THREAD_MAX).map((c:any)=>({author:cleanText(c?.user?.login,100),association:cleanText(c?.author_association,40),at:cleanText(c?.updated_at??c?.created_at,40),body:cleanText(c?.body,COMMENT_MAX)}));
+ const kept=rows.slice(-THREAD_MAX).map((c:any)=>({association:cleanText(c?.author_association,40),at:cleanText(c?.updated_at??c?.created_at,40),body:cleanText(c?.body,COMMENT_MAX)}));
  // all of them together bounded too: the oldest go first
  while(kept.length>1&&kept.reduce((t,c)=>t+c.body.length,0)>THREAD_TOTAL)kept.shift();
  return kept;
 }
-const escape=(s:string)=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-/** an open pull request names an issue: `#n` on its own (not another repository's `o/r#n`, not `#n0`), or the issue's URL */
-const names=(text:string,repository:string,n:number)=>new RegExp(`(?<![\\w/.-])#${n}(?!\\d)|github\\.com/${escape(repository)}/issues/${n}(?!\\d)`,'i').test(text);
+/** the issues an open pull request names on purpose: a closing keyword (fixes, closes, resolves) before `#n` or this
+ *  repository's `owner/repo#n`, or an explicit reference to this repository (`owner/repo#n`, its issue URL). A bare `#n`
+ *  ("Step #12", "a regression from #12"), `&#12;`, `#12a` and another repository's references do not count. One pass. */
+const SHORT=/(?:^|[^\w&])(?:(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+)?([\w.-]+\/[\w.-]+)?#(\d{1,9})(?![\w-])/gi;
+const URL_REF=/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/(\d{1,9})(?![\w-])/gi;
+export function namedIssues(text:string,repository:string):number[]{
+ const repo=repository.toLowerCase(),out=new Set<number>();
+ for(const m of text.matchAll(SHORT))if(m[2]?m[2].toLowerCase()===repo:!!m[1])out.add(Number(m[3]));
+ for(const m of text.matchAll(URL_REF))if(m[1].toLowerCase()===repo)out.add(Number(m[2]));
+ return[...out];
+}
+/** a pull request that may set an issue aside: by someone with a role in the repository, or from a branch of it (a fork's
+ *  pull request by anyone else never does: anyone could push every issue out of the queue) */
+const TRUSTED=new Set(['OWNER','MEMBER','COLLABORATOR']);
+const trusted=(r:any,repository:string)=>TRUSTED.has(String(r?.author_association??''))||String(r?.head?.repo?.full_name??'').toLowerCase()===repository.toLowerCase();
 const snapHash=(issues:IssueSnap[],extra?:unknown)=>sha(JSON.stringify(issues.map(i=>[i.n,i.hash,i.labels]))+(extra===undefined?'':'\0'+JSON.stringify(extra)));
 /** Every open issue of the adapter's repository (pull requests left out), page by page until an empty page; with `threads`,
  *  `closed` or `pulls`, enriched as enrichSnapshot does. */
@@ -75,9 +92,9 @@ export async function snapshotIssues(adapter:IssueReader,o:{now?:()=>string;sign
    if(seen.has(r.number))continue;
    const title=cleanText(r.title,TITLE_MAX),body=cleanText(r.body,BODY_MAX),labels=(Array.isArray(r.labels)?r.labels:[]).map((l:any)=>cleanText(typeof l==='string'?l:l?.name,100)).filter(Boolean).sort();
    const comments=Number.isSafeInteger(r.comments)&&r.comments>0?r.comments:0;
-   // a label is part of what was triaged (a security label changes how its pull request names it); so is a new comment
-   // (an issue with none hashes as it did before comments counted)
-   seen.set(r.number,{n:r.number,title,body,labels,author:cleanText(r.user?.login,100),association:cleanText(r.author_association,40),updatedAt:cleanText(r.updated_at,40),hash:sha(title+'\0'+body+'\0'+labels.join('\n')+(comments?`\0comments ${comments}`:'')),...(comments?{comments}:{})});}
+   // a label is part of what was triaged (a security label changes how its pull request names it). Comments are not: a
+   // "+1" or a bot never makes committed work stale; their count is kept apart, for taking an uncommitted issue again
+   seen.set(r.number,{n:r.number,title,body,labels,author:cleanText(r.user?.login,100),association:cleanText(r.author_association,40),updatedAt:cleanText(r.updated_at,40),hash:sha(title+'\0'+body+'\0'+labels.join('\n')),...(comments?{comments}:{})});}
  }
  const issues=[...seen.values()].sort((a,b)=>a.n-b.n),snap:Snapshot={schema:1,repository:adapter.grant.repository,fetchedAt:o.now?.()??new Date().toISOString(),issues,hash:snapHash(issues)};
  return o.threads?.length||o.closed||o.pulls?enrichSnapshot(adapter,snap,o):snap;
@@ -92,17 +109,20 @@ export async function enrichSnapshot(adapter:IssueReader,snap:Snapshot,o:{signal
  let closed:ClosedSnap[]|undefined;
  if(o.closed){closed=list(await adapter.remoteRead('closed-issues',adapter.grant.repository,1,o.signal,true),'an issue list').filter((r:any)=>!r?.pull_request&&Number.isSafeInteger(r?.number)&&r.number>0&&!byN.has(r.number)).slice(0,CLOSED_MAX)
   .map((r:any)=>({n:r.number,title:cleanText(r.title,TITLE_MAX),body:cleanText(r.body,CLOSED_BODY),reason:cleanText(r.state_reason,40)}));extra.closed=closed!.map(c=>[c.n,c.title,c.body]);}
- let pulls:Snapshot['pulls'],pullsUnread=false;
- if(o.pulls)try{const found:NonNullable<Snapshot['pulls']>=[];
-  for(let page=1;page<=PULL_PAGES;page++){const rows=list(await adapter.remoteRead('open-pulls',adapter.grant.repository,page,o.signal,true),'a pull request list');
-   for(const r of rows){if(!Number.isSafeInteger(r?.number)||r.number<1)continue;const title=cleanText(r.title,TITLE_MAX),text=title+'\n'+cleanText(r.body,BODY_MAX);
-    const ns=issues.filter(i=>names(text,adapter.grant.repository,i.n)).map(i=>i.n);if(ns.length)found.push({n:r.number,title,issues:ns.slice(0,50)});}
-   if(rows.length<100)break;}
+ let pulls:Snapshot['pulls'],pullsUnread:Snapshot['pullsUnread'],pullsCapped:number|undefined;
+ if(o.pulls)try{const found:PullRef[]=[],open=new Set(issues.map(i=>i.n));
+  for(let page=1;;page++){const rows=list(await adapter.remoteRead('open-pulls',adapter.grant.repository,page,o.signal,true),'a pull request list');
+   for(const r of rows){if(!Number.isSafeInteger(r?.number)||r.number<1||!trusted(r,adapter.grant.repository))continue;const title=cleanText(r.title,TITLE_MAX);
+    const ns=namedIssues(title+'\n'+cleanText(r.body,BODY_MAX),adapter.grant.repository).filter(n=>open.has(n)).sort((x,y)=>x-y);
+    if(ns.length)found.push({n:r.number,title,author:cleanText(r.user?.login,100),association:cleanText(r.author_association,40),issues:ns.slice(0,50)});}
+   if(rows.length<PULLS_PER_PAGE)break;
+   if(page>=PULL_PAGES){pullsCapped=PULL_PAGES*PULLS_PER_PAGE;break;}}
   for(const p of found)for(const n of p.issues){const i=byN.get(n)!;i.prs=[...new Set([...(i.prs??[]),p.n])].sort((a,b)=>a-b);}
-  pulls=found;extra.pulls=found.map(p=>[p.n,p.issues]);}
-  // a token that may not read pull requests (a fine-grained one without that permission): triage goes on without them, saying so
-  catch(e:any){if(!/^GitHub (403|404)$/.test(String(e?.message)))throw e;for(const i of issues)delete i.prs;pullsUnread=true;extra.pulls='unread';}
- return{...snap,issues,hash:snapHash(issues,Object.keys(extra).length?extra:undefined),...(closed?{closed}:{}),...(pulls?{pulls}:{}),...(pullsUnread?{pullsUnread}:{})};
+  pulls=found;extra.pulls=found.map(p=>[p.n,p.issues]);if(pullsCapped)extra.pullsCapped=pullsCapped;}
+  // never the reason a triage fails: without the pull requests no issue is known to be in progress, and the note says why
+  catch(e:any){if(o.signal?.aborted)throw e;const m=String(e?.message);for(const i of issues)delete i.prs;pulls=undefined;pullsCapped=undefined;
+   pullsUnread=/rate-limited/.test(m)?'rate-limited':/^GitHub (403|404)$/.test(m)?'no-access':'failed';extra.pulls=pullsUnread;delete extra.pullsCapped;}
+ return{...snap,issues,hash:snapHash(issues,Object.keys(extra).length?extra:undefined),...(closed?{closed}:{}),...(pulls?{pulls}:{}),...(pullsUnread?{pullsUnread}:{}),...(pullsCapped?{pullsCapped}:{})};
 }
 
 const STATES=['present','fixed?','not-code','not-found','needs-info'];
@@ -118,6 +138,7 @@ export function parseReport(raw:any,o:{strict?:boolean}={}):Report{
  if(!Array.isArray(raw.issues)||raw.issues.length>1000)bad('issues');
  for(const f of raw.issues){if(!f||!Number.isSafeInteger(f.n)||!Array.isArray(f.locus)||f.locus.length>20||!f.locus.every((l:any)=>l&&str(l.file,300)&&str(l.symbol,300)&&str(l.lines,40))||!str(f.tag,80)||!STATES.includes(f.state)||!str(f.evidence)||!str(f.repro)||!['yes','no'].includes(f.security)||!Array.isArray(f.links))bad(`issue ${f?.n??'?'}`);
   const at=`issue ${f.n}`,qs=f.questions;
+  if(f.state==='needs-info'&&f.locus.length)bad(`${at}: a needs-info finding names no location (nothing was searched for)`);
   if(f.state==='needs-info'){if(!Array.isArray(qs)||qs.length<1||qs.length>QUESTIONS||!qs.every((q:any)=>str(q,QUESTION_MAX)&&q.trim()))bad(`${at}: needs-info asks the reporter 1 to ${QUESTIONS} questions, each at most ${QUESTION_MAX} characters`);}
   else if(qs!==undefined&&!(Array.isArray(qs)&&!qs.length))bad(`${at}: only a needs-info finding asks the reporter questions`);
   if(f.fit===undefined){if(o.strict)bad(`${at}: fit (agent or human) is missing`);}
@@ -231,7 +252,11 @@ const NO_CODE:Record<NoCode['state'],string>={'needs-info':'the issue lacks what
 const NO_CODE_STATES=['needs-info','not-found','not-code'] as const;
 /** an item for the captain: a disagreement (no kind), or an issue set aside before packaging because a person decides it
  *  (human-fit, with the reasons), it duplicates another (duplicate), or an open pull request names it (in-progress) */
-export type Human={issues:number[];reason:string;kind?:'human-fit'|'duplicate'|'in-progress';fit?:FitReason[];duplicateOf?:number;pulls?:number[]};
+export type Human={issues:number[];reason:string;kind?:'human-fit'|'duplicate'|'in-progress';fit?:FitReason[];
+ /** human-fit: how many investigators said so (1 or 2) */
+ fitFrom?:1|2;duplicateOf?:number;pulls?:number[];
+ /** in-progress: each pull request's author */
+ pullInfo?:{n:number;author:string;association:string}[]};
 const sorted=(ns:number[])=>[...ns].sort((x,y)=>x-y);
 /** questions as data: one line, cleaned, bounded; each once (case and spacing aside), at most `cap` */
 const questionsOf=(qs:unknown[],cap=QUESTIONS_MERGED)=>{const out:string[]=[],seen=new Set<string>();
@@ -259,10 +284,15 @@ export function proposePackages(a:Report,b:Report,snap:Snapshot,read:(file:strin
  // set aside before any package, each for a person with why: both reports name one duplicate and both pass the check, an
  // open pull request names it (Studio's own read), or either report says it is a person's work
  const aside=new Set<number>();
- for(const c of cmp){const n=c.n;if(idle.has(n)||!inSnap.has(n))continue;const prs=byN.get(n)?.prs??[],why=[...new Set([fa(n)?.fit==='human'?fa(n)!.fitReason:undefined,fb(n)?.fit==='human'?fb(n)!.fitReason:undefined].filter(Boolean))].sort() as FitReason[];
-  if(c.agree&&c.duplicateOf!==undefined&&passed(n))toHuman.push({issues:[n],reason:`both reports find #${n} a duplicate of #${c.duplicateOf}, quoting the same symptom from both: close it as a duplicate or keep it`,kind:'duplicate',duplicateOf:c.duplicateOf});
-  else if(prs.length)toHuman.push({issues:[n],reason:`open pull request ${prs.map(p=>'#'+p).join(' ')} names #${n}: work may be in progress; check it before anyone starts`,kind:'in-progress',pulls:prs});
-  else if(why.length)toHuman.push({issues:[n],reason:`not an agent's work (${why.join(', ')}): a person takes it`,kind:'human-fit',fit:why});
+ // two issues found duplicates of each other: the older (lower number) stays, the newer is the duplicate
+ const dupOf=new Map(cmp.filter(c=>c.agree&&c.duplicateOf!==undefined&&passed(c.n)).map(c=>[c.n,c.duplicateOf!]));
+ for(const c of cmp){const n=c.n;if(idle.has(n)||!inSnap.has(n))continue;const prs=byN.get(n)?.prs??[],d=dupOf.get(n);
+  const said=[fa(n),fb(n)].filter(f=>f?.fit==='human') as Finding[],why=[...new Set(said.map(f=>f.fitReason!))].sort();
+  if(d!==undefined&&!(dupOf.get(d)===n&&n<d))toHuman.push({issues:[n],reason:`both reports find #${n} a duplicate of #${d}, quoting the same symptom from both: close it as a duplicate or keep it`,kind:'duplicate',duplicateOf:d});
+  else if(prs.length)toHuman.push({issues:[n],reason:`open pull request ${prs.map(p=>'#'+p).join(' ')} names #${n}: work may be in progress; check it before anyone starts`,kind:'in-progress',pulls:prs,
+   pullInfo:(snap.pulls??[]).filter(p=>prs.includes(p.n)).map(p=>({n:p.n,author:p.author,association:p.association}))});
+  // a person's work only when the reports agree on the issue: a disagreement stays one, for the captain to see
+  else if(why.length&&c.agree)toHuman.push({issues:[n],reason:`not an agent's work (${why.join(', ')}): ${said.length===2?'both investigators':'one investigator'} said so; a person takes it`,kind:'human-fit',fit:why,fitFrom:said.length as 1|2});
   else continue;
   aside.add(n);placed.add(n);}
  // an issue with no code to change, or set aside, is in no package: the sets are compared without it
@@ -312,12 +342,21 @@ export type StoredPackage=Package&{id:string;commit:string;status:PackageStatus;
  /** a recheck made by the cross-batch match: the earlier package at the same function, and where */
  match?:{with:string;where:string};
  /** cross-batch matches the captain joined to this package: which, who, when, and whether that withdrew its approval */
- joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[]};
+ joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[];
+ /** taken into a package by the captain although an open pull request names it */
+ taken?:{by:string;at:string;pulls:number[]}};
 export type CrossEntry={id:string;issues:number[];package:Package&{commit:string};with:string;where:string};
 export type PackageStatus='proposed'|'approved'|'declined'|'stale';
 export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:string;investigated:boolean;security:boolean;agree?:boolean;diff?:string[];state?:Finding['state'];tag?:string;locus?:Locus[];repro?:string;checked?:boolean;
  /** a person's work (either report's human fit), and why; the duplicate both reports name; open pull requests naming it */
- fit?:'agent'|'human';fitReason?:FitReason[];duplicateOf?:number;inProgress?:number[]};
+ fit?:'agent'|'human';fitReason?:FitReason[];duplicateOf?:number;inProgress?:number[];
+ /** an agreed duplicate's symptom, as quoted from each issue's text, and where (body, or a comment and its writer's relation) */
+ symptom?:{here:Quote;there:Quote};
+ /** the comment count when it was investigated: an issue not in committed work is taken again when it changes */
+ comments?:number;
+ /** changed on GitHub while it was investigated (a comment edited, say): taken again by the next batch */
+ changed?:true};
+export type Quote={n:number;text:string;from:string};
 export type TriageRecord={schema:1;project:string;repository:string;commit:string;snapshot:{hash:string;fetchedAt:string};open:number;investigated:number[];
  issues:Record<string,TriageIssue>;packages:StoredPackage[];lastPackage?:number;
  /** new findings at the same function as an earlier package not started yet: the captain joins them to it or keeps them apart */
@@ -338,6 +377,11 @@ function sharedLocus(x:Finding|undefined,y:Finding|undefined,read:(file:string)=
   out.push({file,symbol,lines:LINES.test(l.lines.trim())?l.lines.trim():''});}
  return out.slice(0,10);
 }
+/** where a quote was found in an issue's own text: its body, or a comment (with its writer's relation to the repository) */
+const sourceOf=(q:string,i?:{body:string;thread?:Comment[]})=>{const k=low(q);if(!i)return'';if(low(i.body).includes(k))return'body';const c=(i.thread??[]).find(m=>low(m.body).includes(k));return c?`comment (${c.association||'unknown'})`:'';};
+const symptomOf=(f:Finding|undefined,snap:Snapshot):Pick<TriageIssue,'symptom'>=>{if(!f?.symptom||f.duplicateOf===undefined)return{};
+ const at=(n:number)=>snap.issues.find(i=>i.n===n)??(snap.closed??[]).find(c=>c.n===n),q=(n:number,t:string):Quote=>({n,text:oneLine(t,500),from:sourceOf(t,at(n))});
+ return{symptom:{here:q(f.n,f.symptom.here),there:q(f.duplicateOf,f.symptom.there)}};};
 /** either report's human fit makes the issue a person's, with both reasons; else agent (a report without fit reads as agent) */
 const fitOf=(a:Report,b:Report,n:number):Pick<TriageIssue,'fit'|'fitReason'>=>{const fs=[a,b].map(r=>r.issues.find(f=>f.n===n)).filter(Boolean) as Finding[],why:FitReason[]=[];
  for(const f of fs)if(f.fit==='human'&&f.fitReason&&!why.includes(f.fitReason))why.push(f.fitReason);
@@ -353,7 +397,7 @@ export function triageRecord(o:{project:string;snapshot:Snapshot;a:Report;b:Repo
  for(const i of snap.issues){const fa=a.issues.find(x=>x.n===i.n),fb=b.issues.find(x=>x.n===i.n),f=fa??fb,c=cmp.get(i.n);
   issues[String(i.n)]={title:i.title,labels:i.labels,hash:i.hash,investigated:!!f,security:!!(va.get(i.n)?.security||vb.get(i.n)?.security||i.labels.some(l=>SECURITY_LABEL.test(l))),
    // the repro and the tag are notes for the captain's page; a Task's request never carries them (issueBrief)
-   ...(f&&c?{agree:c.agree,diff:c.diff,state:c.state??f.state,tag:TAG.test(f.tag)?f.tag:'',locus:sharedLocus(fa,fb,read),repro:f.repro.slice(0,500),checked:!!(va.get(i.n)?.ok&&vb.get(i.n)?.ok),...fitOf(a,b,i.n),...(c.duplicateOf!==undefined?{duplicateOf:c.duplicateOf}:{})}:{}),...(i.prs?.length?{inProgress:i.prs}:{})};}
+   ...(f&&c?{agree:c.agree,diff:c.diff,state:c.state??f.state,tag:TAG.test(f.tag)?f.tag:'',locus:sharedLocus(fa,fb,read),repro:f.repro.slice(0,500),checked:!!(va.get(i.n)?.ok&&vb.get(i.n)?.ok),...fitOf(a,b,i.n),...(c.duplicateOf!==undefined?{duplicateOf:c.duplicateOf,...symptomOf(fa??fb,snap)}:{})}:{}),comments:i.comments??0,...(i.prs?.length?{inProgress:i.prs}:{})};}
  const investigated=Object.entries(issues).filter(([,v])=>v.investigated).map(([n])=>Number(n)).sort((x,y)=>x-y);
  return{schema:1,project:o.project,repository:snap.repository,commit:a.commit,snapshot:{hash:snap.hash,fetchedAt:snap.fetchedAt},open:snap.issues.length,investigated,issues,
   packages:plan.packages.map((p,i)=>({...p,id:`P-${i+1}`,commit:a.commit,status:'proposed' as const})),lastPackage:plan.packages.length,toHuman:plan.toHuman,noCode:plan.noCode,createdAt:o.now?.()??new Date().toISOString(),by:o.by};
@@ -362,13 +406,15 @@ export function triageRecord(o:{project:string;snapshot:Snapshot;a:Report;b:Repo
 const started=(p:{work?:Record<string,unknown>})=>!!p.work&&Object.keys(p.work).length>0;
 /** a package the captain approved, or one with work started: it outlives its issues closing */
 const committed=(p:{status:string;work?:unknown})=>p.status==='approved'||!!p.work;
+/** no comment added or removed since it was investigated (an issue triaged before comments were counted: unknown, same) */
+const sameComments=(p:TriageIssue,i:{comments?:number})=>p.comments===undefined||p.comments===(i.comments??0);
 /** The next batch to investigate: the open issues named, else the oldest open issues not investigated at their current text. */
 export function pickBatch(snap:Snapshot,prev:TriageRecord|null,o:{size:number;issues?:number[]}):number[]{
  const open=new Set(snap.issues.map(i=>i.n)),size=Math.max(1,Math.min(o.size,50));
  // an issue an approved package holds, unchanged, keeps its findings: investigating it again would drop work in progress
  const held=new Set((prev?.packages??[]).filter(committed).flatMap(p=>p.members).filter(n=>prev!.issues[String(n)]?.hash===snap.issues.find(i=>i.n===n)?.hash));
  if(o.issues?.length)return[...new Set(o.issues)].filter(n=>open.has(n)&&!held.has(n)).sort((x,y)=>x-y).slice(0,size);
- const done=(i:IssueSnap)=>{const p=prev?.issues[String(i.n)];return!!p?.investigated&&p.hash===i.hash;};
+ const done=(i:IssueSnap)=>{const p=prev?.issues[String(i.n)];return held.has(i.n)||!!p?.investigated&&p.hash===i.hash&&sameComments(p,i);};
  return snap.issues.filter(i=>!done(i)).map(i=>i.n).sort((x,y)=>x-y).slice(0,size);
 }
 /** issues kept in each no-code entry, the empty entries dropped */
@@ -382,18 +428,22 @@ const noCodeMerged=(xs:NoCode[])=>NO_CODE_STATES.map(state=>{const of=xs.filter(
 export function withoutChanged(rec:TriageRecord,changed:number[]):TriageRecord{
  const c=new Set(changed),hit=rec.packages.filter(p=>p.members.some(n=>c.has(n))),aside=rec.toHuman.filter(h=>h.kind&&h.issues.some(n=>c.has(n)));
  // no-code issues and issues set aside for a person (human fit, duplicate, in progress): their reason was about the old text
- const gone=sorted([...(rec.noCode??[]).flatMap(x=>x.issues),...aside.flatMap(h=>h.issues)].filter(n=>c.has(n)));if(!hit.length&&!gone.length)return rec;
+ const gone=sorted([...(rec.noCode??[]).flatMap(x=>x.issues),...aside.flatMap(h=>h.issues)].filter(n=>c.has(n)));if(!c.size)return rec;
  const why=(ns:number[])=>`changed on GitHub while being investigated: ${ns.filter(n=>c.has(n)).map(n=>'#'+n).join(' ')}`;
- return{...rec,packages:rec.packages.filter(p=>!hit.includes(p)),noCode:noCodeOf(rec.noCode,n=>!c.has(n)),toHuman:[...rec.toHuman.filter(h=>!aside.includes(h)),...hit.map(p=>({issues:p.members,reason:why(p.members)})),...(gone.length?[{issues:gone,reason:why(gone)}]:[])]};
+ // taken again by the next batch, even when only a comment changed (its text, and so its hash, may be the same)
+ const issues=Object.fromEntries(Object.entries(rec.issues).map(([n,i])=>[n,c.has(Number(n))&&i.investigated?{...i,investigated:false,changed:true as const}:i]));
+ return{...rec,issues,investigated:rec.investigated.filter(n=>!c.has(n)),packages:rec.packages.filter(p=>!hit.includes(p)),noCode:noCodeOf(rec.noCode,n=>!c.has(n)),toHuman:[...rec.toHuman.filter(h=>!aside.includes(h)),...hit.map(p=>({issues:p.members,reason:why(p.members)})),...(gone.length?[{issues:gone,reason:why(gone)}]:[])]};
 }
 /** A batch joined to the project's stored triage. The batch's snapshot is the open issues now: a closed issue's package is
  *  dropped; an issue edited since it was investigated is investigated again and its package is stale; an issue the batch
  *  investigated again replaces its earlier findings, package and disagreement. New packages are numbered after the old. */
 export function mergeTriage(prev:TriageRecord|null,next:TriageRecord):TriageRecord{
  if(!prev||prev.repository!==next.repository)return next;
- const redone=new Set(next.investigated),issues:Record<string,TriageIssue>={};
+ const redone=new Set([...next.investigated,...Object.entries(next.issues).filter(([,i])=>i.changed).map(([n])=>Number(n))]),issues:Record<string,TriageIssue>={};
+ // committed work keeps its issues' findings through a new comment; any other issue with one is taken again
+ const held=new Set(prev.packages.filter(committed).flatMap(p=>p.members));
  // an open issue is open: one reopened on GitHub loses its closed mark
- for(const[n,i]of Object.entries(next.issues)){const p=prev.issues[n];if(!i.investigated&&p?.investigated&&p.hash===i.hash){const{closed:_closed,...again}=p;issues[n]=again;}else issues[n]=i;}
+ for(const[n,i]of Object.entries(next.issues)){const p=prev.issues[n];if(!i.investigated&&!i.changed&&p?.investigated&&p.hash===i.hash&&(sameComments(p,i)||held.has(Number(n)))){const{closed:_closed,...again}=p;issues[n]=again;}else issues[n]=i;}
  // an approved package's issue that closed (a person closed it after its pull request merged) stays, marked closed, with the package
  for(const p of prev.packages.filter(committed))for(const n of p.members)if(!issues[String(n)]&&prev.issues[String(n)])issues[String(n)]={...prev.issues[String(n)],closed:true};
  const open=(n:number)=>!!issues[String(n)],kept=(ms:number[])=>ms.every(open)&&!ms.some(n=>redone.has(n));
@@ -444,7 +494,7 @@ export function declinePackages(rec:TriageRecord,ids:string[]):TriageRecord{
  *  findings and the hash it was investigated at (so an edited one is taken again); any other open issue is listed fresh. */
 export function atSnapshot(rec:TriageRecord,now:Snapshot):TriageRecord{
  const issues:Record<string,TriageIssue>={};
- for(const i of now.issues){const had=rec.issues[String(i.n)];issues[String(i.n)]=had?.investigated?{...had,title:i.title,labels:i.labels}:{title:i.title,labels:i.labels,hash:i.hash,investigated:false,security:i.labels.some(l=>SECURITY_LABEL.test(l))};}
+ for(const i of now.issues){const had=rec.issues[String(i.n)];issues[String(i.n)]=had?.investigated?{...had,title:i.title,labels:i.labels}:{title:i.title,labels:i.labels,hash:i.hash,investigated:false,security:i.labels.some(l=>SECURITY_LABEL.test(l)),...(i.comments?{comments:i.comments}:{}),...(had?.changed?{changed:true as const}:{})};}
  const open=(n:number)=>!!issues[String(n)];
  return{...rec,issues,open:now.issues.length,snapshot:{hash:now.hash,fetchedAt:now.fetchedAt},investigated:rec.investigated.filter(open),packages:rec.packages.filter(p=>p.members.every(open)),toHuman:rec.toHuman.filter(h=>h.issues.some(open)),noCode:noCodeOf(rec.noCode,open)};
 }
@@ -503,6 +553,18 @@ export function joinCross(rec:TriageRecord,id:string,o:{by?:string;at?:string}={
   security:old.security||c.package.security,status:'proposed',joins:[...(old.joins??[]),{id,issues:c.issues,by:o.by??'captain',at:o.at??new Date().toISOString(),wasApproved:old.status==='approved'}]};
  delete joined.approvedBy;delete joined.approvedAt;
  return{...rec,packages:rec.packages.map(p=>p.id===old.id?joined:p),cross:(rec.cross??[]).filter(x=>x!==c),dedup:(rec.dedup??0)+1};
+}
+/** The captain takes an issue set aside as in progress anyway: it becomes a package of its own, waiting for approval, and
+ *  records the pull request it went past. Only an issue both reports agree has code to change, an agent's work, no duplicate. */
+export function takeAnyway(rec:TriageRecord,n:number,o:{by:string;at?:string}):TriageRecord{
+ const h=rec.toHuman.find(x=>x.kind==='in-progress'&&x.issues.includes(n));if(!h)throw new Error(`#${n} is not set aside as in progress`);
+ const i=rec.issues[String(n)];
+ if(!i?.investigated||!i.agree||!i.checked||!needsCode(i.state))throw new Error(`#${n}: the two reports do not agree on code to change, so it cannot become a package`);
+ if(i.fit==='human')throw new Error(`#${n} is a person's work (${(i.fitReason??[]).join(', ')}), not a package`);
+ if(i.duplicateOf!==undefined)throw new Error(`#${n} is a duplicate of #${i.duplicateOf}`);
+ const last=Math.max(rec.lastPackage??0,...rec.packages.map(p=>Number(p.id.slice(2))||0))+1;
+ const pk:StoredPackage={kind:i.state==='fixed?'?'recheck':'single',members:[n],order:[n],why:'',security:i.security,agreement:'exact',id:`P-${last}`,commit:rec.commit,status:'proposed',taken:{by:o.by,at:o.at??new Date().toISOString(),pulls:h.pulls??[]}};
+ return{...rec,packages:[...rec.packages,pk],toHuman:rec.toHuman.filter(x=>x!==h),lastPackage:last};
 }
 /** The captain keeps a cross-batch match apart: it becomes a package of its own, waiting for approval. */
 export function splitCross(rec:TriageRecord,id:string):TriageRecord{

@@ -284,7 +284,7 @@ export class GitHubPrAdapter implements PrAdapter {
     else if (kind === "issues" && target === this.grant.repository) suffix = `/issues?state=open&sort=created&direction=asc&per_page=50&page=${page}`;
     // what triage checks before investigating (read only): the recently closed issues (one page) and the open pull requests
     else if (kind === "closed-issues" && target === this.grant.repository && page === 1) suffix = `/issues?state=closed&sort=updated&direction=desc&per_page=50&page=1`;
-    else if (kind === "open-pulls" && target === this.grant.repository) suffix = `/pulls?state=open&per_page=100&page=${page}`;
+    else if (kind === "open-pulls" && target === this.grant.repository) suffix = `/pulls?state=open&per_page=30&page=${page}`;
     else if (kind === "ref" && ref(target) && this.branchAllowed(target, approvedHead) && page === 1) suffix = `/git/ref/heads/${encodeURIComponent(target)}`;
     else if (kind === "protection" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection`;
     else if (kind === "policy" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection/required_status_checks`;
@@ -306,10 +306,12 @@ export class GitHubPrAdapter implements PrAdapter {
           if (response.status === 403 && /upgrade to github pro|make this repository public/i.test(message)) throw new Error("GitHub 403 protection-plan");
           if (response.status === 404 && /branch not protected/i.test(message)) throw new Error("GitHub 404 protection-none");
         }
+        // out of API calls, not out of permission: the caller can say which (issue triage's pull request read does)
+        if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") throw new Error("GitHub 403 rate-limited");
         throw new Error(`GitHub ${response.status}`);
       }
       return JSON.parse(await boundedResponse(response, 1_000_000));
-    } catch (e: any) { throw new Error(/^GitHub \d+(?: protection-(?:plan|none))?$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
+    } catch (e: any) { throw new Error(/^GitHub \d+(?: protection-(?:plan|none)| rate-limited)?$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
     finally { await disposeOwnedResponse(response,controller);clearTimeout(timer); }
   }
   /** The read-only probe before the captain grants merging (src/github-merge-grant.ts): one GET of the granted repository with

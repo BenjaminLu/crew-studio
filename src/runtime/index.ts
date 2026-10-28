@@ -563,6 +563,15 @@ export function createRuntime(d: RuntimeDeps) {
           try { return json(issueTriageFlow.cross(crossM[1], b.id, b.action, "captain (project page)")); }
           catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
         }
+        // an issue set aside because an open pull request names it, taken into a package anyway on the project page
+        const takeM = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/take$/.exec(p);
+        if (takeM) {
+          if (!writing) return json({ error: "use POST" }, 405);
+          if (who.kind !== "desktop") return json({ error: "only the desktop captain takes an issue in progress" }, 403);
+          if (!Number.isSafeInteger(b?.issue) || b.issue < 1) return json({ error: "name the issue (a positive integer)" }, 400);
+          try { return json(issueTriageFlow.take(takeM[1], b.issue, "captain (project page)")); }
+          catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+        }
         // packages kept as proposals, approved later on the project page (the issues are read again first)
         const approve = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/approve$/.exec(p);
         if (approve) {

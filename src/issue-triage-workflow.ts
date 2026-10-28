@@ -18,7 +18,7 @@ import {must} from './git';
 import {localUnrestricted} from './local-execution';
 import {realInside} from './secure';
 import {listTree,searchTree,typedRead,LINES_PER_READ} from './review-read';
-import {approvePackages,atSnapshot,declinePackages,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,enrichSnapshot,triageRecord,verifyReport,withoutChanged,NEAR,SPAN,type Reads,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
+import {approvePackages,atSnapshot,declinePackages,takeAnyway,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,enrichSnapshot,triageRecord,verifyReport,withoutChanged,NEAR,SPAN,type Reads,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
 import type {IssueTriageStore} from './issue-triage-store';
 import {NativeToolFailure} from './host/types';
 import type {Engine,X} from './runtime/engine';
@@ -83,7 +83,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   rmSync(join(tree,'.git'),{recursive:true,force:true});
   x.ctx.issueTriage={project,repository:full.repository,commit,tree,batch,snapshot:full.hash} satisfies State;
   engine.record(x,'issue-triage-snapshot',{head:full.hash,data:{schema:1,project,repository:full.repository,commit,open:full.issues.length,batch,closed:full.closed?.length??0,pulls:full.pulls?.length??0}} as any);
-  x.rn.note=`${batch.length} of ${snap.issues.length} open issues, code at ${commit.slice(0,7)}${full.pullsUnread?'; the open pull requests could not be read (the token may not), so none is known to be in progress':''}`;x.save();return 'ok';};
+  x.rn.note=`${batch.length} of ${snap.issues.length} open issues, code at ${commit.slice(0,7)}${full.pullsUnread?`; the open pull requests could not be read (${({'no-access':'the token may not read them','rate-limited':'GitHub\'s rate limit is used up for now',failed:'GitHub did not answer'} as const)[full.pullsUnread]}), so none is known to be in progress`:''}${full.pullsCapped?`; only the first ${full.pullsCapped} open pull requests were read`:''}`;x.save();return 'ok';};
 
  // the investigators are paid model work: the captain starts them, seeing the batch, the commit and the two models
  engine.actions['issues.confirm-card']=async x=>{
@@ -155,8 +155,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    const a=reportOf(x,'a'),b=reportOf(x,'b');
    if(a.by.provider===b.by.provider&&a.by.model===b.by.model)throw new Error(`Both investigators ran on ${a.by.provider} ${a.by.model}: the two reports must come from different models; give the maker and reviewer seats different models`);
    const snap=snapOf(x),{adapter}=selected(t.project),fresh=await snapshotIssues(adapter,{signal:engine.abortOf(x.run).signal,threads:t.batch});guard(x);
-   // changed: its title, text, labels or comment count, or a comment edited (the batch's comments are read again)
-   const now=new Map(fresh.issues.map(i=>[i.n,i])),changed=t.batch.filter(n=>{const was=snap.issues.find(i=>i.n===n);return now.get(n)?.hash!==was?.hash||now.get(n)?.threadHash!==was?.threadHash;});
+   // changed: its title, text or labels, a comment added or removed, or a comment edited (the batch's comments are read again)
+   const now=new Map(fresh.issues.map(i=>[i.n,i])),changed=t.batch.filter(n=>{const was=snap.issues.find(i=>i.n===n);return now.get(n)?.hash!==was?.hash||(now.get(n)?.comments??0)!==(was?.comments??0)||now.get(n)?.threadHash!==was?.threadHash;});
    const batch=triageRecord({project:t.project,snapshot:snap,a:a.report,b:b.report,read:checkoutReader(t.tree),reads:{a:a.reads,b:b.reads},by:`issue-triage ${x.run.id}`});
    const prev=store.get(t.project),merged=mergeTriage(prev,atSnapshot(withoutChanged(batch,changed),fresh));
    const added=merged.packages.filter(p=>!prev?.packages.some(q=>q.id===p.id)).map(p=>p.id),matched=(merged.cross??[]).filter(c=>!prev?.cross?.some(q=>q.id===c.id)).map(c=>c.id);
@@ -289,5 +289,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const rec=store.get(project);if(!rec)throw new Error(`${project} has no issue triage`);
   const next=action==='join'?joinCross(rec,id,{by}):splitCross(rec,id);store.write(next);
   return{ok:true,...(action==='join'?{joined:(rec.cross??[]).find(c=>c.id===id)?.with}:{package:`P-${next.lastPackage}`})};}
- return{start,progress,investigators,approve,decline,cross,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
+ /** The captain takes an issue set aside as in progress anyway, on the project page: a package waiting for approval. */
+ function take(project:string,n:number,by:string){const rec=store.get(project);if(!rec)throw new Error(`${project} has no issue triage`);
+  const next=takeAnyway(rec,n,{by});store.write(next);return{ok:true,package:`P-${next.lastPackage}`};}
+ return{start,progress,investigators,approve,decline,cross,take,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
 }
