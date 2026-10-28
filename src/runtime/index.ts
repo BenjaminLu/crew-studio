@@ -215,7 +215,7 @@ export function createRuntime(d: RuntimeDeps) {
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
   const draftTools=installWorkflowDraftTools(drafts,readiness?.tools,def=>{readiness?.versionSaved(def);try{d.send('wf',{id:def.id,version:def.version});}catch{}});
-  const issueTriageFlow=installIssueTriage(engine,projects,issueTriage,d.dataDir,{propose:(args,owner)=>originalFirstmate.call('studio_propose_work',args,owner) as any});
+  const issueTriageFlow=installIssueTriage(engine,projects,issueTriage,d.dataDir,{propose:(args,owner)=>originalFirstmate.call('studio_propose_work',args,owner) as any,crewOf:(def,project)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),def,{},t.hash,project).nodes as any:null;}});
   const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
@@ -523,11 +523,22 @@ export function createRuntime(d: RuntimeDeps) {
           catch (e: any) { const msg = String(e?.message ?? e); return json({ error: msg }, /only an ended run|still finishing/.test(msg) ? 409 : 400); }
         }
       }
-      // ---------- issue triage (read-only here: the issue-triage workflow writes it) ----------
+      // ---------- issue triage: read here; written by the issue-triage workflow only. The project page starts one (the
+      // captain on the desktop, a batch of 1 to 50 issues); its investigators still wait for the captain's start card ----------
       if (p === "/api/issue-triage" || p.startsWith("/api/issue-triage/")) {
+        const start = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/start$/.exec(p);
+        if (start) {
+          if (!writing) return json({ error: "use POST" }, 405);
+          if (who.kind !== "desktop") return json({ error: "only the desktop captain starts an issue triage" }, 403);
+          const size = b?.size ?? 15, issues = b?.issues ?? [];
+          if (!Number.isSafeInteger(size) || size < 1 || size > 50 || !Array.isArray(issues) || issues.length > 50 || !issues.every((n: any) => Number.isSafeInteger(n) && n > 0)) return json({ error: "a batch is 1 to 50 issues; issue numbers are positive integers" }, 400);
+          try { const run = issueTriageFlow.start({ project: start[1], size, issues, by: "captain (project page)" }); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
+          catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+        }
         if (writing) return json({ error: "read only" }, 405);
         if (p === "/api/issue-triage") return json({ projects: issueTriage.list() });
-        try { const rec = issueTriage.get(decodeURIComponent(p.slice("/api/issue-triage/".length))); return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec) } : { state: "none" }); } catch { return json({ error: "invalid project id" }, 400); }
+        try { const id = decodeURIComponent(p.slice("/api/issue-triage/".length)), rec = issueTriage.get(id), investigators = issueTriageFlow.investigators(id);
+          return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec), investigators } : { state: "none", investigators }); } catch { return json({ error: "invalid project id" }, 400); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });

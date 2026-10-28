@@ -145,8 +145,12 @@ function viewIndex() {
 async function loadPage(id) {
   const cur = PJ.pages.get(id) || {}; if (cur.busy) { cur.again = true; return; }
   cur.busy = true; PJ.pages.set(id, cur);
-  try { cur.data = await getJ(`/api/projects/${encodeURIComponent(id)}/overview`); cur.err = null; cur.at = Date.now(); } catch (e) { cur.err = e; cur.at = Date.now(); }
-  finally { cur.busy = false; }
+  try {
+    try { cur.data = await getJ(`/api/projects/${encodeURIComponent(id)}/overview`); cur.err = null; cur.at = Date.now(); } catch (e) { cur.err = e; cur.at = Date.now(); }
+    // the team as this project runs it (each seat's model, with this project's own changes); a failed read hides only that
+    try { cur.team = id === "studio" ? null : await getJ(`/api/team?project=${encodeURIComponent(id)}`); } catch { cur.team = null; }
+  } finally { cur.busy = false; }
+  window.crewProjectIssuesReload?.(id);
   if (curId() === id) soft();
   if (cur.again) { cur.again = false; loadPage(id); }
 }
@@ -183,8 +187,18 @@ function cardRow(c) {
     h("div", {}, h("div", { class: "need-t" }, LX(c.title)), h("div", { class: "need-d" }, bits.join(" · "))),
     h("a", { class: "btn primary", href: c.href, "data-card-link": c.id }, T("Open card", "開啟卡片")));
 }
-function crewSection(d) {
-  const p = d.project, crew = d.crew;
+/** each seat of the team the way this project runs it: the member's model and effort, and what this project changes */
+function teamRows(team) {
+  const seats = (team?.seats || []).filter((s) => s.member && (s.uses || s.project));
+  if (!team?.team || !seats.length) return null;
+  return h("div", { class: "pj-roles", "data-project-team": String(team.team.version) },
+    seats.map((s) => { const m = { ...s.member, ...(s.project || {}) };
+      return h("div", { class: "pj-role", "data-seat": s.id }, h("span", { class: "rn" }, T(s.label?.en ?? s.id, s.label?.zh ?? s.id)),
+        h("span", { class: "rc" }, [m.provider, m.model, m.effort].filter(Boolean).map((x) => h("span", { class: "vbadge" }, x))),
+        h("span", { class: "pj-src" }, s.project ? T("changed for this project", "這個專案自己的設定") : T(`team v${team.team.version}`, `團隊 v${team.team.version}`))); }));
+}
+function crewSection(d, team) {
+  const p = d.project, crew = d.crew, rows = teamRows(team);
   // the crew link only where tasks can start (the staffing check passes); otherwise the panel could not staff it
   const canLink = p.kind !== "studio" && p.canStart === true;
   const head = h("div", { class: "sec-head" }, h("h2", { id: "hCrew" }, T("Crew", "船員")), h("span", { class: "faint" }, T("read only", "唯讀")), h("span", { class: "x-grow" }),
@@ -195,6 +209,7 @@ function crewSection(d) {
   else if (failed(crew)) body = crew.error === "refused" ? plain(`No task can start: ${crew.detail?.en ?? ""}`, `無法開始任何任務：${crew.detail?.tw ?? ""}`, "refused")
     : sectionErr("The crew", "船員配置");
   else if (p.kind === "external" && !p.connected && !crew) body = h("div", { class: "pj-empty-row" }, T("External project: cannot dispatch yet. Its GitHub grant does not verify.", "外部專案：暫時無法派工。它的 GitHub 授權驗證不過。"));
+  else if (!crew && rows) body = null;
   else if (!crew) body = h("div", { class: "pj-empty-row", "data-crew-empty": "1" }, T("No crew approved yet. Tasks here will wait at their first round.", "還沒有核准的船員。這裡的任務會停在第一輪。"));
   else body = h("div", { class: "pj-crew-wf", "data-crew": crew.workflow },
     h("div", { class: "x-row wrap" }, h("b", {}, `${crew.workflow} v${crew.version}`), h("span", { class: "badge ok" }, h("span", { class: "d" }), T(`Approved · config v${crew.config}`, `已核准 · 配置 v${crew.config}`)),
@@ -202,7 +217,9 @@ function crewSection(d) {
     h("div", { class: "pj-roles" }, crew.roles.map((r) => h("div", { class: "pj-role" }, h("span", { class: "rn" }, r.role),
       h("span", { class: "rc" }, [r.provider, r.model, r.effort].filter(Boolean).map((x) => h("span", { class: "vbadge" }, x))), h("span", { class: "pj-src" }, r.skill)))),
     h("div", { class: "faint", style: "font-size:12px" }, T("One approved crew covers the project. To change it, approve a new one on the Crew page.", "一份核准的船員配置涵蓋整個專案。要修改，請到船員頁核准新的一份。")));
-  return h("section", { id: "s-crew", "aria-labelledby": "hCrew" }, head, h("div", { class: "card" }, body));
+  return h("section", { id: "s-crew", "aria-labelledby": "hCrew" }, head,
+    rows ? h("div", { class: "card" }, h("div", { class: "pj-crew-wf" }, h("div", { class: "x-row wrap" }, h("b", {}, T("Team in this project", "這個專案的團隊")), h("span", { class: "x-grow" }), h("a", { class: "btn ghost", href: "#/team" }, T("Change on the Crew page", "到 Crew 頁修改"))), rows)) : null,
+    body ? h("div", { class: "card" }, body) : null);
 }
 function sensitiveSection(d, id) {
   const s = d.sensitive;
@@ -295,6 +312,7 @@ function viewPage(id) {
   const chips = h("nav", { class: "pj-jump chips", "aria-label": T("Sections", "區段") },
     h("a", { class: "chip", href: "#s-tasks", onclick: scrollTo("s-tasks") }, tasks ? T(`Tasks · ${tasks.length}`, `任務 · ${tasks.length}`) : T("Tasks", "任務")),
     cards?.length ? h("a", { class: "chip", href: "#s-cards", onclick: scrollTo("s-cards") }, T(`Cards · ${cards.length}`, `卡片 · ${cards.length}`)) : null,
+    !studio && gh?.connected && gh.verified ? h("a", { class: "chip", href: "#s-issues", onclick: scrollTo("s-issues") }, T("Issues", "Issues")) : null,
     studio ? null : [h("a", { class: "chip", href: "#s-crew", onclick: scrollTo("s-crew") }, T("Crew", "船員")), h("a", { class: "chip", href: "#s-paths", onclick: scrollTo("s-paths") }, T("Sensitive paths", "敏感路徑")),
       h("a", { class: "chip", href: "#s-out", onclick: scrollTo("s-out") }, T("Outputs", "成品")), h("a", { class: "chip", href: "#s-wt", onclick: scrollTo("s-wt") }, T("Worktrees", "Worktree"))]);
   const attn = cards?.length ? h("div", { class: "card pj-attn", role: "status", "data-project-attention": String(cards.length) }, h("span", { class: "need-ic" }, icon("human")),
@@ -317,9 +335,11 @@ function viewPage(id) {
     h("div", { class: "card" }, !tasks ? h("div", { class: "x-pad" }, sectionErr("Tasks", "任務")) : tasks.length ? tasks.map(taskRow) : h("div", { class: "pj-empty-row", "data-tasks-empty": "1" }, T("Nothing running.", "目前沒有進行中的任務。"))));
   const cardsSec = cards?.length ? h("section", { id: "s-cards", "aria-labelledby": "hCards" }, h("div", { class: "sec-head" }, h("h2", { id: "hCards" }, T("Cards waiting for you", "等你處理的卡片")), h("span", { class: "badge human" }, String(cards.length))),
     h("div", { class: "card" }, cards.map(cardRow))) : !cards ? h("section", { id: "s-cards" }, sectionErr("Cards", "卡片")) : null;
-  const left = h("div", { class: "pj-col" }, tasksSec, cardsSec, studio ? null : crewSection(d));
+  const left = h("div", { class: "pj-col" }, tasksSec, cardsSec, studio ? null : crewSection(d, st.team));
+  // a project connected to GitHub: its issues, triaged in batches, and the work packages (public/issues.js)
+  const issues = !studio && gh?.connected && gh.verified && window.crewProjectIssues ? window.crewProjectIssues(p.id, gh.repository) : null;
   const right = studio ? null : h("div", { class: "pj-col" }, sensitiveSection(d, p.id), outputsSection(d), worktreesSection(d));
-  return h("div", { class: "page", "data-project-page": id }, header, notice, chips, attn, health, h("div", { class: "pj-cols" }, left, right));
+  return h("div", { class: "page", "data-project-page": id }, header, notice, chips, attn, health, issues, h("div", { class: "pj-cols" }, left, right));
 }
 
 routes.projects = viewIndex;

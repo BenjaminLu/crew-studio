@@ -35,7 +35,9 @@ export const checkoutReader=(tree:string)=>(file:string)=>{const p=join(tree,fil
 
 /** Studio's own proposal path (src/firstmate.ts studio_propose_work): a dispatch card the captain approves before any work */
 type Propose=(args:{workflow:string;version:number;title:string;text:string;params:Record<string,string>},owner:any)=>Promise<{proposal?:string}>;
-export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTriageStore,dataDir:string,o:{propose?:Propose}={}){
+/** the team's resolution of a workflow in a project (src/domain/crew.ts resolveCrew): who runs each agent node there */
+type CrewOf=(def:any,project:string)=>{node:string;provider:string|null;model:string|null;effort?:string|null}[]|null;
+export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTriageStore,dataDir:string,o:{propose?:Propose;crewOf?:CrewOf}={}){
  const source=normalizeDef(JSON.parse(bundledText(`workflows/v2/${ISSUE_TRIAGE_WORKFLOW}.wf.yaml`)||'null'));
  const bound=(x:X)=>{if(x.run.def.id!==ISSUE_TRIAGE_WORKFLOW||digest(x.run.def.nodes)!==digest(source.nodes)||digest(x.run.def.edges)!==digest(source.edges))throw new Error('The installed issue triage workflow changed; restart Studio so it installs its built-in workflows');};
  /** the project, its verified GitHub grant and the read-only adapter it allows */
@@ -150,7 +152,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   await engine.card(x,'permission',{captainOnly:true,title:`Approve ${packs.length} work package${packs.length===1?'':'s'} for ${t.repository}?`,zhTitle:`核准 ${t.repository} 的 ${packs.length} 個工作包嗎？`,
    en:{intent:`Work packages for ${t.repository}`,why:`Two investigators on different models read the code at ${t.commit.slice(0,7)} and agree on these; Studio found every file and quoted line.${sec.length?` ${sec.length} hold security issues: approve them once whoever owns security for this repository agrees.`:''}`,how:'Approve to let them be worked, one person per package, or keep them as proposals. Each issue is read again first: one that changed is not approved.'},
    zh:{intent:`${t.repository} 的工作包`,why:`兩位不同模型的調查員在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識；Studio 確認每個檔案和引用的程式碼都在。${sec.length?`其中 ${sec.length} 個含安全 issue：請先取得這個 repo 的安全負責人同意再核准。`:''}`,how:'核准後就能開工，一包一個人；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。'},
-   body:[...packs.map(line),'',`Code read at / 程式碼版本: ${t.commit}`,'The Board lists them: Board → Issues. / 看板 → Issues 可以看到。'].join('\n'),links:[{label:'Open the work packages',href:'#/board/issues'}],
+   body:[...packs.map(line),'',`Code read at / 程式碼版本: ${t.commit}`,'The project page lists them, under GitHub issues. / 專案頁的「GitHub issues」可以看到。'].join('\n'),links:[{label:'Open the work packages',href:`#/project/${encodeURIComponent(t.project)}`}],
    options:[{id:'approve',label:`Approve ${packs.length} package${packs.length===1?'':'s'}`,labelZh:`核准 ${packs.length} 個工作包`,primary:true},{id:'close',label:'Keep as proposals',labelZh:'先留著當提案',hold:true}]});
   return{wait:true};};
 
@@ -177,7 +179,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   return engine.start({workflow:ISSUE_TRIAGE_WORKFLOW,version:def.version,title:`Triage issues of ${record.github!.repository}`,text:`Triage open GitHub issues of ${record.github!.repository}`,
    params:{project:o.project,issues:(o.issues??[]).join(','),size:String(Math.max(1,Math.min(o.size??15,50)))},by:o.by} as any);}
  /** Firstmate proposes a triage: the run reads the issues and pins the code, then waits for the captain to start it. */
- const spec={type:'function',name:'studio_triage_issues',description:'When the captain asks to triage, classify or batch a connected project\'s open GitHub issues: start an issue triage of its next batch (the oldest open issues not investigated yet, or the issue numbers given). Studio reads the issues and pins the code, then raises a captain card that shows the batch and the two investigators\' models; only the captain starts them, and only the captain approves the work packages they agree on (Board → Issues). Returns the Task; never answer its cards.',
+ const spec={type:'function',name:'studio_triage_issues',description:'When the captain asks to triage, classify or batch a connected project\'s open GitHub issues: start an issue triage of its next batch (the oldest open issues not investigated yet, or the issue numbers given). Studio reads the issues and pins the code, then raises a captain card that shows the batch and the two investigators\' models; only the captain starts them, and only the captain approves the work packages they agree on (the project page, GitHub issues). Returns the Task; never answer its cards.',
   inputSchema:{type:'object',properties:{project:{type:'string'},issues:{type:'array',items:{type:'integer',minimum:1},maxItems:50},size:{type:'integer',minimum:1,maximum:50}},required:['project'],additionalProperties:false}};
  async function call(_name:string,args:any,owner:{captain?:boolean;text:string;live:()=>boolean}){
   if(!owner.live())throw new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。');
@@ -199,7 +201,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   return{state:DONE.includes(child.status)?'closed':'open',task:child.id};};
  /** every package's issues with a Task, for the Board */
  const progress=(rec:TriageRecord)=>Object.fromEntries(rec.packages.filter(p=>p.work).map(p=>[p.id,Object.fromEntries(Object.entries(p.work!).map(([n,e])=>[n,workOf(e)]))]));
- const workSpec={type:'function',name:'studio_work_package',description:'When the captain asks to work on (fix) an approved work package of a connected project\'s issue triage (Board → Issues, ids like P-3): propose the Task for its next issue on code-firstmate, from the triage\'s location, repro and security answer. One issue at a time, in the package\'s order; Studio reads the issue again first and refuses a package whose issue changed. The captain approves the Task on its dispatch card. Returns the proposal; call it again for the next issue once the previous one is merged.',
+ const workSpec={type:'function',name:'studio_work_package',description:'When the captain asks to work on (fix) an approved work package of a connected project\'s issue triage (the project page, GitHub issues; ids like P-3): propose the Task for its next issue on code-firstmate, from the triage\'s location, repro and security answer. One issue at a time, in the package\'s order; Studio reads the issue again first and refuses a package whose issue changed. The captain approves the Task on its dispatch card. Returns the proposal; call it again for the next issue once the previous one is merged.',
   inputSchema:{type:'object',properties:{project:{type:'string'},package:{type:'string'}},required:['project','package'],additionalProperties:false}};
  /** packages a proposal is being prepared for: two turns at once never propose one package's issue twice */
  const inFlight=new Set<string>();
@@ -227,5 +229,10 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const cur=store.get(args.project)!,at=new Date().toISOString();
   store.write({...cur,packages:cur.packages.map(p=>p.id===args.package?{...p,work:{...(p.work??{}),...Object.fromEntries(ns.map(n=>[String(n),{proposal:r.proposal!,at}]))}}:p)});
   return{proposal:r.proposal,issues:ns,next:'The captain approves the Task on its dispatch card. Ask for the next issue once this one is merged.'};}
- return{start,progress,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
+ /** the two investigators as a triage of this project would run them: the team's seats there, else the roles' providers */
+ function investigators(project:string){const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)return null;let nodes:ReturnType<CrewOf>=null;try{nodes=o.crewOf?.(def,project)??null;}catch{}
+  const one=(id:string)=>{const n=nodes?.find(x=>x.node===id),role=def.roles.find((r:any)=>r.id===def.nodes.find((m:any)=>m.id===id)?.role);
+   return n?.provider?{provider:n.provider,model:n.model??null,effort:n.effort??null,from:'team'}:{provider:role?.provider??null,model:role?.model??null,effort:null,from:'workflow'};};
+  return{a:one('a'),b:one('b')};}
+ return{start,progress,investigators,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
 }
