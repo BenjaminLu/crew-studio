@@ -74,7 +74,10 @@ export class ClaudeNative{
    if(code!==0||j.loggedIn!==true||!['claude.ai','oauth_token','api_key'].includes(j.authMethod)||j.apiProvider!=='firstParty')return this.base(p,{context,reason:'Claude account/provider metadata is unsupported'});
    if(this.denial?.code==='quotaExhausted')return this.base(p,{auth:this.authDenied?'unverified':'verified',loginState:'logged-in',context,refusal:'exhausted',reason:'Claude is signed in but quota is exhausted; wait for reset, not login'});
    if(this.authDenied)return this.base(p,{loginState:'logged-in',context,reason:'This CLI stores a login, but runtime authentication was refused; selected-context authentication is unverified'});
-   const cached=this.admitted.get(pairKey(p));if(cached&&isClaudeExecutionAdmission(cached,p))return cached;
+   const cached=this.admitted.get(pairKey(p));
+   if(cached&&isClaudeExecutionAdmission(cached,p)){if(cached.expires>Date.now())return cached;
+    // the capability went stale but its receipt still holds: a fresh 30-second capability carries the same receipt
+    const at=Date.now(),fresh={...cached,at,expires:at+30000};receipts.set(fresh,receipts.get(cached)!);this.admitted.set(pairKey(p),fresh);return fresh;}
    return this.base(p,{auth:'verified',loginState:'logged-in',context,reason:'Signed in; remaining quota and actual selected model execution are unverified. Studio verifies the exact model with one bounded request before its first round.'});
   }catch{return this.base(p,{reason:'Claude auth metadata is unavailable in this context'});}finally{if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;}if(clean)rmSync(root,{recursive:true,force:true});}
  }
@@ -112,7 +115,7 @@ export class ClaudeNative{
    return{source:'cli',models,at,version:typeof reply.response?.claude_code_version==='string'?reply.response.claude_code_version.slice(0,40):null};
   }catch{return failed('Claude model discovery failed');}finally{if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;}if(clean)rmSync(root,{recursive:true,force:true});}
  }
- async verify(p:ClaudePair,o:{confirm:boolean;signal?:AbortSignal;timeoutMs?:number;}):Promise<ClaudeCapability>{
+ async verify(p:ClaudePair,o:{confirm:boolean;signal?:AbortSignal;timeoutMs?:number;ttlMs?:number}):Promise<ClaudeCapability>{
   if(o.confirm!==true||!validClaudePair(p))return this.base(p,{reason:'Explicit confirmation of the exact configured Claude model/effort is required'});
   if(this.quotaHeld())return this.base(p,{reason:'Quota is exhausted; do not retry before reset'});
   const key=pairKey(p);let flight=this.flights.get(key);if(flight?.abort.signal.aborted)flight=undefined; // every earlier waiter left: never join a cancelled request
@@ -120,7 +123,7 @@ export class ClaudeNative{
    if([...this.flights.values()].filter(f=>!f.abort.signal.aborted).length>=ClaudeNative.MAX_FLIGHTS)return this.base(p,{reason:'Too many Claude verifications are waiting; try again when they finish'});
    const abort=new AbortController(),previous=this.tail,timeoutMs=o.timeoutMs??120000;
    // Queued behind the running pair: the deadline starts when this pair's own request starts.
-   const done=previous.then(()=>abort.signal.aborted?this.base(p,{reason:'Claude verification ended before it started'}):this.quotaHeld()?this.base(p,{reason:'Quota is exhausted; do not retry before reset'}):this.runVerify(p,abort.signal,timeoutMs));
+   const done=previous.then(()=>abort.signal.aborted?this.base(p,{reason:'Claude verification ended before it started'}):this.quotaHeld()?this.base(p,{reason:'Quota is exhausted; do not retry before reset'}):this.runVerify(p,abort.signal,timeoutMs,o.ttlMs));
    const created={abort,done,waiters:0};flight=created;this.flights.set(key,created);
    const leave=()=>{if(this.flights.get(key)===created)this.flights.delete(key);};this.tail=done.then(leave,leave);
   }
@@ -130,7 +133,9 @@ export class ClaudeNative{
   finally{release();shared.waiters--;if(shared.waiters<=0)shared.abort.abort();}
  }
  private quotaHeld(){return this.denial?.code==='quotaExhausted'&&(!this.denial.resetAt||this.denial.resetAt>Date.now());}
- private async runVerify(p:ClaudePair,signal:AbortSignal,timeoutMs:number):Promise<ClaudeCapability>{
+ /** a receipt lasts 30 seconds (Doctor's Verify) or, for Studio's own verification before rounds, up to an hour */
+ private async runVerify(p:ClaudePair,signal:AbortSignal,timeoutMs:number,ttlMs=30000):Promise<ClaudeCapability>{
+  ttlMs=Math.max(30000,Math.min(Number(ttlMs)||30000,3600000));
   if(!Number.isInteger(timeoutMs)||timeoutMs<500||timeoutMs>120000)return this.base(p,{reason:'Claude verification deadline is invalid'});
   const auth=await this.status(p,signal);if(auth.loginState!=='logged-in'||signal.aborted)return auth;
   const login=(this.options.login??(()=>claudeLogin({record:false})))();if(!login.ok)return this.base(p,{auth:'verified',loginState:'logged-in',reason:'Selected CLI is signed in but its credential cannot be safely isolated for a native worker'});
@@ -151,7 +156,8 @@ export class ClaudeNative{
    const code=await proc.exited;await proc.stop();if(signal.aborted||code!==0||proc.output().failure||!result||invalid||Date.now()>=deadline)throw 0;
    this.denial=null;this.authDenied=false;const at=Date.now(),cap=this.base(p,{auth:'verified',loginState:'logged-in',quota:'unknown',refusal:undefined,admission:'verified-execution',models:[{id:p.model,efforts:claudeEfforts(p.model)}],at,expires:at+30000,reason:'Exact model completed a bounded request; remaining quota is unknown',guidance:'Verified bounded execution; remaining quota is unknown. Runtime quota or auth denial stops readiness. / 已驗證有限執行；剩餘額度仍未知。執行時的額度或登入拒絕會停止就緒狀態。',context:auth.context});
    const superseded=this.admitted.get(pairKey(p));if(superseded){const previous=receipts.get(superseded);if(previous)previous.valid=false;}
-   receipts.set(cap,{valid:true,pair:{...p},expires:cap.expires,login:{...login,env:{...login.env}},owner:this,binary});this.admitted.set(pairKey(p),cap);return cap;
+   // the receipt lasts ttlMs; the capability the policy reads stays a 30-second fact (status() mints a fresh one from it)
+   receipts.set(cap,{valid:true,pair:{...p},expires:at+ttlMs,login:{...login,env:{...login.env}},owner:this,binary});this.admitted.set(pairKey(p),cap);return cap;
   }catch{return this.base(p,{auth:auth.auth,loginState:auth.loginState,reason:'Claude bounded verification did not establish readiness; no work or fallback was started'});}finally{signal.removeEventListener('abort',abort);if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;this.invalidate();}if(clean)rmSync(root,{recursive:true,force:true});}
  }
  async cancel(){const flights=[...this.flights.values()];for(const f of flights)f.abort.abort();await Promise.all(flights.map(f=>f.done.catch(()=>null)));}
@@ -161,8 +167,12 @@ export const probeClaudeNative=(p:ClaudePair,signal?:AbortSignal)=>nativeClaude.
 /** Before a round: a signed-in Claude with no execution receipt for this exact pair is verified by Studio itself (one
  *  bounded request), so the captain never has to press Verify first. Nothing else is verified: not a Claude that is not
  *  signed in, not one whose quota is exhausted or that is unavailable, not one already admitted, not an unsupported pair. */
-export async function admitSignedInClaude(cap:ProviderCapability,p:ClaudePair,d:{verify:(p:ClaudePair,o:{confirm:boolean;signal?:AbortSignal})=>Promise<ProviderCapability>;admitted:(cap:ProviderCapability,p:ClaudePair)=>boolean}={verify:(p,o)=>nativeClaude.verify(p,o),admitted:isClaudeExecutionAdmission},signal?:AbortSignal):Promise<ProviderCapability>{
+export const AUTO_VERIFY_TTL_MS=30*60_000;
+export async function admitSignedInClaude(cap:ProviderCapability,p:ClaudePair,d:{verify:(p:ClaudePair,o:{confirm:boolean;signal?:AbortSignal;ttlMs?:number})=>Promise<ProviderCapability>;admitted:(cap:ProviderCapability,p:ClaudePair)=>boolean}={verify:(p,o)=>nativeClaude.verify(p,o),admitted:isClaudeExecutionAdmission},signal?:AbortSignal,live:()=>boolean=()=>true):Promise<ProviderCapability>{
  if(cap.provider!=='claude'||!cap.available||cap.auth!=='verified'||cap.quota!=='unknown'||!validClaudePair(p)||d.admitted(cap,p))return cap;
- return d.verify(p,{confirm:true,signal});
+ // nothing is spent for a round whose owner ended; one verification serves the pair's rounds for half an hour (a queue
+ // wait or the next round reuses it instead of paying again)
+ if(signal?.aborted||!live())return cap;
+ return d.verify(p,{confirm:true,signal,ttlMs:AUTO_VERIFY_TTL_MS});
 }
 export function makeNativeClaudeProvider(cap:ProviderCapability,p:ClaudePair){const entry=receipts.get(cap);if(!entry||!isClaudeExecutionAdmission(cap,p))throw new Error('Claude native execution receipt is unavailable');return claudeProvider(p.model,entry.binary,{...p,live:()=>isClaudeExecutionAdmission(cap,p),invalidate:(code,event)=>entry.owner.invalidate(code,event),login:()=>({...entry.login,env:{...entry.login.env}})});}

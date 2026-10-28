@@ -15,4 +15,9 @@ const fakes = (admitted = false) => { const calls: any[] = []; return { calls, d
 for (const [o, name] of [[{ auth: "missing" }, "not signed in"], [{ auth: "unverified" }, "login unverified"], [{ quota: "exhausted", refusal: "exhausted" }, "quota exhausted"], [{ available: false }, "unavailable"], [{ provider: "codex" }, "another provider"]] as const) {
   const f = fakes(), c = cap(o); ok(await admitSignedInClaude(c, pair, f.deps) === c && f.calls.length === 0, `${name}: nothing is verified automatically`); }
 { const f = fakes(); ok(await admitSignedInClaude(cap(), { model: "not-a-claude-model", effort: null }, f.deps) && f.calls.length === 0, "an unsupported model or effort is never verified"); }
+// cost: one verification lasts the run's working time, not 30 seconds, so a round re-selected after a queue wait reuses it
+{ const opts: any[] = []; const deps = { verify: async (_p: any, o: any) => { opts.push(o); return admittedCap; }, admitted: (c: any) => c === admittedCap };
+  await admitSignedInClaude(cap(), pair, deps); ok(opts[0]?.ttlMs >= 10 * 60_000, "an automatic verification lasts at least ten minutes, so queued and repeated rounds do not pay again", JSON.stringify(opts)); }
+// a round whose owner ended before admission spends nothing
+{ const f = fakes(); ok(await admitSignedInClaude(cap(), pair, f.deps, undefined, () => false) && f.calls.length === 0, "a round no longer owned verifies nothing"); }
 console.log(`claude-auto-verify: ${pass} passed, 0 failed`);
