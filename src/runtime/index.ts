@@ -18,6 +18,7 @@ import {OnboardingTeam,type TeamPick,type TeamProbe} from '../onboarding-team';
 import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
 import {CrewStore,resolveCrew,teamBody,withJudges,seatLabel} from '../domain/crew';
+import {usableModels,levelOf,reachable,required,degradedWhy,withNote,LEVEL_TEXT,type Level} from '../domain/independence';
 import {installCrewGuard,judgeSlots} from '../crew-guard';
 import {installTeamStaffingGuard} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
@@ -88,6 +89,9 @@ export type RuntimeDeps = {
   /** fresh: read every model list again now (the Crew page's detection), not a reading the provider reuses */
   staffingFacts?: (o?:{fresh?:boolean}) => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
+  /** Studio's own bounded verification of one staffed model (a signed-in Claude pair, a Cursor key, a Codex probe): true when it
+   *  ran and passed. Absent: a signed-in model that is not verified stays blocked with the reason. */
+  staffingVerify?: (role:{provider:string;model:string;effort:string|null},o?:{signal?:AbortSignal})=>Promise<boolean>;
   onboardingProvider?:()=>string|null;
   /** each vendor's sign-in presence (claude, codex, cursor), free to read: the startup competition's Start form and Firstmate contract say which role to move to Cursor */
   providerLogins?:()=>Promise<Record<string,string>>;
@@ -159,6 +163,41 @@ export function createRuntime(d: RuntimeDeps) {
   let staffingCapabilities:StaffingFacts[]=[];
   const staffingFacts=async(o?:{fresh?:boolean})=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))(o);return staffingCapabilities;};
   const roleReady=(role:{provider:string;model:string;effort:string|null})=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);return !(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role as any,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort));};
+  // ---------- adaptive staffing (docs/architecture.md, "Adaptive staffing") ----------
+  // what this machine can run now, from the provider facts last read (null: none read yet, so no rule is relaxed)
+  const usableNow=()=>staffingCapabilities.length?usableModels(staffingCapabilities):null;
+  engine.deps.usableModels=usableNow;
+  type Role={provider:string;model:string;effort:string|null};
+  const verifyKey=(r:Role)=>`${r.provider}/${r.model}/${r.effort??''}`,said=(r:Role)=>`${r.provider} ${r.model}${r.effort?` (${r.effort})`:''}`;
+  // a verification that failed is not paid again for ten minutes; one that passed is the provider's own receipt (Claude: 30 minutes)
+  const verifyFailed=new Map<string,number>(),verifying=new Map<string,Promise<boolean>>(),VERIFY_RETRY_MS=10*60_000;
+  /** Why a role cannot run now when Studio cannot fix it by verifying it itself; null when one bounded verification would admit it. */
+  const unfixable=(id:string,role:Role):{en:string;zh:string}|null=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),r=cap?.reason?` (${cap.reason})`:'';
+   if(!cap||cap.support!=='supported')return{en:`The ${id} role's ${said(role)} is not available on this machine${r}. Check the account, then refresh.`,zh:`${id} 角色的 ${said(role)} 在這台機器上不可用；請確認帳號後重新整理。`};
+   if(cap.auth!=='verified'&&cap.login!=='logged-in')return{en:`The ${id} role's ${role.provider} is not signed in${r}. Sign in, then Start.`,zh:`${id} 角色的 ${role.provider} 尚未登入；請先登入再按開始。`};
+   if(cap.quota==='exhausted')return{en:`The ${id} role's ${role.provider} is out of quota${r}. Wait for the reset, then Start.`,zh:`${id} 角色的 ${role.provider} 額度已用完；請等額度重置後再按開始。`};
+   const known=[...cap.models,...cap.candidates??[]].filter(m=>m.id===role.model);
+   if(!known.length)return{en:`The ${id} role's ${role.provider} does not offer ${role.model} on this machine. Choose another model on the Crew page.`,zh:`${id} 角色的 ${role.provider} 在這台機器上沒有 ${role.model}；請到船員頁換一個模型。`};
+   if(role.effort!==null&&!known.some(m=>m.efforts.includes(role.effort!)))return{en:`The ${id} role's ${role.provider} ${role.model} does not support ${role.effort} effort. Choose another effort on the Crew page.`,zh:`${id} 角色的 ${role.provider} ${role.model} 不支援 ${role.effort}；請到船員頁換一個推理強度。`};
+   if(!d.staffingVerify)return{en:`The ${id} role's ${said(role)} is signed in but not verified by a bounded request, and Studio cannot verify it here. Verify it with Firstmate, then Start.`,zh:`${id} 角色的 ${said(role)} 已登入，但尚未經有限請求驗證，Studio 在這裡無法自行驗證；請先和 Firstmate 驗證，再按開始。`};
+   if((verifyFailed.get(verifyKey(role))??0)>Date.now())return{en:`Studio's verification of the ${id} role's ${said(role)} failed a few minutes ago${r}. Check the account, then Start again.`,zh:`Studio 幾分鐘前驗證 ${id} 角色的 ${said(role)} 失敗；請確認帳號後再按開始。`};
+   return null;};
+  /** Before a start (the Board's, the review room's turn): every role that is signed in but not verified yet, or whose facts are
+   *  stale, is verified by Studio itself (one bounded request per model, kept for the provider's expiry window), then the facts are
+   *  read again. Never for a role that is not signed in, out of quota or not offered: those stay blocked with the reason. */
+  async function autoVerify(roles:Record<string,Role>,o:{signal?:AbortSignal;why?:string}={}):Promise<{state:'ready';verified:string[]}|{state:'blocked';role:string;reason:{en:string;zh:string}}>{
+   const verified:string[]=[];
+   for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const why=unfixable(id,role);if(why)return{state:'blocked',role:id,reason:why};
+    const key=verifyKey(role);let job=verifying.get(key);
+    if(!job){job=(async()=>{try{return await d.staffingVerify!(role,{signal:o.signal})===true;}catch{return false;}})();verifying.set(key,job);void job.finally(()=>verifying.delete(key));}
+    const passed=await job;try{await staffingFacts();}catch{}
+    const ready=passed&&roleReady(role);if(!ready)verifyFailed.set(key,Date.now()+VERIFY_RETRY_MS);else{verifyFailed.delete(key);verified.push(`${id}: ${said(role)}`);}
+    d.log.emit({type:'staffing_auto_verify',summary:`${said(role)} for the ${id} role${o.why?` (${o.why})`:''}: ${ready?'verified with one bounded request':'verification did not admit it'}`});
+    if(!ready)return{state:'blocked',role:id,reason:{en:`Studio verified the ${id} role's ${said(role)} with one bounded request and it did not pass. Check the account, then Start again.`,zh:`Studio 用一次有限請求驗證 ${id} 角色的 ${said(role)}，沒有通過；請確認帳號後再按開始。`}};}
+   return{state:'ready',verified};}
+  // the review room's tutor (and any adaptive pick): verified the same way before its paid round
+  if(d.staffingFacts)engine.deps.ensurePick=async(pick:Role,o?:{signal?:AbortSignal;why?:string})=>{try{await staffingFacts();}catch{}const r=await autoVerify({tutor:pick},o);if(r.state==='blocked')throw new Error(`${r.reason.en} / ${r.reason.zh}`);return r;};
+  engine.deps.refreshUsable=async()=>{try{await staffingFacts();}catch{}return usableNow();};
   // each role's pick and each node override's effective pick (the definition the configuration names)
   const staffingCapability=(config:any)=>staffedCapability(config,engine.defs.get(config.workflow.id,config.workflow.version),roleReady);
   // the Studio-wide team (docs/design/crew-seats.md): a staffed workflow's project staffing is derived from it when it covers the
@@ -194,12 +233,21 @@ export function createRuntime(d: RuntimeDeps) {
   library:()=>engine.skillLibrary().library(),skillPackages:()=>skillPackages});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
-  /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
-   *  A Claude role that is signed in but not verified by a bounded request cannot start: the form never pays for it. */
-  const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);
-    if(role.provider==='claude'&&cap?.support==='supported'&&cap.auth==='verified'&&cap.expires>Date.now())return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's Claude ${role.model} is signed in but not verified by a bounded request. Verify it with Firstmate, then Start.`,zh:`${id} 角色的 Claude ${role.model} 已登入，但尚未經有限請求驗證；請先和 Firstmate 驗證，再按開始。`}};
-    return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's ${role.provider} ${role.model} is not available now${cap?.reason?` (${cap.reason})`:''}. Check the account, then refresh.`,zh:`${id} 角色的 ${role.provider} ${role.model} 目前不可用；請確認帳號後重新整理。`}};}
-   return{state:'ready' as const};};
+  /** A staffed code crew's reviewer on its worker's own model (src/domain/independence.ts). It is never refused here: the team's
+   *  resolution already moves a reviewing seat to another member's model when the team has one (src/domain/crew.ts), so this
+   *  happens on one usable model or by the captain's own choice. Either way it is said (Start form, merge card) and recorded. */
+  const reviewIndependence=(roles:Record<string,Role>):{level:Level;note?:{en:string;zh:string}}|null=>{
+   const w=roles.worker,rv=roles.reviewer;if(!w||!rv)return null;const level=levelOf(w,rv),usable=usableNow();if(level!=='same')return{level};
+   if(!usable||required('model',usable)==='same'){const why=degradedWhy(usable);return{level,note:{en:`Reviewer: ${LEVEL_TEXT.same.en}.${why.en}`,zh:`Reviewer：${LEVEL_TEXT.same.zh}。${why.zh}`}};}
+   const other=usable.find(u=>levelOf(u,w)!=='same');
+   return{level,note:{en:`Reviewer: ${LEVEL_TEXT.same.en}. This machine has another usable model${other?` (${other.provider} ${other.model})`:''}: give the reviewer seat a different model on the Crew page for an independent review.`,zh:`Reviewer：${LEVEL_TEXT.same.zh}。這台機器還有別的可用模型${other?`（${other.provider} ${other.model}）`:''}：到船員頁讓 reviewer 座位用不同模型，審查才是獨立的。`}};};
+  /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status). A role that is
+   *  signed in but not verified yet is ready: Studio verifies it itself when Start is pressed (one bounded request per model). */
+  const crewReadiness=(roles:Record<string,Role>)=>{const verify:{role:string;provider:string;model:string;effort:string|null}[]=[];
+   for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const why=unfixable(id,role);if(why)return{state:'blocked' as const,role:id,reason:why};verify.push({role:id,...role});}
+   const ind=reviewIndependence(roles);
+   const models=[...new Set(verify.map(v=>`${v.provider} ${v.model}`))];
+   return{state:'ready' as const,...verify.length?{verify,note:{en:`Studio verifies ${models.join(', ')} with one small paid request each when you start (kept for the provider's expiry window).`,zh:`按下開始時，Studio 會用一次小額付費請求驗證 ${models.join('、')}（在供應商的有效期內不會重複）。`}}:{},...ind?.note?{independence:{level:ind.level,...ind.note}}:{}};};
   const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission,a=>d.staffingApproved?.(a),{verified:(def,params)=>staffingGuard.verified(def,params),capability:staffingCapability},(def,projectId)=>teamStaffing(def,projectId));
   // Board start of a project-staffed workflow (code-firstmate): the approved configuration of the chosen registered
   // project, the same one Firstmate's dispatch binds. Never a bypass: the staffing guard still verifies it at start.
@@ -225,6 +273,16 @@ export function createRuntime(d: RuntimeDeps) {
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def,defs.ownCrew);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
+  // a staffed code Task's reviewer on its worker's own model: recorded on the Task's ledger (review-independence) and said on its
+  // merge card, with what this machine could run
+  const staffedRoles=(def:any,params:any):Record<string,Role>|null=>{if(!boardStaffed(def)||!params?._staffing)return null;try{const c=staffingGuard.verified(def,params);return Object.fromEntries(Object.entries(c.roles).map(([id,r]:any)=>[id,{provider:r.provider,model:r.model,effort:r.effort}]));}catch{return null;}};
+  const initIndependence=engine.deps.initializeRun;
+  engine.deps.initializeRun=(run:any,o:any)=>{initIndependence?.(run,o);const roles=staffedRoles(run.def,run.params),ind=roles&&reviewIndependence(roles);if(!ind||ind.level!=='same')return;const node=run.def.nodes[0],u=usableNow();
+   engine.record(engine.x(run,node,run.nodes[node.id]),'review-independence',{data:{schema:1,level:ind.level,worker:roles!.worker,reviewer:roles!.reviewer,reachable:u?reachable(u):null,usable:u?.map(x=>`${x.provider}/${x.model}`)??null,en:ind.note?.en??`Reviewer: ${LEVEL_TEXT.same.en}.`,zh:ind.note?.zh??`Reviewer：${LEVEL_TEXT.same.zh}。`}} as any);};
+  // the merge card says it plainly when the reviewer ran on the worker's own model (whatever route the body takes)
+  const mergeBody=engine.cardBodies?.merge;
+  if(mergeBody)engine.cardBodies.merge=async(x:any)=>{const body=await mergeBody(x);try{const e:any=engine.trusted(x.run.id).entries.filter((l:any)=>l.record==='review-independence').at(-1);if(!e||!body||typeof body!=='object')return body;
+   return withNote(body as any,{level:e.data?.level,en:String(e.data?.en??''),zh:String(e.data?.zh??'')});}catch{return body;}};
   const ownClaude=installOwnClaudeGrants(engine);
   const githubReview=installGitHubReviewWorkflow(engine,projects,d.dataDir,d.protectedRoots??[]);
   installReadinessViews(engine);
@@ -426,6 +484,7 @@ export function createRuntime(d: RuntimeDeps) {
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
         // every start refusal carries its typed failure (runtime/failures.ts), never only a string
+        let autoVerified:string[]=[];
         const refuse = (o: Record<string, unknown>, st: number, code: FailureCode) => json({ ...o, failure: failure(code, String(o.error ?? ""), { source: "params" }) }, st);
         const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return refuse({ error: "say what you want done" }, 400, "invalid-input.params");
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
@@ -456,6 +515,10 @@ export function createRuntime(d: RuntimeDeps) {
           const crew=boardStaffing(chosenDef,pid);if(crew.state!=='approved')return json({error:`${crew.reason.en} / ${crew.reason.zh}`,code:crew.code,staffing:crew},409);
           // the crew the captain saw when the form loaded: a crew approved again since then is reviewed again, never started blind
           if(b?.staffingExpected!==undefined&&b.staffingExpected!==crew.hash)return json({error:'The approved crew changed since this form loaded; review it again / 已核准的代理配置在表單載入後已變更，請重新確認',code:'staffing_changed',staffing:{state:'blocked',code:'staffing_changed',reason:{en:'The approved crew changed since this form loaded; review it again',zh:'已核准的代理配置在表單載入後已變更，請重新確認'}}},409);
+          // a signed-in role not verified yet (or whose facts went stale) is verified by Studio now, before the Task exists
+          const ready=await autoVerify(crew.roles,{why:`start of ${wf} on ${pid}`});
+          if(ready.state==='blocked')return json({error:`${ready.reason.en} / ${ready.reason.zh}`,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',role:ready.role,reason:ready.reason}},409);
+          if(ready.verified.length)autoVerified=ready.verified;
           params={...params,base:projects.get(pid)!.base,_staffing:crew.hash};
         }
         if(chosenDef?.kind==="coffee-kit") {
@@ -465,6 +528,8 @@ export function createRuntime(d: RuntimeDeps) {
         }
         let r;try{r = ownClaude.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls },b?.claudeVerification);}
         catch(e:any){if(!boardStaffed(chosenDef))throw e;const message=String(e?.message??e).replace(/^Staffing approval requires confirmation: /,'');return json({error:message,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',reason:{en:message,zh:'已核准的代理目前無法開始；請更新代理能力狀態後再試。'}}},409);}
+        // what Studio verified itself for this start, on the Task's own signed ledger
+        if(autoVerified.length)try{const run=engine.get(r.id)!,node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),"staffing-auto-verify",{data:{schema:1,verified:autoVerified,by:"studio",at:new Date().toISOString()}} as any);}catch{}
         return json(runView(r.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
@@ -587,6 +652,8 @@ export function createRuntime(d: RuntimeDeps) {
         }
         if (writing) return json({ error: "read only" }, 405);
         if (p === "/api/issue-triage") return json({ projects: issueTriage.list() });
+        // whether one model twice is allowed depends on what is usable: read the free probes once if nothing was read yet
+        if (d.staffingFacts && !staffingCapabilities.length) try { await staffingFacts(); } catch {}
         try { const id = decodeURIComponent(p.slice("/api/issue-triage/".length)), rec = issueTriage.get(id), investigators = issueTriageFlow.investigators(id);
           return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec), investigators } : { state: "none", investigators }); } catch { return json({ error: "invalid project id" }, 400); }
       }

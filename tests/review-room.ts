@@ -64,10 +64,23 @@ ok(viewBefore.reviewRoom?.href === `#/review/${merge.id}` && viewBefore.reviewRo
 let refusal: any = null; try { await room.start(merge.id, { action: "teach" }, "captain"); } catch (e) { refusal = e; }
 ok(refusal?.code === "confirm_required" && refusal.offer?.provider === "tutor" && refusal.offer?.model === "t-1" && typeof refusal.offer.hash === "string", "a turn without the confirmation is refused and offers the tutor's provider and model", JSON.stringify(refusal?.offer ?? refusal?.message));
 const offer = room.view(merge.id).offer as any;
-// the tutor never runs on the maker's model
+ok(offer.independence?.level === "vendor" && offer.independence.adaptive === false && /Different vendor/.test(offer.independence.en) && !!offer.independence.zh, "the offer labels the tutor's independence from the author: a different vendor", JSON.stringify(offer.independence));
+// the tutor adapts to what is usable; it is never refused because only one vendor or model is (src/domain/independence.ts)
 const reviewer = run.def.roles.find((x: any) => x.id === "reviewer")!; const saved = { ...reviewer }; Object.assign(reviewer, { provider: undefined, model: undefined });
-ok(/maker's model/.test((room.view(merge.id).offer as any).error ?? ""), "a tutor on the maker's model is refused", JSON.stringify(room.view(merge.id).offer));
-Object.assign(reviewer, saved);
+let o2: any = room.view(merge.id).offer;
+ok(!o2.error && o2.provider === "stub" && o2.independence?.level === "same" && /Same model as the author/.test(o2.independence.en), "with no other model known, the tutor runs on the author's own model and says so, never refused", JSON.stringify(o2));
+E.deps.usableModels = () => [{ provider: "stub", model: "m-2", efforts: [], verified: true }, { provider: "codex", model: "c-1", efforts: ["low", "medium"], verified: true }];
+o2 = room.view(merge.id).offer;
+ok(o2.provider === "codex" && o2.model === "c-1" && o2.effort === "medium" && o2.independence?.level === "vendor" && o2.independence.adaptive === true, "with another vendor usable, the tutor moves to it (at medium effort)", JSON.stringify(o2));
+E.deps.usableModels = () => [];
+o2 = room.view(merge.id).offer;
+ok(o2.code === "no_tutor" && /No signed-in model/.test(o2.error ?? ""), "with nothing usable at all, the room says so", JSON.stringify(o2));
+delete E.deps.usableModels; Object.assign(reviewer, saved);
+// the approved reviewer member wins a tie: it stays the tutor when it is usable and as independent as any other
+E.deps.usableModels = () => [{ provider: "codex", model: "c-1", efforts: ["medium"], verified: true }, { provider: "tutor", model: "t-1", efforts: [], verified: true }];
+o2 = room.view(merge.id).offer;
+ok(o2.provider === "tutor" && o2.model === "t-1" && o2.independence.adaptive === false && o2.hash === offer.hash, "a usable approved reviewer member stays the tutor on a tie", JSON.stringify(o2));
+delete E.deps.usableModels;
 // a sandbox-off grant refuses the turn
 const grant = E.grants.add({ kinds: ["sandbox-off"], until: new Date(Date.now() + 3600_000).toISOString(), project: null } as any, "captain (desktop)") as any;
 refusal = null; try { await room.start(merge.id, { action: "how", confirm: offer.hash }, "captain"); } catch (e) { refusal = e; }
@@ -144,6 +157,7 @@ ok(skillTexts.every((t) => prompts[0].system.includes(t.trim())) && /Role: revie
 const recDir = join(data, "runs", r.id, "nodes", merge.node, `room-${merge.id}-1`);
 ok(["prompt.md", "system.md", "stream.jsonl", "report.json"].every((f) => existsSync(join(recDir, f))) && /review-room-tutor@sha256:/.test(readFileSync(join(recDir, "prompt.md"), "utf8")) && /rounds to the cent/.test(readFileSync(join(recDir, "report.json"), "utf8")), "the turn leaves a round record: prompt with its skill pins, system, stream and report");
 const rec = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-turn");
+ok(rec[0]?.data.independence === "vendor" && t1.independence === "vendor" && JSON.parse(readFileSync(join(data, "review-room-stats.json"), "utf8"))[r.id]?.independence === "vendor", "the turn's independence level is on the ledger, the turn and the room's stats", JSON.stringify(rec[0]?.data));
 ok(rec.length === 1 && rec[0].data.card === merge.id && rec[0].data.provider === "tutor" && rec[0].data.confirm === offer.hash && rec[0].data.skills.length === 4 && rec[0].data.check.asked === 2, "the turn is on the Task's signed ledger: card, provider, the confirmation, the skill pins, the check", JSON.stringify(rec[0]?.data));
 ok(/THE TASK'S SPEC/.test(prompts[0].text) && prompts[0].text.includes(head) && /THE DIFF/.test(prompts[0].text) && prompts[0].text.includes(`[ledger:#${ledgerSeq}]`) && /Traditional Chinese/.test(prompts[0].text), "the prompt carries the spec, the head, the diff, the ledger to cite and the captain's language");
 

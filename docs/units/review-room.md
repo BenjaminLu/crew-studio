@@ -58,18 +58,35 @@ deciding its merge, without anything leaving Studio.
   `why` on local history only (the issue tracker, documents, chat, observability, error tracking and analytics categories
   are recorded as gaps, per its own contract), `why`'s confidence tiers kept end to end, and the board's build-up instead
   of image generation. The four texts are pinned by sha256 (`ROOM_SKILLS`); a changed text refuses the turn.
-- Not Firstmate, not the worker, not the reviewer. It is the **tutor seat**, staffed on the reviewer role's member (the
-  approved staffing's reviewer as admitted on the merge card's node, else the Task's own pick for its review node), so it
-  inherits the reviewer-differs-from-maker rule; Studio also refuses a tutor whose provider and model equal the maker's
-  (every node that wrote the change, build, fix or rework, as staffed and as it ran; a model left to the vendor's default
-  counts as possibly the same).
+- Not Firstmate, not the worker, not the reviewer. It is the **tutor seat**, and it adapts to what this machine can run
+  (docs/architecture.md, "Adaptive staffing"). Its candidates are the reviewer role's member (the approved staffing's
+  reviewer as admitted on the merge card's node, else the Task's own pick for its review node), when it is usable, then
+  every other usable model (a Codex model at medium effort, Claude and Cursor at their own default). Studio picks the one
+  most independent of the change's author (every node that wrote it, build, fix or rework, as staffed and as it ran; a
+  model left to the vendor's default counts as possibly the same): another vendor, else another model of the author's
+  vendor, else the author's own model; the reviewer's member wins a tie. It is never refused because only one vendor or
+  one model is usable, only when nothing is usable at all (`no_tutor`). Without provider facts (no probe read yet) the
+  tutor is the reviewer's member, as before. The offer carries the level (`independence: {level: vendor | model | same,
+  adaptive, en, zh}`), the room shows it as "Tutor: … — Different vendor from the author" (or "Same vendor as the author,
+  different model", or "Same model as the author: a fresh context, not an independent opinion", with why: only one vendor
+  or one model is usable), and each turn records it: on the turn, its `review-room-turn` ledger entry and the room's
+  stats (`review-room-stats.json`, with the tutor's provider and model).
+- **Verified by Studio.** Before the paid turn, Studio reads what is usable again (the offer may change: a changed offer is
+  answered with the current one) and verifies the chosen member itself when it is signed in but not verified yet
+  (`engine.deps.ensurePick`: one bounded request per model, kept for its window). One that is not signed in, out of quota
+  or not offered is refused with the reason, before anything is paid.
 - **Admission, like any role's.** A turn belongs to the merge card's live node: the provider is chosen through the native
   selection on that node as the reviewer (capability verified, certified for that owner), and staffing issues a receipt
   for the tutor seat. Staffing knows the seat (`engine.deps.auxiliarySeats`: the seat, the role whose approved member it
-  runs on, the sha256 of each pinned text) and checks the provider, model and effort against the approved reviewer and
+  runs on, the sha256 of each pinned text, `adaptive: true`) and checks the provider, model and effort against the approved
+  reviewer, or, for an adaptive member (`aux.member`), against that member, which must be usable on this machine now
+  (without provider facts only the approved member is admitted; a seat that is not adaptive takes no member), and
   that the instructions are exactly the pinned texts, in order, under the safety and operating rules (nothing added,
   nothing left out, nothing reordered); the receipt records the seat and the hash of its texts
-  (`staffing-instructions`, with `seat: review-room-tutor`). The round is one of the Task's jobs (`ref` is the Task): the
+  (`staffing-instructions`, with `seat: review-room-tutor`), and names the member actually used: its provider, model and
+  effort, plus `adaptive: {independence, approved}` when it stands in for the approved reviewer. The native selection runs
+  on that member (`adaptive: true` keeps it from being replaced by the role's approved pick), and the job's admission
+  checks the provider against it. The round is one of the Task's jobs (`ref` is the Task): the
   same queue, cancel and provider admission as other roles, which recheck the receipt, the owner and the instructions'
   hash at launch. A seat staffing does not know, or instructions that differ from the pins, are refused before anything
   is paid.
@@ -158,9 +175,12 @@ and page do not exist):
 1. Only merge cards have a room; any other card has no summary and its room and turns are refused. — review-room
    "a dispatch card has no review room …", "a turn on a card that is not a merge card is refused"; review-room-ui "a card
    that is not a merge card has no review room".
-2. A turn needs the captain's confirmation of the exact provider and model; a tutor on the maker's model and a sandbox-off
-   grant refuse it; one turn at a time. — review-room "a turn without the confirmation …", "a tutor on the maker's model
-   is refused", "with a sandbox-off grant …", "a confirmed turn starts at once, and a second one waits …"; review-room-ui
+2. A turn needs the captain's confirmation of the exact provider and model; a sandbox-off grant refuses it; one turn at a
+   time. The tutor adapts (another vendor, else another model, else the author's model, labelled) and is never refused for
+   having one vendor or model. — review-room "a turn without the confirmation …", "the offer labels the tutor's
+   independence …", "with no other model known, the tutor runs on the author's own model …", "with another vendor usable,
+   the tutor moves to it …", "a usable approved reviewer member stays the tutor on a tie", "the turn's independence level
+   is on the ledger …", "with a sandbox-off grant …", "a confirmed turn starts at once, and a second one waits …"; review-room-ui
    "a quick action first asks to confirm …", "Start sends the turn …".
 3. The round is read-only with no write tools, sandboxed with no host beyond its model, with the pinned skills, and leaves
    its round record and ledger entry. — review-room "the round gets only the room's … tools", "… nothing to write and no
@@ -187,7 +207,7 @@ and page do not exist):
    refs are untouched by the room".
 10. The per pull request record is kept. — review-room "the per pull request record keeps …".
 
-Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
+Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission, the adaptive tutor on one vendor, two vendors and one model, a member that is not usable, verification before the turn), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
 tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; screenshots in `tests/out/review-room`
 or `ROOM_SHOTS`). `bun run test:review-room` runs all four.
 
@@ -209,8 +229,7 @@ or `ROOM_SHOTS`). `bun run test:review-room` runs all four.
     "the points appear as the narration reaches them", "the mic is offered only after …", "holding the mic fills the
     question …", "without on-device recognition the mic stays off …".
 
-Not in this unit: Firstmate offering to open a room from its chat; a per-room model switch (the tutor is the reviewer
-seat's member); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
+Not in this unit: Firstmate offering to open a room from its chat; a per-room model switch (Studio picks the tutor); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
 same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
 render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice
 questions are recognised on this device only); illustrations made when the merge card is created (they start when the

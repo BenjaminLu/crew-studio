@@ -23,6 +23,8 @@ import type {IssueTriageStore} from './issue-triage-store';
 import {NativeToolFailure} from './host/types';
 import type {Engine,X} from './runtime/engine';
 import type {Projects} from './doors';
+import {levelOf,required,degradedWhy,type Level,type Usable} from './domain/independence';
+const PAIR_TEXT:Record<Level,{en:string;zh:string}>={vendor:{en:'Different vendors',zh:'不同供應商'},model:{en:'Same vendor, different models',zh:'同一個供應商、不同模型'},same:{en:'Same model',zh:'同一個模型'}};
 
 export const ISSUE_TRIAGE_WORKFLOW='issue-triage';
 const CAPTAIN=/^captain\b/i,SHA=/^[a-f0-9]{40}$/,FILE_CAP=2_000_000,SUBMITS=5;
@@ -64,6 +66,13 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(localUnrestricted())throw new Error('Investigators run only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED), where rounds have the network and the whole machine');
   if(b.allow?.length)throw new Error(`Investigators run with no network beyond their model: this project's egress.allow policy grants ${b.allow.join(', ')}`);};
  const pickOf=(x:X,id:string)=>{const n=x.run.def.nodes.find(m=>m.id===id)!;return engine.x(x.run,n,x.run.nodes[id]).pick();};
+ /** Two investigators on one model are allowed only when this machine has one usable model (src/domain/independence.ts): with
+  *  another usable model (or no provider facts read) they must differ, as before. Allowed, it is said on the cards and the
+  *  project page and recorded: their agreement is weaker evidence. */
+ const SAME_NOTE={en:'Investigators ran on the same model; agreement is weaker evidence.',zh:'兩位調查員用同一個模型；兩份報告一致的證據力較弱。'};
+ const pairRule=(a:{provider:string;model:string|null},b:{provider:string;model:string|null}):{level:Level;allowed:boolean;why:{en:string;zh:string}}=>{
+  const level=levelOf(a,b),usable=(engine.deps.usableModels?.()??null) as Usable[]|null;
+  return{level,allowed:level!=='same'||required('model',usable)==='same',why:degradedWhy(usable)};};
 
  engine.actions['issues.snapshot']=async x=>{
   bound(x);const project=String(x.run.params.project??''),{record,adapter}=selected(project),signal=engine.abortOf(x.run).signal;
@@ -86,13 +95,17 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  engine.actions['issues.confirm-card']=async x=>{
   bound(x);const t=state(x),snap=snapOf(x),pick=(id:string)=>{try{const p=pickOf(x,id);return`${p.provider} ${p.model??'(default model)'}`;}catch{return'(no model yet)';}};
   // refused before anything is paid: one model twice is not two independent reports, and a round outside the sandbox is not offline
-  try{const a=pickOf(x,'a'),b=pickOf(x,'b');if(a.provider===b.provider&&(a.model??null)===(b.model??null))throw new Error(`Both investigators would run on ${a.provider} ${a.model??'(default model)'}: the two reports must come from different models; give the maker and reviewer seats different models`);}catch(e:any){if(/different models/.test(String(e?.message)))throw e;}
+  let same:{en:string;zh:string}|null=null;
+  try{const a=pickOf(x,'a'),b=pickOf(x,'b'),rule=pairRule({provider:a.provider,model:a.model??null},{provider:b.provider,model:b.model??null});
+   if(!rule.allowed)throw new Error(`Both investigators would run on ${a.provider} ${a.model??'(default model)'}: the two reports must come from different models while this machine has another usable model; give the maker and reviewer seats different models`);
+   if(rule.level==='same'){same={en:`${SAME_NOTE.en}${rule.why.en}`,zh:`${SAME_NOTE.zh}${rule.why.zh}`};engine.record(x,'issue-triage-independence',{data:{schema:1,level:'same',a:{provider:a.provider,model:a.model??null},b:{provider:b.provider,model:b.model??null},usable:(engine.deps.usableModels?.()??[]).map((u:any)=>`${u.provider}/${u.model}`),...same}} as any);}}
+  catch(e:any){if(/different models/.test(String(e?.message)))throw e;}
   box(x,'a');box(x,'b');
   const rows=t.batch.map(n=>snap.issues.find(i=>i.n===n)!).map(i=>`#${i.n} ${i.title}`);
   await engine.card(x,'permission',{captainOnly:true,title:`Investigate ${t.batch.length} issue${t.batch.length===1?'':'s'} of ${t.repository}?`,zhTitle:`調查 ${t.repository} 的 ${t.batch.length} 張 issue 嗎？`,
-   en:{intent:`Triage ${t.batch.length} open issues of ${t.repository}`,why:`Two investigators read the code at ${t.commit.slice(0,7)}, each on its own model: ${pick('a')} and ${pick('b')}. They run offline, read only this checkout and the issues' text, and write nothing.`,how:'Start to run both investigators (two model runs), or close: nothing is investigated.'},
-   zh:{intent:`分診 ${t.repository} 的 ${t.batch.length} 張 open issue`,why:`兩位調查員各用自己的模型讀 ${t.commit.slice(0,7)} 的程式碼：${pick('a')}、${pick('b')}。他們離線執行，只讀這份 checkout 和 issue 內容，不寫任何東西。`,how:'開始就跑兩位調查員（兩次模型執行）；關閉則不調查。'},
-   body:[...rows.map(r=>r.slice(0,200)),'',`Code / 程式碼: ${t.commit}`,`Investigators / 調查員: ${pick('a')} · ${pick('b')}`].join('\n'),
+   en:{intent:`Triage ${t.batch.length} open issues of ${t.repository}`,why:`Two investigators read the code at ${t.commit.slice(0,7)}, ${same?'on one model':'each on its own model'}: ${pick('a')} and ${pick('b')}.${same?` ${same.en}`:''} They run offline, read only this checkout and the issues' text, and write nothing.`,how:'Start to run both investigators (two model runs), or close: nothing is investigated.'},
+   zh:{intent:`分診 ${t.repository} 的 ${t.batch.length} 張 open issue`,why:`兩位調查員${same?'用同一個模型':'各用自己的模型'}讀 ${t.commit.slice(0,7)} 的程式碼：${pick('a')}、${pick('b')}。${same?same.zh:''}他們離線執行，只讀這份 checkout 和 issue 內容，不寫任何東西。`,how:'開始就跑兩位調查員（兩次模型執行）；關閉則不調查。'},
+   body:[...rows.map(r=>r.slice(0,200)),'',`Code / 程式碼: ${t.commit}`,`Investigators / 調查員: ${pick('a')} · ${pick('b')}`,...same?[`${same.en} / ${same.zh}`]:[]].join('\n'),
    options:[{id:'start',label:'Start the investigation',labelZh:'開始調查',primary:true},{id:'close',label:'Not now',labelZh:'先不要',hold:true}]});
   return{wait:true};};
  engine.actions['issues.drop']=x=>{dropTree(x.run.id);return 'ok';};
@@ -143,14 +156,18 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   bound(x);const t=state(x);
   try{
    const a=reportOf(x,'a'),b=reportOf(x,'b');
-   if(a.by.provider===b.by.provider&&a.by.model===b.by.model)throw new Error(`Both investigators ran on ${a.by.provider} ${a.by.model}: the two reports must come from different models; give the maker and reviewer seats different models`);
+   // the same model is accepted only as the start card allowed it (recorded on the ledger before anything was paid)
+   const sameModel=a.by.provider===b.by.provider&&a.by.model===b.by.model,allowedSame=sameModel&&engine.trusted(x.run.id).entries.some((e:any)=>e.record==='issue-triage-independence'&&e.data?.level==='same');
+   if(sameModel&&!allowedSame)throw new Error(`Both investigators ran on ${a.by.provider} ${a.by.model}: the two reports must come from different models; give the maker and reviewer seats different models`);
    const snap=snapOf(x),{adapter}=selected(t.project),fresh=await snapshotIssues(adapter,{signal:engine.abortOf(x.run).signal});guard(x);
    const now=new Map(fresh.issues.map(i=>[i.n,i.hash])),changed=t.batch.filter(n=>now.get(n)!==snap.issues.find(i=>i.n===n)?.hash);
    const batch=triageRecord({project:t.project,snapshot:snap,a:a.report,b:b.report,read:checkoutReader(t.tree),reads:{a:a.reads,b:b.reads},by:`issue-triage ${x.run.id}`});
-   const prev=store.get(t.project),merged=mergeTriage(prev,atSnapshot(withoutChanged(batch,changed),fresh));
+   const prev=store.get(t.project),joined=mergeTriage(prev,atSnapshot(withoutChanged(batch,changed),fresh));
+   // packages this batch adds, from two reports on one model: marked, so the project page says their agreement is weaker evidence
+   const merged=sameModel?{...joined,packages:joined.packages.map(p=>prev?.packages.some(q=>q.id===p.id)?p:{...p,investigators:{level:'same' as const,by:`${a.by.provider} ${a.by.model}`,...SAME_NOTE}})}:joined;
    const added=merged.packages.filter(p=>!prev?.packages.some(q=>q.id===p.id)).map(p=>p.id),matched=(merged.cross??[]).filter(c=>!prev?.cross?.some(q=>q.id===c.id)).map(c=>c.id);
    store.write(merged);x.ctx.issueTriage={...t,added,matched};
-   engine.record(x,'issue-triage-written',{head:digest(merged),data:{schema:1,project:t.project,commit:t.commit,added,toHuman:merged.toHuman.length,changed}} as any);
+   engine.record(x,'issue-triage-written',{head:digest(merged),data:{schema:1,project:t.project,commit:t.commit,added,toHuman:merged.toHuman.length,changed,...sameModel?{investigators:'same'}:{}}} as any);
    // counted from what was written: an issue edited meanwhile, or closed, is not agreed on any more
    const none=(merged.noCode??[]).flatMap(n=>n.issues).filter(n=>t.batch.includes(n)).length;
    x.rn.note=`${added.length} new work package${added.length===1?'':'s'}${none?`; ${none} agreed to have nothing to change in the code`:''}${matched.length?`; ${matched.length} at the same function as an earlier package, to decide on the project page`:''}${changed.length?`; ${changed.length} issue${changed.length===1?'':'s'} changed on GitHub meanwhile`:''}`;x.save();
@@ -159,13 +176,13 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
 
  engine.actions['issues.approve-card']=async x=>{
   bound(x);const t=state(x) as State&{added:string[]},rec=store.get(t.project);
-  const packs=(rec?.packages??[]).filter(p=>t.added.includes(p.id)),sec=packs.filter(p=>p.security);
+  const packs=(rec?.packages??[]).filter(p=>t.added.includes(p.id)),sec=packs.filter(p=>p.security),weak=packs.some(p=>p.investigators?.level==='same');
   // how strongly the two reports agree on each package: the same issues, or sets one issue apart (that one went to the captain)
   const agreed=(p:typeof packs[number])=>p.agreement==='overlap'?` · overlap, ${(p.left??[]).map(n=>`#${n}`).join(' ')} left to you / 部分重疊，${(p.left??[]).map(n=>`#${n}`).join(' ')} 交給你`:p.agreement==='exact'?' · both reports alike / 兩份報告一致':'';
   const line=(p:typeof packs[number])=>`${p.id} · ${p.kind}${p.security?' · security':''}${agreed(p)}: ${(p.order.length?p.order:p.members).map(n=>`#${n}`).join(' → ')}${p.why?` (${p.why})`:''}`;
   await engine.card(x,'permission',{captainOnly:true,title:`Approve ${packs.length} work package${packs.length===1?'':'s'} for ${t.repository}?`,zhTitle:`核准 ${t.repository} 的 ${packs.length} 個工作包嗎？`,
-   en:{intent:`Work packages for ${t.repository}`,why:`Two investigators on different models read the code at ${t.commit.slice(0,7)} and agree on these. For every issue in them Studio checked both reports: each file exists at that commit, each stated range is at most ${SPAN} lines in a file, each named symbol is a name (not a description) written from ${SPAN} lines above its stated range to ${NEAR} lines after it, and each quoted line is in its file within ${NEAR} lines of the stated range and in what fs_read showed that investigator; each finding quotes at least one distinctive line. Studio did not run the code: whether the quoted lines are the bug is the investigators' judgement.${sec.length?` ${sec.length} hold security issues: approve them once whoever owns security for this repository agrees.`:''}`,how:'Approve to let them be worked, one person per package, or keep them as proposals. Each issue is read again first: one that changed is not approved.'},
-   zh:{intent:`${t.repository} 的工作包`,why:`兩位不同模型的調查員在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。這些包裡的每張 issue，Studio 都核對了兩份報告：每個檔案在那個 commit 存在、每個檔案標示的行號範圍合計最多 ${SPAN} 行、每個指名的 symbol 是一個名稱（不是描述），而且寫在標示範圍上方 ${SPAN} 行到下方 ${NEAR} 行之間、每行引用的程式碼都在檔案裡標示行號範圍前後 ${NEAR} 行內，而且是那位調查員用 fs_read 讀到的內容；每項發現至少引用一行有辨識度的程式碼。Studio 沒有執行程式碼：引用的那幾行是不是 bug，是調查員的判斷。${sec.length?`其中 ${sec.length} 個含安全 issue：請先取得這個 repo 的安全負責人同意再核准。`:''}`,how:'核准後就能開工，一包一個人；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。'},
+   en:{intent:`Work packages for ${t.repository}`,why:`${weak?`Two investigators on one model read the code at ${t.commit.slice(0,7)} and agree on these. ${SAME_NOTE.en}`:`Two investigators on different models read the code at ${t.commit.slice(0,7)} and agree on these.`} For every issue in them Studio checked both reports: each file exists at that commit, each stated range is at most ${SPAN} lines in a file, each named symbol is a name (not a description) written from ${SPAN} lines above its stated range to ${NEAR} lines after it, and each quoted line is in its file within ${NEAR} lines of the stated range and in what fs_read showed that investigator; each finding quotes at least one distinctive line. Studio did not run the code: whether the quoted lines are the bug is the investigators' judgement.${sec.length?` ${sec.length} hold security issues: approve them once whoever owns security for this repository agrees.`:''}`,how:'Approve to let them be worked, one person per package, or keep them as proposals. Each issue is read again first: one that changed is not approved.'},
+   zh:{intent:`${t.repository} 的工作包`,why:`${weak?`兩位調查員用同一個模型在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。${SAME_NOTE.zh}`:`兩位不同模型的調查員在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。`}這些包裡的每張 issue，Studio 都核對了兩份報告：每個檔案在那個 commit 存在、每個檔案標示的行號範圍合計最多 ${SPAN} 行、每個指名的 symbol 是一個名稱（不是描述），而且寫在標示範圍上方 ${SPAN} 行到下方 ${NEAR} 行之間、每行引用的程式碼都在檔案裡標示行號範圍前後 ${NEAR} 行內，而且是那位調查員用 fs_read 讀到的內容；每項發現至少引用一行有辨識度的程式碼。Studio 沒有執行程式碼：引用的那幾行是不是 bug，是調查員的判斷。${sec.length?`其中 ${sec.length} 個含安全 issue：請先取得這個 repo 的安全負責人同意再核准。`:''}`,how:'核准後就能開工，一包一個人；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。'},
    body:[...packs.map(line),...((t as any).matched?.length?['',`${(t as any).matched.length} more at the same function as an earlier package: join or keep apart on the project page. / 另有 ${(t as any).matched.length} 項和既有工作包在同一個函式：到專案頁決定併入或分開。`]:[]),'',`Code read at / 程式碼版本: ${t.commit}`,'The project page lists them, under GitHub issues. / 專案頁的「GitHub issues」可以看到。'].join('\n'),links:[{label:'Open the work packages',href:`#/project/${encodeURIComponent(t.project)}`}],
    options:[{id:'approve',label:`Approve ${packs.length} package${packs.length===1?'':'s'}`,labelZh:`核准 ${packs.length} 個工作包`,primary:true},{id:'close',label:'Keep as proposals',labelZh:'先留著當提案',hold:true}]});
   return{wait:true};};
@@ -249,7 +266,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  function investigators(project:string){const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)return null;let nodes:ReturnType<CrewOf>=null;try{nodes=o.crewOf?.(def,project)??null;}catch{}
   const one=(id:string)=>{const n=nodes?.find(x=>x.node===id),role=def.roles.find((r:any)=>r.id===def.nodes.find((m:any)=>m.id===id)?.role);
    return n?.provider?{provider:n.provider,model:n.model??null,effort:n.effort??null,from:'team'}:{provider:role?.provider??null,model:role?.model??null,effort:null,from:'workflow'};};
-  return{a:one('a'),b:one('b')};}
+  const a=one('a'),b=one('b');if(!a.provider||!b.provider)return{a,b};const rule=pairRule({provider:a.provider,model:a.model},{provider:b.provider,model:b.model});
+  return{a,b,independence:{level:rule.level,allowed:rule.allowed,label:PAIR_TEXT[rule.level],...rule.level==='same'&&rule.allowed?{note:{en:`${SAME_NOTE.en}${rule.why.en}`,zh:`${SAME_NOTE.zh}${rule.why.zh}`}}:{}}};}
  /** The captain approves packages kept as proposals, later, from the project page: the issues are read again first, and a
   *  package whose issue changed since it was investigated is stale, never approved. */
  async function approve(project:string,ids:string[],by:string,signal?:AbortSignal){

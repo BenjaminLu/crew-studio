@@ -51,11 +51,13 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
   await p.locator('[data-run-project="code-firstmate"]').selectOption('stale');await p.locator('[data-run-crew="blocked"]').waitFor();
   ok(await p.locator('[data-run-crew="blocked"]').getAttribute('data-run-crew-code')==='staffing_changed'&&await p.locator('[data-run-start]').isDisabled(),'a crew approved for another definition says why it cannot start '+tag);
   await p.screenshot({path:join(shots,`blocked-${width}-${theme}-${lang}.png`),fullPage:true});
-  await p.locator('[data-run-project="code-firstmate"]').selectOption('fixture');await p.locator('[data-run-crew="blocked"][data-run-crew-code="staffing_not_ready"]').waitFor();
-  ok(/Claude/.test(await p.locator('[data-run-crew="blocked"]').textContent())&&await p.locator('[data-run-start]').isDisabled(),'a signed-in but unverified Claude crew shows why it cannot start and Start stays disabled '+tag);
+  await p.locator('[data-run-project="code-firstmate"]').selectOption('fixture');await p.locator('[data-run-crew="approved"]').waitFor();await p.locator('[data-run-crew-verify]').waitFor();
+  {const said=await p.locator('[data-run-crew-verify]').textContent();
+   ok((lang==='en'?/Studio verifies claude claude-sonnet-5-5, claude claude-opus-5-5 with one small paid request each when you start/.test(said):/Studio 會用一次小額付費請求驗證/.test(said))&&!await p.locator('[data-run-start]').isDisabled(),'a signed-in but unverified Claude crew can start: the form says Studio verifies each model, once, when Start is pressed '+tag+' '+said);}
   await p.screenshot({path:join(shots,`unverified-${width}-${theme}-${lang}.png`),fullPage:true});
   await p.locator('[data-run-project="code-firstmate"]').selectOption('codex');await p.locator('[data-run-crew="approved"]').waitFor();
   ok(!await p.locator('[data-run-start]').isDisabled(),'a ready approved crew lets the captain start '+tag);
+  ok(lang!=='en'||/Same model as the author[\s\S]*another usable model/.test(await p.locator('[data-run-crew-independence="same"]').textContent()),'a reviewer on the worker\'s own model is said on the Start form, with another usable model to give it '+tag);
   ok(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'no horizontal page scroll '+tag);
   await p.screenshot({path:join(shots,`approved-${width}-${theme}-${lang}.png`),fullPage:true});
   if(width===1440&&theme==='light'&&lang==='en'){

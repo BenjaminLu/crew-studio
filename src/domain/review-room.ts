@@ -27,6 +27,7 @@ import { keys } from "../keys";
 import { openScopedProxy, type ProxyAuthority } from "../egress-client";
 import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
+import { bestOf, defaultEffort, degradedWhy, LEVEL_TEXT, type Level, type Usable } from "./independence";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -57,6 +58,8 @@ type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "com
 type Question = { n: number; q: string; turn: number; at: string; result?: { correct: boolean; note: string; turn: number } };
 type Turn = { n: number; action: string; text: string; lang: string; by: string; at: string; status: "running" | "done" | "failed" | "interrupted"; ended: string | null;
   job: string | null; provider: string; model: string; effort: string | null; answer: string; error: string | null; cost: any; round: string; head: string;
+  /** how independent this turn's tutor was from the change's author (src/domain/independence.ts) */
+  independence?: Level;
   /** the answer as claims, each cited or an inference (ground) */
   claims?: Claim[] };
 export type Room = { schema: 1; run: string; card: string; node: string; head: string; base: string; turns: Turn[]; board: Item[]; sources: Source[]; check: { questions: Question[] };
@@ -102,13 +105,14 @@ const SPEECH_VENDORS: Record<string, string> = { codex: "openai", openai: "opena
 const TTS_MODEL = "gpt-4o-mini-tts", TTS_VOICE = "alloy";
 /** a claim as narration: citations, markup and list marks out */
 export const narration = (t: string) => String(t ?? "").replace(CITE, "").replace(/\[(inference|inferred|speculative|direct|supported)\]/gi, "").replace(/\*\*|`|^#+\s*/gm, "").replace(/^\s*([-*+]|\d+\.)\s+/gm, "").replace(/\s+/g, " ").trim();
-/** the tutor's seat: it runs on the reviewer role's approved member with its own pinned instructions (staffing's auxiliary seats) */
+/** the tutor's seat: it runs with its own pinned instructions (staffing's auxiliary seats) on the reviewer role's approved member,
+ *  or, adaptive, on another usable member Studio chose for independence from the author (the receipt names the member used) */
 export const TUTOR_SEAT = "review-room-tutor", TUTOR_ROLE = "reviewer";
 export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: WebBackend | ((check: (url: string) => string | null) => WebBackend); illustrate?: Illustrator; speak?: Speaker }) {
   const imageDir = (run: string, card: string) => join(engine.rdir(run), "review-room", `${card.replace(/[^\w-]/g, "")}-images`);
   const live = new Map<string, number>(), speaking = new Map<string, Promise<any>>();
   // the seat staffing admits: the reviewer's approved member, with exactly these pinned texts as its instructions
-  engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256) } };
+  engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256), adaptive: true } };
   const file = (run: string, card: string) => join(engine.rdir(run), "review-room", `${card.replace(/[^\w-]/g, "")}.json`);
   // one object per room in memory: a turn's tools and a background illustration change the same room, never two copies
   const cache = new Map<string, Room>();
@@ -130,27 +134,37 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const node = run.def.nodes.find((n: any) => n.id === c.node); if (!node) throw refuse("The card's node is gone", "not_found");
     return { run, wt, head, base, node };
   };
-  /** The tutor's seat: the reviewer's member (its own read-only role and skill), on a different model from the maker. */
+  /** The tutor's seat, adaptive (docs/units/review-room.md, "The tutor"): from what this machine can run now, the member most
+   *  independent of the change's author: another vendor, else another model of the author's vendor, else the author's own model.
+   *  The reviewer's approved member comes first and wins a tie. Never refused because only one vendor or one model is usable. */
   const reviewNode = (run: any) => run.def.nodes.find((n: any) => n.kind === "agent" && (n.mode === "review" || n.role === "reviewer"));
-  const tutorPick = (run: any, node?: any): AgentPick => {
+  type Tutor = { pick: AgentPick; level: Level; adaptive: boolean; label: { en: string; zh: string } };
+  const tutorPick = (run: any, node?: any): Tutor => {
     const review = reviewNode(run);
     if (!review) throw refuse("This workflow has no reviewer seat for the tutor", "no_seat");
     // the approved staffing's reviewer member as admitted on the merge card's node (the node the tutor's rounds belong to)
     const card = node ?? run.def.nodes.find((n: any) => n.kind === "card" && n.args?.card_kind === "merge");
-    const pick = (card && engine.deps.approvedPick?.(run, card, TUTOR_ROLE)) || engine.x(run, review, run.nodes[review.id]).pick();
+    const approved = (card && engine.deps.approvedPick?.(run, card, TUTOR_ROLE)) || engine.x(run, review, run.nodes[review.id]).pick();
     // every node that wrote the change (build, fix, rework: the maker's role), as staffed and as it really ran
     const makerRole = run.def.nodes.find((n: any) => n.kind === "agent" && n.mode === "build")?.role ?? "worker";
     const writers = run.def.nodes.filter((n: any) => (n.kind === "agent" || n.kind === "loop") && (n.mode === "build" || n.role === makerRole || n.args?.producer === "build"));
     const makers = [...writers.flatMap((n: any) => { try { return [engine.x(run, n, run.nodes[n.id]).pick()]; } catch { return []; } }),
       ...run.steps.filter((s: any) => writers.some((n: any) => n.id === s.node) && s.provider).map((s: any) => ({ provider: s.provider, model: s.model }))] as AgentPick[];
-    // a model left to the vendor's default is unknown: on the same vendor it may be the maker's, so it counts as the same
-    if (makers.some((m) => m.provider === pick.provider && ((m.model ?? null) === (pick.model ?? null) || !m.model || !pick.model))) throw refuse(`The tutor would run on the maker's model (${pick.provider} ${pick.model ?? "default"}); give the reviewer seat a different model / 導師會用到作者的同一個模型，請讓 reviewer 座位用不同模型`, "same_model");
-    return pick;
+    // usable now (signed in, not out of quota, verified or verifiable); unknown (no facts read): only the approved member
+    const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null;
+    const isUsable = (p: AgentPick) => !usable || usable.some((u) => u.provider === p.provider && u.model === p.model);
+    const candidates: AgentPick[] = [...(isUsable(approved) ? [approved] : []), ...(usable ?? []).filter((u) => !(u.provider === approved.provider && u.model === approved.model)).map((u) => ({ provider: u.provider, model: u.model, effort: defaultEffort(u) }))];
+    const best = bestOf(candidates.map((c) => ({ ...c, model: c.model ?? null })), makers.map((m) => ({ provider: m.provider, model: m.model ?? null })));
+    if (!best) throw refuse("No signed-in model can run the tutor on this machine now: sign in to a vendor, then open the room again / 這台機器目前沒有已登入、可用的模型能當導師：請先登入一個供應商，再打開審查室", "no_tutor");
+    const pick = best.pick as AgentPick, adaptive = !(pick.provider === approved.provider && (pick.model ?? null) === (approved.model ?? null) && (pick.effort ?? null) === (approved.effort ?? null));
+    const why = best.level === "vendor" ? { en: "", zh: "" } : degradedWhy(usable);
+    return { pick, level: best.level, adaptive, label: { en: `${LEVEL_TEXT[best.level].en}.${why.en}`, zh: `${LEVEL_TEXT[best.level].zh}。${why.zh}` } };
   };
   const offerOf = (c: SCard) => {
-    try { const { run, head, node } = subject(c); const p = tutorPick(run, node); const effort = p.effort ?? null;
+    try { const { run, head, node } = subject(c); const t = tutorPick(run, node), p = t.pick; const effort = p.effort ?? null;
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
-      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, hash: sha(JSON.stringify({ card: c.id, head, provider: p.provider, model: p.model ?? null, effort })).slice(0, 16) }; }
+      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, independence: { level: t.level, adaptive: t.adaptive, ...t.label },
+        hash: sha(JSON.stringify({ card: c.id, head, provider: p.provider, model: p.model ?? null, effort, level: t.level })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
   const skills = () => ROOM_SKILLS.map((s) => { const t = bundledText(s.ref); if (t == null || sha(t) !== s.sha256) throw refuse(`The pinned skill ${s.id} changed or is missing; Studio refuses the turn`, "skill_pin"); return { ...s, text: t }; });
@@ -380,9 +394,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       Object.assign(turn, { status: job.status === "done" ? "done" : "failed", job: job.id, answer: String(job.said ?? "").trim().slice(0, 20000), error: job.status === "done" ? null : String(job.error ?? job.status), cost: job.cost ?? null });
     } catch (e: any) { Object.assign(turn, { status: "failed", error: String(e?.message ?? e).slice(0, 500) }); }
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
-    turn.ended = new Date().toISOString(); save(room); stat(c, { turns: room.turns.filter((t) => t.status === "done").length, check: checkOf(room) });
+    turn.ended = new Date().toISOString(); save(room); stat(c, { turns: room.turns.filter((t) => t.status === "done").length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
-    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: c.id, turn: turn.n, action: turn.action, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, cost: turn.cost, confirm,
+    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: c.id, turn: turn.n, action: turn.action, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }
@@ -436,6 +450,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ROOM_ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
       if (live.has(c.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
+      // what is usable is read again first: the tutor the captain confirms is the one this machine can run now
+      try { await engine.deps.refreshUsable?.(); } catch {}
       const offer = offerOf(c); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
       if (a.confirm !== offer.hash) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
       const off = engine.grants.open("sandbox-off", s.run.ctx.project ?? s.run.params?.project ?? null);
@@ -444,19 +460,24 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const sk = skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
       // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it, the native
       // selection verifies the reviewer member's capability, and staffing issues its receipt for the tutor seat
-      const run = s.run, x = engine.x(run, s.node, run.nodes[s.node.id]), pick = tutorPick(run, s.node); let provider: any;
+      const run = s.run, x = engine.x(run, s.node, run.nodes[s.node.id]), tutor = tutorPick(run, s.node), pick = tutor.pick; let provider: any;
       if (!engine.owns(x)) throw refuse("The merge card's step is no longer live", "closed");
-      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
+      // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
+      // signed in, out of quota or not offered is refused with the reason
+      if (pick.model) try { await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${c.id}` }); }
+      catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
+      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
       const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
-      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })) };
+      // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
+      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level } } : {}) };
       const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
       let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
       if (live.has(c.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
       const room: Room = load(c.run, c.id) ?? fresh(c, s);
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
       room.head = s.head; room.base = s.base;
-      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, answer: "", error: null, cost: null, round: `room-${c.id}-${n}`, head: s.head };
+      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, independence: tutor.level, answer: "", error: null, cost: null, round: `room-${c.id}-${n}`, head: s.head };
       room.turns.push(turn); save(room); live.set(c.id, n); notify(c, n);
       void runTurn(c, room, turn, s, provider, sk, offer.hash, { x, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { live.delete(c.id); notify(c, n); });
       return this.view(c.id);
@@ -484,7 +505,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const s = subject(c), room = load(c.run, c.id), m = /^t([1-9]\d{0,3})$/.exec(String(scene ?? "")), t = m ? room?.turns.find((x) => x.n === Number(m[1])) : null;
       if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
       // the vendor that answered this scene, as recorded; it must still be the seat's vendor, or nothing is sent anywhere
-      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[tutorPick(s.run, s.node).provider];
+      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[tutorPick(s.run, s.node).pick.provider];
       if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
       if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
       const key = `${c.id}/${t.n}`, running = speaking.get(key); if (running) return running;

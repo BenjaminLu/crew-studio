@@ -200,7 +200,9 @@ export type StoredPackage=Package&{id:string;commit:string;status:PackageStatus;
  /** a recheck made by the cross-batch match: the earlier package at the same function, and where */
  match?:{with:string;where:string};
  /** cross-batch matches the captain joined to this package: which, who, when, and whether that withdrew its approval */
- joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[]};
+ joins?:{id:string;issues:number[];by:string;at:string;wasApproved:boolean}[];
+ /** both reports came from one model (allowed on a machine with one usable model): their agreement is weaker evidence */
+ investigators?:{level:'same';by:string;en:string;zh:string}};
 export type CrossEntry={id:string;issues:number[];package:Package&{commit:string};with:string;where:string};
 export type PackageStatus='proposed'|'approved'|'declined'|'stale';
 export type TriageIssue={closed?:boolean;title:string;labels:string[];hash:string;investigated:boolean;security:boolean;agree?:boolean;diff?:string[];state?:Finding['state'];tag?:string;locus?:Locus[];repro?:string;checked?:boolean};

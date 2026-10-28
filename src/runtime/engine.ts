@@ -44,6 +44,7 @@ import { OperatingRules, jobInstructions } from "../operating-rules";
 import { composeSkeleton, type SkeletonFacts } from "./brief-skeleton";
 import { clampTitle, deriveTitle } from "../task-title";
 import { appendLines, readLog, repairTail, syncDir, writeAtomic, type LogRead } from "./durable-log";
+import { degradedWhy } from "../domain/independence";
 import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
@@ -1110,20 +1111,28 @@ export class Engine {
     const take = (o: any, by: string, identity?: { provider: string; model?: string; job?: string }) => { const raw = Array.isArray(o?.findings) ? o.findings : []; const fs = raw.map((f: any) => parseFinding(f, "judge", man.ref)).filter((f: Finding | null) => f && f.locator) as Finding[];
       votes.push({ by, ...identity, verdict: o?.verdict === "fail" ? "fail" : o?.verdict === "warn" ? "warn" : "pass", findings: fs, dropped: raw.length - fs.length, score: Number.isFinite(Number(o?.score)) ? Number(o.score) : null }); };
     if (j.from_node) { const v = x.run.nodes[j.from_node]?.data?.judged; if (v) { if (j.distinct_providers && (!v.provider || actual.has(v.provider))) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "from-node vendor identity is unverified or duplicate", votes }; if (v.provider) actual.add(v.provider); take(v, v.by ?? j.from_node, v.provider ? { provider: v.provider, model: v.model, job: v.job } : undefined); } }
-    const vendors = (ref.provider ? [ref.provider] : j.vendors?.length ? j.vendors : [j.provider ?? this.deps.defaultProvider().provider]);
+    let vendors = (ref.provider ? [ref.provider] : j.vendors?.length ? j.vendors : [j.provider ?? this.deps.defaultProvider().provider]);
+    // distinct providers on a machine with one usable vendor (src/domain/independence.ts): never an opposite vendor that is not
+    // there. The votes run on that vendor's distinct models (or its one model), and the result says how independent they are.
+    let relaxed: { level: "model" | "same"; en: string; zh: string; models: string[] } | null = null;
+    if (j.distinct_providers) { const usable = this.deps.usableModels?.() as { provider: string; model: string }[] | null | undefined;
+      if (usable?.length && new Set(usable.map((u) => u.provider)).size === 1) { const models = [...new Set(usable.map((u) => u.model))], level = models.length >= 2 ? "model" as const : "same" as const, why = degradedWhy(usable as any);
+        relaxed = { level, models, en: `${level === "model" ? "Judges ran on different models of one vendor." : "Judges ran on the same model: a fresh context, not an independent opinion."}${why.en}`, zh: `${level === "model" ? "評審用同一個供應商的不同模型。" : "評審用同一個模型：是新的脈絡，不是獨立意見。"}${why.zh}` };
+        vendors = [usable[0].provider]; } }
+    const seen = new Set<string>();
     const evidenceJSON=JSON.stringify({ ...input, out: undefined });
     if(evidenceJSON.length>(x.run.def.kind==='coffee-kit'?192000:64000))return {verdict:'error',score:null,findings:[],evidence:[],proves:[],error:'Complete judge evidence exceeds bounded capacity; refusing truncated review'};
     const prompt = `${ref.prompt ?? j.prompt}\n\nInput (JSON):\n${evidenceJSON}`;
     const role = this.judgeRole(x, man);
     for (let i = votes.length; i < q.of; i++) {
       const approvedJudge = this.deps.approvedPick?.(x.run, x.node, role);
-      const provider = approvedJudge?.provider ?? vendors[i % vendors.length]; const model = approvedJudge?.model ?? ref.model ?? j.model ?? null;
+      const provider = approvedJudge?.provider ?? vendors[i % vendors.length]; const model = approvedJudge?.model ?? (relaxed ? relaxed.models[i % relaxed.models.length] : ref.model ?? j.model ?? null);
       let got: any = null;
       const tools: AgentTool[] = [{ name: "judge_report", description: `Your judgement, once: verdict pass, warn or fail, and findings. Every finding MUST carry a typed locator, e.g. {"type":"file","path":"index.html","line":1}, {"type":"text","section":"receipts.site"}, or {"type":"card","field":"staffing"}. type is mandatory. Invalid findings are rejected; correct the payload and call again.`,
         schema: { type: "object", properties: { verdict: { type: "string", enum: ["pass", "warn", "fail"] }, score: { type: "number" }, findings: { type: "array", items: { type: "object", properties: { locator: { type: "object", properties:{type:{type:"string",enum:["file","web","image","timeline","text","card"]},path:{type:"string"},line:{type:"number"},url:{type:"string"},bbox:{type:"array",items:{type:"number"},minItems:4,maxItems:4},from:{type:"number"},to:{type:"number"},section:{type:"string"},field:{type:"string"}},required:["type"] }, message: { type: "string" }, expected: { type: "string" }, class: { type: "string" }, severity: { type: "string", enum: ["blocking", "minor"] } }, required: ["locator", "message", "class"] } } }, required: ["verdict", "findings"] },
         run: (a) => { if(!['pass','warn','fail'].includes(a?.verdict)||!Array.isArray(a?.findings)||a.findings.some((f:any)=>!parseFinding(f,"judge",man.ref)?.locator))return {error:'Every finding needs a message and typed valid locator. Use {type:"file",path:"index.html",line:1} or {type:"text",section:"receipts.site"}; correct and resubmit.'};got = a; return { ok: true }; } }];
       const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model, ...(approvedJudge ? {effort: approvedJudge.effort} : {}) }, { role: role === "designer" ? "designer" : "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
-      if (j.distinct_providers && actual.has(selected.id)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement resolved to a duplicate actual vendor", votes };
+      if (j.distinct_providers && !relaxed && actual.has(selected.id)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement resolved to a duplicate actual vendor", votes };
       // a judge's instructions go through the same composer as any agent's: the safety rules, its role's skill, then its check's duty skills
       const use = x.run?.def ? this.instructionsUse(x.run, role, Array.isArray(ref.skills) ? ref.skills : []) : { text: composeInstructions("", []), roleSkill: null, skills: [] as string[] };
       const system = `${use.text}\n\nYou are a judge for the check "${man.title.en}". Judge only what the input shows. Submit one valid judge_report; if its payload is rejected, correct it before ending. Then answer in one line.`;
@@ -1133,15 +1142,17 @@ export class Engine {
         text: `JUDGE ${man.id}\n${prompt}`, tools, admissionReceipt, provider: selected, ref: x.run?.id, project: x.run?.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x,role,jobInstructions(system, r),selected), signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
         sandbox: x.run ? this.roundSandbox(x, null, `judge-${man.id}-${i + 1}`) : { writes: [] } } as any);
       if (job.status !== "done" || !got) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `tool error: judge ${provider} ${job.status === "done" ? "gave no judgement" : job.error}` };
-      if (j.distinct_providers && actual.has(job.provider)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement produced duplicate actual vendor", votes };
-      actual.add(job.provider); take(got, `${job.provider}·${job.model}`, { provider: job.provider, model: job.model, job: job.id });
+      if (j.distinct_providers && !relaxed && actual.has(job.provider)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement produced duplicate actual vendor", votes };
+      // one vendor with two models: the votes must still come from two models
+      if (relaxed?.level === "model" && seen.has(`${job.provider}/${job.model}`)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "one-vendor agreement produced a duplicate actual model", votes };
+      actual.add(job.provider); seen.add(`${job.provider}/${job.model}`); take(got, `${job.provider}·${job.model}`, { provider: job.provider, model: job.model, job: job.id });
       this.noteJudge(x, man, role, use);
     }
     const fails = votes.filter((v) => v.verdict === "fail").length;
     const verdict = fails >= q.n ? "fail" : fails > 0 || votes.some((v) => v.verdict === "warn") ? "warn" : "pass";
     const scores = votes.map((v) => v.score).filter((s): s is number => s != null);
     return { verdict, score: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : verdict === "pass" ? 1 : verdict === "fail" ? 0 : 0.5, findings: votes.filter((v) => v.verdict !== "pass").flatMap((v) => v.findings), evidence: [], proves: [],
-      dropped: votes.reduce((n, v) => n + v.dropped, 0), votes: votes.map((v) => ({ by: v.by, verdict: v.verdict, ...(v.provider ? { provider: v.provider, model: v.model, job: v.job } : {}) })) };
+      dropped: votes.reduce((n, v) => n + v.dropped, 0), votes: votes.map((v) => ({ by: v.by, verdict: v.verdict, ...(v.provider ? { provider: v.provider, model: v.model, job: v.job } : {}) })), ...(relaxed ? { independence: { level: relaxed.level, en: relaxed.en, zh: relaxed.zh } } : {}) };
   }
   /** The role a judged check is judged as: the role its check.yaml names (judge.role), else the role of the node it sits on, else (a node with no role) the designer for a check named for one, else the reviewer. */
   judgeRole(x: X, man: CheckManifest): string {

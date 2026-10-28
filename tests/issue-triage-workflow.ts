@@ -189,6 +189,36 @@ try {
   reset2(); models = { a: ["claude", "same"], b: ["claude", "same"] }; script = happy; const before = JSON.stringify(store.get("proj")), jobs4 = H.agents.jobs.size;
   r = await runOf({ issues: [1, 2, 3] });
   ok(r.status === "failed" && /different models/.test(String(r.nodes.confirm?.error ?? r.error)) && H.agents.jobs.size === jobs4 && JSON.stringify(store.get("proj")) === before, "two investigators on one model are refused before either runs, and nothing is written", `${r.status} ${r.error}`);
+  // the same, while this machine has another usable model: still refused
+  reset2(); (E.deps as any).usableModels = () => [{ provider: "claude", model: "same", efforts: [], verified: true }, { provider: "claude", model: "other", efforts: [], verified: true }];
+  r = await runOf({ issues: [1, 2, 3] });
+  ok(r.status === "failed" && /another usable model/.test(String(r.nodes.confirm?.error ?? r.error)) && H.agents.jobs.size === jobs4, "two investigators on one model are refused while this machine has another usable model", `${r.status} ${r.nodes.confirm?.error}`);
+
+  // --- 4b. one usable vendor: two of its models run, as before, and nothing is said to be weaker ---
+  open = [...open, issue(12, { title: "Menu filter" }), issue(13, { title: "Menu filter again" })];
+  const menuScript = (n: number) => () => [...reading("src/menu.ts"), { tool: "triage_submit", args: { report: { commit, issues: [finding(n, { locus: [{ file: "src/menu.ts", symbol: "openMenu", lines: "1-3" }], evidence: "return items.filter((i) => i.visible && !i.hidden)" })], groups: [], related: [], alone: [n] } } }];
+  /** a triage of these issues, its start card read before the captain starts it */
+  const startSeen = async (issues: number[]) => { const t = flow.start({ project: "proj", by: "captain (board)", issues }); await settled(t.id); const c = confirmCard(t.id);
+    if (c) { await E.answer(c.id, { choice: "start", by: "captain (card)" } as any); await until(() => !confirmCard(t.id)); await settled(t.id); } return { run: E.get(t.id)!, card: c }; };
+  reset2(); models = { a: ["claude", "model-a"], b: ["claude", "model-b"] }; script = menuScript(12);
+  (E.deps as any).usableModels = () => [{ provider: "claude", model: "model-a", efforts: [], verified: true }, { provider: "claude", model: "model-b", efforts: [], verified: true }];
+  { const { run: t, card: c } = await startSeen([12]);
+    ok(!!c && /each on its own model/.test(c.sections.en.why) && !/weaker evidence/.test(JSON.stringify(c)) && t.status === "waiting" && !E.trusted(t.id).entries.some((e: any) => e.record === "issue-triage-independence"), "one usable vendor: two of its models investigate, as before, with no weaker-evidence note", `${t.status} ${t.error} ${c?.sections.en.why}`);
+    const a = E.cards.list({ run: t.id, open: true }).find((x) => x.node === "approve"); if (a) await E.answer(a.id, { choice: "close", by: "captain (card)" } as any); await until(() => E.get(t.id)!.status === "succeeded"); }
+
+  // --- 4c. one usable model: both investigators run on it, and it is said on the cards and the project page, and recorded ---
+  reset2(); models = { a: ["claude", "only"], b: ["claude", "only"] }; script = () => [...reading("src/theme.ts"), { tool: "triage_submit", args: { report: { commit, issues: [finding(13, { locus: [{ file: "src/theme.ts", symbol: "pickTheme", lines: "1" }], evidence: "THEMES[name] ?? THEMES.light" })], groups: [], related: [], alone: [13] } } }];
+  (E.deps as any).usableModels = () => [{ provider: "claude", model: "only", efforts: [], verified: true }];
+  { const { run: t, card: c } = await startSeen([13]);
+    ok(!!c && /on one model/.test(c.sections.en.why) && /Investigators ran on the same model; agreement is weaker evidence\. Only one model is usable on this machine \(claude only\)/.test(c.sections.en.why) && /證據力較弱/.test(c.sections["zh-TW"].why) && /weaker evidence/.test(c.body), "one usable model: the start card says both run on it and that agreement is weaker evidence", c?.sections.en.why);
+    const rec: any = E.trusted(t.id).entries.find((e: any) => e.record === "issue-triage-independence");
+    ok(rec?.data?.level === "same" && rec.data.a.model === "only" && rec.data.usable.join() === "claude/only", "the allowed same-model pair is on Studio's ledger", JSON.stringify(rec?.data));
+    const approve = E.cards.list({ run: t.id, open: true }).find((x) => x.node === "approve"), pack = store.get("proj")!.packages.find((p) => p.members.includes(13));
+    ok(t.status === "waiting" && !!approve && /on one model/.test(approve.sections.en.why) && /weaker evidence/.test(approve.sections.en.why) && /證據力較弱/.test(approve.sections["zh-TW"].why) && pack?.investigators?.level === "same" && /weaker evidence/.test(pack.investigators.en) && pack.investigators.by === "claude only",
+      "the reports are checked and written as usual; the approval card and the stored package (the project page) say their agreement is weaker evidence", `${t.status} ${t.error} ${JSON.stringify(pack)}`);
+    ok(!store.get("proj")!.packages.filter((p) => !p.members.includes(13)).some((p) => p.investigators), "packages from earlier batches are not marked");
+    if (approve) await E.answer(approve.id, { choice: "close", by: "captain (card)" } as any); await until(() => E.get(t.id)!.status === "succeeded"); }
+  delete (E.deps as any).usableModels; open = open.filter((i) => i.number !== 12 && i.number !== 13);
   models = { a: ["claude", "model-a"], b: ["codex", "model-b"] };
 
   // --- 5. one triage at a time per project ---

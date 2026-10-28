@@ -44,7 +44,7 @@ const record = {
   },
   packages: [
     { id: "P-1", kind: "ordered", members: [11, 12], order: [11, 12], why: "Both decide which page a request really came from.", security: true, status: "approved", commit: "c".repeat(40), work: { 11: { proposal: "R-999", at: "2026-10-28T10:00:00Z" } } },
-    { id: "P-2", kind: "single", members: [13], order: [13], why: "", security: false, status: "proposed", commit: "c".repeat(40) },
+    { id: "P-2", kind: "single", members: [13], order: [13], why: "", security: false, status: "proposed", commit: "c".repeat(40), investigators: { level: "same", by: "claude only", en: "Investigators ran on the same model; agreement is weaker evidence.", zh: "兩位調查員用同一個模型；兩份報告一致的證據力較弱。" } },
     { id: "P-3", kind: "recheck", members: [14], order: [14], why: "", security: true, status: "stale", commit: "c".repeat(40) },
     { id: "P-4", kind: "recheck", members: [17], order: [17], why: "", security: false, status: "proposed", commit: "c".repeat(40), match: { with: "P-2", where: "src/utils/url.ts · addParams" } },
   ],
@@ -85,6 +85,7 @@ async function open(width, lang = "en", hash = "#/project/wallet", o = {}) {
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await ctx.route(/\/api\/team\?project=wallet/, (r) => r.fulfill({ json: TEAM }));
   if (o.empty) await ctx.route(/\/api\/issue-triage\/wallet$/, (r) => r.fulfill({ json: { state: "none", investigators: { a: { provider: "claude", model: "claude-opus-5-5" }, b: { provider: "codex", model: "gpt-6" } } } }));
+  if (o.oneModel) await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, investigators: { a: { provider: "claude", model: "only" }, b: { provider: "claude", model: "only" }, independence: { level: "same", allowed: true, note: { en: "Investigators ran on the same model; agreement is weaker evidence. Only one model is usable on this machine (claude only).", zh: "兩位調查員用同一個模型；兩份報告一致的證據力較弱。" } } } } }); });
   if (o.same) await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, investigators: { a: { provider: "claude", model: "same" }, b: { provider: "claude", model: "same" } } } }); });
   const posts = [], approvals = [], crosses = [], catCalls = [], declines = [];
   await ctx.route(/\/api\/issue-triage\/wallet\/decline$/, (r) => { declines.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { ok: true, declined: [] } }); });
@@ -126,6 +127,7 @@ try {
     ok(/An issue changed: triage again/.test(await p.locator('[data-pack="P-3"]').textContent()) && /Waiting for approval/.test(await p.locator('[data-pack="P-2"]').textContent()), "each package says where it stands");
     ok(!(await p.locator('[data-detail="P-1"] [data-approve], [data-detail="P-1"] [data-decline]').count()), "an approved package offers no approval and no decline");
     await openCat("C-2"); await p.click('[data-tri="C-2"] [data-pack="P-2"]');
+    ok(/same model; agreement is weaker evidence\. \(claude only\)/.test(await p.locator('[data-detail="P-2"] [data-weak-evidence="P-2"]').textContent()) && await p.locator('[data-detail="P-1"] [data-weak-evidence]').count() === 0, "a package from two reports on one model says its agreement is weaker evidence");
     ok(await p.locator('[data-detail="P-2"] [data-approve="P-2"]').count() === 1 && await p.locator('[data-detail="P-2"] [data-decline="P-2"]').count() === 1 && /reads its issues again/.test(await p.locator('[data-detail="P-2"] .is-approve').textContent()), "a package waiting for approval can be approved or declined on the page");
     await p.click('[data-approve="P-2"]'); await p.waitForTimeout(400);
     ok(approvals.length === 1 && approvals[0].packages.join() === "P-2" && /Approved P-2/.test(await p.locator('[data-project-issues="wallet"] [role="status"]').textContent()), "approving sends that package and says it was approved", JSON.stringify(approvals));
@@ -215,6 +217,10 @@ try {
   { const { ctx, p, posts } = await open(1440, "en", "#/project/wallet", { same: true });
     await p.waitForSelector("[data-issue-triage]");
     ok(await p.locator("[data-issue-triage]").isDisabled() && /different models/.test(await p.locator("[data-investigators]").textContent()) && posts.length === 0, "when both investigators would run on one model, the form says so and cannot start");
+    await ctx.close(); }
+  { const { ctx, p } = await open(1440, "en", "#/project/wallet", { oneModel: true });
+    await p.waitForSelector("[data-issue-triage]");
+    ok(!(await p.locator("[data-issue-triage]").isDisabled()) && /claude only, twice\. Investigators ran on the same model; agreement is weaker evidence\. Only one model is usable/.test(await p.locator('[data-weak-evidence="start"]').textContent()), "when one model is all this machine can run, the form starts on it and says the agreement is weaker evidence");
     await ctx.close(); }
   { const { ctx, p } = await open(390, "zh-TW");
     await p.waitForSelector('[data-project-issues="wallet"] [data-pack]', { timeout: 8000 }).catch(() => {});
