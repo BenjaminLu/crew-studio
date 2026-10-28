@@ -58,9 +58,20 @@ deciding its merge, without anything leaving Studio.
   `why` on local history only (the issue tracker, documents, chat, observability, error tracking and analytics categories
   are recorded as gaps, per its own contract), `why`'s confidence tiers kept end to end, and the board's build-up instead
   of image generation. The four texts are pinned by sha256 (`ROOM_SKILLS`); a changed text refuses the turn.
-- Not Firstmate, not the worker, not the reviewer. It is staffed on the reviewer seat's member (the Task's own pick for
-  its review node, approved staffing included), so it inherits the reviewer-differs-from-maker rule; Studio also refuses
-  a tutor whose provider and model equal the maker's (the build node's pick, or the model its latest build round ran).
+- Not Firstmate, not the worker, not the reviewer. It is the **tutor seat**, staffed on the reviewer role's member (the
+  approved staffing's reviewer as admitted on the merge card's node, else the Task's own pick for its review node), so it
+  inherits the reviewer-differs-from-maker rule; Studio also refuses a tutor whose provider and model equal the maker's
+  (every node that wrote the change, build, fix or rework, as staffed and as it ran; a model left to the vendor's default
+  counts as possibly the same).
+- **Admission, like any role's.** A turn belongs to the merge card's live node: the provider is chosen through the native
+  selection on that node as the reviewer (capability verified, certified for that owner), and staffing issues a receipt
+  for the tutor seat. Staffing knows the seat (`engine.deps.auxiliarySeats`: the seat, the role whose approved member it
+  runs on, the sha256 of each pinned text) and checks the provider, model and effort against the approved reviewer and
+  that every pinned text is in the instructions; the receipt records the seat and the hash of its texts
+  (`staffing-instructions`, with `seat: review-room-tutor`). The round is one of the Task's jobs (`ref` is the Task): the
+  same queue, cancel and provider admission as other roles, which recheck the receipt, the owner and the instructions'
+  hash at launch. A seat staffing does not know, or instructions that differ from the pins, are refused before anything
+  is paid.
 - Rooms are per pull request and run concurrently: no driver lock. One turn at a time per room.
 
 ## A turn
@@ -163,9 +174,9 @@ and page do not exist):
    refs are untouched by the room".
 10. The per pull request record is kept. — review-room "the per pull request record keeps …".
 
-Tests: `tests/review-web.ts`, `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
+Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
 tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; screenshots in `tests/out/review-room`
-or `ROOM_SHOTS`). `bun run test:review-room` runs all three.
+or `ROOM_SHOTS`). `bun run test:review-room` runs all four.
 
 11. Pictures: screenshots come only from Studio's captures of this head (before / after toggle); a diffstat chart is
     counted by git; an uncited chart is an inference; illustrations are made in the background (the turn does not wait),

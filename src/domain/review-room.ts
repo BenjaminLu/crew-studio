@@ -20,7 +20,7 @@ import { bundledText } from "../bundled";
 import { git, gitArgv, gitEnv } from "../git";
 import { helper, normPath } from "../review-read";
 import { localUnrestricted } from "../local-execution";
-import { OperatingRules } from "../operating-rules";
+import { OperatingRules, jobInstructions } from "../operating-rules";
 import { DOCS_HOSTS, ILLUSTRATION_CONCEPTS, ILLUSTRATION_LAYOUTS, WEB_CALLS_PER_TURN, illustrationPrompt, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebBackend, type WebContext } from "../review-web";
 import type { AgentTool } from "../agent";
 import { keys } from "../keys";
@@ -102,9 +102,13 @@ const SPEECH_VENDORS: Record<string, string> = { codex: "openai", openai: "opena
 const TTS_MODEL = "gpt-4o-mini-tts", TTS_VOICE = "alloy";
 /** a claim as narration: citations, markup and list marks out */
 export const narration = (t: string) => String(t ?? "").replace(CITE, "").replace(/\[(inference|inferred|speculative|direct|supported)\]/gi, "").replace(/\*\*|`|^#+\s*/gm, "").replace(/^\s*([-*+]|\d+\.)\s+/gm, "").replace(/\s+/g, " ").trim();
+/** the tutor's seat: it runs on the reviewer role's approved member with its own pinned instructions (staffing's auxiliary seats) */
+export const TUTOR_SEAT = "review-room-tutor", TUTOR_ROLE = "reviewer";
 export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: WebBackend | ((check: (url: string) => string | null) => WebBackend); illustrate?: Illustrator; speak?: Speaker }) {
   const imageDir = (run: string, card: string) => join(engine.rdir(run), "review-room", `${card.replace(/[^\w-]/g, "")}-images`);
   const live = new Map<string, number>(), speaking = new Map<string, Promise<any>>();
+  // the seat staffing admits: the reviewer's approved member, with exactly these pinned texts as its instructions
+  engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256) } };
   const file = (run: string, card: string) => join(engine.rdir(run), "review-room", `${card.replace(/[^\w-]/g, "")}.json`);
   // one object per room in memory: a turn's tools and a background illustration change the same room, never two copies
   const cache = new Map<string, Room>();
@@ -128,10 +132,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   };
   /** The tutor's seat: the reviewer's member (its own read-only role and skill), on a different model from the maker. */
   const reviewNode = (run: any) => run.def.nodes.find((n: any) => n.kind === "agent" && (n.mode === "review" || n.role === "reviewer"));
-  const tutorPick = (run: any): AgentPick => {
+  const tutorPick = (run: any, node?: any): AgentPick => {
     const review = reviewNode(run);
     if (!review) throw refuse("This workflow has no reviewer seat for the tutor", "no_seat");
-    const pick = engine.x(run, review, run.nodes[review.id]).pick();
+    // the approved staffing's reviewer member as admitted on the merge card's node (the node the tutor's rounds belong to)
+    const card = node ?? run.def.nodes.find((n: any) => n.kind === "card" && n.args?.card_kind === "merge");
+    const pick = (card && engine.deps.approvedPick?.(run, card, TUTOR_ROLE)) || engine.x(run, review, run.nodes[review.id]).pick();
     // every node that wrote the change (build, fix, rework: the maker's role), as staffed and as it really ran
     const makerRole = run.def.nodes.find((n: any) => n.kind === "agent" && n.mode === "build")?.role ?? "worker";
     const writers = run.def.nodes.filter((n: any) => (n.kind === "agent" || n.kind === "loop") && (n.mode === "build" || n.role === makerRole || n.args?.producer === "build"));
@@ -142,7 +148,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     return pick;
   };
   const offerOf = (c: SCard) => {
-    try { const { run, head } = subject(c); const p = tutorPick(run); const effort = p.effort ?? null;
+    try { const { run, head, node } = subject(c); const p = tutorPick(run, node); const effort = p.effort ?? null;
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
       return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, hash: sha(JSON.stringify({ card: c.id, head, provider: p.provider, model: p.model ?? null, effort })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
@@ -352,17 +358,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
 
-  async function runTurn(c: SCard, room: Room, turn: Turn, s: ReturnType<typeof subject>, provider: any, sk: ReturnType<typeof skills>, confirm: string) {
+  async function runTurn(c: SCard, room: Room, turn: Turn, s: ReturnType<typeof subject>, provider: any, sk: ReturnType<typeof skills>, confirm: string,
+    adm: { x: any; system: string; rules: any; admissionReceipt: unknown; receipt: (r: any) => unknown }) {
     // the pages this turn may read: its own search results, and the documentation hosts (built in, plus policy review_room.docs_hosts)
     const ctx = await webContext(s), allowed = { urls: new Set<string>(), hosts: new Set([...DOCS_HOSTS, ...([] as any[]).concat(engine.policy(s.run, "review_room.docs_hosts", []) ?? []).map((h) => String(h).toLowerCase())]) };
     const check = (u: string) => urlRefusal(u, ctx, allowed);
     const web: WebBackend = typeof o.web === "function" ? o.web(check) : o.web ?? proxiedWeb(() => engine.deps.agents.egress, { check });
-    const x = engine.x(s.run, s.node, s.run.nodes[s.node.id]);
-    const system = sk.map((k) => k.text.trim()).join("\n\n");
-    const rules = new OperatingRules(engine.deps.dataDir).section(s.run.params?.project || null);
+    const x = adm.x, system = adm.system, rules = adm.rules;
     let job: any = null;
     try {
       job = await engine.deps.agents.run({ kind: "review-room", title: `${s.run.id} review room turn ${turn.n}`, system, text: await prompt(c, room, turn, s), tools: tools(c, room, turn, s, web, ctx, allowed), provider,
+        // one of the Task's jobs: its queue, its cancel, its staffing receipt (issued again if the rules change while it waits)
+        ref: s.run.id, admissionReceipt: adm.admissionReceipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal, owns: () => engine.owns(x) && engine.cards.get(c.id)?.status === "open",
         project: s.run.params?.project || null, rules, maxTools: 40, timeoutMs: Number(process.env.CREW_REVIEW_ROOM_TIMEOUT_MS ?? 8 * 60_000),
         // the round sandbox with nothing to write and no host beyond its model (the egress.allow policy is not carried)
         sandbox: { writes: [], reads: [], allow: [] },
@@ -432,18 +439,23 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (off) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
       if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
       const sk = skills();
-      // the tutor is not a role of the Task's workflow, so its round carries no staffing receipt and is not admitted as one
-      // of the Task's jobs: the captain's confirmation of this exact provider and model, per turn, is its authority
-      const run = s.run, pick = tutorPick(run); let provider: any;
-      try { provider = engine.deps.provider(pick.provider, pick.model ?? undefined); }
+      // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it, the native
+      // selection verifies the reviewer member's capability, and staffing issues its receipt for the tutor seat
+      const run = s.run, x = engine.x(run, s.node, run.nodes[s.node.id]), pick = tutorPick(run, s.node); let provider: any;
+      if (!engine.owns(x)) throw refuse("The merge card's step is no longer live", "closed");
+      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
+      const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
+      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })) };
+      const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, aux);
+      let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
       if (live.has(c.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
       const room: Room = load(c.run, c.id) ?? fresh(c, s);
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
       room.head = s.head; room.base = s.base;
       const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, answer: "", error: null, cost: null, round: `room-${c.id}-${n}`, head: s.head };
       room.turns.push(turn); save(room); live.set(c.id, n); notify(c, n);
-      void runTurn(c, room, turn, s, provider, sk, offer.hash).catch(() => {}).finally(() => { live.delete(c.id); notify(c, n); });
+      void runTurn(c, room, turn, s, provider, sk, offer.hash, { x, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { live.delete(c.id); notify(c, n); });
       return this.view(c.id);
     },
     /** What a citation points at, for the room's links: the diff hunks, the ledger entry, the commit, the source or the board excerpt. */
@@ -469,7 +481,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const s = subject(c), room = load(c.run, c.id), m = /^t([1-9]\d{0,3})$/.exec(String(scene ?? "")), t = m ? room?.turns.find((x) => x.n === Number(m[1])) : null;
       if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
       // the vendor that answered this scene, as recorded; it must still be the seat's vendor, or nothing is sent anywhere
-      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[tutorPick(s.run).provider];
+      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[tutorPick(s.run, s.node).provider];
       if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
       if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
       const key = `${c.id}/${t.n}`, running = speaking.get(key); if (running) return running;
