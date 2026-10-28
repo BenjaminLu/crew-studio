@@ -33,8 +33,17 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
   folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
   scene recorded it, and only while the seat still runs on that vendor; one request per scene at a time; never on an
-  answered card), or one of this Mac's on-device voices, the best first (Premium, Enhanced, Siri). A voice the browser would send
-  to a server is never offered. While a voice plays, the points appear as it reaches them.
+  answered card), or one of this Mac's on-device voices, the best first (Premium, Enhanced, Siri and neural voices, the
+  compact ones last; the captain's own language and region first among equals). A voice the browser would send to a
+  server is never offered, nor is any of macOS's novelty voices (Albert, Bad News, Bahh, Bells, Boing, Bubbles, Cellos,
+  Good News, Jester, Organ, Superstar, Trinoids, Whisper, Wobble, Zarvox, …). Its robotic legacy voices (MacinTalk's
+  Fred, Junior, Ralph, Kathy, …; the Eloquence voices Eddy, Flo, Grandma, …) are left out too, unless this Mac has
+  nothing else in the captain's language. Voices are told apart by name: an older macOS gives every voice, the good
+  ones too, the same `com.apple.speech.synthesis.voice.` address. A Mac voice picked before it was dropped falls back to
+  the best one there is. While a voice plays, the points appear as it reaches them. Leaving the room stops its playback
+  and its mic at once, and nothing the room finishes later (its poll, a live update, playback, a turn or a citation it
+  sent, the mic) redraws the page the captain moved on to.
+- A picture's chip shows its title cut at a word, with an ellipsis, and the whole title on hover.
 - **Voice questions**: push to talk, only where the browser recognises speech on this device
   (`SpeechRecognition.available({processLocally: true})`); the transcript fills the question field and is sent only when
   the captain presses Ask. Without on-device recognition the mic stays off and says why.
@@ -201,7 +210,10 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
 
 Every explanatory claim, in the chat and on the board, cites its basis: `[diff:path:L10-24]` (a hunk at the head),
 `[ledger:#12]` (an entry of the Task's signed ledger), `[commit:abc1234]`, `[source:3]` (a web source of this room) or
-`[board:B2-1]` (an excerpt on the board). Studio splits each answer into blocks and checks every citation (a changed file,
+`[board:B2-1]` (an excerpt on the board). The answer is the tutor's final message only: what it says before a tool call
+or before its final message (a codex tutor's "I'll use the how guidance to…") is progress, never part of the answer, on
+every vendor (`src/agent.ts`, the job's `answer`). A tutor that ends after its tools with no final message has no
+answer: the turn fails with "the tutor ended without an answer", never a blank scene. Studio splits each answer into blocks and checks every citation (a changed file,
 an entry of this Task, a commit in the repository, a source that was fetched, a grounded board item); a block with no
 valid citation, or tagged `[inference]`, `[Inferred]` or `[Speculative]`, is shown as **Inference**. Headings and offers
 ("Want me to go deeper?") are not claims. A mermaid or note item carries its citations in `cites`. On the page a
@@ -314,7 +326,13 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     following it; push to talk on-device only, the transcript shown before it is sent. — review-room-ui "voice is off by
     default …", "with this Mac's voice each point is spoken …", "the vendor's voice is asked for the whole scene once …",
     "the points appear as the narration reaches them", "the mic is offered only after …", "holding the mic fills the
-    question …", "without on-device recognition the mic stays off …".
+    question …", "without on-device recognition the mic stays off …", "a saved voice no longer offered falls back …",
+    "once the captain leaves a room, its poll and its playback no longer redraw …", "on an older macOS the good voices are
+    offered …", "when this Mac has only legacy voices …", "leaving the room stops its playback and its mic at once", "what
+    the room finishes after the captain left …"; the answer is the final message only — review-room "only the tutor's
+    final message is the answer …", "text streamed without a closing message counts as one message …", "a tutor that ends
+    after a tool call with no final message fails the turn …"; a chip's title — review-room-ui "a long picture title in
+    the strip is cut at a word …".
 
 14. A Task's branch has a room once Studio's review passed at its head, also a tainted Task ready on its branch; its turns
     run on the Task's reviewer seat through an auxiliary owner that never moves the Task. — review-room-anywhere "before

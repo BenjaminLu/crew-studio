@@ -25,6 +25,11 @@ export type AgentJob = {
   started: string; ended: string | null; tools: number; cost: Cost | null; said: string; error: string | null; /** the provider's end code (notLoggedIn, quotaExhausted, …) when it gave one */ errorCode?: string | null; log: AgentLog[]; ref: string | null; reasoningEffort?: string | null; executionMode?: string;
   /** the captain's operating rules this job received: the hash of the exact section text and the project it was read for */
   operatingRules?: { hash: string; project: string | null };
+  /** `said` is every word the agent streamed, preambles and progress messages included. `answer` is only its final
+   *  assistant message: what it said after its last tool call, and of several messages there, the last (a codex agent
+   *  streams "I'll look at…" before its tools and again before its answer). Text streamed with no closing message
+   *  (a provider that sends deltas only) counts as one message. */
+  answer?: string;
 };
 const now = () => new Date().toISOString();
 
@@ -173,10 +178,15 @@ export class Agents {
       this.live.set(id, () => stop("cancelled"));
       try { o.onStart?.(id); } catch {}
       const timer = setTimeout(() => stop("timeout"), timeoutMs);
+      // the final message: `open` is text streamed since the last message closed, `last` the last closed message; a tool call
+      // starts over, so what came before it (a preamble) is never the answer
+      let open = "", last = "";
       try {
         for await (const e of session.send(text)) {
           rec?.event(e);
-          if (e.type === "delta") job.said += e.text;
+          if (e.type === "delta") { job.said += e.text; open += e.text; }
+          else if (e.type === "message") { last = e.text; open = ""; }
+          else if (e.type === "toolStart") { last = ""; open = ""; }
           else if (e.type === "toolEnd" && e.error) this.log(job, "result", `error: ${e.error}`);
           else if (e.type === "turnEnd") {
             const u = (e as any).usage; if (u) job.cost = { usd: u.usd ?? null, inTokens: u.inTokens ?? null, outTokens: u.outTokens ?? null };
@@ -189,7 +199,7 @@ export class Agents {
         }
         if (job.status === "running") { job.status = "failed"; job.error = "the turn ended without a result"; }
       } catch (err: any) { job.status = "failed"; job.error = String(err?.message ?? err); }
-      finally { clearTimeout(timer); this.live.delete(id); this.tokens.delete(token); }
+      finally { clearTimeout(timer); this.live.delete(id); this.tokens.delete(token); job.answer = open.trim() ? open : last; }
       job.ended = now();
       if (job.said.trim()) this.log(job, "text", job.said.trim());
       this.log(job, job.status === "done" ? "end" : "error", job.error ?? "done");
