@@ -19,7 +19,7 @@ import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
 import {CrewStore,resolveCrew,teamBody,withJudges,seatLabel} from '../domain/crew';
 import {installCrewGuard,judgeSlots} from '../crew-guard';
-import {installTeamStaffingGuard} from '../crew-staffing';
+import {installTeamStaffingGuard,crewStaffingDraft} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
 import {crewRoutes} from '../crew-routes';
 import {installCrewTools} from '../crew-tools';
@@ -196,6 +196,10 @@ export function createRuntime(d: RuntimeDeps) {
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   // the review room asks for a project's crew reviewer (a pull request no Task made): a team that covers code-firstmate gives it
   (engine.deps as any).teamStaffing=teamStaffing;
+  /** read only: the reviewer the team would give a staffed workflow for a project (nothing written; the review room's offer) */
+  (engine.deps as any).teamReviewerPreview=(def:any,projectId:string)=>{try{const team=crewStore.current();if(!team||!staffingApplies(def))return null;
+    const d=crewStaffingDraft(def,team,staffingProject(projectId),(r:any)=>({pin:{skill:{ref:r.skill,version:1,sha256:'0'.repeat(64),snapshotSha256:'0'.repeat(64)}},text:''}));
+    return 'missing' in d?null:d.draft.roles.reviewer??null;}catch{return null;}};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
    *  A Claude role that is signed in but not verified by a bounded request cannot start: the form never pays for it. */
   const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);

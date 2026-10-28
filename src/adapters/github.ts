@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
+import { readdir, stat } from "node:fs/promises";
 import { gitArgv, gitEnv } from "../git";
 import { githubHeaders, findToken } from "../github";
 import type { RemoteGit } from "../worktrees";
@@ -451,25 +452,28 @@ export class GitHubPrAdapter implements PrAdapter {
    *  disk, watched while the fetch runs (over maxBytes the fetch is stopped) and checked after it, success or not; a fetch that
    *  stops leaves no temporary pack behind. Over the cap the read is refused with overCap set (the caller decides whether the
    *  cache may go: another room may be reading it). One fetch at a time per cache. Each head it saw is kept (refs/crew/seen/<sha>). */
-  async fetchPull(n: string, base: string, cache: string, o: { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number } = {}) {
+  async fetchPull(n: string, base: string, cache: string, o: { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number; watchMs?: number } = {}) {
     validateGitHubGrant(this.grant); o.signal?.throwIfAborted();
     if (!/^[1-9][0-9]{0,8}$/.test(n) || !ref(base) || !cache.startsWith("/") || /[\r\n]/.test(cache)) throw new Error("invalid pull request fetch target");
     const prior = pullFetches.get(cache) ?? Promise.resolve(); let done!: () => void; const mine = new Promise<void>((r) => (done = r)), chain = prior.then(() => mine); pullFetches.set(cache, chain);
     await prior.catch(() => {});
     const max = o.maxBytes ?? 1024 ** 3, packs = join(cache, "objects", "pack");
-    const sizeOf = (dir: string): number => { let t = 0; try { for (const e of readdirSync(dir, { withFileTypes: true })) { const f = join(dir, e.name); t += e.isDirectory() ? sizeOf(f) : (() => { try { return statSync(f).size; } catch { return 0; } })(); } } catch {} return t; };
-    const overCap = () => Object.assign(new Error(`the pull request's repository is larger than the review room keeps (${Math.round(max / 1024 ** 2)} MB)`), { overCap: true });
+    // the watch's estimate: the pack folder only, read asynchronously. A fetch always keeps its pack (fetch.unpackLimit=1), so
+    // what it receives grows there as tmp_pack_* while it runs, never as loose objects the estimate would miss
+    const packBytes = async () => { let t = 0; try { for (const f of await readdir(packs)) { try { t += (await stat(join(packs, f))).size; } catch {} } } catch {} return t; };
+    const looseAndPacked = async (c: (a: string[]) => Promise<string>) => (await c(["count-objects", "-v"])).split("\n").reduce((t, l) => { const m = /^(size|size-pack|size-garbage): (\d+)$/.exec(l); return t + (m ? Number(m[2]) * 1024 : 0); }, 0);
+    const overCap = () => Object.assign(new Error(`the pull request's repository is larger than the review room keeps (${Math.round(max / 1024 ** 2)} MB)`), { overCap: true, stopped: over });
     const clean = () => { try { for (const f of readdirSync(packs)) if (/^tmp_|\.keep$|\.lock$/.test(f)) rmSync(join(packs, f), { force: true }); } catch {} try { for (const f of readdirSync(join(cache, "objects"))) if (/^(incoming-|tmp_)/.test(f)) rmSync(join(cache, "objects", f), { recursive: true, force: true }); } catch {} };
     const stop = new AbortController(), signal = o.signal ? AbortSignal.any([o.signal, stop.signal]) : stop.signal; let over = false;
-    const watch = setInterval(() => { if (sizeOf(join(cache, "objects")) > max) { over = true; stop.abort(); } }, 250);
+    let scanning = false; const watch = setInterval(() => { if (scanning || over) return; scanning = true; void packBytes().then((b) => { if (b > max) { over = true; stop.abort(); } }).finally(() => { scanning = false; }); }, Math.max(5, o.watchMs ?? 250));
     try {
       mkdirSync(cache, { recursive: true, mode: 0o700 });
       if (!existsSync(join(cache, "HEAD"))) localMust(cache, ["-c", "core.hooksPath=/dev/null", "init", "--bare", "-q", "--template=", "."]);
       const env = publicationEnv(this.gitAuth()), timeout = Math.max(1000, Math.min(600_000, o.timeoutMs ?? 120_000));
-      const c = (args: string[]) => ownedGit(gitArgv(["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args]), cache, env, timeout, signal);
+      const c = (args: string[]) => ownedGit(gitArgv(["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.unpackLimit=1", ...args]), cache, env, timeout, signal);
       try { await c(["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", this.grant.pushUrl, `+refs/pull/${n}/head:refs/crew/pull/${n}/head`, `+refs/heads/${base}:refs/crew/pull/${n}/base`]); }
-      catch (e) { clean(); if (over || sizeOf(join(cache, "objects")) > max) throw overCap(); throw e; }
-      if (sizeOf(join(cache, "objects")) > max) throw overCap();
+      catch (e) { clean(); if (over || (await packBytes()) > max) throw overCap(); throw e; }
+      if ((await looseAndPacked(c)) > max) throw overCap();
       const head = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/head^{commit}`]), tip = await c(["rev-parse", "--verify", `refs/crew/pull/${n}/base^{commit}`]);
       if (!sha.test(head) || !sha.test(tip)) throw new Error("the fetched pull request head or base is invalid");
       await c(["update-ref", `refs/crew/seen/${head}`, head]);

@@ -70,7 +70,7 @@ A room has one subject and keeps one identity across that subject's heads:
   base branch into a bare repository Studio owns, `data/review-room/cache/<hash>.git` (`GitHubPrAdapter.fetchPull`: the
   grant's credential path, no hooks and no templates, a time limit, no gc, full history for merge base, log and blame, one
   fetch at a time per cache). Its size on disk is capped (`CREW_REVIEW_PR_CACHE_MB`, default 1024): watched while the fetch
-  runs (over the cap it is stopped) and checked after it, success or not; a stopped fetch leaves no temporary pack. Over the
+  runs (an asynchronous scan of the pack folder; the fetch always keeps a pack, `fetch.unpackLimit=1`, so nothing it receives escapes the scan as loose objects; over the cap it is stopped) and checked after it, success or not; a stopped fetch leaves no temporary pack. Over the
   cap the read is refused and the cache removed, unless a turn of a room of that repository is reading it. Never the
   project's checkout or its object store, no worktree, nothing pushed. The room's base is the merge base of the head and
   the base branch. When the commits cannot be fetched (the cap, the network, a head that moved during the read), what
@@ -96,6 +96,9 @@ internal, one hook node and no edges: it runs no agent and writes nothing). The 
 other rooms': an auxiliary owner of its node, the native selection as the reviewer, the staffing receipt for the tutor seat
 naming the crew reviewer, the round record and the ledger on the host. Later turns, and the "what changed" scene, use the same
 host. A project with no approved crew is refused with "Approve this project's crew first" (`no_crew`) and no host is made.
+The offer is read only: it reads the project's approved staffing, else what the Studio team would give the reviewer
+(`teamReviewerPreview`, nothing written); the team's staffing version is written only when the captain's confirmed turn makes
+the host, which is started as that captain (`by`). The host Task's page links back to the pull request's room.
 
 **What reviewers asked.** Each read of a pull request turns the reviewer notes not shown yet (reviews with a body or a
 verdict, inline comments, comments) into a Studio scene: each note is a point labelled "Reviewer's words", Studio's own

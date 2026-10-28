@@ -246,10 +246,17 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     let p: AgentPick | null = null; try { p = engine.deps.approvedPick?.(run, node, TUTOR_ROLE) ?? null; } catch (e: any) { throw refuse(String(e?.message ?? e), e?.code ?? "no_crew"); }
     if (!p) throw refuse("Approve this project's crew first: the tutor runs on its approved reviewer / 請先核准這個專案的船員：導師用它核准的審查者", "no_crew"); return p; };
   /** before a pull request room has a host: the project's approved crew reviewer (a team that covers code-firstmate is derived first) */
+  /** Read only (an offer, a page read): the project's approved crew reviewer, else what the Studio team would give code-firstmate's
+   *  reviewer, derived without writing anything. Nothing is persisted until the captain confirms a turn (hostFor). */
+  /** the code workflow whose crew staffs a pull request's tutor: code-firstmate, else the first code workflow with a reviewer role */
+  const codeDef = () => engine.defs.get("code-firstmate") ?? engine.defs.list().map((w: any) => engine.defs.get(w.id)).find((d: any) => d?.kind === "code" && d.roles?.some((r: any) => r.id === TUTOR_ROLE)) ?? null;
   const crewPick = (project: string | null | undefined): AgentPick => {
-    try { const def = engine.defs.get("code-firstmate"); if (def && project) engine.deps.teamStaffing?.(def, project); } catch {}
-    const reviewerOf = engine.deps.projectReviewer; if (!reviewerOf) throw refuse("Approve this project's crew first: the tutor runs on its approved reviewer / 請先核准這個專案的船員：導師用它核准的審查者", "no_crew");
-    try { const r = reviewerOf(String(project ?? "")); return { provider: r.provider, model: r.model, effort: r.effort }; } catch (e: any) { throw refuse(String(e?.message ?? e), e?.code ?? "no_crew"); } };
+    const none = (why?: string) => refuse(why ?? "Approve this project's crew first: the tutor runs on its approved reviewer / 請先核准這個專案的船員：導師用它核准的審查者", "no_crew");
+    let why: string | undefined;
+    try { const r = engine.deps.projectReviewer?.(String(project ?? "")); if (r) return { provider: r.provider, model: r.model, effort: r.effort }; } catch (e: any) { why = String(e?.message ?? e); }
+    const def = codeDef(), team = def && project ? engine.deps.teamReviewerPreview?.(def, project) : null;
+    if (team) return { provider: team.provider, model: team.model, effort: team.effort ?? null };
+    throw none(why); };
   const noHost = () => refuse("No Studio Task made this pull request, so no reviewer seat can host a tutor here: the room shows the pull request, its reviewers' comments and what changed, without paid turns / 這個 pull request 不是 Studio 的任務開的，沒有審查座位可以當導師：審查室只顯示 PR、審查者的意見和改了什麼，不能付費提問", "no_host");
   const offerOf = (k: Key) => {
     try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr") throw noHost();
@@ -652,6 +659,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     },
     /** A Task's entry to the room on its reviewed branch (the Task page): once Studio's review passed at its head, or a room exists. */
     taskEntry(run: any) {
+      // a review room's host Task: its page links back to the pull request's room
+      if (isHostRun(run)) { const p = parsePrUrl(run.params?.pr); return p ? { href: `#/review/${prRoomId(p.repository, p.n)}`, host: true, pr: p.url, reviewed: true, head: null, branch: null, local: false, turns: 0, moved: false } : null; }
       try { if (!run?.ctx?.repo || !reviewNode(run)) return null; const k = keyOf(run.id), head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? ""), ok = SHA.test(head) && reviewed(run, head), room = load(k);
         if (!ok && !room) return null;
         return { href: `#/review/${run.id}`, reviewed: ok, head, branch: run.ctx.branch ?? null, local: !!run.ctx.taintedReady, turns: room?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, moved: !!room?.seen && room.seen.head !== head }; } catch { return null; }
@@ -707,7 +716,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (engine.grants.open("sandbox-off", project)) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
         if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
         live.set(k.id, -1);
-        try { const h = engine.start({ workflow: HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { project: String(project ?? ""), pr: String(room0.subject?.url ?? "") } } as any); room0.host = h.id; save(k, room0); }
+        // only now, after the captain confirmed: a team that covers code-firstmate writes the project's crew-derived staffing
+        try { const def = codeDef(); if (def && project) engine.deps.teamStaffing?.(def, project); } catch {}
+        try { const h = engine.start({ workflow: HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { project: String(project ?? ""), pr: String(room0.subject?.url ?? "") }, by } as any); room0.host = h.id; save(k, room0); }
         catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_crew"); }
         finally { live.delete(k.id); }
         return this.start(id, a, by);

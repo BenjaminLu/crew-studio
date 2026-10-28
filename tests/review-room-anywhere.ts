@@ -28,6 +28,7 @@ function scriptedTutor(H: any, script: any[][], prompts: { text: string }[]) {
     return { interrupt() {}, async *send(text: string) { me.text = text;
       for (const [name, args] of script.shift() ?? []) {
         if (name === "say") { yield { type: "delta", text: args } as any; continue; }
+        if (name === "wait") { await args; continue; }
         const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json();
         yield { type: "toolStart", id: name, name, args } as any; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) } as any; }
       yield { type: "turnEnd", status: "ok", usage: { usd: 0.01, inTokens: 1, outTokens: 1 } } as any; } }; } });
@@ -107,7 +108,10 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const fakeOffer: any = (room.view(t.id) as any).offer, fakeTurn = await refused(() => room.start(t.id, { action: "how", confirm: tv.offer.hash }, "captain")); tr.ctx.taintedReady = ready;
   ok(fakeOffer?.code === "not_reviewed" && fakeTurn?.code === "not_reviewed", "a ready-on-branch head with no tainted-ready ledger entry for it is refused", JSON.stringify([fakeOffer, fakeTurn?.code]));
   { const reviewN = ur.def.nodes.find((n: any) => n.mode === "review")!, held = E.auxOwner(ur, reviewN), alive = E.owns(held.x); held.release();
-    ok(alive && !E.owns(held.x), "an auxiliary owner owns its node until it is released"); }
+    ok(alive && !E.owns(held.x), "an auxiliary owner owns its node until it is released");
+    const tN = tr.def.nodes.find((n: any) => n.mode === "review")!, own = E.auxOwner(tr, tN), other = E.auxOwner(ur, reviewN), admit = (E.deps.agents as any).admission;
+    const mine = admit({ ref: t.id, auxOwner: own.x }, "probe-1").ready(), theirs = admit({ ref: t.id, auxOwner: other.x }, "probe-2").ready(), none = admit({ ref: t.id }, "probe-3").ready(); own.release(); other.release();
+    ok(mine.ready === true && theirs.ready === false && none.ready === false, "the job queue admits a job on an ended Task only for an auxiliary owner of that same Task", JSON.stringify([mine, theirs, none])); }
   ok(!fetched.some((x) => /github/i.test(x)) && fetched.every((x) => x.startsWith(H.toolUrl)), "no request left Studio: nothing went to GitHub", JSON.stringify(fetched.filter((x) => !x.startsWith(H.toolUrl))));
   globalThis.fetch = realFetch; H.stop();
 }
@@ -215,12 +219,26 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const scene = E.trusted(host.id).entries.filter((x: any) => x.record === "review-room-scene").at(-1) as any, rec2 = E.trusted(host.id).entries.filter((x: any) => x.record === "review-room-turn").at(-1) as any;
   ok(scene?.data.from === A && scene.data.to === B && scene.data.subject.url === "https://github.com/fixture/project/pull/1" && rec2.data.subject.head === B && rec2.head === B, "each head's comprehension is on the ledger: the scene of what changed, then the turn at the new head", JSON.stringify([scene?.data, rec2?.data?.subject]));
 
+  { const big = join(tmp, "big.git"), work = join(tmp, "big-work"); mkdirSync(work); assertTempRepo(work); must(tmp, ["init", "-q", "--bare", big]);
+    must(work, ["init", "-qb", "main"]); writeFileSync(join(work, "r.txt"), "base\n"); must(work, ["add", "r.txt"]); must(work, [...id, "commit", "-qm", "base"]); must(work, ["push", "-q", big, "main"]);
+    const { randomBytes } = await import("node:crypto"); writeFileSync(join(work, "blob.bin"), randomBytes(60 * 1024 * 1024)); must(work, ["add", "blob.bin"]); must(work, [...id, "commit", "-qm", "big"]);
+    must(work, ["push", "-q", big, "HEAD:refs/pull/9/head"]);
+    const bigAdapter = new GitHubPrAdapter({ ...grant, pushUrl: big }, () => "fake-test-token", 15_000, H.data), dir = join(tmp, "big-cache");
+    const e: any = await refused(() => bigAdapter.fetchPull("9", "main", dir, { maxBytes: 2 * 1024 * 1024, watchMs: 5 }));
+    const left = (() => { try { return Bun.spawnSync(["ls", join(dir, "objects", "pack")]).stdout.toString().split("\n").filter(Boolean); } catch { return []; } })();
+    ok(e?.overCap === true && e.stopped === true && !left.some((f) => /^tmp_/.test(f)) && !Bun.spawnSync(["git", "rev-parse", "--verify", "-q", "refs/crew/pull/9/head"], { cwd: dir }).success,
+      "the size watch stops a fetch that grows past the cap while it runs, and its temporary pack is cleaned away", JSON.stringify([e?.message, e?.stopped, left])); }
   // ---- the cache's size cap: over it the fetch stops, no temporary pack stays, the room keeps GitHub's text and takes no paid turn ----
   const capDir = join(tmp, "cap-cache"); const capped = await refused(() => adapter.fetchPull("1", "main", capDir, { maxBytes: 1 }));
   const tmpPacks = (d: string) => { try { return Bun.spawnSync(["ls", join(d, "objects", "pack")]).stdout.toString().split("\n").filter((f) => /^tmp_/.test(f)); } catch { return []; } };
   ok(capped?.overCap === true && /larger than the review room keeps/.test(capped.message) && tmpPacks(capDir).length === 0, "a fetch over the size cap is refused and leaves no temporary pack behind", capped?.message);
   lists(1, { reviews: [{ id: 21, user: { login: "rita" }, state: "COMMENTED", body: "A few questions.", commit_id: A, submitted_at: "2026-10-28T10:00:00Z" }], comments: [{ id: 32, user: { login: "bob" }, body: "One more thing.", created_at: "2026-10-28T11:00:00Z" }],
     inline: [{ id: 11, user: { login: "rita" }, body: EVIL, path: "a.txt", line: 2, position: null, commit_id: A, created_at: "2026-10-28T10:01:00Z" }], files: [{ filename: "a.txt", status: "modified", additions: 1, deletions: 1 }] });
+  { let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:a.txt]."]]);
+    await room.start(pid, { action: "how", confirm: (room.view(pid) as any).offer.hash }, "captain");
+    process.env.CREW_REVIEW_PR_CACHE_MB = "0.0001"; const busy: any = await room.check(pid); delete process.env.CREW_REVIEW_PR_CACHE_MB;
+    ok(/larger than the review room keeps/.test(busy.stale?.error ?? "") && busy.running != null && existsSync(cache), "over the cap while a turn of this repository is reading the cache, the cache stays", JSON.stringify([busy.stale, busy.running]));
+    release(); await room.settle(pid); }
   process.env.CREW_REVIEW_PR_CACHE_MB = "0.0001"; const vc: any = await room.check(pid); delete process.env.CREW_REVIEW_PR_CACHE_MB;
   const staleTurn = await refused(() => room.start(pid, { action: "how", confirm: v4.offer?.hash ?? "x" }, "captain"));
   ok(/larger than the review room keeps/.test(vc.stale?.error ?? "") && vc.turns.some((t: any) => t.action === "reviewers" && t.claims.some((c: any) => c.quote === "One more thing.")) && !existsSync(cache) && staleTurn?.code === "stale",
@@ -251,6 +269,11 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
     "a fork's pull request (refs/pull/n/head) no Studio Task made opens readable, its diff cited", JSON.stringify([fv.head, fv.prState?.headRepo]));
   ok(fv.offer?.code === "no_crew" && /Approve this project's crew first/.test(fv.offer.error) && noHost?.code === "no_crew" && /Approve this project's crew first/.test(noHost.message) && !E.list().some((r: any) => r.workflow === "review-room-host"),
     "with no approved crew for the project, its turn is refused, saying to approve the project's crew first; no host Task is made", JSON.stringify([fv.offer, noHost?.message]));
+  { // a Studio team that covers code-firstmate: the offer shows the reviewer it would give, read only (nothing is written by a read)
+    let writes = 0; const deps = E.deps as any, before = { preview: deps.teamReviewerPreview, staffing: deps.teamStaffing };
+    deps.teamReviewerPreview = () => ({ provider: "codex", model: "team-reviewer", effort: "high" }); deps.teamStaffing = () => { writes++; return null; };
+    const teamOffer: any = (room.view(fork.id) as any).offer; Object.assign(deps, { teamReviewerPreview: before.preview, teamStaffing: before.staffing });
+    ok(teamOffer?.provider === "codex" && teamOffer.model === "team-reviewer" && writes === 0, "with a team that covers the workflow, the offer reads the team's reviewer without writing any staffing", JSON.stringify([teamOffer, writes])); }
   ok(localState() === localBefore && remoteRefs() === remoteNow && sim.calls.every((c) => c.method === "GET"),
     "through all of it: the project's checkout untouched, nothing pushed by Studio, every GitHub call a GET");
   for (const r of E.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await E.cancel(r.id, "cleanup");
@@ -286,7 +309,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const crew = store.approve({ schema: 1, algorithm: "sha256-canonical-v1", project: identity("proj"), workflow: { id: def.id, version: def.version, sha256: staffingHash(def) },
     roles: { worker: { provider: "codex", model: "worker-model", effort: "low", skill: skill(code.roles[0].skill) }, reviewer: { provider: "claude", model: "reviewer-model", effort: "high", skill: skill(code.roles[1].skill) } },
     review: { freshContexts: 3, distinctProviders: false } } as any, null, { run: "R-source", card: "SC-source", answerSeq: 1 });
-  const adapter = new GitHubPrAdapter(grant, () => "fake-test-token", 15_000, H.data);
+  const adapter = new GitHubPrAdapter(grant, () => "fake-test-token", 15_000, H.data); let teamWrites = 0; (E.deps as any).teamStaffing = () => { teamWrites++; return null; };
   const room = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data), github: () => adapter, web: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
   const script: any[][] = [], prompts: { text: string }[] = [], selects: any[] = [], tutor = scriptedTutor(H, script, prompts);
   E.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ run: x.run.id, node: x.node.id, role: c?.role, pick: p }); return { ...tutor(p.provider, p.model), reasoningEffort: p.effort ?? null } as any; };
@@ -295,9 +318,9 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   ok(v0.task === null && v0.offer?.provider === "claude" && v0.offer.model === "reviewer-model" && v0.offer.effort === "high" && !E.list().some((r: any) => r.workflow === "review-room-host"),
     "an external pull request's room offers the project's approved crew reviewer; nothing is made before the captain confirms", JSON.stringify(v0.offer));
   const unconfirmed = await refused(() => room.start(opened.id, { action: "how" }, "captain"));
-  ok(unconfirmed?.code === "confirm_required" && !E.list().some((r: any) => r.workflow === "review-room-host"), "without the confirmation nothing starts: no host Task, nothing paid");
+  ok(unconfirmed?.code === "confirm_required" && !E.list().some((r: any) => r.workflow === "review-room-host") && teamWrites === 0, "without the confirmation nothing starts: no host Task, nothing paid, no staffing written by the offer");
   script.push([["board_draw", { items: [{ type: "diff", title: "Its diff", path: "a.txt" }] }], ["say", "It adds a second line [diff:a.txt]."]]);
-  await room.start(opened.id, { action: "how", confirm: v0.offer.hash }, "captain"); await room.settle(opened.id);
+  await room.start(opened.id, { action: "how", confirm: v0.offer.hash }, "captain (desktop test)"); await room.settle(opened.id);
   const hosts = E.list().filter((r: any) => r.workflow === "review-room-host"), host = hosts[0], v1: any = room.view(opened.id);
   ok(hosts.length === 1 && host.params.project === "proj" && host.params.pr === "https://github.com/fixture/project/pull/5" && v1.task?.id === host.id && v1.turns.at(-1).status === "done" && v1.turns.at(-1).claims.every((c: any) => c.basis === "cited"),
     "the first confirmed turn makes one host Task for this pull request, and the turn answers on it, cited", JSON.stringify([hosts.map((r: any) => r.id), v1.turns.at(-1)?.status, v1.turns.at(-1)?.error]));
@@ -305,6 +328,11 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   ok(start?.data.config === crew.hash && receipt?.data.role === "reviewer" && receipt.data.seat === "review-room-tutor" && receipt.data.provider === "claude" && receipt.data.model === "reviewer-model" && receipt.data.effort === "high" && receipt.data.config === crew.hash && receipt.node === "review-room",
     "the host is bound to the project's approved crew, and the staffing receipt names the crew reviewer for the tutor seat", JSON.stringify([start?.data, receipt?.data]));
   ok(selects.every((x) => x.run === host.id && x.node === "review-room" && x.role === "reviewer" && x.pick.model === "reviewer-model"), "the provider is selected as the reviewer on the host's node", JSON.stringify(selects));
+  { const hx = E.x(host, host.def.nodes[0], host.nodes["review-room"]); let refusal = "";
+    try { E.deps.instructionReceipt(hx, "reviewer", "Role: reviewer", { id: "claude", model: "reviewer-model", reasoningEffort: "high" }); } catch (e: any) { refusal = String(e?.message ?? e); }
+    ok(/only the tutor seat/.test(refusal), "the host Task gives no receipt for anything but the tutor seat", refusal); }
+  ok(teamWrites === 1, "the team's staffing is written only once the captain confirmed, as the host is made", String(teamWrites));
+  ok(host.by === "captain (desktop test)" && room.taskEntry(host)?.href === `#/review/${opened.id}` && room.taskEntry(host)?.host === true, "the host Task is started by the captain who confirmed, and its page links back to the pull request's room", JSON.stringify([host.by, room.taskEntry(host)]));
   const turnRec = E.trusted(host.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
   ok(turnRec?.data.subject.url === "https://github.com/fixture/project/pull/5" && turnRec.data.subject.head === A && turnRec.data.provider === "claude", "the turn is on the host's ledger with the pull request and its head", JSON.stringify(turnRec?.data?.subject));
   // the pull request moves on: the next turn opens with what changed, still on the same host
