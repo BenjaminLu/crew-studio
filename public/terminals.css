@@ -42,3 +42,4 @@
 .ct-ask{flex-basis:100%;font-size:12px;color:var(--human);overflow-wrap:anywhere}
 @media (max-width:900px){.wt-grid{grid-template-columns:minmax(0,1fr)}.wt-xterm{height:60vh}}
 .wt-review{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px}
+.wt-refused{flex-basis:100%;margin:0;font-size:12px;color:var(--bad);background:var(--bad-soft);border-radius:8px;padding:6px 8px;overflow-wrap:anywhere}

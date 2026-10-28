@@ -103,16 +103,23 @@ try {
   // ---------- Send for review: a finished terminal whose branch has commits ----------
   await p.locator("#termProject").selectOption("repo");
   const G = "git -c user.name=A -c user.email=a@example.invalid";
-  await p.locator("#termCmd").fill(`${G} checkout -q -b agent/ui && echo x > f.txt && ${G} add f.txt && ${G} commit -q -m 'feat: f' && echo COMMITTED && read y`);
-  await p.locator("[data-term-run]").click();
+  // run from the command field with Enter, as the captain does, and keep a field focused while the command ends by itself
+  // (live bug: the review row came only after a reload, because the page is not rebuilt while a field has the focus)
+  await p.locator("#termCmd").fill(`${G} checkout -q -b agent/ui && echo x > f.txt && ${G} add f.txt && ${G} commit -q -m 'feat: f' && echo COMMITTED && sleep 3`);
+  await p.locator("#termCmd").press("Enter");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("COMMITTED"), 10000), "an agent commits on a branch in the project's folder", await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => ""));
   ok(await seen(p.locator("[data-term-send][disabled]")) && /once the agent has finished/.test(await p.locator("[data-term-review]").innerText()), "Send for review waits until the agent has finished");
-  await p.locator(".wt-xterm").click(); await p.keyboard.press("Enter");
-  ok(await seen(p.locator("[data-term-send]:not([disabled])"), 8000) && /agent\/ui · 1 commit\(s\) beyond main/.test(await p.locator("[data-term-review]").innerText()), "finished, with a commit beyond main: Send for review is offered, with the branch", await p.locator("[data-term-review]").innerText().catch(() => ""));
+  // the captain clicks back into the command field (to type the next one) while this one is still running
+  await p.locator("#termCmd").focus();
+  ok(await p.evaluate(() => document.activeElement?.id) === "termCmd", "the command field has the focus while the command runs");
+  ok(await seen(p.locator("[data-term-send]:not([disabled])"), 10000) && /agent\/ui · 1 commit\(s\) beyond main/.test(await p.locator("[data-term-review]").innerText()), "when it ends, Send for review appears with the branch, with no reload", await p.locator("[data-term-review]").innerText().catch(() => ""));
   await p.locator("[data-term-send]").click();
-  // this Studio has no approved crew for code-firstmate: the refusal says why, and the terminal stays as it was
-  ok(await seen(p.locator(".toast").filter({ hasText: /registered project|已登錄|crew|staff|approv/i }), 8000), "without an approved crew the send is refused with the reason", (await p.locator(".toast").allInnerTexts().catch(() => [])).join(" | "));
-  ok(await p.locator("[data-term-send]:not([disabled])").count() === 1, "and Send for review stays available");
+  // this Studio has no approved crew for code-firstmate: the refusal stays in the review row (not only a passing toast)
+  const refusedText = (await seen(p.locator("[data-term-review-error]"), 8000)) ? await p.locator("[data-term-review-error]").innerText() : "";
+  const toastText = (await p.locator(".toast").allInnerTexts().catch(() => [])).find((x) => !/waiting for you/.test(x)) ?? "";
+  ok(/^Send for review was refused: \S/.test(refusedText) && toastText.length > 10 && refusedText.includes(toastText.split(" / ")[0].slice(0, 30)), "a refused Send for review says why, in the review row (the server's reason, in English here)", `${refusedText} | ${toastText}`);
+  await new Promise((r) => setTimeout(r, 4000));
+  ok(await p.locator("[data-term-review-error]").isVisible() && await p.locator("[data-term-send]:not([disabled])").count() === 1, "the reason stays after the toast is gone, and Send for review stays available");
   if (shots) await p.screenshot({ path: join(shots, "terminals-send-review.png") });
 
   // ---------- a paired phone ----------

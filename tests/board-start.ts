@@ -99,6 +99,18 @@ try{
   await new Promise(r=>setTimeout(r,20));ac.abort();release();const said=await first;verifyGate=base;claudeVerified.delete('claude-opus-5-5');
   const next=await E.deps.ensurePick({provider:'claude',model:'claude-opus-5-5',effort:'low'}).then(()=>'ready',(e:any)=>String(e?.message));
   ok(/ended before it finished/.test(said)&&next==='ready'&&verifyCalls.length===calls+2,'a verification ended by its caller leaves no backoff: the next one verifies',JSON.stringify({said,next,calls:verifyCalls.slice(calls)}));}
+ // Send for review on a web terminal (runtime.startFromBranch) takes the Board's own staffing step: a signed-in crew not verified
+ // yet is verified by Studio, the Task starts, and what Studio verified is on the Task's signed ledger (live bug: it was refused)
+ {claudeVerified.clear();verifyPasses=true;const calls=verifyCalls.length;
+  git(claudeRepo,['checkout','-q','-b','agent/send-review']);writeFileSync(join(claudeRepo,'sfr.txt'),'from a terminal\n');git(claudeRepo,['add','sfr.txt']);
+  git(claudeRepo,['-c','user.name=Agent','-c','user.email=agent@example.invalid','commit','-q','-m','feat: from a terminal']);const commit=git(claudeRepo,['rev-parse','HEAD']);git(claudeRepo,['checkout','-q','main']);
+  let run:any=null,err='';try{run=await rt.startFromBranch({project:'claude-crew',commit,branch:'agent/send-review',terminal:'T-board-start',label:'claude',by:'desktop'});}catch(e:any){err=`${e?.code}: ${e?.message}`;}
+  ok(!!run?.id&&verifyCalls.slice(calls).join(' ')==='claude/claude-sonnet-5-5 claude/claude-opus-5-5','Send for review on a signed-in, unverified crew: Studio verifies each model once and the Task starts',JSON.stringify({err,calls:verifyCalls.slice(calls)}));
+  const rec:any=run?.id&&E.trusted(run.id).entries.find((e:any)=>e.record==='staffing-auto-verify');
+  ok(rec?.data?.verified?.length===2&&run?.params?._adopt&&JSON.parse(run.params._adopt).commit===commit,'what Studio verified for Send for review is on that Task\'s signed ledger',JSON.stringify(rec?.data));
+  if(run?.id)await E.cancel(run.id,'test');
+  claudeVerified.clear();verifyPasses=false;let held:any=null;try{await rt.startFromBranch({project:'claude-crew',commit,branch:'agent/send-review',terminal:'T-board-start',label:'claude',by:'desktop'});}catch(e:any){held=e;}
+  ok(held?.code==='staffing_not_ready'&&/did not pass/.test(held?.staffing?.reason?.en??held?.message??'')&&!!held?.staffing?.reason?.zh,'a verification that fails refuses Send for review with the same bilingual staffing_not_ready as Start',`${held?.code} ${held?.message}`);}
  claudeVerified.clear();verifyPasses=false;
  // Codex whose quota cannot be read now: a hold with that reason, never a failed verification and no backoff
  {const keep=codexQuota;codexQuota='unknown';const calls=verifyCalls.length,o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'}});

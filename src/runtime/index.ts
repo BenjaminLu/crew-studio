@@ -311,6 +311,29 @@ export function createRuntime(d: RuntimeDeps) {
   if(mergeBody)engine.cardBodies.merge=async(x:any)=>{const body=await mergeBody(x);try{const e:any=engine.trusted(x.run.id).entries.filter((l:any)=>l.record==='review-independence').at(-1);if(!e||!body||typeof body!=='object')return body;
    return withNote(body as any,{level:e.data?.level,en:String(e.data?.en??''),zh:String(e.data?.zh??'')});}catch{return body;}};
   const ownClaude=installOwnClaudeGrants(engine);
+  /**
+   * The one staffing step a board-staffed start takes, whoever starts it (the Board's Run, Send for review on a web
+   * terminal): fresh staffing facts, the approved crew (and, from a form, the crew it showed), then the signed-in roles not
+   * verified yet are verified by Studio before the Task exists. A refusal is the route's typed answer.
+   */
+  type StartRefusal={ok:false;status:number;body:Record<string,any>};
+  async function staffedStartGuard(def:any,pid:string,o:{why:string;expected?:unknown}):Promise<{ok:true;params:{base:string;_staffing:string};autoVerified:string[]}|StartRefusal>{
+    await staffingFacts();
+    const crew=boardStaffing(def,pid);if(crew.state!=='approved')return{ok:false,status:409,body:{error:`${crew.reason.en} / ${crew.reason.zh}`,code:crew.code,staffing:crew}};
+    // the crew the captain saw when the form loaded: a crew approved again since then is reviewed again, never started blind
+    if(o.expected!==undefined&&o.expected!==crew.hash)return{ok:false,status:409,body:{error:'The approved crew changed since this form loaded; review it again / 已核准的代理配置在表單載入後已變更，請重新確認',code:'staffing_changed',staffing:{state:'blocked',code:'staffing_changed',reason:{en:'The approved crew changed since this form loaded; review it again',zh:'已核准的代理配置在表單載入後已變更，請重新確認'}}}};
+    // a signed-in role not verified yet (or whose facts went stale) is verified by Studio now, before the Task exists
+    const ready=await autoVerify(crew.roles,{why:o.why,explicit:true});
+    if(ready.state==='blocked')return{ok:false,status:409,body:{error:`${ready.reason.en} / ${ready.reason.zh}`,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',role:ready.role,reason:ready.reason}}};
+    return{ok:true,params:{base:projects.get(pid)!.base,_staffing:crew.hash},autoVerified:ready.verified};
+  }
+  /** Start the Task; a staffed start's refusal is staffing_not_ready, and what Studio verified itself goes on the Task's own signed ledger. */
+  function staffedStartRun(def:any,start:()=>any,autoVerified:string[]):{ok:true;run:any}|StartRefusal{
+    let r;try{r=start();}
+    catch(e:any){if(!boardStaffed(def))throw e;const message=String(e?.message??e).replace(/^Staffing approval requires confirmation: /,'');return{ok:false,status:409,body:{error:message,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',reason:{en:message,zh:'已核准的代理目前無法開始；請更新代理能力狀態後再試。'}}}};}
+    if(autoVerified.length)try{const run=engine.get(r.id)!,node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),"staffing-auto-verify",{data:{schema:1,verified:autoVerified,by:"studio",at:new Date().toISOString()}} as any);}catch{}
+    return{ok:true,run:r};
+  }
   const githubReview=installGitHubReviewWorkflow(engine,projects,d.dataDir,d.protectedRoots??[]);
   installReadinessViews(engine);
   engine.load();
@@ -541,26 +564,18 @@ export function createRuntime(d: RuntimeDeps) {
         if(boardStaffed(chosenDef)){
           if(params.repo)return json({error:'Choose a registered project; a repository path cannot carry approved staffing / 請選擇已登錄專案；直接指定儲存庫路徑無法帶入已核准的代理配置',code:'project_required'},400);
           const pid=String(params.project??'');if(!pid)return json({error:'Choose a registered project for this workflow / 請為此流程選擇已登錄專案',code:'project_required'},400);
-          await staffingFacts();
-          const crew=boardStaffing(chosenDef,pid);if(crew.state!=='approved')return json({error:`${crew.reason.en} / ${crew.reason.zh}`,code:crew.code,staffing:crew},409);
-          // the crew the captain saw when the form loaded: a crew approved again since then is reviewed again, never started blind
-          if(b?.staffingExpected!==undefined&&b.staffingExpected!==crew.hash)return json({error:'The approved crew changed since this form loaded; review it again / 已核准的代理配置在表單載入後已變更，請重新確認',code:'staffing_changed',staffing:{state:'blocked',code:'staffing_changed',reason:{en:'The approved crew changed since this form loaded; review it again',zh:'已核准的代理配置在表單載入後已變更，請重新確認'}}},409);
-          // a signed-in role not verified yet (or whose facts went stale) is verified by Studio now, before the Task exists
-          const ready=await autoVerify(crew.roles,{why:`start of ${wf} on ${pid}`,explicit:true});
-          if(ready.state==='blocked')return json({error:`${ready.reason.en} / ${ready.reason.zh}`,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',role:ready.role,reason:ready.reason}},409);
-          if(ready.verified.length)autoVerified=ready.verified;
-          params={...params,base:projects.get(pid)!.base,_staffing:crew.hash};
+          const g=await staffedStartGuard(chosenDef,pid,{why:`start of ${wf} on ${pid}`,expected:b?.staffingExpected});
+          if(!g.ok)return json(g.body,g.status);
+          autoVerified=g.autoVerified;params={...params,...g.params};
         }
         if(chosenDef?.kind==="coffee-kit") {
           let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return refuse({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409,"env.staffing");}const image=config.roles['image-worker'];
           if(!image||image.provider!=='codex'&&image.provider!=='cursor')return refuse({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409,"env.staffing");
           params={...params,_staffing:config.hash};
         }
-        let r;try{r = ownClaude.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls },b?.claudeVerification);}
-        catch(e:any){if(!boardStaffed(chosenDef))throw e;const message=String(e?.message??e).replace(/^Staffing approval requires confirmation: /,'');return json({error:message,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',reason:{en:message,zh:'已核准的代理目前無法開始；請更新代理能力狀態後再試。'}}},409);}
-        // what Studio verified itself for this start, on the Task's own signed ledger
-        if(autoVerified.length)try{const run=engine.get(r.id)!,node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),"staffing-auto-verify",{data:{schema:1,verified:autoVerified,by:"studio",at:new Date().toISOString()}} as any);}catch{}
-        return json(runView(r.id, who));
+        const started=staffedStartRun(chosenDef,()=>ownClaude.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls },b?.claudeVerification),autoVerified);
+        if(!started.ok)return json(started.body,started.status);
+        return json(runView(started.run.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
       const claudeVerification=/^\/api\/wruns\/(R-\d+)\/claude-verification\/(offer|confirm)$/.exec(p);
@@ -754,16 +769,19 @@ export function createRuntime(d: RuntimeDeps) {
     if (!def) throw Object.assign(new Error("code-firstmate is not installed"), { code: "workflow_unavailable" });
     const p = projects.get(o.project); if (!p?.path) throw Object.assign(new Error("choose a registered project"), { code: "project_required" });
     if (!/^[0-9a-f]{40,64}$/.test(o.commit)) throw Object.assign(new Error("no commit to review"), { code: "commit" });
-    let params: Record<string, string> = { project: p.id, base: p.base };
+    let params: Record<string, string> = { project: p.id, base: p.base }, autoVerified: string[] = [];
+    const refuse = (x: StartRefusal) => Object.assign(new Error(String(x.body.error)), { code: x.body.code, staffing: x.body.staffing });
     if (boardStaffed(def)) {
-      await staffingFacts(); const crew = boardStaffing(def, p.id);
-      if (crew.state !== "approved") throw Object.assign(new Error(`${crew.reason.en} / ${crew.reason.zh}`), { code: crew.code });
-      params = { ...params, base: p.base, _staffing: crew.hash };
+      const g = await staffedStartGuard(def, p.id, { why: `Send for review of ${o.branch ?? o.commit.slice(0, 12)} on ${p.id}` });
+      if (!g.ok) throw refuse(g);
+      autoVerified = g.autoVerified; params = { ...params, ...g.params };
     }
     params._adopt = JSON.stringify({ commit: o.commit, branch: o.branch, terminal: o.terminal });
     const what = o.branch ?? o.commit.slice(0, 12);
     const text = `Review ${what}, the work a web terminal (${o.label}) committed in ${p.name || p.id} (${o.commit.slice(0, 12)}): draft the spec from its diff, check it, review it and merge it.`;
-    return ownClaude.start({ workflow: wf, title: `Review ${what} from a web terminal (${o.label})`.slice(0, 120), text, params, by: o.by });
+    const started = staffedStartRun(def, () => ownClaude.start({ workflow: wf, title: `Review ${what} from a web terminal (${o.label})`.slice(0, 120), text, params, by: o.by }), autoVerified);
+    if (!started.ok) throw refuse(started);
+    return started.run;
   };
   return { handle, engine, defs, projects, firstmate, startFromBranch, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
