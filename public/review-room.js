@@ -1,4 +1,4 @@
-// The review room (#/review/<merge card>; docs/units/review-room.md, src/domain/review-room.ts): a BOARD the tutor draws
+// The review room (#/room/<merge card>; docs/units/review-room.md, src/domain/review-room.ts): a BOARD the tutor draws
 // on step by step (flowcharts built up one part at a time, diff hunks, code excerpts and before / after from the real
 // commits) and a CHAT where the captain asks. Each turn is a paid model round: the captain confirms the provider and
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
@@ -9,7 +9,7 @@ const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
-const rerender = () => { if (S.route?.name === "review") render(); };
+const rerender = () => { if (S.route?.name === "room") render(); };
 const enc = encodeURIComponent;
 const page = (title, sub, ...kids) => h("div", { class: "page rr-page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, title), sub ? h("p", {}, sub) : null)), ...kids);
 async function load(id, open = false) {
@@ -19,7 +19,7 @@ async function load(id, open = false) {
   finally { RR.loading.delete(id); rerender(); schedule(); }
 }
 // while a turn runs, the page follows it (the live stream says when it ends; a slow poll covers a missed event)
-function schedule() { clearTimeout(RR.poll); const id = S.route?.name === "review" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null) RR.poll = setTimeout(() => load(id), 2500); }
+function schedule() { clearTimeout(RR.poll); const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null) RR.poll = setTimeout(() => load(id), 2500); }
 window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card); });
 
 // ---------- the board's flowcharts: Studio draws mermaid's flowchart subset itself (no library, no markup) ----------
@@ -307,7 +307,7 @@ function drawer(r) {
       s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
       : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")));
 }
-routes.review = (arg) => {
+routes.room = (arg) => {
   if (!arg) return page(T("Review room", "審查室"), T("Open a review room from a merge card.", "請從合併卡開啟審查室。"));
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }

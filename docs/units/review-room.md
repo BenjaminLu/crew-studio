@@ -1,6 +1,6 @@
 # Unit review-room: learn a pull request before you merge it
 
-What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/review/<merge card>`,
+What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/room/<merge card>`; `#/review/…` is the Library's artifact review,
 `public/review-room.js`) works like an interactive whiteboard tutor:
 
 - **The board is the stage** and takes most of the screen. Each tutor answer is a **scene**: a visual on the left and the
@@ -220,8 +220,8 @@ and page do not exist):
 10. The per pull request record is kept. — review-room "the per pull request record keeps …".
 
 Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission, the adaptive tutor on one vendor, two vendors and one model, a member that is not usable, verification before the turn), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
-tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; screenshots in `tests/out/review-room`
-or `ROOM_SHOTS`). `bun run test:review-room` runs all four.
+tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; the room and the Library review each on its own route, `tests/route-names.ts` keeps route names apart; screenshots in `tests/out/review-room`
+or `ROOM_SHOTS`). `bun run test:review-room` runs all five.
 
 11. Pictures: screenshots come only from Studio's captures of this head (before / after toggle); a diffstat chart is
     counted by git; an uncited chart is an inference; illustrations are made in the background (the turn does not wait),
