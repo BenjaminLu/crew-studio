@@ -492,7 +492,9 @@ function voicePicker(r) {
 // ---------- the check on the board: multiple choice, graded by Studio (no model) the moment the captain picks ----------
 const LETTERS = "ABCD";
 async function pickOption(card, q, i, at) {
-  const key = `${card}/q${q.n}`; if (RR.posting.has(key)) return; if (at) RR.reveal.set(at[0], at[1]); // the verdict stays in view: no jump to the next question RR.posting.add(key); RR.err.delete(card); rerender();
+  const key = `${card}/q${q.n}`; if (RR.posting.has(key)) return; if (at) RR.reveal.set(at[0], at[1]);
+  // one answer per question: the lock is set before anything else (a second click while it is sent does nothing); the verdict stays in view
+  RR.posting.add(key); RR.err.delete(card); rerender();
   try { const out = await postJ(`/api/review-room/${enc(card)}/check-answer`, { n: q.n, choice: i }); RR.rooms.set(card, out.room); }
   catch (e) { RR.err.set(card, e.message); } finally { RR.posting.delete(key); redraw(card); }
 }
@@ -529,7 +531,7 @@ function regenList(r, t) {
   return h("div", { class: "rr-regenlist", role: "group", "data-regen-list": t.n, "aria-label": T("Models on this machine", "這台機器上的模型") },
     (r.tutors || []).map((m) => h("button", { type: "button", class: "rr-regenopt", "data-regen-pick": `${m.provider}|${m.model}`, disabled: !m.runnable || RR.posting.has(card), title: m.held || "", onclick: () => pick(m) },
       h("b", {}, `${m.provider} · ${m.model}`), m.current ? h("span", { class: "rr-pill ok" }, T("current", "目前")) : null,
-      m.level ? h("span", { class: `rr-pill${m.level === "vendor" ? "" : " warn"}`, "data-regen-level": m.level }, T(...lvl[m.level])) : null,
+      h("span", { class: `rr-pill${m.level === "vendor" ? "" : " warn"}`, "data-regen-level": m.level || "unknown" }, m.level ? T(...lvl[m.level]) : T("independence from the author unknown", "和作者的獨立程度未知")),
       m.held ? h("span", { class: "rr-pill bad", "data-regen-held": "" }, T(`held: ${m.held}`, `暫停：${m.held}`)) : null)));
 }
 /** The stage: the board (the scene's title, its picture on the left, at most four of its points on the right), the caption

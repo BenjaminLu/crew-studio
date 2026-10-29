@@ -361,6 +361,9 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const hosts = E.list().filter((r: any) => r.workflow === "review-room-host"), host = hosts[0], v1: any = room.view(opened.id);
   ok(hosts.length === 1 && host.params.project === "proj" && host.params.pr === "https://github.com/fixture/project/pull/5" && v1.task?.id === host.id && v1.turns.at(-1).status === "done" && v1.turns.at(-1).claims.every((c: any) => c.basis === "cited"),
     "the first confirmed turn makes one host Task for this pull request, and the turn answers on it, cited", JSON.stringify([hosts.map((r: any) => r.id), v1.turns.at(-1)?.status, v1.turns.at(-1)?.error]));
+  { const again: any = await refused(() => room.start(opened.id, { regenerate: v1.turns.at(-1).n, pick: { provider: "codex", model: "other-model" } }, "captain"));
+    ok(again?.code === "confirm_required" && again.offer.provider === "codex" && again.offer.independence.level === null && /unknown/.test(again.offer.independence.en) && !/Different vendor/.test(again.offer.independence.en),
+      "a pull request no Task made has no author to compare with: a picked tutor's independence is unknown, never claimed as another vendor", JSON.stringify(again?.offer?.independence ?? again?.message)); }
   const start = E.trusted(host.id).entries.find((e: any) => e.record === "staffing-start") as any, receipt = E.trusted(host.id).entries.filter((e: any) => e.record === "staffing-instructions").at(-1) as any;
   ok(start?.data.config === crew.hash && receipt?.data.role === "reviewer" && receipt.data.seat === "review-room-tutor" && receipt.data.provider === "claude" && receipt.data.model === "reviewer-model" && receipt.data.effort === "high" && receipt.data.config === crew.hash && receipt.node === "review-room",
     "the host is bound to the project's approved crew, and the staffing receipt names the crew reviewer for the tutor seat", JSON.stringify([start?.data, receipt?.data]));

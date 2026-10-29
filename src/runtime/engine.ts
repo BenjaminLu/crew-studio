@@ -1358,6 +1358,8 @@ export class Engine {
       const no = rescopeRefusal({ note: a.note, previous: last?.note ?? null }); if (no) throw new FailureRefusal(no);
     }
     const c = this.cards.answer(cardId, a);
+    // a merge card's review room finishes when the card is answered (src/domain/review-room.ts: it is saved to the Library once)
+    try { (this as any).reviewRoom?.cardAnswered?.(c); } catch {}
     const node = r.def.nodes.find((n) => n.id === c.node)!;
     const x = this.x(r, node, rn);
     this.emit(r, "card_answered", `${c.id} ${c.title.en}: ${c.answer!.choice}${c.answer!.note ? ` — ${c.answer!.note.slice(0, 160)}` : ""}`, { node: node.id, card: c.id, choice: c.answer!.choice, by: a.by });

@@ -341,6 +341,8 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   let e1: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "claude", model: "x-1" }, confirm: "x" }, "captain"); } catch (e) { e1 = e; }
   let e2: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-1" } }, "captain"); } catch (e) { e2 = e; }
   ok(e1?.code === "held" && /quota/.test(e1.message) && e2?.code === "confirm_required" && e2.offer.provider === "codex" && e2.offer.model === "c-1" && e2.offer.hash !== (room.view(merge.id) as any).offer.hash, "a held model cannot be picked; a runnable one asks to confirm its own paid round first", JSON.stringify({ e1: e1?.message, e2: e2?.offer }));
+  const e3 = await (async () => { try { await room.start(merge.id, { action: "how", pick: { provider: "codex", model: "c-1" }, confirm: e2.offer.hash }, "captain"); return null; } catch (e) { return e as any; } })();
+  ok(e3?.code === "bad_pick" && (room.view(merge.id) as any).turns.length === 4, "a model is picked only to explain a finished answer again: a new question with a pick is refused", e3?.message);
   script.push([["say", "Again, more briefly: it rounds to the cent [diff:src/percent.ts:L2-3]."]]);
   await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-1" }, confirm: e2.offer.hash, lang: "en" }, "captain"); await room.settle(merge.id);
   const turns = (room.view(merge.id) as any).turns, again = turns.at(-1), led = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1);
@@ -366,7 +368,14 @@ const fetchedBefore = fetched.length, sv1: any = await room.saveToLibrary(merge.
     "the snapshot is read-only (no offer, no tutors to pick, nothing to translate) and records the subject, its head, the tutors, the cost and the date", JSON.stringify({ subject: snap.subject, tutors: snap.tutors, cost: snap.cost }));
   ok(/Math\.round/.test(snap.cites["diff:src/percent.ts:L2-3"]?.text ?? "") && snap.cites[`ledger:#${ledgerSeq}`]?.check === "firstmate/ci" && snap.view.translations.en?.["1"] && snap.view.check.questions.every((q: any) => q.result && q.choice != null),
     "every citation is resolved into the snapshot (the diff hunk copied), with every language made and the check's answers", JSON.stringify(Object.keys(snap.cites)));
+  const raw = JSON.stringify(snap);
+  ok(!/src\/percent\.ts rounds|rounding in src\/percent\.ts|127\.0\.0\.1:4210|wiki\.intranet\.local|192\.168\.1\.10/.test(raw) && !snap.view.illustrations.length && snap.view.sources.filter((x: any) => x.refused).every((x: any) => !x.query && !x.url && !x.text && x.refused),
+    "the Library keeps no refused text: no illustration prompt the privacy filter refused, no refused query or address (only that it was refused, and why)", JSON.stringify(snap.view.sources.slice(0, 3)));
   ok(img && new RegExp(`^/api/review-room/library/${aid}/1/asset/B1-\\d+\\.png$`).test(img.src) && Buffer.compare(room.libraryAsset(aid, 1, img.src.split("/").at(-1)), PNG) === 0 && fetched.length === fetchedBefore, "its pictures are copied into it and served from it; saving asked nothing of GitHub or the web", JSON.stringify(img)); }
+{ const both: any[] = await Promise.all([room.saveToLibrary(merge.id, "captain"), room.saveToLibrary(merge.id, "captain")]);
+  const seen = [2, 3].map((n) => room.librarySnapshot(aid, n).view.library?.versions.length ?? 0);
+  ok(both[0].n !== both[1].n && JSON.stringify(lib.versions(aid).map((v: any) => v.n)) === "[1,2,3]" && lib.versions(aid).every((v: any) => !lib.verify(aid, v.n).length) && JSON.stringify(seen) === "[1,2]",
+    "two saves at once each get their own version, one after another: each snapshot already knows the version saved before it", JSON.stringify({ n: both.map((b) => b.n), seen })); }
 // ---------- the room never answers the card; once the card is answered the room is read-only ----------
 await E.answer(merge.id, { choice: "merge", by: "captain", aligned: merge.detail!.intents.map((_: any, i: number) => i) });
 await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status), 60000);
@@ -378,16 +387,27 @@ ok(refusal?.code === "closed", "and it no longer speaks");
 // the room ended: Studio saves it again, a new version; the snapshot reads with the room's folder and the worktree gone
 room.view(merge.id); await room.settle(merge.id);
 { const vs = lib.versions(aid);
-  ok(vs.length === 2 && /merge card was answered/.test(vs[1].summary ?? "") && (room.view(merge.id) as any).library.versions.length === 2, "when the merge card is answered, the room is saved again: one artifact, its history kept as versions", JSON.stringify(vs.map((v: any) => [v.n, v.summary])));
+  ok(vs.length === 4 && /merge card was answered/.test(vs[3].summary ?? "") && (room.view(merge.id) as any).library.versions.length === 4, "when the merge card is answered, the room is saved again: one artifact, its history kept as versions", JSON.stringify(vs.map((v: any) => [v.n, v.summary])));
   room.view(merge.id); await room.settle(merge.id);
-  ok(lib.versions(aid).length === 2, "an unchanged ended room is not saved again");
+  ok(lib.versions(aid).length === 4, "an ended room is saved once, not again on a listing or a view");
   const { rmSync, renameSync } = await import("node:fs"), rdir = join(data, "runs", r.id, "review-room"); renameSync(rdir, `${rdir}.away`); rmSync(wt, { recursive: true, force: true });
   const snap: any = room.librarySnapshot(aid), v1: any = room.librarySnapshot(aid, 1), img = snap.view.board.find((b: any) => b.type === "image" && b.turn === 1);
-  ok(snap.n === 2 && v1.n === 1 && /Math\.round/.test(snap.cites["diff:src/percent.ts:L2-3"]?.text ?? "") && Buffer.compare(room.libraryAsset(aid, 2, img.src.split("/").at(-1)), PNG) === 0 && !snap.integrity.length,
+  ok(snap.n === 4 && v1.n === 1 && /Math\.round/.test(snap.cites["diff:src/percent.ts:L2-3"]?.text ?? "") && Buffer.compare(room.libraryAsset(aid, 4, img.src.split("/").at(-1)), PNG) === 0 && !snap.integrity.length,
     "offline: with the room's folder and the worktree removed, the saved room still opens, its citations and pictures inside it, every version readable", JSON.stringify({ n: snap.n, integrity: snap.integrity }));
   let bad: any = null; try { room.librarySnapshot("room-../../x"); } catch (e) { bad = e; }
-  let badAsset: any = null; try { room.libraryAsset(aid, 2, "../room.json"); } catch (e) { badAsset = e; }
+  let badAsset: any = null; try { room.libraryAsset(aid, 4, "../room.json"); } catch (e) { badAsset = e; }
   ok(bad?.code === "not_found" && badAsset?.code === "not_found", "only a saved room's own id and its own pictures are served"); renameSync(`${rdir}.away`, rdir); }
+{ const f = join(data, "runs", r.id, "review-room", `${merge.id}.json`), saved = readFileSync(f, "utf8"), old = JSON.parse(saved); delete old.finished; delete old.library; writeFileSync(f, JSON.stringify(old));
+  // an older room (answered before Studio recorded when a room finishes): listing the cards and opening it saves nothing
+  const before = lib.versions(aid).length, plain = installReviewRoom(E, { dataDir: data }); plain.summary(E.cards.get(merge.id)!); plain.view(merge.id); E.cards.view(E.cards.get(merge.id)!); await plain.settle(merge.id);
+  ok(lib.versions(aid).length === before, "a room that finished before this version is not saved by a listing or a view: no burst of snapshots after an update", String(lib.versions(aid).length));
+  // a save that fails is recorded once and not retried by itself
+  let tries = 0; const failing: any = { get: () => null, create: () => { tries++; throw new Error("disk full"); }, versions: () => [], latest: () => null };
+  const broken = installReviewRoom(E, { dataDir: data, artifacts: failing }); broken.cardAnswered(E.cards.get(merge.id)!); await broken.settle(merge.id);
+  broken.cardAnswered(E.cards.get(merge.id)!); broken.summary(E.cards.get(merge.id)!); broken.view(merge.id); await broken.settle(merge.id);
+  const after = JSON.parse(readFileSync(f, "utf8"));
+  ok(tries === 1 && after.finished?.tried === true && /disk full/.test(after.finished?.error ?? ""), "a failed Library save is recorded with its error and not retried on the next answer, listing or view", JSON.stringify({ tries, finished: after.finished }));
+  writeFileSync(f, saved); }
 // a restart while an illustration was being drawn: the room reads it as interrupted, never pending forever
 { const f = join(data, "runs", r.id, "review-room", `${merge.id}.json`), rr = JSON.parse(readFileSync(f, "utf8")); rr.board.push({ id: "B9-1", turn: 9, type: "image", kind: "illustration", status: "pending", src: null, basis: "illustration", cites: [] });
   writeFileSync(f, JSON.stringify(rr)); const fresh = installReviewRoom(E, { dataDir: data });

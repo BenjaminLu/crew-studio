@@ -328,6 +328,16 @@ try {
     ok(/paid model round/.test(await p.textContent("[data-room-confirm]")) && !posts.length, "a missed question offers “re-explain with the board”, a normal paid turn that asks to confirm first");
     await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector("[data-room-busy]"));
     ok(posts.length === 1 && posts[0].action === "ask" && /question 3/.test(posts[0].text) && /picked B/.test(posts[0].text), "the re-explanation asks about that question, saying what the captain picked", JSON.stringify(posts));
+    // a double click (A, then B while A is being sent) sends one answer and shows no error
+    { const p2 = await ctx.newPage(); const sent = []; p2.on("pageerror", (e) => errors.push(e.message));
+      await p2.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: R3 }));
+      await p2.route(/\/api\/review-room\/SC-50\/check-answer$/, async (r) => { const b = JSON.parse(r.request().postData() || "{}"); sent.push(b); await new Promise((res) => setTimeout(res, 300));
+        if (sent.length > 1) return r.fulfill({ status: 400, json: { error: "This question is answered already", code: "answered" } });
+        r.fulfill({ json: { n: b.n, correct: b.choice === 0, room: { ...R3, check: { questions: R3.check.questions.map((q) => q.n === b.n ? { ...q, choice: b.choice, answer: 0, why: "w", cites: [], result: { correct: b.choice === 0, note: "w", turn: 3, choice: b.choice, by: "studio" } } : q) } } } }); });
+      await p2.goto(`${base}/#/room/SC-50`); await p2.waitForSelector('[data-quiz-option="3:0"]', { timeout: 15000 });
+      await p2.evaluate(() => { const a = document.querySelector('[data-quiz-option="3:0"]'), b = document.querySelector('[data-quiz-option="3:1"]'); a.click(); b.click(); });
+      await p2.waitForSelector("[data-quiz-verdict]", { timeout: 5000 }).catch(() => {}); await p2.waitForTimeout(500);
+      ok(sent.length === 1 && sent[0].choice === 0 && !(await p2.$("[data-room-error]")) && await p2.evaluate(() => document.querySelector("[data-quiz-verdict]")?.dataset.quizVerdict) === "correct", "a double click on two options sends one answer (the first) and shows no error", JSON.stringify(sent)); }
     await ctx.close(); }
 
   // ---------- the explanation's language, switched live: a kept translation at once, a missing one after one confirmation ----------
@@ -555,8 +565,9 @@ try {
     const caRaw = await fetch(`${base}/api/review-room/SC-999/check-answer`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(ca[0] === 404 && ca[1] === "not_found" && (caRaw.status === 401 || caRaw.status === 403), "the check's answer route is real, and like every write it needs Studio's session", JSON.stringify([ca, caRaw.status]));
     const lb = await p.evaluate(async () => { const a = await fetch("/api/review-room/library/room-sc-999"), b = await fetch("/api/review-room/library/room-sc-999", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), c = await fetch("/api/artifacts/room-sc-999/v/1/approve", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), d = await fetch("/api/review-room/SC-999/save", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-      return [a.status, b.status, c.status, (await c.json()).code, d.status]; });
-    ok(lb[0] === 404 && lb[1] === 405 && lb[2] === 403 && lb[3] === "room-snapshot-read-only" && lb[4] === 404, "a saved room's route reads only; the Library refuses any write to a saved room; Save to Library is a real route", JSON.stringify(lb));
+      const e = await fetch("/api/artifacts/room-sc-999", { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" });
+      return [a.status, b.status, c.status, (await c.json()).code, d.status, e.status, (await e.json()).error]; });
+    ok(lb[0] === 404 && lb[1] === 405 && lb[2] === 403 && lb[3] === "room-snapshot-read-only" && lb[4] === 404 && lb[5] === 404 && /no such saved room/.test(lb[6] ?? ""), "a saved room's route reads only; the Library refuses any write to a saved room but its deletion; Save to Library is a real route", JSON.stringify(lb));
     await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally { await browser.close(); app.kill(); }

@@ -147,6 +147,9 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   translating?: { lang: string; status: "running" | "done" | "failed"; at: string; ended?: string | null; error?: string | null; dropped?: number[]; job?: string | null; cost?: any };
   /** the room's Library snapshot (one artifact, a version per save) and the change it was saved at */
   library?: { artifact: string; versions: { n: number; at: string; reason: string }[]; rev: number; ended?: boolean; sig?: string };
+  /** the room finished (its merge card answered, its pull request merged or closed), recorded at that moment: only such a room is
+   *  saved to the Library by Studio, once (tried: a failed save is not retried by itself; the captain's Save to Library still works) */
+  finished?: { at: string; reason: string; tried?: boolean; error?: string | null };
   /** bumped on every save: a snapshot older than this is out of date */
   rev?: number;
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
@@ -380,7 +383,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const provider = String(want?.provider ?? ""), model = want?.model == null ? null : String(want.model), list = tutorsOf(run, null), u = list.find((x) => x.provider === provider && x.model === model);
     if (!u) throw refuse(`${provider} ${model ?? ""} is not a model this machine can run / 這台機器不能跑這個模型`, "not_usable");
     if (!u.runnable) throw refuse(`${provider} ${model} is held: ${u.held} / 這個模型目前不能用：${u.held}`, "held");
-    const level = (u.level ?? "vendor") as Level;
+    const level = (u.level ?? null) as Level | null;
+    // no author Studio knows (a pull request no Task made): how independent the pick is cannot be said, and is not claimed
+    if (!level) return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level: null as unknown as Level, adaptive: true, outside: true, label: { en: "Independence from the author unknown: the change's author is outside Studio. Picked by the captain to explain this again.", zh: "和作者的獨立程度未知：改動的作者不在 Studio 裡。船長選來重講這一題。" } };
     // the author's own model only when nothing else can run, as for the room's own tutor
     if (level === "same" && list.some((x) => x.runnable && x.level !== "same")) throw refuse(`${provider} ${model} is the author's own model; another model can run now / 這是作者自己的模型；還有別的模型可以用`, "same_as_author");
     return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level, adaptive: true, outside: true, label: { en: `${LEVEL_TEXT[level].en}. Picked by the captain to explain this again.`, zh: `${LEVEL_TEXT[level].zh}。船長選來重講這一題。` } };
@@ -764,6 +769,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** a room's Library artifact id: room-<the room's id> */
   const libId = (id: string) => `room-${id.toLowerCase()}`, LIB_ID = /^room-(sc-\d+|r-\d+|pr-[0-9a-f]{12}-[1-9]\d{0,8})$/;
   const saving = new Map<string, Promise<any>>();
+  /** every Library save runs after the one before it, whatever its room: two saves never race for a version number */
+  let saveChain: Promise<unknown> = Promise.resolve();
+  const queueSave = <T>(id: string, fn: () => Promise<T>): Promise<T> => { const job = saveChain.then(fn, fn); saveChain = job.catch(() => null); saving.set(id, job); void job.catch(() => null).finally(() => { if (saving.get(id) === job) saving.delete(id); }); return job; };
   /** what a snapshot shows (the scenes, the board, the check's answers, the languages): a re-read of GitHub alone does not change it */
   const contentSig = (r: Room) => sha(JSON.stringify([r.turns.map((t) => [t.n, t.status, t.answer?.length ?? 0, t.scenes?.length ?? 0]), r.board.map((b) => [b.id, b.status ?? null]), r.check.questions.map((q) => [q.n, q.choice ?? null, !!q.result]), Object.entries(r.translations ?? {}).map(([l, x]) => [l, Object.keys(x)])])).slice(0, 16);
   /** what the room is about, for the snapshot's record */
@@ -791,7 +799,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const tutors = [...new Map(room.turns.filter((t) => !t.studio && t.provider).map((t) => [`${t.provider} ${t.model}`, { provider: t.provider, model: t.model }])).values()];
       const usd = room.turns.reduce((n, t) => n + (typeof t.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof room.translating?.cost?.usd === "number" ? room.translating.cost.usd : 0);
       const savedAt = new Date().toISOString(), snap = { schema: 1, kind: "review-room-snapshot", room: k.id, savedAt, reason, subject: subjectMeta(k, room, view), tutors, cost: { usd: Math.round(usd * 10000) / 10000 },
-        view: { ...view, board, open: false, offer: null, running: null, tutors: [], translate: null, checking: false, moved: null, closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
+        view: { ...view, board, open: false, offer: null, running: null, tutors: [], translate: null, checking: false, moved: null, illustrations: [],
+          sources: (view.sources ?? []).map((x: any) => x.ok ? x : { n: x.n, turn: x.turn, kind: x.kind, at: x.at, ok: false, ...(x.refused ? { refused: x.refused } : {}), ...(x.error ? { error: "not read" } : {}) }), closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
       writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
       const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);
       const project = String(engine.get(room.run)?.params?.project ?? engine.get(room.run)?.ctx.project ?? room.subject?.project ?? "") || "firstmate-workflow";
@@ -801,11 +810,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       notify(k); return { artifact: aid, n: v.n, href: `#/room/lib:${aid}` };
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
-  /** a room that has ended (its merge card answered, its pull request merged or closed) is saved once it changed since its last snapshot */
-  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room || k.open() || !room.turns.some((t) => t.status === "done") || (room.library?.ended && room.library.sig === contentSig(room)) || saving.has(k.id) || live.has(k.id)) return;
-    const reason = k.kind === "merge" ? "The merge card was answered" : k.kind === "pr" ? (room.pr?.merged ? "The pull request was merged" : "The pull request was closed") : "The room ended";
-    // deferred: the snapshot reads the room's view, which would ask again
-    const job = Promise.resolve().then(() => snapshot(api, k, reason, true)).catch(() => null).finally(() => saving.delete(k.id)); saving.set(k.id, job); } catch {} };
+  /** Mark the room finished, at the moment it finishes, and save it to the Library once. A room that finished before this marker
+   *  existed is never saved by Studio on its own (no burst of snapshots when Studio updates); a failed save is recorded, not retried. */
+  const finish = (api: any, k: Key, reason: string) => { try { const room = load(k); if (!room || room.finished || !room.turns.some((t) => t.status === "done")) return;
+    room.finished = { at: new Date().toISOString(), reason }; save(k, room); autoSave(api, k); } catch {} };
+  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room?.finished || room.finished.tried || saving.has(k.id)) return;
+    room.finished.tried = true; save(k, room);
+    void queueSave(k.id, () => snapshot(api, k, room.finished!.reason, true)).catch((e: any) => { const r2 = load(k); if (r2?.finished) { r2.finished.error = String(e?.message ?? e).slice(0, 300); save(k, r2); } }); } catch {} };
   // ---------- Studio's own scenes: no model, nothing paid, every line from git or from what GitHub returned ----------
   const studioTurn = (room: Room, action: "since" | "reviewers", title: string, head: string, claims: Claim[], extra: Partial<Turn> = {}): Turn => {
     const at = new Date().toISOString();
@@ -881,7 +892,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           ...comments.out.filter((c: any) => Number.isSafeInteger(c?.id)).map((c: any): Note => ({ id: `i${c.id}`, kind: "comment", author: login(c.user), body: untrusted(c.body ?? "", 4000), at: typeof c.created_at === "string" ? c.created_at : null, url: ghUrl(c.html_url, repository) })),
         ].sort((x, y) => String(x.at ?? "").localeCompare(String(y.at ?? "")));
         const k: Key = { id, kind: "pr", run: null, node: null, file: prFile(id), dir: join(prDir, `${id}-images`), stat: `pr:${id}`, open: () => load(k)?.pr?.state === "open" };
-        const prior = load(k), host = hostInto(k, prior ?? { subject: { url: canonical } } as any); if (prior && prior.subject?.repository?.toLowerCase() !== repository.toLowerCase()) throw refuse("Another pull request's room has this id", "conflict");
+        const prior = load(k), wasOpen = !!prior?.pr && prior.pr.state === "open" && !prior.pr.merged, host = hostInto(k, prior ?? { subject: { url: canonical } } as any); if (prior && prior.subject?.repository?.toLowerCase() !== repository.toLowerCase()) throw refuse("Another pull request's room has this id", "conflict");
         const wt = cacheDir(repository); let fetched: { head: string; base: string } | null = null, failed: string | null = null;
         try { fetched = await a!.fetchPull(n, pull.base.ref, wt, { signal: ac.signal, timeoutMs: PR_FETCH_MS, maxBytes: PR_CACHE_BYTES() }); }
         catch (e: any) { failed = e?.overCap ? String(e.message) : "Studio could not fetch the pull request's commits from GitHub (authentication, the network or the time limit)";
@@ -900,7 +911,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         reviewersScene(k, room);
         // a room no Task hosts takes no turn, so there is no next turn to open with what changed: the scene comes now
         if (!host && fetched) { save(k, room); await catchUp(k, { key: k, run: null, wt, head: snap.head, base, node: null }, room); }
-        save(k, room); notify(k); if (snap.merged || snap.state === "closed") autoSave(self, k); return id;
+        save(k, room); notify(k); if (wasOpen && (snap.merged || snap.state === "closed")) finish(self, k, snap.merged ? "The pull request was merged" : "The pull request was closed"); return id;
       } finally { clearTimeout(timer); }
     })();
     refreshing.set(id, job); try { return await job; } finally { refreshing.delete(id); }
@@ -970,7 +981,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   return (self = {
     /** the summary a merge card shows: never readiness, never an answer */
     summary(c: SCard) {
-      if (c.kind !== "merge") return null; const k0 = keyOf(c.id), r0 = load(k0), r = r0 ? settled(r0) : null; if (c.status !== "open") autoSave(this, k0);
+      if (c.kind !== "merge") return null; const k0 = keyOf(c.id), r0 = load(k0), r = r0 ? settled(r0) : null;
       return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, turns: r?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, questions: r?.turns.filter((t) => !t.studio).length ?? 0, running: live.has(c.id), check: checkOf(r),
         sources: { consulted: r?.sources.filter((s) => s.ok).length ?? 0, refused: r?.sources.filter((s) => s.refused).length ?? 0 } };
     },
@@ -984,7 +995,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     },
     /** the room as its page reads it; opened: the captain opened the page (recorded once per subject; a pull request is read again) */
     view(id: string, opened = false) {
-      const k = keyOf(id); if (!k.open()) autoSave(this, k);
+      const k = keyOf(id);
       if (k.kind === "merge") { const c = k.card!;
         if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); pregenerate(k); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
@@ -1025,6 +1036,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const base = a.regenerate != null ? load(k)?.turns.find((t) => t.n === Number(a.regenerate) && t.status === "done" && !t.studio) ?? null : null;
       if (a.regenerate != null && !base) throw refuse("There is no finished answer to explain again / 沒有可以重講的回答", "not_found");
       if (base) { a = { ...a, action: base.action, text: base.text }; if (!a.pick) throw refuse("Pick the model to explain it again / 請選一位導師重講", "bad_pick"); }
+      else if (a.pick != null) throw refuse("A model is picked only to explain a finished answer again (regenerate); a new question runs on the room's tutor / 只有重講一個已完成的回答時才能選導師", "bad_pick");
       const action = String(a.action ?? ""); if (!Object.hasOwn(ROOM_ACTIONS, action)) throw refuse(`action is one of ${Object.keys(ROOM_ACTIONS).join(", ")}`, "bad_action");
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ROOM_ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
@@ -1084,8 +1096,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       return this.view(k.id);
     },
     /** Save to the Library now (the captain's button): a new version of the room's snapshot */
-    async saveToLibrary(id: string, by: string) { const k = keyOf(id); const running = saving.get(k.id); if (running) await running;
-      const job = Promise.resolve().then(() => snapshot(this, k, `Saved by ${by}`)); saving.set(k.id, job); try { return await job; } finally { saving.delete(k.id); } },
+    async saveToLibrary(id: string, by: string) { const k = keyOf(id); return queueSave(k.id, () => snapshot(this, k, `Saved by ${by}`)); },
+    /** the engine calls this when a card is answered: a merge card's room finishes now (and is saved once) */
+    cardAnswered(c: SCard) { if (c.kind !== "merge") return; try { finish(this, keyOf(c.id), "The merge card was answered"); } catch {} },
     /** a room's snapshot from the Library (a version, else the latest), its pictures served from the snapshot itself */
     librarySnapshot(aid: string, n?: unknown) {
       if (!LIB_ID.test(aid)) throw refuse("No such saved room", "not_found"); const store = library(), a = store.get(aid); if (!a || a.source !== "room") throw refuse("No such saved room", "not_found");

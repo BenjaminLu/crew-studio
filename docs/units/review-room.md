@@ -98,10 +98,12 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   the language shown: this Mac's voice in that language, or the vendor's narration of the translated text.
 - **Regenerate with another tutor** ("Regenerate with…" / 換一位導師重講, on any finished tutor scene): the models this
   machine can run, from the facts adaptive staffing uses (`usableModels`: codex, claude, cursor, …), each with how independent
-  it is from the change's author (another vendor; "same vendor as the author"; the author's own model), the current tutor
+  it is from the change's author (another vendor; "same vendor as the author"; the author's own model; "unknown" when the
+  author is outside Studio, a pull request no Task made, and never claimed as another vendor), the current tutor
   marked. A held model (out of quota, its quota unreadable, its verification being retried) is listed with the reason and
   cannot be picked; the author's own model only when nothing else can run, as for the room's own tutor. A pick is a paid
-  turn on that model (`POST …/turn {regenerate: n, pick: {provider, model}, confirm}`): its own offer and confirmation hash,
+  turn on that model (`POST …/turn {regenerate: n, pick: {provider, model}, confirm}`; a pick is refused on anything but a
+  regeneration, `bad_pick`): its own offer and confirmation hash,
   then the same admission as any turn (the staffing receipt names the picked member, `adaptive`), and the same question
   asked again. Both answers are kept: the scene shows the latest with a switcher naming each model ("codex gpt-x · claude
   y"). The turn records `regenOf` and `picked`; its `review-room-turn` ledger entry carries `regenerate: {of, provider,
@@ -110,14 +112,22 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   closed on GitHub) Studio saves it, and the captain can save it any time ("Save to Library" / 存到成品庫,
   `POST /api/review-room/<card>/save`, the desktop captain). It is one Library artifact per room (`room-<room id>`, source
   `room`, type `doc`, under the room's project, so it follows that project's place in the Library), a new version per save,
-  the history kept; an ended room is saved again only when what it shows changed. A version is `room.json` and its
+  the history kept. Studio saves a room on its own only once, at the moment it finishes: the card's answer (the engine tells
+  the room) or a read that finds an open pull request merged or closed records `finished` on the room; listing cards or
+  opening a room never saves, so a room that finished before this version is never saved by itself, and a failed save is
+  recorded (`finished.error`) and not retried (the captain's button still saves). Every save runs after the one before it,
+  whatever its room, so two saves never share a version number. A version is `room.json` and its
   `assets/`: the room's view with its scenes in every language made, the board, its pictures (the illustrations, the app's
   screenshots and cached narration copied in), every citation resolved to the text it pointed at (diff hunks, ledger
   entries, commits, sources, reviewers' notes), the check with the captain's answers and results, the transcript, the cost,
+  (never a refused text: an illustration prompt the privacy filter refused is left out, a refused or failed web source keeps
+  only that it was refused and why, not its query or address),
   the subject (repository, pull request or branch, head and base), the tutors and the date. It reads without Studio's cache,
   the worktree or GitHub (`GET /api/review-room/library/<artifact>?v=<n>`, its files under `…/<n>/asset/<name>`). The
   Library's page of a saved room offers "Replay in the review room" for each version (`#/room/lib:<artifact>@<n>`), never
-  review, notes, approval or compare, and the Library refuses any write to it (`room-snapshot-read-only`). The replay is
+  review, notes, approval or compare, and the Library refuses any write to it (`room-snapshot-read-only`) except its
+  deletion (`DELETE /api/artifacts/room-<id>`, the desktop captain: the artifact and all its versions; a later save makes it
+  again). The replay is
   the same room, read-only: no prompt, no paid action (no turn, regeneration, translation or vendor voice); captions, this
   Mac's voice and the language switch over the languages saved with it still work. Nothing is written to GitHub.
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
@@ -534,6 +544,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     the Library in the room itself, read-only …", "a citation opens from the snapshot itself …", "captions and playback
     still work", "the language switch uses the languages saved with it", "the check shows the captain's answers …", "the
     Library shows a saved room with “Replay in the review room” …", "a saved room's route reads only …".
+31. Review fixes: a double click answers once; Studio saves a room by itself only when it finishes after this version, once
+    (a listing, an older room or a failed save never triggers another); saves run one after another, each its own version;
+    a pick only on a regeneration; independence unknown when the author is outside Studio; no refused text in the Library;
+    a saved room can be deleted. — review-room-ui "a double click on two options sends one answer …", "a saved room's route
+    reads only …"; review-room "two saves at once each get their own version …", "an ended room is saved once …", "a room
+    that finished before this version is not saved …", "a failed Library save is recorded …", "a model is picked only to
+    explain a finished answer again …", "the Library keeps no refused text …"; review-room-anywhere "a pull request no Task
+    made has no author to compare with …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

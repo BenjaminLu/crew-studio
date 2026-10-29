@@ -421,7 +421,8 @@ Studio never writes specs or cards. It records intents; firstmate (the main sess
 Artifacts live in `data/artifacts/<id>/` (`artifact.json`, then `v<N>/manifest.json`, `v<N>/files/…`, `v<N>/notes.json`).
 A review room saved to the Library is an artifact `room-<room id>` with source `room` (`docs/units/review-room.md`, "Saved to
 the Library"): each version is `room.json` plus `assets/`, written by the room (on its Save to Library button, and when the
-room ends), read-only in the Library (writes are refused with `room-snapshot-read-only`), and opened as a replay in the room
+room ends), read-only in the Library (writes are refused with `room-snapshot-read-only`; deleting it, `DELETE /api/artifacts/room-<id>` on
+the desktop, removes it with its versions), and opened as a replay in the room
 (`#/room/lib:<artifact>@<n>`) rather than reviewed.
 A version's files never change after it exists: the manifest keeps a sha256 per file, `verify()` recomputes them, and
 approving a changed version is refused. Changes always make v(N+1). A film's shared `cast/` folder is linked, not copied.

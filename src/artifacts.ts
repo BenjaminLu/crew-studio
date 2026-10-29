@@ -156,6 +156,9 @@ export class ArtifactStore {
   }
   setRender(id: string, n: number, render: Version["render"]) { const v = this.version(id, n); if (!v) return; v.render = render; this.saveVersion(v); }
 
+  /** Delete a saved review room (source room) with all its versions: the only artifact the Library deletes (src/m3.ts). */
+  remove(id: string) { const a = this.get(id); if (!a || a.source !== "room") throw new Error("only a saved review room is deleted"); rmSync(this.adir(id), { recursive: true, force: true }); this.onChange(); }
+
   /** Recompute every file's sha256; returns the paths that no longer match (empty = intact). */
   verify(id: string, n: number): string[] {
     const v = this.version(id, n); if (!v) return ["(no manifest)"];
