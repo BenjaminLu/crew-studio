@@ -3,7 +3,7 @@
 // issue's own row in its category; nothing here is written anywhere.
 import type {TriageRecord,WorkState} from './issue-triage';
 
-export type FixStateName='none'|'starting'|'investigating'|'judge'|'security'|'running'|'waiting'|'ready'|'merged'|'failed'|
+export type FixStateName='none'|'starting'|'queued'|'investigating'|'judge'|'security'|'running'|'waiting'|'ready'|'merged'|'failed'|
  'needs-info'|'not-code'|'duplicate'|'in-progress'|'recheck'|'human'|'changed'|'proposed'|'approved'|'package';
 export type FixState={state:FixStateName;
  /** another Fix on it starts nothing: its investigation or its Task is under way, or its Task is done */
@@ -16,14 +16,18 @@ export type FixRun={id:string;status:string;error?:string|null;note?:string|null
  /** the captain-only card it waits on: the disagreement court, or the approval card of a security package */
  waiting:'court'|'approve'|null;
  /** its docket names this issue (the court view can show it) */
- docket:boolean};
+ docket:boolean;
+ /** waiting for an investigation slot (a few Fix investigations run at a time) */
+ queued?:boolean};
 /** an issue's Task, as the engine has it: waiting when it waits on a card */
 export type FixWork={state:WorkState|'waiting';task:string|null};
 const ENDED=['succeeded','failed','cancelled'];
-const BUSY:FixStateName[]=['starting','investigating','security','running','waiting','ready','merged'],PICK:FixStateName[]=['none','failed','changed','proposed','approved'];
+const BUSY:FixStateName[]=['starting','queued','investigating','security','running','waiting','ready','merged'],PICK:FixStateName[]=['none','failed','changed','proposed','approved'];
 const of=(state:FixStateName,o:Partial<FixState>={}):FixState=>({state,busy:BUSY.includes(state),pick:PICK.includes(state),...o});
 
-export function fixState(n:number,o:{project:string;rec:TriageRecord|null;entry:{by:string;at:string;run?:string;error?:string}|null;run:FixRun|null;work:(pkg:string,n:number)=>FixWork;dispatching:boolean}):FixState{
+export function fixState(n:number,o:{project:string;rec:TriageRecord|null;entry:{by:string;at:string;run?:string;error?:string}|null;run:FixRun|null;work:(pkg:string,n:number)=>FixWork;dispatching:boolean;
+ /** an ordinary triage reading this issue now (R-n): a Fix would pay for it twice */
+ batch?:string|null}):FixState{
  const who=o.entry?{by:o.entry.by,at:o.entry.at}:{},court=(id:string)=>`#/court/${encodeURIComponent(o.project)}/${id}`;
  if(o.dispatching)return of('starting',who);
  const r=o.run;
@@ -31,7 +35,8 @@ export function fixState(n:number,o:{project:string;rec:TriageRecord|null;entry:
   // a disagreement waits for the captain's rulings on the docket page; its run is under way, so another Fix starts nothing
   if(r.waiting==='court')return{...of('judge',{...who,task:r.id,court:court(r.id)}),busy:true};
   if(r.waiting==='approve')return of('security',{...who,task:r.id});
-  return of('investigating',{...who,task:r.id});}
+  return of(r.queued?'queued':'investigating',{...who,task:r.id});}
+ if(o.batch)return of('investigating',{task:o.batch});
  if(r&&r.status!=='succeeded')return of('failed',{...who,task:r.id,why:r.status==='cancelled'?'cancelled':String(r.error??'the investigation failed').slice(0,300)});
  const rec=o.rec,k=String(n),i=rec?.issues[k],pkg=rec?.packages.find(p=>p.members.includes(n));
  if(pkg){

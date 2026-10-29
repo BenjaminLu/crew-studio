@@ -4,7 +4,7 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 // a category and on the whole page, the bar that says how many are picked, one in-page confirmation (how many issues, the
 // two investigators' and the worker's models, a Task per issue) for the whole pick, a Fix button per issue, and each issue's
 // state on its own row with a status line on each category, also when it is closed. At 1440 (en) and 390 (zh-TW).
-// Nothing starts: the Fix route is answered by the test.     bun tests/issue-fix-ui.mjs
+// Nothing starts: the Fix route is answered by the test. It imports TypeScript, so it runs with bun:   bun tests/issue-fix-ui.mjs
 import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -72,12 +72,14 @@ try {
     // closed categories already say how their issues stand
     const sum = async (id) => (await p.locator(`[data-cat="${id}"] > summary [data-fix-summary]`).textContent().catch(() => "")) || "";
     ok(!(await p.locator('[data-cat="C-1"]').evaluate((e) => e.open)) && /1 being fixed · 1 for you to judge/.test(await sum("C-1")), "a closed category's line says how its issues stand", await sum("C-1"));
-    ok(/1 need more information · 1 failed/.test(await sum("C-2")) && /2 fixed, waiting for you to check · 3 nothing to fix/.test(await sum("C-4")) && await p.locator('[data-cat="C-3"] [data-fix-summary]').count() === 0, "each group is counted; a category waiting for approval has no Fix", JSON.stringify([await sum("C-2"), await sum("C-4")]));
+    ok(/1 need more information · 1 failed/.test(await sum("C-2")) && /1 for you to judge · 1 fixed, waiting for you to check · 3 nothing to fix/.test(await sum("C-4")) && await p.locator('[data-cat="C-3"] [data-fix-summary]').count() === 0, "each group is counted; a category waiting for approval has no Fix", JSON.stringify([await sum("C-2"), await sum("C-4")]));
     await openCat(p, "C-1"); await openCat(p, "C-2");
     const row = (n) => p.locator(`[data-cat-issue="${n}"]`);
     ok(await row(11).locator("[data-fix-pick]").isDisabled() && !(await row(11).locator("[data-fix-one]").count()) && /Fixing/.test(await row(11).locator("[data-fix-state]").textContent()) && await row(11).locator('a[href="#/run/R-31"]').count() === 1, "an issue being fixed shows its Task and cannot be picked again");
     ok(/The investigators disagree: you decide/.test(await row(12).locator("[data-fix-state]").textContent()) && await row(12).locator('a[href="#/court/wallet/R-32"]').count() === 1 && await row(12).locator("[data-fix-pick]").isDisabled(), "a disagreement links the court on its row");
     ok(/Needs more information/.test(await row(13).textContent()) && await row(13).locator('[data-fix-questions="13"] li').count() === 1 && !(await p.evaluate(() => window.__pwned2)) && !(await row(13).locator("img").count()), "needs information: the questions on the row, as text", await row(13).textContent());
+    ok(!(await row(13).locator("[data-fix-one]").count()) && await row(13).locator("[data-fix-pick]").isDisabled() && /Investigate again/.test(await row(13).locator("[data-fix-again]").textContent()), "an issue with an outcome offers no Fix and cannot be picked: only Investigate again");
+    ok(await p.locator(".is-cat > summary input, .is-cat > summary button, .is-cat > summary select").count() === 0 && await p.locator('[data-cat-row="C-1"] > .is-fix-all input').count() === 1, "no control sits inside a category's <summary>: its Select all is beside it");
     ok(/Failed: its Task ended without being ready/.test(await row(17).textContent()) && await row(17).locator("[data-fix-one]").count() === 1 && !(await row(17).locator("[data-fix-pick]").isDisabled()), "a failed issue says why and can be fixed again");
     ok(!(await row(16).locator("[data-fix-state]").count()) && await row(16).locator("[data-fix-one]").count() === 1 && !(await p.evaluate(() => window.__pwned)), "an issue not fixed yet has its Fix button; its title stays text");
     await openCat(p, "C-4");
@@ -87,14 +89,20 @@ try {
     await row(16).locator("[data-fix-pick]").check();
     ok(/1 selected/.test(await p.locator("[data-fix-bar]").textContent()), "picking an issue shows the bar with how many are picked");
     const c2open = await p.locator('[data-cat="C-2"]').evaluate((e) => e.open);
-    await p.locator('[data-cat="C-2"] > summary .is-fix-all input').check();
+    await p.locator('[data-cat-row="C-2"] > .is-fix-all input').check();
     ok(/2 selected/.test(await p.locator("[data-fix-bar]").textContent()) && await p.locator('[data-cat="C-2"]').evaluate((e) => e.open) === c2open, "a category's Select all picks what can be fixed in it (not a needs-info issue), without opening or closing it", await p.locator("[data-fix-bar]").textContent());
-    await p.locator('[data-cat="C-2"] > summary .is-fix-all input').uncheck();
+    await p.locator('[data-cat-row="C-2"] > .is-fix-all input').uncheck();
     ok(/1 selected/.test(await p.locator("[data-fix-bar]").textContent()), "and unpicks them again");
     await p.click("[data-fix-go]");
     const modal = p.locator("[data-fix-modal]");
+    await p.waitForTimeout(100);
+    { const inside = []; for (let i = 0; i < 5; i++) { await p.keyboard.press("Tab"); inside.push(await p.evaluate(() => !!document.activeElement?.closest("[data-fix-modal]"))); }
+      ok(inside.every(Boolean), "the focus stays inside the confirmation while it is open (Tab cycles in it)", JSON.stringify(inside)); }
+    ok(/runs through its spec, build, review and CI with no further card/.test(await modal.locator("[data-fix-runs-through]").textContent()) && /stops on its local branch/.test(await modal.textContent()) && /4 issues at a time/.test(await modal.locator('[data-fix-models="investigators"]').textContent()), "the confirmation says each Task runs through with no further card and stops on its local branch, and that 4 issues are investigated at a time", await modal.textContent());
     ok(await modal.count() === 1 && /Fix 1 issue\?/.test(await modal.textContent()) && /inv-a/.test(await modal.locator('[data-fix-models="investigators"]').textContent()) && /inv-b/.test(await modal.locator('[data-fix-models="investigators"]').textContent()) && /worker-model/.test(await modal.locator('[data-fix-models="worker"]').textContent()) && /its own Task/.test(await modal.textContent()), "Fix asks once, in the page: how many issues, both investigators' and the worker's models, a Task per issue", await modal.textContent());
-    await p.click("[data-fix-cancel]");
+    await p.keyboard.press("Escape"); await p.waitForTimeout(150);
+    ok(!(await modal.count()) && await p.evaluate(() => document.activeElement?.matches("[data-fix-go]")), "closing it gives the focus back to the button that opened it");
+    await p.click("[data-fix-go]"); await p.click("[data-fix-cancel]");
     ok(!(await modal.count()) && sent.length === 0 && /1 selected/.test(await p.locator("[data-fix-bar]").textContent()), "cancelling sends nothing and keeps the pick");
     // everything filed, through one confirmation
     await p.locator(".is-fix-head .is-fix-all input").check();
@@ -110,6 +118,10 @@ try {
     ok(!(await modal.count()) && sent.length === 1, "Escape closes it, sending nothing");
     await row(16).locator("[data-fix-one]").click(); await p.click("[data-fix-confirm]"); await p.waitForTimeout(400);
     ok(sent.length === 2 && sent[1].issues.join() === "16", "confirmed, it sends that one issue", JSON.stringify(sent[1]));
+    await openCat(p, "C-4"); await row(100).locator("[data-fix-again]").click();
+    ok(/Investigate #100 again\?/.test(await modal.textContent()) && /two more model runs/.test(await modal.locator("[data-fix-again-note]").textContent()), "Investigate again asks first, saying both investigators run again", await modal.textContent());
+    await p.click("[data-fix-confirm]"); await p.waitForTimeout(400);
+    ok(sent.length === 3 && sent[2].issues.join() === "100", "confirmed, it sends that issue to be investigated again", JSON.stringify(sent[2]));
     await p.screenshot({ path: join(root, "tests/out/issue-fix-1440.png"), fullPage: false }).catch(() => {});
     await ctx.close(); }
   { const { ctx, p, sent } = await open(390, "zh-TW");

@@ -139,7 +139,7 @@
 .is-cat-issues{margin:0;padding-left:0;list-style:none;display:grid;grid-template-columns:minmax(0,1fr);gap:4px}.is-cat-issues li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:13px}.is-cat-issues .is-title{flex:1 1 200px;min-width:0}
 /* Fix (public/issues.js): pick filed issues, one confirmation, each issue's state on its own row */
 .is-fix-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:2px 0 8px;font-size:13px}.is-fix-head .faint{font-size:12px}
-.is-fix-all{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}.is-cat>summary .is-fix-all span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.is-fix-all{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}.is-cat-row{display:flex;align-items:flex-start;gap:8px;min-width:0}.is-cat-row>.is-cat{flex:1 1 auto;min-width:0}.is-cat-row>.is-fix-all{padding-top:9px}.is-cat-row>.is-fix-all span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .is-fix-pick,.is-fix-all input{width:18px;height:18px;margin:0;flex:none}
 .is-fix-sum{font-size:12px;color:var(--text-2);flex:1 1 100%}
 .is-fix{font-size:12px;border-radius:999px;padding:1px 8px;background:var(--surface-2);color:var(--text-2);overflow-wrap:anywhere;max-width:100%}
