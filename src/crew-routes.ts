@@ -61,7 +61,7 @@ export function crewView(d:CrewViewDeps,project:string|null=null){
   const staffed=staffingApplies(def),roles=staffed?resolveCrew(team,withRoleNodes(def),{},null,project):null,missing=roles?roles.missing:res.missing;
   // which seat is empty, and for which role: a staffed role no node shows (coffee's image worker) is named, not just counted
   const missingRoles=(roles?.nodes??[]).filter(n=>n.source==='missing'&&n.node.startsWith('role--')).map(n=>({role:n.role,label:n.label,seat:n.seat,seatLabel:seatLabel(team,n.seat,def)}));
-  return{id:def.id,name:def.name,version:def.version,kind:def.kind??null,staffed,badge:missing.length?{state:'missing',count:missing.length}:crewBadge(res),missing,missingRoles,
+  return{id:def.id,name:def.name,displayName:d.defs.displayName?.(def.id)??def.name,version:def.version,kind:def.kind??null,staffed,badge:missing.length?{state:'missing',count:missing.length}:crewBadge(res),missing,missingRoles,
    nodes:res.nodes.sort((a,b)=>Number(order.get(a.node))-Number(order.get(b.node))).map(n=>{const j=n.node.startsWith('judge--')?judgeOf(n.node):null;
     return{...n,judge:n.node.startsWith('judge--'),roleSkill:role(def,j?j.role??null:n.role),skills:n.skills.map(p=>({...p,name:name(p.id)})),...(j?{duty:checkPins(def,j.node,j.check).map(p=>({...p,name:name(p.id)}))}:{})};})};});
  const declared=new Map<string,any>();for(const def of wfs)for(const s of declaredSeats(def))if(!declared.has(s.id))declared.set(s.id,structuredClone(s));

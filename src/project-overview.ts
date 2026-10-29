@@ -92,6 +92,8 @@ export function createProjectOverview(d: OverviewDeps) {
   const now = d.now ?? (() => Date.now());
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   const E = d.engine;
+  // a workflow as the captain sees it (docs/units/workflow-rename.md): its display name, else its id
+  const wfShown = (id: string): string => { try { return E.defs.displayName?.(id) ?? id; } catch { return id; } };
   const records = (): Project[] => d.projects.nativeSnapshot().records;
   const live = (r: Run) => !TERMINAL.has(r.status) && !r.archived;
   const capacityFor = (r: Run) => {
@@ -281,7 +283,7 @@ export function createProjectOverview(d: OverviewDeps) {
     else if (!enabled) out.push(tile("crew", "idle", "Crew not checked", "未檢查船員", { en: "Project disabled", tw: "專案已停用" }));
     else if (crew && "error" in crew && crew.error === "refused") out.push(tile("crew", "warn", "No task can start", "無法開始任何任務", (crew as any).detail));
     else if (crew && "error" in crew) out.push(tile("crew", "warn", "Crew cannot be read", "無法讀取船員配置", { en: "The approved crew could not be read. Nothing was changed.", tw: "無法讀取已核准的船員配置。沒有任何變更。" }));
-    else if (crew) out.push(tile("crew", "ok", "Crew approved", "船員已核准", { en: `${crew.workflow} v${crew.version} · config v${crew.config}`, tw: `${crew.workflow} v${crew.version} · 配置 v${crew.config}` }));
+    else if (crew) out.push(tile("crew", "ok", "Crew approved", "船員已核准", { en: `${wfShown(crew.workflow)} v${crew.version} · config v${crew.config}`, tw: `${wfShown(crew.workflow)} v${crew.version} · 配置 v${crew.config}` }));
     else out.push(tile("crew", "warn", "Crew not approved", "船員未核准", { en: "Tasks here will wait at their first round.", tw: "這裡的任務會停在第一輪。" }));
     const g = readGatesTest(p.path);
     const gd: Record<string, [string, string]> = { missing: ["No .crew/gates.json", "沒有 .crew/gates.json"], "no-test": ["No test command in .crew/gates.json", ".crew/gates.json 沒有測試指令"],

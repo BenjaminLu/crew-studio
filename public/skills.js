@@ -107,7 +107,7 @@ function skillRow(s) {
       h("dt", {}, T("Source", "來源")), h("dd", { class: "mono" }, s.source),
       h("dt", {}, "sha256"), h("dd", { class: "mono", title: s.sha256, "data-skill-sha": "1" }, short(s.sha256)),
       h("dt", {}, T("Size", "大小")), h("dd", { "data-skill-size": "1" }, `${sizeWords(s.bytes)}${s.files?.length ? T(` · ${count(s.files.length, "supporting file")}`, ` · ${s.files.length} 個附加檔`) : ""}`),
-      h("dt", {}, T("Used by", "使用中")), h("dd", {}, used.length ? used.map((u) => h("a", { class: "vbadge sk-use", href: `#/workflows/${u.workflow}` }, `${u.workflow} · ${u.node} · v${u.v}`)) : h("span", { class: "faint" }, T("no node yet", "還沒有節點")))),
+      h("dt", {}, T("Used by", "使用中")), h("dd", {}, used.length ? used.map((u) => h("a", { class: "vbadge sk-use", href: `#/workflows/${u.workflow}` }, `${wfName(u.workflow)} · ${u.node} · v${u.v}`)) : h("span", { class: "faint" }, T("no node yet", "還沒有節點")))),
     s.ignored?.length ? h("p", { class: "sk-ignored", "data-skill-ignored": "1" }, icon("shield", "ic sm"), h("span", {}, ignoredText(s.ignored))) : null);
 }
 function roleRow(r) {
@@ -178,7 +178,7 @@ function skillMarkdown(text) {
 }
 const fmValue = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 // a seat by its member's display name (Maker / 產出), as the Crew page names it
-const useText = (u) => { if (u.workflow && u.node) return `${u.workflow} · ${u.node}`; const seat = u.label ? T(u.label.en, u.label.zh) : u.seat; return u.project ? `${u.project} · ${seat}` : seat; };
+const useText = (u) => { if (u.workflow && u.node) return `${wfName(u.workflow)} · ${u.node}`; const seat = u.label ? T(u.label.en, u.label.zh) : u.seat; return u.project ? `${u.project} · ${seat}` : seat; };
 function skvFiles(d) {
   if (!d.files?.length) return null;
   return h("section", { class: "skv-files", "data-skv-files": "" }, h("h3", {}, T("Supporting files", "附加檔案")),

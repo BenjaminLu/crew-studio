@@ -182,6 +182,8 @@ async function post(u, body) {
   let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { refusal: j.refusal || null }); return j;
 }
 const short = (s) => (s ? String(s).slice(0, 8) : "—");
+// a workflow's display name (app.js wfName: the captain's rename or Studio's default), else its id
+const scardWorkflowName = (id) => (typeof wfName === "function" ? wfName(id) : id);
 const fmtUsd = (n) => (n == null ? "—" : `$${n.toFixed(n < 1 ? 3 : 2)}`);
 
 // Language helpers from i18n.js. A page that loads this file on its own (no i18n.js) still gets English and zh-TW.
@@ -380,7 +382,7 @@ function mountCard(el, card, opts = {}) {
     const roles = Object.entries(cfg.roles), worker = cfg.roles.worker;
     const same = worker ? roles.filter(([id, r]) => id !== "worker" && ["reviewer", "designer"].includes(id) && r.provider === worker.provider && r.model === worker.model).map(([id]) => id) : [];
     return [sec("staffing", T("Role configuration", "角色配置"),
-      h("p", { class: "cc-count" }, `${cfg.project?.id ?? ""} · ${cfg.workflow?.id ?? ""} v${cfg.workflow?.version ?? "?"}`),
+      h("p", { class: "cc-count" }, `${cfg.project?.id ?? ""} · ${cfg.workflow?.id ? scardWorkflowName(cfg.workflow.id) : ""} v${cfg.workflow?.version ?? "?"}`),
       h("div", { style: "overflow-x:auto" }, h("table", { class: "cc-table", "data-staffing-table": "" },
         h("thead", {}, h("tr", {}, [T("Role", "角色"), T("Provider", "供應商"), T("Model", "模型"), T("Effort", "推理強度"), T("Skill", "技能")].map((x) => h("th", {}, x)))),
         h("tbody", {}, roles.map(([id, r]) => h("tr", { "data-staffing-role": id }, h("td", {}, id), h("td", {}, r.provider), h("td", { class: "cc-mono" }, r.model), h("td", {}, r.effort ?? T("default", "預設")),
@@ -684,7 +686,7 @@ function mountCard(el, card, opts = {}) {
     const body = !d && zhWhy && c.body === c.sections?.en?.why ? zhWhy : c.body;
     const kids = [
       h("div", { class: "cc-h rt-card-h" }, h("span", { class: "vbadge" }, c.kind), h("b", {}, L(c.title)), c.door ? h("span", { class: `vbadge door-${c.door}` }, c.door) : null, lang),
-      opts.inbox ? h("div", { class: "cardmeta cc-meta", "data-scard-meta": c.id }, h("span", { class: "mono" }, c.id), h("a", { href: `#/run/${encodeURIComponent(c.run)}` }, c.run), h("span", {}, c.workflow), h("span", { class: "badge" }, c.node)) : null,
+      opts.inbox ? h("div", { class: "cardmeta cc-meta", "data-scard-meta": c.id }, h("span", { class: "mono" }, c.id), h("a", { href: `#/run/${encodeURIComponent(c.run)}` }, c.run), h("span", {}, scardWorkflowName(c.workflow)), h("span", { class: "badge" }, c.node)) : null,
       failureView(c),
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
       competitionView(c),

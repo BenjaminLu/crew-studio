@@ -9,6 +9,9 @@
   website, image, video, code change, a folder to organise) becomes a proposal on the workflow that makes it
   (`studio_list_workflows` returns the routing and what this message asks for). Work hands-on yourself only when the
   captain explicitly asks you to. Reading, explaining or asking about something that exists is not a request to make.
+- **Workflow names.** Call a workflow by the `name` `studio_list_workflows` gives (the captain may rename any workflow;
+  `code-firstmate` shows as "coding" by default) and a Task's by `workflowName` in `studio_work_status`. Every tool
+  call still takes the workflow's `id`.
 - **Several deliverables in one message.** One proposal each, each with `captain_quote`: the item it delivers, copied
   exactly from the captain's message, the first proposal included. Never two proposals for one item.
 - **Status.** Every captain message carries Studio's live status line (cards waiting for the captain, Tasks

@@ -342,10 +342,11 @@ import b338 from "../docs/units/web-terminal.md" with { type: "file" };
 import b339 from "../docs/units/workflow-definition-export.md" with { type: "file" };
 import b340 from "../docs/units/workflow-overview.md" with { type: "file" };
 import b341 from "../docs/units/workflow-packages.md" with { type: "file" };
-import b342 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
-import b343 from "../docs/units/worktrees.md" with { type: "file" };
-import b344 from "../docs/v2-spec.md" with { type: "file" };
-import b345 from "../docs/w29-local-sandbox.md" with { type: "file" };
+import b342 from "../docs/units/workflow-rename.md" with { type: "file" };
+import b343 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
+import b344 from "../docs/units/worktrees.md" with { type: "file" };
+import b345 from "../docs/v2-spec.md" with { type: "file" };
+import b346 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -690,8 +691,9 @@ export const BUNDLED: Record<string, string> = {
   "docs/units/workflow-definition-export.md": b339,
   "docs/units/workflow-overview.md": b340,
   "docs/units/workflow-packages.md": b341,
-  "docs/units/workflow-semantic-comparison.md": b342,
-  "docs/units/worktrees.md": b343,
-  "docs/v2-spec.md": b344,
-  "docs/w29-local-sandbox.md": b345,
+  "docs/units/workflow-rename.md": b342,
+  "docs/units/workflow-semantic-comparison.md": b343,
+  "docs/units/worktrees.md": b344,
+  "docs/v2-spec.md": b345,
+  "docs/w29-local-sandbox.md": b346,
 };

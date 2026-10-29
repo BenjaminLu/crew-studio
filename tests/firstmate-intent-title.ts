@@ -67,6 +67,8 @@ try {
   for (const [k, t] of OWN.entries()) { const r = await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "Staffing fix", text: t }, { key: "own-" + k, captain: true, text: t, live: () => true }));
     ok(r === null, `the captain's own words propose: ${t}`, String(r?.message)); }
   ok((await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "依據 /Users/you/brief.pdf", text: REQUEST }, owner("path"))))?.publicFailure?.code === "invalid_params", "a title with a path is refused");
+  // a renamed workflow (docs/units/workflow-rename.md): the dispatch card names it by its display name and its id
+  E.defs.rename("title-fixture", "Titled flow", "captain");
   const p: any = await tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "EUR 金額格式", text: REQUEST, params: { mode: "fast" } }, owner("titled"));
   const proposal = E.get(p.proposal)!;
   ok(proposal.title === "EUR 金額格式" && proposal.text === REQUEST, "Firstmate's title names the proposal Task; the request is kept whole", proposal.title);
@@ -74,6 +76,7 @@ try {
   const card = E.cards.list({ run: proposal.id }).find((c) => c.node === "dispatch")!;
   ok(card.sections.en.intent === REQUEST, "the dispatch card's intent is the captain's full request");
   ok(/Parameters \/ 參數:\n {2}mode: fast\n/.test(card.body) && !card.body.includes('{"mode"'), "F9: the dispatch card lists parameters as key/value lines, not JSON", card.body);
+  ok(card.body.includes("Titled flow (title-fixture) v1"), "a renamed workflow's dispatch card shows its display name with its id", card.body);
   await E.answer(card.id, { choice: "approve", by: "captain" } as any);
   await until(() => E.list().some((r) => r.params._firstmateProposal === proposal.id));
   const child = E.list().find((r) => r.params._firstmateProposal === proposal.id)!;

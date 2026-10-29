@@ -7,6 +7,9 @@ first, or reload to discard them. Export never starts a Task or copies approvals
 This is a specification artifact for inspection and Git sharing. There is no
 importer in this feature and execution compatibility is not verified.
 
+The export carries the definition's own `name`. A captain's rename (docs/units/workflow-rename.md, e.g.
+`code-firstmate` shown as "coding") is a display name local to this Studio and is not exported.
+
 ## Exact source and hashes
 
 `GET /api/wf/:id/export?v=N` is authenticated desktop-only and read-only. Exactly

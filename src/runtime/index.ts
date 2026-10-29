@@ -66,6 +66,7 @@ import type { Provider } from "../providers";
 import type { StudioLog } from "../rawlog";
 import { schemaDefaults } from "./checks";
 import { validate, normalize as normDef, WorkflowDefs, roleSkillJoin } from "./defs";
+import { DEFAULT_DISPLAY_NAMES, DisplayNameError } from "./workflow-names";
 import { Engine, type AgentPick } from "./engine";
 import {COFFEE_DESIGN_FIELDS,validateCoffeeDesign,coffeeDesignJSON} from "../domain/coffee-design";
 import { installCoffeeKit } from "../domain/coffee-kit";
@@ -384,7 +385,7 @@ export function createRuntime(d: RuntimeDeps) {
   const roomChecks = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(workflow-packages|workflow-names|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) {
       if(p.startsWith('/api/workflow-packages')){
         const cap=12*1024*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
@@ -446,7 +447,22 @@ export function createRuntime(d: RuntimeDeps) {
         if(!stored)return json({error:'No such saved workflow version'},404);
         return json(workflowDefinitionExport(stored));
       }}
-      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), trash:defs.trashCatalog(), checks: engine.registry.all().map(checkView) });
+      // display names (src/runtime/workflow-names.ts): what the captain sees; no definition, version or hash changes
+      if(p==='/api/workflow-names'){
+        if(!writing)return json({names:defs.names.map()});
+        if(req.method!=='POST')return json({error:'POST required'},405);
+        if(who.kind!=='desktop')return json({error:'Rename workflows on the desktop',code:'desktopOnly'},403);
+        if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>!['workflow','name'].includes(k))||typeof b.workflow!=='string')return json({error:'Pass the workflow id and its new name (blank resets it)'},400);
+        if(!/^[a-z0-9][a-z0-9-]{0,40}$/.test(b.workflow)||!defs.versions(b.workflow).length)return json({error:'no such workflow'},404);
+        const before=defs.displayName(b.workflow);let done;
+        try{done=defs.rename(b.workflow,b.name,by);}catch(e:any){return json({error:e.message},e instanceof DisplayNameError?400:409);}
+        const after=defs.displayName(b.workflow);
+        d.log.emit({type:'workflow_renamed',workflow:b.workflow,actor:by,summary:`${b.workflow} ${done.renamed?`renamed "${before}" → "${after}"`:`name reset to "${after}"`} by ${by}`,data:{from:before,to:after,reset:!done.renamed}});
+        // every open Board (other tabs, the phone) redraws with the new name
+        try{d.send('workflow-names',{workflow:b.workflow,names:defs.names.map()});}catch{}
+        return json({workflow:b.workflow,displayName:after,renamed:done.renamed,defaultName:DEFAULT_DISPLAY_NAMES[b.workflow]??defs.get(b.workflow)?.name??b.workflow,names:defs.names.map()});
+      }
+      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), trash:defs.trashCatalog(), names:defs.names.map(), checks: engine.registry.all().map(checkView) });
       if(readiness){const gated=await readiness.route(p,url,req.method,writing,b,by,who);if(gated)return gated;}
       const drafted=await draftRoute(drafts,p,req.method,writing,b,by);if(drafted)return drafted;
       if (p === "/api/wf" && writing) {
@@ -473,7 +489,8 @@ export function createRuntime(d: RuntimeDeps) {
         if (m[2] === "layout" && writing) return json({ layout: defs.setLayout(id, Number(b?.version), b?.positions ?? {}) });
         if (!writing) {
           const v = url.searchParams.get("v"); const def = defs.get(id, v ? Number(v) : undefined); if (!def) return json({ error: "no such workflow" }, 404);
-          return json({ def, personal:defs.personal(id), trash:defs.trashState(id), selectable:defs.selectable(id,def.version), held:defs.held(id), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
+          // displayName is beside def, never in it: the editor saves def back, and a rename must not become a definition change
+          return json({ def, displayName:defs.displayName(id), renamed:!!defs.names.overrides()[id], defaultName:DEFAULT_DISPLAY_NAMES[id]??defs.versions(id).at(-1)?.name??id, personal:defs.personal(id), trash:defs.trashState(id), selectable:defs.selectable(id,def.version), held:defs.held(id), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
         // every workflow's node settings are checked the same way (provider, model, effort, agent or loop only); a role-skill ref a bundled node already had is kept as is

@@ -89,7 +89,7 @@ function viewRetro(id) {
       return e ? h("div", { class: "x-row" }, icon("wand", "ic sm"), h("a", { href: `#/edit/${e.id}` }, T(`Proposal ${e.id}`, `提案 ${e.id}`)), eBadge(e.status), evalBar(e.evals)) : sk ? h("div", { class: "faint", style: "font-size:13px" }, sk.why) : null; })());
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, h("a", { href: "#/improve", class: "a3-back" }, T("Improve", "改進")), " · ", T(`Retro ${r.id}`, `回顧 ${r.id}`)),
-      h("p", { class: "run-s", style: "font-size:13px" }, h("span", { class: "vbadge" }, r.workflow), h("span", {}, `${r.window.from.slice(0, 10)} → ${r.window.to.slice(0, 10)}`), h("span", {}, T(`${r.window.events} events`, `${r.window.events} 個事件`)),
+      h("p", { class: "run-s", style: "font-size:13px" }, h("span", { class: "vbadge" }, wfName(r.workflow)), h("span", {}, `${r.window.from.slice(0, 10)} → ${r.window.to.slice(0, 10)}`), h("span", {}, T(`${r.window.events} events`, `${r.window.events} 個事件`)),
         h("span", {}, r.trigger), r.config ? h("span", { class: "faint" }, T(`source: ${r.config.source} (read-only)`, `來源：${r.config.source}（唯讀）`)) : null))),
     h("div", { class: "x-tiles" }, r.metrics.map((m) => h("div", { class: "card x-tile" }, h("div", { class: "x-tv" }, m.value == null ? "—" : String(m.value)), h("div", { class: "faint" }, m.label)))),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Repeat classes", "重複的問題類別")), h("span", { class: "faint" }, T(`${found.length} found · ${not.length} not found`, `找到 ${found.length}・沒找到 ${not.length}`))),
@@ -107,11 +107,11 @@ function viewEdit(id) {
   const mark = (ok) => h("span", { class: `x-ck ${ok ? "ok" : "bad"}` }, ok ? "✓" : "✗");
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, h("a", { href: "#/improve", class: "a3-back" }, T("Improve", "改進")), " · ", e.kind === "proposal" ? e.title : T(`Chat edit ${e.id}`, `對話修改 ${e.id}`)),
-      h("p", { class: "run-s", style: "font-size:13px" }, eBadge(e.status), h("a", { href: `#/skill/${e.workflow}/${e.role}` }, `${e.workflow}/${e.role}`), h("span", {}, T(`from v${e.base}`, `基於 v${e.base}`)),
+      h("p", { class: "run-s", style: "font-size:13px" }, eBadge(e.status), h("a", { href: `#/skill/${e.workflow}/${e.role}` }, `${wfName(e.workflow)}/${e.role}`), h("span", {}, T(`from v${e.base}`, `基於 v${e.base}`)),
         e.stat ? h("span", { class: "x-num" }, `+${e.stat.added} −${e.stat.removed}`) : null, h("span", {}, e.by), e.retro ? h("a", { href: `#/retro/${e.retro}` }, e.retro) : null, h("span", { class: "faint" }, ago(e.createdAt)))),
       h("div", { class: "actions" },
-        e.status === "offered" ? h("button", { class: "btn primary", onclick: () => modal(T("Adopt this edit?", "採用這個修改？"), h("p", {}, T(`Studio's ${e.workflow}/${e.role} skill gets a new version. ${e.workflow === "code" ? "firstmate's own file is not written: download the patch from the skill page to hand it over." : ""}`,
-          `Studio 的 ${e.workflow}/${e.role} 技能會多一個版本。${e.workflow === "code" ? "不會寫入 firstmate 自己的檔案：到技能頁下載 patch 交給它。" : ""}`)), (close) => { close(); act("adopt"); }) }, icon("check", "ic sm"), T("Adopt", "採用")) : null,
+        e.status === "offered" ? h("button", { class: "btn primary", onclick: () => modal(T("Adopt this edit?", "採用這個修改？"), h("p", {}, T(`Studio's ${wfName(e.workflow)}/${e.role} skill gets a new version. ${e.workflow === "code" ? "firstmate's own file is not written: download the patch from the skill page to hand it over." : ""}`,
+          `Studio 的 ${wfName(e.workflow)}/${e.role} 技能會多一個版本。${e.workflow === "code" ? "不會寫入 firstmate 自己的檔案：到技能頁下載 patch 交給它。" : ""}`)), (close) => { close(); act("adopt"); }) }, icon("check", "ic sm"), T("Adopt", "採用")) : null,
         e.status === "offered" || e.status === "failed" ? h("button", { class: "btn", onclick: () => { const why = h("textarea", { rows: 3, "aria-label": T("Why", "原因"), placeholder: T("optional", "可留空") });
           modal(T("Reject this edit?", "拒絕這個修改？"), h("div", { class: "form" }, h("p", { class: "faint" }, e.fingerprint ? T("A rejected proposal is never proposed again for this class and role.", "被拒絕的提案，同一類別與角色不會再提。") : ""), why), (close) => { close(); act("reject", { reason: why.value }); }); } }, T("Reject", "拒絕")) : null,
         e.status === "offered" ? h("button", { class: "btn ghost", onclick: () => act("reeval") }, icon("refresh", "ic sm"), T("Re-run evals", "重跑評測")) : null)),

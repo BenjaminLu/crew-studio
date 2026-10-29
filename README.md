@@ -31,7 +31,7 @@ What you see first:
 
 1. **The Board**, empty: no Tasks and no decisions waiting.
 2. **Settings → Doctor** (the gear) lists what this Mac has. Basic pages, workflows, cards and the Library need nothing else. A Claude or Codex CLI that is installed but signed out shows **Not signed in**; GitHub shows off until a project is connected. Nothing is installed or signed in for you.
-3. **Workflows** lists the shipped workflows, each with a line on what it makes. The Doctor page names what each optional install adds (the film renderer for Video, Git, Node.js and Python 3 for coding).
+3. **Workflows** lists the shipped workflows, each with a line on what it makes (the coding workflow, id `code-firstmate`, is listed as **coding**). **Rename** on any workflow changes the name Studio shows; the definition, its approved crews and its exports keep their own name. The Doctor page names what each optional install adds (the film renderer for Video, Git, Node.js and Python 3 for coding).
 4. **Firstmate**: connect Codex using your ChatGPT account, or sign in to Claude, then talk to Studio's own Firstmate in its private workspace on the host you pick (Codex and Claude sit side by side; a Claude Firstmate signs in with the crew token and never falls back to Codex). No existing terminal session, repository, AGENTS file or handoff is required. Firstmate can propose work, but only your approval of its dispatch card starts a Task. Account readiness and native worker/tool readiness remain separate.
 
 Two workflows run with no model account: **Hello Crew Studio** (below) and **File organization**. Leave its folder blank and Studio makes a sample folder in its own data to tidy; it never touches your files unless you name a folder.

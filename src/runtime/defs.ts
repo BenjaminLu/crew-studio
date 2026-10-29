@@ -12,6 +12,7 @@ import {withLock} from "../ids";
 import {Ledger} from "./checks";
 import { bundledList, bundledText, parseYaml } from "../bundled";
 import { compareProblem } from "../compare";
+import { WorkflowNames, DEFAULT_DISPLAY_NAMES } from "./workflow-names";
 
 export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; // a closed set (architecture §3.1)
 export type NodeKind = (typeof NODE_KINDS)[number];
@@ -250,8 +251,25 @@ export class WorkflowDefs {
   skillLibrary: SkillCatalogue | null = null;
   /** the Studio team's resolution of a definition (set by the runtime): a captain's own workflow confirms exactly what will run */
   ownCrew: ((def: WDef) => any) | null = null;
+  /** display names (src/runtime/workflow-names.ts): what the captain sees, never written into a definition */
+  readonly names: WorkflowNames;
+  /** The name the captain sees for a workflow; every hash, signature and export keeps the definition's own name. */
+  displayName(id: string): string { return this.names.of(id, this.versions(id).at(-1)?.name); }
+  /** Rename or reset a workflow's display name. It may not take another workflow's id, display name or default name. */
+  rename(id: string, name: unknown, by: string) {
+    return this.names.set(id, name, by, () => {
+      const shown = this.names.map(), out: string[] = [];
+      for (const other of new Set([...this.ids(), ...Object.keys(DEFAULT_DISPLAY_NAMES)])) {
+        if (other === id) continue;
+        const own = this.listable(other).at(-1)?.name;
+        out.push(other, ...[shown[other], DEFAULT_DISPLAY_NAMES[other], own].filter((x): x is string => typeof x === "string"));
+      }
+      return out;
+    });
+  }
   constructor(readonly dataDir: string, readonly bundled = defaultDefinitions, public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
     this.dir = join(dataDir, "workflows"); mkdirSync(this.dir, { recursive: true });
+    this.names = new WorkflowNames(dataDir);
     this.seed();
   }
   private wdir(id: string) { if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id)) throw new Error(`bad workflow id ${id}`); return join(this.dir, id); }
@@ -325,7 +343,7 @@ export class WorkflowDefs {
   heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!this.trashed(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
   /** An empty folder, or a package-import (imp-*) folder that cannot be read, is left out instead of breaking the whole catalog. */
   private listable(id: string): WDef[] { try { return this.versions(id); } catch (e) { if (id.startsWith("imp-")) { console.error(`workflow ${id}: unreadable, left out of the catalog: ${(e as Error).message}`); return []; } throw e; } }
-  list() { return this.ids().flatMap((id) => { const vs = this.listable(id); const l = vs.at(-1); if (!l) return []; return [{ id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }]; }); }
+  list() { const shown = this.names.map(), renamed = this.names.overrides(); return this.ids().flatMap((id) => { const vs = this.listable(id); const l = vs.at(-1); if (!l) return []; return [{ id, name: l.name, displayName: shown[id] ?? l.name, renamed: Object.hasOwn(renamed, id), description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }]; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
   setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {
