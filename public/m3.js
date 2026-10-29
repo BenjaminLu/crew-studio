@@ -119,6 +119,7 @@ function staticPreview(href) {
 function artPreview(a, v, big) {
   if (!v) return previewBox("missing", T("No version to preview", "尚無版本可預覽"));
   if (a.source === "url") return previewBox("missing", T("External link · open to view", "外部連結・開啟查看內容"));
+  if (a.source === "room") return previewBox("missing", T("A saved review room · open to replay it", "存起來的審查室・打開即可重播"));
   if (!v.url && (v.fileCount === 0 || (v.files && !v.files.length))) return previewBox("missing", T("No preview file", "尚無預覽檔案"));
   if (a.type === "audio") return h("div",{class:"lprev media-audio"},h("audio",{controls:true,preload:"metadata",src:`/af/${a.id}/${v.n}/${v.primary||a.entry||"audio.wav"}`,"aria-label":a.title}));
   if (a.type === "video" || a.type === "image") {
@@ -192,7 +193,7 @@ function viewArtifact(arg) {
   if (d.error) return h("div", { class: "page" }, h("div", { class: "card" }, h("div", { class: "empty" }, h("b", {}, T("No such artifact", "找不到這個成品")), h("a", { href: "#/library" }, T("Library", "成品庫")))));
   const a = d.artifact, vs = d.versions, last = vs.at(-1), ap = vs.filter((v) => v.status === "approved").at(-1);
   if(d.nativeReview)return nativePreview(d,last);
-  const reviewable = a.source !== "url";
+  const reviewable = a.source !== "url" && a.source !== "room";
   const live = (d.runs || []).find((r) => r.status === "running" || r.status === "rendering");
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, a.title),
@@ -200,9 +201,10 @@ function viewArtifact(arg) {
         h("span", {}, a.project), h("span", {}, T(`created ${ago(a.created)}`, `${ago(a.created)}建立`)))),
       h("div", { class: "actions" },
         openWebsiteLink(a,last),
+        a.source === "room" && last ? h("a", { class: "btn primary", href: `#/room/lib:${a.id}@${last.n}`, "data-replay-room": a.id }, T(`Replay in the review room · v${last.n}`, `在審查室重播 · v${last.n}`)) : null,
         reviewable && last ? h("a", { class: "btn primary", href: `#/review/${a.id}/${last.n}` }, icon(a.type === "video" ? "film" : "pin", "ic sm"), T(`Review v${last.n}`, `審查 v${last.n}`)) : null,
         a.source === "url" && last?.url ? h("a", { class: "btn", href: last.url, target: "_blank", rel: "noopener" }, icon("link", "ic sm"), T("Open link", "打開連結")) : null,
-        vs.length > 1 ? h("a", { class: "btn", href: `#/compare/${a.id}/${vs.at(-2).n}/${last.n}` }, icon("copy", "ic sm"), T(`Compare v${vs.at(-2).n} ↔ v${last.n}`, `比較 v${vs.at(-2).n} ↔ v${last.n}`)) : null,
+        vs.length > 1 && a.source !== "room" ? h("a", { class: "btn", href: `#/compare/${a.id}/${vs.at(-2).n}/${last.n}` }, icon("copy", "ic sm"), T(`Compare v${vs.at(-2).n} ↔ v${last.n}`, `比較 v${vs.at(-2).n} ↔ v${last.n}`)) : null,
         a.type === "image" && ap ? h("button", { class: "btn", onclick: () => useInRepo(a, ap, d.repos) }, icon("github", "ic sm"), T("Use in repo", "用在 repo")) : null,
         a.source === "md" ? h("a", { class: "btn", href: `#/doc/${a.id}` }, icon("doc", "ic sm"), T("Approve and export", "核准與匯出")) : null)),
     last?.media?h("div",{class:"faint media-provenance"},`${last.media.origin} · ${last.media.provider||"import"}${last.media.model?" / "+last.media.model:""} · Task ${last.media.task} · g${last.media.generation}`):null,
@@ -231,8 +233,8 @@ function verRow(a, v, d) {
       v.summary ? h("div", { class: "faint", style: "font-size:13px" }, v.summary) : null,
       v.approvedBy ? h("div", { class: "faint", style: "font-size:13px" }, T(`Approved by ${v.approvedBy} ${ago(v.approvedAt)}`, `${v.approvedBy} ${ago(v.approvedAt)}核准`)) : null),
     h("div", { class: "a3-vact" },
-      a.source !== "url" ? h("a", { class: "btn sm", href: `#/review/${a.id}/${v.n}` }, T(`Notes (${v.notes.length})`, `標註 (${v.notes.length})`)) : null,
-      v.status === "in-review" ? h("button", { class: "btn sm", onclick: () => approve(a, v) }, icon("check", "ic sm"), T("Approve", "核准")) : null,
+      a.source === "room" ? h("a", { class: "btn sm", href: `#/room/lib:${a.id}@${v.n}`, "data-replay-version": v.n }, T("Replay", "重播")) : a.source !== "url" ? h("a", { class: "btn sm", href: `#/review/${a.id}/${v.n}` }, T(`Notes (${v.notes.length})`, `標註 (${v.notes.length})`)) : null,
+      v.status === "in-review" && a.source !== "room" ? h("button", { class: "btn sm", onclick: () => approve(a, v) }, icon("check", "ic sm"), T("Approve", "核准")) : null,
       v.render?.state === "failed" && A.render?.canFilm ? h("button", { class: "btn sm", onclick: async () => { const r = await api(`/api/artifacts/${a.id}/v/${v.n}/render`); if (r.error) toast(r.error); } }, T("Render again", "重新算圖")) : null));
 }
 function lineage(a, vs, runs) {
@@ -240,7 +242,7 @@ function lineage(a, vs, runs) {
   vs.forEach((v, i) => {
     if (i) { const run = runs.find((r) => r.version === v.n); parts.push(h("span", { class: "a3-arrow" }, "→"),
       h("span", { class: "lstep" }, h("b", {}, v.annotations?.length ? v.annotations.join(", ") : T("new file", "新檔案")), h("span", {}, run ? `${run.provider} · ${money(run.cost)}` : maker(v.createdBy))), h("span", { class: "a3-arrow" }, "→")); }
-    parts.push(h("a", { class: `lstep ${v.status === "approved" ? "ok" : ""}`, href: a.source === "url" ? (v.url || "#") : `#/review/${a.id}/${v.n}` }, h("b", {}, `v${v.n}`), h("span", {}, VST[v.status]?.[1]() || v.status)));
+    parts.push(h("a", { class: `lstep ${v.status === "approved" ? "ok" : ""}`, href: a.source === "url" ? (v.url || "#") : a.source === "room" ? `#/room/lib:${a.id}@${v.n}` : `#/review/${a.id}/${v.n}` }, h("b", {}, `v${v.n}`), h("span", {}, VST[v.status]?.[1]() || v.status)));
   });
   return h("div", { class: "lineage" }, parts);
 }

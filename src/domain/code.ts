@@ -182,10 +182,12 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** the review room's web tools (tests stub them; production goes through Studio's egress proxy) */
   reviewWeb?: WebBackend | ((check: (url: string) => string | null) => WebBackend);
   /** the review room's vendor voice (tests stub it; production calls the tutor vendor's own speech endpoint) */
-  reviewSpeak?: import("./review-room").Speaker }) {
+  reviewSpeak?: import("./review-room").Speaker;
+  /** the Library (Studio's artifact store): where an ended or saved review room is kept read-only */
+  artifacts?: import("../artifacts").ArtifactStore }) {
   installCodeQueue(engine);
   // the merge card's review room: a view on the card (its summary), never its answer or its readiness
-  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, speak: o.reviewSpeak, projects: o.projects,
+  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, speak: o.reviewSpeak, projects: o.projects, artifacts: o.artifacts,
     // a pull request is read (GET) with its connected project's own grant, verified like any GitHub use (an injected adapter in tests)
     github: (p: any) => { if (o.adapter instanceof GitHubPrAdapter) return o.adapter.grant.repository === p.github?.repository ? o.adapter : null;
       if (!p.github) return null; o.projects.assertExecutable({ project: p.id, base: p.base ?? p.github.base }); const a = projectPrAdapter(p, o.dataDir, o.poller); return a instanceof GitHubPrAdapter ? a : null; } });

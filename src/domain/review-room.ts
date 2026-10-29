@@ -26,6 +26,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { ArtifactStore } from "../artifacts";
+import { CAPTURE_PATH } from "../runtime/captures";
 import { cleanText } from "./issue-triage";
 import type { GitHubPrAdapter } from "../adapters/github";
 import type { Projects } from "../doors";
@@ -44,7 +48,7 @@ import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT,
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
-  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "05cf8996df0b222bb49aa847cb925076bba65e424c8063f2e52c81cee6837ef4" },
+  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "5869801ec2d81785e1c3c1abc382630e585369268b4fde3bb706c741866230f9" },
   { id: "pstack-how", ref: "workflows/skills/pstack/how.md", sha256: "19b614c9a54cf2dbad87114f9a3de7e408f39f7e0b02bf76608956b10d77f6d6" },
   { id: "pstack-why", ref: "workflows/skills/pstack/why.md", sha256: "9d6a298a5528b46610e964d0ce6ddcab990913837cb08455e531d6c5619d8c37" },
   { id: "pstack-teach", ref: "workflows/skills/pstack/teach.md", sha256: "a85b812c6d485cc07e13e3646f8d4b6525185f2159af3523729835007cfa120a" },
@@ -59,7 +63,31 @@ export const ROOM_ACTIONS: Record<string, { en: string; zh: string } | null> = {
   quiz: { en: "Check my understanding: ask me a few questions.", zh: "考考我：問我幾個問題，看我懂了沒。" },
 };
 /** The tools a tutor round gets: reading, the board, the check and the filtered web. Nothing else, ever. */
-export const ROOM_TOOLS = ["fs_list", "fs_search", "fs_read", "git_diff", "git_log", "git_show", "git_blame", "board_draw", "screenshots_show", "chart_draw", "illustrate", "check_ask", "check_grade", "web_search", "web_fetch"] as const;
+export const ROOM_TOOLS = ["fs_list", "fs_search", "fs_read", "git_diff", "git_log", "git_show", "git_blame", "board_draw", "scene_show", "screenshots_show", "chart_draw", "illustrate", "check_ask", "check_grade", "web_search", "web_fetch"] as const;
+/** What the board shows is short, and Studio holds the tutor to it (scene_show refuses what is over, and the tutor rewrites):
+ *  a scene's title at most 20 CJK characters or 48 Latin ones, a point at most 60 CJK or 120 Latin (citations not counted).
+ *  A CJK character counts as the Latin characters the two limits trade it for. */
+export const SCENE_LIMITS = { title: { cjk: 20, latin: 48 }, point: { cjk: 60, latin: 120 }, points: { min: 2, max: 4 }, scenes: 6 } as const;
+const CJK = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿︰-﹏＀-￯]|[\ud840-\ud87f][\udc00-\udfff]/g;
+/** a text's length on the board: citations, markup and spacing out; a CJK character weighs latin / cjk */
+export function boardLength(text: unknown, limit: { cjk: number; latin: number }): number {
+  const t = String(text ?? "").replace(/\[(diff|ledger|commit|source|board|review):[^\]\s]{1,300}\]|\[(inference|inferred|speculative|direct|supported)\]/gi, "").replace(/\*\*|`/g, "").replace(/\s+/g, " ").trim();
+  const cjk = (t.match(CJK) ?? []).length; return cjk * (limit.latin / limit.cjk) + ([...t].length - cjk);
+}
+export const fitsBoard = (text: unknown, limit: { cjk: number; latin: number }) => boardLength(text, limit) <= limit.latin;
+/** what is wrong with a scene's title and points, as the tutor reads it (empty: it fits the board) */
+export function sceneErrors(title: string, points: any[]): string[] {
+  const errors: string[] = [];
+  if (!title) errors.push("title is required");
+  else if (!fitsBoard(title, SCENE_LIMITS.title)) errors.push(`the title is too long (${Math.ceil(boardLength(title, SCENE_LIMITS.title))} of ${SCENE_LIMITS.title.latin}: at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin): shorten it`);
+  if (points.length < SCENE_LIMITS.points.min || points.length > SCENE_LIMITS.points.max) errors.push(`points is ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points; the rest goes in your final answer`);
+  points.slice(0, 8).forEach((p: any, i: number) => { const t = String(p?.text ?? "").trim();
+    if (!t) errors.push(`point ${i + 1} is empty`);
+    else if (/\n/.test(t)) errors.push(`point ${i + 1} is one sentence, no line breaks`);
+    else if (!fitsBoard(t, SCENE_LIMITS.point)) errors.push(`point ${i + 1} is too long (${Math.ceil(boardLength(t, SCENE_LIMITS.point))} of ${SCENE_LIMITS.point.latin}: at most ${SCENE_LIMITS.point.cjk} CJK characters or ${SCENE_LIMITS.point.latin} Latin): split it or put the detail in your final answer`);
+    if (p?.cites !== undefined && (!Array.isArray(p.cites) || p.cites.length > 4)) errors.push(`point ${i + 1}: cites is a list of at most 4 citations`); });
+  return errors;
+}
 /** Illustrations a turn may generate (each a paid image job): never evidence, always labelled as generated. */
 export const ILLUSTRATIONS_PER_TURN = 2;
 /** An image generator (production: Studio's Codex image job, the same one image steps use; tests stub it). */
@@ -67,8 +95,15 @@ export type Illustrator = (prompt: string, authorize: () => void, signal: AbortS
 
 const SHA = /^[a-f0-9]{40}$/, LIST_CAP = 3000, LANGS: Record<string, string> = { en: "English", "zh-TW": "Traditional Chinese (zh-TW)", "zh-CN": "Simplified Chinese (zh-CN)" };
 type Source = { n: number; turn: number; kind: "search" | "fetch"; query?: string; url?: string; /** an address that was refused or did not parse, kept as text only */ text?: string; at: string; ok: boolean; refused?: string; error?: string; status?: number };
-type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "compare" | "note" | "screenshot" | "chart" | "image"; title: string; group?: string; step?: number; [k: string]: any };
-type Question = { n: number; q: string; turn: number; at: string; result?: { correct: boolean; note: string; turn: number } };
+type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "compare" | "note" | "table" | "screenshot" | "chart" | "image"; title: string; group?: string; step?: number; [k: string]: any };
+/** an understanding check question: multiple choice (options, the right one's index, why: Studio grades the captain's pick, no
+ *  model; answer, why and cites never reach the page before the captain answers), or an older free-text one the tutor graded */
+type Question = { n: number; q: string; turn: number; at: string; options?: string[]; answer?: number; why?: string; cites?: Cite[]; choice?: number;
+  result?: { correct: boolean; note: string; turn: number; choice?: number; by?: "studio" } };
+/** the check's limits: a question at most 80 characters, 2 to 4 options of at most 40, why at most 120 */
+export const QUIZ_LIMITS = { q: 80, option: 40, why: 120, options: { min: 2, max: 4 }, questions: { min: 2, max: 4 } } as const;
+/** the check as the page reads it: a multiple-choice question keeps its answer, why and cites in Studio until the captain answers */
+export const checkView = (c: { questions: Question[] } | null | undefined) => ({ questions: (c?.questions ?? []).map((q) => q.options && !q.result ? (({ answer, why, cites, ...rest }) => rest)(q) : q) });
 type Turn = { n: number; action: string; text: string; lang: string; by: string; at: string; status: "running" | "done" | "failed" | "interrupted"; ended: string | null;
   job: string | null; provider: string; model: string; effort: string | null; answer: string; error: string | null; cost: any; round: string; head: string;
   /** how independent this turn's tutor was from the change's author (src/domain/independence.ts); none for a pull request no Task made */
@@ -76,7 +111,11 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   /** the answer as claims, each cited or an inference (ground) */
   claims?: Claim[];
   /** a scene Studio made itself, no model and nothing paid: "since" (what changed since the captain last looked) or "reviewers" (what GitHub reviewers asked) */
-  studio?: true; title?: string; from?: string };
+  studio?: true; title?: string; from?: string;
+  /** a regeneration: the turn whose question this one asks again, on a model the captain picked (both answers are kept) */
+  regenOf?: number; picked?: { provider: string; model: string | null; effort: string | null };
+  /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
+  scenes?: { n: number; title: string; picture: string; points: Claim[] }[] };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
 export type Subject = { kind: "merge" | "branch" | "pr"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null };
 type Note = { id: string; kind: "review" | "inline" | "comment"; author: string; body: string; at: string | null; url: string | null; state?: string; commit?: string | null; path?: string | null; line?: number | null; outdated?: boolean };
@@ -100,16 +139,53 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   host?: string;
   /** the opening illustration was started (once per card, when the captain first opened the room) */
   opening?: { at: string };
+  /** the explanation in another language, per turn (a translation turn on the tutor's model: text only, citations kept) */
+  translations?: Record<string, Record<string, Translation>>;
+  /** the captain confirmed translating this room's explanation (once per room, for this tutor) */
+  translateOk?: { hash: string; at: string };
+  /** the last translation turn: its language, how it went and what was left untranslated */
+  translating?: { lang: string; status: "running" | "done" | "failed"; at: string; ended?: string | null; error?: string | null; dropped?: number[]; job?: string | null; cost?: any };
+  /** the room's Library snapshot (one artifact, a version per save) and the change it was saved at */
+  library?: { artifact: string; versions: { n: number; at: string; reason: string }[]; rev: number; ended?: boolean; sig?: string };
+  /** the room finished (its merge card answered, its pull request merged or closed), recorded at that moment: only such a room is
+   *  saved to the Library by Studio, once (tried: a failed save is not retried by itself; the captain's Save to Library still works) */
+  finished?: { at: string; reason: string; tried?: boolean; error?: string | null };
+  /** bumped on every save: a snapshot older than this is out of date */
+  rev?: number;
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
   illustrations?: { turn: number; prompt: string; refused: string; at: string }[] };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
+/** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
+ *  citations, board items and pictures are the original's */
+export type Translation = { scenes: { title: string; points: string[] }[]; claims: string[]; answer: string; provider: string; model: string; at: string };
+/** the languages the explanation is made in (zh-CN is the zh-TW text through OpenCC on the page, nothing paid) */
+export const ROOM_LANGS = ["en", "zh-TW"] as const;
+/** the citations a text carries, sorted: a translation keeps exactly the original's */
+export const citeTokens = (t: unknown) => [...String(t ?? "").matchAll(/\[(diff|ledger|commit|source|board|review):[^\]\s]{1,300}\]|\[(inference|inferred|speculative|direct|supported)\]/gi)].map((m) => m[0].toLowerCase()).sort();
+const sameCites = (a: unknown, b: unknown) => JSON.stringify(citeTokens(a)) === JSON.stringify(citeTokens(b));
+/** a translated turn checked against the original: the same number of scenes, points and blocks, every citation kept, a
+ *  scene within the board's limits. Returns what is wrong (empty: it may be kept). */
+export function translationErrors(t: { scenes?: { title: string; points: { text: string }[] }[]; claims?: { text: string; kind: string }[]; answer?: string }, x: any): string[] {
+  const errs: string[] = [], scenes = t.scenes ?? [], blocks = (t.claims ?? []).filter((c) => ["claim", "aside", "heading"].includes(c.kind));
+  if (!x || typeof x !== "object") return ["not an object"];
+  if (!Array.isArray(x.scenes) || x.scenes.length !== scenes.length) errs.push(`scenes: ${scenes.length} expected`);
+  else scenes.forEach((sc, i) => { const y = x.scenes[i]; if (!y || typeof y.title !== "string" || !Array.isArray(y.points) || y.points.length !== sc.points.length) { errs.push(`scene ${i + 1}: title and ${sc.points.length} points expected`); return; }
+    errs.push(...sceneErrors(y.title.replace(/\s+/g, " ").trim(), y.points.map((p: any) => ({ text: String(p ?? "") }))).map((e) => `scene ${i + 1}: ${e}`));
+    sc.points.forEach((p, j) => { if (!sameCites(p.text, y.points[j])) errs.push(`scene ${i + 1} point ${j + 1}: the citations differ from the original`); }); });
+  if (!Array.isArray(x.claims) || x.claims.length !== blocks.length) errs.push(`claims: ${blocks.length} expected`);
+  else blocks.forEach((c, i) => { if (typeof x.claims[i] !== "string" || !x.claims[i].trim()) errs.push(`claim ${i + 1} is empty`); else if (!sameCites(c.text, x.claims[i])) errs.push(`claim ${i + 1}: the citations differ from the original`); });
+  if (typeof x.answer !== "string" || !x.answer.trim()) errs.push("answer is empty"); else if (!sameCites(t.answer ?? "", x.answer)) errs.push("answer: the citations differ from the original");
+  return errs;
+}
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // ---------- grounding: every claim names its basis; one without a valid basis reads as an inference ----------
 export const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})\]/g;
 export type Cite = { ref: string; ok: boolean };
 /** basis "reviewer": a GitHub reviewer's own words (quote, untrusted text shown as text), cited to the comment */
-export type Claim = { text: string; kind: "claim" | "heading" | "code" | "aside"; basis: "cited" | "inference" | "reviewer" | null; cites: Cite[]; quote?: string };
+export type Claim = { text: string; kind: "claim" | "heading" | "code" | "table" | "aside"; basis: "cited" | "inference" | "reviewer" | null; cites: Cite[]; quote?: string;
+  /** a Studio-made line in Chinese (its own strings; the quote, someone else's words, is never translated) */
+  zh?: string };
 /** The tutor's answer as blocks (paragraphs, list items, headings, code), each claim with its citations checked by ok. */
 export function ground(text: string, ok: (kind: string, value: string) => boolean): Claim[] {
   const blocks: string[] = []; let cur: string[] = [], fence = false;
@@ -125,6 +201,8 @@ export function ground(text: string, ok: (kind: string, value: string) => boolea
   return blocks.map((b): Claim => {
     if (/^\s*```/.test(b)) return { text: b, kind: "code", basis: null, cites: [] };
     if (/^\s*#{1,6}\s/.test(b)) return { text: b, kind: "heading", basis: null, cites: [] };
+    // a markdown table is not a claim: the board shows it as a table (text only), its citations kept
+    if (b.split("\n").filter((l) => l.trim()).length >= 2 && b.split("\n").every((l) => !l.trim() || /^\s*\|/.test(l))) return { text: b, kind: "table", basis: null, cites: [...b.matchAll(CITE)].map((m) => ({ ref: `${m[1]}:${m[2]}`, ok: ok(m[1], m[2]) })) };
     const cites = [...b.matchAll(CITE)].map((m) => ({ ref: `${m[1]}:${m[2]}`, ok: ok(m[1], m[2]) }));
     if (!cites.length && /\?\s*$/.test(b.trim())) return { text: b, kind: "aside", basis: null, cites };
     return { text: b, kind: "claim", basis: !/\[(inference|inferred|speculative)\]/i.test(b) && cites.some((c) => c.ok) ? "cited" : "inference", cites };
@@ -168,7 +246,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** the registered projects (a pull request is read only for a project connected to GitHub with that repository) */
   projects?: Projects;
   /** the GitHub adapter of a connected project (production: its grant's adapter, verified; tests: the simulator's) */
-  github?: (project: any) => GitHubPrAdapter | null }) {
+  github?: (project: any) => GitHubPrAdapter | null;
+  /** the Library (src/artifacts.ts): where a room's read-only snapshot is kept; production passes Studio's own store */
+  artifacts?: ArtifactStore }) {
   const live = new Map<string, number>(), speaking = new Map<string, Promise<any>>();
   // the seat staffing admits: the reviewer's approved member, with exactly these pinned texts as its instructions
   engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256), adaptive: true } };
@@ -202,7 +282,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   // read from disk only once per process: an illustration still pending there had its job in a Studio that stopped
   const load = (k: Key): Room | null => { const had = cache.get(k.file); if (had) return had; try { const r: Room = JSON.parse(readFileSync(k.file, "utf8"));
     for (const b of r.board) if (b.type === "image" && b.status === "pending") Object.assign(b, { status: "failed", error: "interrupted: Studio stopped before the picture was ready" }); cache.set(k.file, r); return r; } catch { return null; } };
-  const save = (k: Key, r: Room) => { cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
+  const save = (k: Key, r: Room) => { r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
   /** a turn left running by a Studio that stopped reads interrupted (its round record keeps what it did) */
   const settled = (r: Room) => ({ ...r, turns: r.turns.map((t) => t.status === "running" && live.get(r.card) !== t.n ? { ...t, status: "interrupted" as const } : t) });
   const cardOf = (id: string) => { const c = engine.cards.get(id); if (!c) throw refuse("No such card", "not_found"); return c; };
@@ -281,6 +361,35 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     if (!fallback) throw refuse("No signed-in model can run the tutor on this machine now: sign in to a vendor, then open the room again / 這台機器目前沒有已登入、可用的模型能當導師：請先登入一個供應商，再打開審查室", "no_tutor");
     return done(fallback, "same", !inCrew.length, why);
   };
+  /** every node that wrote the change, as staffed and as it ran (the author the tutor is judged against) */
+  const makersOf = (run: any, usable: Usable[] | null): { provider: string; model: string | null }[] => {
+    const resolve = (p: AgentPick): AgentPick => p.model || !usable ? p : { ...p, model: usable.find((u) => u.provider === p.provider && u.isDefault)?.model ?? null };
+    const makerRole = run.def.nodes.find((n: any) => n.kind === "agent" && n.mode === "build")?.role ?? "worker";
+    const writers = run.def.nodes.filter((n: any) => (n.kind === "agent" || n.kind === "loop") && (n.mode === "build" || n.role === makerRole || n.args?.producer === "build"));
+    return [...writers.flatMap((n: any) => { try { return [engine.x(run, n, run.nodes[n.id]).pick()]; } catch { return []; } }), ...run.steps.filter((st: any) => writers.some((n: any) => n.id === st.node) && st.provider).map((st: any) => ({ provider: st.provider, model: st.model }))]
+      .map((m: AgentPick) => resolve(m)).map((m) => ({ provider: m.provider, model: m.model ?? null }));
+  };
+  /** the models the captain may pick to explain a turn again: what this machine has (adaptive staffing's facts), each with how
+   *  independent it is from the author; a held one (out of quota, unreadable, in its verification backoff) is listed, not pickable */
+  const tutorsOf = (run: any, current: { provider: string; model: string | null } | null) => {
+    const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null; if (!usable) return [];
+    const group = run && !isHostRun(run) ? makersOf(run, usable) : [];
+    return usable.map((u) => { const backoff = !!engine.deps.verifyBackoff?.({ provider: u.provider, model: u.model } as AgentPick);
+      return { provider: u.provider, model: u.model, effort: defaultEffort(u), runnable: !!u.runnable && !backoff, held: !u.runnable ? (u.held ?? "it cannot run now") : backoff ? "its verification is being retried" : null,
+        level: group.length ? levelAgainst({ provider: u.provider, model: u.model }, group) : null, current: !!current && current.provider === u.provider && (current.model ?? null) === u.model }; });
+  };
+  /** the tutor the captain picked for a regeneration: refused unless this machine runs it now */
+  const pickedTutor = (run: any, want: any): Tutor => {
+    const provider = String(want?.provider ?? ""), model = want?.model == null ? null : String(want.model), list = tutorsOf(run, null), u = list.find((x) => x.provider === provider && x.model === model);
+    if (!u) throw refuse(`${provider} ${model ?? ""} is not a model this machine can run / 這台機器不能跑這個模型`, "not_usable");
+    if (!u.runnable) throw refuse(`${provider} ${model} is held: ${u.held} / 這個模型目前不能用：${u.held}`, "held");
+    const level = (u.level ?? null) as Level | null;
+    // no author Studio knows (a pull request no Task made): how independent the pick is cannot be said, and is not claimed
+    if (!level) return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level: null as unknown as Level, adaptive: true, outside: true, label: { en: "Independence from the author unknown: the change's author is outside Studio. Picked by the captain to explain this again.", zh: "和作者的獨立程度未知：改動的作者不在 Studio 裡。船長選來重講這一題。" } };
+    // the author's own model only when nothing else can run, as for the room's own tutor
+    if (level === "same" && list.some((x) => x.runnable && x.level !== "same")) throw refuse(`${provider} ${model} is the author's own model; another model can run now / 這是作者自己的模型；還有別的模型可以用`, "same_as_author");
+    return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level, adaptive: true, outside: true, label: { en: `${LEVEL_TEXT[level].en}. Picked by the captain to explain this again.`, zh: `${LEVEL_TEXT[level].zh}。船長選來重講這一題。` } };
+  };
   /** the seat a turn runs on: the hosting Task's reviewer (tutorPick); on a review-room-host Task, the project's approved crew reviewer */
   const crewTutor = (pick: AgentPick): Tutor => ({ pick, level: null as unknown as Level, adaptive: false, outside: false,
     label: { en: "The project's crew reviewer. The change's author is outside Studio, so its independence is not measured.", zh: "專案船員的審查者。改動的作者不在 Studio 裡，所以不衡量獨立程度。" } });
@@ -299,14 +408,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     if (team) return { provider: team.provider, model: team.model, effort: team.effort ?? null };
     throw none(why); };
   const noHost = () => refuse("No Studio Task made this pull request, so no reviewer seat can host a tutor here: the room shows the pull request, its reviewers' comments and what changed, without paid turns / 這個 pull request 不是 Studio 的任務開的，沒有審查座位可以當導師：審查室只顯示 PR、審查者的意見和改了什麼，不能付費提問", "no_host");
-  const offerOf = (k: Key) => {
+  const offerOf = (k: Key, want?: any) => {
     try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr") throw noHost();
+      if (want && (!s.run || !s.node)) throw noHost();
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
-      const t = s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)), p = t.pick, effort = p.effort ?? null;
+      const t = want ? pickedTutor(s.run, want) : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)), p = t.pick, effort = p.effort ?? null;
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
       return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label },
-        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside })).slice(0, 16) }; }
+        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}) })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
   const skills = () => ROOM_SKILLS.map((s) => { const t = bundledText(s.ref); if (t == null || sha(t) !== s.sha256) throw refuse(`The pinned skill ${s.id} changed or is missing; Studio refuses the turn`, "skill_pin"); return { ...s, text: t }; });
@@ -388,6 +498,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const said = async () => { const cites = citesOf(a?.cites, await citeCheck(room, s)); return { cites, basis: cites.some((c) => c.ok) ? "cited" : "inference" }; };
       if (type === "mermaid") { const code = String(a?.code ?? ""); if (!code.trim() || code.length > 4000) throw new Error(`item ${i + 1}: mermaid code is 1 to 4000 characters`); return { ...at, type, code, ...(await said()) }; }
       if (type === "note") { const text = String(a?.text ?? ""); if (!text.trim() || text.length > 2000) throw new Error(`item ${i + 1}: a note is 1 to 2000 characters`); return { ...at, type, text, ...(await said()) }; }
+      // a small table, drawn by Studio as text: the header row first
+      if (type === "table") { const rows = Array.isArray(a?.rows) ? a.rows : [];
+        if (rows.length < 2 || rows.length > 8 || rows.some((r: any) => !Array.isArray(r) || !r.length || r.length > 5 || r.some((c: any) => typeof c !== "string" && typeof c !== "number" || String(c).length > 60))) throw new Error(`item ${i + 1}: a table is 2 to 8 rows (the header first) of 1 to 5 cells, each at most 60 characters`);
+        return { ...at, type, rows: rows.map((r: any[]) => r.map((c) => String(c).replace(/\s+/g, " ").trim())), ...(await said()) }; }
       const path = pathArg(a?.path);
       if (type === "diff") {
         if (!(await changedOf(s)).includes(path)) throw new Error(`item ${i + 1}: ${path} is not a changed file of this pull request`);
@@ -405,7 +519,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (!before && !after) throw new Error(`item ${i + 1}: ${path} is in neither the base nor the head`);
         return { ...at, type, path, base, commit: head, before, after, basis: "cited", cites: [] };
       }
-      throw new Error(`item ${i + 1}: type is mermaid, diff, code, compare or note`);
+      throw new Error(`item ${i + 1}: type is mermaid, diff, code, compare, table or note`);
     };
     return [
       { name: "fs_list", description: `List the files of the pull request's head commit (at most ${LIST_CAP}).`, schema: { type: "object", properties: {} },
@@ -431,13 +545,25 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       { name: "git_blame", description: "Who last changed each line of a range of a file at the head (at most 120 lines): commit, author, date.", schema: { type: "object", properties: { path: { type: "string" }, start: { type: "number" }, end: { type: "number" } }, required: ["path", "start"] },
         run: async (a) => { const p = pathArg(a?.path), s0 = Math.max(1, Number(a?.start) || 1), e0 = Math.min(s0 + 119, Math.max(s0, Number(a?.end) || s0 + 40));
           const t = await g(wt, ["blame", "--date=short", "-L", `${s0},${e0}`, head, "--", p], 400_000); return t === null ? { error: `cannot blame ${p} lines ${s0}-${e0} at the head` } : { path: p, text: t.slice(0, 20000) }; } },
-      { name: "board_draw", description: "Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); note {text}. Studio fills every excerpt from the real commits.",
+      { name: "board_draw", description: "Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); table {rows: [[header cells], [cells], ...]} (2 to 8 rows of at most 5 cells of at most 60 characters, shown as text); note {text}. Studio fills every excerpt from the real commits.",
         schema: { type: "object", properties: { items: { type: "array", maxItems: 8, items: { type: "object" } } }, required: ["items"] },
         run: async (a) => { const list = Array.isArray(a?.items) ? a.items.slice(0, 8) : []; if (!list.length) return { error: "items is a list of 1 to 8 board items" };
           if (room.board.filter((b) => b.turn === turn.n).length + list.length > 40) return { error: "at most 40 board items a turn" };
           const added: string[] = [], errors: string[] = [];
           for (let i = 0; i < list.length; i++) { try { const it = await item(list[i], i); room.board.push(it); added.push(it.id); } catch (e: any) { errors.push(String(e?.message ?? e)); } }
           save(k, room); return { added, errors }; } },
+      { name: "scene_show", description: `Show one scene on the board, the way the captain reads an answer: a short title, one picture (a board item id you drew: board_draw, chart_draw, screenshots_show or illustrate) and ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points, each one sentence with the citations it rests on (none: it is an inference). Limits: the title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones; a point at most ${SCENE_LIMITS.point.cjk} CJK or ${SCENE_LIMITS.point.latin} Latin (citations not counted). Over a limit the scene is refused, saying which part: shorten it and call again. A longer explanation goes in your final answer (the transcript). At most ${SCENE_LIMITS.scenes} scenes a turn.`,
+        schema: { type: "object", properties: { title: { type: "string" }, picture: { type: "string" }, points: { type: "array", minItems: SCENE_LIMITS.points.min, maxItems: SCENE_LIMITS.points.max, items: { type: "object", properties: { text: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["text"] } } }, required: ["title", "picture", "points"] },
+        run: async (a) => {
+          const title = String(a?.title ?? "").replace(/\s+/g, " ").trim(), picture = String(a?.picture ?? "").trim(), points = Array.isArray(a?.points) ? a.points : [];
+          const errors = sceneErrors(title, points); if (!room.board.some((b) => b.id === picture)) errors.push(`picture ${picture ? `"${picture.slice(0, 20)}" is not a board item` : "is required"}: draw one first (board_draw, chart_draw, screenshots_show or illustrate) and give its id`);
+          if ((turn.scenes?.length ?? 0) >= SCENE_LIMITS.scenes) errors.push(`at most ${SCENE_LIMITS.scenes} scenes a turn`);
+          if (errors.length) return { error: errors.join("; ") };
+          const ok = await citeCheck(room, s);
+          const claims: Claim[] = points.map((p: any) => { const cites = citesOf(p.cites, ok), text = String(p.text).replace(/\s+/g, " ").trim();
+            return { text, kind: "claim", basis: !/\[(inference|inferred|speculative)\]/i.test(text) && cites.some((c) => c.ok) ? "cited" : "inference", cites }; });
+          const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title, picture, points: claims }]; save(k, room);
+          return { scene: n, points: claims.map((c) => c.basis) }; } },
       { name: "screenshots_show", description: "Put the app's real screenshots on the board: each changed page at the base and at the head, as Studio's sandboxed renderer shot them for this head (the Task's own capture check, the app's fixture build, no live data). The captain toggles before / after. Only when the change touches the app's pages.",
         schema: { type: "object", properties: { title: { type: "string" } } },
         run: async (a) => { const cap = s.run.ctx.captures, prefix = `/api/wruns/${s.run.id}/captures/`, ok = (u: any) => typeof u === "string" && u.startsWith(prefix) && !u.includes("..") ? u : null;
@@ -469,13 +595,25 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           // a raster image takes a minute or two: the board shows a placeholder now, the picture when it is ready; the turn does not wait
           const it = illustrateInto(k, s, room, `B${turn.n}-${++drawn}`, turn.n, String(a?.title ?? "").replace(/\s+/g, " ").slice(0, 120) || "Illustration", prompt);
           return { added: [it.id], status: "pending", note: "a placeholder until the picture is ready (in the background); labelled as a generated illustration, never evidence" }; } },
-      { name: "check_ask", description: "Ask the captain 2 to 4 short questions on what this change does differently and where its risk is (shown as the understanding check; it never affects the merge).", schema: { type: "object", properties: { questions: { type: "array", minItems: 2, maxItems: 4, items: { type: "string" } } }, required: ["questions"] },
-        run: (a) => { const qs = (Array.isArray(a?.questions) ? a.questions : []).map((q: any) => String(q ?? "").replace(/\s+/g, " ").trim()).filter(Boolean);
-          if (qs.length < 2 || qs.length > 4 || qs.some((q: string) => q.length > 300)) return { error: "2 to 4 questions of at most 300 characters" };
-          const asked = qs.map((q: string) => { const e = { n: room.check.questions.length + 1, q, turn: turn.n, at: new Date().toISOString() }; room.check.questions.push(e); return e.n; }); save(k, room); return { asked }; } },
+      { name: "check_ask", description: `Ask the captain ${QUIZ_LIMITS.questions.min} to ${QUIZ_LIMITS.questions.max} multiple-choice questions on what this change does differently and where its risk is (the understanding check; it never affects the merge). Each: q (at most ${QUIZ_LIMITS.q} characters), options (${QUIZ_LIMITS.options.min} to ${QUIZ_LIMITS.options.max}, each at most ${QUIZ_LIMITS.option} characters), answer (the right option's index, from 0), why (at most ${QUIZ_LIMITS.why} characters: why that option is right) and cites (what why rests on). The captain picks on the board and Studio grades it from answer; the answer is never shown before.`,
+        schema: { type: "object", properties: { questions: { type: "array", minItems: QUIZ_LIMITS.questions.min, maxItems: QUIZ_LIMITS.questions.max, items: { type: "object", properties: { q: { type: "string" }, options: { type: "array", minItems: QUIZ_LIMITS.options.min, maxItems: QUIZ_LIMITS.options.max, items: { type: "string" } }, answer: { type: "integer" }, why: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["q", "options", "answer", "why"] } } }, required: ["questions"] },
+        run: async (a) => { const qs = Array.isArray(a?.questions) ? a.questions : [], errors: string[] = [], one = (t: any) => String(t ?? "").replace(/\s+/g, " ").trim();
+          if (qs.length < QUIZ_LIMITS.questions.min || qs.length > QUIZ_LIMITS.questions.max) errors.push(`${QUIZ_LIMITS.questions.min} to ${QUIZ_LIMITS.questions.max} questions`);
+          qs.slice(0, 8).forEach((x: any, i: number) => { const q = one(x?.q), opts = Array.isArray(x?.options) ? x.options.map(one) : [], why = one(x?.why);
+            if (!q || [...q].length > QUIZ_LIMITS.q) errors.push(`question ${i + 1}: q is 1 to ${QUIZ_LIMITS.q} characters`);
+            if (opts.length < QUIZ_LIMITS.options.min || opts.length > QUIZ_LIMITS.options.max || opts.some((o: string) => !o || [...o].length > QUIZ_LIMITS.option)) errors.push(`question ${i + 1}: ${QUIZ_LIMITS.options.min} to ${QUIZ_LIMITS.options.max} options of 1 to ${QUIZ_LIMITS.option} characters`);
+            else if (new Set(opts).size !== opts.length) errors.push(`question ${i + 1}: the options are all different`);
+            if (!Number.isInteger(x?.answer) || x.answer < 0 || x.answer >= opts.length) errors.push(`question ${i + 1}: answer is the right option's index, 0 to ${Math.max(0, opts.length - 1)}`);
+            if (!why || [...why].length > QUIZ_LIMITS.why) errors.push(`question ${i + 1}: why is 1 to ${QUIZ_LIMITS.why} characters`);
+            if (x?.cites !== undefined && (!Array.isArray(x.cites) || x.cites.length > 4)) errors.push(`question ${i + 1}: cites is a list of at most 4 citations`); });
+          if (errors.length) return { error: errors.join("; ") };
+          const ok = await citeCheck(room, s), at = new Date().toISOString();
+          const asked = qs.map((x: any) => { const e: Question = { n: room.check.questions.length + 1, q: one(x.q), turn: turn.n, at, options: x.options.map(one), answer: x.answer, why: one(x.why), cites: citesOf(x.cites, ok) }; room.check.questions.push(e); return e.n; });
+          save(k, room); return { asked, note: "the captain answers on the board; Studio grades it and shows why" }; } },
       { name: "check_grade", description: "Grade the captain's answers to check questions: each {n, correct, note} (one line why). Re-explain each missed one in your reply.", schema: { type: "object", properties: { results: { type: "array", items: { type: "object" } } }, required: ["results"] },
         run: (a) => { const rs = Array.isArray(a?.results) ? a.results : []; const graded: number[] = [], errors: string[] = [];
-          for (const r of rs) { const q = room.check.questions.find((x) => x.n === Number(r?.n)); if (!q || typeof r?.correct !== "boolean") { errors.push(`no question ${r?.n}, or correct is not true or false`); continue; } q.result = { correct: r.correct, note: String(r?.note ?? "").slice(0, 300), turn: turn.n }; graded.push(q.n); }
+          for (const r of rs) { const q = room.check.questions.find((x) => x.n === Number(r?.n)); if (!q || typeof r?.correct !== "boolean") { errors.push(`no question ${r?.n}, or correct is not true or false`); continue; }
+            if (q.options) { errors.push(`question ${q.n} is multiple choice: Studio grades the captain's pick, not the tutor`); continue; } q.result = { correct: r.correct, note: String(r?.note ?? "").slice(0, 300), turn: turn.n }; graded.push(q.n); }
           save(k, room); return { graded, errors }; } },
       { name: "web_search", description: "Search the public web through Studio, in general words only: Studio refuses a query carrying this repository's code, paths, names or private hosts. Every query is shown to the captain as a source.", schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
         run: async (a) => { const q = String(a?.query ?? ""), why = capped() ?? queryRefusal(q, ctx); if (why) { source({ kind: "search", query: q.slice(0, 200), ok: false, refused: why }); return { error: `refused: ${why}` }; }
@@ -528,12 +666,44 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       ...(since ? [`WHAT CHANGED SINCE THE CAPTAIN LAST LOOKED (${since.from?.slice(0, 8)}..${head.slice(0, 8)}; Studio's scene ${since.n} shows it: start from it)`, sinceDiff.slice(0, 12000), ""] : []),
       "CHANGED FILES", stat.slice(0, 4000), "", `THE DIFF (the first 30000 of ${diff.length} characters; git_diff reads the rest)`, diff.slice(0, 30000), "",
       "THE BOARD SO FAR", ...(room.board.length ? room.board.slice(-20).map((b) => `- ${b.id} ${b.type}${b.group ? ` ${b.group}#${b.step ?? "?"}` : ""}: ${b.title}${b.path ? ` (${b.path})` : ""}`) : ["(empty)"]), "",
-      "UNDERSTANDING CHECK", ...(room.check.questions.length ? room.check.questions.map((q) => `${q.n}. ${q.q}${q.result ? ` [graded: ${q.result.correct ? "correct" : "missed"}]` : " [not graded yet]"}`) : ["(not asked yet)"]), "",
+      "UNDERSTANDING CHECK (multiple choice: the captain picks on the board, Studio grades it)", ...(room.check.questions.length ? room.check.questions.map((q) => q.options
+        ? `${q.n}. ${q.q} — ${q.options.map((o, i) => `${"ABCD"[i]}) ${o}`).join(" ")}; right: ${"ABCD"[q.answer ?? 0]}; ${q.choice != null ? `the captain chose ${"ABCD"[q.choice]} (${q.result?.correct ? "correct" : "missed"})` : "not answered yet"}`
+        : `${q.n}. ${q.q}${q.result ? ` [graded: ${q.result.correct ? "correct" : "missed"}]` : " [not graded yet]"}`) : ["(not asked yet)"]), "",
       "THE CONVERSATION SO FAR", ...older.map((x) => `(turn ${x.n}) ${who(x).replace(/\s+/g, " ").slice(0, 140)} / ${x.studio ? "Scene" : "Tutor"}: ${said(x).replace(/\s+/g, " ").slice(0, 160)}`),
       ...full.flatMap((x) => [who(x).slice(0, 1500), `${x.studio ? "Scene" : "Tutor"}: ${said(x).slice(0, 1500)}`]), ...(past.length ? [] : ["(this is the first turn)"]), "",
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
 
+  /** A tutor round's admission, the same for a turn and a translation: the round sandbox only, the pinned skills, the Task's
+   *  node (an auxiliary owner for a branch or pull request room), the member verified and selected natively, staffing's
+   *  receipt for the tutor seat. On a refusal nothing is held. */
+  async function admit(k: Key, s: S, tutor: Tutor) {
+    const off = engine.grants.open("sandbox-off", s.run.ctx.project ?? s.run.params?.project ?? null);
+    if (off) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
+    if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
+    const sk = skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
+    // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it (a branch or
+    // pull request room: an auxiliary owner of the review node, which never advances the Task), the native selection verifies
+    // the reviewer member's capability, and staffing issues its receipt for the tutor seat
+    const run = s.run, pick = tutor.pick, held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]); let provider: any;
+    try {
+      if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
+      // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
+      // signed in, out of quota or not offered is refused with the reason
+      if (pick.model) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
+        // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
+        if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${k.id}`, at: new Date().toISOString() } } as any); }
+      catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
+      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
+      catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
+    } catch (e) { held?.release(); throw e; }
+    const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
+    // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
+    const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level, crew: !tutor.outside } } : {}) };
+    const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
+    let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
+    return { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor };
+  }
   async function runTurn(k: Key, room: Room, turn: Turn, s: S, provider: any, sk: ReturnType<typeof skills>, confirm: string,
     adm: { x: any; aux: boolean; system: string; rules: any; admissionReceipt: unknown; receipt: (r: any) => unknown }) {
     // the pages this turn may read: its own search results, and the documentation hosts (built in, plus policy review_room.docs_hosts)
@@ -560,10 +730,95 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
     turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
-    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
+    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }
+  /** the turns whose explanation is not in this language yet: what to translate (text only) */
+  const untranslated = (room: Room, lang: string) => room.turns.filter((t) => t.status === "done" && !t.studio && t.lang !== lang && !room.translations?.[lang]?.[String(t.n)]);
+  const translateUnits = (turns: Turn[]) => turns.map((t) => ({ n: t.n, scenes: (t.scenes ?? []).map((sc) => ({ title: sc.title, points: sc.points.map((p) => p.text) })),
+    claims: (t.claims ?? []).filter((c) => ["claim", "aside", "heading"].includes(c.kind)).map((c) => c.text), answer: t.answer }));
+  /** roughly what a translation costs: a fifth of a turn of this room, at least a cent (shown with ~) */
+  const translateEstimate = (room: Room | null) => { const c = (room?.turns ?? []).filter((t) => !t.studio && typeof t.cost?.usd === "number").map((t) => t.cost.usd); return c.length ? Math.max(0.01, Math.round(c.reduce((a, b) => a + b, 0) / c.length * 0.2 * 100) / 100) : null; };
+  async function runTranslate(k: Key, room: Room, lang: string, turns: Turn[], s: S, provider: any, sk: ReturnType<typeof skills>, adm: { x: any; aux: boolean; system: string; rules: any; admissionReceipt: unknown; receipt: (r: any) => unknown }) {
+    const units = translateUnits(turns), round = `room-${k.id}-tr-${lang}-${Date.now().toString(36)}`;
+    const text = ["TRANSLATION ONLY. Do not read code, do not call any tool, do not explain anything new.",
+      `Translate the review room's explanation below into ${LANGS[lang] ?? lang}. Keep every citation token exactly as written ([diff:…], [ledger:…], [commit:…], [source:…], [board:…], [review:…], [inference]) and in the same sentence; keep code, paths, names and numbers as they are. Keep each scene title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones and each point at most ${SCENE_LIMITS.point.cjk} CJK characters or ${SCENE_LIMITS.point.latin} Latin ones.`,
+      "Reply with JSON only, the same shape and the same number of items: {\"turns\": [{\"n\": <n>, \"scenes\": [{\"title\": \"…\", \"points\": [\"…\"]}], \"claims\": [\"…\"], \"answer\": \"…\"}]}",
+      "", JSON.stringify({ turns: units })].join("\n");
+    let job: any = null, dropped: number[] = [], error: string | null = null;
+    try {
+      job = await engine.deps.agents.run({ kind: "review-room", title: `${s.run.id} review room translation (${lang})`, system: adm.system, text, tools: [], provider,
+        ref: s.run.id, admissionReceipt: adm.admissionReceipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal, owns: () => engine.owns(adm.x) && k.open(), ...(adm.aux ? { auxOwner: adm.x } : {}),
+        project: s.run.params?.project || null, rules: adm.rules, maxTools: 0, timeoutMs: Number(process.env.CREW_REVIEW_ROOM_TIMEOUT_MS ?? 8 * 60_000), sandbox: { writes: [], reads: [], allow: [] },
+        record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, round), header: { run: s.run.id, node: s.node.id, round, head: s.head, base: s.base, card: k.id, subject: subjectRecord(k, s, room), translate: lang, turns: units.map((u) => u.n), role: "review-room-tutor", skills: sk.map((x) => `${x.id}@sha256:${x.sha256}`) } } } as any);
+      const answer = String(job.answer ?? job.said ?? ""), m = /\{[\s\S]*\}/.exec(answer); let parsed: any = null; try { parsed = m ? JSON.parse(m[0]) : null; } catch {}
+      if (job.status !== "done" || !parsed || !Array.isArray(parsed.turns)) throw new Error(job.status !== "done" ? String(job.error ?? job.status) : "the translation was not the JSON asked for");
+      room.translations = room.translations ?? {}; room.translations[lang] = room.translations[lang] ?? {};
+      for (const t of turns) { const x = parsed.turns.find((y: any) => Number(y?.n) === t.n), errs = translationErrors(t, x);
+        // a translation that lost a citation, changed the shape or broke the board's limits is not kept: the original shows
+        if (errs.length) { dropped.push(t.n); continue; }
+        room.translations[lang][String(t.n)] = { scenes: x.scenes.map((y: any) => ({ title: String(y.title).replace(/\s+/g, " ").trim(), points: y.points.map((p: any) => String(p).replace(/\s+/g, " ").trim()) })), claims: x.claims.map(String), answer: String(x.answer), provider: provider.id ?? "", model: provider.model ?? "", at: new Date().toISOString() }; }
+    } catch (e: any) { error = String(e?.message ?? e).slice(0, 300); }
+    room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost: job?.cost ?? null }; save(k, room);
+    engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost: job?.cost ?? null, status: room.translating.status } } as any);
+  }
+  // ---------- the Library: a room's read-only snapshot, one artifact per room, a version per save ----------
+  let libMemo: ArtifactStore | null = null;
+  const library = () => o.artifacts ?? (libMemo ??= new ArtifactStore(o.dataDir));
+  /** a room's Library artifact id: room-<the room's id> */
+  const libId = (id: string) => `room-${id.toLowerCase()}`, LIB_ID = /^room-(sc-\d+|r-\d+|pr-[0-9a-f]{12}-[1-9]\d{0,8})$/;
+  const saving = new Map<string, Promise<any>>();
+  /** every Library save runs after the one before it, whatever its room: two saves never race for a version number */
+  let saveChain: Promise<unknown> = Promise.resolve();
+  const queueSave = <T>(id: string, fn: () => Promise<T>): Promise<T> => { const job = saveChain.then(fn, fn); saveChain = job.catch(() => null); saving.set(id, job); void job.catch(() => null).finally(() => { if (saving.get(id) === job) saving.delete(id); }); return job; };
+  /** what a snapshot shows (the scenes, the board, the check's answers, the languages): a re-read of GitHub alone does not change it */
+  const contentSig = (r: Room) => sha(JSON.stringify([r.turns.map((t) => [t.n, t.status, t.answer?.length ?? 0, t.scenes?.length ?? 0]), r.board.map((b) => [b.id, b.status ?? null]), r.check.questions.map((q) => [q.n, q.choice ?? null, !!q.result]), Object.entries(r.translations ?? {}).map(([l, x]) => [l, Object.keys(x)])])).slice(0, 16);
+  /** what the room is about, for the snapshot's record */
+  const subjectMeta = (k: Key, room: Room, view: any) => ({ kind: k.kind, room: k.id, repository: room.subject?.repository ?? null, number: room.subject?.number ?? (view.pr?.id ?? null), url: room.subject?.url ?? view.pr?.url ?? null,
+    branch: k.kind === "branch" ? engine.get(k.run!)?.ctx.branch ?? null : room.pr?.headRef ?? null, head: room.head, base: room.base, task: view.task?.id ?? null, title: view.card?.title ?? null });
+  /** Write the room into the Library: its scenes in every language made, the board and its pictures (copied), every citation
+   *  resolved to the text it points at (diff hunks included, so it reads without Studio's cache), the check with the captain's
+   *  answers, the transcript, cost, subject, tutors and the date. Nothing goes to GitHub. */
+  async function snapshot(api: any, k: Key, reason: string, ended = false) {
+    const room = load(k); if (!room || !room.turns.some((t) => t.status === "done")) throw refuse("Nothing to save yet: the room has no finished scene / 還沒有可以存的場景", "empty");
+    const view: any = api.view(k.id), dir = mkdtempSync(join(tmpdir(), "crew-room-snap-")), assets = join(dir, "assets"); mkdirSync(assets, { recursive: true });
+    try {
+      // pictures and narration from the room's own folder; the app's screenshots from the Task's captures
+      const names = new Map<string, string>();
+      try { for (const n of readdirSync(k.dir)) if (/^(B\d+-\d+\.png|voice-t\d+-[0-9a-f]{12}\.mp3)$/.test(n)) { copyFileSync(join(k.dir, n), join(assets, n)); names.set(`/api/review-room/${k.id}/${n.endsWith(".png") ? "image" : "audio"}/${n}`, n); } } catch {}
+      const shot = (u: unknown) => { const m = typeof u === "string" ? CAPTURE_PATH.exec(u) : null; if (!m) return u; const from = join(engine.rdir(m[1]), "captures", m[2], m[3], m[4]), name = `cap-${sha(u as string).slice(0, 16)}.png`;
+        try { if (!names.has(u as string)) { copyFileSync(from, join(assets, name)); names.set(u as string, name); } return `asset:${name}`; } catch { return null; } };
+      const board = (view.board ?? []).map((b: any) => b.type === "image" && b.src ? { ...b, src: names.has(b.src) ? `asset:${names.get(b.src)}` : null } : b.type === "screenshot" ? { ...b, pages: (b.pages ?? []).map((p: any) => ({ ...p, before: shot(p.before), after: shot(p.after) })) } : b);
+      // every citation, resolved now: a snapshot opens them without the cache, the Task or GitHub
+      const refs = new Set<string>(), add = (c: any) => { if (c?.ref && c.ok !== false) refs.add(c.ref); };
+      for (const t of room.turns) { (t.claims ?? []).forEach((c) => c.cites.forEach(add)); (t.scenes ?? []).forEach((sc) => sc.points.forEach((p) => p.cites.forEach(add))); for (const m of String(t.answer ?? "").matchAll(CITE)) refs.add(`${m[1]}:${m[2]}`); }
+      for (const b of room.board) (b.cites ?? []).forEach(add); for (const q of room.check.questions) if (q.result) (q.cites ?? []).forEach(add);
+      const cites: Record<string, any> = {}; for (const ref of [...refs].slice(0, 300)) { try { cites[ref] = await api.cite(k.id, ref); } catch (e: any) { cites[ref] = { error: String(e?.message ?? e).slice(0, 200) }; } }
+      for (const c of Object.values(cites)) if (c?.kind === "board" && c.item) c.item = board.find((b: any) => b.id === c.item.id) ?? c.item;
+      const tutors = [...new Map(room.turns.filter((t) => !t.studio && t.provider).map((t) => [`${t.provider} ${t.model}`, { provider: t.provider, model: t.model }])).values()];
+      const usd = room.turns.reduce((n, t) => n + (typeof t.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof room.translating?.cost?.usd === "number" ? room.translating.cost.usd : 0);
+      const savedAt = new Date().toISOString(), snap = { schema: 1, kind: "review-room-snapshot", room: k.id, savedAt, reason, subject: subjectMeta(k, room, view), tutors, cost: { usd: Math.round(usd * 10000) / 10000 },
+        view: { ...view, board, open: false, offer: null, running: null, tutors: [], translate: null, checking: false, moved: null, illustrations: [],
+          sources: (view.sources ?? []).map((x: any) => x.ok ? x : { n: x.n, turn: x.turn, kind: x.kind, at: x.at, ok: false, ...(x.refused ? { refused: "refused by Studio's web filter" } : {}), ...(x.error ? { error: "not read" } : {}) }), closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
+      writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
+      const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);
+      const project = String(engine.get(room.run)?.params?.project ?? engine.get(room.run)?.ctx.project ?? room.subject?.project ?? "") || "firstmate-workflow";
+      if (!store.get(aid)) store.create({ id: aid, title, type: "doc", project, source: "room", note: "A review room, saved read-only: open it to replay its scenes. / 存起來的審查室（唯讀）：打開即可重播。" });
+      const v = store.addVersion(aid, { from: dir, primary: "room.json", createdBy: { kind: "host" }, status: "draft", summary: reason, cost: { usd: snap.cost.usd, inTokens: null, outTokens: null } });
+      const fresh = load(k)!; fresh.library = { artifact: aid, versions: [...(fresh.library?.artifact === aid && v.n > 1 ? fresh.library.versions : []), { n: v.n, at: savedAt, reason }], rev: (fresh.rev ?? 0) + 1, ended: !!fresh.library?.ended || ended, sig: contentSig(fresh) }; save(k, fresh);
+      notify(k); return { artifact: aid, n: v.n, href: `#/room/lib:${aid}` };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  /** Mark the room finished, at the moment it finishes, and save it to the Library once. A room that finished before this marker
+   *  existed is never saved by Studio on its own (no burst of snapshots when Studio updates); a failed save is recorded, not retried. */
+  const finish = (api: any, k: Key, reason: string) => { try { const room = load(k); if (!room || room.finished || !room.turns.length) return;
+    room.finished = { at: new Date().toISOString(), reason }; save(k, room); autoSave(api, k); } catch {} };
+  // a turn or a translation still running: the save waits for it to end (the turn's end calls autoSave again), never a half scene;
+  // a save already in flight: this one is queued after it (queueSave), never dropped
+  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room?.finished || room.finished.tried || live.has(k.id)) return;
+    room.finished.tried = true; save(k, room);
+    void queueSave(k.id, () => snapshot(api, k, room.finished!.reason, true)).catch((e: any) => { const r2 = load(k); if (r2?.finished) { r2.finished.error = String(e?.message ?? e).slice(0, 300); save(k, r2); } }); } catch {} };
   // ---------- Studio's own scenes: no model, nothing paid, every line from git or from what GitHub returned ----------
   const studioTurn = (room: Room, action: "since" | "reviewers", title: string, head: string, claims: Claim[], extra: Partial<Turn> = {}): Turn => {
     const at = new Date().toISOString();
@@ -578,13 +833,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const files = known ? (await g(s.wt, ["diff", "--name-only", "-M", from, s.head]) ?? "").split("\n").filter(Boolean) : [];
     const diff = known ? await g(s.wt, ["diff", "--no-color", "-M", from, s.head], 2_000_000) ?? "" : "";
     const n = room.turns.length + 1, cite = (c: string): Cite => ({ ref: `commit:${c}`, ok: true });
-    const claims: Claim[] = [{ text: ancestor ? `${log.length} new commit${log.length === 1 ? "" : "s"} since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}) [commit:${s.head}]` : known ? `The branch was rewritten since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}): the new head does not build on the old one [commit:${s.head}]` : `The head moved since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}); the old head is no longer in Studio's copy [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)] }];
-    for (const x of log.slice(0, 10)) claims.push({ text: `Commit ${x.c.slice(0, 8)} [commit:${x.c}]`, kind: "claim", basis: "cited", cites: [cite(x.c)], quote: untrusted(x.subj, 200) });
-    if (files.length) claims.push({ text: `Files changed since: ${files.slice(0, 20).map(glyph).join(", ")}${files.length > 20 ? ` and ${files.length - 20} more` : ""} [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)] });
+    const claims: Claim[] = [{ text: ancestor ? `${log.length} new commit${log.length === 1 ? "" : "s"} since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}) [commit:${s.head}]` : known ? `The branch was rewritten since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}): the new head does not build on the old one [commit:${s.head}]` : `The head moved since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}); the old head is no longer in Studio's copy [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)],
+      zh: ancestor ? `你上次看過之後有 ${log.length} 個新 commit（${from.slice(0, 8)} → ${s.head.slice(0, 8)}）[commit:${s.head}]` : known ? `你上次看過之後分支被改寫了（${from.slice(0, 8)} → ${s.head.slice(0, 8)}）：新的 head 不是接在舊的之後 [commit:${s.head}]` : `你上次看過之後 head 動了（${from.slice(0, 8)} → ${s.head.slice(0, 8)}）；舊的 head 已不在 Studio 的副本裡 [commit:${s.head}]` }];
+    for (const x of log.slice(0, 10)) claims.push({ text: `Commit ${x.c.slice(0, 8)} [commit:${x.c}]`, zh: `Commit ${x.c.slice(0, 8)} [commit:${x.c}]`, kind: "claim", basis: "cited", cites: [cite(x.c)], quote: untrusted(x.subj, 200) });
+    if (files.length) claims.push({ text: `Files changed since: ${files.slice(0, 20).map(glyph).join(", ")}${files.length > 20 ? ` and ${files.length - 20} more` : ""} [commit:${s.head}]`, zh: `之後改過的檔案：${files.slice(0, 20).map(glyph).join("、")}${files.length > 20 ? ` 等另外 ${files.length - 20} 個` : ""} [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)] });
     // a reviewer's inline comment whose lines changed since: the code it points at moved (whether that answers it is the captain's call)
     for (const x of (room.pr?.notes ?? []).filter((x) => x.kind === "inline" && x.path).slice(-20)) {
       const touched = known && files.includes(x.path!) ? (x.line ? (await hunksOf({ wt: s.wt, base: from, head: s.head }, x.path!, Math.max(1, x.line - 3), x.line + 3)).count > 0 : true) : false;
-      claims.push({ text: `${touched ? "Changed since: the code this comment points at" : files.includes(x.path!) ? "Its file changed, not the lines this comment points at" : "Not touched since"}: ${x.author} on ${glyph(x.path)}${x.line ? `:L${x.line}` : ""} [review:${x.id}]`, kind: "claim", basis: "reviewer", cites: [{ ref: `review:${x.id}`, ok: true }], quote: x.body.slice(0, 400) });
+      claims.push({ text: `${touched ? "Changed since: the code this comment points at" : files.includes(x.path!) ? "Its file changed, not the lines this comment points at" : "Not touched since"}: ${x.author} on ${glyph(x.path)}${x.line ? `:L${x.line}` : ""} [review:${x.id}]`,
+        zh: `${touched ? "之後改過：這則留言指的程式碼" : files.includes(x.path!) ? "它的檔案改過，但不是這則留言指的那幾行" : "之後沒動過"}：${x.author} 在 ${glyph(x.path)}${x.line ? `:L${x.line}` : ""} [review:${x.id}]`, kind: "claim", basis: "reviewer", cites: [{ ref: `review:${x.id}`, ok: true }], quote: x.body.slice(0, 400) });
     }
     const item: Item = { id: `B${n}-1`, turn: n, type: "diff", title: "What changed since you last looked", path: "", range: { from, to: s.head }, commit: s.head, base: from, header: `${from.slice(0, 8)}..${s.head.slice(0, 8)}`, text: diff.slice(0, 8000) || "(no textual change)", basis: "cited", cites: [cite(s.head)] };
     const t = studioTurn(room, "since", "What changed since last time", s.head, claims, { from });
@@ -599,9 +856,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     // a bot's plain comment (coverage tables, CI summaries) is not a reviewer's question: counted, not shown. A bot's review or
     // inline comment (an AI reviewer's) is shown like a person's
     const isBot = (x: Note) => x.kind === "comment" && /\[bot\]$/i.test(x.author), notes = fresh.filter((x) => !isBot(x)), bots = fresh.length - notes.length;
+    const ZH_STATE: Record<string, string> = { APPROVED: "核准", CHANGES_REQUESTED: "要求修改", COMMENTED: "留言", DISMISSED: "撤銷" };
     const claims: Claim[] = notes.map((x) => ({ text: `${x.author} · ${x.kind === "review" ? `review${x.state ? ` (${x.state.toLowerCase().replace(/_/g, " ")}${x.commit ? ` at ${x.commit.slice(0, 8)}` : ""})` : ""}` : x.kind === "inline" ? `on ${glyph(x.path)}${x.line ? `:L${x.line}` : ""}${x.outdated ? " (outdated)" : ""}` : "comment"} [review:${x.id}]`,
+      zh: `${x.author} · ${x.kind === "review" ? `審查${x.state ? `（${ZH_STATE[x.state] ?? x.state.toLowerCase()}${x.commit ? `，在 ${x.commit.slice(0, 8)}` : ""}）` : ""}` : x.kind === "inline" ? `在 ${glyph(x.path)}${x.line ? `:L${x.line}` : ""}${x.outdated ? "（已過時）" : ""}` : "留言"} [review:${x.id}]`,
       kind: "claim" as const, basis: "reviewer" as const, cites: [{ ref: `review:${x.id}`, ok: true }], quote: x.body.slice(0, 1200) }));
-    if (bots) claims.push({ text: `${bots} bot comment${bots === 1 ? "" : "s"} (coverage, CI and the like) not shown here; they are on GitHub.`, kind: "aside", basis: null, cites: [] });
+    if (bots) claims.push({ text: `${bots} bot comment${bots === 1 ? "" : "s"} (coverage, CI and the like) not shown here; they are on GitHub.`, zh: `${bots} 則 bot 留言（覆蓋率、CI 之類）沒有放上來；原文在 GitHub 上。`, kind: "aside", basis: null, cites: [] });
     room.shown = [...shown, ...fresh.map((x) => x.id)]; if (!notes.length) return null;
     const t = studioTurn(room, "reviewers", "What reviewers asked", room.pr!.head, claims); room.turns.push(t); return t;
   }
@@ -635,7 +894,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           ...comments.out.filter((c: any) => Number.isSafeInteger(c?.id)).map((c: any): Note => ({ id: `i${c.id}`, kind: "comment", author: login(c.user), body: untrusted(c.body ?? "", 4000), at: typeof c.created_at === "string" ? c.created_at : null, url: ghUrl(c.html_url, repository) })),
         ].sort((x, y) => String(x.at ?? "").localeCompare(String(y.at ?? "")));
         const k: Key = { id, kind: "pr", run: null, node: null, file: prFile(id), dir: join(prDir, `${id}-images`), stat: `pr:${id}`, open: () => load(k)?.pr?.state === "open" };
-        const prior = load(k), host = hostInto(k, prior ?? { subject: { url: canonical } } as any); if (prior && prior.subject?.repository?.toLowerCase() !== repository.toLowerCase()) throw refuse("Another pull request's room has this id", "conflict");
+        const prior = load(k), wasOpen = !!prior?.pr && prior.pr.state === "open" && !prior.pr.merged, host = hostInto(k, prior ?? { subject: { url: canonical } } as any); if (prior && prior.subject?.repository?.toLowerCase() !== repository.toLowerCase()) throw refuse("Another pull request's room has this id", "conflict");
         const wt = cacheDir(repository); let fetched: { head: string; base: string } | null = null, failed: string | null = null;
         try { fetched = await a!.fetchPull(n, pull.base.ref, wt, { signal: ac.signal, timeoutMs: PR_FETCH_MS, maxBytes: PR_CACHE_BYTES() }); }
         catch (e: any) { failed = e?.overCap ? String(e.message) : "Studio could not fetch the pull request's commits from GitHub (authentication, the network or the time limit)";
@@ -654,7 +913,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         reviewersScene(k, room);
         // a room no Task hosts takes no turn, so there is no next turn to open with what changed: the scene comes now
         if (!host && fetched) { save(k, room); await catchUp(k, { key: k, run: null, wt, head: snap.head, base, node: null }, room); }
-        save(k, room); notify(k); return id;
+        save(k, room); notify(k); if (wasOpen && (snap.merged || snap.state === "closed")) finish(self, k, snap.merged ? "The pull request was merged" : "The pull request was closed"); return id;
       } finally { clearTimeout(timer); }
     })();
     refreshing.set(id, job); try { return await job; } finally { refreshing.delete(id); }
@@ -674,8 +933,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const notify = (k: Key, turn?: number) => { try { if (k.card) engine.deps.send("scard", { id: k.id, run: k.run, status: engine.cards.get(k.id)?.status }); engine.deps.send("review-room", { card: k.id, run: k.run, turn: turn ?? null }); } catch {} };
 
   /** one scene's narration by its vendor: generated once, then served from the room's folder */
-  async function speakScene(k: Key, s: S, t: Turn, vendor: string) {
-    const text = (t.claims ?? []).filter((x) => x.kind === "claim" || x.kind === "aside").map((x) => narration(x.text)).filter(Boolean).join("\n").slice(0, 4000); if (!text) throw refuse("This scene has nothing to say", "not_found");
+  async function speakScene(k: Key, s: S, t: Turn, vendor: string, lang?: string) {
+    const tr = lang && lang !== t.lang ? load(k)?.translations?.[lang]?.[String(t.n)] : null;
+    const text = (tr ? (tr.scenes.length ? tr.scenes.flatMap((x) => x.points) : tr.claims) : t.scenes?.length ? t.scenes.flatMap((x) => x.points.map((p) => p.text)) : (t.claims ?? []).filter((x) => x.kind === "claim" || x.kind === "aside").map((x) => x.text)).map((x) => narration(x)).filter(Boolean).join("\n").slice(0, 4000); if (!text) throw refuse("This scene has nothing to say", "not_found");
     const name = `voice-t${t.n}-${sha(text).slice(0, 12)}.mp3`, f = join(k.dir, name), src = `/api/review-room/${k.id}/audio/${name}`;
     if (existsSync(f)) return { src, cached: true, vendor, model: TTS_MODEL };
     const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 90_000);
@@ -699,14 +959,31 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const verdicts = [...latest.values()].map((x) => ({ author: x.author, state: x.state!, commit: x.commit ?? null, current: x.commit === pr.head }));
     return { state: pr.merged ? "merged" : pr.state, draft: pr.draft, mergedAt: pr.mergedAt, closedAt: pr.closedAt, checkedAt: pr.checkedAt, head: pr.head, headRef: pr.headRef, headRepo: pr.headRepo, baseRef: pr.baseRef, author: pr.author, title: pr.title,
       files: pr.files.length, truncated: pr.truncated, verdicts, approved: verdicts.some((v) => v.state === "APPROVED" && v.current) && !verdicts.some((v) => v.state === "CHANGES_REQUESTED") }; };
+  /** the change's line counts per file, counted by git (base to head; a pull request Studio has no commits of yet: what GitHub
+   *  listed): the room's free pictures (the welcome scene, an answer that drew none) are drawn from these. Cached per head. */
+  const statMemo = new Map<string, { files: { path: string; added: number; removed: number }[]; total: { files: number; added: number; removed: number }; from: "git" | "github" }>();
+  const diffstatOf = (s: { wt: string; base: string; head: string } | null, room: Room | null) => {
+    const sum = (files: { path: string; added: number; removed: number }[], from: "git" | "github") => ({ files: files.slice(0, 300), total: { files: files.length, added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) }, from });
+    if (s) { const key = `${s.wt}\0${s.base}\0${s.head}`, had = statMemo.get(key); if (had) return had;
+      const r = git(s.wt, ["diff", "--numstat", "-M", s.base, s.head]); if (r.ok) {
+        const v = sum(r.out.split("\n").filter(Boolean).map((l) => { const [a, d, ...rest] = l.split("\t"); return { path: glyph(rest.join("\t")).slice(0, 300), added: Number(a) || 0, removed: Number(d) || 0 }; }), "git");
+        if (statMemo.size > 200) statMemo.clear(); statMemo.set(key, v); return v; } }
+    return room?.pr?.files?.length ? sum(room.pr.files.map((f) => ({ path: f.path, added: f.added, removed: f.removed })), "github") : null;
+  };
+  /** the room's languages for the page: the translations kept, the last translation turn, and what translating would cost */
+  const langView = (r: Room | null, open: boolean) => ({ translations: r?.translations ?? {}, translating: r?.translating ?? null, langs: ROOM_LANGS,
+    tutors: open && r ? (() => { try { const k0 = keyOf(r.card); const s0 = subjectOf(k0); return s0.run && s0.node ? tutorsOf(s0.run, (() => { const o0 = offerOf(k0); return "error" in o0 ? null : { provider: o0.provider, model: o0.model }; })()) : []; } catch { return []; } })() : [],
+    library: r?.library && library().get(r.library.artifact) ? { artifact: r.library.artifact, versions: r.library.versions, current: r.library.sig === contentSig(r) } : null,
+    translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
   /** the head moved past the one the captain last looked at: how many commits (null when the branch was rewritten) */
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
     const known = git(s.wt, ["cat-file", "-e", `${from}^{commit}`]).ok, anc = known && git(s.wt, ["merge-base", "--is-ancestor", from, s.head]).ok;
     return { from, to: s.head, commits: anc ? Number(git(s.wt, ["rev-list", "--count", `${from}..${s.head}`]).out) || 0 : null, rewritten: known && !anc }; };
-  return {
+  let self: any = null;
+  return (self = {
     /** the summary a merge card shows: never readiness, never an answer */
     summary(c: SCard) {
-      if (c.kind !== "merge") return null; const r0 = load(keyOf(c.id)), r = r0 ? settled(r0) : null;
+      if (c.kind !== "merge") return null; const k0 = keyOf(c.id), r0 = load(k0), r = r0 ? settled(r0) : null;
       return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, turns: r?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, questions: r?.turns.filter((t) => !t.studio).length ?? 0, running: live.has(c.id), check: checkOf(r),
         sources: { consulted: r?.sources.filter((s) => s.ok).length ?? 0, refused: r?.sources.filter((s) => s.refused).length ?? 0 } };
     },
@@ -724,9 +1001,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (k.kind === "merge") { const c = k.card!;
         if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); pregenerate(k); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
-        return { card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
+        let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
+        return { ...langView(r, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
-          actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, summary: this.summary(c) };
+          actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), summary: this.summary(c) };
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
@@ -737,18 +1015,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         const pr = k.kind === "pr" ? load(k) : null; if (pr?.subject?.url && Date.now() - Date.parse(pr.pr?.attemptedAt ?? pr.pr?.checkedAt ?? "0") > PR_RECHECK_MS) void readPr(pr.subject.url).catch(() => {}); }
       const r0 = load(k), r = r0 ? settled(r0) : null, run = k.run ? engine.get(k.run) : null, open = k.open() && !!s, sub = r?.subject ?? (s ? subjectRecord(k, s, r) : { kind: k.kind, room: k.id });
       const title = k.kind === "branch" ? { en: `Branch ${run?.ctx.branch ?? k.id}`, "zh-TW": `分支 ${run?.ctx.branch ?? k.id}` } : { en: `Pull request #${sub.number}: ${r?.pr?.title ?? ""}`, "zh-TW": `Pull request #${sub.number}：${r?.pr?.title ?? ""}` };
-      return { card: { id: k.id, run: k.run, node: k.node, title, status: open ? "open" : "closed" }, subject: sub, task: run ? { id: run.id, title: run.title ?? run.id } : null,
+      return { ...langView(r, open), card: { id: k.id, run: k.run, node: k.node, title, status: open ? "open" : "closed" }, subject: sub, task: run ? { id: run.id, title: run.title ?? run.id } : null,
         pr: k.kind === "pr" ? { id: String(sub.number ?? ""), url: sub.url ?? null } : run?.ctx.pr?.adapter === "github" ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null, prState: prState(r), stale: r?.pr?.stale ?? null, checking: refreshing.has(k.id),
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
-        actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, summary: null };
+        actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), summary: null };
     },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
     async openPr(url: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); return { id, href: `#/room/${id}`, room: this.view(id) }; },
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
-    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown }, by: string) {
+    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown }, by: string) {
       let k = keyOf(id);
       if (k.kind === "pr") { const r0 = load(k);
         // a paid turn reads the pull request again first when it was read a while ago: merged or closed by now, the turn is refused
@@ -756,6 +1034,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (load(k)?.pr?.stale && load(k)?.pr?.state === "open") throw refuse("GitHub shows newer commits Studio could not fetch yet: check for new commits before a paid turn / GitHub 上有 Studio 還沒抓到的新 commit：付費提問前請先檢查新的 commit", "stale"); }
       if (!k.open()) throw refuse(k.kind === "merge" ? "The merge card is answered: the room is read-only now / 合併卡已回覆，審查室只能閱讀" : `${closedText(k, load(k)).en} / ${closedText(k, load(k)).zh}`, "closed");
       const s = subjectOf(k);
+      // a regeneration: the same question, asked again on a model the captain picked; the answer it replaces is kept
+      const base = a.regenerate != null ? load(k)?.turns.find((t) => t.n === Number(a.regenerate) && t.status === "done" && !t.studio) ?? null : null;
+      if (a.regenerate != null && !base) throw refuse("There is no finished answer to explain again / 沒有可以重講的回答", "not_found");
+      if (base) { a = { ...a, action: base.action, text: base.text }; if (!a.pick) throw refuse("Pick the model to explain it again / 請選一位導師重講", "bad_pick"); }
+      else if (a.pick != null) throw refuse("A model is picked only to explain a finished answer again (regenerate); a new question runs on the room's tutor / 只有重講一個已完成的回答時才能選導師", "bad_pick");
       const action = String(a.action ?? ""); if (!Object.hasOwn(ROOM_ACTIONS, action)) throw refuse(`action is one of ${Object.keys(ROOM_ACTIONS).join(", ")}`, "bad_action");
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ROOM_ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
@@ -779,43 +1062,58 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         return this.start(id, a, by);
       }
       if (!s.run || !s.node) throw noHost();
-      const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
+      if (a.pick) { const o0 = offerOf(k, a.pick); if ("error" in o0) throw refuse(o0.error!, (o0 as any).code ?? "held"); }
+      const offer = offerOf(k, a.pick); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
       if (a.confirm !== offer.hash) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
-      const off = engine.grants.open("sandbox-off", s.run.ctx.project ?? s.run.params?.project ?? null);
-      if (off) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
-      if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
-      const sk = skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
-      // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it (a branch or
-      // pull request room: an auxiliary owner of the review node, which never advances the Task), the native selection verifies
-      // the reviewer member's capability, and staffing issues its receipt for the tutor seat
-      const run = s.run, tutor = seatPick(run, s.node), pick = tutor.pick, held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]); let provider: any;
-      try {
-        if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
-        // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
-        // signed in, out of quota or not offered is refused with the reason
-        if (pick.model) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
-          // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
-          if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${k.id}`, at: new Date().toISOString() } } as any); }
-        catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
-        try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
-        catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
-      } catch (e) { held?.release(); throw e; }
-      const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
-      // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
-      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level, crew: !tutor.outside } } : {}) };
-      const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
-      let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
-      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head };
+      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
-      void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); });
+      void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); autoSave(self, k); });
       return this.view(k.id);
     },
+    /** Show the explanation in another language: the turns not in it yet are translated by one small paid turn on the room's
+     *  tutor (text only: no tool, no code read; citations, board items and pictures stay the original's), confirmed once per
+     *  room; what is translated is kept per turn and language, so switching back costs nothing. */
+    async translate(id: string, a: { lang?: unknown; confirm?: unknown }, by: string) {
+      const k = keyOf(id), lang = String(a.lang ?? ""); if (!(ROOM_LANGS as readonly string[]).includes(lang)) throw refuse(`lang is one of ${ROOM_LANGS.join(", ")}`, "bad_lang");
+      if (!k.open()) throw refuse("This room no longer takes paid turns; it shows the languages it has / 這間審查室不再付費，只顯示已有的語言", "closed");
+      const room0 = load(k); const todo = room0 ? untranslated(room0, lang) : []; if (!todo.length) return this.view(id);
+      if (live.has(k.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
+      const s = subjectOf(k); if (!s.run || !s.node) throw noHost();
+      const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
+      const hash = sha(`${offer.hash}:translate`).slice(0, 16), estimate = translateEstimate(room0);
+      if (room0!.translateOk?.hash !== hash && a.confirm !== hash) throw refuse(`Translating this room's explanation is a small paid round on ${offer.provider} ${offer.model ?? "(default model)"} (~${estimate ?? "?"}): confirm it once / 翻譯這間房間的解說是一次小的付費回合（約 ${estimate ?? "?"}），請確認一次`, "confirm_required", { offer: { ...offer, translate: { hash, estimate, lang } } });
+      try { await engine.deps.refreshUsable?.(); } catch {}
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, seatPick(s.run, s.node));
+      if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
+      const room = load(k)!; room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
+      live.set(k.id, -2); notify(k);
+      void runTranslate(k, room, lang, untranslated(room, lang), s, provider, sk, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k); autoSave(self, k); });
+      return this.view(k.id);
+    },
+    /** Save to the Library now (the captain's button): a new version of the room's snapshot */
+    async saveToLibrary(id: string, by: string) { const k = keyOf(id); return queueSave(k.id, () => snapshot(this, k, `Saved by ${by}`)); },
+    /** the engine calls this when a card is answered: a merge card's room finishes now (and is saved once) */
+    cardAnswered(c: SCard) { if (c.kind !== "merge") return; try { finish(this, keyOf(c.id), "The merge card was answered"); } catch {} },
+    /** a room's snapshot from the Library (a version, else the latest), its pictures served from the snapshot itself */
+    librarySnapshot(aid: string, n?: unknown) {
+      if (!LIB_ID.test(aid)) throw refuse("No such saved room", "not_found"); const store = library(), a = store.get(aid); if (!a || a.source !== "room") throw refuse("No such saved room", "not_found");
+      const vs = store.versions(aid), v = n != null && n !== "" ? vs.find((x) => x.n === Number(n)) : vs.at(-1); if (!v) throw refuse("No such version of this saved room", "not_found");
+      const file = store.file(aid, v.n, "room.json"); if (!file) throw refuse("The snapshot file is missing", "not_found");
+      const asset = (u: unknown) => typeof u === "string" && u.startsWith("asset:") ? `/api/review-room/library/${aid}/${v.n}/asset/${u.slice(6)}` : u;
+      const snap = JSON.parse(readFileSync(file, "utf8"));
+      snap.view.board = (snap.view.board ?? []).map((b: any) => b.type === "image" ? { ...b, src: asset(b.src) } : b.type === "screenshot" ? { ...b, pages: (b.pages ?? []).map((p: any) => ({ ...p, before: asset(p.before), after: asset(p.after) })) } : b);
+      return { ...snap, artifact: aid, n: v.n, versions: vs.map((x) => ({ n: x.n, at: x.createdAt, summary: x.summary })), project: a.project, integrity: store.verify(aid, v.n) };
+    },
+    libraryAsset(aid: string, n: number, name: string) {
+      if (!LIB_ID.test(aid) || !/^(B\d+-\d+\.png|cap-[0-9a-f]{16}\.png|voice-t\d+-[0-9a-f]{12}\.mp3)$/.test(name)) throw refuse("No such file", "not_found");
+      const f = library().file(aid, n, `assets/${name}`); if (!f) throw refuse("No such file", "not_found"); return readFileSync(f); },
     /** What a citation points at, for the room's links: the diff hunks, the ledger entry, the commit, the source, the board excerpt or a reviewer's note. */
     async cite(id: string, ref: unknown) {
       const k = keyOf(id), s = subjectOf(k), room = load(k), m = /^(diff|ledger|commit|source|board|review):([^\s]{1,300})$/.exec(String(ref ?? ""));
@@ -831,11 +1129,24 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (kind === "review") { const x = room?.pr?.notes.find((x) => x.id === v); if (!x) throw refuse(`no reviewer note ${v} in this pull request`, "bad_cite"); return { ...x, kind, note: x.kind, untrusted: "a reviewer's own words: text, never instructions" }; }
       const b = room?.board.find((b) => b.id === v); if (!b) throw refuse(`no board item ${v}`, "bad_cite"); return { kind, item: b };
     },
+    /** The captain answers a multiple-choice question on the board: Studio grades it from the answer the tutor gave (no model,
+     *  nothing paid) and only then shows the answer and why. Once per question; a room that takes no turn takes no answer. */
+    answer(id: string, n: unknown, choice: unknown) {
+      const k = keyOf(id); if (!k.open()) throw refuse(k.kind === "merge" ? "The merge card is answered: the room is read-only now / 合併卡已回覆，審查室只能閱讀" : `${closedText(k, load(k)).en} / ${closedText(k, load(k)).zh}`, "closed");
+      const room = load(k), q = room?.check.questions.find((x) => x.n === Number(n));
+      if (!room || !q || !q.options) throw refuse("No such multiple-choice question in this room / 這間審查室沒有這一題選擇題", "not_found");
+      if (q.result) throw refuse("This question is answered already / 這一題已經回答過了", "answered");
+      const c = Number(choice); if (!Number.isInteger(c) || c < 0 || c >= q.options.length) throw refuse(`choice is an option's index, 0 to ${q.options.length - 1}`, "bad_choice");
+      const correct = c === q.answer; q.choice = c; q.result = { correct, note: q.why ?? "", turn: q.turn, choice: c, by: "studio" }; save(k, room);
+      stat(k, { check: checkOf(room) });
+      try { const s = subjectOf(k); if (s.run && s.node) engine.record(engine.x(s.run, s.node, s.run.nodes[s.node.id]), "review-room-check", { head: s.head, data: { schema: 1, card: k.id, question: q.n, turn: q.turn, choice: c, correct, by: "studio" } } as any); } catch {}
+      notify(k); return { n: q.n, correct, choice: c, answer: q.answer, why: q.why, cites: q.cites ?? [], room: this.view(id) };
+    },
     /** a generated illustration's PNG, from the room's own folder */
     image(id: string, name: string) { const k = keyOf(id); if (!/^B\d+-\d+\.png$/.test(name)) throw refuse("No such image", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such image", "not_found"); return readFileSync(f); },
     /** A scene's narration in the tutor vendor's own neural voice (paid; the captain turned the voice on): generated once,
      *  cached in the room's folder, served from it. Only when the tutor's vendor speaks; never another vendor. */
-    async speech(id: string, scene: unknown) {
+    async speech(id: string, scene: unknown, lang?: unknown) {
       const k = keyOf(id); if (!k.open()) throw refuse("The merge card is answered: the room no longer speaks / 合併卡已回覆，審查室不再朗讀", "closed");
       const s = subjectOf(k), room = load(k), m = /^t([1-9]\d{0,3})$/.exec(String(scene ?? "")), t = m ? room?.turns.find((x) => x.n === Number(m[1])) : null;
       if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
@@ -844,14 +1155,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[seatPick(s.run, s.node).pick.provider];
       if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
       if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
-      const key = `${k.id}/${t.n}`, running = speaking.get(key); if (running) return running;
-      const job = speakScene(k, s, t, vendor); speaking.set(key, job); try { return await job; } finally { speaking.delete(key); }
+      const key = `${k.id}/${t.n}`, running = speaking.get(`${key}/${(ROOM_LANGS as readonly string[]).includes(String(lang)) ? String(lang) : ""}`); if (running) return running;
+      const l = (ROOM_LANGS as readonly string[]).includes(String(lang)) ? String(lang) : undefined;
+      const job = speakScene(k, s, t, vendor, l); speaking.set(`${key}/${l ?? ""}`, job); try { return await job; } finally { speaking.delete(`${key}/${l ?? ""}`); }
     },
     /** a narration file, from the room's own folder */
     audio(id: string, name: string) { const k = keyOf(id); if (!/^voice-t\d+-[0-9a-f]{12}\.mp3$/.test(name)) throw refuse("No such audio", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such audio", "not_found"); return readFileSync(f); },
     /** tests: wait for a room's running turn and its background pictures */
-    async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
-  };
+    async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size || saving.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
+  });
 }
 
 /** OpenAI's speech endpoint with the key Studio keeps, through the egress proxy with a one-host credential. */

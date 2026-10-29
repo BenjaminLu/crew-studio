@@ -1,129 +1,333 @@
-/* The review room (public/review-room.js): the board is the stage (a scene: the visual beside the tutor's points, with a
-   caption), a slim prompt bar under it, the transcript in a drawer closed by default. */
-.rr-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
-.rr-top b { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
-.rr-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.rr-stage { padding: 12px 14px; min-width: 0; }
-.rr-scene-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
-.rr-scene-title { flex: 1 1 auto; min-width: 0; display: grid; overflow-wrap: anywhere; }
-.rr-scene-title b { font-size: 17px; }
-.rr-scene { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; min-height: 46vh; }
-@media (max-width: 900px) { .rr-scene { grid-template-columns: minmax(0, 1fr); min-height: 0; } }
-.rr-visual { min-width: 0; }
-.rr-visual .rr-item { border: 0; padding: 0; }
-.rr-novisual { padding: 40px 0; text-align: center; }
-.rr-vstrip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.rr-vchip { font: 12px var(--sans, system-ui); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
-.rr-vchip.on { border-color: var(--accent); color: var(--accent-text, var(--accent)); }
-.rr-points { min-width: 0; overflow-wrap: anywhere; }
-.rr-q { margin: 0 0 10px; color: var(--text-2); }
-.rr-pointlist { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
-.rr-point { animation: rr-in .35s ease-out; }
-.rr-point.now { font-weight: 500; }
-.rr-point.inference { border-left: 3px solid var(--warn, #c9861a); padding-left: 8px; list-style-position: inside; }
+/* The review room (public/review-room.js). A room is the whole screen (focus mode: the sidebar folds to its rail, Firstmate
+   is a sheet over the room): the header, the stage (the board, its caption, the play bar) and the dock, one viewport tall.
+   Nothing in the room grows the page: the board has a fixed height, the picture scales to it, the points column shows at
+   most four points (the next ones are the next page). The transcript and a citation open over the room. */
+
+/* ---------- the room's paper: tokens (light, then dark under the system preference and under the dark theme) ---------- */
+:root {
+  --rr-paper: #fffcf4; --rr-paper-edge: #efe6cf; --rr-dot: rgba(31,42,68,.14); --rr-ink: #1f2a44; --rr-ink-2: #5b6478; --rr-marker: #1d3f72;
+  --rr-ok: #2e9e6b; --rr-ok-soft: #e3f4ea; --rr-bad: #c8463d; --rr-bad-soft: #fbe9e7; --rr-hl: rgba(255,214,90,.62); --rr-new: #2f5bd3; --rr-new-soft: rgba(47,91,211,.10);
+  --rr-cite-bg: rgba(29,63,114,.07); --rr-cite-ink: #1d3f72; --rr-caption: #fff7e0; --rr-sticky: #fff3b0; --rr-sticky-ink: #1f2a44; --rr-img-bg: #ffffff;
+  --rr-code-bg: rgba(31,42,68,.05); --rr-inf-bg: rgba(201,134,26,.16); --rr-inf-ink: #7a4d00; --rr-add: rgba(46,158,107,.18); --rr-del: rgba(200,70,61,.15);
+  --rr-shadow: 0 1px 0 rgba(31,42,68,.04), 0 10px 30px -12px rgba(31,42,68,.22);
+  --rr-hand: "LXGW WenKai TC", "Caveat", "Kaiti TC", "STKaiti", cursive;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-dot: rgba(232,235,241,.09); --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
+  --rr-ok: #5cc994; --rr-ok-soft: #14291f; --rr-bad: #ff8a80; --rr-bad-soft: #35181b; --rr-hl: rgba(255,205,80,.26); --rr-new: #8eb0ff; --rr-new-soft: rgba(142,176,255,.12);
+  --rr-cite-bg: rgba(156,192,255,.10); --rr-cite-ink: #b9d0ff; --rr-caption: #232833; --rr-sticky: #3a3420; --rr-sticky-ink: #ece6d6; --rr-img-bg: #f4f1ea;
+  --rr-code-bg: rgba(232,235,241,.06); --rr-inf-bg: rgba(232,176,79,.18); --rr-inf-ink: #f0c46a; --rr-add: rgba(92,201,148,.18); --rr-del: rgba(255,138,128,.16);
+  --rr-shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -14px rgba(0,0,0,.7); } }
+:root[data-theme="dark"] {
+  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-dot: rgba(232,235,241,.09); --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
+  --rr-ok: #5cc994; --rr-ok-soft: #14291f; --rr-bad: #ff8a80; --rr-bad-soft: #35181b; --rr-hl: rgba(255,205,80,.26); --rr-new: #8eb0ff; --rr-new-soft: rgba(142,176,255,.12);
+  --rr-cite-bg: rgba(156,192,255,.10); --rr-cite-ink: #b9d0ff; --rr-caption: #232833; --rr-sticky: #3a3420; --rr-sticky-ink: #ece6d6; --rr-img-bg: #f4f1ea;
+  --rr-code-bg: rgba(232,235,241,.06); --rr-inf-bg: rgba(232,176,79,.18); --rr-inf-ink: #f0c46a; --rr-add: rgba(92,201,148,.18); --rr-del: rgba(255,138,128,.16);
+  --rr-shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -14px rgba(0,0,0,.7); }
+/* the handwriting, only for the board's titles and picture labels: LXGW WenKai first in a Chinese room, Caveat first in English */
+.rr-hand { font-family: var(--rr-hand); font-weight: 400; }
+html:lang(en) .rr-hand { font-family: "Caveat", "LXGW WenKai TC", "Kaiti TC", cursive; }
+
+/* ---------- focus mode ---------- */
+body.room-focus .main { overflow: hidden !important; padding: 0 !important; max-height: none !important; }
+body.room-focus .fab, body.room-focus .ob-tour { display: none !important; }
+body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bottom: 0; height: auto; z-index: 80; width: min(var(--chat-w), 92vw); box-shadow: var(--shadow-2); }
+@media (max-width: 760px) { body.room-focus .side { display: none; } body.room-focus { overflow: hidden; }
+  /* the room has no launcher dock to leave room for: Firstmate is the header's button */
+  body.room-focus.chat-closed .shell { height: 100dvh; } }
+
+/* ---------- the room: five fixed rows, only the board flexes ---------- */
+.rr-room { height: 100vh; height: 100dvh; display: grid; grid-template-rows: 48px minmax(0, 1fr) 56px; gap: 10px; padding: 12px 24px; box-sizing: border-box; max-width: 1480px; margin: 0 auto; min-width: 0; }
+.rr-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rr-back { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 13px; white-space: nowrap; flex: none; text-decoration: none; cursor: pointer; }
+.rr-back:hover { color: var(--text); background: var(--surface-2); }
+.rr-back:disabled { opacity: .55; cursor: default; }
+.rr-htitle { display: grid; min-width: 0; flex: 1 1 200px; }
+.rr-htitle b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-htitle span { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-pills { display: flex; gap: 6px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.rr-pill { display: inline-block; height: 28px; line-height: 26px; padding: 0 10px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; min-width: 0; flex: 0 1 auto; box-sizing: border-box; }
+.rr-pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; font-weight: 600; }
+.rr-pill.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.rr-pill.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.rr-pill .add { color: var(--ok); } .rr-pill .del { color: var(--bad); }
+.rr-ic { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* the stage: the board, then its caption and its play bar */
+.rr-stage { display: grid; grid-template-rows: minmax(0, 1fr) 52px 40px; gap: 10px; min-height: 0; min-width: 0; }
+.rr-board { min-height: 0; min-width: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 18px; border: 1px solid var(--rr-paper-edge); background-color: var(--rr-paper); background-image: radial-gradient(var(--rr-dot) 1.1px, transparent 1.3px); background-size: 20px 20px; box-shadow: var(--rr-shadow); color: var(--rr-ink); padding: 16px 28px; }
+.rr-stitle { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin: 0 0 8px; }
+.rr-kicker { flex: none; font-size: 12px; color: var(--rr-ink-2); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.rr-stitle h2 { margin: 0; font-size: clamp(22px, 2.3vw, 32px); line-height: 1.2; color: var(--rr-marker); min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; isolation: isolate; padding: 0 4px; }
+/* the highlighter under a scene's title: drawn once, when the scene first shows */
+.rr-stitle h2 .rr-hl { position: absolute; left: 0; right: 0; bottom: .12em; height: .42em; background: var(--rr-hl); border-radius: 3px; z-index: -1; transform-origin: left; }
+.rr-stitle h2 .rr-hl.rr-anim { animation: rr-scale .45s cubic-bezier(.2,.7,.2,1) .1s both; }
+.rr-scene { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 28px; min-height: 0; min-width: 0; }
+.rr-visual { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 6px; }
+.rr-visual > .rr-item { min-height: 0; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: 4px; border: 0; padding: 0; margin: 0; background: none; }
+.rr-body { min-height: 0; min-width: 0; overflow: auto; }
+.rr-body.pic { display: grid; place-items: center; overflow: hidden; }
+.rr-body.pic > *, .rr-flow-wrap, .rr-chart-wrap { width: 100%; height: 100%; min-height: 0; min-width: 0; }
+.rr-flow-wrap, .rr-chart-wrap { display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; }
+.rr-flow, .rr-chart, .rr-keycard { width: 100%; height: 100%; display: block; }
+.rr-drawing { display: grid; place-items: center; min-height: 0; }
+.rr-empty { display: grid; align-content: center; justify-items: start; gap: 8px; max-width: 640px; }
+.rr-vstrip { display: flex; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
+.rr-vchip { font: 12px var(--f-sans); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; flex: 0 1 auto; }
+.rr-vchip.on { border-color: var(--accent); color: var(--accent-text); }
+
+/* the points: at most four (a page), each at most three lines; the column never grows the page */
+.rr-points { min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+.rr-pointlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.rr-point { position: relative; padding: 8px 12px 8px 14px; border-left: 3px solid var(--rr-paper-edge); border-radius: 0 10px 10px 0; color: var(--rr-ink-2); font-size: 15.5px; line-height: 1.55; transition: color .25s, background-color .25s, border-color .25s; }
+.rr-point.rr-enter { animation: rr-in .35s ease-out both; }
+.rr-point.now { color: var(--rr-ink); border-left-color: var(--rr-marker); background: var(--rr-new-soft); }
+.rr-point code { font: 13px var(--f-mono); background: var(--rr-cite-bg); padding: 0 4px; border-radius: 4px; }
+.rr-point.inference { border-left-style: dashed; }
+.rr-ptext { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.rr-point.code pre { max-height: 9em; overflow: hidden; }
+.rr-ppage { margin: 0; font-size: 12px; color: var(--rr-ink-2); }
 @keyframes rr-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .rr-point { animation: none; } }
-.rr-sceneq { margin-top: 12px; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); }
+
+.rr-sceneq { padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); font-size: 13px; }
 .rr-sceneq ol { margin: 4px 0 0; padding-left: 18px; }
-.rr-caption { margin: 12px 0 0; min-height: 2.6em; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,.78); color: #fff; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
-.rr-caption:empty { visibility: hidden; }
-.rr-playbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-.rr-voice select { max-width: 100%; }
-.rr-bar { display: grid; gap: 6px; min-width: 0; }
-.rr-askrow { display: flex; gap: 8px; min-width: 0; }
-.rr-askrow .input { flex: 1 1 auto; min-width: 0; }
-.rr-drawer summary { cursor: pointer; font-weight: 600; }
-.rr-drawer h3 { font-size: 14px; margin: 12px 0 6px; }
-.rr-jump { background: transparent; border: 0; padding: 2px 0; text-align: left; cursor: pointer; color: var(--text); font: inherit; overflow-wrap: anywhere; }
-.rr-jump:hover .rr-jq { text-decoration: underline; }
+
+/* the caption follows the point being read */
+.rr-caption { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 16px; border-radius: 12px; background: var(--rr-caption); color: var(--rr-ink); border: 1px solid var(--rr-paper-edge); font-size: 16px; line-height: 1.4; }
+.rr-who { flex: none; font-size: 11px; font-weight: 600; color: var(--rr-ink-2); padding-right: 12px; border-right: 1px solid var(--rr-paper-edge); }
+.rr-ctext { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.rr-ctext:empty::before { content: "\00a0"; }
+
+/* the play bar: point back, the dots, point forward, play, replay, the scene, the voice */
+.rr-playbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rr-ibtn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); display: grid; place-items: center; flex: none; padding: 0; cursor: pointer; }
+.rr-ibtn:disabled { opacity: .4; cursor: default; }
+.rr-ibtn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+.rr-ibtn.primary .rr-ic { fill: currentColor; }
+.rr-dots { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
+.rr-dot { border: 0; padding: 0 2px; background: none; height: 22px; display: grid; place-items: center; cursor: pointer; }
+.rr-dot i { display: block; width: 8px; height: 8px; border-radius: 99px; background: var(--border-strong); transition: width .25s, background-color .25s; }
+.rr-dot[aria-current="step"] i { width: 24px; background: var(--rr-marker); }
+.rr-scenenav { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.rr-mini { border: 0; background: none; color: var(--text-2); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 14px; }
+.rr-mini:disabled { opacity: .35; cursor: default; }
+.rr-voice select { max-width: 220px; height: 34px; }
+
+/* the dock: quick actions, the question, the transcript; what needs a word opens above it */
+.rr-dock { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-sizing: border-box; }
+.rr-quick { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.rr-chip { height: 36px; padding: 0 12px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; white-space: nowrap; cursor: pointer; flex: none; }
+.rr-chip.lead { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.rr-chip:disabled { opacity: .5; cursor: default; }
+.rr-askrow { flex: 1 1 auto; min-width: 140px; display: flex; align-items: center; gap: 6px; height: 40px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); padding: 0 4px 0 14px; box-sizing: border-box; }
+.rr-askin { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; height: 36px; color: var(--text); font: inherit; }
+.rr-mic, .rr-send { height: 32px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12px; padding: 0 10px; white-space: nowrap; cursor: pointer; }
+.rr-mic.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.rr-send { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+.rr-mic:disabled, .rr-send:disabled { opacity: .5; cursor: default; }
+.rr-dock-note { flex: 1; margin: 0 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-ro-note { display: none; margin: 0 8px; flex: 1; font-size: 13px; }
+.rr-pops { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); display: grid; justify-items: end; gap: 6px; z-index: 20; pointer-events: none; }
+.rr-pops > * { pointer-events: auto; max-width: min(720px, 100%); }
+.rr-pops > [data-heard] { pointer-events: none; }
+.rr-busy { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
+.rr-busy i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; animation: rr-pulse 1s ease-in-out infinite; }
+@keyframes rr-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .rr-busy i { animation: none; } }
+.rr-pop { margin: 0; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-2); font-size: 13px; }
+.rr-pop.rr-err { color: var(--bad); }
+.rr-confirm { border-color: var(--accent); }
+.rr-confirm p { margin: 0 0 8px; }
+
+/* the transcript drawer and a citation: over the room, never pushing the board */
+.rr-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 40; }
+.rr-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 92vw); z-index: 41; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-2); display: grid; grid-template-rows: auto minmax(0, 1fr); transition: transform .25s cubic-bezier(.2, .7, .2, 1), visibility .25s; }
+.rr-drawer[data-open="false"] { transform: translateX(100%); visibility: hidden; }
+.rr-drawer > header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.rr-drawer > header b { flex: 1; font-size: 14px; }
+.rr-drawer-body { overflow: auto; padding: 8px 16px 24px; overflow-wrap: anywhere; }
+.rr-drawer h3 { font-size: 12px; color: var(--text-3); font-weight: 600; margin: 14px 0 6px; }
+@media (prefers-reduced-motion: reduce) { .rr-drawer { transition: none; } }
+.rr-cite-panel { position: fixed; right: 16px; bottom: 96px; width: min(560px, calc(100vw - 32px)); max-height: 60vh; overflow: auto; z-index: 45; border: 1px solid var(--accent); box-shadow: var(--shadow-2); }
+.rr-jump { background: transparent; border: 0; padding: 6px 8px; border-radius: 8px; text-align: left; cursor: pointer; color: var(--text); font: inherit; overflow-wrap: anywhere; width: 100%; }
+.rr-jump:hover { background: var(--surface-2); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.rr-board, .rr-chat, .rr-side, .rr-cite-panel { min-width: 0; overflow-wrap: anywhere; }
-.rr-board h2, .rr-chat h2, .rr-side h2 { font-size: 15px; margin: 0 0 8px; }
-.rr-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin: 0 0 10px; background: var(--surface, transparent); min-width: 0; }
-.rr-item-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 0 0 6px; min-width: 0; }
-.rr-item-h code { overflow-wrap: anywhere; }
-.rr-pre > span { display: block; min-width: max-content; }
-.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--code-bg, rgba(127,127,127,.08)); font: 12px/1.45 var(--mono, ui-monospace, monospace); overflow-x: auto; max-width: 100%; white-space: pre; }
-.rr-diff .add { background: rgba(40,160,80,.16); }
-.rr-diff .del { background: rgba(210,60,60,.16); }
+
+/* ---------- the board's pictures and excerpts ---------- */
+.rr-item { min-width: 0; }
+.rr-item-h { display: flex; flex-wrap: nowrap; gap: 6px; align-items: baseline; margin: 0; min-width: 0; overflow: hidden; font-size: 12px; color: var(--text-2); }
+.rr-item-h b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rr-item-h code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rr-pre > span { display: block; }
+.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--rr-code-bg); font: 12.5px/1.5 var(--f-mono); max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rr-diff .add { background: var(--rr-add); }
+.rr-diff .del { background: var(--rr-del); }
 .rr-diff .hunk { color: var(--text-2); }
 .rr-code i { font-style: normal; color: var(--text-2); user-select: none; }
 .rr-code .hl { background: var(--accent-soft); }
 .rr-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-@media (max-width: 640px) { .rr-compare { grid-template-columns: minmax(0, 1fr); } }
-.rr-steps { border: 1px dashed var(--accent); border-radius: 12px; padding: 8px; margin: 0 0 10px; }
-.rr-step-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 6px; }
-.rr-flow-wrap { overflow-x: auto; max-width: 100%; }
-.rr-flow { max-width: none; height: auto; }
-.rr-flow rect, .rr-flow polygon { fill: var(--surface, #fff); stroke: var(--border-strong); stroke-width: 1.4; }
-.rr-flow text { fill: var(--text, #111); font: 12px var(--sans, system-ui, sans-serif); }
-.rr-flow .rr-edge { stroke: var(--text-2, #666); stroke-width: 1.4; }
-.rr-flow .rr-edge.dashed { stroke-dasharray: 5 4; }
-.rr-flow .rr-arrowhead { fill: var(--text-2, #666); }
-.rr-flow .rr-elabel { fill: var(--text-2, #555); font-size: 11px; }
-.rr-flow .rr-new rect, .rr-flow .rr-new polygon { stroke: var(--accent); stroke-width: 2.6; fill: var(--accent-soft); }
-.rr-flow line.rr-new { stroke: var(--accent); stroke-width: 2.4; }
-.rr-turns { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px; }
-.rr-msg { padding: 8px 10px; border-radius: 10px; min-width: 0; overflow-wrap: anywhere; }
-.rr-msg.captain { background: var(--accent-soft); margin-left: 12%; }
-.rr-msg.tutor { border: 1px solid var(--border); margin-right: 4%; }
-.rr-answer p, .rr-answer h4 { margin: 0 0 8px; }
-.rr-claim.inference { border-left: 3px solid var(--warn, #c9861a); padding-left: 8px; }
-.rr-inference { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; margin-right: 6px; border-radius: 6px; background: rgba(201,134,26,.16); color: var(--warn-text, #8a5a0b); }
+.rr-flow .rr-box { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; stroke-linejoin: round; }
+.rr-flow text { fill: var(--rr-ink); font-family: var(--rr-hand); font-size: 19px; }
+html:lang(en) .rr-flow text { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 21px; }
+.rr-flow .rr-edge { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; }
+.rr-flow .rr-edge.dashed { stroke-dasharray: 6 5; }
+.rr-flow .rr-ahead { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.rr-flow .rr-elabel { fill: var(--rr-ink-2); font-size: 16px; }
+.rr-flow .rr-new .rr-box { stroke: var(--rr-new); fill: var(--rr-new-soft); }
+.rr-flow .rr-edge.rr-new, .rr-flow .rr-ahead.rr-new { stroke: var(--rr-new); }
+.rr-flow .rr-newtag { fill: var(--rr-new); font-size: 15px; }
+.rr-keycard .rr-key-title { font-size: 34px; fill: var(--rr-marker); }
+.rr-keycard .rr-key-line { stroke: var(--rr-hl); stroke-width: 12; fill: none; stroke-linecap: round; }
+.rr-keycard .rr-sticky rect { fill: var(--rr-sticky); }
+.rr-keycard .rr-sticky-name { font-size: 22px; fill: var(--rr-sticky-ink); }
+.rr-keycard .rr-sticky-dir { font-size: 14px; fill: var(--rr-sticky-ink); opacity: .75; font-family: var(--f-mono); }
+.rr-turns { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+.rr-inference { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; margin-right: 6px; border-radius: 6px; background: var(--rr-inf-bg); color: var(--rr-inf-ink); }
 .rr-tier { font-size: 11px; font-weight: 600; padding: 0 4px; border-radius: 4px; background: rgba(127,127,127,.14); }
-.rr-cite { font: 11px var(--mono, ui-monospace, monospace); padding: 1px 6px; margin: 0 2px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent-text, var(--accent)); cursor: pointer; max-width: 100%; overflow-wrap: anywhere; }
+.rr-cite { font: 500 10.5px var(--f-mono); padding: 1px 7px; margin: 0 2px; border-radius: 99px; border: 0; background: var(--rr-cite-bg); color: var(--rr-cite-ink); cursor: pointer; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: 1px; }
 .rr-cite.bad { border-color: var(--bad, #c33); color: var(--bad, #c33); text-decoration: line-through; }
-.rr-basis { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
-.rr-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-.rr-confirm { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: var(--accent-soft); }
-.rr-confirm p { margin: 0 0 6px; }
+.rr-basis { display: flex; flex-wrap: nowrap; gap: 4px; overflow: hidden; }
 .rr-err { color: var(--bad, #c33); }
-.rr-indep { margin: 0 0 6px; }
-.rr-indep.rr-warn { color: var(--warn, #b26b00); }
-.rr-cost { display: block; font-size: 11px; margin-top: 4px; }
+.rr-cost { display: block; font-size: 11px; margin: 0; }
 .rr-check, .rr-sources { margin: 0 0 10px; padding-left: 18px; }
 .rr-sources { list-style: none; padding-left: 0; }
 .rr-sources li { margin: 0 0 4px; overflow-wrap: anywhere; }
 .rr-mark.ok { color: var(--ok, #1d8a4a); }
 .rr-mark.miss { color: var(--bad, #c33); }
-.rr-cite-panel { margin: 0 0 12px; border: 1px solid var(--accent); }
 /* pictures: screenshots (before / after), charts, generated illustrations; a click enlarges one */
-.rr-kind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
+.rr-kind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text, var(--accent)); white-space: nowrap; }
 .rr-kind.illustration { background: rgba(140,90,200,.16); color: var(--text); }
-.rr-fig { margin: 0 0 8px; min-width: 0; }
-.rr-fig img { display: block; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; cursor: zoom-in; background: #fff; }
+.rr-shots { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-height: 0; }
+.rr-fig { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; height: 100%; }
+.rr-fig img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; cursor: zoom-in; background: var(--rr-img-bg); }
 .rr-fig figcaption { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
-.rr-toggle { display: flex; gap: 6px; margin: 0 0 8px; }
+.rr-toggle { display: flex; gap: 6px; }
 .rr-toggle [aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text, var(--accent)); font-weight: 600; }
-.rr-chart-wrap { overflow-x: auto; max-width: 100%; }
-.rr-chart { max-width: none; height: auto; }
-.rr-chart text { fill: var(--text, #111); font: 11px var(--sans, system-ui, sans-serif); }
-.rr-chart .add, .rr-legend .add { fill: rgba(40,160,80,.7); background: rgba(40,160,80,.7); }
-.rr-chart .del, .rr-legend .del { fill: rgba(210,60,60,.7); background: rgba(210,60,60,.7); }
+.rr-chart text { fill: var(--rr-ink); font: 12px var(--f-sans); }
+.rr-chart .rr-chart-l { font-family: var(--rr-hand); font-size: 15px; }
+html:lang(en) .rr-chart .rr-chart-l { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 17px; }
+.rr-chart .add, .rr-legend .add { fill: var(--rr-ok); background: var(--rr-ok); }
+.rr-chart .del, .rr-legend .del { fill: var(--rr-bad); background: var(--rr-bad); }
 .rr-chart .before, .rr-legend .before { fill: var(--border-strong); background: var(--border-strong); }
 .rr-chart .after, .rr-legend .after { fill: var(--accent); background: var(--accent); }
 .rr-legend { display: flex; gap: 12px; font-size: 12px; margin-top: 4px; }
 .rr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-.rr-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
-.rr-thumb { display: grid; gap: 4px; justify-items: start; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: transparent; cursor: zoom-in; max-width: 160px; }
-.rr-thumb img { max-width: 150px; max-height: 100px; border-radius: 6px; }
-.rr-thumb-chart { font-size: 20px; letter-spacing: -2px; color: var(--accent); }
 .rr-zoom { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.72); display: grid; place-items: center; padding: 16px; gap: 8px; grid-template-rows: auto 1fr; }
-.rr-zoom img { max-width: 100%; max-height: 82vh; border-radius: 8px; background: #fff; }
+.rr-zoom img { max-width: 100%; max-height: 82vh; border-radius: 8px; background: var(--rr-img-bg); }
 .rr-zoom .btn { justify-self: end; }
-@media (max-width: 560px) { .rr-quick .btn, .rr-step-bar .btn, .rr-top .btn, .rr-confirm .btn { min-height: 44px; } .rr-msg.captain { margin-left: 0; } }
-.rr-ph { display: grid; place-items: center; min-height: 220px; padding: 16px; border: 2px dashed var(--border-strong); border-radius: 10px; color: var(--text-2); text-align: center; }
-/* a branch's or a pull request's room: what it is about (the pull request on GitHub, new commits since the captain last looked),
-   the URL box, and someone else's words (a reviewer, a commit message) quoted as plain text */
-.rr-subject { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 0 0 12px; overflow-wrap: anywhere; }
-.rr-subject p { margin: 0; flex: 1 1 320px; min-width: 0; }
-.rr-moved { padding: 6px 10px; border-radius: 8px; background: rgba(201,134,26,.12); }
+.rr-ph { display: grid; place-items: center; min-height: 160px; padding: 16px; border: 2px dashed var(--border-strong); border-radius: 10px; color: var(--text-2); text-align: center; }
+/* someone else's words (a reviewer, a commit message), quoted as plain text: a gist, the original folded */
 .rr-quote-fold { margin: 4px 0 0; font-size: 13px; }
-.rr-quote-fold > summary { cursor: pointer; color: var(--text-2); }
+.rr-quote-fold > summary { cursor: pointer; color: var(--text-2); display: flex; gap: 6px; min-width: 0; }
+.rr-quote-fold > summary .rr-gist { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rr-gist { font-style: italic; }
 .rr-quote { margin: 6px 0 0; padding: 4px 10px; border-left: 3px solid var(--border); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.rr-quote-fold[open] .rr-quote { max-height: 14em; overflow: auto; }
+/* the Review Room's home and a project's page: the pull request URL box */
 .rr-prbox { display: grid; gap: 8px; max-width: 720px; }
 .rr-prlabel { display: grid; gap: 4px; }
 .rr-prbox .input { width: 100%; min-width: 0; }
 .rr-prbox .btn { justify-self: start; }
-@media (max-width: 560px) { .rr-prbox .btn, .rr-subject .btn { min-height: 44px; } }
+@media (max-width: 560px) { .rr-prbox .btn { min-height: 44px; } }
+
+/* a narrower window: the dock's quick actions give way to the question */
+@media (max-width: 1100px) { .rr-room { padding: 10px 14px; } .rr-quick { overflow-x: auto; scrollbar-width: none; max-width: 46%; } .rr-pill { max-width: 180px; } }
+
+/* a table on the board (the tutor's, or one from an older answer): text cells */
+.rr-table { border-collapse: collapse; font-size: 14px; margin: auto; max-width: 100%; }
+.rr-table th, .rr-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; overflow-wrap: anywhere; }
+.rr-table th { background: var(--surface-2); font-weight: 600; }
+.rr-body.text:has(> .rr-table) { display: grid; place-items: center; }
+/* the transcript: the tutor's full answer, folded */
+.rr-answer { margin: 4px 8px 8px; font-size: 13px; }
+.rr-answer summary { cursor: pointer; color: var(--text-2); }
+.rr-answer p { margin: 6px 0; }
+.rr-ans-table { white-space: pre-wrap; font: 12px/1.5 var(--f-mono); }
+/* the check on the board: big option buttons; right and wrong by colour and by a drawn mark */
+.rr-quiz { width: 100%; height: 100%; display: grid; align-content: center; gap: 10px; min-height: 0; overflow: auto; }
+.rr-quiz-q { margin: 0 0 4px; font-size: clamp(20px, 1.8vw, 26px); color: var(--rr-ink); line-height: 1.35; overflow-wrap: anywhere; }
+.rr-opts { display: grid; gap: 8px; }
+.rr-opt { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; gap: 10px; text-align: left; border: 1.5px solid var(--rr-paper-edge); background: var(--rr-paper); color: var(--rr-ink); border-radius: 12px; padding: 10px 12px; min-height: 48px; font: inherit; font-size: 15px; cursor: pointer; transition: border-color .2s, background-color .2s, transform .12s; }
+.rr-opt:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+.rr-opt:disabled { cursor: default; }
+.rr-optk { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid currentColor; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: var(--text-2); }
+.rr-optt { overflow-wrap: anywhere; }
+.rr-opt.right { border-color: var(--rr-ok); background: var(--rr-ok-soft); } .rr-opt.right .rr-optk { color: var(--rr-ok); }
+.rr-opt.wrong { border-color: var(--bad); background: var(--bad-soft); } .rr-opt.wrong .rr-optk { color: var(--bad); }
+.rr-mk { width: 22px; height: 22px; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.rr-mk.ok { stroke: var(--rr-ok); } .rr-mk.miss { stroke: var(--bad); }
+.rr-verdict { font-size: 14px; border-radius: 10px; padding: 8px 12px; background: var(--surface-2); }
+.rr-verdict.ok { background: var(--ok-soft); } .rr-verdict.miss { background: var(--bad-soft); }
+.rr-quiz-help { margin: 0; font-size: 15px; color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .rr-opt { transition: none; } }
+
+/* ---------- motion: one timeline, only what is new moves (a picture's new parts, a new point, a new title) ----------
+   nodes are drawn by the pen (stroke-dashoffset, 450ms), edges 350ms then their arrowhead 120ms, 180ms apart; labels are
+   written left to right (clip-path, 400ms); the highlighter 450ms; bars 600ms; a check mark 250ms. Reduced motion: the
+   final picture at once. */
+.rr-pen { stroke-dasharray: 1; animation: rr-pen var(--d, .45s) cubic-bezier(.3,.6,.2,1) var(--dl, 0s) both; }
+.rr-write { animation: rr-write var(--d, .4s) ease-out var(--dl, 0s) both; }
+.rr-grow { transform-box: fill-box; transform-origin: left; animation: rr-scale var(--d, .6s) cubic-bezier(.2,.7,.2,1) var(--dl, 0s) both; }
+.rr-fade { animation: rr-fadein .3s ease var(--dl, 0s) both; }
+.rr-mk.rr-pen path { stroke-dasharray: 1; animation: rr-pen .25s ease-out .1s both; }
+@keyframes rr-pen { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes rr-write { from { clip-path: inset(-30% 100% -30% 0); } to { clip-path: inset(-30% -4% -30% 0); } }
+@keyframes rr-scale { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes rr-fadein { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .rr-pen, .rr-write, .rr-grow, .rr-fade, .rr-mk.rr-pen path, .rr-point.rr-enter, .rr-stitle h2 .rr-hl.rr-anim, .rr-dot i, .rr-point { animation: none !important; transition: none !important; }
+}
+
+/* the welcome scene's call to action */
+.rr-cta { align-self: flex-start; margin-top: 6px; border: 0; border-radius: 12px; background: var(--rr-marker); color: var(--rr-paper); font: 400 20px/1.2 var(--rr-hand); padding: 10px 18px; box-shadow: 0 2px 0 rgba(0,0,0,.15); cursor: pointer; text-align: left; }
+html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 22px; }
+.rr-cta small { display: block; font: 500 11px var(--f-sans); opacity: .85; }
+.rr-cta:disabled { opacity: .5; cursor: default; }
+.rr-body.text { display: grid; align-content: center; }
+.rr-body.text .rr-pre { font-size: 14px; }
+
+/* the explanation's language (EN / 繁 / 简), the answers to one question and "Regenerate with…" */
+.rr-langs { display: inline-flex; flex: none; border: 1px solid var(--border); border-radius: 99px; padding: 2px; background: var(--surface); }
+.rr-lang { border: 0; background: none; border-radius: 99px; padding: 2px 10px; font-size: 12px; color: var(--text-2); min-height: 26px; cursor: pointer; }
+.rr-lang[aria-pressed="true"] { background: var(--text); color: var(--bg); font-weight: 600; }
+.rr-lang:disabled { opacity: .4; cursor: default; }
+.rr-vers { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.rr-ver { border: 1px solid var(--rr-paper-edge); background: var(--rr-paper); color: var(--rr-ink-2); border-radius: 99px; padding: 1px 8px; font-size: 11px; cursor: pointer; text-decoration: none; }
+.rr-ver[aria-pressed="true"], .rr-ver[aria-current="page"] { border-color: var(--rr-marker); color: var(--rr-marker); font-weight: 600; }
+.rr-regen { margin-left: 6px; font-size: 12px; color: var(--rr-marker); }
+.rr-board { position: relative; }
+.rr-regenlist { position: absolute; top: 52px; left: 24px; z-index: 15; display: grid; gap: 6px; padding: 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-2); max-width: min(560px, calc(100% - 48px)); }
+.rr-regenopt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; text-align: left; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 10px; padding: 8px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+.rr-regenopt:disabled { opacity: .55; cursor: default; }
+.rr-regenopt .rr-pill { height: 22px; line-height: 20px; }
+
+/* ---------- a phone (390×844): the picture on top, one point card under it (the caption is the card), a read-only dock ---------- */
+@media (max-width: 760px) {
+  .rr-room { grid-template-rows: 44px minmax(0, 1fr) auto; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .rr-head { gap: 6px; }
+  .rr-back span, .rr-htitle span, .rr-pills .rr-pill:not([data-pr-state]), [data-room-check], [data-room-github], [data-room-save], [data-room-library], .rr-head .rr-back[href^="#/inbox"] { display: none; }
+  .rr-htitle b { font-size: 14px; }
+  .rr-stage { grid-template-rows: minmax(0, 1fr) 44px; gap: 8px; }
+  .rr-stage > .rr-caption { display: none; }
+  .rr-board { padding: 10px 12px; border-radius: 14px; }
+  .rr-stitle { flex-wrap: wrap; gap: 2px 10px; margin: 0 0 4px; }
+  .rr-kicker { max-width: 100%; }
+  .rr-stitle h2 { font-size: 22px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .rr-scene { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 8px; }
+  .rr-vstrip, .rr-visual .rr-basis { display: none; }
+  .rr-points { justify-content: flex-start; overflow: visible; }
+  .rr-pointlist { display: block; }
+  .rr-point { display: none; font-size: 15px; }
+  .rr-point.now { display: block; }
+  .rr-point.now .rr-ptext { -webkit-line-clamp: 4; }
+  .rr-cost, .rr-sceneq { display: none; }
+  .rr-scenenav, .rr-voice, .rr-playbar > .x-grow { display: none; }
+  .rr-dots { flex: 1; justify-content: center; }
+  .rr-dock { border-radius: 12px; padding: 8px 10px; }
+  .rr-dock .rr-quick, .rr-dock .rr-askrow { display: none; }
+  .rr-ro-note { display: block; }
+  .rr-pops { display: none; }
+  .rr-opt { min-height: 44px; }
+  .rr-quiz-q { font-size: 19px; }
+  .rr-cta { font-size: 18px; }
+}

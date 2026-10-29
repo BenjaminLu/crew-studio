@@ -94,6 +94,10 @@ export function createM3(d: M3Deps) {
     if (writing) { try { b = await req.json(); } catch { b = {}; } }
     try {
       if(writing){const target=/^\/api\/artifacts\/([^/]+)/.exec(p)?.[1];const laneTarget=/^\/api\/lane\/([^/]+)\/(?:pr|merge|close|prepare|ci)$/.exec(p);const id=target?decodeURIComponent(target):p==='/api/artifacts'?String(b?.id??''):p==='/api/lane/run'?String(b?.artifact??''):laneTarget?lane.card(decodeURIComponent(laneTarget[1]))?.artifact??null:null;
+        // a review room saved in the Library is a read-only snapshot: no notes, no approval, no new version from here
+        // a saved review room may be deleted (DELETE /api/artifacts/room-<id>, the desktop captain); any other write is refused
+        if(id&&/^room-/.test(id)&&req.method==='DELETE'&&p===`/api/artifacts/${encodeURIComponent(id)}`){if(who.kind!=='desktop')return json({error:'Delete a saved review room on this Mac',code:'desktopOnly'},403);if(!store.get(id)||store.get(id)!.source!=='room')return json({error:'no such saved room'},404);store.remove(id);return json({deleted:id});}
+        if(id&&/^room-/.test(id))return json({error:'A saved review room is read-only; save it again from the room',errorZh:'存起來的審查室是唯讀的；要更新請在審查室再存一次',code:'room-snapshot-read-only'},403);
         const policy=id?artifactReview(id):null;if(policy)return json({error:policy.reasonZh?policy.reason:'This artifact belongs to a native Task; review and revise its bound bundle there',errorZh:policy.reasonZh??null,code:'native-artifact-read-only'},403);
       }
       const managedTarget=/^\/api\/artifacts\/([^/]+)/.exec(p);

@@ -195,6 +195,8 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   // ---- what reviewers asked: their words as text, cited to the comment, never a citation of their own ----
   const rv = v1.turns.find((t: any) => t.studio && t.action === "reviewers"), inline = rv?.claims.find((c: any) => c.cites.some((x: any) => x.ref === "review:c11"));
   const said = rv?.claims.filter((c: any) => c.basis === "reviewer") ?? [];
+  ok(rv?.claims.every((c: any) => typeof c.zh === "string" && c.zh && c.zh !== c.text && JSON.stringify([...c.zh.matchAll(/\[review:[^\]]+\]/g)].map(String)) === JSON.stringify([...c.text.matchAll(/\[review:[^\]]+\]/g)].map(String)) && (!c.quote || !c.zh.includes(c.quote))),
+    "Studio's own lines carry their Chinese beside the English, citations kept; the reviewers' words are never translated", JSON.stringify(rv?.claims.map((c: any) => c.zh)));
   ok(!!rv && rv.provider === "studio" && said.length === 4 && said.every((c: any) => c.cites.length === 1 && c.cites[0].ok), "the reviewers' review, inline comment and comment are a Studio scene, each cited to its note", JSON.stringify(rv?.claims));
   ok(rv.claims.length === 5 && /^1 bot comment \(coverage, CI and the like\) not shown here/.test(rv.claims[4].text) && !rv.claims.some((c: any) => /Coverage report|github-actions/.test((c.quote ?? "") + c.text)),
     "a bot's comment (a coverage table) is counted, never shown as a reviewer's words", JSON.stringify(rv.claims.at(-1)));
@@ -275,6 +277,13 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const v6: any = await room.check(pid), closedTurn = await refused(() => room.start(pid, { action: "how", confirm: v5.offer.hash }, "captain"));
   ok(v6.prState.state === "merged" && v6.open === false && /merged on GitHub/.test(v6.closed.en) && v6.offer === null && closedTurn?.code === "closed" && v6.turns.length === v5.turns.length && (await room.cite(pid, "diff:a.txt")).text.includes("Two, quietly"),
     "merged on GitHub: the room shows it, takes no turn and stays readable (its scenes and citations open)", JSON.stringify([v6.prState.state, v6.closed, closedTurn?.code]));
+  // the room ended: Studio saved it to the Library, and the snapshot reads with Studio's copy of the pull request's commits gone
+  await room.settle(pid);
+  { const { ArtifactStore } = await import("../src/artifacts"), { rmSync } = await import("node:fs"), lib = new ArtifactStore(H.data), aid = `room-${pid.toLowerCase()}`;
+    const vs = lib.versions(aid), calls2 = sim.calls.length; rmSync(join(H.data, "review-room", "cache"), { recursive: true, force: true });
+    const snap: any = room.librarySnapshot(aid);
+    ok(vs.length === 1 && /merged/.test(vs[0].summary ?? "") && lib.get(aid)?.project === "proj" && snap.subject.kind === "pr" && snap.subject.url === "https://github.com/fixture/project/pull/1" && /Two, quietly/.test(snap.cites["diff:a.txt"]?.text ?? "") && snap.view.turns.some((t: any) => t.action === "reviewers") && sim.calls.length === calls2,
+      "a merged pull request's room is saved to the Library under its project; with Studio's cache removed it still opens, its diff inside it, nothing read from GitHub", JSON.stringify({ vs: vs.map((v: any) => v.summary), project: lib.get(aid)?.project, cites: Object.keys(snap.cites) })); }
 
   // ---- a fork's pull request no Studio Task made: readable, no paid turn ----
   const C = (() => { must(scratch, ["checkout", "-qb", "patch-1", "main"]); writeFileSync(join(scratch, "b.txt"), "from a fork\n"); must(scratch, ["add", "b.txt"]); must(scratch, [...id, "commit", "-qm", "Add b"]); return must(scratch, ["rev-parse", "HEAD"]); })();
@@ -352,6 +361,9 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const hosts = E.list().filter((r: any) => r.workflow === "review-room-host"), host = hosts[0], v1: any = room.view(opened.id);
   ok(hosts.length === 1 && host.params.project === "proj" && host.params.pr === "https://github.com/fixture/project/pull/5" && v1.task?.id === host.id && v1.turns.at(-1).status === "done" && v1.turns.at(-1).claims.every((c: any) => c.basis === "cited"),
     "the first confirmed turn makes one host Task for this pull request, and the turn answers on it, cited", JSON.stringify([hosts.map((r: any) => r.id), v1.turns.at(-1)?.status, v1.turns.at(-1)?.error]));
+  { const again: any = await refused(() => room.start(opened.id, { regenerate: v1.turns.at(-1).n, pick: { provider: "codex", model: "other-model" } }, "captain"));
+    ok(again?.code === "confirm_required" && again.offer.provider === "codex" && again.offer.independence.level === null && /unknown/.test(again.offer.independence.en) && !/Different vendor/.test(again.offer.independence.en),
+      "a pull request no Task made has no author to compare with: a picked tutor's independence is unknown, never claimed as another vendor", JSON.stringify(again?.offer?.independence ?? again?.message)); }
   const start = E.trusted(host.id).entries.find((e: any) => e.record === "staffing-start") as any, receipt = E.trusted(host.id).entries.filter((e: any) => e.record === "staffing-instructions").at(-1) as any;
   ok(start?.data.config === crew.hash && receipt?.data.role === "reviewer" && receipt.data.seat === "review-room-tutor" && receipt.data.provider === "claude" && receipt.data.model === "reviewer-model" && receipt.data.effort === "high" && receipt.data.config === crew.hash && receipt.node === "review-room",
     "the host is bound to the project's approved crew, and the staffing receipt names the crew reviewer for the tutor seat", JSON.stringify([start?.data, receipt?.data]));

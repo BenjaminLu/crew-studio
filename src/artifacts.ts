@@ -29,8 +29,9 @@ export type Version = {
   render: { state: "none" | "running" | "done" | "failed"; detail?: string | null; ms?: number | null; normalized?: boolean; notes?: string[]; orient?: "landscape" | "portrait"; code?: string; dur?: number | null; width?: number | null; height?: number | null } | null;
 };
 /** source: "html" = a page to pin-review; "film" = HTML that renders to an MP4 (render.mp4 in the version);
- *  "file" = a plain file (MP4, image) reviewed without regeneration; "url" = an external link only. */
-export type Artifact = { id: string; title: string; type: ArtifactType; project: string; source: "html" | "film" | "file" | "url" | "md"; created: string; note: string | null; entry: string | null; legacy?: string | null };
+ *  "file" = a plain file (MP4, image) reviewed without regeneration; "url" = an external link only; "room" = a review room saved
+ *  read-only (room.json and its pictures; src/domain/review-room.ts), replayed in the room, never reviewed or edited here. */
+export type Artifact = { id: string; title: string; type: ArtifactType; project: string; source: "html" | "film" | "file" | "url" | "md" | "room"; created: string; note: string | null; entry: string | null; legacy?: string | null };
 export type Note = {
   supersedes?:{version:number;note:string}[];
   id: string; kind: "pin" | "range"; comment: string; createdAt: string; status: "open" | "resolved";
@@ -154,6 +155,9 @@ export class ArtifactStore {
     return rec;
   }
   setRender(id: string, n: number, render: Version["render"]) { const v = this.version(id, n); if (!v) return; v.render = render; this.saveVersion(v); }
+
+  /** Delete a saved review room (source room) with all its versions: the only artifact the Library deletes (src/m3.ts). */
+  remove(id: string) { const a = this.get(id); if (!a || a.source !== "room") throw new Error("only a saved review room is deleted"); rmSync(this.adir(id), { recursive: true, force: true }); this.onChange(); }
 
   /** Recompute every file's sha256; returns the paths that no longer match (empty = intact). */
   verify(id: string, n: number): string[] {
