@@ -89,7 +89,8 @@ cannot press keys the OS gives the browser). So:
 - In a browser tab the terminal page shows a banner naming the chords the tab keeps and the ones to use instead, with **Open
   in a Studio window**: `POST /api/terminals/app-window` runs the same launch as an app window. The desktop page's own
   request only (its cookie, same origin, the guard of every terminal POST; a phone and a script are refused). It answers
-  what opened, or 502 `noWindow` and the page stays.
+  what opened, or 502 `noWindow` and the page stays; a second ask within 5 s is 429 `tooSoon`. A launch that opened nothing
+  removes its private redirect file at once (others go after 10 minutes, as before).
 - `public/manifest.webmanifest` (display standalone, start `/?window=studio`, icons) makes Studio installable; an installed
   Studio, fullscreen, or `display-mode: standalone` count as a Studio window too.
 

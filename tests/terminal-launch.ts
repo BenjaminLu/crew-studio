@@ -2,7 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A Studio window (src/open.ts, docs/units/web-terminal.md "A Studio window"): the commands that open Studio as a Chromium
 // app window on each platform, the launch with an injected spawn (no browser ever opens here), the fallback to the default
 // browser with the plain link, and the page's POST /api/terminals/app-window: the desktop page's own request only.
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,8 +50,9 @@ try {
   ok(L5.used === "a Studio window (Google Chrome)" && same(L5.calls[0].slice(0, 4), ["open", "-na", "Google Chrome", "--args"]), "macOS: Chrome's app window through open -na", JSON.stringify(L5));
   const L6 = await launch("linux", () => true, { app: false, find: { which: () => "/usr/bin/chromium" } });
   ok(L6.calls.length === 1 && L6.calls[0][0] === "xdg-open" && target(L6.calls[0][1]) === `${inst.origin}/session?t=${inst.token}`, "app: false (--tab) opens the default browser only");
+  const files = () => readdirSync(runtime).filter((n) => n.startsWith("browser-")).length, before7 = files();
   const L7 = await launch("linux", () => false, { app: true, find: { which: () => null } });
-  ok(L7.used === false, "nothing opens: false, and the caller says so");
+  ok(L7.used === false && files() === before7, "nothing opens: false, the caller says so, and its private redirect file is removed at once", `${before7} -> ${files()}`);
   ok(L1.detached[0] === true && L3.detached[0] === true && L2.detached[1] === false && L4.detached[0] === false && L5.detached[0] === false,
     "a browser started directly (Linux, Windows) is detached; the openers (open, xdg-open, start) are waited for", JSON.stringify([L1.detached, L2.detached, L3.detached, L4.detached, L5.detached]));
   // the browser itself never exits while its window is open: the launch answers at once, never stops it and never tries
@@ -68,7 +69,7 @@ try {
 
   // ---------- POST /api/terminals/app-window: the desktop page's own request ----------
   let opened = 0; let answer: string | false = "a Studio window (Google Chrome)";
-  const svc = { o: { openWindow: () => { opened++; return answer; } } } as any;
+  const svc = { appWindowAt: 0, o: { openWindow: () => { opened++; return answer; } } } as any;
   const base = "http://127.0.0.1:4999", url = new URL(`${base}/api/terminals/app-window`);
   const req = (h: Record<string, string> = {}, method = "POST") => new Request(url, { method, headers: { "content-type": "application/json", ...h }, body: method === "POST" ? "{}" : undefined });
   const page = { origin: base, "sec-fetch-site": "same-origin" };
@@ -83,8 +84,12 @@ try {
   ok(r.status === 403 && r.body.code === "pageOnly" && opened === 1, "another origin is refused", JSON.stringify(r));
   r = await call(req({}, "GET"), { kind: "desktop" }, false, true);
   ok(r.status === 405 && opened === 1, "a GET opens nothing", JSON.stringify(r));
-  answer = false; r = await call(req(page), { kind: "desktop" }, true, true);
-  ok(r.status === 502 && r.body.code === "noWindow" && opened === 2, "no browser accepts: 502 noWindow, and the page stays", JSON.stringify(r));
+  r = await call(req(page), { kind: "desktop" }, true, true);
+  ok(r.status === 429 && r.body.code === "tooSoon" && opened === 1, "a second ask within seconds opens nothing more (429 tooSoon)", JSON.stringify(r));
+  svc.appWindowAt -= 5000; r = await call(req(page), { kind: "desktop" }, true, true);
+  ok(r.status === 200 && opened === 2, "a few seconds later it may open again", JSON.stringify(r));
+  svc.appWindowAt = 0; answer = false; r = await call(req(page), { kind: "desktop" }, true, true);
+  ok(r.status === 502 && r.body.code === "noWindow" && opened === 3, "no browser accepts: 502 noWindow, and the page stays", JSON.stringify(r));
 } finally { rmSync(tmp, { recursive: true, force: true }); }
 console.log(`\nterminal-launch: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

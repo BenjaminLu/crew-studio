@@ -195,6 +195,8 @@ export class Terminals {
   private terms = new Map<string, Term>();
   private probe = new Map<string, Promise<"flag" | "slash">>();
   readonly keepTranscripts: boolean; readonly maxSubs = 4;
+  /** when the page last asked for a Studio window (POST /api/terminals/app-window), for its rate limit */
+  appWindowAt = 0;
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
   constructor(readonly o: TerminalsOpts) {
     this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
@@ -512,6 +514,7 @@ export class Terminals {
   cutDevice(device: string) { for (const t of this.terms.values()) for (const s of t.subs) if (s.device === device) { t.subs.delete(s); try { s.ctl.close(); } catch {} } }
 }
 const enc = new TextEncoder();
+const APP_WINDOW_GAP_MS = 5000;
 const RECORD = /^T-[\w-]{1,60}\.json$/;
 /** A record's git facts, read back: a commit id as head, else none (a hand-edited or damaged record never reaches git or the page). */
 const facts = (g: any): TermGit | null => g && typeof g.head === "string" && /^[0-9a-f]{40,64}$/.test(g.head)
@@ -543,6 +546,9 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
     // crew-studio launch
     if (p === "/api/terminals/app-window") {
       if (!writing) return json({ error: "POST" }, 405);
+      // one launch every few seconds: each opens a window and writes a private redirect file
+      const now = Date.now(); if (now - svc.appWindowAt < APP_WINDOW_GAP_MS) return json({ error: "A Studio window was just opened: look for it, or try again in a few seconds.", code: "tooSoon" }, 429);
+      svc.appWindowAt = now;
       const used = svc.o.openWindow ? await svc.o.openWindow() : false;
       return used ? json({ ok: true, used }) : json({ error: "No browser accepted the Studio window. Studio is still here, in this tab.", code: "noWindow" }, 502);
     }

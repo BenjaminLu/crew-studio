@@ -65,7 +65,8 @@ export async function requestBrowser(instance:RunningInstance,opts:BrowserOpts={
    if(out&&out[1]===0)handler=defaultHttpHandler(out[0]);else if(!out)d.kill();}catch{}
   if(handler&&await run(['-b',handler]))used=`your default browser (${handler})`;else if(await run([]))used="the system's default for links";}}
  else{if(app)used=await appWindow();if(!used&&await waitRun(defaultOpenCommand(platform,file)))used="the system's default for links";}
- if(!used){console.error(`Could not request a browser. Studio is running at ${instance.origin}. Retry the launch command with --browser Safari (or another installed browser). Session credentials are never printed.`);return false;}
+ if(!used){clearTimeout(timer);rmSync(file,{force:true}); // nothing will read it
+  console.error(`Could not request a browser. Studio is running at ${instance.origin}. Retry the launch command with --browser Safari (or another installed browser). Session credentials are never printed.`);return false;}
  console.log(`Requested Studio's authenticated Board in ${used}. Browser dispatch was accepted; a visible window is not verified.`);return used;
 }
 export async function openStudio(start=false){let instance=await discoverInstance();if(!instance&&start){const {runningInstance}=await import('./server');instance=runningInstance;}if(!instance)throw new Error('No verified running Studio instance matches. Run the same binary with launch (or bun run launch); use CREW_DATA/CREW_PORT only to select a specific instance.');return requestBrowser(instance);}
