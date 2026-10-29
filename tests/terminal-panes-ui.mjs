@@ -198,6 +198,30 @@ try {
   ok(await seen(q.locator('[data-term-help="win"]')) && /Ctrl\+Shift\+T/.test(await q.locator('[data-term-help] [data-help-act="newTab"]').innerText()), "F1 shows Windows Terminal's keys");
   await shot(q, "panes-win-help.png");
   await ctx2.close();
+
+  // ---------- eight panes: a browser keeps six connections to Studio, and typing needs one ----------
+  { const ctx8 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    await ctx8.addInitScript((os) => { Object.defineProperty(Navigator.prototype, "platform", { get: () => os.platform }); Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => ({ platform: os.uad }) });
+      try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
+      // every event stream the page opens, to count the ones still open
+      const ES = window.EventSource; window.__es = []; window.EventSource = class extends ES { constructor(...a) { super(...a); window.__es.push(this); } }; }, MAC);
+    const e8 = await ctx8.newPage(); e8.on("pageerror", (e) => errors.push(`eight: ${e}`));
+    await e8.goto(`${base}/?window=studio#/terminals/${encodeURIComponent(t1)}`); await seen(e8.locator(".wt-stage .wt-pane .xterm-rows"), 10000); await e8.waitForTimeout(300);
+    await e8.locator(".wt-xterm").first().click();
+    for (let i = 1; i < 8; i++) { await e8.keyboard.press(i % 2 ? "Meta+KeyD" : "Shift+Meta+KeyD"); await until(async () => (await panes(e8)).length === i + 1, 10000); await e8.waitForTimeout(250); }
+    const ps8 = await panes(e8);
+    ok(ps8.length === 8 && new Set(ps8.map((x) => x.term)).size === 8, "eight panes, eight terminals", String(ps8.length));
+    await until(async () => (await e8.locator(".wt-stage .xterm-rows").count()) === 8, 10000); await e8.waitForTimeout(600);
+    const open = await e8.evaluate(() => window.__es.filter((x) => x.readyState !== 2).map((x) => new URL(x.url).pathname));
+    ok(open.length <= 2 && open.includes("/api/terminals/mux"), "the page holds two event streams in all: its own and one for every pane", JSON.stringify(open));
+    let typed = 0;
+    for (const [i, x] of ps8.entries()) {
+      await e8.locator(`.wt-pane[data-pane="${x.pane}"] .wt-xterm`).click(); await e8.keyboard.type(`echo mux-${i}-$((${i}*7))`); await e8.keyboard.press("Enter");
+      if (await until(async () => new RegExp(`mux-${i}-${i * 7}`).test(await rows(e8, x.term)), 6000)) typed++;
+    }
+    ok(typed === 8, "typing reaches the shell in every one of the eight panes", `${typed} of 8`);
+    await shot(e8, "panes-eight.png");
+    await ctx8.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
   try { await browser?.close(); } catch {}

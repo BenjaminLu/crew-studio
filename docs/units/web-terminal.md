@@ -116,6 +116,10 @@ starts ("Not sandboxed: runs with your user's full permissions in <path>"). What
 - `GET /api/terminals/<id>/stream`: server-sent events. `meta` (the summary), `replay` (the scrollback ring), then `out`
   (live output), `meta` on each state change, `exit`. The page gets raw bytes (base64) and xterm.js decodes UTF-8 across
   chunks; a phone gets text with the Remote Control link removed.
+- `GET /api/terminals/mux?ids=<id>,<id>…`: the same events for several terminals on one stream, each event's data naming
+  its terminal (`{"id": …}`); `gone` for one that is not there or may not be viewed. The page uses only this: one stream for
+  every terminal in its tabs, opened again when that set changes (each replays). A browser keeps at most six connections
+  to Studio, and a stream per pane left none for typing once five panes were open.
 - `POST …/input {data}`, `…/resize {cols, rows}`, `…/kill`, `…/restart`, `…/dismiss`.
 - The page's own stream (`/api/stream`) carries `terminals` (the phone-safe list) so the sidebar and the panel stay live.
 
