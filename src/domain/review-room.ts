@@ -48,13 +48,13 @@ import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT,
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
-  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "0eca04766d00ddf57c778bccba09117c54cda789f66cea38913ed3162863c80b" },
+  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "7d34a72779feb6e24225021858bd6e3b29935e84650d3b196115d9e9e5227f88" },
   { id: "pstack-how", ref: "workflows/skills/pstack/how.md", sha256: "19b614c9a54cf2dbad87114f9a3de7e408f39f7e0b02bf76608956b10d77f6d6" },
   { id: "pstack-why", ref: "workflows/skills/pstack/why.md", sha256: "9d6a298a5528b46610e964d0ce6ddcab990913837cb08455e531d6c5619d8c37" },
   { id: "pstack-teach", ref: "workflows/skills/pstack/teach.md", sha256: "a85b812c6d485cc07e13e3646f8d4b6525185f2159af3523729835007cfa120a" },
-  { id: "baton-lesson", ref: "workflows/skills/baton/SKILL.md", sha256: "f5862aab3b3c084322b9bcf1ef227d533adddbeb2c17f4960d4ad1c45ad1c546" },
+  { id: "baton-lesson", ref: "workflows/skills/baton/SKILL.md", sha256: "3d55496de85987177d9de178dadc4249e75e70014d18d69d1e4d3753a456438c" },
   { id: "baton-diagrams", ref: "workflows/skills/baton/diagrams.md", sha256: "7151c2f73bea0641ff32c881925f7d465a4a98b5da605fbb7a02ea3ddb31b07c" },
-  { id: "baton-spec", ref: "workflows/skills/baton/spec.md", sha256: "8e95b3b194ab519030303e46c7207903b607b5ed9378b410fe8ef42c32cc8904" },
+  { id: "baton-spec", ref: "workflows/skills/baton/spec.md", sha256: "bdc7361060ac9bfb2fe8ff5593db92d40a1499468260511c430114f34193f9ff" },
 ] as const;
 /** The room's quick actions: what the captain's message says when they press one (ask carries their own words). */
 export const ROOM_ACTIONS: Record<string, { en: string; zh: string } | null> = {
@@ -75,18 +75,18 @@ export const ROOM_TOOLS = ["fs_list", "fs_search", "fs_read", "git_diff", "git_l
 export const SCENE_LIMITS = { title: { cjk: 20, latin: 48 }, point: { cjk: 60, latin: 120 }, points: { min: 2, max: 4 }, scenes: 12 } as const;
 /** A lesson's chapters, in their order (after baton's packet: each dropped when its source is empty, every one a drawing).
  *  picture: the board item kinds a chapter's scene shows (any, when not listed); cited: every point rests on a citation. */
-export type Chapter = { id: string; en: string; zh: string; picture?: string[]; text?: true; required?: true; skippable?: true; many?: true; cited?: true; record?: true };
+export type Chapter = { id: string; en: string; zh: string; cn: string; picture?: string[]; text?: true; required?: true; skippable?: true; many?: true; cited?: true; record?: true };
 export const CHAPTERS: Chapter[] = [
-  { id: "what", en: "What this is", zh: "這是什麼", text: true, required: true },
-  { id: "talks", en: "What talks to what", zh: "誰跟誰說話", picture: ["arch"], required: true },
-  { id: "decisions", en: "The decisions", zh: "做了哪些決定", picture: ["decision"], many: true },
-  { id: "change", en: "The change itself", zh: "改了什麼", picture: ["item"], required: true, many: true },
-  { id: "lifecycle", en: "Its life, state by state", zh: "狀態的一生", picture: ["states"], skippable: true },
-  { id: "sequence", en: "One request, in order", zh: "一次請求的順序", picture: ["sequence"], skippable: true },
-  { id: "reviewers", en: "What reviewers raised", zh: "審查者提了什麼", text: true },
-  { id: "roads", en: "Roads not taken", zh: "沒走的路", text: true, record: true },
-  { id: "watch", en: "What to watch", zh: "要注意的地方", text: true, cited: true },
-  { id: "questions", en: "Open questions", zh: "待解問題", text: true },
+  { id: "what", en: "What this is", zh: "這是什麼", cn: "这是什么", text: true, required: true },
+  { id: "talks", en: "What talks to what", zh: "誰跟誰說話", cn: "谁跟谁说话", picture: ["arch"], skippable: true },
+  { id: "decisions", en: "The decisions", zh: "做了哪些決定", cn: "做了哪些决定", picture: ["decision"], many: true },
+  { id: "change", en: "The change itself", zh: "改了什麼", cn: "改了什么", picture: ["item"], required: true, many: true },
+  { id: "lifecycle", en: "Its life, state by state", zh: "狀態的一生", cn: "状态的一生", picture: ["states"], skippable: true },
+  { id: "sequence", en: "One request, in order", zh: "一次請求的順序", cn: "一次请求的顺序", picture: ["sequence"], skippable: true },
+  { id: "reviewers", en: "What reviewers raised", zh: "審查者提了什麼", cn: "审查者提了什么", text: true },
+  { id: "roads", en: "Roads not taken", zh: "沒走的路", cn: "没走的路", text: true, record: true },
+  { id: "watch", en: "What to watch", zh: "要注意的地方", cn: "要注意的地方", text: true, cited: true },
+  { id: "questions", en: "Open questions", zh: "待解問題", cn: "待解问题", text: true },
 ];
 /** what a lesson still lacks: a required chapter not shown, a skippable one neither shown nor left out with a cited reason */
 export function lessonGaps(scenes: { chapter?: string; skip?: true }[] | undefined): string[] {
@@ -193,14 +193,16 @@ export type Translation = { scenes: { title: string; points: string[] }[]; claim
   figures?: Record<string, string[]> };
 /** a figure's words, in a fixed order (what a translation replaces; ids, code names and actors stay as they are) */
 export function figureTexts(it: any): string[] {
-  switch (it?.type) {
+  const own = (() => { switch (it?.type) {
     case "arch": return [...(it.nodes ?? []).map((n: any) => n.label), ...(it.edges ?? []).map((e: any) => e.label ?? "")];
-    case "item": return [it.before, it.after];
+    case "item": return [it.name, it.before, it.after, it.mechanism ?? ""];
     case "decision": return [it.question, it.chosen, it.because, ...(it.rejected ?? []).flatMap((r: any) => [r.option, r.why])];
     case "states": return [...(it.states ?? []).map((x: any) => x.label), ...(it.transitions ?? []).flatMap((t: any) => [t.label ?? "", t.detail ?? ""])];
     case "sequence": return (it.steps ?? []).flatMap((x: any) => [x.label, x.frameLabel ?? ""]);
-    default: return [];
-  }
+    default: return null;
+  } })();
+  // the figure's title first, then its own words
+  return own ? [it.title ?? "", ...own] : [];
 }
 /** the languages the explanation is made in (zh-CN is the zh-TW text through OpenCC on the page, nothing paid) */
 export const ROOM_LANGS = ["en", "zh-TW"] as const;
@@ -591,7 +593,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           !because || !fitsBoard(because, FIGURE_LIMITS.because) ? `because is 1 to ${FIGURE_LIMITS.because.latin} Latin or ${FIGURE_LIMITS.because.cjk} CJK characters` : "", rejected.length > FIGURE_LIMITS.rejected ? `at most ${FIGURE_LIMITS.rejected} rejected options` : "",
           ...rejected.map((x: any, j: number) => !x.option || !fitsBoard(x.option, FIGURE_LIMITS.option) || !x.why || !fitsBoard(x.why, FIGURE_LIMITS.because) ? `rejected ${j + 1}: option and why are short (${FIGURE_LIMITS.option.latin} / ${FIGURE_LIMITS.because.latin} Latin)` : !x.cite?.ok || !/^(commit|review|ledger|source):/.test(x.cite.ref) ? `rejected ${j + 1}: an option the change turned down is shown only as the record shows it: cite the commit, the review note or the source (never invent one)` : "")].filter(Boolean);
         if (bad.length) throw new Error(`item ${i + 1}: ${bad.join("; ")}`);
-        return { ...at, type, question, chosen, because, rejected, ...(await said()) }; }
+        const sd = await said(), cites = [...sd.cites, ...rejected.map((x: any) => x.cite).filter(Boolean)];
+        return { ...at, type, question, chosen, because, rejected, cites, basis: sd.basis }; }
       // a small table, drawn by Studio as text: the header row first
       if (type === "table") { const rows = Array.isArray(a?.rows) ? a.rows : [];
         if (rows.length < 2 || rows.length > 8 || rows.some((r: any) => !Array.isArray(r) || !r.length || r.length > 5 || r.some((c: any) => typeof c !== "string" && typeof c !== "number" || String(c).length > 60))) throw new Error(`item ${i + 1}: a table is 2 to 8 rows (the header first) of 1 to 5 cells, each at most 60 characters`);
@@ -654,8 +657,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           // a lesson (teach) is chapters in order; any other answer may name a chapter, in any order, or none
           const teach = turn.action === "teach";
           if (at < 0 && (teach || a?.chapter)) errors.push(`chapter is one of ${CHAPTERS.map((c) => c.id).join(", ")}, in that order`);
-          else if (at >= 0) { const last = (turn.scenes ?? []).map((x) => CHAPTERS.findIndex((c) => c.id === x.chapter)).filter((x) => x >= 0).at(-1) ?? -1;
-            if (teach && at < last) errors.push(`chapters come in order (${CHAPTERS.map((c) => c.id).join(" → ")}): "${ch.id}" cannot follow "${CHAPTERS[last].id}"`);
+          else if (at >= 0) {
             if (ch.picture && pic && !ch.picture.includes(pic.type)) errors.push(`the "${ch.id}" chapter's picture is a ${ch.picture.join(" or ")} item (board_draw): draw it, then show it`);
             if (ch.cited) points.forEach((p: any, j: number) => { if (!Array.isArray(p?.cites) || !p.cites.length) errors.push(`point ${j + 1}: a risk is listed only with what it rests on: cite it (an empty list is a finding: say what you checked, cited)`); });
             if (ch.record) points.forEach((p: any, j: number) => { if (!(Array.isArray(p?.cites) ? p.cites : []).some((c: any) => /^(commit|review|ledger|source):/.test(String(c)))) errors.push(`point ${j + 1}: a road not taken is listed only when the record shows it: cite the commit, the review note or the source that shows the alternative (never invent one)`); });
@@ -674,21 +676,22 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           if (ch?.record && claims.some((c) => !c.cites.some((x) => x.ok && /^(commit|review|ledger|source):/.test(x.ref)))) return { error: "a road not taken is listed only with a commit, review note or source Studio can verify: fix the citation or leave it out" };
           const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title, picture, points: claims, ...(ch ? { chapter: ch.id } : {}) }]; save(k, room);
           return { scene: n, points: claims.map((c) => c.basis) }; } },
-      { name: "chapter_skip", description: `Teaching only: leave out a chapter that this change has nothing for, saying why with a citation (the captain sees that line in place of the drawing). Only ${CHAPTERS.filter((c) => c.skippable).map((c) => c.id).join(" and ")} may be left out this way, and only when the diff truly has no state transitions (lifecycle) or no call chain across services or I/O (sequence): ${CHAPTERS.filter((c) => c.required).map((c) => c.id).join(", ")} are always shown. The optional chapters (${CHAPTERS.filter((c) => !c.required && !c.skippable).map((c) => c.id).join(", ")}) are simply not shown when empty.`,
+      { name: "chapter_skip", description: `Teaching only: leave out a chapter that this change has nothing for, saying why with a citation (the captain sees that line in place of the drawing). Only ${CHAPTERS.filter((c) => c.skippable).map((c) => c.id).join(", ")} may be left out this way, and only when the diff truly has no components talking (talks: a docs or config-only change), no state transitions (lifecycle) or no call chain across services or I/O (sequence): ${CHAPTERS.filter((c) => c.required).map((c) => c.id).join(", ")} are always shown. The optional chapters (${CHAPTERS.filter((c) => !c.required && !c.skippable).map((c) => c.id).join(", ")}) are simply not shown when empty.`,
         schema: { type: "object", properties: { chapter: { type: "string", enum: CHAPTERS.filter((c) => c.skippable).map((c) => c.id) }, reason: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["chapter", "reason", "cites"] },
         run: async (a) => {
           if (turn.action !== "teach") return { error: "chapter_skip is for a lesson (teach) only" };
           const at = CHAPTERS.findIndex((c) => c.id === a?.chapter), ch = CHAPTERS[at], reason = String(a?.reason ?? "").replace(/\s+/g, " ").trim();
           if (!ch?.skippable) return { error: `only ${CHAPTERS.filter((c) => c.skippable).map((c) => c.id).join(" or ")} may be left out; ${CHAPTERS.filter((c) => c.required).map((c) => c.id).join(", ")} are always shown` };
           if ((turn.scenes ?? []).some((x) => x.chapter === ch.id)) return { error: `"${ch.id}" is already in the lesson` };
-          const last = (turn.scenes ?? []).map((x) => CHAPTERS.findIndex((c) => c.id === x.chapter)).filter((x) => x >= 0).at(-1) ?? -1;
-          if (at < last) return { error: `chapters come in order (${CHAPTERS.map((c) => c.id).join(" → ")}): "${ch.id}" cannot follow "${CHAPTERS[last].id}"` };
-          const errs = sceneErrors(turn.lang === "zh-TW" ? ch.zh : ch.en, [{ text: reason, cites: a?.cites }], 1); if (errs.length) return { error: errs.join("; ") };
+          // 5. a chapter left out is a scene of the lesson too: it counts toward the limit
+          if ((turn.scenes?.length ?? 0) >= SCENE_LIMITS.scenes) return { error: `at most ${SCENE_LIMITS.scenes} scenes a turn` };
+          const title = turn.lang === "zh-CN" ? ch.cn : turn.lang === "zh-TW" ? ch.zh : ch.en;
+          const errs = sceneErrors(title, [{ text: reason, cites: a?.cites }], 1); if (errs.length) return { error: errs.join("; ") };
           const ok = await citeCheck(room, s), cites = citesOf(a?.cites, ok);
           if (!cites.some((c) => c.ok)) return { error: "a chapter is left out only with a reason Studio can verify: cite the diff (or the commit) that shows there is nothing for it" };
-          const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title: turn.lang === "zh-TW" ? ch.zh : ch.en, picture: "", points: [{ text: reason, kind: "claim", basis: "cited", cites }], chapter: ch.id, skip: true }]; save(k, room);
+          const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title, picture: "", points: [{ text: reason, kind: "claim", basis: "cited", cites }], chapter: ch.id, skip: true }]; save(k, room);
           return { skipped: ch.id, scene: n }; } },
-      { name: "lesson_check", description: "Teaching only: what the lesson still lacks before your final answer. Studio refuses a lesson that misses a required chapter (what, talks, change) or leaves lifecycle or sequence out without chapter_skip.",
+      { name: "lesson_check", description: "Teaching only: which chapters the lesson still lacks before your final answer (any order is fine; the report is shown in the chapters' order). Studio refuses a lesson without what and change, or that leaves talks, lifecycle or sequence out without chapter_skip.",
         schema: { type: "object", properties: {} },
         run: async () => { const gaps = lessonGaps(turn.scenes); return turn.action !== "teach" ? { error: "lesson_check is for a lesson (teach) only" } : { ok: !gaps.length, missing: gaps }; } },
       { name: "screenshots_show", description: "Put the app's real screenshots on the board: each changed page at the base and at the head, as Studio's sandboxed renderer shot them for this head (the Task's own capture check, the app's fixture build, no live data). The captain toggles before / after. Only when the change touches the app's pages.",
@@ -715,6 +718,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       { name: "illustrate", description: `Generate one explanatory illustration (whiteboard-marker style) for the board. At most ${ILLUSTRATIONS_PER_TURN} a turn, each a paid image job made in the background. The image model gets no words of yours: pick 1 to 6 concepts from the fixed list and a layout. An illustration is never evidence: cite the diff, a check or a commit for every claim it shows.`,
         schema: { type: "object", properties: { title: { type: "string" }, concepts: { type: "array", minItems: 1, maxItems: 6, items: { type: "string", enum: [...ILLUSTRATION_CONCEPTS] } }, layout: { type: "string", enum: Object.keys(ILLUSTRATION_LAYOUTS) } }, required: ["concepts"] },
         run: async (a) => { if (!generator()) return { error: "no image generator is configured in this Studio; draw a mermaid diagram instead" };
+          // the captain may turn pictures off while the turn runs: no paid image job then
+          if (!room.images?.on) return { error: "generated pictures are off in this room: draw with board_draw instead" };
           if (room.board.filter((b) => b.turn === turn.n && b.type === "image").length >= ILLUSTRATIONS_PER_TURN) return { error: `at most ${ILLUSTRATIONS_PER_TURN} illustrations a turn` };
           const built = illustrationPrompt(a ?? {});
           if ("refused" in built) { room.illustrations = [...(room.illustrations ?? []), { turn: turn.n, prompt: JSON.stringify(a?.concepts ?? null).slice(0, 300), refused: built.refused, at: new Date().toISOString() }]; save(k, room); return { error: `refused: ${built.refused}` }; }
@@ -805,7 +810,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         : `${q.n}. ${q.q}${q.result ? ` [graded: ${q.result.correct ? "correct" : "missed"}]` : " [not graded yet]"}`) : ["(not asked yet)"]), "",
       "THE CONVERSATION SO FAR", ...older.map((x) => `(turn ${x.n}) ${who(x).replace(/\s+/g, " ").slice(0, 140)} / ${x.studio ? "Scene" : "Tutor"}: ${said(x).replace(/\s+/g, " ").slice(0, 160)}`),
       ...full.flatMap((x) => [who(x).slice(0, 1500), `${x.studio ? "Scene" : "Tutor"}: ${said(x).slice(0, 1500)}`]), ...(past.length ? [] : ["(this is the first turn)"]), "",
-      ...(turn.action === "teach" ? [`A LESSON (baton's packet, workflows/skills/baton): chapters in order ${CHAPTERS.map((c) => c.id).join(" → ")}. Always show what, talks (an arch drawing) and change (one item drawing a change, at least one); show lifecycle and sequence, or leave each out with chapter_skip and a cited reason; one drawing a chapter except change and decisions; roads only as the record shows them. Call lesson_check before your final answer: Studio refuses a lesson that misses one.`, ""] : []),
+      ...(turn.action === "teach" ? [`A LESSON (baton's packet, workflows/skills/baton): chapters ${CHAPTERS.map((c) => c.id).join(" → ")} (shown in that order whatever order you make them in). Always show what and change (one item drawing a change, at least one); show talks (an arch drawing), lifecycle and sequence, or leave each out with chapter_skip and a cited reason; one drawing a chapter except change and decisions; roads only as the record shows them. Call lesson_check before your final answer: Studio refuses a lesson that misses one.`, ""] : []),
       room.images?.on ? "Generated pictures are ON in this room (illustrate, at most two a turn, paid)." : "Generated pictures are OFF in this room: draw with board_draw (Studio lays every drawing out); there is no illustrate tool.", "",
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
@@ -864,7 +869,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       Object.assign(turn, { status: answered ? "done" : "failed", job: job.id, answer, error: answered ? null : job.status === "done" ? "the tutor ended without an answer / 導師沒有給出回答就結束了" : String(job.error ?? job.status), cost: job.cost ?? null });
       // a lesson is refused when it skipped a chapter it owes (never by convenience): the captain sees why, nothing half-made shows
       const gaps = turn.action === "teach" && turn.status === "done" ? lessonGaps(turn.scenes) : [];
-      if (gaps.length) Object.assign(turn, { status: "failed", error: `Studio refused the lesson: it left out ${gaps.join(", ")} (${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.en).join("; ")}); a lesson shows what, talks and change, and leaves lifecycle or sequence out only with a cited reason / Studio 退回了這一課：缺少 ${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.zh).join("、")}` });
+      if (gaps.length) Object.assign(turn, { status: "failed", error: `Studio refused the lesson: it left out ${gaps.join(", ")} (${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.en).join("; ")}); a lesson shows what and change, and leaves talks, lifecycle or sequence out only with a cited reason / Studio 退回了這一課：缺少 ${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.zh).join("、")}` });
     } catch (e: any) { Object.assign(turn, { status: "failed", error: String(e?.message ?? e).slice(0, 500) }); }
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
     turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
@@ -951,7 +956,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const project = String(engine.get(room.run)?.params?.project ?? engine.get(room.run)?.ctx.project ?? room.subject?.project ?? "") || "firstmate-workflow";
       if (!store.get(aid)) store.create({ id: aid, title, type: "doc", project, source: "room", note: "A review room, saved read-only: open it to replay its scenes. / 存起來的審查室（唯讀）：打開即可重播。" });
       const v = store.addVersion(aid, { from: dir, primary: "room.json", createdBy: { kind: "host" }, status: "draft", summary: reason, cost: { usd: snap.cost.usd, inTokens: null, outTokens: null } });
-      const fresh = load(k)!; fresh.library = { artifact: aid, versions: [...(fresh.library?.artifact === aid && v.n > 1 ? fresh.library.versions : []), { n: v.n, at: savedAt, reason }], rev: (fresh.rev ?? 0) + 1, ended: !!fresh.library?.ended || ended, sig: contentSig(fresh) }; save(k, fresh);
+      // the room started over while this was saved: the Library keeps the version; only a room that is there links it
+      const fresh = load(k); if (fresh) { fresh.library = { artifact: aid, versions: [...(fresh.library?.artifact === aid && v.n > 1 ? fresh.library.versions : []), { n: v.n, at: savedAt, reason }], rev: (fresh.rev ?? 0) + 1, ended: !!fresh.library?.ended || ended, sig: contentSig(fresh) }; save(k, fresh); }
       notify(k); return { artifact: aid, n: v.n, href: `#/room/lib:${aid}` };
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
@@ -1172,7 +1178,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     view(id: string, opened = false) {
       const k = keyOf(id);
       if (k.kind === "merge") { const c = k.card!;
-        if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); pregenerate(k); }
+        if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
         return { ...langView(r, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
@@ -1183,7 +1189,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
       let s: S | null = null; try { s = subjectOf(k); } catch (e) { if (k.kind !== "pr") throw e; }
       if (k.kind === "branch" && opened && !load(k)) save(k, fresh(k, s!));
-      if (opened) { if (!stats()[k.stat]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); pregenerate(k);
+      if (opened) { if (!stats()[k.stat]?.openedAt) stat(k, { openedAt: new Date().toISOString() });
         // re-entering a pull request's room reads it again on GitHub (in the background, at most once a minute)
         const pr = k.kind === "pr" ? load(k) : null; if (pr?.subject?.url && Date.now() - Date.parse(pr.pr?.attemptedAt ?? pr.pr?.checkedAt ?? "0") > PR_RECHECK_MS) void readPr(pr.subject.url).catch(() => {}); }
       const r0 = load(k), r = r0 ? settled(r0) : null, run = k.run ? engine.get(k.run) : null, open = k.open() && !!s, sub = r?.subject ?? (s ? subjectRecord(k, s, r) : { kind: k.kind, room: k.id });
@@ -1207,7 +1213,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
-    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown }, by: string) {
+    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown }, by: string) {
       let k = keyOf(id);
       if (k.kind === "pr") { const r0 = load(k);
         // a paid turn reads the pull request again first when it was read a while ago: merged or closed by now, the turn is refused
@@ -1249,12 +1255,16 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
+      // generated pictures as the captain set them on this confirmed paid round (the confirmation said which images they may make)
+      if (typeof a.images === "boolean") room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
       const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
+      // the room's opening picture, once, only now: a confirmed paid round with pictures on
+      if (room.images?.on) pregenerate(k);
       void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); autoSave(self, k); });
       return this.view(k.id);
     },
@@ -1273,7 +1283,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       try { await engine.deps.refreshUsable?.(); } catch {}
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
-      const room = load(k)!; room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
+      const room = load(k); if (!room || !untranslated(room, lang).length) { held?.release(); throw refuse("The room was started over while the translation was being admitted / 審查室在翻譯開始前被清空了", "reset"); }
+      room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
       live.set(k.id, -2); notify(k);
       void runTranslate(k, room, lang, untranslated(room, lang), s, provider, sk, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k); autoSave(self, k); });
       return this.view(k.id);
@@ -1296,7 +1307,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (k.kind === "pr" && room) save(k, { schema: 1, run: room.run, card: k.id, node: room.node, head: room.head, base: room.base, turns: [], board: [], sources: [], check: { questions: [] },
         subject: room.subject, pr: room.pr, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished });
       const run = s?.run ? engine.get(s.run.id) : null, node = run?.def.nodes.find((n: any) => n.id === s!.node?.id);
-      if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-reset", { head: s!.head, data: { schema: 1, card: k.id, by: String(by ?? "captain").slice(0, 80), at, moved } } as any);
+      const entry = { schema: 1, card: k.id, by: String(by ?? "captain").slice(0, 80), at, moved };
+      if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-reset", { head: s!.head, data: entry } as any);
+      // no Task ledger to write to (a pull request room before its first paid turn has no host Task, and a ledger entry needs one):
+      // the reset is recorded in its archive instead, with the same fields and no content
+      else writeFileSync(join(arch, "reset.json"), JSON.stringify({ ...entry, ledger: null, why: "no Task hosts this room yet: it never had a paid turn" }));
       notify(k); return { reset: true, moved, view: this.view(id) }; },
     /** Generated pictures on or off for this room (off unless the captain turns them on): no paid image job while off */
     images(id: string, on: unknown, by: string) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request");

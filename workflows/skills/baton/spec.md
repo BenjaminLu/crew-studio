@@ -7,7 +7,7 @@ citations (each opens the code, the diff, the commit or the note it rests on, at
 
 ## A section (scene_show)
 
-`{chapter, title, picture?, points: [{text, cites}]}`: the chapter in order; a short title; the board item it shows (a
+`{chapter, title, picture?, points: [{text, cites}]}`: the chapter (any order; the report keeps the chapters' order); a short title; the board item it shows (a
 text chapter, what / reviewers / roads / watch / questions, may have none); 2 to 4 points of one sentence each, every point
 with the citations it rests on (`diff:path:Lstart-end`, `commit:<sha>`, `review:<id>`, `ledger:#seq`, `source:<n>`,
 `board:<id>`). A point without a verified citation shows as an inference.
@@ -26,8 +26,8 @@ with the citations it rests on (`diff:path:Lstart-end`, `commit:<sha>`, `review:
 
 ## Leaving a chapter out (chapter_skip)
 
-`{chapter: lifecycle|sequence, reason, cites}`: one sentence, cited to what shows there is nothing for it. The captain
-reads the reason in the report where the drawing would be.
+`{chapter: talks|lifecycle|sequence, reason, cites}`: one sentence, cited to what shows there is nothing for it. The
+captain reads the reason in the report where the drawing would be; it counts as one of the turn's scenes.
 
 ## Before your final answer (lesson_check)
 

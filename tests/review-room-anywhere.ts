@@ -120,7 +120,7 @@ const TOOLRES: [string, any][] = [];
     const ta = (room.view(t.id) as any).turns.at(-1), ra = TOOLRES.slice(r0), get = (n: string) => ra.filter(([x]) => x === n).map(([, j]) => j);
     ok(ta.action === "teach" && ta.status === "failed" && /Studio refused the lesson: it left out change, sequence/.test(ta.error ?? ""), "a lesson that leaves out the change itself (or a chapter it owes without a cited reason) is refused, saying which", JSON.stringify([ta.status, ta.error]));
     ok(/rejected 1: an option the change turned down is shown only as the record shows it/.test(get("board_draw")[0]?.errors?.[0] ?? "") && get("scene_show")[0]?.scene === 1 && /one scene a chapter/.test(get("scene_show")[2]?.error ?? "")
-      && /only lifecycle or sequence may be left out/.test(get("chapter_skip")[0]?.error ?? "") && /only with a reason Studio can verify/.test(get("chapter_skip")[1]?.error ?? "") && get("chapter_skip")[2]?.skipped === "lifecycle"
+      && /only talks or lifecycle or sequence may be left out/.test(get("chapter_skip")[0]?.error ?? "") && /only with a reason Studio can verify/.test(get("chapter_skip")[1]?.error ?? "") && get("chapter_skip")[2]?.skipped === "lifecycle"
       && /a road not taken is listed only when the record shows it/.test(get("scene_show")[3]?.error ?? "") && JSON.stringify(get("lesson_check")[0]?.missing) === JSON.stringify(["change", "sequence"]),
       "Studio holds the lesson's shape: a text chapter needs no picture, one drawing a chapter, only lifecycle or sequence left out and only with a verified reason, roads and rejected options only from the record, lesson_check names what is missing",
       JSON.stringify(ra.map(([n, j]) => [n, j.error ?? j.errors ?? j.skipped ?? j.missing ?? j.scene ?? j.added])));
@@ -141,7 +141,17 @@ const TOOLRES: [string, any][] = [];
     ok(tb.status === "done" && JSON.stringify(tb.scenes.map((x: any) => [x.chapter, !!x.skip])) === JSON.stringify([["what", false], ["talks", false], ["change", false], ["lifecycle", true], ["sequence", true]]) && chk?.ok === true
       && tb.scenes[3].points[0].cites[0].ok === true && (room.view(t.id) as any).board.find((b: any) => b.id === `B${nB}-1`)?.inferred === true,
       "a lesson with what, talks and change, and lifecycle and sequence left out with a cited reason, is kept; the architecture is marked inferred (no design document cited)", JSON.stringify([tb.status, tb.error, tb.scenes?.map((x: any) => x.chapter)]));
-    ok(tools1.includes("illustrate") && /Generated pictures are ON/.test(prompts.at(-1)?.text ?? "") && on.images === true, "with pictures turned on, the tutor may illustrate (paid, at most two a turn)", JSON.stringify(tools1)); }
+    ok(tools1.includes("illustrate") && /Generated pictures are ON/.test(prompts.at(-1)?.text ?? "") && on.images === true, "with pictures turned on, the tutor may illustrate (paid, at most two a turn)", JSON.stringify(tools1));
+    const nD = (room.view(t.id) as any).turns.length + 1, rD = TOOLRES.length, dec = { type: "decision", title: "Halves", question: "How does a half cent round?", chosen: "Up", because: "The spec says so", rejected: [{ option: "Down", why: "Reverted", cite: `commit:${th}` }] };
+    script.push([["board_draw", { items: [dec] }], ...Array.from({ length: 10 }, (_, i) => ["scene_show", { chapter: "decisions", title: `Choice ${i + 1}`, picture: `B${nD}-1`, points: [{ text: "Up [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Two.", cites: [] }] }]),
+      ["chapter_skip", { chapter: "talks", reason: "这个改动只改了一个函数 [diff:src/percent.ts]。", cites: ["diff:src/percent.ts"] }],
+      ["scene_show", { chapter: "what", title: "一个百分比工具", points: [{ text: "新增 percent [diff:src/percent.ts]。", cites: ["diff:src/percent.ts"] }, { text: "取整到分。", cites: [] }] }],
+      ["chapter_skip", { chapter: "lifecycle", reason: "没有状态 [diff:src/percent.ts]。", cites: ["diff:src/percent.ts"] }], ["lesson_check", {}], ["say", "课程 [diff:src/percent.ts]。"]]);
+    await room.start(t.id, { action: "teach", lang: "zh-CN", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const td = (room.view(t.id) as any).turns.at(-1), rd2 = TOOLRES.slice(rD), sk = rd2.filter(([n]) => n === "chapter_skip").map(([, j]) => j), lc = rd2.filter(([n]) => n === "lesson_check").map(([, j]) => j)[0], board = (room.view(t.id) as any).board.find((b: any) => b.id === `B${nD}-1`);
+    ok(sk[0]?.skipped === "talks" && td.scenes.find((x: any) => x.chapter === "talks")?.title === "谁跟谁说话" && td.scenes.at(-1)?.chapter === "what" && /at most 12 scenes a turn/.test(sk[1]?.error ?? "") && JSON.stringify(lc?.missing) === JSON.stringify(["change", "lifecycle", "sequence"]),
+      "a lesson's chapters come in any order (what after the decisions); talks may be left out with a cited reason (its title in the turn's language, 简体 too); a chapter left out counts toward the scene limit; lesson_check names only what is missing", JSON.stringify({ sk, lc, chapters: td.scenes.map((x: any) => x.chapter) }));
+    ok(board?.cites.some((c: any) => c.ref === `commit:${th}` && c.ok) && board.rejected[0].cite.ok, "a rejected option's citation is the decision's own too (the Library resolves it)", JSON.stringify(board?.cites)); }
   // ---- start the room over: refused while a turn or a translation runs; archived, never deleted; nothing writes the old room back ----
   { const rd = join(E.rdir(t.id), "review-room"), f = join(rd, `${t.id}.json`), dir = join(rd, `${t.id}-images`), arch = join(rd, ".archive");
     let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:src/percent.ts]."]]);
@@ -152,19 +162,50 @@ const TOOLRES: [string, any][] = [];
     await room.translate(t.id, { lang: "zh-TW", confirm: need?.offer?.translate?.hash }, "captain");
     const busy2 = await refused(() => room.reset(t.id, "captain")); rel2(); await room.settle(t.id);
     ok(busy?.code === "busy" && busy2?.code === "busy" && existsSync(f) && !existsSync(arch), "starting a room over is refused while a turn or a translation runs, and nothing moves", JSON.stringify([busy?.code, busy2?.code, need?.code]));
-    // a picture still being drawn (the room's opening picture, held) and a Library save, racing the reset
+    // the room's opening picture, made with a confirmed round with pictures on and held in the background; a Library save
+    // mid-flight (resolving its citations) when the room is started over
     let relImg!: () => void; const gImg = new Promise<void>((r) => (relImg = r)), PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
-    E.deps.generateImage = async (_p: string, authorize: () => void) => { authorize(); await gImg; return { bytes: PNG, model: "img-1", provider: "codex" }; };
-    room.view(t.id, true); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "voice-t1-0123456789ab.mp3"), "x");
+    const imgCalls: string[] = []; E.deps.generateImage = async (pr: string, authorize: () => void) => { authorize(); imgCalls.push(pr); await gImg; return { bytes: PNG, model: "img-1", provider: "codex" }; };
+    script.push([["say", "The function rounds [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash, images: true }, "captain");
+    for (let i = 0; i < 300 && (room.view(t.id) as any).running != null; i++) await new Promise((r) => setTimeout(r, 20));
+    mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "voice-t1-0123456789ab.mp3"), "x");
     const before: any = room.view(t.id), pending = before.board.find((b: any) => b.turn === 0)?.status;
-    const saving = room.saveToLibrary(t.id, "captain").catch((e: any) => e), out: any = room.reset(t.id, "captain");
-    relImg(); await saving; await room.settle(t.id); await new Promise((r) => setTimeout(r, 60));
+    const realCite = room.cite; let inCite = false, relCite!: () => void; const gCite = new Promise<void>((r) => (relCite = r));
+    (room as any).cite = async (...args: any[]) => { inCite = true; await gCite; return (realCite as any).apply(room, args); };
+    const saving = room.saveToLibrary(t.id, "captain").then((v: any) => ({ ok: v }), (e: any) => ({ error: e?.message ?? String(e) }));
+    for (let i = 0; i < 300 && !inCite; i++) await new Promise((r) => setTimeout(r, 10));
+    const out: any = room.reset(t.id, "captain"); relCite(); const saved: any = await saving; (room as any).cite = realCite;
+    relImg(); await room.settle(t.id); await new Promise((r) => setTimeout(r, 60));
     const kept = existsSync(arch) ? readdirSync(arch).filter((n) => n.startsWith(`${t.id}-`)) : [], a0 = kept[0] ? join(arch, kept[0]) : "", old = a0 ? JSON.parse(readFileSync(join(a0, "room.json"), "utf8")) : null;
-    ok(pending === "pending" && JSON.stringify(out.moved) === JSON.stringify(["room", "images"]) && kept.length === 1 && old?.turns.length === before.turns.length && existsSync(join(a0, "images", "voice-t1-0123456789ab.mp3")) && !existsSync(f) && !existsSync(dir),
-      "starting over moves the room's file and its pictures' folder into an archive folder beside it (never deleted); a picture still being drawn and a Library save racing it write nothing back", JSON.stringify({ pending, moved: out.moved, kept, file: existsSync(f), dir: existsSync(dir) }));
+    ok(imgCalls.length === 1 && pending === "pending" && inCite && !!saved.ok?.artifact && JSON.stringify(out.moved) === JSON.stringify(["room", "images"]) && kept.length === 1 && old?.turns.length === before.turns.length && existsSync(join(a0, "images", "voice-t1-0123456789ab.mp3")) && !existsSync(f) && !existsSync(dir),
+      "starting over moves the room's file and its pictures' folder into an archive folder beside it (never deleted); a Library save mid-flight finishes into the Library and a picture still being drawn, both holding the old room, write nothing back", JSON.stringify({ pending, inCite, saved, moved: out.moved, kept, file: existsSync(f), dir: existsSync(dir) }));
     const fresh: any = room.view(t.id, true), rec = E.trusted(t.id).entries.filter((e: any) => e.record === "review-room-reset");
-    ok(fresh.turns.length === 0 && !fresh.board.some((b: any) => b.turn > 0) && !fresh.translations?.["zh-TW"] && fresh.images === false && rec.length === 1 && JSON.stringify(rec[0].data.moved) === JSON.stringify(["room", "images"]) && !JSON.stringify(rec[0].data).includes("Still reading"),
-      "the next view is a fresh room (no answers, board, translations or pictures); the ledger records review-room-reset with no content", JSON.stringify({ turns: fresh.turns.length, rec: rec.map((e: any) => e.data) })); }
+    ok(fresh.turns.length === 0 && !fresh.board.some((b: any) => b.turn >= 0) && !fresh.translations?.["zh-TW"] && fresh.images === false && rec.length === 1 && JSON.stringify(rec[0].data.moved) === JSON.stringify(["room", "images"]) && !JSON.stringify(rec[0].data).includes("Still reading"),
+      "the next view is a fresh room (no answers, board, translations or pictures; opening it makes no paid picture); the ledger records review-room-reset with no content", JSON.stringify({ turns: fresh.turns.length, board: fresh.board.length, rec: rec.map((e: any) => e.data) }));
+    // a translation admitted while the room is started over: refused, nothing written, the seat released (the next turn runs)
+    script.push([["say", "Rounds to the cent [diff:src/percent.ts]."]]); await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const realUsable = (E.deps as any).refreshUsable; let relU!: () => void; const gU = new Promise<void>((r) => (relU = r)); let inU = false;
+    (E.deps as any).refreshUsable = async () => { inU = true; await gU; };
+    const need2 = await refused(() => room.translate(t.id, { lang: "zh-TW" }, "captain"));
+    const tr = room.translate(t.id, { lang: "zh-TW", confirm: need2?.offer?.translate?.hash }, "captain").then(() => null, (e: any) => e);
+    for (let i = 0; i < 300 && !inU; i++) await new Promise((r) => setTimeout(r, 10));
+    const out2: any = room.reset(t.id, "captain"); relU(); const trErr: any = await tr; (E.deps as any).refreshUsable = realUsable;
+    script.push([["say", "Fresh again [diff:src/percent.ts]."]]); await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const after: any = room.view(t.id);
+    ok(out2.reset && trErr?.code === "reset" && after.turns.length === 1 && after.turns[0].status === "done" && !after.translating && after.running == null,
+      "a translation admitted while the room is started over is refused (nothing half-written) and its seat released: the next turn runs", JSON.stringify({ code: trErr?.code, msg: trErr?.message, turns: after.turns.map((x: any) => x.status) }));
+    // the captain turns pictures off while a turn runs: its illustrate is refused, no paid image job
+    imgCalls.length = 0; let relE!: () => void; const gE = new Promise<void>((r) => (relE = r)), r0 = TOOLRES.length;
+    script.push([["wait", gE], ["illustrate", { title: "Rounding", concepts: ["number", "rounding"], layout: "flow" }], ["say", "The sketch [diff:src/percent.ts]."]]);
+    const runs0 = runArgs.length; await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash, images: true }, "captain");
+    for (let i = 0; i < 300 && runArgs.length === runs0; i++) await new Promise((r) => setTimeout(r, 10));
+    // the tool as the round was given it (a provider keeps its tool list for the round): its run checks the setting itself
+    const given = (runArgs.at(-1)?.tools ?? []).find((x: any) => x.name === "illustrate"), opening = imgCalls.length; room.images(t.id, false, "captain");
+    const direct = given ? await given.run({ title: "Rounding", concepts: ["number", "rounding"], layout: "flow" }) : null; relE(); await room.settle(t.id);
+    const ill = TOOLRES.slice(r0).filter(([n]) => n === "illustrate").map(([, j]) => j)[0];
+    ok(!!given && /generated pictures are off in this room/.test(direct?.error ?? "") && /generated pictures are off|no such tool illustrate/.test(ill?.error ?? "") && imgCalls.length === opening && !(room.view(t.id) as any).board.some((b: any) => b.type === "image" && b.turn > 0),
+      "pictures turned off while a turn runs: its illustrate is refused there and then, no paid image job", JSON.stringify({ direct, ill, calls: imgCalls.length, opening, tools: (runArgs.at(-1)?.tools ?? []).map((x: any) => x.name), kind: runArgs.at(-1)?.title, images: (room.view(t.id) as any).images })); }
   // ---- the review gate is per head: a head the review did not pass at, or a ready-on-branch end with no ledger entry, takes no turn ----
   const uHead = ur.ctx.head; ur.ctx.head = ur.ctx.baseCommit;
   const movedOffer: any = (room.view(u.id) as any).offer, movedTurn = await refused(() => room.start(u.id, { action: "how", confirm: v0.offer.hash }, "captain")); ur.ctx.head = uHead;
@@ -406,6 +447,9 @@ const TOOLRES: [string, any][] = [];
   const fork: any = await room.openPr("https://github.com/fixture/project/pull/2"), fv: any = room.view(fork.id), noHost = await refused(() => room.start(fork.id, { action: "how", confirm: "x" }, "captain"));
   ok(fv.head === C && fv.prState.headRepo === "contrib/project" && fv.task === null && (await room.cite(fork.id, "diff:b.txt")).text.includes("+from a fork"),
     "a fork's pull request (refs/pull/n/head) no Studio Task made opens readable, its diff cited", JSON.stringify([fv.head, fv.prState?.headRepo]));
+  { const out: any = room.reset(fork.id, "captain"), prd = join(H.data, "review-room", "pr"), dirs = readdirSync(join(prd, ".archive")).filter((n) => n.startsWith(`${fork.id}-`)), rec = dirs[0] && existsSync(join(prd, ".archive", dirs[0], "reset.json")) ? JSON.parse(readFileSync(join(prd, ".archive", dirs[0], "reset.json"), "utf8")) : null;
+    ok(out.reset && rec?.card === fork.id && rec.ledger === null && /never had a paid turn/.test(rec.why) && JSON.stringify(rec.moved) === JSON.stringify(["room"]) && (room.view(fork.id) as any).turns.length === 0,
+      "a pull request room with no Task behind it (no paid turn yet, so no ledger) records its reset in its archive, with no content", JSON.stringify(rec)); }
   ok(fv.offer?.code === "no_crew" && /Approve this project's crew first/.test(fv.offer.error) && noHost?.code === "no_crew" && /Approve this project's crew first/.test(noHost.message) && !E.list().some((r: any) => r.workflow === "review-room-host"),
     "with no approved crew for the project, its turn is refused, saying to approve the project's crew first; no host Task is made", JSON.stringify([fv.offer, noHost?.message]));
   { // a Studio team that covers code-firstmate: the offer shows the reviewer it would give, read only (nothing is written by a read)

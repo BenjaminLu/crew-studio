@@ -37,10 +37,12 @@ risk is a lie.
 
 ## The chapters
 
-In order; Studio refuses a lesson that skips one it owes (see the review room tutor's "Lessons, chapter by chapter"):
+Shown in this order, made in any; Studio refuses a lesson that skips one it owes (see the review room tutor's "Lessons,
+chapter by chapter"):
 
 - *What this is*: a few points the captain could repeat.
 - *What talks to what*: the architecture, one `arch` drawing; inferred unless a design document or the record shows it.
+  Left out only with chapter_skip and a cited reason (nothing talks: a docs or config-only change).
 - *The decisions*: one `decision` drawing a decision the change makes, when it makes some.
 - *The change itself*: one `item` drawing a changed item, at least one.
 - *Its life, state by state*: one `states` drawing, the full set, each transition citing its code and saying what it

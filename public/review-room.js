@@ -4,7 +4,7 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { resetAsk: new Set(), step: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+const RR = { imgWant: new Map(), resetAsk: new Set(), step: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
   scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Set(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -116,31 +116,64 @@ function flowSvg(g, prev, seen, box) {
   const write = (el, key, dl) => { if (anim && !seen.has(key)) { el.classList.add("rr-write"); el.style.setProperty("--dl", `${dl.toFixed(2)}s`); } return el; };
   // the picture scales to its box (viewBox), never wider than the board, never blown up past 1.5x
   const svg = sv("svg", { viewBox: `0 0 ${maxX} ${maxY}`, class: "rr-flow", role: "img", preserveAspectRatio: "xMidYMid meet", "data-layout": horiz ? "LR" : "TD", style: `max-width:${Math.round(maxX * 1.5)}px;max-height:${Math.round(maxY * 1.5)}px` });
-  const fresh = [], reach = { x: 0, y: 0 };
+  const fresh = [];
   for (const n of g.nodes) { const p = pos.get(n.id), isNew = old && !old.nodes.has(n.id), grp = sv("g", { class: `rr-node${isNew ? " rr-new" : ""}`, "data-node": n.id, "data-box": `${p.x},${p.y},${W},${H}` });
     const shape = sv("path", { class: "rr-box", pathLength: 1, d: n.shape === "diamond" ? diamondPath(p.x, p.y, W, H) : boxPath(p.x, p.y, W, H, n.shape === "round" || n.shape === "circle" ? 26 : 10) });
     grp.append(pen(shape, `n:${n.id}`, 0.45));
     const ls = labels.get(n.id); ls.forEach((l, i) => { const tx = sv("text", { x: p.x + W / 2, y: p.y + H / 2 + (i - (ls.length - 1) / 2) * (fs + 4) + fs * 0.35, "text-anchor": "middle", "font-size": fs, style: `font-size:${fs}px` }); tx.textContent = l; grp.append(write(tx, `n:${n.id}`, t + 0.3 + i * 0.12)); });
     if (anim && !seen.has(`n:${n.id}`)) { fresh.push(`n:${n.id}`); t += 0.18; }
     svg.append(grp); }
-  for (const e of g.edges) { const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) continue;
-    // a way back (the edge runs against the layout, or its reverse is drawn too) bows out under the boxes instead of crossing them
-    const backward = horiz ? b.x <= a.x : b.y <= a.y, bow = backward || g.edges.some((o) => o.from === e.to && o.to === e.from && g.edges.indexOf(o) < g.edges.indexOf(e));
-    const [x1, y1, x2, y2] = bow ? (horiz ? [a.x + W / 2, a.y + H, b.x + W / 2, b.y + H] : [a.x + W, a.y + H / 2, b.x + W, b.y + H / 2]) : horiz ? [a.x + W, a.y + H / 2, b.x, b.y + H / 2] : [a.x + W / 2, a.y + H, b.x + W / 2, b.y];
-    const cx = bow ? (horiz ? (x1 + x2) / 2 : Math.max(x1, x2) + 56) : 0, cy = bow ? (horiz ? Math.max(y1, y2) + 56 : (y1 + y2) / 2) : 0;
-    const key = `e:${e.from}>${e.to}`, isNew = old && !old.edges.has(`${e.from}>${e.to}`), cls = isNew ? " rr-new" : "", ang = bow ? Math.atan2(y2 - cy, x2 - cx) : Math.atan2(y2 - y1, x2 - x1);
-    if (bow) { if (horiz) reach.y = Math.max(reach.y, Math.max(y1, y2) + 52); else reach.x = Math.max(reach.x, Math.max(x1, x2) + 40 + (e.label ? Math.min(240, e.label.length * 9) : 0)); }
-    const line = sv("path", { d: bow ? `M${x1},${y1} Q${cx},${cy} ${x2},${y2}` : `M${x1},${y1} L${x2},${y2}`, pathLength: 1, class: `rr-edge${e.dashed ? " dashed" : ""}${cls}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null });
+  // labels go where they overlap no box, no line and no other label: tried along the edge, on either side (baton: a label
+  // between two nodes needs room designed for it); each is also masked by the paper
+  const boxes = [...pos.values()].map((p) => ({ x: p.x - 4, y: p.y - 4, w: W + 8, h: H + 8 })), placed = [], dots = [], todo = [];
+  const lw = (txt) => [...txt].reduce((n, ch) => n + (/[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯]/.test(ch) ? 14 : 8), 0) + 8;
+  const ext = { x0: 0, y0: 0, x1: maxX, y1: maxY }, grow = (x, y) => { ext.x0 = Math.min(ext.x0, x); ext.y0 = Math.min(ext.y0, y); ext.x1 = Math.max(ext.x1, x); ext.y1 = Math.max(ext.y1, y); };
+  const ports = new Map(), forward = (e) => { const a = pos.get(e.from), b = pos.get(e.to); return a && b && e.from !== e.to && (horiz ? b.x > a.x : b.y > a.y); };
+  for (const n of g.nodes) { const outs = g.edges.filter((e) => e.from === n.id && forward(e)).sort((p, q) => (horiz ? pos.get(p.to).y - pos.get(q.to).y : pos.get(p.to).x - pos.get(q.to).x));
+    const ins = g.edges.filter((e) => e.to === n.id && forward(e)).sort((p, q) => (horiz ? pos.get(p.from).y - pos.get(q.from).y : pos.get(p.from).x - pos.get(q.from).x));
+    outs.forEach((e, k) => ports.set(`o${g.edges.indexOf(e)}`, (k + 1) / (outs.length + 1))); ins.forEach((e, k) => ports.set(`i${g.edges.indexOf(e)}`, (k + 1) / (ins.length + 1))); }
+  g.edges.forEach((e, ei) => { const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) return;
+    const po = ports.get(`o${ei}`) ?? 0.5, pi = ports.get(`i${ei}`) ?? 0.5;
+    const twins = g.edges.filter((o) => o.from === e.from && o.to === e.to), tw = twins.indexOf(e);
+    let x1, y1, x2, y2, cx, cy, d, pt, ang, cands = null;
+    if (e.from === e.to) { // a transition back to its own state: a loop beside the box (on top when laid left to right, on the left when top down)
+      const lift = 44 + tw * 22;
+      if (horiz) { x1 = a.x + W * 0.62; y1 = a.y; x2 = a.x + W * 0.38; y2 = a.y; d = `M${x1},${y1} C${x1 + 16},${a.y - lift} ${x2 - 16},${a.y - lift} ${x2},${y2}`; ang = Math.atan2(y2 - (a.y - lift), 16); grow(a.x + W / 2, a.y - lift - 4);
+        pt = (u) => { const q = 1 - u; return [q * q * q * x1 + 3 * q * q * u * (x1 + 16) + 3 * q * u * u * (x2 - 16) + u * u * u * x2, q * q * q * y1 + 3 * q * q * u * (a.y - lift) + 3 * q * u * u * (a.y - lift) + u * u * u * y2]; };
+        cands = (w) => [[a.x + W / 2, a.y - lift - 8], [a.x + W / 2 + w / 2 + 24, a.y - lift + 14]]; }
+      else { x1 = a.x; y1 = a.y + H * 0.32; x2 = a.x; y2 = a.y + H * 0.68; d = `M${x1},${y1} C${a.x - lift},${y1 - 10} ${a.x - lift},${y2 + 10} ${x2},${y2}`; ang = Math.atan2(10, lift); grow(a.x - lift - 4, a.y + H / 2);
+        pt = (u) => { const q = 1 - u; return [q * q * q * x1 + 3 * q * q * u * (a.x - lift) + 3 * q * u * u * (a.x - lift) + u * u * u * x2, q * q * q * y1 + 3 * q * q * u * (y1 - 10) + 3 * q * u * u * (y2 + 10) + u * u * u * y2]; };
+        cands = (w) => [[a.x - lift - w / 2 - 6, a.y + H / 2 + 5], [a.x - lift / 2, a.y - 10]]; } }
+    else {
+      // a way back (against the layout, or its reverse drawn too) bows out under (beside) the boxes; a second edge between the same
+      // two states, the same way, bows out the other side, further each time
+      const backward = horiz ? b.x <= a.x : b.y <= a.y, bow = backward || g.edges.some((o) => o.from === e.to && o.to === e.from && g.edges.indexOf(o) < ei);
+      [x1, y1, x2, y2] = bow ? (horiz ? [a.x + W / 2, a.y + H, b.x + W / 2, b.y + H] : [a.x + W, a.y + H / 2, b.x + W, b.y + H / 2]) : horiz ? [a.x + W, a.y + H * po, b.x, b.y + H * pi] : [a.x + W * po, a.y + H, b.x + W * pi, b.y];
+      if (bow) { cx = horiz ? (x1 + x2) / 2 : Math.max(x1, x2) + 56 + tw * 28; cy = horiz ? Math.max(y1, y2) + 56 + tw * 28 : (y1 + y2) / 2; }
+      else { const len = Math.hypot(x2 - x1, y2 - y1) || 1, off = tw ? (tw % 2 ? 1 : -1) * 30 * Math.ceil(tw / 2) : 0; cx = (x1 + x2) / 2 - ((y2 - y1) / len) * off; cy = (y1 + y2) / 2 + ((x2 - x1) / len) * off; }
+      d = `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`; ang = Math.atan2(y2 - cy, x2 - cx); grow((x1 + 2 * cx + x2) / 4, (y1 + 2 * cy + y2) / 4 + 8);
+      pt = (u) => [(1 - u) * (1 - u) * x1 + 2 * (1 - u) * u * cx + u * u * x2, (1 - u) * (1 - u) * y1 + 2 * (1 - u) * u * cy + u * u * y2]; }
+    const steps = Math.max(24, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / 5) + 24); for (let k = 1; k < steps; k++) dots.push(pt(k / steps));
+    const key = `e:${e.from}>${e.to}`, isNew = old && !old.edges.has(`${e.from}>${e.to}`), cls = isNew ? " rr-new" : "";
+    const line = sv("path", { d, pathLength: 1, class: `rr-edge${e.dashed ? " dashed" : ""}${cls}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null });
     const head = sv("path", { d: `M${x2 - 11 * Math.cos(ang - 0.5)},${y2 - 11 * Math.sin(ang - 0.5)} L${x2},${y2} L${x2 - 11 * Math.cos(ang + 0.5)},${y2 - 11 * Math.sin(ang + 0.5)}`, pathLength: 1, class: `rr-ahead${cls}` });
     if (e.dashed) { if (anim && !seen.has(key)) { line.classList.add("rr-fade"); line.style.setProperty("--dl", `${t.toFixed(2)}s`); } } else pen(line, key, 0.35);
     if (anim && !seen.has(key)) { const t0 = t; t += 0.33; pen(head, key, 0.12); t = t0; }
     svg.append(line, head);
-    if (e.label) { const side = (!bow && Math.abs(x2 - x1) < Math.abs(y2 - y1)) || (bow && !horiz), mx = bow ? (x1 + 2 * cx + x2) / 4 : (x1 + x2) / 2, my = bow ? (y1 + 2 * cy + y2) / 4 + (horiz ? 18 : 0) : (y1 + y2) / 2, tx = sv("text", { x: mx + (side ? 8 : 0), y: my + (bow ? 0 : side ? 6 : -6), class: "rr-elabel", "text-anchor": side ? "start" : "middle", "data-elabel": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null }); tx.textContent = e.label.slice(0, 40); svg.append(write(tx, key, t + 0.25)); }
-    if (anim && !seen.has(key)) { fresh.push(key); t += 0.18; } }
+    if (e.label) todo.push({ e, key, pt, cands, dl: t + 0.25 });
+    if (anim && !seen.has(key)) { fresh.push(key); t += 0.18; } });
+  const hit = (r) => [...boxes, ...placed].some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) || dots.some(([px, py]) => px > r.x && px < r.x + r.w && py > r.y && py < r.y + r.h);
+  for (const { e, key, pt, cands, dl } of todo) { const txt = e.label.slice(0, 40), w = lw(txt), hgt = 18, rect = ([px, py]) => ({ x: px - w / 2, y: py - hgt + 4, w, h: hgt });
+    // along the edge, then pushed out from it along its normal, further each time (on either side)
+    const tries = [...(cands ? cands(w) : []), ...[0.5, 0.38, 0.62, 0.28, 0.72, 0.2, 0.8, 0.12, 0.88].flatMap((u) => { const [px, py] = pt(u), [qx, qy] = pt(Math.min(1, u + 0.02)), dl = Math.hypot(qx - px, qy - py) || 1, nx = -(qy - py) / dl, ny = (qx - px) / dl;
+      return [[px + w / 2 + 8, py + 5], [px - w / 2 - 8, py + 5], [px, py - 12], [px, py + 22], ...[16, 30, 46, 64].flatMap((dd) => [[px + nx * (dd + w / 2 * Math.abs(nx)), py + ny * (dd + 9 * Math.abs(ny)) + 5], [px - nx * (dd + w / 2 * Math.abs(nx)), py - ny * (dd + 9 * Math.abs(ny)) + 5]])]; })];
+    const cost = (r) => [...boxes, ...placed].filter((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y).length * 50 + dots.filter(([px, py]) => px > r.x && px < r.x + r.w && py > r.y && py < r.y + r.h).length;
+    const pick = tries.find((c) => !hit(rect(c))) ?? tries.reduce((p, c) => (cost(rect(c)) < cost(rect(p)) ? c : p)); placed.push(rect(pick)); grow(pick[0] - w / 2, pick[1] - hgt); grow(pick[0] + w / 2, pick[1] + 6);
+    const tx = sv("text", { x: pick[0], y: pick[1], class: "rr-elabel", "text-anchor": "middle", "data-elabel": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null }); tx.textContent = txt; svg.append(write(tx, key, dl)); }
   for (const k of fresh) seen.add(k);
-  // the canvas grows only as far as a way back actually reaches below (or beside) the boxes: no empty band
-  const fw = Math.max(maxX, reach.x), fh = Math.max(maxY, reach.y);
-  if (fw !== maxX || fh !== maxY) { svg.setAttribute("viewBox", `0 0 ${fw} ${fh}`); svg.style.maxWidth = `${Math.round(fw * 1.5)}px`; svg.style.maxHeight = `${Math.round(fh * 1.5)}px`; }
+  // the canvas is what was drawn: a loop above, a way back below, a label beside, never an empty band
+  const vx = Math.min(0, ext.x0 - 8), vy = Math.min(0, ext.y0 - 8), fw = Math.max(maxX, ext.x1 + 8) - vx, fh = Math.max(maxY, ext.y1 + 8) - vy;
+  if (vx || vy || fw !== maxX || fh !== maxY) { svg.setAttribute("viewBox", `${vx} ${vy} ${fw} ${fh}`); svg.style.maxWidth = `${Math.round(fw * 1.5)}px`; svg.style.maxHeight = `${Math.round(fh * 1.5)}px`; }
   return svg;
 }
 
@@ -249,7 +282,7 @@ function itemView(card, it, prev) {
   else if (it.type === "keycard") body = keycardView(it, drawnOf(card, it));
   else if (it.type === "item") body = itemFigure(it, drawnOf(card, it));
   else if (it.type === "arch") body = archView(card, it);
-  else if (it.type === "decision") body = decisionFigure(it, drawnOf(card, it));
+  else if (it.type === "decision") body = decisionView(card, it);
   else if (it.type === "states") body = statesView(card, it);
   else if (it.type === "sequence") body = sequenceView(it, drawnOf(card, it));
   // a table, the tutor's or one from an older answer: cells as text
@@ -330,17 +363,22 @@ function decisionFigure(it, seen) {
   if (!rej.length) { const t = sv("text", { x: 495, y: y1 + 58, "text-anchor": "middle", class: "rr-ib-sub" }); t.textContent = T("no alternative on record", "紀錄裡沒有其他選項"); svg.append(t); }
   return svg;
 }
+/** a decision with its turned-down options listed under the drawing, each with the record that shows it */
+function decisionView(card, it) {
+  return h("div", { class: "rr-flow-wrap rr-dec" }, decisionFigure(it, drawnOf(card, it)), (it.rejected || []).length ? h("ul", { class: "rp-rej", "data-rejected": it.id }, it.rejected.map((x, i) => h("li", { "data-rejected-option": i },
+    h("span", {}, `✗ ${x.option}`), h("span", { class: "faint" }, ` · ${x.why} `), x.cite ? citeChip(card, x.cite.ref, x.cite.ok) : inferenceBadge()))) : null);
+}
 /** a figure's words as the tutor gave them, in a fixed order (src/domain/review-room.ts figureTexts): what a translation replaces */
-function figWords(it) { switch (it?.type) {
+function figWords(it) { const own = (() => { switch (it?.type) {
   case "arch": return [...(it.nodes || []).map((n) => n.label), ...(it.edges || []).map((e) => e.label || "")];
-  case "item": return [it.before, it.after];
+  case "item": return [it.name, it.before, it.after, it.mechanism || ""];
   case "decision": return [it.question, it.chosen, it.because, ...(it.rejected || []).flatMap((x) => [x.option, x.why])];
-  case "states": return it.states?.length ? [...it.states.map((x) => x.label), ...(it.transitions || []).flatMap((t) => [t.label || "", t.detail || ""])] : [];
+  case "states": return it.states?.length ? [...it.states.map((x) => x.label), ...(it.transitions || []).flatMap((t) => [t.label || "", t.detail || ""])] : null;
   case "sequence": return (it.steps || []).flatMap((x) => [x.label, x.frameLabel || ""]);
-  default: return []; } }
-function withWords(it, w) { let i = 0; const n = () => String(w[i++] ?? ""), c = JSON.parse(JSON.stringify(it));
+  default: return null; } })(); return own ? [it.title || "", ...own] : []; }
+function withWords(it, w) { let i = 0; const n = () => String(w[i++] ?? ""), c = JSON.parse(JSON.stringify(it)); c.title = n();
   if (c.type === "arch") { c.nodes.forEach((x) => (x.label = n())); c.edges.forEach((x) => (x.label = n())); }
-  else if (c.type === "item") { c.before = n(); c.after = n(); }
+  else if (c.type === "item") { c.name = n(); c.before = n(); c.after = n(); c.mechanism = n(); }
   else if (c.type === "decision") { c.question = n(); c.chosen = n(); c.because = n(); (c.rejected || []).forEach((x) => { x.option = n(); x.why = n(); }); }
   else if (c.type === "states") { c.states.forEach((x) => (x.label = n())); (c.transitions || []).forEach((t) => { t.label = n(); t.detail = n(); }); }
   else if (c.type === "sequence") c.steps.forEach((x) => { x.label = n(); x.frameLabel = n(); });
@@ -451,6 +489,8 @@ const itemTitle = (it) => (STUDIO_TITLES[it?.title] ? T(it.title, STUDIO_TITLES[
 /** a lesson's chapters, in order (src/domain/review-room.ts CHAPTERS) */
 const CHAPTER = { what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
 const chapterName = (id) => (CHAPTER[id] ? TL(...CHAPTER[id]) : "");
+/** the chapters' order (src/domain/review-room.ts CHAPTERS): a lesson is shown in it */
+const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "reviewers", "roads", "watch", "questions"];
 const TYPE_LABEL = { arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
 const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
 // ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
@@ -519,8 +559,9 @@ function scenesOf(r) {
     if (t.studio) { const [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action]; out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: TL(en, zh), question: null, visuals: turnBoard, points: claims, questions: [] }); continue; }
     // the tutor's own scenes: each its picture and its few points; the answer itself is in the transcript
     if ((t.status === "done" || t.status === "running") && t.scenes?.length) {
-      const used = new Set(t.scenes.map((s) => s.picture));
-      t.scenes.forEach((s, m) => { const pic = r.board.find((b) => b.id === s.picture), last = m === t.scenes.length - 1;
+      const used = new Set(t.scenes.map((s) => s.picture)), rank = (s) => (CHAPTER_ORDER.includes(s.chapter) ? CHAPTER_ORDER.indexOf(s.chapter) : -1);
+      const ordered = t.action === "teach" ? t.scenes.map((s, m) => [s, m]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]) : t.scenes.map((s, m) => [s, m]);
+      ordered.forEach(([s, m], o) => { const pic = r.board.find((b) => b.id === s.picture), last = o === t.scenes.length - 1;
         out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, chapter: s.chapter || null, skip: !!s.skip, pic: pic || null, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
     } else {
     const heading = claims.find((c) => c.kind === "heading"), { points, extra } = legacyPoints(`t${t.n}`, claims);
@@ -690,7 +731,7 @@ const pointText = (card, c) => [c.basis === "inference" ? inferenceBadge() : c.b
 function reportFigure(card, r, it) {
   // a report figure reads at its drawn size, left to right where it fits: the content column, not the board's box
   BOX = innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 };
-  const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionFigure(v, drawnOf(card, v)) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
+  const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionView(card, v) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
     : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : itemView(card, v, null); } finally { BOX = null; }
   // never blown up: at most a little over the size it was laid out at
   for (const sg of [body, ...(body.querySelectorAll ? body.querySelectorAll("svg") : [])]) if (sg?.tagName === "svg" && sg.viewBox?.baseVal?.width) sg.style.maxWidth = `${Math.round(sg.viewBox.baseVal.width * 1.15)}px`;
@@ -847,7 +888,7 @@ function promptBar(r) {
   if (RR.mic == null) void micReady(card);
   const ask = (action) => askTurn(card, action, action === "ask" ? (RR.draft.get(card) || "").trim() : "");
   const start = async () => { const c = RR.confirm.get(card); if (!c || busy) return; RR.posting.add(card); RR.err.delete(card); rerender();
-    try { const room = await postJ(`/api/review-room/${enc(card)}/turn`, c.regenerate ? { regenerate: c.regenerate, pick: c.pick, lang: uiLang(), confirm: c.offer?.hash } : { action: c.action, text: c.text, lang: uiLang(), confirm: offer?.hash }); RR.rooms.set(card, room); RR.confirm.delete(card); if (c.action === "ask") RR.draft.delete(card); RR.heard = false; RR.scene.delete(card); }
+    try { const room = await postJ(`/api/review-room/${enc(card)}/turn`, c.regenerate ? { regenerate: c.regenerate, pick: c.pick, lang: uiLang(), confirm: c.offer?.hash, images: RR.imgWant.get(card) ?? !!r.images } : { action: c.action, text: c.text, lang: uiLang(), confirm: offer?.hash, images: RR.imgWant.get(card) ?? !!r.images }); RR.imgWant.delete(card); RR.rooms.set(card, room); RR.confirm.delete(card); if (c.action === "ask") RR.draft.delete(card); RR.heard = false; RR.scene.delete(card); }
     catch (e) { RR.err.set(card, e.message); if (e.offer) RR.rooms.set(card, { ...r, offer: e.offer }); }
     finally { RR.posting.delete(card); redraw(card); schedule(); } };
   const talk = !!RR.rec;
@@ -865,10 +906,10 @@ function promptBar(r) {
     conf ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
       h("p", {}, conf.regenerate ? T(`Explain this again with ${conf.offer.provider} · ${conf.offer.model ?? "default model"}: `, `改由 ${conf.offer.provider} · ${conf.offer.model ?? "預設模型"} 重講這一題：`) : null, T(`This starts a paid model round on ${(conf.offer || offer).provider} · ${(conf.offer || offer).model ?? "default model"}${(conf.offer || offer).effort ? ` (${(conf.offer || offer).effort})` : ""}${r.images ? "; the tutor may also ask for up to two generated pictures, each a paid image job made in the background" : ""}. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
         `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}${r.images ? "；導師也可能要求最多兩張生成圖片，每張都是在背景進行的付費圖片工作" : ""}。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
-      h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-images-toggle": "", checked: !!r.images, disabled: RR.posting.has(card), onchange: async (e) => { const on = e.target.checked; try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/images`, { on })); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
-        h("span", {}, T("Generated pictures (paid image jobs, at most two a turn; off by default: Studio draws every diagram from the tutor's data)", "生成圖片（付費圖片工作，每回合最多兩張；預設關閉：Studio 會依導師的資料畫出每張圖）"))),
+      h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-images-toggle": "", checked: RR.imgWant.get(card) ?? !!r.images, disabled: RR.posting.has(card), onchange: (e) => { RR.imgWant.set(card, e.target.checked); rerender(); } }),
+        h("span", {}, T("Generated pictures for this room, from this round on: up to two a turn and, once, an opening picture of the change, each a paid image job. Applied only when you start this round; off by default (Studio draws every diagram from the tutor's data).", "這個審查室從這一回合起使用生成圖片：每回合最多兩張，另外會產生一次這個改動的開場圖，每張都是付費圖片工作。只有在你開始這一回合時才生效；預設關閉（Studio 會依導師的資料畫出每張圖）。"))),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-room-start": "", disabled: busy, onclick: start }, T("Start the round", "開始這一回合")),
-        h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", disabled: RR.posting.has(card), onclick: () => { RR.confirm.delete(card); rerender(); } }, T("Cancel", "取消")))) : null,
+        h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", disabled: RR.posting.has(card), onclick: () => { RR.confirm.delete(card); RR.imgWant.delete(card); rerender(); } }, T("Cancel", "取消")))) : null,
     err ? h("p", { class: "rr-pop rr-err", role: "alert", "data-room-error": "" }, err, " ", h("button", { type: "button", class: "rr-mini", "aria-label": T("Dismiss", "關閉"), onclick: () => { RR.err.delete(card); rerender(); } }, "×")) : null].filter(Boolean);
   return h("div", { class: "rr-bar rr-dock", "data-chat": card },
     pops.length ? h("div", { class: "rr-pops" }, pops) : null,
@@ -917,7 +958,7 @@ function drawer(r) {
         // start the room over: confirmed first; what goes and what stays said plainly; refused while a turn or a translation runs
         r.snapshot ? null : h("div", { class: "rr-reset", "data-reset-zone": "" }, h("h3", {}, T("Start over", "清空重來")),
           RR.resetAsk.has(card) ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-reset-confirm-box": "", "aria-label": T("Start this room over", "清空這個審查室重來") },
-            h("p", {}, T("Start this room over? Its answers, its board, its translations and its generated pictures go (moved to an archive folder beside the room, not deleted). The Library's saved snapshots and the Task's ledger stay.", "要清空這個審查室重來嗎？它的回答、白板、翻譯和生成圖片都會移走（搬到審查室旁的封存資料夾，不會刪除）。成品庫裡存過的快照和任務的帳本都會保留。")),
+            h("p", {}, T("Start this room over? Its answers, its board, its translations and its generated pictures go (moved to an archive folder beside the room, not deleted; a Task's room keeps that archive in the Task's own folder, so it goes if the Task is deleted). The Library's saved snapshots and the Task's ledger stay.", "要清空這個審查室重來嗎？它的回答、白板、翻譯和生成圖片都會移走（搬到審查室旁的封存資料夾，不會刪除；任務的審查室會把封存放在任務自己的資料夾裡，任務被刪除時封存也會一起刪除）。成品庫裡存過的快照和任務的帳本都會保留。")),
             h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-reset-confirm": "", disabled: RR.posting.has(card), onclick: () => resetRoom(card) }, T("Start over", "清空重來")),
               h("button", { type: "button", class: "btn ghost", "data-reset-cancel": "", onclick: () => { RR.resetAsk.delete(card); rerender(); } }, T("Cancel", "取消"))))
           : h("button", { type: "button", class: "btn", "data-room-reset": "", disabled: r.running != null || r.translating?.status === "running", title: r.running != null ? T("A turn is running", "有回合在進行") : "", onclick: () => { RR.resetAsk.add(card); rerender(); } }, T("Start this room over…", "清空重來…")))))];

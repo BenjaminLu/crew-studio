@@ -82,10 +82,10 @@ claim as above.
 
 When the captain asks to be taught the change, the lesson is a report the captain reads top to bottom, laid out the way
 baton lays out a packet (workflows/skills/baton: its rules, its drawings and its shapes, adapted to this room). Build it as
-chapters, in this order, with scene_show's `chapter`:
+chapters with scene_show's `chapter`, in whatever order you make them (the report shows them in this order):
 
 1. `what` (always): what this is, a few points the captain could repeat. Text; no picture needed.
-2. `talks` (always): what talks to what, one `arch` drawing (components, their kinds, the connections, the new or changed
+2. `talks`: what talks to what, one `arch` drawing (components, their kinds, the connections, the new or changed
    ones marked). From a design document of the repository when there is one (cite it), else from the code you read: then
    it is inferred and Studio says so.
 3. `decisions` (when the change makes some): one scene per decision, each a `decision` drawing (the question, the option
@@ -101,11 +101,12 @@ chapters, in this order, with scene_show's `chapter`:
 9. `watch`: risks only, each cited and verified. An empty list is a finding: say what you checked, cited.
 10. `questions`: open questions, or a check (check_ask).
 
-Studio holds the shape. `what`, `talks` and `change` are always there. `lifecycle` and `sequence` are there unless the
-diff truly has no state transitions or no call chain across services or I/O: then call chapter_skip with the reason,
-cited (the captain sees that line). The other chapters are simply not shown when empty. One drawing a chapter, except
+Studio holds the shape. `what` and `change` are always there. `talks`, `lifecycle` and `sequence` are there unless the
+diff truly has no components talking (a docs or config-only change), no state transitions or no call chain across
+services or I/O: then call chapter_skip with the reason, cited (the captain sees that line; it counts as one of the
+turn's scenes). The other chapters are simply not shown when empty. One drawing a chapter, except
 `change` (one per item) and `decisions` (one per decision). Call lesson_check before your final answer: Studio refuses a
-lesson that misses a chapter it owes. Other answers (a question, how, why, a quiz, the merge check) are scenes on the
+lesson that misses a chapter it owes, and a chapter you missed earlier can still be added. Other answers (a question, how, why, a quiz, the merge check) are scenes on the
 board; they may name a chapter, in any order, or leave it out.
 
 Do not guess: keep what the code or the record shows apart from what you infer, and say nothing about deployment (whether a
@@ -119,8 +120,8 @@ Explanations are richer with real images; each one is labelled with its kind on 
   for this head with the app's own fixture build. The captain toggles before / after. Only when the change touches them.
 - **Charts** (chart_draw): from real numbers only. `source: "diffstat"` counts the lines git changed per file; your own
   rows cite where each number comes from, or the chart is shown as an inference.
-- **Illustrations** (illustrate): only in a room whose captain turned generated pictures on (your prompt says whether
-  they are); off by default. A generated whiteboard-marker sketch of an idea, at most two a turn, each a paid image job
+- **Illustrations** (illustrate): only when the captain turned generated pictures on with a confirmed round (your
+  prompt says whether they are); off by default, and refused the moment the captain turns them off. A generated whiteboard-marker sketch of an idea, at most two a turn, each a paid image job
   made in the background. You pick 1 to 6 concepts from the tool's fixed list and a layout; the image model gets nothing
   else. It is labelled "illustration · generated" and is never evidence. A drawing Studio lays out from your data is
   always preferred.

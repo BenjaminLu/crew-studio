@@ -53,14 +53,16 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   **screenshots** at the base and the head with a before / after toggle (`screenshots_show`: the Task's own captures of
   this head, shot by Studio's sandboxed renderer from the app's fixture build), and a `note`. The tutor names paths and
   lines; Studio fills every excerpt from the commits, so no excerpt is text the model wrote.
-- **Generated illustrations** (`illustrate`, at most two a turn; **off unless the captain turns generated pictures on for
-  the room**, `POST …/images {on}` or the tick box on the paid round's confirmation: while off the tutor has no `illustrate`
-  tool, its prompt says so, and opening the room makes no picture): a whiteboard-marker sketch from Studio's image job (the
+- **Generated illustrations** (`illustrate`, at most two a turn; **off unless the captain turns generated pictures on with
+  a confirmed paid round**: the tick box on the round's confirmation names every picture it may make and is sent only with
+  the confirmed round (`images` on the turn; `POST …/images {on}` also sets it, but nothing is paid until a confirmed round).
+  While off the tutor has no `illustrate` tool, its prompt says so, and `illustrate` itself refuses the moment the captain
+  turns pictures off mid-turn): a whiteboard-marker sketch from Studio's image job (the
   same one image steps use, `generateImage`), made in the background (a minute or two) with a placeholder until ready,
   stored in the room's folder, labelled "illustration · generated" and "Not evidence". A citation of an illustration never
   grounds a claim. The image model gets no words of the tutor's: the tutor picks 1 to 6 concepts from a fixed list
-  (`ILLUSTRATION_CONCEPTS`) and a layout, and Studio builds the prompt from them. The first time the captain opens the
-  room, one opening illustration is made in the background the same way, from the listed concepts the spec's intent
+  (`ILLUSTRATION_CONCEPTS`) and a layout, and Studio builds the prompt from them. The first confirmed paid round with pictures on
+  makes one opening illustration in the background the same way (opening the room never pays for one), from the listed concepts the spec's intent
   names; it is labelled on the page as a paid generated image made once. It is made once per merge card: the room
   records that it started before anything is paid, so a reload, another device or a restart does not make it again. An
   illustration still pending when Studio stopped reads as interrupted after the restart.
@@ -256,7 +258,7 @@ button shows how many answers the room holds).
 
 **A lesson, chapter by chapter: a report.** Asked to teach the change, the tutor builds a lesson laid out the way baton
 lays out a packet (baton, MIT, credited in THIRD_PARTY_NOTICES.md; its rules, drawings and shapes adapted in `workflows/skills/baton/`,
-pinned in `ROOM_SKILLS`, credited in its NOTICE.md and THIRD_PARTY_NOTICES.md). Its chapters, in order: what this is;
+pinned in `ROOM_SKILLS`, credited in its NOTICE.md and THIRD_PARTY_NOTICES.md). Its chapters, shown in this order whatever order the tutor makes them in: what this is;
 what talks to what (an `arch` drawing: components by kind, the new or changed ones marked on the node, connections each
 citing what shows them; inferred unless a design document or the record is cited); the decisions (one `decision` drawing
 each: the question, the option taken and why, a rejected option only with a commit, review note or source showing it); the
@@ -264,10 +266,10 @@ change itself (one `item` drawing per changed item, one layout for every item); 
 drawing: every state and transition, each numbered, citing its code and saying what it writes); one request, in order
 (one `sequence` drawing, its loops, alternatives and options as frames); what reviewers raised; roads not taken (only as
 commits, the pull request or review threads show them, cited); what to watch (risks only, each cited and verified); open
-questions. Studio enforces the shape: `what`, `talks` and `change` (at least one item) are always there; `lifecycle` and
+questions. Studio enforces the shape: `what` and `change` (at least one item) are always there; `talks`, `lifecycle` and
 `sequence` are there unless the tutor leaves one out with `chapter_skip` and a verified reason (the report shows that line
-where the drawing would be); a chapter never follows a later one; one drawing a chapter except the change and the
-decisions; the drawing chapters show their own kind; a risk, a road not taken and a rejected option need a verified
+where the drawing would be; a skip counts toward the turn's scenes); chapters come in any order, so a chapter missed earlier
+can still be added; one drawing a chapter except the change and the decisions; the drawing chapters show their own kind; a risk, a road not taken and a rejected option need a verified
 citation of their kind. `lesson_check` tells the tutor what is still missing, and a lesson that ends missing a chapter it
 owes is refused: the turn fails, saying which (the paid round is still recorded). Other answers (a question, how, why,
 a quiz, the merge check) are scenes on the board and may name a chapter in any order, or none.
@@ -276,14 +278,17 @@ A finished lesson reads as a **report** in the room (the default for teach): a h
 one section a scene, numbered, its chapter and title, its points as prose (what this is) or as findings with a tone stripe
 (reviewers, roads, risks, questions) and Studio's drawing in a figure card under them, its kind and basis beneath it. Every
 drawing is laid out by Studio from the tutor's data (text nodes only, sizes checked; no image model): an architecture as a
-layered flowchart sized for its labels, a cycle's way back bowed under the boxes; a decision as the question over the
-option taken and the ones turned down, dashed; the state map with every transition numbered, a row per transition that
+layered flowchart sized for its labels, edges leaving and entering a box spread along its side, every label placed clear of
+boxes, lines and other labels (and masked by the paper), a cycle's way back bowed under the boxes, a second transition the
+same way bowed apart, a state's way back to itself a loop beside it; a decision as the question over the
+option taken and the ones turned down, dashed, each listed under it with the record that shows it (its citation is the
+decision's own, so the Library resolves it); the state map with every transition numbered, a row per transition that
 opens its code and shows what it writes. The report scrolls inside the room (the page never does), a strip under the
 chapters on a phone. The chapters rail lists every answer's scenes; a chapter of several items (the change, the
 decisions) is one heading with its items under it; a click scrolls the report to it, and the section in view is marked.
 "Step through on the board" shows the lesson scene by scene on the stage, "Read as a report" goes back. A translation
 covers the report's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
-came back as short as the drawing holds; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
+came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
 
 **Start this room over / 清空重來.** In the transcript drawer, the captain on this Mac can start a room over (`POST
 …/reset`, the same session, origin and desktop gates as the room's other writes; refused with 409 while a turn or a
@@ -292,7 +297,10 @@ what stays (the Library's snapshots, the Task's ledger). Studio moves the room's
 `.archive/<room>-<time>/` beside it (never deleted), drops every copy it keeps in memory and bumps the room's generation,
 so a background job still holding the old room (a picture being drawn, a voice, a Library save) writes nothing back; the
 next view is a fresh room (a pull request's at once, from the pull request as Studio last read it, its Library link kept).
-A `review-room-reset` ledger entry records who and when, with no content. The page forgets what it kept for the room and
+A `review-room-reset` ledger entry records who and when, with no content; a pull request room with no Task behind it
+(no paid turn yet, so no ledger to write to) records the same fields in its archive's `reset.json`. A Task's room keeps its
+archive in the Task's own folder, so the archive goes if the Task is deleted (the confirmation says so). A translation
+admitted while the room is started over is refused and releases its seat. The page forgets what it kept for the room and
 opens it on its welcome scene.
 
 **Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
