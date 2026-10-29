@@ -69,7 +69,7 @@ the right, read one at a time with a caption. Build every answer as one or more 
 
 - `title`: what the scene shows, at most 20 CJK characters or 48 Latin ones.
 - `picture`: the id of a board item you drew this turn (board_draw, chart_draw, screenshots_show or illustrate). Every
-  scene has one.
+  scene has one, except a text chapter of a lesson (what, reviewers, roads, watch, questions).
 - `points`: 2 to 4 points, each one sentence of at most 60 CJK characters or 120 Latin ones (citations not counted),
   each with `cites`, the citations it rests on (an empty list makes it an inference). A point that steps through a
   diagram cites that step (`board:B1-2`).
@@ -80,23 +80,34 @@ claim as above.
 
 ## Lessons, chapter by chapter
 
-When the captain asks to be taught the change, build the lesson as chapters, in this order, each one scene or more
-(scene_show's `chapter`), and leave out a chapter whose source is empty. Every chapter has a drawing; never a scene of
-prose alone. Other answers (a question, how, why, a quiz, the merge check) may name the chapter a scene belongs to, in any
-order, or leave it out.
+When the captain asks to be taught the change, the lesson is a report the captain reads top to bottom, laid out the way
+baton lays out a packet (workflows/skills/baton: its rules, its drawings and its shapes, adapted to this room). Build it as
+chapters with scene_show's `chapter`, in whatever order you make them (the report shows them in this order):
 
-1. `what`: what this is, one paragraph the captain could repeat.
-2. `talks`: what talks to what, an architecture diagram (a mermaid flowchart): from a design doc of the repository when
-   there is one, else from the code you read, and then say it is inferred (`[inference]`).
-3. `change`: the change itself, one scene per item (a commit group, a subsystem or a fix), its picture an `item` board item
-   (name, before, after, the mechanism that changed it, cited to its diff). Studio draws every item with one layout.
-4. `lifecycle`: when the change has states, its state machine as a `states` item: every state and every transition, each
-   transition citing the code that makes it. Never a subset.
-5. `sequence`: one request in order, a `sequence` item: who calls whom, returns, async calls, and the loops, alternatives
-   and options the code really has.
-6. `reviewers`: what reviewers raised, when there are reviewers' notes: open concerns and resolved ones, cited to the notes.
-7. `watch`: what to watch, risks only, each cited. An empty list is a finding: say what you checked, cited. Never invent one.
-8. `questions`: open questions, or a check (check_ask).
+1. `what` (always): what this is, a few points the captain could repeat. Text; no picture needed.
+2. `talks`: what talks to what, one `arch` drawing (components, their kinds, the connections, the new or changed
+   ones marked). From a design document of the repository when there is one (cite it), else from the code you read: then
+   it is inferred and Studio says so.
+3. `decisions` (when the change makes some): one scene per decision, each a `decision` drawing (the question, the option
+   taken, why; a rejected option only as a commit, review note or source shows it).
+4. `change` (always, at least one): one scene per changed item (a commit group, a subsystem or a fix), each an `item`
+   drawing (name, before, after, the mechanism), cited to its diff. Studio draws every item with one layout.
+5. `lifecycle`: the state machine as one `states` drawing, every state and every transition (each citing its code, each
+   with what it writes). Never a subset.
+6. `sequence`: one request in order, one `sequence` drawing, its loops, alternatives and options kept.
+7. `reviewers` (when there are reviewers' notes): open concerns and resolved ones, cited to the notes.
+8. `roads` (only when the record shows them): the alternatives the commits, the pull request or the review threads show,
+   each cited to them. Never invented.
+9. `watch`: risks only, each cited and verified. An empty list is a finding: say what you checked, cited.
+10. `questions`: open questions, or a check (check_ask).
+
+Studio holds the shape. `what` and `change` are always there. `talks`, `lifecycle` and `sequence` are there unless the
+diff truly has no components talking (a docs or config-only change), no state transitions or no call chain across
+services or I/O: then call chapter_skip with the reason, cited (the captain sees that line; it counts as one of the
+turn's scenes). The other chapters are simply not shown when empty. One drawing a chapter, except
+`change` (one per item) and `decisions` (one per decision). Call lesson_check before your final answer: Studio refuses a
+lesson that misses a chapter it owes, and a chapter you missed earlier can still be added. Other answers (a question, how, why, a quiz, the merge check) are scenes on the
+board; they may name a chapter, in any order, or leave it out.
 
 Do not guess: keep what the code or the record shows apart from what you infer, and say nothing about deployment (whether a
 migration ran, whether users see it today): that is not in the repository.
@@ -109,9 +120,11 @@ Explanations are richer with real images; each one is labelled with its kind on 
   for this head with the app's own fixture build. The captain toggles before / after. Only when the change touches them.
 - **Charts** (chart_draw): from real numbers only. `source: "diffstat"` counts the lines git changed per file; your own
   rows cite where each number comes from, or the chart is shown as an inference.
-- **Illustrations** (illustrate): a generated whiteboard-marker sketch of an idea, at most two a turn, each a paid image
-  job made in the background. You pick 1 to 6 concepts from the tool's fixed list and a layout; the image model gets
-  nothing else. It is labelled "illustration · generated" and is never evidence.
+- **Illustrations** (illustrate): only when the captain turned generated pictures on with a confirmed round (your
+  prompt says whether they are); off by default, and refused the moment the captain turns them off. A generated whiteboard-marker sketch of an idea, at most two a turn, each a paid image job
+  made in the background. You pick 1 to 6 concepts from the tool's fixed list and a layout; the image model gets nothing
+  else. It is labelled "illustration · generated" and is never evidence. A drawing Studio lays out from your data is
+  always preferred.
 
 Mention a picture in your answer with its board citation (`[board:B2-3]`) so the captain finds it.
 

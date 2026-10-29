@@ -191,7 +191,7 @@ try {
     await p.dispatchEvent("[data-mic]", "pointerup");
     await p.click("[data-room-send]"); await p.waitForSelector('[data-room-confirm="ask"]');
     ok(await p.getAttribute("[data-independence]", "data-independence") === "same" && /Tutor: codex · gpt-6 — Same model as the author: a fresh context, not an independent opinion\. Only one model is usable/.test(await p.textContent("[data-independence]")), "the room labels the tutor and its independence from the author");
-    ok(/paid model round on codex · gpt-6 \(high\)/.test(await p.textContent("[data-room-confirm]")) && /up to two illustrations, each a paid image job/.test(await p.textContent("[data-room-confirm]")) && /nothing is sent to GitHub/.test(await p.textContent("[data-room-confirm]")) && !posts.length, "Ask first asks to confirm the paid round on its provider and model, illustrations included");
+    ok(/paid model round on codex · gpt-6 \(high\)/.test(await p.textContent("[data-room-confirm]")) && !/generated pictures, each a paid image job/.test(await p.textContent("[data-room-confirm] p")) && (await p.$eval("[data-images-toggle]", (e) => e.checked)) === false && /nothing is sent to GitHub/.test(await p.textContent("[data-room-confirm]")) && !posts.length, "Ask first asks to confirm the paid round on its provider and model; generated pictures are off unless the captain ticks them here");
     await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector('[data-room-action="why"]')?.disabled);
     ok(posts.length === 1 && posts[0].action === "ask" && posts[0].text === "why do halves round up" && posts[0].confirm === "feedc0ffee123456" && posts[0].lang === "en", "Start sends the spoken question with the confirmation and the captain's language", JSON.stringify(posts));
     ok(await p.$eval("[data-room-start]", (e) => e.disabled) && await p.$eval("[data-room-send]", (e) => e.disabled) && await p.$eval("[data-mic]", (e) => e.disabled), "while the turn is being sent every control waits");
@@ -518,7 +518,8 @@ try {
     now = DONE; const done = await p.waitForFunction(() => !!document.querySelector('[data-toc-scene="t3-3"]') && !document.querySelector("[data-turn-progress]"), null, { timeout: 8000 }).then(() => true, () => false);
     await p.waitForTimeout(300);
     const s1 = await stage(p), cur = await p.$eval('[data-toc-scene][aria-current="true"]', (e) => e.dataset.tocScene).catch(() => null);
-    ok(done && s1.scene === "t3" && s1.title === "A percent helper" && cur === "t3", "a lesson of several chapters that finishes opens at its first chapter, not its last", JSON.stringify({ done, s1, cur }));
+    const first = await p.evaluate(() => { const r = document.querySelector("[data-report]"), sec = r?.querySelector('[data-report-section="t3"]'); return r && sec ? { top: Math.round(sec.getBoundingClientRect().top - r.getBoundingClientRect().top), title: sec.querySelector("[data-section-title]")?.textContent } : null; });
+    ok(done && s1.scene === "t3" && cur === "t3" && first && first.top < 260 && first.title === "A percent helper" && !(await p.$("[data-play][aria-pressed=\"true\"]")), "a lesson of several chapters that finishes opens as its report at its first chapter, not its last, and is not played", JSON.stringify({ done, s1, cur, first }));
     await ctx.close(); }
 
   // ---------- a quiz is new every time: no "show the existing one" offer ----------
@@ -546,10 +547,13 @@ try {
     const { ctx, p, cites } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RL }));
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForSelector("[data-toc]", { timeout: 3000 }).catch(() => {});
+    // a finished lesson reads as a report; "Step through on the board" shows it scene by scene, as before
+    await p.click('[data-toc-scene="t3"]').catch(() => {}); await p.click("[data-report-step]").catch(() => {});
     const toc = await p.evaluate(() => ({ items: [...document.querySelectorAll("[data-toc-scene]")].map((e) => [e.dataset.tocScene, e.querySelector("b")?.textContent ?? "", e.getAttribute("aria-current")]) }));
     const lesson = toc.items.filter((x) => /^t3/.test(x[0])).map((x) => x[1]);
-    ok(JSON.stringify(lesson) === JSON.stringify(["What this is", "The change itself", "The change itself", "Its life, state by state", "One request, in order", "What to watch"]) && toc.items.some((x) => x[0] === "t1") && toc.items.some((x) => x[0] === "t0"),
-      "the chapters' rail lists every answer's scenes, the lesson chapter by chapter in order (every answer reachable from it)", JSON.stringify(toc));
+    const heads = await p.$$eval("[data-toc-chapter]", (els) => els.map((e) => [e.dataset.tocChapter, e.textContent])), items = await p.$$eval("[data-toc-item]", (els) => els.map((e) => e.textContent));
+    ok(JSON.stringify(lesson) === JSON.stringify(["What this is", "", "", "Its life, state by state", "One request, in order", "What to watch"]) && JSON.stringify(heads) === JSON.stringify([["change", "The change itself"]]) && JSON.stringify(items) === JSON.stringify(["Rounding", "Tests"]) && toc.items.some((x) => x[0] === "t1") && toc.items.some((x) => x[0] === "t0"),
+      "the chapters' rail lists every answer's scenes, the lesson chapter by chapter in order, a chapter of several items once with its items under it (every answer reachable from it)", JSON.stringify(toc));
     await p.click('[data-toc-scene="t3-2"]'); let s = await stage(p);
     const cur = await p.$eval('[data-toc-scene="t3-2"]', (e) => e.getAttribute("aria-current"));
     const fig = await p.evaluate(() => ({ fig: document.querySelector("[data-visual] [data-item-figure]")?.dataset.itemFigure, rows: [...document.querySelectorAll("[data-visual] .rr-ib-row")].map((e) => e.textContent), boxes: document.querySelectorAll("[data-visual] .rr-ib").length, kicker: document.querySelector(".rr-kicker")?.textContent }));
@@ -563,9 +567,9 @@ try {
     ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && await p.$$eval("[data-visual] [data-elabel]", (els) => els.length) === 3, "the state machine draws every transition, and a transition opens the code it rests on", JSON.stringify(cites));
     await p.click("[data-cite-panel] .btn");
     // two transitions between the same states: each label opens its own citation
-    const second = await p.$$eval('[data-visual] [data-elabel="s_priced>s_paid"]', (els) => els.map((e) => [e.textContent, e.dataset.transitionCite ?? null]));
+    const second = await p.$$eval('[data-visual] [data-elabel="priced>paid"]', (els) => els.map((e) => [e.textContent, e.dataset.transitionCite ?? null]));
     await p.click('[data-transition-cite="diff:test/percent.test.ts"]', { timeout: 3000 }).catch(() => {}); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {});
-    ok(JSON.stringify(second) === JSON.stringify([["pay", null], ["pay later", "diff:test/percent.test.ts"]]) && cites.at(-1) === "diff:test/percent.test.ts", "two transitions between the same states each open their own citation", JSON.stringify({ second, cites }));
+    ok(JSON.stringify(second) === JSON.stringify([["② pay", null], ["③ pay later", "diff:test/percent.test.ts"]]) && cites.at(-1) === "diff:test/percent.test.ts", "two transitions between the same states each open their own citation", JSON.stringify({ second, cites }));
     await p.click("[data-cite-panel] .btn"); await p.click('[data-toc-scene="t3-5"]');
     const sq = await p.evaluate(() => ({ actors: document.querySelectorAll("[data-visual] .rr-actor").length, steps: [...document.querySelectorAll("[data-visual] [data-step]")].map((e) => e.className.baseVal), frame: document.querySelector("[data-visual] [data-frame]")?.textContent }));
     ok(sq.actors === 3 && sq.steps.length === 4 && /return/.test(sq.steps[2]) && /loop \[each line\]/.test(sq.frame || ""), "one request in order: its actors, calls and returns, and its loop as a frame", JSON.stringify(sq));
@@ -574,6 +578,147 @@ try {
     await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(200);
     const ph = await p.evaluate(() => { const t = document.querySelector("[data-toc]").getBoundingClientRect(), v = document.querySelector("[data-visual]").getBoundingClientRect(); return { top: t.bottom <= v.top + 1, w: Math.round(t.width), scroll: document.documentElement.scrollWidth - innerWidth }; });
     ok(ph.top && ph.scroll <= 0, "on a phone the chapters are a strip above the board", JSON.stringify(ph));
+    await ctx.close(); }
+
+  // ---------- the lesson as a report (baton's packet): every section kind, its drawings, its citations, a phone, its languages ----------
+  { // an invented lesson (a percent helper on an invented shop): the report's fixture
+    const LESSON_OF = (lang, H, ok1, cl, n = 3) => { const zh = lang !== "en", T = (en, tw) => (zh ? tw : en), P = (en, tw, c = []) => cl(T(en, tw), c);
+      const figs = [
+        { id: `B${n}-1`, turn: n, type: "arch", title: T("Pricing a cart", "購物車計價"), nodes: [
+            { id: "cart", label: T("Cart page", "購物車頁"), kind: "actor", mark: null }, { id: "pricing", label: T("Pricing service", "計價服務"), kind: "service", mark: "changed" },
+            { id: "percent", label: "percent()", kind: "service", mark: "new" }, { id: "ledger", label: T("Invoice ledger", "發票帳本"), kind: "store", mark: null }, { id: "tax", label: T("Tax table API", "稅率表 API"), kind: "external", mark: null }],
+          edges: [{ from: "cart", to: "pricing", label: "POST /price", cite: ok1("diff:src/pricing.ts:L10-14") }, { from: "pricing", to: "percent", label: T("each line", "每一行"), cite: ok1("diff:src/pricing.ts:L20-22") },
+            { from: "pricing", to: "tax", label: T("rate lookup", "查稅率"), cite: null }, { from: "pricing", to: "ledger", label: T("writes total", "寫入總額"), cite: ok1("diff:src/ledger.ts:L5-9") }],
+          cites: [ok1("diff:src/pricing.ts:L10-14")], inferred: true, basis: "cited" },
+        { id: `B${n}-2`, turn: n, type: "decision", title: T("Half cents", "半分錢"), question: T("How does a half cent round?", "半分錢怎麼取整？"), chosen: T("Half up, away from zero", "四捨五入，遠離零"),
+          because: T("The invoice rule in the spec says so", "規格裡的發票規則這樣寫"), rejected: [{ option: T("Banker's rounding", "銀行家捨入"), why: T("Dropped after the second review", "第二輪審查後拿掉"), cite: ok1("review:r12") }],
+          cites: [ok1("diff:src/percent.ts:L2-3")], basis: "cited" },
+        { id: `B${n}-3`, turn: n, type: "item", title: T("Rounding", "取整"), name: "percent()", before: T("Fractions of a cent kept", "保留分以下的零頭"), after: T("Rounded to the cent", "取整到整數分"), mechanism: "Math.round", basis: "cited", cites: [ok1("diff:src/percent.ts:L2-3")] },
+        { id: `B${n}-4`, turn: n, type: "item", title: T("The ledger", "帳本"), name: "ledger.write()", before: T("Stored the raw total", "存原始總額"), after: T("Stores whole cents", "存整數分"), mechanism: "Number.isInteger", basis: "cited", cites: [ok1("diff:src/ledger.ts:L5-9")] },
+        { id: `B${n}-5`, turn: n, type: "states", title: T("An invoice", "一張發票"), states: [{ id: "draft", label: T("Draft", "草稿") }, { id: "priced", label: T("Priced", "已計價") }, { id: "paid", label: T("Paid", "已付款") }, { id: "void", label: T("Void", "作廢") }],
+          transitions: [{ from: "draft", to: "priced", label: T("price", "計價"), detail: "invoices.total ← percent(...) · WHERE status='draft'", cite: ok1("diff:src/pricing.ts:L20-22") },
+            { from: "priced", to: "paid", label: T("pay", "付款"), detail: "invoices.status ← 'paid'", cite: ok1("diff:src/ledger.ts:L5-9") },
+            { from: "priced", to: "void", label: T("cancel", "取消"), detail: "invoices.status ← 'void'", cite: null }, { from: "priced", to: "draft", label: T("edit", "修改"), detail: "invoices.total ← NULL", cite: null }, { from: "priced", to: "paid", label: T("pay later", "稍後付款"), detail: "invoices.due ← +30d", cite: null }, { from: "priced", to: "priced", label: T("reprice", "重新計價"), detail: "invoices.total ← percent(...)", cite: null }],
+          code: "", basis: "cited", cites: [ok1("diff:src/pricing.ts:L20-22")] },
+        { id: `B${n}-6`, turn: n, type: "sequence", title: T("One cart", "一台購物車"), actors: ["Cart", "Pricing", "percent", "Ledger"], steps: [
+            { from: "Cart", to: "Pricing", label: "POST /price", kind: "call" }, { from: "Pricing", to: "percent", label: "percent(1999, 15)", kind: "call", frame: "loop", frameLabel: T("each line", "每一行") },
+            { from: "percent", to: "Pricing", label: "300", kind: "return", frame: "loop" }, { from: "Pricing", to: "Ledger", label: T("write total", "寫入總額"), kind: "async" }, { from: "Pricing", to: "Cart", label: "200 {total}", kind: "return" }], basis: "cited", cites: [] }];
+      const scenes = [
+        { n: 1, chapter: "what", title: T("A percent helper for invoices", "給發票用的百分比工具"), picture: "", points: [P("It adds `percent()`, which rounds a share of an amount to whole cents [diff:src/percent.ts].", "新增 `percent()`：把金額的百分比取整到整數分 [diff:src/percent.ts]。", [ok1("diff:src/percent.ts")]), P("Pricing now calls it for every line, and the ledger stores whole cents [diff:src/ledger.ts:L5-9].", "計價每一行都改呼叫它，帳本只存整數分 [diff:src/ledger.ts:L5-9]。", [ok1("diff:src/ledger.ts:L5-9")])] },
+        { n: 2, chapter: "talks", title: T("Pricing sits between the cart and the ledger", "計價夾在購物車和帳本之間"), picture: `B${n}-1`, points: [P("The cart posts to pricing [diff:src/pricing.ts:L10-14].", "購物車把請求送到計價 [diff:src/pricing.ts:L10-14]。", [ok1("diff:src/pricing.ts:L10-14")]), P("The tax table is outside this change.", "稅率表不在這次改動裡。")] },
+        { n: 3, chapter: "decisions", title: T("Half up, not banker's", "四捨五入，不是銀行家捨入"), picture: `B${n}-2`, points: [P("Half cents round away from zero [diff:src/percent.ts:L2-3].", "半分錢遠離零取整 [diff:src/percent.ts:L2-3]。", [ok1("diff:src/percent.ts:L2-3")]), P("Banker's rounding was tried and dropped [review:r12].", "銀行家捨入試過後拿掉了 [review:r12]。", [ok1("review:r12")])] },
+        { n: 4, chapter: "change", title: T("Rounding", "取整"), picture: `B${n}-3`, points: [P("It rounds with Math.round [diff:src/percent.ts:L2-3].", "用 Math.round 取整 [diff:src/percent.ts:L2-3]。", [ok1("diff:src/percent.ts:L2-3")]), P("Halves go up.", "0.5 往上進位。")] },
+        { n: 5, chapter: "change", title: T("The ledger", "帳本"), picture: `B${n}-4`, points: [P("It refuses a fraction of a cent [diff:src/ledger.ts:L5-9].", "拒絕分以下的零頭 [diff:src/ledger.ts:L5-9]。", [ok1("diff:src/ledger.ts:L5-9")]), P("Older rows are left as they are.", "舊資料維持原樣。")] },
+        { n: 6, chapter: "lifecycle", title: T("An invoice's states", "發票的狀態"), picture: `B${n}-5`, points: [P("Pricing writes the rounded total [diff:src/pricing.ts:L20-22].", "計價時寫入取整後的總額 [diff:src/pricing.ts:L20-22]。", [ok1("diff:src/pricing.ts:L20-22")]), P("Paying and voiding are unchanged.", "付款和作廢沒變。")] },
+        { n: 7, chapter: "sequence", title: T("Pricing one cart", "計價一台購物車"), picture: `B${n}-6`, points: [P("Each line is rounded once.", "每一行只取整一次。"), P("The ledger write does not hold the reply [diff:src/pricing.ts:L30-34].", "寫帳本不會卡住回應 [diff:src/pricing.ts:L30-34]。", [ok1("diff:src/pricing.ts:L30-34")])] },
+        { n: 8, chapter: "roads", title: T("Roads not taken", "沒走的路"), picture: "", points: [P("A decimal library was tried and reverted [commit:1a2b3c4].", "試過 decimal 套件後 revert 了 [commit:1a2b3c4]。", [ok1("commit:1a2b3c4")]), P("Banker's rounding was dropped in review [review:r12].", "銀行家捨入在審查中拿掉 [review:r12]。", [ok1("review:r12")])] },
+        { n: 9, chapter: "watch", title: T("What to watch", "要注意的地方"), picture: "", points: [P("A total can move by one cent against the old one [diff:src/percent.ts:L2-3].", "總額可能和舊的差一分錢 [diff:src/percent.ts:L2-3]。", [ok1("diff:src/percent.ts:L2-3")]), P("Old ledger rows keep their fractions [diff:src/ledger.ts:L5-9].", "舊帳本資料保留零頭 [diff:src/ledger.ts:L5-9]。", [ok1("diff:src/ledger.ts:L5-9")])] },
+        { n: 10, chapter: "questions", title: T("Open questions", "待解問題"), picture: "", points: [P("Should credit notes round the same way?", "折讓單也要這樣取整嗎？"), P("Not recorded here: whether this is deployed.", "這裡沒有紀錄：是否已部署。")] }];
+      const turn = { n, action: "teach", text: T("Teach me this change.", "教我這個改動。"), lang, status: "done", provider: "codex", model: "gpt-6", cost: { usd: 0.12 }, answer: "z", head: H, claims: [cl("x")], scenes };
+      return { figs, turn }; };
+    const own = (it) => it.type === "arch" ? [...it.nodes.map((n) => n.label), ...it.edges.map((e) => e.label || "")] : it.type === "item" ? [it.name, it.before, it.after, it.mechanism || ""] : it.type === "decision" ? [it.question, it.chosen, it.because, ...it.rejected.flatMap((x) => [x.option, x.why])]
+      : it.type === "states" ? [...it.states.map((x) => x.label), ...it.transitions.flatMap((t) => [t.label || "", t.detail || ""])] : it.type === "sequence" ? it.steps.flatMap((x) => [x.label, x.frameLabel || ""]) : null;
+    const words = (it) => (own(it) ? [it.title || "", ...own(it)] : []);
+    const EN = LESSON_OF("en", H, ok1, cl), ZH = LESSON_OF("zh-TW", H, ok1, cl);
+    const TRZ = { scenes: ZH.turn.scenes.map((x) => ({ title: x.title, points: x.points.map((q) => q.text) })), claims: ["x"], answer: "z", figures: Object.fromEntries(ZH.figs.map((f) => [f.id, words(f)])), provider: "codex", model: "gpt-6", at: "t" };
+    const RP = { ...ROOM, subject: { kind: "merge", repository: "example/shop" }, head: H, board: [...ROOM.board, ...EN.figs], turns: [...ROOM.turns, EN.turn], translations: { "zh-TW": { "3": TRZ } } };
+    const { ctx, p, cites } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const errs = []; p.on("pageerror", (e) => errs.push(e.message));
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RP }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click('[data-toc-scene="t3"]'); await p.waitForSelector("[data-report]", { timeout: 5000 }).catch(() => {});
+    const rp = await p.evaluate(() => { const r = document.querySelector("[data-report]"); return r && { chapters: [...r.querySelectorAll("[data-report-section]")].map((x) => x.dataset.chapter), figures: [...r.querySelectorAll("[data-report-figure]")].map((x) => x.dataset.figureType),
+      points: [...r.querySelectorAll("[data-points-chapter]")].map((x) => [x.dataset.pointsChapter, x.querySelectorAll("li").length]), lead: !!r.querySelector('[data-chapter="what"] .rp-prose p.lead'), title: r.querySelector(".rp-title")?.textContent, eyebrow: r.querySelector(".rp-eyebrow")?.textContent,
+      scroll: document.documentElement.scrollHeight - innerHeight, own: r.scrollHeight > r.clientHeight, cites: r.querySelectorAll("[data-cite]").length, stage: !!document.querySelector("[data-visual]") }; });
+    ok(rp && JSON.stringify(rp.chapters) === JSON.stringify(["what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "roads", "watch", "questions"])
+      && JSON.stringify(rp.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence"]) && JSON.stringify(rp.points) === JSON.stringify([["roads", 2], ["watch", 2], ["questions", 2]]) && rp.lead && !rp.stage,
+      "a finished lesson reads as a report: every section in order, prose for what it is, Studio's drawings (architecture, a decision, each changed item, the state map, the sequence) and the roads, risks and questions as points", JSON.stringify(rp));
+    ok(rp && rp.scroll <= 0 && rp.own && /example\/shop/.test(rp.eyebrow) && rp.cites >= 10, "the report scrolls inside the room (the page never does); its eyebrow names the subject; its points keep Studio's citations", JSON.stringify(rp));
+    // the rail jumps to a section and marks it; the state map: every transition numbered, each opens its own code and shows what it writes
+    await p.click('[data-toc-scene="t3-6"]'); await p.waitForTimeout(400);
+    const jump = await p.evaluate(() => { const r = document.querySelector("[data-report]"), sec = r.querySelector('[data-report-section="t3-6"]'); return { top: Math.round(sec.getBoundingClientRect().top - r.getBoundingClientRect().top), cur: document.querySelector('[data-toc-scene="t3-6"]').getAttribute("aria-current"), labels: [...sec.querySelectorAll("[data-elabel]")].map((e) => e.textContent), rows: sec.querySelectorAll("[data-transition]").length }; });
+    ok(Math.abs(jump.top) < 40 && jump.cur === "true" && JSON.stringify(jump.labels) === JSON.stringify(["① price", "② pay", "③ cancel", "④ edit", "⑤ pay later", "⑥ reprice"]) && jump.rows === 6,
+      "a chapter picked in the rail scrolls the report to it, marked current; the state map draws every transition, numbered, each a row of its own", JSON.stringify(jump));
+    const geo2 = await p.evaluate(() => { const sec = document.querySelector('[data-report-section="t3-6"]'), arch = document.querySelector("[data-arch]");
+      const rect = (e) => { const b = e.getBBox(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }, over = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+      const clash = (root) => { const ls = [...root.querySelectorAll("[data-elabel]")].map(rect), ns = [...root.querySelectorAll("[data-node] .rr-box")].map(rect), out = [];
+        ls.forEach((l, i) => { ns.forEach((n) => { if (over(l, n)) out.push(["box", i]); }); ls.forEach((m, j) => { if (j > i && over(l, m)) out.push(["label", i, j]); });
+          for (const path of root.querySelectorAll("path.rr-edge")) { const len = path.getTotalLength(); for (let k = 1; k < 24; k++) { const q = path.getPointAtLength((len * k) / 24); if (q.x > l.x + 2 && q.x < l.x + l.w - 2 && q.y > l.y + 2 && q.y < l.y + l.h - 2) { out.push(["line", i]); break; } } } }); return out; };
+      const twins = [...sec.querySelectorAll('path.rr-edge[data-edge="priced>paid"]')].map((e) => e.getAttribute("d")), self = sec.querySelector('path.rr-edge[data-edge="priced>priced"]');
+      return { twins, selfLen: self ? Math.round(self.getTotalLength()) : 0, states: clash(sec), arch: clash(arch) }; });
+    ok(geo2.twins.length === 2 && geo2.twins[0] !== geo2.twins[1] && geo2.selfLen > 70 && !geo2.states.length && !geo2.arch.length,
+      "two transitions the same way between two states are drawn apart, a state's way back to itself is a loop, and no label sits on a box, a line or another label", JSON.stringify(geo2));
+    await p.click('[data-transition-pick="1"]'); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {});
+    const t1 = { cite: cites.at(-1), on: await p.$eval('[data-transition="1"]', (e) => e.getAttribute("aria-current")).catch(() => null), detail: await p.$eval('[data-transition="1"] .rp-td', (e) => getComputedStyle(e).display !== "none" ? e.textContent : null).catch(() => null) };
+    await p.click("[data-cite-panel] .btn").catch(() => {});
+    ok(t1.cite === "diff:src/ledger.ts:L5-9" && t1.on === "true" && /invoices\.status/.test(t1.detail || ""), "a transition opens the code it rests on and shows what it writes", JSON.stringify(t1));
+    // what talks to what: the change marked on its nodes, inferred said so, a connection opens what shows it
+    await p.click('[data-toc-scene="t3-2"]'); await p.waitForTimeout(300); await p.click('[data-edge-cite="diff:src/pricing.ts:L10-14"]'); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {});
+    const ar = await p.evaluate(() => ({ marks: [...document.querySelectorAll("[data-arch] [data-mark]")].map((e) => e.dataset.mark), basis: document.querySelector("[data-arch-basis]")?.dataset.archBasis }));
+    ok(cites.at(-1) === "diff:src/pricing.ts:L10-14" && JSON.stringify(ar.marks) === JSON.stringify(["changed", "new"]) && ar.basis === "inferred", "the architecture marks the change on its nodes, says it is inferred, and a connection opens its code", JSON.stringify({ ar, cite: cites.at(-1) }));
+    await p.click("[data-cite-panel] .btn").catch(() => {});
+    // every changed item from one layout; a decision's rejected option set apart
+    const geo = await p.evaluate(() => [...document.querySelectorAll("[data-report-figure] [data-item-figure]")].map((f) => [...f.querySelectorAll(".rr-ib path")].map((e) => e.getAttribute("d")).join("|")));
+    const dec = await p.evaluate(() => ({ boxes: document.querySelectorAll("[data-decision] .rr-ib").length, gone: document.querySelectorAll("[data-decision] .rr-ib.gone").length }));
+    const rej = await p.evaluate(() => [...document.querySelectorAll("[data-rejected-option]")].map((e) => [e.textContent.slice(0, 20), e.querySelector("[data-cite]")?.dataset.cite ?? null]));
+    ok(JSON.stringify(rej.map((x) => x[1])) === JSON.stringify(["review:r12"]), "a decision's turned-down option is listed with the record that shows it (its citation opens)", JSON.stringify(rej));
+    ok(geo.length === 2 && geo[0] && geo[0] === geo[1] && dec.boxes === 3 && dec.gone === 1, "each changed item is drawn from the same layout; a decision shows the option taken and the one turned down, apart", JSON.stringify({ geo: geo.length, dec }));
+    // step through it on the board, and back to the report
+    await p.click("[data-report-step]"); await p.waitForSelector("[data-visual]", { timeout: 3000 }).catch(() => {});
+    const stepped = await p.evaluate(() => ({ visual: !!document.querySelector("[data-visual]"), report: !!document.querySelector("[data-report]") }));
+    await p.click("[data-report-back]").catch(() => {}); await p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
+    ok(stepped.visual && !stepped.report && !!(await p.$("[data-report]")), "the lesson can still be stepped through on the board, and read as a report again", JSON.stringify(stepped));
+    // its languages: the translation kept for it covers the sections and the drawings' words; 简体 through OpenCC
+    await p.click('[data-lang-pick="zh-TW"]'); await p.waitForTimeout(300);
+    const zh = await p.evaluate(() => ({ title: document.querySelector('[data-report-section="t3"] [data-section-title]')?.textContent, node: [...document.querySelectorAll("[data-arch] text")].map((t) => t.textContent).join("|"), head: document.querySelector('[data-report-section="t3"] h3')?.textContent }));
+    await p.click('[data-lang-pick="zh-CN"]'); await p.waitForTimeout(300);
+    const cn = await p.evaluate(() => [...document.querySelectorAll("[data-arch] text")].map((t) => t.textContent).join("|"));
+    ok(zh.title === "給發票用的百分比工具" && /計價服務/.test(zh.node) && /這是什麼/.test(zh.head || "") && /计价服务/.test(cn), "the report's text and its drawings' words switch language: 繁體 from the kept translation, 简体 from it through OpenCC", JSON.stringify({ zh, cn }));
+    await p.click('[data-lang-pick="en"]');
+    // a phone: the report reads top to bottom under the chapters' strip, nothing wider than the screen
+    await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(300);
+    const ph = await p.evaluate(() => { const r = document.querySelector("[data-report]")?.getBoundingClientRect(), t = document.querySelector("[data-toc]")?.getBoundingClientRect(); return { report: !!r, under: r && t ? t.bottom <= r.top + 1 : false, wide: document.documentElement.scrollWidth - innerWidth, scroll: document.documentElement.scrollHeight - innerHeight }; });
+    ok(ph.report && ph.under && ph.wide <= 0 && ph.scroll <= 0, "on a phone the report reads under the chapters' strip, never wider than the screen", JSON.stringify(ph));
+    ok(!errs.length, "the report draws with no page error", errs.join(" | "));
+    await ctx.close();
+    // replayed from the Library: the same report, offline, read-only, no reviewer notes
+    const SN = { schema: 1, kind: "review-room-snapshot", room: "SC-50", savedAt: "t", reason: "Saved by captain", subject: { kind: "merge", head: H, base: B }, tutors: [], cost: { usd: 0.12 }, view: { ...RP, open: false, offer: null, running: null, tutors: [], translate: null, closed: { en: "Saved", zh: "已存" } }, cites: {}, artifact: "room-sc-50", n: 1, versions: [{ n: 1, at: "t", summary: "Saved by captain" }] };
+    const o2 = await open(1440, "en"); await o2.p.setViewportSize({ width: 1440, height: 900 }); const live = [];
+    await o2.p.route(/\/api\/review-room\/library\/room-sc-50(\?v=\d+)?$/, (r) => r.fulfill({ json: SN })); o2.p.on("request", (q) => { if (/\/api\/review-room\/SC-50/.test(q.url())) live.push(q.url()); });
+    await o2.p.goto(`${base}/#/room/lib:room-sc-50`); await o2.p.waitForSelector("[data-stage]", { timeout: 15000 }); await o2.p.click('[data-toc-scene="t3"]'); await o2.p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
+    const lib = await o2.p.evaluate(() => ({ secs: document.querySelectorAll("[data-report-section]").length, figs: document.querySelectorAll("[data-report-figure]").length, prompt: !!document.querySelector("[data-room-ask]"), notes: !!document.querySelector("[data-notes]") }));
+    ok(lib.secs === 10 && lib.figs === 6 && !live.length && !lib.notes, "a room saved in the Library replays its lesson as the same report, offline (nothing read from the live room), no reviewer notes", JSON.stringify({ lib, live }));
+    await o2.ctx.close(); }
+
+  // ---------- a lesson made out of order reads in the chapters' order; pictures apply only with a confirmed round ----------
+  { const scenesOut = [{ n: 1, chapter: "watch", title: "Risks", picture: "", points: [cl("Halves round up [diff:src/percent.ts:L2-3].", [ok1("diff:src/percent.ts:L2-3")]), cl("Pinned [diff:test/percent.test.ts].", [ok1("diff:test/percent.test.ts")])] },
+      { n: 2, chapter: "change", title: "Rounding", picture: "B1-1", points: [cl("It rounds."), cl("Halves up.")] }, { n: 3, chapter: "what", title: "A percent helper", picture: "", points: [cl("It adds percent."), cl("To the cent.")] }];
+    const RO = { ...ROOM, turns: [...ROOM.turns, { n: 3, action: "teach", text: "Teach me this change.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: H, claims: [cl("x")], scenes: scenesOut }] };
+    const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const imgs = [];
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RO })); p.on("request", (q) => { if (/\/images$/.test(q.url())) imgs.push(q.url()); });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t3-3"]').catch(() => {}); await p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
+    const order = await p.$$eval("[data-report-section]", (els) => els.map((e) => e.dataset.chapter));
+    ok(JSON.stringify(order) === JSON.stringify(["what", "change", "watch"]), "a lesson whose chapters came out of order reads in the chapters' order", JSON.stringify(order));
+    await p.click('[data-room-action="how"]'); await p.waitForSelector("[data-room-confirm]");
+    const copy = await p.textContent(".rr-imgopt"); await p.check("[data-images-toggle]"); await p.click("[data-room-cancel]");
+    await p.click('[data-room-action="how"]'); await p.waitForSelector("[data-room-confirm]"); const after = await p.$eval("[data-images-toggle]", (e) => e.checked);
+    await p.check("[data-images-toggle]"); await p.click("[data-room-start]"); await p.waitForTimeout(400);
+    ok(/up to two a turn/.test(copy || "") && /an opening picture/.test(copy || "") && /only when you start this round/.test(copy || "") && after === false && !imgs.length && posts.at(-1)?.images === true,
+      "the pictures tick box names every picture it may make, sends nothing on its own (cancel drops it) and goes with the confirmed round only", JSON.stringify({ copy, after, imgs, last: posts.at(-1) }));
+    await ctx.close(); }
+
+  // ---------- start this room over: confirmed first (what goes, what stays), cancel leaves it, then the welcome scene of a fresh room ----------
+  { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const resets = []; let now = ROOM;
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
+    await p.route(/\/api\/review-room\/SC-50\/reset$/, (r) => { resets.push(r.request().method()); now = { ...ROOM, turns: [], board: [], check: { questions: [] }, translations: {} }; r.fulfill({ json: { reset: true, moved: ["room"], view: now } }); });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {});
+    await p.click("[data-transcript-toggle]"); await p.click("[data-room-reset]");
+    const ask = await p.$eval("[data-reset-confirm-box]", (e) => e.textContent).catch(() => "");
+    await p.click("[data-reset-cancel]", { timeout: 3000 }).catch(() => {}); const cancelled = { box: !!(await p.$("[data-reset-confirm-box]")), resets: resets.length };
+    ok(/answers, its board, its translations and its generated pictures go/.test(ask) && /archive folder/.test(ask) && /goes if the Task is deleted/.test(ask) && /Library's saved snapshots and the Task's ledger stay/.test(ask) && !cancelled.box && cancelled.resets === 0,
+      "starting a room over asks first, saying what goes (answers, board, translations, pictures: archived) and what stays (the Library's snapshots, the ledger); cancel changes nothing", JSON.stringify({ ask, cancelled }));
+    await p.click("[data-room-reset]", { timeout: 3000 }).catch(() => {}); await p.click("[data-reset-confirm]", { timeout: 3000 }).catch(() => {}); await p.waitForFunction(() => document.querySelector("[data-stage]")?.dataset.scene === "t0", null, { timeout: 5000 }).catch(() => {});
+    const after = await p.evaluate(() => ({ scene: document.querySelector("[data-stage]")?.dataset.scene, toc: document.querySelectorAll("[data-toc-scene]").length, box: !!document.querySelector("[data-reset-confirm-box]"), drawer: document.querySelector("[data-transcript]")?.dataset.open }));
+    ok(JSON.stringify(resets) === '["POST"]' && after.scene === "t0" && !after.box && after.drawer === "false", "confirmed, the room is started over and the page forgets what it kept for it (its drawer closed) and opens it fresh on its welcome scene", JSON.stringify({ resets, after }));
     await ctx.close(); }
 
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
@@ -718,6 +863,9 @@ try {
     ok(r[0] === 404 && r[1] === 404 && r[2] === "not_found" && r[3] === 404, "the real routes answer: no room, no turn and no voice for a card that does not exist", JSON.stringify(r));
     const raw = await fetch(`${base}/api/review-room/SC-999/turn`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(raw.status === 401 || raw.status === 403, "a write without Studio's session is refused", String(raw.status));
+    { const g = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999/reset"), b = await fetch("/api/review-room/SC-999/reset", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code]; });
+      const bare = await fetch(`${base}/api/review-room/SC-999/reset`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      ok(g[0] === 405 && g[1] === 404 && g[2] === "not_found" && (bare.status === 401 || bare.status === 403), "starting a room over is a POST only, with Studio's session, on a room that exists", JSON.stringify([g, bare.status])); }
     const ca = await p.evaluate(async () => { const x = await fetch("/api/review-room/SC-999/check-answer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 1, choice: 0 }) }); return [x.status, (await x.json()).code]; });
     const caRaw = await fetch(`${base}/api/review-room/SC-999/check-answer`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(ca[0] === 404 && ca[1] === "not_found" && (caRaw.status === 401 || caRaw.status === 403), "the check's answer route is real, and like every write it needs Studio's session", JSON.stringify([ca, caRaw.status]));

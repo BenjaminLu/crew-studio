@@ -163,8 +163,10 @@ script.push([
     { type: "item", title: "Tests", name: "percent.test.ts", before: "No test of rounding", after: "1999 at 15% pinned to 300", cites: ["diff:test/percent.test.ts"] },
     { type: "states", title: "An invoice", states: [{ id: "draft", label: "Draft" }, { id: "priced", label: "Priced" }, { id: "paid", label: "Paid" }], transitions: [{ from: "draft", to: "priced", label: "price", cite: "diff:src/percent.ts:L2-3" }, { from: "priced", to: "paid", label: "pay" }] },
     { type: "sequence", title: "Pricing a line", actors: ["Cart", "percent", "Math"], steps: [{ from: "Cart", to: "percent", label: "percent(1999, 15)" }, { from: "percent", to: "Math", label: "round(299.85)", frame: "loop", frameLabel: "each line" }, { from: "Math", to: "percent", label: "300", kind: "return", frame: "loop" }, { from: "percent", to: "Cart", label: "300", kind: "return" }], cites: ["diff:src/percent.ts:L2-3"] },
-    { type: "item", title: "Too long", name: "x".repeat(34), before: "a", after: "b" }] }],
-  ["scene_show", { chapter: "talks", title: "What talks to what", picture: "B1-1", points: [{ text: "The cart calls percent [inference].", cites: [] }, { text: "percent rounds [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }] }],
+    { type: "item", title: "Too long", name: "x".repeat(34), before: "a", after: "b" },
+    { type: "arch", title: "Who calls percent", nodes: [{ id: "cart", label: "Cart", kind: "actor" }, { id: "percent", label: "percent()", kind: "service", mark: "new" }, { id: "math", label: "Math", kind: "external" }],
+      edges: [{ from: "cart", to: "percent", label: "calls", cite: "diff:src/percent.ts:L2-3" }, { from: "percent", to: "math", label: "rounds" }] }] }],
+  ["scene_show", { chapter: "talks", title: "What talks to what", picture: "B1-20", points: [{ text: "The cart calls percent [inference].", cites: [] }, { text: "percent rounds [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }] }],
   ["scene_show", { chapter: "change", title: "Rounding", picture: "B1-15", points: [{ text: "It rounds to the cent [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Nothing else changed in it.", cites: [] }] }],
   ["scene_show", { chapter: "change", title: "Tests", picture: "B1-16", points: [{ text: "A test pins it [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }, { text: "At 1999 and 15%.", cites: [] }] }],
   ["scene_show", { chapter: "change", title: "Not an item", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
@@ -179,6 +181,12 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 let releaseImages!: () => void; const imagesGate = new Promise<void>((res) => (releaseImages = res));
 const imagePrompts: string[] = []; E.deps.generateImage = async (prompt: string, authorize: () => void) => { authorize(); imagePrompts.push(prompt); await imagesGate; return { bytes: PNG, model: "img-1", provider: "codex" }; };
 run.ctx.captures = { head, base: run.ctx.baseCommit, rendered: true, skipped: null, pages: [{ label: "Checkout", file: "index.html", before: `/api/wruns/${r.id}/captures/x/before/index.html.png`, after: `/api/wruns/${r.id}/captures/x/after/index.html.png`, changed: { removed: ["$19.99"], added: ["$20.00"] } }, { label: "Evil", before: "https://example.com/x.png", after: null }] };
+{ room.view(merge.id, true); await room.settle(merge.id);
+  ok(imagePrompts.length === 0 && !(room.view(merge.id) as any).board.some((b: any) => b.turn === 0) && (room.view(merge.id) as any).images === false, "generated pictures are off by default: opening the room pays for no picture", JSON.stringify(imagePrompts));
+  const on: any = room.images(merge.id, true, "captain"); let bad: any = null; try { room.images(merge.id, "yes" as any, "captain"); } catch (e) { bad = e; }
+  ok(on.images === true && bad?.code === "bad_request", "the captain turns them on for this room (true or false only)", JSON.stringify([on.images, bad?.message]));
+  room.view(merge.id, true); await room.settle(merge.id);
+  ok(imagePrompts.length === 0 && !(room.view(merge.id) as any).board.some((b: any) => b.turn === 0), "pictures on, opening the room still pays for nothing: the opening picture waits for a confirmed paid round", JSON.stringify(imagePrompts)); }
 const started = await room.start(merge.id, { action: "teach", lang: "zh-TW", confirm: offer.hash }, "captain");
 let busy = ""; try { await room.start(merge.id, { action: "how", confirm: offer.hash }, "captain"); } catch (e: any) { busy = e.code; }
 ok(started.running === 1 && started.turns[0].status === "running" && busy === "busy", "a confirmed turn starts at once, and a second one waits: one turn at a time per room", busy);
@@ -206,7 +214,7 @@ const recDir = join(data, "runs", r.id, "nodes", merge.node, `room-${merge.id}-1
 ok(["prompt.md", "system.md", "stream.jsonl", "report.json"].every((f) => existsSync(join(recDir, f))) && /review-room-tutor@sha256:/.test(readFileSync(join(recDir, "prompt.md"), "utf8")) && /rounds to the cent/.test(readFileSync(join(recDir, "report.json"), "utf8")), "the turn leaves a round record: prompt with its skill pins, system, stream and report");
 const rec = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-turn");
 ok(rec[0]?.data.independence === "vendor" && t1.independence === "vendor" && JSON.parse(readFileSync(join(data, "review-room-stats.json"), "utf8"))[r.id]?.independence === "vendor", "the turn's independence level is on the ledger, the turn and the room's stats", JSON.stringify(rec[0]?.data));
-ok(rec.length === 1 && rec[0].data.card === merge.id && rec[0].data.provider === "tutor" && rec[0].data.confirm === offer.hash && rec[0].data.skills.length === 4 && rec[0].data.check.asked === 2, "the turn is on the Task's signed ledger: card, provider, the confirmation, the skill pins, the check", JSON.stringify(rec[0]?.data));
+ok(rec.length === 1 && rec[0].data.card === merge.id && rec[0].data.provider === "tutor" && rec[0].data.confirm === offer.hash && rec[0].data.skills.length === 7 && rec[0].data.check.asked === 2, "the turn is on the Task's signed ledger: card, provider, the confirmation, the skill pins, the check", JSON.stringify(rec[0]?.data));
 ok(/THE TASK'S SPEC/.test(prompts[0].text) && prompts[0].text.includes(head) && /THE DIFF/.test(prompts[0].text) && prompts[0].text.includes(`[ledger:#${ledgerSeq}]`) && /Traditional Chinese/.test(prompts[0].text), "the prompt carries the spec, the head, the diff, the ledger to cite and the captain's language");
 
 // ---------- the board: excerpts from the real commits, build-up steps, basis ----------
@@ -259,7 +267,7 @@ ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "he
   { const sr2 = results.filter(([n]) => n === "scene_show").map(([, j]) => j).slice(6), figs = results.filter(([n]) => n === "board_draw").at(-1)?.[1];
     const item = board.find((b) => b.id === "B1-15"), states = board.find((b) => b.id === "B1-17"), seq = board.find((b) => b.id === "B1-18");
     ok(JSON.stringify(sc.map((x: any) => x.chapter)) === JSON.stringify(["what", "talks", "change", "change", "lifecycle", "sequence", "watch"]), "the lesson is chapters in their order: what, what talks to what, each changed item, its life, one request, what to watch", JSON.stringify(sc.map((x: any) => x.chapter)));
-    ok(/the "change" chapter's picture is a item/.test(sr2[3]?.error ?? "") && /a risk is listed only with what it rests on/.test(sr2[6]?.error ?? "") && /chapters come in order/.test(sr2[8]?.error ?? ""),
+    ok(/the "change" chapter's picture is a item/.test(sr2[3]?.error ?? "") && /a risk is listed only with what it rests on/.test(sr2[6]?.error ?? "") && /one scene a chapter/.test(sr2[8]?.error ?? ""),
       "Studio holds the chapter shape: a changed item shows its item figure, a risk needs a citation, a chapter never comes back after a later one", JSON.stringify(sr2.map((x: any) => x.error ?? x.scene)));
     ok(item?.name === "percent()" && item.basis === "cited" && states?.transitions.length === 2 && states.transitions[0].cite.ok === true && /s_draft -->\|price\| s_priced/.test(states.code) && seq?.steps[1].frame === "loop" && seq.steps[2].kind === "return" && /item 5: name is 1 to 33/.test(figs?.errors[0] ?? ""),
       "per-item figures, a state machine (every transition, each cited) and a sequence (its loop kept) are board items Studio draws; a label too long for the layout is refused", JSON.stringify({ item, figs: figs?.errors })); }
@@ -353,18 +361,22 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   let need: any = null; try { await room.translate(merge.id, { lang: "en" }, "captain"); } catch (e) { need = e; }
   ok(need?.code === "confirm_required" && /^[0-9a-f]{16}$/.test(need.offer?.translate?.hash ?? "") && typeof need.offer.translate.estimate === "number" && runArgs.length === 4, "translating is a small paid round: it asks to confirm first, with its estimate, and nothing runs", JSON.stringify(need?.offer?.translate));
   const blocks = t1o.claims.filter((c: any) => ["claim", "aside", "heading"].includes(c.kind)).map((c: any) => `EN ${c.text}`);
-  const tr = (p1: string) => JSON.stringify({ turns: [{ n: 1, scenes: t1o.scenes.map((x: any, m: number) => m ? { title: x.title, points: x.points.map((q: any) => q.text) } : { title: "Rounding to the cent", points: [p1, "a".repeat(100), "It was probably for invoices."] }), claims: blocks, answer: `EN ${t1o.answer}` }] });
+  let figs: any = {};
+  const tr = (p1: string) => JSON.stringify({ turns: [{ n: 1, figures: figs, scenes: t1o.scenes.map((x: any, m: number) => m ? { title: x.title, points: x.points.map((q: any) => q.text) } : { title: "Rounding to the cent", points: [p1, "a".repeat(100), "It was probably for invoices."] }), claims: blocks, answer: `EN ${t1o.answer}` }] });
   // a translation that drops a citation is not kept: the original shows
   script.push([["msg", tr("Lost its citation.")]]);
   const runs0 = runArgs.length; await room.translate(merge.id, { lang: "en", confirm: need.offer.translate.hash }, "captain"); await room.settle(merge.id);
   const v1 = room.view(merge.id) as any, trArgs = runArgs.at(-1);
   ok(runArgs.length === runs0 + 1 && trArgs.tools.length === 0 && /translation/.test(trArgs.title) && /TRANSLATION ONLY/.test(prompts.at(-1)!.text) && !/THE DIFF/.test(prompts.at(-1)!.text), "the translation round gets no tool and no code: only the room's text", JSON.stringify({ tools: trArgs.tools.length, title: trArgs.title }));
   ok(!v1.translations.en?.["1"] && JSON.stringify(v1.translating.dropped) === "[1]" && v1.translate.confirmed === true, "a translation that lost a citation is not kept: the validator drops it and the original shows", JSON.stringify(v1.translating));
+  figs = { "B1-20": ["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"], "B1-15": ["only one word"] };
   script.push([["msg", tr("Rounded to the cent [diff:src/percent.ts:L2-3]")]]);
   await room.translate(merge.id, { lang: "en" }, "captain"); await room.settle(merge.id);
   const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"];
   ok(kept?.scenes[0].title === "Rounding to the cent" && kept.claims.length === blocks.length && /^EN /.test(kept.answer) && JSON.stringify(v2.translate.pending.en) === "[]" && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-translate" && e.data.lang === "en" && JSON.stringify(e.data.kept) === "[1]"),
     "confirmed once, the next translation runs without asking again; a valid one is kept per turn and language, and recorded", JSON.stringify(kept));
+  ok(JSON.stringify(kept?.figures?.["B1-20"]) === JSON.stringify(["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"]) && !kept?.figures?.["B1-15"] && /figures/.test(prompts.at(-1)!.text) && prompts.at(-1)!.text.includes('"B1-20":["Who calls percent","Cart","percent()","Math","calls","rounds"]') && prompts.at(-1)!.text.includes('"B1-15":["Rounding","percent()","Fractions of a cent kept","Rounded to the cent","Math.round"]'),
+    "a translation carries the drawings' words too (asked in order, per drawing): a drawing whose words came back whole is kept, one with a missing word stays as drawn", JSON.stringify(kept?.figures));
   const runs1 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain");
   let over: any = null; { const { translationErrors } = await import("../src/domain/review-room"); over = translationErrors(t1o, { scenes: t1o.scenes.map((x: any, m: number) => m ? { title: x.title, points: x.points.map((q: any) => q.text) } : { title: "x".repeat(49), points: ["a", "b", "c"] }), claims: blocks, answer: t1o.answer }); }
   ok(runArgs.length === runs1 && over.some((e: string) => /title is too long/.test(e)) && over.some((e: string) => /citations differ/.test(e)), "switching to a language already kept runs nothing; the validator holds a translation to the board's limits and the original's citations", JSON.stringify(over)); }

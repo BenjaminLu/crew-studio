@@ -29,6 +29,10 @@ const rules: Rule[] = [
 // heuristic is excepted: every path, denylist and secret-file check still runs.
 const publicAttribution = new Map<string,string>([
  ["skins/captain/LICENSE.txt:3","0b744944c7f97122742417ed9293aa005079a2392d189913eab704590c476760"],
+ // baton (MIT): its repository and its author's copyright, credited where the License asks (THIRD_PARTY_NOTICES.md, workflows/skills/baton/NOTICE.md)
+ ["THIRD_PARTY_NOTICES.md:16","f1eb9e9fb7b09dbe1b7cb8dbcaa0b5abddbdda63119be0e9b40cdb70c0634970"],
+ ["workflows/skills/baton/NOTICE.md:6","9956a3efe84aeeb5ccd95c4a0bd9c2e30bb86313bad8095e7ceb6cac9902e4c1"],
+ ["workflows/skills/baton/NOTICE.md:18","765b91112284b6626e5743d21b152bef37ab40e749aad16cac3cdbfd33d71639"],
 ]);
 const publicLine=(f:string,n:number,line:string)=>publicAttribution.get(`${f}:${n}`)===createHash("sha256").update(line).digest("hex");
 function violations(f:string,n:number,line:string,checks:Rule[]=rules){return checks.filter(([,re,kind])=>re.test(line)&&!(kind==="local-user"&&publicLine(f,n,line))).map(([what])=>`${f}:${n} ${what}`);}
