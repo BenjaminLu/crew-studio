@@ -3,13 +3,15 @@
 // issue's own row in its category; nothing here is written anywhere.
 import type {TriageRecord,WorkState} from './issue-triage';
 
-export type FixStateName='none'|'starting'|'queued'|'investigating'|'judge'|'security'|'running'|'waiting'|'ready'|'merged'|'failed'|
+export type FixStateName='none'|'starting'|'queued'|'crew'|'investigating'|'judge'|'security'|'running'|'waiting'|'ready'|'merged'|'failed'|
  'needs-info'|'not-code'|'duplicate'|'in-progress'|'recheck'|'human'|'changed'|'proposed'|'approved'|'package';
 export type FixState={state:FixStateName;
  /** another Fix on it starts nothing: its investigation or its Task is under way, or its Task is done */
  busy:boolean;
  /** "select all" takes it: nothing was decided about it yet, or its last attempt failed */
  pick:boolean;
+ /** in an ordinary triage (not a Fix), which waits for the captain at its court or approval card */
+ inBatch?:boolean;
  task?:string|null;court?:string|null;package?:string;why?:string;questions?:string[];duplicateOf?:number;pulls?:number[];fit?:string[];with?:string;where?:string;by?:string;at?:string};
 /** the hidden triage a Fix click started, as the engine has it */
 export type FixRun={id:string;status:string;error?:string|null;note?:string|null;
@@ -20,14 +22,16 @@ export type FixRun={id:string;status:string;error?:string|null;note?:string|null
  /** waiting for an investigation slot (a few Fix investigations run at a time) */
  queued?:boolean};
 /** an issue's Task, as the engine has it: waiting when it waits on a card */
-export type FixWork={state:WorkState|'waiting';task:string|null};
+export type FixWork={state:WorkState|'waiting';task:string|null;
+ /** its task is still the proposal: the Task has not started */
+ proposal?:boolean};
 const ENDED=['succeeded','failed','cancelled'];
-const BUSY:FixStateName[]=['starting','queued','investigating','security','running','waiting','ready','merged'],PICK:FixStateName[]=['none','failed','changed','proposed','approved'];
+const BUSY:FixStateName[]=['starting','queued','crew','investigating','security','running','waiting','ready','merged'],PICK:FixStateName[]=['none','failed','changed','proposed','approved'];
 const of=(state:FixStateName,o:Partial<FixState>={}):FixState=>({state,busy:BUSY.includes(state),pick:PICK.includes(state),...o});
 
-export function fixState(n:number,o:{project:string;rec:TriageRecord|null;entry:{by:string;at:string;run?:string;error?:string}|null;run:FixRun|null;work:(pkg:string,n:number)=>FixWork;dispatching:boolean;
+export function fixState(n:number,o:{project:string;rec:TriageRecord|null;entry:{by:string;at:string;run?:string;error?:string;crewChanged?:true;specError?:string}|null;run:FixRun|null;work:(pkg:string,n:number)=>FixWork;dispatching:boolean;
  /** an ordinary triage reading this issue now (R-n): a Fix would pay for it twice */
- batch?:string|null}):FixState{
+ batch?:{id:string;waiting:boolean}|null}):FixState{
  const who=o.entry?{by:o.entry.by,at:o.entry.at}:{},court=(id:string)=>`#/court/${encodeURIComponent(o.project)}/${id}`;
  if(o.dispatching)return of('starting',who);
  const r=o.run;
@@ -36,14 +40,15 @@ export function fixState(n:number,o:{project:string;rec:TriageRecord|null;entry:
   if(r.waiting==='court')return{...of('judge',{...who,task:r.id,court:court(r.id)}),busy:true};
   if(r.waiting==='approve')return of('security',{...who,task:r.id});
   return of(r.queued?'queued':'investigating',{...who,task:r.id});}
- if(o.batch)return of('investigating',{task:o.batch});
+ if(o.batch)return o.batch.waiting?{...of('judge',{task:o.batch.id,inBatch:true}),busy:true}:of('investigating',{task:o.batch.id,inBatch:true});
  if(r&&r.status!=='succeeded')return of('failed',{...who,task:r.id,why:r.status==='cancelled'?'cancelled':String(r.error??'the investigation failed').slice(0,300)});
  const rec=o.rec,k=String(n),i=rec?.issues[k],pkg=rec?.packages.find(p=>p.members.includes(n));
  if(pkg){
   const e=pkg.work?.[k];
   if(e){const w=o.work(pkg.id,n);
+   if(w.state==='open'&&w.proposal&&o.entry?.crewChanged)return of('crew',{...who,task:w.task,package:pkg.id});
    if(w.state==='open')return of('running',{...who,task:w.task,package:pkg.id});
-   if(w.state==='waiting')return of('waiting',{...who,task:w.task,package:pkg.id});
+   if(w.state==='waiting')return of('waiting',{...who,task:w.task,package:pkg.id,...(o.entry?.specError?{why:o.entry.specError.slice(0,300)}:{})});
    if(w.state==='ready')return of('ready',{...who,task:w.task,package:pkg.id});
    if(w.state==='merged')return of('merged',{...who,task:w.task,package:pkg.id});
    return of('failed',{...who,task:w.task,package:pkg.id,why:'its Task ended without being ready'});}

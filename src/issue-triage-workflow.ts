@@ -21,7 +21,7 @@ import {git,must} from './git';
 import {localUnrestricted} from './local-execution';
 import {realInside} from './secure';
 import {listTree,searchTree,typedRead,LINES_PER_READ} from './review-read';
-import {approvePackages,atSnapshot,declinePackages,takeAnyway,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,enrichSnapshot,triageRecord,verifyReport,withoutChanged,NEAR,SPAN,type Reads,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
+import {approvePackages,atSnapshot,snapshotHash,declinePackages,takeAnyway,earlierPackages,issueBrief,joinCross,mergeTriage,splitCross,nextIssues,parseReport,pickBatch,snapshotIssues,enrichSnapshot,triageRecord,verifyReport,withoutChanged,NEAR,SPAN,type Reads,type Report,type Snapshot,type TriageRecord,type WorkState} from './domain/issue-triage';
 import type {IssueTriageStore} from './issue-triage-store';
 import {applyRulings,buildDocket,parseRulings,type Docket,type Ruling} from './domain/issue-court';
 import {IssueEvalStore} from './issue-eval-store';
@@ -52,7 +52,7 @@ type Propose=(args:{workflow:string;version:number;title:string;text:string;para
 /** the team's resolution of a workflow in a project (src/domain/crew.ts resolveCrew): who runs each agent node there */
 type CrewOf=(def:any,project:string)=>{node:string;provider:string|null;model:string|null;effort?:string|null}[]|null;
 /** the crew a dispatch card shows and the Task then runs (src/firstmate.ts dispatchCrew): the worker the Fix confirmation names */
-type DispatchCrew=(def:any,project:string)=>{nodes:{node:string;provider:string|null;model:string|null;effort:string|null}[]}|null;
+type DispatchCrew=(def:any,project:string)=>{team?:string;nodes:{node:string;provider:string|null;model:string|null;effort:string|null}[]}|null;
 export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTriageStore,dataDir:string,o:{propose?:Propose;crewOf?:CrewOf;dispatchCrew?:DispatchCrew}={}){
  const source=normalizeDef(JSON.parse(bundledText(`workflows/v2/${ISSUE_TRIAGE_WORKFLOW}.wf.yaml`)||'null'));
  const pinned=[{nodes:digest(source.nodes),edges:digest(source.edges)},...PINNED];
@@ -66,7 +66,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   return{record,adapter};};
  const state=(x:X):State=>{const t=x.ctx.issueTriage as State|undefined;if(!t||!SHA.test(t.commit))throw new Error('This triage has no pinned snapshot');return t;};
  const snapFile=(x:X)=>join(x.dir,'issue-snapshot.json');
- const snapOf=(x:X):Snapshot=>{const s=JSON.parse(readFileSync(snapFile(x),'utf8'));if(s.hash!==state(x).snapshot)throw new Error('The issue snapshot changed on disk');return s;};
+ const snapOf=(x:X):Snapshot=>{const s=JSON.parse(readFileSync(snapFile(x),'utf8'));if(s.hash!==state(x).snapshot||snapshotHash(s)!==s.hash)throw new Error('The issue snapshot changed on disk');return s;};
  /** what fs_read returned to this round's investigator, by file: its quotes must come from these lines */
  const reads=(x:X):Reads=>(x.rn.data.triageReads??={}) as Reads;
  const treeOf=(run:string)=>join(dataDir,'work','issue-triage',run,'checkout');
@@ -78,9 +78,9 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  // starts its tainted Task on the strength of the same click ---
  const fixes=new IssueFixStore(dataDir);
  /** the Fix click a run was started from: Studio's own parameter (no model sets a _ parameter), by the captain, the run's own starter */
- type Click={by:string;at:string;click?:string;snap?:string};
+ type Click={by:string;at:string;click?:string;snap?:string;crew?:string|null};
  const fixOf=(r:{params:Record<string,string>;by:string}):Click|null=>{if(!r.params._fix)return null;let f:any;try{f=JSON.parse(r.params._fix);}catch{return null;}
-  return f&&typeof f.by==='string'&&typeof f.at==='string'&&CAPTAIN.test(f.by)&&f.by===r.by?{by:f.by,at:f.at,...(typeof f.click==='string'&&/^F-[\w-]{1,60}$/.test(f.click)?{click:f.click}:{}),...(typeof f.snap==='string'&&/^[a-f0-9]{64}$/.test(f.snap)?{snap:f.snap}:{})}:null;};
+  return f&&typeof f.by==='string'&&typeof f.at==='string'&&CAPTAIN.test(f.by)&&f.by===r.by?{by:f.by,at:f.at,...(typeof f.click==='string'&&/^F-[\w-]{1,60}$/.test(f.click)?{click:f.click}:{}),...(typeof f.snap==='string'&&/^[a-f0-9]{64}$/.test(f.snap)?{snap:f.snap}:{}),...(f.crew===null||typeof f.crew==='string'?{crew:f.crew}:{})}:null;};
  /** the issue the click named, as the run's own ledger recorded it: the only package the click approves holds exactly it */
  const clickedIssue=(x:X):number|null=>{const t=engine.trusted(x.run.id),e:any=t.ok?t.entries.find((e:any)=>e.record==='issue-fix-click'):null;const n=Number(e?.data?.issues?.[0]);return Number.isSafeInteger(n)&&n>0?n:null;};
  /** the clicked issue's own package, with code to change: one issue, exactly the clicked one, never a recheck */
@@ -97,11 +97,21 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  const FIX_MAX=()=>Math.max(1,Math.floor(Number(process.env.CREW_FIX_INVESTIGATE_MAX))||4);
  const runNo=(id:string)=>Number(id.slice(2))||0;
  const fixRuns=()=>engine.list().filter(r=>r.workflow===ISSUE_TRIAGE_WORKFLOW&&!!r.params._fix&&!ENDED.includes(r.status));
+ // one scheduler for every waiting Fix triage: it admits the oldest waiting runs (FIFO by Task number) into free slots,
+ // when a slot frees (a Fix triage's reports are recorded) and once a second (a Fix triage that ended any other way)
+ const slotQueue=new Map<string,()=>void>();let slotTimer:ReturnType<typeof setInterval>|null=null,slotSeq=0;
+ function admitSlots(){
+  if(!slotQueue.size){if(slotTimer){clearInterval(slotTimer);slotTimer=null;}return;}
+  let free=FIX_MAX()-fixRuns().filter(r=>r.ctx?.fixSlot===true&&!r.ctx?.fixDone&&!slotQueue.has(r.id)).length;
+  for(const id of [...slotQueue.keys()].sort((a,b)=>runNo(a)-runNo(b))){const r=engine.get(id),go=slotQueue.get(id)!;
+   if(!r||ENDED.includes(r.status)){slotQueue.delete(id);go();continue;}
+   if(free<=0)break;free--;r.ctx.fixSlot=true;r.ctx.fixSlotOrder=++slotSeq;slotQueue.delete(id);go();}}
  async function waitSlot(x:X){
-  for(;;){guard(x);const live=fixRuns(),holding=live.filter(r=>r.ctx?.fixSlot===true&&!r.ctx?.fixDone).length,ahead=live.filter(r=>r.id!==x.run.id&&!r.ctx?.fixSlot&&runNo(r.id)<runNo(x.run.id)).length;
-   if(holding+ahead<FIX_MAX()){x.ctx.fixSlot=true;x.save();return;}
-   if(x.rn.note!=='Waiting for an investigation slot'){x.rn.note='Waiting for an investigation slot';x.save();}
-   await new Promise(r=>setTimeout(r,250));}}
+  // a step that runs again (a restart mid-step, Retry on its failure card) already holds its slot: it never waits for itself
+  if(x.ctx.fixSlot===true&&!x.ctx.fixDone)return;
+  x.rn.note='Waiting for an investigation slot';x.save();
+  await new Promise<void>(go=>{slotQueue.set(x.run.id,go);slotTimer??=setInterval(admitSlots,1000);queueMicrotask(admitSlots);});
+  guard(x);x.rn.note=null;x.save();}
  /** the click, as the run's own ledger recorded it at its first step */
  const clicked=(x:X,f:{by:string;at:string})=>{const t=engine.trusted(x.run.id);return t.ok&&t.entries.some((e:any)=>e.record==='issue-fix-click'&&e.actor===f.by&&e.data?.at===f.at);};
  /** issues a Fix investigation of this project is reading now: an ordinary batch leaves them to it */
@@ -127,7 +137,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(click)await waitSlot(x);
   // a Fix triage reads the snapshot its click took once for all its issues (checked against the hash the click pinned)
   let shared:Snapshot|null=null;
-  if(click?.click&&click.snap){try{shared=JSON.parse(readFileSync(clickFile(project,click.click),'utf8'));}catch{throw new Error('The issues this Fix read are gone: press Fix again');}if(shared!.hash!==click.snap)throw new Error('The issues this Fix read changed on disk');}
+  if(click?.click&&click.snap){try{shared=JSON.parse(readFileSync(clickFile(project,click.click),'utf8'));}catch{throw new Error('The issues this Fix read are gone: press Fix again');}if(snapshotHash(shared!)!==click.snap||shared!.hash!==click.snap)throw new Error('The issues this Fix read changed on disk');}
   const snap=shared??await snapshotIssues(adapter,{signal});guard(x);
   const commit=must(record.github!.localPath,['rev-parse','--verify',`${record.github!.base}^{commit}`]);if(!SHA.test(commit))throw new Error('The base branch does not resolve to a commit');
   const named=String(x.run.params.issues??'').split(/[\s,#]+/).filter(Boolean).map(Number).filter(Number.isSafeInteger);
@@ -270,7 +280,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    const none=(merged.noCode??[]).flatMap(n=>n.issues).filter(n=>t.batch.includes(n)).length;
    x.rn.note=`${added.length} new work package${added.length===1?'':'s'}${none?`; ${none} agreed to have nothing to change in the code${needsInfo?`, ${needsInfo} needing information from the reporter (the questions are on the project page; nothing is posted to GitHub)`:''}`:''}${aside?`; ${aside} set aside for you (a duplicate, a pull request open, or not an agent's work)`:''}${matched.length?`; ${matched.length} at the same function as an earlier package, to decide on the project page`:''}${changed.length?`; ${changed.length} issue${changed.length===1?'':'s'} changed on GitHub meanwhile`:''}${docket.cases.length?`; ${docket.cases.length} disagreement${docket.cases.length===1?'':'s'} for the captain to rule on`:''}`;x.save();
    return added.length?'ok':'none';
-  }finally{dropTree(x.run.id);if(fixOf(x.run)){x.ctx.fixDone=true;x.save();}}};
+  }finally{dropTree(x.run.id);if(fixOf(x.run)){x.ctx.fixDone=true;x.save();queueMicrotask(admitSlots);}}};
 
  // the captain rules on each disagreement on the docket page; with none, the step passes on
  engine.actions['issues.court']=async x=>{
@@ -366,7 +376,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(fix){const now=store.get(t.project)!,started:string[]=[];
    const ref=engine.trusted(x.run.id).entries.find((e:any)=>e.record==='issue-fix-click') as any;
    for(const id of out.approved){const p=now.packages.find(q=>q.id===id);if(!p||!own(p))continue;
-    const r=await fixDispatch(t.project,id,p.members[0],{...fix,ref:{run:x.run.id,seq:ref?.seq??null}},x);guard(x);if(r)started.push(`${id} → ${r.proposal}`);}
+    const r=await fixDispatch(t.project,id,p.members[0],{by:fix.by,at:fix.at,ref:{run:x.run.id,seq:ref?.seq??null},...(fix.crew!==undefined?{crew:fix.crew}:{})},x);guard(x);if(r)started.push(`${id} → ${r.proposal}`);}
    if(started.length)x.rn.note+=`; started ${started.join(', ')}`;}
   x.save();return 'ok';};
 
@@ -455,14 +465,18 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  /** The proposal's dispatch card, answered as the captain's Fix click (who pressed it and when are in the answer and on the
   *  proposal's ledger, `issue-fix-dispatch`), until its Task starts. When the team changed after the card showed its crew,
   *  Studio raises the card again on a new proposal: that one is followed and answered the same way. */
- async function autoDispatch(proposal:string,f:{project:string;n:number;pkg:string;by:string;at:string;ref?:Ref}):Promise<{proposal:string;card:string}>{
+ /** the crew changed since the captain confirmed Fix: the dispatch card waits for the captain, who sees the new crew */
+ class CrewChanged extends Error{constructor(readonly proposal:string){super('The crew changed since you confirmed Fix: its dispatch card waits for you, showing the crew as it is now');}}
+ async function autoDispatch(proposal:string,f:{project:string;n:number;pkg:string;by:string;at:string;ref?:Ref;crew?:string|null}):Promise<{proposal:string;card:string}>{
   const until=Date.now()+DISPATCH_WAIT;let cur=proposal,card:string|null=null,ref=f.ref;
   while(Date.now()<until){const pr=engine.get(cur);if(!pr)throw new Error(`${cur} is gone`);
    if(card&&typeof pr.ctx?.childRun==='string')return{proposal:cur,card};
-   const again=pr.ctx?.crewReraised;if(typeof again==='string'&&again!==cur&&engine.get(again)){cur=again;card=null;continue;}
+   // raised again because the team changed after the card showed its crew: that card is the captain's to answer
+   const again=pr.ctx?.crewReraised;if(typeof again==='string'&&again!==cur&&engine.get(again))throw new CrewChanged(again);
    if(ENDED.includes(pr.status))throw new Error(`${cur} ended before its Task started`);
    const c=engine.cards.list({run:cur,open:true}).find(c=>c.kind==='dispatch');
    if(c&&c.id!==card){
+    if(f.crew!==undefined&&(c.crew?.team??null)!==f.crew)throw new CrewChanged(cur);
     // the "again" path has no triage of its own: its click goes on the proposal's ledger
     if(!ref){const e=recordOn(cur,'issue-fix-click',{actor:f.by,data:{schema:1,project:f.project,issues:[f.n],by:f.by,at:f.at,again:f.pkg}});ref={run:cur,seq:e?.seq??null};}
     if(!engine.trusted(cur).entries.some((e:any)=>e.record==='issue-fix-dispatch'))recordOn(cur,'issue-fix-dispatch',{actor:f.by,data:{schema:1,project:f.project,issue:f.n,package:f.pkg,by:f.by,at:f.at,click:ref}});
@@ -470,18 +484,20 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    await new Promise(r=>setTimeout(r,100));}
   throw new Error(`${cur}'s Task did not start in time: approve it on its dispatch card`);}
  /** an approved package's Task, proposed and dispatched on the strength of a Fix click; a refusal is kept on the issue's row */
- async function fixDispatch(project:string,id:string,n:number,f:{by:string;at:string;ref?:Ref},x?:X):Promise<{proposal:string}|null>{
+ async function fixDispatch(project:string,id:string,n:number,f:{by:string;at:string;ref?:Ref;crew?:string|null},x?:X):Promise<{proposal:string}|null>{
   const lock=`${project}/${id}`,key=`${project}/${n}`;
   if(inFlight.has(lock)){fixes.note(project,n,f.at,{error:`${id} is being proposed right now`});return null;}
   inFlight.add(lock);dispatching.add(key);
   try{const owner={key:`issue-fix ${project} ${n} ${f.at}`,captain:true,text:`Fix issue ${n} (the captain pressed Fix on the project page at ${f.at})`,live:()=>true};
-   const r=await proposeNext(project,id,owner,()=>listRead(project)),d=await autoDispatch(r.proposal,{project,n,pkg:id,by:f.by,at:f.at,...(f.ref?{ref:f.ref}:{})});
+   const r=await proposeNext(project,id,owner,()=>listRead(project)),d=await autoDispatch(r.proposal,{project,n,pkg:id,by:f.by,at:f.at,...(f.ref?{ref:f.ref}:{}),...(f.crew!==undefined?{crew:f.crew}:{})}).catch((e:any)=>{
+    if(e instanceof CrewChanged){const cur=store.get(project)!;store.write({...cur,packages:cur.packages.map(p=>p.id===id?{...p,work:{...(p.work??{}),[String(n)]:{proposal:e.proposal,at:new Date().toISOString()}}}:p)});fixes.note(project,n,f.at,{proposal:e.proposal,crewChanged:true,error:e.message});}
+    throw e;});
    // raised again on a new proposal (the team changed): the package's work names the proposal that started the Task
    if(d.proposal!==r.proposal){const cur=store.get(project)!;store.write({...cur,packages:cur.packages.map(p=>p.id===id?{...p,work:{...(p.work??{}),[String(n)]:{proposal:d.proposal,at:new Date().toISOString()}}}:p)});}
    fixes.note(project,n,f.at,{proposal:d.proposal,card:d.card,error:undefined});
    if(x)engine.record(x,'issue-fix-dispatch',{actor:f.by,data:{schema:1,project,package:id,issues:r.issues,proposal:d.proposal,card:d.card,by:f.by,at:f.at}} as any);
    return{proposal:d.proposal};}
-  catch(e:any){fixes.note(project,n,f.at,{error:String(e?.message??e).slice(0,300)});return null;}
+  catch(e:any){if(!(e instanceof CrewChanged))fixes.note(project,n,f.at,{error:String(e?.message??e).slice(0,300)});return null;}
   finally{inFlight.delete(lock);dispatching.delete(key);}}
  // a Fix Task's spec card (code-firstmate's dispatch node, its first visit only) is approved on the strength of the click
  // that dispatched it: the proposal's ledger names the click and its dispatch card was answered as that click. Never any
@@ -494,10 +510,13 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const as=`${d.data.by} · Fix ${d.data.at}`,ans:any=t.entries.filter((e:any)=>e.record==='card-answer'&&e.data?.choice==='approve').at(-1);if(ans?.actor!==as)return;
   if(engine.cards.list({run:x.run.id}).some(c=>c.node==='dispatch'&&c.id!==card.id)||!card.options.some(o=>o.id==='dispatch'))return;
   engine.record(x,'issue-fix-spec',{actor:d.data.by,data:{schema:1,project:d.data.project,issue:d.data.issue,proposal:pid,card:card.id,by:d.data.by,at:d.data.at,click:d.data.click??null}} as any);
-  setTimeout(()=>{void engine.answer(card.id,{choice:'dispatch',by:as}).catch((e:any)=>engine.emit(x.run,'log',`Fix could not approve the spec card ${card.id}: ${e?.message??e}`));},10);};
+  setTimeout(()=>{void engine.answer(card.id,{choice:'dispatch',by:as}).catch((e:any)=>{const why=String(e?.message??e).slice(0,300);engine.emit(x.run,'log',`Fix could not approve the spec card ${card.id}: ${why}`);
+   try{engine.record(x,'issue-fix-spec-refused',{actor:d.data.by,data:{schema:1,project:d.data.project,issue:d.data.issue,card:card.id,why,click:d.data.click??null}} as any);}catch{}
+   if(typeof d.data.project==='string'&&Number.isSafeInteger(d.data.issue))try{fixes.note(d.data.project,d.data.issue,d.data.at,{specError:why});}catch{}});},10);};
  /** issues an ordinary triage of this project is reading now: a Fix on one of them would pay for it twice */
- const batchOf=(project:string)=>{const m=new Map<number,string>();for(const r of engine.list())if(r.workflow===ISSUE_TRIAGE_WORKFLOW&&r.params.project===project&&!r.params._fix&&!ENDED.includes(r.status))
-  for(const n of ((r.ctx?.issueTriage as State|undefined)?.batch??String(r.params.issues??'').split(',').map(Number).filter(n=>Number.isSafeInteger(n)&&n>0)))m.set(n,r.id);return m;};
+ const batchOf=(project:string)=>{const m=new Map<number,{id:string;waiting:boolean}>();for(const r of engine.list())if(r.workflow===ISSUE_TRIAGE_WORKFLOW&&r.params.project===project&&!r.params._fix&&!ENDED.includes(r.status))
+  {const waiting=engine.cards.list({run:r.id,open:true}).some(c=>c.node==='court'||c.node==='approve');
+  for(const n of ((r.ctx?.issueTriage as State|undefined)?.batch??String(r.params.issues??'').split(',').map(Number).filter(n=>Number.isSafeInteger(n)&&n>0)))m.set(n,{id:r.id,waiting});}return m;};
  /** where each issue stands after Fix (src/domain/issue-fix.ts): every issue of the triage and every issue clicked */
  function fixView(project:string):Record<string,FixState>{
   const rec=store.get(project),clicks=fixes.get(project).issues,batches=batchOf(project),ns=new Set([...Object.keys(rec?.issues??{}),...Object.keys(clicks),...[...batches.keys()].map(String)].map(Number).filter(Number.isSafeInteger));
@@ -505,16 +524,17 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    let docket=false;if(ENDED.includes(r.status))try{docket=!!docketOf(r.id)?.cases.length;}catch{}
    return{id:r.id,status:r.status,error:r.error??(Object.values(r.nodes).find((m:any)=>m.error) as any)?.error??null,note:(Object.values(r.nodes).map((m:any)=>m.note).filter(Boolean).at(-1) as string|undefined)??null,waiting:open?(open.node as 'court'|'approve'):null,docket,queued:!ENDED.includes(r.status)&&!r.ctx?.fixSlot};};
   const work=(pkg:string,n:number):FixWork=>{const e=rec?.packages.find(p=>p.id===pkg)?.work?.[String(n)],w=workOf(e);
-   const child=w.task?engine.get(w.task):null;return w.state==='open'&&child?.status==='waiting'&&engine.cards.list({run:child.id,open:true}).length?{state:'waiting',task:w.task}:w;};
+   const child=w.task?engine.get(w.task):null;if(w.state==='open'&&child?.workflow==='firstmate-proposal')return{...w,proposal:true};
+   return w.state==='open'&&child?.status==='waiting'&&engine.cards.list({run:child.id,open:true}).length?{state:'waiting',task:w.task}:w;};
   return Object.fromEntries([...ns].sort((a,b)=>a-b).map(n=>{const entry=clicks[String(n)]?.at(-1)??null,k=`${project}/${n}`;
    return[String(n),fixState(n,{project,rec,entry,run:runOf(entry?.run),work,dispatching:dispatching.has(k)||pending.has(k),batch:batches.get(n)??null})];}));}
  /** The captain pressed Fix on these issues (the desktop captain only): one shared read of GitHub for all of them, then each
   *  starts its own hidden one-issue triage (a few investigate at a time), or its single package's Task again; an issue whose
   *  investigation or Task is under way, or done, starts nothing. */
- async function fix(project:string,issues:number[],by:string){
+ async function fix(project:string,issues:number[],by:string,pinned?:string|null){
   if(!CAPTAIN.test(by))throw new Error('Only the captain fixes issues');
   sweep();const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)throw new Error('The issue triage workflow is missing');
-  const{record,adapter}=selected(project),repo=record.github!.repository,at=new Date().toISOString(),view=fixView(project),click=`F-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+  const{record,adapter}=selected(project),repo=record.github!.repository,at=new Date().toISOString(),view=fixView(project),crew=pinned!==undefined?pinned:(fixWorker(project)?.team??null),click=`F-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
   const started:{n:number;task?:string;again?:string}[]=[],skipped:{n:number;state:string;why?:string}[]=[],investigate:number[]=[];
   for(const n of [...new Set(issues)]){
    const s=view[String(n)];
@@ -526,7 +546,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
     if(p.security&&p.status==='proposed'){skipped.push({n,state:'security',why:`${p.id} holds a security issue: approve it on the package once whoever owns security agrees`});continue;}
     const key=`${project}/${n}`;fixes.add(project,n,{by,at});dispatching.add(key);
     void (async()=>{try{if(p.status==='proposed'){const r=await approve(project,[p.id],by);if(!r.approved.includes(p.id))throw new Error(`${p.id} is stale: the issue changed since it was investigated; press Fix again to investigate it again`);}
-      dispatching.delete(key);await fixDispatch(project,p.id,n,{by,at});}
+      dispatching.delete(key);await fixDispatch(project,p.id,n,{by,at,crew});}
      catch(e:any){fixes.note(project,n,at,{error:String(e?.message??e).slice(0,300)});}finally{dispatching.delete(key);}})();
     started.push({n,again:p.id});continue;}
    investigate.push(n);}
@@ -535,7 +555,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
     const shared=await enrichSnapshot(adapter,await listRead(project),{threads:investigate,closed:true,pulls:true});
     writeAtomic(clickFile(project,click),JSON.stringify(shared));
     for(const n of investigate){const run=engine.start({workflow:ISSUE_TRIAGE_WORKFLOW,version:def.version,title:`Fix issue ${n} of ${repo}`,text:`Investigate GitHub issue ${n} of ${repo}, then fix it (the captain pressed Fix)`,
-      params:{project,issues:String(n),size:'1',_fix:JSON.stringify({by,at,click,snap:shared.hash})},by} as any);
+      params:{project,issues:String(n),size:'1',_fix:JSON.stringify({by,at,click,snap:shared.hash,crew})},by} as any);
      fixes.add(project,n,{by,at,run:run.id});started.push({n,task:run.id});}}
    finally{for(const k of keys)pending.delete(k);}}
   // the reads of clicks whose investigations have all started and ended
@@ -545,7 +565,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  function fixWorker(project:string){const def=engine.defs.get('code-firstmate');if(!def)return null;const node=def.nodes.find((n:any)=>n.role==='worker');
   let crew:ReturnType<DispatchCrew>=null;try{crew=o.dispatchCrew?.(def,project)??null;}catch{}
   const seat=node&&crew?.nodes.find(m=>m.node===node.id),role=def.roles.find((r:any)=>r.id==='worker');
-  return seat?{provider:seat.provider,model:seat.model??null,effort:seat.effort??null,from:'dispatch'}:{provider:role?.provider??null,model:role?.model??null,effort:null,from:'workflow'};}
+  return seat?{provider:seat.provider,model:seat.model??null,effort:seat.effort??null,from:'dispatch',team:(crew as any)?.team??null}:{provider:role?.provider??null,model:role?.model??null,effort:null,from:'workflow',team:(crew as any)?.team??null};}
  /** the two investigators as a triage of this project would run them: the team's seats there, else the roles' providers */
  function investigators(project:string){const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)return null;let nodes:ReturnType<CrewOf>=null;try{nodes=o.crewOf?.(def,project)??null;}catch{}
   const one=(id:string)=>{const n=nodes?.find(x=>x.node===id),role=def.roles.find((r:any)=>r.id===def.nodes.find((m:any)=>m.id===id)?.role);

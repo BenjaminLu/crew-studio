@@ -13,7 +13,11 @@ export type FixEntry={by:string;at:string;
  /** the proposal its Task came from, and the dispatch card Studio answered on the strength of the click */
  proposal?:string;card?:string;
  /** why this attempt stopped before its Task started (the proposal was refused, the dispatch card did not come up) */
- error?:string};
+ error?:string;
+ /** the crew changed since the captain confirmed Fix: its dispatch card waits for the captain */
+ crewChanged?:true;
+ /** why Studio could not approve its Task's spec card on the click's strength (the card waits for the captain) */
+ specError?:string};
 export type FixRecord={schema:1;project:string;issues:Record<string,FixEntry[]>};
 export class IssueFixStore{
  private dir:string;

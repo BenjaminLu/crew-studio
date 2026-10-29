@@ -690,8 +690,9 @@ export function createRuntime(d: RuntimeDeps) {
           if (!writing) return json({ error: "use POST" }, 405);
           if (who.kind !== "desktop") return json({ error: "only the desktop captain fixes issues" }, 403);
           const issues = b?.issues;
-          if (!Array.isArray(issues) || !issues.length || issues.length > 1000 || !issues.every((n: any) => Number.isSafeInteger(n) && n > 0) || Object.keys(b ?? {}).some((k) => k !== "issues")) return json({ error: "send {issues: [n, …]}: 1 to 1000 issue numbers" }, 400);
-          try { return json(await issueTriageFlow.fix(fixM[1], issues, "captain (project page)")); }
+          if (!Array.isArray(issues) || !issues.length || issues.length > 1000 || !issues.every((n: any) => Number.isSafeInteger(n) && n > 0) || Object.keys(b ?? {}).some((k) => k !== "issues" && k !== "crew") || (b.crew !== undefined && b.crew !== null && (typeof b.crew !== "string" || b.crew.length > 128))) return json({ error: "send {issues: [n, …], crew?}: 1 to 1000 issue numbers, and the crew the confirmation showed" }, 400);
+          // the crew the confirmation showed is pinned: a fix Task whose dispatch card shows another crew waits for the captain there
+          try { return json(await issueTriageFlow.fix(fixM[1], issues, "captain (project page)", b.crew === undefined ? undefined : b.crew)); }
           catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
         }
         // the disagreement court of one triage (public/court.js): its docket, an issue as the snapshot holds it, a file at the

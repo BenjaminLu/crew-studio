@@ -199,13 +199,13 @@ const FIX = { sel: new Map(), modal: null, sending: false, note: new Map(), back
 const picked = (project) => { let s = FIX.sel.get(project); if (!s) FIX.sel.set(project, (s = new Set())); return s; };
 const fixOf = (project, n) => IS.rec.get(project)?.fix?.[n] || { state: "none", busy: false, pick: true };
 // a row's state, said in a few words; untrusted text (a reason, a question) only ever in text nodes
-const FIX_SAID = { starting: ["Starting…", "開始中…"], queued: ["Waiting to be investigated", "排隊等調查"], investigating: ["Investigating", "調查中"], security: ["Security issue: approve it on its card", "資安 issue：在核准卡上確認"],
+const FIX_SAID = { starting: ["Starting…", "開始中…"], queued: ["Waiting to be investigated", "排隊等調查"], crew: ["The crew changed: confirm it on its card", "船員變了：請確認"], investigating: ["Investigating", "調查中"], security: ["Security issue: approve it on its card", "資安 issue：在核准卡上確認"],
   running: ["Fixing", "修復中"], waiting: ["Its Task waits for you", "Task 在等你"], ready: ["Fixed on its local branch, not published: check it", "已在本機分支修好，未發布：請確認"], merged: ["Merged", "已合併"],
   "needs-info": ["Needs more information", "需要更多資訊"], "not-code": ["Not a code change", "不是改 code 的事"], "in-progress": ["A pull request is already on it", "已有 PR 在處理"],
   recheck: ["Fixed already? Please check", "已修好？請確認"], human: ["A person's work", "要人來做"], changed: ["The issue changed: Fix it again", "issue 改過了：可再修復一次"],
   proposed: ["Investigated: Fix starts its Task", "已調查：按修復就開工"], approved: ["Investigated: Fix starts its Task", "已調查：按修復就開工"] };
 // the summary line of a category: how its issues stand, in groups
-const FIX_GROUP = { starting: "fixing", queued: "fixing", investigating: "fixing", running: "fixing", judge: "judge", security: "judge", waiting: "judge", human: "judge", recheck: "judge", ready: "done", "needs-info": "info", failed: "failed", "not-code": "skip", duplicate: "skip", "in-progress": "skip" };
+const FIX_GROUP = { starting: "fixing", queued: "fixing", crew: "judge", investigating: "fixing", running: "fixing", judge: "judge", security: "judge", waiting: "judge", human: "judge", recheck: "judge", ready: "done", "needs-info": "info", failed: "failed", "not-code": "skip", duplicate: "skip", "in-progress": "skip" };
 const GROUP_SAID = { fixing: ["being fixed", "修復中"], judge: ["for you to judge", "要你判斷"], done: ["fixed, waiting for you to check", "已修好待確認"], info: ["need more information", "需要更多資訊"], failed: ["failed", "失敗"], skip: ["nothing to fix", "不用修"] };
 function fixSummary(project, issues) {
   const n = {}; for (const i of issues) { const g = FIX_GROUP[fixOf(project, i).state]; if (g) n[g] = (n[g] || 0) + 1; }
@@ -216,13 +216,15 @@ function fixChip(project, repo, n) {
   const s = fixOf(project, n), task = s.task ? h("a", { href: `#/run/${encodeURIComponent(s.task)}`, class: "mono" }, s.task) : null;
   const wrap = (cls, ...kids) => h("span", { class: `is-fix f-${cls}`, "data-fix-state": s.state }, ...kids);
   if (s.state === "none") return null;
+  if (s.inBatch) return wrap(s.state === "judge" ? "you" : "run", s.state === "judge" ? T("In an ordinary triage: waiting for you", "在一般分診中：等你判斷") : T("Being investigated in an ordinary triage", "在一般分診中調查"), " ", task);
+  if (s.state === "waiting" && s.why) return wrap("bad", T(`Auto-approval failed: ${s.why}; answer it on its card`, `自動放行失敗：${s.why}，請到卡片處理`), " ", task);
   if (s.state === "judge") return s.with ? wrap("you", T(`Same function as ${s.with}: decide below`, `和 ${s.with} 同一個函式：在下方決定`))
     : wrap("you", T("The investigators disagree: you decide", "兩位調查員意見不同：你判斷"), " ", s.court ? h("a", { href: s.court, "data-fix-court": String(n) }, T("Open the court", "開啟法庭")) : null);
   if (s.state === "duplicate") return wrap("all", T("Duplicate: ", "重複："), h("a", { href: ghIssue(repo, s.duplicateOf), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${s.duplicateOf}`));
   if (s.state === "failed") return wrap("bad", T(`Failed: ${s.why || ""}`, `失敗：${s.why || ""}`), " ", task);
   if (s.state === "package") return wrap("all", T(`Part of ${s.package}: work it from the package`, `屬於 ${s.package}：從工作包開工`));
   const said = FIX_SAID[s.state]; if (!said) return null;
-  const tone = ["ready", "merged"].includes(s.state) ? "ok" : ["starting", "queued", "investigating", "running"].includes(s.state) ? "run" : ["security", "waiting", "human", "recheck"].includes(s.state) ? "you" : "all";
+  const tone = ["ready", "merged"].includes(s.state) ? "ok" : ["starting", "queued", "investigating", "running"].includes(s.state) ? "run" : ["security", "waiting", "human", "recheck", "crew"].includes(s.state) ? "you" : "all";
   return wrap(tone, T(...said), s.state === "human" && s.fit?.length ? ` (${s.fit.map((f) => T(...(FIT[f] || [f, f]))).join(", ")})` : "",
     ...(s.state === "in-progress" ? (s.pulls || []).flatMap((p) => [" ", h("a", { href: ghPull(repo, p), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${p}`)]) : []), task ? " " : null, task,
     s.state === "needs-info" && s.questions?.length ? h("ul", { class: "is-fix-q", "data-fix-questions": String(n) }, s.questions.map((q) => h("li", {}, q))) : null);
@@ -236,7 +238,7 @@ const selectAll = (project, label, ns) => { const can = ns.filter((n) => fixOf(p
     h("input", { type: "checkbox", checked: all ? true : null, disabled: can.length ? null : true, "aria-label": label, onchange: (e) => toggle(project, can, e.target.checked) }), h("span", {}, label)); };
 async function sendFix(project, ns) {
   FIX.sending = true; FIX.note.delete(project); rerender();
-  try { const r = await postJ(`/api/issue-triage/${encodeURIComponent(project)}/fix`, { issues: ns });
+  try { const r = await postJ(`/api/issue-triage/${encodeURIComponent(project)}/fix`, { issues: ns, crew: IS.rec.get(project)?.worker?.team ?? null });
     FIX.note.set(project, T(`Started ${r.started.length}${r.skipped.length ? `; ${r.skipped.length} left as they are (already under way, done, or part of a package)` : ""}. Each issue's row shows where it stands.`,
       `已開始 ${r.started.length} 張${r.skipped.length ? `；${r.skipped.length} 張沒動（已在進行、已完成，或屬於工作包）` : ""}。每張 issue 的那一列會顯示進度。`));
     picked(project).clear(); FIX.modal = null; }

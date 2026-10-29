@@ -124,6 +124,17 @@ export async function enrichSnapshot(adapter:IssueReader,snap:Snapshot,o:{signal
    pullsUnread=/rate-limited/.test(m)?'rate-limited':/^GitHub (403|404)$/.test(m)?'no-access':'failed';extra.pulls=pullsUnread;delete extra.pullsCapped;}
  return{...snap,issues,hash:snapHash(issues,Object.keys(extra).length?extra:undefined),...(closed?{closed}:{}),...(pulls?{pulls}:{}),...(pullsUnread?{pullsUnread}:{}),...(pullsCapped?{pullsCapped}:{})};
 }
+/** A stored snapshot's hash, computed again from what it holds (each issue's title, text and labels, each read thread, the
+ *  closed issues, the pull requests), never taken from its own `hash` field or each issue's: a file edited on disk does
+ *  not match the hash pinned when it was read. */
+export function snapshotHash(s:Snapshot):string{
+ const issues=(s.issues??[]).map(i=>{const out:IssueSnap={...i,hash:sha(String(i.title)+'\0'+String(i.body)+'\0'+(i.labels??[]).join('\n'))};if(i.thread)out.threadHash=sha(JSON.stringify(i.thread));return out;});
+ const extra:any={};
+ for(const i of issues)if(i.thread)(extra.threads??={})[i.n]=i.threadHash;
+ if(s.closed)extra.closed=s.closed.map(c=>[c.n,c.title,c.body]);
+ if(s.pullsUnread)extra.pulls=s.pullsUnread;else if(s.pulls){extra.pulls=s.pulls.map(p=>[p.n,p.issues]);if(s.pullsCapped)extra.pullsCapped=s.pullsCapped;}
+ return snapHash(issues,Object.keys(extra).length?extra:undefined);
+}
 
 const STATES=['present','fixed?','not-code','not-found','needs-info'];
 /** questions one investigator asks a reporter, each at most QUESTION_MAX characters; both reports' together, kept once each */

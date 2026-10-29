@@ -327,7 +327,8 @@ below ("Working a package", the batch form, the approval card) stays as the adva
   GitHub. Confirming posts `POST /api/issue-triage/<project>/fix {issues}` (1 to 1000 numbers; the desktop captain only,
   as the approve and decline routes: the phone and any other client are refused).
 - **Per issue** (`fix` in `src/issue-triage-workflow.ts`): an issue under way or done starts nothing and is listed as
-  skipped, and so does an issue an ordinary triage is investigating now (a Fix would pay for it twice); an issue of a
+  skipped, and so does an issue an ordinary triage is investigating now (a Fix would pay for it twice; its row says it is
+  in an ordinary triage, or that the triage waits for the captain at its court or approval card); an issue of a
   package of several is worked from its package. An issue whose single package is approved (its Task failed, or never
   started) or waiting for approval has its Task proposed again, without a new investigation (a waiting one is approved
   first, the issue read again; a waiting security package is refused: approve it on the package); its click and its
@@ -337,10 +338,16 @@ below ("Working a package", the batch form, the approval card) stays as the adva
 - **GitHub reads.** One click reads GitHub once for all its issues (`fix`): the open issues, the clicked issues' comments,
   the recently closed issues and the open pull requests, kept beside Studio's work folder
   (`data/work/issue-fix/<project>/<click>.json`) and read by each of its triages, checked against the hash the click
-  pinned. The later re-reads on the Fix path (a triage's record step, its approval, the Task's proposal) share one read of
+  pinned: the hash is computed again from the file's content (`snapshotHash`: each issue's title, text and labels, each
+  read thread, the closed issues, the pull requests), never taken from the file's own hash fields, and a triage's own
+  snapshot file is checked the same way each time it is read. The later re-reads on the Fix path (a triage's record step, its approval, the Task's proposal) share one read of
   the open issues per project while one is in flight or under 20 seconds old (`CREW_FIX_FRESH_MS`); the record step
   still reads its issue's comments again. Investigations run a few at a time: a Fix triage waits for a slot before its
   checkout (4 at once, `CREW_FIX_INVESTIGATE_MAX`; the row says it is queued) and frees it once its reports are recorded.
+  One scheduler admits the waiting triages first in, first out (by Task number) when a slot frees, and once a second for
+  a triage that ended any other way, so a long queue costs one pass, not one poll per run. A slot is kept on the run
+  (`fixSlot`): when its step runs again (a restart in the middle of it, or Retry on its failure card) it goes on at once
+  with the slot it holds and never counts itself as a holder; a triage that ended frees its slot for the queue.
   Fix Tasks are not limited. An ordinary triage leaves the issues a Fix investigation is reading to it, and a Fix
   investigation never stands in for the batch form's triage.
 - **The hidden triage** is the triage below, unchanged in what it checks: both investigators on their own models in the
@@ -358,18 +365,24 @@ below ("Working a package", the batch form, the approval card) stays as the adva
   brief from `issueBrief` only, tainted, code-firstmate). Studio answers its dispatch card on the strength of the click:
   the answer names the captain and the click's time (`captain (project page) · Fix <at>`), the proposal's ledger records
   `issue-fix-dispatch` (the issue, the package, who, when, and a reference to the `issue-fix-click` entry: its run and
-  seq), and the triage's ledger records it too. When the team changed after the card showed its crew, Studio raises the
-  card again on a new proposal; Fix follows and answers that one, and the package's work names it. A dispatch that does
+  seq), and the triage's ledger records it too. The confirmation pins the crew it showed (the dispatch crew's id,
+  sent with the click): a dispatch card showing another crew is not answered, and when the team changes after the card
+  showed its crew and Studio raises the card again on a new proposal, Fix stops there too. Either way the card waits for
+  the captain, who sees the crew as it is now; the package's work names that proposal and the row says the crew changed
+  ("船員變了：請確認"). A Task the captain dispatched that way is no longer the click's: its spec card waits for the captain. A dispatch that does
   not start its Task within a minute (`CREW_FIX_DISPATCH_WAIT_MS`) is left for the captain; a refused proposal (a seat to
   fill, a changed issue) is kept as the row's reason. Then its **spec card** (code-firstmate's dispatch node, its first
   visit only) is approved on the strength of the same click (`cardPrepared['issue-fix-spec']`): only when the Task is
   tainted and its proposal's ledger names the click and its dispatch card was answered as that click; the Task's ledger
-  records `issue-fix-spec` (who, when, the card, the click reference). No other card of it is ever answered for it: not
+  records `issue-fix-spec` (who, when, the card, the click reference). An answer that is refused (a sandbox-off grant
+  opened meanwhile, or local unrestricted mode: `taintRefusal`) is recorded as `issue-fix-spec-refused` with why, and
+  the row says so ("自動放行失敗：<why>，請到卡片處理"); the card waits for the captain. No other card of it is ever answered for it: not
   the door, a failure, the merge or remote readiness card, a staffing or a court card; and a Task started any other way
   keeps its spec card for the captain. The Task is tainted as before: it ends reviewed on its local branch, nothing pushed,
   no pull request.
 - **The row** (`src/domain/issue-fix.ts`, read with the triage: `GET /api/issue-triage/<project>` adds `fix` per issue,
-  `worker` and `fixLimit`): queued; investigating; the investigators disagree, with a link to the court
+  `worker` and `fixLimit`): queued; investigating, here or in an ordinary triage; the crew changed, its dispatch card
+  waiting for the captain; the investigators disagree, with a link to the court
   (`#/court/<project>/<task>`); a security issue waiting on its card; fixing, its Task waiting for the captain, fixed on
   its local branch, or merged, each with the Task; failed, with why (the investigation, the proposal or the Task), which
   can be fixed again; needs more information, with the questions as text; not a code change; a duplicate, naming the
@@ -386,8 +399,10 @@ scripted investigators, a stand-in code-firstmate with a spec card and the real 
 card, the ledger's click, dispatch and spec approval, a tainted Task whose brief carries no issue body or repro, each
 outcome on its row, one shared read per click counted at the stand-in, investigations two at a time, a double click,
 an issue an ordinary triage is reading, a security issue's card, a failed Task fixed again, an earlier match not approved
-by a click on another issue, the dispatch card raised again, a Task proposed or started another way keeping its spec
-card, only the captain, GET only), `tests/issue-triage.ts` (the route: the desktop captain only, its body, the read),
+by a click on another issue, a crew changed before the dispatch card or after it (raised again) leaving the card to the
+captain, a refused spec approval on the ledger and the row, a forged shared read refused, four slot-holding runs
+retried going on, the queue first in first out, an issue in an ordinary triage parked at its card, a Task proposed or
+started another way keeping its spec card, only the captain, GET only), `tests/issue-triage.ts` (the route: the desktop captain only, its body, the read),
 `tests/issue-fix-ui.mjs` (run with bun: it imports TypeScript; the checkboxes, both Select alls, the bar, the
 confirmation for 117 issues sent once, its focus and its text, a row's Fix, Investigate again, Escape, each row's state
 and each category's line, at 1440 and 390 zh-TW).

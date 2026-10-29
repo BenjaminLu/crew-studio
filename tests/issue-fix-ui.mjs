@@ -35,9 +35,10 @@ writeFileSync(join(data, "issue-categories", "wallet.json"), JSON.stringify({ sc
   assignments: { 11: asg("C-1"), 12: asg("C-1"), 16: asg("C-1"), 13: asg("C-2"), 17: asg("C-2"), 18: asg("C-3"), ...Object.fromEntries(BIG.map((n) => [n, asg("C-4")])) },
   titles: { 11: "Bridge trusts a page URL", 12: "Replies reach the next page", 13: "Query string doubled", 16: 'Title with <img src=x onerror="window.__pwned=1"> markup', 17: "Share link loses its fragment", 18: "Push badge", ...Object.fromEntries(BIG.map((n) => [n, `Setting ${n}`])) } }));
 // where each issue stands after Fix (src/domain/issue-fix.ts), as the triage route reads it
-const s = (state, o = {}) => ({ state, busy: ["starting", "investigating", "security", "running", "waiting", "ready", "merged"].includes(state) || state === "judge" && !!o.court, pick: ["none", "failed", "changed", "proposed", "approved"].includes(state), ...o });
+const s = (state, o = {}) => ({ state, busy: ["starting", "queued", "crew", "investigating", "security", "running", "waiting", "ready", "merged"].includes(state) || state === "judge" && !!o.court, pick: ["none", "failed", "changed", "proposed", "approved"].includes(state), ...o });
 const FIXES = { 11: s("running", { task: "R-31" }), 12: s("judge", { task: "R-32", court: "#/court/wallet/R-32" }), 13: s("needs-info", { questions: ['Which version? <img src=x onerror="window.__pwned2=1">'] }),
-  17: s("failed", { task: "R-33", why: "its Task ended without being ready" }), 100: s("duplicate", { duplicateOf: 70 }), 101: s("recheck"), 102: s("ready", { task: "R-40" }), 103: s("not-code"), 104: s("in-progress", { pulls: [40] }) };
+  17: s("failed", { task: "R-33", why: "its Task ended without being ready" }), 100: s("duplicate", { duplicateOf: 70 }), 101: s("recheck"), 102: s("ready", { task: "R-40" }), 103: s("not-code"), 104: s("in-progress", { pulls: [40] }),
+  105: s("crew", { task: "R-41" }), 106: s("waiting", { task: "R-42", why: "a sandbox-off grant is open" }), 107: { ...s("judge", { task: "R-43", inBatch: true }), busy: true } };
 const PICKABLE = [16, 17, ...BIG.filter((n) => !FIXES[n])].sort((a, b) => a - b);
 
 const port = await freePort();
@@ -55,7 +56,7 @@ async function open(width, lang = "en") {
   const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 960 } });
   await ctx.addInitScript(([l]) => { try { localStorage.setItem("crew.lang", l); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); }, [lang]);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
-  await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, fix: FIXES, worker: { provider: "claude", model: "worker-model" },
+  await ctx.route(/\/api\/issue-triage\/wallet$/, async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, fix: FIXES, worker: { provider: "claude", model: "worker-model", team: "team-x" },
     investigators: { a: { provider: "claude", model: "inv-a" }, b: { provider: "codex", model: "inv-b" } } } }); });
   const sent = [];
   await ctx.route(/\/api\/issue-triage\/wallet\/fix$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); sent.push(b); r.fulfill({ json: { ok: true, started: b.issues.map((n) => ({ n, task: `R-${n}` })), skipped: [] } }); });
@@ -72,7 +73,7 @@ try {
     // closed categories already say how their issues stand
     const sum = async (id) => (await p.locator(`[data-cat="${id}"] > summary [data-fix-summary]`).textContent().catch(() => "")) || "";
     ok(!(await p.locator('[data-cat="C-1"]').evaluate((e) => e.open)) && /1 being fixed · 1 for you to judge/.test(await sum("C-1")), "a closed category's line says how its issues stand", await sum("C-1"));
-    ok(/1 need more information · 1 failed/.test(await sum("C-2")) && /1 for you to judge · 1 fixed, waiting for you to check · 3 nothing to fix/.test(await sum("C-4")) && await p.locator('[data-cat="C-3"] [data-fix-summary]').count() === 0, "each group is counted; a category waiting for approval has no Fix", JSON.stringify([await sum("C-2"), await sum("C-4")]));
+    ok(/1 need more information · 1 failed/.test(await sum("C-2")) && /4 for you to judge · 1 fixed, waiting for you to check · 3 nothing to fix/.test(await sum("C-4")) && await p.locator('[data-cat="C-3"] [data-fix-summary]').count() === 0, "each group is counted; a category waiting for approval has no Fix", JSON.stringify([await sum("C-2"), await sum("C-4")]));
     await openCat(p, "C-1"); await openCat(p, "C-2");
     const row = (n) => p.locator(`[data-cat-issue="${n}"]`);
     ok(await row(11).locator("[data-fix-pick]").isDisabled() && !(await row(11).locator("[data-fix-one]").count()) && /Fixing/.test(await row(11).locator("[data-fix-state]").textContent()) && await row(11).locator('a[href="#/run/R-31"]').count() === 1, "an issue being fixed shows its Task and cannot be picked again");
@@ -84,6 +85,9 @@ try {
     ok(!(await row(16).locator("[data-fix-state]").count()) && await row(16).locator("[data-fix-one]").count() === 1 && !(await p.evaluate(() => window.__pwned)), "an issue not fixed yet has its Fix button; its title stays text");
     await openCat(p, "C-4");
     ok(/Duplicate: #70/.test(await row(100).textContent()) && /Fixed already\? Please check/.test(await row(101).textContent()) && /Fixed on its local branch, not published/.test(await row(102).textContent()) && /Not a code change/.test(await row(103).textContent()) && /A pull request is already on it/.test(await row(104).textContent()) && await row(104).locator('a[href="https://github.com/fixture/wallet/pull/40"]').count() === 1, "each outcome is shown on its own row");
+    ok(/The crew changed: confirm it on its card/.test(await row(105).textContent()) && await row(105).locator('a[href="#/run/R-41"]').count() === 1 && await row(105).locator("[data-fix-pick]").isDisabled(), "a Task whose crew changed since the confirmation says so, linking the card that waits");
+    ok(/Auto-approval failed: a sandbox-off grant is open; answer it on its card/.test(await row(106).textContent()), "a spec card Fix could not approve says why on the row");
+    ok(/In an ordinary triage: waiting for you/.test(await row(107).textContent()) && await row(107).locator("[data-fix-pick]").isDisabled(), "an issue in an ordinary triage waiting at its card says so, and cannot be picked");
     // one issue, then a category
     ok(!(await p.locator("[data-fix-bar]").count()), "nothing picked: no bar");
     await row(16).locator("[data-fix-pick]").check();
@@ -110,7 +114,7 @@ try {
     await p.click("[data-fix-go]");
     ok(new RegExp(`Fix ${PICKABLE.length} issues\\?`).test(await modal.textContent()) && await modal.locator(`[data-fix-count="${PICKABLE.length}"]`).count() === 1, "over 100 issues still go through the one confirmation, which says how many");
     await p.click("[data-fix-confirm]"); await p.waitForTimeout(500);
-    ok(sent.length === 1 && sent[0].issues.join() === PICKABLE.join() && !sent[0].issues.includes(13) && !sent[0].issues.includes(11) && !sent[0].issues.includes(18), "confirming sends the whole pick once: no issue under way, no needs-info one, none from a category waiting for approval", JSON.stringify(sent.map((x) => x.issues.length)));
+    ok(sent.length === 1 && sent[0].crew === "team-x" && sent[0].issues.join() === PICKABLE.join() && !sent[0].issues.includes(13) && !sent[0].issues.includes(11) && !sent[0].issues.includes(18), "confirming sends the whole pick once: no issue under way, no needs-info one, none from a category waiting for approval", JSON.stringify(sent.map((x) => x.issues.length)));
     ok(!(await modal.count()) && !(await p.locator("[data-fix-bar]").count()) && new RegExp(`Started ${PICKABLE.length}`).test(await p.locator("[data-fix-note]").textContent()), "after it, the pick is cleared and the page says what started");
     await openCat(p, "C-1"); await row(16).locator("[data-fix-one]").click();
     ok(/Fix 1 issue\?/.test(await modal.textContent()), "a row's Fix button asks the same confirmation for that one issue");
