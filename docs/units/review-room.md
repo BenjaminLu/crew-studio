@@ -304,10 +304,14 @@ label on a line, no connector through a box that is not one of its ends, no labe
 12px, every label with `data-en`, `data-hant` and `data-hans`. A figure that fails is refused with each problem, and the
 tutor redraws (at most eight tries a turn). The page rebuilds the tree element by element (createElementNS, setAttribute,
 textContent; never markup), its ids kept to the figure, each text in the room's language. Or the tutor gives the structure
-and Studio lays it out by the same rules: the architecture and every lifecycle in stage columns (left to right, top down
-past four stages) with orthogonal connectors in the channels between them, ways back and long jumps in the channels between
-rows, labels placed clear of boxes, lines and each other; the sequence one event a band, each fragment's tab on its own
-band, calls, returns and async calls in their own colours.
+and Studio lays it out, baton's way. A lifecycle puts the way it should go on one row, left to right (the longest path from
+where it starts to an end that went well), the states that end badly or need attention on the rows below, the others above;
+the state this change adds or changes (`mark`) in the accent, the ends coloured by how they end. The architecture runs in
+layers left to right, the stores and queues last, drawn as cylinders. Every connector is a straight line or one smooth
+curve, bowed only as far as it must to clear the boxes and never along another connector (two between the same boxes bow
+apart, a state's way back to itself a small loop); its numbered chip sits on it near its middle, and a picked chip opens the
+transaction panel right under the map. The sequence is one event a band, each fragment's tab on its own band, calls,
+returns and async calls in their own colours.
 
 **A database lifecycle per entity; every call.** A lifecycle names its entity and gives each transition its database
 transaction (`tx`: the tables written, INSERT, UPDATE, DELETE or UPSERT, each field was → now, the guard, and what is written

@@ -309,110 +309,157 @@ function itemFigure(it, seen) {
   svg.append(label(140, T("After", "之後")), box(90, 154, 210, 64, "fix", [...wrapLabel(it.name, 190, 16, 1), ...(it.mechanism ? [clip(it.mechanism, 37)] : [])], "a1", 0.5), arrow(300, 370, 186, "new", 0.7), box(372, 154, 250, 64, "now", wrapLabel(it.after, 230, 16, 2), "a2", 0.8));
   return svg;
 }
-/** Studio's own layout for a lifecycle or a "what talks to what" (diagram-design's connector rules, applied by code): the nodes
- *  in stage columns left to right (each column a rank, ways back left out of the ranking), every connector orthogonal with
- *  rounded corners, its own lane in the channel between columns, its own attach point on a box's side, the ways back and the
- *  long jumps in corridors above and below the boxes: no connector runs through a box that is not one of its ends. Labels are
- *  placed where they touch no box, no line and no other label. nodes: [{id, label, sub?, cls}], edges: [{from, to, label, n, cls}] */
-function orthoSvg(nodes, edges, opt = {}) {
-  const fs = opt.fs || 15, lw = (s) => [...String(s || "")].reduce((n, ch) => n + (/[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯\u2460-\u24ff]/.test(ch) ? fs : fs * 0.6), 0);
-  const ids = nodes.map((n) => n.id), at = new Map(nodes.map((n, i) => [n.id, i]));
-  // ranks: depth first, the edges that close a cycle (ways back) left out; then the longest path
+/** Studio's own layout for a lifecycle or a "what talks to what", baton's way (diagram-design's connector rules, applied by
+ *  code). The caller places the boxes (statePlace: the way it should go on one row, the bad ends below, the side states
+ *  above; archPlace: layers left to right, the stores last). Every connector is a straight line or one smooth curve between
+ *  the two boxes' borders, bowed only as far as it must to clear every other box and never to run along another connector
+ *  (two between the same boxes bow apart); a box's way back to itself is a small loop. Each connector's chip, its number and
+ *  words on a paper pill, sits on the connector near its middle. nodes: [{id, label, cls, shape}], edges: [{from, to, label, n, cls}] */
+const CJK_W = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯①-⓿]/;
+const textW = (s, fs) => [...String(s || "")].reduce((n, ch) => n + (CJK_W.test(ch) ? fs : fs * 0.6), 0);
+/** the connectors that close a cycle (the ways back), walking from the first node */
+function backEdges(ids, edges) {
   const adj = new Map(ids.map((id) => [id, []])), mark = new Map(), back = new Set();
   edges.forEach((e, i) => { if (e.from !== e.to && adj.has(e.from) && adj.has(e.to)) adj.get(e.from).push([e.to, i]); });
   const dfs = (u) => { mark.set(u, 1); for (const [v, i] of adj.get(u)) { if (mark.get(v) === 1) back.add(i); else if (!mark.has(v)) dfs(v); } mark.set(u, 2); };
   for (const id of ids) if (!mark.has(id)) dfs(id);
-  const rank = new Map(ids.map((id) => [id, 0]));
-  for (let k = 0; k < ids.length; k++) edges.forEach((e, i) => { if (e.from !== e.to && !back.has(i) && rank.has(e.to) && rank.get(e.to) <= rank.get(e.from)) rank.set(e.to, rank.get(e.from) + 1); });
-  const ncol = Math.max(0, ...rank.values()) + 1, cols = Array.from({ length: ncol }, () => []);
-  for (const id of ids) cols[rank.get(id)].push(id);
-  // order within a column by where its neighbours sit (two sweeps), so connectors cross as little as they can
-  const pos = new Map(); cols.forEach((c) => c.forEach((id, i) => pos.set(id, i)));
-  for (let sweep = 0; sweep < 3; sweep++) for (let r = 1; r < ncol; r++) {
-    const bc = (id) => { const ns = edges.filter((e, i) => !back.has(i) && e.to === id && rank.get(e.from) < r).map((e) => pos.get(e.from)); return ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : pos.get(id); };
-    cols[r].sort((a, b) => bc(a) - bc(b) || at.get(a) - at.get(b)); cols[r].forEach((id, i) => pos.set(id, i)); }
-  const LW = Math.min(240, Math.max(132, Math.ceil((Math.max(...nodes.map((n) => lw(n.label))) + 36) / 4) * 4)), TD = opt.dir === "TD" || (opt.dir !== "LR" && ncol > 4);
-  // W: a box's extent along the stages, H: across them (swapped back at the end when the stages run top down)
-  const W = TD ? 56 : LW, H = TD ? LW : 56;
-  // each connector's kind: next column (a lane in that channel), a long jump (top corridor), a way back (bottom corridor), a loop
-  const kinds = edges.map((e, i) => (!at.has(e.from) || !at.has(e.to) ? null : e.from === e.to ? "loop" : back.has(i) || rank.get(e.to) <= rank.get(e.from) ? "back" : rank.get(e.to) - rank.get(e.from) === 1 ? "next" : "jump"));
-  const gapLanes = Array.from({ length: ncol + 1 }, () => []); // channel g sits left of column g (g = ncol: right of the last)
-  edges.forEach((e, i) => { const k = kinds[i]; if (!k || k === "loop") return; const rf = rank.get(e.from), rt = rank.get(e.to);
-    if (k === "next") gapLanes[rt].push(i); else { gapLanes[rf + 1].push(i); gapLanes[rt].push(i); } });
-  const gapW = gapLanes.map((l, g) => (g === 0 && !l.length ? 24 : Math.ceil((l.length * 12 + (TD ? 44 : 64)) / 4) * 4));
-  const nrow = Math.max(1, ...cols.map((c) => c.length)), RY = H + (TD ? 52 : 60);
-  // the jumps and the ways back run in the channels between rows (rows line up across columns, so a channel crosses no box),
-  // each on its own lane; the channel above the first row and below the last take what the inner ones cannot
-  const chanUse = new Map(), chanOf = new Map(), cap = 3;
-  const y0 = 40 + (edges.some((_, i) => kinds[i] === "loop") ? 36 : 0);
-  const chanY = (c) => y0 + c * RY - (RY - H) / 2;
-  const rowY = new Map(); cols.forEach((c) => c.forEach((id, j) => rowY.set(id, y0 + j * RY + H / 2)));
-  edges.forEach((e, i) => { const k = kinds[i]; if (k !== "jump" && k !== "back") return; const a = rowY.get(e.from), b = rowY.get(e.to);
-    const order = Array.from({ length: nrow + 1 }, (_, c) => c).sort((c1, c2) => Math.abs(chanY(c1) - a) + Math.abs(chanY(c1) - b) - (Math.abs(chanY(c2) - a) + Math.abs(chanY(c2) - b)) || c1 - c2);
-    const c = order.find((c) => c === 0 || c === nrow || (chanUse.get(c) || 0) < cap) ?? 0; const used = chanUse.get(c) || 0; chanUse.set(c, used + 1); chanOf.set(i, [c, used]); });
-  const topN = chanUse.get(0) || 0, y0b = y0 + Math.max(0, topN - 1) * 12;
-  const colX = []; { let x = gapW[0]; for (let r = 0; r < ncol; r++) { colX.push(x); x += W + gapW[r + 1]; } }
-  const box = new Map(); cols.forEach((c, r) => c.forEach((id, j) => box.set(id, { x: colX[r], y: y0b + j * RY, w: W, h: H })));
-  const laneY = (i) => { const [c, k] = chanOf.get(i), n = chanUse.get(c); const mid = y0b + c * RY - (RY - H) / 2;
-    return c === 0 ? y0b - 20 - k * 12 : c === nrow ? y0b + nrow * RY - (RY - H) + 20 + k * 12 : mid + (k - (n - 1) / 2) * 12; };
-  const bottom = y0b + nrow * RY;
-  // attach points: each connector its own point along the side it leaves or enters, ordered by where it goes
-  const side = new Map(); const want = (id, s, i, key) => { const k = `${id}:${s}`; if (!side.has(k)) side.set(k, []); side.get(k).push([i, key]); };
-  edges.forEach((e, i) => { const k = kinds[i]; if (!k || k === "loop") return; const t = box.get(e.to), f = box.get(e.from);
-    want(e.from, "R", i, k === "back" ? 1e6 + i : t.y); want(e.to, "L", i, k === "back" ? -1e6 - i : f.y); });
-  const port = (id, s, i) => { const l = side.get(`${id}:${s}`).sort((a, b) => a[1] - b[1]), b = box.get(id), k = l.findIndex((x) => x[0] === i); return b.y + (b.h * (k + 1)) / (l.length + 1); };
-  const laneX = (g, i) => { const l = gapLanes[g], k = l.indexOf(i), left = g === 0 ? 0 : colX[g - 1] + W; return left + 16 + k * 14; };
-  const paths = [];
-  edges.forEach((e, i) => { const k = kinds[i]; if (!k) return; const f = box.get(e.from), t = box.get(e.to);
-    if (k === "loop") { paths.push({ i, loop: e.from }); return; }
-    const sy = port(e.from, "R", i), ty = port(e.to, "L", i), sx = f.x + f.w, tx = t.x;
-    if (k === "next") { const lx = laneX(rank.get(e.to), i); paths.push({ i, pts: [[sx, sy], [lx, sy], [lx, ty], [tx, ty]] }); return; }
-    const l1 = laneX(rank.get(e.from) + 1, i), l2 = laneX(rank.get(e.to), i);
-    const cy = laneY(i); paths.push({ i, pts: [[sx, sy], [l1, sy], [l1, cy], [l2, cy], [l2, ty], [tx, ty]] }); });
-  if (TD) { for (const [id, b] of box) box.set(id, { x: b.y, y: b.x, w: b.h, h: b.w }); for (const p of paths) if (p.pts) p.pts = p.pts.map(([x, y]) => [y, x]); }
-  for (const p of paths) if (p.loop) { const f = box.get(p.loop), x1 = f.x + f.w * 0.62, x2 = f.x + f.w * 0.38, top = f.y - 32; p.pts = [[x1, f.y], [x1, top], [x2, top], [x2, f.y]]; }
-  const rounded = (pts) => { let d = `M${pts[0][0]},${pts[0][1]}`; for (let k = 1; k < pts.length; k++) { const [x, y] = pts[k], nx = pts[k + 1];
-      if (!nx) { d += ` L${x},${y}`; break; } const [px, py] = pts[k - 1], r = Math.min(8, Math.hypot(x - px, y - py) / 2, Math.hypot(nx[0] - x, nx[1] - y) / 2);
-      const ax = x - Math.sign(x - px) * r, ay = y - Math.sign(y - py) * r, bx = x + Math.sign(nx[0] - x) * r, by = y + Math.sign(nx[1] - y) * r; d += ` L${ax},${ay} Q${x},${y} ${bx},${by}`; } return d; };
-  // the canvas: what was laid out, plus room for labels the placer pushes out
-  const svg = sv("svg", { class: "rr-flow rr-ortho", role: "img", preserveAspectRatio: "xMidYMid meet", "data-layout": TD ? "TD" : "LR" });
-  const dots = [], placed = [], boxes = [...box.values()].map((b) => ({ x: b.x - 4, y: b.y - 4, w: b.w + 8, h: b.h + 8 }));
-  const ext = TD ? { x0: 0, y0: 0, x1: bottom, y1: colX[ncol - 1] + W + gapW[ncol] } : { x0: 0, y0: 0, x1: colX[ncol - 1] + W + gapW[ncol], y1: bottom }, grow = (x, y) => { ext.x0 = Math.min(ext.x0, x); ext.y0 = Math.min(ext.y0, y); ext.x1 = Math.max(ext.x1, x); ext.y1 = Math.max(ext.y1, y); };
-  for (const p of paths) { const e = edges[p.i]; for (let k = 1; k < p.pts.length; k++) { const [ax, ay] = p.pts[k - 1], [bx, by] = p.pts[k], n = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay) / 4)); for (let j = 0; j <= n; j++) dots.push([ax + ((bx - ax) * j) / n, ay + ((by - ay) * j) / n]); }
-    p.pts.forEach(([x, y]) => grow(x, y));
-    const [ex, ey] = p.pts[p.pts.length - 1], [qx, qy] = p.pts[p.pts.length - 2], ang = Math.atan2(ey - qy, ex - qx);
-    const line = sv("path", { d: rounded(p.pts), class: `rr-edge ${kinds[p.i]}${e.cls ? ` ${e.cls}` : ""}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? p.i, fill: "none" });
-    const head = sv("path", { d: `M${ex - 10 * Math.cos(ang - 0.45)},${ey - 10 * Math.sin(ang - 0.45)} L${ex},${ey} L${ex - 10 * Math.cos(ang + 0.45)},${ey - 10 * Math.sin(ang + 0.45)} Z`, class: `rr-ahead ${kinds[p.i]}${e.cls ? ` ${e.cls}` : ""}` });
-    svg.append(line, head); }
-  for (const n of nodes) { const b = box.get(n.id), grp = sv("g", { class: `rr-node${n.cls ? ` ${n.cls}` : ""}`, "data-node": n.id, "data-box": `${b.x},${b.y},${b.w},${b.h}` });
-    grp.append(sv("path", { class: "rr-box", d: boxPath(b.x, b.y, b.w, b.h, n.shape === "round" ? 22 : 8) }));
-    const ls = wrapLabel(n.label, b.w - 20, fs, 2); ls.forEach((l, k) => { const tx = sv("text", { x: b.x + b.w / 2, y: b.y + b.h / 2 + (k - (ls.length - 1) / 2) * (fs + 3) + fs * 0.35, "text-anchor": "middle", class: "rr-nlabel", style: `font-size:${fs}px` }); tx.textContent = l; grp.append(tx); });
+  return back;
+}
+/** each node's longest path from a source (the ways back left out), and the node it came from */
+const longestPaths = (ids, edges, back) => { const rank = new Map(ids.map((id) => [id, 0])), pred = new Map();
+  for (let k = 0; k < ids.length; k++) edges.forEach((e, i) => { if (e.from !== e.to && !back.has(i) && rank.has(e.from) && rank.has(e.to) && rank.get(e.to) < rank.get(e.from) + 1) { rank.set(e.to, rank.get(e.from) + 1); pred.set(e.to, e.from); } });
+  return { rank, pred }; };
+const CHIP_FS = 12, chipText = (e) => String(e.label || "").slice(0, 40), chipW = (e) => textW(chipText(e), CHIP_FS) + 18;
+const nodeSize = (n, fs) => { const lines = wrapLabel(n.label, 196, fs, 2), w = Math.max(n.shape === "cyl" ? 140 : 112, Math.ceil((Math.max(0, ...lines.map((l) => textW(l, fs))) + 44) / 4) * 4);
+  return { w, h: n.shape === "cyl" ? 72 : lines.length > 1 ? 60 : 44, lines }; };
+/** boxes from a grid of [row, col] cells: each column as wide as its widest box, a gap wide enough for the chips between */
+function gridBoxes(nodes, edges, cell, fs, rowGap) {
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), cols = [...new Set([...cell.values()].map(([, c]) => c))].sort((a, b) => a - b), rows = [...new Set([...cell.values()].map(([r]) => r))].sort((a, b) => a - b);
+  const gap = Math.min(170, Math.max(110, Math.max(0, ...edges.map(chipW)) + 44)), colW = new Map(cols.map((c) => [c, Math.max(...nodes.filter((n) => cell.get(n.id)[1] === c).map((n) => size.get(n.id).w))]));
+  const rowH = new Map(rows.map((r) => [r, Math.max(...nodes.filter((n) => cell.get(n.id)[0] === r).map((n) => size.get(n.id).h))]));
+  const cx = new Map(); { let x = 0; for (const c of cols) { cx.set(c, x + colW.get(c) / 2); x += colW.get(c) + gap; } }
+  const cy = new Map(); { let y = 0; for (const r of rows) { cy.set(r, y + rowH.get(r) / 2); y += rowH.get(r) + rowGap; } }
+  return new Map(nodes.map((n) => { const [r, c] = cell.get(n.id), s = size.get(n.id); return [n.id, { x: cx.get(c) - s.w / 2, y: cy.get(r) - s.h / 2, w: s.w, h: s.h, lines: s.lines }]; }));
+}
+/** a lifecycle, baton's way: the way it should go on one row left to right (the longest path from where it starts to an end
+ *  that went well), the states that end badly or need attention on the rows below, any other state on the rows above, each
+ *  as near its neighbours as a free place allows */
+function statePlace(nodes, edges, fs) {
+  const ids = nodes.map((n) => n.id), cls = new Map(nodes.map((n) => [n.id, n.cls || ""])), back = backEdges(ids, edges), { rank, pred } = longestPaths(ids, edges, back);
+  const bad = (id) => /\b(seal|amber)\b/.test(cls.get(id)), ends = ids.filter((id) => !edges.some((e) => e.from === id && e.to !== id)), good = ends.filter((id) => !bad(id));
+  const end = (good.length ? good : ids).reduce((a, b) => (rank.get(b) > rank.get(a) ? b : a));
+  const main = [end]; while (pred.has(main[0]) && !main.includes(pred.get(main[0]))) main.unshift(pred.get(main[0]));
+  while (main.length > 2 && bad(main[main.length - 1])) main.pop();
+  const cell = new Map(), taken = new Set(), key = (r, c) => `${r}:${c}`;
+  main.forEach((id, c) => { cell.set(id, [0, c]); taken.add(key(0, c)); });
+  const left = ids.filter((id) => !cell.has(id)), other = (e, id) => (e.from === id ? e.to : e.from);
+  while (left.length) {
+    const nb = (id) => edges.filter((e) => e.from !== e.to && (e.from === id || e.to === id) && cell.has(other(e, id)));
+    left.sort((a, b) => nb(b).length - nb(a).length || ids.indexOf(a) - ids.indexOf(b));
+    const id = left.shift(), ns = nb(id), want = ns.length ? Math.round(ns.reduce((s, e) => s + cell.get(other(e, id))[1], 0) / ns.length) : 0;
+    let spot = null;
+    for (let ring = 1; !spot; ring++) { const row = bad(id) ? ring : -ring; for (const d of [0, 1, -1, 2, -2, 3, -3]) { const c = want + d; if (c >= 0 && !taken.has(key(row, c))) { spot = [row, c]; break; } } }
+    cell.set(id, spot); taken.add(key(...spot)); }
+  return { box: gridBoxes(nodes, edges, cell, fs, 124), back };
+}
+/** what talks to what: layers left to right by the longest path, the stores and queues in the last layer, each layer's
+ *  boxes ordered by where their neighbours sit and centred on one another */
+function archPlace(nodes, edges, fs) {
+  const ids = nodes.map((n) => n.id), back = backEdges(ids, edges), { rank } = longestPaths(ids, edges, back), max = Math.max(0, ...rank.values());
+  for (const n of nodes) if (n.shape === "cyl" && !edges.some((e) => e.from === n.id && e.to !== n.id)) rank.set(n.id, max);
+  const cols = Array.from({ length: max + 1 }, () => []); for (const id of ids) cols[rank.get(id)].push(id);
+  const pos = new Map(); cols.forEach((c) => c.forEach((id, i) => pos.set(id, i - (c.length - 1) / 2)));
+  for (let sweep = 0; sweep < 3; sweep++) cols.forEach((c, r) => { if (!r) return;
+    const bc = (id) => { const ns = edges.filter((e) => e.from !== e.to && (e.to === id || e.from === id)).map((e) => (e.to === id ? e.from : e.to)).filter((o) => rank.get(o) !== r).map((o) => pos.get(o)); return ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : pos.get(id); };
+    c.sort((a, b) => bc(a) - bc(b) || ids.indexOf(a) - ids.indexOf(b)); c.forEach((id, i) => pos.set(id, i - (c.length - 1) / 2)); });
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(100, Math.max(0, ...edges.map(chipW)) + 40)), box = new Map(); let x = 0;
+  cols.forEach((c) => { const w = Math.max(0, ...c.map((id) => size.get(id).w)), hs = c.map((id) => size.get(id).h), total = hs.reduce((a, b) => a + b, 0) + (c.length - 1) * 72; let y = -total / 2;
+    c.forEach((id, i) => { const s = size.get(id); box.set(id, { x: x + (w - s.w) / 2, y, w: s.w, h: s.h, lines: s.lines }); y += hs[i] + 72; }); x += w + gap; });
+  return { box, back };
+}
+function curveSvg(nodes, edges, placed, opt = {}) {
+  const fs = opt.fs || 15, { box, back } = placed, cen = (b) => [b.x + b.w / 2, b.y + b.h / 2];
+  const rayOut = (b, dx, dy) => { const [cx, cy] = cen(b), t = Math.min(dx ? b.w / 2 / Math.abs(dx) : Infinity, dy ? b.h / 2 / Math.abs(dy) : Infinity); return [cx + dx * t, cy + dy * t]; };
+  const bez = (P, t) => { const u = 1 - t; return [0, 1].map((k) => u * u * u * P[0][k] + 3 * u * u * t * P[1][k] + 3 * u * t * t * P[2][k] + t * t * t * P[3][k]); };
+  const sample = (P, n = 60) => Array.from({ length: n + 1 }, (_, k) => bez(P, k / n));
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  // an attach point slid along its face toward the side the connector bows to (two between the same boxes leave apart)
+  const slideOn = (b, [px, py], nx, ny, k) => { const side = Math.abs(px - b.x) < 0.5 || Math.abs(px - b.x - b.w) < 0.5;
+    return side ? [px, Math.max(b.y + 8, Math.min(b.y + b.h - 8, py + ny * k * (b.h / 2 - 8)))] : [Math.max(b.x + 14, Math.min(b.x + b.w - 14, px + nx * k * (b.w / 2 - 14))), py]; };
+  const curveOf = (e, bow) => { const a = box.get(e.from), b = box.get(e.to), [ax, ay] = cen(a), [bx, by] = cen(b), L = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / L, ny = (bx - ax) / L;
+    const k = Math.max(-1, Math.min(1, bow / 36)), p0 = slideOn(a, rayOut(a, bx - ax, by - ay), nx, ny, k), p3 = slideOn(b, rayOut(b, ax - bx, ay - by), nx, ny, k);
+    const q = [(p0[0] + p3[0]) / 2 + nx * bow * 2, (p0[1] + p3[1]) / 2 + ny * bow * 2];
+    return bow ? [p0, lerp(p0, q, 2 / 3), lerp(p3, q, 2 / 3), p3] : [p0, lerp(p0, p3, 1 / 3), lerp(p0, p3, 2 / 3), p3]; };
+  const loopOf = (e, s) => { const b = box.get(e.from), cx = b.x + b.w / 2, y = s > 0 ? b.y + b.h : b.y; return [[cx - 16, y], [cx - 40, y + s * 58], [cx + 40, y + s * 58], [cx + 16, y]]; };
+  const inBox = ([x, y], b, pad) => x > b.x - pad && x < b.x + b.w + pad && y > b.y - pad && y < b.y + b.h + pad;
+  const segDist = ([px, py], [ax, ay], [bx, by]) => { const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l)) : 0; return Math.hypot(px - ax - t * dx, py - ay - t * dy); };
+  const near = (p, pts, d) => { for (let k = 1; k < pts.length; k++) if (segDist(p, pts[k - 1], pts[k]) < d) return true; return false; };
+  const drawn = [], boxes0 = [...box.values()], chips = []; // drawn: [{i, P, pts, chip}]
+  const over = (r, o, pad) => r.x < o.x + o.w + pad && r.x + r.w + pad > o.x && r.y < o.y + o.h + pad && r.y + r.h + pad > o.y;
+  // a connector's chip: on it, at its middle or as near it as a place clear of the boxes, the chips and the other connectors allows
+  const chipFor = (e, P) => { if (!e.label) return null; const w = chipW(e), hh = 20;
+    return [0.5, 0.45, 0.55, 0.4, 0.6, 0.34, 0.66, 0.28, 0.72, 0.22, 0.78].map((t) => { const [x, y] = bez(P, t), r = { x: x - w / 2, y: y - hh / 2, w, h: hh };
+      const hard = boxes0.filter((b) => over(r, b, 3)).length + chips.filter((c) => over(r, c, 3)).length, soft = drawn.filter((o) => o.pts.some((p) => inBox(p, r, 2))).length;
+      return { r, x, y, cost: hard * 1000 + soft * 400 + Math.abs(t - 0.5) * 20 }; }).reduce((a, b) => (b.cost < a.cost ? b : a)); };
+  // a candidate's faults: through a box not its end (or back into its own), along another connector (a run of samples on it), crossings
+  const judge = (e, P) => { const pts = sample(P), ends = [box.get(e.from), box.get(e.to)]; let hard = 0, cross = 0;
+    for (const [id, b] of box) { if (id === e.from || id === e.to) continue; if (pts.some((p) => inBox(p, b, 8))) hard++; }
+    if (pts.slice(4, -4).some((p) => ends.some((b) => inBox(p, b, -2)))) hard++;
+    // along another connector: a stretch of 12px or more within 3px of it, away from the boxes they meet at (a crossing at
+    // a fair angle is shorter)
+    const step = pts.slice(1).reduce((n, p, k) => n + Math.hypot(p[0] - pts[k][0], p[1] - pts[k][1]), 0) / (pts.length - 1);
+    for (const d of drawn) { let run = 0, best = 0, hit = 0; for (const p of pts) { if (boxes0.some((b) => inBox(p, b, 10))) { run = 0; continue; } if (near(p, d.pts, 3)) { run += step; hit = 1; best = Math.max(best, run); } else run = 0; }
+      if (best >= 12) hard++; cross += hit; }
+    const onChip = chips.filter((c) => pts.some((p) => inBox(p, c, 2))).length, chip = chipFor(e, P);
+    return { hard, cross, pts, chip, cost: hard * 1000 + onChip * 400 + (chip ? chip.cost * 0.6 : 0) + cross * 30 }; };
+  const keep = (i, c) => { drawn.push({ i, P: c.P, pts: c.pts, chip: c.chip }); if (c.chip) chips.push(c.chip.r); };
+  // the order: the plain steps forward first (they take the straight lines), then the longer ones, the ways back, the loops
+  const span = (e) => Math.hypot(...[0, 1].map((k) => cen(box.get(e.to))[k] - cen(box.get(e.from))[k]));
+  const order = edges.map((e, i) => i).filter((i) => box.has(edges[i].from) && box.has(edges[i].to)).sort((i, j) => {
+    const w = (k) => (edges[k].from === edges[k].to ? 3 : back.has(k) ? 2 : 1); return w(i) - w(j) || span(edges[i]) - span(edges[j]) || i - j; });
+  const pairs = new Map(); edges.forEach((e, i) => { if (e.from === e.to) return; const k = [e.from, e.to].sort().join("\u0000"); if (!pairs.has(k)) pairs.set(k, []); pairs.get(k).push(i); });
+  // a connector's best way, the others as they are
+  const route = (i) => { const e = edges[i];
+    if (e.from === e.to) return [1, -1].map((s) => loopOf(e, s)).map((P) => ({ P, ...judge(e, P) })).reduce((a, b) => (b.cost < a.cost ? b : a));
+    const grp = pairs.get([e.from, e.to].sort().join("\u0000")), k = grp.indexOf(i), canon = [e.from, e.to].sort()[0] === e.from ? 1 : -1;
+    // apart from the others between the same boxes: far enough that their chips, side by side, do not meet
+    const [ax, ay] = cen(box.get(e.from)), [bx, by] = cen(box.get(e.to)), upright = Math.abs(by - ay) > Math.abs(bx - ax);
+    const off = grp.length > 1 ? (k - (grp.length - 1) / 2) * (upright ? Math.max(44, ...grp.map((j) => chipW(edges[j]))) + 10 : 44) * canon : 0;
+    const pref = grp.length > 1 ? off : back.has(i) ? -40 : 0, cands = [];
+    for (const d of [0, 24, -24, 48, -48, 72, -72, 100, -100, 136, -136, 180, -180, 240, -240, 320, -320]) { const bow = pref + d; if (grp.length > 1 && (Math.abs(bow) < 16 || Math.sign(bow) !== Math.sign(off))) continue; const P = curveOf(e, bow); cands.push({ P, bow, ...judge(e, P) }); }
+    return cands.reduce((a, b) => { const s = (x) => x.cost + Math.abs(x.bow - pref) * 0.8; return s(b) < s(a) ? b : a; }); };
+  for (const i of order) keep(i, route(i));
+  // twice more, each connector again with every other one in place: one routed early now sees the ones that came after it
+  for (let pass = 0; pass < 2; pass++) for (const i of order) { const k = drawn.findIndex((d) => d.i === i), [d] = drawn.splice(k, 1); if (d.chip) chips.splice(chips.indexOf(d.chip.r), 1); keep(i, route(i)); }
+  drawn.sort((a, b) => a.i - b.i);
+  const svg = sv("svg", { class: "rr-flow rr-ortho rr-curve", role: "img", preserveAspectRatio: "xMidYMid meet" });
+  const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }, grow = (x, y) => { ext.x0 = Math.min(ext.x0, x); ext.y0 = Math.min(ext.y0, y); ext.x1 = Math.max(ext.x1, x); ext.y1 = Math.max(ext.y1, y); };
+  const kindOf = (i) => (edges[i].from === edges[i].to ? "loop" : back.has(i) ? "back" : "next");
+  for (const d of drawn) { const e = edges[d.i], P = d.P, kind = kindOf(d.i), cl = `${kind}${e.cls ? ` ${e.cls}` : ""}`; d.pts.forEach(([x, y]) => grow(x, y));
+    const [ex, ey] = P[3], ang = Math.atan2(ey - P[2][1], ex - P[2][0]);
+    svg.append(sv("path", { d: `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)} C${P[1].map((v) => v.toFixed(1))} ${P[2].map((v) => v.toFixed(1))} ${P[3].map((v) => v.toFixed(1))}`, class: `rr-edge ${cl}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i, fill: "none" }),
+      sv("path", { d: `M${ex - 10 * Math.cos(ang - 0.42)},${ey - 10 * Math.sin(ang - 0.42)} L${ex},${ey} L${ex - 10 * Math.cos(ang + 0.42)},${ey - 10 * Math.sin(ang + 0.42)} Z`, class: `rr-ahead ${cl}` })); }
+  for (const n of nodes) { const b = box.get(n.id), grp = sv("g", { class: `rr-node${n.cls ? ` ${n.cls}` : ""}`, "data-node": n.id, "data-box": `${b.x},${b.y},${b.w},${b.h}` }), e = 9;
+    grow(b.x, b.y); grow(b.x + b.w, b.y + b.h);
+    if (n.shape === "cyl") grp.append(sv("path", { class: "rr-box", d: `M${b.x},${b.y + e} A${b.w / 2},${e} 0 0 1 ${b.x + b.w},${b.y + e} V${b.y + b.h - e} A${b.w / 2},${e} 0 0 1 ${b.x},${b.y + b.h - e} Z` }), sv("path", { class: "rr-cyl-lip", d: `M${b.x},${b.y + e} A${b.w / 2},${e} 0 0 0 ${b.x + b.w},${b.y + e}`, fill: "none" }));
+    else grp.append(sv("path", { class: "rr-box", d: boxPath(b.x, b.y, b.w, b.h, n.shape === "pill" ? b.h / 2 : 8) }));
+    const dy = n.shape === "cyl" ? e / 2 : 0; b.lines.forEach((l, k) => { const tx = sv("text", { x: b.x + b.w / 2, y: b.y + b.h / 2 + dy + (k - (b.lines.length - 1) / 2) * (fs + 3) + fs * 0.35, "text-anchor": "middle", class: "rr-nlabel", style: `font-size:${fs}px` }); tx.textContent = l; grp.append(tx); });
     svg.append(grp); }
-  const hit = (r) => [...boxes, ...placed].some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) || dots.some(([px, py]) => px > r.x - 3 && px < r.x + r.w + 3 && py > r.y - 3 && py < r.y + r.h + 3);
-  const cost = (r) => [...boxes, ...placed].filter((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y).length * 100 + dots.filter(([px, py]) => px > r.x - 3 && px < r.x + r.w + 3 && py > r.y - 3 && py < r.y + r.h + 3).length;
-  for (const p of paths) { const e = edges[p.i]; if (!e.label) continue; const txt = String(e.label).slice(0, 40), w = lw(txt) * 0.86 + 14, hh = 18, rect = ([cx, cy]) => ({ x: cx - w / 2, y: cy - hh + 4, w, h: hh });
-    const tries = []; // beside each segment, longest first, at the middle then nearer its ends, 10 to 40px off it
-    const segs = p.pts.slice(1).map((b, k) => [p.pts[k], b]).sort((s1, s2) => Math.hypot(s2[1][0] - s2[0][0], s2[1][1] - s2[0][1]) - Math.hypot(s1[1][0] - s1[0][0], s1[1][1] - s1[0][1]));
-    for (const [[ax, ay], [bx, by]] of segs) for (const u of [0.5, 0.3, 0.7, 0.15, 0.85]) { const mx = ax + (bx - ax) * u, my = ay + (by - ay) * u, horiz = Math.abs(by - ay) < 1;
-      for (const off of [10, 22, 36]) tries.push(...(horiz ? [[mx, my - off + 4], [mx, my + off + 10]] : [[mx + w / 2 + off, my + 5], [mx - w / 2 - off, my + 5]])); }
-    // nowhere beside it: the nearest free place around its longest stretch (the label's number still names its row)
-    let pick = tries.find((c) => !hit(rect(c)));
-    if (!pick) { const [[ax, ay], [bx, by]] = segs[0], mx = (ax + bx) / 2, my = (ay + by) / 2;
-      for (let rr = 12; rr <= 220 && !pick; rr += 6) for (let ang = 0; ang < 360 && !pick; ang += 20) { const c = [mx + rr * Math.cos((ang * Math.PI) / 180), my + rr * Math.sin((ang * Math.PI) / 180)]; if (!hit(rect(c))) pick = c; } }
-    pick = pick ?? tries.reduce((a, c) => (cost(rect(c)) < cost(rect(a)) ? c : a));
-    const r = rect(pick); placed.push(r); grow(r.x - 4, r.y - 4); grow(r.x + r.w + 4, r.y + r.h + 4);
-    const t = sv("text", { x: pick[0], y: pick[1], class: `rr-elabel ${kinds[p.i]}${e.cls ? ` ${e.cls}` : ""}`, "text-anchor": "middle", "data-elabel": `${e.from}>${e.to}`, "data-edge-n": e.n ?? p.i }); t.textContent = txt; svg.append(t); }
-  boxes.forEach((b) => { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); });
-  const vw = ext.x1 - ext.x0 + 16, vh = ext.y1 - ext.y0 + 16;
-  svg.setAttribute("viewBox", `${ext.x0 - 8} ${ext.y0 - 8} ${vw} ${vh}`); svg.style.maxWidth = `${Math.round(vw * 1.2)}px`; svg.style.maxHeight = `${Math.round(vh * 1.2)}px`; svg.style.minWidth = `${Math.round(Math.min(vw, 1040))}px`;
+  // the chips, placed with their connectors
+  for (const d of drawn) { const e = edges[d.i], c = d.chip; if (!c) continue; const hh = c.r.h; grow(c.r.x, c.r.y); grow(c.r.x + c.r.w, c.r.y + c.r.h);
+    const g = sv("g", { class: `rr-chip ${kindOf(d.i)}${e.cls ? ` ${e.cls}` : ""}`, "data-elabel": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i }), t = sv("text", { x: c.x, y: c.y + 4.2, "text-anchor": "middle", class: "rr-elabel" });
+    t.textContent = chipText(e); g.append(sv("rect", { class: "rr-chip-bg", x: c.r.x, y: c.r.y, width: c.r.w, height: c.r.h, rx: hh / 2 }), t); svg.append(g); }
+  const vw = ext.x1 - ext.x0 + 24, vh = ext.y1 - ext.y0 + 24;
+  svg.setAttribute("viewBox", `${(ext.x0 - 12).toFixed(1)} ${(ext.y0 - 12).toFixed(1)} ${vw.toFixed(1)} ${vh.toFixed(1)}`);
+  svg.style.maxWidth = `${Math.round(vw * 1.15)}px`; svg.style.minWidth = `${Math.round(Math.min(vw * 0.8, 860))}px`;
   return svg;
 }
 const NUMS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
 /** a state's colour by what it is: where it starts, an end that went well, an end that did not (failed, voided, cancelled) */
 const stateCls = (it, x, i) => { const outs = (it.transitions || []).filter((t) => t.from === x.id && t.to !== x.id).length, bad = /fail|error|cancel|void|reject|expire|refund|declin|abort/i.test(`${x.id} ${x.label}`);
-  return i === 0 ? "start" : !outs ? (bad ? "seal" : "ok") : bad ? "amber" : ""; };
+  return x.mark === "changed" || x.mark === "new" ? `accent${i === 0 ? " start" : ""}` : i === 0 ? "start" : !outs ? (bad ? "seal" : "ok") : bad ? "amber" : ""; };
 /** a lifecycle's graph from its data: every state, every transition numbered (the number is the transition's chip) */
-const statesGraph = (it) => ({ nodes: (it.states || []).map((x, i) => ({ id: x.id, label: x.label || x.id, shape: "round", cls: stateCls(it, x, i) })),
+const statesGraph = (it) => ({ nodes: (it.states || []).map((x, i) => ({ id: x.id, label: x.label || x.id, shape: "pill", cls: stateCls(it, x, i) })),
   edges: (it.transitions || []).map((t, i) => ({ from: t.from, to: t.to, label: `${NUMS[i] || i + 1} ${t.label || ""}`.trim(), n: i, cls: t.tx?.tables?.length ? "tx" : "" })) });
 /** an SVG label made a control: Enter and Space as a click */
 const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
@@ -420,7 +467,7 @@ const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribu
  *  label opening the code it rests on (onPick: the report also selects the transition to show what it writes) */
 function statesView(card, it, onPick) {
   if (!it.states?.length) { const g = parseFlow(it.code); return h("div", { class: "rr-flow-wrap", "data-states": it.id }, g ? flowSvg(g, null, drawnOf(card, it), picBox()) : null); }
-  const g = statesGraph(it), wrap = h("div", { class: "rr-flow-wrap rr-states", "data-states": it.id }, orthoSvg(g.nodes, g.edges));
+  const g = statesGraph(it), wrap = h("div", { class: "rr-flow-wrap rr-states", "data-states": it.id }, curveSvg(g.nodes, g.edges, statePlace(g.nodes, g.edges, 15)));
   (it.transitions || []).forEach((t, i) => { const el = wrap.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el || (!onPick && !t.cite?.ok)) return;
     if (t.cite?.ok) { el.classList.add("rr-cite-label"); el.setAttribute("data-transition-cite", t.cite.ref); }
     el.setAttribute("data-transition-pick", String(i)); asControl(el, () => (onPick ? onPick(i, t) : openCite(card, t.cite.ref))); });
@@ -442,24 +489,31 @@ function transitionRows(card, it, sel, pick, lab) {
   return h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
     h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
     h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
-      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, i === sel ? txView(t.tx) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
+      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
 }
 /** the lifecycle in the report: the map, and every transition as a numbered row (what it writes, the code it rests on) */
 function statemapView(card, it) {
   const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, lab = new Map((it.states || []).map((x) => [x.id, x.label || x.id]));
   const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t.cite?.ok && !quiet) openCite(card, t.cite.ref); else rerender(); };
-  return h("div", { class: "rp-smap", "data-statemap": it.id }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, statesView(card, it, pick),
-    h("div", { class: "rp-legend" }, [["start", T("where it starts", "起點")], ["ok", T("ends well", "正常結束")], ["seal", T("ends badly, cannot be undone", "失敗結束，無法回頭")], ["back", T("a way back", "回頭的轉換")]].map(([c, l]) => h("span", {}, h("i", { class: `sw ${c}` }), l))),
-    transitionRows(card, it, sel, pick, lab));
+  const map = statesView(card, it, pick); map.querySelector(`[data-elabel][data-edge-n="${sel}"]`)?.classList.add("on");
+  return h("div", { class: "rp-smap", "data-statemap": it.id }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, map,
+    h("div", { class: "rp-legend" }, [...((it.states || []).some((x) => x.mark) ? [["accent", T("this change", "這個改動")]] : []), ["start", T("where it starts", "起點")], ["ok", T("ends well", "正常結束")], ["seal", T("ends badly, cannot be undone", "失敗結束，無法回頭")], ["back", T("a way back", "回頭的轉換")]].map(([c, l]) => h("span", {}, h("i", { class: `sw ${c}` }), l)), h("span", { class: "rp-hint" }, T("Pick a numbered chip or a state: its transaction shows below.", "點編號或狀態：下方顯示它的交易。"))),
+    txPanel(card, it, sel, lab), transitionRows(card, it, sel, pick, lab));
+}
+/** the picked transition's transaction, right under the map (baton's panel): from → to, the tables it writes, what it writes outside */
+function txPanel(card, it, sel, lab) {
+  const t = (it.transitions || [])[sel]; if (!t) return null;
+  return h("div", { class: "rp-txpanel", "data-tx-panel": sel, "aria-live": "polite" }, h("div", { class: "rp-txp-h" }, h("span", { class: "rp-tn" }, NUMS[sel] || String(sel + 1)), h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null, t.cite ? citeChip(card, t.cite.ref, t.cite.ok) : inferenceBadge()),
+    txView(t.tx) ?? h("p", { class: "rp-td" }, T("No transaction read for this transition.", "這個轉換沒有讀到交易。")));
 }
 /** what talks to what: Studio's layout of the tutor's components and connections; the kind sets the shape, the change is
  *  marked on the node itself in the room's colours (changed, new, removed, outside), a connection opens what shows it */
-const ARCH_SHAPE = { store: "round", queue: "round", actor: "round", external: "rect", service: "rect" };
+const ARCH_SHAPE = { store: "cyl", queue: "cyl", actor: "pill", external: "rect", service: "rect" };
 const MARK = { new: ["new", "新增"], changed: ["changed", "改動"], removed: ["removed", "移除"] };
 const ARCH_CLS = { new: "ok", changed: "accent", removed: "seal" };
 function archView(card, it) {
   const nodes = (it.nodes || []).map((n) => ({ id: n.id, label: n.label, shape: ARCH_SHAPE[n.kind] || "rect", cls: [n.mark ? ARCH_CLS[n.mark] : "", n.kind === "external" ? "muted" : "", `k-${n.kind}`].filter(Boolean).join(" ") }));
-  const svg = orthoSvg(nodes, (it.edges || []).map((e, i) => ({ from: e.from, to: e.to, label: e.label || "", n: i })));
+  const edges = (it.edges || []).map((e, i) => ({ from: e.from, to: e.to, label: e.label || "", n: i })), svg = curveSvg(nodes, edges, archPlace(nodes, edges, 15));
   for (const n of it.nodes || []) { const el = svg.querySelector(`[data-node="${CSS.escape(n.id)}"]`); if (!el) continue; el.classList.add(`rr-k-${n.kind}`);
     if (n.mark) { el.classList.add(`rr-m-${n.mark}`); el.setAttribute("data-mark", n.mark); const [x, y, w] = (el.getAttribute("data-box") || "0,0,0").split(",").map(Number);
       const tg = sv("text", { x: x + w - 8, y: y + 14, "text-anchor": "end", class: "rr-mark-t" }); tg.textContent = T(...MARK[n.mark]); el.append(tg); } }
@@ -1256,5 +1310,5 @@ routes.room = (arg) => {
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
-window.crewReviewRoom = { parseFlow, scenesOf, orthoSvg };
+window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace };
 })();

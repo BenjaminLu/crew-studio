@@ -504,12 +504,23 @@ html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
 .rr-ortho .rr-node.k-store .rr-box { fill: var(--fig-card-2); }
 .rr-ortho .rr-edge { fill: none; stroke: var(--fig-muted); stroke-width: 1.5; }
 .rr-ortho .rr-ahead { fill: var(--fig-muted); stroke: none; }
-.rr-ortho .rr-edge.back { stroke: var(--fig-amber); stroke-dasharray: 6 4; } .rr-ortho .rr-ahead.back { fill: var(--fig-amber); }
+.rr-ortho .rr-edge.back { stroke: var(--fig-amber); } .rr-ortho .rr-ahead.back { fill: var(--fig-amber); }
 .rr-ortho .rr-edge.tx { stroke: var(--fig-ink); }
 .rr-ortho .rr-edge.back.back { stroke: var(--fig-amber); } .rr-ortho .rr-ahead.back.back { fill: var(--fig-amber); }
 .rr-ortho .rr-elabel { fill: var(--fig-muted); font: 12px var(--f-mono) !important; paint-order: stroke; stroke: var(--rr-paper); stroke-width: 5px; stroke-linejoin: round; }
 .rr-ortho .rr-elabel.back { fill: var(--fig-amber); }
-.rr-ortho .rr-cite-label { fill: var(--fig-link); text-decoration: underline; cursor: pointer; }
+.rr-ortho .rr-cite-label, .rr-ortho .rr-cite-label .rr-elabel { text-decoration: none; cursor: pointer; }
+.rr-ortho .rr-chip-bg { fill: var(--fig-card); stroke: var(--fig-rule-strong); stroke-width: 1.2; }
+.rr-ortho .rr-chip .rr-elabel { stroke: none; fill: var(--fig-ink); font: 12px var(--f-mono) !important; }
+.rr-ortho .rr-chip.back .rr-chip-bg { stroke: var(--fig-amber); } .rr-ortho .rr-chip.back .rr-elabel { fill: var(--fig-amber); }
+.rr-ortho .rr-chip.rr-cite-label .rr-chip-bg { stroke: var(--fig-link); } .rr-ortho .rr-chip.rr-cite-label .rr-elabel { fill: var(--fig-link); }
+.rr-ortho .rr-chip.rr-cite-label:hover .rr-chip-bg, .rr-ortho .rr-chip:focus-visible .rr-chip-bg { fill: var(--fig-accent-tint); }
+.rr-ortho .rr-chip.on .rr-chip-bg { stroke: var(--fig-accent); stroke-width: 2.2; fill: var(--fig-card); }
+.rp-txpanel { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--rr-paper-edge); border-radius: 8px; background: var(--fig-card); display: grid; gap: 8px; }
+.rp-txp-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; } .rp-txp-h .rp-tn { color: var(--fig-accent); font-weight: 700; }
+.rp-legend .rp-hint { color: var(--fig-soft); }
+.rr-ortho .rr-cyl-lip { stroke: var(--fig-ink); stroke-width: 1.4; }
+.rr-ortho .rr-node.muted .rr-cyl-lip { stroke: var(--fig-soft); }
 .rr-ortho [data-state-pick] { cursor: pointer; }
 .rr-ortho .rr-mark-t { font: 600 11px var(--f-mono) !important; fill: var(--fig-accent); }
 .rr-ortho .rr-m-new .rr-mark-t { fill: var(--fig-ok); } .rr-ortho .rr-m-removed .rr-mark-t { fill: var(--fig-seal); }

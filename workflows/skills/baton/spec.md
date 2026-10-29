@@ -19,7 +19,7 @@ with the citations it rests on (`diff:path:Lstart-end`, `commit:<sha>`, `review:
 - `decision`: `{type: "decision", title, question, chosen, because, rejected?: [{option, why, cite}], cites}`: at most 3
   rejected options, each cited to a commit, a review note, the ledger or a source.
 - `item`: `{type: "item", title, name, before, after, mechanism?, cites}`.
-- `states`: `{type: "states", title, entity, states: [{id, label}], transitions: [{from, to, label, detail?, cite, tx?}]}`:
+- `states`: `{type: "states", title, entity, states: [{id, label, mark?: "new"|"changed"}], transitions: [{from, to, label, detail?, cite, tx?}]}`:
   2 to 10 states, 1 to 16 transitions; `tx` = `{tables: [{table, op: INSERT|UPDATE|DELETE|UPSERT, guard?, fields: [{k,
   was?, now}]}], outside?: [{what, kind?: cache|call|event|file|queue}]}`.
 - `calls`: `{type: "calls", title, calls: [{name, method?, request: [{k, v}], response: [{k, v}], errors?: [{code, when}],
