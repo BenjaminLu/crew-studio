@@ -190,43 +190,47 @@ const redo = () => { saveLay(); syncHash(); render(); focusTerm(); };
 // a click in a pane moves the focus without rebuilding the page (xterm keeps its focus and selection)
 function markFocus() { syncHash(); const tab = curTab(), t = termOf(focusPane(tab)), sec = document.querySelector("[data-term-detail]"); if (!tab || !t || !sec) return;
   sec.dataset.termDetail = t.id; document.querySelectorAll(".wt-pane").forEach((e) => e.classList.toggle("focus", e.dataset.pane === tab.focus)); patchPage(); }
+// each move answers whether it did anything: one that has nothing to move to leaves the key to the shell (Alt+← is a word back)
 function moveFocus(dir, swap = false) {
-  const tab = curTab(); if (!tab || tab.zoom) return;
-  const els = [...document.querySelectorAll(".wt-stage .wt-pane")], me = els.find((e) => e.dataset.pane === tab.focus); if (!me) return;
+  const tab = curTab(); if (!tab || tab.zoom) return false;
+  const els = [...document.querySelectorAll(".wt-stage .wt-pane")], me = els.find((e) => e.dataset.pane === tab.focus); if (!me) return false;
   const r = me.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2; let best = null, bd = Infinity;
   for (const e of els) { if (e === me) continue; const o = e.getBoundingClientRect();
     const fits = dir === "h" ? o.right <= r.left + 4 : dir === "l" ? o.left >= r.right - 4 : dir === "k" ? o.bottom <= r.top + 4 : o.top >= r.bottom - 4; if (!fits) continue;
     const overlap = dir === "h" || dir === "l" ? o.top < r.bottom && o.bottom > r.top : o.left < r.right && o.right > r.left;
     const d = Math.hypot(o.left + o.width / 2 - cx, o.top + o.height / 2 - cy) + (overlap ? 0 : 10000); if (d < bd) { bd = d; best = e; } }
-  if (!best) return;
+  if (!best) return false;
   const all = panesOf(tab.root), a = all.find((p) => p.id === tab.focus), b = all.find((p) => p.id === best.dataset.pane);
   if (swap) [a.term, b.term] = [b.term, a.term]; // the terminal moves, and the focus goes with it
-  tab.focus = b.id;
+  tab.focus = b.id; return true;
 }
-function cyclePane(d) { const tab = curTab(); if (!tab || tab.zoom) return; const ps = panesOf(tab.root), i = ps.findIndex((p) => p.id === tab.focus); tab.focus = ps[(i + d + ps.length) % ps.length].id; }
+function cyclePane(d) { const tab = curTab(); if (!tab || tab.zoom) return false; const ps = panesOf(tab.root); if (ps.length < 2) return false;
+  const i = ps.findIndex((p) => p.id === tab.focus); tab.focus = ps[(i + d + ps.length) % ps.length].id; return true; }
 function resizeSplit(dir) {
-  const tab = curTab(); if (!tab) return; const want = dir === "h" || dir === "l" ? "row" : "col";
+  const tab = curTab(); if (!tab || tab.zoom) return false; const want = dir === "h" || dir === "l" ? "row" : "col";
   let node = focusPane(tab), s = null; for (;;) { const p = parentOf(tab.root, node); if (!p) break; if (p.dir === want) { s = p; break; } node = p; }
-  if (s) s.ratio = Math.min(0.85, Math.max(0.15, s.ratio + (dir === "l" || dir === "j" ? 0.05 : -0.05)));
+  if (!s) return false; const r = Math.min(0.85, Math.max(0.15, s.ratio + (dir === "l" || dir === "j" ? 0.05 : -0.05)));
+  if (r === s.ratio) return false; s.ratio = r; return true;
 }
 // a new tab or split runs a login shell in the focused terminal's project, as a terminal app opens one in its folder
 const startShell = (split) => start({ project: termOf(focusPane())?.project?.id || TM.project, preset: "shell" }, split ? { split } : {});
-/** What a key (or a toolbar button) asks; false: not on this page (copy mode, workspaces), so the key goes to the terminal. */
+/** What a key (or a toolbar button) asks; false: not on this page (copy mode, workspaces), or nothing to do (one pane, no
+ * such tab), so the key goes to the terminal. */
 function run(act, arg) {
   const tab = curTab(), pn = focusPane(tab), n = TM.lay.tabs.length;
   switch (act) {
     case "newTab": if (!TM.canWrite) return false; startShell(null); return true;
     case "splitRight": case "splitDown": if (!TM.canWrite || !pn) return false; startShell(act === "splitRight" ? "row" : "col"); return true;
-    case "tabN": if (arg - 1 < n) TM.lay.cur = arg - 1; break;
-    case "nextTab": case "prevTab": if (n) TM.lay.cur = (TM.lay.cur + (act === "nextTab" ? 1 : -1) + n) % n; break;
+    case "tabN": if (arg - 1 >= n) return false; TM.lay.cur = arg - 1; break;
+    case "nextTab": case "prevTab": if (n < 2) return false; TM.lay.cur = (TM.lay.cur + (act === "nextTab" ? 1 : -1) + n) % n; break;
     case "renameTab": if (!tab) return true; TM.ui.naming = { tab: tab.id }; break;
-    case "focus": moveFocus(arg); break;
-    case "swap": moveFocus(arg, true); break;
-    case "nextPane": cyclePane(arg); break;
-    case "resize": resizeSplit(arg); break;
-    case "zoom": if (tab) tab.zoom = tab.zoom ? null : pn?.id ?? null; break;
-    case "closePane": if (tab && pn) detachPane(tab, pn); break;
-    case "clear": TM.panes.get(pn?.term)?.term?.clear(); return true;
+    case "focus": if (!moveFocus(arg)) return false; break;
+    case "swap": if (!moveFocus(arg, true)) return false; break;
+    case "nextPane": if (!cyclePane(arg)) return false; break;
+    case "resize": if (!resizeSplit(arg)) return false; break;
+    case "zoom": if (!tab || (!tab.zoom && panesOf(tab.root).length < 2)) return false; tab.zoom = tab.zoom ? null : pn?.id ?? null; break;
+    case "closePane": if (!tab || !pn) return false; detachPane(tab, pn); break;
+    case "clear": { const x = TM.panes.get(pn?.term)?.term; if (!x) return false; x.clear(); return true; }
     case "goto": TM.ui.picker = { q: "", sel: 0 }; break;
     case "sidebar": setSide(!document.body.classList.contains("side-collapsed")); return true;
     case "help": TM.ui.help = !TM.ui.help; break;

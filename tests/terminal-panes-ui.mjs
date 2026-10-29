@@ -182,6 +182,16 @@ try {
   ok(!(await reached(q)).some((k) => /^(Equal|Minus|KeyT|KeyW|Tab|Digit3)/.test(k)), "none of those chords reached xterm", JSON.stringify(await reached(q)));
   await spy(q); await q.keyboard.press("Control+KeyC"); await q.waitForTimeout(150);
   ok((await reached(q)).some((k) => k === "KeyC+C"), "Ctrl+C is the shell's: it reaches xterm", JSON.stringify(await reached(q)));
+  // what has nothing to do, and AltGr's characters, go to the shell: no tab 9, Alt+← in a single pane (a word back), { typed
+  // with AltGr (Ctrl+Alt on Windows): ~ on a French layout's 2 key, where Ctrl+Alt+2 would be tab 2
+  await spy(q); await q.keyboard.press("Control+Alt+Digit9"); await q.waitForTimeout(150);
+  ok((await reached(q)).some((k) => k === "Digit9+A+C") && (await tabs(q)).length === 2, "Ctrl+Alt+9 with two tabs reaches the shell", JSON.stringify(await reached(q)));
+  await q.keyboard.press("Control+Alt+Digit2"); await until(async () => (await tabs(q))[1].sel); await q.waitForTimeout(200);
+  ok((await panes(q)).length === 1, "the second tab has one pane");
+  await spy(q); await q.keyboard.press("Alt+ArrowLeft"); await q.waitForTimeout(150);
+  ok((await reached(q)).some((k) => k === "ArrowLeft+A"), "Alt+← in a single pane reaches the shell (a word back)", JSON.stringify(await reached(q)));
+  await spy(q); const typed = await q.evaluate(() => { const ta = document.querySelector(".wt-pane.focus .wt-xterm textarea"); const e = new KeyboardEvent("keydown", { code: "Digit2", key: "~", ctrlKey: true, altKey: true, bubbles: true, cancelable: true }); ta.dispatchEvent(e); return window.__xk; });
+  ok(typed.includes("Digit2+A+C") && (await tabs(q))[1].sel, "AltGr+2 (~ on a French layout) reaches the shell, not tab 2", JSON.stringify(typed));
   await q.keyboard.press("Control+Shift+KeyP");
   ok(await seen(q.locator("[data-term-picker]")), "Ctrl+Shift+P opens Go to"); await q.keyboard.press("Escape");
   await q.keyboard.press("F1");

@@ -40,6 +40,15 @@ ok(K.show("Alt+Shift+Equal", "win") === "Alt+Shift+=" && K.show("Ctrl+Shift+KeyT
 ok(K.useNow("newTab", "mac", true) === "⌥T" && K.useNow("newTab", "mac", false) === "⌘T" && K.useNow("closePane", "mac", true) === "⌥W" && K.useNow("newWs", "mac", true) === "⌥N", "in a browser tab the Mac hints show ⌥T ⌥W ⌥N; in a Studio window ⌘T");
 ok(K.useNow("newTab", "win", true) === "Ctrl+Alt+T" && K.useNow("newTab", "win", false) === "Ctrl+Shift+T" && K.useNow("nextTab", "win", true) === "Ctrl+Alt+PgDn", "in a browser tab the Windows hints show Ctrl+Alt+T; in a Studio window Ctrl+Shift+T");
 ok(K.useNow("splitRight", "mac", true) === "⌘D" && K.useNow("splitRight", "win", true) === "Alt+Shift+=", "a chord no browser keeps is the same in a tab and in a window");
+// AltGr: Windows reports it as Ctrl+Alt. On a German or French layout Ctrl+Alt+7 types {, Ctrl+Alt+8 [, Ctrl+Alt+3 #: text for
+// the shell, never a tab or a pane move. The same chord that types its own key (a US layout) is still Studio's
+const kd = (code: string, key: string, more: Record<string, unknown> = {}) => ({ code, key, ctrlKey: true, altKey: true, shiftKey: false, metaKey: false, ...more });
+for (const [code, key, where] of [["Digit7", "{", "de"], ["Digit8", "[", "de"], ["Digit9", "]", "de"], ["Digit0", "}", "de"], ["Minus", "\\", "de"], ["BracketRight", "~", "de"], ["Digit2", "~", "fr"], ["Digit3", "#", "fr"], ["Digit6", "|", "fr"], ["Digit0", "@", "fr"], ["BracketLeft", "ü", "de"]] as const)
+  ok(K.lookup(kd(code, key), "win") === null, `win: AltGr ${code} (${where}: ${key}) is text for the shell`, JSON.stringify(K.lookup(kd(code, key), "win")));
+ok(K.lookup(kd("Digit3", "3", { getModifierState: (m: string) => m === "AltGraph" }), "win") === null, "win: a keydown that says AltGraph is never a chord");
+ok(K.lookup(kd("Digit3", "3"), "win")?.act === "tabN" && K.lookup(kd("BracketRight", "]"), "win")?.act === "nextPane" && K.lookup(kd("KeyT", "t"), "win")?.act === "newTab" && K.lookup(kd("ArrowLeft", "ArrowLeft", { shiftKey: true }), "win")?.act === "swap",
+  "win: Ctrl+Alt chords that type their own key (a US layout) and named keys stay Studio's");
+ok(K.lookup(kd("ArrowLeft", "ArrowLeft"), "mac")?.act === "focus", "mac: ⌃⌥← (a named key) stays Studio's");
 // the platform: a Mac (and iPad) is iTerm2's, everything else Windows Terminal's
 ok(K.platformOf({ platform: "MacIntel" }) === "mac" && K.platformOf({ userAgentData: { platform: "macOS" } }) === "mac" && K.platformOf({ platform: "iPad" }) === "mac", "a Mac is \"mac\"");
 ok(K.platformOf({ platform: "Win32" }) === "win" && K.platformOf({ userAgentData: { platform: "Windows" }, platform: "MacIntel" }) === "win" && K.platformOf({ platform: "Linux x86_64" }) === "win", "Windows and Linux are \"win\" (userAgentData first)");

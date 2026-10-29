@@ -39,8 +39,20 @@ function chordOf(e) {
   const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta"].filter(Boolean);
   return { full: [...mods, k].join("+"), loose: [...mods, k.replace(/^Bracket(Left|Right)$/, "Bracket")].join("+"), arg };
 }
+// what a key types with no modifier and with Shift on a US layout: a Ctrl+Alt keydown that types anything else is AltGr
+// (Windows reports AltGr as Ctrl+Alt), the character a German or French layout puts there ({ [ ] } ~ | \ @ #): it is text
+const BASE = { BracketLeft: "[{", BracketRight: "]}", Equal: "=+", Minus: "-_", Slash: "/?", Backslash: "\\|", Backquote: "`~", Semicolon: ";:", Quote: "'\"", Comma: ",<", Period: ".>", Space: " ",
+  Digit1: "1!", Digit2: "2@", Digit3: "3#", Digit4: "4$", Digit5: "5%", Digit6: "6^", Digit7: "7&", Digit8: "8*", Digit9: "9(", Digit0: "0)" };
+function altGr(e) {
+  if (!(e.ctrlKey && e.altKey)) return false;
+  if (e.getModifierState?.("AltGraph")) return true;
+  const k = e.key; if (typeof k !== "string" || [...k].length !== 1) return false; // a named key (an arrow, PageDown, Tab)
+  if (/^Key[A-Z]$/.test(e.code)) return k.toLowerCase() !== e.code.slice(3).toLowerCase();
+  const b = BASE[e.code]; return !b || k !== (e.shiftKey && b.length > 1 ? b[1] : b[0]);
+}
 /** The action a keydown asks for on this platform ("mac" | "win"), either of its chords, or null (the key goes to the terminal). */
 function lookup(e, plat) {
+  if (altGr(e)) return null;
   const c = chordOf(e);
   for (const row of KEYMAP) { const specs = row[plat === "mac" ? 3 : 4]; if (specs.includes(c.full) || specs.includes(c.loose)) return { act: row[1], arg: c.arg }; }
   return null;
