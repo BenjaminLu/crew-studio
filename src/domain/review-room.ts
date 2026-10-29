@@ -800,21 +800,23 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const usd = room.turns.reduce((n, t) => n + (typeof t.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof room.translating?.cost?.usd === "number" ? room.translating.cost.usd : 0);
       const savedAt = new Date().toISOString(), snap = { schema: 1, kind: "review-room-snapshot", room: k.id, savedAt, reason, subject: subjectMeta(k, room, view), tutors, cost: { usd: Math.round(usd * 10000) / 10000 },
         view: { ...view, board, open: false, offer: null, running: null, tutors: [], translate: null, checking: false, moved: null, illustrations: [],
-          sources: (view.sources ?? []).map((x: any) => x.ok ? x : { n: x.n, turn: x.turn, kind: x.kind, at: x.at, ok: false, ...(x.refused ? { refused: x.refused } : {}), ...(x.error ? { error: "not read" } : {}) }), closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
+          sources: (view.sources ?? []).map((x: any) => x.ok ? x : { n: x.n, turn: x.turn, kind: x.kind, at: x.at, ok: false, ...(x.refused ? { refused: "refused by Studio's web filter" } : {}), ...(x.error ? { error: "not read" } : {}) }), closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
       writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
       const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);
       const project = String(engine.get(room.run)?.params?.project ?? engine.get(room.run)?.ctx.project ?? room.subject?.project ?? "") || "firstmate-workflow";
       if (!store.get(aid)) store.create({ id: aid, title, type: "doc", project, source: "room", note: "A review room, saved read-only: open it to replay its scenes. / 存起來的審查室（唯讀）：打開即可重播。" });
       const v = store.addVersion(aid, { from: dir, primary: "room.json", createdBy: { kind: "host" }, status: "draft", summary: reason, cost: { usd: snap.cost.usd, inTokens: null, outTokens: null } });
-      const fresh = load(k)!; fresh.library = { artifact: aid, versions: [...(fresh.library?.versions ?? []), { n: v.n, at: savedAt, reason }], rev: (fresh.rev ?? 0) + 1, ended: !!fresh.library?.ended || ended, sig: contentSig(fresh) }; save(k, fresh);
+      const fresh = load(k)!; fresh.library = { artifact: aid, versions: [...(fresh.library?.artifact === aid && v.n > 1 ? fresh.library.versions : []), { n: v.n, at: savedAt, reason }], rev: (fresh.rev ?? 0) + 1, ended: !!fresh.library?.ended || ended, sig: contentSig(fresh) }; save(k, fresh);
       notify(k); return { artifact: aid, n: v.n, href: `#/room/lib:${aid}` };
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
   /** Mark the room finished, at the moment it finishes, and save it to the Library once. A room that finished before this marker
    *  existed is never saved by Studio on its own (no burst of snapshots when Studio updates); a failed save is recorded, not retried. */
-  const finish = (api: any, k: Key, reason: string) => { try { const room = load(k); if (!room || room.finished || !room.turns.some((t) => t.status === "done")) return;
+  const finish = (api: any, k: Key, reason: string) => { try { const room = load(k); if (!room || room.finished || !room.turns.length) return;
     room.finished = { at: new Date().toISOString(), reason }; save(k, room); autoSave(api, k); } catch {} };
-  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room?.finished || room.finished.tried || saving.has(k.id)) return;
+  // a turn or a translation still running: the save waits for it to end (the turn's end calls autoSave again), never a half scene;
+  // a save already in flight: this one is queued after it (queueSave), never dropped
+  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room?.finished || room.finished.tried || live.has(k.id)) return;
     room.finished.tried = true; save(k, room);
     void queueSave(k.id, () => snapshot(api, k, room.finished!.reason, true)).catch((e: any) => { const r2 = load(k); if (r2?.finished) { r2.finished.error = String(e?.message ?? e).slice(0, 300); save(k, r2); } }); } catch {} };
   // ---------- Studio's own scenes: no model, nothing paid, every line from git or from what GitHub returned ----------
@@ -971,7 +973,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** the room's languages for the page: the translations kept, the last translation turn, and what translating would cost */
   const langView = (r: Room | null, open: boolean) => ({ translations: r?.translations ?? {}, translating: r?.translating ?? null, langs: ROOM_LANGS,
     tutors: open && r ? (() => { try { const k0 = keyOf(r.card); const s0 = subjectOf(k0); return s0.run && s0.node ? tutorsOf(s0.run, (() => { const o0 = offerOf(k0); return "error" in o0 ? null : { provider: o0.provider, model: o0.model }; })()) : []; } catch { return []; } })() : [],
-    library: r?.library ? { artifact: r.library.artifact, versions: r.library.versions, current: r.library.sig === contentSig(r) } : null,
+    library: r?.library && library().get(r.library.artifact) ? { artifact: r.library.artifact, versions: r.library.versions, current: r.library.sig === contentSig(r) } : null,
     translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
   /** the head moved past the one the captain last looked at: how many commits (null when the branch was rewritten) */
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
@@ -1072,7 +1074,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
       const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
-      void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); });
+      void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); autoSave(self, k); });
       return this.view(k.id);
     },
     /** Show the explanation in another language: the turns not in it yet are translated by one small paid turn on the room's
@@ -1092,7 +1094,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room = load(k)!; room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
       live.set(k.id, -2); notify(k);
-      void runTranslate(k, room, lang, untranslated(room, lang), s, provider, sk, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k); });
+      void runTranslate(k, room, lang, untranslated(room, lang), s, provider, sk, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k); autoSave(self, k); });
       return this.view(k.id);
     },
     /** Save to the Library now (the captain's button): a new version of the room's snapshot */

@@ -115,19 +115,20 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   the history kept. Studio saves a room on its own only once, at the moment it finishes: the card's answer (the engine tells
   the room) or a read that finds an open pull request merged or closed records `finished` on the room; listing cards or
   opening a room never saves, so a room that finished before this version is never saved by itself, and a failed save is
-  recorded (`finished.error`) and not retried (the captain's button still saves). Every save runs after the one before it,
-  whatever its room, so two saves never share a version number. A version is `room.json` and its
+  recorded (`finished.error`) and not retried (the captain's button still saves). A room that finishes while a turn or a
+  translation still runs is saved when that ends, never with a half-finished scene; a save already in flight is followed, not
+  dropped. Every save runs after the one before it, whatever its room, so two saves never share a version number. A version is `room.json` and its
   `assets/`: the room's view with its scenes in every language made, the board, its pictures (the illustrations, the app's
   screenshots and cached narration copied in), every citation resolved to the text it pointed at (diff hunks, ledger
   entries, commits, sources, reviewers' notes), the check with the captain's answers and results, the transcript, the cost,
   (never a refused text: an illustration prompt the privacy filter refused is left out, a refused or failed web source keeps
-  only that it was refused and why, not its query or address),
+  only that it was refused, in Studio's own fixed words, never its query, its address or the proxy's message),
   the subject (repository, pull request or branch, head and base), the tutors and the date. It reads without Studio's cache,
   the worktree or GitHub (`GET /api/review-room/library/<artifact>?v=<n>`, its files under `…/<n>/asset/<name>`). The
   Library's page of a saved room offers "Replay in the review room" for each version (`#/room/lib:<artifact>@<n>`), never
   review, notes, approval or compare, and the Library refuses any write to it (`room-snapshot-read-only`) except its
-  deletion (`DELETE /api/artifacts/room-<id>`, the desktop captain: the artifact and all its versions; a later save makes it
-  again). The replay is
+  deletion (`DELETE /api/artifacts/room-<id>`, the desktop captain: the artifact and all its versions; the room then no
+  longer links it, and a later save makes it again from v1). The replay is
   the same room, read-only: no prompt, no paid action (no turn, regeneration, translation or vendor voice); captions, this
   Mac's voice and the language switch over the languages saved with it still work. Nothing is written to GitHub.
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
@@ -552,6 +553,10 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     that finished before this version is not saved …", "a failed Library save is recorded …", "a model is picked only to
     explain a finished answer again …", "the Library keeps no refused text …"; review-room-anywhere "a pull request no Task
     made has no author to compare with …".
+32. Second review: a room finished while a turn runs is saved when the turn ends, never mid-turn; three saves at once each
+    know the one before; a deleted saved room is forgotten and saved again from v1; a refusal reaches the Library only as
+    Studio's fixed words. — review-room "answered while a turn still runs …", "once the turn has ended the room is saved …",
+    "three saves at once …", "deleted from the Library, the room no longer links it …", "the Library keeps no refused text …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
