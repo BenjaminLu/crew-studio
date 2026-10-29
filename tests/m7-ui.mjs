@@ -54,6 +54,9 @@ try {
     await p.goto(`${base}/#/packs`);
     ok(await p.locator('[data-pack="file-organization"]').waitFor({ timeout: 8000 }).then(() => true, () => false), "the Packs page lists the built-in file-organization pack");
     await p.locator("#genesisAsk").fill("Every Friday, sort the open support mail, answer the easy ones and escalate the rest to a person");
+    // a redraw while the captain types (the first Claude or Cursor status read) keeps what was typed in the field it draws anew
+    await p.evaluate(() => render());
+    ok(await p.locator("#genesisAsk").inputValue() === "Every Friday, sort the open support mail, answer the easy ones and escalate the rest to a person", "a redraw keeps the text typed into the genesis field");
     await p.locator(".x-ask .btn.primary").click();
     // a same-document hash change (no load event): wait on the hash itself, with room for a loaded machine (the stub drafts the pack first)
     await p.waitForFunction(() => location.hash.startsWith("#/tasks/"), null, { timeout: 30000 });
