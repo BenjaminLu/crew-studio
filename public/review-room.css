@@ -476,3 +476,5 @@ html .rr-report .rr-flow text, html .rr-report .rr-itemfig text, html .rr-report
 html .rr-report .rr-itemfig text { font-size: 15px; } html .rr-report .rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); }
 html .rr-report .rr-flow text { font-size: 17px; } html .rr-report .rr-flow .rr-elabel { font: 13px var(--f-mono); }
 html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
+.rr-reset { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--border); }
+.rr-reset .rr-pop { position: static; }

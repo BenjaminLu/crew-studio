@@ -677,6 +677,21 @@ try {
     ok(lib.secs === 10 && lib.figs === 6 && !live.length && !lib.notes, "a room saved in the Library replays its lesson as the same report, offline (nothing read from the live room), no reviewer notes", JSON.stringify({ lib, live }));
     await o2.ctx.close(); }
 
+  // ---------- start this room over: confirmed first (what goes, what stays), cancel leaves it, then the welcome scene of a fresh room ----------
+  { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const resets = []; let now = ROOM;
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
+    await p.route(/\/api\/review-room\/SC-50\/reset$/, (r) => { resets.push(r.request().method()); now = { ...ROOM, turns: [], board: [], check: { questions: [] }, translations: {} }; r.fulfill({ json: { reset: true, moved: ["room"], view: now } }); });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {});
+    await p.click("[data-transcript-toggle]"); await p.click("[data-room-reset]");
+    const ask = await p.$eval("[data-reset-confirm-box]", (e) => e.textContent).catch(() => "");
+    await p.click("[data-reset-cancel]", { timeout: 3000 }).catch(() => {}); const cancelled = { box: !!(await p.$("[data-reset-confirm-box]")), resets: resets.length };
+    ok(/answers, its board, its translations and its generated pictures go/.test(ask) && /archive folder/.test(ask) && /Library's saved snapshots and the Task's ledger stay/.test(ask) && !cancelled.box && cancelled.resets === 0,
+      "starting a room over asks first, saying what goes (answers, board, translations, pictures: archived) and what stays (the Library's snapshots, the ledger); cancel changes nothing", JSON.stringify({ ask, cancelled }));
+    await p.click("[data-room-reset]", { timeout: 3000 }).catch(() => {}); await p.click("[data-reset-confirm]", { timeout: 3000 }).catch(() => {}); await p.waitForFunction(() => document.querySelector("[data-stage]")?.dataset.scene === "t0", null, { timeout: 5000 }).catch(() => {});
+    const after = await p.evaluate(() => ({ scene: document.querySelector("[data-stage]")?.dataset.scene, toc: document.querySelectorAll("[data-toc-scene]").length, box: !!document.querySelector("[data-reset-confirm-box]"), drawer: document.querySelector("[data-transcript]")?.dataset.open }));
+    ok(JSON.stringify(resets) === '["POST"]' && after.scene === "t0" && !after.box && after.drawer === "false", "confirmed, the room is started over and the page forgets what it kept for it (its drawer closed) and opens it fresh on its welcome scene", JSON.stringify({ resets, after }));
+    await ctx.close(); }
+
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });
@@ -819,6 +834,9 @@ try {
     ok(r[0] === 404 && r[1] === 404 && r[2] === "not_found" && r[3] === 404, "the real routes answer: no room, no turn and no voice for a card that does not exist", JSON.stringify(r));
     const raw = await fetch(`${base}/api/review-room/SC-999/turn`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(raw.status === 401 || raw.status === 403, "a write without Studio's session is refused", String(raw.status));
+    { const g = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999/reset"), b = await fetch("/api/review-room/SC-999/reset", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code]; });
+      const bare = await fetch(`${base}/api/review-room/SC-999/reset`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      ok(g[0] === 405 && g[1] === 404 && g[2] === "not_found" && (bare.status === 401 || bare.status === 403), "starting a room over is a POST only, with Studio's session, on a room that exists", JSON.stringify([g, bare.status])); }
     const ca = await p.evaluate(async () => { const x = await fetch("/api/review-room/SC-999/check-answer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 1, choice: 0 }) }); return [x.status, (await x.json()).code]; });
     const caRaw = await fetch(`${base}/api/review-room/SC-999/check-answer`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(ca[0] === 404 && ca[1] === "not_found" && (caRaw.status === 401 || caRaw.status === 403), "the check's answer route is real, and like every write it needs Studio's session", JSON.stringify([ca, caRaw.status]));

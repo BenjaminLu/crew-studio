@@ -8,7 +8,7 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 // moves, the next turn opens with Studio's "what changed since last time"; approved, merged or closed it shows so and stays
 // readable. Each turn's ledger entry and round record carry the subject. Stub providers, a scripted tutor, the GitHub
 // simulator, temporary data only.        bun tests/review-room-anywhere.ts
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, suite, until, Y } from "./rt-harness";
 import { githubSimulator } from "./lib/github-simulator";
@@ -142,6 +142,29 @@ const TOOLRES: [string, any][] = [];
       && tb.scenes[3].points[0].cites[0].ok === true && (room.view(t.id) as any).board.find((b: any) => b.id === `B${nB}-1`)?.inferred === true,
       "a lesson with what, talks and change, and lifecycle and sequence left out with a cited reason, is kept; the architecture is marked inferred (no design document cited)", JSON.stringify([tb.status, tb.error, tb.scenes?.map((x: any) => x.chapter)]));
     ok(tools1.includes("illustrate") && /Generated pictures are ON/.test(prompts.at(-1)?.text ?? "") && on.images === true, "with pictures turned on, the tutor may illustrate (paid, at most two a turn)", JSON.stringify(tools1)); }
+  // ---- start the room over: refused while a turn or a translation runs; archived, never deleted; nothing writes the old room back ----
+  { const rd = join(E.rdir(t.id), "review-room"), f = join(rd, `${t.id}.json`), dir = join(rd, `${t.id}-images`), arch = join(rd, ".archive");
+    let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain");
+    const busy = await refused(() => room.reset(t.id, "captain")); release(); await room.settle(t.id);
+    const need = await refused(() => room.translate(t.id, { lang: "zh-TW" }, "captain"));
+    let rel2!: () => void; const g2 = new Promise<void>((r) => (rel2 = r)); script.push([["wait", g2], ["say", "not the JSON asked for"]]);
+    await room.translate(t.id, { lang: "zh-TW", confirm: need?.offer?.translate?.hash }, "captain");
+    const busy2 = await refused(() => room.reset(t.id, "captain")); rel2(); await room.settle(t.id);
+    ok(busy?.code === "busy" && busy2?.code === "busy" && existsSync(f) && !existsSync(arch), "starting a room over is refused while a turn or a translation runs, and nothing moves", JSON.stringify([busy?.code, busy2?.code, need?.code]));
+    // a picture still being drawn (the room's opening picture, held) and a Library save, racing the reset
+    let relImg!: () => void; const gImg = new Promise<void>((r) => (relImg = r)), PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+    E.deps.generateImage = async (_p: string, authorize: () => void) => { authorize(); await gImg; return { bytes: PNG, model: "img-1", provider: "codex" }; };
+    room.view(t.id, true); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "voice-t1-0123456789ab.mp3"), "x");
+    const before: any = room.view(t.id), pending = before.board.find((b: any) => b.turn === 0)?.status;
+    const saving = room.saveToLibrary(t.id, "captain").catch((e: any) => e), out: any = room.reset(t.id, "captain");
+    relImg(); await saving; await room.settle(t.id); await new Promise((r) => setTimeout(r, 60));
+    const kept = existsSync(arch) ? readdirSync(arch).filter((n) => n.startsWith(`${t.id}-`)) : [], a0 = kept[0] ? join(arch, kept[0]) : "", old = a0 ? JSON.parse(readFileSync(join(a0, "room.json"), "utf8")) : null;
+    ok(pending === "pending" && JSON.stringify(out.moved) === JSON.stringify(["room", "images"]) && kept.length === 1 && old?.turns.length === before.turns.length && existsSync(join(a0, "images", "voice-t1-0123456789ab.mp3")) && !existsSync(f) && !existsSync(dir),
+      "starting over moves the room's file and its pictures' folder into an archive folder beside it (never deleted); a picture still being drawn and a Library save racing it write nothing back", JSON.stringify({ pending, moved: out.moved, kept, file: existsSync(f), dir: existsSync(dir) }));
+    const fresh: any = room.view(t.id, true), rec = E.trusted(t.id).entries.filter((e: any) => e.record === "review-room-reset");
+    ok(fresh.turns.length === 0 && !fresh.board.some((b: any) => b.turn > 0) && !fresh.translations?.["zh-TW"] && fresh.images === false && rec.length === 1 && JSON.stringify(rec[0].data.moved) === JSON.stringify(["room", "images"]) && !JSON.stringify(rec[0].data).includes("Still reading"),
+      "the next view is a fresh room (no answers, board, translations or pictures); the ledger records review-room-reset with no content", JSON.stringify({ turns: fresh.turns.length, rec: rec.map((e: any) => e.data) })); }
   // ---- the review gate is per head: a head the review did not pass at, or a ready-on-branch end with no ledger entry, takes no turn ----
   const uHead = ur.ctx.head; ur.ctx.head = ur.ctx.baseCommit;
   const movedOffer: any = (room.view(u.id) as any).offer, movedTurn = await refused(() => room.start(u.id, { action: "how", confirm: v0.offer.hash }, "captain")); ur.ctx.head = uHead;
@@ -368,6 +391,12 @@ const TOOLRES: [string, any][] = [];
     { const live: any = room.view(pid), card = snap.view.turns.find((t: any) => t.studio && /notes on GitHub/.test(t.claims?.[0]?.text ?? ""));
       ok(live.notes?.length > 0 && !("notes" in snap.view) && snap.view.progress == null && snap.view.turns.every((t: any) => !t.hidden) && !!card && !JSON.stringify(snap.view.turns).includes("Same remark again."),
         "the Library keeps the reviewers' card, not their notes: no raw notes (bots' included), no turn progress, no hidden dumps in the snapshot", JSON.stringify({ notes: live.notes?.length, keys: Object.keys(snap.view), card: card?.claims?.[0]?.text })); } }
+
+  // ---- a pull request's room started over: archived beside it, and fresh at once from the pull request as Studio last read it ----
+  { const prd = join(H.data, "review-room", "pr"), before: any = room.view(pid); let out: any = null, v: any = null; try { out = room.reset(pid, "captain"); v = room.view(pid); } catch (e: any) { out = out ?? { moved: [], error: e.message }; }
+    const kept = existsSync(join(prd, ".archive")) ? readdirSync(join(prd, ".archive")).filter((n) => n.startsWith(`${pid}-`)) : [], old = kept[0] ? JSON.parse(readFileSync(join(prd, ".archive", kept[0], "room.json"), "utf8")) : null;
+    ok(!!v && out.moved.includes("room") && kept.length === 1 && old?.turns.length === before.turns.length && v.turns.length === 0 && v.board.length === 0 && v.prState.state === before.prState.state && v.card.title.en === before.card.title.en && !!v.library && v.library.artifact === before.library?.artifact,
+      "a pull request's room started over is fresh at once from the pull request as Studio last read it (its Library link kept); the old file is in the archive", JSON.stringify({ out, kept, turns: v?.turns.length, lib: v?.library })); }
 
   // ---- a fork's pull request no Studio Task made: readable, no paid turn ----
   const C = (() => { must(scratch, ["checkout", "-qb", "patch-1", "main"]); writeFileSync(join(scratch, "b.txt"), "from a fork\n"); must(scratch, ["add", "b.txt"]); must(scratch, [...id, "commit", "-qm", "Add b"]); return must(scratch, ["rev-parse", "HEAD"]); })();

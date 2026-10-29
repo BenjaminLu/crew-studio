@@ -25,7 +25,7 @@
 //   ledger: review-room-turn                               each turn: subject (branch or URL, head), action, job, provider, model, confirmation, skills, counts
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { copyFileSync, mkdtempSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { ArtifactStore } from "../artifacts";
@@ -327,7 +327,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const load = (k: Key): Room | null => { const had = cache.get(k.file); if (had) return had; try { const r: Room = JSON.parse(readFileSync(k.file, "utf8"));
     for (const b of r.board) if (b.type === "image" && b.status === "pending") Object.assign(b, { status: "failed", error: "interrupted: Studio stopped before the picture was ready" });
     try { tidyReviewers(r); } catch {} cache.set(k.file, r); return r; } catch { return null; } };
-  const save = (k: Key, r: Room) => { r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
+  /** rooms started over: their old object (held by a background job: a picture, a voice, a Library save) is never written back */
+  const startedOver = new WeakSet<Room>(), resetGen = new Map<string, number>();
+  const save = (k: Key, r: Room) => { if (startedOver.has(r)) return; r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
   /** a turn left running by a Studio that stopped reads interrupted (its round record keeps what it did) */
   const settled = (r: Room) => ({ ...r, turns: r.turns.map((t) => t.status === "running" && live.get(r.card) !== t.n ? { ...t, status: "interrupted" as const } : t) });
   const cardOf = (id: string) => { const c = engine.cards.get(id); if (!c) throw refuse("No such card", "not_found"); return c; };
@@ -501,11 +503,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   function illustrateInto(k: Key, s: S, room: Room, id: string, turnN: number, title: string, prompt: string): Item {
     const it: Item = { id, turn: turnN, type: "image", kind: "illustration", title, src: null, status: "pending", prompt: prompt.slice(0, 600), provider: null, model: null, sha256: null, basis: "illustration", cites: [] };
     room.board.push(it); save(k, room);
-    const gen = generator()!, ac = new AbortController(), timer = setTimeout(() => ac.abort(), 4 * 60_000);
+    const gen = generator()!, ac = new AbortController(), timer = setTimeout(() => ac.abort(), 4 * 60_000), born = resetGen.get(k.id) ?? 0;
     const full = `A clean whiteboard sketch in dry-erase marker style on a white background: simple boxes, arrows and a few short hand-written labels, no code, no logos. It explains: ${prompt}`;
     const job = (async () => {
       try { const img = await gen(full, () => { if (!k.open()) throw new Error(k.kind === "merge" ? "the merge card is answered" : "the room no longer takes turns"); }, ac.signal, new OperatingRules(engine.deps.dataDir).section(s.run.params?.project || null));
         const bytes = Buffer.from(img.bytes); if (bytes.length < 24 || bytes.length > 12_000_000 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("the image generator did not return a PNG");
+        if ((resetGen.get(k.id) ?? 0) !== born || startedOver.has(room)) throw new Error("the room was started over");
         mkdirSync(k.dir, { recursive: true }); writeFileSync(join(k.dir, `${id}.png`), bytes);
         Object.assign(it, { status: "ready", src: `/api/review-room/${k.id}/image/${id}.png`, provider: img.provider ?? "codex", model: img.model ?? null, sha256: createHash("sha256").update(bytes).digest("hex") });
         const run = engine.get(s.run.id), node = run?.def.nodes.find((n: any) => n.id === s.node.id);
@@ -1101,8 +1104,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const text = (tr ? (tr.scenes.length ? tr.scenes.flatMap((x) => x.points) : tr.claims) : t.scenes?.length ? t.scenes.flatMap((x) => x.points.map((p) => p.text)) : (t.claims ?? []).filter((x) => x.kind === "claim" || x.kind === "aside").map((x) => x.text)).map((x) => narration(x)).filter(Boolean).join("\n").slice(0, 4000); if (!text) throw refuse("This scene has nothing to say", "not_found");
     const name = `voice-t${t.n}-${sha(text).slice(0, 12)}.mp3`, f = join(k.dir, name), src = `/api/review-room/${k.id}/audio/${name}`;
     if (existsSync(f)) return { src, cached: true, vendor, model: TTS_MODEL };
-    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 90_000);
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 90_000), born = resetGen.get(k.id) ?? 0;
     try { const say = o.speak ?? openaiSpeaker(() => engine.deps.agents.egress); const out = await say(text, ac.signal); const bytes = Buffer.from(out.bytes);
+      if ((resetGen.get(k.id) ?? 0) !== born) throw refuse("The room was started over", "reset");
       if (bytes.length < 64 || bytes.length > 20_000_000) throw new Error("the voice came back empty or too large");
       mkdirSync(k.dir, { recursive: true }); writeFileSync(f, bytes);
       const run = engine.get(s.run.id), node = run?.def.nodes.find((n: any) => n.id === s.node.id);
@@ -1275,6 +1279,25 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       return this.view(k.id);
     },
     /** Save to the Library now (the captain's button): a new version of the room's snapshot */
+    /** Start this room over (the captain, on this Mac): its file and its pictures' folder move into an archive folder beside
+     *  it (never deleted); every copy in memory is dropped, so nothing a background job still holds writes the old room back;
+     *  the next view is a fresh room (a pull request's from the pull request as Studio last read it). Refused while a turn or
+     *  a translation runs. The Library's snapshots and the ledger stay; a review-room-reset entry records it, with no content. */
+    reset(id: string, by: string) {
+      const k = keyOf(id), room = load(k);
+      if (live.has(k.id)) throw refuse("A turn or a translation is running: start the room over once it has ended / 有回合或翻譯正在進行：結束後再清空重來", "busy");
+      let s: S | null = null; try { s = subjectOf(k); } catch {}
+      const at = new Date().toISOString(), arch = join(dirname(k.file), ".archive", `${k.id}-${at.replace(/[:.]/g, "-")}`), moved: string[] = [];
+      mkdirSync(arch, { recursive: true });
+      if (existsSync(k.file)) { renameSync(k.file, join(arch, "room.json")); moved.push("room"); }
+      if (existsSync(k.dir)) { renameSync(k.dir, join(arch, "images")); moved.push("images"); }
+      if (room) startedOver.add(room); cache.delete(k.file); resetGen.set(k.id, (resetGen.get(k.id) ?? 0) + 1); statMemo.clear(); saving.delete(k.id); refreshing.delete(k.id);
+      // a pull request's room is its file: a fresh one now, from the pull request as Studio last read it (its link to the Library kept)
+      if (k.kind === "pr" && room) save(k, { schema: 1, run: room.run, card: k.id, node: room.node, head: room.head, base: room.base, turns: [], board: [], sources: [], check: { questions: [] },
+        subject: room.subject, pr: room.pr, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished });
+      const run = s?.run ? engine.get(s.run.id) : null, node = run?.def.nodes.find((n: any) => n.id === s!.node?.id);
+      if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-reset", { head: s!.head, data: { schema: 1, card: k.id, by: String(by ?? "captain").slice(0, 80), at, moved } } as any);
+      notify(k); return { reset: true, moved, view: this.view(id) }; },
     /** Generated pictures on or off for this room (off unless the captain turns them on): no paid image job while off */
     images(id: string, on: unknown, by: string) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request");
       let room = load(k); if (!room) { const s = subjectOf(k); if (!k.open()) throw refuse("This room no longer takes changes", "closed"); room = fresh(k, s); }

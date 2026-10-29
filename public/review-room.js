@@ -4,7 +4,7 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { step: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+const RR = { resetAsk: new Set(), step: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
   scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Set(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -913,7 +913,27 @@ function drawer(r) {
         h("h3", {}, T("Sources", "來源")),
         r.sources.length ? h("ul", { class: "rr-sources" }, r.sources.map((s) => h("li", { "data-source": s.n, "data-source-ok": String(s.ok) }, h("span", { class: "vbadge" }, `${s.n} ${s.kind === "search" ? T("search", "搜尋") : T("page", "網頁")}`), " ",
           s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
-          : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。"))))];
+          : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")),
+        // start the room over: confirmed first; what goes and what stays said plainly; refused while a turn or a translation runs
+        r.snapshot ? null : h("div", { class: "rr-reset", "data-reset-zone": "" }, h("h3", {}, T("Start over", "清空重來")),
+          RR.resetAsk.has(card) ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-reset-confirm-box": "", "aria-label": T("Start this room over", "清空這個審查室重來") },
+            h("p", {}, T("Start this room over? Its answers, its board, its translations and its generated pictures go (moved to an archive folder beside the room, not deleted). The Library's saved snapshots and the Task's ledger stay.", "要清空這個審查室重來嗎？它的回答、白板、翻譯和生成圖片都會移走（搬到審查室旁的封存資料夾，不會刪除）。成品庫裡存過的快照和任務的帳本都會保留。")),
+            h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-reset-confirm": "", disabled: RR.posting.has(card), onclick: () => resetRoom(card) }, T("Start over", "清空重來")),
+              h("button", { type: "button", class: "btn ghost", "data-reset-cancel": "", onclick: () => { RR.resetAsk.delete(card); rerender(); } }, T("Cancel", "取消"))))
+          : h("button", { type: "button", class: "btn", "data-room-reset": "", disabled: r.running != null || r.translating?.status === "running", title: r.running != null ? T("A turn is running", "有回合在進行") : "", onclick: () => { RR.resetAsk.add(card); rerender(); } }, T("Start this room over…", "清空重來…")))))];
+}
+/** the room started over: Studio archived it; this page forgets everything it kept for it and opens it fresh, on its welcome */
+async function resetRoom(card) {
+  if (RR.posting.has(card)) return; RR.posting.add(card); RR.err.delete(card); rerender();
+  try { await postJ(`/api/review-room/${enc(card)}/reset`, {});
+    stopPlay(); clearTimeout(RR.poll); RR.poll = null;
+    for (const m of [RR.scene, RR.seen, RR.confirm, RR.draft, RR.cite, RR.err, RR.reveal, RR.ready, RR.rscroll, RR.jump, RR.lang]) m.delete(card);
+    for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
+    for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);
+    for (const set of [RR.step, RR.titled, RR.fold]) for (const key of [...set]) if (key.startsWith(`${card}/`)) set.delete(key);
+    RR.rooms.delete(card); RR.scene.set(card, 0); await load(card, true); RR.scene.set(card, 0); }
+  catch (e) { RR.err.set(card, e.message); RR.resetAsk.delete(card); }
+  finally { RR.posting.delete(card); rerender(); }
 }
 // ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------
 const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set() };

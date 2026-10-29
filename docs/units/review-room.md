@@ -285,6 +285,16 @@ decisions) is one heading with its items under it; a click scrolls the report to
 covers the report's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
 came back as short as the drawing holds; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
 
+**Start this room over / 清空重來.** In the transcript drawer, the captain on this Mac can start a room over (`POST
+…/reset`, the same session, origin and desktop gates as the room's other writes; refused with 409 while a turn or a
+translation runs). It asks first, saying what goes (the answers, the board, the translations, the generated pictures) and
+what stays (the Library's snapshots, the Task's ledger). Studio moves the room's file and its pictures' folder into
+`.archive/<room>-<time>/` beside it (never deleted), drops every copy it keeps in memory and bumps the room's generation,
+so a background job still holding the old room (a picture being drawn, a voice, a Library save) writes nothing back; the
+next view is a fresh room (a pull request's at once, from the pull request as Studio last read it, its Library link kept).
+A `review-room-reset` ledger entry records who and when, with no content. The page forgets what it kept for the room and
+opens it on its welcome scene.
+
 **Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
 re-entry (the desktop page, at most once a minute from the last attempt) or "Check for new commits" (`POST …/check`, the
 desktop captain only, at most once every five seconds a room) Studio reads the pull request again; a branch's head is read
@@ -642,7 +652,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     architecture marks the change …", "each changed item is drawn from the same layout …", "the lesson can still be stepped
     through …", "the report's text and its drawings' words switch language …", "on a phone the report reads …", "a room
     saved in the Library replays its lesson as the same report …".
-
+36. Start this room over: refused while a turn or a translation runs; the file and the pictures' folder archived beside the
+    room, never deleted; a picture being drawn and a Library save racing it write nothing back; the next view is fresh (a
+    pull request's at once); a review-room-reset ledger entry with no content; POST only, with Studio's session, desktop
+    only; the page asks first and cancel changes nothing. — review-room-anywhere "starting a room over is refused while a
+    turn or a translation runs …", "starting over moves the room's file and its pictures' folder …", "the next view is a
+    fresh room …", "a pull request's room started over is fresh at once …"; review-room-ui "starting a room over is a POST
+    only …", "starting a room over asks first …", "confirmed, the room is started over …"; smoke "even allowed to drive, a
+    phone cannot … start it over".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 

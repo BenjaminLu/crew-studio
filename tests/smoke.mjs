@@ -268,8 +268,8 @@ try {
   ok((await raw("POST", "/api/main/interrupt", { host: TAILNET, token: ptok })).status === 200, "a phone may always interrupt");
   ok((await raw("POST", "/api/remote/settings", { host: TAILNET, token: ptok, body: { allowDrive: true } })).body?.code === "desktopOnly", "a phone cannot allow itself to drive");
   ok((await raw("POST", "/api/remote/settings", { body: { allowDrive: true } })).body?.allowDrive === true, "the Mac allows phone driving");
-  { const open = await raw("POST", "/api/review-room/open-pr", { host: TAILNET, token: ptok, body: { url: "https://github.com/fixture/project/pull/1" } }), check = await raw("POST", "/api/review-room/PR-0123456789ab-1/check", { host: TAILNET, token: ptok, body: {} });
-    ok(open.body?.code === "desktopOnly" && check.body?.code === "desktopOnly", "even allowed to drive, a phone cannot open a pull request's review room or make it read GitHub again", JSON.stringify([open.status, open.body, check.status, check.body])); }
+  { const open = await raw("POST", "/api/review-room/open-pr", { host: TAILNET, token: ptok, body: { url: "https://github.com/fixture/project/pull/1" } }), check = await raw("POST", "/api/review-room/PR-0123456789ab-1/check", { host: TAILNET, token: ptok, body: {} }), reset = await raw("POST", "/api/review-room/PR-0123456789ab-1/reset", { host: TAILNET, token: ptok, body: {} });
+    ok(open.body?.code === "desktopOnly" && check.body?.code === "desktopOnly" && reset.status === 403 && reset.body?.code === "desktopOnly", "even allowed to drive, a phone cannot open a pull request's review room, make it read GitHub again or start it over", JSON.stringify([open.status, open.body, check.status, check.body, reset.status, reset.body])); }
   ok((await raw("POST", "/api/main/send", { host: TAILNET, token: ptok, body: { text: "hi" } })).body?.code === "detached", "with driving allowed, the phone's send passes the gate (nothing attached yet)");
   // revoking cuts the phone's live stream
   const streamCut = new Promise((resolve) => {
