@@ -261,7 +261,7 @@ ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "he
     ok(JSON.stringify(sc.map((x: any) => x.chapter)) === JSON.stringify(["what", "talks", "change", "change", "lifecycle", "sequence", "watch"]), "the lesson is chapters in their order: what, what talks to what, each changed item, its life, one request, what to watch", JSON.stringify(sc.map((x: any) => x.chapter)));
     ok(/the "change" chapter's picture is a item/.test(sr2[3]?.error ?? "") && /a risk is listed only with what it rests on/.test(sr2[6]?.error ?? "") && /chapters come in order/.test(sr2[8]?.error ?? ""),
       "Studio holds the chapter shape: a changed item shows its item figure, a risk needs a citation, a chapter never comes back after a later one", JSON.stringify(sr2.map((x: any) => x.error ?? x.scene)));
-    ok(item?.name === "percent()" && item.basis === "cited" && states?.transitions.length === 2 && states.transitions[0].cite.ok === true && /draft -->\|price\| priced/.test(states.code) && seq?.steps[1].frame === "loop" && seq.steps[2].kind === "return" && /item 5: name is 1 to 33/.test(figs?.errors[0] ?? ""),
+    ok(item?.name === "percent()" && item.basis === "cited" && states?.transitions.length === 2 && states.transitions[0].cite.ok === true && /s_draft -->\|price\| s_priced/.test(states.code) && seq?.steps[1].frame === "loop" && seq.steps[2].kind === "return" && /item 5: name is 1 to 33/.test(figs?.errors[0] ?? ""),
       "per-item figures, a state machine (every transition, each cited) and a sequence (its loop kept) are board items Studio draws; a label too long for the layout is refused", JSON.stringify({ item, figs: figs?.errors })); }
   const tbl = board.find((b) => b.type === "table"), bd = results.filter(([n]) => n === "board_draw")[1]?.[1];
   ok(tbl && JSON.stringify(tbl.rows) === JSON.stringify([["amount", "15%"], ["1999", "300"], ["1000", "150"]]) && tbl.basis === "cited" && /a table is 2 to 8 rows/.test(bd.errors[0]), "a table is a board item of text cells (a number becomes text); one too wide is refused", JSON.stringify({ tbl, bd }));
@@ -332,8 +332,19 @@ Object.assign(reviewer, saved);
 noVoice = null; try { await room.speech(merge.id, "t3"); } catch (e) { noVoice = e; }
 ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.length === 1, "when the seat's vendor changes after a scene, its narration is not sent anywhere", noVoice?.message);
 // ---------- a tutor that ends without an answer: the turn fails and says so, never a blank scene ----------
-script.push([["msg", "Let me check the diff first."], ["fs_search", { text: "percent" }]]);
+// outside a lesson a scene may leave its chapter out, or name chapters in any order; a state called "end", a label with ";"
+const r4 = results.length;
+script.push([["board_draw", { items: [{ type: "states", title: "Ends", states: [{ id: "start", label: "Start" }, { id: "end", label: "End; (done) {x}" }], transitions: [{ from: "start", to: "end", label: "finish; now)", cite: "diff:src/percent.ts:L2-3" }] }] }],
+  ["scene_show", { title: "No chapter", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
+  ["scene_show", { chapter: "watch", title: "A risk", picture: "B1-1", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Pinned [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }] }],
+  ["scene_show", { chapter: "what", title: "Back to what", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
+  ["msg", "Let me check the diff first."], ["fs_search", { text: "percent" }]]);
 await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merge.id) as any).offer.hash }, "captain"); await room.settle(merge.id);
+{ const v4 = room.view(merge.id) as any, t4s = v4.turns[3]?.scenes ?? [], made = results.slice(r4).filter(([n]) => n === "scene_show").map(([, j]) => j.error ?? "ok"), fig = v4.board.find((b: any) => b.turn === 4 && b.type === "states");
+  ok(JSON.stringify(made) === JSON.stringify(["ok", "ok", "ok"]) && JSON.stringify(t4s.map((x: any) => x.chapter ?? null)) === JSON.stringify([null, "watch", "what"]),
+    "outside a lesson (why, how, a question, a quiz) a scene may leave its chapter out or name chapters in any order", JSON.stringify({ made, chapters: t4s.map((x: any) => x.chapter) }));
+  const g = fig && /flowchart LR\n {2}s_start\[Start\]\n {2}s_end\[End done x\]\n {2}s_start -->\|finish now\| s_end$/.test(fig.code);
+  ok(!!g, "a state machine's states are drawn under Studio's own ids (a state called end is not a keyword) and labels lose ; ) } that would cut them", fig?.code); }
 { const t4 = (room.view(merge.id) as any).turns[3];
   ok(t4?.status === "failed" && /the tutor ended without an answer/.test(t4.error ?? "") && t4.answer === "" && !t4.claims.length, "a tutor that ends after a tool call with no final message fails the turn with the reason; its preamble is not the answer", JSON.stringify(t4 && { status: t4.status, error: t4.error, answer: t4.answer, claims: t4.claims })); }
 // ---------- the explanation in another language: one confirmed translation turn, text only, kept per turn and language ----------

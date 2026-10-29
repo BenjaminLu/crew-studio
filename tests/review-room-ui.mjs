@@ -445,6 +445,9 @@ try {
     const inApp = await p.evaluate(() => { window.__opened = []; const a = document.createElement("a"); a.href = "#/board"; document.querySelector("#view").append(a); a.click(); return window.__opened.length; });
     await p.waitForFunction(() => S.route?.name === "board");
     ok(inApp === 0, "Studio's own pages still open in place");
+    const own = await p.evaluate(() => { window.__opened = []; const mk = (href, take) => { const a = document.createElement("a"); a.href = href; if (take) a.addEventListener("click", (e) => e.preventDefault()); document.querySelector("#view").append(a); a.click(); };
+      mk("https://example.org/handled", true); mk("mailto:someone@example.org", true); return window.__opened.length; });
+    ok(own === 0, "a link whose own handler takes the click, or that is not http(s), is left to that handler: Studio opens no window for it");
     await ctx.close(); }
 
   // ---------- a pull request's reviewers: a short card on the board, their words folded in the transcript ----------
@@ -496,6 +499,37 @@ try {
     ok(s3.scene === "t3" && !(await p.$("[data-answer-ready]")), "“The answer is ready — show it” goes to the answer", JSON.stringify(s3));
     await ctx.close(); }
 
+  // ---------- a lesson of several chapters finishes: the stage opens it at its first chapter; leaving and coming back mid-turn keeps following it ----------
+  { const RUN = { ...ROOM, running: 3, progress: { turn: 3, status: "running", said: "Reading the diff first.", tools: 1, at: "t" },
+      turns: [...ROOM.turns.map((t) => ({ ...t, head: H })), { n: 3, action: "teach", text: "Teach me this change.", lang: "en", status: "running", provider: "codex", model: "gpt-6", answer: "", head: H }] };
+    const HALF = { ...RUN, progress: { turn: 3, status: "running", said: "Halfway through the lesson.", tools: 4, at: "t" } };
+    const DONE = { ...RUN, running: null, progress: null, turns: RUN.turns.map((t) => t.n === 3 ? { ...t, status: "done", answer: "y", claims: [cl("x")],
+      scenes: [{ n: 1, chapter: "what", title: "A percent helper", picture: "B1-1", points: [cl("It adds percent."), cl("Rounded to the cent.")] },
+        { n: 2, chapter: "change", title: "Rounding", picture: "B1-1", points: [cl("It rounds."), cl("Halves go up.")] },
+        { n: 3, chapter: "watch", title: "What to watch", picture: "B1-1", points: [cl("Halves round up [board:B1-1].", [ok1("board:B1-1")]), cl("The test pins it [board:B1-1].", [ok1("board:B1-1")])] }] } : t) };
+    const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); let now = RUN;
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-turn-progress]", { timeout: 15000 });
+    // the captain leaves while it runs (the poll stops), the tutor gets further, the captain comes back
+    await p.evaluate(() => { location.hash = "#/board"; }); await p.waitForFunction(() => S.route?.name === "board"); await p.waitForTimeout(3200);
+    now = HALF; await p.evaluate(() => { location.hash = "#/room/SC-50"; });
+    const followed = await p.waitForFunction(() => /Halfway through the lesson/.test(document.querySelector("[data-turn-progress]")?.textContent || ""), null, { timeout: 2000 }).then(() => true, () => false);
+    ok(followed, "back in a room whose turn still runs, the room reads it again and shows how far it got (the poll follows it again)", await p.$eval("[data-turn-progress]", (e) => e.textContent).catch(() => ""));
+    now = DONE; const done = await p.waitForFunction(() => !!document.querySelector('[data-toc-scene="t3-3"]') && !document.querySelector("[data-turn-progress]"), null, { timeout: 8000 }).then(() => true, () => false);
+    await p.waitForTimeout(300);
+    const s1 = await stage(p), cur = await p.$eval('[data-toc-scene][aria-current="true"]', (e) => e.dataset.tocScene).catch(() => null);
+    ok(done && s1.scene === "t3" && s1.title === "A percent helper" && cur === "t3", "a lesson of several chapters that finishes opens at its first chapter, not its last", JSON.stringify({ done, s1, cur }));
+    await ctx.close(); }
+
+  // ---------- a quiz is new every time: no "show the existing one" offer ----------
+  { const RQ = { ...ROOM, turns: [...ROOM.turns.map((t) => ({ ...t, head: H })), { n: 3, action: "quiz", text: "Check my understanding: ask me a few questions.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "q", head: H, claims: [cl("A question.")] }] };
+    const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RQ }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click('[data-room-action="quiz"]'); const asked = await p.waitForSelector('[data-room-confirm="quiz"]', { timeout: 3000 }).then(() => true, () => false);
+    ok(asked && !(await p.$("[data-existing-offer]")) && !posts.length, "asking for a quiz again goes to its confirmation (a new quiz), never “show the existing one”");
+    await ctx.close(); }
+
   // ---------- a lesson, chapter by chapter: the chapters' rail, per-item figures, a state machine, a sequence ----------
   { const LESSON = { n: 3, action: "teach", text: "Teach me this change.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: H, claims: [cl("x")],
       scenes: [{ n: 1, chapter: "what", title: "A percent helper", picture: "B1-1", points: [cl("It adds percent [diff:src/percent.ts].", [ok1("diff:src/percent.ts")]), cl("Rounded to the cent.")] },
@@ -506,7 +540,7 @@ try {
         { n: 6, chapter: "watch", title: "What to watch", picture: "B3-1", points: [cl("Halves round up [diff:src/percent.ts:L2-3].", [ok1("diff:src/percent.ts:L2-3")]), cl("The test pins it [diff:test/percent.test.ts].", [ok1("diff:test/percent.test.ts")])] }] };
     const FIGS = [{ id: "B3-1", turn: 3, type: "item", title: "Rounding", name: "percent()", before: "Fractions of a cent kept", after: "Rounded to the cent", mechanism: "Math.round", basis: "cited", cites: [ok1("diff:src/percent.ts:L2-3")] },
       { id: "B3-2", turn: 3, type: "item", title: "Tests", name: "percent.test.ts", before: "No test of rounding", after: "1999 at 15% pinned to 300", mechanism: "", basis: "cited", cites: [] },
-      { id: "B3-3", turn: 3, type: "states", title: "An invoice", states: [{ id: "draft", label: "Draft" }, { id: "priced", label: "Priced" }, { id: "paid", label: "Paid" }], transitions: [{ from: "draft", to: "priced", label: "price", cite: ok1("diff:src/percent.ts:L2-3") }, { from: "priced", to: "paid", label: "pay", cite: null }], code: "flowchart LR\n  draft[Draft]\n  priced[Priced]\n  paid[Paid]\n  draft -->|price| priced\n  priced -->|pay| paid", basis: "cited", cites: [ok1("diff:src/percent.ts:L2-3")] },
+      { id: "B3-3", turn: 3, type: "states", title: "An invoice", states: [{ id: "draft", label: "Draft" }, { id: "priced", label: "Priced" }, { id: "paid", label: "Paid" }], transitions: [{ from: "draft", to: "priced", label: "price", cite: ok1("diff:src/percent.ts:L2-3") }, { from: "priced", to: "paid", label: "pay", cite: null }, { from: "priced", to: "paid", label: "pay later", cite: ok1("diff:test/percent.test.ts") }], code: "flowchart LR\n  s_draft[Draft]\n  s_priced[Priced]\n  s_paid[Paid]\n  s_draft -->|price| s_priced\n  s_priced -->|pay| s_paid\n  s_priced -->|pay later| s_paid", basis: "cited", cites: [ok1("diff:src/percent.ts:L2-3")] },
       { id: "B3-4", turn: 3, type: "sequence", title: "Pricing a line", actors: ["Cart", "percent", "Math"], steps: [{ from: "Cart", to: "percent", label: "percent(1999, 15)", kind: "call" }, { from: "percent", to: "Math", label: "round(299.85)", kind: "call", frame: "loop", frameLabel: "each line" }, { from: "Math", to: "percent", label: "300", kind: "return", frame: "loop" }, { from: "percent", to: "Cart", label: "300", kind: "return" }], basis: "cited", cites: [] }];
     const RL = { ...ROOM, board: [...ROOM.board, ...FIGS], turns: [...ROOM.turns, LESSON] };
     const { ctx, p, cites } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
@@ -526,7 +560,12 @@ try {
     const geo0 = await p.evaluate(() => [...document.querySelectorAll("[data-visual] [data-item-figure] .rr-ib path")].map((e) => e.getAttribute("d")).join("|"));
     ok(geo && geo === geo0, "every changed item is drawn from the same layout (identical geometry), not free-drawn");
     await p.click('[data-toc-scene="t3-4"]'); await p.click('[data-transition-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel]");
-    ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && await p.$$eval("[data-visual] [data-elabel]", (els) => els.length) === 2, "the state machine draws every transition, and a transition opens the code it rests on", JSON.stringify(cites));
+    ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && await p.$$eval("[data-visual] [data-elabel]", (els) => els.length) === 3, "the state machine draws every transition, and a transition opens the code it rests on", JSON.stringify(cites));
+    await p.click("[data-cite-panel] .btn");
+    // two transitions between the same states: each label opens its own citation
+    const second = await p.$$eval('[data-visual] [data-elabel="s_priced>s_paid"]', (els) => els.map((e) => [e.textContent, e.dataset.transitionCite ?? null]));
+    await p.click('[data-transition-cite="diff:test/percent.test.ts"]', { timeout: 3000 }).catch(() => {}); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {});
+    ok(JSON.stringify(second) === JSON.stringify([["pay", null], ["pay later", "diff:test/percent.test.ts"]]) && cites.at(-1) === "diff:test/percent.test.ts", "two transitions between the same states each open their own citation", JSON.stringify({ second, cites }));
     await p.click("[data-cite-panel] .btn"); await p.click('[data-toc-scene="t3-5"]');
     const sq = await p.evaluate(() => ({ actors: document.querySelectorAll("[data-visual] .rr-actor").length, steps: [...document.querySelectorAll("[data-visual] [data-step]")].map((e) => e.className.baseVal), frame: document.querySelector("[data-visual] [data-frame]")?.textContent }));
     ok(sq.actors === 3 && sq.steps.length === 4 && /return/.test(sq.steps[2]) && /loop \[each line\]/.test(sq.frame || ""), "one request in order: its actors, calls and returns, and its loop as a frame", JSON.stringify(sq));

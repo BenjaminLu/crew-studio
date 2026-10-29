@@ -33,7 +33,7 @@ async function load(id, open = false) {
 }
 // while a turn runs, the page follows it (the live stream says when it ends; a slow poll covers a missed event)
 
-function schedule() { clearTimeout(RR.poll); const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) RR.poll = setTimeout(() => load(id), 2500); }
+function schedule() { clearTimeout(RR.poll); RR.poll = null; const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) RR.poll = setTimeout(() => { RR.poll = null; load(id); }, 2500); }
 window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card); });
 
 // ---------- the board's flowcharts: Studio draws mermaid's flowchart subset itself (no library, no markup) ----------
@@ -259,7 +259,11 @@ function itemFigure(it, seen) {
  *  label opening the code it rests on */
 function statesView(card, it) {
   const g = parseFlow(it.code), wrap = h("div", { class: "rr-flow-wrap", "data-states": it.id }, g ? flowSvg(g, null, drawnOf(card, it), picBox()) : null);
-  for (const t of it.transitions || []) { const el = wrap.querySelector(`[data-elabel="${t.from}>${t.to}"]`); if (!el || !t.cite?.ok) continue;
+  // Studio drew each state as s_<id>; two transitions between the same states are matched to their labels in order
+  const ids = new Set((g?.nodes || []).map((n) => n.id)), sid = (id) => (ids.has(`s_${id}`) ? `s_${id}` : id), nth = new Map();
+  for (const t of it.transitions || []) { if (!String(t.label || "").replace(/[\[\]|;(){}\s]/g, "")) continue;
+    const pair = `${sid(t.from)}>${sid(t.to)}`, k = nth.get(pair) ?? 0; nth.set(pair, k + 1);
+    const el = wrap.querySelectorAll(`[data-elabel="${CSS.escape(pair)}"]`)[k]; if (!el || !t.cite?.ok) continue;
     el.classList.add("rr-cite-label"); el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.setAttribute("data-transition-cite", t.cite.ref);
     const go = () => openCite(card, t.cite.ref); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); }
   return wrap;
@@ -684,7 +688,7 @@ function listen(card) {
 }
 /** ask for a paid turn: it first asks to confirm (the provider and the model) */
 const askTurn = (card, action, text, again) => { if (action === "ask" && !text) return; const r = RR.rooms.get(card);
-  const prior = !again && r ? [...(r.turns || [])].reverse().find((t) => !t.studio && t.status === "done" && t.action === action && t.head === r.head && (action !== "ask" || String(t.text).trim() === String(text).trim())) : null;
+  const prior = !again && r && action !== "quiz" ? [...(r.turns || [])].reverse().find((t) => !t.studio && t.status === "done" && t.action === action && t.head === r.head && (action !== "ask" || String(t.text).trim() === String(text).trim())) : null;
   RR.confirm.set(card, prior ? { action, text: text || "", existing: prior.n } : { action, text: text || "" }); rerender(); };
 /** go to a turn's scene (its first) */
 const showTurn = (card, n) => { const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), at = scenes.findIndex((x) => x.t?.n === n); if (at >= 0) { stopPlay(); RR.scene.set(card, at); } rerender(); };
@@ -831,7 +835,9 @@ function header(r) {
 // were on leaving. Only a room that has loaded: the home page, a loading room and an error keep the board's layout ----------
 // the room list is read again on coming back to it: app.js has already drawn the new route when this runs, so leaving the
 // list (for a room or any page) is what marks it stale
-addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room" && !S.route.arg)) RR.list.fresh = false; });
+addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room" && !S.route.arg)) RR.list.fresh = false;
+  // back in a room whose turn still runs (the poll stopped when the captain left): read it now, and the poll follows it again
+  const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) load(id); });
 // the keyboard: ← → a point back or forward, Space play / pause, Escape closes what is open over the room
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -859,11 +865,13 @@ routes.room = (arg) => {
   // a scene that arrives while the page is open is revealed point by point; scenes already there show whole
   const scenes = scenesOf(r), seen = RR.seen.get(arg);
   if (!seen) RR.seen.set(arg, new Set(scenes.filter((s) => !s.t || s.t.status !== "running").map((s) => s.key)));
-  else for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key);
+  // an answer of several scenes (a lesson's chapters) arrives at once: the stage goes to its first, the rest wait in order
+  else { const took = new Set(); for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key);
+    const tk = sc.turn ?? sc.key; if (took.has(tk)) continue; took.add(tk);
     // the captain moved elsewhere while it ran: the answer waits behind "the answer is ready", never pulling the stage away
     if (RR.moved.has(arg)) { if (!RR.ready.has(arg)) RR.ready.set(arg, sc.key); continue; }
     // the stage moves to that answer itself (not to whatever scene happens to be last)
-    RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue; RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); }
+    RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue; RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
   // entering a room while a turn runs: the stage shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);

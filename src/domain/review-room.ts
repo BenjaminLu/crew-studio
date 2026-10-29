@@ -48,7 +48,7 @@ import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT,
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
-  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "967e49b4af1a0c79a2905996fe0c017f593278b73f0943d2b473f4a2b2ff4d49" },
+  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "5cd9acd030b2d30ae7326fe74de473a972fe6798b892113d84e2b70852220bed" },
   { id: "pstack-how", ref: "workflows/skills/pstack/how.md", sha256: "19b614c9a54cf2dbad87114f9a3de7e408f39f7e0b02bf76608956b10d77f6d6" },
   { id: "pstack-why", ref: "workflows/skills/pstack/why.md", sha256: "9d6a298a5528b46610e964d0ce6ddcab990913837cb08455e531d6c5619d8c37" },
   { id: "pstack-teach", ref: "workflows/skills/pstack/teach.md", sha256: "a85b812c6d485cc07e13e3646f8d4b6525185f2159af3523729835007cfa120a" },
@@ -529,7 +529,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         const transitions = (Array.isArray(a?.transitions) ? a.transitions : []).map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), label: String(x?.label ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null }));
         if (states.length < 2 || states.length > FIGURE_LIMITS.states || states.some((x: any) => !/^[\w-]{1,30}$/.test(x.id)) || ids.size !== states.length) throw new Error(`item ${i + 1}: states is 2 to ${FIGURE_LIMITS.states} {id, label}, each id letters, digits, - or _`);
         if (!transitions.length || transitions.length > FIGURE_LIMITS.transitions || transitions.some((x: any) => !ids.has(x.from) || !ids.has(x.to))) throw new Error(`item ${i + 1}: transitions is 1 to ${FIGURE_LIMITS.transitions} {from, to, label, cite}, between the states listed`);
-        const code = ["flowchart LR", ...states.map((x: any) => `  ${x.id}[${x.label.replace(/[\[\]|]/g, " ")}]`), ...transitions.map((x: any) => `  ${x.from} -->${x.label ? `|${x.label.replace(/[|\[\]]/g, " ")}|` : ""} ${x.to}`)].join("\n");
+        // drawn as a mermaid flowchart: an id is prefixed (a state called "end", "style" or "class" is a keyword there) and a label
+        // loses what would end it early ([ ] | ; ) })
+        const sid = (id: string) => `s_${id}`, lab = (t: string) => t.replace(/[\[\]|;(){}]/g, " ").replace(/\s+/g, " ").trim();
+        const code = ["flowchart LR", ...states.map((x: any) => `  ${sid(x.id)}[${lab(x.label) || x.id}]`), ...transitions.map((x: any) => `  ${sid(x.from)} -->${lab(x.label) ? `|${lab(x.label)}|` : ""} ${sid(x.to)}`)].join("\n");
         const cites = transitions.map((x: any) => x.cite).filter(Boolean);
         return { ...at, type, states, transitions, code, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" }; }
       // one request, in order: who calls whom, returns and async, loops, alternatives and options kept
@@ -593,14 +596,16 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           const added: string[] = [], errors: string[] = [];
           for (let i = 0; i < list.length; i++) { try { const it = await item(list[i], i); room.board.push(it); added.push(it.id); } catch (e: any) { errors.push(String(e?.message ?? e)); } }
           save(k, room); return { added, errors }; } },
-      { name: "scene_show", description: `Show one scene of the lesson on the board, the way the captain reads an answer: its chapter (in order: ${CHAPTERS.map((c) => c.id).join(", ")}; a chapter with nothing to show is left out), a short title, one picture (a board item id you drew: board_draw, chart_draw, screenshots_show or illustrate) and ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points, each one sentence with the citations it rests on (none: it is an inference). Limits: the title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones; a point at most ${SCENE_LIMITS.point.cjk} CJK or ${SCENE_LIMITS.point.latin} Latin (citations not counted). Over a limit the scene is refused, saying which part: shorten it and call again. A longer explanation goes in your final answer (the transcript). At most ${SCENE_LIMITS.scenes} scenes a turn.`,
-        schema: { type: "object", properties: { chapter: { type: "string", enum: CHAPTERS.map((c) => c.id) }, title: { type: "string" }, picture: { type: "string" }, points: { type: "array", minItems: SCENE_LIMITS.points.min, maxItems: SCENE_LIMITS.points.max, items: { type: "object", properties: { text: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["text"] } } }, required: ["chapter", "title", "picture", "points"] },
+      { name: "scene_show", description: `Show one scene on the board, the way the captain reads an answer: when teaching the change, its chapter (in order: ${CHAPTERS.map((c) => c.id).join(", ")}; a chapter with nothing to show is left out; other answers may name one or leave it out), a short title, one picture (a board item id you drew: board_draw, chart_draw, screenshots_show or illustrate) and ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points, each one sentence with the citations it rests on (none: it is an inference). Limits: the title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones; a point at most ${SCENE_LIMITS.point.cjk} CJK or ${SCENE_LIMITS.point.latin} Latin (citations not counted). Over a limit the scene is refused, saying which part: shorten it and call again. A longer explanation goes in your final answer (the transcript). At most ${SCENE_LIMITS.scenes} scenes a turn.`,
+        schema: { type: "object", properties: { chapter: { type: "string", enum: CHAPTERS.map((c) => c.id) }, title: { type: "string" }, picture: { type: "string" }, points: { type: "array", minItems: SCENE_LIMITS.points.min, maxItems: SCENE_LIMITS.points.max, items: { type: "object", properties: { text: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["text"] } } }, required: ["title", "picture", "points"] },
         run: async (a) => {
           const title = String(a?.title ?? "").replace(/\s+/g, " ").trim(), picture = String(a?.picture ?? "").trim(), points = Array.isArray(a?.points) ? a.points : [];
           const errors = sceneErrors(title, points), at = CHAPTERS.findIndex((c) => c.id === a?.chapter), ch: any = CHAPTERS[at], pic = room.board.find((b) => b.id === picture);
-          if (at < 0) errors.push(`chapter is one of ${CHAPTERS.map((c) => c.id).join(", ")}, in that order`);
-          else { const last = (turn.scenes ?? []).map((x) => CHAPTERS.findIndex((c) => c.id === x.chapter)).filter((x) => x >= 0).at(-1) ?? -1;
-            if (at < last) errors.push(`chapters come in order (${CHAPTERS.map((c) => c.id).join(" → ")}): "${ch.id}" cannot follow "${CHAPTERS[last].id}"`);
+          // a lesson (teach) is chapters in order; any other answer may name a chapter, in any order, or none
+          const teach = turn.action === "teach";
+          if (at < 0 && (teach || a?.chapter)) errors.push(`chapter is one of ${CHAPTERS.map((c) => c.id).join(", ")}, in that order`);
+          else if (at >= 0) { const last = (turn.scenes ?? []).map((x) => CHAPTERS.findIndex((c) => c.id === x.chapter)).filter((x) => x >= 0).at(-1) ?? -1;
+            if (teach && at < last) errors.push(`chapters come in order (${CHAPTERS.map((c) => c.id).join(" → ")}): "${ch.id}" cannot follow "${CHAPTERS[last].id}"`);
             if (ch.picture && pic && !ch.picture.includes(pic.type)) errors.push(`the "${ch.id}" chapter's picture is a ${ch.picture.join(" or ")} item (board_draw): draw it, then show it`);
             if (ch.cited) points.forEach((p: any, j: number) => { if (!Array.isArray(p?.cites) || !p.cites.length) errors.push(`point ${j + 1}: a risk is listed only with what it rests on: cite it (an empty list is a finding: say what you checked, cited)`); }); } if (!room.board.some((b) => b.id === picture)) errors.push(`picture ${picture ? `"${picture.slice(0, 20)}" is not a board item` : "is required"}: draw one first (board_draw, chart_draw, screenshots_show or illustrate) and give its id`);
           if ((turn.scenes?.length ?? 0) >= SCENE_LIMITS.scenes) errors.push(`at most ${SCENE_LIMITS.scenes} scenes a turn`);
@@ -609,7 +614,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           const claims: Claim[] = points.map((p: any) => { const cites = citesOf(p.cites, ok), text = String(p.text).replace(/\s+/g, " ").trim();
             return { text, kind: "claim", basis: !/\[(inference|inferred|speculative)\]/i.test(text) && cites.some((c) => c.ok) ? "cited" : "inference", cites }; });
           if (ch?.cited && claims.some((c) => c.basis !== "cited")) return { error: "a risk is listed only with a citation Studio can verify: fix the citation or leave the point out" };
-          const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title, picture, points: claims, chapter: ch.id }]; save(k, room);
+          const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title, picture, points: claims, ...(ch ? { chapter: ch.id } : {}) }]; save(k, room);
           return { scene: n, points: claims.map((c) => c.basis) }; } },
       { name: "screenshots_show", description: "Put the app's real screenshots on the board: each changed page at the base and at the head, as Studio's sandboxed renderer shot them for this head (the Task's own capture check, the app's fixture build, no live data). The captain toggles before / after. Only when the change touches the app's pages.",
         schema: { type: "object", properties: { title: { type: "string" } } },
@@ -851,7 +856,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const tutors = [...new Map(room.turns.filter((t) => !t.studio && t.provider).map((t) => [`${t.provider} ${t.model}`, { provider: t.provider, model: t.model }])).values()];
       const usd = room.turns.reduce((n, t) => n + (typeof t.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof room.translating?.cost?.usd === "number" ? room.translating.cost.usd : 0);
       const savedAt = new Date().toISOString(), snap = { schema: 1, kind: "review-room-snapshot", room: k.id, savedAt, reason, subject: subjectMeta(k, room, view), tutors, cost: { usd: Math.round(usd * 10000) / 10000 },
-        view: { ...view, board, open: false, offer: null, running: null, tutors: [], translate: null, checking: false, moved: null, illustrations: [],
+        view: { ...view, board, open: false, offer: null, running: null, notes: undefined, progress: null, turns: (view.turns ?? []).filter((t: any) => !t.hidden), tutors: [], translate: null, checking: false, moved: null, illustrations: [],
           sources: (view.sources ?? []).map((x: any) => x.ok ? x : { n: x.n, turn: x.turn, kind: x.kind, at: x.at, ok: false, ...(x.refused ? { refused: "refused by Studio's web filter" } : {}), ...(x.error ? { error: "not read" } : {}) }), closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
       writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
       const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);

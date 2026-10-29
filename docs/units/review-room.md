@@ -259,8 +259,8 @@ design doc of the repository shows it); the change itself, one scene per item (a
 state (a `states` item: every state and every transition, each transition citing its code and opening it); one request, in
 order (a `sequence` item: calls, returns, async calls, and loops, alternatives and options as frames); what reviewers raised;
 what to watch (risks only, every point cited and verified: an empty list is a finding, said with what was checked); open
-questions or a check. Studio holds the shape as it holds a scene's size: `scene_show` names its `chapter`, a chapter never
-follows a later one, the change, lifecycle and sequence chapters show their own kind of drawing, and a risk without a
+questions or a check. Studio holds the shape as it holds a scene's size: in a lesson `scene_show` names its `chapter` and a chapter
+never follows a later one (other answers may name one, in any order, or none); the change, lifecycle and sequence chapters show their own kind of drawing, and a risk without a
 verified citation is refused. Every figure is drawn by Studio from the tutor's data (text nodes, sizes checked against its
 layout). Nothing about deployment is claimed: whether a migration ran is not in the repository. The room's chapters rail
 (left of the board; a strip above it on a phone) lists every answer's scenes under its question, the lesson by chapter: a

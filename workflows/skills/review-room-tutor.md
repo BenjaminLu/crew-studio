@@ -82,7 +82,8 @@ claim as above.
 
 When the captain asks to be taught the change, build the lesson as chapters, in this order, each one scene or more
 (scene_show's `chapter`), and leave out a chapter whose source is empty. Every chapter has a drawing; never a scene of
-prose alone.
+prose alone. Other answers (a question, how, why, a quiz, the merge check) may name the chapter a scene belongs to, in any
+order, or leave it out.
 
 1. `what`: what this is, one paragraph the captain could repeat.
 2. `talks`: what talks to what, an architecture diagram (a mermaid flowchart): from a design doc of the repository when

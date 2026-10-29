@@ -337,7 +337,7 @@ function categoriesCard(project) {
         h("ul", { class: "is-cat-issues" }, x.issues.map((n) => { const fx = fixOf(project, n), live = x.status === "active", can = live && !fx.busy && fx.state !== "package" && !outcome(fx);
           return h("li", { "data-cat-issue": String(n) },
           x.status === "active" ? h("input", { type: "checkbox", class: "is-fix-pick", "data-fix-pick": String(n), "aria-label": T(`Select #${n}`, `選 #${n}`), checked: picked(project).has(n) ? true : null, disabled: can ? null : true, onchange: (e) => toggle(project, [n], e.target.checked) }) : null,
-          h("a", { target: "_blank", rel: "noopener noreferrer", href: `https://github.com/${c.repository}/issues/${n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: title(n) }, title(n)),
+          h("a", { href: `https://github.com/${c.repository}/issues/${n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: title(n) }, title(n)),
           packOf(n) ? h("span", { class: "tb-count mono", "data-cat-pack": packOf(n) }, packOf(n)) : null,
           fixChip(project, c.repository, n),
           can ? h("button", { type: "button", class: "btn", "data-fix-one": String(n), onclick: () => askFix(project, [n], { back: `[data-fix-one="${n}"]` }) }, T("Fix", "修復")) : null,
@@ -356,7 +356,7 @@ function categoriesCard(project) {
     h("summary", {}, h("b", {}, T("Planned work", "規劃中")), h("span", { class: "tb-count num" }, String(plan.length)), waiting.length ? h("span", { class: "is-proposed", "data-cat-planned-waiting": String(waiting.length) }, T(`${waiting.length} wait${waiting.length === 1 ? "s" : ""} for approval`, `${waiting.length} 張等核准`)) : null,
       h("span", { class: "faint is-cat-scope" }, T("Roadmap and program tasks, plans, process work: set aside, not filed into a category. A security issue is never set aside.", "路線圖、計畫任務、流程類工作：先擱置，不歸類。安全 issue 不會被擱置。"))),
     h("div", { class: "is-cat-body" }, h("ul", { class: "is-cat-issues" }, all.map((x) => h("li", { "data-cat-issue": String(x.n), ...(x.pending ? { "data-cat-pending": "1" } : {}) },
-      h("a", { target: "_blank", rel: "noopener noreferrer", href: `https://github.com/${c.repository}/issues/${x.n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${x.n}`), h("span", { class: "is-title", title: title(x.n) }, title(x.n)),
+      h("a", { href: `https://github.com/${c.repository}/issues/${x.n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${x.n}`), h("span", { class: "is-title", title: title(x.n) }, title(x.n)),
       x.pending ? h("span", { class: "is-proposed" }, T("Proposed: waiting for approval", "提議中：等核准")) : null,
       x.why ? h("span", { class: "faint" }, x.why) : null,
       x.pending ? h("button", { type: "button", class: "btn", "data-cat-plan": String(x.n), onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "move", n: x.n, to: "PLANNED" }) }, T("Set it aside", "擱置它")) : null,
