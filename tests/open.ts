@@ -28,19 +28,19 @@ ok(defaultHttpHandler(LISTING) === "com.google.chrome" && defaultHttpHandler("(\
 const tmp = mkdtempSync(join(tmpdir(), "crew-open-")); const log = join(tmp, "argv.log");
 const openStub = join(tmp, "open"), defStub = join(tmp, "defaults");
 // each call's argv, one element per NUL, a call per record (RS): argument boundaries are kept, so "-a" "Google Chrome" is proven as two elements
-const stub = (failOn: string | null) => { writeFileSync(openStub, `#!/bin/sh\nprintf '%s\\0' "$@" >> "${log}"\nprintf '\\036' >> "${log}"\n${failOn ? `case "$*" in *${failOn}*) exit 1;; esac\n` : ""}exit 0\n`); chmodSync(openStub, 0o755); };
+const stub = (failOn: string | null) => { writeFileSync(openStub, `#!/bin/sh\nprintf '%s\\0' "$@" >> "${log}"\nprintf '\\036' >> "${log}"\n${failOn ? `case "$*" in *"${failOn}"*) exit 1;; esac\n` : ""}exit 0\n`); chmodSync(openStub, 0o755); };
 const defaults = (body: string | null) => { writeFileSync(defStub, body === null ? "#!/bin/sh\nexit 1\n" : `#!/bin/sh\ncat <<'X'\n${body}\nX\n`); chmodSync(defStub, 0o755); };
 let livePort="";
-const env = (extra: Record<string, string> = {}) => { const e: any = { ...process.env, CREW_DATA: join(tmp, "data"), CREW_PORT: livePort, CREW_RUNTIME_DIR:join(tmp,"runtime"), CREW_OPEN_TOOL: openStub, CREW_DEFAULTS_TOOL: defStub, CREW_SESSION_TOKEN: "sessfixture0123", GITHUB_TOKEN: "dummy-open-inherited-token", ...extra }; if (!extra.CREW_BROWSER) delete e.CREW_BROWSER; return e; };
+const env = (extra: Record<string, string> = {}) => { const e: any = { ...process.env, CREW_DATA: join(tmp, "data"), CREW_PORT: livePort, CREW_RUNTIME_DIR:join(tmp,"runtime"), CREW_OPEN_TOOL: openStub, CREW_DEFAULTS_TOOL: defStub, CREW_SESSION_TOKEN: "sessfixture0123", GITHUB_TOKEN: "dummy-open-inherited-token", CREW_APP_WINDOW: "0", ...extra }; if (!extra.CREW_BROWSER) delete e.CREW_BROWSER; return e; };
 const fixture=Bun.spawn(["bun","tests/lib/launch-fixture.ts"],{cwd:join(import.meta.dir,".."),env:env(),stdout:"pipe",stderr:"pipe"});
 const reader=fixture.stdout.getReader();livePort=new TextDecoder().decode((await reader.read()).value).trim();reader.releaseLock();
 const go = async (args: string[], extra: Record<string, string> = {}) => { rmSync(log, { force: true }); const r = Bun.spawn(["bun", "src/main.ts", "open", ...args], { cwd: join(import.meta.dir, ".."), env: env(extra), stdout: "pipe", stderr: "pipe" });
   const output=new Response(r.stdout).text();await r.exited;
   const calls = existsSync(log) ? readFileSync(log, "utf8").split("\x1e").filter(Boolean).map((c) => c.split("\0").slice(0, -1)) : [];
   const rawCalls = calls;
-  const redirects = rawCalls.map(c => c.at(-1)).filter((path): path is string => !!path && path.endsWith(".html"));
+  const redirects = rawCalls.map(c => c.at(-1)).map(p => p?.startsWith("--app=file://") ? decodeURIComponent(p.slice(13)) : p).filter((path): path is string => !!path && path.endsWith(".html"));
   const protectedFiles = redirects.length > 0 && redirects.every(path => (statSync(path).mode & 0o777) === 0o600 && path.startsWith(join(tmp,"runtime")+"/"));
-  return { out: await output + await new Response(r.stderr).text(), rawCalls, protectedFiles, calls: calls.map(c => c.map((arg,i) => { if(i!==c.length-1||!arg.endsWith(".html"))return arg; const html=readFileSync(arg,"utf8"),match=/location\.replace\((".*?")\)/.exec(html);return match?JSON.parse(match[1]):arg; })) }; };
+  return { out: await output + await new Response(r.stderr).text(), rawCalls, protectedFiles, calls: calls.map(c => c.map((arg,i) => { if(i!==c.length-1||!arg.endsWith(".html")||arg.startsWith("--app="))return arg; const html=readFileSync(arg,"utf8"),match=/location\.replace\((".*?")\)/.exec(html);return match?JSON.parse(match[1]):arg; })) }; };
 const same = (a: string[] | undefined, b: string[]) => JSON.stringify(a) === JSON.stringify(b);
 const URL = `http://127.0.0.1:${livePort}/session?t=sessfixture0123`;
 stub(null); defaults(LISTING);
@@ -63,6 +63,22 @@ const i = await go(["--browser="], { CREW_BROWSER: "Firefox" });
 ok(same(i.calls[0], ["-a", "Firefox", URL]), "an empty --browser= falls back to CREW_BROWSER", JSON.stringify(i));
 const j = await go(["--browser="]);
 ok(j.calls.length === 1 && same(j.calls[0], ["-b", "com.google.chrome", URL]), "an empty --browser= with no CREW_BROWSER falls back to the default browser", JSON.stringify(j));
+// a Studio window (the default launch): Chrome's app window by name through LaunchServices, the session link marked &w=app,
+// the argv holding only the redirect file's file: URL; a missing Chrome tries the next Chromium; none, the default browser
+const APP = `${URL}&w=app`, appArg = (c: string[] | undefined) => c?.at(-1)?.startsWith("--app=file://") ? c.at(-1)! : "";
+const appCall = (c: string[] | undefined, app: string) => !!c && c.length === 4 && c[0] === "-na" && c[1] === app && c[2] === "--args" && !!appArg(c);
+const appTarget = (c: string[] | undefined) => { const a = appArg(c); if (!a) return ""; const f = decodeURIComponent(a.slice("--app=file://".length)), m = /location\.replace\((".*?")\)/.exec(readFileSync(f, "utf8")); return m ? JSON.parse(m[1]) : ""; };
+stub(null); const w1 = await go([], { CREW_APP_WINDOW: "" });
+ok(w1.rawCalls.length === 1 && appCall(w1.rawCalls[0], "Google Chrome") && appTarget(w1.rawCalls[0]) === APP && /in a Studio window \(Google Chrome\)/.test(w1.out) && !JSON.stringify(w1.rawCalls).includes("sessfixture0123"),
+  "by default the launch asks for a Studio window: open -na \"Google Chrome\" --args --app=<the private redirect file>, its link marked &w=app", JSON.stringify(w1.rawCalls));
+stub("Google Chrome"); const w2 = await go([], { CREW_APP_WINDOW: "" });
+ok(w2.rawCalls.length === 2 && appCall(w2.rawCalls[0], "Google Chrome") && appCall(w2.rawCalls[1], "Microsoft Edge") && /Studio window \(Microsoft Edge\)/.test(w2.out), "no Chrome: the next Chromium browser's app window", JSON.stringify(w2.rawCalls));
+stub("--app="); const w3 = await go([], { CREW_APP_WINDOW: "" });
+ok(w3.rawCalls.length === 5 && w3.rawCalls.slice(0, 4).every((c) => c[0] === "-na") && same(w3.calls[4], ["-b", "com.google.chrome", URL]) && /default browser/.test(w3.out), "no Chromium at all: the default browser, as before, with the plain link (a tab is not a Studio window)", JSON.stringify(w3.calls));
+stub(null); const w4 = await go(["--tab"], { CREW_APP_WINDOW: "" });
+ok(w4.calls.length === 1 && same(w4.calls[0], ["-b", "com.google.chrome", URL]), "--tab keeps the browser tab (no app window, no &w=app)", JSON.stringify(w4.calls));
+const w5 = await go(["--browser", "Safari"], { CREW_APP_WINDOW: "" });
+ok(w5.calls.length === 1 && same(w5.calls[0], ["-a", "Safari", URL]), "a browser the captain names is used as asked", JSON.stringify(w5.calls));
 writeFileSync(openStub, "#!/bin/sh\nexit 1\n"); chmodSync(openStub, 0o755); const g = await go([]);
 ok(!g.out.includes(URL)&&!g.out.includes("sessfixture0123"), "when nothing opens, no secret link is printed", g.out);
 fixture.kill("SIGTERM");await fixture.exited;

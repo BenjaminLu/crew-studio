@@ -7,7 +7,8 @@ pane per agent, and its state (working, waiting for you, done, exited) at a glan
 Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state heuristics), `public/terminals.js` and
 `public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 5.5.0 and its fit addon 0.10.0,
 pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
-`tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs` (`bun run test:terminals`).
+`tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs`, `tests/terminal-keys.ts`, `tests/terminal-launch.ts`,
+`tests/terminal-panes-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`.
 
 ## Focus mode
 
@@ -24,12 +25,65 @@ The sidebar has a **Terminals** item (its own icon, right after Firstmate, also 
 The state is on `<body>` and in `PAGE_FOCUS`, outside `#view`, so a `render()` changes nothing. Another page can use the
 same switch by setting `.focus` on its route view.
 
-With a terminal shown, the page is the terminal: a strip of session tabs (the list, current one marked), its header (state,
-command, Stop, Restart, Remove, Send for review, Remote Control) and xterm filling the rest, width and height. The fit addon
-follows every resize, and the PTY gets the new size (`…/resize`). **New** opens the launcher above the terminal and starting
-a terminal closes it; it starts open while nothing is running. A phone sees the same strip with a "View only" badge in place
-of New; at 760 px and below the sidebar stays the top bar (its theme and gear row is hidden on this page) and the terminal
-takes the screen's width. With no terminal at all, the page is the launcher and the empty state, as before.
+With a terminal shown, the page is the terminal: a row of tabs and tools, the focused terminal's header on one line (state,
+command, Stop, Restart, Remove, Send for review, Remote Control), the tab's panes filling the rest, width and height, and a
+line of key hints. Each pane's fit addon follows every resize, and its PTY gets the new size (`…/resize`). **Launch…** opens
+the launcher (agent presets, a command, every terminal listed) above the panes; starting a terminal closes it; it starts
+open while nothing is running. A phone sees the same tabs with a "View only" badge in place of the tools that start
+terminals; at 760 px and below the sidebar stays the top bar (its theme and gear row is hidden on this page) and the panes
+take the screen's width. With no tab at all, the page is the launcher and the list, as before.
+
+## Tabs, panes and keys
+
+The page holds tabs; a tab is a binary tree of splits (row or column, with a ratio) whose leaves are panes; a pane is one
+terminal, its own PTY on the service above. A new tab or a split starts a login shell (the Shell preset) in the focused
+terminal's project, as a terminal app opens one in its folder; Launch… starts anything else in a new tab. The arrangement is
+this viewer's own, in `localStorage` (`crew.term.layout`): a reload keeps it, another browser has its own, and losing it
+loses no terminal. **Closing a pane or a tab never stops its terminal**: it leaves the screen and stays in the list, in Go to
+and on the Firstmate panel; Stop stops it. The last pane of a tab closes the tab, as in iTerm2. A terminal that is removed
+(or gone after a restart) leaves its pane. Dividers drag; a click in a pane focuses it without rebuilding the page; the
+address names the focused terminal (replaced in place, so moving between panes adds no history).
+
+The keys are the platform's own terminal's (`public/term-keys.js`, the prototype's table, kept whole):
+
+| | Mac (iTerm2) | Windows and Linux (Windows Terminal) |
+|---|---|---|
+| New tab | ⌘T, in a browser tab ⌥T | Ctrl+Shift+T, in a browser tab Ctrl+Alt+T |
+| Tab 1–9, next, previous | ⌘1–9, ⇧⌘] / ⇧⌘[ (⌥⇧] / ⌥⇧[) | Ctrl+Alt+1–9, Ctrl+Tab / Ctrl+Shift+Tab (Ctrl+Alt+PgDn / PgUp) |
+| Rename tab | F2 | F2 |
+| Split right, down | ⌘D, ⇧⌘D | Alt+Shift+=, Alt+Shift+- |
+| Move, next pane, swap | ⌥⌘arrows (⌃⌥arrows), ⌘] / ⌘[, ⌥⇧⌘arrows | Alt+arrows, Ctrl+Alt+] / [, Ctrl+Alt+Shift+arrows |
+| Resize, zoom | ⌃⌘arrows, ⇧⌘↩ | Alt+Shift+arrows, Ctrl+Shift+Enter |
+| Close pane (last: the tab) | ⌘W, in a browser tab ⌥W | Ctrl+Shift+W, in a browser tab Ctrl+Alt+W |
+| Clear, go to, sidebar, keys | ⌘K, ⇧⌘O, ⌘B, ⌘/ | Ctrl+Shift+K, Ctrl+Shift+P, Ctrl+Shift+B, F1 |
+
+Chords are matched on `KeyboardEvent.code` (the physical key: an input method or a keyboard layout does not move them),
+in the capture phase ahead of xterm, with `preventDefault`, so a chord that is Studio's never also reaches the shell.
+Everything else (plain keys, Ctrl+C, the browser's copy and paste) goes to the terminal as before. Both chords of an action
+always work; the hints and the key table (⌘/ or F1, both platforms one click apart) show the one that works where the page
+is, and strike out the other. The table also lists copy mode, a new workspace and its rename (⇧⌘C, ⌘N, ⇧F2 on a Mac): this
+page has no workspaces and xterm selects and copies by itself, so those chords are not taken and reach the terminal.
+
+## A Studio window
+
+A browser tab keeps ⌘T, ⌘W and ⌘N (Ctrl+Shift+T, W, N; Ctrl+Tab) for itself: the page never sees them. A Chromium app
+window (`--app`) keeps none, so there they reach the page (checked by hand with real keystrokes, Chrome on macOS; tests
+cannot press keys the OS gives the browser). So:
+
+- `crew-studio launch` and `open` (and the live release's open) ask for a Studio window first: on macOS
+  `open -na "Google Chrome" --args --app=<the private redirect file>`, then Microsoft Edge, Brave and Chromium; on Windows
+  the installed chrome.exe, msedge.exe or brave.exe; on Linux the Chromium browsers on PATH. The command line carries only
+  the redirect file's `file:` URL (0600, as before); the file's link is the session link with `&w=app`, and Studio's
+  `/session` then lands on `/?window=studio`. The page keeps that for the window (`sessionStorage`) and drops it from the
+  address. No Chromium: the default browser as before, with the plain link. `--tab` or `CREW_APP_WINDOW=0` keeps the tab;
+  `--browser <app>` is used as asked. Windows and Linux reuse the same launch, whose private runtime folder check is
+  POSIX's: not exercised on those systems.
+- In a browser tab the terminal page shows a banner naming the chords the tab keeps and the ones to use instead, with **Open
+  in a Studio window**: `POST /api/terminals/app-window` runs the same launch as an app window. The desktop page's own
+  request only (its cookie, same origin, the guard of every terminal POST; a phone and a script are refused). It answers
+  what opened, or 502 `noWindow` and the page stays.
+- `public/manifest.webmanifest` (display standalone, start `/?window=studio`, icons) makes Studio installable; an installed
+  Studio, fullscreen, or `display-mode: standalone` count as a Studio window too.
 
 ## Not sandboxed, by decision
 

@@ -175,6 +175,8 @@ export type TerminalsOpts = {
   shell?: string;
   /** Send for review: start code-firstmate from the terminal's branch; answers the run's id */
   review?: (r: ReviewRequest) => Promise<{ run: string }>;
+  /** "Open in a Studio window": Studio's authenticated launch as an app window (src/open.ts); answers what opened it, or false */
+  openWindow?: () => Promise<string | false> | string | false;
 };
 /** The project's checkout: its branch, head and commits beyond base (Studio's own git: no hooks, no user config). */
 export function gitFacts(path: string, base?: string | null): TermGit | null {
@@ -193,7 +195,7 @@ export class Terminals {
   private probe = new Map<string, Promise<"flag" | "slash">>();
   readonly keepTranscripts: boolean; readonly maxSubs = 4;
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
-  constructor(private o: TerminalsOpts) {
+  constructor(readonly o: TerminalsOpts) {
     this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
     this.keepTranscripts = o.transcripts ?? process.env.CREW_TERMINAL_TRANSCRIPTS !== "0";
     this.cap = envNum("CREW_TERMINAL_SCROLLBACK", 2 * MIB); this.max = envNum("CREW_TERMINAL_MAX", 8);
@@ -508,6 +510,14 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
         ...(desktop ? { presets: svc.presets().map(({ id, label, kind, remoteControl, path }) => ({ id, label, kind, remoteControl: !!remoteControl, path })), projects: svc.projects() } : {}) });
     }
     if (p === "/api/terminals" && writing) { const b = await req.json().catch(() => null); return json({ terminal: await svc.create(b ?? {}, "desktop") }); }
+    // the page opens Studio again as an app window, where the browser keeps no key for itself (the new-tab, close and
+    // new-window chords reach the terminal): the desktop page's own request only (the guard above), the same launch as
+    // crew-studio launch
+    if (p === "/api/terminals/app-window") {
+      if (!writing) return json({ error: "POST" }, 405);
+      const used = svc.o.openWindow ? await svc.o.openWindow() : false;
+      return used ? json({ ok: true, used }) : json({ error: "No browser accepted the Studio window. Studio is still here, in this tab.", code: "noWindow" }, 502);
+    }
     const m = /^\/api\/terminals\/([\w-]{1,64})\/(stream|input|resize|kill|restart|dismiss|review)$/.exec(p);
     if (!m) return json({ error: "not found" }, 404);
     const [, id, op] = m;

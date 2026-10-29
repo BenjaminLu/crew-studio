@@ -88,7 +88,7 @@ try {
   await p.goto(base + "/#/terminals");
   await p.locator("#termCmd").fill("printf 'Proceed with deploy? [y/N] '; read a; echo answer:$a; sleep 1");
   await p.locator("[data-term-run]").click();
-  ok(await until(async () => /#\/terminals\/T-/.test(p.url())), "Run opens the new terminal", p.url());
+  ok(await until(async () => /#\/terminals\/T-(?!seeded)/.test(p.url())), "Run opens the new terminal", p.url());
   const firstId = decodeURIComponent(p.url().split("/terminals/")[1] || "");
   ok(await seen(p.locator(".wt-xterm .xterm-rows"), 10000), "xterm.js draws it");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText()).includes("Proceed with deploy?")), "the program's output is on screen");

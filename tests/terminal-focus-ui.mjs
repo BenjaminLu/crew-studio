@@ -79,12 +79,13 @@ try {
     const avail = L.vw - L.side.w;
     ok(L.focus === "terminal" && L.collapsed && L.chatClosed && !L.chat?.shown && L.side.w <= 64, `${when}: the side bar is the rail, the chat is gone`, JSON.stringify(L));
     ok(L.xterm && L.xterm.w >= 0.9 * avail, `${when}: the terminal is >= 90 % of the width beside the rail (${Math.round(L.xterm?.w)} of ${avail})`, JSON.stringify(L.xterm));
-    ok(L.xterm && L.xterm.h >= L.vh - 200, `${when}: and the window's height but for its header, at most 200 px (${Math.round(L.xterm?.h)} of ${L.vh})`, JSON.stringify(L.xterm));
+    ok(L.xterm && L.xterm.h >= L.vh - 200, `${when}: and the window's height but for the tabs, its header and the key hints, at most 200 px (${Math.round(L.xterm?.h)} of ${L.vh})`, JSON.stringify(L.xterm));
     ok(L.scrollW <= L.vw + 1, `${when}: no sideways scroll`);
-    ok(await p.locator(`.wt-tabs [data-term-row="${id}"][aria-current="page"]`).isVisible() && await p.locator(`[data-term-kill="${id}"]`).isVisible() && await p.locator("[data-term-new]").isVisible(),
-      `${when}: the sessions strip (this one current), Stop and New stay`);
+    ok(await p.locator('.wt-tabs [data-term-tab][aria-selected="true"]').isVisible() && await p.locator(`.wt-pane.focus[data-term-pane="${id}"]`).isVisible() && await p.locator(`[data-term-kill="${id}"]`).isVisible() && await p.locator("[data-term-new]").isVisible(),
+      `${when}: the tabs (this one current, its pane focused), Stop and Launch stay`);
     return L;
   };
+  await p.locator('[data-term-appwin] button[aria-label="Hide"]').click(); await p.waitForTimeout(200);
   await check("a terminal shown");
   await shot(p, "focus-terminal-after.png");
   const host0 = await p.locator(".wt-xterm").elementHandle();
@@ -105,11 +106,11 @@ try {
 
   // New opens the launcher in place and closes it again; the state lives in the page's model, not the DOM
   await p.locator("[data-term-new]").click();
-  ok(await seen(p.locator(".wt-new #termCmd")) && await p.locator("[data-term-new]").getAttribute("aria-expanded") === "true", "New opens the launcher above the terminal");
+  ok(await seen(p.locator(".wt-new #termCmd")) && await p.locator("[data-term-new]").getAttribute("aria-expanded") === "true", "Launch opens the launcher above the terminal");
   await p.evaluate(() => render());
   ok(await p.locator(".wt-new #termCmd").isVisible(), "an open launcher survives render()");
   await p.locator("[data-term-new]").click();
-  ok(await until(async () => !(await p.locator(".wt-new").count())), "New again closes it");
+  ok(await until(async () => !(await p.locator(".wt-new").count())), "Launch again closes it");
 
   // leaving gives back what the captain had
   await p.locator('.nav > .nav-item[data-view="board"]').click(); await p.waitForTimeout(300);
