@@ -295,7 +295,7 @@ export function createRuntime(d: RuntimeDeps) {
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
   const draftTools=installWorkflowDraftTools(drafts,readiness?.tools,def=>{readiness?.versionSaved(def);try{d.send('wf',{id:def.id,version:def.version});}catch{}});
-  const issueTriageFlow=installIssueTriage(engine,projects,issueTriage,d.dataDir,{propose:({tainted:_t,...args},owner)=>originalFirstmate.proposeTainted(args,owner) as any,crewOf:(def,project)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),def,{},t.hash,project).nodes as any:null;}});
+  const issueTriageFlow=installIssueTriage(engine,projects,issueTriage,d.dataDir,{propose:({tainted:_t,...args},owner)=>originalFirstmate.proposeTainted(args,owner) as any,crewOf:(def,project)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),def,{},t.hash,project).nodes as any:null;},dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project) as any});
   const categoriesFlow=installIssueCategories(engine,projects,issueCategories,d.dataDir);
   const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
@@ -683,6 +683,18 @@ export function createRuntime(d: RuntimeDeps) {
           try { const run = issueTriageFlow.start({ project: start[1], size, issues, by: "captain (project page)" }); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
           catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
         }
+        // Fix, from the project page (docs/units/board.md, "Fixing issues"): the desktop captain's click is the approval of
+        // each issue's hidden one-issue investigation and of the fix Task a fixable outcome starts
+        const fixM = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/fix$/.exec(p);
+        if (fixM) {
+          if (!writing) return json({ error: "use POST" }, 405);
+          if (who.kind !== "desktop") return json({ error: "only the desktop captain fixes issues" }, 403);
+          const issues = b?.issues;
+          if (!Array.isArray(issues) || !issues.length || issues.length > 1000 || !issues.every((n: any) => Number.isSafeInteger(n) && n > 0) || Object.keys(b ?? {}).some((k) => k !== "issues" && k !== "crew") || (b.crew !== undefined && b.crew !== null && (typeof b.crew !== "string" || b.crew.length > 128))) return json({ error: "send {issues: [n, …], crew?}: 1 to 1000 issue numbers, and the crew the confirmation showed" }, 400);
+          // the crew the confirmation showed is pinned: a fix Task whose dispatch card shows another crew waits for the captain there
+          try { return json(await issueTriageFlow.fix(fixM[1], issues, "captain (project page)", b.crew === undefined ? undefined : b.crew)); }
+          catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+        }
         // the disagreement court of one triage (public/court.js): its docket, an issue as the snapshot holds it, a file at the
         // pinned commit (read from git's objects), and the captain's rulings (the desktop or the phone captain)
         const court = /^\/api\/issue-triage\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/court\/(R-\d{1,9})(?:\/(issue\/(\d{1,9})|file))?$/.exec(p);
@@ -739,7 +751,8 @@ export function createRuntime(d: RuntimeDeps) {
         // whether one model twice is allowed depends on what is usable: read the free probes once if nothing was read yet
         if (d.staffingFacts && !staffingCapabilities.length) try { await staffingFacts(); } catch {}
         try { const id = decodeURIComponent(p.slice("/api/issue-triage/".length)), rec = issueTriage.get(id), investigators = issueTriageFlow.investigators(id);
-          return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec), investigators } : { state: "none", investigators }); } catch { return json({ error: "invalid project id" }, 400); }
+          const fix = issueTriageFlow.fixView(id), worker = issueTriageFlow.fixWorker(id), fixLimit = issueTriageFlow.fixLimit();
+          return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec), investigators, fix, worker, fixLimit } : { state: "none", investigators, fix, worker, fixLimit }); } catch { return json({ error: "invalid project id" }, 400); }
       }
       // ---------- a merge card's review room (src/domain/review-room.ts): read on any authenticated page; a turn is a paid
       // round only the desktop captain starts, confirming its provider and model; nothing here answers the card ----------
