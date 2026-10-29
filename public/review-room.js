@@ -5,7 +5,7 @@
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
 const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
-  scene: new Map(), reveal: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
+  scene: new Map(), reveal: new Map(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -56,29 +56,69 @@ const sv = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SV
 // the room's own line icons (drawn from fixed paths, nothing parsed)
 const ICO = { prev: "M15 6l-6 6 6 6", next: "M9 6l6 6-6 6", play: "M8 5l11 7-11 7z", pause: "M8 5v14M16 5v14", replay: ["M4 12a8 8 0 1 0 2.4-5.7", "M4 4v4h4"], list: "M4 6h16M4 12h16M4 18h10", msg: "M4 5h16v11H9l-5 4z", x: "M6 6l12 12M18 6L6 18", send: "M5 12h14M13 6l6 6-6 6", back: "M15 6l-6 6 6 6" };
 const ic = (n) => sv("svg", { viewBox: "0 0 24 24", class: "rr-ic", "aria-hidden": "true" }, ...[].concat(ICO[n]).map((d) => sv("path", { d })));
-function wrapLabel(s, n = 22) { const words = String(s).split(/\s+/), out = []; let cur = ""; for (const w of words) { if ((cur + " " + w).trim().length > n && cur) { out.push(cur); cur = w; } else cur = (cur + " " + w).trim(); } if (cur) out.push(cur); return out.slice(0, 4); }
-/** an SVG of a flowchart; nodes and edges not in `prev` (the step before) are marked new */
-function flowSvg(g, prev) {
+/** a label in lines that fit `width` units at font size `fs` (a CJK character a whole em, Latin about half): words stay whole,
+ *  CJK breaks anywhere; at most `max` lines, the last cut with an ellipsis */
+function wrapLabel(s, width = 150, fs = 19, max = 3) {
+  const em = (ch) => (/[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯]/.test(ch) ? 1 : 0.55) * fs, out = []; let cur = "", w = 0;
+  const tokens = String(s).match(/[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯]|[^\sᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯]+|\s+/g) || [];
+  for (const t of tokens) { const tw = [...t].reduce((n, ch) => n + em(ch), 0);
+    if (/^\s+$/.test(t)) { if (cur) { cur += " "; w += 0.3 * fs; } continue; }
+    if (w + tw > width && cur.trim()) { out.push(cur.trim()); cur = ""; w = 0; }
+    cur += t; w += tw; }
+  if (cur.trim()) out.push(cur.trim());
+  return out.length > max ? [...out.slice(0, max - 1), `${out[max - 1]}…`] : out;
+}
+const boxPath = (x, y, w, h, r) => `M${x + r},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h - r} Q${x + w},${y + h} ${x + w - r},${y + h} H${x + r} Q${x},${y + h} ${x},${y + h - r} V${y + r} Q${x},${y} ${x + r},${y} Z`;
+const diamondPath = (x, y, w, h) => `M${x + w / 2},${y} L${x + w},${y + h / 2} L${x + w / 2},${y + h} L${x},${y + h / 2} Z`;
+/** the parts of a picture this viewer has seen drawn (a diagram's steps share one set, so a step draws only what it adds) */
+const drawnOf = (card, it) => { const key = `${card}/${it.group ? `${it.turn}:${it.group}` : it.id}`; if (!RR.drawn.has(key)) RR.drawn.set(key, new Set()); return RR.drawn.get(key); };
+/** the picture's box, roughly: the board's left column on a desktop, the top of the board on a phone */
+const picBox = () => innerWidth <= 760 ? { narrow: true, w: innerWidth - 40, h: innerHeight * 0.42 } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.classList.contains("room-focus") ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
+const reduceMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
+/** a flowchart's places, left to right (horiz) or top down; node size from its longest label */
+function flowLayout(g, horiz, fs) {
   const rank = new Map(g.nodes.map((n) => [n.id, 0]));
   for (let k = 0; k < g.nodes.length; k++) for (const e of g.edges) if (e.from !== e.to && rank.get(e.to) <= rank.get(e.from) && rank.get(e.from) < g.nodes.length) rank.set(e.to, rank.get(e.from) + 1);
   const cols = new Map(); for (const n of g.nodes) { const r = rank.get(n.id); if (!cols.has(r)) cols.set(r, []); cols.get(r).push(n); }
-  const horiz = g.dir === "LR" || g.dir === "RL", W = 170, H = 58, GX = horiz ? 70 : 30, GY = horiz ? 26 : 56, pos = new Map();
-  for (const [r, list] of cols) list.forEach((n, i) => { pos.set(n.id, horiz ? { x: 20 + r * (W + GX), y: 20 + i * (H + GY) } : { x: 20 + i * (W + GX), y: 20 + r * (H + GY) }); });
+  const W = 180, labels = new Map(g.nodes.map((n) => [n.id, wrapLabel(n.label, W - 20, fs)])), lines = Math.max(1, ...[...labels.values()].map((l) => l.length)), H = Math.max(60, lines * (fs + 4) + 22);
+  const GX = horiz ? 64 : 28, GY = horiz ? 26 : 50, pos = new Map();
+  for (const [r, list] of cols) list.forEach((n, i) => { pos.set(n.id, horiz ? { x: 20 + r * (W + GX), y: 24 + i * (H + GY) } : { x: 20 + i * (W + GX), y: 24 + r * (H + GY) }); });
   const maxX = Math.max(...[...pos.values()].map((p) => p.x)) + W + 20, maxY = Math.max(...[...pos.values()].map((p) => p.y)) + H + 20;
-  if (g.dir === "RL" || g.dir === "BT") for (const p of pos.values()) { if (g.dir === "RL") p.x = maxX - W - p.x; else p.y = maxY - H - p.y; }
+  return { horiz, W, H, pos, maxX, maxY, labels };
+}
+/** An SVG of a flowchart, drawn by Studio from the tutor's data (text only through text nodes). Nodes and edges not in `prev`
+ *  (the step before) are marked new; what this viewer has not seen drawn yet (`seen`, kept per picture) is drawn by the pen,
+ *  180ms apart; the rest shows at once. Studio picks the layout that reads largest in the box: top down on a phone. */
+function flowSvg(g, prev, seen, box) {
+  const fs = 19, narrow = box?.narrow, want = g.dir === "LR" || g.dir === "RL";
+  const cands = narrow ? [flowLayout(g, false, fs)] : [flowLayout(g, want, fs), flowLayout(g, !want, fs)];
+  const fit = (L) => Math.min(1.5, (box?.w || 800) / L.maxX, (box?.h || 520) / L.maxY);
+  const L = cands.reduce((a, b) => (fit(b) > fit(a) * 1.15 ? b : a)), { horiz, W, H, pos, maxX, maxY, labels } = L;
+  if (L.horiz === want && (g.dir === "RL" || g.dir === "BT")) for (const p of pos.values()) { if (g.dir === "RL") p.x = maxX - W - p.x; else p.y = maxY - H - p.y; }
   const old = prev ? { nodes: new Set(prev.nodes.map((n) => n.id)), edges: new Set(prev.edges.map((e) => `${e.from}>${e.to}`)) } : null;
+  const anim = seen && !reduceMotion(); let t = 0;
+  const pen = (el, key, d) => { if (anim && !seen.has(key)) { el.classList.add("rr-pen"); el.style.setProperty("--d", `${d}s`); el.style.setProperty("--dl", `${t.toFixed(2)}s`); } return el; };
+  const write = (el, key, dl) => { if (anim && !seen.has(key)) { el.classList.add("rr-write"); el.style.setProperty("--dl", `${dl.toFixed(2)}s`); } return el; };
   // the picture scales to its box (viewBox), never wider than the board, never blown up past 1.5x
-  const svg = sv("svg", { viewBox: `0 0 ${maxX} ${maxY}`, class: "rr-flow", role: "img", preserveAspectRatio: "xMidYMid meet", style: `max-width:${Math.round(maxX * 1.5)}px;max-height:${Math.round(maxY * 1.5)}px` });
-  svg.append(sv("defs", {}, sv("marker", { id: "rr-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, sv("path", { d: "M0,0 L10,5 L0,10 z", class: "rr-arrowhead" }))));
+  const svg = sv("svg", { viewBox: `0 0 ${maxX} ${maxY}`, class: "rr-flow", role: "img", preserveAspectRatio: "xMidYMid meet", "data-layout": horiz ? "LR" : "TD", style: `max-width:${Math.round(maxX * 1.5)}px;max-height:${Math.round(maxY * 1.5)}px` });
+  const fresh = [];
+  for (const n of g.nodes) { const p = pos.get(n.id), isNew = old && !old.nodes.has(n.id), grp = sv("g", { class: `rr-node${isNew ? " rr-new" : ""}`, "data-node": n.id });
+    const shape = sv("path", { class: "rr-box", pathLength: 1, d: n.shape === "diamond" ? diamondPath(p.x, p.y, W, H) : boxPath(p.x, p.y, W, H, n.shape === "round" || n.shape === "circle" ? 26 : 10) });
+    grp.append(pen(shape, `n:${n.id}`, 0.45));
+    const ls = labels.get(n.id); ls.forEach((l, i) => { const tx = sv("text", { x: p.x + W / 2, y: p.y + H / 2 + (i - (ls.length - 1) / 2) * (fs + 4) + fs * 0.35, "text-anchor": "middle" }); tx.textContent = l; grp.append(write(tx, `n:${n.id}`, t + 0.3 + i * 0.12)); });
+    if (anim && !seen.has(`n:${n.id}`)) { fresh.push(`n:${n.id}`); t += 0.18; }
+    svg.append(grp); }
   for (const e of g.edges) { const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) continue;
     const [x1, y1, x2, y2] = horiz ? [a.x + W, a.y + H / 2, b.x, b.y + H / 2] : [a.x + W / 2, a.y + H, b.x + W / 2, b.y];
-    const isNew = old && !old.edges.has(`${e.from}>${e.to}`);
-    svg.append(sv("line", { x1, y1, x2, y2, class: `rr-edge${e.dashed ? " dashed" : ""}${isNew ? " rr-new" : ""}`, "marker-end": "url(#rr-arrow)", "data-edge": `${e.from}>${e.to}` }));
-    if (e.label) { const t = sv("text", { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 4, class: "rr-elabel", "text-anchor": "middle" }); t.textContent = e.label.slice(0, 40); svg.append(t); } }
-  for (const n of g.nodes) { const p = pos.get(n.id), isNew = old && !old.nodes.has(n.id), grp = sv("g", { class: `rr-node${isNew ? " rr-new" : ""}`, "data-node": n.id });
-    grp.append(n.shape === "diamond" ? sv("polygon", { points: `${p.x + W / 2},${p.y} ${p.x + W},${p.y + H / 2} ${p.x + W / 2},${p.y + H} ${p.x},${p.y + H / 2}` }) : sv("rect", { x: p.x, y: p.y, width: W, height: H, rx: n.shape === "round" || n.shape === "circle" ? 26 : 8 }));
-    const ls = wrapLabel(n.label); ls.forEach((l, i) => { const t = sv("text", { x: p.x + W / 2, y: p.y + H / 2 + (i - (ls.length - 1) / 2) * 14 + 4, "text-anchor": "middle" }); t.textContent = l; grp.append(t); });
-    svg.append(grp); }
+    const key = `e:${e.from}>${e.to}`, isNew = old && !old.edges.has(`${e.from}>${e.to}`), cls = isNew ? " rr-new" : "", ang = Math.atan2(y2 - y1, x2 - x1);
+    const line = sv("path", { d: `M${x1},${y1} L${x2},${y2}`, pathLength: 1, class: `rr-edge${e.dashed ? " dashed" : ""}${cls}`, "data-edge": `${e.from}>${e.to}` });
+    const head = sv("path", { d: `M${x2 - 11 * Math.cos(ang - 0.5)},${y2 - 11 * Math.sin(ang - 0.5)} L${x2},${y2} L${x2 - 11 * Math.cos(ang + 0.5)},${y2 - 11 * Math.sin(ang + 0.5)}`, pathLength: 1, class: `rr-ahead${cls}` });
+    if (e.dashed) { if (anim && !seen.has(key)) { line.classList.add("rr-fade"); line.style.setProperty("--dl", `${t.toFixed(2)}s`); } } else pen(line, key, 0.35);
+    if (anim && !seen.has(key)) { const t0 = t; t += 0.33; pen(head, key, 0.12); t = t0; }
+    svg.append(line, head);
+    if (e.label) { const side = Math.abs(x2 - x1) < Math.abs(y2 - y1), tx = sv("text", { x: (x1 + x2) / 2 + (side ? 8 : 0), y: (y1 + y2) / 2 + (side ? 6 : -6), class: "rr-elabel", "text-anchor": side ? "start" : "middle" }); tx.textContent = e.label.slice(0, 40); svg.append(write(tx, key, t + 0.25)); }
+    if (anim && !seen.has(key)) { fresh.push(key); t += 0.18; } }
+  for (const k of fresh) seen.add(k);
   return svg;
 }
 
@@ -152,12 +192,13 @@ function shotView(card, it) {
     it.pages.map((p) => h("figure", { class: "rr-fig", "data-shot-page": p.label }, pick(p) ? h("img", { src: pick(p), alt: `${p.label} · ${side}`, loading: "lazy", "data-shot-img": side, onclick: () => zoom(pick(p), `${p.label} · ${side}`) }) : h("p", { class: "faint" }, T("(this side has no picture: the page did not build)", "（這一側沒有圖：頁面沒有建置出來）")),
       h("figcaption", {}, p.label, p.changed && (p.changed.added?.length || p.changed.removed?.length) ? h("span", { class: "faint" }, ` · ${T("text changed", "文字有變")}: ${(p.changed.removed || []).slice(0, 2).join(", ") || "—"} → ${(p.changed.added || []).slice(0, 2).join(", ") || "—"}`) : null))));
 }
-function chartView(it) {
+function chartView(it, seen) {
+  const anim = seen && !seen.has("bars") && !reduceMotion(); if (seen) seen.add("bars"); let nb = 0;
   const rows = it.rows || [], two = it.mode === "diffstat" || it.mode === "before-after";
   const vals = rows.flatMap((r) => it.mode === "diffstat" ? [r.added, r.removed] : [r.before, r.after, r.value]).filter((v) => typeof v === "number");
   const max = Math.max(1, ...vals.map(Math.abs)), LW = 170, BW = 260, RH = two ? 34 : 22, W = LW + BW + 70, Hh = 18 + rows.length * RH;
   const svg = sv("svg", { viewBox: `0 0 ${W} ${Hh}`, class: "rr-chart", role: "img", "data-chart": it.mode, preserveAspectRatio: "xMidYMid meet", style: `max-width:${Math.round(W * 1.6)}px;max-height:${Math.round(Hh * 1.6)}px` });
-  const bar = (y, v, cls) => { if (typeof v !== "number") return; const w = Math.max(1, Math.round(Math.abs(v) / max * BW)); svg.append(sv("rect", { x: LW, y, width: w, height: 12, class: cls, "data-value": v })); const t = sv("text", { x: LW + w + 6, y: y + 10, class: "rr-chart-v" }); t.textContent = `${v}${it.unit ? " " + (it.unit === "lines" ? T("lines", "行") : it.unit) : ""}`; svg.append(t); };
+  const bar = (y, v, cls) => { if (typeof v !== "number") return; const w = Math.max(1, Math.round(Math.abs(v) / max * BW)); const rect = sv("rect", { x: LW, y, width: w, height: 12, rx: 3, class: `${cls}${anim ? " rr-grow" : ""}`, "data-value": v, ...(anim ? { style: `--dl:${(0.1 + nb++ * 0.08).toFixed(2)}s` } : {}) }); svg.append(rect); const t = sv("text", { x: LW + w + 6, y: y + 10, class: "rr-chart-v" }); t.textContent = `${v}${it.unit ? " " + (it.unit === "lines" ? T("lines", "行") : it.unit) : ""}`; svg.append(t); };
   rows.forEach((r, i) => { const y = 14 + i * RH, l = sv("text", { x: LW - 8, y: y + 10, "text-anchor": "end", class: "rr-chart-l" }); l.textContent = r.label.length > 26 ? "…" + r.label.slice(-25) : r.label; svg.append(l);
     if (it.mode === "diffstat") { bar(y, r.added, "add"); bar(y + 14, r.removed, "del"); } else if (it.mode === "before-after") { bar(y, r.before, "before"); bar(y + 14, r.after, "after"); } else bar(y, r.value, "after"); });
   const legend = it.mode === "diffstat" ? [["add", T("lines added", "新增行數")], ["del", T("lines removed", "刪除行數")]] : it.mode === "before-after" ? [["before", T("before", "之前")], ["after", T("after", "之後")]] : [];
@@ -173,14 +214,14 @@ function basisRow(card, it) { return it.basis === "illustration" ? h("div", { cl
 function itemView(card, it, prev) {
   const head = h("div", { class: "rr-item-h" }, it.kind ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge", "data-type": it.type }, typeLabel(it.type)), h("b", {}, itemTitle(it)), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
   let body;
-  if (it.type === "mermaid") { const g = parseFlow(it.code), p = prev ? parseFlow(prev.code) : null; body = g ? h("div", { class: "rr-flow-wrap", "data-flow": it.id }, flowSvg(g, p)) : [h("p", { class: "faint" }, T("Diagram source (Studio draws flowcharts; this kind is shown as text)", "圖表原始碼（Studio 會畫 flowchart；這種圖以文字顯示）")), h("pre", { class: "rr-pre" }, it.code)]; }
+  if (it.type === "mermaid") { const g = parseFlow(it.code), p = prev ? parseFlow(prev.code) : null; body = g ? h("div", { class: "rr-flow-wrap", "data-flow": it.id }, flowSvg(g, p, drawnOf(card, it), picBox())) : [h("p", { class: "faint" }, T("Diagram source (Studio draws flowcharts; this kind is shown as text)", "圖表原始碼（Studio 會畫 flowchart；這種圖以文字顯示）")), h("pre", { class: "rr-pre" }, it.code)]; }
   else if (it.type === "diff") body = [it.header ? h("p", { class: "faint" }, it.header) : null, diffPre(it.text)];
   else if (it.type === "code") body = linesPre(it, it.highlight || []);
   else if (it.type === "screenshot") body = shotView(card, it);
-  else if (it.type === "chart") body = chartView(it);
+  else if (it.type === "chart") body = chartView(it, drawnOf(card, it));
   else if (it.type === "image") body = imageView(it);
   else if (it.type === "compare") body = h("div", { class: "rr-compare" }, h("div", {}, h("b", {}, T("Before (base)", "之前（base）")), linesPre(it.before)), h("div", {}, h("b", {}, T("After (head)", "之後（head）")), linesPre(it.after)));
-  else if (it.type === "keycard") body = keycardView(it);
+  else if (it.type === "keycard") body = keycardView(it, drawnOf(card, it));
   // a table, the tutor's or one from an older answer: cells as text
   else if (it.type === "table") body = h("table", { class: "rr-table", "data-table": it.id }, (it.rows || []).map((row, i) => h("tr", {}, row.map((c) => h(i ? "td" : "th", {}, String(c))))));
   else if (it.type === "snippet") body = h("pre", { class: "rr-pre" }, it.text || "");
@@ -190,12 +231,13 @@ function itemView(card, it, prev) {
   return h("article", { class: `rr-item rr-item-${it.type}`, id: `rr-${it.id}`, "data-board-item": it.id, "data-item-type": it.type }, h("div", { class: `rr-body${pic ? " pic" : " text"}` }, body), head, basisRow(card, it));
 }
 /** Studio's own picture when an answer drew none: the scene's title and the files it cites, as sticky notes (text nodes only) */
-function keycardView(it) {
+function keycardView(it, seen) {
+  const anim = seen && !seen.has("card") && !reduceMotion(); if (seen) seen.add("card");
   const files = (it.files || []).slice(0, 4), W = 640, H = 150 + Math.ceil(files.length / 2) * 112;
   const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "rr-keycard", role: "img", preserveAspectRatio: "xMidYMid meet", "aria-label": it.title || "", style: `max-width:${W * 1.5}px;max-height:${H * 1.5}px` });
-  const title = sv("text", { x: 24, y: 64, class: "rr-hand rr-key-title" }); title.textContent = clip(it.title || "", 34); svg.append(title);
-  svg.append(sv("path", { d: `M24,80 H${Math.min(W - 24, 24 + Math.max(120, (title.textContent.length || 1) * 17))}`, class: "rr-key-line" }));
-  files.forEach((f, i) => { const x = 24 + (i % 2) * 304, y = 112 + Math.floor(i / 2) * 112, g = sv("g", { class: "rr-sticky", transform: `rotate(${i % 2 ? 1.5 : -1.5} ${x + 140} ${y + 44})` });
+  const title = sv("text", { x: 24, y: 64, class: `rr-hand rr-key-title${anim ? " rr-write" : ""}` }); title.textContent = clip(it.title || "", 34); svg.append(title);
+  svg.insertBefore(sv("path", { class: `rr-key-line${anim ? " rr-grow" : ""}`, style: "--dl:.3s;--d:.45s", d: `M24,74 H${Math.min(W - 24, 24 + Math.max(120, (title.textContent.length || 1) * 17))}` }), title);
+  files.forEach((f, i) => { const x = 24 + (i % 2) * 304, y = 112 + Math.floor(i / 2) * 112, g = sv("g", { class: `rr-sticky${anim ? " rr-fade" : ""}`, style: `--dl:${(0.5 + i * 0.18).toFixed(2)}s`, transform: `rotate(${i % 2 ? 1.5 : -1.5} ${x + 140} ${y + 44})` });
     g.append(sv("rect", { x, y, width: 280, height: 88, rx: 6 }));
     const name = String(f).split("/").pop(), dir = String(f).slice(0, Math.max(0, String(f).length - name.length - 1));
     const a = sv("text", { x: x + 16, y: y + 40, class: "rr-hand rr-sticky-name" }); a.textContent = clip(name, 26); g.append(a);
@@ -239,11 +281,33 @@ function legacyPoints(key, claims) {
   if (pend && out.length) out.at(-1).visual ||= pend;
   return { points: out, extra };
 }
-/** the room's scenes: the opening picture (turn 0), then each turn's: the scenes the tutor showed (scene_show), else its answer
+/** what the room is about, in a few words: the pull request's number, the branch, or the merge card's pull request */
+const subjectName = (r) => { const k = r.subject?.kind || "merge";
+  return k === "pr" ? { en: `pull request #${r.subject?.number ?? ""}`, zh: `#${r.subject?.number ?? ""} 這一個 PR` }
+    : k === "branch" ? { en: `branch ${r.card.title?.en?.replace(/^Branch\s+/, "") || r.card.id}`, zh: `${r.card.title?.en?.replace(/^Branch\s+/, "") || r.card.id} 這一個 branch` }
+    : r.pr?.id ? { en: `pull request #${r.pr.id}`, zh: `#${r.pr.id} 這一個 PR` } : { en: "this change", zh: "這一個改動" }; };
+/** The welcome scene, made by Studio for free: what the room is about, its files' line counts (git's), three points, and
+ *  "Teach me this change" (a paid turn, confirmed like any other). The opening illustration, when there is one, is a picture
+ *  of this scene too. */
+function welcomeScene(r, opening) {
+  const ds = r.diffstat, name = subjectName(r), files = ds?.files || [], top = [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed))[0];
+  const chart = files.length ? { id: "t0-files", synth: true, turn: 0, type: "chart", kind: "chart", mode: "diffstat", from: ds.from === "github" ? "numbers" : "git", title: T("What changed, by file", "改了哪些檔案"), unit: "lines", rows: [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed)).slice(0, 8).map((f) => ({ label: f.path, added: f.added, removed: f.removed })), basis: "cited", cites: [] } : null;
+  const ps = r.prState, verdict = ps?.verdicts?.find((v) => v.state === "CHANGES_REQUESTED") || ps?.verdicts?.find((v) => v.state === "APPROVED");
+  const studio = (en, zh, cites = []) => ({ text: T(en, zh) + cites.map((c) => ` [${c.ref}]`).join(""), kind: "claim", basis: "studio", cites });
+  const points = [
+    ds ? studio(`This change touches ${ds.total.files} file${ds.total.files === 1 ? "" : "s"}, +${ds.total.added} −${ds.total.removed} lines${top ? `; the most in ${top.path}` : ""}.`, `這個改動動了 ${ds.total.files} 個檔案、+${ds.total.added} −${ds.total.removed} 行${top ? `；最多在 ${top.path}` : ""}。`, top ? [{ ref: `diff:${top.path}`, ok: true }] : [])
+      : studio("Studio has not counted this change's lines yet.", "Studio 還沒算出這個改動的行數。"),
+    ps ? (verdict ? studio(`${verdict.author} ${verdict.state === "APPROVED" ? "approved it" : "asked for changes"}${verdict.current ? "" : " (at an older head)"}; their words are a scene of their own.`, `${verdict.author} ${verdict.state === "APPROVED" ? "核准了" : "要求修改"}${verdict.current ? "" : "（在較舊的 head）"}；審查者的原話另有一個場景。`) : studio("No reviewer has given a verdict on GitHub yet.", "GitHub 上還沒有審查者給出結論。"))
+      : r.subject?.kind === "branch" ? studio("Studio's own review passed at this head; nothing here goes to GitHub.", "Studio 自己的審查在這個 head 通過了；這裡的東西不會送到 GitHub。")
+      : studio("Studio's checks ran at this head; the merge card waits for your answer, the room never gives it.", "Studio 的檢查在這個 head 跑過了；合併卡等你回覆，審查室不會替你回。"),
+    studio("Press “Teach me” to start; every point names its basis, a click opens it.", "按「教我這個 PR」開始；每一點都附依據，點了就打開。")];
+  return { key: "t0", turn: 0, welcome: true, studio: true, title: T(`This room is only about ${name.en}`, `這間審查室只講 ${name.zh}`), question: null, visuals: [chart, ...opening].filter(Boolean), points, questions: [] };
+}
+/** the room's scenes: the welcome scene (turn 0, with the opening picture), then each turn's: the scenes the tutor showed (scene_show), else its answer
  *  as points; Studio's own scenes (what changed, what reviewers asked) as they are */
 function scenesOf(r) {
   const out = [], opening = r.board.filter((b) => b.turn === 0);
-  if (opening.length) out.push({ key: "t0", turn: 0, title: T("This change at a glance", "一眼看懂這個改動"), question: null, visuals: opening, points: [], questions: [] });
+  out.push(welcomeScene(r, opening));
   for (const t of r.turns) {
     const asked = r.check.questions.filter((q) => q.turn === t.n), questions = asked.filter((q) => !q.options), quiz = asked.filter((q) => q.options), turnBoard = r.board.filter((b) => b.turn === t.n);
     const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]) : [];
@@ -325,7 +389,7 @@ function advance(card) {
   if (RR.playing !== card || RR.audio) return;
   const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
   if (speak(text, next)) return;
-  RR.timer = setTimeout(() => advance(card), Math.min(9000, 1600 + text.length * 35));
+  RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170));
 }
 /** the vendor's voice for a whole scene: the points appear as the audio reaches them (by their share of the text) */
 async function playVendor(card, sc) {
@@ -371,15 +435,16 @@ async function pickOption(card, q, i, at) {
   catch (e) { RR.err.set(card, e.message); } finally { RR.posting.delete(key); redraw(card); }
 }
 /** a check mark drawn by the pen (a path; the motion only on the first showing) */
-const checkMark = (ok) => sv("svg", { viewBox: "0 0 24 24", class: `rr-mk ${ok ? "ok" : "miss"}`, "aria-hidden": "true" }, sv("path", { d: ok ? "M5 12.5l4.5 4.5L19 7" : "M7 7l10 10M17 7L7 17", pathLength: 1 }));
+const checkMark = (ok, fresh) => sv("svg", { viewBox: "0 0 24 24", class: `rr-mk ${ok ? "ok" : "miss"}${fresh ? " rr-pen" : ""}`, "aria-hidden": "true" }, sv("path", { d: ok ? "M5 12.5l4.5 4.5L19 7" : "M7 7l10 10M17 7L7 17", pathLength: 1 }));
 function quizView(card, r, q, at) {
+  const markKey = `${card}/mk${q.n}`, fresh = !!q.result && !RR.titled.has(markKey) && !reduceMotion(); if (q.result) RR.titled.add(markKey);
   const answered = !!q.result, open = r.open && !r.offer?.error, busy = RR.posting.has(`${card}/q${q.n}`);
   return h("div", { class: "rr-quiz", "data-scene-check": "", "data-quiz": q.n, "data-check-result": answered ? (q.result.correct ? "correct" : "missed") : "open" },
     h("p", { class: "rr-quiz-q rr-hand" }, q.q),
     h("div", { class: "rr-opts", role: "group", "aria-label": T("Options", "選項") }, q.options.map((o, i) => {
       const right = answered && i === q.answer, wrong = answered && i === q.choice && !right;
       return h("button", { type: "button", class: `rr-opt${right ? " right" : wrong ? " wrong" : ""}`, "data-quiz-option": `${q.n}:${i}`, "aria-pressed": String(q.choice === i), disabled: answered || busy || !open, onclick: () => pickOption(card, q, i, at) },
-        h("span", { class: "rr-optk" }, LETTERS[i]), h("span", { class: "rr-optt" }, o), right || wrong ? checkMark(right) : h("span"));
+        h("span", { class: "rr-optk" }, LETTERS[i]), h("span", { class: "rr-optt" }, o), right || wrong ? checkMark(right, fresh) : h("span"));
     })),
     answered ? h("div", { class: `rr-verdict ${q.result.correct ? "ok" : "miss"}`, role: "status", "data-quiz-verdict": q.result.correct ? "correct" : "missed" },
       h("b", {}, q.result.correct ? T("Right. ", "答對了。") : T("Not quite. ", "沒答對，再看一次：")), q.why || "", " ", (q.cites || []).map((c) => citeChip(card, c.ref, c.ok))) : null,
@@ -409,10 +474,12 @@ function stageView(r) {
   const cur = sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
   const page = pageOf(k), shown = sc.points.slice(page * PER, Math.max(page * PER, k)), pages = Math.max(1, Math.ceil(n / PER));
   const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
-  const kicker = sc.quiz ? T(`Check me · question ${k} of ${n}`, `考考我 · 第 ${k} 題 / ${n}`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
+  const kicker = sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · question ${k} of ${n}`, `考考我 · 第 ${k} 題 / ${n}`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
+  const titleKey = `${card}/${sc.key}`, firstTitle = !RR.titled.has(titleKey); RR.titled.add(titleKey);
+  const entering = RR.lastK.get(titleKey) !== k; RR.lastK.set(titleKey, k);
   const pointView = (c, j) => { const at = page * PER + j, now = at === k - 1;
     if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}`, "data-claim": "code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
-    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : " done"}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
+    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : " done"}${now && entering ? " rr-enter" : ""}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
       c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites)),
       // what someone else wrote (a reviewer, a commit message): their words as plain text, never parsed for citations or markup;
       // the gist (its first line, cut short) on the board, the whole text only when the captain opens it
@@ -426,9 +493,9 @@ function stageView(r) {
   return h("section", { class: "rr-stage", "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") },
     h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
       h("div", { class: "rr-stitle" },
-        h("span", { class: "rr-kicker" }, sc.studio ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker, pages > 1 && !sc.quiz ? ` · ${page + 1}/${pages}` : "",
+        h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker, pages > 1 && !sc.quiz ? ` · ${page + 1}/${pages}` : "",
           sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null),
-        h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, sc.quiz ? T("Check me", "考考我") : sc.title)),
+        h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
       h("div", { class: "rr-scene" },
         h("figure", { class: "rr-visual", "data-visual": quizQ ? `quiz-${quizQ.n}` : v?.id || "" },
           quizQ ? quizView(card, r, quizQ, [`${card}/${sc.key}`, k]) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")),
@@ -437,6 +504,9 @@ function stageView(r) {
           sc.t && sc.t.status !== "done" ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
           sc.quiz ? quizSide(r, sc) : h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
           n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
+          // the welcome scene's one action: the lesson, a paid turn that asks to confirm first
+          sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
+            T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
           sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
           sc.t?.status === "done" && sc.t.cost?.usd != null ? h("p", { class: "faint rr-cost" }, `$${Number(sc.t.cost.usd).toFixed(2)} · ${sc.t.provider} · ${sc.t.model}`) : null))),
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),

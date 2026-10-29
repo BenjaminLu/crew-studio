@@ -17,3 +17,10 @@
   (`public/vendor/xterm-addon-fit-0.10.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the web
   terminal's renderer (docs/units/web-terminal.md). MIT License, copyright the xterm.js authors, SourceLair Private Company and
   Christopher Jeffrey; both texts are in `public/vendor/xterm-LICENSE.txt`.
+- **LXGW WenKai TC** (Regular; SIL Open Font License 1.1, copyright 2024 The LXGW WenKai Project Authors,
+  https://github.com/lxgw/LxgwWenkaiTC) and **Caveat** (SemiBold; SIL Open Font License 1.1, copyright 2014 The Caveat
+  Project Authors, https://github.com/googlefonts/caveat): the review room's handwriting, for the board's titles and
+  picture labels only. Copied as woff2 slices by unicode-range from the pinned npm packages `@fontsource/lxgw-wenkai-tc`
+  5.3.1 and `@fontsource/caveat` 5.3.0 into `public/fonts/hand/` (the CJK slices and Latin; no Cyrillic, Greek, Vietnamese
+  or Lisu), declared in `public/fonts/hand.css`; Studio serves them itself, nothing is fetched from Google Fonts. The
+  license texts are `public/fonts/OFL-LXGW-WenKai-TC.txt` and `public/fonts/OFL-Caveat.txt`.

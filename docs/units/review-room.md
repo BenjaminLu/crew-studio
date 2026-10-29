@@ -21,6 +21,22 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   scene is whole), replay, the scene (« ») and the voice. The keyboard: ← → a point back or forward (past a scene's last
   point is the next scene), Space play / pause, Escape closes what is open over the room. A scene that arrives while the
   page is open plays itself; scenes already there show whole.
+- **Paper, handwriting, motion.** The board is dotted paper (light `#fffcf4` with ink `#1f2a44` and a marker `#1d3f72`;
+  dark `#1b1f27`, ink `#ece6d6`, marker `#9cc0ff`; the room's tokens are `--rr-*` in `public/review-room.css`, the inference
+  badge at 4.5:1 or more in both themes). Titles and picture labels are handwritten in LXGW WenKai TC (first in a Chinese
+  room) and Caveat (first in English), both SIL OFL 1.1, served by Studio from `public/fonts/hand/` as woff2 slices by
+  unicode-range (`public/fonts/hand.css`; nothing from Google Fonts); the points stay in the UI font. Only what is new moves,
+  once per viewer: a diagram's new nodes are drawn by the pen (stroke-dashoffset, 450ms), its new edges (350ms, then the
+  arrowhead 120ms), 180ms apart, their labels written in (clip-path, 400ms); a scene's title gets a highlighter (450ms); a
+  chart's bars grow (600ms); a check's mark is drawn (250ms); a new point slides in. A step of a diagram draws only the part
+  it adds, a redraw draws nothing again, and with reduced motion the final picture shows at once. One beat a point: the
+  picture's step, the point and the caption move together; a point stays max(2.6 s, 170 ms a character), or as long as
+  the voice reads it. Studio lays a flowchart out left to right or top down, whichever reads larger in the box. The caption
+  is a paper strip.
+- **The welcome scene** (scene 1, Studio's own, free): "This room is only about <the pull request or branch>", the change's
+  line counts by file as a chart, three points (the size of the change and where most of it is, its state: a reviewer's
+  verdict, Studio's review or checks, and how to start), and "Teach me this change" (教我這個 PR), a paid turn that asks to
+  confirm first like any other. The opening illustration, when there is one, is a picture of this scene.
 - **Never "no picture".** An answer that drew no picture gets one from Studio, free: the line counts of the files it cites
   (git's numbers, `view().diffstat`: `git diff --numstat` base to head, cached per head; a pull request Studio has no
   commits of yet: GitHub's file list), else a key card (the scene's title and the files it is about as sticky notes).
@@ -442,6 +458,12 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     multiple-choice question …", "the next turn's prompt carries …"; review-room-ui "the check is a scene of option
     buttons …", "a pick is sent as {n, choice} …", "a missed question offers …", "the re-explanation asks about that
     question …", "the check's answer route is real …".
+26. Paper, handwriting and motion: the pen draws only what is new, a step only what it adds, a redraw nothing; reduced
+    motion shows the final state; the paper, its caption strip and the dark theme's badge contrast; the handwriting is
+    Studio's own woff2 slices; a new room opens on the welcome scene, whose lesson asks to confirm. — review-room-ui "the
+    pen draws only what is new …", "the board is paper …", "the handwriting is Studio's own …", "with reduced motion …",
+    "dark: the paper is #1b1f27 …", "a new room opens on Studio's welcome scene …", "the welcome scene's lesson still asks
+    to confirm …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

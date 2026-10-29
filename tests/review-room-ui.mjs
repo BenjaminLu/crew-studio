@@ -128,7 +128,7 @@ try {
     await p.click("[data-transcript-toggle]"); const jumps = await p.$$eval("[data-jump]", (els) => els.map((e) => [e.dataset.jump, e.textContent]));
     const links = await p.evaluate(() => ({ js: document.querySelectorAll('a[href^="javascript:" i]').length, src: [...document.querySelectorAll("[data-source]")].map((e) => [e.dataset.source, !!e.querySelector("a"), e.querySelector("[data-source-text]")?.textContent ?? null]) }));
     ok(links.js === 0 && JSON.stringify(links.src) === JSON.stringify([["1", true, null], ["2", false, null], ["3", false, "javascript:alert(document.cookie)"], ["4", false, "javascript:alert(2)"]]), "only a fetched http(s) page is a link; a refused or non-http address is plain text, never an anchor", JSON.stringify(links));
-    ok(jumps.length === 3 && /This change at a glance/.test(jumps[0][1]) && /Teach me this change\. → How percent works/.test(jumps[1][1]), "the transcript lists each question and its scene's title", JSON.stringify(jumps));
+    ok(jumps.length === 3 && /This room is only about pull request #7/.test(jumps[0][1]) && /Teach me this change\. → How percent works/.test(jumps[1][1]), "the transcript lists each question and its scene's title", JSON.stringify(jumps));
     await p.click('[data-jump="t1"]'); s = await stage(p);
     ok(s.scene === "t1" && s.pos === "2/3" && s.title === "How percent works" && s.at === "5/5" && s.points === 1 && s.visual === "B1-7" && await p.$eval("[data-transcript]", (e) => e.dataset.open === "false"), "a click in the transcript jumps to its scene and closes the transcript; the visual is the one the last point cites; past four points the next ones are the next page", JSON.stringify(s));
     await p.keyboard.press("ArrowLeft"); s = await stage(p);
@@ -156,6 +156,7 @@ try {
     ok((await p.getAttribute("[data-zoom] img", "src")) === "/api/review-room/SC-50/image/B1-9.png", "a click enlarges the picture");
     await p.click("[data-zoom] button"); ok(!(await p.$("[data-zoom]")), "and Close puts it back");
     await p.click('[data-jump="t0"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]'); });
+    await p.click('[data-visual-pick="B0-1"]');
     ok(!!(await p.$("[data-visual] [data-illustration-pending]")) && /paid generated image, made once/.test(await p.textContent("[data-visual] [data-paid-image]")), "the opening picture still being drawn shows a placeholder, labelled as a paid generated image made once");
     // voice: off by default; on-device voices only, the best first; the vendor's own voice for the whole scene
     await p.click('[data-jump="t1"]').catch(() => {});
@@ -259,9 +260,53 @@ try {
     ok(lens.length >= 3 && lens.every((n) => n <= 62) && maxShown <= 4 && sawTable, "an older long answer is split by sentence into short points (≤ 60 CJK characters), at most four a page; its markdown table becomes a table picture", JSON.stringify({ lens, maxShown, sawTable }));
     ok(await p.evaluate(() => document.querySelector("[data-visual] [data-table] th")?.textContent === "金額" && !document.querySelector("[data-visual] [data-table] script")), "the table is drawn by Studio as text cells");
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]');
+    await p.click('[data-visual-pick="B0-1"]');
     const zh = await p.evaluate(() => ({ title: document.querySelector("[data-scene-title]")?.textContent, foot: document.querySelector("[data-visual] .rr-item-h")?.textContent, stage: document.querySelector("[data-stage]").textContent }));
-    await p.keyboard.press("ArrowRight"); const flow = await p.evaluate(() => document.querySelector("[data-visual] .rr-item-h")?.textContent || "");
-    ok(zh.title === "一眼看懂這個改動" && /一眼看懂這個改動/.test(zh.foot) && !/This change at a glance|mermaid/.test(zh.stage + flow) && /流程圖/.test(flow), "a Chinese room has no English titles or badges: Studio's titles and every picture's kind read in Chinese", JSON.stringify({ zh, flow }));
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); const flow = await p.evaluate(() => document.querySelector("[data-visual] .rr-item-h")?.textContent || "");
+    ok(zh.title === "這間審查室只講 #7 這一個 PR" && /一眼看懂這個改動/.test(zh.foot) && !/This change at a glance|mermaid/.test(zh.stage + flow) && /流程圖/.test(flow), "a Chinese room has no English titles or badges: Studio's titles and every picture's kind read in Chinese", JSON.stringify({ zh, flow }));
+    await ctx.close(); }
+
+  // ---------- paper, handwriting and motion: only what is new is drawn; reduced motion shows the final picture ----------
+  { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const asked = [];
+    p.on("request", (q) => asked.push(q.url()));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]");
+    const pen = () => p.evaluate(() => ({ nodes: [...document.querySelectorAll("[data-visual] [data-node]")].map((n) => n.dataset.node + (n.querySelector(".rr-pen") ? "~" : "") + (n.querySelector(".rr-write") ? "w" : "")), edges: [...document.querySelectorAll("[data-visual] [data-edge]")].map((e) => e.dataset.edge + (e.classList.contains("rr-pen") ? "~" : "")) }));
+    const s1 = await pen(); await p.click("[data-play]"); await p.click("[data-point-next]"); const s2 = await pen(); await p.evaluate(() => render()); const s3 = await pen();
+    ok(JSON.stringify(s1) === JSON.stringify({ nodes: ["A~w", "B~w"], edges: ["A>B~"] }) && JSON.stringify(s2) === JSON.stringify({ nodes: ["A", "B", "C~w"], edges: ["A>B", "B>C~"] }) && JSON.stringify(s3.nodes) === JSON.stringify(["A", "B", "C"]),
+      "the pen draws only what is new: the first step's nodes, edges and labels; the next step only the part it adds; a redraw draws nothing again", JSON.stringify({ s1, s2, s3 }));
+    const look = await p.evaluate(() => { const b = getComputedStyle(document.querySelector(".rr-board")), t = getComputedStyle(document.querySelector("[data-scene-title]")), c = getComputedStyle(document.querySelector(".rr-caption")), f = getComputedStyle(document.querySelector("[data-visual] [data-node] text"));
+      return { paper: b.backgroundColor, title: t.fontFamily, label: f.fontFamily, caption: c.backgroundColor, body: getComputedStyle(document.querySelector(".rr-ptext")).fontFamily }; });
+    const css = await p.evaluate(async () => { const r = await fetch("/fonts/hand.css"); const t = await r.text(); return { ok: r.ok, faces: (t.match(/@font-face/g) || []).length, ranges: (t.match(/unicode-range:/g) || []).length, google: /googleapis|gstatic/.test(t), files: [...new Set([...t.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]))].length }; });
+    const font = await p.evaluate(async () => { const r = await fetch((await (await fetch("/fonts/hand.css")).text()).match(/url\("([^"]+wenkai-latin\.woff2)"\)/)[1]); return [r.ok, r.headers.get("content-type")]; });
+    ok(look.paper === "rgb(255, 252, 244)" && /Caveat/.test(look.title) && /Caveat|WenKai/.test(look.label) && !/Caveat|WenKai/.test(look.body) && look.caption === "rgb(255, 247, 224)", "the board is paper (#fffcf4) with a paper caption strip; titles and picture labels are handwritten, the points stay in the UI font", JSON.stringify(look));
+    ok(css.ok && css.faces > 100 && css.faces === css.ranges && css.files === css.faces && !css.google && font[0] && /font\/woff2|application\/octet-stream|font/.test(font[1] || "") && !asked.some((u) => /googleapis|gstatic/.test(u)), "the handwriting is Studio's own: one woff2 slice per unicode-range, nothing asked of Google Fonts", JSON.stringify({ css, font }));
+    await ctx.close(); }
+  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", colorScheme: "dark" });
+    await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
+    await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    await ctx.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: ROOM }));
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]");
+    const rm = await p.evaluate(() => ({ moving: document.querySelectorAll("[data-stage] .rr-pen, [data-stage] .rr-write, [data-stage] .rr-grow, [data-stage] .rr-enter, [data-stage] .rr-hl.rr-anim").length, anim: [...document.querySelectorAll("[data-stage] *")].filter((e) => getComputedStyle(e).animationName !== "none").length, nodes: document.querySelectorAll("[data-visual] [data-node]").length }));
+    ok(rm.moving === 0 && rm.anim === 0 && rm.nodes === 2, "with reduced motion the picture shows its final state at once: nothing is drawn or written in", JSON.stringify(rm));
+    await p.keyboard.press("ArrowRight"); await p.keyboard.press("ArrowRight");
+    const dark = await p.evaluate(() => { const lum = (c) => { const v = c.match(/[\d.]+/g).map(Number); const f = (x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(v[0]) + 0.7152 * f(v[1]) + 0.0722 * f(v[2]); };
+      const mix = (fg, bg) => { const a = fg.match(/[\d.]+/g).map(Number), b = bg.match(/[\d.]+/g).map(Number), al = a[3] ?? 1; return `rgb(${[0, 1, 2].map((i) => a[i] * al + b[i] * (1 - al)).join(",")})`; };
+      const badge = document.querySelector('[data-stage] [data-basis="inference"]'), li = badge.closest(".rr-point"), board = getComputedStyle(document.querySelector(".rr-board")).backgroundColor;
+      const under = mix(getComputedStyle(li).backgroundColor, board), bg = mix(getComputedStyle(badge).backgroundColor, under), fg = getComputedStyle(badge).color, L1 = lum(fg), L2 = lum(bg);
+      return { paper: board, ratio: Math.round(((Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05)) * 100) / 100, img: getComputedStyle(document.querySelector(".rr-fig img") || document.body).backgroundColor }; });
+    ok(dark.paper === "rgb(27, 31, 39)" && dark.ratio >= 4.5, "dark: the paper is #1b1f27 and the inference badge reads at 4.5:1 or more", JSON.stringify(dark));
+    await ctx.close(); }
+  // ---------- the welcome scene: Studio's own, free, with the lesson one confirmed click away ----------
+  { const { ctx, p, posts } = await open(1440, "zh-TW"); await p.setViewportSize({ width: 1440, height: 900 });
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: { ...ROOM, turns: [], board: [], check: { questions: [] } } }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    const w = await p.evaluate(() => ({ scene: document.querySelector("[data-stage]").dataset.scene, title: document.querySelector("[data-scene-title]")?.textContent, kicker: document.querySelector(".rr-kicker")?.textContent, chart: document.querySelector("[data-visual] [data-chart]")?.dataset.chart, rows: document.querySelectorAll("[data-visual] .rr-chart-l").length, points: document.querySelectorAll("[data-stage] .rr-point").length, cta: document.querySelector("[data-welcome-teach]")?.textContent, empty: !!document.querySelector("[data-board-empty]") }));
+    ok(w.scene === "t0" && w.title === "這間審查室只講 #7 這一個 PR" && /Studio 做的，免費/.test(w.kicker) && w.chart === "diffstat" && w.rows === 2 && w.points === 3 && /教我這個 PR/.test(w.cta) && !w.empty, "a new room opens on Studio's welcome scene: what it is about, its files' line counts, three points and “教我這個 PR”", JSON.stringify(w));
+    await p.click("[data-welcome-teach]"); await p.waitForSelector('[data-room-confirm="teach"]');
+    ok(!posts.length && /付費/.test(await p.textContent("[data-room-confirm]")), "the welcome scene's lesson still asks to confirm the paid round first");
     await ctx.close(); }
 
   // ---------- the check as multiple choice: option buttons on the board, Studio grades the pick, a miss can be re-explained ----------

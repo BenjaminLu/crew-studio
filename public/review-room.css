@@ -3,6 +3,31 @@
    Nothing in the room grows the page: the board has a fixed height, the picture scales to it, the points column shows at
    most four points (the next ones are the next page). The transcript and a citation open over the room. */
 
+/* ---------- the room's paper: tokens (light, then dark under the system preference and under the dark theme) ---------- */
+:root {
+  --rr-paper: #fffcf4; --rr-paper-edge: #efe6cf; --rr-dot: rgba(31,42,68,.14); --rr-ink: #1f2a44; --rr-ink-2: #5b6478; --rr-marker: #1d3f72;
+  --rr-ok: #2e9e6b; --rr-ok-soft: #e3f4ea; --rr-bad: #c8463d; --rr-bad-soft: #fbe9e7; --rr-hl: rgba(255,214,90,.62); --rr-new: #2f5bd3; --rr-new-soft: rgba(47,91,211,.10);
+  --rr-cite-bg: rgba(29,63,114,.07); --rr-cite-ink: #1d3f72; --rr-caption: #fff7e0; --rr-sticky: #fff3b0; --rr-sticky-ink: #1f2a44; --rr-img-bg: #ffffff;
+  --rr-code-bg: rgba(31,42,68,.05); --rr-inf-bg: rgba(201,134,26,.16); --rr-inf-ink: #7a4d00; --rr-add: rgba(46,158,107,.18); --rr-del: rgba(200,70,61,.15);
+  --rr-shadow: 0 1px 0 rgba(31,42,68,.04), 0 10px 30px -12px rgba(31,42,68,.22);
+  --rr-hand: "LXGW WenKai TC", "Caveat", "Kaiti TC", "STKaiti", cursive;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-dot: rgba(232,235,241,.09); --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
+  --rr-ok: #5cc994; --rr-ok-soft: #14291f; --rr-bad: #ff8a80; --rr-bad-soft: #35181b; --rr-hl: rgba(255,205,80,.26); --rr-new: #8eb0ff; --rr-new-soft: rgba(142,176,255,.12);
+  --rr-cite-bg: rgba(156,192,255,.10); --rr-cite-ink: #b9d0ff; --rr-caption: #232833; --rr-sticky: #3a3420; --rr-sticky-ink: #ece6d6; --rr-img-bg: #f4f1ea;
+  --rr-code-bg: rgba(232,235,241,.06); --rr-inf-bg: rgba(232,176,79,.18); --rr-inf-ink: #f0c46a; --rr-add: rgba(92,201,148,.18); --rr-del: rgba(255,138,128,.16);
+  --rr-shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -14px rgba(0,0,0,.7); } }
+:root[data-theme="dark"] {
+  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-dot: rgba(232,235,241,.09); --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
+  --rr-ok: #5cc994; --rr-ok-soft: #14291f; --rr-bad: #ff8a80; --rr-bad-soft: #35181b; --rr-hl: rgba(255,205,80,.26); --rr-new: #8eb0ff; --rr-new-soft: rgba(142,176,255,.12);
+  --rr-cite-bg: rgba(156,192,255,.10); --rr-cite-ink: #b9d0ff; --rr-caption: #232833; --rr-sticky: #3a3420; --rr-sticky-ink: #ece6d6; --rr-img-bg: #f4f1ea;
+  --rr-code-bg: rgba(232,235,241,.06); --rr-inf-bg: rgba(232,176,79,.18); --rr-inf-ink: #f0c46a; --rr-add: rgba(92,201,148,.18); --rr-del: rgba(255,138,128,.16);
+  --rr-shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -14px rgba(0,0,0,.7); }
+/* the handwriting, only for the board's titles and picture labels: LXGW WenKai first in a Chinese room, Caveat first in English */
+.rr-hand { font-family: var(--rr-hand); font-weight: 400; }
+html:lang(en) .rr-hand { font-family: "Caveat", "LXGW WenKai TC", "Kaiti TC", cursive; }
+
 /* ---------- focus mode ---------- */
 body.room-focus .main { overflow: hidden !important; padding: 0 !important; max-height: none !important; }
 body.room-focus .fab, body.room-focus .ob-tour { display: none !important; }
@@ -28,10 +53,13 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 
 /* the stage: the board, then its caption and its play bar */
 .rr-stage { display: grid; grid-template-rows: minmax(0, 1fr) 52px 40px; gap: 10px; min-height: 0; min-width: 0; }
-.rr-board { min-height: 0; min-width: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 16px; border: 1px solid var(--border); background: var(--surface); padding: 14px 24px; }
+.rr-board { min-height: 0; min-width: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 18px; border: 1px solid var(--rr-paper-edge); background-color: var(--rr-paper); background-image: radial-gradient(var(--rr-dot) 1.1px, transparent 1.3px); background-size: 20px 20px; box-shadow: var(--rr-shadow); color: var(--rr-ink); padding: 16px 28px; }
 .rr-stitle { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin: 0 0 8px; }
-.rr-kicker { flex: none; font-size: 12px; color: var(--text-3); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
-.rr-stitle h2 { margin: 0; font-size: 22px; line-height: 1.2; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-kicker { flex: none; font-size: 12px; color: var(--rr-ink-2); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.rr-stitle h2 { margin: 0; font-size: clamp(22px, 2.3vw, 32px); line-height: 1.2; color: var(--rr-marker); min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; isolation: isolate; padding: 0 4px; }
+/* the highlighter under a scene's title: drawn once, when the scene first shows */
+.rr-stitle h2 .rr-hl { position: absolute; left: 0; right: 0; bottom: .12em; height: .42em; background: var(--rr-hl); border-radius: 3px; z-index: -1; transform-origin: left; }
+.rr-stitle h2 .rr-hl.rr-anim { animation: rr-scale .45s cubic-bezier(.2,.7,.2,1) .1s both; }
 .rr-scene { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 28px; min-height: 0; min-width: 0; }
 .rr-visual { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 6px; }
 .rr-visual > .rr-item { min-height: 0; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: 4px; border: 0; padding: 0; margin: 0; background: none; }
@@ -49,20 +77,22 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 /* the points: at most four (a page), each at most three lines; the column never grows the page */
 .rr-points { min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
 .rr-pointlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.rr-point { position: relative; padding: 8px 12px 8px 14px; border-left: 3px solid var(--border); border-radius: 0 10px 10px 0; color: var(--text-2); font-size: 15px; line-height: 1.55; animation: rr-in .35s ease-out; }
-.rr-point.now { color: var(--text); border-left-color: var(--accent); background: var(--accent-soft); }
+.rr-point { position: relative; padding: 8px 12px 8px 14px; border-left: 3px solid var(--rr-paper-edge); border-radius: 0 10px 10px 0; color: var(--rr-ink-2); font-size: 15.5px; line-height: 1.55; transition: color .25s, background-color .25s, border-color .25s; }
+.rr-point.rr-enter { animation: rr-in .35s ease-out both; }
+.rr-point.now { color: var(--rr-ink); border-left-color: var(--rr-marker); background: var(--rr-new-soft); }
+.rr-point code { font: 13px var(--f-mono); background: var(--rr-cite-bg); padding: 0 4px; border-radius: 4px; }
 .rr-point.inference { border-left-style: dashed; }
 .rr-ptext { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .rr-point.code pre { max-height: 9em; overflow: hidden; }
-.rr-ppage { margin: 0; font-size: 12px; }
+.rr-ppage { margin: 0; font-size: 12px; color: var(--rr-ink-2); }
 @keyframes rr-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .rr-point { animation: none; } }
+
 .rr-sceneq { padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); font-size: 13px; }
 .rr-sceneq ol { margin: 4px 0 0; padding-left: 18px; }
 
 /* the caption follows the point being read */
-.rr-caption { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 16px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); font-size: 16px; line-height: 1.4; }
-.rr-who { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); padding-right: 12px; border-right: 1px solid var(--border); }
+.rr-caption { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 16px; border-radius: 12px; background: var(--rr-caption); color: var(--rr-ink); border: 1px solid var(--rr-paper-edge); font-size: 16px; line-height: 1.4; }
+.rr-who { flex: none; font-size: 11px; font-weight: 600; color: var(--rr-ink-2); padding-right: 12px; border-right: 1px solid var(--rr-paper-edge); }
 .rr-ctext { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .rr-ctext:empty::before { content: "\00a0"; }
 
@@ -75,7 +105,7 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 .rr-dots { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
 .rr-dot { border: 0; padding: 0 2px; background: none; height: 22px; display: grid; place-items: center; cursor: pointer; }
 .rr-dot i { display: block; width: 8px; height: 8px; border-radius: 99px; background: var(--border-strong); transition: width .25s, background-color .25s; }
-.rr-dot[aria-current="step"] i { width: 24px; background: var(--accent); }
+.rr-dot[aria-current="step"] i { width: 24px; background: var(--rr-marker); }
 .rr-scenenav { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
 .rr-mini { border: 0; background: none; color: var(--text-2); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 14px; }
 .rr-mini:disabled { opacity: .35; cursor: default; }
@@ -127,30 +157,32 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 .rr-item-h b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .rr-item-h code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rr-pre > span { display: block; }
-.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--code-bg, rgba(127,127,127,.08)); font: 12.5px/1.5 var(--mono, ui-monospace, monospace); max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
-.rr-diff .add { background: rgba(40,160,80,.16); }
-.rr-diff .del { background: rgba(210,60,60,.16); }
+.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--rr-code-bg); font: 12.5px/1.5 var(--f-mono); max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rr-diff .add { background: var(--rr-add); }
+.rr-diff .del { background: var(--rr-del); }
 .rr-diff .hunk { color: var(--text-2); }
 .rr-code i { font-style: normal; color: var(--text-2); user-select: none; }
 .rr-code .hl { background: var(--accent-soft); }
 .rr-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-.rr-flow rect, .rr-flow polygon { fill: var(--surface, #fff); stroke: var(--border-strong); stroke-width: 1.4; }
-.rr-flow text { fill: var(--text, #111); font: 12px var(--sans, system-ui, sans-serif); }
-.rr-flow .rr-edge { stroke: var(--text-2, #666); stroke-width: 1.4; }
-.rr-flow .rr-edge.dashed { stroke-dasharray: 5 4; }
-.rr-flow .rr-arrowhead { fill: var(--text-2, #666); }
-.rr-flow .rr-elabel { fill: var(--text-2, #555); font-size: 11px; }
-.rr-flow .rr-new rect, .rr-flow .rr-new polygon { stroke: var(--accent); stroke-width: 2.6; fill: var(--accent-soft); }
-.rr-flow line.rr-new { stroke: var(--accent); stroke-width: 2.4; }
-.rr-keycard .rr-key-title { font-size: 34px; fill: var(--text); }
-.rr-keycard .rr-key-line { stroke: var(--accent); stroke-width: 3; fill: none; stroke-linecap: round; }
-.rr-keycard .rr-sticky rect { fill: #fff3b0; }
-.rr-keycard .rr-sticky-name { font-size: 22px; fill: #1f2a44; }
-.rr-keycard .rr-sticky-dir { font-size: 14px; fill: #5b6478; font-family: var(--f-mono); }
+.rr-flow .rr-box { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; stroke-linejoin: round; }
+.rr-flow text { fill: var(--rr-ink); font-family: var(--rr-hand); font-size: 19px; }
+html:lang(en) .rr-flow text { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 21px; }
+.rr-flow .rr-edge { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; }
+.rr-flow .rr-edge.dashed { stroke-dasharray: 6 5; }
+.rr-flow .rr-ahead { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.rr-flow .rr-elabel { fill: var(--rr-ink-2); font-size: 16px; }
+.rr-flow .rr-new .rr-box { stroke: var(--rr-new); fill: var(--rr-new-soft); }
+.rr-flow .rr-edge.rr-new, .rr-flow .rr-ahead.rr-new { stroke: var(--rr-new); }
+.rr-flow .rr-newtag { fill: var(--rr-new); font-size: 15px; }
+.rr-keycard .rr-key-title { font-size: 34px; fill: var(--rr-marker); }
+.rr-keycard .rr-key-line { stroke: var(--rr-hl); stroke-width: 12; fill: none; stroke-linecap: round; }
+.rr-keycard .rr-sticky rect { fill: var(--rr-sticky); }
+.rr-keycard .rr-sticky-name { font-size: 22px; fill: var(--rr-sticky-ink); }
+.rr-keycard .rr-sticky-dir { font-size: 14px; fill: var(--rr-sticky-ink); opacity: .75; font-family: var(--f-mono); }
 .rr-turns { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
-.rr-inference { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; margin-right: 6px; border-radius: 6px; background: rgba(201,134,26,.16); color: var(--warn-text, #8a5a0b); }
+.rr-inference { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; margin-right: 6px; border-radius: 6px; background: var(--rr-inf-bg); color: var(--rr-inf-ink); }
 .rr-tier { font-size: 11px; font-weight: 600; padding: 0 4px; border-radius: 4px; background: rgba(127,127,127,.14); }
-.rr-cite { font: 11px var(--mono, ui-monospace, monospace); padding: 1px 6px; margin: 0 2px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent-text, var(--accent)); cursor: pointer; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: 1px; }
+.rr-cite { font: 500 10.5px var(--f-mono); padding: 1px 7px; margin: 0 2px; border-radius: 99px; border: 0; background: var(--rr-cite-bg); color: var(--rr-cite-ink); cursor: pointer; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: 1px; }
 .rr-cite.bad { border-color: var(--bad, #c33); color: var(--bad, #c33); text-decoration: line-through; }
 .rr-basis { display: flex; flex-wrap: nowrap; gap: 4px; overflow: hidden; }
 .rr-err { color: var(--bad, #c33); }
@@ -165,19 +197,21 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 .rr-kind.illustration { background: rgba(140,90,200,.16); color: var(--text); }
 .rr-shots { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-height: 0; }
 .rr-fig { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; height: 100%; }
-.rr-fig img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; cursor: zoom-in; background: #fff; }
+.rr-fig img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; cursor: zoom-in; background: var(--rr-img-bg); }
 .rr-fig figcaption { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
 .rr-toggle { display: flex; gap: 6px; }
 .rr-toggle [aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text, var(--accent)); font-weight: 600; }
-.rr-chart text { fill: var(--text, #111); font: 11px var(--sans, system-ui, sans-serif); }
-.rr-chart .add, .rr-legend .add { fill: rgba(40,160,80,.7); background: rgba(40,160,80,.7); }
-.rr-chart .del, .rr-legend .del { fill: rgba(210,60,60,.7); background: rgba(210,60,60,.7); }
+.rr-chart text { fill: var(--rr-ink); font: 12px var(--f-sans); }
+.rr-chart .rr-chart-l { font-family: var(--rr-hand); font-size: 15px; }
+html:lang(en) .rr-chart .rr-chart-l { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 17px; }
+.rr-chart .add, .rr-legend .add { fill: var(--rr-ok); background: var(--rr-ok); }
+.rr-chart .del, .rr-legend .del { fill: var(--rr-bad); background: var(--rr-bad); }
 .rr-chart .before, .rr-legend .before { fill: var(--border-strong); background: var(--border-strong); }
 .rr-chart .after, .rr-legend .after { fill: var(--accent); background: var(--accent); }
 .rr-legend { display: flex; gap: 12px; font-size: 12px; margin-top: 4px; }
 .rr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .rr-zoom { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.72); display: grid; place-items: center; padding: 16px; gap: 8px; grid-template-rows: auto 1fr; }
-.rr-zoom img { max-width: 100%; max-height: 82vh; border-radius: 8px; background: #fff; }
+.rr-zoom img { max-width: 100%; max-height: 82vh; border-radius: 8px; background: var(--rr-img-bg); }
 .rr-zoom .btn { justify-self: end; }
 .rr-ph { display: grid; place-items: center; min-height: 160px; padding: 16px; border: 2px dashed var(--border-strong); border-radius: 10px; color: var(--text-2); text-align: center; }
 /* someone else's words (a reviewer, a commit message), quoted as plain text: a gist, the original folded */
@@ -208,18 +242,43 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 .rr-ans-table { white-space: pre-wrap; font: 12px/1.5 var(--f-mono); }
 /* the check on the board: big option buttons; right and wrong by colour and by a drawn mark */
 .rr-quiz { width: 100%; height: 100%; display: grid; align-content: center; gap: 10px; min-height: 0; overflow: auto; }
-.rr-quiz-q { margin: 0 0 4px; font-size: 22px; line-height: 1.35; overflow-wrap: anywhere; }
+.rr-quiz-q { margin: 0 0 4px; font-size: clamp(20px, 1.8vw, 26px); color: var(--rr-ink); line-height: 1.35; overflow-wrap: anywhere; }
 .rr-opts { display: grid; gap: 8px; }
-.rr-opt { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; gap: 10px; text-align: left; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); border-radius: 12px; padding: 10px 12px; min-height: 48px; font: inherit; font-size: 15px; cursor: pointer; transition: border-color .2s, background-color .2s, transform .12s; }
+.rr-opt { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; gap: 10px; text-align: left; border: 1.5px solid var(--rr-paper-edge); background: var(--rr-paper); color: var(--rr-ink); border-radius: 12px; padding: 10px 12px; min-height: 48px; font: inherit; font-size: 15px; cursor: pointer; transition: border-color .2s, background-color .2s, transform .12s; }
 .rr-opt:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
 .rr-opt:disabled { cursor: default; }
 .rr-optk { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid currentColor; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: var(--text-2); }
 .rr-optt { overflow-wrap: anywhere; }
-.rr-opt.right { border-color: var(--ok); background: var(--ok-soft); } .rr-opt.right .rr-optk { color: var(--ok); }
+.rr-opt.right { border-color: var(--rr-ok); background: var(--rr-ok-soft); } .rr-opt.right .rr-optk { color: var(--rr-ok); }
 .rr-opt.wrong { border-color: var(--bad); background: var(--bad-soft); } .rr-opt.wrong .rr-optk { color: var(--bad); }
 .rr-mk { width: 22px; height: 22px; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.rr-mk.ok { stroke: var(--ok); } .rr-mk.miss { stroke: var(--bad); }
+.rr-mk.ok { stroke: var(--rr-ok); } .rr-mk.miss { stroke: var(--bad); }
 .rr-verdict { font-size: 14px; border-radius: 10px; padding: 8px 12px; background: var(--surface-2); }
 .rr-verdict.ok { background: var(--ok-soft); } .rr-verdict.miss { background: var(--bad-soft); }
 .rr-quiz-help { margin: 0; font-size: 15px; color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { .rr-opt { transition: none; } }
+
+/* ---------- motion: one timeline, only what is new moves (a picture's new parts, a new point, a new title) ----------
+   nodes are drawn by the pen (stroke-dashoffset, 450ms), edges 350ms then their arrowhead 120ms, 180ms apart; labels are
+   written left to right (clip-path, 400ms); the highlighter 450ms; bars 600ms; a check mark 250ms. Reduced motion: the
+   final picture at once. */
+.rr-pen { stroke-dasharray: 1; animation: rr-pen var(--d, .45s) cubic-bezier(.3,.6,.2,1) var(--dl, 0s) both; }
+.rr-write { animation: rr-write var(--d, .4s) ease-out var(--dl, 0s) both; }
+.rr-grow { transform-box: fill-box; transform-origin: left; animation: rr-scale var(--d, .6s) cubic-bezier(.2,.7,.2,1) var(--dl, 0s) both; }
+.rr-fade { animation: rr-fadein .3s ease var(--dl, 0s) both; }
+.rr-mk.rr-pen path { stroke-dasharray: 1; animation: rr-pen .25s ease-out .1s both; }
+@keyframes rr-pen { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes rr-write { from { clip-path: inset(-30% 100% -30% 0); } to { clip-path: inset(-30% -4% -30% 0); } }
+@keyframes rr-scale { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes rr-fadein { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .rr-pen, .rr-write, .rr-grow, .rr-fade, .rr-mk.rr-pen path, .rr-point.rr-enter, .rr-stitle h2 .rr-hl.rr-anim, .rr-dot i, .rr-point { animation: none !important; transition: none !important; }
+}
+
+/* the welcome scene's call to action */
+.rr-cta { align-self: flex-start; margin-top: 6px; border: 0; border-radius: 12px; background: var(--rr-marker); color: var(--rr-paper); font: 400 20px/1.2 var(--rr-hand); padding: 10px 18px; box-shadow: 0 2px 0 rgba(0,0,0,.15); cursor: pointer; text-align: left; }
+html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 22px; }
+.rr-cta small { display: block; font: 500 11px var(--f-sans); opacity: .85; }
+.rr-cta:disabled { opacity: .5; cursor: default; }
+.rr-body.text { display: grid; align-content: center; }
+.rr-body.text .rr-pre { font-size: 14px; }
