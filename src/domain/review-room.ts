@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { ArtifactStore } from "../artifacts";
 import { CAPTURE_PATH } from "../runtime/captures";
 import { cleanText } from "./issue-triage";
+import { figureGate, sanitizeFigure } from "./figure-svg";
 import type { GitHubPrAdapter } from "../adapters/github";
 import type { Projects } from "../doors";
 import { bundledText } from "../bundled";
@@ -48,13 +49,22 @@ import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT,
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
-  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "7d34a72779feb6e24225021858bd6e3b29935e84650d3b196115d9e9e5227f88" },
+  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "e20a225c14f781e9fbb5fd331b09af3069a85c0e10807dbe75a98acdf4d5b4a5" },
   { id: "pstack-how", ref: "workflows/skills/pstack/how.md", sha256: "19b614c9a54cf2dbad87114f9a3de7e408f39f7e0b02bf76608956b10d77f6d6" },
   { id: "pstack-why", ref: "workflows/skills/pstack/why.md", sha256: "9d6a298a5528b46610e964d0ce6ddcab990913837cb08455e531d6c5619d8c37" },
   { id: "pstack-teach", ref: "workflows/skills/pstack/teach.md", sha256: "a85b812c6d485cc07e13e3646f8d4b6525185f2159af3523729835007cfa120a" },
-  { id: "baton-lesson", ref: "workflows/skills/baton/SKILL.md", sha256: "3d55496de85987177d9de178dadc4249e75e70014d18d69d1e4d3753a456438c" },
-  { id: "baton-diagrams", ref: "workflows/skills/baton/diagrams.md", sha256: "7151c2f73bea0641ff32c881925f7d465a4a98b5da605fbb7a02ea3ddb31b07c" },
-  { id: "baton-spec", ref: "workflows/skills/baton/spec.md", sha256: "bdc7361060ac9bfb2fe8ff5593db92d40a1499468260511c430114f34193f9ff" },
+  { id: "baton-lesson", ref: "workflows/skills/baton/SKILL.md", sha256: "8b07debcbfd93cd793c517c2364cca5513d433e23171ea75aeea0f77290c6eba" },
+  { id: "baton-diagrams", ref: "workflows/skills/baton/diagrams.md", sha256: "8bc58a4165eb075015008bfcc06f23cc41d230883a5a24373bedbe414700862d" },
+  { id: "baton-spec", ref: "workflows/skills/baton/spec.md", sha256: "06e1675764aca2a309ac77069323335ab9b2c63e8ddea908f7fbabdad1d0e36d" },
+  { id: "diagram-design-skill", ref: "workflows/skills/diagram-design/SKILL.md", sha256: "1cd2ba6ae710bf76fef458e8599decd9ada0c8f685af2e968d08f0abf2d1b59a" },
+  { id: "diagram-design-style-guide", ref: "workflows/skills/diagram-design/style-guide.md", sha256: "303a48fd14240f72fc04a3bc2d78259fe483cb6032f9633de3251e8dded8c5f8" },
+  { id: "diagram-design-semantic-patterns", ref: "workflows/skills/diagram-design/semantic-patterns.md", sha256: "5d56ce71a7be7ca8465f3919ac6e8f72713c11ea6034203773175538dcaf959f" },
+  { id: "diagram-design-output-spec", ref: "workflows/skills/diagram-design/output-spec.md", sha256: "c7ef280a930362034069e01e8325237471dac8841b712f6b4042f751266a8ec0" },
+  { id: "diagram-design-type-state", ref: "workflows/skills/diagram-design/type-state.md", sha256: "f0ee60615758af858e992f3cc9623a97744052ff1a458e0c645c66773192de8b" },
+  { id: "diagram-design-type-sequence", ref: "workflows/skills/diagram-design/type-sequence.md", sha256: "03eb760a1b5c2b6ccb322d0c9c1e4da3c9379e089f5b88b1f88615200b5d26b2" },
+  { id: "diagram-design-type-architecture", ref: "workflows/skills/diagram-design/type-architecture.md", sha256: "2cc7cebf22475387f898ac3203aeb02cdb144f1d175992db1805ec16171daa15" },
+  { id: "diagram-design-type-data-flow", ref: "workflows/skills/diagram-design/type-data-flow.md", sha256: "de08247fe2baa97bcbe05ece08fd7ecea5381440bad41aad8c6198a0010e2136" },
+  { id: "diagram-design-type-flowchart", ref: "workflows/skills/diagram-design/type-flowchart.md", sha256: "23bedcb7f6193c4ec0018351a0982ef5ea57d3e01c577d980a7d07f69c1b420a" },
 ] as const;
 /** The room's quick actions: what the captain's message says when they press one (ask carries their own words). */
 export const ROOM_ACTIONS: Record<string, { en: string; zh: string } | null> = {
@@ -68,26 +78,48 @@ export const ROOM_ACTIONS: Record<string, { en: string; zh: string } | null> = {
   reviews: { en: "Digest the review discussion: what reviewers raised, what is still open and what was resolved.", zh: "整理審查討論：審查者提了什麼、哪些還沒解決、哪些已經處理。" },
 };
 /** The tools a tutor round gets: reading, the board, the check and the filtered web. Nothing else, ever. */
-export const ROOM_TOOLS = ["fs_list", "fs_search", "fs_read", "git_diff", "git_log", "git_show", "git_blame", "board_draw", "scene_show", "chapter_skip", "lesson_check", "screenshots_show", "chart_draw", "illustrate", "check_ask", "check_grade", "web_search", "web_fetch"] as const;
+export const ROOM_TOOLS = ["fs_list", "fs_search", "fs_read", "git_diff", "git_log", "git_show", "git_blame", "board_draw", "scene_show", "chapter_skip", "lesson_check", "figure_svg", "screenshots_show", "chart_draw", "illustrate", "check_ask", "check_grade", "web_search", "web_fetch"] as const;
 /** What the board shows is short, and Studio holds the tutor to it (scene_show refuses what is over, and the tutor rewrites):
  *  a scene's title at most 20 CJK characters or 48 Latin ones, a point at most 60 CJK or 120 Latin (citations not counted).
  *  A CJK character counts as the Latin characters the two limits trade it for. */
 export const SCENE_LIMITS = { title: { cjk: 20, latin: 48 }, point: { cjk: 60, latin: 120 }, points: { min: 2, max: 4 }, scenes: 12 } as const;
 /** A lesson's chapters, in their order (after baton's packet: each dropped when its source is empty, every one a drawing).
  *  picture: the board item kinds a chapter's scene shows (any, when not listed); cited: every point rests on a citation. */
-export type Chapter = { id: string; en: string; zh: string; cn: string; picture?: string[]; text?: true; required?: true; skippable?: true; many?: true; cited?: true; record?: true };
+export type Chapter = { id: string; en: string; zh: string; cn: string; picture?: string[]; svg?: string[]; text?: true; required?: true; skippable?: true; many?: true; cited?: true; record?: true };
 export const CHAPTERS: Chapter[] = [
   { id: "what", en: "What this is", zh: "這是什麼", cn: "这是什么", text: true, required: true },
-  { id: "talks", en: "What talks to what", zh: "誰跟誰說話", cn: "谁跟谁说话", picture: ["arch"], skippable: true },
-  { id: "decisions", en: "The decisions", zh: "做了哪些決定", cn: "做了哪些决定", picture: ["decision"], many: true },
-  { id: "change", en: "The change itself", zh: "改了什麼", cn: "改了什么", picture: ["item"], required: true, many: true },
-  { id: "lifecycle", en: "Its life, state by state", zh: "狀態的一生", cn: "状态的一生", picture: ["states"], skippable: true },
-  { id: "sequence", en: "One request, in order", zh: "一次請求的順序", cn: "一次请求的顺序", picture: ["sequence"], skippable: true },
+  { id: "talks", en: "What talks to what", zh: "誰跟誰說話", cn: "谁跟谁说话", picture: ["arch", "svg"], svg: ["architecture", "flow"], skippable: true },
+  { id: "decisions", en: "The decisions", zh: "做了哪些決定", cn: "做了哪些决定", picture: ["decision", "svg"], svg: ["decision", "flow"], many: true },
+  { id: "change", en: "The change itself", zh: "改了什麼", cn: "改了什么", picture: ["item", "svg"], svg: ["item", "flow"], required: true, many: true },
+  { id: "lifecycle", en: "Its life, state by state", zh: "狀態的一生", cn: "状态的一生", picture: ["states", "svg"], svg: ["state"], skippable: true, many: true },
+  { id: "sequence", en: "One request, in order", zh: "一次請求的順序", cn: "一次请求的顺序", picture: ["sequence", "svg"], svg: ["sequence"], skippable: true },
+  { id: "calls", en: "Every call: request, response, transaction", zh: "每個呼叫：request、response、交易", cn: "每个调用：request、response、事务", picture: ["calls"], many: true },
   { id: "reviewers", en: "What reviewers raised", zh: "審查者提了什麼", cn: "审查者提了什么", text: true },
   { id: "roads", en: "Roads not taken", zh: "沒走的路", cn: "没走的路", text: true, record: true },
   { id: "watch", en: "What to watch", zh: "要注意的地方", cn: "要注意的地方", text: true, cited: true },
   { id: "questions", en: "Open questions", zh: "待解問題", cn: "待解问题", text: true },
 ];
+/** One database transaction a transition (or a call) runs, as the tutor read it in the code: each table written (INSERT,
+ *  UPDATE or DELETE, each field was → now), the guard that makes it safe (a CAS predicate, a unique key, a row condition),
+ *  and what is written outside it (a cache, an outbound call, an event), shown set apart. Returns null for nothing given. */
+export function txOf(v: any): { tables: { table: string; op: string; guard: string; fields: { k: string; was: string | null; now: string }[] }[]; outside: { what: string; kind: string }[] } | null | { error: string } {
+  if (v == null) return null; if (typeof v !== "object") return { error: "tx is {tables: [{table, op, guard?, fields: [{k, was?, now}]}], outside?: [{what, kind?}]}" };
+  const one = (x: unknown, n: number) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const tables = (Array.isArray(v.tables) ? v.tables : []).slice(0, 4).map((t: any) => ({ table: one(t?.table, 60), op: String(t?.op ?? "").toUpperCase(), guard: one(t?.guard, 120),
+    fields: (Array.isArray(t?.fields) ? t.fields : []).slice(0, 8).map((x: any) => ({ k: one(x?.k, 60), was: x?.was == null || x.was === "" ? null : one(x.was, 60), now: one(x?.now, 60) })) }));
+  const outside = (Array.isArray(v.outside) ? v.outside : []).slice(0, 4).map((x: any) => ({ what: one(x?.what, 100), kind: ["cache", "call", "event", "file", "queue"].includes(x?.kind) ? x.kind : "" }));
+  if (tables.some((t: any) => !t.table || !["INSERT", "UPDATE", "DELETE", "UPSERT"].includes(t.op) || t.fields.some((x: any) => !x.k || !x.now)) || outside.some((x: any) => !x.what) || (!tables.length && !outside.length))
+    return { error: "tx: each table has a name, op INSERT|UPDATE|DELETE|UPSERT and fields {k, was?, now}; each outside write says what" };
+  return { tables, outside };
+}
+/** the diff's added lines that write a state or status column (a lifecycle is then owed, never left out) */
+export function stateWrites(diff: string): string[] {
+  const out: string[] = []; let file = "", line = 0;
+  for (const l of diff.split("\n")) { const f = /^\+\+\+ b\/(.+)$/.exec(l); if (f) { file = f[1]; continue; } const h = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(l); if (h) { line = Number(h[1]); continue; }
+    if (l.startsWith("+") && !l.startsWith("+++")) { if (!/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|\.md$/i.test(file) && /\b(status|state)\b\s*(=|:|=>)\s*['"`A-Za-z_]|\bSET\s+[\w.]*\b(status|state)\s*=|\.(status|state)\s*=\s*/i.test(l)) out.push(`${file}:${line}`); line++; }
+    else if (!l.startsWith("-")) line++; }
+  return [...new Set(out)].slice(0, 20);
+}
 /** what a lesson still lacks: a required chapter not shown, a skippable one neither shown nor left out with a cited reason */
 export function lessonGaps(scenes: { chapter?: string; skip?: true }[] | undefined): string[] {
   const has = (id: string) => (scenes ?? []).some((x) => x.chapter === id && !x.skip), skipped = (id: string) => (scenes ?? []).some((x) => x.chapter === id && x.skip);
@@ -122,7 +154,7 @@ export type Illustrator = (prompt: string, authorize: () => void, signal: AbortS
 
 const SHA = /^[a-f0-9]{40}$/, LIST_CAP = 3000, LANGS: Record<string, string> = { en: "English", "zh-TW": "Traditional Chinese (zh-TW)", "zh-CN": "Simplified Chinese (zh-CN)" };
 type Source = { n: number; turn: number; kind: "search" | "fetch"; query?: string; url?: string; /** an address that was refused or did not parse, kept as text only */ text?: string; at: string; ok: boolean; refused?: string; error?: string; status?: number };
-type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "compare" | "note" | "table" | "item" | "states" | "sequence" | "arch" | "decision" | "screenshot" | "chart" | "image"; title: string; group?: string; step?: number; [k: string]: any };
+type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "compare" | "note" | "table" | "item" | "states" | "sequence" | "arch" | "decision" | "calls" | "svg" | "screenshot" | "chart" | "image"; title: string; group?: string; step?: number; [k: string]: any };
 /** an understanding check question: multiple choice (options, the right one's index, why: Studio grades the captain's pick, no
  *  model; answer, why and cites never reach the page before the captain answers), or an older free-text one the tutor graded */
 type Question = { n: number; q: string; turn: number; at: string; options?: string[]; answer?: number; why?: string; cites?: Cite[]; choice?: number;
@@ -546,7 +578,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const fresh = (k: Key, s: { run: any; head: string; base: string }): Room => ({ schema: 1, run: s.run?.id ?? "", card: k.id, node: k.node ?? "", head: s.head, base: s.base, turns: [], board: [], sources: [], check: { questions: [] },
     ...(k.kind === "merge" ? {} : { subject: subjectRecord(k, s, null), seen: { head: s.head, at: new Date().toISOString() }, heads: [{ head: s.head, base: s.base, at: new Date().toISOString() }] }) });
   function tools(k: Key, room: Room, turn: Turn, s: S, web: WebBackend, ctx: WebContext, allowed: { urls: Set<string>; hosts: Set<string> }): AgentTool[] {
-    const { wt, head, base } = s; let drawn = 0;
+    const { wt, head, base } = s; let drawn = 0, figTries = 0;
     // a source is plain text: an address is kept as one only when it parses as http(s); anything else is kept as text, never a link
     const source = (x: Omit<Source, "n" | "turn" | "at">) => { const e = { n: room.sources.length + 1, turn: turn.n, at: new Date().toISOString(), ...x, ...(x.url !== undefined ? (x.ok ? safeUrl(x.url) : { url: undefined, text: safeUrl(x.url).url ?? String(x.url).slice(0, 300) }) : {}) } as Source; room.sources.push(e); save(k, room); return e; };
     let calls = 0; const capped = () => ++calls > WEB_CALLS_PER_TURN ? `at most ${WEB_CALLS_PER_TURN} web calls a turn` : null;
@@ -567,7 +599,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // a lifecycle: its states and every transition, each transition citing the code that makes it
       if (type === "states") { const states = (Array.isArray(a?.states) ? a.states : []).map((x: any) => ({ id: String(x?.id ?? "").trim(), label: String(x?.label ?? x?.id ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label) }));
         const ids = new Set(states.map((x: any) => x.id)), ok = await citeCheck(room, s);
-        const transitions = (Array.isArray(a?.transitions) ? a.transitions : []).map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), label: String(x?.label ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), detail: String(x?.detail ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null }));
+        const transitions = (Array.isArray(a?.transitions) ? a.transitions : []).map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), label: String(x?.label ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), detail: String(x?.detail ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null, tx: txOf(x?.tx) }));
+        const badTx = transitions.findIndex((x: any) => x.tx && "error" in x.tx); if (badTx >= 0) throw new Error(`item ${i + 1}: transition ${badTx + 1}: ${(transitions[badTx].tx as any).error}`);
         if (states.length < 2 || states.length > FIGURE_LIMITS.states || states.some((x: any) => !/^[\w-]{1,30}$/.test(x.id)) || ids.size !== states.length) throw new Error(`item ${i + 1}: states is 2 to ${FIGURE_LIMITS.states} {id, label}, each id letters, digits, - or _`);
         if (!transitions.length || transitions.length > FIGURE_LIMITS.transitions || transitions.some((x: any) => !ids.has(x.from) || !ids.has(x.to))) throw new Error(`item ${i + 1}: transitions is 1 to ${FIGURE_LIMITS.transitions} {from, to, label, cite}, between the states listed`);
         // drawn as a mermaid flowchart: an id is prefixed (a state called "end", "style" or "class" is a keyword there) and a label
@@ -575,7 +608,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         const sid = (id: string) => `s_${id}`, lab = (t: string) => t.replace(/-->|---|--x|==>/g, " ").replace(/[\[\]|;(){}&]/g, " ").replace(/\s+/g, " ").trim();
         const code = ["flowchart LR", ...states.map((x: any) => `  ${sid(x.id)}[${lab(x.label) || x.id}]`), ...transitions.map((x: any) => `  ${sid(x.from)} -->${lab(x.label) ? `|${lab(x.label)}|` : ""} ${sid(x.to)}`)].join("\n");
         const cites = transitions.map((x: any) => x.cite).filter(Boolean);
-        return { ...at, type, states, transitions, code, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" }; }
+        return { ...at, type, entity: String(a?.entity ?? "").replace(/\s+/g, " ").trim().slice(0, 40), states, transitions, code, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" }; }
       // one request, in order: who calls whom, returns and async, loops, alternatives and options kept
       if (type === "sequence") { const actors = (Array.isArray(a?.actors) ? a.actors : []).map((x: any) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, 24)).filter(Boolean);
         const steps = (Array.isArray(a?.steps) ? a.steps : []).map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), label: String(x?.label ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), kind: ["call", "return", "async"].includes(x?.kind) ? x.kind : "call",
@@ -603,6 +636,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (bad.length) throw new Error(`item ${i + 1}: ${bad.join("; ")}`);
         const sd = await said(), cites = [...sd.cites, ...rejected.map((x: any) => x.cite).filter(Boolean)];
         return { ...at, type, question, chosen, because, rejected, cites, basis: sd.basis }; }
+      // every call: its request, its response (and errors), the transaction it runs
+      if (type === "calls") { const ok = await citeCheck(room, s), one = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+        const kv = (v: any) => (Array.isArray(v) ? v : []).slice(0, 10).map((x: any) => ({ k: one(x?.k, 60), v: one(x?.v, 80) })).filter((x: any) => x.k);
+        const calls = (Array.isArray(a?.calls) ? a.calls : []).slice(0, 6).map((c: any) => ({ name: one(c?.name, 60), method: one(c?.method, 40), request: kv(c?.request), response: kv(c?.response),
+          errors: (Array.isArray(c?.errors) ? c.errors : []).slice(0, 4).map((x: any) => ({ code: one(x?.code, 30), when: one(x?.when, 80) })).filter((x: any) => x.code), tx: txOf(c?.tx), cite: citesOf(c?.cite ? [c.cite] : [], ok)[0] ?? null }));
+        if (!calls.length || calls.some((c: any) => !c.name || !c.request.length || !c.response.length)) throw new Error(`item ${i + 1}: calls is 1 to 6 {name, method?, request: [{k, v}], response: [{k, v}], errors?, tx?, cite}`);
+        const bad = calls.findIndex((c: any) => c.tx && "error" in c.tx); if (bad >= 0) throw new Error(`item ${i + 1}: call ${bad + 1}: ${(calls[bad].tx as any).error}`);
+        const cites = calls.map((c: any) => c.cite).filter(Boolean);
+        return { ...at, type, calls, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" }; }
       // a small table, drawn by Studio as text: the header row first
       if (type === "table") { const rows = Array.isArray(a?.rows) ? a.rows : [];
         if (rows.length < 2 || rows.length > 8 || rows.some((r: any) => !Array.isArray(r) || !r.length || r.length > 5 || r.some((c: any) => typeof c !== "string" && typeof c !== "number" || String(c).length > 60))) throw new Error(`item ${i + 1}: a table is 2 to 8 rows (the header first) of 1 to 5 cells, each at most 60 characters`);
@@ -624,7 +666,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (!before && !after) throw new Error(`item ${i + 1}: ${path} is in neither the base nor the head`);
         return { ...at, type, path, base, commit: head, before, after, basis: "cited", cites: [] };
       }
-      throw new Error(`item ${i + 1}: type is mermaid, diff, code, compare, table, item, states, sequence, arch, decision or note`);
+      throw new Error(`item ${i + 1}: type is mermaid, diff, code, compare, table, item, states, sequence, arch, decision, calls or note (a figure you draw yourself: figure_svg)`);
     };
     const all: AgentTool[] = [
       { name: "fs_list", description: `List the files of the pull request's head commit (at most ${LIST_CAP}).`, schema: { type: "object", properties: {} },
@@ -650,7 +692,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       { name: "git_blame", description: "Who last changed each line of a range of a file at the head (at most 120 lines): commit, author, date.", schema: { type: "object", properties: { path: { type: "string" }, start: { type: "number" }, end: { type: "number" } }, required: ["path", "start"] },
         run: async (a) => { const p = pathArg(a?.path), s0 = Math.max(1, Number(a?.start) || 1), e0 = Math.min(s0 + 119, Math.max(s0, Number(a?.end) || s0 + 40));
           const t = await g(wt, ["blame", "--date=short", "-L", `${s0},${e0}`, head, "--", p], 400_000); return t === null ? { error: `cannot blame ${p} lines ${s0}-${e0} at the head` } : { path: p, text: t.slice(0, 20000) }; } },
-      { name: "board_draw", description: "Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); table {rows: [[header cells], [cells], ...]} (2 to 8 rows of at most 5 cells of at most 60 characters, shown as text); item {name, before, after, mechanism?, cites} (one changed item: a commit group, a subsystem or a fix, before and after; Studio draws every item with the same layout); states {states: [{id, label}], transitions: [{from, to, label, detail?, cite}]} (a lifecycle, every transition citing the code that makes it, detail what it writes); arch {nodes: [{id, label, kind: service|store|external|queue|actor, mark?: new|changed|removed}], edges: [{from, to, label?, cite?}], cites} (what talks to what, laid out by Studio; inferred unless a design document or the record shows it); decision {question, chosen, because, rejected?: [{option, why, cite}], cites} (one decision the change makes; a rejected option only with a commit, review note or source showing it); sequence {actors: [names], steps: [{from, to, label, kind: call|return|async, frame?: loop|alt|else|opt, frameLabel?}], cites} (one request in order, its loops and alternatives kept); note {text}. Studio fills every excerpt from the real commits and draws every figure.",
+      { name: "board_draw", description: "Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); table {rows: [[header cells], [cells], ...]} (2 to 8 rows of at most 5 cells of at most 60 characters, shown as text); item {name, before, after, mechanism?, cites} (one changed item: a commit group, a subsystem or a fix, before and after; Studio draws every item with the same layout); states {entity, states: [{id, label}], transitions: [{from, to, label, detail?, cite, tx?}]} (one entity's lifecycle, every transition citing the code that makes it; tx its database transaction: {tables: [{table, op, guard?, fields: [{k, was?, now}]}], outside?: [{what, kind?}]}); calls {calls: [{name, method?, request: [{k, v}], response: [{k, v}], errors?: [{code, when}], tx?, cite}]} (every API call: request, response, the transaction it runs); arch {nodes: [{id, label, kind: service|store|external|queue|actor, mark?: new|changed|removed}], edges: [{from, to, label?, cite?}], cites} (what talks to what, laid out by Studio; inferred unless a design document or the record shows it); decision {question, chosen, because, rejected?: [{option, why, cite}], cites} (one decision the change makes; a rejected option only with a commit, review note or source showing it); sequence {actors: [names], steps: [{from, to, label, kind: call|return|async, frame?: loop|alt|else|opt, frameLabel?}], cites} (one request in order, its loops and alternatives kept); note {text}. Studio fills every excerpt from the real commits and draws every figure.",
         schema: { type: "object", properties: { items: { type: "array", maxItems: 8, items: { type: "object" } } }, required: ["items"] },
         run: async (a) => { const list = Array.isArray(a?.items) ? a.items.slice(0, 8) : []; if (!list.length) return { error: "items is a list of 1 to 8 board items" };
           if (room.board.filter((b) => b.turn === turn.n).length + list.length > 40) return { error: "at most 40 board items a turn" };
@@ -666,7 +708,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           const teach = turn.action === "teach";
           if (at < 0 && (teach || a?.chapter)) errors.push(`chapter is one of ${CHAPTERS.map((c) => c.id).join(", ")}, in that order`);
           else if (at >= 0) {
-            if (ch.picture && pic && !ch.picture.includes(pic.type)) errors.push(`the "${ch.id}" chapter's picture is a ${ch.picture.join(" or ")} item (board_draw): draw it, then show it`);
+            if (ch.picture && pic && !ch.picture.includes(pic.type)) errors.push(`the "${ch.id}" chapter's picture is a ${ch.picture.join(" or ")} item (board_draw or figure_svg): draw it, then show it`);
+            if (pic?.type === "svg" && ch.svg && !ch.svg.includes(pic.kind)) errors.push(`the "${ch.id}" chapter shows a figure of kind ${ch.svg.join(" or ")}, not ${pic.kind}`);
+            // a lifecycle shows every transition, each citing the code that makes it
+            if (teach && ch.id === "lifecycle" && pic) { const tr: any[] = pic.type === "states" || pic.type === "svg" ? pic.transitions ?? [] : [];
+              if (!tr.length || tr.some((x) => !x.cite?.ok)) errors.push(`a lifecycle's every transition cites the code that makes it (verified): ${tr.filter((x) => !x.cite?.ok).map((x) => `${x.from ?? x.edge}→${x.to ?? ""}`).join(", ") || "no transitions"}`); }
             if (ch.cited) points.forEach((p: any, j: number) => { if (!Array.isArray(p?.cites) || !p.cites.length) errors.push(`point ${j + 1}: a risk is listed only with what it rests on: cite it (an empty list is a finding: say what you checked, cited)`); });
             if (ch.record) points.forEach((p: any, j: number) => { if (!(Array.isArray(p?.cites) ? p.cites : []).some((c: any) => /^(commit|review|ledger|source):/.test(String(c)))) errors.push(`point ${j + 1}: a road not taken is listed only when the record shows it: cite the commit, the review note or the source that shows the alternative (never invent one)`); });
             // a lesson has one drawing a chapter: a second scene of the same chapter is refused (the change's items and the decisions excepted)
@@ -690,6 +736,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           if (turn.action !== "teach") return { error: "chapter_skip is for a lesson (teach) only" };
           const at = CHAPTERS.findIndex((c) => c.id === a?.chapter), ch = CHAPTERS[at], reason = String(a?.reason ?? "").replace(/\s+/g, " ").trim();
           if (!ch?.skippable) return { error: `only ${CHAPTERS.filter((c) => c.skippable).map((c) => c.id).join(" or ")} may be left out; ${CHAPTERS.filter((c) => c.required).map((c) => c.id).join(", ")} are always shown` };
+          if (ch.id === "lifecycle") { const w = stateWrites(await g(wt, ["diff", "--no-color", "-U0", base, head], 4_000_000) ?? "");
+            if (w.length) return { error: `this diff writes a state column (${w.slice(0, 4).join(", ")}): its lifecycle is owed, one statemap for each entity it moves, every transition cited` }; }
           if ((turn.scenes ?? []).some((x) => x.chapter === ch.id)) return { error: `"${ch.id}" is already in the lesson` };
           // 5. a chapter left out is a scene of the lesson too: it counts toward the limit
           if ((turn.scenes?.length ?? 0) >= SCENE_LIMITS.scenes) return { error: `at most ${SCENE_LIMITS.scenes} scenes a turn` };
@@ -701,7 +749,26 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           return { skipped: ch.id, scene: n }; } },
       { name: "lesson_check", description: "Teaching only: which chapters the lesson still lacks before your final answer (any order is fine; the report is shown in the chapters' order). Studio refuses a lesson without what and change, or that leaves talks, lifecycle or sequence out without chapter_skip.",
         schema: { type: "object", properties: {} },
-        run: async () => { const gaps = lessonGaps(turn.scenes); return turn.action !== "teach" ? { error: "lesson_check is for a lesson (teach) only" } : { ok: !gaps.length, missing: gaps }; } },
+        run: async () => { if (turn.action !== "teach") return { error: "lesson_check is for a lesson (teach) only" }; const gaps = lessonGaps(turn.scenes), w = stateWrites(await g(wt, ["diff", "--no-color", "-U0", base, head], 4_000_000) ?? "");
+          return { ok: !gaps.length, missing: gaps, ...(w.length ? { stateWrites: w, note: "the diff writes a state column: one lifecycle (statemap) for each entity it moves" } : {}) }; } },
+      { name: "figure_svg", description: `Draw a figure yourself, the way workflows/skills/diagram-design says (its type references, connector rules, 4px grid, budgets) inside baton's embedding contract: one <svg viewBox> of svg g rect path line polyline polygon circle ellipse text tspan marker defs title desc; colours ONLY as var(--fig-<token>) (${["paper", "card", "ink", "muted", "soft", "rule", "accent", "accent-tint", "ok", "ok-tint", "amber", "amber-tint", "seal", "seal-tint", "link"].join(", ")}); fonts only var(--fig-sans|mono|serif); data-node on every box a reader may pick, data-edge="from>to" on every connector, data-en, data-hant and data-hans on every text (the visible text one of them), data-cite on a connector that opens code. Studio drops anything else and refuses a figure whose labels overlap, sit on a line or leave the viewBox, whose connector runs through a box that is not one of its ends, or whose Chinese text is under 12px: redraw it. kind: state (a lifecycle: with entity and transitions [{edge: "from>to", label, cite, tx}] for every data-edge), sequence, architecture, flow, decision, item. At most 8 tries a turn.`,
+        schema: { type: "object", properties: { kind: { type: "string", enum: ["state", "sequence", "architecture", "flow", "decision", "item"] }, title: { type: "string" }, svg: { type: "string" }, entity: { type: "string" }, cites: { type: "array", items: { type: "string" } },
+          transitions: { type: "array", items: { type: "object", properties: { edge: { type: "string" }, label: { type: "string" }, cite: { type: "string" }, detail: { type: "string" }, tx: { type: "object" } }, required: ["edge"] } } }, required: ["kind", "title", "svg"] },
+        run: async (a) => {
+          if (++figTries > 8) return { error: "at most 8 figure_svg tries a turn: draw with board_draw instead" };
+          const kind = String(a?.kind ?? ""); if (!["state", "sequence", "architecture", "flow", "decision", "item"].includes(kind)) return { error: "kind is state, sequence, architecture, flow, decision or item" };
+          const r = sanitizeFigure(a?.svg); if (r.errors.length || !r.tree) return { error: `Studio could not take the figure: ${r.errors.join("; ")}`, stripped: r.stripped };
+          const gate = figureGate(r.tree); if (gate.length) return { error: `Studio refused the figure (redraw it): ${gate.join("; ")}`, stripped: r.stripped };
+          const ok = await citeCheck(room, s), one = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+          const transitions = (Array.isArray(a?.transitions) ? a.transitions : []).slice(0, 24).map((x: any) => { const edge = one(x?.edge, 130), [from, to] = edge.replace(/#\d+$/, "").split(">");
+            return { edge, from, to, label: one(x?.label, FIGURE_LIMITS.label), detail: one(x?.detail, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null, tx: txOf(x?.tx) }; });
+          const badTx = transitions.findIndex((x: any) => x.tx && "error" in x.tx); if (badTx >= 0) return { error: `transition ${badTx + 1}: ${(transitions[badTx].tx as any).error}` };
+          if (kind === "state") { const drawn = new Set(r.edges), listed = new Set(transitions.map((x: any) => x.edge)), missing = [...drawn].filter((e) => !listed.has(e)), extra = [...listed].filter((e) => !drawn.has(e));
+            if (!r.nodes.length || !drawn.size) return { error: "a state figure has data-node on every state and data-edge on every transition" };
+            if (missing.length || extra.length) return { error: `transitions lists every data-edge of the figure, and only those: missing ${missing.join(", ") || "none"}; not drawn ${extra.join(", ") || "none"}` }; }
+          const cites = [...citesOf(a?.cites, ok), ...transitions.map((x: any) => x.cite).filter(Boolean)];
+          const it: Item = { id: `B${turn.n}-${++drawn}`, turn: turn.n, type: "svg", kind, title: one(a?.title, 120) || "Figure", tree: r.tree, nodes: r.nodes, edges: r.edges, entity: one(a?.entity, 40), transitions, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" };
+          room.board.push(it); save(k, room); return { added: [it.id], stripped: r.stripped }; } },
       { name: "screenshots_show", description: "Put the app's real screenshots on the board: each changed page at the base and at the head, as Studio's sandboxed renderer shot them for this head (the Task's own capture check, the app's fixture build, no live data). The captain toggles before / after. Only when the change touches the app's pages.",
         schema: { type: "object", properties: { title: { type: "string" } } },
         run: async (a) => { const cap = s.run.ctx.captures, prefix = `/api/wruns/${s.run.id}/captures/`, ok = (u: any) => typeof u === "string" && u.startsWith(prefix) && !u.includes("..") ? u : null;

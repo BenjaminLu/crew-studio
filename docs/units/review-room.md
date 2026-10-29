@@ -290,6 +290,33 @@ decisions) is one heading with its items under it; a click scrolls the report to
 covers the report's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
 came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
 
+**Figures, drawn as diagram-design draws them.** A lesson's figures follow diagram-design (MIT, credited in
+THIRD_PARTY_NOTICES.md; adapted in `workflows/skills/diagram-design/`, pinned in `ROOM_SKILLS`), as baton's do: a semantic
+pattern first, the type's reference, orthogonal connectors with rounded corners, each on its own attach point, labels off
+their lines, the 4px grid, the budgets, and colour by meaning from one palette (`--fig-accent` this change, `--fig-ok` new or
+ended well, `--fig-amber` needs attention or a way back, `--fig-seal` cannot be undone, `--fig-muted`/`--fig-soft` context),
+which the room maps to its light and dark themes. Two ways in. The tutor draws a figure itself with `figure_svg` (kinds
+state, sequence, architecture, flow, decision, item): Studio parses the SVG into a tree of allowed elements and attributes
+(`src/domain/figure-svg.ts`: svg g rect path line polyline polygon circle ellipse text tspan marker defs title desc; no
+script, style, foreignObject, image, use, link, href, class, filter, on* handler or outside url(); colours only the
+palette's tokens; at most 80 000 characters, 900 elements, 2400 × 2400) and runs a geometric gate: no label on another, no
+label on a line, no connector through a box that is not one of its ends, no label outside the viewBox, no Chinese under
+12px, every label with `data-en`, `data-hant` and `data-hans`. A figure that fails is refused with each problem, and the
+tutor redraws (at most eight tries a turn). The page rebuilds the tree element by element (createElementNS, setAttribute,
+textContent; never markup), its ids kept to the figure, each text in the room's language. Or the tutor gives the structure
+and Studio lays it out by the same rules: the architecture and every lifecycle in stage columns (left to right, top down
+past four stages) with orthogonal connectors in the channels between them, ways back and long jumps in the channels between
+rows, labels placed clear of boxes, lines and each other; the sequence one event a band, each fragment's tab on its own
+band, calls, returns and async calls in their own colours.
+
+**A database lifecycle per entity; every call.** A lifecycle names its entity and gives each transition its database
+transaction (`tx`: the tables written, INSERT, UPDATE, DELETE or UPSERT, each field was → now, the guard, and what is written
+outside the transaction). The report's statemap numbers every transition; picking a state shows the transaction that brings
+the entity into it, picking a transition shows its own, the writes outside set apart dashed. A lesson shows one lifecycle for
+each entity (the chapter takes several), each transition cited; when the diff writes a state or status column the
+lifecycle is owed (chapter_skip refuses it, lesson_check names the lines). A `calls` item shows every API call: request,
+response, the errors a client sees, the transaction it runs.
+
 **A pasted pull request teaches itself.** When the captain pastes a pull request (`POST …/open-pr`) and its room has no
 lesson for the current head (none done or running), the lesson starts by itself: the paste is the consent, so there is no
 click and no confirmation. It is an ordinary paid turn on the room's tutor, marked `auto` on the ledger, with generated
@@ -682,6 +709,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     start, the room says why. — review-room-anywhere "auto-teach off …", "pasting a pull request starts its lesson by itself
     …", "pasting it again … starts no second lesson", "a head that already has its finished lesson starts nothing …", "the
     room's own switch turned off …", "when the lesson cannot start by itself …".
+38. Figures by diagram-design: a figure the tutor draws is taken through the allowlist (script, foreignObject, style,
+    links, handlers, outside references dropped; colours only the palette) and the geometric gate (overlapping labels, a
+    label on a line, a connector through a box, a label outside, Chinese under 12px, a label without three languages
+    refused); Studio's own layouts keep labels clear and connectors out of boxes; a lifecycle per entity with each
+    transition's transaction; every call. — review-room-figures (each rule); review-room-anywhere "a figure the tutor draws
+    is refused with what is wrong …", "the figure is kept as Studio's tree …", "a lifecycle names its entity …", "a lesson may
+    show one lifecycle for each entity …"; review-room-ui "Studio's drawings read …", "the point stands out by colour …",
+    "one lifecycle for each entity; picking a state shows …", "every call: …", "a figure the tutor drew is rebuilt …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 

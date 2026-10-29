@@ -282,6 +282,8 @@ function itemView(card, it, prev) {
   else if (it.type === "keycard") body = keycardView(it, drawnOf(card, it));
   else if (it.type === "item") body = itemFigure(it, drawnOf(card, it));
   else if (it.type === "arch") body = archView(card, it);
+  else if (it.type === "svg") body = svgFigureView(card, it);
+  else if (it.type === "calls") body = callsView(card, it);
   else if (it.type === "decision") body = decisionView(card, it);
   else if (it.type === "states") body = statesView(card, it);
   else if (it.type === "sequence") body = sequenceView(it, drawnOf(card, it));
@@ -290,7 +292,7 @@ function itemView(card, it, prev) {
   else if (it.type === "snippet") body = h("pre", { class: "rr-pre" }, it.text || "");
   else body = h("p", { class: "rr-note" }, inline(card, it.text || "", it.cites));
   // the picture first, filling its box; what it is (kind, title, path) and its basis under it
-  const pic = ["mermaid", "chart", "screenshot", "image", "keycard", "item", "states", "sequence", "arch", "decision"].includes(it.type);
+  const pic = ["mermaid", "chart", "screenshot", "image", "keycard", "item", "states", "sequence", "arch", "decision", "svg", "calls"].includes(it.type);
   return h("article", { class: `rr-item rr-item-${it.type}`, id: `rr-${it.id}`, "data-board-item": it.id, "data-item-type": it.type }, h("div", { class: `rr-body${pic ? " pic" : " text"}` }, body), head, basisRow(card, it));
 }
 /** One changed item, before and after, from one layout for every item (baton's per-fix card): the same three boxes in two
@@ -307,47 +309,201 @@ function itemFigure(it, seen) {
   svg.append(label(140, T("After", "之後")), box(90, 154, 210, 64, "fix", [...wrapLabel(it.name, 190, 16, 1), ...(it.mechanism ? [clip(it.mechanism, 37)] : [])], "a1", 0.5), arrow(300, 370, 186, "new", 0.7), box(372, 154, 250, 64, "now", wrapLabel(it.after, 230, 16, 2), "a2", 0.8));
   return svg;
 }
+/** Studio's own layout for a lifecycle or a "what talks to what" (diagram-design's connector rules, applied by code): the nodes
+ *  in stage columns left to right (each column a rank, ways back left out of the ranking), every connector orthogonal with
+ *  rounded corners, its own lane in the channel between columns, its own attach point on a box's side, the ways back and the
+ *  long jumps in corridors above and below the boxes: no connector runs through a box that is not one of its ends. Labels are
+ *  placed where they touch no box, no line and no other label. nodes: [{id, label, sub?, cls}], edges: [{from, to, label, n, cls}] */
+function orthoSvg(nodes, edges, opt = {}) {
+  const fs = opt.fs || 15, lw = (s) => [...String(s || "")].reduce((n, ch) => n + (/[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯\u2460-\u24ff]/.test(ch) ? fs : fs * 0.6), 0);
+  const ids = nodes.map((n) => n.id), at = new Map(nodes.map((n, i) => [n.id, i]));
+  // ranks: depth first, the edges that close a cycle (ways back) left out; then the longest path
+  const adj = new Map(ids.map((id) => [id, []])), mark = new Map(), back = new Set();
+  edges.forEach((e, i) => { if (e.from !== e.to && adj.has(e.from) && adj.has(e.to)) adj.get(e.from).push([e.to, i]); });
+  const dfs = (u) => { mark.set(u, 1); for (const [v, i] of adj.get(u)) { if (mark.get(v) === 1) back.add(i); else if (!mark.has(v)) dfs(v); } mark.set(u, 2); };
+  for (const id of ids) if (!mark.has(id)) dfs(id);
+  const rank = new Map(ids.map((id) => [id, 0]));
+  for (let k = 0; k < ids.length; k++) edges.forEach((e, i) => { if (e.from !== e.to && !back.has(i) && rank.has(e.to) && rank.get(e.to) <= rank.get(e.from)) rank.set(e.to, rank.get(e.from) + 1); });
+  const ncol = Math.max(0, ...rank.values()) + 1, cols = Array.from({ length: ncol }, () => []);
+  for (const id of ids) cols[rank.get(id)].push(id);
+  // order within a column by where its neighbours sit (two sweeps), so connectors cross as little as they can
+  const pos = new Map(); cols.forEach((c) => c.forEach((id, i) => pos.set(id, i)));
+  for (let sweep = 0; sweep < 3; sweep++) for (let r = 1; r < ncol; r++) {
+    const bc = (id) => { const ns = edges.filter((e, i) => !back.has(i) && e.to === id && rank.get(e.from) < r).map((e) => pos.get(e.from)); return ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : pos.get(id); };
+    cols[r].sort((a, b) => bc(a) - bc(b) || at.get(a) - at.get(b)); cols[r].forEach((id, i) => pos.set(id, i)); }
+  const LW = Math.min(240, Math.max(132, Math.ceil((Math.max(...nodes.map((n) => lw(n.label))) + 36) / 4) * 4)), TD = opt.dir === "TD" || (opt.dir !== "LR" && ncol > 4);
+  // W: a box's extent along the stages, H: across them (swapped back at the end when the stages run top down)
+  const W = TD ? 56 : LW, H = TD ? LW : 56;
+  // each connector's kind: next column (a lane in that channel), a long jump (top corridor), a way back (bottom corridor), a loop
+  const kinds = edges.map((e, i) => (!at.has(e.from) || !at.has(e.to) ? null : e.from === e.to ? "loop" : back.has(i) || rank.get(e.to) <= rank.get(e.from) ? "back" : rank.get(e.to) - rank.get(e.from) === 1 ? "next" : "jump"));
+  const gapLanes = Array.from({ length: ncol + 1 }, () => []); // channel g sits left of column g (g = ncol: right of the last)
+  edges.forEach((e, i) => { const k = kinds[i]; if (!k || k === "loop") return; const rf = rank.get(e.from), rt = rank.get(e.to);
+    if (k === "next") gapLanes[rt].push(i); else { gapLanes[rf + 1].push(i); gapLanes[rt].push(i); } });
+  const gapW = gapLanes.map((l, g) => (g === 0 && !l.length ? 24 : Math.ceil((l.length * 12 + (TD ? 44 : 64)) / 4) * 4));
+  const nrow = Math.max(1, ...cols.map((c) => c.length)), RY = H + (TD ? 52 : 60);
+  // the jumps and the ways back run in the channels between rows (rows line up across columns, so a channel crosses no box),
+  // each on its own lane; the channel above the first row and below the last take what the inner ones cannot
+  const chanUse = new Map(), chanOf = new Map(), cap = 3;
+  const y0 = 40 + (edges.some((_, i) => kinds[i] === "loop") ? 36 : 0);
+  const chanY = (c) => y0 + c * RY - (RY - H) / 2;
+  const rowY = new Map(); cols.forEach((c) => c.forEach((id, j) => rowY.set(id, y0 + j * RY + H / 2)));
+  edges.forEach((e, i) => { const k = kinds[i]; if (k !== "jump" && k !== "back") return; const a = rowY.get(e.from), b = rowY.get(e.to);
+    const order = Array.from({ length: nrow + 1 }, (_, c) => c).sort((c1, c2) => Math.abs(chanY(c1) - a) + Math.abs(chanY(c1) - b) - (Math.abs(chanY(c2) - a) + Math.abs(chanY(c2) - b)) || c1 - c2);
+    const c = order.find((c) => c === 0 || c === nrow || (chanUse.get(c) || 0) < cap) ?? 0; const used = chanUse.get(c) || 0; chanUse.set(c, used + 1); chanOf.set(i, [c, used]); });
+  const topN = chanUse.get(0) || 0, y0b = y0 + Math.max(0, topN - 1) * 12;
+  const colX = []; { let x = gapW[0]; for (let r = 0; r < ncol; r++) { colX.push(x); x += W + gapW[r + 1]; } }
+  const box = new Map(); cols.forEach((c, r) => c.forEach((id, j) => box.set(id, { x: colX[r], y: y0b + j * RY, w: W, h: H })));
+  const laneY = (i) => { const [c, k] = chanOf.get(i), n = chanUse.get(c); const mid = y0b + c * RY - (RY - H) / 2;
+    return c === 0 ? y0b - 20 - k * 12 : c === nrow ? y0b + nrow * RY - (RY - H) + 20 + k * 12 : mid + (k - (n - 1) / 2) * 12; };
+  const bottom = y0b + nrow * RY;
+  // attach points: each connector its own point along the side it leaves or enters, ordered by where it goes
+  const side = new Map(); const want = (id, s, i, key) => { const k = `${id}:${s}`; if (!side.has(k)) side.set(k, []); side.get(k).push([i, key]); };
+  edges.forEach((e, i) => { const k = kinds[i]; if (!k || k === "loop") return; const t = box.get(e.to), f = box.get(e.from);
+    want(e.from, "R", i, k === "back" ? 1e6 + i : t.y); want(e.to, "L", i, k === "back" ? -1e6 - i : f.y); });
+  const port = (id, s, i) => { const l = side.get(`${id}:${s}`).sort((a, b) => a[1] - b[1]), b = box.get(id), k = l.findIndex((x) => x[0] === i); return b.y + (b.h * (k + 1)) / (l.length + 1); };
+  const laneX = (g, i) => { const l = gapLanes[g], k = l.indexOf(i), left = g === 0 ? 0 : colX[g - 1] + W; return left + 16 + k * 14; };
+  const paths = [];
+  edges.forEach((e, i) => { const k = kinds[i]; if (!k) return; const f = box.get(e.from), t = box.get(e.to);
+    if (k === "loop") { paths.push({ i, loop: e.from }); return; }
+    const sy = port(e.from, "R", i), ty = port(e.to, "L", i), sx = f.x + f.w, tx = t.x;
+    if (k === "next") { const lx = laneX(rank.get(e.to), i); paths.push({ i, pts: [[sx, sy], [lx, sy], [lx, ty], [tx, ty]] }); return; }
+    const l1 = laneX(rank.get(e.from) + 1, i), l2 = laneX(rank.get(e.to), i);
+    const cy = laneY(i); paths.push({ i, pts: [[sx, sy], [l1, sy], [l1, cy], [l2, cy], [l2, ty], [tx, ty]] }); });
+  if (TD) { for (const [id, b] of box) box.set(id, { x: b.y, y: b.x, w: b.h, h: b.w }); for (const p of paths) if (p.pts) p.pts = p.pts.map(([x, y]) => [y, x]); }
+  for (const p of paths) if (p.loop) { const f = box.get(p.loop), x1 = f.x + f.w * 0.62, x2 = f.x + f.w * 0.38, top = f.y - 32; p.pts = [[x1, f.y], [x1, top], [x2, top], [x2, f.y]]; }
+  const rounded = (pts) => { let d = `M${pts[0][0]},${pts[0][1]}`; for (let k = 1; k < pts.length; k++) { const [x, y] = pts[k], nx = pts[k + 1];
+      if (!nx) { d += ` L${x},${y}`; break; } const [px, py] = pts[k - 1], r = Math.min(8, Math.hypot(x - px, y - py) / 2, Math.hypot(nx[0] - x, nx[1] - y) / 2);
+      const ax = x - Math.sign(x - px) * r, ay = y - Math.sign(y - py) * r, bx = x + Math.sign(nx[0] - x) * r, by = y + Math.sign(nx[1] - y) * r; d += ` L${ax},${ay} Q${x},${y} ${bx},${by}`; } return d; };
+  // the canvas: what was laid out, plus room for labels the placer pushes out
+  const svg = sv("svg", { class: "rr-flow rr-ortho", role: "img", preserveAspectRatio: "xMidYMid meet", "data-layout": TD ? "TD" : "LR" });
+  const dots = [], placed = [], boxes = [...box.values()].map((b) => ({ x: b.x - 4, y: b.y - 4, w: b.w + 8, h: b.h + 8 }));
+  const ext = TD ? { x0: 0, y0: 0, x1: bottom, y1: colX[ncol - 1] + W + gapW[ncol] } : { x0: 0, y0: 0, x1: colX[ncol - 1] + W + gapW[ncol], y1: bottom }, grow = (x, y) => { ext.x0 = Math.min(ext.x0, x); ext.y0 = Math.min(ext.y0, y); ext.x1 = Math.max(ext.x1, x); ext.y1 = Math.max(ext.y1, y); };
+  for (const p of paths) { const e = edges[p.i]; for (let k = 1; k < p.pts.length; k++) { const [ax, ay] = p.pts[k - 1], [bx, by] = p.pts[k], n = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay) / 4)); for (let j = 0; j <= n; j++) dots.push([ax + ((bx - ax) * j) / n, ay + ((by - ay) * j) / n]); }
+    p.pts.forEach(([x, y]) => grow(x, y));
+    const [ex, ey] = p.pts[p.pts.length - 1], [qx, qy] = p.pts[p.pts.length - 2], ang = Math.atan2(ey - qy, ex - qx);
+    const line = sv("path", { d: rounded(p.pts), class: `rr-edge ${kinds[p.i]}${e.cls ? ` ${e.cls}` : ""}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? p.i, fill: "none" });
+    const head = sv("path", { d: `M${ex - 10 * Math.cos(ang - 0.45)},${ey - 10 * Math.sin(ang - 0.45)} L${ex},${ey} L${ex - 10 * Math.cos(ang + 0.45)},${ey - 10 * Math.sin(ang + 0.45)} Z`, class: `rr-ahead ${kinds[p.i]}${e.cls ? ` ${e.cls}` : ""}` });
+    svg.append(line, head); }
+  for (const n of nodes) { const b = box.get(n.id), grp = sv("g", { class: `rr-node${n.cls ? ` ${n.cls}` : ""}`, "data-node": n.id, "data-box": `${b.x},${b.y},${b.w},${b.h}` });
+    grp.append(sv("path", { class: "rr-box", d: boxPath(b.x, b.y, b.w, b.h, n.shape === "round" ? 22 : 8) }));
+    const ls = wrapLabel(n.label, b.w - 20, fs, 2); ls.forEach((l, k) => { const tx = sv("text", { x: b.x + b.w / 2, y: b.y + b.h / 2 + (k - (ls.length - 1) / 2) * (fs + 3) + fs * 0.35, "text-anchor": "middle", class: "rr-nlabel", style: `font-size:${fs}px` }); tx.textContent = l; grp.append(tx); });
+    svg.append(grp); }
+  const hit = (r) => [...boxes, ...placed].some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) || dots.some(([px, py]) => px > r.x - 3 && px < r.x + r.w + 3 && py > r.y - 3 && py < r.y + r.h + 3);
+  const cost = (r) => [...boxes, ...placed].filter((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y).length * 100 + dots.filter(([px, py]) => px > r.x - 3 && px < r.x + r.w + 3 && py > r.y - 3 && py < r.y + r.h + 3).length;
+  for (const p of paths) { const e = edges[p.i]; if (!e.label) continue; const txt = String(e.label).slice(0, 40), w = lw(txt) * 0.86 + 14, hh = 18, rect = ([cx, cy]) => ({ x: cx - w / 2, y: cy - hh + 4, w, h: hh });
+    const tries = []; // beside each segment, longest first, at the middle then nearer its ends, 10 to 40px off it
+    const segs = p.pts.slice(1).map((b, k) => [p.pts[k], b]).sort((s1, s2) => Math.hypot(s2[1][0] - s2[0][0], s2[1][1] - s2[0][1]) - Math.hypot(s1[1][0] - s1[0][0], s1[1][1] - s1[0][1]));
+    for (const [[ax, ay], [bx, by]] of segs) for (const u of [0.5, 0.3, 0.7, 0.15, 0.85]) { const mx = ax + (bx - ax) * u, my = ay + (by - ay) * u, horiz = Math.abs(by - ay) < 1;
+      for (const off of [10, 22, 36]) tries.push(...(horiz ? [[mx, my - off + 4], [mx, my + off + 10]] : [[mx + w / 2 + off, my + 5], [mx - w / 2 - off, my + 5]])); }
+    // nowhere beside it: the nearest free place around its longest stretch (the label's number still names its row)
+    let pick = tries.find((c) => !hit(rect(c)));
+    if (!pick) { const [[ax, ay], [bx, by]] = segs[0], mx = (ax + bx) / 2, my = (ay + by) / 2;
+      for (let rr = 12; rr <= 220 && !pick; rr += 6) for (let ang = 0; ang < 360 && !pick; ang += 20) { const c = [mx + rr * Math.cos((ang * Math.PI) / 180), my + rr * Math.sin((ang * Math.PI) / 180)]; if (!hit(rect(c))) pick = c; } }
+    pick = pick ?? tries.reduce((a, c) => (cost(rect(c)) < cost(rect(a)) ? c : a));
+    const r = rect(pick); placed.push(r); grow(r.x - 4, r.y - 4); grow(r.x + r.w + 4, r.y + r.h + 4);
+    const t = sv("text", { x: pick[0], y: pick[1], class: `rr-elabel ${kinds[p.i]}${e.cls ? ` ${e.cls}` : ""}`, "text-anchor": "middle", "data-elabel": `${e.from}>${e.to}`, "data-edge-n": e.n ?? p.i }); t.textContent = txt; svg.append(t); }
+  boxes.forEach((b) => { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); });
+  const vw = ext.x1 - ext.x0 + 16, vh = ext.y1 - ext.y0 + 16;
+  svg.setAttribute("viewBox", `${ext.x0 - 8} ${ext.y0 - 8} ${vw} ${vh}`); svg.style.maxWidth = `${Math.round(vw * 1.2)}px`; svg.style.maxHeight = `${Math.round(vh * 1.2)}px`; svg.style.minWidth = `${Math.round(Math.min(vw, 1040))}px`;
+  return svg;
+}
 const NUMS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+/** a state's colour by what it is: where it starts, an end that went well, an end that did not (failed, voided, cancelled) */
+const stateCls = (it, x, i) => { const outs = (it.transitions || []).filter((t) => t.from === x.id && t.to !== x.id).length, bad = /fail|error|cancel|void|reject|expire|refund|declin|abort/i.test(`${x.id} ${x.label}`);
+  return i === 0 ? "start" : !outs ? (bad ? "seal" : "ok") : bad ? "amber" : ""; };
 /** a lifecycle's graph from its data: every state, every transition numbered (the number is the transition's chip) */
-const statesGraph = (it) => ({ dir: "LR", nodes: (it.states || []).map((x) => ({ id: x.id, label: x.label || x.id, shape: "round" })),
-  edges: (it.transitions || []).map((t, i) => ({ from: t.from, to: t.to, label: `${NUMS[i] || i + 1} ${t.label || ""}`.trim(), n: i })) });
+const statesGraph = (it) => ({ nodes: (it.states || []).map((x, i) => ({ id: x.id, label: x.label || x.id, shape: "round", cls: stateCls(it, x, i) })),
+  edges: (it.transitions || []).map((t, i) => ({ from: t.from, to: t.to, label: `${NUMS[i] || i + 1} ${t.label || ""}`.trim(), n: i, cls: t.tx?.tables?.length ? "tx" : "" })) });
 /** an SVG label made a control: Enter and Space as a click */
 const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
 /** a lifecycle: the state machine drawn from the tutor's states and transitions (every transition kept), each transition's
  *  label opening the code it rests on (onPick: the report also selects the transition to show what it writes) */
 function statesView(card, it, onPick) {
   if (!it.states?.length) { const g = parseFlow(it.code); return h("div", { class: "rr-flow-wrap", "data-states": it.id }, g ? flowSvg(g, null, drawnOf(card, it), picBox()) : null); }
-  const wrap = h("div", { class: "rr-flow-wrap", "data-states": it.id }, flowSvg(statesGraph(it), null, drawnOf(card, it), picBox()));
+  const g = statesGraph(it), wrap = h("div", { class: "rr-flow-wrap rr-states", "data-states": it.id }, orthoSvg(g.nodes, g.edges));
   (it.transitions || []).forEach((t, i) => { const el = wrap.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el || (!onPick && !t.cite?.ok)) return;
     if (t.cite?.ok) { el.classList.add("rr-cite-label"); el.setAttribute("data-transition-cite", t.cite.ref); }
     el.setAttribute("data-transition-pick", String(i)); asControl(el, () => (onPick ? onPick(i, t) : openCite(card, t.cite.ref))); });
+  // a state picked: the transaction that brings the entity into it
+  if (onPick) for (const nodeEl of wrap.querySelectorAll("[data-node]")) { const id = nodeEl.getAttribute("data-node"), k = (it.transitions || []).findIndex((t) => t.to === id && t.from !== id);
+    if (k >= 0) { nodeEl.setAttribute("data-state-pick", id); asControl(nodeEl, () => onPick(k, it.transitions[k], true)); } }
   return wrap;
+}
+/** one transaction: the tables it writes (op, the guard, each field was → now) inside its envelope, what it writes outside set apart */
+function txView(tx) {
+  if (!tx || tx.error) return null;
+  return h("div", { class: "rp-tx", "data-tx": "" }, (tx.tables || []).length ? h("div", { class: "rp-tx-env" }, h("div", { class: "rp-tx-cap" }, T("One database transaction", "同一個資料庫交易")),
+      tx.tables.map((t) => h("div", { class: "rp-tx-row", "data-tx-table": t.table }, h("div", { class: "rp-tx-h" }, h("span", { class: `rp-op ${t.op.toLowerCase()}` }, t.op), h("code", {}, t.table), t.guard ? h("span", { class: "rp-guard" }, `${T("guard", "條件")}: `, h("code", {}, t.guard)) : null),
+        h("table", { class: "rp-fields" }, t.fields.map((x) => h("tr", {}, h("td", { class: "k" }, h("code", {}, x.k)), h("td", {}, x.was != null ? h("s", { class: "was" }, x.was) : null, x.was != null ? " → " : "", h("b", { class: "now" }, x.now)))))))) : null,
+    (tx.outside || []).length ? h("div", { class: "rp-outside", "data-tx-outside": "" }, h("div", { class: "rp-tx-cap" }, T("Outside the transaction", "交易之外")), h("ul", {}, tx.outside.map((o) => h("li", {}, o.kind ? h("span", { class: "rp-op" }, o.kind) : null, " ", o.what)))) : null);
+}
+/** every transition as a numbered row: from → to, what it writes (its transaction, when the tutor read one), the code it rests on */
+function transitionRows(card, it, sel, pick, lab) {
+  return h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
+    h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
+    h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
+      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, i === sel ? txView(t.tx) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
 }
 /** the lifecycle in the report: the map, and every transition as a numbered row (what it writes, the code it rests on) */
 function statemapView(card, it) {
   const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, lab = new Map((it.states || []).map((x) => [x.id, x.label || x.id]));
-  const pick = (i, t) => { RR.tsel.set(key, i); if (t.cite?.ok) openCite(card, t.cite.ref); else rerender(); };
-  return h("div", { class: "rp-smap", "data-statemap": it.id }, statesView(card, it, pick),
-    h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
-      h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
-      h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
-        t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge()))))));
+  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t.cite?.ok && !quiet) openCite(card, t.cite.ref); else rerender(); };
+  return h("div", { class: "rp-smap", "data-statemap": it.id }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, statesView(card, it, pick),
+    h("div", { class: "rp-legend" }, [["start", T("where it starts", "起點")], ["ok", T("ends well", "正常結束")], ["seal", T("ends badly, cannot be undone", "失敗結束，無法回頭")], ["back", T("a way back", "回頭的轉換")]].map(([c, l]) => h("span", {}, h("i", { class: `sw ${c}` }), l))),
+    transitionRows(card, it, sel, pick, lab));
 }
 /** what talks to what: Studio's layout of the tutor's components and connections; the kind sets the shape, the change is
- *  marked on the node itself, a connection opens what shows it */
-const ARCH_SHAPE = { store: "round", queue: "round", actor: "circle", external: "rect", service: "rect" };
+ *  marked on the node itself in the room's colours (changed, new, removed, outside), a connection opens what shows it */
+const ARCH_SHAPE = { store: "round", queue: "round", actor: "round", external: "rect", service: "rect" };
 const MARK = { new: ["new", "新增"], changed: ["changed", "改動"], removed: ["removed", "移除"] };
+const ARCH_CLS = { new: "ok", changed: "accent", removed: "seal" };
 function archView(card, it) {
-  const g = { dir: "LR", nodes: (it.nodes || []).map((n) => ({ id: n.id, label: n.label, shape: ARCH_SHAPE[n.kind] || "rect" })), edges: (it.edges || []).map((e, i) => ({ from: e.from, to: e.to, label: e.label || "", n: i })) };
-  const svg = flowSvg(g, null, drawnOf(card, it), picBox());
+  const nodes = (it.nodes || []).map((n) => ({ id: n.id, label: n.label, shape: ARCH_SHAPE[n.kind] || "rect", cls: [n.mark ? ARCH_CLS[n.mark] : "", n.kind === "external" ? "muted" : "", `k-${n.kind}`].filter(Boolean).join(" ") }));
+  const svg = orthoSvg(nodes, (it.edges || []).map((e, i) => ({ from: e.from, to: e.to, label: e.label || "", n: i })));
   for (const n of it.nodes || []) { const el = svg.querySelector(`[data-node="${CSS.escape(n.id)}"]`); if (!el) continue; el.classList.add(`rr-k-${n.kind}`);
     if (n.mark) { el.classList.add(`rr-m-${n.mark}`); el.setAttribute("data-mark", n.mark); const [x, y, w] = (el.getAttribute("data-box") || "0,0,0").split(",").map(Number);
-      const tg = sv("text", { x: x + w - 8, y: y + 15, "text-anchor": "end", class: "rr-mark-t" }); tg.textContent = T(...MARK[n.mark]); el.append(tg); } }
+      const tg = sv("text", { x: x + w - 8, y: y + 14, "text-anchor": "end", class: "rr-mark-t" }); tg.textContent = T(...MARK[n.mark]); el.append(tg); } }
   (it.edges || []).forEach((e, i) => { if (!e.cite?.ok) return; const el = svg.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el) return; el.classList.add("rr-cite-label"); el.setAttribute("data-edge-cite", e.cite.ref); asControl(el, () => openCite(card, e.cite.ref)); });
   const marks = [...new Set((it.nodes || []).map((n) => n.mark).filter(Boolean))];
   return h("div", { class: "rr-flow-wrap rr-arch", "data-arch": it.id }, svg,
-    h("div", { class: "rp-legend" }, marks.map((m) => h("span", {}, h("i", { class: `sw ${m}` }), T(...MARK[m]))), (it.nodes || []).some((n) => n.kind === "external") ? h("span", {}, h("i", { class: "sw ctx" }), T("outside this change", "這個改動之外")) : null,
+    h("div", { class: "rp-legend" }, marks.map((m) => h("span", {}, h("i", { class: `sw ${ARCH_CLS[m]}` }), T(...MARK[m]))), (it.nodes || []).some((n) => n.kind === "external") ? h("span", {}, h("i", { class: "sw ctx" }), T("outside this change", "這個改動之外")) : null,
       h("span", { "data-arch-basis": it.inferred ? "inferred" : "shown" }, it.inferred ? T("Drawn from the code: Studio's layout of the tutor's reading (inferred)", "依程式碼畫出：導師的理解，由 Studio 排版（推論）") : T("As the cited document or record shows it", "依引用的文件或紀錄"))));
+}
+/** every call: its request and its response (and errors), the transaction it runs, the code it rests on */
+function callsView(card, it) {
+  const kv = (rows) => h("table", { class: "rp-kv" }, rows.map((x) => h("tr", {}, h("td", { class: "k" }, h("code", {}, x.k)), h("td", {}, h("code", {}, x.v)))));
+  return h("div", { class: "rp-calls", "data-calls": it.id }, (it.calls || []).map((c, i) => h("section", { class: "rp-call", "data-call": i },
+    h("header", {}, c.method ? h("span", { class: "rp-op" }, c.method) : null, h("code", { class: "rp-call-name" }, c.name), c.cite ? citeChip(card, c.cite.ref, c.cite.ok) : inferenceBadge()),
+    h("div", { class: "rp-call-cols" }, h("div", { "data-call-part": "request" }, h("h5", {}, T("Request", "Request")), kv(c.request)),
+      h("div", { "data-call-part": "response" }, h("h5", {}, T("Response", "Response")), kv(c.response), (c.errors || []).length ? h("ul", { class: "rp-errs" }, c.errors.map((x) => h("li", {}, h("code", {}, x.code), ` ${x.when}`))) : null),
+      h("div", { "data-call-part": "transaction" }, h("h5", {}, T("Transaction", "交易")), txView(c.tx) || h("p", { class: "faint" }, T("Writes nothing", "不寫入任何東西")))))));
+}
+/** a figure the tutor drew (workflows/skills/diagram-design), as Studio took it: its tree rebuilt element by element with
+ *  createElementNS, setAttribute and textContent (no markup), each text in the room's language, its ids kept to this figure */
+const FIG_EL = new Set(["svg", "g", "rect", "path", "line", "polyline", "polygon", "circle", "ellipse", "text", "tspan", "marker", "defs", "title", "desc"]);
+const FIG_OK = /^(id|role|aria-label|aria-labelledby|data-node|data-edge|data-cite|data-en|data-hant|data-hans|data-kind|fill|stroke|stroke-width|stroke-dasharray|stroke-linecap|stroke-linejoin|opacity|fill-opacity|stroke-opacity|font-size|font-weight|font-family|font-style|text-anchor|dominant-baseline|letter-spacing|marker-start|marker-mid|marker-end|x|y|dx|dy|width|height|rx|ry|cx|cy|r|x1|y1|x2|y2|points|d|transform|viewBox|markerWidth|markerHeight|refX|refY|orient|markerUnits)$/;
+function figTree(n, lang, pre) {
+  if (!n || !FIG_EL.has(n.t)) return null; const el = document.createElementNS(SVGNS, n.t);
+  for (const [k, v0] of Object.entries(n.a || {})) { if (!FIG_OK.test(k)) continue; let v = String(v0);
+    if (/^(fill|stroke)$/.test(k) && !/^(none|transparent|var\(--fig-[a-z0-9-]+\))$/.test(v)) continue;
+    if (/^marker-/.test(k)) { const m = /^url\(#([\w-]+)\)$/.exec(v); if (!m) continue; v = `url(#${pre}-${m[1]})`; }
+    if (k === "id") v = `${pre}-${v}`; if (k === "aria-labelledby") v = v.split(/\s+/).map((x) => `${pre}-${x}`).join(" ");
+    el.setAttribute(k, v); }
+  const say = n.t === "text" ? (LANG_BASE(lang) === "en" ? n.a?.["data-en"] : lang === "zh-CN" ? n.a?.["data-hans"] : n.a?.["data-hant"]) : null;
+  if (say) el.textContent = say;
+  else for (const c of n.c || []) { if (typeof c === "string") el.append(document.createTextNode(c)); else { const ch = figTree(c, lang, pre); if (ch) el.append(ch); } }
+  return el;
+}
+function svgFigureView(card, it) {
+  const r = RR.rooms.get(card), lang = r ? roomLang(r) : uiLang(), svg = figTree(it.tree, lang, `f${it.id}`);
+  if (svg) { svg.classList.add("rr-figsvg-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number); if (vb[2]) svg.style.maxWidth = `${Math.round(vb[2] * 1.2)}px`; }
+  const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, tr = it.transitions || [];
+  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t?.cite?.ok && !quiet) openCite(card, t.cite.ref); else rerender(); };
+  if (svg) { for (const el of svg.querySelectorAll("[data-edge]")) { const e = el.getAttribute("data-edge"), k = tr.findIndex((t) => t.edge === e), cite = el.getAttribute("data-cite");
+      if (k >= 0) { el.classList.add("rr-pickable"); if (k === sel) el.classList.add("on"); asControl(el, () => pick(k, tr[k])); } else if (cite) { el.classList.add("rr-pickable"); asControl(el, () => openCite(card, cite)); } }
+    for (const el of svg.querySelectorAll("[data-node]")) { const id = el.getAttribute("data-node"), k = tr.findIndex((t) => t.to === id && t.from !== id); if (k >= 0) { el.classList.add("rr-pickable"); asControl(el, () => pick(k, tr[k], true)); } } }
+  const lab = new Map(); return h("div", { class: `rr-figsvg rr-figsvg-${it.kind}`, "data-svg-figure": it.id, "data-figure-kind": it.kind }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, svg,
+    tr.length ? transitionRows(card, { ...it, transitions: tr }, sel, pick, lab) : null);
 }
 /** one decision: the question, the option taken and why; the options turned down (only as the record shows them) set apart */
 function decisionFigure(it, seen) {
@@ -395,18 +551,22 @@ function figIn(r, it) {
  *  options as frames around their steps */
 function sequenceView(it, seen) {
   const anim = seen && !seen.has("seq") && !reduceMotion(); if (seen) seen.add("seq");
-  const n = it.actors.length, GX = 150, X0 = 90, RH = 40, top = 70, W = X0 * 2 + GX * (n - 1), H = top + it.steps.length * RH + 40;
+  // one event a band; a frame (or an alternative inside it) gets a band of its own for its tab, so no tab sits on a message
+  const n = it.actors.length, GX = 150, X0 = 90, RH = 40, top = 70, W = X0 * 2 + GX * (n - 1);
+  const opens = it.steps.map((st, i) => !!st.frame && (i === 0 || it.steps[i - 1].frame !== st.frame) && !(st.frame === "else" && it.steps[i - 1]?.frame === "else"));
+  const YS = []; { let extra = 0; it.steps.forEach((_, i) => { if (opens[i]) extra += 20; YS.push(top + i * RH + extra); }); }
+  const yOf = (i) => (i < YS.length ? YS[i] : YS[YS.length - 1] + RH), H = (YS.length ? YS[YS.length - 1] + RH : top) + 40;
   const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "rr-seq", role: "img", "data-sequence": it.id, preserveAspectRatio: "xMidYMid meet", style: `max-width:${W * 1.5}px;max-height:${H * 1.5}px` });
   const x = (a) => X0 + it.actors.indexOf(a) * GX;
   // frames first, behind: consecutive steps that share a frame
   for (let i = 0; i < it.steps.length;) { const f = it.steps[i].frame; if (!f) { i++; continue; } let j = i; while (j + 1 < it.steps.length && (it.steps[j + 1].frame === f || (f === "alt" && it.steps[j + 1].frame === "else"))) j++;
-    const y0 = top + i * RH - 10, y1 = top + (j + 1) * RH - 14, fr = sv("g", { class: "rr-frame", "data-frame": f }); fr.append(sv("rect", { x: 12, y: y0, width: W - 24, height: y1 - y0, rx: 6 }));
+    const y0 = yOf(i) - 30, y1 = yOf(j) + RH - 14, fr = sv("g", { class: "rr-frame", "data-frame": f }); fr.append(sv("rect", { x: 12, y: y0, width: W - 24, height: y1 - y0, rx: 6 }));
     const t = sv("text", { x: 20, y: y0 + 14, class: "rr-frame-l" }); t.textContent = `${f}${it.steps[i].frameLabel ? ` [${it.steps[i].frameLabel}]` : ""}`; fr.append(t);
-    for (let k = i + 1; k <= j; k++) if (it.steps[k].frame === "else") { const ye = top + k * RH - 12; fr.append(sv("line", { x1: 12, y1: ye, x2: W - 12, y2: ye, class: "rr-frame-else" })); const te = sv("text", { x: 20, y: ye + 12, class: "rr-frame-l" }); te.textContent = `else${it.steps[k].frameLabel ? ` [${it.steps[k].frameLabel}]` : ""}`; fr.append(te); }
+    for (let k = i + 1; k <= j; k++) if (it.steps[k].frame === "else" && it.steps[k - 1].frame !== "else") { const ye = yOf(k) - 30; fr.append(sv("line", { x1: 12, y1: ye, x2: W - 12, y2: ye, class: "rr-frame-else" })); const te = sv("text", { x: 20, y: ye + 12, class: "rr-frame-l" }); te.textContent = `else${it.steps[k].frameLabel ? ` [${it.steps[k].frameLabel}]` : ""}`; fr.append(te); }
     svg.append(fr); i = j + 1; }
   it.actors.forEach((a) => { const g = sv("g", { class: "rr-actor" }); g.append(sv("rect", { x: x(a) - 62, y: 14, width: 124, height: 34, rx: 8 }), sv("line", { x1: x(a), y1: 48, x2: x(a), y2: H - 14, class: "rr-lifeline" }));
     const t = sv("text", { x: x(a), y: 36, "text-anchor": "middle", class: "rr-actor-l" }); t.textContent = clip(a, 16); g.append(t); svg.append(g); });
-  it.steps.forEach((st, i) => { const y = top + i * RH + 10, x1 = x(st.from), x2 = x(st.to), self = x1 === x2, g = sv("g", { class: `rr-step ${st.kind}`, "data-step": i + 1 });
+  it.steps.forEach((st, i) => { const y = yOf(i) + 10, x1 = x(st.from), x2 = x(st.to), self = x1 === x2, g = sv("g", { class: `rr-step ${st.kind}${st.frame ? ` in-${st.frame}` : ""}`, "data-step": i + 1 });
     const d = self ? `M${x1},${y - 8} h36 v16 h-36` : `M${x1},${y} L${x2},${y}`, dir = x2 >= x1 ? 1 : -1, ex = self ? x1 : x2;
     const line = sv("path", { d, pathLength: 1, class: "rr-step-line" }), head = sv("path", { d: self ? `M${ex + 10},${y + 2} L${ex},${y + 8} L${ex + 10},${y + 14}` : `M${ex - 10 * dir},${y - 6} L${ex},${y} L${ex - 10 * dir},${y + 6}${st.kind === "async" ? "" : " Z"}`, class: "rr-step-head" });
     if (anim) { line.classList.add("rr-pen"); line.style.setProperty("--dl", `${(i * 0.18).toFixed(2)}s`); }
@@ -487,11 +647,11 @@ const plain = (s) => String(s || "").replace(CITE, "").replace(/\*\*|`/g, "").re
 const STUDIO_TITLES = { "This change at a glance": "一眼看懂這個改動", "What changed since you last looked": "你上次看過之後改了什麼", "The app, before and after": "這個 app 改動前後", "Chart": "圖表", "Illustration": "插圖" };
 const itemTitle = (it) => (STUDIO_TITLES[it?.title] ? T(it.title, STUDIO_TITLES[it.title]) : it?.title || "");
 /** a lesson's chapters, in order (src/domain/review-room.ts CHAPTERS) */
-const CHAPTER = { what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
+const CHAPTER = { calls: ["Every call: request, response, transaction", "每個呼叫：request、response、交易"], what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
 const chapterName = (id) => (CHAPTER[id] ? TL(...CHAPTER[id]) : "");
 /** the chapters' order (src/domain/review-room.ts CHAPTERS): a lesson is shown in it */
-const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "reviewers", "roads", "watch", "questions"];
-const TYPE_LABEL = { arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
+const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "calls", "reviewers", "roads", "watch", "questions"];
+const TYPE_LABEL = { svg: ["drawn by the tutor, checked by Studio", "導師畫的圖，Studio 檢查過"], calls: ["every call", "每個呼叫"], arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
 const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
 // ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
 const CJK_RE = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿︰-﹏＀-￯]/g;
@@ -732,7 +892,7 @@ function reportFigure(card, r, it) {
   // a report figure reads at its drawn size, left to right where it fits: the content column, not the board's box
   BOX = innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 };
   const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionView(card, v) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
-    : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : itemView(card, v, null); } finally { BOX = null; }
+    : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : v.type === "svg" ? svgFigureView(card, v) : v.type === "calls" ? callsView(card, v) : itemView(card, v, null); } finally { BOX = null; }
   // never blown up: at most a little over the size it was laid out at
   for (const sg of [body, ...(body.querySelectorAll ? body.querySelectorAll("svg") : [])]) if (sg?.tagName === "svg" && sg.viewBox?.baseVal?.width) sg.style.maxWidth = `${Math.round(sg.viewBox.baseVal.width * 1.15)}px`;
   return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
@@ -807,7 +967,7 @@ function stageView(r) {
   const toc = scenes.some((x) => x.chapter) ? h("nav", { class: "rr-toc", "data-toc": "", "aria-label": T("Chapters", "章節") },
     (() => { const out = [], seenTurn = new Set(); scenes.forEach((x, j) => { const tn = x.turn ?? 0;
       if (!seenTurn.has(tn)) { seenTurn.add(tn); out.push(h("p", { class: "rr-toc-h" }, x.welcome ? T("Welcome", "開場") : x.t ? clip(x.question || x.t.text || T(...(ACTION_LABEL[x.t.action] || [x.t.action, x.t.action])), 40) : "")); }
-      const prev = scenes[j - 1], run = x.chapter && (x.chapter === "change" || x.chapter === "decisions"), cont = run && prev?.turn === x.turn && prev?.chapter === x.chapter;
+      const prev = scenes[j - 1], run = x.chapter && ["change", "decisions", "lifecycle", "calls"].includes(x.chapter), cont = run && prev?.turn === x.turn && prev?.chapter === x.chapter;
       if (run && !cont) out.push(h("p", { class: "rr-toc-ch", "data-toc-chapter": x.chapter }, chapterName(x.chapter)));
       if (run) { const nth = scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === x.chapter).length;
         out.push(h("button", { type: "button", class: "rr-toc-i sub", "data-toc-scene": x.key, "data-toc-item": nth, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
@@ -1096,5 +1256,5 @@ routes.room = (arg) => {
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
-window.crewReviewRoom = { parseFlow, scenesOf };
+window.crewReviewRoom = { parseFlow, scenesOf, orthoSvg };
 })();

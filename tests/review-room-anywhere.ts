@@ -152,6 +152,39 @@ const TOOLRES: [string, any][] = [];
     ok(sk[0]?.skipped === "talks" && td.scenes.find((x: any) => x.chapter === "talks")?.title === "谁跟谁说话" && td.scenes.at(-1)?.chapter === "what" && /at most 12 scenes a turn/.test(sk[1]?.error ?? "") && JSON.stringify(lc?.missing) === JSON.stringify(["change", "lifecycle", "sequence"]),
       "a lesson's chapters come in any order (what after the decisions); talks may be left out with a cited reason (its title in the turn's language, 简体 too); a chapter left out counts toward the scene limit; lesson_check names only what is missing", JSON.stringify({ sk, lc, chapters: td.scenes.map((x: any) => x.chapter) }));
     ok(board?.cites.some((c: any) => c.ref === `commit:${th}` && c.ok) && board.rejected[0].cite.ok, "a rejected option's citation is the decision's own too (the Library resolves it)", JSON.stringify(board?.cites)); }
+  // ---- figures: one the tutor draws itself (taken through Studio's allowlist and geometric gate), a lifecycle per entity with
+  //      each transition's transaction, every call with its request, response and transaction ----
+  { const nF = (room.view(t.id) as any).turns.length + 1, rF = TOOLRES.length;
+    const tx1 = { tables: [{ table: "orders", op: "UPDATE", guard: "WHERE status='draft'", fields: [{ k: "status", was: "draft", now: "priced" }] }], outside: [{ what: "price cache", kind: "cache" }] };
+    const T = (x: number, y: number, s: string) => `<text x="${x}" y="${y}" text-anchor="middle" font-size="13" fill="var(--fig-ink)" data-en="${s}" data-hant="${s}" data-hans="${s}">${s}</text>`;
+    const stateSvg = (labelY: number) => `<svg viewBox="0 0 400 140" role="img"><defs><marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fig-muted)"/></marker></defs>
+<path d="M140,70 H260" fill="none" stroke="var(--fig-muted)" marker-end="url(#ar)" data-edge="draft>priced"/><rect x="20" y="48" width="120" height="44" rx="8" fill="var(--fig-card)" stroke="var(--fig-ink)" data-node="draft"/>${T(80, 75, "Draft")}
+<rect x="260" y="48" width="120" height="44" rx="8" fill="var(--fig-accent-tint)" stroke="var(--fig-accent)" data-node="priced"/>${T(320, 75, "Priced")}${T(200, labelY, "price")}<script>x()</script></svg>`;
+    script.push([
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(74), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", tx: tx1 }] }],
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", tx: tx1 }] }],
+      ["figure_svg", { kind: "state", title: "Orders", svg: stateSvg(58), transitions: [] }],
+      ["board_draw", { items: [{ type: "states", title: "Invoices", entity: "invoices.state", states: [{ id: "open", label: "Open" }, { id: "paid", label: "Paid" }], transitions: [{ from: "open", to: "paid", label: "pay", cite: "diff:src/percent.ts", tx: tx1 }] },
+        { type: "states", title: "Bad", states: [{ id: "a", label: "A" }, { id: "b", label: "B" }], transitions: [{ from: "a", to: "b", label: "x", tx: { tables: [{ table: "t", op: "MERGE", fields: [] }] } }] },
+        { type: "states", title: "Uncited", states: [{ id: "a", label: "A" }, { id: "b", label: "B" }], transitions: [{ from: "a", to: "b", label: "x" }] },
+        { type: "calls", title: "Calls", calls: [{ name: "/price", method: "POST", request: [{ k: "amount", v: "1999" }], response: [{ k: "cents", v: "300" }], errors: [{ code: "400", when: "negative" }], tx: tx1, cite: "diff:src/percent.ts" }] },
+        { type: "calls", title: "No response", calls: [{ name: "/x", request: [{ k: "a", v: "b" }], response: [] }] }] }],
+      ["scene_show", { chapter: "lifecycle", title: "Orders", picture: `B${nF}-1`, points: [{ text: "Pricing is one UPDATE [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "The cache is outside it.", cites: [] }] }],
+      ["scene_show", { chapter: "lifecycle", title: "Invoices", picture: `B${nF}-2`, points: [{ text: "Paying is one UPDATE [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "One way only.", cites: [] }] }],
+      ["scene_show", { chapter: "lifecycle", title: "Uncited", picture: `B${nF}-4`, points: [{ text: "One [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Two.", cites: [] }] }],
+      ["scene_show", { chapter: "calls", title: "The price call", picture: `B${nF}-5`, points: [{ text: "It answers in cents [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Negative amounts fail.", cites: [] }] }],
+      ["say", "Figures [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "teach", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const rr = TOOLRES.slice(rF), get = (n: string) => rr.filter(([x]) => x === n).map(([, j]) => j), fs = get("figure_svg"), bd = get("board_draw")[0], sh = get("scene_show");
+    const vF: any = room.view(t.id), svgIt = vF.board.find((b: any) => b.id === `B${nF}-1`), inv = vF.board.find((b: any) => b.id === `B${nF}-2`), callIt = vF.board.find((b: any) => b.id === `B${nF}-5`), tf = vF.turns.at(-1);
+    ok(/Studio refused the figure \(redraw it\): text "price" sits on a line/.test(fs[0]?.error ?? "") && JSON.stringify(fs[1]?.added) === JSON.stringify([`B${nF}-1`]) && fs[1].stripped.includes("<script>") && /transitions lists every data-edge/.test(fs[2]?.error ?? ""),
+      "a figure the tutor draws is refused with what is wrong (a label on its line) and taken once redrawn, anything off the allowlist dropped; a state figure lists every transition it draws", JSON.stringify(fs));
+    ok(svgIt?.type === "svg" && svgIt.kind === "state" && svgIt.entity === "orders.status" && svgIt.transitions[0].tx.tables[0].fields[0].now === "priced" && svgIt.transitions[0].cite.ok && !JSON.stringify(svgIt.tree).includes("script"),
+      "the figure is kept as Studio's tree of allowed elements, with its entity and each transition's transaction", JSON.stringify(svgIt?.transitions));
+    ok(inv?.entity === "invoices.state" && inv.transitions[0].tx.outside[0].kind === "cache" && /transition 1: tx:/.test(bd?.errors?.[0] ?? "") && callIt?.calls[0].tx.tables[0].table === "orders" && callIt.calls[0].errors[0].code === "400" && /calls is 1 to 6/.test(bd?.errors?.[1] ?? ""),
+      "a lifecycle names its entity and each transition's transaction (tables, guard, fields was → now, writes outside); every call has its request, response, errors and transaction; a malformed one is refused", JSON.stringify(bd?.errors));
+    ok(sh[0]?.scene && sh[1]?.scene && /every transition cites the code that makes it/.test(sh[2]?.error ?? "") && sh[3]?.scene && tf.scenes.filter((x: any) => x.chapter === "lifecycle").length === 2,
+      "a lesson may show one lifecycle for each entity; a lifecycle with a transition that cites nothing is refused; every call has a chapter of its own", JSON.stringify(sh.map((x: any) => x.error ?? x.scene))); }
   // ---- start the room over: refused while a turn or a translation runs; archived, never deleted; nothing writes the old room back ----
   { const rd = join(E.rdir(t.id), "review-room"), f = join(rd, `${t.id}.json`), dir = join(rd, `${t.id}-images`), arch = join(rd, ".archive");
     let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:src/percent.ts]."]]);

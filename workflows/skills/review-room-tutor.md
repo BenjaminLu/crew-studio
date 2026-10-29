@@ -92,9 +92,12 @@ chapters with scene_show's `chapter`, in whatever order you make them (the repor
    taken, why; a rejected option only as a commit, review note or source shows it).
 4. `change` (always, at least one): one scene per changed item (a commit group, a subsystem or a fix), each an `item`
    drawing (name, before, after, the mechanism), cited to its diff. Studio draws every item with one layout.
-5. `lifecycle`: the state machine as one `states` drawing, every state and every transition (each citing its code, each
-   with what it writes). Never a subset.
+5. `lifecycle`: one statemap for each entity the change moves (a `states` item or a state figure you draw): every state
+   and every transition (each citing its code, each with its database transaction in `tx`: tables, op, fields was → now,
+   the guard, and what it writes outside the transaction). Never a subset. When the diff writes a state or status column
+   it is owed (chapter_skip refuses it).
 6. `sequence`: one request in order, one `sequence` drawing, its loops, alternatives and options kept.
+6b. `calls`: every API call the change adds or changes: request, response, errors, the transaction it runs (`calls`).
 7. `reviewers` (when there are reviewers' notes): open concerns and resolved ones, cited to the notes.
 8. `roads` (only when the record shows them): the alternatives the commits, the pull request or the review threads show,
    each cited to them. Never invented.
@@ -105,7 +108,8 @@ Studio holds the shape. `what` and `change` are always there. `talks`, `lifecycl
 diff truly has no components talking (a docs or config-only change), no state transitions or no call chain across
 services or I/O: then call chapter_skip with the reason, cited (the captain sees that line; it counts as one of the
 turn's scenes). The other chapters are simply not shown when empty. One drawing a chapter, except
-`change` (one per item) and `decisions` (one per decision). Call lesson_check before your final answer: Studio refuses a
+`change` (one per item), `decisions` (one per decision), `lifecycle` (one per entity) and `calls`. Draw every figure
+by workflows/skills/diagram-design: with figure_svg when you lay it out yourself, or as board_draw data Studio lays out. Call lesson_check before your final answer: Studio refuses a
 lesson that misses a chapter it owes, and a chapter you missed earlier can still be added. Other answers (a question, how, why, a quiz, the merge check) are scenes on the
 board; they may name a chapter, in any order, or leave it out.
 

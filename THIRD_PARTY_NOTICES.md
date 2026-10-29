@@ -17,6 +17,11 @@
   0ccff28a2fba09eeed5ef33b129cdb6ce402dc11): its SKILL.md, references/diagrams.md and references/spec.md are adapted, not
   vendored as is, in `workflows/skills/baton/` (SKILL.md, diagrams.md, spec.md) for the review room's lesson, whose report
   layout follows its templates/packet.html. The changes and the full MIT License text are in `workflows/skills/baton/NOTICE.md`.
+- **diagram-design** (MIT License, copyright (c) 2025 Cathryn Lavery; https://github.com/cathrynlavery/diagram-design, commit
+  5d59b9b6bd4d7abc08bef2bb0fce8cfa525a203c): its SKILL.md and the references style-guide, semantic-patterns, output-spec,
+  type-state, type-sequence, type-architecture, type-data-flow and type-flowchart are adapted, not vendored as is, in
+  `workflows/skills/diagram-design/` for the review room's figures. The changes and the full MIT License text are in
+  `workflows/skills/diagram-design/NOTICE.md`.
 - **xterm.js 5.5.0** (`@xterm/xterm`, `public/vendor/xterm-5.5.0.min.js` and `xterm-5.5.0.css`) and **@xterm/addon-fit 0.10.0**
   (`public/vendor/xterm-addon-fit-0.10.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the web
   terminal's renderer (docs/units/web-terminal.md). MIT License, copyright the xterm.js authors, SourceLair Private Company and
