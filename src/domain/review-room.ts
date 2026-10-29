@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { ArtifactStore } from "../artifacts";
 import { CAPTURE_PATH } from "../runtime/captures";
 import { cleanText } from "./issue-triage";
-import { figureGate, sanitizeFigure } from "./figure-svg";
+import { figureGate, sanitizeFigure, type FigNode } from "./figure-svg";
 import type { GitHubPrAdapter } from "../adapters/github";
 import type { Projects } from "../doors";
 import { bundledText } from "../bundled";
@@ -112,11 +112,21 @@ export function txOf(v: any): { tables: { table: string; op: string; guard: stri
     return { error: "tx: each table has a name, op INSERT|UPDATE|DELETE|UPSERT and fields {k, was?, now}; each outside write says what" };
   return { tables, outside };
 }
-/** the diff's added lines that write a state or status column (a lifecycle is then owed, never left out) */
+/** the writes that move a state: into the database (UPDATE … SET status/state =, INSERT INTO t (… status …), an ORM call
+ *  writing a status/state key), a state machine's step (setState, setStatus, transition), or a real assignment to an entity's
+ *  status/state field. Never a comparison (== / ===), an HTTP response's status, a local called state, or an object literal. */
+export const STATE_WRITES: RegExp[] = [
+  /\bSET\s+(?:[\w.`"]+\s*=\s*[^,;]+,\s*)*[\w.`"]*?\b(?:status|state)\b[`"]?\s*=(?![=>])/i,
+  /\bINSERT\s+INTO\b[^;(]*\([^)]*\b(?:status|state)\b/i,
+  /\.(?:update|updateOne|updateMany|upsert|insert|create|set|patch|save)\s*\(\s*\{[^;]*?\b(?:status|state)\s*:/,
+  /\b(?:setState|setStatus|transition(?:To)?)\s*\(/,
+  /(?<![\w$.])(?!(?:res|response|reply|ctx|req|request|this|props)\.)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:status|state)\s*=(?![=>])\s*['"`A-Za-z_]/,
+];
+/** the added lines (not tests, not docs) that write a state or status: a lifecycle is owed when there is one */
 export function stateWrites(diff: string): string[] {
   const out: string[] = []; let file = "", line = 0;
   for (const l of diff.split("\n")) { const f = /^\+\+\+ b\/(.+)$/.exec(l); if (f) { file = f[1]; continue; } const h = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(l); if (h) { line = Number(h[1]); continue; }
-    if (l.startsWith("+") && !l.startsWith("+++")) { if (!/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|\.md$/i.test(file) && /\b(status|state)\b\s*(=|:|=>)\s*['"`A-Za-z_]|\bSET\s+[\w.]*\b(status|state)\s*=|\.(status|state)\s*=\s*/i.test(l)) out.push(`${file}:${line}`); line++; }
+    if (l.startsWith("+") && !l.startsWith("+++")) { if (!/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|\.md$/i.test(file) && STATE_WRITES.some((re) => re.test(l.slice(1)))) out.push(`${file}:${line}`); line++; }
     else if (!l.startsWith("-")) line++; }
   return [...new Set(out)].slice(0, 20);
 }
@@ -766,7 +776,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           if (kind === "state") { const drawn = new Set(r.edges), listed = new Set(transitions.map((x: any) => x.edge)), missing = [...drawn].filter((e) => !listed.has(e)), extra = [...listed].filter((e) => !drawn.has(e));
             if (!r.nodes.length || !drawn.size) return { error: "a state figure has data-node on every state and data-edge on every transition" };
             if (missing.length || extra.length) return { error: `transitions lists every data-edge of the figure, and only those: missing ${missing.join(", ") || "none"}; not drawn ${extra.join(", ") || "none"}` }; }
-          const cites = [...citesOf(a?.cites, ok), ...transitions.map((x: any) => x.cite).filter(Boolean)];
+          // a connector's data-cite opens code: checked like any citation; one that does not resolve is dropped from the figure
+          const linked: Cite[] = [], walkCite = (n: FigNode) => { const v = n.a["data-cite"]; if (v) { const c = citesOf([v], ok)[0]; if (c?.ok) { n.a["data-cite"] = c.ref; if (!linked.some((x) => x.ref === c.ref)) linked.push(c); } else delete n.a["data-cite"]; }
+            for (const ch of n.c) if (typeof ch !== "string") walkCite(ch); };
+          walkCite(r.tree);
+          const cites = [...citesOf(a?.cites, ok), ...transitions.map((x: any) => x.cite).filter(Boolean), ...linked.slice(0, 24)];
           const it: Item = { id: `B${turn.n}-${++drawn}`, turn: turn.n, type: "svg", kind, title: one(a?.title, 120) || "Figure", tree: r.tree, nodes: r.nodes, edges: r.edges, entity: one(a?.entity, 40), transitions, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" };
           room.board.push(it); save(k, room); return { added: [it.id], stripped: r.stripped }; } },
       { name: "screenshots_show", description: "Put the app's real screenshots on the board: each changed page at the base and at the head, as Studio's sandboxed renderer shot them for this head (the Task's own capture check, the app's fixture build, no live data). The captain toggles before / after. Only when the change touches the app's pages.",
@@ -990,7 +1004,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   }
   /** A pasted pull request's lesson, started by Studio: the captain's paste is the consent. Only a pull request's room, only when
    *  auto-teach is on (the room's switch, else the global setting), once per head (recorded before anything starts, so a reload
-   *  or a revisit never starts another), never when a lesson for this head is done or running. Pictures stay off. When it cannot
+   *  or a revisit never starts another), never when a lesson for this head is done or running. Pictures as the room has them. When it cannot
    *  start (no tutor can run, admission refuses), the reason is kept and the room shows the ordinary teach button with it. */
   async function autoTeach(api: any, id: string, by: string, lang = "en") {
     let k: Key; try { k = keyOf(id); } catch { return; } if (k.kind !== "pr") return;
@@ -1002,7 +1016,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const mark = { head, at: new Date().toISOString() } as { head: string; at: string; turn?: number; skipped?: string };
     room.autoTaught = [...(room.autoTaught ?? []), mark]; save(k, room);
     try { const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
-      await api.start(id, { action: "teach", lang, confirm: offer.hash, images: false, auto: true }, by);
+      await api.start(id, { action: "teach", lang, confirm: offer.hash, auto: true }, by);
       const r2 = load(k); const m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.turn = r2.turns.at(-1)?.n; save(k, r2); } }
     catch (e: any) { const r2 = load(k), m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.skipped = String(e?.message ?? e).slice(0, 300); save(k, r2); notify(k); } }
   }
@@ -1042,7 +1056,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const tutors = [...new Map(room.turns.filter((t) => !t.studio && t.provider).map((t) => [`${t.provider} ${t.model}`, { provider: t.provider, model: t.model }])).values()];
       const usd = room.turns.reduce((n, t) => n + (typeof t.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof room.translating?.cost?.usd === "number" ? room.translating.cost.usd : 0);
       const savedAt = new Date().toISOString(), snap = { schema: 1, kind: "review-room-snapshot", room: k.id, savedAt, reason, subject: subjectMeta(k, room, view), tutors, cost: { usd: Math.round(usd * 10000) / 10000 },
-        view: { ...view, board, open: false, offer: null, running: null, notes: undefined, progress: null, turns: (view.turns ?? []).filter((t: any) => !t.hidden), tutors: [], translate: null, checking: false, moved: null, illustrations: [],
+        view: { ...view, board, open: false, offer: null, running: null, notes: undefined, autoTeach: undefined, progress: null, turns: (view.turns ?? []).filter((t: any) => !t.hidden), tutors: [], translate: null, checking: false, moved: null, illustrations: [],
           sources: (view.sources ?? []).map((x: any) => x.ok ? x : { n: x.n, turn: x.turn, kind: x.kind, at: x.at, ok: false, ...(x.refused ? { refused: "refused by Studio's web filter" } : {}), ...(x.error ? { error: "not read" } : {}) }), closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
       writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
       const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);
@@ -1306,6 +1320,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     async openPr(url: unknown, by = "captain", lang?: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en"); return { id, href: `#/room/${id}`, room: this.view(id) }; },
     /** Studio-wide settings of the review room (autoTeach: a pasted pull request's lesson starts by itself) */
     settings() { return settings(); },
+    /** what pasting this pull request's address would start (the paste box shows it before the paste): auto-teach on or off,
+     *  and the tutor and the paid round it would run on, as the room's offer would name them */
+    pasteOffer(url: unknown) { const auto = settings().autoTeach, p = parsePrUrl(String(url ?? "").slice(0, 400)); if (!p) return { auto, error: "not a pull request's address", code: "bad_url" };
+      const project: any = connected(p.repository); if (!project) return { auto, error: `github.com/${p.repository} is not the repository of a project connected to GitHub`, code: "not_connected" };
+      try { const t = crewPick(project.id ?? project.name); return { auto, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, paid: true, images: false }; }
+      catch (e: any) { return { auto, error: String(e?.message ?? e).slice(0, 300), code: e?.code ?? "no_crew" }; } },
     setSettings(a: { autoTeach?: unknown }) { if (typeof a?.autoTeach !== "boolean") throw refuse("autoTeach is true or false", "bad_request"); writeFileSync(settingsFile(), JSON.stringify({ ...settings(), autoTeach: a.autoTeach })); return settings(); },
     /** this room's own auto-teach switch (a pull request's room) */
     autoTeachFor(id: string, on: unknown) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request"); const room = load(k); if (!room) throw refuse("No such review room", "not_found");
@@ -1341,7 +1361,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (engine.grants.open("sandbox-off", project)) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
         if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
         live.set(k.id, -1);
-        // only now, after the captain confirmed: a team that covers code-firstmate writes the project's crew-derived staffing
+        // only now, after the captain confirmed (a pasted pull request's auto-teach counts the paste as that confirm: the paste box
+        // named the tutor and the paid round before it): a team that covers code-firstmate writes the project's crew-derived staffing
         try { const def = codeDef(); if (def && project) engine.deps.teamStaffing?.(def, project); } catch {}
         try { const h = engine.start({ workflow: HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { project: String(project ?? ""), pr: String(room0.subject?.url ?? "") }, by } as any); room0.host = h.id; save(k, room0); }
         catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_crew"); }
@@ -1405,7 +1426,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (room) startedOver.add(room); cache.delete(k.file); resetGen.set(k.id, (resetGen.get(k.id) ?? 0) + 1); statMemo.clear(); saving.delete(k.id); refreshing.delete(k.id);
       // a pull request's room is its file: a fresh one now, from the pull request as Studio last read it (its link to the Library kept)
       if (k.kind === "pr" && room) save(k, { schema: 1, run: room.run, card: k.id, node: room.node, head: room.head, base: room.base, turns: [], board: [], sources: [], check: { questions: [] },
-        subject: room.subject, pr: room.pr, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished });
+        subject: room.subject, pr: room.pr, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished,
+        ...(room.autoTeach != null ? { autoTeach: room.autoTeach } : {}), ...(room.autoTaught?.length ? { autoTaught: room.autoTaught.map(({ skipped: _s, ...x }) => x) } : {}) });
       const run = s?.run ? engine.get(s.run.id) : null, node = run?.def.nodes.find((n: any) => n.id === s!.node?.id);
       const entry = { schema: 1, card: k.id, by: String(by ?? "captain").slice(0, 80), at, moved };
       if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-reset", { head: s!.head, data: entry } as any);

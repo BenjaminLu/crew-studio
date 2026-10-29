@@ -158,7 +158,7 @@ const TOOLRES: [string, any][] = [];
     const tx1 = { tables: [{ table: "orders", op: "UPDATE", guard: "WHERE status='draft'", fields: [{ k: "status", was: "draft", now: "priced" }] }], outside: [{ what: "price cache", kind: "cache" }] };
     const T = (x: number, y: number, s: string) => `<text x="${x}" y="${y}" text-anchor="middle" font-size="13" fill="var(--fig-ink)" data-en="${s}" data-hant="${s}" data-hans="${s}">${s}</text>`;
     const stateSvg = (labelY: number) => `<svg viewBox="0 0 400 140" role="img"><defs><marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fig-muted)"/></marker></defs>
-<path d="M140,70 H260" fill="none" stroke="var(--fig-muted)" marker-end="url(#ar)" data-edge="draft>priced"/><rect x="20" y="48" width="120" height="44" rx="8" fill="var(--fig-card)" stroke="var(--fig-ink)" data-node="draft"/>${T(80, 75, "Draft")}
+<path d="M140,70 H260" fill="none" stroke="var(--fig-muted)" marker-end="url(#ar)" data-edge="draft>priced" data-cite="diff:src/percent.ts"/><rect x="20" y="48" width="120" height="44" rx="8" fill="var(--fig-card)" stroke="var(--fig-ink)" data-node="draft" data-cite="diff:src/not-in-this-change.ts"/>${T(80, 75, "Draft")}
 <rect x="260" y="48" width="120" height="44" rx="8" fill="var(--fig-accent-tint)" stroke="var(--fig-accent)" data-node="priced"/>${T(320, 75, "Priced")}${T(200, labelY, "price")}<script>x()</script></svg>`;
     script.push([
       ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(74), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", tx: tx1 }] }],
@@ -179,6 +179,10 @@ const TOOLRES: [string, any][] = [];
     const vF: any = room.view(t.id), svgIt = vF.board.find((b: any) => b.id === `B${nF}-1`), inv = vF.board.find((b: any) => b.id === `B${nF}-2`), callIt = vF.board.find((b: any) => b.id === `B${nF}-5`), tf = vF.turns.at(-1);
     ok(/Studio refused the figure \(redraw it\): text "price" sits on a line/.test(fs[0]?.error ?? "") && JSON.stringify(fs[1]?.added) === JSON.stringify([`B${nF}-1`]) && fs[1].stripped.includes("<script>") && /transitions lists every data-edge/.test(fs[2]?.error ?? ""),
       "a figure the tutor draws is refused with what is wrong (a label on its line) and taken once redrawn, anything off the allowlist dropped; a state figure lists every transition it draws", JSON.stringify(fs));
+    { const all: any[] = [], walk = (n: any) => { all.push(n); for (const c of n.c ?? []) if (typeof c !== "string") walk(c); }; if (svgIt?.tree) walk(svgIt.tree);
+      const edge = all.find((n) => n.a["data-edge"] === "draft>priced"), draft = all.find((n) => n.a["data-node"] === "draft");
+      ok(edge?.a["data-cite"] === "diff:src/percent.ts" && draft && !("data-cite" in draft.a) && svgIt.cites.filter((c: any) => c.ref === "diff:src/percent.ts" && c.ok).length === 2 && !svgIt.cites.some((c: any) => /not-in-this-change/.test(c.ref)),
+        "a figure's data-cite is checked like any citation: one that resolves is kept and joins the figure's cites (the Library resolves it), one that does not is dropped", JSON.stringify({ edge: edge?.a, draft: draft?.a, cites: svgIt?.cites })); }
     ok(svgIt?.type === "svg" && svgIt.kind === "state" && svgIt.entity === "orders.status" && svgIt.transitions[0].tx.tables[0].fields[0].now === "priced" && svgIt.transitions[0].cite.ok && !JSON.stringify(svgIt.tree).includes("script"),
       "the figure is kept as Studio's tree of allowed elements, with its entity and each transition's transaction", JSON.stringify(svgIt?.transitions));
     ok(inv?.entity === "invoices.state" && inv.states[0].mark === "changed" && !("mark" in inv.states[1]) && inv.transitions[0].tx.outside[0].kind === "cache" && /transition 1: tx:/.test(bd?.errors?.[0] ?? "") && callIt?.calls[0].tx.tables[0].table === "orders" && callIt.calls[0].errors[0].code === "400" && /calls is 1 to 6/.test(bd?.errors?.[1] ?? ""),
@@ -584,11 +588,14 @@ const TOOLRES: [string, any][] = [];
   { const url = "https://github.com/fixture/project/pull/5", turns = () => (room.view(opened.id) as any).turns.length;
     headAs(B); const n0 = turns(); await room.openPr(url); await room.settle(opened.id);
     ok(turns() === n0 && room.settings().autoTeach === false, "auto-teach off (the Studio-wide setting): pasting the pull request starts nothing", JSON.stringify(room.settings()));
-    room.setSettings({ autoTeach: true }); script.push([["msg", "Reading the change."], ["say", "It adds a third line [diff:a.txt]."]]);
+    const offOffer: any = room.pasteOffer(url); room.setSettings({ autoTeach: true }); const onOffer: any = room.pasteOffer(url), badOffer: any = room.pasteOffer("https://example.com/x");
+    script.push([["msg", "Reading the change."], ["say", "It adds a third line [diff:a.txt]."]]);
     headAs(B); const out: any = await room.openPr(url, "captain"), running = out.room.running, t = (room.view(opened.id) as any).turns.at(-1); await room.settle(opened.id);
     const led = E.trusted(host.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
     ok(running != null && t.action === "teach" && t.auto === true && t.head === B && led?.data.auto === true && led.data.action === "teach" && !(room.view(opened.id) as any).images,
       "pasting a pull request starts its lesson by itself, no click and no confirmation: an ordinary paid turn marked auto on the ledger, pictures off", JSON.stringify({ running, turn: [t.action, t.auto, t.status], led: led?.data.auto }));
+    ok(offOffer.auto === false && onOffer.auto === true && onOffer.provider === t.provider && (onOffer.model ?? "") === (t.model ?? "") && onOffer.paid === true && badOffer.code === "bad_url",
+      "before the paste, the paste box can say what it starts: auto-teach on or off, and the tutor and the paid round (the one the lesson then ran on)", JSON.stringify({ offOffer, onOffer, ran: [t.provider, t.model] }));
     const n1 = turns(); headAs(B); await room.openPr(url); room.view(opened.id, true); await room.settle(opened.id);
     ok(turns() === n1, "pasting it again (or reopening the room) on the same head starts no second lesson", String(turns() - n1));
     // a new head with a finished lesson already there: nothing starts
@@ -610,7 +617,18 @@ const TOOLRES: [string, any][] = [];
     // when it cannot start, the room keeps why (and shows the ordinary teach button with it)
     room.autoTeachFor(opened.id, true); const realStart = room.start; (room as any).start = async () => { throw Object.assign(new Error("No tutor can run on this Mac now"), { code: "no_tutor" }); };
     headAs(D); await room.openPr(url); (room as any).start = realStart; const vs: any = room.view(opened.id);
-    ok(turns() === n3 && /No tutor can run on this Mac now/.test(vs.autoTeach.skipped ?? ""), "when the lesson cannot start by itself, nothing runs and the room says why", JSON.stringify(vs.autoTeach)); }
+    ok(turns() === n3 && /No tutor can run on this Mac now/.test(vs.autoTeach.skipped ?? ""), "when the lesson cannot start by itself, nothing runs and the room says why", JSON.stringify(vs.autoTeach));
+    // the Library's snapshot never carries that notice (it would replay forever)
+    await room.saveToLibrary(opened.id, "captain"); const snapView: any = (room.librarySnapshot(`room-${opened.id.toLowerCase()}`) as any)?.view;
+    ok(!!snapView && snapView.autoTeach === undefined, "a room saved to the Library keeps no auto-teach notice", JSON.stringify(snapView?.autoTeach ?? null));
+    // the auto turn keeps the room's own pictures setting: it never passes one
+    writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\n"); must(scratch, [...id, "commit", "-qam", "Add six"]); const E6 = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${E6}:refs/pull/5/head`]);
+    let asked: any = null; (room as any).start = async (_id: string, a: any) => { asked = a; return {}; }; headAs(E6); await room.openPr(url); (room as any).start = realStart;
+    ok(asked?.auto === true && !("images" in asked), "the lesson started on paste keeps the room's pictures setting (it does not turn them off)", JSON.stringify(asked));
+    // a reset keeps the room's switch: pasted again on the same head, a room whose auto-teach is off starts nothing
+    room.autoTeachFor(opened.id, false); await room.settle(opened.id); room.reset(opened.id, "captain"); const vr: any = room.view(opened.id);
+    headAs(E6); await room.openPr(url); await room.settle(opened.id); const va: any = room.view(opened.id);
+    ok(vr.autoTeach.room === false && vr.turns.length === 0 && va.turns.length === 0 && va.running == null, "started over, the room keeps its auto-teach switch: pasted again on the same head, nothing starts", JSON.stringify({ before: vr.autoTeach, turns: va.turns.length })); }
   sim.stop(); H.stop();
 }
 end();

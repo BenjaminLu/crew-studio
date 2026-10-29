@@ -765,6 +765,8 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing) return json(rr.settings());
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac changes the review room's settings", code: "desktopOnly" }, 403);
         try { return json(rr.setSettings(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
+      // what pasting a pull request's address would start: auto-teach on or off, the tutor and the paid round (read only)
+      if (p === "/api/review-room/paste-offer" && !writing) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); return json(rr.pasteOffer(url.searchParams.get("url"))); }
       if (p === "/api/review-room/open-pr") {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);

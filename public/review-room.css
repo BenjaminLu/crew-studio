@@ -555,3 +555,4 @@ html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
 .rr-figsvg-svg { width: 100%; height: auto; } .rr-figsvg-svg text { font-family: var(--f-sans); }
 .rr-figsvg .rr-pickable { cursor: pointer; } .rr-figsvg .rr-pickable.on { stroke-width: 2.4; }
 .rp-figbody { justify-items: start; } .rp-figbody > .rr-flow-wrap, .rp-figbody > .rp-smap, .rp-figbody > .rr-figsvg { justify-items: center; }
+.rr-paste-offer { font-size: 12.5px; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--fig-amber); background: var(--fig-amber-tint); } .rr-auto-note { font-size: 12.5px; } .rr-auto-note label { display: inline-flex; gap: 4px; align-items: center; }

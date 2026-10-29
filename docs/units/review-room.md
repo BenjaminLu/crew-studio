@@ -303,7 +303,12 @@ palette's tokens; at most 80 000 characters, 900 elements, 2400 × 2400) and run
 label on a line, no connector through a box that is not one of its ends, no label outside the viewBox, no Chinese under
 12px, every label with `data-en`, `data-hant` and `data-hans`. A figure that fails is refused with each problem, and the
 tutor redraws (at most eight tries a turn). The page rebuilds the tree element by element (createElementNS, setAttribute,
-textContent; never markup), its ids kept to the figure, each text in the room's language. Or the tutor gives the structure
+textContent; never markup, from the client's own allowlist too, so a tampered room file adds nothing), its ids kept to the
+figure, each text in the room's language (a label of several lines keeps its tspans, each line in the room's language). The
+gate is bounded: every coordinate within the viewBox (plus 40), at most 40 000 sample points a figure, the label-on-line scan
+only where boxes meet; it measures what the page draws (each tspan at its own x/y/dy; a path is a connector unless it is a
+closed filled shape). A `data-cite` is checked like any citation: kept and added to the figure's cites when it resolves,
+dropped when it does not. Or the tutor gives the structure
 and Studio lays it out, baton's way. A lifecycle puts the way it should go on one row, left to right (the longest path from
 where it starts to an end that went well); its ways back and its skips over a state are arcs above the row, nested by span
 (the shorter inside); the states that end badly or need attention sit in the lane below, the others in the lane above,
@@ -315,7 +320,9 @@ apart, a state's way back to itself a small loop); its numbered chip sits on it 
 transaction panel right under the map. The sequence is one event a band, each fragment's tab on its own band, calls,
 returns and async calls in their own colours.
 
-**A database lifecycle per entity; every call.** A lifecycle names its entity and gives each transition its database
+**A database lifecycle per entity; every call.** A lifecycle is owed only for a real state write: UPDATE … SET status/state,
+INSERT INTO … (status), an ORM write with a status/state key, setState / setStatus / transition(), or an entity's status
+assigned; never a comparison, an HTTP response's status, a local named state or an object literal. A lifecycle names its entity and gives each transition its database
 transaction (`tx`: the tables written, INSERT, UPDATE, DELETE or UPSERT, each field was → now, the guard, and what is written
 outside the transaction). The report's statemap numbers every transition; picking a state shows the transaction that brings
 the entity into it, picking a transition shows its own, the writes outside set apart dashed. A lesson shows one lifecycle for
@@ -325,11 +332,15 @@ response, the errors a client sees, the transaction it runs.
 
 **A pasted pull request teaches itself.** When the captain pastes a pull request (`POST …/open-pr`) and its room has no
 lesson for the current head (none done or running), the lesson starts by itself: the paste is the consent, so there is no
-click and no confirmation. It is an ordinary paid turn on the room's tutor, marked `auto` on the ledger, with generated
-pictures off. It starts once per head: the head is recorded before anything starts, so a reload, a revisit or a second
+click and no confirmation. So the paste box says what a paste starts before it is pasted (`GET …/paste-offer?url=`: auto-teach
+on or off, and the tutor, model and paid round the room's offer would name), and the lesson says it started on paste, with
+the tutor it ran on and the room's switch beside it. It is an ordinary paid turn on the room's tutor, marked `auto` on the
+ledger; it keeps the room's own pictures setting (a new room's is off). It starts once per head: the head is recorded before anything starts, so a reload, a revisit or a second
 paste starts nothing. The Studio-wide setting (`GET/POST /api/review-room/settings {autoTeach}`, on the room list's page,
 default on) and the room's own switch (`POST …/auto {on}`, in its drawer) turn it off. When it cannot start (no tutor can
-run, admission refuses) nothing runs, the reason is kept and the welcome scene shows it above the ordinary teach button.
+run, admission refuses) nothing runs, the reason is kept and the welcome scene shows it above the ordinary teach button;
+a Library snapshot never carries that notice. Starting the room over keeps its switch and the heads it already taught by
+itself, so pasting the same head again after a reset starts nothing.
 Merge-card rooms and Task rooms never start by themselves; only a pasted pull request does.
 
 **Start this room over / 清空重來.** In the transcript drawer, the captain on this Mac can start a room over (`POST

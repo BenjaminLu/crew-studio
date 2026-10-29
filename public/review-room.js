@@ -576,7 +576,7 @@ function figTree(n, lang, pre) {
     if (/^marker-/.test(k)) { const m = /^url\(#([\w-]+)\)$/.exec(v); if (!m) continue; v = `url(#${pre}-${m[1]})`; }
     if (k === "id") v = `${pre}-${v}`; if (k === "aria-labelledby") v = v.split(/\s+/).map((x) => `${pre}-${x}`).join(" ");
     el.setAttribute(k, v); }
-  const say = n.t === "text" ? (LANG_BASE(lang) === "en" ? n.a?.["data-en"] : lang === "zh-CN" ? n.a?.["data-hans"] : n.a?.["data-hant"]) : null;
+  const leaf = !(n.c || []).some((c) => typeof c !== "string"), say = (n.t === "text" || n.t === "tspan") && leaf ? (LANG_BASE(lang) === "en" ? n.a?.["data-en"] : lang === "zh-CN" ? n.a?.["data-hans"] : n.a?.["data-hant"]) : null;
   if (say) el.textContent = say;
   else for (const c of n.c || []) { if (typeof c === "string") el.append(document.createTextNode(c)); else { const ch = figTree(c, lang, pre); if (ch) el.append(ch); } }
   return el;
@@ -996,6 +996,13 @@ function reportSection(card, r, x, j, nth) {
     : h("div", { class: `rp-prose${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: m === 0 && ch === "what" ? "lead" : "" }, ...pointText(card, p))));
   return h("section", { class: `rp-sec${x.skip ? " skipped" : ""}`, id: `rp-${card}-${x.key}`, "data-report-section": x.key, "data-chapter": ch }, h("div", { class: "rp-card" }, head, body), pic ? reportFigure(card, r, pic) : null);
 }
+/** a lesson auto-teach started: said so, with what it ran on, and the room's switch to stop it starting on the next paste */
+function autoNote(r, t) {
+  if (!t?.auto) return null; const card = r.card.id;
+  return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n }, T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
+    !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+      T(" start by itself on the next paste", " 下次貼上時自動開始")) : null);
+}
 /** the report: the lesson's sections in order, a quiet footer with the rules it keeps; it scrolls inside the room */
 function reportView(r, scenes, i, toc) {
   const card = r.card.id, sc = scenes[i], t = sc.t, secs = scenes.filter((x) => x.turn === sc.turn && x.chapter);
@@ -1007,7 +1014,7 @@ function reportView(r, scenes, i, toc) {
     cur = cur || secs[0]?.key; const at = scenes.findIndex((x) => x.key === cur); if (at >= 0 && RR.scene.get(card) !== at) { RR.scene.set(card, at);
       for (const b of document.querySelectorAll("[data-toc-scene]")) b.setAttribute("aria-current", b.dataset.tocScene === cur ? "true" : "false"); } };
   const rep = h("div", { class: "rr-report", "data-report": t.n, tabindex: "0", onscroll: spy, "aria-label": T("The lesson, as a report", "這一課（報告）") },
-    h("header", { class: "rp-top" }, eyebrow ? h("div", { class: "rp-eyebrow" }, eyebrow) : null, h("h1", { class: "rp-title" }, title),
+    h("header", { class: "rp-top" }, eyebrow ? h("div", { class: "rp-eyebrow" }, eyebrow) : null, h("h1", { class: "rp-title" }, title), autoNote(r, t),
       h("p", { class: "rp-lede" }, T(`A lesson in ${secs.length} sections. Every drawing is laid out by Studio from the tutor's data; a point without a verified citation is marked as an inference.`, `這一課共 ${secs.length} 節。每張圖都由 Studio 依導師給的資料排版；沒有可驗證引用的重點會標成推論。`))),
     secs.map((x, j) => reportSection(card, r, x, j, x.chapter === "decisions" ? ++nth : 0)),
     h("footer", { class: "rp-foot" }, h("span", {}, T("Nothing here says whether this change is deployed: that is not in the repository.", "這裡不說這個改動是否已部署：那不在 repository 裡。")),
@@ -1080,11 +1087,12 @@ function stageView(r) {
         h("div", { class: "rr-points" },
           RR.ready.has(card) ? h("button", { type: "button", class: "rr-chip lead", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.reveal.set(`${card}/${key}`, 0); queueMicrotask(() => play(card, scenes[at])); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示")) : null,
           sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
+          autoNote(r, sc.t),
           sc.t && sc.t.status !== "done" ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
           sc.quiz ? quizSide(r, sc) : h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
           n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
           // the welcome scene's one action: the lesson, a paid turn that asks to confirm first
-          sc.welcome && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
+          sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
           sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
             T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
           sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
@@ -1227,7 +1235,19 @@ async function resetRoom(card) {
   finally { RR.posting.delete(card); rerender(); }
 }
 // ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------
-const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set() };
+const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(), offer: new Map() };
+const PR_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?$/;
+/** what pasting this address would start, asked of Studio once per address (the paste box says it before the paste) */
+const pasteOffer = (url) => { if (!PR_URL.test(url) || PR.offer.has(url)) return PR.offer.get(url); PR.offer.set(url, { loading: true });
+  api(`/api/review-room/paste-offer?url=${encodeURIComponent(url)}`).then((o) => PR.offer.set(url, o)).catch((e) => PR.offer.set(url, { error: e.message })).finally(rerenderAny); return PR.offer.get(url); };
+/** the paste box's line about the paste: a paid round on this tutor when auto-teach is on, else nothing runs until asked */
+function pasteLine(url) {
+  const o = url ? pasteOffer(url) : null; if (!o || o.loading) return null;
+  if (o.auto === false) return h("p", { class: "faint", "data-paste-offer": "off" }, T("Pasting opens the room; nothing runs until you ask (auto-teach is off).", "貼上只會開啟審查室；你開口之前什麼都不跑（自動教學已關）。"));
+  if (o.error) return h("p", { class: "faint", "data-paste-offer": "none" }, T(`Pasting opens the room; no lesson starts by itself: ${o.error}`, `貼上會開啟審查室，不會自動開始教學：${o.error}`));
+  return h("p", { class: "rr-paste-offer", "data-paste-offer": "on" }, T(`Pasting starts the lesson by itself: one paid model round on ${o.provider} · ${o.model ?? "default model"}${o.effort ? ` (${o.effort})` : ""}, no generated pictures. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
+    `貼上就會自動開始這一課：在 ${o.provider} · ${o.model ?? "預設模型"}${o.effort ? `（${o.effort}）` : ""} 上付費執行一回合，不產生圖片。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`));
+}
 /** the URL box (the Review Room's home, and a small one on a connected project's page) */
 function prBox(where, repository) {
   const busy = PR.busy.has(where), err = PR.err.get(where);
@@ -1237,7 +1257,8 @@ function prBox(where, repository) {
   return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
     h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),
       h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 300, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>", value: PR.url.get(where) || "",
-        oninput: (e) => PR.url.set(where, e.target.value), "aria-label": T("Pull request URL", "Pull request 網址") })),
+        oninput: (e) => { PR.url.set(where, e.target.value); if (PR_URL.test(e.target.value.trim()) && !PR.offer.has(e.target.value.trim())) { pasteOffer(e.target.value.trim()); } }, "aria-label": T("Pull request URL", "Pull request 網址") })),
+    pasteLine((PR.url.get(where) || "").trim()),
     h("button", { type: "submit", class: "btn primary", "data-pr-open": where, disabled: busy }, busy ? T("Reading it on GitHub…", "正在讀取 GitHub…") : T("Open its review room", "開啟它的審查室")),
     h("p", { class: "faint" }, T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
     err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);

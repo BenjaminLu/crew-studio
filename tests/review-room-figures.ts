@@ -46,6 +46,32 @@ const all = (n: FigNode, out: FigNode[] = []) => { out.push(n); for (const c of 
   const routed = gateOf(fig(`<path d="M70,80 V160 H330 V80" fill="none" stroke="var(--fig-muted)" data-edge="a>b"/>${box("a", 20, 40)}${box("c", 160, 40, 80)}${box("b", 280, 40)}`, "0 0 400 200"));
   ok(!routed.length, "routed around the box in the middle, the same connector passes", JSON.stringify(routed)); }
 
+// ---------- the gate is bounded: a figure built to exhaust it is refused at once ----------
+{ const zig = "M0,0" + " L99999,99999 L0,0".repeat(330), paths = Array.from({ length: 13 }, () => `<path d="${zig}" fill="none" stroke="var(--fig-muted)"/>`).join("");
+  const svg = fig(paths), r = sanitizeFigure(svg); (globalThis as any).Bun?.gc?.(true);
+  const heap0 = process.memoryUsage().heapUsed, t0 = performance.now(), g = r.tree ? figureGate(r.tree) : r.errors, ms = performance.now() - t0, grew = process.memoryUsage().heapUsed - heap0;
+  ok(svg.length < 80_000 && !!r.tree && g.length === 1 && /outside the viewBox/.test(g[0]) && ms < 50 && grew < 32 * 1024 * 1024,
+    "a path drawn far outside its picture (13 of them, under the size cap) is refused at its first coordinate: fast, nothing huge allocated", JSON.stringify({ len: svg.length, g, ms: Math.round(ms), grewMB: Math.round(grew / 1048576) }));
+  const inside = "M0,0" + " L399,199 L0,0".repeat(400), many = Array.from({ length: 13 }, () => `<path d="${inside}" fill="none" stroke="var(--fig-muted)"/>`).join(""), r2 = sanitizeFigure(fig(many));
+  const t1 = performance.now(), g2 = r2.tree ? figureGate(r2.tree) : r2.errors, ms2 = performance.now() - t1;
+  ok(!!r2.tree && g2.length === 1 && /too much line to check/.test(g2[0]) && ms2 < 50, "inside the picture but too long to check: refused by the points budget, with a reason to redraw, fast", JSON.stringify({ g2, ms: Math.round(ms2) }));
+  const far = gateOf(fig(`<rect x="0" y="0" width="99999" height="20" fill="var(--fig-card)"/>`)), farLine = gateOf(fig(`<line x1="0" y1="0" x2="9000" y2="10" stroke="var(--fig-muted)"/>`));
+  ok(/outside the viewBox/.test(far[0] ?? "") && /outside the viewBox/.test(farLine[0] ?? ""), "a box or a line reaching far outside the viewBox is refused", JSON.stringify({ far, farLine })); }
+
+// ---------- what the gate measures is what the page draws ----------
+{ // an open path is a connector whatever its fill; a closed filled shape is not
+  const openFilled = gateOf(fig(`<path d="M70,60 H330" stroke="var(--fig-muted)" data-edge="a>b"/>${box("a", 20, 40)}${box("c", 160, 40, 80)}${box("b", 280, 40)}`));
+  const closedShape = gateOf(fig(`<path d="M150,30 H250 V90 H150 Z" fill="var(--fig-card-2)"/>${t(200, 64, "inside a panel")}`));
+  ok(openFilled.some((e) => /passes through "c"/.test(e)) && !closedShape.length, "a path without fill=\"none\" is still a connector (through a box is refused); a closed filled shape is a panel, not a line", JSON.stringify({ openFilled, closedShape }));
+  // tspans: each line at its own x/y (dy below the last), measured with its own languages
+  const L = (dy: number, s: string, more = "") => `<tspan x="200" dy="${dy}" data-en="${s}" data-hant="${s}" data-hans="${s}"${more}>${s}</tspan>`;
+  const twoLines = gateOf(fig(`<text x="200" y="80" text-anchor="middle" font-size="12" fill="var(--fig-ink)">${L(0, "first line")}${L(18, "second line")}</text>`));
+  const stacked = gateOf(fig(`<text x="200" y="80" text-anchor="middle" font-size="12" fill="var(--fig-ink)">${L(0, "first line")}${L(2, "second line")}</text>`));
+  const offPicture = gateOf(fig(`<text x="200" y="80" font-size="12" fill="var(--fig-ink)">${L(0, "first")}<tspan x="390" dy="18" data-en="second" data-hant="second" data-hans="second">second</tspan></text>`));
+  const noLangs = gateOf(fig(`<text x="200" y="80" font-size="12" fill="var(--fig-ink)">${L(0, "first")}<tspan x="200" dy="18">second</tspan></text>`));
+  ok(!twoLines.length && stacked.some((e) => /overlaps text/.test(e)) && offPicture.some((e) => /"second" runs outside/.test(e)) && noLangs.some((e) => /"second" needs data-en/.test(e)),
+    "a label of several lines (tspans) is measured line by line at each line's x/y/dy: two lines apart pass, two on each other, one past the edge or one without its languages are refused", JSON.stringify({ twoLines, stacked, offPicture, noLangs })); }
+
 // ---------- a transition's transaction; the diff lines that move a state ----------
 { const tx = txOf({ tables: [{ table: "orders", op: "update", guard: "WHERE status='awaiting'", fields: [{ k: "status", was: "awaiting", now: "authorized" }] }], outside: [{ what: "PSP authorize", kind: "call" }] }) as any;
   const bad = txOf({ tables: [{ table: "orders", op: "MERGE", fields: [] }] }) as any, none = txOf(undefined);
@@ -54,5 +80,12 @@ const all = (n: FigNode, out: FigNode[] = []) => { out.push(n); for (const c of 
     "+++ b/test/orders.test.ts", "@@ -1 +1,2 @@", "+  order.status = 'paid';", "+++ b/README.md", "@@ -1 +1 @@", "+status: 'documented'"].join("\n");
   const w = stateWrites(diff);
   ok(JSON.stringify(w) === JSON.stringify(["src/orders.ts:11", "src/orders.ts:12"]), "the lines that write a state or status column are found (tests and docs left out): a lifecycle is then owed", JSON.stringify(w)); }
+{ const at = (lines: string[]) => stateWrites(["+++ b/src/x.ts", `@@ -1,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`)].join("\n"));
+  const not = ["if (order.status === 'paid') return;", "if (order.state == 'open') go();", "res.status = 404;", "res.status = code;", "response.status = 'error';", "const state = useReducer(r);", "return { state: loading };", "const s = { status: \"ok\" };", "this.state = { open: true };", "const ok = a.status !== b.status;"];
+  const yes = ["await db.query(\"UPDATE orders SET updated_at = now(), status = 'void' WHERE id = $1\");", "  SET status = 'paid'", "INSERT INTO orders (id, status) VALUES ($1, 'new')", "await prisma.order.update({ where: { id }, data: { status: \"paid\" } });",
+    "await Order.updateOne({ status: 'paid' });", "this.setState({ step: 2 });", "machine.transition(\"pay\");", "order.state = OrderState.Paid;", "invoice.status = 'sent';"];
+  const fp = not.filter((l) => at([l]).length), tp = yes.filter((l) => !at([l]).length);
+  ok(!fp.length, "not a state write: a comparison (== / ===), an HTTP response's status, a local called state, an object literal, React's own this.state", JSON.stringify(fp));
+  ok(!tp.length, "a state write: UPDATE … SET status, INSERT INTO … (status), an ORM update with a status key, setState, transition(), an entity's status assigned", JSON.stringify(tp)); }
 
 console.log(`\nreview-room-figures: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);
