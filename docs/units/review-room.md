@@ -53,7 +53,9 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   **screenshots** at the base and the head with a before / after toggle (`screenshots_show`: the Task's own captures of
   this head, shot by Studio's sandboxed renderer from the app's fixture build), and a `note`. The tutor names paths and
   lines; Studio fills every excerpt from the commits, so no excerpt is text the model wrote.
-- **Generated illustrations** (`illustrate`, at most two a turn): a whiteboard-marker sketch from Studio's image job (the
+- **Generated illustrations** (`illustrate`, at most two a turn; **off unless the captain turns generated pictures on for
+  the room**, `POST …/images {on}` or the tick box on the paid round's confirmation: while off the tutor has no `illustrate`
+  tool, its prompt says so, and opening the room makes no picture): a whiteboard-marker sketch from Studio's image job (the
   same one image steps use, `generateImage`), made in the background (a minute or two) with a placeholder until ready,
   stored in the room's folder, labelled "illustration · generated" and "Not evidence". A citation of an illustration never
   grounds a claim. The image model gets no words of the tutor's: the tutor picks 1 to 6 concepts from a fixed list
@@ -252,20 +254,36 @@ already has its finished answer (or the same question) first offers "Show the ex
 (paid)", the latter confirmed as usual. Every finished answer is a scene of its own, reachable from the transcript (its
 button shows how many answers the room holds).
 
-**A lesson, chapter by chapter.** Asked to teach the change, the tutor builds the lesson as chapters, in this order, each
-left out when its source is empty: what this is; what talks to what (an architecture drawing, said to be inferred when no
-design doc of the repository shows it); the change itself, one scene per item (a commit group, a subsystem, a fix), each an
-`item` board item (name, before, after, the mechanism) that Studio draws with one layout for every item; its life, state by
-state (a `states` item: every state and every transition, each transition citing its code and opening it); one request, in
-order (a `sequence` item: calls, returns, async calls, and loops, alternatives and options as frames); what reviewers raised;
-what to watch (risks only, every point cited and verified: an empty list is a finding, said with what was checked); open
-questions or a check. Studio holds the shape as it holds a scene's size: in a lesson `scene_show` names its `chapter` and a chapter
-never follows a later one (other answers may name one, in any order, or none); the change, lifecycle and sequence chapters show their own kind of drawing, and a risk without a
-verified citation is refused. Every figure is drawn by Studio from the tutor's data (text nodes, sizes checked against its
-layout). Nothing about deployment is claimed: whether a migration ran is not in the repository. The room's chapters rail
-(left of the board; a strip above it on a phone) lists every answer's scenes under its question, the lesson by chapter: a
-click jumps to it, the current one is marked, and finished answers stay listed. The chapters are kept in the room file and
-its Library snapshot.
+**A lesson, chapter by chapter: a report.** Asked to teach the change, the tutor builds a lesson laid out the way baton
+lays out a packet (baton, MIT, credited in THIRD_PARTY_NOTICES.md; its rules, drawings and shapes adapted in `workflows/skills/baton/`,
+pinned in `ROOM_SKILLS`, credited in its NOTICE.md and THIRD_PARTY_NOTICES.md). Its chapters, in order: what this is;
+what talks to what (an `arch` drawing: components by kind, the new or changed ones marked on the node, connections each
+citing what shows them; inferred unless a design document or the record is cited); the decisions (one `decision` drawing
+each: the question, the option taken and why, a rejected option only with a commit, review note or source showing it); the
+change itself (one `item` drawing per changed item, one layout for every item); its life, state by state (one `states`
+drawing: every state and transition, each numbered, citing its code and saying what it writes); one request, in order
+(one `sequence` drawing, its loops, alternatives and options as frames); what reviewers raised; roads not taken (only as
+commits, the pull request or review threads show them, cited); what to watch (risks only, each cited and verified); open
+questions. Studio enforces the shape: `what`, `talks` and `change` (at least one item) are always there; `lifecycle` and
+`sequence` are there unless the tutor leaves one out with `chapter_skip` and a verified reason (the report shows that line
+where the drawing would be); a chapter never follows a later one; one drawing a chapter except the change and the
+decisions; the drawing chapters show their own kind; a risk, a road not taken and a rejected option need a verified
+citation of their kind. `lesson_check` tells the tutor what is still missing, and a lesson that ends missing a chapter it
+owes is refused: the turn fails, saying which (the paid round is still recorded). Other answers (a question, how, why,
+a quiz, the merge check) are scenes on the board and may name a chapter in any order, or none.
+
+A finished lesson reads as a **report** in the room (the default for teach): a header (the subject, the room's title), then
+one section a scene, numbered, its chapter and title, its points as prose (what this is) or as findings with a tone stripe
+(reviewers, roads, risks, questions) and Studio's drawing in a figure card under them, its kind and basis beneath it. Every
+drawing is laid out by Studio from the tutor's data (text nodes only, sizes checked; no image model): an architecture as a
+layered flowchart sized for its labels, a cycle's way back bowed under the boxes; a decision as the question over the
+option taken and the ones turned down, dashed; the state map with every transition numbered, a row per transition that
+opens its code and shows what it writes. The report scrolls inside the room (the page never does), a strip under the
+chapters on a phone. The chapters rail lists every answer's scenes; a chapter of several items (the change, the
+decisions) is one heading with its items under it; a click scrolls the report to it, and the section in view is marked.
+"Step through on the board" shows the lesson scene by scene on the stage, "Read as a report" goes back. A translation
+covers the report's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
+came back as short as the drawing holds; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
 
 **Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
 re-entry (the desktop page, at most once a minute from the last attempt) or "Check for new commits" (`POST …/check`, the
@@ -353,7 +371,7 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
 - Read-only. The round runs in the round sandbox with nothing to write (`writes: []`) and no host beyond its model
   (`allow: []`, `egress.allow` is not carried); a sandbox-off grant or local unrestricted mode refuses the turn. Its tools
   (`ROOM_TOOLS`): `fs_list`, `fs_search`, `fs_read` (the head commit, through `git ls-tree`, `git grep`, `git show`),
-  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `scene_show`, `screenshots_show`, `chart_draw`, `illustrate`, `check_ask`, `check_grade`, `web_search`,
+  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `scene_show`, `chapter_skip`, `lesson_check`, `screenshots_show`, `chart_draw`, `illustrate` (only with generated pictures on), `check_ask`, `check_grade`, `web_search`,
   `web_fetch`. Nothing reads or writes the worktree's files, index or refs. Nothing goes to GitHub: no comment, review or
   request of any kind.
 - Recorded like any round: `data/runs/<task>/nodes/<merge node>/room-<card>-<n>/` (`prompt.md` with the skill pins in its
@@ -612,6 +630,18 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "a click jumps to its chapter, marked current …", "every changed item is drawn from the same layout …", "the state
     machine draws every transition …", "one request in order …", "the rail sits beside the board …", "on a phone the chapters
     are a strip above the board".
+35. A lesson as a report (baton's packet): what, talks and change required, lifecycle and sequence shown or left out with a
+    verified reason, one drawing a chapter, roads and rejected options only from the record; a lesson missing a chapter is
+    refused; generated pictures off by default; drawings' words translated; the report renders every section kind, its
+    state map's transitions open their code, its architecture marks the change, it works on a phone and replays from the
+    Library. — review-room-anywhere "a lesson that leaves out the change itself … is refused", "Studio holds the lesson's
+    shape …", "generated pictures are off by default …", "a lesson with what, talks and change …", "with pictures turned
+    on …"; review-room "generated pictures are off by default: opening the room pays for no picture", "a translation carries
+    the drawings' words too …"; review-room-ui "a finished lesson reads as a report …", "the report scrolls inside the room
+    …", "a chapter picked in the rail scrolls the report to it …", "a transition opens the code it rests on …", "the
+    architecture marks the change …", "each changed item is drawn from the same layout …", "the lesson can still be stepped
+    through …", "the report's text and its drawings' words switch language …", "on a phone the report reads …", "a room
+    saved in the Library replays its lesson as the same report …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

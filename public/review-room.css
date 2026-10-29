@@ -386,3 +386,93 @@ html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cur
   .rr-toc-i { flex: none; max-width: 150px; border-left: 0; border-bottom: 3px solid transparent; }
   .rr-toc-i[aria-current="true"] { border-bottom-color: var(--rr-marker); }
 }
+
+/* ---------- the lesson report (baton's packet, workflows/skills/baton): a teach answer read top to bottom ----------
+   Sections are cards on the room's paper: a numbered heading in a display serif, the points as prose or as findings with
+   a tone stripe, and Studio's drawing under them in a figure card. The report scrolls inside the room; the page does not. */
+.rr-stage.report { grid-template-rows: minmax(0, 1fr); }
+.rr-toc-ch { margin: 6px 8px 0; font-size: 12px; font-weight: 600; color: var(--text); }
+.rr-toc-i.sub { padding-left: 20px; }
+@media (max-width: 760px) { .rr-toc-ch { display: none; } .rr-toc-i.sub { padding-left: 8px; } }
+.rr-report { --rp-serif: "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", Georgia, serif;
+  grid-row: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 18px 40px 6px;
+  color: var(--rr-ink); font-family: var(--f-sans); outline: none; }
+.rp-top { padding: 14px 0 16px; border-bottom: 2px solid var(--rr-ink); margin-bottom: 18px; max-width: 78rem; }
+.rp-eyebrow { font: 600 11px var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--rr-ink-2); margin-bottom: 8px; overflow-wrap: anywhere; }
+.rp-title { font-family: var(--rp-serif); font-size: clamp(22px, 2.6vw, 34px); font-weight: 600; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+.rp-lede { margin: 0; font-size: 14.5px; color: var(--rr-ink-2); max-width: 46rem; line-height: 1.6; }
+.rp-sec { max-width: 78rem; margin: 0 0 16px; scroll-margin-top: 8px; display: grid; gap: 10px; }
+.rp-card, .rp-fig { background: var(--rr-paper); border: 1px solid var(--rr-paper-edge); border-radius: 8px; box-shadow: var(--rr-shadow); }
+.rp-card { padding: 16px 20px; }
+.rp-head { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: baseline; margin-bottom: 8px; }
+.rp-num { grid-row: 1 / span 2; font: 600 12px var(--f-mono); color: var(--rr-new); font-variant-numeric: tabular-nums; }
+.rp-head h3 { margin: 0; font-family: var(--rp-serif); font-size: 21px; font-weight: 600; line-height: 1.3; text-wrap: balance; }
+.rp-of { font-family: var(--rp-serif); color: var(--rr-ink-2); font-weight: 500; }
+.rp-sub { grid-column: 2; margin: 2px 0 0; font: 13px var(--f-mono); color: var(--rr-ink-2); }
+.rp-prose p { margin: 0 0 8px; font-size: 15px; line-height: 1.68; max-width: 46rem; }
+.rp-prose p.lead { font-size: 17px; line-height: 1.56; max-width: 44rem; }
+.rp-prose p:last-child { margin-bottom: 0; }
+.rp-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rp-points li { display: grid; gap: 2px; background: var(--rr-paper); border: 1px solid var(--rr-paper-edge); border-left: 3px solid var(--border-strong); border-radius: 5px; padding: 9px 12px; font-size: 14.5px; line-height: 1.6; }
+.rp-points li.risk { border-left-color: var(--rr-bad); } .rp-points li.warn { border-left-color: var(--rr-inf-ink); } .rp-points li.ok { border-left-color: var(--rr-new); }
+.rp-tag { font: 700 10px var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--rr-ink-2); }
+.rp-points li.risk .rp-tag { color: var(--rr-bad); } .rp-points li.warn .rp-tag { color: var(--rr-inf-ink); } .rp-points li.ok .rp-tag { color: var(--rr-new); }
+.rp-skip { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--rr-ink-2); border-left: 3px solid var(--rr-inf-ink); padding: 6px 12px; background: var(--rr-code-bg); border-radius: 3px; }
+.rp-skip-k { font: 700 10px var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--rr-inf-ink); }
+.rp-sec.skipped .rp-card { box-shadow: none; }
+/* the figure card: Studio's drawing at the size it was laid out for, never scaled past one and a half */
+.rp-fig { margin: 0; padding: 14px 16px 10px; display: grid; gap: 8px; min-width: 0; }
+.rp-figbody { overflow-x: auto; display: grid; justify-items: center; min-width: 0; }
+.rp-figbody > svg, .rp-figbody .rr-flow-wrap > svg { width: 100%; height: auto; max-height: 560px; }
+.rp-figbody .rr-flow-wrap { width: 100%; display: grid; gap: 8px; place-items: center; }
+.rp-fig figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: var(--rr-ink-2); }
+.rp-fig figcaption .rr-basis { flex-wrap: wrap; }
+/* the report's drawings in the page's text faces (the board keeps its handwriting) */
+.rr-report .rr-flow text, .rr-report .rr-itemfig text, .rr-report .rr-seq .rr-actor-l { font-family: var(--f-sans); }
+.rr-report .rr-flow text { font-size: 16px; } .rr-report .rr-flow .rr-elabel { font: 13px var(--f-mono); }
+.rr-report .rr-itemfig text { font-size: 15px; } .rr-report .rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); }
+/* what talks to what: the change marked on the node, context dashed */
+.rr-arch .rr-m-new .rr-box, .rr-arch .rr-m-changed .rr-box { stroke: var(--rr-new); fill: var(--rr-new-soft); stroke-width: 2.6; }
+.rr-arch .rr-m-removed .rr-box { stroke: var(--rr-bad); stroke-dasharray: 6 5; }
+.rr-arch .rr-k-external .rr-box { stroke: var(--rr-ink-2); stroke-dasharray: 6 5; }
+.rr-arch .rr-mark-t { font: 600 11px var(--f-mono) !important; fill: var(--rr-new); }
+.rr-arch .rr-m-removed .rr-mark-t { fill: var(--rr-bad); }
+.rp-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; font-size: 12px; color: var(--rr-ink-2); }
+.rp-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.rp-legend .sw { width: 11px; height: 11px; border-radius: 2px; border: 2px solid var(--rr-new); background: var(--rr-new-soft); }
+.rp-legend .sw.removed { border-color: var(--rr-bad); border-style: dashed; background: none; }
+.rp-legend .sw.ctx { border-color: var(--rr-ink-2); border-style: dashed; background: none; }
+/* a decision: the option taken solid, the ones turned down dashed and dimmed */
+.rr-decfig .rr-ib.q path { fill: var(--rr-code-bg); stroke: var(--rr-ink-2); }
+.rr-decfig .rr-ib.gone path { stroke: var(--rr-ink-2); stroke-dasharray: 6 5; fill: none; }
+.rr-decfig .rr-ib.gone text { fill: var(--rr-ink-2); }
+.rr-decfig .rr-dlink { stroke: var(--rr-ink); stroke-width: 1.8; }
+.rr-decfig .rr-dlink.taken { stroke: var(--rr-new); stroke-width: 2.4; }
+.rr-decfig .rr-dlink.not { stroke: var(--rr-ink-2); stroke-dasharray: 5 5; }
+/* the lifecycle: every transition a numbered row; the one picked shows what it writes */
+.rp-smap { width: 100%; display: grid; gap: 10px; }
+.rp-trans { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; text-align: left; width: 100%; }
+.rp-trans li { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 6px 10px; border-radius: 6px; border: 1px solid transparent; font-size: 13.5px; }
+.rp-trans li.on { border-color: var(--rr-new); background: var(--rr-new-soft); }
+.rp-tn { border: 0; background: none; color: var(--rr-new); font: 600 15px var(--f-mono); cursor: pointer; padding: 0; }
+.rp-tl { color: var(--rr-ink-2); }
+.rp-td { margin: 2px 0 4px; font: 12.5px var(--f-mono); color: var(--rr-ink-2); }
+.rp-trans li:not(.on) .rp-td { display: none; }
+.rp-foot { max-width: 78rem; margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--rr-paper-edge); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font: 12px var(--f-mono); color: var(--rr-ink-2); }
+.rp-cost { margin-left: auto; }
+.rr-imgopt { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); margin: 6px 0 2px; }
+.rr-imgopt input { margin-top: 3px; }
+@media (max-width: 760px) {
+  .rr-stage.report { grid-template-rows: auto minmax(0, 1fr); }
+  .rr-stage.report > .rr-report { grid-row: 2; padding: 2px 2px 28px; }
+  .rp-card { padding: 12px 14px; } .rp-fig { padding: 10px; }
+  .rp-head h3 { font-size: 18px; } .rp-prose p.lead { font-size: 15.5px; }
+  .rp-cost { margin-left: 0; }
+}
+/* the report's drawings are as tall as they are drawn (the board's are fitted to its box) */
+.rp-figbody .rr-flow-wrap, .rp-figbody .rr-flow, .rp-figbody svg { height: auto !important; }
+.rp-figbody .rr-flow-wrap { grid-template-rows: auto auto; }
+html .rr-report .rr-flow text, html .rr-report .rr-itemfig text, html .rr-report .rr-seq .rr-actor-l { font-family: var(--f-sans); }
+html .rr-report .rr-itemfig text { font-size: 15px; } html .rr-report .rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); }
+html .rr-report .rr-flow text { font-size: 17px; } html .rr-report .rr-flow .rr-elabel { font: 13px var(--f-mono); }
+html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }

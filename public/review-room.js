@@ -4,7 +4,7 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+const RR = { step: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
   scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Set(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -77,15 +77,24 @@ const diamondPath = (x, y, w, h) => `M${x + w / 2},${y} L${x + w},${y + h / 2} L
 /** the parts of a picture this viewer has seen drawn (a diagram's steps share one set, so a step draws only what it adds) */
 const drawnOf = (card, it) => { const key = `${card}/${it.group ? `${it.turn}:${it.group}` : it.id}`; if (!RR.drawn.has(key)) RR.drawn.set(key, new Set()); return RR.drawn.get(key); };
 /** the picture's box, roughly: the board's left column on a desktop, the top of the board on a phone */
-const picBox = () => innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.dataset.focus === "room" ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
+let BOX = null; // the report's figure box, while a report figure is drawn
+const picBox = () => BOX ? BOX : innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.dataset.focus === "room" ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
 const reduceMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 /** a flowchart's places, left to right (horiz) or top down; node size from its longest label */
 function flowLayout(g, horiz, fs) {
   const rank = new Map(g.nodes.map((n) => [n.id, 0]));
-  for (let k = 0; k < g.nodes.length; k++) for (const e of g.edges) if (e.from !== e.to && rank.get(e.to) <= rank.get(e.from) && rank.get(e.from) < g.nodes.length) rank.set(e.to, rank.get(e.from) + 1);
+  // a cycle (a state machine's way back) does not push its nodes further out: the edges that close a cycle are left out of
+  // the ranking (found depth first, in the order given) and still drawn
+  const adj = new Map(g.nodes.map((n) => [n.id, []])), mark = new Map(), back = new Set();
+  for (const e of g.edges) adj.get(e.from)?.push(e.to);
+  const dfs = (u) => { mark.set(u, 1); for (const v of adj.get(u) || []) { if (mark.get(v) === 1) back.add(`${u}>${v}`); else if (!mark.has(v)) dfs(v); } mark.set(u, 2); };
+  for (const n of g.nodes) if (!mark.has(n.id)) dfs(n.id);
+  for (let k = 0; k < g.nodes.length; k++) for (const e of g.edges) if (e.from !== e.to && !back.has(`${e.from}>${e.to}`) && rank.get(e.to) <= rank.get(e.from) && rank.get(e.from) < g.nodes.length) rank.set(e.to, rank.get(e.from) + 1);
   const cols = new Map(); for (const n of g.nodes) { const r = rank.get(n.id); if (!cols.has(r)) cols.set(r, []); cols.get(r).push(n); }
   const W = 180, labels = new Map(g.nodes.map((n) => [n.id, wrapLabel(n.label, W - 20, fs)])), lines = Math.max(1, ...[...labels.values()].map((l) => l.length)), H = Math.max(60, lines * (fs + 4) + 22);
-  const GX = horiz ? 64 : 28, GY = horiz ? 26 : 50, pos = new Map();
+  // the gap between columns is sized for the longest edge label, so a label never runs across the boxes beside it
+  const lw = Math.max(0, ...g.edges.map((e) => [...String(e.label || "")].reduce((n, ch) => n + (/[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯]/.test(ch) ? 2 : 1), 0)));
+  const GX = horiz ? Math.max(64, Math.min(240, lw * 8.5 + 30)) : 28, GY = horiz ? 26 : Math.max(50, lw ? 44 : 50), pos = new Map();
   for (const [r, list] of cols) list.forEach((n, i) => { pos.set(n.id, horiz ? { x: 20 + r * (W + GX), y: 24 + i * (H + GY) } : { x: 20 + i * (W + GX), y: 24 + r * (H + GY) }); });
   const maxX = Math.max(...[...pos.values()].map((p) => p.x)) + W + 20, maxY = Math.max(...[...pos.values()].map((p) => p.y)) + H + 20;
   return { horiz, W, H, pos, maxX, maxY, labels };
@@ -107,24 +116,31 @@ function flowSvg(g, prev, seen, box) {
   const write = (el, key, dl) => { if (anim && !seen.has(key)) { el.classList.add("rr-write"); el.style.setProperty("--dl", `${dl.toFixed(2)}s`); } return el; };
   // the picture scales to its box (viewBox), never wider than the board, never blown up past 1.5x
   const svg = sv("svg", { viewBox: `0 0 ${maxX} ${maxY}`, class: "rr-flow", role: "img", preserveAspectRatio: "xMidYMid meet", "data-layout": horiz ? "LR" : "TD", style: `max-width:${Math.round(maxX * 1.5)}px;max-height:${Math.round(maxY * 1.5)}px` });
-  const fresh = [];
-  for (const n of g.nodes) { const p = pos.get(n.id), isNew = old && !old.nodes.has(n.id), grp = sv("g", { class: `rr-node${isNew ? " rr-new" : ""}`, "data-node": n.id });
+  const fresh = [], reach = { x: 0, y: 0 };
+  for (const n of g.nodes) { const p = pos.get(n.id), isNew = old && !old.nodes.has(n.id), grp = sv("g", { class: `rr-node${isNew ? " rr-new" : ""}`, "data-node": n.id, "data-box": `${p.x},${p.y},${W},${H}` });
     const shape = sv("path", { class: "rr-box", pathLength: 1, d: n.shape === "diamond" ? diamondPath(p.x, p.y, W, H) : boxPath(p.x, p.y, W, H, n.shape === "round" || n.shape === "circle" ? 26 : 10) });
     grp.append(pen(shape, `n:${n.id}`, 0.45));
     const ls = labels.get(n.id); ls.forEach((l, i) => { const tx = sv("text", { x: p.x + W / 2, y: p.y + H / 2 + (i - (ls.length - 1) / 2) * (fs + 4) + fs * 0.35, "text-anchor": "middle", "font-size": fs, style: `font-size:${fs}px` }); tx.textContent = l; grp.append(write(tx, `n:${n.id}`, t + 0.3 + i * 0.12)); });
     if (anim && !seen.has(`n:${n.id}`)) { fresh.push(`n:${n.id}`); t += 0.18; }
     svg.append(grp); }
   for (const e of g.edges) { const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) continue;
-    const [x1, y1, x2, y2] = horiz ? [a.x + W, a.y + H / 2, b.x, b.y + H / 2] : [a.x + W / 2, a.y + H, b.x + W / 2, b.y];
-    const key = `e:${e.from}>${e.to}`, isNew = old && !old.edges.has(`${e.from}>${e.to}`), cls = isNew ? " rr-new" : "", ang = Math.atan2(y2 - y1, x2 - x1);
-    const line = sv("path", { d: `M${x1},${y1} L${x2},${y2}`, pathLength: 1, class: `rr-edge${e.dashed ? " dashed" : ""}${cls}`, "data-edge": `${e.from}>${e.to}` });
+    // a way back (the edge runs against the layout, or its reverse is drawn too) bows out under the boxes instead of crossing them
+    const backward = horiz ? b.x <= a.x : b.y <= a.y, bow = backward || g.edges.some((o) => o.from === e.to && o.to === e.from && g.edges.indexOf(o) < g.edges.indexOf(e));
+    const [x1, y1, x2, y2] = bow ? (horiz ? [a.x + W / 2, a.y + H, b.x + W / 2, b.y + H] : [a.x + W, a.y + H / 2, b.x + W, b.y + H / 2]) : horiz ? [a.x + W, a.y + H / 2, b.x, b.y + H / 2] : [a.x + W / 2, a.y + H, b.x + W / 2, b.y];
+    const cx = bow ? (horiz ? (x1 + x2) / 2 : Math.max(x1, x2) + 56) : 0, cy = bow ? (horiz ? Math.max(y1, y2) + 56 : (y1 + y2) / 2) : 0;
+    const key = `e:${e.from}>${e.to}`, isNew = old && !old.edges.has(`${e.from}>${e.to}`), cls = isNew ? " rr-new" : "", ang = bow ? Math.atan2(y2 - cy, x2 - cx) : Math.atan2(y2 - y1, x2 - x1);
+    if (bow) { if (horiz) reach.y = Math.max(reach.y, Math.max(y1, y2) + 52); else reach.x = Math.max(reach.x, Math.max(x1, x2) + 40 + (e.label ? Math.min(240, e.label.length * 9) : 0)); }
+    const line = sv("path", { d: bow ? `M${x1},${y1} Q${cx},${cy} ${x2},${y2}` : `M${x1},${y1} L${x2},${y2}`, pathLength: 1, class: `rr-edge${e.dashed ? " dashed" : ""}${cls}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null });
     const head = sv("path", { d: `M${x2 - 11 * Math.cos(ang - 0.5)},${y2 - 11 * Math.sin(ang - 0.5)} L${x2},${y2} L${x2 - 11 * Math.cos(ang + 0.5)},${y2 - 11 * Math.sin(ang + 0.5)}`, pathLength: 1, class: `rr-ahead${cls}` });
     if (e.dashed) { if (anim && !seen.has(key)) { line.classList.add("rr-fade"); line.style.setProperty("--dl", `${t.toFixed(2)}s`); } } else pen(line, key, 0.35);
     if (anim && !seen.has(key)) { const t0 = t; t += 0.33; pen(head, key, 0.12); t = t0; }
     svg.append(line, head);
-    if (e.label) { const side = Math.abs(x2 - x1) < Math.abs(y2 - y1), tx = sv("text", { x: (x1 + x2) / 2 + (side ? 8 : 0), y: (y1 + y2) / 2 + (side ? 6 : -6), class: "rr-elabel", "text-anchor": side ? "start" : "middle", "data-elabel": `${e.from}>${e.to}` }); tx.textContent = e.label.slice(0, 40); svg.append(write(tx, key, t + 0.25)); }
+    if (e.label) { const side = (!bow && Math.abs(x2 - x1) < Math.abs(y2 - y1)) || (bow && !horiz), mx = bow ? (x1 + 2 * cx + x2) / 4 : (x1 + x2) / 2, my = bow ? (y1 + 2 * cy + y2) / 4 + (horiz ? 18 : 0) : (y1 + y2) / 2, tx = sv("text", { x: mx + (side ? 8 : 0), y: my + (bow ? 0 : side ? 6 : -6), class: "rr-elabel", "text-anchor": side ? "start" : "middle", "data-elabel": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null }); tx.textContent = e.label.slice(0, 40); svg.append(write(tx, key, t + 0.25)); }
     if (anim && !seen.has(key)) { fresh.push(key); t += 0.18; } }
   for (const k of fresh) seen.add(k);
+  // the canvas grows only as far as a way back actually reaches below (or beside) the boxes: no empty band
+  const fw = Math.max(maxX, reach.x), fh = Math.max(maxY, reach.y);
+  if (fw !== maxX || fh !== maxY) { svg.setAttribute("viewBox", `0 0 ${fw} ${fh}`); svg.style.maxWidth = `${Math.round(fw * 1.5)}px`; svg.style.maxHeight = `${Math.round(fh * 1.5)}px`; }
   return svg;
 }
 
@@ -220,6 +236,7 @@ function imageView(it) {
 }
 function basisRow(card, it) { return it.basis === "illustration" ? h("div", { class: "rr-basis" }, h("span", { class: "rr-inference", "data-basis": "illustration" }, T("Not evidence", "不是證據"))) : it.basis === "inference" ? h("div", { class: "rr-basis" }, inferenceBadge()) : it.cites?.length ? h("div", { class: "rr-basis" }, it.cites.map((c) => citeChip(card, c.ref, c.ok))) : null; }
 function itemView(card, it, prev) {
+  it = figIn(RR.rooms.get(card), it);
   const head = h("div", { class: "rr-item-h" }, it.kind ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge", "data-type": it.type }, typeLabel(it.type)), h("b", {}, itemTitle(it)), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
   let body;
   if (it.type === "mermaid") { const g = parseFlow(it.code), p = prev ? parseFlow(prev.code) : null; body = g ? h("div", { class: "rr-flow-wrap", "data-flow": it.id }, flowSvg(g, p, drawnOf(card, it), picBox())) : [h("p", { class: "faint" }, T("Diagram source (Studio draws flowcharts; this kind is shown as text)", "圖表原始碼（Studio 會畫 flowchart；這種圖以文字顯示）")), h("pre", { class: "rr-pre" }, it.code)]; }
@@ -231,6 +248,8 @@ function itemView(card, it, prev) {
   else if (it.type === "compare") body = h("div", { class: "rr-compare" }, h("div", {}, h("b", {}, T("Before (base)", "之前（base）")), linesPre(it.before)), h("div", {}, h("b", {}, T("After (head)", "之後（head）")), linesPre(it.after)));
   else if (it.type === "keycard") body = keycardView(it, drawnOf(card, it));
   else if (it.type === "item") body = itemFigure(it, drawnOf(card, it));
+  else if (it.type === "arch") body = archView(card, it);
+  else if (it.type === "decision") body = decisionFigure(it, drawnOf(card, it));
   else if (it.type === "states") body = statesView(card, it);
   else if (it.type === "sequence") body = sequenceView(it, drawnOf(card, it));
   // a table, the tutor's or one from an older answer: cells as text
@@ -238,7 +257,7 @@ function itemView(card, it, prev) {
   else if (it.type === "snippet") body = h("pre", { class: "rr-pre" }, it.text || "");
   else body = h("p", { class: "rr-note" }, inline(card, it.text || "", it.cites));
   // the picture first, filling its box; what it is (kind, title, path) and its basis under it
-  const pic = ["mermaid", "chart", "screenshot", "image", "keycard", "item", "states", "sequence"].includes(it.type);
+  const pic = ["mermaid", "chart", "screenshot", "image", "keycard", "item", "states", "sequence", "arch", "decision"].includes(it.type);
   return h("article", { class: `rr-item rr-item-${it.type}`, id: `rr-${it.id}`, "data-board-item": it.id, "data-item-type": it.type }, h("div", { class: `rr-body${pic ? " pic" : " text"}` }, body), head, basisRow(card, it));
 }
 /** One changed item, before and after, from one layout for every item (baton's per-fix card): the same three boxes in two
@@ -255,18 +274,84 @@ function itemFigure(it, seen) {
   svg.append(label(140, T("After", "之後")), box(90, 154, 210, 64, "fix", [...wrapLabel(it.name, 190, 16, 1), ...(it.mechanism ? [clip(it.mechanism, 37)] : [])], "a1", 0.5), arrow(300, 370, 186, "new", 0.7), box(372, 154, 250, 64, "now", wrapLabel(it.after, 230, 16, 2), "a2", 0.8));
   return svg;
 }
+const NUMS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+/** a lifecycle's graph from its data: every state, every transition numbered (the number is the transition's chip) */
+const statesGraph = (it) => ({ dir: "LR", nodes: (it.states || []).map((x) => ({ id: x.id, label: x.label || x.id, shape: "round" })),
+  edges: (it.transitions || []).map((t, i) => ({ from: t.from, to: t.to, label: `${NUMS[i] || i + 1} ${t.label || ""}`.trim(), n: i })) });
+/** an SVG label made a control: Enter and Space as a click */
+const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
 /** a lifecycle: the state machine drawn from the tutor's states and transitions (every transition kept), each transition's
- *  label opening the code it rests on */
-function statesView(card, it) {
-  const g = parseFlow(it.code), wrap = h("div", { class: "rr-flow-wrap", "data-states": it.id }, g ? flowSvg(g, null, drawnOf(card, it), picBox()) : null);
-  // Studio drew each state as s_<id>; two transitions between the same states are matched to their labels in order
-  const ids = new Set((g?.nodes || []).map((n) => n.id)), sid = (id) => (ids.has(`s_${id}`) ? `s_${id}` : id), nth = new Map();
-  for (const t of it.transitions || []) { if (!String(t.label || "").replace(/[\[\]|;(){}\s]/g, "")) continue;
-    const pair = `${sid(t.from)}>${sid(t.to)}`, k = nth.get(pair) ?? 0; nth.set(pair, k + 1);
-    const el = wrap.querySelectorAll(`[data-elabel="${CSS.escape(pair)}"]`)[k]; if (!el || !t.cite?.ok) continue;
-    el.classList.add("rr-cite-label"); el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.setAttribute("data-transition-cite", t.cite.ref);
-    const go = () => openCite(card, t.cite.ref); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); }
+ *  label opening the code it rests on (onPick: the report also selects the transition to show what it writes) */
+function statesView(card, it, onPick) {
+  if (!it.states?.length) { const g = parseFlow(it.code); return h("div", { class: "rr-flow-wrap", "data-states": it.id }, g ? flowSvg(g, null, drawnOf(card, it), picBox()) : null); }
+  const wrap = h("div", { class: "rr-flow-wrap", "data-states": it.id }, flowSvg(statesGraph(it), null, drawnOf(card, it), picBox()));
+  (it.transitions || []).forEach((t, i) => { const el = wrap.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el || (!onPick && !t.cite?.ok)) return;
+    if (t.cite?.ok) { el.classList.add("rr-cite-label"); el.setAttribute("data-transition-cite", t.cite.ref); }
+    el.setAttribute("data-transition-pick", String(i)); asControl(el, () => (onPick ? onPick(i, t) : openCite(card, t.cite.ref))); });
   return wrap;
+}
+/** the lifecycle in the report: the map, and every transition as a numbered row (what it writes, the code it rests on) */
+function statemapView(card, it) {
+  const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, lab = new Map((it.states || []).map((x) => [x.id, x.label || x.id]));
+  const pick = (i, t) => { RR.tsel.set(key, i); if (t.cite?.ok) openCite(card, t.cite.ref); else rerender(); };
+  return h("div", { class: "rp-smap", "data-statemap": it.id }, statesView(card, it, pick),
+    h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
+      h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
+      h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
+        t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge()))))));
+}
+/** what talks to what: Studio's layout of the tutor's components and connections; the kind sets the shape, the change is
+ *  marked on the node itself, a connection opens what shows it */
+const ARCH_SHAPE = { store: "round", queue: "round", actor: "circle", external: "rect", service: "rect" };
+const MARK = { new: ["new", "新增"], changed: ["changed", "改動"], removed: ["removed", "移除"] };
+function archView(card, it) {
+  const g = { dir: "LR", nodes: (it.nodes || []).map((n) => ({ id: n.id, label: n.label, shape: ARCH_SHAPE[n.kind] || "rect" })), edges: (it.edges || []).map((e, i) => ({ from: e.from, to: e.to, label: e.label || "", n: i })) };
+  const svg = flowSvg(g, null, drawnOf(card, it), picBox());
+  for (const n of it.nodes || []) { const el = svg.querySelector(`[data-node="${CSS.escape(n.id)}"]`); if (!el) continue; el.classList.add(`rr-k-${n.kind}`);
+    if (n.mark) { el.classList.add(`rr-m-${n.mark}`); el.setAttribute("data-mark", n.mark); const [x, y, w] = (el.getAttribute("data-box") || "0,0,0").split(",").map(Number);
+      const tg = sv("text", { x: x + w - 8, y: y + 15, "text-anchor": "end", class: "rr-mark-t" }); tg.textContent = T(...MARK[n.mark]); el.append(tg); } }
+  (it.edges || []).forEach((e, i) => { if (!e.cite?.ok) return; const el = svg.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el) return; el.classList.add("rr-cite-label"); el.setAttribute("data-edge-cite", e.cite.ref); asControl(el, () => openCite(card, e.cite.ref)); });
+  const marks = [...new Set((it.nodes || []).map((n) => n.mark).filter(Boolean))];
+  return h("div", { class: "rr-flow-wrap rr-arch", "data-arch": it.id }, svg,
+    h("div", { class: "rp-legend" }, marks.map((m) => h("span", {}, h("i", { class: `sw ${m}` }), T(...MARK[m]))), (it.nodes || []).some((n) => n.kind === "external") ? h("span", {}, h("i", { class: "sw ctx" }), T("outside this change", "這個改動之外")) : null,
+      h("span", { "data-arch-basis": it.inferred ? "inferred" : "shown" }, it.inferred ? T("Drawn from the code: Studio's layout of the tutor's reading (inferred)", "依程式碼畫出：導師的理解，由 Studio 排版（推論）") : T("As the cited document or record shows it", "依引用的文件或紀錄"))));
+}
+/** one decision: the question, the option taken and why; the options turned down (only as the record shows them) set apart */
+function decisionFigure(it, seen) {
+  const anim = seen && !seen.has("dec") && !reduceMotion(); if (seen) seen.add("dec");
+  const rej = it.rejected || [], W = 660, qy = 18, qh = 64, y1 = 128, H = Math.max(y1 + 116, y1 + rej.length * 76) + 16;
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "rr-itemfig rr-decfig", role: "img", "data-decision": it.id, preserveAspectRatio: "xMidYMid meet", "aria-label": `${it.question} → ${it.chosen}`, style: `max-width:${W * 1.5}px;max-height:${H * 1.5}px` });
+  const box = (x, y, w, h, cls, lines, dl) => { const g = sv("g", { class: `rr-ib ${cls}` }), p = sv("path", { d: boxPath(x, y, w, h, 10), pathLength: 1 }); if (anim) { p.classList.add("rr-pen"); p.style.setProperty("--dl", `${dl}s`); } g.append(p);
+    lines.forEach(([l, sub], i) => { const t = sv("text", { x: x + w / 2, y: y + h / 2 + (i - (lines.length - 1) / 2) * 20 + 6, "text-anchor": "middle", class: sub ? "rr-ib-sub" : "rr-ib-main" }); t.textContent = l; g.append(t); }); return g; };
+  const link = (x1, y1_, x2, y2, cls) => sv("path", { d: `M${x1},${y1_} C${x1},${(y1_ + y2) / 2} ${x2},${(y1_ + y2) / 2} ${x2},${y2}`, class: `rr-dlink ${cls}`, fill: "none" });
+  svg.append(box(20, qy, W - 40, qh, "q", wrapLabel(it.question, W - 80, 16, 2).map((l) => [l]), 0));
+  svg.append(link(W / 4, qy + qh, 175, y1, "taken"), box(20, y1, 310, 116, "fix", [...wrapLabel(`✓ ${it.chosen}`, 280, 16, 2).map((l) => [l]), ...wrapLabel(it.because, 280, 13, 2).map((l) => [l, true])], 0.3));
+  rej.forEach((x, i) => { const y = y1 + i * 76; svg.append(link(W * 3 / 4, qy + qh, 495, y, "not"), box(350, y, 290, 64, "old gone", [[`✗ ${clip(x.option, 34)}`], [clip(x.why, 44), true]], 0.5 + i * 0.15)); });
+  if (!rej.length) { const t = sv("text", { x: 495, y: y1 + 58, "text-anchor": "middle", class: "rr-ib-sub" }); t.textContent = T("no alternative on record", "紀錄裡沒有其他選項"); svg.append(t); }
+  return svg;
+}
+/** a figure's words as the tutor gave them, in a fixed order (src/domain/review-room.ts figureTexts): what a translation replaces */
+function figWords(it) { switch (it?.type) {
+  case "arch": return [...(it.nodes || []).map((n) => n.label), ...(it.edges || []).map((e) => e.label || "")];
+  case "item": return [it.before, it.after];
+  case "decision": return [it.question, it.chosen, it.because, ...(it.rejected || []).flatMap((x) => [x.option, x.why])];
+  case "states": return it.states?.length ? [...it.states.map((x) => x.label), ...(it.transitions || []).flatMap((t) => [t.label || "", t.detail || ""])] : [];
+  case "sequence": return (it.steps || []).flatMap((x) => [x.label, x.frameLabel || ""]);
+  default: return []; } }
+function withWords(it, w) { let i = 0; const n = () => String(w[i++] ?? ""), c = JSON.parse(JSON.stringify(it));
+  if (c.type === "arch") { c.nodes.forEach((x) => (x.label = n())); c.edges.forEach((x) => (x.label = n())); }
+  else if (c.type === "item") { c.before = n(); c.after = n(); }
+  else if (c.type === "decision") { c.question = n(); c.chosen = n(); c.because = n(); (c.rejected || []).forEach((x) => { x.option = n(); x.why = n(); }); }
+  else if (c.type === "states") { c.states.forEach((x) => (x.label = n())); (c.transitions || []).forEach((t) => { t.label = n(); t.detail = n(); }); }
+  else if (c.type === "sequence") c.steps.forEach((x) => { x.label = n(); x.frameLabel = n(); });
+  return c; }
+/** a figure in the room's language: as drawn when its turn was in it (zh-CN through OpenCC), else the words kept for it */
+function figIn(r, it) {
+  const w = figWords(it), t = r && (r.turns || []).find((x) => x.n === it?.turn); if (!w.length || !t || t.studio) return it;
+  const lang = roomLang(r);
+  if (LANG_BASE(t.lang || "en") === LANG_BASE(lang)) return lang === "zh-CN" && t.lang !== "zh-CN" ? withWords(it, w.map((x) => toLang(x, t.lang, lang))) : it;
+  const tw = r.translations?.[LANG_BASE(lang)]?.[String(it.turn)]?.figures?.[it.id];
+  return tw && tw.length === w.length ? withWords(it, tw.map((x) => toLang(x, LANG_BASE(lang), lang))) : it;
 }
 /** one request in order: lifelines, calls (solid), returns (dashed), async (open head), and the loops, alternatives and
  *  options as frames around their steps */
@@ -364,9 +449,9 @@ const plain = (s) => String(s || "").replace(CITE, "").replace(/\*\*|`/g, "").re
 const STUDIO_TITLES = { "This change at a glance": "一眼看懂這個改動", "What changed since you last looked": "你上次看過之後改了什麼", "The app, before and after": "這個 app 改動前後", "Chart": "圖表", "Illustration": "插圖" };
 const itemTitle = (it) => (STUDIO_TITLES[it?.title] ? T(it.title, STUDIO_TITLES[it.title]) : it?.title || "");
 /** a lesson's chapters, in order (src/domain/review-room.ts CHAPTERS) */
-const CHAPTER = { what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
+const CHAPTER = { what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
 const chapterName = (id) => (CHAPTER[id] ? TL(...CHAPTER[id]) : "");
-const TYPE_LABEL = { item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
+const TYPE_LABEL = { arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
 const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
 // ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
 const CJK_RE = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿︰-﹏＀-￯]/g;
@@ -436,7 +521,7 @@ function scenesOf(r) {
     if ((t.status === "done" || t.status === "running") && t.scenes?.length) {
       const used = new Set(t.scenes.map((s) => s.picture));
       t.scenes.forEach((s, m) => { const pic = r.board.find((b) => b.id === s.picture), last = m === t.scenes.length - 1;
-        out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, chapter: s.chapter || null, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
+        out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, chapter: s.chapter || null, skip: !!s.skip, pic: pic || null, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
     } else {
     const heading = claims.find((c) => c.kind === "heading"), { points, extra } = legacyPoints(`t${t.n}`, claims);
     // the scene's title: the answer's heading, else the question itself (shown once, never as "Question: …" beside itself)
@@ -596,6 +681,56 @@ function regenList(r, t) {
 }
 /** The stage: the board (the scene's title, its picture on the left, at most four of its points on the right), the caption
  *  and the play bar. One viewport tall with the header and the dock: nothing in it grows the page. */
+// ---------- the lesson report (baton's packet, workflows/skills/baton): a teach answer read top to bottom ----------
+const POINTS_TONE = { watch: ["risk", ["risk", "風險"]], reviewers: ["warn", ["reviewer", "審查"]], roads: ["ok", ["not taken", "沒走"]], questions: ["", ["open", "待解"]] };
+/** one point as text: its basis badge, its words with their citations (text nodes only) */
+const pointText = (card, c) => [c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null,
+  h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites))];
+/** a figure in the report: the drawing Studio lays out from the tutor's data, its title and what it rests on */
+function reportFigure(card, r, it) {
+  // a report figure reads at its drawn size, left to right where it fits: the content column, not the board's box
+  BOX = innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 };
+  const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionFigure(v, drawnOf(card, v)) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
+    : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : itemView(card, v, null); } finally { BOX = null; }
+  // never blown up: at most a little over the size it was laid out at
+  for (const sg of [body, ...(body.querySelectorAll ? body.querySelectorAll("svg") : [])]) if (sg?.tagName === "svg" && sg.viewBox?.baseVal?.width) sg.style.maxWidth = `${Math.round(sg.viewBox.baseVal.width * 1.15)}px`;
+  return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
+    h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)));
+}
+/** one section: its number, its chapter, its title, then its points (text chapters) or its points and its drawing */
+function reportSection(card, r, x, j, nth) {
+  const ch = x.chapter, tone = POINTS_TONE[ch], pic = x.pic && !x.skip ? x.pic : null;
+  const head = h("div", { class: "rp-head" }, h("span", { class: "rp-num" }, String(j + 1).padStart(2, "0")),
+    h("h3", {}, chapterName(ch), ch === "decisions" ? h("span", { class: "rp-of" }, ` · ${T(`Choice ${nth}`, `決定 ${nth}`)}`) : null),
+    h("p", { class: "rp-sub", "data-section-title": "" }, x.title));
+  const body = x.skip ? h("p", { class: "rp-skip", "data-skip": ch }, h("span", { class: "rp-skip-k" }, T("Not drawn here", "這一章沒有畫")), " ", ...pointText(card, x.points[0] || { text: "", cites: [] }))
+    : tone ? h("ul", { class: "rp-points", "data-points-chapter": ch }, x.points.map((p) => h("li", { class: tone[0] }, h("span", { class: "rp-tag" }, T(...tone[1])), h("div", {}, ...pointText(card, p)))))
+    : h("div", { class: `rp-prose${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: m === 0 && ch === "what" ? "lead" : "" }, ...pointText(card, p))));
+  return h("section", { class: `rp-sec${x.skip ? " skipped" : ""}`, id: `rp-${card}-${x.key}`, "data-report-section": x.key, "data-chapter": ch }, h("div", { class: "rp-card" }, head, body), pic ? reportFigure(card, r, pic) : null);
+}
+/** the report: the lesson's sections in order, a quiet footer with the rules it keeps; it scrolls inside the room */
+function reportView(r, scenes, i, toc) {
+  const card = r.card.id, sc = scenes[i], t = sc.t, secs = scenes.filter((x) => x.turn === sc.turn && x.chapter);
+  const head = r.head ? String(r.head).slice(0, 8) : "", eyebrow = [r.subject?.repository, r.pr?.id ? `PR #${r.pr.id}` : null, r.task?.id || null, head ? `head ${head}` : null].filter(Boolean).join(" · ");
+  const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
+  let nth = 0;
+  const spy = (e) => { const el = e.currentTarget; RR.rscroll.set(card, el.scrollTop); if (Date.now() < (RR.spyHold || 0)) return; const top = el.getBoundingClientRect().top + 90;
+    let cur = null; for (const sec of el.querySelectorAll("[data-report-section]")) { if (sec.getBoundingClientRect().top <= top) cur = sec.dataset.reportSection; }
+    cur = cur || secs[0]?.key; const at = scenes.findIndex((x) => x.key === cur); if (at >= 0 && RR.scene.get(card) !== at) { RR.scene.set(card, at);
+      for (const b of document.querySelectorAll("[data-toc-scene]")) b.setAttribute("aria-current", b.dataset.tocScene === cur ? "true" : "false"); } };
+  const rep = h("div", { class: "rr-report", "data-report": t.n, tabindex: "0", onscroll: spy, "aria-label": T("The lesson, as a report", "這一課（報告）") },
+    h("header", { class: "rp-top" }, eyebrow ? h("div", { class: "rp-eyebrow" }, eyebrow) : null, h("h1", { class: "rp-title" }, title),
+      h("p", { class: "rp-lede" }, T(`A lesson in ${secs.length} sections. Every drawing is laid out by Studio from the tutor's data; a point without a verified citation is marked as an inference.`, `這一課共 ${secs.length} 節。每張圖都由 Studio 依導師給的資料排版；沒有可驗證引用的重點會標成推論。`))),
+    secs.map((x, j) => reportSection(card, r, x, j, x.chapter === "decisions" ? ++nth : 0)),
+    h("footer", { class: "rp-foot" }, h("span", {}, T("Nothing here says whether this change is deployed: that is not in the repository.", "這裡不說這個改動是否已部署：那不在 repository 裡。")),
+      t.cost?.usd != null ? h("span", { class: "rp-cost" }, `$${Number(t.cost.usd).toFixed(2)} · ${t.provider} · ${t.model}`) : null,
+      h("button", { type: "button", class: "btn ghost", "data-report-step": t.n, onclick: () => { RR.step.add(`${card}/${t.n}`); stopPlay(); rerender(); } }, T("Step through on the board", "在白板上逐步看"))));
+  // the place in the report survives a redraw; a jump (a chapter picked in the rail) scrolls to its section
+  requestAnimationFrame(() => { const el = document.querySelector(`[data-report="${t.n}"]`); if (!el) return; const want = RR.jump.get(card); RR.jump.delete(card);
+    if (want) { const sec = el.querySelector(`[data-report-section="${CSS.escape(want)}"]`); if (sec) { RR.spyHold = Date.now() + 500; el.scrollTo({ top: Math.max(0, sec.offsetTop - el.offsetTop - 8), behavior: "instant" }); RR.rscroll.set(card, el.scrollTop); return; } }
+    if (RR.rscroll.has(card)) el.scrollTop = RR.rscroll.get(card); });
+  return h("section", { class: "rr-stage with-toc report", "data-stage": card, "data-scene": sc.key, "data-view": "report", "aria-label": T("Lesson", "課程") }, toc, rep);
+}
 function stageView(r) {
   const card = r.card.id, scenes = scenesOf(r);
   if (!scenes.length) return h("section", { class: "rr-stage", "data-stage": card, "aria-label": T("Board", "白板") },
@@ -631,8 +766,15 @@ function stageView(r) {
   const toc = scenes.some((x) => x.chapter) ? h("nav", { class: "rr-toc", "data-toc": "", "aria-label": T("Chapters", "章節") },
     (() => { const out = [], seenTurn = new Set(); scenes.forEach((x, j) => { const tn = x.turn ?? 0;
       if (!seenTurn.has(tn)) { seenTurn.add(tn); out.push(h("p", { class: "rr-toc-h" }, x.welcome ? T("Welcome", "開場") : x.t ? clip(x.question || x.t.text || T(...(ACTION_LABEL[x.t.action] || [x.t.action, x.t.action])), 40) : "")); }
-      out.push(h("button", { type: "button", class: "rr-toc-i", "data-toc-scene": x.key, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); rerender(); } },
+      const prev = scenes[j - 1], run = x.chapter && (x.chapter === "change" || x.chapter === "decisions"), cont = run && prev?.turn === x.turn && prev?.chapter === x.chapter;
+      if (run && !cont) out.push(h("p", { class: "rr-toc-ch", "data-toc-chapter": x.chapter }, chapterName(x.chapter)));
+      if (run) { const nth = scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === x.chapter).length;
+        out.push(h("button", { type: "button", class: "rr-toc-i sub", "data-toc-scene": x.key, "data-toc-item": nth, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
+          h("span", {}, x.chapter === "decisions" ? `${T(`Choice ${nth}`, `決定 ${nth}`)} · ${clip(x.title, 30)}` : clip(x.title, 36)))); return; }
+      out.push(h("button", { type: "button", class: "rr-toc-i", "data-toc-scene": x.key, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
         x.chapter ? h("b", {}, chapterName(x.chapter)) : null, h("span", {}, clip(x.title, 36)), x.t && x.t.status === "running" ? h("i", { class: "rr-toc-run" }, "…") : null)); }); return out; })()) : null;
+  // a finished lesson reads as a report (baton's packet); the captain may step through it on the board instead
+  if (sc.t?.action === "teach" && sc.t.status === "done" && sc.chapter && !RR.step.has(`${card}/${sc.t.n}`)) return reportView(r, scenes, i, toc);
   return h("section", { class: `rr-stage${toc ? " with-toc" : ""}`, "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") }, toc,
     h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
       h("div", { class: "rr-stitle" },
@@ -640,6 +782,7 @@ function stageView(r) {
           sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null,
           sc.t?.versions?.length > 1 && !sc.quiz ? h("span", { class: "rr-vers", role: "group", "data-versions": sc.t.regenOf ?? sc.t.n, "aria-label": T("Answers to this question", "這一題的回答") }, sc.t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === sc.t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${sc.t.regenOf ?? sc.t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null,
           sc.t && !sc.studio && !sc.quiz && sc.t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": sc.t.n, "aria-expanded": String(RR.regen.has(card)), onclick: () => { RR.regen.has(card) ? RR.regen.delete(card) : RR.regen.add(card); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null),
+        sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" ? h("button", { type: "button", class: "rr-mini", "data-report-back": sc.t.n, onclick: () => { RR.step.delete(`${card}/${sc.t.n}`); RR.jump.set(card, sc.key); stopPlay(); rerender(); } }, T("Read as a report", "以報告閱讀")) : null,
         RR.regen.has(card) && sc.t && !sc.studio ? regenList(r, sc.t) : null,
         h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
       h("div", { class: "rr-scene" },
@@ -720,8 +863,10 @@ function promptBar(r) {
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-translate-start": "", disabled: RR.posting.has(card), onclick: () => startTranslate(r, conf.lang, offer?.translate?.hash, true) }, T("Translate", "翻譯")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); RR.lang.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
-      h("p", {}, conf.regenerate ? T(`Explain this again with ${conf.offer.provider} · ${conf.offer.model ?? "default model"}: `, `改由 ${conf.offer.provider} · ${conf.offer.model ?? "預設模型"} 重講這一題：`) : null, T(`This starts a paid model round on ${(conf.offer || offer).provider} · ${(conf.offer || offer).model ?? "default model"}${(conf.offer || offer).effort ? ` (${(conf.offer || offer).effort})` : ""}; the tutor may also ask for up to two illustrations, each a paid image job made in the background. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
-        `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}；導師也可能要求最多兩張插圖，每張都是在背景進行的付費圖片工作。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
+      h("p", {}, conf.regenerate ? T(`Explain this again with ${conf.offer.provider} · ${conf.offer.model ?? "default model"}: `, `改由 ${conf.offer.provider} · ${conf.offer.model ?? "預設模型"} 重講這一題：`) : null, T(`This starts a paid model round on ${(conf.offer || offer).provider} · ${(conf.offer || offer).model ?? "default model"}${(conf.offer || offer).effort ? ` (${(conf.offer || offer).effort})` : ""}${r.images ? "; the tutor may also ask for up to two generated pictures, each a paid image job made in the background" : ""}. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
+        `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}${r.images ? "；導師也可能要求最多兩張生成圖片，每張都是在背景進行的付費圖片工作" : ""}。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
+      h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-images-toggle": "", checked: !!r.images, disabled: RR.posting.has(card), onchange: async (e) => { const on = e.target.checked; try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/images`, { on })); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+        h("span", {}, T("Generated pictures (paid image jobs, at most two a turn; off by default: Studio draws every diagram from the tutor's data)", "生成圖片（付費圖片工作，每回合最多兩張；預設關閉：Studio 會依導師的資料畫出每張圖）"))),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-room-start": "", disabled: busy, onclick: start }, T("Start the round", "開始這一回合")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", disabled: RR.posting.has(card), onclick: () => { RR.confirm.delete(card); rerender(); } }, T("Cancel", "取消")))) : null,
     err ? h("p", { class: "rr-pop rr-err", role: "alert", "data-room-error": "" }, err, " ", h("button", { type: "button", class: "rr-mini", "aria-label": T("Dismiss", "關閉"), onclick: () => { RR.err.delete(card); rerender(); } }, "×")) : null].filter(Boolean);
@@ -844,6 +989,8 @@ addEventListener("keydown", (e) => {
   const card = S.route.arg, t = e.target;
   if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else return; e.preventDefault(); rerender(); return; }
   if (t?.closest?.("input,textarea,select,[contenteditable],[role=dialog]") || RR.zoom) return;
+  if (document.querySelector("[data-report]") && e.key === " ") return; // Space scrolls the report
+  if (document.querySelector("[data-report]") && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { if (t?.closest?.("[data-report]") || t === document.body) { e.preventDefault(); const { scenes } = curScene(card), at = sceneState(card, scenes) + (e.key === "ArrowRight" ? 1 : -1); if (scenes[at]) { RR.scene.set(card, at); RR.jump.set(card, scenes[at].key); rerender(); } } return; }
   if (e.key === "ArrowRight") { e.preventDefault(); stepPoint(card, 1); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); stepPoint(card, -1); }
   else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
@@ -871,7 +1018,9 @@ routes.room = (arg) => {
     // the captain moved elsewhere while it ran: the answer waits behind "the answer is ready", never pulling the stage away
     if (RR.moved.has(arg)) { if (!RR.ready.has(arg)) RR.ready.set(arg, sc.key); continue; }
     // the stage moves to that answer itself (not to whatever scene happens to be last)
-    RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue; RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
+    RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue;
+    // a lesson opens as its report, at its first section: read, not played
+    if (sc.chapter && sc.t?.action === "teach" && !RR.step.has(`${arg}/${sc.t.n}`)) { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
   // entering a room while a turn runs: the stage shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);

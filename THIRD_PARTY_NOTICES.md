@@ -13,6 +13,10 @@
   37d989cabf310ea2d7631f1d006117ca4cc8a799): its `how`, `why` and `teach` skills (with their references) are adapted, not
   vendored as is, in `workflows/skills/pstack/` (how.md, why.md, teach.md) for the merge card's review room. The changes
   and the full MIT License text are in `workflows/skills/pstack/NOTICE.md`.
+- **baton** (MIT License, copyright (c) Benjamin Lu; https://github.com/BenjaminLu/baton, commit
+  0ccff28a2fba09eeed5ef33b129cdb6ce402dc11): its SKILL.md, references/diagrams.md and references/spec.md are adapted, not
+  vendored as is, in `workflows/skills/baton/` (SKILL.md, diagrams.md, spec.md) for the review room's lesson, whose report
+  layout follows its templates/packet.html. The changes and the full MIT License text are in `workflows/skills/baton/NOTICE.md`.
 - **xterm.js 5.5.0** (`@xterm/xterm`, `public/vendor/xterm-5.5.0.min.js` and `xterm-5.5.0.css`) and **@xterm/addon-fit 0.10.0**
   (`public/vendor/xterm-addon-fit-0.10.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the web
   terminal's renderer (docs/units/web-terminal.md). MIT License, copyright the xterm.js authors, SourceLair Private Company and
