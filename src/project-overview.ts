@@ -12,6 +12,9 @@
 //                                       card (src/github-connect.ts); the captain's answer on that card writes the grant.
 //   POST /api/projects/<id>/github/merge[/revoke]   (desktop) only proposes: the captain-only card that grants
 //                                       or revokes Studio's merge for that repository (src/github-merge-grant.ts).
+//   POST /api/projects/pick-folder      (desktop, macOS) the Add local project form's "Choose folder…": the OS folder
+//                                       dialog (src/folder-picker.ts) answers {path} or {cancelled:true}; it registers
+//                                       nothing. The sidebar read carries folderPicker: whether the page offers it.
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, relative, isAbsolute, resolve } from "node:path";
 import { hasSession } from "./csrf";
@@ -24,6 +27,7 @@ import type { WorktreeRecord } from "./worktrees";
 import { githubSlugOf, originOf, verifyGitHubGrant } from "./github-grant";
 import { startGitHubConnect } from "./github-connect";
 import { startMergeGrant } from "./github-merge-grant";
+import { createFolderPicker, FolderPickerError, type FolderPicker } from "./folder-picker";
 
 export type Line = { tone: "" | "ok" | "run" | "human" | "warn" | "bad"; en: string; tw: string };
 type Who = { kind: "desktop" | "phone" | "refused" | string };
@@ -34,6 +38,7 @@ export type OverviewDeps = {
   protectedRoots?: string[];
   now?: () => number;
   prepareLocalProject?: (args:unknown,owner:any)=>Promise<unknown>;
+  folderPicker?: FolderPicker;
 };
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
@@ -92,6 +97,7 @@ export function createProjectOverview(d: OverviewDeps) {
   const now = d.now ?? (() => Date.now());
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   const E = d.engine;
+  const picker = d.folderPicker ?? createFolderPicker();
   // a workflow as the captain sees it (docs/units/workflow-rename.md): its display name, else its id
   const wfShown = (id: string): string => { try { return E.defs.displayName?.(id) ?? id; } catch { return id; } };
   const records = (): Project[] => d.projects.nativeSnapshot().records;
@@ -366,6 +372,13 @@ export function createProjectOverview(d: OverviewDeps) {
 
   async function handle(req: Request, url: URL, who: Who, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
+    if(p==='/api/projects/pick-folder'){
+      if(req.method!=='POST')return json({error:'use POST'},405);
+      if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);
+      if(!hasSession(req,d.session))return json({error:'Studio session required'},401);
+      try{return json(await picker.pick(req.signal));}
+      catch(e:any){if(e instanceof FolderPickerError)return json({error:e.message,tw:e.tw,code:e.code},e.status);return json({error:'The folder dialog could not be opened. Type the path instead.',tw:'無法開啟選擇資料夾的視窗，請直接輸入路徑。',code:'failed'},500);}
+    }
     if(p==='/api/projects/local-registration'){
       if(req.method!=='POST')return json({error:'use POST'},405);
       if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);
@@ -397,7 +410,7 @@ export function createProjectOverview(d: OverviewDeps) {
     if (writing) return json({ error: "read only" }, 405);
     if (who.kind === "desktop" && !hasSession(req, d.session)) return json({ error: "Studio session required" }, 401);
     if (who.kind !== "desktop" && who.kind !== "phone") return json({ error: "refused" }, 403);
-    if (!m) return json(sidebar());
+    if (!m) return json({ ...sidebar(), folderPicker: picker.supported && who.kind === "desktop" });
     let v; try { v = page(m[1]); } catch { return json({ error: "Registry unreadable", tw: "無法讀取登錄資料" }, 503); }
     return v ? json(v) : json({ error: "No such project", tw: "沒有這個專案" }, 404);
   }

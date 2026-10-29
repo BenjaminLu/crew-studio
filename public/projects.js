@@ -90,17 +90,24 @@ function localProjectForm() {
   const path=h("input",{class:"input",id:"project-local-path",name:"path",type:"text",required:true,maxlength:1000,autocomplete:"off",placeholder:"/Users/you/projects/repository",value:a.path,oninput:e=>{a.path=e.target.value;}});
   // the field takes focus once it is in the page, which after a route change is a render later than the click
   if(a.focus){a.focus=false;requestAnimationFrame(()=>document.getElementById("project-local-path")?.focus());}
+  // macOS only (the sidebar read's folderPicker): the server opens the OS folder dialog, since a page cannot read an
+  // absolute path; the chosen folder fills the field (and a.path, so a redraw keeps it), Cancel changes nothing
+  const choose=PJ.side?.folderPicker?h("button",{class:"btn",type:"button","data-pick-folder":"1",disabled:a.busy||a.picking,onclick:async()=>{
+    if(a.busy||a.picking)return;a.picking=true;a.error=null;soft();
+    try{const r=await postJ("/api/projects/pick-folder",{});if(PJ.adding===a&&!r.cancelled&&typeof r.path==="string"&&r.path){a.path=r.path;const el=document.getElementById("project-local-path");if(el)el.value=r.path;}}
+    catch(err){a.error=err.message;}finally{a.picking=false;if(PJ.adding===a)soft();}
+  }},a.picking?T("Choosing…","選擇中…"):T("Choose folder…","選擇資料夾…")):null;
   const name=h("input",{class:"input",id:"project-local-name",name:"name",type:"text",maxlength:100,autocomplete:"off",value:a.name,oninput:e=>{a.name=e.target.value;}});
   return h("form",{class:"card x-pad x-stack pj-add", "data-local-project-form":"1",onsubmit:async e=>{
     e.preventDefault();if(a.busy)return;a.busy=true;a.error=null;soft();
     try{const result=await postJ("/api/projects/local-registration",{path:a.path.trim(),...(a.name.trim()?{name:a.name.trim()}:{})});if(PJ.adding!==a)return;PJ.adding=null;location.hash=result.href;if(result.existing)toast(T("Already registered. Opened the existing project.","已註冊，已開啟既有專案。"));}
     catch(err){a.error=err.message;}finally{a.busy=false;if(PJ.adding===a)soft();}
   }},h("h2",{},T("Add local project","新增本機專案")),
-    h("label",{for:"project-local-path"},T("Local Git repository path","本機 Git 儲存庫路徑")),path,
+    h("label",{for:"project-local-path"},T("Local Git repository path","本機 Git 儲存庫路徑")),choose?h("div",{class:"pj-pathrow"},path,choose):path,
     h("label",{for:"project-local-name"},T("Project name (optional)","專案名稱（選填）")),name,
     h("p",{class:"faint"},T("Use an existing Git repository with a named branch. Studio checks its real root and base, then asks you to confirm. It does not modify files or start tasks. GitHub access and crew are configured separately.","請選擇已有具名分支的 Git 儲存庫。Studio 會檢查實際根目錄與基準分支，再請你確認。不會修改檔案或啟動任務；GitHub 權限與船員配置另外設定。")),
     a.error?h("div",{class:"err",role:"alert"},a.error):null,
-    h("div",{class:"actions"},h("button",{class:"btn primary",type:"submit",disabled:a.busy},a.busy?T("Checking…","檢查中…"):T("Review project","檢查並確認")),h("button",{class:"btn",type:"button",disabled:a.busy,onclick:()=>{PJ.adding=null;soft();}},T("Cancel","取消"))));
+    h("div",{class:"actions"},h("button",{class:"btn primary",type:"submit",disabled:a.busy},a.busy?T("Checking…","檢查中…"):T("Review project","檢查並確認")),h("button",{class:"btn",type:"button","data-cancel-add-project":"1",disabled:a.busy,onclick:()=>{PJ.adding=null;soft();}},T("Cancel","取消"))));
 }
 function viewIndex() {
   if (PJ.side === null && !PJ.sideErr) { loadSide(true); }
