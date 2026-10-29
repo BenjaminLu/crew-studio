@@ -398,7 +398,7 @@ try {
     p.on("request", (q) => { if (/\/api\/review-room\/SC-50/.test(q.url())) live.push(q.url()); });
     await p.goto(`${base}/#/room/lib:room-sc-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
     const ro = await p.evaluate(() => ({ note: document.querySelector("[data-room-readonly]")?.textContent, paid: ["[data-room-action]", "[data-room-text]", "[data-room-send]", "[data-mic]", "[data-welcome-teach]", "[data-regen]", "[data-room-save]", "[data-room-check]", "[data-translate-start]"].filter((q) => document.querySelector(q)),
-      snap: document.querySelector("[data-room-snapshot]")?.dataset.roomSnapshot, vers: [...document.querySelectorAll("[data-snapshot-version]")].map((e) => e.dataset.snapshotVersion), focus: document.body.classList.contains("room-focus"), voice: !!document.querySelector("[data-voice]"), vendor: !!document.querySelector('[data-voice] option[value="vendor"]') }));
+      snap: document.querySelector("[data-room-snapshot]")?.dataset.roomSnapshot, vers: [...document.querySelectorAll("[data-snapshot-version]")].map((e) => e.dataset.snapshotVersion), focus: document.body.dataset.focus === "room", voice: !!document.querySelector("[data-voice]"), vendor: !!document.querySelector('[data-voice] option[value="vendor"]') }));
     ok(/read-only replay/.test(ro.note || "") && !ro.paid.length && ro.snap === "room-sc-50@2" && JSON.stringify(ro.vers) === JSON.stringify(["1", "2"]) && ro.focus && ro.voice && !ro.vendor, "a saved room opens from the Library in the room itself, read-only: no prompt, no paid control, its versions listed, this Mac's voice still there", JSON.stringify(ro));
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]"); await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]');
     await p.waitForSelector("[data-cite-panel] .rr-diff");
@@ -415,7 +415,7 @@ try {
     const ver = (n) => ({ n, status: "draft", createdAt: "2026-10-28T13:00:00Z", createdBy: { kind: "host" }, approvedBy: null, approvedAt: null, primary: "room.json", sha256: null, parent: n > 1 ? n - 1 : null, annotations: [], cost: { usd: 0.04 }, render: null, url: null, notes: 0, fileCount: 2, summary: "saved", files: [{ path: "room.json" }] });
     await p.route(/\/api\/artifacts\/room-sc-50$/, (r) => r.fulfill({ json: { artifact: { id: "room-sc-50", title: "Review room · Merge: Add percent", type: "doc", project: "studio", source: "room", created: "2026-10-28T13:00:00Z", note: null, entry: null }, versions: [ver(1), ver(2)], runs: [] } }));
     await p.evaluate(() => { location.hash = "#/artifact/room-sc-50"; }); await p.waitForSelector("[data-replay-room]", { timeout: 15000 });
-    const libPage = await p.evaluate(() => ({ replay: document.querySelector("[data-replay-room]")?.getAttribute("href"), versions: [...document.querySelectorAll("[data-replay-version]")].map((e) => e.closest("a").getAttribute("href")), review: !!document.querySelector('a[href^="#/review/room-sc-50"]'), compare: !!document.querySelector('a[href^="#/compare/room-sc-50"]'), focus: document.body.classList.contains("room-focus") }));
+    const libPage = await p.evaluate(() => ({ replay: document.querySelector("[data-replay-room]")?.getAttribute("href"), versions: [...document.querySelectorAll("[data-replay-version]")].map((e) => e.closest("a").getAttribute("href")), review: !!document.querySelector('a[href^="#/review/room-sc-50"]'), compare: !!document.querySelector('a[href^="#/compare/room-sc-50"]'), focus: document.body.dataset.focus === "room" }));
     ok(libPage.replay === "#/room/lib:room-sc-50@2" && libPage.versions.length === 2 && !libPage.review && !libPage.compare && !libPage.focus, "the Library shows a saved room with “Replay in the review room” for each version, and no review, approval or compare", JSON.stringify(libPage));
     await ctx.close(); }
 
@@ -425,7 +425,7 @@ try {
     await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     await ctx.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: ROOM }));
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
-    const shell = () => p.evaluate(() => ({ focus: document.body.classList.contains("room-focus"), side: document.body.classList.contains("side-collapsed"), chat: !document.body.classList.contains("chat-closed"), sideW: Math.round(document.querySelector(".side").getBoundingClientRect().width), store: [localStorage.getItem("crew.side"), localStorage.getItem("crew.chatOpen")] }));
+    const shell = () => p.evaluate(() => ({ focus: document.body.dataset.focus === "room", side: document.body.classList.contains("side-collapsed"), chat: !document.body.classList.contains("chat-closed"), sideW: Math.round(document.querySelector(".side").getBoundingClientRect().width), store: [localStorage.getItem("crew.side"), localStorage.getItem("crew.chatOpen")] }));
     await p.goto(`${base}/#/board`); await p.waitForFunction(() => S.route?.name === "board"); await p.waitForTimeout(300);
     const before = await shell();
     await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForTimeout(300);

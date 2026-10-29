@@ -638,3 +638,10 @@ body.chat-closed .main{padding-bottom:120px}
 .fm-item .faint{margin-left:auto;font-size:12px}
 .fm-item .fm-gap{width:16px;flex:none}
 .fm-stop{color:var(--bad);border-top:1px solid var(--border);border-radius:0 0 6px 6px;margin-top:4px}
+
+/* A focus page (app.js pageFocus: the terminal page, an open review room) takes the screen: no Firstmate button (the page
+   offers its own way to Firstmate) and no tour over it; Firstmate opened there is a sheet over the page, never a column
+   beside it; on a phone no launcher dock is kept free at the bottom. */
+body[data-focus] .fab, body[data-focus] .ob-tour { display: none !important; }
+body[data-focus]:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bottom: 0; height: auto; z-index: 80; width: min(var(--chat-w), 92vw); box-shadow: var(--shadow-2); }
+@media (max-width: 760px) { body[data-focus].chat-closed .shell { height: 100dvh; } }

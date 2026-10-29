@@ -13,17 +13,19 @@ pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, 
 ## Focus mode
 
 The sidebar has a **Terminals** item (its own icon, right after Firstmate, also in the 64 px rail); it is current on
-`#/terminals` and carries the "waiting for you" count. `#/terminals` is a focus page: the route's view declares
-`viewTerminals.focus = "terminal"`, and `pageFocus` in `public/app.js` (called by `route()`) does the rest, generically:
+`#/terminals` and carries the "waiting for you" count. `#/terminals` is a focus page, as an open review room is
+(docs/units/review-room.md): one mechanism, `pageFocus` in `public/app.js`. A route's view declares `.focus`, a name
+(`viewTerminals.focus = "terminal"`) or a function of the route's argument (a room: only once it has loaded), and
+`render()` asks on every draw:
 
-- on entering, it notes whether the sidebar was collapsed and the chat open, then collapses the sidebar to the rail, closes
-  the chat panel and sets `body[data-focus="terminal"]`; the page's CSS hides the chat button and lets the page take the
-  window. Nothing is written: `crew.side` and `crew.chatOpen` stay the captain's. A sidebar or chat toggle made while
-  there (`setSide`, `openChat`) becomes what is given back;
-- on leaving for any other route, it gives back what it noted and removes `data-focus`.
+- on entering, it notes whether the sidebar was collapsed, the chat open and the saved `crew.side`, then folds the sidebar
+  to the rail, closes the chat panel and sets `body[data-focus="<name>"]`. `styles.css` hides the chat button (and the
+  tour) on every focus page and makes Firstmate, opened from the page, a sheet over it; the page's own CSS takes the window.
+  Nothing is written: `openChat` saves no `crew.chatOpen` during focus, and `crew.side` stays the captain's;
+- on leaving for a page that is not one, it gives back what it noted and removes `data-focus`, except a sidebar the captain
+  folded or opened on purpose while there (`setSide` saved it): that choice wins.
 
-The state is on `<body>` and in `PAGE_FOCUS`, outside `#view`, so a `render()` changes nothing. Another page can use the
-same switch by setting `.focus` on its route view.
+The state is on `<body>` and in `PAGE_FOCUS`, outside `#view`, so a `render()` changes nothing.
 
 With a terminal shown, the page is the terminal: a row of tabs and tools, the focused terminal's header on one line (state,
 command, Stop, Restart, Remove, Send for review, Remote Control), the tab's panes filling the rest, width and height, and a

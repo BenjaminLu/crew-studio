@@ -3,7 +3,7 @@
 What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/room/<merge card>`; `#/review/<artifact>/<n>` is the Library's artifact review,
 `public/review-room.js`) works like an interactive whiteboard tutor:
 
-- **A room is the whole screen** (focus mode, `body.room-focus` on `#/room/<id>`): the sidebar folds to its 64px rail and
+- **A room is the whole screen** (focus mode, `body[data-focus="room"]` on `#/room/<id>`, app.js `pageFocus`, shared with the terminal page): the sidebar folds to its 64px rail and
   Firstmate closes; the header's Firstmate button opens it as a sheet over the room, never a column beside the board.
   Neither is saved as the captain's preference (`crew.side`, `crew.chatOpen` stay as they were; a fold the captain makes on
   purpose with the sidebar's own toggle is saved and wins), the onboarding journey and the chat button step aside, and

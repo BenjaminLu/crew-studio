@@ -28,13 +28,10 @@
 .rr-hand { font-family: var(--rr-hand); font-weight: 400; }
 html:lang(en) .rr-hand { font-family: "Caveat", "LXGW WenKai TC", "Kaiti TC", cursive; }
 
-/* ---------- focus mode ---------- */
-body.room-focus .main { overflow: hidden !important; padding: 0 !important; max-height: none !important; }
-body.room-focus .fab, body.room-focus .ob-tour { display: none !important; }
-body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bottom: 0; height: auto; z-index: 80; width: min(var(--chat-w), 92vw); box-shadow: var(--shadow-2); }
-@media (max-width: 760px) { body.room-focus .side { display: none; } body.room-focus { overflow: hidden; }
-  /* the room has no launcher dock to leave room for: Firstmate is the header's button */
-  body.room-focus.chat-closed .shell { height: 100dvh; } }
+/* ---------- focus mode (app.js pageFocus: body[data-focus="room"]; the rail, the Firstmate sheet and the hidden button are
+   every focus page's, in styles.css) ---------- */
+body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !important; max-height: none !important; }
+@media (max-width: 760px) { body[data-focus="room"] .side { display: none; } body[data-focus="room"] { overflow: hidden; } }
 
 /* ---------- the room: five fixed rows, only the board flexes ---------- */
 .rr-room { height: 100vh; height: 100dvh; display: grid; grid-template-rows: 48px minmax(0, 1fr) 56px; gap: 10px; padding: 12px 24px; box-sizing: border-box; max-width: 1480px; margin: 0 auto; min-width: 0; }
