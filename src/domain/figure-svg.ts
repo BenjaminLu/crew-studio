@@ -107,11 +107,11 @@ export function pathPoints(d: string, step = 4, lim?: FigureBudget): [number, nu
   const pts: [number, number][] = []; let x = 0, y = 0, sx = 0, sy = 0, px = 0, py = 0;
   const seg = (x0: number, y0: number, f: (t: number) => [number, number], len: number) => { const n = Math.max(2, Math.ceil(len / step)); spend(lim, n); for (let k = 1; k <= n; k++) pts.push(f(k / n)); };
   const re = /([MmLlHhVvCcSsQqTtAaZz])([^MmLlHhVvCcSsQqTtAaZz]*)/g; let m: RegExpExecArray | null;
-  while ((m = re.exec(d))) { const c = m[1], a = nums(m[2]), rel = c === c.toLowerCase() && c !== "z" && c !== "Z", C = c.toUpperCase();
+  while ((m = re.exec(d))) { const c = m[1], a = nums(m[2]), rel = c === c.toLowerCase() && c !== "z" && c !== "Z"; let C = c.toUpperCase();
     let i = 0; const take = (n: number) => { const v = a.slice(i, i + n); i += n; return v; };
     do {
       if (C === "Z") { const x0 = x, y0 = y; seg(x0, y0, (t) => [x0 + (sx - x0) * t, y0 + (sy - y0) * t], Math.hypot(sx - x0, sy - y0)); x = sx; y = sy; break; }
-      if (C === "M") { const [nx, ny] = take(2); if (nx === undefined) break; x = rel ? x + nx : nx; y = rel ? y + ny : ny; within(lim, x, y); spend(lim, 1); sx = x; sy = y; pts.push([x, y]); continue; }
+      if (C === "M") { const [nx, ny] = take(2); if (nx === undefined) break; x = rel ? x + nx : nx; y = rel ? y + ny : ny; within(lim, x, y); spend(lim, 1); sx = x; sy = y; pts.push([x, y]); C = "L"; continue; } // pairs after a moveto are linetos
       if (C === "L" || C === "T") { const [nx, ny] = take(2); if (ny === undefined) break; const x0 = x, y0 = y, x1 = rel ? x + nx : nx, y1 = rel ? y + ny : ny; within(lim, x1, y1); seg(x0, y0, (t) => [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t], Math.hypot(x1 - x0, y1 - y0)); x = x1; y = y1; continue; }
       if (C === "H") { const [nx] = take(1); if (nx === undefined) break; const x0 = x, x1 = rel ? x + nx : nx; within(lim, x1, y); seg(x0, y, (t) => [x0 + (x1 - x0) * t, y], Math.abs(x1 - x0)); x = x1; continue; }
       if (C === "V") { const [ny] = take(1); if (ny === undefined) break; const y0 = y, y1 = rel ? y + ny : ny; within(lim, x, y1); seg(x, y0, (t) => [x, y0 + (y1 - y0) * t], Math.abs(y1 - y0)); y = y1; continue; }

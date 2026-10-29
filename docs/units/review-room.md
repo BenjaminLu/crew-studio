@@ -322,7 +322,10 @@ returns and async calls in their own colours.
 
 **A database lifecycle per entity; every call.** A lifecycle is owed only for a real state write: UPDATE … SET status/state,
 INSERT INTO … (status), an ORM write with a status/state key, setState / setStatus / transition(), or an entity's status
-assigned; never a comparison, an HTTP response's status, a local named state or an object literal. A lifecycle names its entity and gives each transition its database
+assigned, the key in any case (`this.state =`, `self.status = :paid`, `o.Status = StatusPaid`, `order["status"] = 3`,
+Django `.update(status=`, Rails `update!(status:`, GORM `Update("status"`, or a status key on its own line inside a
+multi-line ORM call); never a comparison, an HTTP response's status, a local named state, setState without a status or
+state key, or an object literal outside an ORM call. A lifecycle names its entity and gives each transition its database
 transaction (`tx`: the tables written, INSERT, UPDATE, DELETE or UPSERT, each field was → now, the guard, and what is written
 outside the transaction). The report's statemap numbers every transition; picking a state shows the transaction that brings
 the entity into it, picking a transition shows its own, the writes outside set apart dashed. A lesson shows one lifecycle for
@@ -332,9 +335,12 @@ response, the errors a client sees, the transaction it runs.
 
 **A pasted pull request teaches itself.** When the captain pastes a pull request (`POST …/open-pr`) and its room has no
 lesson for the current head (none done or running), the lesson starts by itself: the paste is the consent, so there is no
-click and no confirmation. So the paste box says what a paste starts before it is pasted (`GET …/paste-offer?url=`: auto-teach
-on or off, and the tutor, model and paid round the room's offer would name), and the lesson says it started on paste, with
-the tutor it ran on and the room's switch beside it. It is an ordinary paid turn on the room's tutor, marked `auto` on the
+click and no confirmation. So the paste box says what a paste starts before it is pasted (`GET …/paste-offer?url=`), from
+the same plan the start reads (auto-teach as the room has it, else the Studio-wide setting; the tutor its offer would use,
+the host Task's seat or the project's crew reviewer; the room's pictures; whether the first paid turn creates the host Task
+and its staffing). A paste sent before that line is on screen (Enter at once) opens the room without starting a lesson
+(`open-pr {auto: false}`), and a switch changed asks for the line again. The lesson says it started on paste, with the
+tutor it ran on and the room's switch beside it. It is an ordinary paid turn on the room's tutor, marked `auto` on the
 ledger; it keeps the room's own pictures setting (a new room's is off). It starts once per head: the head is recorded before anything starts, so a reload, a revisit or a second
 paste starts nothing. The Studio-wide setting (`GET/POST /api/review-room/settings {autoTeach}`, on the room list's page,
 default on) and the room's own switch (`POST …/auto {on}`, in its drawer) turn it off. When it cannot start (no tutor can

@@ -59,6 +59,10 @@ const all = (n: FigNode, out: FigNode[] = []) => { out.push(n); for (const c of 
   ok(/outside the viewBox/.test(far[0] ?? "") && /outside the viewBox/.test(farLine[0] ?? ""), "a box or a line reaching far outside the viewBox is refused", JSON.stringify({ far, farLine })); }
 
 // ---------- what the gate measures is what the page draws ----------
+{ // pairs after a moveto are linetos (and every command repeats with its pairs): M20,20 380,180 is a line
+  const implicit = gateOf(fig(`<path d="M20,20 380,180" fill="none" stroke="var(--fig-muted)" data-edge="a>b"/>${box("a", 0, 0, 30, 30)}${box("c", 170, 80, 60, 40)}${box("b", 370, 170, 30, 30)}`));
+  const repeated = gateOf(fig(`<path d="M20,20 L100,20 380,180" fill="none" stroke="var(--fig-muted)" data-edge="a>b"/>${box("a", 0, 0, 30, 30)}${box("c", 220, 90, 60, 40)}${box("b", 370, 170, 30, 30)}`));
+  ok(implicit.some((e) => /passes through "c"/.test(e)) && repeated.some((e) => /passes through "c"/.test(e)), "a path's implicit lines are lines: after a moveto, and a lineto's repeated pairs (through a box is refused)", JSON.stringify({ implicit, repeated })); }
 { // an open path is a connector whatever its fill; a closed filled shape is not
   const openFilled = gateOf(fig(`<path d="M70,60 H330" stroke="var(--fig-muted)" data-edge="a>b"/>${box("a", 20, 40)}${box("c", 160, 40, 80)}${box("b", 280, 40)}`));
   const closedShape = gateOf(fig(`<path d="M150,30 H250 V90 H150 Z" fill="var(--fig-card-2)"/>${t(200, 64, "inside a panel")}`));
@@ -81,11 +85,15 @@ const all = (n: FigNode, out: FigNode[] = []) => { out.push(n); for (const c of 
   const w = stateWrites(diff);
   ok(JSON.stringify(w) === JSON.stringify(["src/orders.ts:11", "src/orders.ts:12"]), "the lines that write a state or status column are found (tests and docs left out): a lifecycle is then owed", JSON.stringify(w)); }
 { const at = (lines: string[]) => stateWrites(["+++ b/src/x.ts", `@@ -1,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`)].join("\n"));
-  const not = ["if (order.status === 'paid') return;", "if (order.state == 'open') go();", "res.status = 404;", "res.status = code;", "response.status = 'error';", "const state = useReducer(r);", "return { state: loading };", "const s = { status: \"ok\" };", "this.state = { open: true };", "const ok = a.status !== b.status;"];
+  const not = ["if (order.status === 'paid') return;", "if (order.state == 'open') go();", "res.status = 404;", "res.status = code;", "response.status = 'error';", "const state = useReducer(r);", "return { state: loading };", "const s = { status: \"ok\" };", "const ok = a.status !== b.status;", "return res.status(404).json(err);", "if (o.Status == StatusPaid) {", "this.setState({ loading: true });", "setState(prev => ({ ...prev, loading: false }));", "let state = 0;"];
   const yes = ["await db.query(\"UPDATE orders SET updated_at = now(), status = 'void' WHERE id = $1\");", "  SET status = 'paid'", "INSERT INTO orders (id, status) VALUES ($1, 'new')", "await prisma.order.update({ where: { id }, data: { status: \"paid\" } });",
-    "await Order.updateOne({ status: 'paid' });", "this.setState({ step: 2 });", "machine.transition(\"pay\");", "order.state = OrderState.Paid;", "invoice.status = 'sent';"];
+    "await Order.updateOne({ status: 'paid' });", "this.setState({ status: 'loading' });", "setState(prev => ({ ...prev, state: 'done' }));", "machine.transition(\"pay\");", "order.state = OrderState.Paid;", "invoice.status = 'sent';",
+    "this.state = 'closed';", "self.status = :paid", "order.status = :paid", "job.state = 3;", "o.Status = StatusPaid", "o.Status = Status.PAID;", "order.STATE = 'x';", "order[\"status\"] = 'paid';", "order['state'] = 2",
+    "Order.objects.filter(id=pk).update(status='paid')", "order.update(status: :paid)", "order.update!(status: :paid)", "db.Model(&o).Update(\"status\", \"paid\")", "db.Model(&o).Updates(map[string]interface{}{\"Status\": \"paid\"})", "await Invoice.create({ number, state: 'draft' });"];
   const fp = not.filter((l) => at([l]).length), tp = yes.filter((l) => !at([l]).length);
   ok(!fp.length, "not a state write: a comparison (== / ===), an HTTP response's status, a local called state, an object literal, React's own this.state", JSON.stringify(fp));
-  ok(!tp.length, "a state write: UPDATE … SET status, INSERT INTO … (status), an ORM update with a status key, setState, transition(), an entity's status assigned", JSON.stringify(tp)); }
+  ok(!tp.length, "a state write, the key in any case: UPDATE … SET status, INSERT INTO … (status), an ORM write naming it (JS, Django, Rails, GORM), setState with a status key, transition(), an entity's status or state assigned (this., self., [\"status\"], a symbol, a number, an enum)", JSON.stringify(tp));
+  const multi = at(["await prisma.order.update({", "  where: { id },", "  data: {", "    status: 'paid',", "  },", "});"]), plain = at(["return {", "  state: loading,", "  items,", "};"]);
+  ok(JSON.stringify(multi) === JSON.stringify(["src/x.ts:4"]) && !plain.length, "a status key on its own line inside a multi-line ORM call (its data: { …) counts; the same key in a plain object literal does not", JSON.stringify({ multi, plain })); }
 
 console.log(`\nreview-room-figures: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);

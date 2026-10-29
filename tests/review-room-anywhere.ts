@@ -623,8 +623,18 @@ const TOOLRES: [string, any][] = [];
     ok(!!snapView && snapView.autoTeach === undefined, "a room saved to the Library keeps no auto-teach notice", JSON.stringify(snapView?.autoTeach ?? null));
     // the auto turn keeps the room's own pictures setting: it never passes one
     writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\n"); must(scratch, [...id, "commit", "-qam", "Add six"]); const E6 = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${E6}:refs/pull/5/head`]);
-    let asked: any = null; (room as any).start = async (_id: string, a: any) => { asked = a; return {}; }; headAs(E6); await room.openPr(url); (room as any).start = realStart;
+    // what the paste box says is what starts: the room's pictures on, its switch on while the Studio-wide one is off, a host Task there
+    room.setSettings({ autoTeach: false }); room.autoTeachFor(opened.id, true); room.images(opened.id, true, "captain");
+    const plan: any = room.pasteOffer(url), offerNow: any = (room.view(opened.id) as any).offer;
+    let asked: any = null; (room as any).start = async (_id: string, a: any) => { asked = a; return {}; }; headAs(E6);
+    const offNoAuto: any = await room.openPr(url, "captain", "en", false), skippedNoAuto = asked; await room.openPr(url); (room as any).start = realStart; const offerAt: any = (room.view(opened.id) as any).offer;
     ok(asked?.auto === true && !("images" in asked), "the lesson started on paste keeps the room's pictures setting (it does not turn them off)", JSON.stringify(asked));
+    ok(plan.auto === true && plan.images === true && plan.createsHost === false && plan.provider === offerNow.provider && (plan.model ?? null) === (offerNow.model ?? null) && (plan.effort ?? null) === (offerNow.effort ?? null) && asked?.confirm === offerAt.hash && offerAt.provider === plan.provider && (offerAt.model ?? null) === (plan.model ?? null) && !("hash" in plan),
+      "the paste box's offer is what the paste then starts: the room's switch over the Studio-wide one, the room's pictures, the host Task's tutor (its very offer)", JSON.stringify({ plan, offer: [offerNow.provider, offerNow.model, offerNow.effort], confirm: asked?.confirm === offerAt.hash }));
+    ok(!!offNoAuto?.id && skippedNoAuto === null, "a paste sent before the box said what it starts (auto: false) opens the room and starts nothing", JSON.stringify(skippedNoAuto));
+    const fresh5: any = room.pasteOffer("https://github.com/fixture/project/pull/77");
+    ok(fresh5.createsHost === true && fresh5.auto === false && fresh5.images === false && !!fresh5.provider, "a pull request with no room yet: its paste would make the host Task (and its staffing), with the Studio-wide switch and no pictures", JSON.stringify(fresh5));
+    room.images(opened.id, false, "captain"); room.setSettings({ autoTeach: true });
     // a reset keeps the room's switch: pasted again on the same head, a room whose auto-teach is off starts nothing
     room.autoTeachFor(opened.id, false); await room.settle(opened.id); room.reset(opened.id, "captain"); const vr: any = room.view(opened.id);
     headAs(E6); await room.openPr(url); await room.settle(opened.id); const va: any = room.view(opened.id);

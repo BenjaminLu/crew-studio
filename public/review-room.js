@@ -1000,7 +1000,7 @@ function reportSection(card, r, x, j, nth) {
 function autoNote(r, t) {
   if (!t?.auto) return null; const card = r.card.id;
   return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n }, T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
-    !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+    !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
       T(" start by itself on the next paste", " 下次貼上時自動開始")) : null);
 }
 /** the report: the lesson's sections in order, a quiet footer with the rules it keeps; it scrolls inside the room */
@@ -1212,7 +1212,7 @@ function drawer(r) {
           s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
           : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")),
         // start the room over: confirmed first; what goes and what stays said plainly; refused while a turn or a translation runs
-        !r.snapshot && r.subject?.kind === "pr" ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+        !r.snapshot && r.subject?.kind === "pr" ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
           h("span", {}, T("Start the lesson by itself when this pull request is pasted again on a new head", "這個 pull request 在新的 head 再次貼上時自動開始教學"))) : null,
         r.snapshot ? null : h("div", { class: "rr-reset", "data-reset-zone": "" }, h("h3", {}, T("Start over", "清空重來")),
           RR.resetAsk.has(card) ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-reset-confirm-box": "", "aria-label": T("Start this room over", "清空這個審查室重來") },
@@ -1235,30 +1235,37 @@ async function resetRoom(card) {
   finally { RR.posting.delete(card); rerender(); }
 }
 // ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------
-const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(), offer: new Map() };
+const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(), offer: new Map(), shown: new Map() };
+/** a switch changed: what a paste starts is asked again */
+const dropPasteOffers = () => { PR.offer.clear(); PR.shown.clear(); };
 const PR_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?$/;
 /** what pasting this address would start, asked of Studio once per address (the paste box says it before the paste) */
 const pasteOffer = (url) => { if (!PR_URL.test(url) || PR.offer.has(url)) return PR.offer.get(url); PR.offer.set(url, { loading: true });
   api(`/api/review-room/paste-offer?url=${encodeURIComponent(url)}`).then((o) => PR.offer.set(url, o)).catch((e) => PR.offer.set(url, { error: e.message })).finally(rerenderAny); return PR.offer.get(url); };
 /** the paste box's line about the paste: a paid round on this tutor when auto-teach is on, else nothing runs until asked */
-function pasteLine(url) {
-  const o = url ? pasteOffer(url) : null; if (!o || o.loading) return null;
+function pasteLine(url, where) {
+  const o = url ? pasteOffer(url) : null; if (!o || o.loading) { PR.shown.delete(where); return null; }
+  PR.shown.set(where, { url, auto: o.auto !== false && !o.error }); // what go() may start: only what this line said
   if (o.auto === false) return h("p", { class: "faint", "data-paste-offer": "off" }, T("Pasting opens the room; nothing runs until you ask (auto-teach is off).", "貼上只會開啟審查室；你開口之前什麼都不跑（自動教學已關）。"));
   if (o.error) return h("p", { class: "faint", "data-paste-offer": "none" }, T(`Pasting opens the room; no lesson starts by itself: ${o.error}`, `貼上會開啟審查室，不會自動開始教學：${o.error}`));
-  return h("p", { class: "rr-paste-offer", "data-paste-offer": "on" }, T(`Pasting starts the lesson by itself: one paid model round on ${o.provider} · ${o.model ?? "default model"}${o.effort ? ` (${o.effort})` : ""}, no generated pictures. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
-    `貼上就會自動開始這一課：在 ${o.provider} · ${o.model ?? "預設模型"}${o.effort ? `（${o.effort}）` : ""} 上付費執行一回合，不產生圖片。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`));
+  const who = `${o.provider} · ${o.model ?? T("default model", "預設模型")}${o.effort ? ` (${o.effort})` : ""}`;
+  return h("p", { class: "rr-paste-offer", "data-paste-offer": "on", "data-paste-images": o.images ? "on" : "off", "data-paste-host": o.createsHost ? "new" : "kept" },
+    T(`Pasting starts the lesson by itself: ${o.createsHost ? "it creates this pull request's host Task and its tutor's staffing, then runs " : ""}one paid model round on ${who}; ${o.images ? "the tutor may also ask for up to two generated pictures, each a paid image job" : "no generated pictures"}. The tutor only reads the code, and nothing is sent to GitHub.`,
+      `貼上就會自動開始這一課：${o.createsHost ? "會先為這個 pull request 建立承載它的任務和導師的人員配置，再" : ""}在 ${who} 上付費執行一回合；${o.images ? "導師也可能要求最多兩張生成圖片，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼，也不送任何東西到 GitHub。`));
 }
 /** the URL box (the Review Room's home, and a small one on a connected project's page) */
 function prBox(where, repository) {
   const busy = PR.busy.has(where), err = PR.err.get(where);
   const go = async () => { const url = (PR.url.get(where) || "").trim(); if (!url || busy) return; PR.busy.add(where); PR.err.delete(where); rerenderAny();
-    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang() }); RR.rooms.set(out.id, out.room); PR.url.delete(where); location.hash = out.href; }
+    // the lesson starts by itself only when this box has said so for this very address; before that the paste opens the room only
+    const said = PR.shown.get(where), auto = !!(said && said.url === url && said.auto);
+    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang(), ...(auto ? {} : { auto: false }) }); RR.rooms.set(out.id, out.room); PR.url.delete(where); dropPasteOffers(); location.hash = out.href; }
     catch (e) { PR.err.set(where, e.message); } finally { PR.busy.delete(where); rerenderAny(); } };
   return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
     h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),
       h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 300, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>", value: PR.url.get(where) || "",
         oninput: (e) => { PR.url.set(where, e.target.value); if (PR_URL.test(e.target.value.trim()) && !PR.offer.has(e.target.value.trim())) { pasteOffer(e.target.value.trim()); } }, "aria-label": T("Pull request URL", "Pull request 網址") })),
-    pasteLine((PR.url.get(where) || "").trim()),
+    pasteLine((PR.url.get(where) || "").trim(), where),
     h("button", { type: "submit", class: "btn primary", "data-pr-open": where, disabled: busy }, busy ? T("Reading it on GitHub…", "正在讀取 GitHub…") : T("Open its review room", "開啟它的審查室")),
     h("p", { class: "faint" }, T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
     err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);
@@ -1338,8 +1345,8 @@ routes.room = (arg) => {
           h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("a turn is running", "有一回合在跑") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
           h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`)))) : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
       h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null),
-        h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),
-          h("span", {}, T("Teach a pasted pull request by itself: pasting it starts the lesson (one paid round on the room's tutor, no generated pictures), once per head.", "貼上 pull request 就自動開始教學：貼上即開始這一課（用房間的導師付費一回合，不產生圖片），每個 head 只一次。"))))); }
+        h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); dropPasteOffers(); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),
+          h("span", {}, T("Teach a pasted pull request by itself: pasting it starts the lesson (one paid round on the room's tutor, with the room's pictures setting; the paste box says which before you paste), once per head.", "貼上 pull request 就自動開始教學：貼上即開始這一課（用房間的導師付費一回合，圖片依房間設定；貼上前貼上框會先說明），每個 head 只一次。"))))); }
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));

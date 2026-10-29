@@ -112,22 +112,30 @@ export function txOf(v: any): { tables: { table: string; op: string; guard: stri
     return { error: "tx: each table has a name, op INSERT|UPDATE|DELETE|UPSERT and fields {k, was?, now}; each outside write says what" };
   return { tables, outside };
 }
-/** the writes that move a state: into the database (UPDATE … SET status/state =, INSERT INTO t (… status …), an ORM call
- *  writing a status/state key), a state machine's step (setState, setStatus, transition), or a real assignment to an entity's
- *  status/state field. Never a comparison (== / ===), an HTTP response's status, a local called state, or an object literal. */
+/** the writes that move a state, the key in any case (status, Status, STATE): into the database (UPDATE … SET status =,
+ *  INSERT INTO t (… status …), an ORM write naming it: .update({status:, .update(status=, update!(status:, Update("status",
+ *  .create({ … state: }), a state machine's step (setState with a status or state key, setStatus, transition), or an assignment
+ *  to an entity's status or state (o.status = 'paid', this.state = …, self.status = :paid, o.Status = StatusPaid,
+ *  order["status"] = 3). Never a comparison (== / ===), an HTTP response's status (res.status = 404, res.status(404)), a local
+ *  named state, setState without a status or state key, or an object literal outside an ORM call. */
 export const STATE_WRITES: RegExp[] = [
   /\bSET\s+(?:[\w.`"]+\s*=\s*[^,;]+,\s*)*[\w.`"]*?\b(?:status|state)\b[`"]?\s*=(?![=>])/i,
   /\bINSERT\s+INTO\b[^;(]*\([^)]*\b(?:status|state)\b/i,
-  /\.(?:update|updateOne|updateMany|upsert|insert|create|set|patch|save)\s*\(\s*\{[^;]*?\b(?:status|state)\s*:/,
-  /\b(?:setState|setStatus|transition(?:To)?)\s*\(/,
-  /(?<![\w$.])(?!(?:res|response|reply|ctx|req|request|this|props)\.)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:status|state)\s*=(?![=>])\s*['"`A-Za-z_]/,
+  /\.(?:update|update_?all|updateone|updatemany|updates|update_?columns?|upsert|insert|create|set|patch|save)!?\s*\(\s*\{?[^;]*?["'`]?\b(?:status|state)\b["'`]?\s*(?::(?!:)|=(?![=>])|,)/i,
+  /\bsetState\s*\(\s*(?:\w+\s*=>\s*\(?\s*)?\{[^}]*\b(?:status|state)\s*:/i,
+  /\b(?:setStatus|transition(?:To)?)\s*\(/i,
+  /(?<![\w$.])(?!(?:res|response|reply|ctx|req|request|props)\.)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\.(?:status|state)\b|\[\s*["'](?:status|state)["']\s*\])\s*=(?![=>~])\s*(?:['"`:]|[A-Za-z_]|-?\d)/i,
 ];
+/** a status or state key on a line of its own, and the ORM call (or its data: { …) it belongs to a few lines above */
+const STATE_KEY = /^\s*["'`]?(?:status|state)["'`]?\s*:\s*\S/i, ORM_CALL = /\.(?:update|update_?all|updateone|updatemany|upsert|insert|create|set|patch|save)\w*!?\s*\(|\bdata\s*:\s*\{/i;
 /** the added lines (not tests, not docs) that write a state or status: a lifecycle is owed when there is one */
 export function stateWrites(diff: string): string[] {
-  const out: string[] = []; let file = "", line = 0;
-  for (const l of diff.split("\n")) { const f = /^\+\+\+ b\/(.+)$/.exec(l); if (f) { file = f[1]; continue; } const h = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(l); if (h) { line = Number(h[1]); continue; }
-    if (l.startsWith("+") && !l.startsWith("+++")) { if (!/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|\.md$/i.test(file) && STATE_WRITES.some((re) => re.test(l.slice(1)))) out.push(`${file}:${line}`); line++; }
-    else if (!l.startsWith("-")) line++; }
+  const out: string[] = []; let file = "", line = 0, back: string[] = [];
+  for (const l of diff.split("\n")) { const f = /^\+\+\+ b\/(.+)$/.exec(l); if (f) { file = f[1]; back = []; continue; } const h = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(l); if (h) { line = Number(h[1]); back = []; continue; }
+    if (l.startsWith("-")) continue;
+    const code = l.slice(1), added = l.startsWith("+") && !l.startsWith("+++");
+    if (added && !/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|\.md$/i.test(file) && (STATE_WRITES.some((re) => re.test(code)) || (STATE_KEY.test(code) && back.some((b) => ORM_CALL.test(b))))) out.push(`${file}:${line}`);
+    back = [...back, code].slice(-6); line++; }
   return [...new Set(out)].slice(0, 20);
 }
 /** what a lesson still lacks: a required chapter not shown, a skippable one neither shown nor left out with a cited reason */
@@ -1002,6 +1010,22 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost: job?.cost ?? null }; save(k, room);
     engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost: job?.cost ?? null, status: room.translating.status } } as any);
   }
+  /** What a paste of this pull request starts, from the one place both the paste box and the start read it: auto-teach as the
+   *  room has it (its switch, else the Studio-wide setting), the tutor the room's offer would use (the host Task's seat when
+   *  there is one, else the project's crew reviewer), the room's pictures setting, and whether the first paid turn creates the
+   *  host Task and its staffing. */
+  const planOf = (k: Key, room: Room | null, project: string | null | undefined) => {
+    const auto = (room?.autoTeach ?? settings().autoTeach) !== false, images = !!room?.images?.on, createsHost = !k.run;
+    const o: any = room ? offerOf(k) : (() => { try { const p = crewPick(project); return { provider: p.provider, model: p.model ?? null, effort: p.effort ?? null, paid: true }; } catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "no_crew" }; } })();
+    return "error" in o ? { auto, images, createsHost, error: String(o.error).slice(0, 300), code: o.code ?? null } : { auto, images, createsHost, provider: o.provider, model: o.model ?? null, effort: o.effort ?? null, paid: true, hash: o.hash as string | undefined };
+  };
+  const autoPlan = (url: unknown) => {
+    const p = parsePrUrl(String(url ?? "").slice(0, 400)); if (!p) return { auto: settings().autoTeach, error: "not a pull request's address", code: "bad_url" };
+    const project: any = connected(p.repository); if (!project) return { auto: settings().autoTeach, error: `github.com/${p.repository} is not the repository of a project connected to GitHub`, code: "not_connected" };
+    let k: Key | null = null; try { k = keyOf(prRoomId(p.repository, p.n)); } catch { /* no room for it yet */ }
+    const room = k ? load(k) : null; if (k) hostInto(k, room);
+    const { hash: _h, ...plan } = planOf(k ?? ({ run: null } as unknown as Key), room, project.id ?? project.name); return plan;
+  };
   /** A pasted pull request's lesson, started by Studio: the captain's paste is the consent. Only a pull request's room, only when
    *  auto-teach is on (the room's switch, else the global setting), once per head (recorded before anything starts, so a reload
    *  or a revisit never starts another), never when a lesson for this head is done or running. Pictures as the room has them. When it cannot
@@ -1010,13 +1034,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     let k: Key; try { k = keyOf(id); } catch { return; } if (k.kind !== "pr") return;
     const room = load(k); if (!room || !k.open() || live.has(k.id)) return;
     const head = room.pr?.head ?? room.head; if (!head) return;
-    if ((room.autoTeach ?? settings().autoTeach) === false) return;
+    const plan = planOf(k, room, room.subject?.project); if (!plan.auto) return;
     if ((room.autoTaught ?? []).some((x) => x.head === head)) return;
     if (room.turns.some((t) => t.action === "teach" && t.head === head && (t.status === "done" || t.status === "running"))) return;
     const mark = { head, at: new Date().toISOString() } as { head: string; at: string; turn?: number; skipped?: string };
     room.autoTaught = [...(room.autoTaught ?? []), mark]; save(k, room);
-    try { const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
-      await api.start(id, { action: "teach", lang, confirm: offer.hash, auto: true }, by);
+    try { if ("error" in plan) throw refuse(plan.error!, plan.code ?? "no_tutor");
+      await api.start(id, { action: "teach", lang, confirm: plan.hash, auto: true }, by);
       const r2 = load(k); const m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.turn = r2.turns.at(-1)?.n; save(k, r2); } }
     catch (e: any) { const r2 = load(k), m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.skipped = String(e?.message ?? e).slice(0, 300); save(k, r2); notify(k); } }
   }
@@ -1317,15 +1341,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       for (const run of engine.list()) { const d = join(engine.rdir(run.id), "review-room"); if (!existsSync(d)) continue; try { for (const f of readdirSync(d)) if (/^(SC-\d+|R-\d+)\.json$/.test(f)) push(f.slice(0, -5), join(d, f)); } catch {} }
       return out.sort((a, b) => Number(b.open) - Number(a.open) || b.updatedAt.localeCompare(a.updatedAt)).slice(0, 60); },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
-    async openPr(url: unknown, by = "captain", lang?: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en"); return { id, href: `#/room/${id}`, room: this.view(id) }; },
+    /** a pasted pull request: its room, and its lesson started by itself unless the paste box had not yet said what that starts (auto: false) */
+    async openPr(url: unknown, by = "captain", lang?: unknown, auto?: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); if (auto !== false) await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en"); return { id, href: `#/room/${id}`, room: this.view(id) }; },
     /** Studio-wide settings of the review room (autoTeach: a pasted pull request's lesson starts by itself) */
     settings() { return settings(); },
     /** what pasting this pull request's address would start (the paste box shows it before the paste): auto-teach on or off,
      *  and the tutor and the paid round it would run on, as the room's offer would name them */
-    pasteOffer(url: unknown) { const auto = settings().autoTeach, p = parsePrUrl(String(url ?? "").slice(0, 400)); if (!p) return { auto, error: "not a pull request's address", code: "bad_url" };
-      const project: any = connected(p.repository); if (!project) return { auto, error: `github.com/${p.repository} is not the repository of a project connected to GitHub`, code: "not_connected" };
-      try { const t = crewPick(project.id ?? project.name); return { auto, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, paid: true, images: false }; }
-      catch (e: any) { return { auto, error: String(e?.message ?? e).slice(0, 300), code: e?.code ?? "no_crew" }; } },
+    pasteOffer(url: unknown) { return autoPlan(url); },
     setSettings(a: { autoTeach?: unknown }) { if (typeof a?.autoTeach !== "boolean") throw refuse("autoTeach is true or false", "bad_request"); writeFileSync(settingsFile(), JSON.stringify({ ...settings(), autoTeach: a.autoTeach })); return settings(); },
     /** this room's own auto-teach switch (a pull request's room) */
     autoTeachFor(id: string, on: unknown) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request"); const room = load(k); if (!room) throw refuse("No such review room", "not_found");

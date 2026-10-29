@@ -937,8 +937,10 @@ try {
     await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); });
     await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const opens = [], checks = [];
-    await ctx.route(/\/api\/review-room\/paste-offer\?/, (r) => { const u = new URL(r.request().url()).searchParams.get("url");
-      r.fulfill({ json: /fixture\/project\/pull\/7$/.test(u) ? { auto: true, provider: "codex", model: "gpt-6", effort: "high", paid: true, images: false } : { auto: true, error: "github.com/someone/else is not the repository of a project connected to GitHub", code: "not_connected" } }); });
+    let globalAuto = true; const asked = [];
+    await ctx.route(/\/api\/review-room\/settings$/, (r) => { if (r.request().method() === "POST") globalAuto = JSON.parse(r.request().postData() || "{}").autoTeach; r.fulfill({ json: { autoTeach: globalAuto } }); });
+    await ctx.route(/\/api\/review-room\/paste-offer\?/, (r) => { const u = new URL(r.request().url()).searchParams.get("url"); asked.push(u);
+      r.fulfill({ json: /fixture\/project\/pull\/7$/.test(u) ? { auto: globalAuto, provider: "codex", model: "gpt-6", effort: "high", paid: true, images: true, createsHost: true } : { auto: true, error: "github.com/someone/else is not the repository of a project connected to GitHub", code: "not_connected" } }); });
     await ctx.route(/\/api\/review-room\/open-pr$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); opens.push(b.url);
       if (!/^https:\/\/github\.com\/fixture\/project\/pull\/7$/.test(b.url)) return r.fulfill({ status: 400, json: { error: "github.com/someone/else is not the GitHub repository of a registered project connected to GitHub; Studio reads only those", code: "not_connected" } });
       r.fulfill({ json: { id: PRID, href: `#/room/${PRID}`, room: PRROOM } }); });
@@ -951,7 +953,13 @@ try {
     ok(/not the GitHub repository of a registered project connected to GitHub/.test(await p.textContent('[data-pr-error="home"]')), "the Review Room's home takes a pull request's URL; a repository not connected is refused with the reason");
     await p.fill('[data-pr-url="home"]', "https://github.com/fixture/project/pull/7"); await p.waitForSelector('[data-paste-offer="on"]', { timeout: 5000 }).catch(() => {});
     const po = await p.evaluate(() => document.querySelector('[data-pr-box="home"] [data-paste-offer]')?.textContent ?? null);
-    ok(/starts the lesson by itself/.test(po ?? "") && /one paid model round on codex · gpt-6 \(high\)/.test(po ?? "") && /no generated pictures/.test(po ?? ""), "before the paste, the paste box says what it starts: the lesson by itself, one paid round on this tutor and model", po);
+    ok(/starts the lesson by itself/.test(po ?? "") && /one paid model round on codex · gpt-6 \(high\)/.test(po ?? "") && /up to two generated pictures/.test(po ?? "") && /creates this pull request's host Task and its tutor's staffing/.test(po ?? "") && !/nothing is written/i.test(po ?? ""),
+      "before the paste, the paste box says what it starts, as the room would run it: the host Task and staffing it creates, one paid round on this tutor and model, the room's pictures setting", po);
+    // a switch changed: the box asks again and says the new thing (no answer kept from before the change)
+    const n0 = asked.length; await p.click("[data-auto-global]"); await p.waitForSelector('[data-pr-box="home"] [data-paste-offer="off"]', { timeout: 5000 }).catch(() => {});
+    const offLine = await p.evaluate(() => document.querySelector('[data-pr-box="home"] [data-paste-offer]')?.dataset.pasteOffer);
+    await p.click("[data-auto-global]"); await p.waitForSelector('[data-pr-box="home"] [data-paste-offer="on"]', { timeout: 5000 }).catch(() => {});
+    ok(offLine === "off" && asked.length >= n0 + 2, "turning auto-teach off or on asks the paste box's offer again: it never shows what a paste started before the switch changed", JSON.stringify({ offLine, asked: asked.length - n0 }));
     await p.click('[data-pr-open="home"]'); await p.waitForSelector(`[data-review-room="${PRID}"]`);
     ok(opens.length === 2 && (await p.evaluate(() => location.hash)) === `#/room/${PRID}`, "a connected repository's URL opens its room", JSON.stringify(opens));
     ok(/Open · approved at this head/.test(await p.textContent("[data-pr-state]")) && /from the fork contrib\/project/.test(await p.textContent("[data-room-subject]")) && /rita: approved/.test(await p.textContent("[data-pr-verdicts]")),
@@ -1005,7 +1013,15 @@ try {
       ok(/Review a pull request of fixture\/project/.test(await p.textContent(`[data-project-review-room="${pid}"]`)) && (await p.getAttribute(`[data-pr-url="project:${pid}"]`, "placeholder")) === "https://github.com/fixture/project/pull/123", "a project connected to GitHub offers the pull request box on its page");
       await p.route(/\/api\/review-room\/open-pr$/, (r) => r.fulfill({ status: 400, json: { error: "Paste a pull request's address: https://github.com/<owner>/<repo>/pull/<number>", code: "bad_url" } }));
       await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/issues/1"); await p.click(`[data-pr-open="project:${pid}"]`); await p.waitForSelector(`[data-pr-error="project:${pid}"]`);
-      ok(/Paste a pull request's address/.test(await p.textContent(`[data-pr-error="project:${pid}"]`)), "the project page's box shows why an address is refused"); }
+      ok(/Paste a pull request's address/.test(await p.textContent(`[data-pr-error="project:${pid}"]`)), "the project page's box shows why an address is refused");
+      const sent = []; p.on("request", (q) => { if (/\/api\/review-room\/open-pr$/.test(q.url())) sent.push(JSON.parse(q.postData() || "{}")); });
+      await p.route(/\/api\/review-room\/paste-offer\?/, async (r) => { await new Promise((ok2) => setTimeout(ok2, 700)); r.fulfill({ json: { auto: true, provider: "codex", model: "gpt-6", effort: null, paid: true, images: false, createsHost: false } }); });
+      await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/pull/8"); await p.press(`[data-pr-url="project:${pid}"]`, "Enter"); await p.waitForSelector(`[data-pr-error="project:${pid}"]`);
+      const early = sent.at(-1);
+      await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/pull/9"); await p.waitForSelector(`[data-pr-box="project:${pid}"] [data-paste-offer="on"]`, { timeout: 5000 }).catch(() => {});
+      await p.press(`[data-pr-url="project:${pid}"]`, "Enter"); await p.waitForTimeout(300); const late = sent.at(-1);
+      ok(early?.url === "https://github.com/fixture/project/pull/8" && early.auto === false && late?.url === "https://github.com/fixture/project/pull/9" && !("auto" in late),
+        "Enter at once after the paste, before the box has said what it starts, opens the room without starting a lesson; once it has said so, the paste starts it", JSON.stringify({ early, late })); }
     else ok(false, "fixture: the UI server lists a project to show", JSON.stringify(real));
     await ctx.close(); }
 
