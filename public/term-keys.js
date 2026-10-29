@@ -47,7 +47,8 @@ function altGr(e) {
   if (!(e.ctrlKey && e.altKey)) return false;
   if (e.getModifierState?.("AltGraph")) return true;
   const k = e.key; if (typeof k !== "string" || [...k].length !== 1) return false; // a named key (an arrow, PageDown, Tab)
-  if (/^Key[A-Z]$/.test(e.code)) return k.toLowerCase() !== e.code.slice(3).toLowerCase();
+  // a letter key types another letter on another layout (AZERTY's W key is z, Russian's T is е): not AltGr by itself
+  if (/^Key[A-Z]$/.test(e.code)) return false;
   const b = BASE[e.code]; return !b || k !== (e.shiftKey && b.length > 1 ? b[1] : b[0]);
 }
 /**

@@ -58,6 +58,10 @@ ok(K.lookup(kd("Digit3", "3", { getModifierState: (m: string) => m === "AltGraph
 ok(K.lookup(kd("Digit3", "3"), "win")?.act === "tabN" && K.lookup(kd("BracketRight", "]"), "win")?.act === "nextPane" && K.lookup(kd("KeyT", "t"), "win")?.act === "newTab" && K.lookup(kd("ArrowLeft", "ArrowLeft", { shiftKey: true }), "win")?.act === "swap",
   "win: Ctrl+Alt chords that type their own key (a US layout) and named keys stay Studio's");
 ok(K.lookup(kd("ArrowLeft", "ArrowLeft"), "mac")?.act === "focus", "mac: ⌃⌥← (a named key) stays Studio's");
+// a letter key types another letter on another layout: that is not AltGr. AZERTY's W key types z, a Russian T types е
+ok(K.lookup(kd("KeyW", "z"), "win")?.act === "closePane", "win, AZERTY: Ctrl+Alt+W (the key types z) closes the pane", JSON.stringify(K.lookup(kd("KeyW", "z"), "win")));
+ok(K.lookup(kd("KeyT", "е"), "win")?.act === "newTab", "win, Russian: Ctrl+Alt+T (the key types е) opens a tab", JSON.stringify(K.lookup(kd("KeyT", "е"), "win")));
+ok(K.lookup(kd("KeyT", "t", { getModifierState: (m: string) => m === "AltGraph" }), "win") === null && K.lookup(kd("Digit7", "{"), "win") === null, "AltGraph said outright still wins on a letter; German AltGr+7 still types {");
 // the platform: a Mac (and iPad) is iTerm2's, everything else Windows Terminal's
 ok(K.platformOf({ platform: "MacIntel" }) === "mac" && K.platformOf({ userAgentData: { platform: "macOS" } }) === "mac" && K.platformOf({ platform: "iPad" }) === "mac", "a Mac is \"mac\"");
 ok(K.platformOf({ platform: "Win32" }) === "win" && K.platformOf({ userAgentData: { platform: "Windows" }, platform: "MacIntel" }) === "win" && K.platformOf({ platform: "Linux x86_64" }) === "win", "Windows and Linux are \"win\" (userAgentData first)");
