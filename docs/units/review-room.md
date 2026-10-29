@@ -46,7 +46,21 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   Ask and the transcript. The paid round's confirmation, a voice question heard and an error open above it, over the
   board, never pushing it; a turn being sent shows in the dock. The **transcript** is a drawer over the room, closed by
   default: each question with its scene's title (a click shows the scene and closes the drawer, nothing scrolls), the
-  understanding check and the sources. A citation's basis opens over the room too.
+  tutor's full answer, the understanding check and the sources. A citation's basis opens over the room too.
+- **Short on the board, long in the transcript.** The tutor builds an answer as scenes with `scene_show` {title, picture,
+  points: [{text, cites}]}: a title of at most 20 CJK characters or 48 Latin ones, a picture (a board item it drew), 2 to 4
+  points of at most 60 CJK characters or 120 Latin ones each (citations not counted; a CJK character weighs as many Latin
+  ones as the two limits trade it for, `SCENE_LIMITS`, `boardLength`), at most six scenes a turn. Over a limit the tool
+  refuses the scene and says which part, so the tutor rewrites; the longer explanation is its final answer, which the
+  transcript shows. An older answer (no scenes) is split on the page, sentence by sentence, into points of at most 120 (a
+  CJK character counting two), each citation staying with its sentence; its markdown tables become a `table` picture and
+  its code a picture labelled as the tutor's own code, shown with the point after them. A `table` board item (`rows`, the
+  header first, 2 to 8 rows of at most 5 cells of at most 60 characters) is drawn by Studio as text; a markdown table in an
+  answer is a `table` block, not a claim.
+- **Labels in the captain's language**: a scene's title is the tutor's (or its heading), else the question itself, never
+  "Question: …" beside the same question; Studio's own titles ("This change at a glance", "What changed since you last
+  looked", …) and every picture's kind read in Chinese in a Chinese room; an inference shows one badge (its `[inference]`
+  tag is not shown again).
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
   Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
   folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
@@ -227,7 +241,7 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
 - Read-only. The round runs in the round sandbox with nothing to write (`writes: []`) and no host beyond its model
   (`allow: []`, `egress.allow` is not carried); a sandbox-off grant or local unrestricted mode refuses the turn. Its tools
   (`ROOM_TOOLS`): `fs_list`, `fs_search`, `fs_read` (the head commit, through `git ls-tree`, `git grep`, `git show`),
-  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `screenshots_show`, `chart_draw`, `illustrate`, `check_ask`, `check_grade`, `web_search`,
+  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `scene_show`, `screenshots_show`, `chart_draw`, `illustrate`, `check_ask`, `check_grade`, `web_search`,
   `web_fetch`. Nothing reads or writes the worktree's files, index or refs. Nothing goes to GitHub: no comment, review or
   request of any kind.
 - Recorded like any round: `data/runs/<task>/nodes/<merge node>/room-<card>-<n>/` (`prompt.md` with the skill pins in its
@@ -403,6 +417,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "the header's Firstmate opens it as a sheet …", "leaving the room gives the sidebar and Firstmate back …", "a click in
     the transcript jumps to its scene and closes the transcript …", "← goes back a point …", "Space plays and pauses", "an
     answer with no picture shows Studio's key card …", "an answer that cites files but drew nothing …".
+24. The board stays short: scene_show refuses a title or point over its limit (a CJK character weighing more), a picture
+    not on the board and fewer than two points, saying which; a scene within the limits is kept; a table is a board item of
+    text cells; a markdown table in an answer is not a claim; an older answer is split by sentence into short points, its
+    table a picture; the full answer is in the transcript; a Chinese room has no English titles or badges; an inference
+    shows one badge. — review-room "the board's limits …", "scene_show refuses …", "a scene within the limits is kept …",
+    "a table is a board item …", "a markdown table in an answer is not a claim …"; review-room-ui "a scene the tutor
+    showed …", "the tutor's full answer is in the transcript …", "an older long answer is split by sentence …", "the table
+    is drawn by Studio as text cells", "a Chinese room has no English titles or badges …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

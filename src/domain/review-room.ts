@@ -44,7 +44,7 @@ import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT,
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
-  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "05cf8996df0b222bb49aa847cb925076bba65e424c8063f2e52c81cee6837ef4" },
+  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "052fdfc913925b9034a921d21960c13f0969c5c885f232391a533efe28748e91" },
   { id: "pstack-how", ref: "workflows/skills/pstack/how.md", sha256: "19b614c9a54cf2dbad87114f9a3de7e408f39f7e0b02bf76608956b10d77f6d6" },
   { id: "pstack-why", ref: "workflows/skills/pstack/why.md", sha256: "9d6a298a5528b46610e964d0ce6ddcab990913837cb08455e531d6c5619d8c37" },
   { id: "pstack-teach", ref: "workflows/skills/pstack/teach.md", sha256: "a85b812c6d485cc07e13e3646f8d4b6525185f2159af3523729835007cfa120a" },
@@ -59,7 +59,31 @@ export const ROOM_ACTIONS: Record<string, { en: string; zh: string } | null> = {
   quiz: { en: "Check my understanding: ask me a few questions.", zh: "考考我：問我幾個問題，看我懂了沒。" },
 };
 /** The tools a tutor round gets: reading, the board, the check and the filtered web. Nothing else, ever. */
-export const ROOM_TOOLS = ["fs_list", "fs_search", "fs_read", "git_diff", "git_log", "git_show", "git_blame", "board_draw", "screenshots_show", "chart_draw", "illustrate", "check_ask", "check_grade", "web_search", "web_fetch"] as const;
+export const ROOM_TOOLS = ["fs_list", "fs_search", "fs_read", "git_diff", "git_log", "git_show", "git_blame", "board_draw", "scene_show", "screenshots_show", "chart_draw", "illustrate", "check_ask", "check_grade", "web_search", "web_fetch"] as const;
+/** What the board shows is short, and Studio holds the tutor to it (scene_show refuses what is over, and the tutor rewrites):
+ *  a scene's title at most 20 CJK characters or 48 Latin ones, a point at most 60 CJK or 120 Latin (citations not counted).
+ *  A CJK character counts as the Latin characters the two limits trade it for. */
+export const SCENE_LIMITS = { title: { cjk: 20, latin: 48 }, point: { cjk: 60, latin: 120 }, points: { min: 2, max: 4 }, scenes: 6 } as const;
+const CJK = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿︰-﹏＀-￯]|[\ud840-\ud87f][\udc00-\udfff]/g;
+/** a text's length on the board: citations, markup and spacing out; a CJK character weighs latin / cjk */
+export function boardLength(text: unknown, limit: { cjk: number; latin: number }): number {
+  const t = String(text ?? "").replace(/\[(diff|ledger|commit|source|board|review):[^\]\s]{1,300}\]|\[(inference|inferred|speculative|direct|supported)\]/gi, "").replace(/\*\*|`/g, "").replace(/\s+/g, " ").trim();
+  const cjk = (t.match(CJK) ?? []).length; return cjk * (limit.latin / limit.cjk) + ([...t].length - cjk);
+}
+export const fitsBoard = (text: unknown, limit: { cjk: number; latin: number }) => boardLength(text, limit) <= limit.latin;
+/** what is wrong with a scene's title and points, as the tutor reads it (empty: it fits the board) */
+export function sceneErrors(title: string, points: any[]): string[] {
+  const errors: string[] = [];
+  if (!title) errors.push("title is required");
+  else if (!fitsBoard(title, SCENE_LIMITS.title)) errors.push(`the title is too long (${Math.ceil(boardLength(title, SCENE_LIMITS.title))} of ${SCENE_LIMITS.title.latin}: at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin): shorten it`);
+  if (points.length < SCENE_LIMITS.points.min || points.length > SCENE_LIMITS.points.max) errors.push(`points is ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points; the rest goes in your final answer`);
+  points.slice(0, 8).forEach((p: any, i: number) => { const t = String(p?.text ?? "").trim();
+    if (!t) errors.push(`point ${i + 1} is empty`);
+    else if (/\n/.test(t)) errors.push(`point ${i + 1} is one sentence, no line breaks`);
+    else if (!fitsBoard(t, SCENE_LIMITS.point)) errors.push(`point ${i + 1} is too long (${Math.ceil(boardLength(t, SCENE_LIMITS.point))} of ${SCENE_LIMITS.point.latin}: at most ${SCENE_LIMITS.point.cjk} CJK characters or ${SCENE_LIMITS.point.latin} Latin): split it or put the detail in your final answer`);
+    if (p?.cites !== undefined && (!Array.isArray(p.cites) || p.cites.length > 4)) errors.push(`point ${i + 1}: cites is a list of at most 4 citations`); });
+  return errors;
+}
 /** Illustrations a turn may generate (each a paid image job): never evidence, always labelled as generated. */
 export const ILLUSTRATIONS_PER_TURN = 2;
 /** An image generator (production: Studio's Codex image job, the same one image steps use; tests stub it). */
@@ -67,7 +91,7 @@ export type Illustrator = (prompt: string, authorize: () => void, signal: AbortS
 
 const SHA = /^[a-f0-9]{40}$/, LIST_CAP = 3000, LANGS: Record<string, string> = { en: "English", "zh-TW": "Traditional Chinese (zh-TW)", "zh-CN": "Simplified Chinese (zh-CN)" };
 type Source = { n: number; turn: number; kind: "search" | "fetch"; query?: string; url?: string; /** an address that was refused or did not parse, kept as text only */ text?: string; at: string; ok: boolean; refused?: string; error?: string; status?: number };
-type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "compare" | "note" | "screenshot" | "chart" | "image"; title: string; group?: string; step?: number; [k: string]: any };
+type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "compare" | "note" | "table" | "screenshot" | "chart" | "image"; title: string; group?: string; step?: number; [k: string]: any };
 type Question = { n: number; q: string; turn: number; at: string; result?: { correct: boolean; note: string; turn: number } };
 type Turn = { n: number; action: string; text: string; lang: string; by: string; at: string; status: "running" | "done" | "failed" | "interrupted"; ended: string | null;
   job: string | null; provider: string; model: string; effort: string | null; answer: string; error: string | null; cost: any; round: string; head: string;
@@ -76,7 +100,9 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   /** the answer as claims, each cited or an inference (ground) */
   claims?: Claim[];
   /** a scene Studio made itself, no model and nothing paid: "since" (what changed since the captain last looked) or "reviewers" (what GitHub reviewers asked) */
-  studio?: true; title?: string; from?: string };
+  studio?: true; title?: string; from?: string;
+  /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
+  scenes?: { n: number; title: string; picture: string; points: Claim[] }[] };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
 export type Subject = { kind: "merge" | "branch" | "pr"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null };
 type Note = { id: string; kind: "review" | "inline" | "comment"; author: string; body: string; at: string | null; url: string | null; state?: string; commit?: string | null; path?: string | null; line?: number | null; outdated?: boolean };
@@ -109,7 +135,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 export const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})\]/g;
 export type Cite = { ref: string; ok: boolean };
 /** basis "reviewer": a GitHub reviewer's own words (quote, untrusted text shown as text), cited to the comment */
-export type Claim = { text: string; kind: "claim" | "heading" | "code" | "aside"; basis: "cited" | "inference" | "reviewer" | null; cites: Cite[]; quote?: string };
+export type Claim = { text: string; kind: "claim" | "heading" | "code" | "table" | "aside"; basis: "cited" | "inference" | "reviewer" | null; cites: Cite[]; quote?: string };
 /** The tutor's answer as blocks (paragraphs, list items, headings, code), each claim with its citations checked by ok. */
 export function ground(text: string, ok: (kind: string, value: string) => boolean): Claim[] {
   const blocks: string[] = []; let cur: string[] = [], fence = false;
@@ -125,6 +151,8 @@ export function ground(text: string, ok: (kind: string, value: string) => boolea
   return blocks.map((b): Claim => {
     if (/^\s*```/.test(b)) return { text: b, kind: "code", basis: null, cites: [] };
     if (/^\s*#{1,6}\s/.test(b)) return { text: b, kind: "heading", basis: null, cites: [] };
+    // a markdown table is not a claim: the board shows it as a table (text only), its citations kept
+    if (b.split("\n").filter((l) => l.trim()).length >= 2 && b.split("\n").every((l) => !l.trim() || /^\s*\|/.test(l))) return { text: b, kind: "table", basis: null, cites: [...b.matchAll(CITE)].map((m) => ({ ref: `${m[1]}:${m[2]}`, ok: ok(m[1], m[2]) })) };
     const cites = [...b.matchAll(CITE)].map((m) => ({ ref: `${m[1]}:${m[2]}`, ok: ok(m[1], m[2]) }));
     if (!cites.length && /\?\s*$/.test(b.trim())) return { text: b, kind: "aside", basis: null, cites };
     return { text: b, kind: "claim", basis: !/\[(inference|inferred|speculative)\]/i.test(b) && cites.some((c) => c.ok) ? "cited" : "inference", cites };
@@ -388,6 +416,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const said = async () => { const cites = citesOf(a?.cites, await citeCheck(room, s)); return { cites, basis: cites.some((c) => c.ok) ? "cited" : "inference" }; };
       if (type === "mermaid") { const code = String(a?.code ?? ""); if (!code.trim() || code.length > 4000) throw new Error(`item ${i + 1}: mermaid code is 1 to 4000 characters`); return { ...at, type, code, ...(await said()) }; }
       if (type === "note") { const text = String(a?.text ?? ""); if (!text.trim() || text.length > 2000) throw new Error(`item ${i + 1}: a note is 1 to 2000 characters`); return { ...at, type, text, ...(await said()) }; }
+      // a small table, drawn by Studio as text: the header row first
+      if (type === "table") { const rows = Array.isArray(a?.rows) ? a.rows : [];
+        if (rows.length < 2 || rows.length > 8 || rows.some((r: any) => !Array.isArray(r) || !r.length || r.length > 5 || r.some((c: any) => typeof c !== "string" && typeof c !== "number" || String(c).length > 60))) throw new Error(`item ${i + 1}: a table is 2 to 8 rows (the header first) of 1 to 5 cells, each at most 60 characters`);
+        return { ...at, type, rows: rows.map((r: any[]) => r.map((c) => String(c).replace(/\s+/g, " ").trim())), ...(await said()) }; }
       const path = pathArg(a?.path);
       if (type === "diff") {
         if (!(await changedOf(s)).includes(path)) throw new Error(`item ${i + 1}: ${path} is not a changed file of this pull request`);
@@ -405,7 +437,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (!before && !after) throw new Error(`item ${i + 1}: ${path} is in neither the base nor the head`);
         return { ...at, type, path, base, commit: head, before, after, basis: "cited", cites: [] };
       }
-      throw new Error(`item ${i + 1}: type is mermaid, diff, code, compare or note`);
+      throw new Error(`item ${i + 1}: type is mermaid, diff, code, compare, table or note`);
     };
     return [
       { name: "fs_list", description: `List the files of the pull request's head commit (at most ${LIST_CAP}).`, schema: { type: "object", properties: {} },
@@ -431,13 +463,25 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       { name: "git_blame", description: "Who last changed each line of a range of a file at the head (at most 120 lines): commit, author, date.", schema: { type: "object", properties: { path: { type: "string" }, start: { type: "number" }, end: { type: "number" } }, required: ["path", "start"] },
         run: async (a) => { const p = pathArg(a?.path), s0 = Math.max(1, Number(a?.start) || 1), e0 = Math.min(s0 + 119, Math.max(s0, Number(a?.end) || s0 + 40));
           const t = await g(wt, ["blame", "--date=short", "-L", `${s0},${e0}`, head, "--", p], 400_000); return t === null ? { error: `cannot blame ${p} lines ${s0}-${e0} at the head` } : { path: p, text: t.slice(0, 20000) }; } },
-      { name: "board_draw", description: "Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); note {text}. Studio fills every excerpt from the real commits.",
+      { name: "board_draw", description: "Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); table {rows: [[header cells], [cells], ...]} (2 to 8 rows of at most 5 cells of at most 60 characters, shown as text); note {text}. Studio fills every excerpt from the real commits.",
         schema: { type: "object", properties: { items: { type: "array", maxItems: 8, items: { type: "object" } } }, required: ["items"] },
         run: async (a) => { const list = Array.isArray(a?.items) ? a.items.slice(0, 8) : []; if (!list.length) return { error: "items is a list of 1 to 8 board items" };
           if (room.board.filter((b) => b.turn === turn.n).length + list.length > 40) return { error: "at most 40 board items a turn" };
           const added: string[] = [], errors: string[] = [];
           for (let i = 0; i < list.length; i++) { try { const it = await item(list[i], i); room.board.push(it); added.push(it.id); } catch (e: any) { errors.push(String(e?.message ?? e)); } }
           save(k, room); return { added, errors }; } },
+      { name: "scene_show", description: `Show one scene on the board, the way the captain reads an answer: a short title, one picture (a board item id you drew: board_draw, chart_draw, screenshots_show or illustrate) and ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points, each one sentence with the citations it rests on (none: it is an inference). Limits: the title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones; a point at most ${SCENE_LIMITS.point.cjk} CJK or ${SCENE_LIMITS.point.latin} Latin (citations not counted). Over a limit the scene is refused, saying which part: shorten it and call again. A longer explanation goes in your final answer (the transcript). At most ${SCENE_LIMITS.scenes} scenes a turn.`,
+        schema: { type: "object", properties: { title: { type: "string" }, picture: { type: "string" }, points: { type: "array", minItems: SCENE_LIMITS.points.min, maxItems: SCENE_LIMITS.points.max, items: { type: "object", properties: { text: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["text"] } } }, required: ["title", "picture", "points"] },
+        run: async (a) => {
+          const title = String(a?.title ?? "").replace(/\s+/g, " ").trim(), picture = String(a?.picture ?? "").trim(), points = Array.isArray(a?.points) ? a.points : [];
+          const errors = sceneErrors(title, points); if (!room.board.some((b) => b.id === picture)) errors.push(`picture ${picture ? `"${picture.slice(0, 20)}" is not a board item` : "is required"}: draw one first (board_draw, chart_draw, screenshots_show or illustrate) and give its id`);
+          if ((turn.scenes?.length ?? 0) >= SCENE_LIMITS.scenes) errors.push(`at most ${SCENE_LIMITS.scenes} scenes a turn`);
+          if (errors.length) return { error: errors.join("; ") };
+          const ok = await citeCheck(room, s);
+          const claims: Claim[] = points.map((p: any) => { const cites = citesOf(p.cites, ok), text = String(p.text).replace(/\s+/g, " ").trim();
+            return { text, kind: "claim", basis: !/\[(inference|inferred|speculative)\]/i.test(text) && cites.some((c) => c.ok) ? "cited" : "inference", cites }; });
+          const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title, picture, points: claims }]; save(k, room);
+          return { scene: n, points: claims.map((c) => c.basis) }; } },
       { name: "screenshots_show", description: "Put the app's real screenshots on the board: each changed page at the base and at the head, as Studio's sandboxed renderer shot them for this head (the Task's own capture check, the app's fixture build, no live data). The captain toggles before / after. Only when the change touches the app's pages.",
         schema: { type: "object", properties: { title: { type: "string" } } },
         run: async (a) => { const cap = s.run.ctx.captures, prefix = `/api/wruns/${s.run.id}/captures/`, ok = (u: any) => typeof u === "string" && u.startsWith(prefix) && !u.includes("..") ? u : null;

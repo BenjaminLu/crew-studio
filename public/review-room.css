@@ -196,3 +196,13 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 
 /* a narrower window: the dock's quick actions give way to the question */
 @media (max-width: 1100px) { .rr-room { padding: 10px 14px; } .rr-quick .rr-chip:not(.lead) { display: none; } .rr-pill { max-width: 180px; } }
+/* a table on the board (the tutor's, or one from an older answer): text cells */
+.rr-table { border-collapse: collapse; font-size: 14px; margin: auto; max-width: 100%; }
+.rr-table th, .rr-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; overflow-wrap: anywhere; }
+.rr-table th { background: var(--surface-2); font-weight: 600; }
+.rr-body.text:has(> .rr-table) { display: grid; place-items: center; }
+/* the transcript: the tutor's full answer, folded */
+.rr-answer { margin: 4px 8px 8px; font-size: 13px; }
+.rr-answer summary { cursor: pointer; color: var(--text-2); }
+.rr-answer p { margin: 6px 0; }
+.rr-ans-table { white-space: pre-wrap; font: 12px/1.5 var(--f-mono); }

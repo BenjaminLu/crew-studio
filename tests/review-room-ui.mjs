@@ -235,6 +235,35 @@ try {
     ok(s.visual === "t2-files" && chart.chart === "diffstat" && JSON.stringify(chart.rows) === JSON.stringify(["test/percent.test.ts"]) && /counted by git/.test(chart.kind), "an answer that cites files but drew nothing gets those files' line counts, counted by git", JSON.stringify({ s, chart }));
     await ctx.close(); }
 
+  // ---------- short on the board: the tutor's scenes, an older long answer split, labels in the captain's language ----------
+  { const LONG = "第一句說明 percent 怎麼算 [diff:src/percent.ts:L2-3]。第二句講四捨五入的規則，負數也一樣處理。第三句提醒呼叫端都要傳入以分為單位的整數。第四句說測試涵蓋了邊界情況 [diff:test/percent.test.ts]。第五句是一個比較長的補充說明，描述這個改動和發票的關係以及為什麼現在要做。";
+    const R2 = { ...ROOM, turns: [...ROOM.turns,
+      { n: 3, action: "how", text: "這個改動是怎麼運作的？", lang: "zh-TW", status: "done", provider: "codex", model: "gpt-6", answer: "## 很長的完整說明\n\n第一段落，內容只在紀錄裡看得到 [diff:src/percent.ts]。\n\n第二段落。", claims: [cl("第一段落 [diff:src/percent.ts]。", [ok1("diff:src/percent.ts")])],
+        scenes: [{ n: 1, title: "四捨五入到整數分", picture: "B1-2", points: [cl("金額先進 percent [board:B1-1]。", [ok1("board:B1-1")]), cl("結果取整到分 [board:B1-2]。", [ok1("board:B1-2")]), cl("我推測是為了發票 [inference]。")] }] },
+      { n: 4, action: "why", text: "為什麼要這樣做？", lang: "zh-TW", status: "done", provider: "codex", model: "gpt-6", answer: "z", claims: [cl(LONG, [ok1("diff:src/percent.ts:L2-3"), ok1("diff:test/percent.test.ts")]),
+        { text: "| 金額 | 15% |\n|---|---|\n| 1999 | 300 |", kind: "table", basis: null, cites: [] }, cl("表格之後的一點 [inference]。")] }] };
+    const { ctx, p } = await open(1440, "zh-TW"); await p.setViewportSize({ width: 1440, height: 900 });
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: R2 }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t3"]');
+    let s = await stage(p); const kick = await p.evaluate(() => ({ kicker: document.querySelector(".rr-kicker")?.textContent, badges: document.querySelectorAll('[data-stage] .rr-point [data-basis="inference"]').length, tiers: document.querySelectorAll("[data-stage] .rr-tier").length }));
+    ok(s.title === "四捨五入到整數分" && s.visual === "B1-2" && s.points === 3 && kick.badges === 1 && kick.tiers === 0 && !/提問：|Question/.test(kick.kicker), "a scene the tutor showed: its own short title, its picture, its points; one inference badge, the [inference] tag not shown again; no “Question: …” title", JSON.stringify({ s, kick }));
+    await p.click("[data-transcript-toggle]");
+    const full = await p.evaluate(() => { const d = document.querySelector('[data-answer="3"]'); return d && d.textContent; });
+    ok(/導師的完整回答/.test(full || "") && /內容只在紀錄裡看得到/.test(full || "") && !/內容只在紀錄裡看得到/.test(await p.textContent("[data-stage]")), "the tutor's full answer is in the transcript, not on the board", full);
+    await p.click('[data-jump="t4"]'); await p.click("[data-replay]"); await p.click("[data-play]");
+    const lens = []; let sawTable = false, maxShown = 0;
+    for (let i = 0; i < 12; i++) { const m = await p.evaluate(() => ({ cur: document.querySelector('[data-stage] .rr-point[aria-current="true"] .rr-ptext')?.textContent || "", type: document.querySelector("[data-visual] [data-item-type]")?.dataset.itemType, shown: document.querySelectorAll("[data-stage] .rr-point").length, at: document.querySelector("[data-point-pos]")?.dataset.pointPos, scene: document.querySelector("[data-stage]").dataset.scene }));
+      if (m.scene !== "t4") break; lens.push(m.cur.replace(/\s*(diff|白板)\s[^\s]+/g, "").length); if (m.type === "table") sawTable = true; maxShown = Math.max(maxShown, m.shown);
+      if (m.at && m.at.split("/")[0] === m.at.split("/")[1]) break; await p.keyboard.press("ArrowRight"); }
+    ok(lens.length >= 3 && lens.every((n) => n <= 62) && maxShown <= 4 && sawTable, "an older long answer is split by sentence into short points (≤ 60 CJK characters), at most four a page; its markdown table becomes a table picture", JSON.stringify({ lens, maxShown, sawTable }));
+    ok(await p.evaluate(() => document.querySelector("[data-visual] [data-table] th")?.textContent === "金額" && !document.querySelector("[data-visual] [data-table] script")), "the table is drawn by Studio as text cells");
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]');
+    const zh = await p.evaluate(() => ({ title: document.querySelector("[data-scene-title]")?.textContent, foot: document.querySelector("[data-visual] .rr-item-h")?.textContent, stage: document.querySelector("[data-stage]").textContent }));
+    await p.keyboard.press("ArrowRight"); const flow = await p.evaluate(() => document.querySelector("[data-visual] .rr-item-h")?.textContent || "");
+    ok(zh.title === "一眼看懂這個改動" && /一眼看懂這個改動/.test(zh.foot) && !/This change at a glance|mermaid/.test(zh.stage + flow) && /流程圖/.test(flow), "a Chinese room has no English titles or badges: Studio's titles and every picture's kind read in Chinese", JSON.stringify({ zh, flow }));
+    await ctx.close(); }
+
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });

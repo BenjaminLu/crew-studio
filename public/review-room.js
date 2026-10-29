@@ -157,7 +157,7 @@ function chartView(it) {
   const vals = rows.flatMap((r) => it.mode === "diffstat" ? [r.added, r.removed] : [r.before, r.after, r.value]).filter((v) => typeof v === "number");
   const max = Math.max(1, ...vals.map(Math.abs)), LW = 170, BW = 260, RH = two ? 34 : 22, W = LW + BW + 70, Hh = 18 + rows.length * RH;
   const svg = sv("svg", { viewBox: `0 0 ${W} ${Hh}`, class: "rr-chart", role: "img", "data-chart": it.mode, preserveAspectRatio: "xMidYMid meet", style: `max-width:${Math.round(W * 1.6)}px;max-height:${Math.round(Hh * 1.6)}px` });
-  const bar = (y, v, cls) => { if (typeof v !== "number") return; const w = Math.max(1, Math.round(Math.abs(v) / max * BW)); svg.append(sv("rect", { x: LW, y, width: w, height: 12, class: cls, "data-value": v })); const t = sv("text", { x: LW + w + 6, y: y + 10, class: "rr-chart-v" }); t.textContent = `${v}${it.unit ? " " + it.unit : ""}`; svg.append(t); };
+  const bar = (y, v, cls) => { if (typeof v !== "number") return; const w = Math.max(1, Math.round(Math.abs(v) / max * BW)); svg.append(sv("rect", { x: LW, y, width: w, height: 12, class: cls, "data-value": v })); const t = sv("text", { x: LW + w + 6, y: y + 10, class: "rr-chart-v" }); t.textContent = `${v}${it.unit ? " " + (it.unit === "lines" ? T("lines", "行") : it.unit) : ""}`; svg.append(t); };
   rows.forEach((r, i) => { const y = 14 + i * RH, l = sv("text", { x: LW - 8, y: y + 10, "text-anchor": "end", class: "rr-chart-l" }); l.textContent = r.label.length > 26 ? "…" + r.label.slice(-25) : r.label; svg.append(l);
     if (it.mode === "diffstat") { bar(y, r.added, "add"); bar(y + 14, r.removed, "del"); } else if (it.mode === "before-after") { bar(y, r.before, "before"); bar(y + 14, r.after, "after"); } else bar(y, r.value, "after"); });
   const legend = it.mode === "diffstat" ? [["add", T("lines added", "新增行數")], ["del", T("lines removed", "刪除行數")]] : it.mode === "before-after" ? [["before", T("before", "之前")], ["after", T("after", "之後")]] : [];
@@ -171,7 +171,7 @@ function imageView(it) {
 }
 function basisRow(card, it) { return it.basis === "illustration" ? h("div", { class: "rr-basis" }, h("span", { class: "rr-inference", "data-basis": "illustration" }, T("Not evidence", "不是證據"))) : it.basis === "inference" ? h("div", { class: "rr-basis" }, inferenceBadge()) : it.cites?.length ? h("div", { class: "rr-basis" }, it.cites.map((c) => citeChip(card, c.ref, c.ok))) : null; }
 function itemView(card, it, prev) {
-  const head = h("div", { class: "rr-item-h" }, it.kind ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge" }, it.type), h("b", {}, it.title || ""), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
+  const head = h("div", { class: "rr-item-h" }, it.kind ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge", "data-type": it.type }, typeLabel(it.type)), h("b", {}, itemTitle(it)), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
   let body;
   if (it.type === "mermaid") { const g = parseFlow(it.code), p = prev ? parseFlow(prev.code) : null; body = g ? h("div", { class: "rr-flow-wrap", "data-flow": it.id }, flowSvg(g, p)) : [h("p", { class: "faint" }, T("Diagram source (Studio draws flowcharts; this kind is shown as text)", "圖表原始碼（Studio 會畫 flowchart；這種圖以文字顯示）")), h("pre", { class: "rr-pre" }, it.code)]; }
   else if (it.type === "diff") body = [it.header ? h("p", { class: "faint" }, it.header) : null, diffPre(it.text)];
@@ -181,6 +181,9 @@ function itemView(card, it, prev) {
   else if (it.type === "image") body = imageView(it);
   else if (it.type === "compare") body = h("div", { class: "rr-compare" }, h("div", {}, h("b", {}, T("Before (base)", "之前（base）")), linesPre(it.before)), h("div", {}, h("b", {}, T("After (head)", "之後（head）")), linesPre(it.after)));
   else if (it.type === "keycard") body = keycardView(it);
+  // a table, the tutor's or one from an older answer: cells as text
+  else if (it.type === "table") body = h("table", { class: "rr-table", "data-table": it.id }, (it.rows || []).map((row, i) => h("tr", {}, row.map((c) => h(i ? "td" : "th", {}, String(c))))));
+  else if (it.type === "snippet") body = h("pre", { class: "rr-pre" }, it.text || "");
   else body = h("p", { class: "rr-note" }, inline(card, it.text || "", it.cites));
   // the picture first, filling its box; what it is (kind, title, path) and its basis under it
   const pic = ["mermaid", "chart", "screenshot", "image", "keycard"].includes(it.type);
@@ -200,22 +203,62 @@ function keycardView(it) {
     svg.append(g); });
   return svg;
 }
-// ---------- the stage: each answer is a scene, a visual beside the tutor's points, revealed step by step ----------
+// ---------- the stage: each answer is one or more scenes, a picture beside the tutor's points, revealed step by step ----------
 const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"], since: ["What changed since last time", "上次之後改了什麼"], reviewers: ["What reviewers asked", "審查者問了什麼"] };
 /** text cut to n characters at a word, with an ellipsis (one long word is cut where it must) */
 const clip = (s, n) => { s = String(s || "").trim(); if (s.length <= n) return s; const cut = s.slice(0, n), at = cut.lastIndexOf(" "); return `${(at > n / 3 ? cut.slice(0, at) : cut.slice(0, n - 1)).replace(/[\s,.;:–—-]+$/, "")}…`; };
 const plain = (s) => String(s || "").replace(CITE, "").replace(/\*\*|`/g, "").replace(/^\s*([-*+]|\d+\.)\s+/, "").replace(/\s+/g, " ").trim();
-/** the room's scenes: the opening picture (turn 0), then one per turn, its points the answer's claims */
+// what Studio itself names a picture or a scene, in the captain's language (the model's own titles stay as written)
+const STUDIO_TITLES = { "This change at a glance": "一眼看懂這個改動", "What changed since you last looked": "你上次看過之後改了什麼", "The app, before and after": "這個 app 改動前後", "Chart": "圖表", "Illustration": "插圖" };
+const itemTitle = (it) => (STUDIO_TITLES[it?.title] ? T(it.title, STUDIO_TITLES[it.title]) : it?.title || "");
+const TYPE_LABEL = { mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
+const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
+// ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
+const CJK_RE = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿︰-﹏＀-￯]/g;
+const boardLen = (s) => { const t = plain(s), c = (t.match(CJK_RE) || []).length; return c * 2 + ([...t].length - c); };
+const POINT_LEN = 120;
+/** an older answer's paragraph as points of at most one or two sentences: a citation stays with the sentence it follows */
+function sentences(text) {
+  const raw = String(text || "").replace(/^\s*([-*+]|\d+\.)\s+/, "").replace(/\s*\n\s*/g, " ").split(/(?<=[。！？；])|(?<=[.!?;])\s+(?=[^\s[])/).map((x) => x.trim()).filter(Boolean), out = [];
+  for (const p of raw) { const m = /^((?:\[[a-z]+:[^\]\s]+\]\s*)+)(.*)$/i.exec(p); if (m && out.length) { out[out.length - 1] += ` ${m[1].trim()}`; if (m[2].trim()) out.push(m[2].trim()); } else out.push(p); }
+  const packed = []; for (const s of out) { const last = packed.at(-1); if (last != null && boardLen(`${last} ${s}`) <= POINT_LEN) packed[packed.length - 1] = `${last} ${s}`; else packed.push(s); }
+  return packed;
+}
+const isTable = (t) => { const ls = String(t || "").split("\n").filter((l) => l.trim()); return ls.length >= 2 && ls.every((l) => /^\s*\|/.test(l)); };
+const tableRows = (t) => String(t || "").split("\n").filter((l) => l.trim() && !/^\s*\|?\s*:?-{2,}/.test(l)).slice(0, 9).map((l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").slice(0, 5).map((c) => clip(plain(c), 60)));
+/** an older answer (no scenes of its own) as points: sentences, its tables and code as pictures shown with the point after them */
+function legacyPoints(key, claims) {
+  const out = [], extra = []; let pend = null;
+  claims.forEach((c, i) => {
+    if (c.kind === "heading") return;
+    if (c.kind === "table" || isTable(c.text)) { pend = { id: `${key}-table${i + 1}`, synth: true, type: "table", title: T("A table from the answer", "回答裡的表格"), rows: tableRows(c.text), basis: null, cites: c.cites || [] }; extra.push(pend); return; }
+    if (c.kind === "code") { pend = { id: `${key}-code${i + 1}`, synth: true, type: "snippet", title: T("Code the tutor wrote (not from the commit)", "導師寫的程式碼（不是 commit 裡的）"), text: c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, ""), basis: null, cites: [] }; extra.push(pend); return; }
+    const parts = c.quote || c.basis === "reviewer" ? [c.text] : sentences(c.text);
+    parts.forEach((t, j) => { out.push({ ...c, text: t, cites: parts.length === 1 ? c.cites : (c.cites || []).filter((x) => t.includes(`[${x.ref}]`)), ...(j === 0 && pend ? { visual: pend } : {}) }); if (j === 0) pend = null; });
+  });
+  if (pend && out.length) out.at(-1).visual ||= pend;
+  return { points: out, extra };
+}
+/** the room's scenes: the opening picture (turn 0), then each turn's: the scenes the tutor showed (scene_show), else its answer
+ *  as points; Studio's own scenes (what changed, what reviewers asked) as they are */
 function scenesOf(r) {
   const out = [], opening = r.board.filter((b) => b.turn === 0);
   if (opening.length) out.push({ key: "t0", turn: 0, title: T("This change at a glance", "一眼看懂這個改動"), question: null, visuals: opening, points: [], questions: [] });
   for (const t of r.turns) {
+    const questions = r.check.questions.filter((q) => q.turn === t.n), turnBoard = r.board.filter((b) => b.turn === t.n);
     const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]) : [];
-    const heading = claims.find((c) => c.kind === "heading"), [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action];
     // a scene Studio made itself (no model): what changed since the captain last looked, what GitHub reviewers asked
-    if (t.studio) { out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: T(en, zh), question: null, visuals: r.board.filter((b) => b.turn === t.n), points: claims, questions: [] }); continue; }
-    out.push({ key: `t${t.n}`, turn: t.n, t, title: heading ? plain(heading.text.replace(/^\s*#+\s*/, "")) : `${T(en, zh)}: ${t.text.slice(0, 80)}`, question: t.text,
-      visuals: r.board.filter((b) => b.turn === t.n), points: claims.filter((c) => c.kind !== "heading"), questions: r.check.questions.filter((q) => q.turn === t.n) });
+    if (t.studio) { const [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action]; out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: T(en, zh), question: null, visuals: turnBoard, points: claims, questions: [] }); continue; }
+    // the tutor's own scenes: each its picture and its few points; the answer itself is in the transcript
+    if (t.status === "done" && t.scenes?.length) {
+      const used = new Set(t.scenes.map((s) => s.picture));
+      t.scenes.forEach((s, m) => { const pic = r.board.find((b) => b.id === s.picture), last = m === t.scenes.length - 1;
+        out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
+      continue; }
+    const heading = claims.find((c) => c.kind === "heading"), { points, extra } = legacyPoints(`t${t.n}`, claims);
+    // the scene's title: the answer's heading, else the question itself (shown once, never as "Question: …" beside itself)
+    out.push({ key: `t${t.n}`, turn: t.n, t, title: heading ? plain(heading.text.replace(/^\s*#+\s*/, "")) : clip(plain(t.text), 48), question: heading ? t.text : null,
+      visuals: [...turnBoard, ...extra], points, questions });
   }
   return out;
 }
@@ -336,7 +379,7 @@ function stageView(r) {
   const pointView = (c, j) => { const at = page * PER + j, now = at === k - 1;
     if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}`, "data-claim": "code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
     return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : " done"}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
-      c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, c.text.replace(/^\s*[-*+]\s+/, ""), c.cites)),
+      c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites)),
       // what someone else wrote (a reviewer, a commit message): their words as plain text, never parsed for citations or markup;
       // the gist (its first line, cut short) on the board, the whole text only when the captain opens it
       c.quote ? quoteView(c, `${card}/${sc.key}/${at}`) : null); };
@@ -355,7 +398,7 @@ function stageView(r) {
       h("div", { class: "rr-scene" },
         h("figure", { class: "rr-visual", "data-visual": v?.id || "" },
           v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")),
-          sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : b.type, ` ${clip(b.title, 24)}`))) : null),
+          sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
         h("div", { class: "rr-points" },
           sc.t && sc.t.status !== "done" ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
           h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
@@ -440,7 +483,11 @@ function drawer(r) {
         h("h3", {}, T("Scenes", "場景")),
         // a jump changes the scene on the stage and closes the drawer: nothing scrolls
         h("ol", { class: "rr-turns" }, scenes.map((sc, i) => h("li", { "data-turn": sc.turn, "data-turn-status": sc.t?.status || "opening" }, h("button", { type: "button", class: "rr-jump", "data-jump": sc.key, onclick: () => { stopPlay(); RR.scene.set(card, i); RR.drawer.delete(card); rerender(); } },
-          sc.question ? h("span", { class: "rr-jq" }, sc.question.slice(0, 160)) : null, h("span", { class: "faint" }, ` → ${sc.title}`))))),
+          sc.question ? h("span", { class: "rr-jq" }, sc.question.slice(0, 160)) : null, h("span", { class: "faint" }, ` → ${sc.title}`)),
+          // the tutor's whole answer: the board shows it short, the transcript in full (text only)
+          sc.t && !sc.t.studio && sc.t.status === "done" && sc.t.answer && sc.key === `t${sc.t.n}` ? h("details", { class: "rr-answer", "data-answer": sc.t.n, open: RR.fold.has(`${card}/answer/${sc.t.n}`) },
+            h("summary", { onclick: (e) => { const k = `${card}/answer/${sc.t.n}`; e.currentTarget.parentElement.open ? RR.fold.delete(k) : RR.fold.add(k); } }, T("The tutor's full answer", "導師的完整回答")),
+            String(sc.t.answer).split(/\n\s*\n/).filter((x) => x.trim()).map((para) => h("p", { class: isTable(para) ? "rr-ans-table" : "" }, inline(card, para.trim(), (sc.t.claims || []).flatMap((c) => c.cites || []))))) : null))),
         h("h3", {}, T("Understanding check", "理解檢查")),
         q.length ? [h("p", { "data-check-score": "" }, graded.length ? T(`${right} of ${graded.length} correct`, `答對 ${right}/${graded.length}`) : T("Not answered yet: answer in the prompt.", "還沒作答：請在輸入框回答。")),
           h("ol", { class: "rr-check" }, q.map((x) => h("li", { "data-check": x.n, "data-check-result": x.result ? (x.result.correct ? "correct" : "missed") : "open" }, x.q, x.result?.note ? h("div", { class: "faint" }, x.result.note) : null)))]

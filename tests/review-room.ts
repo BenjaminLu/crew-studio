@@ -145,7 +145,16 @@ script.push([
   ["illustrate", { title: "One too many", concepts: ["number"] }],
   ["check_ask", { questions: ["What does percent(1999, 15) return, and why?", "Where could rounding go wrong for a user?"] }],
   ["fs_write", { path: "src/percent.ts", content: "x" }],
-  ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nThe sketch shows the rounding [board:B1-11].\n\nWant me to go deeper?`]]);
+  // a small table on the board, drawn by Studio as text; one too wide is refused
+  ["board_draw", { items: [{ type: "table", title: "Rounding cases", rows: [["amount", "15%"], ["1999", "300"], ["1000", 150]], cites: ["diff:src/percent.ts:L2-3"] }, { type: "table", title: "Too wide", rows: [["a", "b", "c", "d", "e", "f"], ["1", "2", "3", "4", "5", "6"]] }] }],
+  // scenes: Studio holds the tutor to short titles and points (a CJK character weighs more), and to a picture it drew
+  ["scene_show", { title: "How percent rounds its result to the nearest whole cent today", picture: "B1-1", points: [{ text: "One." }, { text: "Two." }] }],
+  ["scene_show", { title: "金".repeat(21), picture: "B1-1", points: [{ text: "One." }, { text: "Two." }] }],
+  ["scene_show", { title: "Rounding", picture: "B9-9", points: [{ text: "Only one." }] }],
+  ["scene_show", { title: "Rounding", picture: "B1-1", points: [{ text: "a".repeat(121) }, { text: "Two." }] }],
+  ["scene_show", { title: "四捨五入", picture: "B1-1", points: [{ text: "金".repeat(61) }, { text: "Two." }] }],
+  ["scene_show", { title: "金".repeat(20), picture: "B1-2", points: [{ text: `${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, cites: ["diff:src/percent.ts:L2-3"] }, { text: "a".repeat(120), cites: ["diff:src/percent.ts"] }, { text: "It was probably for invoices." }] }],
+  ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nThe sketch shows the rounding [board:B1-11].\n\n| case | cents |\n|---|---|\n| 1999 at 15% | 300 [diff:src/percent.ts:L2-3] |\n\nWant me to go deeper?`]]);
 // the renderer's captures for this head (the Task's capture check makes them; stubbed here) and the image generator, stubbed
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 let releaseImages!: () => void; const imagesGate = new Promise<void>((res) => (releaseImages = res));
@@ -218,6 +227,19 @@ ok(imagePrompts.length === 3 && (again.view(merge.id) as any).board.filter((b: a
 delete run.ctx.captures;
 ok(find(/old commit/)?.basis === "inference" && find(/old commit/)?.cites[0].ok === false, "a citation Studio cannot verify (no such commit) leaves the claim an inference");
 ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "headings and offers are not claims");
+// ---------- scenes: short, with a picture; over a limit the tool refuses and the tutor rewrites ----------
+{ const { boardLength, fitsBoard, SCENE_LIMITS: L } = await import("../src/domain/review-room");
+  ok(fitsBoard("金".repeat(20), L.title) && !fitsBoard("金".repeat(21), L.title) && fitsBoard("a".repeat(48), L.title) && !fitsBoard("a".repeat(49), L.title)
+    && fitsBoard(`${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, L.point) && !fitsBoard("金".repeat(61), L.point) && fitsBoard("a".repeat(120), L.point) && !fitsBoard("a".repeat(121), L.point) && boardLength("金a", L.point) === 3,
+    "the board's limits: a title at most 20 CJK or 48 Latin characters, a point at most 60 CJK or 120 Latin, citations not counted");
+  const sr = results.filter(([n]) => n === "scene_show").map(([, j]) => j);
+  ok(sr.length === 6 && /title is too long/.test(sr[0].error) && /title is too long/.test(sr[1].error) && /not a board item/.test(sr[2].error) && /points is 2 to 4/.test(sr[2].error) && /point 1 is too long/.test(sr[3].error) && /point 1 is too long/.test(sr[4].error) && sr[5].scene === 1 && !sr[5].error,
+    "scene_show refuses a title or a point over the limit, a picture that is not on the board and fewer than two points, saying which: the tutor rewrites", JSON.stringify(sr));
+  const sc = t1.scenes as any[];
+  ok(sc?.length === 1 && sc[0].title === "金".repeat(20) && sc[0].picture === "B1-2" && sc[0].points.map((p: any) => p.basis).join() === "cited,cited,inference" && sc[0].points[0].cites[0].ok === true, "a scene within the limits is kept on the turn: its title, its picture, each point with its basis", JSON.stringify(sc));
+  const tbl = board.find((b) => b.type === "table"), bd = results.filter(([n]) => n === "board_draw").at(-1)?.[1];
+  ok(tbl && JSON.stringify(tbl.rows) === JSON.stringify([["amount", "15%"], ["1999", "300"], ["1000", "150"]]) && tbl.basis === "cited" && /a table is 2 to 8 rows/.test(bd.errors[0]), "a table is a board item of text cells (a number becomes text); one too wide is refused", JSON.stringify({ tbl, bd }));
+  ok(claims.some((c) => c.kind === "table" && /1999 at 15%/.test(c.text)) && !claims.some((c) => c.kind === "claim" && /^\s*\|/.test(c.text)), "a markdown table in an answer is not a claim: the board shows it as a table", JSON.stringify(claims.map((c) => c.kind))); }
 const cDiff: any = await room.cite(merge.id, "diff:src/percent.ts:L2-3"), cLedger: any = await room.cite(merge.id, `ledger:#${ledgerSeq}`), cSource: any = await room.cite(merge.id, "source:8");
 let badCite = ""; try { await room.cite(merge.id, "diff:README.md"); } catch (e: any) { badCite = e.code; }
 ok(/Math\.round/.test(cDiff.text) && cLedger.check === "firstmate/ci" && cLedger.task === r.id && cSource.url === MDN && badCite === "bad_cite", "a citation opens what it rests on: the diff hunk, the ledger entry, the web source", JSON.stringify({ cLedger, cSource }));
