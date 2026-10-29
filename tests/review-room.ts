@@ -152,12 +152,27 @@ script.push([
   // a small table on the board, drawn by Studio as text; one too wide is refused
   ["board_draw", { items: [{ type: "table", title: "Rounding cases", rows: [["amount", "15%"], ["1999", "300"], ["1000", 150]], cites: ["diff:src/percent.ts:L2-3"] }, { type: "table", title: "Too wide", rows: [["a", "b", "c", "d", "e", "f"], ["1", "2", "3", "4", "5", "6"]] }] }],
   // scenes: Studio holds the tutor to short titles and points (a CJK character weighs more), and to a picture it drew
-  ["scene_show", { title: "How percent rounds its result to the nearest whole cent today", picture: "B1-1", points: [{ text: "One." }, { text: "Two." }] }],
-  ["scene_show", { title: "金".repeat(21), picture: "B1-1", points: [{ text: "One." }, { text: "Two." }] }],
-  ["scene_show", { title: "Rounding", picture: "B9-9", points: [{ text: "Only one." }] }],
-  ["scene_show", { title: "Rounding", picture: "B1-1", points: [{ text: "a".repeat(121) }, { text: "Two." }] }],
-  ["scene_show", { title: "四捨五入", picture: "B1-1", points: [{ text: "金".repeat(61) }, { text: "Two." }] }],
-  ["scene_show", { title: "金".repeat(20), picture: "B1-2", points: [{ text: `${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, cites: ["diff:src/percent.ts:L2-3"] }, { text: "a".repeat(120), cites: ["diff:src/percent.ts"] }, { text: "It was probably for invoices." }] }],
+  ["scene_show", { chapter: "what", title: "How percent rounds its result to the nearest whole cent today", picture: "B1-1", points: [{ text: "One." }, { text: "Two." }] }],
+  ["scene_show", { chapter: "what", title: "金".repeat(21), picture: "B1-1", points: [{ text: "One." }, { text: "Two." }] }],
+  ["scene_show", { chapter: "what", title: "Rounding", picture: "B9-9", points: [{ text: "Only one." }] }],
+  ["scene_show", { chapter: "what", title: "Rounding", picture: "B1-1", points: [{ text: "a".repeat(121) }, { text: "Two." }] }],
+  ["scene_show", { chapter: "what", title: "四捨五入", picture: "B1-1", points: [{ text: "金".repeat(61) }, { text: "Two." }] }],
+  ["scene_show", { chapter: "what", title: "金".repeat(20), picture: "B1-2", points: [{ text: `${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, cites: ["diff:src/percent.ts:L2-3"] }, { text: "a".repeat(120), cites: ["diff:src/percent.ts"] }, { text: "It was probably for invoices." }] }],
+  // a lesson, chapter by chapter: per-item figures from one layout, a state machine, a sequence; chapters in order, risks cited
+  ["board_draw", { items: [{ type: "item", title: "Rounding", name: "percent()", before: "Fractions of a cent kept", after: "Rounded to the cent", mechanism: "Math.round", cites: ["diff:src/percent.ts:L2-3"] },
+    { type: "item", title: "Tests", name: "percent.test.ts", before: "No test of rounding", after: "1999 at 15% pinned to 300", cites: ["diff:test/percent.test.ts"] },
+    { type: "states", title: "An invoice", states: [{ id: "draft", label: "Draft" }, { id: "priced", label: "Priced" }, { id: "paid", label: "Paid" }], transitions: [{ from: "draft", to: "priced", label: "price", cite: "diff:src/percent.ts:L2-3" }, { from: "priced", to: "paid", label: "pay" }] },
+    { type: "sequence", title: "Pricing a line", actors: ["Cart", "percent", "Math"], steps: [{ from: "Cart", to: "percent", label: "percent(1999, 15)" }, { from: "percent", to: "Math", label: "round(299.85)", frame: "loop", frameLabel: "each line" }, { from: "Math", to: "percent", label: "300", kind: "return", frame: "loop" }, { from: "percent", to: "Cart", label: "300", kind: "return" }], cites: ["diff:src/percent.ts:L2-3"] },
+    { type: "item", title: "Too long", name: "x".repeat(34), before: "a", after: "b" }] }],
+  ["scene_show", { chapter: "talks", title: "What talks to what", picture: "B1-1", points: [{ text: "The cart calls percent [inference].", cites: [] }, { text: "percent rounds [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }] }],
+  ["scene_show", { chapter: "change", title: "Rounding", picture: "B1-15", points: [{ text: "It rounds to the cent [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Nothing else changed in it.", cites: [] }] }],
+  ["scene_show", { chapter: "change", title: "Tests", picture: "B1-16", points: [{ text: "A test pins it [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }, { text: "At 1999 and 15%.", cites: [] }] }],
+  ["scene_show", { chapter: "change", title: "Not an item", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
+  ["scene_show", { chapter: "lifecycle", title: "An invoice", picture: "B1-17", points: [{ text: "Draft, priced, paid.", cites: [] }, { text: "Pricing rounds [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }] }],
+  ["scene_show", { chapter: "sequence", title: "Pricing a line", picture: "B1-18", points: [{ text: "Each line is rounded once.", cites: [] }, { text: "The result goes back [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }] }],
+  ["scene_show", { chapter: "watch", title: "What to watch", picture: "B1-15", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Users may notice.", cites: [] }] }],
+  ["scene_show", { chapter: "watch", title: "What to watch", picture: "B1-15", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "The test pins it [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }] }],
+  ["scene_show", { chapter: "what", title: "Too late", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
   ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nThe sketch shows the rounding [board:B1-11].\n\n| case | cents |\n|---|---|\n| 1999 at 15% | 300 [diff:src/percent.ts:L2-3] |\n\nWant me to go deeper?`]]);
 // the renderer's captures for this head (the Task's capture check makes them; stubbed here) and the image generator, stubbed
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -236,12 +251,19 @@ ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "he
   ok(fitsBoard("金".repeat(20), L.title) && !fitsBoard("金".repeat(21), L.title) && fitsBoard("a".repeat(48), L.title) && !fitsBoard("a".repeat(49), L.title)
     && fitsBoard(`${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, L.point) && !fitsBoard("金".repeat(61), L.point) && fitsBoard("a".repeat(120), L.point) && !fitsBoard("a".repeat(121), L.point) && boardLength("金a", L.point) === 3,
     "the board's limits: a title at most 20 CJK or 48 Latin characters, a point at most 60 CJK or 120 Latin, citations not counted");
-  const sr = results.filter(([n]) => n === "scene_show").map(([, j]) => j);
+  const sr = results.filter(([n]) => n === "scene_show").map(([, j]) => j).slice(0, 6);
   ok(sr.length === 6 && /title is too long/.test(sr[0].error) && /title is too long/.test(sr[1].error) && /not a board item/.test(sr[2].error) && /points is 2 to 4/.test(sr[2].error) && /point 1 is too long/.test(sr[3].error) && /point 1 is too long/.test(sr[4].error) && sr[5].scene === 1 && !sr[5].error,
     "scene_show refuses a title or a point over the limit, a picture that is not on the board and fewer than two points, saying which: the tutor rewrites", JSON.stringify(sr));
   const sc = t1.scenes as any[];
-  ok(sc?.length === 1 && sc[0].title === "金".repeat(20) && sc[0].picture === "B1-2" && sc[0].points.map((p: any) => p.basis).join() === "cited,cited,inference" && sc[0].points[0].cites[0].ok === true, "a scene within the limits is kept on the turn: its title, its picture, each point with its basis", JSON.stringify(sc));
-  const tbl = board.find((b) => b.type === "table"), bd = results.filter(([n]) => n === "board_draw").at(-1)?.[1];
+  ok(sc?.length >= 1 && sc[0].chapter === "what" && sc[0].title === "金".repeat(20) && sc[0].picture === "B1-2" && sc[0].points.map((p: any) => p.basis).join() === "cited,cited,inference" && sc[0].points[0].cites[0].ok === true, "a scene within the limits is kept on the turn: its title, its picture, each point with its basis", JSON.stringify(sc));
+  { const sr2 = results.filter(([n]) => n === "scene_show").map(([, j]) => j).slice(6), figs = results.filter(([n]) => n === "board_draw").at(-1)?.[1];
+    const item = board.find((b) => b.id === "B1-15"), states = board.find((b) => b.id === "B1-17"), seq = board.find((b) => b.id === "B1-18");
+    ok(JSON.stringify(sc.map((x: any) => x.chapter)) === JSON.stringify(["what", "talks", "change", "change", "lifecycle", "sequence", "watch"]), "the lesson is chapters in their order: what, what talks to what, each changed item, its life, one request, what to watch", JSON.stringify(sc.map((x: any) => x.chapter)));
+    ok(/the "change" chapter's picture is a item/.test(sr2[3]?.error ?? "") && /a risk is listed only with what it rests on/.test(sr2[6]?.error ?? "") && /chapters come in order/.test(sr2[8]?.error ?? ""),
+      "Studio holds the chapter shape: a changed item shows its item figure, a risk needs a citation, a chapter never comes back after a later one", JSON.stringify(sr2.map((x: any) => x.error ?? x.scene)));
+    ok(item?.name === "percent()" && item.basis === "cited" && states?.transitions.length === 2 && states.transitions[0].cite.ok === true && /draft -->\|price\| priced/.test(states.code) && seq?.steps[1].frame === "loop" && seq.steps[2].kind === "return" && /item 5: name is 1 to 33/.test(figs?.errors[0] ?? ""),
+      "per-item figures, a state machine (every transition, each cited) and a sequence (its loop kept) are board items Studio draws; a label too long for the layout is refused", JSON.stringify({ item, figs: figs?.errors })); }
+  const tbl = board.find((b) => b.type === "table"), bd = results.filter(([n]) => n === "board_draw")[1]?.[1];
   ok(tbl && JSON.stringify(tbl.rows) === JSON.stringify([["amount", "15%"], ["1999", "300"], ["1000", "150"]]) && tbl.basis === "cited" && /a table is 2 to 8 rows/.test(bd.errors[0]), "a table is a board item of text cells (a number becomes text); one too wide is refused", JSON.stringify({ tbl, bd }));
   ok(claims.some((c) => c.kind === "table" && /1999 at 15%/.test(c.text)) && !claims.some((c) => c.kind === "claim" && /^\s*\|/.test(c.text)), "a markdown table in an answer is not a claim: the board shows it as a table", JSON.stringify(claims.map((c) => c.kind))); }
 const cDiff: any = await room.cite(merge.id, "diff:src/percent.ts:L2-3"), cLedger: any = await room.cite(merge.id, `ledger:#${ledgerSeq}`), cSource: any = await room.cite(merge.id, "source:8");
@@ -320,7 +342,7 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   let need: any = null; try { await room.translate(merge.id, { lang: "en" }, "captain"); } catch (e) { need = e; }
   ok(need?.code === "confirm_required" && /^[0-9a-f]{16}$/.test(need.offer?.translate?.hash ?? "") && typeof need.offer.translate.estimate === "number" && runArgs.length === 4, "translating is a small paid round: it asks to confirm first, with its estimate, and nothing runs", JSON.stringify(need?.offer?.translate));
   const blocks = t1o.claims.filter((c: any) => ["claim", "aside", "heading"].includes(c.kind)).map((c: any) => `EN ${c.text}`);
-  const tr = (p1: string) => JSON.stringify({ turns: [{ n: 1, scenes: [{ title: "Rounding to the cent", points: [p1, "a".repeat(100), "It was probably for invoices."] }], claims: blocks, answer: `EN ${t1o.answer}` }] });
+  const tr = (p1: string) => JSON.stringify({ turns: [{ n: 1, scenes: t1o.scenes.map((x: any, m: number) => m ? { title: x.title, points: x.points.map((q: any) => q.text) } : { title: "Rounding to the cent", points: [p1, "a".repeat(100), "It was probably for invoices."] }), claims: blocks, answer: `EN ${t1o.answer}` }] });
   // a translation that drops a citation is not kept: the original shows
   script.push([["msg", tr("Lost its citation.")]]);
   const runs0 = runArgs.length; await room.translate(merge.id, { lang: "en", confirm: need.offer.translate.hash }, "captain"); await room.settle(merge.id);
@@ -333,7 +355,7 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   ok(kept?.scenes[0].title === "Rounding to the cent" && kept.claims.length === blocks.length && /^EN /.test(kept.answer) && JSON.stringify(v2.translate.pending.en) === "[]" && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-translate" && e.data.lang === "en" && JSON.stringify(e.data.kept) === "[1]"),
     "confirmed once, the next translation runs without asking again; a valid one is kept per turn and language, and recorded", JSON.stringify(kept));
   const runs1 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain");
-  let over: any = null; { const { translationErrors } = await import("../src/domain/review-room"); over = translationErrors(t1o, { scenes: [{ title: "x".repeat(49), points: ["a", "b", "c"] }], claims: blocks, answer: t1o.answer }); }
+  let over: any = null; { const { translationErrors } = await import("../src/domain/review-room"); over = translationErrors(t1o, { scenes: t1o.scenes.map((x: any, m: number) => m ? { title: x.title, points: x.points.map((q: any) => q.text) } : { title: "x".repeat(49), points: ["a", "b", "c"] }), claims: blocks, answer: t1o.answer }); }
   ok(runArgs.length === runs1 && over.some((e: string) => /title is too long/.test(e)) && over.some((e: string) => /citations differ/.test(e)), "switching to a language already kept runs nothing; the validator holds a translation to the board's limits and the original's citations", JSON.stringify(over)); }
 // ---------- regenerate: explain a turn again with a model the captain picks; both answers are kept ----------
 { E.deps.usableModels = () => U(["tutor", "t-1"], ["codex", "c-1"], ["claude", "x-1", { runnable: false, held: "claude's quota could not be read" }]);
@@ -370,6 +392,7 @@ const fetchedBefore = fetched.length, sv1: any = await room.saveToLibrary(merge.
   ok(/Math\.round/.test(snap.cites["diff:src/percent.ts:L2-3"]?.text ?? "") && snap.cites[`ledger:#${ledgerSeq}`]?.check === "firstmate/ci" && snap.view.translations.en?.["1"] && snap.view.check.questions.every((q: any) => q.result && q.choice != null),
     "every citation is resolved into the snapshot (the diff hunk copied), with every language made and the check's answers", JSON.stringify(Object.keys(snap.cites)));
   const raw = JSON.stringify(snap);
+  ok(JSON.stringify(snap.view.turns[0].scenes.map((x: any) => x.chapter)) === JSON.stringify(["what", "talks", "change", "change", "lifecycle", "sequence", "watch"]) && snap.view.board.some((b: any) => b.type === "sequence"), "the lesson's chapters and their figures are kept in the room and its Library snapshot");
   ok(!/src\/percent\.ts rounds|rounding in src\/percent\.ts|127\.0\.0\.1:4210|wiki\.intranet\.local|192\.168\.1\.10/.test(raw) && !snap.view.illustrations.length && snap.view.sources.filter((x: any) => x.refused).every((x: any) => !x.query && !x.url && !x.text && x.refused === "refused by Studio's web filter"),
     "the Library keeps no refused text: no illustration prompt the privacy filter refused, no refused query or address (only that it was refused, and why)", JSON.stringify(snap.view.sources.slice(0, 3)));
   ok(img && new RegExp(`^/api/review-room/library/${aid}/1/asset/B1-\\d+\\.png$`).test(img.src) && Buffer.compare(room.libraryAsset(aid, 1, img.src.split("/").at(-1)), PNG) === 0 && fetched.length === fetchedBefore, "its pictures are copied into it and served from it; saving asked nothing of GitHub or the web", JSON.stringify(img)); }

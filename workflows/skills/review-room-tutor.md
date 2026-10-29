@@ -78,6 +78,28 @@ Over a limit Studio refuses the scene and says which part: shorten it and call s
 explanation belongs in your final answer, which the captain reads in the transcript. Your final answer still cites every
 claim as above.
 
+## Lessons, chapter by chapter
+
+When the captain asks to be taught the change, build the lesson as chapters, in this order, each one scene or more
+(scene_show's `chapter`), and leave out a chapter whose source is empty. Every chapter has a drawing; never a scene of
+prose alone.
+
+1. `what`: what this is, one paragraph the captain could repeat.
+2. `talks`: what talks to what, an architecture diagram (a mermaid flowchart): from a design doc of the repository when
+   there is one, else from the code you read, and then say it is inferred (`[inference]`).
+3. `change`: the change itself, one scene per item (a commit group, a subsystem or a fix), its picture an `item` board item
+   (name, before, after, the mechanism that changed it, cited to its diff). Studio draws every item with one layout.
+4. `lifecycle`: when the change has states, its state machine as a `states` item: every state and every transition, each
+   transition citing the code that makes it. Never a subset.
+5. `sequence`: one request in order, a `sequence` item: who calls whom, returns, async calls, and the loops, alternatives
+   and options the code really has.
+6. `reviewers`: what reviewers raised, when there are reviewers' notes: open concerns and resolved ones, cited to the notes.
+7. `watch`: what to watch, risks only, each cited. An empty list is a finding: say what you checked, cited. Never invent one.
+8. `questions`: open questions, or a check (check_ask).
+
+Do not guess: keep what the code or the record shows apart from what you infer, and say nothing about deployment (whether a
+migration ran, whether users see it today): that is not in the repository.
+
 ## Pictures
 
 Explanations are richer with real images; each one is labelled with its kind on the board and shown in your answer:

@@ -490,6 +490,47 @@ try {
     ok(s3.scene === "t3" && !(await p.$("[data-answer-ready]")), "“The answer is ready — show it” goes to the answer", JSON.stringify(s3));
     await ctx.close(); }
 
+  // ---------- a lesson, chapter by chapter: the chapters' rail, per-item figures, a state machine, a sequence ----------
+  { const LESSON = { n: 3, action: "teach", text: "Teach me this change.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: H, claims: [cl("x")],
+      scenes: [{ n: 1, chapter: "what", title: "A percent helper", picture: "B1-1", points: [cl("It adds percent [diff:src/percent.ts].", [ok1("diff:src/percent.ts")]), cl("Rounded to the cent.")] },
+        { n: 2, chapter: "change", title: "Rounding", picture: "B3-1", points: [cl("It rounds [diff:src/percent.ts:L2-3].", [ok1("diff:src/percent.ts:L2-3")]), cl("Halves go up.")] },
+        { n: 3, chapter: "change", title: "Tests", picture: "B3-2", points: [cl("A test pins it [diff:test/percent.test.ts].", [ok1("diff:test/percent.test.ts")]), cl("At 1999.")] },
+        { n: 4, chapter: "lifecycle", title: "An invoice", picture: "B3-3", points: [cl("Draft, priced, paid."), cl("Pricing rounds [diff:src/percent.ts:L2-3].", [ok1("diff:src/percent.ts:L2-3")])] },
+        { n: 5, chapter: "sequence", title: "Pricing a line", picture: "B3-4", points: [cl("Each line once."), cl("Back to the cart.")] },
+        { n: 6, chapter: "watch", title: "What to watch", picture: "B3-1", points: [cl("Halves round up [diff:src/percent.ts:L2-3].", [ok1("diff:src/percent.ts:L2-3")]), cl("The test pins it [diff:test/percent.test.ts].", [ok1("diff:test/percent.test.ts")])] }] };
+    const FIGS = [{ id: "B3-1", turn: 3, type: "item", title: "Rounding", name: "percent()", before: "Fractions of a cent kept", after: "Rounded to the cent", mechanism: "Math.round", basis: "cited", cites: [ok1("diff:src/percent.ts:L2-3")] },
+      { id: "B3-2", turn: 3, type: "item", title: "Tests", name: "percent.test.ts", before: "No test of rounding", after: "1999 at 15% pinned to 300", mechanism: "", basis: "cited", cites: [] },
+      { id: "B3-3", turn: 3, type: "states", title: "An invoice", states: [{ id: "draft", label: "Draft" }, { id: "priced", label: "Priced" }, { id: "paid", label: "Paid" }], transitions: [{ from: "draft", to: "priced", label: "price", cite: ok1("diff:src/percent.ts:L2-3") }, { from: "priced", to: "paid", label: "pay", cite: null }], code: "flowchart LR\n  draft[Draft]\n  priced[Priced]\n  paid[Paid]\n  draft -->|price| priced\n  priced -->|pay| paid", basis: "cited", cites: [ok1("diff:src/percent.ts:L2-3")] },
+      { id: "B3-4", turn: 3, type: "sequence", title: "Pricing a line", actors: ["Cart", "percent", "Math"], steps: [{ from: "Cart", to: "percent", label: "percent(1999, 15)", kind: "call" }, { from: "percent", to: "Math", label: "round(299.85)", kind: "call", frame: "loop", frameLabel: "each line" }, { from: "Math", to: "percent", label: "300", kind: "return", frame: "loop" }, { from: "percent", to: "Cart", label: "300", kind: "return" }], basis: "cited", cites: [] }];
+    const RL = { ...ROOM, board: [...ROOM.board, ...FIGS], turns: [...ROOM.turns, LESSON] };
+    const { ctx, p, cites } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RL }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForSelector("[data-toc]", { timeout: 3000 }).catch(() => {});
+    const toc = await p.evaluate(() => ({ items: [...document.querySelectorAll("[data-toc-scene]")].map((e) => [e.dataset.tocScene, e.querySelector("b")?.textContent ?? "", e.getAttribute("aria-current")]) }));
+    const lesson = toc.items.filter((x) => /^t3/.test(x[0])).map((x) => x[1]);
+    ok(JSON.stringify(lesson) === JSON.stringify(["What this is", "The change itself", "The change itself", "Its life, state by state", "One request, in order", "What to watch"]) && toc.items.some((x) => x[0] === "t1") && toc.items.some((x) => x[0] === "t0"),
+      "the chapters' rail lists every answer's scenes, the lesson chapter by chapter in order (every answer reachable from it)", JSON.stringify(toc));
+    await p.click('[data-toc-scene="t3-2"]'); let s = await stage(p);
+    const cur = await p.$eval('[data-toc-scene="t3-2"]', (e) => e.getAttribute("aria-current"));
+    const fig = await p.evaluate(() => ({ fig: document.querySelector("[data-visual] [data-item-figure]")?.dataset.itemFigure, rows: [...document.querySelectorAll("[data-visual] .rr-ib-row")].map((e) => e.textContent), boxes: document.querySelectorAll("[data-visual] .rr-ib").length, kicker: document.querySelector(".rr-kicker")?.textContent }));
+    ok(s.scene === "t3-2" && cur === "true" && fig.fig === "B3-1" && fig.boxes === 4 && JSON.stringify(fig.rows) === JSON.stringify(["Before", "After"]) && /The change itself/.test(fig.kicker), "a click jumps to its chapter, marked current; a changed item is its before → after card", JSON.stringify({ s, cur, fig }));
+    await p.click('[data-toc-scene="t3-3"]');
+    const geo = await p.evaluate(() => [...document.querySelectorAll("[data-visual] [data-item-figure] .rr-ib path")].map((e) => e.getAttribute("d")).join("|"));
+    await p.click('[data-toc-scene="t3-2"]');
+    const geo0 = await p.evaluate(() => [...document.querySelectorAll("[data-visual] [data-item-figure] .rr-ib path")].map((e) => e.getAttribute("d")).join("|"));
+    ok(geo && geo === geo0, "every changed item is drawn from the same layout (identical geometry), not free-drawn");
+    await p.click('[data-toc-scene="t3-4"]'); await p.click('[data-transition-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel]");
+    ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && await p.$$eval("[data-visual] [data-elabel]", (els) => els.length) === 2, "the state machine draws every transition, and a transition opens the code it rests on", JSON.stringify(cites));
+    await p.click("[data-cite-panel] .btn"); await p.click('[data-toc-scene="t3-5"]');
+    const sq = await p.evaluate(() => ({ actors: document.querySelectorAll("[data-visual] .rr-actor").length, steps: [...document.querySelectorAll("[data-visual] [data-step]")].map((e) => e.className.baseVal), frame: document.querySelector("[data-visual] [data-frame]")?.textContent }));
+    ok(sq.actors === 3 && sq.steps.length === 4 && /return/.test(sq.steps[2]) && /loop \[each line\]/.test(sq.frame || ""), "one request in order: its actors, calls and returns, and its loop as a frame", JSON.stringify(sq));
+    const lay = await p.evaluate(() => { const v = document.querySelector("[data-visual]").getBoundingClientRect(), t = document.querySelector("[data-toc]").getBoundingClientRect(); return { scroll: document.documentElement.scrollHeight - innerHeight, apart: t.right <= v.left + 1, inView: v.bottom <= innerHeight }; });
+    ok(lay.scroll <= 0 && lay.apart && lay.inView, "the rail sits beside the board: the page still never scrolls and the picture stays in view", JSON.stringify(lay));
+    await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(200);
+    const ph = await p.evaluate(() => { const t = document.querySelector("[data-toc]").getBoundingClientRect(), v = document.querySelector("[data-visual]").getBoundingClientRect(); return { top: t.bottom <= v.top + 1, w: Math.round(t.width), scroll: document.documentElement.scrollWidth - innerWidth }; });
+    ok(ph.top && ph.scroll <= 0, "on a phone the chapters are a strip above the board", JSON.stringify(ph));
+    await ctx.close(); }
+
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });

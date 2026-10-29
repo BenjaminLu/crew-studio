@@ -71,7 +71,7 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
 - **Short on the board, long in the transcript.** The tutor builds an answer as scenes with `scene_show` {title, picture,
   points: [{text, cites}]}: a title of at most 20 CJK characters or 48 Latin ones, a picture (a board item it drew), 2 to 4
   points of at most 60 CJK characters or 120 Latin ones each (citations not counted; a CJK character weighs as many Latin
-  ones as the two limits trade it for, `SCENE_LIMITS`, `boardLength`), at most six scenes a turn. Over a limit the tool
+  ones as the two limits trade it for, `SCENE_LIMITS`, `boardLength`), at most twelve scenes a turn. Over a limit the tool
   refuses the scene and says which part, so the tutor rewrites; the longer explanation is its final answer, which the
   transcript shows. An older answer (no scenes) is split on the page, sentence by sentence, into points of at most 120 (a
   CJK character counting two), each citation staying with its sentence; its markdown tables become a `table` picture and
@@ -251,6 +251,21 @@ elsewhere meanwhile: then "The answer is ready — show it" waits on the board. 
 already has its finished answer (or the same question) first offers "Show the existing explanation" or "Explain again
 (paid)", the latter confirmed as usual. Every finished answer is a scene of its own, reachable from the transcript (its
 button shows how many answers the room holds).
+
+**A lesson, chapter by chapter.** Asked to teach the change, the tutor builds the lesson as chapters, in this order, each
+left out when its source is empty: what this is; what talks to what (an architecture drawing, said to be inferred when no
+design doc of the repository shows it); the change itself, one scene per item (a commit group, a subsystem, a fix), each an
+`item` board item (name, before, after, the mechanism) that Studio draws with one layout for every item; its life, state by
+state (a `states` item: every state and every transition, each transition citing its code and opening it); one request, in
+order (a `sequence` item: calls, returns, async calls, and loops, alternatives and options as frames); what reviewers raised;
+what to watch (risks only, every point cited and verified: an empty list is a finding, said with what was checked); open
+questions or a check. Studio holds the shape as it holds a scene's size: `scene_show` names its `chapter`, a chapter never
+follows a later one, the change, lifecycle and sequence chapters show their own kind of drawing, and a risk without a
+verified citation is refused. Every figure is drawn by Studio from the tutor's data (text nodes, sizes checked against its
+layout). Nothing about deployment is claimed: whether a migration ran is not in the repository. The room's chapters rail
+(left of the board; a strip above it on a phone) lists every answer's scenes under its question, the lesson by chapter: a
+click jumps to it, the current one is marked, and finished answers stay listed. The chapters are kept in the room file and
+its Library snapshot.
 
 **Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
 re-entry (the desktop page, at most once a minute from the last attempt) or "Check for new commits" (`POST …/check`, the
@@ -589,6 +604,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     the reviews …", "their notes are in the transcript, folded …", "coming back while a turn runs …", "when it finishes, the
     room shows the answer", "asking again what this head already has …", "the captain looked elsewhere while it ran …",
     "“The answer is ready — show it” goes to the answer".
+34. A lesson, chapter by chapter: chapters in their order, per-item before → after figures from one layout, a state machine
+    with every transition cited and openable, a sequence with its loop; out-of-order chapters, the wrong drawing and uncited
+    risks refused; the chapters rail jumps and marks the current scene; chapters kept in the Library snapshot. — review-room
+    "the lesson is chapters in their order …", "Studio holds the chapter shape …", "per-item figures, a state machine …",
+    "the lesson's chapters and their figures are kept …"; review-room-ui "the chapters' rail lists every answer's scenes …",
+    "a click jumps to its chapter, marked current …", "every changed item is drawn from the same layout …", "the state
+    machine draws every transition …", "one request in order …", "the rail sits beside the board …", "on a phone the chapters
+    are a strip above the board".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

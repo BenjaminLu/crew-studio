@@ -313,6 +313,43 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
 .rr-progress { font-size: 13px; }
 .rr-progress-said { margin: 4px 0 0; padding: 6px 10px; border-left: 3px solid var(--rr-paper-edge); color: var(--rr-ink-2); font-style: italic; }
 
+/* the lesson's chapters: a rail beside the board (every answer's scenes, the current one marked) */
+.rr-stage.with-toc { grid-template-columns: 188px minmax(0, 1fr); column-gap: 12px; }
+.rr-stage.with-toc > :not(.rr-toc) { grid-column: 2; }
+.rr-toc { grid-row: 1 / -1; grid-column: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 6px 4px; border-right: 1px solid var(--border); }
+.rr-toc-h { margin: 10px 6px 4px; font-size: 11px; font-weight: 600; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-toc-i { display: grid; gap: 1px; text-align: left; border: 0; background: none; border-radius: 8px; padding: 6px 8px; cursor: pointer; color: var(--text-2); font: inherit; font-size: 12px; border-left: 3px solid transparent; }
+.rr-toc-i b { font-size: 12px; color: var(--text); font-weight: 600; }
+.rr-toc-i span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-toc-i:hover { background: var(--surface-2); }
+.rr-toc-i[aria-current="true"] { background: var(--rr-new-soft); border-left-color: var(--rr-marker); color: var(--text); }
+.rr-toc-run { font-style: normal; color: var(--accent); }
+/* a changed item, before and after (one layout for every item) */
+.rr-itemfig .rr-ib path { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; }
+.rr-itemfig .rr-ib.fix path { stroke: var(--rr-new); fill: var(--rr-new-soft); stroke-width: 2.6; }
+.rr-itemfig .rr-ib.old path { stroke: var(--rr-bad); }
+.rr-itemfig .rr-ib.now path { stroke: var(--rr-ok); }
+.rr-itemfig text { fill: var(--rr-ink); font-family: var(--rr-hand); font-size: 17px; }
+html:lang(en) .rr-itemfig text { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 19px; }
+.rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); fill: var(--rr-ink-2); }
+.rr-itemfig .rr-ib-row { font: 600 12px var(--f-sans); fill: var(--rr-ink-2); }
+.rr-itemfig .rr-ia path { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; }
+.rr-itemfig .rr-ia.new path { stroke: var(--rr-new); }
+/* one request, in order */
+.rr-seq .rr-actor rect { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; }
+.rr-seq .rr-actor-l { fill: var(--rr-ink); font-family: var(--rr-hand); font-size: 16px; }
+html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 18px; }
+.rr-seq .rr-lifeline { stroke: var(--rr-ink-2); stroke-dasharray: 4 5; }
+.rr-seq .rr-step-line { fill: none; stroke: var(--rr-ink); stroke-width: 1.8; }
+.rr-seq .rr-step.return .rr-step-line { stroke-dasharray: 6 4; }
+.rr-seq .rr-step-head { fill: var(--rr-ink); stroke: var(--rr-ink); stroke-width: 1.5; }
+.rr-seq .rr-step.async .rr-step-head { fill: none; }
+.rr-seq .rr-step-l { fill: var(--rr-ink); font: 12px var(--f-sans); }
+.rr-seq .rr-frame rect { fill: var(--rr-new-soft); stroke: var(--rr-marker); stroke-dasharray: 5 4; }
+.rr-seq .rr-frame-l { fill: var(--rr-marker); font: 600 11px var(--f-mono); }
+.rr-seq .rr-frame-else { stroke: var(--rr-marker); stroke-dasharray: 5 4; }
+.rr-flow .rr-cite-label { fill: var(--rr-cite-ink); text-decoration: underline; cursor: pointer; }
+
 /* ---------- a phone (390×844): the picture on top, one point card under it (the caption is the card), a read-only dock ---------- */
 @media (max-width: 760px) {
   .rr-room { grid-template-rows: 44px minmax(0, 1fr) auto; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
@@ -342,4 +379,10 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
   .rr-opt { min-height: 44px; }
   .rr-quiz-q { font-size: 19px; }
   .rr-cta { font-size: 18px; }
+  .rr-stage.with-toc { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) 44px; }
+  .rr-stage.with-toc > :not(.rr-toc) { grid-column: 1; }
+  .rr-toc { grid-row: 1; flex-direction: row; overflow-x: auto; border-right: 0; padding: 0; scrollbar-width: none; }
+  .rr-toc-h { display: none; }
+  .rr-toc-i { flex: none; max-width: 150px; border-left: 0; border-bottom: 3px solid transparent; }
+  .rr-toc-i[aria-current="true"] { border-bottom-color: var(--rr-marker); }
 }
