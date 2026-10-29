@@ -82,6 +82,20 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   "Question: …" beside the same question; Studio's own titles ("This change at a glance", "What changed since you last
   looked", …) and every picture's kind read in Chinese in a Chinese room; an inference shows one badge (its `[inference]`
   tag is not shown again).
+- **The explanation's language, switched live** (the header's EN / 繁 / 简). A room explains in the language of its answers
+  until the captain switches: the titles, points, captions and the transcript change at once when that language is kept;
+  简体 is always the 繁體 text through OpenCC, nothing paid. A language not kept yet is made by a **translation turn** on the
+  room's own tutor (`POST /api/review-room/<card>/translate {lang, confirm}`, `lang` en or zh-TW; the desktop captain, the
+  same admission as a turn: the round sandbox, the pinned skills, the staffing receipt): text only, no tool and no code read;
+  the citations, board items and pictures stay the original's. It is a small paid round, so it asks once per room
+  ("Translate this room's explanation (~US$x)", a fifth of the room's mean turn cost); after that, translating the room's
+  new answers runs without asking again. Each translation is checked like the original (`translationErrors`: the same
+  scenes, points and blocks, every citation kept, a scene within the board's limits); one that fails is not kept and the
+  original shows. Translations are kept per turn and language in the room (`translations`), so switching back costs
+  nothing; a `review-room-translate` ledger entry records each one (the turns kept and dropped, the job, the cost).
+  Studio's own scenes (the welcome scene, what reviewers asked, what changed) switch for free from Studio's own strings
+  (their Chinese lines are kept beside the English, `zh`); a reviewer's quoted words are never translated. The voice follows
+  the language shown: this Mac's voice in that language, or the vendor's narration of the translated text.
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
   Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
   folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
@@ -471,6 +485,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     to confirm …".
 27. A phone: the picture on top, one point card under it, a top-down flowchart with labels of 14px or more, the prompt a
     read-only note, nothing scrolls. — review-room-ui "390×844: the picture on top and one point card under it …".
+28. The explanation's language switches live: a kept translation at once (简體 through OpenCC), a missing one after one
+    confirmation; the translation round has no tool and no code; one that loses a citation or breaks the board's limits is
+    not kept; switching back runs nothing; the voice follows the language. — review-room "the room knows which answers are
+    not in a language yet", "translating is a small paid round …", "the translation round gets no tool …", "a translation
+    that lost a citation is not kept …", "confirmed once, the next translation runs without asking again …", "switching to
+    a language already kept runs nothing …"; review-room-ui "a kept translation shows at once …", "a translation is text …",
+    "the voice follows the language shown …", "简体 comes from the 繁體 text …", "a language not kept yet asks to confirm …",
+    "confirmed, the translation is sent …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

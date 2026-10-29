@@ -5,7 +5,7 @@
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
 const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
-  scene: new Map(), reveal: new Map(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
+  scene: new Map(), reveal: new Map(), lang: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -247,6 +247,53 @@ function keycardView(it, seen) {
     svg.append(g); });
   return svg;
 }
+// ---------- the explanation's language (zh-TW ⇄ en, zh-CN as zh-TW through OpenCC): switched live, translated once ----------
+const LANG_BASE = (l) => (l === "zh-CN" ? "zh-TW" : l);
+/** the language the room explains in: the captain's pick, else the language of its latest answer, else the page's */
+const roomLang = (r) => RR.lang.get(r.card.id) || [...(r.turns || [])].reverse().find((t) => !t.studio && t.lang)?.lang || uiLang();
+let CUR = { lang: "en" };
+/** Studio's own words in the room's language (not the page's): the welcome scene, its scene titles, its scenes' lines */
+const TL = (en, zh) => window.crewI18n.pick(CUR.lang, en, zh);
+const toLang = (text, from, to) => (to === "zh-CN" && from !== "zh-CN" ? window.crewI18n.toCN(text) : text);
+/** a tutor turn's words in the room's language: its own, else the translation kept for it (null: none yet) */
+function turnIn(r, t, lang) {
+  const base = LANG_BASE(lang);
+  if (LANG_BASE(t.lang || "en") === base) return { scenes: null, claims: null, answer: toLang(t.answer, t.lang, lang), conv: (x) => toLang(x, t.lang, lang), own: true };
+  const tr = r.translations?.[base]?.[String(t.n)]; if (!tr) return null;
+  return { scenes: tr.scenes, claims: tr.claims, answer: toLang(tr.answer, base, lang), conv: (x) => toLang(x, base, lang), own: false };
+}
+/** the turn as the room shows it in its language: its scenes' titles and points, its answer's blocks, replaced in order */
+function localTurn(r, t, lang) {
+  if (t.studio || t.status !== "done") return t;
+  const w = turnIn(r, t, lang); if (!w) return { ...t, untranslated: true };
+  if (w.own) return lang === t.lang ? t : { ...t, answer: w.answer, scenes: t.scenes?.map((sc) => ({ ...sc, title: w.conv(sc.title), points: sc.points.map((p) => ({ ...p, text: w.conv(p.text) })) })), claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(c.text) } : c) };
+  let i = 0;
+  return { ...t, answer: w.answer, scenes: t.scenes?.map((sc, m) => ({ ...sc, title: w.conv(w.scenes[m]?.title ?? sc.title), points: sc.points.map((p, j) => ({ ...p, text: w.conv(w.scenes[m]?.points[j] ?? p.text) })) })),
+    claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(w.claims[i++] ?? c.text) } : c) };
+}
+/** Studio's own scene lines in the room's language (a reviewer's words, the quote, stay as written) */
+const studioClaim = (c, lang) => (LANG_BASE(lang) === "zh-TW" && c.zh ? { ...c, text: toLang(c.zh, "zh-TW", lang) } : c);
+const missingIn = (r, lang) => (r.turns || []).filter((t) => t.status === "done" && !t.studio && !turnIn(r, t, lang)).map((t) => t.n);
+/** switch the room's language: at once when every answer is in it; otherwise a translation turn, confirmed once per room */
+async function switchLang(r, lang) {
+  const card = r.card.id; RR.lang.set(card, lang); stopPlay();
+  const missing = missingIn(r, lang);
+  if (!missing.length || !r.open || r.snapshot) { rerender(); return; }
+  if (!r.translate?.confirmed && !RR.trConfirm.has(card)) { RR.confirm.set(card, { action: "translate", lang }); rerender(); return; }
+  await startTranslate(r, lang);
+}
+async function startTranslate(r, lang, hash, confirmed) {
+  const card = r.card.id; RR.posting.add(card); RR.err.delete(card); rerender();
+  try { const room = await postJ(`/api/review-room/${enc(card)}/translate`, { lang: LANG_BASE(lang), confirm: hash }); RR.rooms.set(card, room); RR.confirm.delete(card); RR.trConfirm.add(card); }
+  catch (e) { if (e.code === "confirm_required" && e.offer?.translate && confirmed && !hash) { RR.posting.delete(card); return startTranslate(r, lang, e.offer.translate.hash, false); } if (e.code === "confirm_required" && e.offer?.translate) { RR.rooms.set(card, { ...r, offer: { ...(r.offer || {}), ...e.offer } }); RR.confirm.set(card, { action: "translate", lang }); } else RR.err.set(card, e.message); }
+  finally { RR.posting.delete(card); redraw(card); schedule(); }
+}
+function langToggle(r) {
+  const cur = roomLang(r), opts = [["en", "EN"], ["zh-TW", "繁"], ["zh-CN", "简"]];
+  return h("div", { class: "rr-langs", role: "group", "data-room-lang": cur, "aria-label": T("The explanation's language", "解說的語言") }, opts.map(([l, label]) => {
+    const missing = missingIn(r, l).length, can = !missing || (r.open && !r.snapshot && !r.offer?.error);
+    return h("button", { type: "button", class: "rr-lang", "data-lang-pick": l, "aria-pressed": String(cur === l), disabled: !can || r.running != null, title: missing ? (can ? T("Not translated yet: a small paid round", "還沒翻譯：一次小的付費回合") : T("Not in this language", "沒有這個語言的版本")) : "", onclick: () => switchLang(r, l) }, label); }));
+}
 // ---------- the stage: each answer is one or more scenes, a picture beside the tutor's points, revealed step by step ----------
 const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"], since: ["What changed since last time", "上次之後改了什麼"], reviewers: ["What reviewers asked", "審查者問了什麼"] };
 /** text cut to n characters at a word, with an ellipsis (one long word is cut where it must) */
@@ -293,9 +340,9 @@ const subjectName = (r) => { const k = r.subject?.kind || "merge";
  *  of this scene too. */
 function welcomeScene(r, opening) {
   const ds = r.diffstat, name = subjectName(r), files = ds?.files || [], top = [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed))[0];
-  const chart = files.length ? { id: "t0-files", synth: true, turn: 0, type: "chart", kind: "chart", mode: "diffstat", from: ds.from === "github" ? "numbers" : "git", title: T("What changed, by file", "改了哪些檔案"), unit: "lines", rows: [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed)).slice(0, 8).map((f) => ({ label: f.path, added: f.added, removed: f.removed })), basis: "cited", cites: [] } : null;
+  const chart = files.length ? { id: "t0-files", synth: true, turn: 0, type: "chart", kind: "chart", mode: "diffstat", from: ds.from === "github" ? "numbers" : "git", title: TL("What changed, by file", "改了哪些檔案"), unit: "lines", rows: [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed)).slice(0, 8).map((f) => ({ label: f.path, added: f.added, removed: f.removed })), basis: "cited", cites: [] } : null;
   const ps = r.prState, verdict = ps?.verdicts?.find((v) => v.state === "CHANGES_REQUESTED") || ps?.verdicts?.find((v) => v.state === "APPROVED");
-  const studio = (en, zh, cites = []) => ({ text: T(en, zh) + cites.map((c) => ` [${c.ref}]`).join(""), kind: "claim", basis: "studio", cites });
+  const studio = (en, zh, cites = []) => ({ text: TL(en, zh) + cites.map((c) => ` [${c.ref}]`).join(""), kind: "claim", basis: "studio", cites });
   const points = [
     ds ? studio(`This change touches ${ds.total.files} file${ds.total.files === 1 ? "" : "s"}, +${ds.total.added} −${ds.total.removed} lines${top ? `; the most in ${top.path}` : ""}.`, `這個改動動了 ${ds.total.files} 個檔案、+${ds.total.added} −${ds.total.removed} 行${top ? `；最多在 ${top.path}` : ""}。`, top ? [{ ref: `diff:${top.path}`, ok: true }] : [])
       : studio("Studio has not counted this change's lines yet.", "Studio 還沒算出這個改動的行數。"),
@@ -303,18 +350,19 @@ function welcomeScene(r, opening) {
       : r.subject?.kind === "branch" ? studio("Studio's own review passed at this head; nothing here goes to GitHub.", "Studio 自己的審查在這個 head 通過了；這裡的東西不會送到 GitHub。")
       : studio("Studio's checks ran at this head; the merge card waits for your answer, the room never gives it.", "Studio 的檢查在這個 head 跑過了；合併卡等你回覆，審查室不會替你回。"),
     studio("Press “Teach me” to start; every point names its basis, a click opens it.", "按「教我這個 PR」開始；每一點都附依據，點了就打開。")];
-  return { key: "t0", turn: 0, welcome: true, studio: true, title: T(`This room is only about ${name.en}`, `這間審查室只講 ${name.zh}`), question: null, visuals: [chart, ...opening].filter(Boolean), points, questions: [] };
+  return { key: "t0", turn: 0, welcome: true, studio: true, title: TL(`This room is only about ${name.en}`, `這間審查室只講 ${name.zh}`), question: null, visuals: [chart, ...opening].filter(Boolean), points, questions: [] };
 }
 /** the room's scenes: the welcome scene (turn 0, with the opening picture), then each turn's: the scenes the tutor showed (scene_show), else its answer
  *  as points; Studio's own scenes (what changed, what reviewers asked) as they are */
 function scenesOf(r) {
-  const out = [], opening = r.board.filter((b) => b.turn === 0);
+  const out = [], opening = r.board.filter((b) => b.turn === 0), lang = roomLang(r); CUR = { lang };
   out.push(welcomeScene(r, opening));
-  for (const t of r.turns) {
+  for (const t0 of r.turns) {
+    const t = localTurn(r, t0, lang);
     const asked = r.check.questions.filter((q) => q.turn === t.n), questions = asked.filter((q) => !q.options), quiz = asked.filter((q) => q.options), turnBoard = r.board.filter((b) => b.turn === t.n);
-    const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]) : [];
+    const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]).map((c) => (t.studio ? studioClaim(c, lang) : c)) : [];
     // a scene Studio made itself (no model): what changed since the captain last looked, what GitHub reviewers asked
-    if (t.studio) { const [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action]; out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: T(en, zh), question: null, visuals: turnBoard, points: claims, questions: [] }); continue; }
+    if (t.studio) { const [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action]; out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: TL(en, zh), question: null, visuals: turnBoard, points: claims, questions: [] }); continue; }
     // the tutor's own scenes: each its picture and its few points; the answer itself is in the transcript
     if (t.status === "done" && t.scenes?.length) {
       const used = new Set(t.scenes.map((s) => s.picture));
@@ -370,7 +418,7 @@ const LEGACY = /^(agnes|bruce|fred|junior|kathy|princess|ralph|vicki|victoria|ed
 const baseName = (v) => String(v.name || "").replace(/\s*\(.*\)\s*$/, "").trim();
 // the best first: Premium, then Enhanced (Safari says so only in the voice's address), Siri and neural voices, the compact ones last
 const voiceRank = (v) => { const s = `${v.name} ${v.voiceURI || ""}`; return /premium/i.test(s) ? 4 : /enhanced/i.test(s) ? 3 : /siri|neural|natural/i.test(s) ? 2 : /compact/i.test(s) ? 0 : 1; };
-const localVoices = () => { try { const want = uiLang().toLowerCase(), l = want.slice(0, 2), exact = (v) => (v.lang || "").toLowerCase().replace("_", "-") === want ? 1 : 0;
+const localVoices = () => { try { const want = (CUR.lang || uiLang()).toLowerCase(), l = want.slice(0, 2), exact = (v) => (v.lang || "").toLowerCase().replace("_", "-") === want ? 1 : 0;
   const mine = (window.speechSynthesis?.getVoices?.() || []).filter((v) => v.localService && v.lang?.toLowerCase().startsWith(l) && !NOVELTY.test(baseName(v)));
   const good = mine.filter((v) => !LEGACY.test(baseName(v)));
   return (good.length ? good : mine).sort((a, b) => voiceRank(b) - voiceRank(a) || exact(b) - exact(a)); } catch { return []; } };
@@ -395,7 +443,7 @@ function advance(card) {
 }
 /** the vendor's voice for a whole scene: the points appear as the audio reaches them (by their share of the text) */
 async function playVendor(card, sc) {
-  try { const out = await postJ(`/api/review-room/${enc(card)}/speech`, { scene: sc.key }); if (RR.playing !== card) return;
+  try { const out = await postJ(`/api/review-room/${enc(card)}/speech`, { scene: sc.key.replace(/-\d+$|-quiz$/, ""), lang: LANG_BASE(CUR.lang) }); if (RR.playing !== card) return;
     const texts = sc.points.map((p) => plain(p.text)), total = texts.reduce((n, t) => n + t.length, 0) || 1; let acc = 0; const at = texts.map((t) => { const s = acc / total; acc += t.length; return s; });
     const a = new Audio(out.src); RR.audio = a;
     a.ontimeupdate = () => { if (RR.audio !== a || !a.duration) return; if (!onRoom(card)) return stopPlay(); const f = a.currentTime / a.duration, k = at.filter((s) => s <= f + 1e-6).length; if (k > revealOf(card, sc)) { RR.reveal.set(`${card}/${sc.key}`, k); rerender(); } };
@@ -476,7 +524,7 @@ function stageView(r) {
   const cur = sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
   const page = pageOf(k), shown = sc.points.slice(page * PER, Math.max(page * PER, k)), pages = Math.max(1, Math.ceil(n / PER));
   const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
-  const kicker = sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · question ${k} of ${n}`, `考考我 · 第 ${k} 題 / ${n}`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
+  const kicker = sc.t?.untranslated ? T("Not in this language yet: shown as written", "還沒有這個語言的版本：照原文顯示") : sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · question ${k} of ${n}`, `考考我 · 第 ${k} 題 / ${n}`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
   const titleKey = `${card}/${sc.key}`, firstTitle = !RR.titled.has(titleKey); RR.titled.add(titleKey);
   const entering = RR.lastK.get(titleKey) !== k; RR.lastK.set(titleKey, k);
   const pointView = (c, j) => { const at = page * PER + j, now = at === k - 1;
@@ -558,6 +606,10 @@ function promptBar(r) {
   const talk = !!RR.rec;
   const pops = [
     RR.heard && RR.draft.get(card) ? h("p", { class: "rr-pop faint", "data-heard": "" }, T("Heard you: check the text above, then Ask.", "已聽到：請先檢查上面的文字，再按送出。")) : null,
+    conf?.action === "translate" ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-translate-confirm": conf.lang, "aria-label": T("Confirm the translation", "確認翻譯") },
+      h("p", {}, T(`Translate this room's explanation (~US$${r.translate?.estimate ?? "?"}): one small paid round on ${offer?.provider} · ${offer?.model ?? "default model"}. Text only: no code is read; citations, the board and its pictures stay as they are. Asked once for this room; switching back costs nothing.`, `翻譯這間房間的解說（約 US$${r.translate?.estimate ?? "?"}）：在 ${offer?.provider} · ${offer?.model ?? "預設模型"} 上一次小的付費回合。只翻文字：不讀程式碼；引用、白板和圖都不變。這間房間只問一次；切回原文不用錢。`)),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-translate-start": "", disabled: RR.posting.has(card), onclick: () => startTranslate(r, conf.lang, offer?.translate?.hash, true) }, T("Translate", "翻譯")),
+        h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); RR.lang.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
       h("p", {}, T(`This starts a paid model round on ${offer.provider} · ${offer.model ?? "default model"}${offer.effort ? ` (${offer.effort})` : ""}; the tutor may also ask for up to two illustrations, each a paid image job made in the background. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
         `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}；導師也可能要求最多兩張插圖，每張都是在背景進行的付費圖片工作。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
@@ -570,7 +622,7 @@ function promptBar(r) {
     h("div", { class: "rr-askrow" },
       h("input", { class: "rr-askin", type: "text", maxlength: 4000, "data-room-text": card, disabled: busy, "aria-label": T("Ask anything about this change", "問任何關於這個改動的問題"), placeholder: T("Ask anything, or interrupt with a question…", "隨時打斷、隨便問…"), value: RR.draft.get(card) || "",
         oninput: (e) => { RR.draft.set(card, e.target.value); }, onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing) { RR.draft.set(card, e.target.value); ask("ask"); } } }),
-      busy ? h("span", { class: "rr-busy", role: "status", "data-room-busy": "", title: T("The tutor is working; one turn at a time.", "導師作答中；一次一回合。") }, h("i"), T("The tutor is working; one turn at a time.", "導師作答中；一次一回合。")) : null,
+      busy ? h("span", { class: "rr-busy", role: "status", "data-room-busy": r.running === -2 ? "translate" : "", title: T("The tutor is working; one turn at a time.", "導師作答中；一次一回合。") }, h("i"), r.running === -2 ? T("Translating the explanation…", "正在翻譯解說…") : T("The tutor is working; one turn at a time.", "導師作答中；一次一回合。")) : null,
       h("button", { type: "button", class: `rr-mic${talk ? " on" : ""}`, "data-mic": "", "aria-pressed": String(talk), disabled: busy || !RR.mic, title: RR.mic ? T("Hold to talk (this Mac recognises your voice; nothing is sent)", "按住說話（由這台 Mac 辨識，不送出任何聲音）") : T("No on-device speech recognition in this browser", "這個瀏覽器沒有裝置上的語音辨識"),
         onpointerdown: (e) => { e.preventDefault(); listen(card); }, onpointerup: () => { try { RR.rec?.stop(); } catch {} }, onpointerleave: () => { try { RR.rec?.stop(); } catch {} } }, talk ? T("Listening…", "聆聽中…") : T("Hold to talk", "按住說話")),
       h("button", { type: "button", class: "rr-send", "data-room-send": "", disabled: busy, onclick: () => ask("ask"), "aria-label": T("Ask", "送出") }, T("Ask", "送出"))),
@@ -639,6 +691,7 @@ function header(r) {
   return h("header", { class: "rr-head", "data-room-subject": kind },
     back, kind === "merge" ? h("a", { class: "rr-back", href: `#/inbox/${enc(r.card.id)}` }, T("The merge card", "合併卡")) : null,
     h("div", { class: "rr-htitle" }, h("b", { title }, title), h("span", { title: sub }, sub)),
+    langToggle(r),
     h("div", { class: "rr-pills" },
       ps ? pill({ class: ps.state === "merged" ? "ok" : ps.state === "closed" ? "bad" : ps.approved ? "ok" : "", "data-pr-state": ps.state, "data-pr-approved": String(!!ps.approved) }, h("span", {}, ps.state === "merged" ? T("Merged on GitHub", "已在 GitHub 合併") : ps.state === "closed" ? T("Closed on GitHub", "已在 GitHub 關閉") : ps.approved ? T("Open · approved at this head", "開啟中 · 已在這個 head 核准") : ps.draft ? T("Open · draft", "開啟中 · 草稿") : T("Open", "開啟中")),
         " · ", ps.headRepo && r.subject?.repository && ps.headRepo.toLowerCase() !== r.subject.repository.toLowerCase() ? T(`from the fork ${ps.headRepo} · `, `來自 fork ${ps.headRepo} · `) : "", verdicts ? h("span", { "data-pr-verdicts": "" }, verdicts) : T("No reviewer verdict yet", "還沒有審查者的結論"),

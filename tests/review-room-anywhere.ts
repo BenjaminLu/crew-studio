@@ -195,6 +195,8 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   // ---- what reviewers asked: their words as text, cited to the comment, never a citation of their own ----
   const rv = v1.turns.find((t: any) => t.studio && t.action === "reviewers"), inline = rv?.claims.find((c: any) => c.cites.some((x: any) => x.ref === "review:c11"));
   const said = rv?.claims.filter((c: any) => c.basis === "reviewer") ?? [];
+  ok(rv?.claims.every((c: any) => typeof c.zh === "string" && c.zh && c.zh !== c.text && JSON.stringify([...c.zh.matchAll(/\[review:[^\]]+\]/g)].map(String)) === JSON.stringify([...c.text.matchAll(/\[review:[^\]]+\]/g)].map(String)) && (!c.quote || !c.zh.includes(c.quote))),
+    "Studio's own lines carry their Chinese beside the English, citations kept; the reviewers' words are never translated", JSON.stringify(rv?.claims.map((c: any) => c.zh)));
   ok(!!rv && rv.provider === "studio" && said.length === 4 && said.every((c: any) => c.cites.length === 1 && c.cites[0].ok), "the reviewers' review, inline comment and comment are a Studio scene, each cited to its note", JSON.stringify(rv?.claims));
   ok(rv.claims.length === 5 && /^1 bot comment \(coverage, CI and the like\) not shown here/.test(rv.claims[4].text) && !rv.claims.some((c: any) => /Coverage report|github-actions/.test((c.quote ?? "") + c.text)),
     "a bot's comment (a coverage table) is counted, never shown as a reviewer's words", JSON.stringify(rv.claims.at(-1)));

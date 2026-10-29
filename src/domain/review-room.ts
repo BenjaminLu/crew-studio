@@ -133,16 +133,46 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   host?: string;
   /** the opening illustration was started (once per card, when the captain first opened the room) */
   opening?: { at: string };
+  /** the explanation in another language, per turn (a translation turn on the tutor's model: text only, citations kept) */
+  translations?: Record<string, Record<string, Translation>>;
+  /** the captain confirmed translating this room's explanation (once per room, for this tutor) */
+  translateOk?: { hash: string; at: string };
+  /** the last translation turn: its language, how it went and what was left untranslated */
+  translating?: { lang: string; status: "running" | "done" | "failed"; at: string; ended?: string | null; error?: string | null; dropped?: number[]; job?: string | null; cost?: any };
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
   illustrations?: { turn: number; prompt: string; refused: string; at: string }[] };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
+/** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
+ *  citations, board items and pictures are the original's */
+export type Translation = { scenes: { title: string; points: string[] }[]; claims: string[]; answer: string; provider: string; model: string; at: string };
+/** the languages the explanation is made in (zh-CN is the zh-TW text through OpenCC on the page, nothing paid) */
+export const ROOM_LANGS = ["en", "zh-TW"] as const;
+/** the citations a text carries, sorted: a translation keeps exactly the original's */
+export const citeTokens = (t: unknown) => [...String(t ?? "").matchAll(/\[(diff|ledger|commit|source|board|review):[^\]\s]{1,300}\]|\[(inference|inferred|speculative|direct|supported)\]/gi)].map((m) => m[0].toLowerCase()).sort();
+const sameCites = (a: unknown, b: unknown) => JSON.stringify(citeTokens(a)) === JSON.stringify(citeTokens(b));
+/** a translated turn checked against the original: the same number of scenes, points and blocks, every citation kept, a
+ *  scene within the board's limits. Returns what is wrong (empty: it may be kept). */
+export function translationErrors(t: { scenes?: { title: string; points: { text: string }[] }[]; claims?: { text: string; kind: string }[]; answer?: string }, x: any): string[] {
+  const errs: string[] = [], scenes = t.scenes ?? [], blocks = (t.claims ?? []).filter((c) => ["claim", "aside", "heading"].includes(c.kind));
+  if (!x || typeof x !== "object") return ["not an object"];
+  if (!Array.isArray(x.scenes) || x.scenes.length !== scenes.length) errs.push(`scenes: ${scenes.length} expected`);
+  else scenes.forEach((sc, i) => { const y = x.scenes[i]; if (!y || typeof y.title !== "string" || !Array.isArray(y.points) || y.points.length !== sc.points.length) { errs.push(`scene ${i + 1}: title and ${sc.points.length} points expected`); return; }
+    errs.push(...sceneErrors(y.title.replace(/\s+/g, " ").trim(), y.points.map((p: any) => ({ text: String(p ?? "") }))).map((e) => `scene ${i + 1}: ${e}`));
+    sc.points.forEach((p, j) => { if (!sameCites(p.text, y.points[j])) errs.push(`scene ${i + 1} point ${j + 1}: the citations differ from the original`); }); });
+  if (!Array.isArray(x.claims) || x.claims.length !== blocks.length) errs.push(`claims: ${blocks.length} expected`);
+  else blocks.forEach((c, i) => { if (typeof x.claims[i] !== "string" || !x.claims[i].trim()) errs.push(`claim ${i + 1} is empty`); else if (!sameCites(c.text, x.claims[i])) errs.push(`claim ${i + 1}: the citations differ from the original`); });
+  if (typeof x.answer !== "string" || !x.answer.trim()) errs.push("answer is empty"); else if (!sameCites(t.answer ?? "", x.answer)) errs.push("answer: the citations differ from the original");
+  return errs;
+}
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // ---------- grounding: every claim names its basis; one without a valid basis reads as an inference ----------
 export const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})\]/g;
 export type Cite = { ref: string; ok: boolean };
 /** basis "reviewer": a GitHub reviewer's own words (quote, untrusted text shown as text), cited to the comment */
-export type Claim = { text: string; kind: "claim" | "heading" | "code" | "table" | "aside"; basis: "cited" | "inference" | "reviewer" | null; cites: Cite[]; quote?: string };
+export type Claim = { text: string; kind: "claim" | "heading" | "code" | "table" | "aside"; basis: "cited" | "inference" | "reviewer" | null; cites: Cite[]; quote?: string;
+  /** a Studio-made line in Chinese (its own strings; the quote, someone else's words, is never translated) */
+  zh?: string };
 /** The tutor's answer as blocks (paragraphs, list items, headings, code), each claim with its citations checked by ok. */
 export function ground(text: string, ok: (kind: string, value: string) => boolean): Claim[] {
   const blocks: string[] = []; let cur: string[] = [], fence = false;
@@ -599,6 +629,36 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
 
+  /** A tutor round's admission, the same for a turn and a translation: the round sandbox only, the pinned skills, the Task's
+   *  node (an auxiliary owner for a branch or pull request room), the member verified and selected natively, staffing's
+   *  receipt for the tutor seat. On a refusal nothing is held. */
+  async function admit(k: Key, s: S, tutor: Tutor) {
+    const off = engine.grants.open("sandbox-off", s.run.ctx.project ?? s.run.params?.project ?? null);
+    if (off) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
+    if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
+    const sk = skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
+    // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it (a branch or
+    // pull request room: an auxiliary owner of the review node, which never advances the Task), the native selection verifies
+    // the reviewer member's capability, and staffing issues its receipt for the tutor seat
+    const run = s.run, pick = tutor.pick, held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]); let provider: any;
+    try {
+      if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
+      // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
+      // signed in, out of quota or not offered is refused with the reason
+      if (pick.model) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
+        // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
+        if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${k.id}`, at: new Date().toISOString() } } as any); }
+      catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
+      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
+      catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
+    } catch (e) { held?.release(); throw e; }
+    const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
+    // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
+    const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level, crew: !tutor.outside } } : {}) };
+    const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
+    let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
+    return { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor };
+  }
   async function runTurn(k: Key, room: Room, turn: Turn, s: S, provider: any, sk: ReturnType<typeof skills>, confirm: string,
     adm: { x: any; aux: boolean; system: string; rules: any; admissionReceipt: unknown; receipt: (r: any) => unknown }) {
     // the pages this turn may read: its own search results, and the documentation hosts (built in, plus policy review_room.docs_hosts)
@@ -629,6 +689,35 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }
+  /** the turns whose explanation is not in this language yet: what to translate (text only) */
+  const untranslated = (room: Room, lang: string) => room.turns.filter((t) => t.status === "done" && !t.studio && t.lang !== lang && !room.translations?.[lang]?.[String(t.n)]);
+  const translateUnits = (turns: Turn[]) => turns.map((t) => ({ n: t.n, scenes: (t.scenes ?? []).map((sc) => ({ title: sc.title, points: sc.points.map((p) => p.text) })),
+    claims: (t.claims ?? []).filter((c) => ["claim", "aside", "heading"].includes(c.kind)).map((c) => c.text), answer: t.answer }));
+  /** roughly what a translation costs: a fifth of a turn of this room, at least a cent (shown with ~) */
+  const translateEstimate = (room: Room | null) => { const c = (room?.turns ?? []).filter((t) => !t.studio && typeof t.cost?.usd === "number").map((t) => t.cost.usd); return c.length ? Math.max(0.01, Math.round(c.reduce((a, b) => a + b, 0) / c.length * 0.2 * 100) / 100) : null; };
+  async function runTranslate(k: Key, room: Room, lang: string, turns: Turn[], s: S, provider: any, sk: ReturnType<typeof skills>, adm: { x: any; aux: boolean; system: string; rules: any; admissionReceipt: unknown; receipt: (r: any) => unknown }) {
+    const units = translateUnits(turns), round = `room-${k.id}-tr-${lang}-${Date.now().toString(36)}`;
+    const text = ["TRANSLATION ONLY. Do not read code, do not call any tool, do not explain anything new.",
+      `Translate the review room's explanation below into ${LANGS[lang] ?? lang}. Keep every citation token exactly as written ([diff:…], [ledger:…], [commit:…], [source:…], [board:…], [review:…], [inference]) and in the same sentence; keep code, paths, names and numbers as they are. Keep each scene title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones and each point at most ${SCENE_LIMITS.point.cjk} CJK characters or ${SCENE_LIMITS.point.latin} Latin ones.`,
+      "Reply with JSON only, the same shape and the same number of items: {\"turns\": [{\"n\": <n>, \"scenes\": [{\"title\": \"…\", \"points\": [\"…\"]}], \"claims\": [\"…\"], \"answer\": \"…\"}]}",
+      "", JSON.stringify({ turns: units })].join("\n");
+    let job: any = null, dropped: number[] = [], error: string | null = null;
+    try {
+      job = await engine.deps.agents.run({ kind: "review-room", title: `${s.run.id} review room translation (${lang})`, system: adm.system, text, tools: [], provider,
+        ref: s.run.id, admissionReceipt: adm.admissionReceipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal, owns: () => engine.owns(adm.x) && k.open(), ...(adm.aux ? { auxOwner: adm.x } : {}),
+        project: s.run.params?.project || null, rules: adm.rules, maxTools: 0, timeoutMs: Number(process.env.CREW_REVIEW_ROOM_TIMEOUT_MS ?? 8 * 60_000), sandbox: { writes: [], reads: [], allow: [] },
+        record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, round), header: { run: s.run.id, node: s.node.id, round, head: s.head, base: s.base, card: k.id, subject: subjectRecord(k, s, room), translate: lang, turns: units.map((u) => u.n), role: "review-room-tutor", skills: sk.map((x) => `${x.id}@sha256:${x.sha256}`) } } } as any);
+      const answer = String(job.answer ?? job.said ?? ""), m = /\{[\s\S]*\}/.exec(answer); let parsed: any = null; try { parsed = m ? JSON.parse(m[0]) : null; } catch {}
+      if (job.status !== "done" || !parsed || !Array.isArray(parsed.turns)) throw new Error(job.status !== "done" ? String(job.error ?? job.status) : "the translation was not the JSON asked for");
+      room.translations = room.translations ?? {}; room.translations[lang] = room.translations[lang] ?? {};
+      for (const t of turns) { const x = parsed.turns.find((y: any) => Number(y?.n) === t.n), errs = translationErrors(t, x);
+        // a translation that lost a citation, changed the shape or broke the board's limits is not kept: the original shows
+        if (errs.length) { dropped.push(t.n); continue; }
+        room.translations[lang][String(t.n)] = { scenes: x.scenes.map((y: any) => ({ title: String(y.title).replace(/\s+/g, " ").trim(), points: y.points.map((p: any) => String(p).replace(/\s+/g, " ").trim()) })), claims: x.claims.map(String), answer: String(x.answer), provider: provider.id ?? "", model: provider.model ?? "", at: new Date().toISOString() }; }
+    } catch (e: any) { error = String(e?.message ?? e).slice(0, 300); }
+    room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost: job?.cost ?? null }; save(k, room);
+    engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost: job?.cost ?? null, status: room.translating.status } } as any);
+  }
   // ---------- Studio's own scenes: no model, nothing paid, every line from git or from what GitHub returned ----------
   const studioTurn = (room: Room, action: "since" | "reviewers", title: string, head: string, claims: Claim[], extra: Partial<Turn> = {}): Turn => {
     const at = new Date().toISOString();
@@ -643,13 +732,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const files = known ? (await g(s.wt, ["diff", "--name-only", "-M", from, s.head]) ?? "").split("\n").filter(Boolean) : [];
     const diff = known ? await g(s.wt, ["diff", "--no-color", "-M", from, s.head], 2_000_000) ?? "" : "";
     const n = room.turns.length + 1, cite = (c: string): Cite => ({ ref: `commit:${c}`, ok: true });
-    const claims: Claim[] = [{ text: ancestor ? `${log.length} new commit${log.length === 1 ? "" : "s"} since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}) [commit:${s.head}]` : known ? `The branch was rewritten since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}): the new head does not build on the old one [commit:${s.head}]` : `The head moved since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}); the old head is no longer in Studio's copy [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)] }];
-    for (const x of log.slice(0, 10)) claims.push({ text: `Commit ${x.c.slice(0, 8)} [commit:${x.c}]`, kind: "claim", basis: "cited", cites: [cite(x.c)], quote: untrusted(x.subj, 200) });
-    if (files.length) claims.push({ text: `Files changed since: ${files.slice(0, 20).map(glyph).join(", ")}${files.length > 20 ? ` and ${files.length - 20} more` : ""} [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)] });
+    const claims: Claim[] = [{ text: ancestor ? `${log.length} new commit${log.length === 1 ? "" : "s"} since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}) [commit:${s.head}]` : known ? `The branch was rewritten since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}): the new head does not build on the old one [commit:${s.head}]` : `The head moved since you last looked (${from.slice(0, 8)} → ${s.head.slice(0, 8)}); the old head is no longer in Studio's copy [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)],
+      zh: ancestor ? `你上次看過之後有 ${log.length} 個新 commit（${from.slice(0, 8)} → ${s.head.slice(0, 8)}）[commit:${s.head}]` : known ? `你上次看過之後分支被改寫了（${from.slice(0, 8)} → ${s.head.slice(0, 8)}）：新的 head 不是接在舊的之後 [commit:${s.head}]` : `你上次看過之後 head 動了（${from.slice(0, 8)} → ${s.head.slice(0, 8)}）；舊的 head 已不在 Studio 的副本裡 [commit:${s.head}]` }];
+    for (const x of log.slice(0, 10)) claims.push({ text: `Commit ${x.c.slice(0, 8)} [commit:${x.c}]`, zh: `Commit ${x.c.slice(0, 8)} [commit:${x.c}]`, kind: "claim", basis: "cited", cites: [cite(x.c)], quote: untrusted(x.subj, 200) });
+    if (files.length) claims.push({ text: `Files changed since: ${files.slice(0, 20).map(glyph).join(", ")}${files.length > 20 ? ` and ${files.length - 20} more` : ""} [commit:${s.head}]`, zh: `之後改過的檔案：${files.slice(0, 20).map(glyph).join("、")}${files.length > 20 ? ` 等另外 ${files.length - 20} 個` : ""} [commit:${s.head}]`, kind: "claim", basis: "cited", cites: [cite(s.head)] });
     // a reviewer's inline comment whose lines changed since: the code it points at moved (whether that answers it is the captain's call)
     for (const x of (room.pr?.notes ?? []).filter((x) => x.kind === "inline" && x.path).slice(-20)) {
       const touched = known && files.includes(x.path!) ? (x.line ? (await hunksOf({ wt: s.wt, base: from, head: s.head }, x.path!, Math.max(1, x.line - 3), x.line + 3)).count > 0 : true) : false;
-      claims.push({ text: `${touched ? "Changed since: the code this comment points at" : files.includes(x.path!) ? "Its file changed, not the lines this comment points at" : "Not touched since"}: ${x.author} on ${glyph(x.path)}${x.line ? `:L${x.line}` : ""} [review:${x.id}]`, kind: "claim", basis: "reviewer", cites: [{ ref: `review:${x.id}`, ok: true }], quote: x.body.slice(0, 400) });
+      claims.push({ text: `${touched ? "Changed since: the code this comment points at" : files.includes(x.path!) ? "Its file changed, not the lines this comment points at" : "Not touched since"}: ${x.author} on ${glyph(x.path)}${x.line ? `:L${x.line}` : ""} [review:${x.id}]`,
+        zh: `${touched ? "之後改過：這則留言指的程式碼" : files.includes(x.path!) ? "它的檔案改過，但不是這則留言指的那幾行" : "之後沒動過"}：${x.author} 在 ${glyph(x.path)}${x.line ? `:L${x.line}` : ""} [review:${x.id}]`, kind: "claim", basis: "reviewer", cites: [{ ref: `review:${x.id}`, ok: true }], quote: x.body.slice(0, 400) });
     }
     const item: Item = { id: `B${n}-1`, turn: n, type: "diff", title: "What changed since you last looked", path: "", range: { from, to: s.head }, commit: s.head, base: from, header: `${from.slice(0, 8)}..${s.head.slice(0, 8)}`, text: diff.slice(0, 8000) || "(no textual change)", basis: "cited", cites: [cite(s.head)] };
     const t = studioTurn(room, "since", "What changed since last time", s.head, claims, { from });
@@ -664,9 +755,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     // a bot's plain comment (coverage tables, CI summaries) is not a reviewer's question: counted, not shown. A bot's review or
     // inline comment (an AI reviewer's) is shown like a person's
     const isBot = (x: Note) => x.kind === "comment" && /\[bot\]$/i.test(x.author), notes = fresh.filter((x) => !isBot(x)), bots = fresh.length - notes.length;
+    const ZH_STATE: Record<string, string> = { APPROVED: "核准", CHANGES_REQUESTED: "要求修改", COMMENTED: "留言", DISMISSED: "撤銷" };
     const claims: Claim[] = notes.map((x) => ({ text: `${x.author} · ${x.kind === "review" ? `review${x.state ? ` (${x.state.toLowerCase().replace(/_/g, " ")}${x.commit ? ` at ${x.commit.slice(0, 8)}` : ""})` : ""}` : x.kind === "inline" ? `on ${glyph(x.path)}${x.line ? `:L${x.line}` : ""}${x.outdated ? " (outdated)" : ""}` : "comment"} [review:${x.id}]`,
+      zh: `${x.author} · ${x.kind === "review" ? `審查${x.state ? `（${ZH_STATE[x.state] ?? x.state.toLowerCase()}${x.commit ? `，在 ${x.commit.slice(0, 8)}` : ""}）` : ""}` : x.kind === "inline" ? `在 ${glyph(x.path)}${x.line ? `:L${x.line}` : ""}${x.outdated ? "（已過時）" : ""}` : "留言"} [review:${x.id}]`,
       kind: "claim" as const, basis: "reviewer" as const, cites: [{ ref: `review:${x.id}`, ok: true }], quote: x.body.slice(0, 1200) }));
-    if (bots) claims.push({ text: `${bots} bot comment${bots === 1 ? "" : "s"} (coverage, CI and the like) not shown here; they are on GitHub.`, kind: "aside", basis: null, cites: [] });
+    if (bots) claims.push({ text: `${bots} bot comment${bots === 1 ? "" : "s"} (coverage, CI and the like) not shown here; they are on GitHub.`, zh: `${bots} 則 bot 留言（覆蓋率、CI 之類）沒有放上來；原文在 GitHub 上。`, kind: "aside", basis: null, cites: [] });
     room.shown = [...shown, ...fresh.map((x) => x.id)]; if (!notes.length) return null;
     const t = studioTurn(room, "reviewers", "What reviewers asked", room.pr!.head, claims); room.turns.push(t); return t;
   }
@@ -739,8 +832,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const notify = (k: Key, turn?: number) => { try { if (k.card) engine.deps.send("scard", { id: k.id, run: k.run, status: engine.cards.get(k.id)?.status }); engine.deps.send("review-room", { card: k.id, run: k.run, turn: turn ?? null }); } catch {} };
 
   /** one scene's narration by its vendor: generated once, then served from the room's folder */
-  async function speakScene(k: Key, s: S, t: Turn, vendor: string) {
-    const text = (t.claims ?? []).filter((x) => x.kind === "claim" || x.kind === "aside").map((x) => narration(x.text)).filter(Boolean).join("\n").slice(0, 4000); if (!text) throw refuse("This scene has nothing to say", "not_found");
+  async function speakScene(k: Key, s: S, t: Turn, vendor: string, lang?: string) {
+    const tr = lang && lang !== t.lang ? load(k)?.translations?.[lang]?.[String(t.n)] : null;
+    const text = (tr ? (tr.scenes.length ? tr.scenes.flatMap((x) => x.points) : tr.claims) : t.scenes?.length ? t.scenes.flatMap((x) => x.points.map((p) => p.text)) : (t.claims ?? []).filter((x) => x.kind === "claim" || x.kind === "aside").map((x) => x.text)).map((x) => narration(x)).filter(Boolean).join("\n").slice(0, 4000); if (!text) throw refuse("This scene has nothing to say", "not_found");
     const name = `voice-t${t.n}-${sha(text).slice(0, 12)}.mp3`, f = join(k.dir, name), src = `/api/review-room/${k.id}/audio/${name}`;
     if (existsSync(f)) return { src, cached: true, vendor, model: TTS_MODEL };
     const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 90_000);
@@ -775,6 +869,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (statMemo.size > 200) statMemo.clear(); statMemo.set(key, v); return v; } }
     return room?.pr?.files?.length ? sum(room.pr.files.map((f) => ({ path: f.path, added: f.added, removed: f.removed })), "github") : null;
   };
+  /** the room's languages for the page: the translations kept, the last translation turn, and what translating would cost */
+  const langView = (r: Room | null, open: boolean) => ({ translations: r?.translations ?? {}, translating: r?.translating ?? null, langs: ROOM_LANGS,
+    translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
   /** the head moved past the one the captain last looked at: how many commits (null when the branch was rewritten) */
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
     const known = git(s.wt, ["cat-file", "-e", `${from}^{commit}`]).ok, anc = known && git(s.wt, ["merge-base", "--is-ancestor", from, s.head]).ok;
@@ -801,7 +898,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); pregenerate(k); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
-        return { card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
+        return { ...langView(r, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
           actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), summary: this.summary(c) };
       }
@@ -814,7 +911,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         const pr = k.kind === "pr" ? load(k) : null; if (pr?.subject?.url && Date.now() - Date.parse(pr.pr?.attemptedAt ?? pr.pr?.checkedAt ?? "0") > PR_RECHECK_MS) void readPr(pr.subject.url).catch(() => {}); }
       const r0 = load(k), r = r0 ? settled(r0) : null, run = k.run ? engine.get(k.run) : null, open = k.open() && !!s, sub = r?.subject ?? (s ? subjectRecord(k, s, r) : { kind: k.kind, room: k.id });
       const title = k.kind === "branch" ? { en: `Branch ${run?.ctx.branch ?? k.id}`, "zh-TW": `分支 ${run?.ctx.branch ?? k.id}` } : { en: `Pull request #${sub.number}: ${r?.pr?.title ?? ""}`, "zh-TW": `Pull request #${sub.number}：${r?.pr?.title ?? ""}` };
-      return { card: { id: k.id, run: k.run, node: k.node, title, status: open ? "open" : "closed" }, subject: sub, task: run ? { id: run.id, title: run.title ?? run.id } : null,
+      return { ...langView(r, open), card: { id: k.id, run: k.run, node: k.node, title, status: open ? "open" : "closed" }, subject: sub, task: run ? { id: run.id, title: run.title ?? run.id } : null,
         pr: k.kind === "pr" ? { id: String(sub.number ?? ""), url: sub.url ?? null } : run?.ctx.pr?.adapter === "github" ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null, prState: prState(r), stale: r?.pr?.stale ?? null, checking: refreshing.has(k.id),
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
@@ -858,30 +955,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!s.run || !s.node) throw noHost();
       const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
       if (a.confirm !== offer.hash) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
-      const off = engine.grants.open("sandbox-off", s.run.ctx.project ?? s.run.params?.project ?? null);
-      if (off) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
-      if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
-      const sk = skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
-      // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it (a branch or
-      // pull request room: an auxiliary owner of the review node, which never advances the Task), the native selection verifies
-      // the reviewer member's capability, and staffing issues its receipt for the tutor seat
-      const run = s.run, tutor = seatPick(run, s.node), pick = tutor.pick, held = k.kind === "merge" ? null : engine.auxOwner(run, s.node), x = held ? held.x : engine.x(run, s.node, run.nodes[s.node.id]); let provider: any;
-      try {
-        if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
-        // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
-        // signed in, out of quota or not offered is refused with the reason
-        if (pick.model) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
-          // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
-          if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${k.id}`, at: new Date().toISOString() } } as any); }
-        catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
-        try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
-        catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
-      } catch (e) { held?.release(); throw e; }
-      const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
-      // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
-      const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level, crew: !tutor.outside } } : {}) };
-      const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
-      let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
@@ -891,6 +965,26 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head };
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
       void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); });
+      return this.view(k.id);
+    },
+    /** Show the explanation in another language: the turns not in it yet are translated by one small paid turn on the room's
+     *  tutor (text only: no tool, no code read; citations, board items and pictures stay the original's), confirmed once per
+     *  room; what is translated is kept per turn and language, so switching back costs nothing. */
+    async translate(id: string, a: { lang?: unknown; confirm?: unknown }, by: string) {
+      const k = keyOf(id), lang = String(a.lang ?? ""); if (!(ROOM_LANGS as readonly string[]).includes(lang)) throw refuse(`lang is one of ${ROOM_LANGS.join(", ")}`, "bad_lang");
+      if (!k.open()) throw refuse("This room no longer takes paid turns; it shows the languages it has / 這間審查室不再付費，只顯示已有的語言", "closed");
+      const room0 = load(k); const todo = room0 ? untranslated(room0, lang) : []; if (!todo.length) return this.view(id);
+      if (live.has(k.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
+      const s = subjectOf(k); if (!s.run || !s.node) throw noHost();
+      const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
+      const hash = sha(`${offer.hash}:translate`).slice(0, 16), estimate = translateEstimate(room0);
+      if (room0!.translateOk?.hash !== hash && a.confirm !== hash) throw refuse(`Translating this room's explanation is a small paid round on ${offer.provider} ${offer.model ?? "(default model)"} (~${estimate ?? "?"}): confirm it once / 翻譯這間房間的解說是一次小的付費回合（約 ${estimate ?? "?"}），請確認一次`, "confirm_required", { offer: { ...offer, translate: { hash, estimate, lang } } });
+      try { await engine.deps.refreshUsable?.(); } catch {}
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, seatPick(s.run, s.node));
+      if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
+      const room = load(k)!; room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
+      live.set(k.id, -2); notify(k);
+      void runTranslate(k, room, lang, untranslated(room, lang), s, provider, sk, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k); });
       return this.view(k.id);
     },
     /** What a citation points at, for the room's links: the diff hunks, the ledger entry, the commit, the source, the board excerpt or a reviewer's note. */
@@ -925,7 +1019,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     image(id: string, name: string) { const k = keyOf(id); if (!/^B\d+-\d+\.png$/.test(name)) throw refuse("No such image", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such image", "not_found"); return readFileSync(f); },
     /** A scene's narration in the tutor vendor's own neural voice (paid; the captain turned the voice on): generated once,
      *  cached in the room's folder, served from it. Only when the tutor's vendor speaks; never another vendor. */
-    async speech(id: string, scene: unknown) {
+    async speech(id: string, scene: unknown, lang?: unknown) {
       const k = keyOf(id); if (!k.open()) throw refuse("The merge card is answered: the room no longer speaks / 合併卡已回覆，審查室不再朗讀", "closed");
       const s = subjectOf(k), room = load(k), m = /^t([1-9]\d{0,3})$/.exec(String(scene ?? "")), t = m ? room?.turns.find((x) => x.n === Number(m[1])) : null;
       if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
@@ -934,8 +1028,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[seatPick(s.run, s.node).pick.provider];
       if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
       if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
-      const key = `${k.id}/${t.n}`, running = speaking.get(key); if (running) return running;
-      const job = speakScene(k, s, t, vendor); speaking.set(key, job); try { return await job; } finally { speaking.delete(key); }
+      const key = `${k.id}/${t.n}`, running = speaking.get(`${key}/${(ROOM_LANGS as readonly string[]).includes(String(lang)) ? String(lang) : ""}`); if (running) return running;
+      const l = (ROOM_LANGS as readonly string[]).includes(String(lang)) ? String(lang) : undefined;
+      const job = speakScene(k, s, t, vendor, l); speaking.set(`${key}/${l ?? ""}`, job); try { return await job; } finally { speaking.delete(`${key}/${l ?? ""}`); }
     },
     /** a narration file, from the room's own folder */
     audio(id: string, name: string) { const k = keyOf(id); if (!/^voice-t\d+-[0-9a-f]{12}\.mp3$/.test(name)) throw refuse("No such audio", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such audio", "not_found"); return readFileSync(f); },

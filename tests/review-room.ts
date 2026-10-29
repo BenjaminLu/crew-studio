@@ -313,6 +313,27 @@ script.push([["msg", "Let me check the diff first."], ["fs_search", { text: "per
 await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merge.id) as any).offer.hash }, "captain"); await room.settle(merge.id);
 { const t4 = (room.view(merge.id) as any).turns[3];
   ok(t4?.status === "failed" && /the tutor ended without an answer/.test(t4.error ?? "") && t4.answer === "" && !t4.claims.length, "a tutor that ends after a tool call with no final message fails the turn with the reason; its preamble is not the answer", JSON.stringify(t4 && { status: t4.status, error: t4.error, answer: t4.answer, claims: t4.claims })); }
+// ---------- the explanation in another language: one confirmed translation turn, text only, kept per turn and language ----------
+{ const v0 = room.view(merge.id) as any, t1o = v0.turns[0];
+  ok(JSON.stringify(v0.translate.pending.en) === "[1]" && JSON.stringify(v0.translate.pending["zh-TW"]) === "[2,3]" && v0.translate.confirmed === false, "the room knows which answers are not in a language yet", JSON.stringify(v0.translate));
+  let need: any = null; try { await room.translate(merge.id, { lang: "en" }, "captain"); } catch (e) { need = e; }
+  ok(need?.code === "confirm_required" && /^[0-9a-f]{16}$/.test(need.offer?.translate?.hash ?? "") && typeof need.offer.translate.estimate === "number" && runArgs.length === 4, "translating is a small paid round: it asks to confirm first, with its estimate, and nothing runs", JSON.stringify(need?.offer?.translate));
+  const blocks = t1o.claims.filter((c: any) => ["claim", "aside", "heading"].includes(c.kind)).map((c: any) => `EN ${c.text}`);
+  const tr = (p1: string) => JSON.stringify({ turns: [{ n: 1, scenes: [{ title: "Rounding to the cent", points: [p1, "a".repeat(100), "It was probably for invoices."] }], claims: blocks, answer: `EN ${t1o.answer}` }] });
+  // a translation that drops a citation is not kept: the original shows
+  script.push([["msg", tr("Lost its citation.")]]);
+  const runs0 = runArgs.length; await room.translate(merge.id, { lang: "en", confirm: need.offer.translate.hash }, "captain"); await room.settle(merge.id);
+  const v1 = room.view(merge.id) as any, trArgs = runArgs.at(-1);
+  ok(runArgs.length === runs0 + 1 && trArgs.tools.length === 0 && /translation/.test(trArgs.title) && /TRANSLATION ONLY/.test(prompts.at(-1)!.text) && !/THE DIFF/.test(prompts.at(-1)!.text), "the translation round gets no tool and no code: only the room's text", JSON.stringify({ tools: trArgs.tools.length, title: trArgs.title }));
+  ok(!v1.translations.en?.["1"] && JSON.stringify(v1.translating.dropped) === "[1]" && v1.translate.confirmed === true, "a translation that lost a citation is not kept: the validator drops it and the original shows", JSON.stringify(v1.translating));
+  script.push([["msg", tr("Rounded to the cent [diff:src/percent.ts:L2-3]")]]);
+  await room.translate(merge.id, { lang: "en" }, "captain"); await room.settle(merge.id);
+  const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"];
+  ok(kept?.scenes[0].title === "Rounding to the cent" && kept.claims.length === blocks.length && /^EN /.test(kept.answer) && JSON.stringify(v2.translate.pending.en) === "[]" && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-translate" && e.data.lang === "en" && JSON.stringify(e.data.kept) === "[1]"),
+    "confirmed once, the next translation runs without asking again; a valid one is kept per turn and language, and recorded", JSON.stringify(kept));
+  const runs1 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain");
+  let over: any = null; { const { translationErrors } = await import("../src/domain/review-room"); over = translationErrors(t1o, { scenes: [{ title: "x".repeat(49), points: ["a", "b", "c"] }], claims: blocks, answer: t1o.answer }); }
+  ok(runArgs.length === runs1 && over.some((e: string) => /title is too long/.test(e)) && over.some((e: string) => /citations differ/.test(e)), "switching to a language already kept runs nothing; the validator holds a translation to the board's limits and the original's citations", JSON.stringify(over)); }
 // ---------- a docs_hosts policy naming a host of user content refuses the turn ----------
 E.policies.setProject("sandbox", { install: false, review_room: { docs_hosts: ["raw.githubusercontent.com"] } } as any);
 refusal = null; try { await room.start(merge.id, { action: "how", confirm: (room.view(merge.id) as any).offer.hash }, "captain"); } catch (e) { refusal = e; }

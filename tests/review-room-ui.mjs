@@ -330,6 +330,31 @@ try {
     ok(posts.length === 1 && posts[0].action === "ask" && /question 3/.test(posts[0].text) && /picked B/.test(posts[0].text), "the re-explanation asks about that question, saying what the captain picked", JSON.stringify(posts));
     await ctx.close(); }
 
+  // ---------- the explanation's language, switched live: a kept translation at once, a missing one after one confirmation ----------
+  { const TR = { "1": { scenes: [], claims: ["## 百分比怎麼算", "以分為單位的金額進入 `percent` [board:B1-1]。", "結果取整到分 [board:B1-2] [diff:src/percent.ts:L2-3]。", "我推測這是為了發票 <img src=x onerror=\"window.__pwned=1\">。", "頁面上的總額差了一分錢 [board:B1-7]。", "要我講深一點嗎？"], answer: "譯文", provider: "codex", model: "gpt-6", at: "t" } };
+    const R6 = { ...ROOM, translations: { "zh-TW": TR }, translate: { estimate: 0.02, confirmed: false, pending: { en: [], "zh-TW": [2] } } };
+    const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const trs = [];
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: R6 }));
+    await p.route(/\/api\/review-room\/SC-50\/translate$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); trs.push(b);
+      if (b.confirm !== "tr0123456789abcd") return r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: { ...ROOM.offer, translate: { hash: "tr0123456789abcd", estimate: 0.02, lang: b.lang } } } });
+      r.fulfill({ json: { ...R6, running: -2, translating: { lang: b.lang, status: "running" }, translate: { ...R6.translate, confirmed: true } } }); });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]");
+    const before = (await stage(p)).caption; await p.click('[data-lang-pick="zh-TW"]');
+    let s6 = await stage(p);
+    ok(/An amount in cents goes into percent/.test(before) && s6.title === "百分比怎麼算" && /以分為單位的金額進入/.test(s6.caption) && !trs.length && !posts.length && await p.$eval("[data-room-lang]", (e) => e.dataset.roomLang) === "zh-TW", "a kept translation shows at once: the title, the points and the caption switch language, nothing is asked or paid", JSON.stringify({ before, s6 }));
+    ok(await p.evaluate(() => !window.__pwned && !document.querySelector(".rr-point img")) && s6.visual === "B1-1", "a translation is text: markup in it stays text, and the board's pictures are the original's", JSON.stringify(s6));
+    const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
+    ok(voices.includes("local:mj") && !voices.includes("local:ava"), "the voice follows the language shown: this Mac's Chinese voice now", JSON.stringify(voices));
+    await p.click('[data-lang-pick="zh-CN"]'); s6 = await stage(p);
+    ok(s6.title === "百分比怎么算" && !trs.length, "简体 comes from the 繁體 text through OpenCC: nothing paid", JSON.stringify(s6));
+    await p.click('[data-lang-pick="en"]'); await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t2"]');
+    await p.click('[data-lang-pick="zh-TW"]'); await p.waitForSelector("[data-translate-confirm]");
+    ok(/US\$0\.02/.test(await p.textContent("[data-translate-confirm]")) && !trs.length, "a language not kept yet asks to confirm the translation once, with its cost", await p.textContent("[data-translate-confirm]"));
+    await p.click("[data-translate-start]"); await p.waitForFunction(() => document.querySelector('[data-room-busy="translate"]'));
+    ok(trs.length === 2 && trs[0].lang === "zh-TW" && trs[1].confirm === "tr0123456789abcd" && !posts.length, "confirmed, the translation is sent with the room's confirmation; the dock says it is translating", JSON.stringify(trs));
+    await ctx.close(); }
+
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });
