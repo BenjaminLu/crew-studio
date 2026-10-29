@@ -305,7 +305,7 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
 @media (max-width: 760px) {
   .rr-room { grid-template-rows: 44px minmax(0, 1fr) auto; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
   .rr-head { gap: 6px; }
-  .rr-back span, .rr-htitle span, .rr-pills .rr-pill:not([data-pr-state]), [data-room-check], [data-room-github], .rr-head .rr-back[href^="#/inbox"] { display: none; }
+  .rr-back span, .rr-htitle span, .rr-pills .rr-pill:not([data-pr-state]), [data-room-check], [data-room-github], [data-room-save], [data-room-library], .rr-head .rr-back[href^="#/inbox"] { display: none; }
   .rr-htitle b { font-size: 14px; }
   .rr-stage { grid-template-rows: minmax(0, 1fr) 44px; gap: 8px; }
   .rr-stage > .rr-caption { display: none; }

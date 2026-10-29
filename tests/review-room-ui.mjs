@@ -288,7 +288,7 @@ try {
     await ctx.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: ROOM }));
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
-    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]");
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]");
     const rm = await p.evaluate(() => ({ moving: document.querySelectorAll("[data-stage] .rr-pen, [data-stage] .rr-write, [data-stage] .rr-grow, [data-stage] .rr-enter, [data-stage] .rr-hl.rr-anim").length, anim: [...document.querySelectorAll("[data-stage] *")].filter((e) => getComputedStyle(e).animationName !== "none").length, nodes: document.querySelectorAll("[data-visual] [data-node]").length }));
     ok(rm.moving === 0 && rm.anim === 0 && rm.nodes === 2, "with reduced motion the picture shows its final state at once: nothing is drawn or written in", JSON.stringify(rm));
     await p.keyboard.press("ArrowRight"); await p.keyboard.press("ArrowRight");
@@ -374,6 +374,39 @@ try {
     ok(turns.length === 1 && turns[0].regenerate === 2 && turns[0].pick.provider === "claude" && !turns[0].confirm && /claude · opus-x/.test(await p.textContent("[data-room-confirm]")), "picking a model asks to confirm a paid round on that model first", JSON.stringify(turns));
     await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector("[data-room-busy]"));
     ok(turns.length === 2 && turns[1].confirm === "re0123456789abcd" && turns[1].regenerate === 2 && !posts.length, "confirmed, the same question is asked again on the picked model", JSON.stringify(turns));
+    await ctx.close(); }
+
+  // ---------- a room saved in the Library: replayed in the room, read-only, offline, no paid control ----------
+  { const MCQ = { n: 3, q: "What does percent(1999, 15) return?", turn: 1, at: "t", options: ["300", "299"], answer: 0, choice: 1, why: "Math.round", cites: [], result: { correct: false, note: "Math.round", turn: 1, choice: 1, by: "studio" } };
+    const SNAP = { schema: 1, kind: "review-room-snapshot", room: "SC-50", savedAt: "2026-10-28T13:00:00Z", reason: "The merge card was answered", subject: { kind: "merge", head: H, base: B }, tutors: [{ provider: "codex", model: "gpt-6" }], cost: { usd: 0.04 },
+      view: { ...ROOM, board: ROOM.board.map((b) => b.id === "B1-9" ? { ...b, src: "/api/review-room/library/room-sc-50/2/asset/B1-9.png" } : b), open: false, offer: null, running: null, tutors: [], translate: null, closed: { en: "Saved", zh: "已存" }, check: { questions: [...ROOM.check.questions, MCQ] },
+        translations: { "zh-TW": { "1": { scenes: [], claims: ["## 百分比怎麼算", "a", "b", "c", "d", "e"], answer: "譯", provider: "codex", model: "gpt-6", at: "t" } } } },
+      cites: { "diff:src/percent.ts:L2-3": { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "@@ -0,0 +1 @@\n+  return Math.round((amount * pct) / 100);" } }, artifact: "room-sc-50", n: 2, versions: [{ n: 1, at: "t", summary: "Saved by captain" }, { n: 2, at: "t", summary: "The merge card was answered" }] };
+    const { ctx, p, posts, cites, speech } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const live = [];
+    await p.route(/\/api\/review-room\/library\/room-sc-50(\?v=\d+)?$/, (r) => r.fulfill({ json: SNAP }));
+    await p.route(/\/api\/review-room\/library\/room-sc-50\/2\/asset\/B1-9\.png$/, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
+    p.on("request", (q) => { if (/\/api\/review-room\/SC-50/.test(q.url())) live.push(q.url()); });
+    await p.goto(`${base}/#/room/lib:room-sc-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    const ro = await p.evaluate(() => ({ note: document.querySelector("[data-room-readonly]")?.textContent, paid: ["[data-room-action]", "[data-room-text]", "[data-room-send]", "[data-mic]", "[data-welcome-teach]", "[data-regen]", "[data-room-save]", "[data-room-check]", "[data-translate-start]"].filter((q) => document.querySelector(q)),
+      snap: document.querySelector("[data-room-snapshot]")?.dataset.roomSnapshot, vers: [...document.querySelectorAll("[data-snapshot-version]")].map((e) => e.dataset.snapshotVersion), focus: document.body.classList.contains("room-focus"), voice: !!document.querySelector("[data-voice]"), vendor: !!document.querySelector('[data-voice] option[value="vendor"]') }));
+    ok(/read-only replay/.test(ro.note || "") && !ro.paid.length && ro.snap === "room-sc-50@2" && JSON.stringify(ro.vers) === JSON.stringify(["1", "2"]) && ro.focus && ro.voice && !ro.vendor, "a saved room opens from the Library in the room itself, read-only: no prompt, no paid control, its versions listed, this Mac's voice still there", JSON.stringify(ro));
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]"); await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]');
+    await p.waitForSelector("[data-cite-panel] .rr-diff");
+    ok(/Math\.round/.test(await p.textContent("[data-cite-panel]")) && !cites.length && !live.length, "a citation opens from the snapshot itself: nothing asked of the live room or the cache", JSON.stringify({ cites, live }));
+    await p.click("[data-cite-panel] .btn");
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); const cap = (await stage(p)).caption;
+    ok(/An amount in cents goes into percent/.test(cap) && await p.$eval("[data-play]", (e) => !e.disabled), "captions and playback still work", cap);
+    await p.click("[data-play]"); await p.click('[data-lang-pick="zh-TW"]'); const zh = await stage(p);
+    ok(zh.title === "百分比怎麼算" && await p.$eval('[data-lang-pick="en"]', (e) => !e.disabled), "the language switch uses the languages saved with it", JSON.stringify(zh));
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1-quiz"]');
+    const quiz = await p.evaluate(() => ({ disabled: [...document.querySelectorAll("[data-quiz-option]")].every((e) => e.disabled), verdict: document.querySelector("[data-quiz-verdict]")?.dataset.quizVerdict, reteach: !!document.querySelector("[data-quiz-reteach]") }));
+    ok(quiz.disabled && quiz.verdict === "missed" && !quiz.reteach && !posts.length && !speech.length, "the check shows the captain's answers and results, nothing to pick and nothing to pay", JSON.stringify(quiz));
+    // the Library's page of a saved room: replay it (each version), never review, approve or compare it
+    const ver = (n) => ({ n, status: "draft", createdAt: "2026-10-28T13:00:00Z", createdBy: { kind: "host" }, approvedBy: null, approvedAt: null, primary: "room.json", sha256: null, parent: n > 1 ? n - 1 : null, annotations: [], cost: { usd: 0.04 }, render: null, url: null, notes: 0, fileCount: 2, summary: "saved", files: [{ path: "room.json" }] });
+    await p.route(/\/api\/artifacts\/room-sc-50$/, (r) => r.fulfill({ json: { artifact: { id: "room-sc-50", title: "Review room · Merge: Add percent", type: "doc", project: "studio", source: "room", created: "2026-10-28T13:00:00Z", note: null, entry: null }, versions: [ver(1), ver(2)], runs: [] } }));
+    await p.evaluate(() => { location.hash = "#/artifact/room-sc-50"; }); await p.waitForSelector("[data-replay-room]", { timeout: 15000 });
+    const libPage = await p.evaluate(() => ({ replay: document.querySelector("[data-replay-room]")?.getAttribute("href"), versions: [...document.querySelectorAll("[data-replay-version]")].map((e) => e.closest("a").getAttribute("href")), review: !!document.querySelector('a[href^="#/review/room-sc-50"]'), compare: !!document.querySelector('a[href^="#/compare/room-sc-50"]'), focus: document.body.classList.contains("room-focus") }));
+    ok(libPage.replay === "#/room/lib:room-sc-50@2" && libPage.versions.length === 2 && !libPage.review && !libPage.compare && !libPage.focus, "the Library shows a saved room with “Replay in the review room” for each version, and no review, approval or compare", JSON.stringify(libPage));
     await ctx.close(); }
 
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
@@ -521,6 +554,9 @@ try {
     const ca = await p.evaluate(async () => { const x = await fetch("/api/review-room/SC-999/check-answer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 1, choice: 0 }) }); return [x.status, (await x.json()).code]; });
     const caRaw = await fetch(`${base}/api/review-room/SC-999/check-answer`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(ca[0] === 404 && ca[1] === "not_found" && (caRaw.status === 401 || caRaw.status === 403), "the check's answer route is real, and like every write it needs Studio's session", JSON.stringify([ca, caRaw.status]));
+    const lb = await p.evaluate(async () => { const a = await fetch("/api/review-room/library/room-sc-999"), b = await fetch("/api/review-room/library/room-sc-999", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), c = await fetch("/api/artifacts/room-sc-999/v/1/approve", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), d = await fetch("/api/review-room/SC-999/save", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      return [a.status, b.status, c.status, (await c.json()).code, d.status]; });
+    ok(lb[0] === 404 && lb[1] === 405 && lb[2] === 403 && lb[3] === "room-snapshot-read-only" && lb[4] === 404, "a saved room's route reads only; the Library refuses any write to a saved room; Save to Library is a real route", JSON.stringify(lb));
     await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally { await browser.close(); app.kill(); }

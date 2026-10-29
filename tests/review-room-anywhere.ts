@@ -277,6 +277,13 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   const v6: any = await room.check(pid), closedTurn = await refused(() => room.start(pid, { action: "how", confirm: v5.offer.hash }, "captain"));
   ok(v6.prState.state === "merged" && v6.open === false && /merged on GitHub/.test(v6.closed.en) && v6.offer === null && closedTurn?.code === "closed" && v6.turns.length === v5.turns.length && (await room.cite(pid, "diff:a.txt")).text.includes("Two, quietly"),
     "merged on GitHub: the room shows it, takes no turn and stays readable (its scenes and citations open)", JSON.stringify([v6.prState.state, v6.closed, closedTurn?.code]));
+  // the room ended: Studio saved it to the Library, and the snapshot reads with Studio's copy of the pull request's commits gone
+  await room.settle(pid);
+  { const { ArtifactStore } = await import("../src/artifacts"), { rmSync } = await import("node:fs"), lib = new ArtifactStore(H.data), aid = `room-${pid.toLowerCase()}`;
+    const vs = lib.versions(aid), calls2 = sim.calls.length; rmSync(join(H.data, "review-room", "cache"), { recursive: true, force: true });
+    const snap: any = room.librarySnapshot(aid);
+    ok(vs.length === 1 && /merged/.test(vs[0].summary ?? "") && lib.get(aid)?.project === "proj" && snap.subject.kind === "pr" && snap.subject.url === "https://github.com/fixture/project/pull/1" && /Two, quietly/.test(snap.cites["diff:a.txt"]?.text ?? "") && snap.view.turns.some((t: any) => t.action === "reviewers") && sim.calls.length === calls2,
+      "a merged pull request's room is saved to the Library under its project; with Studio's cache removed it still opens, its diff inside it, nothing read from GitHub", JSON.stringify({ vs: vs.map((v: any) => v.summary), project: lib.get(aid)?.project, cites: Object.keys(snap.cites) })); }
 
   // ---- a fork's pull request no Studio Task made: readable, no paid turn ----
   const C = (() => { must(scratch, ["checkout", "-qb", "patch-1", "main"]); writeFileSync(join(scratch, "b.txt"), "from a fork\n"); must(scratch, ["add", "b.txt"]); must(scratch, [...id, "commit", "-qm", "Add b"]); return must(scratch, ["rev-parse", "HEAD"]); })();

@@ -26,6 +26,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { ArtifactStore } from "../artifacts";
+import { CAPTURE_PATH } from "../runtime/captures";
 import { cleanText } from "./issue-triage";
 import type { GitHubPrAdapter } from "../adapters/github";
 import type { Projects } from "../doors";
@@ -141,6 +145,10 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   translateOk?: { hash: string; at: string };
   /** the last translation turn: its language, how it went and what was left untranslated */
   translating?: { lang: string; status: "running" | "done" | "failed"; at: string; ended?: string | null; error?: string | null; dropped?: number[]; job?: string | null; cost?: any };
+  /** the room's Library snapshot (one artifact, a version per save) and the change it was saved at */
+  library?: { artifact: string; versions: { n: number; at: string; reason: string }[]; rev: number; ended?: boolean; sig?: string };
+  /** bumped on every save: a snapshot older than this is out of date */
+  rev?: number;
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
   illustrations?: { turn: number; prompt: string; refused: string; at: string }[] };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
@@ -235,7 +243,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** the registered projects (a pull request is read only for a project connected to GitHub with that repository) */
   projects?: Projects;
   /** the GitHub adapter of a connected project (production: its grant's adapter, verified; tests: the simulator's) */
-  github?: (project: any) => GitHubPrAdapter | null }) {
+  github?: (project: any) => GitHubPrAdapter | null;
+  /** the Library (src/artifacts.ts): where a room's read-only snapshot is kept; production passes Studio's own store */
+  artifacts?: ArtifactStore }) {
   const live = new Map<string, number>(), speaking = new Map<string, Promise<any>>();
   // the seat staffing admits: the reviewer's approved member, with exactly these pinned texts as its instructions
   engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256), adaptive: true } };
@@ -269,7 +279,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   // read from disk only once per process: an illustration still pending there had its job in a Studio that stopped
   const load = (k: Key): Room | null => { const had = cache.get(k.file); if (had) return had; try { const r: Room = JSON.parse(readFileSync(k.file, "utf8"));
     for (const b of r.board) if (b.type === "image" && b.status === "pending") Object.assign(b, { status: "failed", error: "interrupted: Studio stopped before the picture was ready" }); cache.set(k.file, r); return r; } catch { return null; } };
-  const save = (k: Key, r: Room) => { cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
+  const save = (k: Key, r: Room) => { r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
   /** a turn left running by a Studio that stopped reads interrupted (its round record keeps what it did) */
   const settled = (r: Room) => ({ ...r, turns: r.turns.map((t) => t.status === "running" && live.get(r.card) !== t.n ? { ...t, status: "interrupted" as const } : t) });
   const cardOf = (id: string) => { const c = engine.cards.get(id); if (!c) throw refuse("No such card", "not_found"); return c; };
@@ -748,6 +758,54 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost: job?.cost ?? null }; save(k, room);
     engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost: job?.cost ?? null, status: room.translating.status } } as any);
   }
+  // ---------- the Library: a room's read-only snapshot, one artifact per room, a version per save ----------
+  let libMemo: ArtifactStore | null = null;
+  const library = () => o.artifacts ?? (libMemo ??= new ArtifactStore(o.dataDir));
+  /** a room's Library artifact id: room-<the room's id> */
+  const libId = (id: string) => `room-${id.toLowerCase()}`, LIB_ID = /^room-(sc-\d+|r-\d+|pr-[0-9a-f]{12}-[1-9]\d{0,8})$/;
+  const saving = new Map<string, Promise<any>>();
+  /** what a snapshot shows (the scenes, the board, the check's answers, the languages): a re-read of GitHub alone does not change it */
+  const contentSig = (r: Room) => sha(JSON.stringify([r.turns.map((t) => [t.n, t.status, t.answer?.length ?? 0, t.scenes?.length ?? 0]), r.board.map((b) => [b.id, b.status ?? null]), r.check.questions.map((q) => [q.n, q.choice ?? null, !!q.result]), Object.entries(r.translations ?? {}).map(([l, x]) => [l, Object.keys(x)])])).slice(0, 16);
+  /** what the room is about, for the snapshot's record */
+  const subjectMeta = (k: Key, room: Room, view: any) => ({ kind: k.kind, room: k.id, repository: room.subject?.repository ?? null, number: room.subject?.number ?? (view.pr?.id ?? null), url: room.subject?.url ?? view.pr?.url ?? null,
+    branch: k.kind === "branch" ? engine.get(k.run!)?.ctx.branch ?? null : room.pr?.headRef ?? null, head: room.head, base: room.base, task: view.task?.id ?? null, title: view.card?.title ?? null });
+  /** Write the room into the Library: its scenes in every language made, the board and its pictures (copied), every citation
+   *  resolved to the text it points at (diff hunks included, so it reads without Studio's cache), the check with the captain's
+   *  answers, the transcript, cost, subject, tutors and the date. Nothing goes to GitHub. */
+  async function snapshot(api: any, k: Key, reason: string, ended = false) {
+    const room = load(k); if (!room || !room.turns.some((t) => t.status === "done")) throw refuse("Nothing to save yet: the room has no finished scene / 還沒有可以存的場景", "empty");
+    const view: any = api.view(k.id), dir = mkdtempSync(join(tmpdir(), "crew-room-snap-")), assets = join(dir, "assets"); mkdirSync(assets, { recursive: true });
+    try {
+      // pictures and narration from the room's own folder; the app's screenshots from the Task's captures
+      const names = new Map<string, string>();
+      try { for (const n of readdirSync(k.dir)) if (/^(B\d+-\d+\.png|voice-t\d+-[0-9a-f]{12}\.mp3)$/.test(n)) { copyFileSync(join(k.dir, n), join(assets, n)); names.set(`/api/review-room/${k.id}/${n.endsWith(".png") ? "image" : "audio"}/${n}`, n); } } catch {}
+      const shot = (u: unknown) => { const m = typeof u === "string" ? CAPTURE_PATH.exec(u) : null; if (!m) return u; const from = join(engine.rdir(m[1]), "captures", m[2], m[3], m[4]), name = `cap-${sha(u as string).slice(0, 16)}.png`;
+        try { if (!names.has(u as string)) { copyFileSync(from, join(assets, name)); names.set(u as string, name); } return `asset:${name}`; } catch { return null; } };
+      const board = (view.board ?? []).map((b: any) => b.type === "image" && b.src ? { ...b, src: names.has(b.src) ? `asset:${names.get(b.src)}` : null } : b.type === "screenshot" ? { ...b, pages: (b.pages ?? []).map((p: any) => ({ ...p, before: shot(p.before), after: shot(p.after) })) } : b);
+      // every citation, resolved now: a snapshot opens them without the cache, the Task or GitHub
+      const refs = new Set<string>(), add = (c: any) => { if (c?.ref && c.ok !== false) refs.add(c.ref); };
+      for (const t of room.turns) { (t.claims ?? []).forEach((c) => c.cites.forEach(add)); (t.scenes ?? []).forEach((sc) => sc.points.forEach((p) => p.cites.forEach(add))); for (const m of String(t.answer ?? "").matchAll(CITE)) refs.add(`${m[1]}:${m[2]}`); }
+      for (const b of room.board) (b.cites ?? []).forEach(add); for (const q of room.check.questions) if (q.result) (q.cites ?? []).forEach(add);
+      const cites: Record<string, any> = {}; for (const ref of [...refs].slice(0, 300)) { try { cites[ref] = await api.cite(k.id, ref); } catch (e: any) { cites[ref] = { error: String(e?.message ?? e).slice(0, 200) }; } }
+      for (const c of Object.values(cites)) if (c?.kind === "board" && c.item) c.item = board.find((b: any) => b.id === c.item.id) ?? c.item;
+      const tutors = [...new Map(room.turns.filter((t) => !t.studio && t.provider).map((t) => [`${t.provider} ${t.model}`, { provider: t.provider, model: t.model }])).values()];
+      const usd = room.turns.reduce((n, t) => n + (typeof t.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof room.translating?.cost?.usd === "number" ? room.translating.cost.usd : 0);
+      const savedAt = new Date().toISOString(), snap = { schema: 1, kind: "review-room-snapshot", room: k.id, savedAt, reason, subject: subjectMeta(k, room, view), tutors, cost: { usd: Math.round(usd * 10000) / 10000 },
+        view: { ...view, board, open: false, offer: null, running: null, tutors: [], translate: null, checking: false, moved: null, closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
+      writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
+      const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);
+      const project = String(engine.get(room.run)?.params?.project ?? engine.get(room.run)?.ctx.project ?? room.subject?.project ?? "") || "firstmate-workflow";
+      if (!store.get(aid)) store.create({ id: aid, title, type: "doc", project, source: "room", note: "A review room, saved read-only: open it to replay its scenes. / 存起來的審查室（唯讀）：打開即可重播。" });
+      const v = store.addVersion(aid, { from: dir, primary: "room.json", createdBy: { kind: "host" }, status: "draft", summary: reason, cost: { usd: snap.cost.usd, inTokens: null, outTokens: null } });
+      const fresh = load(k)!; fresh.library = { artifact: aid, versions: [...(fresh.library?.versions ?? []), { n: v.n, at: savedAt, reason }], rev: (fresh.rev ?? 0) + 1, ended: !!fresh.library?.ended || ended, sig: contentSig(fresh) }; save(k, fresh);
+      notify(k); return { artifact: aid, n: v.n, href: `#/room/lib:${aid}` };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  /** a room that has ended (its merge card answered, its pull request merged or closed) is saved once it changed since its last snapshot */
+  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room || k.open() || !room.turns.some((t) => t.status === "done") || (room.library?.ended && room.library.sig === contentSig(room)) || saving.has(k.id) || live.has(k.id)) return;
+    const reason = k.kind === "merge" ? "The merge card was answered" : k.kind === "pr" ? (room.pr?.merged ? "The pull request was merged" : "The pull request was closed") : "The room ended";
+    // deferred: the snapshot reads the room's view, which would ask again
+    const job = Promise.resolve().then(() => snapshot(api, k, reason, true)).catch(() => null).finally(() => saving.delete(k.id)); saving.set(k.id, job); } catch {} };
   // ---------- Studio's own scenes: no model, nothing paid, every line from git or from what GitHub returned ----------
   const studioTurn = (room: Room, action: "since" | "reviewers", title: string, head: string, claims: Claim[], extra: Partial<Turn> = {}): Turn => {
     const at = new Date().toISOString();
@@ -842,7 +900,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         reviewersScene(k, room);
         // a room no Task hosts takes no turn, so there is no next turn to open with what changed: the scene comes now
         if (!host && fetched) { save(k, room); await catchUp(k, { key: k, run: null, wt, head: snap.head, base, node: null }, room); }
-        save(k, room); notify(k); return id;
+        save(k, room); notify(k); if (snap.merged || snap.state === "closed") autoSave(self, k); return id;
       } finally { clearTimeout(timer); }
     })();
     refreshing.set(id, job); try { return await job; } finally { refreshing.delete(id); }
@@ -902,15 +960,17 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** the room's languages for the page: the translations kept, the last translation turn, and what translating would cost */
   const langView = (r: Room | null, open: boolean) => ({ translations: r?.translations ?? {}, translating: r?.translating ?? null, langs: ROOM_LANGS,
     tutors: open && r ? (() => { try { const k0 = keyOf(r.card); const s0 = subjectOf(k0); return s0.run && s0.node ? tutorsOf(s0.run, (() => { const o0 = offerOf(k0); return "error" in o0 ? null : { provider: o0.provider, model: o0.model }; })()) : []; } catch { return []; } })() : [],
+    library: r?.library ? { artifact: r.library.artifact, versions: r.library.versions, current: r.library.sig === contentSig(r) } : null,
     translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
   /** the head moved past the one the captain last looked at: how many commits (null when the branch was rewritten) */
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
     const known = git(s.wt, ["cat-file", "-e", `${from}^{commit}`]).ok, anc = known && git(s.wt, ["merge-base", "--is-ancestor", from, s.head]).ok;
     return { from, to: s.head, commits: anc ? Number(git(s.wt, ["rev-list", "--count", `${from}..${s.head}`]).out) || 0 : null, rewritten: known && !anc }; };
-  return {
+  let self: any = null;
+  return (self = {
     /** the summary a merge card shows: never readiness, never an answer */
     summary(c: SCard) {
-      if (c.kind !== "merge") return null; const r0 = load(keyOf(c.id)), r = r0 ? settled(r0) : null;
+      if (c.kind !== "merge") return null; const k0 = keyOf(c.id), r0 = load(k0), r = r0 ? settled(r0) : null; if (c.status !== "open") autoSave(this, k0);
       return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, turns: r?.turns.filter((t) => t.status === "done" && !t.studio).length ?? 0, questions: r?.turns.filter((t) => !t.studio).length ?? 0, running: live.has(c.id), check: checkOf(r),
         sources: { consulted: r?.sources.filter((s) => s.ok).length ?? 0, refused: r?.sources.filter((s) => s.refused).length ?? 0 } };
     },
@@ -924,7 +984,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     },
     /** the room as its page reads it; opened: the captain opened the page (recorded once per subject; a pull request is read again) */
     view(id: string, opened = false) {
-      const k = keyOf(id);
+      const k = keyOf(id); if (!k.open()) autoSave(this, k);
       if (k.kind === "merge") { const c = k.card!;
         if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); pregenerate(k); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
@@ -1023,6 +1083,22 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       void runTranslate(k, room, lang, untranslated(room, lang), s, provider, sk, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k); });
       return this.view(k.id);
     },
+    /** Save to the Library now (the captain's button): a new version of the room's snapshot */
+    async saveToLibrary(id: string, by: string) { const k = keyOf(id); const running = saving.get(k.id); if (running) await running;
+      const job = Promise.resolve().then(() => snapshot(this, k, `Saved by ${by}`)); saving.set(k.id, job); try { return await job; } finally { saving.delete(k.id); } },
+    /** a room's snapshot from the Library (a version, else the latest), its pictures served from the snapshot itself */
+    librarySnapshot(aid: string, n?: unknown) {
+      if (!LIB_ID.test(aid)) throw refuse("No such saved room", "not_found"); const store = library(), a = store.get(aid); if (!a || a.source !== "room") throw refuse("No such saved room", "not_found");
+      const vs = store.versions(aid), v = n != null && n !== "" ? vs.find((x) => x.n === Number(n)) : vs.at(-1); if (!v) throw refuse("No such version of this saved room", "not_found");
+      const file = store.file(aid, v.n, "room.json"); if (!file) throw refuse("The snapshot file is missing", "not_found");
+      const asset = (u: unknown) => typeof u === "string" && u.startsWith("asset:") ? `/api/review-room/library/${aid}/${v.n}/asset/${u.slice(6)}` : u;
+      const snap = JSON.parse(readFileSync(file, "utf8"));
+      snap.view.board = (snap.view.board ?? []).map((b: any) => b.type === "image" ? { ...b, src: asset(b.src) } : b.type === "screenshot" ? { ...b, pages: (b.pages ?? []).map((p: any) => ({ ...p, before: asset(p.before), after: asset(p.after) })) } : b);
+      return { ...snap, artifact: aid, n: v.n, versions: vs.map((x) => ({ n: x.n, at: x.createdAt, summary: x.summary })), project: a.project, integrity: store.verify(aid, v.n) };
+    },
+    libraryAsset(aid: string, n: number, name: string) {
+      if (!LIB_ID.test(aid) || !/^(B\d+-\d+\.png|cap-[0-9a-f]{16}\.png|voice-t\d+-[0-9a-f]{12}\.mp3)$/.test(name)) throw refuse("No such file", "not_found");
+      const f = library().file(aid, n, `assets/${name}`); if (!f) throw refuse("No such file", "not_found"); return readFileSync(f); },
     /** What a citation points at, for the room's links: the diff hunks, the ledger entry, the commit, the source, the board excerpt or a reviewer's note. */
     async cite(id: string, ref: unknown) {
       const k = keyOf(id), s = subjectOf(k), room = load(k), m = /^(diff|ledger|commit|source|board|review):([^\s]{1,300})$/.exec(String(ref ?? ""));
@@ -1071,8 +1147,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** a narration file, from the room's own folder */
     audio(id: string, name: string) { const k = keyOf(id); if (!/^voice-t\d+-[0-9a-f]{12}\.mp3$/.test(name)) throw refuse("No such audio", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such audio", "not_found"); return readFileSync(f); },
     /** tests: wait for a room's running turn and its background pictures */
-    async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
-  };
+    async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size || saving.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
+  });
 }
 
 /** OpenAI's speech endpoint with the key Studio keeps, through the egress proxy with a one-host credential. */

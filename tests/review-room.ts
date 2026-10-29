@@ -357,6 +357,16 @@ const pin = ROOM_SKILLS[1] as any, real = pin.sha256; pin.sha256 = "0".repeat(64
 refusal = null; try { await room.start(merge.id, { action: "why", confirm: offer.hash }, "captain"); } catch (e) { refusal = e; } pin.sha256 = real;
 ok(refusal?.code === "skill_pin", "a skill whose text no longer matches its pin refuses the turn", refusal?.message);
 
+// ---------- Save to Library: a read-only snapshot of the room, a version per save ----------
+const aid = `room-${merge.id.toLowerCase()}`, { ArtifactStore } = await import("../src/artifacts"), lib = new ArtifactStore(data);
+const fetchedBefore = fetched.length, sv1: any = await room.saveToLibrary(merge.id, "captain");
+{ const snap: any = room.librarySnapshot(aid), art = lib.get(aid), img = snap.view.board.find((b: any) => b.type === "image" && b.turn === 1);
+  ok(sv1.artifact === aid && sv1.n === 1 && art?.source === "room" && art.type === "doc" && lib.latest(aid)?.files.some((f: any) => f.path === "room.json") && (room.view(merge.id) as any).library?.versions.length === 1, "Save to Library writes the room as a Library artifact (source room), its snapshot a version", JSON.stringify({ sv1, art }));
+  ok(snap.view.open === false && snap.view.offer === null && !snap.view.tutors.length && snap.view.translate === null && snap.subject.kind === "merge" && snap.subject.head === head && snap.tutors.some((t: any) => t.provider === "tutor") && typeof snap.cost.usd === "number" && snap.savedAt,
+    "the snapshot is read-only (no offer, no tutors to pick, nothing to translate) and records the subject, its head, the tutors, the cost and the date", JSON.stringify({ subject: snap.subject, tutors: snap.tutors, cost: snap.cost }));
+  ok(/Math\.round/.test(snap.cites["diff:src/percent.ts:L2-3"]?.text ?? "") && snap.cites[`ledger:#${ledgerSeq}`]?.check === "firstmate/ci" && snap.view.translations.en?.["1"] && snap.view.check.questions.every((q: any) => q.result && q.choice != null),
+    "every citation is resolved into the snapshot (the diff hunk copied), with every language made and the check's answers", JSON.stringify(Object.keys(snap.cites)));
+  ok(img && new RegExp(`^/api/review-room/library/${aid}/1/asset/B1-\\d+\\.png$`).test(img.src) && Buffer.compare(room.libraryAsset(aid, 1, img.src.split("/").at(-1)), PNG) === 0 && fetched.length === fetchedBefore, "its pictures are copied into it and served from it; saving asked nothing of GitHub or the web", JSON.stringify(img)); }
 // ---------- the room never answers the card; once the card is answered the room is read-only ----------
 await E.answer(merge.id, { choice: "merge", by: "captain", aligned: merge.detail!.intents.map((_: any, i: number) => i) });
 await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status), 60000);
@@ -365,6 +375,19 @@ refusal = null; try { await room.start(merge.id, { action: "how", confirm: offer
 ok(refusal?.code === "closed" && (room.view(merge.id) as any).turns.length === 5, "after the card is answered the room stays readable and takes no turn");
 refusal = null; try { await room.speech(merge.id, "t3"); } catch (e) { refusal = e; }
 ok(refusal?.code === "closed", "and it no longer speaks");
+// the room ended: Studio saves it again, a new version; the snapshot reads with the room's folder and the worktree gone
+room.view(merge.id); await room.settle(merge.id);
+{ const vs = lib.versions(aid);
+  ok(vs.length === 2 && /merge card was answered/.test(vs[1].summary ?? "") && (room.view(merge.id) as any).library.versions.length === 2, "when the merge card is answered, the room is saved again: one artifact, its history kept as versions", JSON.stringify(vs.map((v: any) => [v.n, v.summary])));
+  room.view(merge.id); await room.settle(merge.id);
+  ok(lib.versions(aid).length === 2, "an unchanged ended room is not saved again");
+  const { rmSync, renameSync } = await import("node:fs"), rdir = join(data, "runs", r.id, "review-room"); renameSync(rdir, `${rdir}.away`); rmSync(wt, { recursive: true, force: true });
+  const snap: any = room.librarySnapshot(aid), v1: any = room.librarySnapshot(aid, 1), img = snap.view.board.find((b: any) => b.type === "image" && b.turn === 1);
+  ok(snap.n === 2 && v1.n === 1 && /Math\.round/.test(snap.cites["diff:src/percent.ts:L2-3"]?.text ?? "") && Buffer.compare(room.libraryAsset(aid, 2, img.src.split("/").at(-1)), PNG) === 0 && !snap.integrity.length,
+    "offline: with the room's folder and the worktree removed, the saved room still opens, its citations and pictures inside it, every version readable", JSON.stringify({ n: snap.n, integrity: snap.integrity }));
+  let bad: any = null; try { room.librarySnapshot("room-../../x"); } catch (e) { bad = e; }
+  let badAsset: any = null; try { room.libraryAsset(aid, 2, "../room.json"); } catch (e) { badAsset = e; }
+  ok(bad?.code === "not_found" && badAsset?.code === "not_found", "only a saved room's own id and its own pictures are served"); renameSync(`${rdir}.away`, rdir); }
 // a restart while an illustration was being drawn: the room reads it as interrupted, never pending forever
 { const f = join(data, "runs", r.id, "review-room", `${merge.id}.json`), rr = JSON.parse(readFileSync(f, "utf8")); rr.board.push({ id: "B9-1", turn: 9, type: "image", kind: "illustration", status: "pending", src: null, basis: "illustration", cites: [] });
   writeFileSync(f, JSON.stringify(rr)); const fresh = installReviewRoom(E, { dataDir: data });

@@ -106,6 +106,20 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   asked again. Both answers are kept: the scene shows the latest with a switcher naming each model ("codex gpt-x · claude
   y"). The turn records `regenOf` and `picked`; its `review-room-turn` ledger entry carries `regenerate: {of, provider,
   model, by: "captain"}`.
+- **Saved to the Library, replayed read-only.** When the room ends (its merge card answered, its pull request merged or
+  closed on GitHub) Studio saves it, and the captain can save it any time ("Save to Library" / 存到成品庫,
+  `POST /api/review-room/<card>/save`, the desktop captain). It is one Library artifact per room (`room-<room id>`, source
+  `room`, type `doc`, under the room's project, so it follows that project's place in the Library), a new version per save,
+  the history kept; an ended room is saved again only when what it shows changed. A version is `room.json` and its
+  `assets/`: the room's view with its scenes in every language made, the board, its pictures (the illustrations, the app's
+  screenshots and cached narration copied in), every citation resolved to the text it pointed at (diff hunks, ledger
+  entries, commits, sources, reviewers' notes), the check with the captain's answers and results, the transcript, the cost,
+  the subject (repository, pull request or branch, head and base), the tutors and the date. It reads without Studio's cache,
+  the worktree or GitHub (`GET /api/review-room/library/<artifact>?v=<n>`, its files under `…/<n>/asset/<name>`). The
+  Library's page of a saved room offers "Replay in the review room" for each version (`#/room/lib:<artifact>@<n>`), never
+  review, notes, approval or compare, and the Library refuses any write to it (`room-snapshot-read-only`). The replay is
+  the same room, read-only: no prompt, no paid action (no turn, regeneration, translation or vendor voice); captions, this
+  Mac's voice and the language switch over the languages saved with it still work. Nothing is written to GitHub.
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
   Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
   folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
@@ -509,6 +523,17 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "a held model cannot be picked …", "the regeneration asks the same question on the picked model …"; review-room-ui "a
     regenerated answer is kept beside the first …", "the switcher shows the first answer again", "“Regenerate with…” lists
     this machine's models …", "picking a model asks to confirm …", "confirmed, the same question is asked again …".
+30. Save to Library: a room is saved as one artifact with a version per save (on the captain's button, and when it ends;
+    an unchanged ended room not again), its snapshot read-only and complete (citations resolved, pictures copied, every
+    language, the check's answers, subject, tutors, cost, date); it opens offline (the worktree, the room's folder or the
+    pull request's cache removed), only its own files are served, and the Library refuses writes to it; it replays in the
+    room without any paid control. — review-room "Save to Library writes the room …", "the snapshot is read-only …", "every
+    citation is resolved …", "its pictures are copied into it …", "when the merge card is answered, the room is saved
+    again …", "an unchanged ended room is not saved again", "offline: …", "only a saved room's own id …";
+    review-room-anywhere "a merged pull request's room is saved to the Library …"; review-room-ui "a saved room opens from
+    the Library in the room itself, read-only …", "a citation opens from the snapshot itself …", "captions and playback
+    still work", "the language switch uses the languages saved with it", "the check shows the captain's answers …", "the
+    Library shows a saved room with “Replay in the review room” …", "a saved room's route reads only …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
@@ -517,4 +542,5 @@ Not in this unit: Firstmate offering to open a room from its chat; background po
 same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
 render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice
 questions are recognised on this device only); illustrations made when the merge card is created (they start when the
-captain first opens the room, so no image is paid for a room nobody opens).
+captain first opens the room, so no image is paid for a room nobody opens); a saved room's vendor narration that was never
+generated (only narration already cached is copied into the snapshot).
