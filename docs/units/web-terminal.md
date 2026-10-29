@@ -79,7 +79,9 @@ cannot press keys the OS gives the browser). So:
   `/session` then lands on `/?window=studio`. The page keeps that for the window (`sessionStorage`) and drops it from the
   address. No Chromium: the default browser as before, with the plain link. `--tab` or `CREW_APP_WINDOW=0` keeps the tab;
   `--browser <app>` is used as asked. Windows and Linux reuse the same launch, whose private runtime folder check is
-  POSIX's: not exercised on those systems.
+  POSIX's: not exercised on those systems. The launch never blocks (the page's button runs it inside the server): an opener
+  (open, xdg-open, start) is waited for without blocking, at most 5 s; a browser started directly is the window itself, so
+  it is started detached, never waited for and never stopped.
 - In a browser tab the terminal page shows a banner naming the chords the tab keeps and the ones to use instead, with **Open
   in a Studio window**: `POST /api/terminals/app-window` runs the same launch as an app window. The desktop page's own
   request only (its cookie, same origin, the guard of every terminal POST; a phone and a script are refused). It answers

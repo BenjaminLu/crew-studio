@@ -27,29 +27,44 @@ try {
   ok(same(lin, [["/usr/bin/chromium", `--app=${T}`], ["/usr/bin/microsoft-edge", `--app=${T}`]]), "Linux: the Chromium browsers on PATH, each with --app", JSON.stringify(lin));
   ok(same(defaultOpenCommand("linux", "/f.html"), ["xdg-open", "/f.html"]) && same(defaultOpenCommand("win32", "C:\\f.html"), ["cmd", "/c", "start", "", "C:\\f.html"]), "the default opener: xdg-open, start");
 
-  // ---------- the launch, with the spawn injected ----------
+  // ---------- the launch, with the start of a process injected ----------
   const inst = { origin: "http://127.0.0.1:4999", token: "launch-secret-0123" } as any;
-  const launch = (platform: string, accept: (c: string[]) => boolean, opts: any = {}) => { const calls: string[][] = [];
-    const used = requestBrowser(inst, { platform, argv: [], spawn: (c) => { calls.push(c); return accept(c); }, ...opts }); return { used, calls }; };
+  // accept: an opener exits 0 (else 1); a browser started on its own starts (else the start throws, as a missing binary does)
+  const launch = async (platform: string, accept: (c: string[]) => boolean, opts: any = {}) => { const calls: string[][] = [], detached: boolean[] = [];
+    const used = await requestBrowser(inst, { platform, argv: [], start: (c, detach) => { calls.push(c); detached.push(detach); if (detach && !accept(c)) throw new Error("ENOENT");
+      return { exited: Promise.resolve(accept(c) ? 0 : 1), unref() {} }; }, ...opts }); return { used, calls, detached }; };
   const target = (arg: string) => { const f = arg.startsWith("--app=") ? fileURLToPath(arg.slice(6)) : arg; const m = /location\.replace\((".*?")\)/.exec(readFileSync(f, "utf8")); return m ? JSON.parse(m[1]) : ""; };
-  const L1 = launch("linux", () => true, { app: true, find: { which: (b: string) => (b === "google-chrome" ? "/opt/google/chrome/google-chrome" : null) } });
+  const L1 = await launch("linux", () => true, { app: true, find: { which: (b: string) => (b === "google-chrome" ? "/opt/google/chrome/google-chrome" : null) } });
   ok(L1.used === "a Studio window (google-chrome)" && L1.calls.length === 1 && L1.calls[0][0] === "/opt/google/chrome/google-chrome" && L1.calls[0][1].startsWith("--app=file://")
     && target(L1.calls[0][1]) === `${inst.origin}/session?t=${inst.token}&w=app`, "Linux: Chrome's app window on the private redirect file, its link marked &w=app", JSON.stringify(L1));
   ok(!JSON.stringify(L1.calls).includes(inst.token), "the token is never in a command line (the file holds it, 0600)");
   ok((statSync(fileURLToPath(L1.calls[0][1].slice(6))).mode & 0o777) === 0o600, "the redirect file is private");
-  const L2 = launch("linux", (c) => c[0] === "xdg-open", { app: true, find: { which: (b: string) => (b === "chromium" ? "/usr/bin/chromium" : null) } });
+  const L2 = await launch("linux", (c) => c[0] === "xdg-open", { app: true, find: { which: (b: string) => (b === "chromium" ? "/usr/bin/chromium" : null) } });
   ok(L2.used === "the system's default for links" && L2.calls.length === 2 && L2.calls[1][0] === "xdg-open" && target(L2.calls[1][1]) === `${inst.origin}/session?t=${inst.token}`,
     "Linux: an app window that does not open falls back to xdg-open with the plain link (a tab is not a Studio window)", JSON.stringify(L2));
-  const L3 = launch("win32", () => true, { app: true, find: { env: { ProgramFiles: "C:\\PF" }, exists: (p: string) => p.endsWith("msedge.exe") } });
+  const L3 = await launch("win32", () => true, { app: true, find: { env: { ProgramFiles: "C:\\PF" }, exists: (p: string) => p.endsWith("msedge.exe") } });
   ok(L3.used === "a Studio window (msedge.exe)" && same(L3.calls[0].slice(0, 1), ["C:\\PF\\Microsoft\\Edge\\Application\\msedge.exe"]), "Windows: Edge's app window when it is the Chromium installed", JSON.stringify(L3));
-  const L4 = launch("win32", () => true, { app: true, find: { env: {}, exists: () => false } });
+  const L4 = await launch("win32", () => true, { app: true, find: { env: {}, exists: () => false } });
   ok(L4.calls.length === 1 && same(L4.calls[0].slice(0, 4), ["cmd", "/c", "start", ""]) && target(L4.calls[0][4]) === `${inst.origin}/session?t=${inst.token}`, "Windows without Chromium: the default browser (start)", JSON.stringify(L4));
-  const L5 = launch("darwin", (c) => c[2] === "Google Chrome", { app: true });
+  const L5 = await launch("darwin", (c) => c[2] === "Google Chrome", { app: true });
   ok(L5.used === "a Studio window (Google Chrome)" && same(L5.calls[0].slice(0, 4), ["open", "-na", "Google Chrome", "--args"]), "macOS: Chrome's app window through open -na", JSON.stringify(L5));
-  const L6 = launch("linux", () => true, { app: false, find: { which: () => "/usr/bin/chromium" } });
+  const L6 = await launch("linux", () => true, { app: false, find: { which: () => "/usr/bin/chromium" } });
   ok(L6.calls.length === 1 && L6.calls[0][0] === "xdg-open" && target(L6.calls[0][1]) === `${inst.origin}/session?t=${inst.token}`, "app: false (--tab) opens the default browser only");
-  const L7 = launch("linux", () => false, { app: true, find: { which: () => null } });
+  const L7 = await launch("linux", () => false, { app: true, find: { which: () => null } });
   ok(L7.used === false, "nothing opens: false, and the caller says so");
+  ok(L1.detached[0] === true && L3.detached[0] === true && L2.detached[1] === false && L4.detached[0] === false && L5.detached[0] === false,
+    "a browser started directly (Linux, Windows) is detached; the openers (open, xdg-open, start) are waited for", JSON.stringify([L1.detached, L2.detached, L3.detached, L4.detached, L5.detached]));
+  // the browser itself never exits while its window is open: the launch answers at once, never stops it and never tries
+  // another; an opener that hangs is given up on after waitMs, without blocking the server's event loop meanwhile
+  { const calls: string[][] = []; let unref = 0, killed = 0; const t0 = Date.now();
+    const used = await requestBrowser(inst, { platform: "linux", app: true, argv: [], find: { which: (b: string) => (b === "google-chrome" || b === "chromium" ? `/usr/bin/${b}` : null) },
+      start: (c) => { calls.push(c); return { exited: new Promise(() => {}), unref: () => unref++, kill: () => killed++ }; } });
+    ok(used === "a Studio window (google-chrome)" && calls.length === 1 && Date.now() - t0 < 1000 && !killed, "Linux: a Chrome that keeps running (it is the window) is accepted at once, never stopped, no fallback", JSON.stringify({ used, n: calls.length, ms: Date.now() - t0, killed })); }
+  { const calls: string[][] = []; let ticks = 0, killed = 0; const tick = setInterval(() => ticks++, 20); const t0 = Date.now();
+    const used = await requestBrowser(inst, { platform: "darwin", app: true, argv: [], waitMs: 300,
+      start: (c) => { calls.push(c); return { exited: c[2] === "Google Chrome" ? new Promise(() => {}) : Promise.resolve(0), kill: () => killed++ }; } });
+    clearInterval(tick); const ms = Date.now() - t0;
+    ok(used === "a Studio window (Microsoft Edge)" && calls.length === 2 && killed === 1 && ms >= 280 && ms < 2000 && ticks >= 8, "macOS: an open that hangs is given up on after waitMs (the loop kept running), then the next browser", JSON.stringify({ used, n: calls.length, killed, ms, ticks })); }
 
   // ---------- POST /api/terminals/app-window: the desktop page's own request ----------
   let opened = 0; let answer: string | false = "a Studio window (Google Chrome)";

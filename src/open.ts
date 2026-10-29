@@ -24,10 +24,22 @@ export function appWindowCommands(platform:string,target:string,o:Find={}):strin
 }
 /** The system's own opener for a file outside macOS (macOS keeps its LaunchServices path below). */
 export const defaultOpenCommand=(platform:string,file:string):string[]=>platform==='win32'?['cmd','/c','start','',file]:['xdg-open',file];
-export type BrowserOpts={app?:boolean;platform?:string;spawn?:(argv:string[])=>boolean;argv?:string[];find?:Find};
-/** Opens Studio's session link; answers what took it (named in the output), or false. With app, a Studio window first. */
-export function requestBrowser(instance:RunningInstance,opts:BrowserOpts={}):string|false{
- const argv=opts.argv??process.argv.slice(3),platform=opts.platform??process.platform;
+/** A started process: its exit (a status), and, for a browser started on its own, a way to let it outlive Studio. */
+export type Proc={exited:Promise<number|null>;unref?:()=>void;kill?:()=>void};
+export type BrowserOpts={app?:boolean;platform?:string;argv?:string[];find?:Find;
+ /** starts a command (tests inject one); detach: a browser itself, which runs for as long as its window is open */
+ start?:(cmd:string[],detach:boolean)=>Proc;
+ /** how long an opener (open, xdg-open, start) may take to answer before the next is tried; default 5 s */
+ waitMs?:number};
+const startProc=(cmd:string[],detach:boolean):Proc=>{const p=Bun.spawn(cmd,{env:scrubEnv(),stdio:['ignore','ignore','ignore'],...(detach?{detached:true}:{})} as any);if(detach)p.unref();return p;};
+/**
+ * Opens Studio's session link; answers what took it (named in the output), or false. With app, a Studio window first.
+ * Never blocks: the page's "Open in a Studio window" runs it inside the server. An opener (open, xdg-open, start) answers
+ * at once and is waited for, at most waitMs, without blocking; a browser started directly (Windows, Linux) is the browser,
+ * so it is started detached and never waited for or stopped: started is accepted.
+ */
+export async function requestBrowser(instance:RunningInstance,opts:BrowserOpts={}):Promise<string|false>{
+ const argv=opts.argv??process.argv.slice(3),platform=opts.platform??process.platform,start=opts.start??startProc,waitMs=opts.waitMs??5000;
  // a Studio window unless the captain asks for a tab (--tab, CREW_APP_WINDOW=0) or names a browser (--browser)
  const asked=browserFlag(argv),app=opts.app??(!asked&&!argv.includes('--tab')&&process.env.CREW_APP_WINDOW!=='0');
  const link=(w:boolean)=>`${instance.origin}/session?t=${encodeURIComponent(instance.token)}${w?'&w=app':''}`,tool=process.env.CREW_OPEN_TOOL||'open';
@@ -38,13 +50,21 @@ export function requestBrowser(instance:RunningInstance,opts:BrowserOpts={}):str
  const redirect=(w:boolean,flag:string)=>writeFileSync(file,`<!doctype html><meta charset="utf-8"><title>Crew Studio</title><script>if(Date.now()<${expires})location.replace(${JSON.stringify(link(w)).replace(/</g,'\\u003c')});</script>`,{mode:0o600,flag});
  redirect(app,'wx');
  const timer=setTimeout(()=>rmSync(file,{force:true}),600000);timer.unref();
- const spawn=opts.spawn??((cmd:string[])=>{try{return Bun.spawnSync(cmd,{env:scrubEnv(),stdout:'ignore',stderr:'ignore',timeout:5000}).success}catch{return false}});
- const run=(args:string[])=>spawn([tool,...args,file]);
- const appWindow=()=>{for(const cmd of appWindowCommands(platform,pathToFileURL(file).href,{tool,...opts.find}))if(spawn(cmd))return `a Studio window (${platform==='darwin'?cmd[2]:cmd[0].split(/[\\/]/).pop()})`;redirect(false,'w');return null;};
- let used:string|null=null;if(platform==='darwin'||process.env.CREW_OPEN_TOOL){if(asked){if(run(['-a',asked]))used=asked;else console.log('Requested browser did not accept the link; trying the default browser.');}
- if(!used&&app)used=appWindow();
- if(!used){let handler:string|null=null;try{const d=Bun.spawnSync([process.env.CREW_DEFAULTS_TOOL||'defaults','read','com.apple.LaunchServices/com.apple.launchservices.secure','LSHandlers'],{env:scrubEnv(),stdout:'pipe',stderr:'ignore',timeout:3000});if(d.success)handler=defaultHttpHandler(d.stdout.toString())}catch{}if(handler&&run(['-b',handler]))used=`your default browser (${handler})`;else if(run([]))used="the system's default for links";}}
- else{if(app)used=appWindow();if(!used&&spawn(defaultOpenCommand(platform,file)))used="the system's default for links";}
+ const waitRun=async(cmd:string[])=>{let p:Proc;try{p=start(cmd,false)}catch{return false}
+  let t:any;const code=await Promise.race([p.exited,new Promise<'late'>(r=>{t=setTimeout(()=>r('late'),waitMs)})]);clearTimeout(t);
+  if(code==='late'){try{p.kill?.()}catch{}return false}return code===0;};
+ const detachRun=(cmd:string[])=>{try{start(cmd,true);return true}catch{return false}};
+ const run=(args:string[])=>waitRun([tool,...args,file]);
+ const appWindow=async()=>{for(const cmd of appWindowCommands(platform,pathToFileURL(file).href,{tool,...opts.find}))
+   if(platform==='darwin'?await waitRun(cmd):detachRun(cmd))return `a Studio window (${platform==='darwin'?cmd[2]:cmd[0].split(/[\\/]/).pop()})`;
+  redirect(false,'w');return null;};
+ let used:string|null=null;if(platform==='darwin'||process.env.CREW_OPEN_TOOL){if(asked){if(await run(['-a',asked]))used=asked;else console.log('Requested browser did not accept the link; trying the default browser.');}
+ if(!used&&app)used=await appWindow();
+ if(!used){let handler:string|null=null;try{const d=Bun.spawn([process.env.CREW_DEFAULTS_TOOL||'defaults','read','com.apple.LaunchServices/com.apple.launchservices.secure','LSHandlers'],{env:scrubEnv(),stdout:'pipe',stderr:'ignore'});
+   let t:any;const out=await Promise.race([Promise.all([new Response(d.stdout).text(),d.exited]),new Promise<null>(r=>{t=setTimeout(()=>r(null),3000)})]);clearTimeout(t);
+   if(out&&out[1]===0)handler=defaultHttpHandler(out[0]);else if(!out)d.kill();}catch{}
+  if(handler&&await run(['-b',handler]))used=`your default browser (${handler})`;else if(await run([]))used="the system's default for links";}}
+ else{if(app)used=await appWindow();if(!used&&await waitRun(defaultOpenCommand(platform,file)))used="the system's default for links";}
  if(!used){console.error(`Could not request a browser. Studio is running at ${instance.origin}. Retry the launch command with --browser Safari (or another installed browser). Session credentials are never printed.`);return false;}
  console.log(`Requested Studio's authenticated Board in ${used}. Browser dispatch was accepted; a visible window is not verified.`);return used;
 }
