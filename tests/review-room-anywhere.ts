@@ -150,7 +150,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   lists(1, { reviews: [{ id: 21, user: { login: "rita" }, state: "COMMENTED", body: "A few questions.", commit_id: A, submitted_at: "2026-10-28T10:00:00Z", html_url: "https://github.com/fixture/project/pull/1#pullrequestreview-21" }],
     inline: [{ id: 11, user: { login: "rita" }, body: EVIL, path: "a.txt", line: 2, position: 1, commit_id: A, created_at: "2026-10-28T10:01:00Z", html_url: "https://github.com/fixture/project/pull/1#discussion_r11" },
       { id: 12, user: { login: "rita" }, body: "And this file?", path: EVIL_PATH, line: 1, position: 1, commit_id: A, created_at: "2026-10-28T10:01:30Z" }],
-    comments: [{ id: 31, user: { login: "bob" }, body: "Looks fine to me.", created_at: "2026-10-28T10:02:00Z" }], files: [{ filename: "a.txt", status: "modified", additions: 1, deletions: 1 }, { filename: EVIL_PATH, status: "added", additions: 1, deletions: 0 }] });
+    comments: [{ id: 31, user: { login: "bob" }, body: "Looks fine to me.", created_at: "2026-10-28T10:02:00Z" }, { id: 39, user: { login: "github-actions[bot]" }, body: "## Coverage report\n| St. | Category | Percentage |\n| :-: | :- | :- |", created_at: "2026-10-28T10:03:00Z" }], files: [{ filename: "a.txt", status: "modified", additions: 1, deletions: 1 }, { filename: EVIL_PATH, status: "added", additions: 1, deletions: 0 }] });
   const at0 = "2026-10-28T00:00:00Z", grant = { mode: "simulator" as const, repository: "fixture/project", localPath: local, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: at0, approvalId: "fixture" };
   // the Task that published pull request #1 (its reviewer seat hosts the room's turns)
   const flow = { id: "pr-host", name: "PR host", kind: "code", version: 1, roles: [{ id: "worker", label: "Worker" }, { id: "reviewer", label: "Reviewer", provider: "tutor", model: "t-1" }],
@@ -192,7 +192,10 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   ok(localState() === localBefore && remoteRefs() === remoteBefore, "the project's checkout is untouched (refs, objects, files) and nothing was pushed to GitHub");
   // ---- what reviewers asked: their words as text, cited to the comment, never a citation of their own ----
   const rv = v1.turns.find((t: any) => t.studio && t.action === "reviewers"), inline = rv?.claims.find((c: any) => c.cites.some((x: any) => x.ref === "review:c11"));
-  ok(!!rv && rv.provider === "studio" && rv.claims.length === 4 && rv.claims.every((c: any) => c.basis === "reviewer" && c.cites.length === 1 && c.cites[0].ok), "the reviewers' review, inline comment and comment are a Studio scene, each cited to its note", JSON.stringify(rv?.claims));
+  const said = rv?.claims.filter((c: any) => c.basis === "reviewer") ?? [];
+  ok(!!rv && rv.provider === "studio" && said.length === 4 && said.every((c: any) => c.cites.length === 1 && c.cites[0].ok), "the reviewers' review, inline comment and comment are a Studio scene, each cited to its note", JSON.stringify(rv?.claims));
+  ok(rv.claims.length === 5 && /^1 bot comment \(coverage, CI and the like\) not shown here/.test(rv.claims[4].text) && !rv.claims.some((c: any) => /Coverage report|github-actions/.test((c.quote ?? "") + c.text)),
+    "a bot's comment (a coverage table) is counted, never shown as a reviewer's words", JSON.stringify(rv.claims.at(-1)));
   ok(inline?.quote.includes('‹img src=x onerror="window.__pwned=1"›') && inline.quote.includes("[diff:a.txt]") && !/[<>]/.test(inline.quote) && rv.claims.every((c: any) => !/[<>]/.test(c.text + (c.quote ?? ""))) && !inline.text.includes("[diff:") && /rita · on a\.txt:L2/.test(inline.text),
     "a comment is kept as its words (markup and a citation-looking text stay text, nothing can close its fence), apart from Studio's line", JSON.stringify(inline));
   const cited: any = await room.cite(pid, "review:c11");

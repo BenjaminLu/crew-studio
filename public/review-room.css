@@ -118,6 +118,9 @@
 .rr-subject { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 0 0 12px; overflow-wrap: anywhere; }
 .rr-subject p { margin: 0; flex: 1 1 320px; min-width: 0; }
 .rr-moved { padding: 6px 10px; border-radius: 8px; background: rgba(201,134,26,.12); }
+.rr-quote-fold { margin: 4px 0 0; font-size: 13px; }
+.rr-quote-fold > summary { cursor: pointer; color: var(--text-2); }
+.rr-gist { font-style: italic; }
 .rr-quote { margin: 6px 0 0; padding: 4px 10px; border-left: 3px solid var(--border); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .rr-prbox { display: grid; gap: 8px; max-width: 720px; }
 .rr-prlabel { display: grid; gap: 4px; }

@@ -116,7 +116,12 @@ the host, which is started as that captain (`by`). The host Task's page links ba
 **What reviewers asked.** Each read of a pull request turns the reviewer notes not shown yet (reviews with a body or a
 verdict, inline comments, comments) into a Studio scene: each note is a point labelled "Reviewer's words", Studio's own
 line (who, where, which verdict) cited `[review:<id>]` (`r…` a review, `c…` an inline comment, `i…` a comment), and the
-words themselves as plain text beside it (`quote`: never parsed for citations or markup). A citation opens the note.
+words themselves as plain text beside it (`quote`: never parsed for citations or markup), shown as a one-line gist with
+the full text folded under "Original" until the captain opens it. A bot's plain comment (an author ending in `[bot]`: coverage tables, CI summaries) is
+not a reviewer's question: the scene counts such comments in one line and shows none of them; a bot's review or inline
+comment (an AI reviewer's) is shown like a person's. An opened original stays open across redraws; a one-line quote (a
+commit subject) is shown as it is.
+A citation opens the note.
 
 **Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
 re-entry (the desktop page, at most once a minute from the last attempt) or "Check for new commits" (`POST …/check`, the

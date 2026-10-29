@@ -5,7 +5,7 @@
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
 const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
-  scene: new Map(), reveal: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
+  scene: new Map(), reveal: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -28,6 +28,7 @@ async function load(id, open = false) {
   finally { RR.loading.delete(id); redraw(id); schedule(); }
 }
 // while a turn runs, the page follows it (the live stream says when it ends; a slow poll covers a missed event)
+
 function schedule() { clearTimeout(RR.poll); const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null) RR.poll = setTimeout(() => load(id), 2500); }
 window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card); });
 
@@ -89,6 +90,20 @@ function citeChip(card, ref, ok) {
   return h("button", { type: "button", class: `rr-cite${ok === false ? " bad" : ""}`, "data-cite": ref, title: ok === false ? T("Studio could not verify this citation", "Studio 無法驗證這個引用") : T("Open what this rests on", "開啟依據"), onclick: () => openCite(card, ref) },
     `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`);
 }
+/** Someone else's words (a reviewer's, a commit message): a short gist on the board, the full text folded under "Original"
+ *  (kept open across redraws, like the transcript drawer). Text nodes only: the words are untrusted, never parsed. */
+const gist = (t) => { const lines = String(t).split("\n").map((l) => l.replace(/[*`|]+/g, " ").replace(/\s+/g, " ").trim()).filter((l) => l && !/^[‹<]!--/.test(l));
+  const line = lines.find((l) => !/^[>›]/.test(l) && l.replace(/^#+\s*/, "").length > 3)?.replace(/^#+\s*/, "") || lines[0] || ""; return line.length > 120 ? line.slice(0, 119) + "…" : line; };
+function quoteView(c, key) {
+  const kind = c.basis === "reviewer" ? "review" : "text", g = gist(c.quote);
+  // a one-line quote (a commit subject) is its own gist: shown as it is, nothing to open
+  if (g === String(c.quote).trim()) return h("blockquote", { class: "rr-quote", "data-untrusted": kind }, c.quote);
+  // saved on the summary's click, which a redraw cannot come between (the toggle event comes later)
+  return h("details", { class: "rr-quote-fold", "data-untrusted-fold": kind, open: RR.fold.has(key) },
+    h("summary", { onclick: (e) => { e.currentTarget.parentElement.open ? RR.fold.delete(key) : RR.fold.add(key); } }, h("span", { class: "rr-gist" }, g), " ", h("span", { class: "faint" }, T("Original", "看原文"))),
+    h("blockquote", { class: "rr-quote", "data-untrusted": kind }, c.quote));
+}
+
 function inline(card, text, cites) {
   const ok = new Map((cites || []).map((c) => [c.ref, c.ok])), out = []; let i = 0, m; const re = new RegExp(CITE.source, "gi");
   while ((m = re.exec(text))) { if (m.index > i) out.push(...mdBits(text.slice(i, m.index))); if (m[1]) out.push(citeChip(card, `${m[1]}:${m[2]}`, ok.has(`${m[1]}:${m[2]}`) ? ok.get(`${m[1]}:${m[2]}`) : undefined)); else out.push(h("span", { class: `rr-tier ${m[3].toLowerCase()}` }, m[3])); i = re.lastIndex; }
@@ -269,7 +284,8 @@ function stageView(r) {
         h("ol", { class: "rr-pointlist", "data-points": sc.points.length }, sc.points.slice(0, k).map((c, n) => c.kind === "code" ? h("li", { class: "rr-point code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")))
           : h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${n === k - 1 ? " now" : ""}`, "data-claim": c.basis || c.kind }, c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, inline(card, c.text.replace(/^\s*[-*+]\s+/, ""), c.cites),
             // what someone else wrote (a reviewer, a commit message): their words as plain text, never parsed for citations or markup
-            c.quote ? h("blockquote", { class: "rr-quote", "data-untrusted": c.basis === "reviewer" ? "review" : "text" }, c.quote) : null))),
+            // the gist (its first line, cut short) on the board, the whole text only when the captain opens it
+            c.quote ? quoteView(c, `${card}/${sc.key}/${n}`) : null))),
         sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
         sc.t?.status === "done" && sc.t.cost?.usd != null ? h("p", { class: "faint rr-cost" }, `$${Number(sc.t.cost.usd).toFixed(2)} · ${sc.t.provider} · ${sc.t.model}`) : null)),
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, caption),
