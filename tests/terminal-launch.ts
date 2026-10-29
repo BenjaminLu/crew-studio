@@ -89,7 +89,15 @@ try {
   svc.appWindowAt -= 5000; r = await call(req(page), { kind: "desktop" }, true, true);
   ok(r.status === 200 && opened === 2, "a few seconds later it may open again", JSON.stringify(r));
   svc.appWindowAt = 0; answer = false; r = await call(req(page), { kind: "desktop" }, true, true);
-  ok(r.status === 502 && r.body.code === "noWindow" && opened === 3, "no browser accepts: 502 noWindow, and the page stays", JSON.stringify(r));
+  const r502 = r; answer = "a Studio window (Google Chrome)"; r = await call(req(page), { kind: "desktop" }, true, true);
+  ok(r502.status === 502 && r.status === 200 && opened === 4, "a launch that opened nothing may be tried again at once (only an open window counts for the wait)", JSON.stringify({ r502: r502.status, r: r.status, opened }));
+  { let release: () => void = () => {}; svc.appWindowAt = 0; svc.o.openWindow = () => new Promise<string>((res) => { opened++; release = () => res("a Studio window (Google Chrome)"); });
+    const first = call(req(page), { kind: "desktop" }, true, true); await new Promise((x) => setTimeout(x, 10));
+    const second = await call(req(page), { kind: "desktop" }, true, true); release(); const f1 = await first;
+    ok(f1.status === 200 && second.status === 429 && second.body.code === "tooSoon" && opened === 5, "while one launch is under way a second press waits its turn (429)", JSON.stringify({ f1: f1.status, second }));
+    svc.o.openWindow = () => { opened++; return answer; }; answer = false; }
+  r = r502;
+  ok(r.status === 502 && r.body.code === "noWindow" && opened === 5, "no browser accepts: 502 noWindow, and the page stays", JSON.stringify(r));
 } finally { rmSync(tmp, { recursive: true, force: true }); }
 console.log(`\nterminal-launch: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

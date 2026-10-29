@@ -199,7 +199,7 @@ export class Terminals {
   private probe = new Map<string, Promise<"flag" | "slash">>();
   readonly keepTranscripts: boolean; readonly maxSubs = 4;
   /** when the page last asked for a Studio window (POST /api/terminals/app-window), for its rate limit */
-  appWindowAt = 0;
+  appWindowAt = 0; appWindowBusy = false;
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
   constructor(readonly o: TerminalsOpts) {
     this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
@@ -558,9 +558,11 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
     if (p === "/api/terminals/app-window") {
       if (!writing) return json({ error: "POST" }, 405);
       // one launch every few seconds: each opens a window and writes a private redirect file
-      const now = Date.now(); if (now - svc.appWindowAt < APP_WINDOW_GAP_MS) return json({ error: "A Studio window was just opened: look for it, or try again in a few seconds.", code: "tooSoon" }, 429);
-      svc.appWindowAt = now;
-      const used = svc.o.openWindow ? await svc.o.openWindow() : false;
+      // counted from a window that opened: a launch that failed may be tried again at once; one in flight holds the next
+      if (svc.appWindowBusy || Date.now() - svc.appWindowAt < APP_WINDOW_GAP_MS) return json({ error: "A Studio window was just opened: look for it, or try again in a few seconds.", code: "tooSoon" }, 429);
+      svc.appWindowBusy = true; let used: string | false = false;
+      try { used = svc.o.openWindow ? await svc.o.openWindow() : false; } finally { svc.appWindowBusy = false; }
+      if (used) svc.appWindowAt = Date.now();
       return used ? json({ ok: true, used }) : json({ error: "No browser accepted the Studio window. Studio is still here, in this tab.", code: "noWindow" }, 502);
     }
     if (p === "/api/terminals/mux" && !writing) return svc.attachMany((url.searchParams.get("ids") ?? "").split(",").filter((x) => /^[\w-]{1,64}$/.test(x)), !desktop, who.device?.id);
