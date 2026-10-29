@@ -20,6 +20,12 @@ let lastZh = lang !== "en" ? lang : I18N.browserLang(navigator.languages || []) 
 const zhLang = () => (lang !== "en" ? lang : lastZh);
 // English, the zh-TW text, or zh-CN: the optional third argument, else derived from zh-TW
 const T = (en, tw, cn) => I18N.pick(lang, en, tw, cn);
+// a workflow's display name: the captain's rename, else Studio's default (code-firstmate shows as "coding"), else the
+// fallback given (the definition's own name), else its id. Served by /api/workflow-names and /api/wf; always rendered as text
+const WFN = { names: {} };
+const wfName = (id, fallback) => (id && Object.hasOwn(WFN.names, id) ? WFN.names[id] : null) || fallback || id || "";
+const setWorkflowNames = (names) => { if (names && typeof names === "object" && !Array.isArray(names)) WFN.names = Object.fromEntries(Object.entries(names).filter(([, v]) => typeof v === "string")); };
+const loadWorkflowNames = () => fetch("/api/workflow-names").then((r) => (r.ok ? r.json() : null)).then((j) => setWorkflowNames(j?.names)).catch(() => {});
 
 // ---------- time ----------
 const ago = (iso) => {
@@ -282,16 +288,16 @@ function viewInbox(id) {
       h("div", { class: "ib-detail" }, inboxHead(cur, items), inboxCard(cur)))
     : h("div", { class: "card" }, h("div", { class: "empty" }, icon("inbox"), h("b", {}, T("Inbox zero", "沒有待處理的卡")), T("Cards show up here live.", "新卡會即時出現。"))));
 }
-const inboxRow = (x, i, on) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), title: x.task, "aria-label": [x.task, x.kind, x.workflow, x.run, ago(x.ts)].filter(Boolean).join(" · "), "data-inbox-row": x.id, "data-inbox-source": x.source },
+const inboxRow = (x, i, on) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), title: x.task, "aria-label": [x.task, x.kind, x.workflow ? wfName(x.workflow) : null, x.run, ago(x.ts)].filter(Boolean).join(" · "), "data-inbox-row": x.id, "data-inbox-source": x.source },
   h("span", { class: "ib-n num", "aria-hidden": "true" }, String(i + 1)),
   h("span", { class: "ib-row-main" }, h("span", { class: "ib-row-t", title: x.task }, x.task),
-    h("span", { class: "ib-row-d" }, h("span", { class: "vbadge ib-kind", "data-kind": x.kind }, x.kind), x.workflow ? h("span", { class: "ib-wf" }, icon("workflow", "ic sm"), x.workflow) : null, x.run ? h("span", { class: "mono" }, x.run) : null)),
+    h("span", { class: "ib-row-d" }, h("span", { class: "vbadge ib-kind", "data-kind": x.kind }, x.kind), x.workflow ? h("span", { class: "ib-wf" }, icon("workflow", "ic sm"), wfName(x.workflow)) : null, x.run ? h("span", { class: "mono" }, x.run) : null)),
   h("span", { class: "ib-age faint num", title: x.ts || "" }, ago(x.ts)));
 // the selected card's header: which Task this is, kept on screen while the card scrolls (Back returns to the list when narrow)
 const inboxHead = (x, items) => h("div", { class: "ib-head", tabindex: "-1", "aria-label": T(`${x.task}, ${x.kind}`, `${x.task}，${x.kind}`), "data-inbox-head": x.id },
   h("a", { class: "btn ghost ib-back", href: "#/inbox", "data-inbox-back": "" }, "← ", T("Back to list", "回到列表")),
   h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num" }, T(`${items.indexOf(x) + 1} of ${items.length}`, `第 ${items.indexOf(x) + 1} / ${items.length} 張`))),
-  h("div", { class: "ib-head-d" }, h("span", { class: "vbadge" }, x.kind), x.workflow ? h("span", {}, x.workflow) : null,
+  h("div", { class: "ib-head-d" }, h("span", { class: "vbadge" }, x.kind), x.workflow ? h("span", {}, wfName(x.workflow)) : null,
     x.run ? h("a", { class: "mono", href: x.source === "studio" ? `#/run/${encodeURIComponent(x.run)}` : `#/activity/${encodeURIComponent(x.run)}` }, x.run) : null, h("span", { class: "mono" }, x.id)));
 const inboxCard = (x) => (x.source === "studio" ? window.studioCards.card(x.data, x.task) : cardView(x.data));
 // the Inbox's one live region: it stays in the page across renders and its text is set after the change, so a screen
@@ -525,7 +531,7 @@ function viewWorkflow(taskId) {
 // ---------- live data ----------
 async function load() {
   // Bootstrap metadata belongs to this load/error boundary, before live-ready.
-  const [s, types] = await Promise.all([fetch("/api/summary").then((r) => r.json()), fetch("/api/types").then((r) => r.json())]);
+  const [s, types] = await Promise.all([fetch("/api/summary").then((r) => r.json()), fetch("/api/types").then((r) => r.json()), loadWorkflowNames()]);
   Object.assign(S, { tasks: s.tasks, pending: s.pending, crew: s.crew, github: s.github, board: s.board, flow: s.flow, events: s.events, types });
   // the legacy firstmate checkout's name, when Studio reads one; a native Studio names no checkout
   $("#wsSub").textContent = s.legacy ? s.state.split("/").slice(-2, -1)[0] || "" : "";
@@ -610,6 +616,8 @@ function connect() {
   es.onerror = () => conn("down");
   es.addEventListener("events", (m) => {
     const d = JSON.parse(m.data); S.tasks = d.tasks; S.events += d.events.length;
+    // a rename in another tab: this tab shows the new name too
+    if (d.events.some((e) => e?.type === "workflow_renamed")) loadWorkflowNames().then(() => soft());
     if (S.route?.name === "activity") {
       const fresh = d.events.filter(matchAF).reverse();
       if (fresh.length) { AF.items = fresh.concat(AF.items).slice(0, 600); const list = $("#evlist");

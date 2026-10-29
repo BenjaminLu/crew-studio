@@ -195,7 +195,7 @@ const HASHY = /^[0-9a-f]{16,}$/i;
 function proposalProject(r) { try { const p = JSON.parse(r.params?.target || "null")?.project; return typeof p === "string" && !HASHY.test(p) ? p : null; } catch { return null; } }
 const runProject = (r) => { const p = isProposal(r) ? proposalProject(r) : r.ctx?.project || r.params?.project || null; return typeof p === "string" && !HASHY.test(p) ? p : null; };
 const fromProposal = (r) => { const f = r.params?._firstmateProposal; return typeof f === "string" && /^R-\d+$/.test(f) ? f : null; };
-const metaLine = (x) => [x.id, x.workflow, x.project || "—", x.from ? T(`from Firstmate's proposal ${x.from}`, `來自 Firstmate 的提案 ${x.from}`) : null].filter(Boolean).join(" · ");
+const metaLine = (x) => [x.id, x.workflow ? wfName(x.workflow) : null, x.project || "—", x.from ? T(`from Firstmate's proposal ${x.from}`, `來自 Firstmate 的提案 ${x.from}`) : null].filter(Boolean).join(" · ");
 function studioView(r, cards, group) {
   const id = r.id, card = currentCard(r, cards);
   if (!group) group = r.status === "failed" || r.ctx?.firstmateQuestion || (r.status !== "succeeded" && !!capStep(r)) ? "stuck" : card || Object.values(r.nodes || {}).some((n) => n?.waiting === "card") ? "you" : "run";

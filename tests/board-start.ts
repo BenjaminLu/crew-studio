@@ -61,6 +61,10 @@ try{
  const byId=Object.fromEntries((options.body.projects??[]).map((p:any)=>[p.id,p]));
  ok(options.status===200&&options.body.projectScoped===true&&options.body.staffing===true&&options.body.crewHref==='#/team','start options mark code-firstmate as project-scoped and staffed',JSON.stringify(options.body));
  ok(byId.fixture?.staffing?.state==='approved'&&byId.fixture.staffing.hash===approved.hash&&byId.fixture.staffing.roles.worker.model==='fixture-model','an approved project shows its approved crew');
+ // a rename is a display name only (src/runtime/workflow-names.ts): the signed approval still verifies against the same definition
+ {const renamed=await call('/api/workflow-names',{workflow:'code-firstmate',name:'Renamed coding'});const again=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture');
+  ok(renamed.status===200&&again?.staffing?.state==='approved'&&again.staffing.hash===approved.hash&&staffingHash(E.defs.get('code-firstmate'))===staffingHash(def),'a renamed code-firstmate keeps its approved crew and definition hash',JSON.stringify(again?.staffing));
+  await call('/api/workflow-names',{workflow:'code-firstmate',name:null});}
  ok(byId.unstaffed?.staffing?.state==='missing'&&byId.unstaffed.staffing.code==='staffing_missing','a project without a crew shows missing');
 
  ok(factsCalls>=1&&byId.fixture.staffing.readiness?.state==='ready','start options refresh the free capability probes and show a ready crew');

@@ -175,7 +175,7 @@ function taskRow(t) {
   return h("div", { class: "pj-task", "data-project-task": t.id },
     h("div", {}, h("div", { class: "run-t" }, h("span", { class: "tid" }, t.id), h("a", { href: t.href }, h("span", {}, t.title || t.id))),
       pipe(t.pipe),
-      h("div", { class: "run-s" }, h("span", { class: "vbadge" }, `${t.workflow}${t.version ? ` v${t.version}` : ""}`), door, h("span", {}, roundsTxt))),
+      h("div", { class: "run-s" }, h("span", { class: "vbadge" }, `${wfName(t.workflow)}${t.version ? ` v${t.version}` : ""}`), door, h("span", {}, roundsTxt))),
     h("div", { class: "pj-wait", "data-waits-on": t.waitsOn?.kind || "none" }, waitBadge(t), detail ? h("span", { class: "faint" }, detail) : null));
 }
 const KIND_WORD = { merge: ["merge card", "合併卡"], scope: ["scope card", "範圍卡"], dispatch: ["dispatch card", "派工卡"], permission: ["permission card", "權限卡"], plan: ["plan card", "計畫卡"], question: ["question card", "問題卡"], acceptance: ["acceptance card", "驗收卡"], "round-budget": ["round budget card", "回合預算卡"], "step-back": ["step-back card", "退一步卡"], promote: ["promote card", "升級卡"], retro: ["retro card", "回顧卡"] };
@@ -212,7 +212,7 @@ function crewSection(d, team) {
   else if (!crew && rows) body = null;
   else if (!crew) body = h("div", { class: "pj-empty-row", "data-crew-empty": "1" }, T("No crew approved yet. Tasks here will wait at their first round.", "還沒有核准的船員。這裡的任務會停在第一輪。"));
   else body = h("div", { class: "pj-crew-wf", "data-crew": crew.workflow },
-    h("div", { class: "x-row wrap" }, h("b", {}, `${crew.workflow} v${crew.version}`), h("span", { class: "badge ok" }, h("span", { class: "d" }), T(`Approved · config v${crew.config}`, `已核准 · 配置 v${crew.config}`)),
+    h("div", { class: "x-row wrap" }, h("b", { "data-crew-workflow-name": crew.workflow }, `${wfName(crew.workflow)} v${crew.version}`), h("span", { class: "badge ok" }, h("span", { class: "d" }), T(`Approved · config v${crew.config}`, `已核准 · 配置 v${crew.config}`)),
       h("span", { class: "faint" }, [crew.approvedAt ? dateOf(crew.approvedAt) : null, crew.signed ? T("signed", "已簽章") : null].filter(Boolean).join(" · "))),
     h("div", { class: "pj-roles" }, crew.roles.map((r) => h("div", { class: "pj-role" }, h("span", { class: "rn" }, r.role),
       h("span", { class: "rc" }, [r.provider, r.model, r.effort].filter(Boolean).map((x) => h("span", { class: "vbadge" }, x))), h("span", { class: "pj-src" }, r.skill)))),

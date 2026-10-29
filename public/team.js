@@ -269,7 +269,7 @@ function card(w) {
   const on = TM.sel === w.id, b = w.badge;
   const badge = b.state === "missing" ? T("Missing", "缺人") : b.state === "custom" ? T(`${b.count} custom`, `${b.count} 項自訂`) : T("Follows team", "跟團隊");
   return h("button", { class: `tm-card${on ? " on" : ""}`, "aria-pressed": String(on), "data-team-card": w.id, onclick: () => { TM.sel = w.id; TM.ask = null; render(); } },
-    h("span", { class: "tm-card-h" }, h("b", {}, w.name), h("span", { class: `tm-badge ${b.state}` }, badge)),
+    h("span", { class: "tm-card-h" }, h("b", {}, w.displayName || w.name), h("span", { class: `tm-badge ${b.state}` }, badge)),
     h("span", { class: "tm-steps" }, w.nodes.map((n) => h("span", { class: `tm-step${n.source === "missing" ? " missing" : n.custom ? " custom" : ""}${n.judge ? " judge" : ""}`, title: `${n.label} · ${seatName(n.seat)}`, "data-step-seat": n.seat },
       h("i", { class: "tm-dot", style: `background:${seatColor(n.seat)}` }), n.judge ? "✓ " : "", n.label, n.custom ? " ★" : ""))),
     // a seat a role needs that no step shows (coffee's image worker): named, in red
@@ -309,19 +309,19 @@ function view() {
     detection(), staleNote(), skillStatusPanel(), decidePanel(),
     TM.editing ? memberEditor() : null,
     h("div", { class: "tm-cards" }, TM.data.workflows.map(card)),
-    wf ? h("section", { class: "card tm-detail", "data-team-detail": wf.id, "aria-label": T(`${wf.name}: final crew`, `${wf.name}：最後的人員配置`) },
-      h("div", { class: "tm-dhead" }, h("h2", {}, T(`${wf.name}: who finally runs it`, `${wf.name}：最後的人員配置`)),
+    wf ? h("section", { class: "card tm-detail", "data-team-detail": wf.id, "aria-label": T(`${wf.displayName || wf.name}: final crew`, `${wf.displayName || wf.name}：最後的人員配置`) },
+      h("div", { class: "tm-dhead" }, h("h2", {}, T(`${wf.displayName || wf.name}: who finally runs it`, `${wf.displayName || wf.name}：最後的人員配置`)),
         h("span", { class: "faint" }, T("Role: the workflow role's skill, loaded first. Grey skills come with the member; white ones are this node's.", "角色＝workflow 角色的 skill，最先載入；灰色 skill＝成員本身帶的；白色＝這個節點加的")),
         custom ? h("button", { class: "btn", "data-restore": wf.id, disabled: TM.busy, onclick: () => change({ kind: "restore", workflow: wf.id }) }, T("Restore to team", "恢復成團隊設定")) : null,
         projectCustom ? h("button", { class: "btn", "data-restore-project": TM.project, disabled: TM.busy, onclick: () => change({ kind: "project-restore", project: TM.project }) }, T(`Restore ${projectName()} to the team`, `${projectName()} 恢復成團隊設定`)) : null),
       h("div", { class: "tm-grid tm-head", "aria-hidden": "true" }, [T("Node", "節點"), T("Member", "成員"), T("Model", "模型"), "Effort", "Skills", T("Source", "來源")].map((x) => h("span", {}, x))),
       missingLine(wf),
       wf.nodes.map((n) => nodeRow(wf, n)),
-      TM.notes.length ? h("div", { class: "tm-adjust", role: "status", "data-team-notes": "" }, h("b", {}, T("Adjusted by the team rules:", "團隊規則自動調整：")), h("ul", {}, TM.notes.map((n) => h("li", {}, `${n.workflow} · ${n.node}: ${L(n)}`)))) : null) : null);
+      TM.notes.length ? h("div", { class: "tm-adjust", role: "status", "data-team-notes": "" }, h("b", {}, T("Adjusted by the team rules:", "團隊規則自動調整：")), h("ul", {}, TM.notes.map((n) => h("li", {}, `${wfName(n.workflow)} · ${n.node}: ${L(n)}`)))) : null) : null);
 }
 // Crew workspace keeps role defaults separate from workflow-specific assignments.
 let crewSeat = null, crewNode = null, crewDraft = null, crewSection = 'team', crewReturnFocus = null, crewViewport = null, crewEntryQuery = null, crewFocusGeneration = 0;
-const crewUses = id => (TM.data?.workflows || []).flatMap(w => w.nodes.filter(n => n.seat === id).map(n => ({workflow:w.name, ...n})));
+const crewUses = id => (TM.data?.workflows || []).flatMap(w => w.nodes.filter(n => n.seat === id).map(n => ({workflow:w.displayName||w.name, ...n})));
 const crewSource = row => T(...(SOURCE[row.source] || [row.source,row.source]));
 window.pageDirty?.provide('crew-member-draft',()=>!!crewDraft);
 const crewFoldState = new Map();
@@ -374,7 +374,7 @@ function workspaceView(){
  }));if(crewSection==='team')head.after(people);
  const detect=v.querySelector('.tm-detect');if(detect&&crewSection!=='team')detect.remove();else if(detect){const mark=h('span');detect.before(mark);mark.replaceWith(foldCrew('model-detection',T('Model availability and detection','模型可用狀態與偵測'),detect));}
  const cards=v.querySelector('.tm-cards'),detail=v.querySelector('[data-team-detail]');
- if(cards&&detail){const wf=TM.data.workflows.find(w=>w.id===TM.sel);const rows=h('div',{class:'tm-workflow-people'},wf.nodes.map(n=>h('button',{type:'button',class:'tm-workflow-person','data-crew-node':n.node,onclick:()=>crewOpen(n.seat,n.node)},h('b',{},n.label),h('span',{},seatName(n.seat)),h('span',{class:'tm-node-effective'},n.model||T('No effective model','尚無生效模型'),h('small',{},`Effort ${n.effort||T('default','預設')} · ${crewSource(n)}`)),T('Settings','設定'))));const restore=[...detail.querySelectorAll('[data-restore],[data-restore-project]')];detail.replaceChildren(h('h2',{},wf.name),missingLine(wf),rows,restore.length?foldCrew(`restore:${TM.sel}`,T('Restore assignment defaults','恢復配置預設'),...restore):'');const holder=h('div');cards.before(holder);if(crewSection==='workflows'){const picker=h('select',{class:'tm-sel','data-crew-workflow-picker':'','data-no-unsent':'','aria-label':T('Workflow','流程'),onchange:e=>{TM.sel=e.target.value;TM.ask=null;render();}},TM.data.workflows.map(w=>h('option',{value:w.id},w.name)));picker.value=TM.sel;holder.append(h('section',{'data-crew-workflow-view':'','aria-label':T('Workflow assignments','流程個別配置')},h('label',{class:'tm-edit-field'},h('span',{},T('Workflow','流程')),picker),detail,foldCrew('workflow-overview',T('All workflow assignment summaries','所有流程配置摘要'),cards)));}else{cards.remove();detail.remove();}}
+ if(cards&&detail){const wf=TM.data.workflows.find(w=>w.id===TM.sel);const rows=h('div',{class:'tm-workflow-people'},wf.nodes.map(n=>h('button',{type:'button',class:'tm-workflow-person','data-crew-node':n.node,onclick:()=>crewOpen(n.seat,n.node)},h('b',{},n.label),h('span',{},seatName(n.seat)),h('span',{class:'tm-node-effective'},n.model||T('No effective model','尚無生效模型'),h('small',{},`Effort ${n.effort||T('default','預設')} · ${crewSource(n)}`)),T('Settings','設定'))));const restore=[...detail.querySelectorAll('[data-restore],[data-restore-project]')];detail.replaceChildren(h('h2',{},wf.displayName||wf.name),missingLine(wf),rows,restore.length?foldCrew(`restore:${TM.sel}`,T('Restore assignment defaults','恢復配置預設'),...restore):'');const holder=h('div');cards.before(holder);if(crewSection==='workflows'){const picker=h('select',{class:'tm-sel','data-crew-workflow-picker':'','data-no-unsent':'','aria-label':T('Workflow','流程'),onchange:e=>{TM.sel=e.target.value;TM.ask=null;render();}},TM.data.workflows.map(w=>h('option',{value:w.id},w.name)));picker.value=TM.sel;holder.append(h('section',{'data-crew-workflow-view':'','aria-label':T('Workflow assignments','流程個別配置')},h('label',{class:'tm-edit-field'},h('span',{},T('Workflow','流程')),picker),detail,foldCrew('workflow-overview',T('All workflow assignment summaries','所有流程配置摘要'),cards)));}else{cards.remove();detail.remove();}}
  if(crewSection==='team')v.append(foldCrew('team-advanced',T('Team presets and advanced settings','團隊預設組合與進階設定'),h('button',{class:'btn','data-crew-manage':'',onclick:()=>crewOpen('*')},T('Manage all members and presets','管理全部船員與預設組合'))));
  if(crewSection==='workflows'){v.querySelector('[data-team-empty]')?.remove();v.querySelector('[data-models-note]')?.remove();}
  const sectionTabs=h('nav',{class:'tm-section-tabs','aria-label':T('Crew settings areas','船員設定分頁')},...['team','workflows'].map(section=>h('button',{type:'button',class:crewSection===section?'on':'','data-crew-section':section,'aria-pressed':String(crewSection===section),onclick:()=>crewSelectSection(section)},section==='team'?T('Team defaults','團隊預設'):T('Workflow assignments','流程個別配置'))));head.after(sectionTabs);
@@ -418,7 +418,7 @@ function staffingSection() {
   const panel = window.crewStaffingPanel?.(); if (!panel) return null;
   return h("details", { class: "card tm-staffing", "data-team-staffing": "", open: asked || TM.staffingOpen || null, ontoggle: (e) => { TM.staffingOpen = e.target.open; } },
     h("summary", {}, h("b", {}, T("A project's own approved crew", "專案自己核准的人員")), " ",
-      h("span", { class: "faint" }, T("code-firstmate and coffee-kit run on a crew you approve for each project.", "code-firstmate 和 coffee-kit 用你按專案核准的人員。"))), panel);
+      h("span", { class: "faint" }, T(`${wfName("code-firstmate")} and ${wfName("coffee-kit")} run on a crew you approve for each project.`, `${wfName("code-firstmate")} 和 ${wfName("coffee-kit")} 用你按專案核准的人員。`))), panel);
 }
 routes.team = () => {
   if(!TM.opened)crewEntryQuery=null;

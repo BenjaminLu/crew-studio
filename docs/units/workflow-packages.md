@@ -2,6 +2,9 @@
 
 The editor exports either the existing definition JSON or a real `.crew.zip` containing the selected saved version's declaration and known dependency bytes. Export never uses the unsaved editor or mutable layout projection. Private workflow record metadata/origin/interviews are omitted; the record hash identifies the immutable source. Declaration/skill text may itself contain author-provided sensitive information: inspect before sharing. This is not a secret scanner.
 
+A package carries the definition as saved, with its own `name`; a display name the captain set in this Studio
+(docs/units/workflow-rename.md) stays local and is not packaged.
+
 Package layout:
 
 ```
