@@ -361,7 +361,7 @@ function namingSheet() {
     h("div", { class: "wt-sh" }, h("span", { class: "faint" }, T("Tab name", "分頁名稱")), input), h("p", { class: "faint wt-note" }, T("Enter to keep, Esc to cancel", "Enter 確定 · Esc 取消"))));
 }
 function focusView(arg) {
-  reconcile();
+  if (!TM.err) reconcile(); // a list that did not load says nothing about which terminals are gone: the saved tabs stay
   if (arg && !TM.list.some((t) => t.id === arg)) return null; // a link to a terminal that is gone says so
   if (arg !== TM.lastArg) { TM.lastArg = arg; if (arg && TM.list.some((t) => t.id === arg)) reveal(arg); }
   // a first visit opens the terminal the list would pick; once the captain closes every tab, the launcher stays

@@ -205,6 +205,19 @@ try {
   await shot(q, "panes-win-help.png");
   await ctx2.close();
 
+  // ---------- the terminal list does not load: the saved tabs are kept, not taken for gone ----------
+  { const ctxE = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+    const saved = JSON.stringify({ tabs: [{ id: "t1", name: "kept", root: { t: "pane", id: "p1", term: t1 }, focus: "p1", zoom: null }], cur: 0, uid: 1 });
+    await ctxE.addInitScript((saved) => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.term.layout", saved); }
+      localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} }, saved);
+    let fail = true; await ctxE.route(/\/api\/terminals$/, (r) => (fail && r.request().method() === "GET" ? r.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Studio is busy" }) }) : r.continue()));
+    const pe = await ctxE.newPage(); pe.on("pageerror", (e) => errors.push(`list-error: ${e}`));
+    await pe.goto(`${base}/#/terminals`); await seen(pe.locator("text=Studio is busy")); await pe.waitForTimeout(300);
+    ok(JSON.parse(await pe.evaluate(() => localStorage.getItem("crew.term.layout")) || "{}").tabs?.[0]?.name === "kept", "a list that failed to load leaves the saved tabs as they were");
+    fail = false; await pe.evaluate(() => dispatchEvent(new Event("focus")));
+    ok(await until(async () => (await tabs(pe))[0]?.name === "kept" && (await panes(pe)).length === 1), "when the list loads, the tab is back with its pane");
+    await ctxE.close(); }
+
   // ---------- eight panes: a browser keeps six connections to Studio, and typing needs one ----------
   { const ctx8 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
     await ctx8.addInitScript((os) => { Object.defineProperty(Navigator.prototype, "platform", { get: () => os.platform }); Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => ({ platform: os.uad }) });
