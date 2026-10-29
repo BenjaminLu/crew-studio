@@ -430,7 +430,7 @@ try {
     const list = await p.$$eval("[data-room-link]", (els) => els.map((e) => [e.dataset.roomLink, e.getAttribute("href")]));
     ok(JSON.stringify(list) === JSON.stringify([["SC-50", "#/room/SC-50"], ["PR-0123456789ab-7", "#/room/PR-0123456789ab-7"]]) && /open/.test(await p.textContent('[data-room-list]')), "the Review room's home lists the rooms on this machine, open ones first, each a link back into it", JSON.stringify(list));
     await p.click('[data-room-link="SC-50"]'); await p.waitForSelector("[data-stage]", { timeout: 15000 });
-    ok(await p.getAttribute("[data-room-home]", "href") === "#/room" && /Review room/.test(await p.textContent(".rr-crumb")), "the room's header says where you are: Review room › the room, the first a link to the list");
+    ok(await p.$eval("[data-room-home]", (e) => e.getAttribute("href")).catch(() => null) === "#/room" && /Review room/.test(await p.$eval(".rr-crumb", (e) => e.textContent).catch(() => "")), "the room's header says where you are: Review room › the room, the first a link to the list");
     await p.goBack(); await p.waitForFunction(() => S.route?.name === "room" && !S.route.arg); await p.goBack(); await p.waitForFunction(() => S.route?.name === "board");
     ok(true, "the browser's back walks Studio's own pages: room → the room list → the board");
     await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-stage]");
@@ -467,11 +467,11 @@ try {
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
     let s1 = await stage(p);
     ok(s1.scene === "t3" && /Reading the diff and the tests first/.test(await p.textContent("[data-turn-progress]")) && /3 tool calls/.test(await p.textContent("[data-turn-progress]")), "coming back while a turn runs, the stage shows that turn and what it has said so far (not a later Studio scene)", JSON.stringify(s1));
-    now = DONE; await p.waitForFunction(() => document.querySelector("[data-stage]")?.dataset.scene === "t3" && /finished explanation/.test(document.querySelector("[data-stage] .rr-pointlist")?.textContent || ""), null, { timeout: 15000 });
-    ok(true, "when it finishes, the room shows the answer");
+    now = DONE; const shown = await p.waitForFunction(() => document.querySelector("[data-stage]")?.dataset.scene === "t3" && /finished explanation/.test(document.querySelector("[data-stage] .rr-pointlist")?.textContent || ""), null, { timeout: 15000 }).then(() => true, () => false);
+    ok(shown, "when it finishes, the room shows the answer", JSON.stringify(await stage(p)));
     // an explanation for this head is already there: show it, or explain again (paid, still confirmed)
-    await p.click('[data-room-action="teach"]'); await p.waitForSelector("[data-existing-offer]");
-    ok(!(await p.$("[data-room-confirm]")) && !posts.length, "asking again what this head already has offers the existing explanation first, nothing paid");
+    await p.click('[data-room-action="teach"]'); const offered = await p.waitForSelector("[data-existing-offer]", { timeout: 5000 }).then(() => true, () => false);
+    ok(offered && !(await p.$("[data-room-confirm]")) && !posts.length, "asking again what this head already has offers the existing explanation first, nothing paid");
     await p.click("[data-existing-show]"); s1 = await stage(p);
     ok(s1.scene === "t3" && !(await p.$("[data-existing-offer]")), "“Show the existing explanation” goes to it", JSON.stringify(s1));
     await p.click('[data-room-action="teach"]'); await p.click("[data-existing-again]"); await p.waitForSelector('[data-room-confirm="teach"]');
@@ -483,9 +483,9 @@ try {
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
     await p.keyboard.press("ArrowLeft"); const away = (await stage(p)).scene;
-    now = DONE; await p.waitForSelector("[data-answer-ready]", { timeout: 15000 });
+    now = DONE; const chip = await p.waitForSelector("[data-answer-ready]", { timeout: 15000 }).then(() => true, () => false);
     const s2 = await stage(p);
-    ok(away !== "t3" && s2.scene === away, "the captain looked elsewhere while it ran: the finished answer does not pull the stage away", JSON.stringify({ away, s2 }));
+    ok(chip && away !== "t3" && s2.scene === away, "the captain looked elsewhere while it ran: the finished answer does not pull the stage away", JSON.stringify({ away, s2 }));
     await p.click("[data-answer-ready]"); const s3 = await stage(p);
     ok(s3.scene === "t3" && !(await p.$("[data-answer-ready]")), "“The answer is ready — show it” goes to the answer", JSON.stringify(s3));
     await ctx.close(); }
