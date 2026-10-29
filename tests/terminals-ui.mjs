@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Web terminals in a real browser (public/terminals.js, docs/units/web-terminal.md), stub CLIs only:
 //   the desktop page: the unsandboxed warning with the project's path, presets, a custom command started in xterm.js,
-//   "waiting for you" in the terminal's badge, the sidebar's Firstmate item and the Firstmate panel's Terminals tab,
+//   "waiting for you" in the terminal's badge, the sidebar's Terminals item and the Firstmate panel's Terminals tab,
 //   typing answers it; Claude Code's Remote Control link and its QR code in the header;
 //   a paired phone: the same list and states, the output drawn read only (no input element, no launcher, no controls,
 //   no link), at 390 px without a horizontal scroll; and with an xterm stub, the page asks xterm for no input on a phone.
@@ -94,18 +94,21 @@ try {
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText()).includes("Proceed with deploy?")), "the program's output is on screen");
   ok(await seen(p.locator('.wt-detail [data-term-state="waiting"]'), 6000), "the badge says waiting for you");
   ok(await seen(p.locator("[data-term-ask]")) && (await p.locator("[data-term-ask]").innerText()).includes("Proceed with deploy? [y/N]"), "with the question it asks");
-  ok(await until(async () => (await p.locator("#navTerms").innerText().catch(() => "")) === "1"), "the sidebar's Firstmate item counts one terminal waiting");
-  await p.locator('[data-chat-tab="terms"]').click();
+  ok(await until(async () => (await p.locator('.nav-item[data-view="terminals"] #navTerms').innerText().catch(() => "")) === "1"), "the sidebar's Terminals item counts one terminal waiting");
+  // the terminal page is a focus page (no chat panel there): the panel's Terminals tab lists it from any other page
+  await p.goto(base + "/#/board"); await p.locator('[data-chat-tab="terms"]').click();
   ok(await seen(p.locator('#chatTerms [data-term-row] [data-term-state="waiting"]')) && await p.locator("#chatLog").isHidden(), "the Firstmate panel's Terminals tab lists it, waiting (the chat stays one tab away)");
   if (shots) await p.screenshot({ path: join(shots, "terminals-desktop-waiting.png") });
   await p.locator('[data-chat-tab="chat"]').click();
   ok(await p.locator("#chatLog").isVisible(), "the Chat tab brings the chat back");
+  await p.goto(`${base}/#/terminals/${encodeURIComponent(firstId)}`); await seen(p.locator(".wt-xterm .xterm-rows"), 10000);
   await p.locator(".wt-xterm").click(); await p.keyboard.type("y"); await p.keyboard.press("Enter");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText()).includes("answer:y")), "typing in the terminal reaches the program");
   ok(await seen(p.locator('.wt-detail [data-term-state="done"]'), 8000), "exit 0: done");
   ok(await until(async () => (await p.locator("#navTerms").isHidden())), "nothing waits any more: the count goes");
 
-  // Claude Code with Remote Control: the link and its QR code in the header
+  // Claude Code with Remote Control: the link and its QR code in the header (with a terminal shown, New opens the launcher)
+  await p.locator("[data-term-new]").click();
   await p.locator('[data-preset="claude"]').click();
   ok(await seen(p.locator("[data-term-remote-url]"), 10000), "Claude Code's Remote Control link shows in the terminal's header");
   ok((await p.locator("[data-term-remote-url]").innerText()) === "https://claude.ai/code/rc-UIFAKE789" && await p.locator(".wt-qr svg").count() === 1, "with the link and a QR code drawn on the page");
@@ -113,6 +116,7 @@ try {
   if (shots) await p.screenshot({ path: join(shots, "terminals-desktop-remote.png") });
 
   // ---------- Send for review: a finished terminal whose branch has commits ----------
+  await p.locator("[data-term-new]").click();
   await p.locator("#termProject").selectOption("repo");
   const G = "git -c user.name=A -c user.email=a@example.invalid";
   // run from the command field with Enter, as the captain does, and keep a field focused while the command ends by itself
@@ -122,6 +126,7 @@ try {
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("COMMITTED"), 10000), "an agent commits on a branch in the project's folder", await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => ""));
   ok(await seen(p.locator("[data-term-send][disabled]")) && /once the agent has finished/.test(await p.locator("[data-term-review]").innerText()), "Send for review waits until the agent has finished");
   // the captain clicks back into the command field (to type the next one) while this one is still running
+  await p.locator("[data-term-new]").click();
   await p.locator("#termCmd").focus();
   ok(await p.evaluate(() => document.activeElement?.id) === "termCmd", "the command field has the focus while the command runs");
   ok(await seen(p.locator("[data-term-send]:not([disabled])"), 10000) && /agent\/ui · 1 commit\(s\) beyond main/.test(await p.locator("[data-term-review]").innerText()), "when it ends, Send for review appears with the branch, with no reload", await p.locator("[data-term-review]").innerText().catch(() => ""));

@@ -161,8 +161,9 @@ async function ask(text) {
 const isPhone = () => innerWidth <= 1100;
 function openChat(open) {
   document.body.classList.toggle("chat-closed", !open);
-  // a review room in focus mode opens Firstmate as a sheet over it: that is not the captain's saved chat preference
-  if (!isPhone() && !document.body.classList.contains("room-focus")) store.set("crew.chatOpen", open ? "1" : "0");
+  // a focus page (app.js pageFocus: the terminal page, a review room) opens Firstmate as a sheet over it: that is not the
+  // captain's saved chat preference, and leaving the page gives back the chat as it was before
+  if (!isPhone() && !document.body.dataset.focus) store.set("crew.chatOpen", open ? "1" : "0");
   if (open) { renderChat(); setTimeout(() => $("#chatIn")?.focus({ preventScroll: true }), 0); }
 }
 function setChatW(w, persist = true) {

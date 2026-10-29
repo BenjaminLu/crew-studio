@@ -78,7 +78,20 @@ function route() {
   const v = routes[normalized] ? normalized : "board";
   $$(".nav-item").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
+  pageFocus(routes[v]?.focus || null);
   render();
+}
+// A focus page (a route view with a .focus name, e.g. the terminal, docs/units/web-terminal.md): while it is shown the side
+// bar is the 64 px rail, the chat panel and its button step aside, and body[data-focus] lets the page's own CSS take the
+// whole window. Leaving gives back the layout the captain had. Nothing is stored: crew.side and crew.chatOpen stay theirs,
+// and a sidebar or chat toggle made during focus (setSide, openChat) becomes what is given back.
+const PAGE_FOCUS = { name: null, prev: null };
+function pageFocus(name) {
+  const b = document.body;
+  if (name && !PAGE_FOCUS.name) { PAGE_FOCUS.prev = { side: b.classList.contains("side-collapsed"), chat: !b.classList.contains("chat-closed") }; b.classList.add("side-collapsed", "chat-closed"); }
+  if (!name && PAGE_FOCUS.name && PAGE_FOCUS.prev) { b.classList.toggle("side-collapsed", PAGE_FOCUS.prev.side); b.classList.toggle("chat-closed", !PAGE_FOCUS.prev.chat); PAGE_FOCUS.prev = null; }
+  PAGE_FOCUS.name = name || null;
+  if (name) b.dataset.focus = name; else delete b.dataset.focus;
 }
 const fieldKey = (el) => { if (el.id) return `#${CSS.escape(el.id)}`; const d = [...el.attributes].find((x) => x.name.startsWith("data-"));
   return d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : null; };
@@ -660,7 +673,7 @@ function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lan
   $$("#themeSeg button").forEach((b) => { const t = th[b.dataset.themeSet]; if (!t) return; const sp = b.querySelector("span:not([data-ic])"); if (sp) sp.textContent = T(t[0], t[1]); b.setAttribute("aria-label", T(t[2], t[3])); });
   window.onLang?.();
   if (S.route) render(); }
-function setSide(collapsed) { document.body.classList.toggle("side-collapsed", collapsed); store.set("crew.side", collapsed ? "collapsed" : "open");
+function setSide(collapsed) { document.body.classList.toggle("side-collapsed", collapsed); store.set("crew.side", collapsed ? "collapsed" : "open"); if (PAGE_FOCUS.prev) PAGE_FOCUS.prev.side = collapsed;
   $("#sideTog").setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar"); }
 
 hydrateIcons(document);

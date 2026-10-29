@@ -7,7 +7,29 @@ pane per agent, and its state (working, waiting for you, done, exited) at a glan
 Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state heuristics), `public/terminals.js` and
 `public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 5.5.0 and its fit addon 0.10.0,
 pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
-`tests/terminals-ui.mjs` (`bun run test:terminals`).
+`tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs` (`bun run test:terminals`).
+
+## Focus mode
+
+The sidebar has a **Terminals** item (its own icon, right after Firstmate, also in the 64 px rail); it is current on
+`#/terminals` and carries the "waiting for you" count. `#/terminals` is a focus page: the route's view declares
+`viewTerminals.focus = "terminal"`, and `pageFocus` in `public/app.js` (called by `route()`) does the rest, generically:
+
+- on entering, it notes whether the sidebar was collapsed and the chat open, then collapses the sidebar to the rail, closes
+  the chat panel and sets `body[data-focus="terminal"]`; the page's CSS hides the chat button and lets the page take the
+  window. Nothing is written: `crew.side` and `crew.chatOpen` stay the captain's. A sidebar or chat toggle made while
+  there (`setSide`, `openChat`) becomes what is given back;
+- on leaving for any other route, it gives back what it noted and removes `data-focus`.
+
+The state is on `<body>` and in `PAGE_FOCUS`, outside `#view`, so a `render()` changes nothing. Another page can use the
+same switch by setting `.focus` on its route view.
+
+With a terminal shown, the page is the terminal: a strip of session tabs (the list, current one marked), its header (state,
+command, Stop, Restart, Remove, Send for review, Remote Control) and xterm filling the rest, width and height. The fit addon
+follows every resize, and the PTY gets the new size (`…/resize`). **New** opens the launcher above the terminal and starting
+a terminal closes it; it starts open while nothing is running. A phone sees the same strip with a "View only" badge in place
+of New; at 760 px and below the sidebar stays the top bar (its theme and gear row is hidden on this page) and the terminal
+takes the screen's width. With no terminal at all, the page is the launcher and the empty state, as before.
 
 ## Not sandboxed, by decision
 

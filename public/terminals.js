@@ -7,7 +7,7 @@
 // ("terminals"). Loaded before backbone.js.
 (() => {
 const XV = "5.5.0", FITV = "0.10.0";
-const TM = { refused: new Map(), list: null, presets: [], projects: [], canWrite: false, err: null, panes: new Map(), prev: new Map(), busy: false, cmd: "", args: "",
+const TM = { refused: new Map(), list: null, presets: [], projects: [], canWrite: false, err: null, panes: new Map(), prev: new Map(), busy: false, cmd: "", args: "", showNew: null,
   project: store.get("crew.term.project", ""), rc: store.get("crew.term.rc", "1") !== "0", tab: store.get("crew.chat.tab", "chat") };
 window.crewTerminals = TM;
 const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
@@ -54,7 +54,7 @@ addEventListener("focus", () => { if (TM.list) load(); });
 
 // ---------- the sidebar's count and the Firstmate panel's tab ----------
 function badgeNav() {
-  const item = document.querySelector('.nav-item[data-view="firstmate"]'); if (!item) return;
+  const item = document.querySelector('.nav-item[data-view="terminals"]'); if (!item) return;
   let b = item.querySelector("#navTerms"); const n = waiting().length;
   if (!b) { b = h("span", { class: "count attn", id: "navTerms" }); item.append(b); }
   b.hidden = !n; b.textContent = n ? String(n) : ""; b.title = T(`${n} terminals waiting for you`, `${n} 個終端機在等你`);
@@ -127,7 +127,7 @@ async function start(body) {
   if (TM.busy) return; TM.busy = true; redraw();
   try { if (window.Notification?.permission === "default") Notification.requestPermission().catch?.(() => {}); } catch {}
   const size = (() => { const p = [...TM.panes.values()].find((x) => x.term); return p ? { cols: p.term.cols, rows: p.term.rows } : { cols: 120, rows: 32 }; })();
-  try { const j = await postJ("/api/terminals", { project: TM.project, ...size, ...body }); await load(); location.hash = `#/terminals/${encodeURIComponent(j.terminal.id)}`; }
+  try { const j = await postJ("/api/terminals", { project: TM.project, ...size, ...body }); TM.showNew = false; await load(); location.hash = `#/terminals/${encodeURIComponent(j.terminal.id)}`; }
   catch (e) { toast(String(e.message || e)); } finally { TM.busy = false; redraw(); }
 }
 async function termOp(id, op) {
@@ -228,6 +228,20 @@ function viewTerminals(arg) {
   // a terminal no longer listed loses its stream
   for (const id of [...TM.panes.keys()]) if (!TM.list.some((t) => t.id === id)) closePane(id);
   const sel = selected(arg), rows = listRows(sel);
+  // a terminal shown: the terminal takes the window (body[data-focus="terminal"], app.js pageFocus). What stays is what
+  // runs it: the sessions as a strip of tabs, its header (Stop, Restart, Remove, review), and New, which opens the launcher
+  // the launcher starts open while nothing runs (nothing to watch live), closed once a terminal runs; New toggles it
+  const showNew = TM.showNew ?? !TM.list.some((t) => t.running);
+  if (sel) return h("div", { class: "page wt-page wt-full", "data-term-focus": sel.id },
+    h("div", { class: "wt-bar" },
+      h("h1", { class: "wt-h" }, T("Terminals", "終端機")),
+      h("div", { class: "wt-list wt-tabs", role: "list", "aria-label": T("Terminals", "終端機") }, rows),
+      TM.canWrite ? h("button", { type: "button", class: `btn sm${showNew ? " primary" : ""}`, "data-term-new": "1", "aria-expanded": String(showNew),
+        onclick: () => { TM.showNew = !showNew; soft(); } }, icon("plus", "ic sm"), T("New", "新增"))
+        : h("span", { class: "badge", "data-term-readonly": "1", title: T("Typing, starting and stopping happen on the Mac.", "輸入、啟動和停止要在 Mac 上做。") }, T("View only", "只能檢視"))),
+    TM.err ? h("p", { class: "faint" }, TM.err) : null,
+    TM.canWrite && showNew ? launcher() : null,
+    detail(sel));
   return h("div", { class: "page wt-page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Terminals", "終端機")),
       h("p", {}, T("Any agent CLI in a real terminal, in your project's folder. Working, waiting for you, done or exited, at a glance.", "在專案資料夾裡，用真的終端機跑任何 agent CLI；執行中、等你、完成或結束，一眼看見。")))),
@@ -237,5 +251,6 @@ function viewTerminals(arg) {
       sel ? detail(sel) : h("section", { class: "wt-detail wt-empty" }, h("p", { class: "faint" }, arg ? T("This terminal is gone (Studio restarted, or it was removed).", "這個終端機已不在（Studio 重新啟動過，或已移除）。") : T("Start an agent on the left.", "從左邊啟動一個 agent。")))));
 }
 routes.terminals = viewTerminals;
+viewTerminals.focus = "terminal"; // app.js pageFocus: the rail, no chat panel, the terminal takes the window
 load();
 })();

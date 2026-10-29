@@ -42,4 +42,29 @@
 .ct-ask{flex-basis:100%;font-size:12px;color:var(--human);overflow-wrap:anywhere}
 @media (max-width:900px){.wt-grid{grid-template-columns:minmax(0,1fr)}.wt-xterm{height:60vh}}
 .wt-review{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px}
+/* focus mode (app.js pageFocus sets body[data-focus="terminal"] on #/terminals): the side bar is the rail, no chat panel or
+   its button, and a shown terminal fills the rest of the window, its fit addon following every resize */
+body[data-focus="terminal"] .fab{display:none!important}
+body[data-focus="terminal"] #main{padding:12px 16px}
+body[data-focus="terminal"] #view{height:100%}
+.wt-full{max-width:none;height:100%;min-height:0;display:flex;flex-direction:column;gap:8px}
+.wt-bar{display:flex;align-items:center;gap:10px;min-width:0;flex:none}
+.wt-h{font-size:15px;line-height:1.2;margin:0;flex:none}
+.wt-tabs{flex-direction:row;flex:1;min-width:0;overflow-x:auto;gap:6px;scrollbar-width:thin}
+.wt-tabs .wt-item{display:flex;align-items:center;gap:6px;padding:3px 10px;white-space:nowrap;flex:none}
+.wt-tabs .wt-iproj{font-size:12px}
+.wt-tabs .wt-iask{display:none}
+.wt-tabs [data-term-row-restored]{font-size:12px}
+.wt-full .wt-new{flex:none}
+.wt-full .wt-detail{flex:1;min-height:0;gap:6px}
+.wt-full .wt-xterm{flex:1;height:auto;min-height:200px}
+.wt-full .wt-cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:760px){
+  body[data-focus="terminal"] .shell{height:100dvh}
+  .wt-full .wt-cmd{white-space:normal}
+  body[data-focus="terminal"] .side-foot{display:none}
+  body[data-focus="terminal"] #main{padding:8px}
+  .wt-h{display:none}
+  .wt-full .wt-xterm{min-height:240px}
+}
 .wt-refused{flex-basis:100%;margin:0;font-size:12px;color:var(--bad);background:var(--bad-soft);border-radius:8px;padding:6px 8px;overflow-wrap:anywhere}

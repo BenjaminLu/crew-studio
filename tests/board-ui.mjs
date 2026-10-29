@@ -96,7 +96,7 @@ try {
     await p.goto(`${base}/`); await seen(p, '[data-task="R-101"] .tb-track i', 10000);
     await p.waitForFunction(() => [...document.querySelectorAll('[data-task^="R-"]')].every((r) => r.querySelector(".tb-track i")), null, { timeout: 8000 }).catch(() => {});
     const views = await p.$$eval(".nav > .nav-item", (bs) => bs.filter((b) => !b.hidden && getComputedStyle(b).display !== "none").map((b) => b.dataset.view));
-    ok(p.url().endsWith("#/board") && views[0] === "board" && JSON.stringify(views) === JSON.stringify(["board", "firstmate", "inbox", "crew", "runs", "workflows", "skills", "library"]), "home is the Board, first in the sidebar", `${p.url()} ${JSON.stringify(views)}`);
+    ok(p.url().endsWith("#/board") && views[0] === "board" && JSON.stringify(views) === JSON.stringify(["board", "firstmate", "terminals", "inbox", "crew", "runs", "workflows", "skills", "library"]), "home is the Board, first in the sidebar", `${p.url()} ${JSON.stringify(views)}`);
 
     // every Task, Studio and firstmate, one row each, with its milestones
     const rows = await p.$$eval("[data-task]", (rs) => rs.map((r) => r.dataset.task));
