@@ -829,7 +829,9 @@ function header(r) {
 // ---------- focus mode: a room is the whole screen (app.js pageFocus, the terminal page's too). The sidebar folds to its rail and
 // Firstmate closes (an overlay sheet from the header); neither is saved as the captain's preference, and both come back as they
 // were on leaving. Only a room that has loaded: the home page, a loading room and an error keep the board's layout ----------
-addEventListener("hashchange", () => { if (S.route?.name === "room" && !S.route.arg && RR.list) RR.list.fresh = false; });
+// the room list is read again on coming back to it: app.js has already drawn the new route when this runs, so leaving the
+// list (for a room or any page) is what marks it stale
+addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room" && !S.route.arg)) RR.list.fresh = false; });
 // the keyboard: ← → a point back or forward, Space play / pause, Escape closes what is open over the room
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
