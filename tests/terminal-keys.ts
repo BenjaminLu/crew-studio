@@ -18,19 +18,28 @@ expect("mac", [
   ["Meta+Digit1", "tabN:1"], ["Meta+Digit9", "tabN:9"], ["Shift+Meta+BracketRight", "nextTab:1"], ["Shift+Meta+BracketLeft", "prevTab:-1"],
   ["Alt+Shift+BracketRight", "nextTab:1"], ["Meta+BracketRight", "nextPane:1"], ["Meta+BracketLeft", "nextPane:-1"],
   ["Alt+Meta+ArrowLeft", "focus:h"], ["Ctrl+Alt+ArrowRight", "focus:l"], ["Alt+Shift+Meta+ArrowUp", "swap:k"], ["Ctrl+Meta+ArrowDown", "resize:j"],
-  ["Shift+Meta+Enter", "zoom"], ["Meta+KeyK", "clear"], ["Shift+Meta+KeyO", "goto"], ["F2", "renameTab"], ["Shift+F2", "renameWs"], ["Meta+Slash", "help"], ["Meta+KeyB", "sidebar"],
+  ["Shift+Meta+Enter", "zoom"], ["Meta+KeyK", "clear"], ["Shift+Meta+KeyO", "goto"], ["Meta+Slash", "help"], ["Meta+KeyB", "sidebar"],
 ]);
 expect("win", [
   ["Ctrl+Shift+KeyT", "newTab"], ["Ctrl+Alt+KeyT", "newTab"], ["Ctrl+Shift+KeyW", "closePane"], ["Ctrl+Alt+KeyW", "closePane"], ["Ctrl+Shift+KeyN", "newWs"], ["Ctrl+Alt+KeyN", "newWs"],
   ["Alt+Shift+Equal", "splitRight"], ["Alt+Shift+Minus", "splitDown"], ["Alt+ArrowLeft", "focus:h"], ["Alt+Shift+ArrowRight", "resize:l"], ["Ctrl+Alt+Shift+ArrowUp", "swap:k"],
   ["Ctrl+Tab", "nextTab"], ["Ctrl+Shift+Tab", "prevTab"], ["Ctrl+Alt+PageDown", "nextTab"], ["Ctrl+Alt+PageUp", "prevTab"], ["Ctrl+Alt+Digit3", "tabN:3"],
-  ["Ctrl+Shift+Enter", "zoom"], ["Ctrl+Shift+KeyK", "clear"], ["Ctrl+Shift+KeyP", "goto"], ["F1", "help"], ["F2", "renameTab"], ["Ctrl+Shift+KeyB", "sidebar"],
+  ["Ctrl+Shift+Enter", "zoom"], ["Ctrl+Shift+KeyK", "clear"], ["Ctrl+Shift+KeyP", "goto"], ["Ctrl+Shift+Slash", "help"], ["Ctrl+Shift+KeyB", "sidebar"],
 ]);
 // what is not Studio's goes to the terminal: plain keys, the shell's own Ctrl chords, the browser's copy and paste, the
 // other platform's chords
 for (const [plat, chords] of [["mac", ["KeyA", "Enter", "Ctrl+KeyC", "Ctrl+KeyD", "Ctrl+KeyL", "Meta+KeyC", "Meta+KeyV", "Alt+ArrowLeft", "Ctrl+Shift+KeyT", "Shift+KeyD", "Digit1"]],
   ["win", ["KeyA", "Enter", "Ctrl+KeyC", "Ctrl+KeyD", "Ctrl+KeyT", "Ctrl+KeyW", "Ctrl+Shift+KeyC", "Ctrl+Shift+KeyV", "Meta+KeyT", "Meta+KeyD", "Alt+KeyT", "Digit1"]]] as const)
   for (const c of chords) ok(act(c, plat) === null, `${plat}: ${c} is left for the terminal`, String(act(c, plat)));
+// F1, F2 and Shift+F2 are full-screen programs' (htop, mc): never Studio's
+for (const plat of ["mac", "win"] as const) for (const c of ["F1", "F2", "Shift+F2", "F10"]) ok(act(c, plat) === null, `${plat}: ${c} is left for the terminal`, String(act(c, plat)));
+// the second chord counts only in a browser tab: in a Studio window ⌥T ⌥W ⌥⇧] are Option-as-Meta and ’ ” for the shell
+const inWin = (chord: string, plat: "mac" | "win") => K.lookup(ev(chord), plat, false)?.act ?? null;
+ok(inWin("Alt+KeyT", "mac") === null && inWin("Alt+KeyW", "mac") === null && inWin("Alt+KeyN", "mac") === null && inWin("Alt+Shift+BracketRight", "mac") === null && inWin("Ctrl+Alt+ArrowLeft", "mac") === null,
+  "mac, Studio window: ⌥T ⌥W ⌥N ⌥⇧] ⌃⌥← go to the shell");
+ok(inWin("Meta+KeyT", "mac") === "newTab" && inWin("Meta+KeyW", "mac") === "closePane" && inWin("Alt+Meta+ArrowLeft", "mac") === "focus" && inWin("Ctrl+Shift+KeyT", "win") === "newTab" && inWin("Ctrl+Alt+KeyT", "win") === null,
+  "Studio window: the first chords work (⌘T ⌘W ⌥⌘←, Ctrl+Shift+T), the tab's second ones are the shell's");
+ok(K.lookup(ev("Alt+KeyT"), "mac", true)?.act === "newTab", "mac, browser tab: ⌥T opens a tab");
 // the code, not the character: a layout that types another letter on the T key still opens a tab; Shift+Meta+D is not Meta+D
 ok(K.lookup({ code: "KeyT", key: "ㄔ", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, "mac")?.act === "newTab", "the physical key decides (an input method's character does not)");
 ok(K.lookup(ev("Shift+Meta+KeyD"), "mac").act === "splitDown" && K.lookup(ev("Meta+KeyD"), "mac").act === "splitRight", "Shift is part of the chord");
@@ -55,6 +64,6 @@ ok(K.platformOf({ platform: "Win32" }) === "win" && K.platformOf({ userAgentData
 // every action has a chord on both platforms, and no chord means two actions
 for (const plat of [3, 4]) { const seen = new Map<string, string>();
   for (const r of K.KEYMAP) for (const c of r[plat]) { if (seen.has(c)) ok(false, `${plat === 3 ? "mac" : "win"}: ${c} is one action`, `${seen.get(c)} and ${r[1]}`); seen.set(c, r[1]); } }
-ok(K.KEYMAP.every((r: any) => r[3].length && r[4].length), "every action has a chord on both platforms");
+ok(K.KEYMAP.every((r: any) => r[1] === "renameTab" || (r[3].length && r[4].length)), "every action but renaming a tab (double-click) has a chord on both platforms");
 console.log(`\nterminal-keys: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

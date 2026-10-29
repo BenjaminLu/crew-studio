@@ -12,7 +12,8 @@ const KEYMAP = [
   [["Tabs", "分頁"], "tabN", ["Go to tab 1–9", "跳到第 1–9 個分頁"], ["Meta+Digit"], ["Ctrl+Alt+Digit"]],
   [["Tabs", "分頁"], "nextTab", ["Next tab", "下一個分頁"], ["Shift+Meta+BracketRight", "Alt+Shift+BracketRight"], ["Ctrl+Tab", "Ctrl+Alt+PageDown"]],
   [["Tabs", "分頁"], "prevTab", ["Previous tab", "上一個分頁"], ["Shift+Meta+BracketLeft", "Alt+Shift+BracketLeft"], ["Ctrl+Shift+Tab", "Ctrl+Alt+PageUp"]],
-  [["Tabs", "分頁"], "renameTab", ["Rename tab", "分頁改名"], ["F2"], ["F2"]],
+  // no key: F1 and F2 are full-screen programs' own (htop, mc); a tab is renamed by double-clicking it
+  [["Tabs", "分頁"], "renameTab", ["Rename tab (double-click it)", "分頁改名（雙擊分頁）"], [], []],
   [["Panes", "窗格"], "splitRight", ["Split right", "向右分割"], ["Meta+KeyD"], ["Alt+Shift+Equal"]],
   [["Panes", "窗格"], "splitDown", ["Split down", "向下分割"], ["Shift+Meta+KeyD"], ["Alt+Shift+Minus"]],
   [["Panes", "窗格"], "focus", ["Move to the pane in a direction", "往某個方向換窗格"], ["Alt+Meta+Arrow", "Ctrl+Alt+Arrow"], ["Alt+Arrow"]],
@@ -24,10 +25,9 @@ const KEYMAP = [
   [["Panes", "窗格"], "clear", ["Clear the screen", "清畫面"], ["Meta+KeyK"], ["Ctrl+Shift+KeyK"]],
   [["Panes", "窗格"], "copy", ["Copy mode", "複製模式"], ["Shift+Meta+KeyC"], ["Ctrl+Shift+KeyM"]],
   [["Workspaces", "工作區"], "newWs", ["New workspace", "新工作區"], ["Meta+KeyN", "Alt+KeyN"], ["Ctrl+Shift+KeyN", "Ctrl+Alt+KeyN"]],
-  [["Workspaces", "工作區"], "renameWs", ["Rename workspace", "工作區改名"], ["Shift+F2"], ["Shift+F2"]],
   [["Workspaces", "工作區"], "goto", ["Go to any terminal", "跳到任一終端機"], ["Shift+Meta+KeyO"], ["Ctrl+Shift+KeyP"]],
   [["Workspaces", "工作區"], "sidebar", ["Show / hide the sidebar", "顯示 / 隱藏側欄"], ["Meta+KeyB"], ["Ctrl+Shift+KeyB"]],
-  [["Workspaces", "工作區"], "help", ["This table", "這張表"], ["Meta+Slash"], ["F1"]],
+  [["Workspaces", "工作區"], "help", ["This table", "這張表"], ["Meta+Slash"], ["Ctrl+Shift+Slash"]],
 ];
 const ARROW = { ArrowLeft: "h", ArrowDown: "j", ArrowUp: "k", ArrowRight: "l" };
 /** The chord a keydown is: modifiers in a fixed order, then the key's code; arrows, digits and brackets carry their argument. */
@@ -50,11 +50,15 @@ function altGr(e) {
   if (/^Key[A-Z]$/.test(e.code)) return k.toLowerCase() !== e.code.slice(3).toLowerCase();
   const b = BASE[e.code]; return !b || k !== (e.shiftKey && b.length > 1 ? b[1] : b[0]);
 }
-/** The action a keydown asks for on this platform ("mac" | "win"), either of its chords, or null (the key goes to the terminal). */
-function lookup(e, plat) {
+/**
+ * The action a keydown asks for on this platform ("mac" | "win"), or null (the key goes to the terminal). The second chord
+ * of an action counts only in a browser tab (inTab), where the browser keeps the first: in a Studio window ⌥T, ⌥W and ⌥⇧]
+ * are Option-as-Meta (M-t, M-w) and the characters they type (’ ”), the shell's.
+ */
+function lookup(e, plat, inTab = true) {
   if (altGr(e)) return null;
   const c = chordOf(e);
-  for (const row of KEYMAP) { const specs = row[plat === "mac" ? 3 : 4]; if (specs.includes(c.full) || specs.includes(c.loose)) return { act: row[1], arg: c.arg }; }
+  for (const row of KEYMAP) { const specs = row[plat === "mac" ? 3 : 4].slice(0, inTab ? 2 : 1); if (specs.includes(c.full) || specs.includes(c.loose)) return { act: row[1], arg: c.arg }; }
   return null;
 }
 const KEYNAME = { Arrow: "←↑↓→", Digit: "1–9", BracketRight: "]", BracketLeft: "[", Bracket: "] / [", Equal: "=", Minus: "-", Slash: "/", PageDown: "PgDn", PageUp: "PgUp" };
@@ -67,7 +71,7 @@ function show(spec, plat) {
 const row = (act) => KEYMAP.find((r) => r[1] === act);
 /** The chord that works where the page is now: the second one while a browser tab keeps the first. */
 function chordNow(act, plat, inTab) { const specs = row(act)[plat === "mac" ? 3 : 4]; return inTab && specs[1] ? specs[1] : specs[0]; }
-const useNow = (act, plat, inTab) => show(chordNow(act, plat, inTab), plat);
+const useNow = (act, plat, inTab) => { const c = chordNow(act, plat, inTab); return c ? show(c, plat) : ""; };
 /** "mac" on a Mac (and iPad, iPhone), else "win" (Windows, Linux, ChromeOS: Windows Terminal's keys). */
 const platformOf = (nav) => (/Mac|iPhone|iPad/i.test(nav?.userAgentData?.platform || nav?.platform || nav?.userAgent || "") ? "mac" : "win");
 globalThis.crewTermKeys = { KEYMAP, chordOf, lookup, show, chordNow, useNow, platformOf };

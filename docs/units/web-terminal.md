@@ -52,19 +52,23 @@ The keys are the platform's own terminal's (`public/term-keys.js`, the prototype
 |---|---|---|
 | New tab | ⌘T, in a browser tab ⌥T | Ctrl+Shift+T, in a browser tab Ctrl+Alt+T |
 | Tab 1–9, next, previous | ⌘1–9, ⇧⌘] / ⇧⌘[ (⌥⇧] / ⌥⇧[) | Ctrl+Alt+1–9, Ctrl+Tab / Ctrl+Shift+Tab (Ctrl+Alt+PgDn / PgUp) |
-| Rename tab | F2 | F2 |
+| Rename tab | double-click it | double-click it |
 | Split right, down | ⌘D, ⇧⌘D | Alt+Shift+=, Alt+Shift+- |
 | Move, next pane, swap | ⌥⌘arrows (⌃⌥arrows), ⌘] / ⌘[, ⌥⇧⌘arrows | Alt+arrows, Ctrl+Alt+] / [, Ctrl+Alt+Shift+arrows |
 | Resize, zoom | ⌃⌘arrows, ⇧⌘↩ | Alt+Shift+arrows, Ctrl+Shift+Enter |
 | Close pane (last: the tab) | ⌘W, in a browser tab ⌥W | Ctrl+Shift+W, in a browser tab Ctrl+Alt+W |
-| Clear, go to, sidebar, keys | ⌘K, ⇧⌘O, ⌘B, ⌘/ | Ctrl+Shift+K, Ctrl+Shift+P, Ctrl+Shift+B, F1 |
+| Clear, go to, sidebar, keys | ⌘K, ⇧⌘O, ⌘B, ⌘/ | Ctrl+Shift+K, Ctrl+Shift+P, Ctrl+Shift+B, Ctrl+Shift+/ |
 
 Chords are matched on `KeyboardEvent.code` (the physical key: an input method or a keyboard layout does not move them),
 in the capture phase ahead of xterm, with `preventDefault`, so a chord that is Studio's never also reaches the shell.
-Everything else (plain keys, Ctrl+C, the browser's copy and paste) goes to the terminal as before. Both chords of an action
-always work; the hints and the key table (⌘/ or F1, both platforms one click apart) show the one that works where the page
-is, and strike out the other. The table also lists copy mode, a new workspace and its rename (⇧⌘C, ⌘N, ⇧F2 on a Mac): this
-page has no workspaces and xterm selects and copies by itself, so those chords are not taken and reach the terminal.
+Everything else (plain keys, Ctrl+C, the browser's copy and paste, F1 to F12, which full-screen programs such as htop and mc
+use) goes to the terminal as before. So does a chord with nothing to do (no such tab, one pane, no split that way), and
+AltGr: Windows reports it as Ctrl+Alt, so a Ctrl+Alt keydown that says AltGraph or types a character other than its key's
+own ({ [ ] ~ | \ # on German and French layouts) is text. The second chord of an action counts only in a browser tab; in a
+Studio window ⌥T, ⌥W and ⌥⇧] are Option-as-Meta and the shell's. The hints and the key table (⌘/, Ctrl+Shift+/ or the Keys
+button; both platforms one click apart) show the chord that works where the page is, and strike out the other. The table
+also lists copy mode and a new workspace (⇧⌘C, ⌘N on a Mac): this page has no workspaces and xterm selects and copies by
+itself, so those chords are not taken and reach the terminal.
 
 ## A Studio window
 

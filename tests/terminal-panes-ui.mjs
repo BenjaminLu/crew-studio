@@ -3,12 +3,12 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // docs/units/web-terminal.md "Tabs, panes and keys"), a stub server with temporary data, login shells only:
 //   as a Mac (iTerm2's keys): ⌘D and ⇧⌘D split, each new pane its own PTY; ⌥⌘arrows move the focus, ⌃⌘arrows resize,
 //   ⇧⌘↩ zooms; a chord that is Studio's never reaches xterm, a plain key does (and reaches the shell); in a browser tab ⌥T
-//   opens a tab, ⌘1 and ⇧⌘] switch, ⌥W closes the pane (the terminal keeps running), F2 renames, ⇧⌘O finds, ⌘/ shows the
+//   opens a tab, ⌘1 and ⇧⌘] switch, ⌥W closes the pane (the terminal keeps running), a double-click renames, ⇧⌘O finds, ⌘/ shows the
 //   keys with the tab's struck-out chords; the layout survives render() and a reload; the banner offers a Studio window,
 //   whose button asks the server for Chrome's app window (a stand-in open(1) records argv: no browser opens);
 //   a Studio window (?window=studio, as the launch lands): no banner, hints show ⌘T, ⌘T itself opens a tab;
 //   as Windows (Windows Terminal's keys): Alt+Shift+= and Alt+Shift+- split, Alt+arrows move, Ctrl+Shift+T and Ctrl+Alt+T
-//   open tabs, Ctrl+Tab switches, Ctrl+Shift+W closes, Ctrl+Shift+P finds, F1 shows Windows' chords.
+//   open tabs, Ctrl+Tab switches, Ctrl+Shift+W closes, Ctrl+Shift+P finds, Ctrl+Shift+/ shows Windows' chords; F1 and F2 stay the shell's.
 //   TERMINAL_PANES_SHOTS=<dir>  also write screenshots there
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -110,9 +110,11 @@ try {
   await p.keyboard.press("Alt+KeyW");
   ok(await until(async () => (await tabs(p)).length === 1 && (await tabs(p))[0].sel), "⌥W closes the last pane, and with it the tab");
   ok((await list(p)).some((t) => t.id === t4 && t.running), "the terminal it showed keeps running");
-  await p.keyboard.press("F2"); await seen(p.locator("#termName"));
+  await spy(p); await p.keyboard.press("F2"); await p.waitForTimeout(150);
+  ok(!(await p.locator("#termName").count()) && (await reached(p)).includes("F2"), "F2 is the shell's (htop, mc), not a rename", JSON.stringify(await reached(p)));
+  await p.locator('[data-term-tab][aria-selected="true"] .wt-tname').dblclick(); await seen(p.locator("#termName"));
   await p.locator("#termName").fill("build"); await p.keyboard.press("Enter");
-  ok(await until(async () => (await tabs(p))[0].name === "build"), "F2 renames the tab");
+  ok(await until(async () => (await tabs(p))[0].name === "build"), "a double-click renames the tab");
   await p.keyboard.press("Shift+Meta+KeyO"); await seen(p.locator("[data-term-picker] #termPickQ"));
   ok(await p.locator("[data-term-picker] [data-pick]").count() === 4, "⇧⌘O lists every terminal, the one off screen too");
   await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("Enter");
@@ -151,6 +153,8 @@ try {
   ok(await until(async () => (await tabs(w)).length === 2), "⌘T opens a tab");
   await w.keyboard.press("Meta+KeyW");
   ok(await until(async () => (await tabs(w)).length === 1), "⌘W closes it");
+  await spy(w); await w.keyboard.press("Alt+KeyT"); await w.keyboard.press("Alt+KeyW"); await w.waitForTimeout(200);
+  ok((await tabs(w)).length === 1 && (await reached(w)).includes("KeyT+A") && (await reached(w)).includes("KeyW+A"), "in a Studio window ⌥T and ⌥W are the shell's (Option as Meta), not a tab", JSON.stringify(await reached(w)));
   await w.reload(); await w.waitForTimeout(400);
   ok(await w.locator('[data-term-where="window"]').isVisible(), "the window remembers it is a Studio window across a reload");
   await shot(w, "panes-studio-window.png");
@@ -194,8 +198,10 @@ try {
   ok(typed.includes("Digit2+A+C") && (await tabs(q))[1].sel, "AltGr+2 (~ on a French layout) reaches the shell, not tab 2", JSON.stringify(typed));
   await q.keyboard.press("Control+Shift+KeyP");
   ok(await seen(q.locator("[data-term-picker]")), "Ctrl+Shift+P opens Go to"); await q.keyboard.press("Escape");
-  await q.keyboard.press("F1");
-  ok(await seen(q.locator('[data-term-help="win"]')) && /Ctrl\+Shift\+T/.test(await q.locator('[data-term-help] [data-help-act="newTab"]').innerText()), "F1 shows Windows Terminal's keys");
+  await spy(q); await q.keyboard.press("F1"); await q.waitForTimeout(150);
+  ok(!(await q.locator("[data-term-help]").count()) && (await reached(q)).includes("F1"), "F1 is the shell's", JSON.stringify(await reached(q)));
+  await q.keyboard.press("Control+Shift+Slash");
+  ok(await seen(q.locator('[data-term-help="win"]')) && /Ctrl\+Shift\+T/.test(await q.locator('[data-term-help] [data-help-act="newTab"]').innerText()), "Ctrl+Shift+/ shows Windows Terminal's keys");
   await shot(q, "panes-win-help.png");
   await ctx2.close();
 

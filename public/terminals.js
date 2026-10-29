@@ -273,7 +273,7 @@ addEventListener("keydown", (e) => {
     else if (e.key === "ArrowDown" || e.key === "ArrowUp") { stop(); ui.picker.sel = Math.max(0, Math.min(list.length - 1, ui.picker.sel + (e.key === "ArrowDown" ? 1 : -1))); render(); }
     else if (e.key === "Enter") { stop(); const r = list[ui.picker.sel]; if (r) choose(r.id); else { ui.picker = null; redo(); } }
     return; }
-  const hit = K.lookup(e, plat());
+  const hit = K.lookup(e, plat(), inTab());
   if (ui.help) { if (e.key === "Escape" || hit?.act === "help") { stop(); ui.help = false; redo(); } return; }
   if (hit && run(hit.act, hit.arg)) stop();
 }, true);
@@ -330,10 +330,10 @@ function statusLine() {
 function helpSheet() {
   const p = TM.ui.helpPlat || plat(), tab = inTab(); let group = null; const kids = [];
   for (const [g, act, label, mac, win] of K.KEYMAP) {
-    if (!["newWs", "renameWs", "copy"].includes(act)) { // not on this page: no workspaces, xterm selects and copies by itself
+    if (!["newWs", "copy"].includes(act)) { // not on this page: no workspaces, xterm selects and copies by itself
       if (g[0] !== group) { kids.push(h("h3", {}, T(...g))); group = g[0]; }
       const specs = p === "mac" ? mac : win;
-      kids.push(h("div", { "data-help-act": act }, h("span", {}, T(...label)), h("span", {}, h("kbd", { class: tab && specs[1] ? "off" : null }, K.show(specs[0], p)), specs[1] ? [" ", h("kbd", { class: tab ? null : "off" }, K.show(specs[1], p))] : null)));
+      kids.push(h("div", { "data-help-act": act }, h("span", {}, T(...label)), h("span", {}, specs[0] ? h("kbd", { class: tab && specs[1] ? "off" : null }, K.show(specs[0], p)) : null, specs[1] ? [" ", h("kbd", { class: tab ? null : "off" }, K.show(specs[1], p))] : null)));
     }
   }
   return h("div", { class: "wt-veil", "data-term-help": p, onclick: (e) => { if (e.target === e.currentTarget) { TM.ui.help = false; redo(); } } },
