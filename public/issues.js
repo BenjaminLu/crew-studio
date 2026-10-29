@@ -192,6 +192,82 @@ function startForm(project, rec) {
     f.error ? h("p", { class: "is-warn", role: "alert" }, f.error) : null);
 }
 
+// ---- Fix (docs/units/board.md, "Fixing issues"): the captain picks filed issues (one, several, a category, all of them)
+// and presses Fix; one confirmation for the whole pick, then each issue gets its own investigation and, when there is code
+// to change, its own Task. Where each one stands is shown on its own row (src/domain/issue-fix.ts) ----
+const FIX = { sel: new Map(), modal: null, sending: false, note: new Map() };
+const picked = (project) => { let s = FIX.sel.get(project); if (!s) FIX.sel.set(project, (s = new Set())); return s; };
+const fixOf = (project, n) => IS.rec.get(project)?.fix?.[n] || { state: "none", busy: false, pick: true };
+// a row's state, said in a few words; untrusted text (a reason, a question) only ever in text nodes
+const FIX_SAID = { starting: ["Starting…", "開始中…"], investigating: ["Investigating", "調查中"], security: ["Security issue: approve it on its card", "資安 issue：在核准卡上確認"],
+  running: ["Fixing", "修復中"], waiting: ["Its Task waits for you", "Task 在等你"], ready: ["Fixed on its local branch, not published: check it", "已在本機分支修好，未發布：請確認"], merged: ["Merged", "已合併"],
+  "needs-info": ["Needs more information", "需要更多資訊"], "not-code": ["Not a code change", "不是改 code 的事"], "in-progress": ["A pull request is already on it", "已有 PR 在處理"],
+  recheck: ["Fixed already? Please check", "已修好？請確認"], human: ["A person's work", "要人來做"], changed: ["The issue changed: Fix it again", "issue 改過了：可再修復一次"],
+  proposed: ["Investigated: Fix starts its Task", "已調查：按修復就開工"], approved: ["Investigated: Fix starts its Task", "已調查：按修復就開工"] };
+// the summary line of a category: how its issues stand, in groups
+const FIX_GROUP = { starting: "fixing", investigating: "fixing", running: "fixing", judge: "judge", security: "judge", waiting: "judge", human: "judge", ready: "done", recheck: "done", "needs-info": "info", failed: "failed", "not-code": "skip", duplicate: "skip", "in-progress": "skip" };
+const GROUP_SAID = { fixing: ["being fixed", "修復中"], judge: ["for you to judge", "要你判斷"], done: ["fixed, waiting for you to check", "已修好待確認"], info: ["need more information", "需要更多資訊"], failed: ["failed", "失敗"], skip: ["nothing to fix", "不用修"] };
+function fixSummary(project, issues) {
+  const n = {}; for (const i of issues) { const g = FIX_GROUP[fixOf(project, i).state]; if (g) n[g] = (n[g] || 0) + 1; }
+  const parts = Object.keys(GROUP_SAID).filter((g) => n[g]).map((g) => T(`${n[g]} ${GROUP_SAID[g][0]}`, `${n[g]} 張${GROUP_SAID[g][1]}`));
+  return parts.length ? h("span", { class: "is-fix-sum", "data-fix-summary": "1" }, parts.join(" · ")) : null;
+}
+function fixChip(project, repo, n) {
+  const s = fixOf(project, n), task = s.task ? h("a", { href: `#/run/${encodeURIComponent(s.task)}`, class: "mono" }, s.task) : null;
+  const wrap = (cls, ...kids) => h("span", { class: `is-fix f-${cls}`, "data-fix-state": s.state }, ...kids);
+  if (s.state === "none") return null;
+  if (s.state === "judge") return s.with ? wrap("you", T(`Same function as ${s.with}: decide below`, `和 ${s.with} 同一個函式：在下方決定`))
+    : wrap("you", T("The investigators disagree: you decide", "兩位調查員意見不同：你判斷"), " ", s.court ? h("a", { href: s.court, "data-fix-court": String(n) }, T("Open the court", "開啟法庭")) : null);
+  if (s.state === "duplicate") return wrap("all", T("Duplicate: ", "重複："), h("a", { href: ghIssue(repo, s.duplicateOf), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${s.duplicateOf}`));
+  if (s.state === "failed") return wrap("bad", T(`Failed: ${s.why || ""}`, `失敗：${s.why || ""}`), " ", task);
+  if (s.state === "package") return wrap("all", T(`Part of ${s.package}: work it from the package`, `屬於 ${s.package}：從工作包開工`));
+  const said = FIX_SAID[s.state]; if (!said) return null;
+  const tone = ["ready", "merged", "recheck"].includes(s.state) ? "ok" : ["starting", "investigating", "running"].includes(s.state) ? "run" : ["security", "waiting", "human"].includes(s.state) ? "you" : "all";
+  return wrap(tone, T(...said), s.state === "human" && s.fit?.length ? ` (${s.fit.map((f) => T(...(FIT[f] || [f, f]))).join(", ")})` : "",
+    ...(s.state === "in-progress" ? (s.pulls || []).flatMap((p) => [" ", h("a", { href: ghPull(repo, p), target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${p}`)]) : []), task ? " " : null, task,
+    s.state === "needs-info" && s.questions?.length ? h("ul", { class: "is-fix-q", "data-fix-questions": String(n) }, s.questions.map((q) => h("li", {}, q))) : null);
+}
+const toggle = (project, ns, on) => { const s = picked(project); for (const n of ns) on ? s.add(n) : s.delete(n); rerender(); };
+const selectAll = (project, label, ns) => { const can = ns.filter((n) => fixOf(project, n).pick), s = picked(project), all = can.length > 0 && can.every((n) => s.has(n));
+  return h("label", { class: "is-fix-all", onclick: (e) => e.stopPropagation() },
+    h("input", { type: "checkbox", checked: all ? true : null, disabled: can.length ? null : true, "aria-label": label, onchange: (e) => toggle(project, can, e.target.checked) }), h("span", {}, label)); };
+async function sendFix(project, ns) {
+  FIX.sending = true; FIX.note.delete(project); rerender();
+  try { const r = await postJ(`/api/issue-triage/${encodeURIComponent(project)}/fix`, { issues: ns });
+    FIX.note.set(project, T(`Started ${r.started.length}${r.skipped.length ? `; ${r.skipped.length} left as they are (already under way, done, or part of a package)` : ""}. Each issue's row shows where it stands.`,
+      `已開始 ${r.started.length} 張${r.skipped.length ? `；${r.skipped.length} 張沒動（已在進行、已完成，或屬於工作包）` : ""}。每張 issue 的那一列會顯示進度。`));
+    picked(project).clear(); FIX.modal = null; }
+  catch (e) { FIX.note.set(project, e.message); }
+  finally { FIX.sending = false; await load(project); }
+}
+// one confirmation for the whole pick: how many issues, the models, and that each issue starts its own Task
+function fixModal(project) {
+  if (FIX.modal?.project !== project) return null;
+  const ns = FIX.modal.issues, rec = IS.rec.get(project), inv = rec?.investigators, close = () => { FIX.modal = null; rerender(); };
+  const back = h("div", { class: "modal-back", "data-fix-back": "1", onclick: (e) => { if (e.target === back) close(); } },
+    h("div", { class: "modal is-fix-modal", role: "dialog", "aria-modal": "true", "aria-label": T("Fix issues", "修復 issue"), "data-fix-modal": project },
+      h("h2", {}, T(`Fix ${ns.length} issue${ns.length === 1 ? "" : "s"}?`, `修復 ${ns.length} 張 issue？`)),
+      h("ul", { class: "is-fix-facts" },
+        h("li", { "data-fix-count": String(ns.length) }, T(`${ns.length} issue${ns.length === 1 ? "" : "s"}: ${ns.slice(0, 12).map((n) => `#${n}`).join(" ")}${ns.length > 12 ? ` and ${ns.length - 12} more` : ""}`, `${ns.length} 張：${ns.slice(0, 12).map((n) => `#${n}`).join(" ")}${ns.length > 12 ? ` 等 ${ns.length - 12} 張` : ""}`)),
+        h("li", { "data-fix-models": "investigators" }, T(`Two investigators read the code for each issue: ${who(inv?.a)} and ${who(inv?.b)} (two model runs per issue).`, `每張 issue 先由兩位調查員讀程式碼：${who(inv?.a)}、${who(inv?.b)}（每張兩次模型執行）。`)),
+        h("li", { "data-fix-models": "worker" }, T(`Each issue with code to change starts its own Task, all at once: the worker is ${who(rec?.worker)}.`, `有程式要改的，每張各開一個 Task，全部同時跑：worker 是 ${who(rec?.worker)}。`)),
+        h("li", {}, T("Each Task stops reviewed on its local branch: nothing is pushed, no pull request is opened, nothing is written to GitHub. A security issue still waits for you on its approval card.", "每個 Task 審完就停在本機分支：不 push、不開 PR、不寫任何東西到 GitHub。資安 issue 仍會出核准卡等你確認。"))),
+      h("div", { class: "actions", style: "justify-content:flex-end" },
+        h("button", { type: "button", class: "btn", "data-fix-cancel": "1", onclick: close }, T("Cancel", "取消")),
+        h("button", { type: "button", class: "btn primary", "data-fix-confirm": "1", disabled: FIX.sending ? true : null, onclick: () => sendFix(project, ns) }, T(`Fix ${ns.length}`, `修復 ${ns.length} 張`)))));
+  return back;
+}
+// Escape closes the confirmation wherever the focus is
+addEventListener("keydown", (e) => { if (e.key === "Escape" && FIX.modal && !FIX.sending) { FIX.modal = null; rerender(); } });
+const askFix = (project, ns) => { FIX.modal = { project, issues: [...ns].sort((a, b) => a - b) }; rerender(); requestAnimationFrame(() => document.querySelector("[data-fix-confirm]")?.focus()); };
+function fixBar(project) {
+  const s = [...picked(project)]; if (!s.length) return null;
+  return h("div", { class: "is-fixbar", "data-fix-bar": project, role: "region", "aria-label": T("Selected issues", "已選的 issue") },
+    h("span", { class: "num" }, T(`${s.length} selected`, `已選 ${s.length} 張`)),
+    h("button", { type: "button", class: "btn ghost", "data-fix-clear": "1", onclick: () => { picked(project).clear(); rerender(); } }, T("Clear", "取消選取")),
+    h("button", { type: "button", class: "btn primary", "data-fix-go": "1", onclick: () => askFix(project, s) }, T(`Fix ${s.length}`, "修復")));
+}
+
 // ---- the project's categories (src/issue-categories-workflow.ts): built once, new issues filed into them ----
 const CAT = { data: new Map(), busy: new Set(), again: new Set(), editing: null, note: new Map(), open: new Set() };
 // one read at a time per project; a read asked for meanwhile (after an edit) runs once the current one ends
@@ -227,7 +303,9 @@ function categoriesCard(project) {
     const editing = CAT.editing === x.id, others = active.filter((o) => o.id !== x.id);
     // a category stays open across redraws (an edit, a refetch) until the captain closes it
     return h("details", { class: "is-cat", "data-cat": x.id, open: CAT.open.has(x.id) || editing ? true : null, ontoggle: (e) => { if (e.target.open) CAT.open.add(x.id); else CAT.open.delete(x.id); } },
-      h("summary", {}, h("b", {}, x.name), x.status === "proposed" ? h("span", { class: "is-sec" }, T("Waiting for approval", "等核准")) : null, h("span", { class: "tb-count num" }, String(x.issues.length)), h("span", { class: "faint is-cat-scope" }, x.scope)),
+      h("summary", {}, x.status === "active" ? selectAll(project, T(`Select all of ${x.name}`, `全選「${x.name}」`), x.issues) : null,
+        h("b", {}, x.name), x.status === "proposed" ? h("span", { class: "is-sec" }, T("Waiting for approval", "等核准")) : null, h("span", { class: "tb-count num" }, String(x.issues.length)),
+        x.status === "active" ? fixSummary(project, x.issues) : null, h("span", { class: "faint is-cat-scope" }, x.scope)),
       h("div", { class: "is-cat-body" },
         x.status === "proposed" ? h("div", { class: "is-cat-acts" },
           h("button", { type: "button", class: "btn primary", "data-cat-approve": x.id, onclick: () => catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "approve", ids: [x.id] }) }, T("Approve", "核准")),
@@ -241,12 +319,16 @@ function categoriesCard(project) {
             : h("button", { type: "button", class: "btn ghost", "data-cat-rename": x.id, onclick: () => { CAT.editing = x.id; rerender(); } }, T("Rename", "改名")),
           others.length ? h("select", { "aria-label": T("Merge into", "併入"), "data-cat-merge": x.id, onchange: (e) => { if (e.target.value) catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "merge", id: x.id, into: e.target.value }); } },
             h("option", { value: "" }, T("Merge into…", "併入…")), others.map((o) => h("option", { value: o.id }, o.name))) : null) : null,
-        h("ul", { class: "is-cat-issues" }, x.issues.map((n) => h("li", { "data-cat-issue": String(n) },
+        h("ul", { class: "is-cat-issues" }, x.issues.map((n) => { const fx = fixOf(project, n), can = x.status === "active" && !fx.busy && fx.state !== "package";
+          return h("li", { "data-cat-issue": String(n) },
+          x.status === "active" ? h("input", { type: "checkbox", class: "is-fix-pick", "data-fix-pick": String(n), "aria-label": T(`Select #${n}`, `選 #${n}`), checked: picked(project).has(n) ? true : null, disabled: can ? null : true, onchange: (e) => toggle(project, [n], e.target.checked) }) : null,
           h("a", { href: `https://github.com/${c.repository}/issues/${n}`, target: "_blank", rel: "noopener noreferrer", class: "mono" }, `#${n}`), h("span", { class: "is-title", title: title(n) }, title(n)),
           packOf(n) ? h("span", { class: "tb-count mono", "data-cat-pack": packOf(n) }, packOf(n)) : null,
+          fixChip(project, c.repository, n),
+          can ? h("button", { type: "button", class: "btn", "data-fix-one": String(n), onclick: () => askFix(project, [n]) }, T("Fix", "修復")) : null,
           // any listed issue can be tagged planned; moving into another category needs one that is active
           h("select", { "aria-label": T(`Move #${n}`, `移動 #${n}`), "data-cat-move": String(n), onchange: (e) => { if (e.target.value) catPost(project, `issue-categories/${encodeURIComponent(project)}/edit`, { op: "move", n, to: e.target.value }); } },
-            h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name)), h("option", { value: "PLANNED" }, T("Planned work", "規劃中")))))),
+            h("option", { value: "" }, T("Move to…", "移到…")), others.map((o) => h("option", { value: o.id }, o.name)), h("option", { value: "PLANNED" }, T("Planned work", "規劃中")))); })),
         triageOf(tr, x.issues, x.id)));
   };
   // planned work: tagged in Studio and set aside, not handed out by category; the captain takes an issue off it. What a run
@@ -264,7 +346,12 @@ function categoriesCard(project) {
   return h("div", { class: "card x-pad", "data-categories": project },
     head([h("span", { class: "faint" }, T(`${active.length} categories · ${filed} issues filed${plan.length ? ` · ${plan.length} planned` : ""}`, `${active.length} 個類別・已歸類 ${filed} 張${plan.length ? `・規劃中 ${plan.length} 張` : ""}`)), startBtn(T("File new issues…", "歸類新 issue…"))]),
     proposed.length ? h("p", { class: "note" }, T(`${proposed.length} new categor${proposed.length === 1 ? "y waits" : "ies wait"} for your approval: open it below, or answer its Task's card.`, `${proposed.length} 個新類別等你核准：在下面展開它，或在任務卡片上處理。`)) : null,
-    note, h("div", { class: "is-cats" }, list.map(row), plannedRow));
+    note,
+    // Fix: every filed issue at once, one category's, or one at a time; one confirmation for the whole pick
+    active.length ? h("div", { class: "is-fix-head" }, selectAll(project, T("Select all filed issues", "全選所有已分類 issue"), active.flatMap((x) => x.issues)),
+      h("span", { class: "faint" }, T("Pick issues and press Fix: each one is investigated, and each with code to change gets its own Task.", "勾選 issue 按修復：每張各自調查，有程式要改的各開一個 Task。"))) : null,
+    FIX.note.get(project) ? h("p", { class: "note", role: "status", "data-fix-note": "1" }, FIX.note.get(project)) : null,
+    h("div", { class: "is-cats" }, list.map(row), plannedRow), fixBar(project), fixModal(project));
 }
 
 /** The project page's GitHub issues section (a connected project only): the categories, each with its own triage; then

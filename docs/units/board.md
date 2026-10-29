@@ -306,6 +306,66 @@ Tests: `tests/issue-categories.ts` (the reports, build and file, approval, the c
 `tests/issue-categories-workflow.ts` (the workflow end to end with a scripted categorizer), `tests/issues-ui.mjs` (the
 Categories card), `tests/acceptance/issue-categories.yaml`.
 
+### Fixing issues
+
+The plain path from categories to code: the captain picks filed issues and presses Fix, and each picked issue becomes its
+own fix Task. There are no work packages on this path; the package flow below ("Working a package", the batch form, the
+approval card) stays as the advanced path.
+
+- **Picking.** In each active category's issue list (`public/issues.js`) every issue has a checkbox and a Fix button, the
+  category's header a Select all, and the Categories card a Select all filed issues. A Select all takes only the issues
+  nothing was decided about yet, or whose last attempt failed (`pick`); an issue whose investigation or Task is under way,
+  or done, cannot be picked (`busy`). Picked issues show a bar, "已選 N 張 · 修復". Fix opens one confirmation in the page
+  (not a card) for the whole pick, however large: how many issues, both investigators' models (two model runs per issue),
+  the worker's model (the code-firstmate worker seat as this project runs it), that each issue with code to change starts
+  its own Task, all at once, and that nothing reaches GitHub. Confirming posts `POST /api/issue-triage/<project>/fix
+  {issues}` (1 to 1000 numbers; the desktop captain only, as the approve and decline routes: the phone and any other
+  client are refused).
+- **Per issue** (`fix` in `src/issue-triage-workflow.ts`): an issue under way or done starts nothing and is listed as
+  skipped; an issue of a package of several is worked from its package. An issue whose single package is approved (its
+  Task failed, or never started) or waiting for approval has its Task proposed again, without a new investigation (a
+  waiting one is approved first, the issue read again; a waiting security package is refused: approve it on the package).
+  Any other issue starts its own triage of exactly that issue (`params._fix`, Studio's own parameter, holding who clicked
+  and when; the run's starter must be that captain). There is no limit on how many run at once. An ordinary triage
+  leaves the issues a Fix investigation is reading to it, and a Fix investigation never stands in for the batch form's
+  triage.
+- **The hidden triage** is the triage below, unchanged in what it checks: the snapshot, both investigators on their own
+  models in the round sandbox, Studio's mechanical check of every finding, the record. Its first step records the click
+  on its signed ledger (`issue-fix-click`: who, when, the issue). It raises no start card (the confirmation showed the
+  models; the same refusals still apply: one model twice while another is usable, a sandbox-off grant, local unrestricted
+  mode) and no approval card: the click approves the package (`issue-triage-approved` with `fix: {by, at}`, and the
+  package's `approvedBy`). A security issue keeps its approval card, saying the security owner agrees first; approved
+  there, its Task starts with no second card. The disagreement court is raised only for an actual disagreement (a
+  finding or a grouping); an issue both reports set aside (a duplicate, an open pull request, a person's work) is shown
+  on its row and in the category's triage, as the advanced path leaves it.
+- **The fix Task** of an approved package with code to change (not a recheck) is proposed through the same path as
+  `studio_work_package` (`proposeNext`: the issue read again, the brief from `issueBrief` only, tainted, code-firstmate),
+  and Studio answers its dispatch card on the strength of the click: the answer names the captain and the click's time
+  (`captain (project page) · Fix <at>`), and the triage's ledger records `issue-fix-dispatch` (package, proposal, card,
+  who, when). A dispatch card that does not come up within a minute (`CREW_FIX_DISPATCH_WAIT_MS`) is left for the captain
+  to approve; a refused proposal (a seat to fill, a changed issue) is kept as the row's reason. The Task is tainted as
+  before: it ends reviewed on its local branch, nothing pushed, no pull request. Its own cards (the spec card and the
+  rest of code-firstmate) still wait for the captain.
+- **The row** (`src/domain/issue-fix.ts`, read with the triage: `GET /api/issue-triage/<project>` adds `fix` per issue and
+  `worker`): investigating; the investigators disagree, with a link to the court (`#/court/<project>/<task>`); a security
+  issue waiting on its card; fixing, its Task waiting for the captain, fixed on its local branch, or merged, each with the
+  Task; failed, with why (the investigation, the proposal or the Task), which can be fixed again; needs more information,
+  with the questions as text; not a code change; a duplicate, naming the issue; a pull request already on it, linking
+  it; fixed already, to recheck; a person's work; changed since it was investigated. Each category's summary line,
+  shown also when it is closed, counts them: being fixed, for you to judge, fixed and waiting for you to check, needing
+  information, failed, nothing to fix. Two picked issues at the same function follow the cross-batch rule: the second
+  becomes a match to decide on the page, or a recheck once the first one's Task started.
+- Studio keeps each click (`data/issue-fix/<project>.json`, `src/issue-fix-store.ts`: who, when, the triage, the proposal,
+  the dispatch card or why it stopped; the last ten per issue), never issue text. Nothing is written to GitHub.
+
+Tests: `tests/issue-fix.ts` (one, many and the rest of the issues, end to end against a local GitHub stand-in with
+scripted investigators, a stand-in code-firstmate and the real proposal workflow: no start or approval card, the ledger's
+click and dispatch, a tainted Task whose brief carries no issue body or repro, each outcome on its row, a double click,
+a security issue's card, a failed Task fixed again, only the captain, GET only), `tests/issue-triage.ts` (the route: the
+desktop captain only, its body, the read), `tests/issue-fix-ui.mjs` (the checkboxes, both Select alls, the bar, the
+confirmation for 117 issues sent once, a row's Fix, Escape, each row's state and each category's line, at 1440 and 390
+zh-TW).
+
 ### The issue-triage workflow
 
 `workflows/v2/issue-triage.wf.yaml` (`src/issue-triage-workflow.ts`, internal: Firstmate starts it with
@@ -420,7 +480,7 @@ the docket page `public/court.js` (`#/court/<project>/<task>`, opened from the c
 
 ### Working a package
 
-`studio_work_package {project, package}` (Firstmate, in a captain's turn) proposes the next issue of an approved package
+The advanced path (the plain one is "Fixing issues" above, which uses the same proposal path). `studio_work_package {project, package}` (Firstmate, in a captain's turn) proposes the next issue of an approved package
 on code-firstmate, through Studio's own proposal path: the captain approves the Task on its dispatch card, and the
 code-firstmate definition is unchanged. One person works a package one issue at a time: an ordered package in its
 order, the next issue only once the one before is merged; a one-change group is one Task for all its issues; an issue

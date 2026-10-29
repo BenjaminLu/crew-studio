@@ -29,6 +29,8 @@ import {NativeToolFailure} from './host/types';
 import type {Engine,X} from './runtime/engine';
 import type {Projects} from './doors';
 import {levelOf,required,degradedWhy,type Level,type Usable} from './domain/independence';
+import {IssueFixStore} from './issue-fix-store';
+import {fixState,type FixRun,type FixState,type FixWork} from './domain/issue-fix';
 const PAIR_TEXT:Record<Level,{en:string;zh:string}>={vendor:{en:'Different vendors',zh:'不同供應商'},model:{en:'Same vendor, different models',zh:'同一個供應商、不同模型'},same:{en:'Same model',zh:'同一個模型'}};
 
 export const ISSUE_TRIAGE_WORKFLOW='issue-triage';
@@ -69,6 +71,17 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  const dropTree=(run:string)=>rmSync(join(dataDir,'work','issue-triage',run),{recursive:true,force:true});
  const guard=(x:X)=>{if(!engine.owns(x)||x.cancelled())throw new Error('This triage is no longer running');};
  const ENDED=['succeeded','failed','cancelled'];
+ // --- Fix (docs/units/board.md, "Fixing issues"): the captain's Fix click on an issue starts a triage of that one issue
+ // with no start card and no approval card (the click is the approval, recorded on the ledger), and a fixable outcome
+ // starts its tainted Task on the strength of the same click ---
+ const fixes=new IssueFixStore(dataDir);
+ /** the Fix click a run was started from: Studio's own parameter (no model sets a _ parameter), by the captain, the run's own starter */
+ const fixOf=(r:{params:Record<string,string>;by:string}):{by:string;at:string}|null=>{if(!r.params._fix)return null;let f:any;try{f=JSON.parse(r.params._fix);}catch{return null;}
+  return f&&typeof f.by==='string'&&typeof f.at==='string'&&CAPTAIN.test(f.by)&&f.by===r.by?{by:f.by,at:f.at}:null;};
+ /** the click, as the run's own ledger recorded it at its first step */
+ const clicked=(x:X,f:{by:string;at:string})=>{const t=engine.trusted(x.run.id);return t.ok&&t.entries.some((e:any)=>e.record==='issue-fix-click'&&e.actor===f.by&&e.data?.at===f.at);};
+ /** issues a Fix investigation of this project is reading now: an ordinary batch leaves them to it */
+ const fixBusy=(project:string,but?:string)=>new Set(engine.list().filter(r=>r.workflow===ISSUE_TRIAGE_WORKFLOW&&r.params.project===project&&r.params._fix&&r.id!==but&&!ENDED.includes(r.status)).flatMap(r=>String(r.params.issues??'').split(',').map(Number).filter(Number.isSafeInteger)));
  /** checkouts of triages that ended any other way (cancelled at a card, an investigator failed or timed out) */
  const sweep=()=>{const root=join(dataDir,'work','issue-triage');let ids:string[]=[];try{ids=readdirSync(root);}catch{return;}for(const id of ids){const r=engine.get(id);if(!r||ENDED.includes(r.status))dropTree(id);}};
  /** an investigator's round: the round sandbox with no network beyond its model, or it does not run */
@@ -90,7 +103,11 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const snap=await snapshotIssues(adapter,{signal});guard(x);
   const commit=must(record.github!.localPath,['rev-parse','--verify',`${record.github!.base}^{commit}`]);if(!SHA.test(commit))throw new Error('The base branch does not resolve to a commit');
   const named=String(x.run.params.issues??'').split(/[\s,#]+/).filter(Boolean).map(Number).filter(Number.isSafeInteger);
-  const batch=pickBatch(snap,store.get(project),{size:Number(x.run.params.size)||15,issues:named});
+  const fix=fixOf(x.run),busy=fix?new Set<number>():fixBusy(project,x.run.id);
+  // a Fix investigation takes its one issue; an ordinary batch leaves the issues a Fix investigation is reading now to it
+  const batch=pickBatch({...snap,issues:snap.issues.filter(i=>!busy.has(i.n))},store.get(project),fix?{size:1,issues:named.slice(0,1)}:{size:Number(x.run.params.size)||15,issues:named});
+  // the captain's Fix click is this run's approval: on its signed ledger first, before anything is read or paid
+  if(fix)engine.record(x,'issue-fix-click',{actor:fix.by,data:{schema:1,project,issues:named.slice(0,1),by:fix.by,at:fix.at}} as any);
   if(!batch.length){x.rn.note=!snap.issues.length?`${snap.repository} has no open issue`:named.length?'none of the named issues is open':'every open issue is already investigated at its current text';return 'empty';}
   // what the investigators check before locating code (GET only): the batch's comments, the recently closed issues (a
   // duplicate), and the open pull requests that name an issue (work in progress); the snapshot's hash covers them
@@ -117,6 +134,8 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
    if(rule.level==='same'){same={en:`${SAME_NOTE.en}${rule.why.en}`,zh:`${SAME_NOTE.zh}${rule.why.zh}`};engine.record(x,'issue-triage-independence',{data:{schema:1,level:'same',a:{provider:a.provider,model:a.model??null},b:{provider:b.provider,model:b.model??null},usable:(engine.deps.usableModels?.()??[]).map((u:any)=>`${u.provider}/${u.model}`),...same}} as any);}}
   catch(e:any){if(/different models/.test(String(e?.message)))throw e;}
   box(x,'a');box(x,'b');
+  // started from the captain's Fix click: the page's confirmation showed the issues and both investigators' models, so no card
+  if(fixOf(x.run)){x.rn.note=`Started from the captain's Fix click: ${pick('a')} and ${pick('b')} investigate #${t.batch.join(' #')}`;x.save();return 'start';}
   const rows=t.batch.map(n=>snap.issues.find(i=>i.n===n)!).map(i=>`#${i.n} ${i.title}`);
   await engine.card(x,'permission',{captainOnly:true,title:`Investigate ${t.batch.length} issue${t.batch.length===1?'':'s'} of ${t.repository}?`,zhTitle:`調查 ${t.repository} 的 ${t.batch.length} 張 issue 嗎？`,
    en:{intent:`Triage ${t.batch.length} open issues of ${t.repository}`,why:`Two investigators read the code at ${t.commit.slice(0,7)}, ${same?'on one model':'each on its own model'}: ${pick('a')} and ${pick('b')}.${same?` ${same.en}`:''} They run offline, read only this checkout and the issues' text, and write nothing.`,how:'Start to run both investigators (two model runs), or close: nothing is investigated.'},
@@ -228,6 +247,9 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  engine.actions['issues.court']=async x=>{
   bound(x);const t=state(x),d=docketOf(x.run.id);
   if(!d?.cases.length){x.rn.note='Nothing to rule on: the two reports disagree on nothing new';return 'ok';}
+  // started from Fix: only a disagreement waits for rulings; an issue both reports set aside (a duplicate, an open pull
+  // request, a person's work) is shown on its row and on the project page, as the advanced path leaves it
+  if(fixOf(x.run)&&!d.cases.some(c=>c.kind==='finding'||c.kind==='package')){x.rn.note='Nothing in dispute: set aside for you on the project page (a duplicate, a pull request open, or a person\'s work)';return 'ok';}
   const issues=[...new Set(d.cases.flatMap(c=>c.issues))],snap=snapOf(x),title=(n:number)=>snap.issues.find(i=>i.n===n)?.title??'';
   const line=(c:Docket['cases'][number])=>`${c.id} · ${c.kind==='package'?'grouping':c.kind==='finding'?c.diff.join(', '):c.kind}: ${c.issues.map(n=>`#${n} ${title(n)}`.slice(0,160)).join(' · ')}`;
   await engine.card(x,'permission',{captainOnly:true,title:`Rule on ${d.cases.length} disagreement${d.cases.length===1?'':'s'} of ${t.repository}?`,zhTitle:`裁決 ${t.repository} 的 ${d.cases.length} 件分歧嗎？`,
@@ -280,12 +302,16 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   const left=[...(needsInfo?[`${needsInfo} issue${needsInfo===1?' needs':'s need'} information from ${needsInfo===1?'its reporter':'their reporters'}: the questions are on the project page, kept in Studio; nothing is posted to GitHub. / ${needsInfo} 張 issue 資訊不足，要向回報者確認：問題列在專案頁，只存在 Studio，不會貼到 GitHub。`]:[]),
    ...(aside?[`${aside} issue${aside===1?' is':'s are'} for you to judge (a likely duplicate, a pull request already open, or not an agent's work): on the project page. / ${aside} 張要你判斷（可能重複、已有 PR、或不適合交給 agent）：在專案頁。`]:[])];
   const packs=(rec?.packages??[]).filter(p=>t.added.includes(p.id)),sec=packs.filter(p=>p.security),weak=packs.some(p=>p.investigators?.level==='same');
+  // started from the captain's Fix click: that click approves them, except a security issue, which keeps its card (whoever
+  // owns security agrees first)
+  const fix=fixOf(x.run);
+  if(fix&&!sec.length){x.rn.note=`Approved by the captain's Fix click (${fix.by}, ${fix.at})`;x.save();return 'approve';}
   // how strongly the two reports agree on each package: the same issues, or sets one issue apart (that one went to the captain)
   const agreed=(p:typeof packs[number])=>p.agreement==='overlap'?` · overlap, ${(p.left??[]).map(n=>`#${n}`).join(' ')} left to you / 部分重疊，${(p.left??[]).map(n=>`#${n}`).join(' ')} 交給你`:p.agreement==='exact'?' · both reports alike / 兩份報告一致':'';
   const line=(p:typeof packs[number])=>`${p.id} · ${p.kind}${p.security?' · security':''}${agreed(p)}: ${(p.order.length?p.order:p.members).map(n=>`#${n}`).join(' → ')}${p.why?` (${p.why})`:''}`;
   await engine.card(x,'permission',{captainOnly:true,title:`Approve ${packs.length} work package${packs.length===1?'':'s'} for ${t.repository}?`,zhTitle:`核准 ${t.repository} 的 ${packs.length} 個工作包嗎？`,
-   en:{intent:`Work packages for ${t.repository}`,why:`${weak?`Two investigators on one model read the code at ${t.commit.slice(0,7)} and agree on these. ${SAME_NOTE.en}`:`Two investigators on different models read the code at ${t.commit.slice(0,7)} and agree on these.`} For every issue in them Studio checked both reports: each file exists at that commit, each stated range is at most ${SPAN} lines in a file, each named symbol is a name (not a description) written from ${SPAN} lines above its stated range to ${NEAR} lines after it, and each quoted line is in its file within ${NEAR} lines of the stated range and in what fs_read showed that investigator; each finding quotes at least one distinctive line. Studio did not run the code: whether the quoted lines are the bug is the investigators' judgement.${sec.length?` ${sec.length} hold security issues: approve them once whoever owns security for this repository agrees.`:''}`,how:'Approve to let them be worked, one person per package, or keep them as proposals. Each issue is read again first: one that changed is not approved.'},
-   zh:{intent:`${t.repository} 的工作包`,why:`${weak?`兩位調查員用同一個模型在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。${SAME_NOTE.zh}`:`兩位不同模型的調查員在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。`}這些包裡的每張 issue，Studio 都核對了兩份報告：每個檔案在那個 commit 存在、每個檔案標示的行號範圍合計最多 ${SPAN} 行、每個指名的 symbol 是一個名稱（不是描述），而且寫在標示範圍上方 ${SPAN} 行到下方 ${NEAR} 行之間、每行引用的程式碼都在檔案裡標示行號範圍前後 ${NEAR} 行內，而且是那位調查員用 fs_read 讀到的內容；每項發現至少引用一行有辨識度的程式碼。Studio 沒有執行程式碼：引用的那幾行是不是 bug，是調查員的判斷。${sec.length?`其中 ${sec.length} 個含安全 issue：請先取得這個 repo 的安全負責人同意再核准。`:''}`,how:'核准後就能開工，一包一個人；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。'},
+   en:{intent:`Work packages for ${t.repository}`,why:`${fix?'You pressed Fix on this issue; it is a security issue, so it waits for you here. ':''}${weak?`Two investigators on one model read the code at ${t.commit.slice(0,7)} and agree on these. ${SAME_NOTE.en}`:`Two investigators on different models read the code at ${t.commit.slice(0,7)} and agree on these.`} For every issue in them Studio checked both reports: each file exists at that commit, each stated range is at most ${SPAN} lines in a file, each named symbol is a name (not a description) written from ${SPAN} lines above its stated range to ${NEAR} lines after it, and each quoted line is in its file within ${NEAR} lines of the stated range and in what fs_read showed that investigator; each finding quotes at least one distinctive line. Studio did not run the code: whether the quoted lines are the bug is the investigators' judgement.${sec.length?` ${sec.length} hold security issues: approve them once whoever owns security for this repository agrees.`:''}`,how:fix?'Approve to start its fix Task (no second card), or keep it as a proposal. The issue is read again first: one that changed is not approved.':'Approve to let them be worked, one person per package, or keep them as proposals. Each issue is read again first: one that changed is not approved.'},
+   zh:{intent:`${t.repository} 的工作包`,why:`${fix?'你在這張 issue 按了修復；它是資安 issue，所以在這裡等你。':''}${weak?`兩位調查員用同一個模型在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。${SAME_NOTE.zh}`:`兩位不同模型的調查員在 ${t.commit.slice(0,7)} 讀了程式碼，對這些有共識。`}這些包裡的每張 issue，Studio 都核對了兩份報告：每個檔案在那個 commit 存在、每個檔案標示的行號範圍合計最多 ${SPAN} 行、每個指名的 symbol 是一個名稱（不是描述），而且寫在標示範圍上方 ${SPAN} 行到下方 ${NEAR} 行之間、每行引用的程式碼都在檔案裡標示行號範圍前後 ${NEAR} 行內，而且是那位調查員用 fs_read 讀到的內容；每項發現至少引用一行有辨識度的程式碼。Studio 沒有執行程式碼：引用的那幾行是不是 bug，是調查員的判斷。${sec.length?`其中 ${sec.length} 個含安全 issue：請先取得這個 repo 的安全負責人同意再核准。`:''}`,how:fix?'核准就直接開修復 Task（不會再出卡）；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。':'核准後就能開工，一包一個人；或先留著當提案。核准前會再讀一次 issue，被改過的不會核准。'},
    body:[...packs.map(line),...(left.length?['',...left]:[]),...(matched?['',`${matched} more at the same function as an earlier package: join or keep apart on the project page. / 另有 ${matched} 項和既有工作包在同一個函式：到專案頁決定併入或分開。`]:[]),'',`Code read at / 程式碼版本: ${t.commit}`,'The project page lists them, under GitHub issues. / 專案頁的「GitHub issues」可以看到。'].join('\n'),links:[{label:'Open the work packages',href:`#/project/${encodeURIComponent(t.project)}`}],
    options:[{id:'approve',label:`Approve ${packs.length} package${packs.length===1?'':'s'}`,labelZh:`核准 ${packs.length} 個工作包`,primary:true},{id:'close',label:'Keep as proposals',labelZh:'先留著當提案',hold:true}]});
   return{wait:true};};
@@ -294,12 +320,21 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   bound(x);const t=state(x) as State&{added:string[]};
   const card=engine.cards.list({run:x.run.id}).filter(c=>c.node==='approve'&&c.status==='answered').at(-1),trusted=engine.trusted(x.run.id);
   const entry:any=card&&trusted.entries.filter((e:any)=>e.record==='card-answer'&&e.data?.card===card.id).at(-1);
-  if(!card?.captainOnly||!trusted.ok||!entry||entry.data?.choice!=='approve'||!CAPTAIN.test(String(entry.actor??''))||!CAPTAIN.test(String(card.answer?.by??'')))throw new Error('The captain\'s approval of these work packages is missing');
+  // the captain's approval: the approval card's answer, or the Fix click the run started from (never for a security package)
+  const fix=fixOf(x.run),viaClick=!card&&!!fix&&clicked(x,fix)&&!(store.get(t.project)?.packages??[]).some(p=>t.added.includes(p.id)&&p.security);
+  if(!viaClick&&(!card?.captainOnly||!trusted.ok||!entry||entry.data?.choice!=='approve'||!CAPTAIN.test(String(entry.actor??''))||!CAPTAIN.test(String(card.answer?.by??''))))throw new Error('The captain\'s approval of these work packages is missing');
   const {adapter}=selected(t.project),fresh=await snapshotIssues(adapter,{signal:engine.abortOf(x.run).signal});guard(x);
   const rec=store.get(t.project);if(!rec)throw new Error('This project\'s triage is gone');
-  const out=approvePackages(rec,t.added,fresh);store.write(out.record);
-  engine.record(x,'issue-triage-approved',{actor:String(entry.actor),head:digest(out.record),data:{schema:1,project:t.project,approved:out.approved,stale:out.stale,card:card.id,answerSeq:entry.seq}} as any);
-  x.rn.note=`${out.approved.length} approved${out.stale.length?`; ${out.stale.length} stale (an issue changed): ${out.stale.join(', ')}`:''}`;return 'ok';};
+  const out=approvePackages(rec,t.added,fresh),actor=viaClick?fix!.by:String(entry.actor),at=new Date().toISOString();
+  store.write(fix?{...out.record,packages:out.record.packages.map(p=>out.approved.includes(p.id)?{...p,approvedBy:actor,approvedAt:at}:p)}:out.record);
+  engine.record(x,'issue-triage-approved',{actor,head:digest(store.get(t.project)),data:{schema:1,project:t.project,approved:out.approved,stale:out.stale,...viaClick?{fix:{by:fix!.by,at:fix!.at}}:{card:card!.id,answerSeq:entry.seq}}} as any);
+  x.rn.note=`${out.approved.length} approved${viaClick?` by the captain's Fix click (${fix!.at})`:''}${out.stale.length?`; ${out.stale.length} stale (an issue changed): ${out.stale.join(', ')}`:''}`;
+  // started from Fix: each approved package with code to change starts its Task now, on the strength of the same click
+  if(fix){const now=store.get(t.project)!,started:string[]=[];
+   for(const id of out.approved){const p=now.packages.find(q=>q.id===id);if(!p||p.kind==='recheck')continue;
+    const r=await fixDispatch(t.project,id,p.order[0]??p.members[0],fix,x);guard(x);if(r)started.push(`${id} → ${r.proposal}`);}
+   if(started.length)x.rn.note+=`; started ${started.join(', ')}`;}
+  x.save();return 'ok';};
 
  // only the captain answers both cards; Firstmate may propose a triage, never start its investigators or approve its packages
  const previous=engine.deps.authorizeAnswer;
@@ -312,7 +347,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
  function start(o:{project:string;issues?:number[];size?:number;by:string}){
   sweep();const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)throw new Error('The issue triage workflow is missing');
   const{record}=selected(o.project);
-  const open=engine.list().find(r=>r.workflow===ISSUE_TRIAGE_WORKFLOW&&r.params.project===o.project&&!['succeeded','failed','cancelled'].includes(r.status));if(open)return open;
+  const open=engine.list().find(r=>r.workflow===ISSUE_TRIAGE_WORKFLOW&&r.params.project===o.project&&!r.params._fix&&!['succeeded','failed','cancelled'].includes(r.status));if(open)return open;
   return engine.start({workflow:ISSUE_TRIAGE_WORKFLOW,version:def.version,title:`Triage issues of ${record.github!.repository}`,text:`Triage open GitHub issues of ${record.github!.repository}`,
    params:{project:o.project,issues:(o.issues??[]).join(','),size:String(Math.max(1,Math.min(o.size??15,50)))},by:o.by} as any);}
  /** Firstmate proposes a triage: the run reads the issues and pins the code, then waits for the captain to start it. */
@@ -351,23 +386,92 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   if(!owner.live())throw new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。');
   if(!owner.captain||!owner.text.trim())throw new NativeToolFailure('owner_ended','Only a current captain request can start work on a package.','只有目前的船長請求可以開始做工作包。');
   if(!args||typeof args.project!=='string'||typeof args.package!=='string'||Object.keys(args).some(k=>k!=='project'&&k!=='package'))throw new NativeToolFailure('invalid_params','Give the project id and the package id (P-n).','請提供專案 id 和工作包 id（P-n）。','list_projects');
+  const r=await proposeNext(args.project,args.package,owner);
+  return{proposal:r.proposal,issues:r.issues,next:'The captain approves the Task on its dispatch card. Ask for the next issue once this one is ready on its branch.'};}
+ /** Studio's own proposal of an approved package's next issues on code-firstmate (tainted; the brief from issueBrief only):
+  *  the issues are read again first, and one edited since it was investigated makes the package stale, never worked. */
+ async function proposeNext(project:string,id:string,owner:{captain?:boolean;text:string;live:()=>boolean;key?:string}):Promise<{proposal:string;issues:number[]}>{
   const def=engine.defs.get('code-firstmate');if(!def||!o.propose)throw new NativeToolFailure('configuration_missing','code-firstmate is not installed','沒有安裝 code-firstmate。','captain_review');
-  const rec=store.get(args.project);if(!rec)throw new NativeToolFailure('target_unavailable',`${args.project} has no issue triage yet: start one with studio_triage_issues`,'這個專案還沒有 issue 分診。','list_projects');
-  const pkg=rec.packages.find(p=>p.id===args.package);
-  let ns:number[];try{ns=nextIssues(rec,args.package,n=>workOf(pkg?.work?.[String(n)]).state);}catch(e:any){throw new NativeToolFailure('target_unavailable',String(e?.message??e),'這個工作包現在不能開工（見英文原因）。','read_current_state');}
+  const rec=store.get(project);if(!rec)throw new NativeToolFailure('target_unavailable',`${project} has no issue triage yet: start one with studio_triage_issues`,'這個專案還沒有 issue 分診。','list_projects');
+  const pkg=rec.packages.find(p=>p.id===id);
+  let ns:number[];try{ns=nextIssues(rec,id,n=>workOf(pkg?.work?.[String(n)]).state);}catch(e:any){throw new NativeToolFailure('target_unavailable',String(e?.message??e),'這個工作包現在不能開工（見英文原因）。','read_current_state');}
   // the issues as GitHub has them now: one edited since it was investigated makes the package stale, never worked
-  let fresh:Snapshot;try{fresh=await snapshotIssues(selected(args.project).adapter);}catch(e:any){throw new NativeToolFailure('target_unavailable',`GitHub could not be read: ${String(e?.message??e).slice(0,200)}`,'讀不到 GitHub。','read_current_state');}
+  let fresh:Snapshot;try{fresh=await snapshotIssues(selected(project).adapter);}catch(e:any){throw new NativeToolFailure('target_unavailable',`GitHub could not be read: ${String(e?.message??e).slice(0,200)}`,'讀不到 GitHub。','read_current_state');}
   const now=new Map(fresh.issues.map(i=>[i.n,i.hash])),changed=ns.filter(n=>now.has(n)&&now.get(n)!==rec.issues[String(n)]?.hash);
   // missing from this read: closed, or slid between pages while it was read; refused this once, the package left as it is
   const missing=ns.filter(n=>!now.has(n));
   if(!changed.length&&missing.length)throw new NativeToolFailure('target_unavailable',`${missing.map(n=>'#'+n).join(' ')} is not among the open issues GitHub just listed (closed, or moved while it was read): check again`,`剛剛 GitHub 列出的 open issue 裡沒有 ${missing.map(n=>'#'+n).join(' ')}（可能已關閉，或讀取時剛好換頁）：請再試一次。`,'read_current_state');
-  if(changed.length){const cur=store.get(args.project)!;store.write({...cur,packages:cur.packages.map(p=>p.id===args.package?{...p,status:'stale' as const}:p)});
-   throw new NativeToolFailure('target_changed',`${changed.map(n=>'#'+n).join(' ')} changed on GitHub since it was investigated: ${args.package} is stale; triage it again`,`${changed.map(n=>'#'+n).join(' ')} 在調查之後被改過了：${args.package} 已過期，請重新分診。`,'read_current_state');}
-  const brief=issueBrief(rec,args.package,ns),r=await o.propose({workflow:'code-firstmate',version:def.version,title:brief.title,text:brief.text,params:{project:args.project},tainted:true},owner);
+  if(changed.length){const cur=store.get(project)!;store.write({...cur,packages:cur.packages.map(p=>p.id===id?{...p,status:'stale' as const}:p)});
+   throw new NativeToolFailure('target_changed',`${changed.map(n=>'#'+n).join(' ')} changed on GitHub since it was investigated: ${id} is stale; triage it again`,`${changed.map(n=>'#'+n).join(' ')} 在調查之後被改過了：${id} 已過期，請重新分診。`,'read_current_state');}
+  const brief=issueBrief(rec,id,ns),r=await o.propose({workflow:'code-firstmate',version:def.version,title:brief.title,text:brief.text,params:{project},tainted:true},owner);
   if(!r?.proposal)throw new NativeToolFailure('configuration_missing','Studio did not create the proposal','Studio 沒有建立提案。','captain_review');
-  const cur=store.get(args.project)!,at=new Date().toISOString();
-  store.write({...cur,packages:cur.packages.map(p=>p.id===args.package?{...p,work:{...(p.work??{}),...Object.fromEntries(ns.map(n=>[String(n),{proposal:r.proposal!,at}]))}}:p)});
-  return{proposal:r.proposal,issues:ns,next:'The captain approves the Task on its dispatch card. Ask for the next issue once this one is ready on its branch.'};}
+  const cur=store.get(project)!,at=new Date().toISOString();
+  store.write({...cur,packages:cur.packages.map(p=>p.id===id?{...p,work:{...(p.work??{}),...Object.fromEntries(ns.map(n=>[String(n),{proposal:r.proposal!,at}]))}}:p)});
+  return{proposal:r.proposal,issues:ns};}
+
+ // --- Fix from the project page: per issue, a hidden one-issue triage (or, for an issue whose single package is approved
+ // or waiting, its Task proposed again); a fixable outcome starts its Task, its dispatch card answered on the click's strength ---
+ const DISPATCH_WAIT=Number(process.env.CREW_FIX_DISPATCH_WAIT_MS)||60_000;
+ /** issues whose Task is being proposed right now (another Fix on them starts nothing) */
+ const dispatching=new Set<string>();
+ /** the proposal's dispatch card, answered as the captain's Fix click: who pressed it and when are in the answer */
+ async function autoDispatch(proposal:string,f:{by:string;at:string}):Promise<string>{
+  const until=Date.now()+DISPATCH_WAIT;
+  while(Date.now()<until){const pr=engine.get(proposal);if(!pr||ENDED.includes(pr.status))throw new Error(`${proposal} ended before its dispatch card came up`);
+   const c=engine.cards.list({run:proposal,open:true}).find(c=>c.kind==='dispatch');
+   if(c)try{await engine.answer(c.id,{choice:'approve',by:`${f.by} · Fix ${f.at}`});return c.id;}catch(e:any){if(!/still being raised|not the one its node waits/.test(String(e?.message)))throw e;}
+   await new Promise(r=>setTimeout(r,100));}
+  throw new Error(`${proposal}'s dispatch card did not come up in time: approve it on its card`);}
+ /** an approved package's Task, proposed and dispatched on the strength of a Fix click; a refusal is kept on the issue's row */
+ async function fixDispatch(project:string,id:string,n:number,f:{by:string;at:string},x?:X):Promise<{proposal:string}|null>{
+  const lock=`${project}/${id}`,key=`${project}/${n}`;
+  if(inFlight.has(lock)){fixes.note(project,n,f.at,{error:`${id} is being proposed right now`});return null;}
+  inFlight.add(lock);dispatching.add(key);
+  try{const owner={key:`issue-fix ${project} ${n} ${f.at}`,captain:true,text:`Fix issue ${n} (the captain pressed Fix on the project page at ${f.at})`,live:()=>true};
+   const r=await proposeNext(project,id,owner),card=await autoDispatch(r.proposal,f);
+   fixes.note(project,n,f.at,{proposal:r.proposal,card,error:undefined});
+   if(x)engine.record(x,'issue-fix-dispatch',{actor:f.by,data:{schema:1,project,package:id,issues:r.issues,proposal:r.proposal,card,by:f.by,at:f.at}} as any);
+   return{proposal:r.proposal};}
+  catch(e:any){fixes.note(project,n,f.at,{error:String(e?.message??e).slice(0,300)});return null;}
+  finally{inFlight.delete(lock);dispatching.delete(key);}}
+ /** where each issue stands after Fix (src/domain/issue-fix.ts): every issue of the triage and every issue clicked */
+ function fixView(project:string):Record<string,FixState>{
+  const rec=store.get(project),clicks=fixes.get(project).issues,ns=new Set([...Object.keys(rec?.issues??{}),...Object.keys(clicks)].map(Number).filter(Number.isSafeInteger));
+  const runOf=(id?:string):FixRun|null=>{const r=id?engine.get(id):null;if(!r)return null;const open=engine.cards.list({run:r.id,open:true}).find(c=>c.node==='court'||c.node==='approve');
+   let docket=false;try{docket=!!docketOf(r.id)?.cases.length;}catch{}
+   return{id:r.id,status:r.status,error:r.error??(Object.values(r.nodes).find((m:any)=>m.error) as any)?.error??null,note:(Object.values(r.nodes).map((m:any)=>m.note).filter(Boolean).at(-1) as string|undefined)??null,waiting:open?(open.node as 'court'|'approve'):null,docket};};
+  const work=(pkg:string,n:number):FixWork=>{const e=rec?.packages.find(p=>p.id===pkg)?.work?.[String(n)],w=workOf(e);
+   const child=w.task?engine.get(w.task):null;return w.state==='open'&&child?.status==='waiting'&&engine.cards.list({run:child.id,open:true}).length?{state:'waiting',task:w.task}:w;};
+  return Object.fromEntries([...ns].sort((a,b)=>a-b).map(n=>{const entry=clicks[String(n)]?.at(-1)??null;
+   return[String(n),fixState(n,{project,rec,entry,run:runOf(entry?.run),work,dispatching:dispatching.has(`${project}/${n}`)})];}));}
+ /** The captain pressed Fix on these issues (the desktop captain only): each starts its own hidden one-issue triage, or its
+  *  single package's Task again; an issue whose investigation or Task is under way, or done, starts nothing. */
+ function fix(project:string,issues:number[],by:string){
+  if(!CAPTAIN.test(by))throw new Error('Only the captain fixes issues');
+  sweep();const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)throw new Error('The issue triage workflow is missing');
+  const{record}=selected(project),repo=record.github!.repository,at=new Date().toISOString(),view=fixView(project);
+  const started:{n:number;task?:string;again?:string}[]=[],skipped:{n:number;state:string;why?:string}[]=[];
+  for(const n of [...new Set(issues)]){
+   const s=view[String(n)];
+   if(s?.busy){skipped.push({n,state:s.state});continue;}
+   if(s?.state==='package'){skipped.push({n,state:s.state,why:`it is one issue of ${s.package}: work it from the package`});continue;}
+   const rec=store.get(project),p=rec?.packages.find(q=>q.members.length===1&&q.members[0]===n);
+   // an issue whose single package is approved (its Task failed, or never started) or waiting: its Task is proposed again
+   if(p&&(p.status==='approved'||p.status==='proposed')&&p.kind!=='recheck'){
+    if(p.security&&p.status==='proposed'){skipped.push({n,state:'security',why:`${p.id} holds a security issue: approve it on the package once whoever owns security agrees`});continue;}
+    const key=`${project}/${n}`;fixes.add(project,n,{by,at});dispatching.add(key);
+    void (async()=>{try{if(p.status==='proposed'){const r=await approve(project,[p.id],by);if(!r.approved.includes(p.id))throw new Error(`${p.id} is stale: the issue changed since it was investigated; press Fix again to investigate it again`);}
+      dispatching.delete(key);await fixDispatch(project,p.id,n,{by,at});}
+     catch(e:any){fixes.note(project,n,at,{error:String(e?.message??e).slice(0,300)});}finally{dispatching.delete(key);}})();
+    started.push({n,again:p.id});continue;}
+   const run=engine.start({workflow:ISSUE_TRIAGE_WORKFLOW,version:def.version,title:`Fix issue ${n} of ${repo}`,text:`Investigate GitHub issue ${n} of ${repo}, then fix it (the captain pressed Fix)`,
+    params:{project,issues:String(n),size:'1',_fix:JSON.stringify({by,at})},by} as any);
+   fixes.add(project,n,{by,at,run:run.id});started.push({n,task:run.id});}
+  return{ok:true,started,skipped};}
+ /** the worker a fix Task would run on: the code-firstmate worker seat as this project runs it */
+ function fixWorker(project:string){const def=engine.defs.get('code-firstmate');if(!def)return null;let nodes:ReturnType<CrewOf>=null;try{nodes=o.crewOf?.(def,project)??null;}catch{}
+  const node=def.nodes.find((n:any)=>n.role==='worker'),seat=node&&nodes?.find(m=>m.node===node.id),role=def.roles.find((r:any)=>r.id==='worker');
+  return seat?.provider?{provider:seat.provider,model:seat.model??null,effort:seat.effort??null,from:'team'}:{provider:role?.provider??null,model:role?.model??null,effort:null,from:'workflow'};}
  /** the two investigators as a triage of this project would run them: the team's seats there, else the roles' providers */
  function investigators(project:string){const def=engine.defs.get(ISSUE_TRIAGE_WORKFLOW);if(!def)return null;let nodes:ReturnType<CrewOf>=null;try{nodes=o.crewOf?.(def,project)??null;}catch{}
   const one=(id:string)=>{const n=nodes?.find(x=>x.node===id),role=def.roles.find((r:any)=>r.id===def.nodes.find((m:any)=>m.id===id)?.role);
@@ -447,5 +551,5 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   try{const rulings=parseRulings(d,raw),hash=digest(rulings);writeAtomic(rulingsFile(r.id,hash),JSON.stringify(rulings));
    await engine.answer(card.id,{choice:'ruled',note:`rulings ${hash}`,by});
    return{ok:true,task:r.id,ruled:rulings.length,href:`#/run/${r.id}`};}finally{ruling.delete(r.id);}}
- return{start,progress,investigators,approve,decline,cross,take,courtView,courtIssue,courtFile,rule,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
+ return{start,progress,investigators,approve,decline,cross,take,courtView,courtIssue,courtFile,rule,fix,fixView,fixWorker,specs:[spec,workSpec],call:(name:string,args:any,owner:any)=>name==='studio_work_package'?work(args,owner):call(name,args,owner)};
 }

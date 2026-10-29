@@ -132,11 +132,25 @@
 .is-approve{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0}.is-approve .faint{font-size:12px}
 .is-cross{align-items:center}.is-cross-acts{display:flex;gap:6px;flex-wrap:wrap}.is-match{margin:0;font-size:12.5px}
 .is-cat-head{align-items:center;gap:8px 12px;margin-bottom:6px}.is-cat-head h3{margin:0;font-size:14px}
-.is-cats{display:grid;gap:6px}.is-cat{border:1px solid var(--border);border-radius:8px;padding:6px 10px}.is-cat>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px}
-.is-cat-scope{font-size:12px;flex:1 1 220px;min-width:0}.is-cat-body{display:grid;gap:8px;padding:8px 0 4px}.is-cat-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.is-cats{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}.is-cat{border:1px solid var(--border);border-radius:8px;padding:6px 10px}.is-cat>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px}
+.is-cat-scope{font-size:12px;flex:1 1 220px;min-width:0}.is-cat-body{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:8px 0 4px}.is-cat-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 /* a category's own triage, and the triage outside the categories */
 .is-tri{display:grid;gap:8px;min-width:0}.is-tri-h{margin:4px 0 0;font-size:13px}.is-other{display:grid;gap:10px;margin-top:12px}.is-other h3{margin:0;font-size:14px}
-.is-cat-issues{margin:0;padding-left:0;list-style:none;display:grid;gap:4px}.is-cat-issues li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:13px}.is-cat-issues .is-title{flex:1 1 200px;min-width:0}
+.is-cat-issues{margin:0;padding-left:0;list-style:none;display:grid;grid-template-columns:minmax(0,1fr);gap:4px}.is-cat-issues li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:13px}.is-cat-issues .is-title{flex:1 1 200px;min-width:0}
+/* Fix (public/issues.js): pick filed issues, one confirmation, each issue's state on its own row */
+.is-fix-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:2px 0 8px;font-size:13px}.is-fix-head .faint{font-size:12px}
+.is-fix-all{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}.is-cat>summary .is-fix-all span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.is-fix-pick,.is-fix-all input{width:18px;height:18px;margin:0;flex:none}
+.is-fix-sum{font-size:12px;color:var(--text-2);flex:1 1 100%}
+.is-fix{font-size:12px;border-radius:999px;padding:1px 8px;background:var(--surface-2);color:var(--text-2);overflow-wrap:anywhere;max-width:100%}
+.is-fix.f-run{color:var(--accent-text);background:var(--surface-3)}.is-fix.f-ok{color:var(--ok);background:var(--ok-soft)}.is-fix.f-you{color:var(--warn);background:var(--warn-soft)}.is-fix.f-bad{color:var(--bad);background:var(--bad-soft)}
+.is-fix-q{flex-basis:100%;margin:2px 0 0;padding-left:18px;font-size:12px}
+.is-fix:has(.is-fix-q){border-radius:8px;display:flex;flex-wrap:wrap;gap:0 4px}
+.is-cat-issues li .btn{padding:2px 10px;min-height:28px}
+.is-fixbar{position:sticky;bottom:0;z-index:30;display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px 12px;margin-top:10px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-2)}
+.is-fixbar .num{margin-right:auto;font-weight:600}
+.is-fix-facts{margin:0;padding-left:18px;display:grid;gap:6px;font-size:13.5px}
+@media (max-width:640px){.is-cat-issues li{gap:4px 8px}.is-fixbar .btn{flex:1 1 auto}}
 /* the disagreement court (public/court.js): one case per screen, the two sides side by side, the rulings docked below */
 .ct-page{display:grid;gap:12px}
 .ct-prog{display:flex;flex-wrap:wrap;align-items:center;gap:5px}.ct-prog i{width:22px;height:5px;border-radius:3px;background:var(--surface-3)}.ct-prog i.done{background:var(--ok)}.ct-prog i.cur{background:var(--accent)}.ct-prog span{margin-left:6px}
