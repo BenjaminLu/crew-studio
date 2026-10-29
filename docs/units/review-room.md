@@ -80,8 +80,12 @@ A room has one subject and keeps one identity across that subject's heads:
   grant's credential path, no hooks and no templates, a time limit, no gc, full history for merge base, log and blame, one
   fetch at a time per cache). Its size on disk is capped (`CREW_REVIEW_PR_CACHE_MB`, default 1024): watched while the fetch
   runs (an asynchronous scan of the pack folder; the fetch always keeps a pack, `fetch.unpackLimit=1`, so nothing it receives escapes the scan as loose objects; over the cap it is stopped) and checked after it, success or not; a stopped fetch leaves no temporary pack. Over the
-  cap the read is refused and the cache removed, unless a turn of a room of that repository is reading it. Never the
-  project's checkout or its object store, no worktree, nothing pushed. The room's base is the merge base of the head and
+  cap the read is refused and the cache removed, unless a turn of a room of that repository is reading it. An empty cache
+  is first seeded from the project's own clone: its `origin/<base>`, else `<base>`, else the grant's base branch, fetched
+  into `refs/crew/seed/base` (`seedPull`; the local file protocol is allowed for that one fetch only, the clone is only
+  read, the seed counts toward the cap, a failure falls back to fetching everything), so GitHub sends only what the clone
+  lacks and a large repository's history no longer outruns the time limit. The project's checkout is never written, no
+  worktree, nothing pushed. The room's base is the merge base of the head and
   the base branch. When the commits cannot be fetched (the cap, the network, a head that moved during the read), what
   GitHub showed (state, text, files, reviews, comments) is still kept and the room is marked stale: it reads the last head
   it has, and takes no paid turn until a check fetches the new one. Every text GitHub returns (title, body, branch names,
@@ -127,7 +131,9 @@ Studio's scenes cost nothing: no model, git and GitHub's answer only.
 
 **Approved, merged, closed.** The room shows the pull request's state as GitHub does: open, draft, each reviewer's latest
 verdict and at which head (approved counts only at the current head and with no changes requested), merged or closed. A
-merged or closed pull request's room stays readable (its scenes, board and citations) and takes no turn.
+merged or closed pull request's room stays readable (its scenes, board and citations) and takes no turn. An open pull
+request whose commits Studio has not fetched yet takes no turn either; the room says so with the reason (never that it is
+closed), and "Check for new commits" tries again, unless the repository is over the cache's cap.
 
 **The record.** Every `review-room-turn` ledger entry and round record header carries the subject: its kind, the branch or
 the URL, the head and the base (merge cards too). A "what changed" scene is a `review-room-scene` entry (from, to, the

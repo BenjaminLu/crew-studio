@@ -683,7 +683,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     finally { clearTimeout(timer); }
   }
   const closedText = (k: Key, room: Room | null) => k.kind === "merge" ? { en: "The merge card is answered: this room is read-only now.", zh: "合併卡已回覆：審查室現在只能閱讀。" }
-    : k.kind === "pr" ? (room?.pr?.merged ? { en: "This pull request is merged on GitHub: the room stays readable and takes no turn.", zh: "這個 pull request 已在 GitHub 合併：審查室仍可閱讀，不再提問。" } : { en: "This pull request is closed on GitHub: the room stays readable and takes no turn.", zh: "這個 pull request 已在 GitHub 關閉：審查室仍可閱讀，不再提問。" })
+    : k.kind === "pr" ? (room?.pr?.state === "open" && !room.pr.merged ? (/larger than the review room keeps/.test(room.pr.stale?.error ?? "")
+        ? { en: `Studio cannot keep this pull request's commits (${room.pr.stale!.error}): the room stays readable and takes no turn.`, zh: `Studio 無法保存這個 pull request 的 commit（${room.pr.stale!.error}）：審查室仍可閱讀，不能提問。` }
+        : { en: `Studio has not read this pull request's commits yet${room.pr.stale?.error ? ` (${room.pr.stale.error})` : ""}: the room takes turns once it has. Check for new commits to try again.`, zh: `Studio 還沒讀到這個 pull request 的 commit${room.pr.stale?.error ? `（${room.pr.stale.error}）` : ""}：讀到之後審查室才能提問。按「檢查新的 commit」再試一次。` })
+      : room?.pr?.merged ? { en: "This pull request is merged on GitHub: the room stays readable and takes no turn.", zh: "這個 pull request 已在 GitHub 合併：審查室仍可閱讀，不再提問。" } : { en: "This pull request is closed on GitHub: the room stays readable and takes no turn.", zh: "這個 pull request 已在 GitHub 關閉：審查室仍可閱讀，不再提問。" })
     : { en: "The Task is gone: this room is read-only.", zh: "任務已不在：審查室只能閱讀。" };
   /** a pull request's state as the room shows it: open, draft, merged or closed, and each reviewer's latest verdict at which head */
   const prState = (room: Room | null) => { const pr = room?.pr; if (!pr) return null; const latest = new Map<string, Note>();

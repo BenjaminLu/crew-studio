@@ -447,7 +447,7 @@ export class GitHubPrAdapter implements PrAdapter {
   }
   /** The review room's copy of pull request n (src/domain/review-room.ts): GitHub's refs/pull/<n>/head (a fork's head too) and
    *  the base branch, fetched read-only with the grant's credential into a bare repository Studio owns under its data
-   *  directory (cache). Never the project's checkout or its object store, no worktree, no hooks, no templates, nothing pushed,
+   *  directory (cache). The project's checkout is only read, to seed an empty cache (seedPull); no worktree, no hooks, no templates, nothing pushed,
    *  no gc. Full history (the room reads merge-base, log and blame at the head). Bounded: a time limit, and the cache's size on
    *  disk, watched while the fetch runs (over maxBytes the fetch is stopped) and checked after it, success or not; a fetch that
    *  stops leaves no temporary pack behind. Over the cap the read is refused with overCap set (the caller decides whether the
@@ -471,6 +471,9 @@ export class GitHubPrAdapter implements PrAdapter {
       if (!existsSync(join(cache, "HEAD"))) localMust(cache, ["-c", "core.hooksPath=/dev/null", "init", "--bare", "-q", "--template=", "."]);
       const env = publicationEnv(this.gitAuth()), timeout = Math.max(1000, Math.min(600_000, o.timeoutMs ?? 120_000));
       const c = (args: string[]) => ownedGit(gitArgv(["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.unpackLimit=1", ...args]), cache, env, timeout, signal);
+      // an empty cache is seeded from the project's own clone first (its copy of the base branch, read only, objects copied in),
+      // so GitHub sends only what the clone lacks: a large repository's whole history no longer outruns the time limit
+      if (!(await packBytes())) await this.seedPull(base, cache, timeout, signal).catch(() => {});
       try { await c(["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", this.grant.pushUrl, `+refs/pull/${n}/head:refs/crew/pull/${n}/head`, `+refs/heads/${base}:refs/crew/pull/${n}/base`]); }
       catch (e) { clean(); if (over || (await packBytes()) > max) throw overCap(); throw e; }
       if ((await looseAndPacked(c)) > max) throw overCap();
@@ -479,6 +482,15 @@ export class GitHubPrAdapter implements PrAdapter {
       await c(["update-ref", `refs/crew/seen/${head}`, head]);
       return { head, base: tip };
     } finally { clearInterval(watch); clean(); done(); if (pullFetches.get(cache) === chain) pullFetches.delete(cache); }
+  }
+  /** Copy the project clone's base branch (its origin copy, else its own branch, else the granted base) into a pull request
+   *  cache. Best effort: the clone is only read, and a missing ref or a failure leaves the cache to fetch everything. */
+  private async seedPull(base: string, cache: string, timeout: number, signal: AbortSignal) {
+    const clone = this.grant.localPath; if (!clone || !clone.startsWith("/") || /[\r\n]/.test(clone) || !existsSync(clone)) return;
+    const names = [...new Set([`refs/remotes/origin/${base}`, `refs/heads/${base}`, `refs/remotes/origin/${this.grant.base}`, `refs/heads/${this.grant.base}`])];
+    const have = localGit(clone, ["for-each-ref", "--format=%(refname)", ...names]); if (!have.ok) return;
+    const found = names.filter((n) => have.out.split("\n").includes(n)); if (!found.length) return;
+    await ownedGit(gitArgv(["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=always", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.unpackLimit=1", "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", clone, `+${found[0]}:refs/crew/seed/base`]), cache, publicationEnv(), timeout, signal);
   }
   /** Fetch the granted base branch head into the local object store (read only); the per-round rebase target before a PR exists. */
   async importBase(signal?: AbortSignal) {
