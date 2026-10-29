@@ -218,6 +218,35 @@ try {
     ok(await until(async () => (await tabs(pe))[0]?.name === "kept" && (await panes(pe)).length === 1), "when the list loads, the tab is back with its pane");
     await ctxE.close(); }
 
+  // ---------- after a reload: a tab not drawn yet, and a zoomed tab's hidden panes, show their terminals' output ----------
+  { const ctxR = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+    // what a resize cannot print again (a shell redraws its prompt on SIGWINCH): earlier lines, typed before the reload
+    const lay = { tabs: [{ id: "t0", name: "zero", root: { t: "pane", id: "p0", term: t4 }, focus: "p0", zoom: null },
+      { id: "t1", name: "one", root: { t: "pane", id: "p1", term: t1 }, focus: "p1", zoom: null },
+      { id: "t3", name: "split", root: { t: "split", id: "s1", dir: "row", ratio: 0.5, a: { t: "pane", id: "p3", term: t2 }, b: { t: "pane", id: "p4", term: t3 } }, focus: "p3", zoom: "p3" }], cur: 1, uid: 4 };
+    await ctxR.addInitScript(([os, lay]) => { Object.defineProperty(Navigator.prototype, "platform", { get: () => os.platform }); Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => ({ platform: os.uad }) });
+      try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.term.layout", JSON.stringify(lay)); }
+        localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} }, [MAC, lay]);
+    const r = await ctxR.newPage(); r.on("pageerror", (e) => errors.push(`reload: ${e}`));
+    await r.goto(`${base}/?window=studio#/terminals/${encodeURIComponent(t1)}`); await seen(r.locator(`.wt-pane[data-term-pane="${t1}"] .xterm-rows`), 10000); await r.waitForTimeout(300);
+    await r.locator(".wt-xterm").first().click(); await r.keyboard.type("echo first-mark-$((5*5))"); await r.keyboard.press("Enter");
+    ok(await until(async () => /first-mark-25/.test(await rows(r, t1))), "a line typed in tab one before the reload");
+    await r.keyboard.press("Meta+Digit1"); await until(async () => (await tabs(r))[0].sel);
+    await r.reload(); await seen(r.locator(`.wt-pane[data-term-pane="${t4}"] .xterm-rows`), 10000); await r.waitForTimeout(500);
+    ok((await tabs(r))[0].sel && !(await r.locator(`.wt-pane[data-term-pane="${t1}"]`).count()), "after the reload tab zero is drawn and tab one is not");
+    await r.locator(".wt-xterm").first().click(); await r.keyboard.press("Shift+Meta+BracketRight");
+    ok(await until(async () => (await tabs(r))[1].sel && /first-mark-25/.test(await rows(r, t1)), 5000), "⇧⌘] to the tab never drawn since the reload: its terminal shows its earlier output", await rows(r, t1));
+    await r.keyboard.press("Meta+Digit3");
+    ok(await until(async () => (await panes(r)).length === 1), "the zoomed tab shows only its focused pane");
+    await r.keyboard.press("Shift+Meta+Enter");
+    ok(await until(async () => (await panes(r)).length === 2 && /pane-42/.test(await rows(r, t3)), 5000), "unzoomed, the pane hidden since the reload shows its earlier output", await rows(r, t3));
+    // a terminal the server will not show here (too many views): the pane says so, and the stream is asked for again
+    await r.evaluate((id) => crewTerminals.mux.es.dispatchEvent(new MessageEvent("gone", { data: JSON.stringify({ id, code: "tooManyViews" }) })), t3);
+    ok(await seen(r.locator(`[data-term-gone="${t3}"]`), 3000) && await r.locator(`[data-term-gone-retry="${t3}"]`).isVisible(), "a terminal refused for too many views says so on its pane, with Retry");
+    ok(await until(async () => !(await r.locator(`[data-term-gone="${t3}"]`).count()), 10000), "and recovers by itself once the stream is opened again");
+    ok(await r.evaluate(() => crewTerminals.resets) === 0, "opening the stream again reset no pane (each got only what followed)", String(await r.evaluate(() => crewTerminals.resets)));
+    await ctxR.close(); }
+
   // ---------- eight panes: a browser keeps six connections to Studio, and typing needs one ----------
   { const ctx8 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
     await ctx8.addInitScript((os) => { Object.defineProperty(Navigator.prototype, "platform", { get: () => os.platform }); Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => ({ platform: os.uad }) });
@@ -239,6 +268,7 @@ try {
       if (await until(async () => new RegExp(`mux-${i}-${i * 7}`).test(await rows(e8, x.term)), 6000)) typed++;
     }
     ok(typed === 8, "typing reaches the shell in every one of the eight panes", `${typed} of 8`);
+    ok(await e8.evaluate(() => crewTerminals.resets) === 0 && /mux-0-0/.test(await rows(e8, ps8[0].term)), "adding seven panes reset none of the others: the first pane keeps what it had", String(await e8.evaluate(() => crewTerminals.resets)));
     await shot(e8, "panes-eight.png");
     await ctx8.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));

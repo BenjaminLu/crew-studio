@@ -83,6 +83,7 @@ body[data-focus="terminal"] #view{height:100%}
 .wt-pbar{display:flex;align-items:center;gap:8px;padding:3px 6px 3px 10px;font-size:12px;color:var(--text-2);border-bottom:1px solid var(--border);background:var(--surface)}
 .wt-pbar b{color:var(--text);font-weight:600}
 .wt-pbar .wt-tx{margin-left:auto}
+.wt-gone{display:inline-flex;gap:6px;align-items:center;color:var(--warn);font-size:12px;min-width:0}
 .wt-full .wt-xterm{flex:1;height:auto;min-height:120px;border:0;border-radius:0}
 .wt-full .wt-cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 0;min-width:0}
 /* the focused terminal's header is one line: its pane bar already names it */

@@ -73,6 +73,9 @@ export class Ring {
       if (f.length <= over) { this.chunks.shift(); this.size -= f.length; this.dropped += f.length; } else { this.chunks[0] = f.slice(over); this.size -= over; this.dropped += over; } }
   }
   bytes() { const o = new Uint8Array(this.size); let i = 0; for (const c of this.chunks) { o.set(c, i); i += c.length; } return o; }
+  /** Where the output stands: every byte ever written, kept or dropped. A replay ends here; a page that already has the
+   * bytes up to some position writes only what follows, so a stream opened again never resets a terminal it shows. */
+  get total() { return this.size + this.dropped; }
 }
 
 /** Removes the Remote Control link from text that arrives in pieces: a piece that may be the start of a link waits for the rest. */
@@ -285,7 +288,7 @@ export class Terminals {
     this.scanLink(t, false);
     const safe = t.redactor.push(text);
     this.writeTranscript(t, safe);
-    const b64 = JSON.stringify({ b64: Buffer.from(d).toString("base64") });
+    const b64 = JSON.stringify({ b64: Buffer.from(d).toString("base64"), end: t.ring.total });
     // Claude Code with Remote Control on: a phone gets states only, never output (the session link is printed in it)
     const ph = safe && !this.phoneHidden(t) ? JSON.stringify({ text: safe }) : null;
     for (const s of t.subs) { if (s.phone) { if (ph) this.emit(t, s, this.ev(s, t, "out", ph)); } else this.emit(t, s, this.ev(s, t, "out", b64)); }
@@ -310,9 +313,17 @@ export class Terminals {
     return enc.encode(`event: ${event}\ndata: ${s.mux ? `{"id":${JSON.stringify(t.id)}${json === "{}" ? "" : ","}${json.slice(1)}` : json}\n\n`);
   }
   private emit(t: Term, s: Sub, chunk: Uint8Array) {
-    // a reader that stopped reading (backpressure past 8 MiB) is cut; it can attach again and gets the replay
-    try { if ((s.ctl.desiredSize ?? 0) < -8 * MIB) { t.subs.delete(s); s.ctl.close(); return; } s.ctl.enqueue(chunk); } catch { t.subs.delete(s); }
+    // a reader that stopped reading (backpressure past 8 MiB) is cut; it can attach again and gets the replay. A shared
+    // stream is cut whole: every terminal's view on it goes, or a closed stream would keep holding view slots
+    try { if ((s.ctl.desiredSize ?? 0) < -8 * MIB) { this.cut(s.ctl); return; } s.ctl.enqueue(chunk); } catch { this.cut(s.ctl); }
   }
+  /** Ends one stream: its views of every terminal go, and the stream closes. */
+  cut(ctl: ReadableStreamDefaultController<Uint8Array>) {
+    for (const t of this.terms.values()) for (const s of t.subs) if (s.ctl === ctl) t.subs.delete(s);
+    try { ctl.close(); } catch {}
+  }
+  /** Views of a terminal open now (tests, the view limit). */
+  views(id: string) { return this.terms.get(id)?.subs.size ?? 0; }
   private evaluate(t: Term) {
     const before = `${t.state}/${t.reason}/${t.ask}`;
     if (Date.now() - t.lastOutAt >= 300) this.scanLink(t, true);
@@ -507,7 +518,7 @@ export class Terminals {
   private hello(t: Term, sub: Sub) {
     const phone = sub.phone, hidden = phone && this.phoneHidden(t), bytes = t.ring.bytes();
     sub.ctl.enqueue(this.ev(sub, t, "meta", JSON.stringify(this.view(t, !phone))));
-    sub.ctl.enqueue(this.ev(sub, t, "replay", JSON.stringify(phone ? (hidden ? { text: "", hidden: "remote-control" } : { text: t.redactor.scrub(new TextDecoder().decode(bytes)), dropped: t.ring.dropped }) : { b64: Buffer.from(bytes).toString("base64"), dropped: t.ring.dropped })));
+    sub.ctl.enqueue(this.ev(sub, t, "replay", JSON.stringify(phone ? (hidden ? { text: "", hidden: "remote-control" } : { text: t.redactor.scrub(new TextDecoder().decode(bytes)), dropped: t.ring.dropped }) : { b64: Buffer.from(bytes).toString("base64"), dropped: t.ring.dropped, end: t.ring.total })));
     if (!t.running) sub.ctl.enqueue(this.ev(sub, t, "exit", JSON.stringify({ exitCode: t.exitCode, signal: t.signal })));
   }
   /** A revoked phone's streams end. */

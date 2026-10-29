@@ -96,7 +96,7 @@ const css = (n, d) => getComputedStyle(document.documentElement).getPropertyValu
 const b64bytes = (s) => { const b = atob(s), o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = b.charCodeAt(i); return o; };
 function pane(t) {
   let p = TM.panes.get(t.id); if (p) return p;
-  p = { host: h("div", { class: "wt-xterm", "data-term-host": t.id }), term: null, fit: null, pending: [], queue: "", sending: Promise.resolve(), flushT: null, sizeT: null, err: null };
+  p = { host: h("div", { class: "wt-xterm", "data-term-host": t.id }), term: null, fit: null, queue: "", sending: Promise.resolve(), flushT: null, sizeT: null, err: null };
   TM.panes.set(t.id, p);
   xterm().then(() => {
     const term = new window.Terminal({ cursorBlink: TM.canWrite, disableStdin: !TM.canWrite, scrollback: 5000, fontSize: 13, allowProposedApi: false,
@@ -110,8 +110,8 @@ function pane(t) {
     }
     try { new ResizeObserver(() => { try { if (p.host.isConnected && p.host.clientWidth) fit.fit(); } catch {} }).observe(p.host); } catch {}
     try { fit.fit(); } catch {}
-    // what the shared stream brought before xterm was ready
-    for (const [type, d] of p.pending.splice(0)) onOut(p, type, d);
+    // everything the shared stream brought for it so far, a tab drawn later or a pane unzoomed included
+    const f = FEED.get(t.id); if (f) { if (f.trimmed) term.write(dropNote()); for (const c of f.log) term.write(c); }
     if (TM.canWrite && focusPane()?.term === t.id && !TM.ui.picker && !TM.ui.naming && !TM.ui.help) term.focus();
   }).catch((e) => { p.err = String(e.message || e); p.host.replaceChildren(h("p", { class: "faint" }, T(`The terminal view could not load: ${p.err}`, `終端機畫面無法載入：${p.err}`))); });
   return p;
@@ -120,25 +120,60 @@ function pane(t) {
 // A browser keeps at most six connections to Studio; one stream per pane would leave none for typing once five panes are
 // open. The page holds one stream for all the terminals in its tabs, opened again when that set changes (each terminal
 // replays, so nothing is lost), and closed for a terminal that leaves every tab.
-const MUX = { es: null, key: "" };
-function onOut(p, type, d) {
-  const term = p.term; if (!term) { p.pending.push([type, d]); return; }
-  const write = (x) => { if (x.b64 !== undefined) term.write(b64bytes(x.b64)); else if (x.text) term.write(x.text); };
-  if (type === "replay") { term.reset(); if (d.hidden === "remote-control") { term.write(`\x1b[2m${T("Output is not shown on a phone while Claude Code's Remote Control is on: its session link is printed in it. The state above stays live; take the session over in the Claude app.", "Claude Code 開著 Remote Control 時，手機上不顯示輸出（裡面有 session 連結）。上面的狀態照常更新；要操作請用 Claude app 接手。")}\x1b[0m\r\n`); return; }
-    if (d.dropped) term.write(`\x1b[2m${T(`[earlier output dropped: ${d.dropped} bytes]`, `[較早的輸出已捨棄：${d.dropped} bytes]`)}\x1b[0m\r\n`); write(d); }
-  else if (type === "out") write(d);
-  else if (type === "exit") { term.write(`\r\n\x1b[2m${T(`[process ended: ${d.signal || `exit ${d.exitCode}`}]`, `[程序已結束：${d.signal || `exit ${d.exitCode}`}]`)}\x1b[0m\r\n`); load(); }
+const MUX = { es: null, key: "", retryT: null, retryMs: 3000 };
+// Per terminal, what the stream has written (its log, bounded) and up to where (end, a position in its output). The stream
+// carries every terminal in the tabs, drawn or not: a pane drawn later (another tab, after a reload, a pane unzoomed) is
+// filled from the log. When the stream opens again (a pane added or closed), each terminal replays; one already shown up
+// to some position gets only what follows, so a pane whose terminal stayed is never reset (its scrollback and selection stay).
+const FEED = new Map(), LOG_CAP = 2 * 1024 * 1024;
+TM.feed = FEED; TM.resets = 0; TM.gone = new Map();
+const feedOf = (id) => { let f = FEED.get(id); if (!f) FEED.set(id, (f = { end: null, log: [], size: 0, trimmed: false, exited: false })); return f; };
+const dropNote = (n) => `\x1b[2m${n ? T(`[earlier output dropped: ${n} bytes]`, `[較早的輸出已捨棄：${n} bytes]`) : T("[earlier output dropped]", "[較早的輸出已捨棄]")}\x1b[0m\r\n`;
+function onOut(id, type, d) {
+  const f = feedOf(id), term = TM.panes.get(id)?.term;
+  const put = (c) => { f.log.push(c); f.size += c.length; while (f.size > LOG_CAP && f.log.length > 1) { f.size -= f.log.shift().length; f.trimmed = true; } term?.write(c); };
+  const fresh = () => { const had = f.end !== null || f.log.length > 0; f.log = []; f.size = 0; f.trimmed = false; f.exited = false; f.end = null; if (term && had) { term.reset(); TM.resets++; } };
+  if (type === "replay") {
+    if (TM.gone.delete(id)) redraw();
+    if (d.hidden === "remote-control") { fresh(); put(`\x1b[2m${T("Output is not shown on a phone while Claude Code's Remote Control is on: its session link is printed in it. The state above stays live; take the session over in the Claude app.", "Claude Code 開著 Remote Control 時，手機上不顯示輸出（裡面有 session 連結）。上面的狀態照常更新；要操作請用 Claude app 接手。")}\x1b[0m\r\n`); return; }
+    if (d.b64 !== undefined && Number.isFinite(d.end)) {
+      const bytes = b64bytes(d.b64), start = d.end - bytes.length;
+      if (f.end !== null && f.end >= start && f.end <= d.end) { if (f.end < d.end) put(bytes.subarray(f.end - start)); f.end = d.end; return; }
+      fresh(); if (d.dropped) put(dropNote(d.dropped)); put(bytes); f.end = d.end; return;
+    }
+    // a phone's text (the link removed) has no positions: drawn again
+    fresh(); if (d.dropped) put(dropNote(d.dropped)); if (d.b64 !== undefined) put(b64bytes(d.b64)); else if (d.text) put(d.text); return;
+  }
+  if (type === "out") {
+    if (d.b64 === undefined) { if (d.text) put(d.text); return; }
+    let bytes = b64bytes(d.b64);
+    if (Number.isFinite(d.end) && f.end !== null) { const start = d.end - bytes.length; if (d.end <= f.end) return; if (start < f.end) bytes = bytes.subarray(f.end - start); }
+    put(bytes); if (Number.isFinite(d.end)) f.end = d.end; return;
+  }
+  if (type === "exit" && !f.exited) { f.exited = true; put(`\r\n\x1b[2m${T(`[process ended: ${d.signal || `exit ${d.exitCode}`}]`, `[程序已結束：${d.signal || `exit ${d.exitCode}`}]`)}\x1b[0m\r\n`); load(); }
+}
+// a terminal the server would not show on this stream (too many views of it): the pane says so, and the stream is asked
+// for again after a while, sooner with the pane's Retry; a terminal that is gone leaves with the next list
+function retryMux() { clearTimeout(MUX.retryT); MUX.retryT = null; try { MUX.es?.close(); } catch {} MUX.es = null; MUX.key = ""; muxSync(); }
+function onGone(d) {
+  if (d.code === "gone") { load(); return; }
+  TM.gone.set(d.id, d.code); redraw();
+  if (!MUX.retryT) { MUX.retryT = setTimeout(retryMux, MUX.retryMs); MUX.retryMs = Math.min(30000, MUX.retryMs * 2); }
 }
 function muxSync() {
   if (!TM.list || TM.err) return; // a list that did not load says nothing about which terminals are gone
   const listed = new Set(TM.list.map((t) => t.id)), want = [...new Set(TM.lay.tabs.flatMap((tab) => panesOf(tab.root).map((p) => p.term)))].filter((id) => listed.has(id)).sort();
   for (const id of [...TM.panes.keys()]) if (!want.includes(id)) closePane(id);
+  for (const id of [...FEED.keys()]) if (!want.includes(id)) { FEED.delete(id); TM.gone.delete(id); }
   const key = want.join(","); if (key === MUX.key && (MUX.es || !key)) return;
   try { MUX.es?.close(); } catch {} MUX.es = null; MUX.key = key; if (!key) return;
   const es = new EventSource(`/api/terminals/mux?ids=${encodeURIComponent(key)}`); MUX.es = es;
-  for (const type of ["replay", "out", "exit"]) es.addEventListener(type, (m) => { const d = JSON.parse(m.data), p = TM.panes.get(d.id); if (p) onOut(p, type, d); });
+  for (const type of ["replay", "out", "exit"]) es.addEventListener(type, (m) => { const d = JSON.parse(m.data); onOut(d.id, type, d); });
+  es.addEventListener("gone", (m) => onGone(JSON.parse(m.data)));
+  es.addEventListener("replay", () => { if (!TM.gone.size) MUX.retryMs = 3000; });
   es.addEventListener("meta", (m) => { const v = JSON.parse(m.data); const i = (TM.list || []).findIndex((x) => x.id === v.id); if (i >= 0) { const before = TM.list[i]; TM.list[i] = v; if (before.state !== v.state || before.remote?.url !== v.remote?.url) redraw(); } });
 }
+TM.retryMux = retryMux;
 TM.mux = MUX;
 function flush(id, p) { const d = p.queue; p.queue = ""; if (!d) return; p.sending = p.sending.then(() => postJ(`/api/terminals/${id}/input`, { data: d }).catch((e) => toast(String(e.message || e)))); }
 function closePane(id) { const p = TM.panes.get(id); if (!p) return; try { p.term?.dispose(); } catch {} TM.panes.delete(id); }
@@ -289,6 +324,8 @@ function tabEls() {
 const tool = (act, ic, en, zh, extra = {}) => h("button", { type: "button", class: "btn ghost sm wt-tool", "data-term-act": act, title: chordTitle(en, zh, act), "aria-label": T(en, zh), onclick: () => run(act), ...extra }, icon(ic, "ic sm"), h("span", { class: "wt-tl" }, T(en, zh)));
 function paneBar(t, pn) {
   return h("div", { class: "wt-pbar" }, h("i", { class: `wt-dot ${t.state}`, "data-pane-state": t.state, title: STATE[t.state]?.[1]() || "" }), h("b", {}, t.label), h("span", { class: "faint" }, t.project.name),
+    TM.gone.has(t.id) ? h("span", { class: "wt-gone", role: "status", "data-term-gone": t.id }, T("Open in too many places right now: its output waits. Retrying…", "這個終端機開著的地方太多，輸出暫停，正在重試…"),
+      h("button", { type: "button", class: "btn ghost sm", "data-term-gone-retry": t.id, onclick: (e) => { e.stopPropagation(); retryMux(); } }, T("Retry", "重試"))) : null,
     h("button", { type: "button", class: "wt-tx", "data-pane-close": pn.id, "aria-label": chordTitle("Close pane (the terminal keeps running)", "關閉窗格（終端機照常執行）", "closePane"),
       onclick: (e) => { e.stopPropagation(); const tab = curTab(); if (tab) detachPane(tab, pn); redo(); } }, "×"));
 }

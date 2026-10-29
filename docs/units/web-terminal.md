@@ -122,9 +122,15 @@ starts ("Not sandboxed: runs with your user's full permissions in <path>"). What
   (live output), `meta` on each state change, `exit`. The page gets raw bytes (base64) and xterm.js decodes UTF-8 across
   chunks; a phone gets text with the Remote Control link removed.
 - `GET /api/terminals/mux?ids=<id>,<id>…`: the same events for several terminals on one stream, each event's data naming
-  its terminal (`{"id": …}`); `gone` for one that is not there or may not be viewed. The page uses only this: one stream for
-  every terminal in its tabs, opened again when that set changes (each replays). A browser keeps at most six connections
-  to Studio, and a stream per pane left none for typing once five panes were open.
+  its terminal (`{"id": …}`); `gone` for one that is not there or may not be viewed. Ids are well-formed ones only, once
+  each, at most 64. A replay and each `out` carry `end`, where the terminal's output stands (every byte it wrote, kept or
+  dropped). The page uses only this: one stream for every terminal in its tabs, drawn or not. It keeps each terminal's
+  output (its log, at most 2 MiB) and position, so a pane drawn later (another tab, after a reload, a pane unzoomed) is
+  filled from it, and when the stream opens again (a pane added or closed) a terminal it already shows gets only what
+  follows: no pane is reset, its scrollback and selection stay. A pane refused for too many views says so, with Retry,
+  and the stream is asked for again by itself (3 s, then longer). A browser keeps at most six connections to Studio, and a
+  stream per pane left none for typing once five panes were open. A stream that stops reading (8 MiB behind) is cut
+  whole, with its views of every terminal.
 - `POST …/input {data}`, `…/resize {cols, rows}`, `…/kill`, `…/restart`, `…/dismiss`.
 - The page's own stream (`/api/stream`) carries `terminals` (the phone-safe list) so the sidebar and the panel stay live.
 
