@@ -42,4 +42,87 @@
 .ct-ask{flex-basis:100%;font-size:12px;color:var(--human);overflow-wrap:anywhere}
 @media (max-width:900px){.wt-grid{grid-template-columns:minmax(0,1fr)}.wt-xterm{height:60vh}}
 .wt-review{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px}
+/* focus mode (app.js pageFocus sets body[data-focus="terminal"] on #/terminals): the side bar is the rail, no chat panel or
+   its button, and a shown terminal fills the rest of the window, its fit addon following every resize */
+body[data-focus="terminal"] #main{padding:12px 16px}
+body[data-focus="terminal"] #view{height:100%}
+.wt-full{max-width:none;height:100%;min-height:0;display:flex;flex-direction:column;gap:8px}
+.wt-bar{display:flex;align-items:center;gap:10px;min-width:0;flex:none}
+.wt-h{font-size:15px;line-height:1.2;margin:0;flex:none}
+.wt-tabs{display:flex;flex:1;min-width:0;overflow-x:auto;gap:2px;scrollbar-width:none}
+.wt-tab{display:flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:7px;font-size:13px;color:var(--text-2);cursor:pointer;white-space:nowrap;flex:none;border:1px solid transparent}
+.wt-tab:hover{background:var(--surface-2);color:var(--text)}
+.wt-tab[aria-selected="true"]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600}
+.wt-tn{font:11px var(--f-mono, ui-monospace, monospace);color:var(--text-3)}
+.wt-tname{max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.wt-tx{border:0;background:none;color:var(--text-3);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px}
+.wt-tx:hover{color:var(--text);background:var(--surface-2)}
+.wt-tools{display:flex;align-items:center;gap:2px;flex:none}
+.wt-tool[aria-pressed="true"]{color:var(--accent)}
+.wt-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--text-3)}
+.wt-dot.waiting{background:var(--human)}.wt-dot.working{background:var(--accent)}.wt-dot.done{background:var(--ok)}.wt-dot.exited{background:var(--bad)}
+.wt-appwin{display:flex;align-items:center;gap:10px;flex:none;font-size:12.5px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
+.wt-appwin>span{flex:1;min-width:0}
+.wt-launch{display:grid;grid-template-columns:minmax(260px,420px) minmax(0,1fr);gap:12px;flex:none;align-items:start}
+.wt-launch .wt-list{max-height:260px;overflow:auto}
+.wt-full .wt-detail{flex:1;min-height:0;gap:6px}
+.wt-stage{flex:1;min-height:0;display:flex}
+.wt-split{display:flex;flex:1;min-width:0;min-height:0}
+.wt-split.col{flex-direction:column}
+.wt-slot{display:flex;min-width:0;min-height:0}
+.wt-slot>*{flex:1}
+.wt-div{flex:none;position:relative;z-index:2}
+.wt-split.row>.wt-div{width:6px;cursor:col-resize}
+.wt-split.col>.wt-div{height:6px;cursor:row-resize}
+.wt-div::after{content:"";position:absolute;background:var(--border)}
+.wt-split.row>.wt-div::after{left:2px;width:2px;top:0;bottom:0}
+.wt-split.col>.wt-div::after{top:2px;height:2px;left:0;right:0}
+.wt-div:hover::after,.wt-div.drag::after{background:var(--accent)}
+.wt-pane{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface-2)}
+.wt-pane.focus{border-color:color-mix(in srgb,var(--accent) 70%,var(--border));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent)}
+.wt-pbar{display:flex;align-items:center;gap:8px;padding:3px 6px 3px 10px;font-size:12px;color:var(--text-2);border-bottom:1px solid var(--border);background:var(--surface)}
+.wt-pbar b{color:var(--text);font-weight:600}
+.wt-pbar .wt-tx{margin-left:auto}
+.wt-gone{display:inline-flex;gap:6px;align-items:center;color:var(--warn);font-size:12px;min-width:0}
+.wt-full .wt-xterm{flex:1;height:auto;min-height:120px;border:0;border-radius:0}
+.wt-full .wt-cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 0;min-width:0}
+/* the focused terminal's header is one line: its pane bar already names it */
+.wt-full .wt-dhead{flex-wrap:nowrap;align-items:center}
+.wt-full .wt-title{flex-wrap:nowrap;flex:1;min-width:0}
+.wt-full .wt-title>b,.wt-full .wt-title>span.faint{display:none}
+.wt-full .wt-actions .btn{min-height:28px;padding-block:2px}
+.wt-status{display:flex;align-items:center;gap:12px;flex:none;font-size:11.5px;color:var(--text-2);min-width:0}
+.wt-plat{font-weight:600}
+.wt-hints{display:flex;gap:12px;overflow:hidden;white-space:nowrap;min-width:0;flex:1}
+.wt-status kbd,.wt-help kbd{font:11px var(--f-mono, ui-monospace, monospace);padding:1px 5px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);color:var(--text)}
+kbd.off{opacity:.4;text-decoration:line-through}
+.wt-where{white-space:nowrap;padding:1px 8px;border-radius:4px;border:1px solid var(--border)}
+.wt-where.tab{color:var(--warn)}.wt-where.ok{color:var(--ok)}
+.wt-veil{position:fixed;inset:0;z-index:80;background:rgb(0 0 0 / .45);display:grid;place-items:start center;padding-top:9vh}
+.wt-sheet{width:min(640px,calc(100vw - 32px));padding:0;overflow:hidden}
+.wt-sh{display:flex;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)}
+.wt-sh input{flex:1;min-width:0;font:13px var(--f-mono, ui-monospace, monospace);padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)}
+.wt-seg{display:inline-flex;margin-left:auto;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+.wt-seg button{border:0;background:none;padding:3px 10px;font:inherit;font-size:12px;color:var(--text-2);cursor:pointer}
+.wt-seg button[aria-pressed="true"]{background:var(--surface-2);color:var(--text);font-weight:600}
+.wt-help{padding:6px 16px 10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 28px;max-height:60vh;overflow:auto}
+.wt-help h3{grid-column:1/-1;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:12px 0 2px}
+.wt-help div{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;border-bottom:1px dashed var(--border)}
+.wt-help div span:last-child{white-space:nowrap}
+.wt-note{margin:0;padding:10px 16px 14px;font-size:12.5px;line-height:1.6;border-top:1px solid var(--border)}
+.wt-pick{max-height:46vh;overflow:auto;padding:6px}
+.wt-prow{display:flex;gap:10px;align-items:center;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px}
+.wt-prow .badge{margin-left:auto}
+.wt-prow.sel{background:var(--surface-2);box-shadow:inset 2px 0 0 var(--accent)}
+@media (max-width:760px){
+  body[data-focus="terminal"] .side-foot{display:none}
+  body[data-focus="terminal"] #main{padding:8px}
+  .wt-h{display:none}
+  .wt-full .wt-xterm{min-height:200px}
+  .wt-tl,.wt-hints [data-hint]:nth-child(n+3),.wt-plat{display:none}
+  .wt-launch{grid-template-columns:minmax(0,1fr)}
+  .wt-help{grid-template-columns:minmax(0,1fr)}
+  .wt-appwin{flex-wrap:wrap}
+}
+@media (min-width:761px) and (max-width:1100px){.wt-tl{display:none}}
 .wt-refused{flex-basis:100%;margin:0;font-size:12px;color:var(--bad);background:var(--bad-soft);border-radius:8px;padding:6px 8px;overflow-wrap:anywhere}

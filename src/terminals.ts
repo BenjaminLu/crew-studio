@@ -73,6 +73,9 @@ export class Ring {
       if (f.length <= over) { this.chunks.shift(); this.size -= f.length; this.dropped += f.length; } else { this.chunks[0] = f.slice(over); this.size -= over; this.dropped += over; } }
   }
   bytes() { const o = new Uint8Array(this.size); let i = 0; for (const c of this.chunks) { o.set(c, i); i += c.length; } return o; }
+  /** Where the output stands: every byte ever written, kept or dropped. A replay ends here; a page that already has the
+   * bytes up to some position writes only what follows, so a stream opened again never resets a terminal it shows. */
+  get total() { return this.size + this.dropped; }
 }
 
 /** Removes the Remote Control link from text that arrives in pieces: a piece that may be the start of a link waits for the rest. */
@@ -152,7 +155,8 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
   return null;
 }
 
-type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string };
+/** A view of a terminal's output. mux: one of several terminals on one stream (GET /api/terminals/mux), each event naming its terminal. */
+type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string; mux?: boolean };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
   decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
   line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[];
@@ -175,6 +179,8 @@ export type TerminalsOpts = {
   shell?: string;
   /** Send for review: start code-firstmate from the terminal's branch; answers the run's id */
   review?: (r: ReviewRequest) => Promise<{ run: string }>;
+  /** "Open in a Studio window": Studio's authenticated launch as an app window (src/open.ts); answers what opened it, or false */
+  openWindow?: () => Promise<string | false> | string | false;
 };
 /** The project's checkout: its branch, head and commits beyond base (Studio's own git: no hooks, no user config). */
 export function gitFacts(path: string, base?: string | null): TermGit | null {
@@ -192,8 +198,10 @@ export class Terminals {
   private terms = new Map<string, Term>();
   private probe = new Map<string, Promise<"flag" | "slash">>();
   readonly keepTranscripts: boolean; readonly maxSubs = 4;
+  /** when the page last asked for a Studio window (POST /api/terminals/app-window), for its rate limit */
+  appWindowAt = 0; appWindowBusy = false;
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
-  constructor(private o: TerminalsOpts) {
+  constructor(readonly o: TerminalsOpts) {
     this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
     this.keepTranscripts = o.transcripts ?? process.env.CREW_TERMINAL_TRANSCRIPTS !== "0";
     this.cap = envNum("CREW_TERMINAL_SCROLLBACK", 2 * MIB); this.max = envNum("CREW_TERMINAL_MAX", 8);
@@ -280,10 +288,10 @@ export class Terminals {
     this.scanLink(t, false);
     const safe = t.redactor.push(text);
     this.writeTranscript(t, safe);
-    const b64 = enc.encode(`event: out\ndata: ${JSON.stringify({ b64: Buffer.from(d).toString("base64") })}\n\n`);
+    const b64 = JSON.stringify({ b64: Buffer.from(d).toString("base64"), end: t.ring.total });
     // Claude Code with Remote Control on: a phone gets states only, never output (the session link is printed in it)
-    const ph = safe && !this.phoneHidden(t) ? enc.encode(`event: out\ndata: ${JSON.stringify({ text: safe })}\n\n`) : null;
-    for (const s of t.subs) { if (s.phone) { if (ph) this.emit(t, s, ph); } else this.emit(t, s, b64); }
+    const ph = safe && !this.phoneHidden(t) ? JSON.stringify({ text: safe }) : null;
+    for (const s of t.subs) { if (s.phone) { if (ph) this.emit(t, s, this.ev(s, t, "out", ph)); } else this.emit(t, s, this.ev(s, t, "out", b64)); }
     this.evaluate(t);
     clearTimeout(t.timer); t.timer = setTimeout(() => this.evaluate(t), this.idleMs + 50);
   }
@@ -300,10 +308,22 @@ export class Terminals {
   private phoneHidden(t: Term) { return !!t.remote?.enabled || t.linkSeen; }
   /** A question shown in lists and to phones: the known link and anything link-like are removed first. */
   private scrubAsk(t: Term, ask: string) { let a = t.redactor.scrub(ask); if (t.remote || t.linkSeen) a = a.replace(/\S*(?:claude\.(?:ai|com)|https?:\/\/)\S*/gi, REMOTE_REMOVED); return a; }
-  private emit(t: Term, s: Sub, chunk: Uint8Array) {
-    // a reader that stopped reading (backpressure past 8 MiB) is cut; it can attach again and gets the replay
-    try { if ((s.ctl.desiredSize ?? 0) < -8 * MIB) { t.subs.delete(s); s.ctl.close(); return; } s.ctl.enqueue(chunk); } catch { t.subs.delete(s); }
+  /** One event for one view: on a shared stream it names its terminal ({"id": …} first in its data). */
+  private ev(s: Sub, t: Term, event: string, json: string) {
+    return enc.encode(`event: ${event}\ndata: ${s.mux ? `{"id":${JSON.stringify(t.id)}${json === "{}" ? "" : ","}${json.slice(1)}` : json}\n\n`);
   }
+  private emit(t: Term, s: Sub, chunk: Uint8Array) {
+    // a reader that stopped reading (backpressure past 8 MiB) is cut; it can attach again and gets the replay. A shared
+    // stream is cut whole: every terminal's view on it goes, or a closed stream would keep holding view slots
+    try { if ((s.ctl.desiredSize ?? 0) < -8 * MIB) { this.cut(s.ctl); return; } s.ctl.enqueue(chunk); } catch { this.cut(s.ctl); }
+  }
+  /** Ends one stream: its views of every terminal go, and the stream closes. */
+  cut(ctl: ReadableStreamDefaultController<Uint8Array>) {
+    for (const t of this.terms.values()) for (const s of t.subs) if (s.ctl === ctl) t.subs.delete(s);
+    try { ctl.close(); } catch {}
+  }
+  /** Views of a terminal open now (tests, the view limit). */
+  views(id: string) { return this.terms.get(id)?.subs.size ?? 0; }
   private evaluate(t: Term) {
     const before = `${t.state}/${t.reason}/${t.ask}`;
     if (Date.now() - t.lastOutAt >= 300) this.scanLink(t, true);
@@ -317,7 +337,7 @@ export class Terminals {
     if (t.running && d.state === "working") { clearTimeout(t.timer); t.timer = setTimeout(() => this.evaluate(t), Math.max(250, this.idleMs / 2)); }
   }
   private pushMeta(t: Term) {
-    for (const s of t.subs) this.emit(t, s, enc.encode(`event: meta\ndata: ${JSON.stringify(this.view(t, !s.phone))}\n\n`));
+    for (const s of t.subs) this.emit(t, s, this.ev(s, t, "meta", JSON.stringify(this.view(t, !s.phone))));
   }
   private writeTranscript(t: Term, s: string) {
     if (!s || t.transcriptTruncated || !t.tFile) return;
@@ -334,7 +354,7 @@ export class Terminals {
     t.git.end = gitFacts(t.project.path, t.project.base);
     try { t.proc.terminal?.close?.(); } catch {}
     this.evaluate(t); this.saveMeta(t);
-    for (const s of t.subs) this.emit(t, s, enc.encode(`event: exit\ndata: ${JSON.stringify({ exitCode: t.exitCode, signal: t.signal })}\n\n`));
+    for (const s of t.subs) this.emit(t, s, this.ev(s, t, "exit", JSON.stringify({ exitCode: t.exitCode, signal: t.signal })));
     this.o.log?.("terminal.exit", `terminal ${t.id} (${t.label}) ended: ${t.signal ? `signal ${t.signal}` : `exit ${t.exitCode}`}`, { id: t.id, project: t.project.id, exitCode: t.exitCode, signal: t.signal });
     this.changed();
   }
@@ -461,27 +481,51 @@ export class Terminals {
 
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {
-    const t = this.need(id); let sub: Sub;
-    // one slot is always the Mac's: phones share the others, and when all are taken the Mac's page takes the oldest phone's
-    const phones = [...t.subs].filter((x) => x.phone);
-    if (phone && (phones.length >= this.maxSubs - 1 || t.subs.size >= this.maxSubs)) throw new TermError(429, `at most ${this.maxSubs - 1} phone views of one terminal at once`, "tooManyViews");
-    if (!phone && t.subs.size >= this.maxSubs) { const old = phones[0]; if (!old) throw new TermError(429, `at most ${this.maxSubs} views of one terminal at once`, "tooManyViews"); t.subs.delete(old); try { old.ctl.close(); } catch {} }
-    const hidden = phone && this.phoneHidden(t);
+    const t = this.need(id); this.admit(t, phone); let sub: Sub;
     const stream = new ReadableStream<Uint8Array>({
-      start: (ctl) => { sub = { phone, ctl, device };
-        const bytes = t.ring.bytes();
-        ctl.enqueue(enc.encode(`event: meta\ndata: ${JSON.stringify(this.view(t, !phone))}\n\n`));
-        ctl.enqueue(enc.encode(`event: replay\ndata: ${JSON.stringify(phone ? (hidden ? { text: "", hidden: "remote-control" } : { text: t.redactor.scrub(new TextDecoder().decode(bytes)), dropped: t.ring.dropped }) : { b64: Buffer.from(bytes).toString("base64"), dropped: t.ring.dropped })}\n\n`));
-        if (!t.running) ctl.enqueue(enc.encode(`event: exit\ndata: ${JSON.stringify({ exitCode: t.exitCode, signal: t.signal })}\n\n`));
-        t.subs.add(sub); },
+      start: (ctl) => { sub = { phone, ctl, device }; this.hello(t, sub); t.subs.add(sub); },
       cancel: () => { t.subs.delete(sub); },
     });
     return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" } });
+  }
+  /**
+   * Several terminals on one stream, each event naming its terminal: the page shows many panes, and a browser keeps at most
+   * six connections to Studio, so one stream per pane would leave none for typing. A terminal it may not view (the view
+   * limit) or that is gone gets a "gone" event; the others behave as attach.
+   */
+  attachMany(ids: string[], phone: boolean, device?: string): Response {
+    const subs: [Term, Sub][] = [];
+    const stream = new ReadableStream<Uint8Array>({
+      start: (ctl) => {
+        for (const id of [...new Set(ids)].slice(0, 64)) {
+          const t = this.terms.get(id); const sub: Sub = { phone, ctl, device, mux: true };
+          try { if (!t) throw new TermError(404, "no such terminal", "gone"); this.admit(t, phone); }
+          catch (e: any) { ctl.enqueue(enc.encode(`event: gone\ndata: ${JSON.stringify({ id, code: e?.code ?? "gone" })}\n\n`)); continue; }
+          this.hello(t, sub); t.subs.add(sub); subs.push([t, sub]);
+        }
+      },
+      cancel: () => { for (const [t, s] of subs) t.subs.delete(s); },
+    });
+    return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" } });
+  }
+  /** One slot is always the Mac's: phones share the others, and when all are taken the Mac's page takes the oldest phone's. */
+  private admit(t: Term, phone: boolean) {
+    const phones = [...t.subs].filter((x) => x.phone);
+    if (phone && (phones.length >= this.maxSubs - 1 || t.subs.size >= this.maxSubs)) throw new TermError(429, `at most ${this.maxSubs - 1} phone views of one terminal at once`, "tooManyViews");
+    if (!phone && t.subs.size >= this.maxSubs) { const old = phones[0]; if (!old) throw new TermError(429, `at most ${this.maxSubs} views of one terminal at once`, "tooManyViews"); t.subs.delete(old); try { if (old.mux) old.ctl.enqueue(enc.encode(`event: gone\ndata: ${JSON.stringify({ id: t.id, code: "tooManyViews" })}\n\n`)); else old.ctl.close(); } catch {} }
+  }
+  /** What a new view gets first: the summary, the replay, and the exit of one that ended. */
+  private hello(t: Term, sub: Sub) {
+    const phone = sub.phone, hidden = phone && this.phoneHidden(t), bytes = t.ring.bytes();
+    sub.ctl.enqueue(this.ev(sub, t, "meta", JSON.stringify(this.view(t, !phone))));
+    sub.ctl.enqueue(this.ev(sub, t, "replay", JSON.stringify(phone ? (hidden ? { text: "", hidden: "remote-control" } : { text: t.redactor.scrub(new TextDecoder().decode(bytes)), dropped: t.ring.dropped }) : { b64: Buffer.from(bytes).toString("base64"), dropped: t.ring.dropped, end: t.ring.total })));
+    if (!t.running) sub.ctl.enqueue(this.ev(sub, t, "exit", JSON.stringify({ exitCode: t.exitCode, signal: t.signal })));
   }
   /** A revoked phone's streams end. */
   cutDevice(device: string) { for (const t of this.terms.values()) for (const s of t.subs) if (s.device === device) { t.subs.delete(s); try { s.ctl.close(); } catch {} } }
 }
 const enc = new TextEncoder();
+const APP_WINDOW_GAP_MS = 5000;
 const RECORD = /^T-[\w-]{1,60}\.json$/;
 /** A record's git facts, read back: a commit id as head, else none (a hand-edited or damaged record never reaches git or the page). */
 const facts = (g: any): TermGit | null => g && typeof g.head === "string" && /^[0-9a-f]{40,64}$/.test(g.head)
@@ -508,6 +552,20 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
         ...(desktop ? { presets: svc.presets().map(({ id, label, kind, remoteControl, path }) => ({ id, label, kind, remoteControl: !!remoteControl, path })), projects: svc.projects() } : {}) });
     }
     if (p === "/api/terminals" && writing) { const b = await req.json().catch(() => null); return json({ terminal: await svc.create(b ?? {}, "desktop") }); }
+    // the page opens Studio again as an app window, where the browser keeps no key for itself (the new-tab, close and
+    // new-window chords reach the terminal): the desktop page's own request only (the guard above), the same launch as
+    // crew-studio launch
+    if (p === "/api/terminals/app-window") {
+      if (!writing) return json({ error: "POST" }, 405);
+      // one launch every few seconds: each opens a window and writes a private redirect file
+      // counted from a window that opened: a launch that failed may be tried again at once; one in flight holds the next
+      if (svc.appWindowBusy || Date.now() - svc.appWindowAt < APP_WINDOW_GAP_MS) return json({ error: "A Studio window was just opened: look for it, or try again in a few seconds.", code: "tooSoon" }, 429);
+      svc.appWindowBusy = true; let used: string | false = false;
+      try { used = svc.o.openWindow ? await svc.o.openWindow() : false; } finally { svc.appWindowBusy = false; }
+      if (used) svc.appWindowAt = Date.now();
+      return used ? json({ ok: true, used }) : json({ error: "No browser accepted the Studio window. Studio is still here, in this tab.", code: "noWindow" }, 502);
+    }
+    if (p === "/api/terminals/mux" && !writing) return svc.attachMany((url.searchParams.get("ids") ?? "").split(",").filter((x) => /^[\w-]{1,64}$/.test(x)), !desktop, who.device?.id);
     const m = /^\/api\/terminals\/([\w-]{1,64})\/(stream|input|resize|kill|restart|dismiss|review)$/.exec(p);
     if (!m) return json({ error: "not found" }, 404);
     const [, id, op] = m;

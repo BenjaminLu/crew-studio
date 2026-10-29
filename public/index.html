@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Crew Studio</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <meta name="crew-release" content="">
 <link rel="stylesheet" href="/fonts.css">
 <link rel="stylesheet" href="/fonts/hand.css">
@@ -30,6 +32,9 @@
     const t = localStorage.getItem("crew.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
     if (localStorage.getItem("crew.side") === "collapsed" || (localStorage.getItem("crew.side") === null && innerWidth < 1280)) document.documentElement.classList.add("pre-collapsed");
   } catch {}
+  // a Studio window (crew-studio launch, the terminal page's button, the installed app) arrives with ?window=studio: this
+  // window remembers it (public/terminals.js: every key is the terminal's there) and the address loses the flag
+  try { if (/[?&]window=studio\b/.test(location.search)) { sessionStorage.setItem("crew.studioWindow", "1"); history.replaceState(null, "", location.pathname + location.hash); } } catch {}
 </script>
 <link rel="stylesheet" href="/pack-genesis.css">
 </head>
@@ -113,6 +118,7 @@
 <script src="/projects.js"></script>
 <script src="/team.js"></script>
 <script src="/review-room.js"></script>
+<script src="/term-keys.js"></script>
 <script src="/terminals.js"></script>
 <script src="/backbone.js"></script>
 <script src="/pack-genesis.js"></script>

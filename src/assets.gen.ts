@@ -136,48 +136,53 @@ import a132 from "../public/fonts.css" with { type: "file" };
 import a133 from "../public/gates.js" with { type: "file" };
 import a134 from "../public/graph-layout.js" with { type: "file" };
 import a135 from "../public/i18n.js" with { type: "file" };
-import a136 from "../public/index.html" with { type: "file" };
-import a137 from "../public/issues.js" with { type: "file" };
-import a138 from "../public/kit.js" with { type: "file" };
-import a139 from "../public/m2.js" with { type: "file" };
-import a140 from "../public/m25.js" with { type: "file" };
-import a141 from "../public/m3.css" with { type: "file" };
-import a142 from "../public/m3.js" with { type: "file" };
-import a143 from "../public/m6.js" with { type: "file" };
-import a144 from "../public/m7.js" with { type: "file" };
-import a145 from "../public/m8.js" with { type: "file" };
-import a146 from "../public/onboarding.css" with { type: "file" };
-import a147 from "../public/onboarding.js" with { type: "file" };
-import a148 from "../public/ootb.js" with { type: "file" };
-import a149 from "../public/pack-genesis.css" with { type: "file" };
-import a150 from "../public/pack-genesis.js" with { type: "file" };
-import a151 from "../public/projects.css" with { type: "file" };
-import a152 from "../public/projects.js" with { type: "file" };
-import a153 from "../public/review-room.css" with { type: "file" };
-import a154 from "../public/review-room.js" with { type: "file" };
-import a155 from "../public/runstate.js" with { type: "file" };
-import a156 from "../public/runtime.css" with { type: "file" };
-import a157 from "../public/runtime.js" with { type: "file" };
-import a158 from "../public/scard.js" with { type: "file" };
-import a159 from "../public/skills.css" with { type: "file" };
-import a160 from "../public/skills.js" with { type: "file" };
-import a161 from "../public/skins.js" with { type: "file" };
-import a162 from "../public/styles.css" with { type: "file" };
-import a163 from "../public/takeover.css" with { type: "file" };
-import a164 from "../public/takeover.js" with { type: "file" };
-import a165 from "../public/team.css" with { type: "file" };
-import a166 from "../public/team.js" with { type: "file" };
-import a167 from "../public/terminals.css" with { type: "file" };
-import a168 from "../public/terminals.js" with { type: "file" };
-import a169 from "../public/transcripts.css" with { type: "file" };
-import a170 from "../public/transcripts.js" with { type: "file" };
-import a171 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
-import a172 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
-import a173 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a174 from "../public/vendor/xterm-5.5.0.css" with { type: "file" };
-import a175 from "../public/vendor/xterm-5.5.0.min.js" with { type: "file" };
-import a176 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
-import a177 from "../public/vendor/xterm-addon-fit-0.10.0.min.js" with { type: "file" };
+import a136 from "../public/icon-192.png" with { type: "file" };
+import a137 from "../public/icon-512.png" with { type: "file" };
+import a138 from "../public/icon.svg" with { type: "file" };
+import a139 from "../public/index.html" with { type: "file" };
+import a140 from "../public/issues.js" with { type: "file" };
+import a141 from "../public/kit.js" with { type: "file" };
+import a142 from "../public/m2.js" with { type: "file" };
+import a143 from "../public/m25.js" with { type: "file" };
+import a144 from "../public/m3.css" with { type: "file" };
+import a145 from "../public/m3.js" with { type: "file" };
+import a146 from "../public/m6.js" with { type: "file" };
+import a147 from "../public/m7.js" with { type: "file" };
+import a148 from "../public/m8.js" with { type: "file" };
+import a149 from "../public/manifest.webmanifest" with { type: "file" };
+import a150 from "../public/onboarding.css" with { type: "file" };
+import a151 from "../public/onboarding.js" with { type: "file" };
+import a152 from "../public/ootb.js" with { type: "file" };
+import a153 from "../public/pack-genesis.css" with { type: "file" };
+import a154 from "../public/pack-genesis.js" with { type: "file" };
+import a155 from "../public/projects.css" with { type: "file" };
+import a156 from "../public/projects.js" with { type: "file" };
+import a157 from "../public/review-room.css" with { type: "file" };
+import a158 from "../public/review-room.js" with { type: "file" };
+import a159 from "../public/runstate.js" with { type: "file" };
+import a160 from "../public/runtime.css" with { type: "file" };
+import a161 from "../public/runtime.js" with { type: "file" };
+import a162 from "../public/scard.js" with { type: "file" };
+import a163 from "../public/skills.css" with { type: "file" };
+import a164 from "../public/skills.js" with { type: "file" };
+import a165 from "../public/skins.js" with { type: "file" };
+import a166 from "../public/styles.css" with { type: "file" };
+import a167 from "../public/takeover.css" with { type: "file" };
+import a168 from "../public/takeover.js" with { type: "file" };
+import a169 from "../public/team.css" with { type: "file" };
+import a170 from "../public/team.js" with { type: "file" };
+import a171 from "../public/term-keys.js" with { type: "file" };
+import a172 from "../public/terminals.css" with { type: "file" };
+import a173 from "../public/terminals.js" with { type: "file" };
+import a174 from "../public/transcripts.css" with { type: "file" };
+import a175 from "../public/transcripts.js" with { type: "file" };
+import a176 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a177 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a178 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a179 from "../public/vendor/xterm-5.5.0.css" with { type: "file" };
+import a180 from "../public/vendor/xterm-5.5.0.min.js" with { type: "file" };
+import a181 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
+import a182 from "../public/vendor/xterm-addon-fit-0.10.0.min.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -316,46 +321,51 @@ export const ASSETS: Record<string, string> = {
   "/gates.js": a133,
   "/graph-layout.js": a134,
   "/i18n.js": a135,
-  "/index.html": a136,
-  "/issues.js": a137,
-  "/kit.js": a138,
-  "/m2.js": a139,
-  "/m25.js": a140,
-  "/m3.css": a141,
-  "/m3.js": a142,
-  "/m6.js": a143,
-  "/m7.js": a144,
-  "/m8.js": a145,
-  "/onboarding.css": a146,
-  "/onboarding.js": a147,
-  "/ootb.js": a148,
-  "/pack-genesis.css": a149,
-  "/pack-genesis.js": a150,
-  "/projects.css": a151,
-  "/projects.js": a152,
-  "/review-room.css": a153,
-  "/review-room.js": a154,
-  "/runstate.js": a155,
-  "/runtime.css": a156,
-  "/runtime.js": a157,
-  "/scard.js": a158,
-  "/skills.css": a159,
-  "/skills.js": a160,
-  "/skins.js": a161,
-  "/styles.css": a162,
-  "/takeover.css": a163,
-  "/takeover.js": a164,
-  "/team.css": a165,
-  "/team.js": a166,
-  "/terminals.css": a167,
-  "/terminals.js": a168,
-  "/transcripts.css": a169,
-  "/transcripts.js": a170,
-  "/vendor/opencc-js-1.4.2-t2cn.min.js": a171,
-  "/vendor/opencc-js-LICENSE.txt": a172,
-  "/vendor/qrcode-1.4.4.min.js": a173,
-  "/vendor/xterm-5.5.0.css": a174,
-  "/vendor/xterm-5.5.0.min.js": a175,
-  "/vendor/xterm-LICENSE.txt": a176,
-  "/vendor/xterm-addon-fit-0.10.0.min.js": a177,
+  "/icon-192.png": a136,
+  "/icon-512.png": a137,
+  "/icon.svg": a138,
+  "/index.html": a139,
+  "/issues.js": a140,
+  "/kit.js": a141,
+  "/m2.js": a142,
+  "/m25.js": a143,
+  "/m3.css": a144,
+  "/m3.js": a145,
+  "/m6.js": a146,
+  "/m7.js": a147,
+  "/m8.js": a148,
+  "/manifest.webmanifest": a149,
+  "/onboarding.css": a150,
+  "/onboarding.js": a151,
+  "/ootb.js": a152,
+  "/pack-genesis.css": a153,
+  "/pack-genesis.js": a154,
+  "/projects.css": a155,
+  "/projects.js": a156,
+  "/review-room.css": a157,
+  "/review-room.js": a158,
+  "/runstate.js": a159,
+  "/runtime.css": a160,
+  "/runtime.js": a161,
+  "/scard.js": a162,
+  "/skills.css": a163,
+  "/skills.js": a164,
+  "/skins.js": a165,
+  "/styles.css": a166,
+  "/takeover.css": a167,
+  "/takeover.js": a168,
+  "/team.css": a169,
+  "/team.js": a170,
+  "/term-keys.js": a171,
+  "/terminals.css": a172,
+  "/terminals.js": a173,
+  "/transcripts.css": a174,
+  "/transcripts.js": a175,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a176,
+  "/vendor/opencc-js-LICENSE.txt": a177,
+  "/vendor/qrcode-1.4.4.min.js": a178,
+  "/vendor/xterm-5.5.0.css": a179,
+  "/vendor/xterm-5.5.0.min.js": a180,
+  "/vendor/xterm-LICENSE.txt": a181,
+  "/vendor/xterm-addon-fit-0.10.0.min.js": a182,
 };

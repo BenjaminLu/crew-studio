@@ -77,7 +77,7 @@ const diamondPath = (x, y, w, h) => `M${x + w / 2},${y} L${x + w},${y + h / 2} L
 /** the parts of a picture this viewer has seen drawn (a diagram's steps share one set, so a step draws only what it adds) */
 const drawnOf = (card, it) => { const key = `${card}/${it.group ? `${it.turn}:${it.group}` : it.id}`; if (!RR.drawn.has(key)) RR.drawn.set(key, new Set()); return RR.drawn.get(key); };
 /** the picture's box, roughly: the board's left column on a desktop, the top of the board on a phone */
-const picBox = () => innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.classList.contains("room-focus") ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
+const picBox = () => innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.dataset.focus === "room" ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
 const reduceMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 /** a flowchart's places, left to right (horiz) or top down; node size from its longest label */
 function flowLayout(g, horiz, fs) {
@@ -747,21 +747,9 @@ function header(r) {
     // Firstmate opens over the room as a sheet, never a column beside the board
     h("button", { type: "button", class: "rr-back", "data-room-firstmate": "", "aria-label": T("Firstmate (over the room)", "Firstmate（疊在審查室上）"), onclick: () => (document.body.classList.contains("chat-closed") ? document.getElementById("chatFab") : document.getElementById("chatClose"))?.click() }, ic("msg"), h("span", {}, "Firstmate")));
 }
-// ---------- focus mode: a room is the whole screen. The sidebar folds to its rail and Firstmate closes (an overlay sheet from
-// the header); neither is saved as the captain's preference, and both come back as they were on leaving ----------
-const FOCUS = { on: false, prev: null };
-function focusMode(on) {
-  const b = document.body; if (on === FOCUS.on) return; FOCUS.on = on;
-  if (on) { FOCUS.prev = { side: b.classList.contains("side-collapsed"), chat: !b.classList.contains("chat-closed"), sideStore: prefs.get("crew.side") };
-    b.classList.add("room-focus", "side-collapsed", "chat-closed"); return; }
-  const p = FOCUS.prev || { side: false, chat: false, sideStore: null }, nowStore = prefs.get("crew.side");
-  b.classList.remove("room-focus");
-  // the captain folded or opened the sidebar on purpose while in the room (it is saved): that choice wins
-  b.classList.toggle("side-collapsed", nowStore !== p.sideStore ? nowStore === "collapsed" : p.side);
-  document.getElementById("sideTog")?.setAttribute("aria-label", b.classList.contains("side-collapsed") ? "Expand sidebar" : "Collapse sidebar");
-  b.classList.toggle("chat-closed", !p.chat);
-}
-addEventListener("hashchange", () => { if (S.route?.name !== "room" || !S.route.arg) focusMode(false); });
+// ---------- focus mode: a room is the whole screen (app.js pageFocus, the terminal page's too). The sidebar folds to its rail and
+// Firstmate closes (an overlay sheet from the header); neither is saved as the captain's preference, and both come back as they
+// were on leaving. Only a room that has loaded: the home page, a loading room and an error keep the board's layout ----------
 // the keyboard: ← → a point back or forward, Space play / pause, Escape closes what is open over the room
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -773,7 +761,6 @@ addEventListener("keydown", (e) => {
   else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
 });
 routes.room = (arg) => {
-  focusMode(!!arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error);
   if (!arg) return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 的網址。"),
     h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null)));
   const r = RR.rooms.get(arg);
@@ -788,5 +775,6 @@ routes.room = (arg) => {
     RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } } },
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
+routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
 window.crewReviewRoom = { parseFlow, scenesOf };
 })();

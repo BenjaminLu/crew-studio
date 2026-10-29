@@ -80,10 +80,32 @@ function route() {
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
   render();
 }
+// A focus page takes the whole screen: the terminal page (docs/units/web-terminal.md) and an open review room
+// (docs/units/review-room.md). A route's view says so with .focus: a name, or a function of the route's argument that
+// answers one or null (a room is in focus only once it has loaded). render() asks on every draw. While a focus page is
+// shown, body[data-focus] names it, the sidebar is its 64 px rail, Firstmate is closed (opened from the page, it is a sheet
+// over it: styles.css) and its button is hidden. Nothing is stored: crew.side and crew.chatOpen stay the captain's (openChat
+// saves nothing during focus). Leaving gives back what the captain had, except a sidebar folded or opened on purpose while
+// there (setSide saves it): that choice wins.
+const PAGE_FOCUS = { name: null, prev: null };
+function pageFocus(name) {
+  const b = document.body; name = name || null;
+  if (name && !PAGE_FOCUS.name) { PAGE_FOCUS.prev = { side: b.classList.contains("side-collapsed"), chat: !b.classList.contains("chat-closed"), sideStore: store.get("crew.side", null) }; b.classList.add("side-collapsed", "chat-closed"); }
+  if (!name && PAGE_FOCUS.name) {
+    const p = PAGE_FOCUS.prev || { side: false, chat: false, sideStore: null }, now = store.get("crew.side", null);
+    b.classList.toggle("side-collapsed", now !== p.sideStore ? now === "collapsed" : p.side);
+    $("#sideTog")?.setAttribute("aria-label", b.classList.contains("side-collapsed") ? "Expand sidebar" : "Collapse sidebar");
+    b.classList.toggle("chat-closed", !p.chat); PAGE_FOCUS.prev = null;
+  }
+  PAGE_FOCUS.name = name;
+  if (name) b.dataset.focus = name; else delete b.dataset.focus;
+}
+const focusOf = (r) => { const f = routes[r?.name]?.focus; return (typeof f === "function" ? f(r.arg) : f) || null; };
 const fieldKey = (el) => { if (el.id) return `#${CSS.escape(el.id)}`; const d = [...el.attributes].find((x) => x.name.startsWith("data-"));
   return d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : null; };
 function render() {
   const root = $("#view");
+  pageFocus(focusOf(S.route));
   const scroll = $("#main").scrollTop;
   // a field the captain is typing in that the new view keeps (a mounted card is reused, unit inbox-live) keeps its focus and caret
   // a field the view draws anew (the Start form's request field) is found again by its stable key (id, else its first data-

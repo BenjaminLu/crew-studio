@@ -382,6 +382,8 @@ const fmRaw = new RawLog(join(STATE, "events.jsonl"));
 const studioLog = new StudioLog(join(DATA, "events.jsonl"));
 // web terminals (src/terminals.ts): unsandboxed agent CLIs in a project's folder, input from this Mac's page only
 const terminals = new Terminals({ dataDir: DATA,
+  // the terminal page's "Open in a Studio window": the same authenticated launch as `crew-studio launch`, as an app window
+  openWindow: async () => { const { requestBrowser } = await import("./open"); return requestBrowser({ ...launchAuthority.record, token: SESSION }, { app: true, argv: [] }); },
   projects: () => new Projects(DATA).list().filter((p) => p.enabled !== false && typeof p.path === "string" && p.path).map((p) => ({ id: p.id, name: p.name || p.id, path: p.path as string, base: p.base })),
   // Send for review: code-firstmate's "From existing branch" (docs/units/branch-intake.md), staffed like a board start
   review: async (r) => { try { const run = await runtime.startFromBranch({ project: r.project, commit: r.commit, branch: r.branch, terminal: r.terminal, label: r.label, by: r.by }); return { run: run.id }; }
@@ -547,7 +549,7 @@ ctx.improve = { roles: () => improve.skills.overview().map((s) => ({ workflow: s
 // --- http ---
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json" };
-Object.assign(TYPES, { ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".png": "image/png" });
+Object.assign(TYPES, { ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".png": "image/png", ".webmanifest": "application/manifest+json" });
 const pub = join(ROOT, "public");
 const PAGE_RELEASE = pageRelease({ compiled: COMPILED, assets: ASSETS, publicDir: pub });
 // the source checkout serves public/ from disk; the binary serves the copies embedded in it
@@ -952,7 +954,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/session" && req.method === "GET") {
       const t = url.searchParams.get("t") ?? ""; const okT = t.length === SESSION.length && timingSafeEqual(Buffer.from(t), Buffer.from(SESSION));
       if (!okT) return new Response("This session link is not valid. Open Studio with `crew-studio open` (or `bun src/main.ts open`).", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
-      return new Response(null, { status: 303, headers: { location: "/", "set-cookie": sessionCookie(SESSION), "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+      // a Studio window (src/open.ts, --app) lands with ?window=studio: the page then knows every key is its own
+      return new Response(null, { status: 303, headers: { location: url.searchParams.get("w") === "app" ? "/?window=studio" : "/", "set-cookie": sessionCookie(SESSION), "cache-control": "no-store", "referrer-policy": "no-referrer" } });
     }
     if (p === "/api/session") return json({ session: who.kind === "phone" || hasSession(req, SESSION) });
     const page = serveStatic(p);
