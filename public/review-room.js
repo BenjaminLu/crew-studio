@@ -837,6 +837,7 @@ function stageView(r) {
           sc.quiz ? quizSide(r, sc) : h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
           n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
           // the welcome scene's one action: the lesson, a paid turn that asks to confirm first
+          sc.welcome && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
           sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
             T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
           sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
@@ -956,6 +957,8 @@ function drawer(r) {
           s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
           : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")),
         // start the room over: confirmed first; what goes and what stays said plainly; refused while a turn or a translation runs
+        !r.snapshot && r.subject?.kind === "pr" ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+          h("span", {}, T("Start the lesson by itself when this pull request is pasted again on a new head", "這個 pull request 在新的 head 再次貼上時自動開始教學"))) : null,
         r.snapshot ? null : h("div", { class: "rr-reset", "data-reset-zone": "" }, h("h3", {}, T("Start over", "清空重來")),
           RR.resetAsk.has(card) ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-reset-confirm-box": "", "aria-label": T("Start this room over", "清空這個審查室重來") },
             h("p", {}, T("Start this room over? Its answers, its board, its translations and its generated pictures go (moved to an archive folder beside the room, not deleted; a Task's room keeps that archive in the Task's own folder, so it goes if the Task is deleted). The Library's saved snapshots and the Task's ledger stay.", "要清空這個審查室重來嗎？它的回答、白板、翻譯和生成圖片都會移走（搬到審查室旁的封存資料夾，不會刪除；任務的審查室會把封存放在任務自己的資料夾裡，任務被刪除時封存也會一起刪除）。成品庫裡存過的快照和任務的帳本都會保留。")),
@@ -982,7 +985,7 @@ const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(
 function prBox(where, repository) {
   const busy = PR.busy.has(where), err = PR.err.get(where);
   const go = async () => { const url = (PR.url.get(where) || "").trim(); if (!url || busy) return; PR.busy.add(where); PR.err.delete(where); rerenderAny();
-    try { const out = await postJ("/api/review-room/open-pr", { url }); RR.rooms.set(out.id, out.room); PR.url.delete(where); location.hash = out.href; }
+    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang() }); RR.rooms.set(out.id, out.room); PR.url.delete(where); location.hash = out.href; }
     catch (e) { PR.err.set(where, e.message); } finally { PR.busy.delete(where); rerenderAny(); } };
   return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
     h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),
@@ -1057,8 +1060,8 @@ addEventListener("keydown", (e) => {
   else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
 });
 routes.room = (arg) => {
-  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
-    else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
+  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
+    else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
     const rooms = RR.list.rooms || [];
     return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 的網址。"),
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
@@ -1066,7 +1069,9 @@ routes.room = (arg) => {
           h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, T(x.title, x.titleZh || x.title))), " ",
           h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("a turn is running", "有一回合在跑") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
           h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`)))) : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
-      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null))); }
+      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null),
+        h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),
+          h("span", {}, T("Teach a pasted pull request by itself: pasting it starts the lesson (one paid round on the room's tutor, no generated pictures), once per head.", "貼上 pull request 就自動開始教學：貼上即開始這一課（用房間的導師付費一回合，不產生圖片），每個 head 只一次。"))))); }
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));

@@ -290,6 +290,15 @@ decisions) is one heading with its items under it; a click scrolls the report to
 covers the report's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
 came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
 
+**A pasted pull request teaches itself.** When the captain pastes a pull request (`POST …/open-pr`) and its room has no
+lesson for the current head (none done or running), the lesson starts by itself: the paste is the consent, so there is no
+click and no confirmation. It is an ordinary paid turn on the room's tutor, marked `auto` on the ledger, with generated
+pictures off. It starts once per head: the head is recorded before anything starts, so a reload, a revisit or a second
+paste starts nothing. The Studio-wide setting (`GET/POST /api/review-room/settings {autoTeach}`, on the room list's page,
+default on) and the room's own switch (`POST …/auto {on}`, in its drawer) turn it off. When it cannot start (no tutor can
+run, admission refuses) nothing runs, the reason is kept and the welcome scene shows it above the ordinary teach button.
+Merge-card rooms and Task rooms never start by themselves; only a pasted pull request does.
+
 **Start this room over / 清空重來.** In the transcript drawer, the captain on this Mac can start a room over (`POST
 …/reset`, the same session, origin and desktop gates as the room's other writes; refused with 409 while a turn or a
 translation runs). It asks first, saying what goes (the answers, the board, the translations, the generated pictures) and
@@ -668,6 +677,11 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     fresh room …", "a pull request's room started over is fresh at once …"; review-room-ui "starting a room over is a POST
     only …", "starting a room over asks first …", "confirmed, the room is started over …"; smoke "even allowed to drive, a
     phone cannot … start it over".
+37. A pasted pull request teaches itself: no click, no confirmation, marked auto on the ledger, pictures off; once per head;
+    never over a finished lesson at that head; the Studio-wide setting and the room's switch turn it off; when it cannot
+    start, the room says why. — review-room-anywhere "auto-teach off …", "pasting a pull request starts its lesson by itself
+    …", "pasting it again … starts no second lesson", "a head that already has its finished lesson starts nothing …", "the
+    room's own switch turned off …", "when the lesson cannot start by itself …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 

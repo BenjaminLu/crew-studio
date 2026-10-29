@@ -141,6 +141,8 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   studio?: true; title?: string; from?: string;
   /** a Studio scene kept for the record but not shown (an older room's duplicate reviewers' dump, replaced by one summary) */
   hidden?: true;
+  /** a lesson Studio started by itself when the captain pasted the pull request (the paste is the consent) */
+  auto?: true;
   /** a regeneration: the turn whose question this one asks again, on a model the captain picked (both answers are kept) */
   regenOf?: number; picked?: { provider: string; model: string | null; effort: string | null };
   /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
@@ -181,6 +183,9 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   finished?: { at: string; reason: string; tried?: boolean; error?: string | null };
   /** bumped on every save: a snapshot older than this is out of date */
   rev?: number;
+  /** auto-teach on paste: this room's own switch (absent: the global setting), and the heads it already started a lesson for
+   *  (once per head, never again on a reload or a revisit), or why it did not */
+  autoTeach?: boolean; autoTaught?: { head: string; at: string; turn?: number; skipped?: string }[];
   /** generated pictures (the opening illustration, the tutor's illustrate tool: paid image jobs) are on: off unless the captain turns them on */
   images?: { on: boolean; by: string; at: string };
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
@@ -329,6 +334,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const load = (k: Key): Room | null => { const had = cache.get(k.file); if (had) return had; try { const r: Room = JSON.parse(readFileSync(k.file, "utf8"));
     for (const b of r.board) if (b.type === "image" && b.status === "pending") Object.assign(b, { status: "failed", error: "interrupted: Studio stopped before the picture was ready" });
     try { tidyReviewers(r); } catch {} cache.set(k.file, r); return r; } catch { return null; } };
+  /** the review room's own settings (Studio-wide): autoTeach, a pasted pull request's lesson starting by itself (default on) */
+  const settingsFile = () => join(o.dataDir, "review-room-settings.json");
+  const settings = (): { autoTeach: boolean } => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8")); return { autoTeach: j?.autoTeach !== false }; } catch { return { autoTeach: true }; } };
   /** rooms started over: their old object (held by a background job: a picture, a voice, a Library save) is never written back */
   const startedOver = new WeakSet<Room>(), resetGen = new Map<string, number>();
   const save = (k: Key, r: Room) => { if (startedOver.has(r)) return; r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
@@ -874,7 +882,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
     turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
-    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
+    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, ...(turn.auto ? { auto: true } : {}), card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }
@@ -912,6 +920,24 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     } catch (e: any) { error = String(e?.message ?? e).slice(0, 300); }
     room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost: job?.cost ?? null }; save(k, room);
     engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost: job?.cost ?? null, status: room.translating.status } } as any);
+  }
+  /** A pasted pull request's lesson, started by Studio: the captain's paste is the consent. Only a pull request's room, only when
+   *  auto-teach is on (the room's switch, else the global setting), once per head (recorded before anything starts, so a reload
+   *  or a revisit never starts another), never when a lesson for this head is done or running. Pictures stay off. When it cannot
+   *  start (no tutor can run, admission refuses), the reason is kept and the room shows the ordinary teach button with it. */
+  async function autoTeach(api: any, id: string, by: string, lang = "en") {
+    let k: Key; try { k = keyOf(id); } catch { return; } if (k.kind !== "pr") return;
+    const room = load(k); if (!room || !k.open() || live.has(k.id)) return;
+    const head = room.pr?.head ?? room.head; if (!head) return;
+    if ((room.autoTeach ?? settings().autoTeach) === false) return;
+    if ((room.autoTaught ?? []).some((x) => x.head === head)) return;
+    if (room.turns.some((t) => t.action === "teach" && t.head === head && (t.status === "done" || t.status === "running"))) return;
+    const mark = { head, at: new Date().toISOString() } as { head: string; at: string; turn?: number; skipped?: string };
+    room.autoTaught = [...(room.autoTaught ?? []), mark]; save(k, room);
+    try { const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
+      await api.start(id, { action: "teach", lang, confirm: offer.hash, images: false, auto: true }, by);
+      const r2 = load(k); const m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.turn = r2.turns.at(-1)?.n; save(k, r2); } }
+    catch (e: any) { const r2 = load(k), m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.skipped = String(e?.message ?? e).slice(0, 300); save(k, r2); notify(k); } }
   }
   // ---------- the Library: a room's read-only snapshot, one artifact per room, a version per save ----------
   let libMemo: ArtifactStore | null = null;
@@ -1145,6 +1171,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   };
   /** the room's languages for the page: the translations kept, the last translation turn, and what translating would cost */
   const langView = (r: Room | null, open: boolean) => ({ translations: r?.translations ?? {}, translating: r?.translating ?? null, langs: ROOM_LANGS, images: !!r?.images?.on,
+    autoTeach: { on: r?.autoTeach ?? settings().autoTeach, room: r?.autoTeach ?? null, global: settings().autoTeach, skipped: (r?.autoTaught ?? []).filter((x) => x.head === (r?.pr?.head ?? r?.head) && x.skipped).map((x) => x.skipped).at(-1) ?? null },
     tutors: open && r ? (() => { try { const k0 = keyOf(r.card); const s0 = subjectOf(k0); return s0.run && s0.node ? tutorsOf(s0.run, (() => { const o0 = offerOf(k0); return "error" in o0 ? null : { provider: o0.provider, model: o0.model }; })()) : []; } catch { return []; } })() : [],
     library: r?.library && library().get(r.library.artifact) ? { artifact: r.library.artifact, versions: r.library.versions, current: r.library.sig === contentSig(r) } : null,
     translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
@@ -1209,11 +1236,17 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       for (const run of engine.list()) { const d = join(engine.rdir(run.id), "review-room"); if (!existsSync(d)) continue; try { for (const f of readdirSync(d)) if (/^(SC-\d+|R-\d+)\.json$/.test(f)) push(f.slice(0, -5), join(d, f)); } catch {} }
       return out.sort((a, b) => Number(b.open) - Number(a.open) || b.updatedAt.localeCompare(a.updatedAt)).slice(0, 60); },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
-    async openPr(url: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); return { id, href: `#/room/${id}`, room: this.view(id) }; },
+    async openPr(url: unknown, by = "captain", lang?: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en"); return { id, href: `#/room/${id}`, room: this.view(id) }; },
+    /** Studio-wide settings of the review room (autoTeach: a pasted pull request's lesson starts by itself) */
+    settings() { return settings(); },
+    setSettings(a: { autoTeach?: unknown }) { if (typeof a?.autoTeach !== "boolean") throw refuse("autoTeach is true or false", "bad_request"); writeFileSync(settingsFile(), JSON.stringify({ ...settings(), autoTeach: a.autoTeach })); return settings(); },
+    /** this room's own auto-teach switch (a pull request's room) */
+    autoTeachFor(id: string, on: unknown) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request"); const room = load(k); if (!room) throw refuse("No such review room", "not_found");
+      room.autoTeach = on; save(k, room); notify(k); return this.view(id); },
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
-    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown }, by: string) {
+    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown; auto?: boolean }, by: string) {
       let k = keyOf(id);
       if (k.kind === "pr") { const r0 = load(k);
         // a paid turn reads the pull request again first when it was read a while ago: merged or closed by now, the turn is refused
@@ -1261,7 +1294,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
-      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
+      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), ...(a.auto ? { auto: true as const } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
       // the room's opening picture, once, only now: a confirmed paid round with pictures on
       if (room.images?.on) pregenerate(k);

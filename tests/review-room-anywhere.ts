@@ -271,6 +271,7 @@ const TOOLRES: [string, any][] = [];
   const adapter = new GitHubPrAdapter(grant, () => "fake-test-token", 15_000, H.data);
   const room = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data), github: (p: any) => p.github?.repository === grant.repository ? adapter : null,
     web: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
+  room.setSettings({ autoTeach: false }); // a pasted pull request's lesson starting by itself is tested on its own (the host block)
   E.actions.prep = async (x: any) => { Object.assign(x.ctx, { project: "proj", repo: local, worktree: local, baseCommit: must(local, ["rev-parse", "main"]), head: A, pr: { adapter: "github", id: "1", url: "https://github.com/fixture/project/pull/1", head: A } }); x.save(); return "ok"; };
   const host = E.start({ workflow: "pr-host", params: {} }); await until(() => E.cards.list({ run: host.id, open: true }).length > 0, 20000);
   const script: any[][] = [], prompts: { text: string }[] = [], tutor = scriptedTutor(H, script, prompts), baseProvider = E.deps.provider;
@@ -495,6 +496,7 @@ const TOOLRES: [string, any][] = [];
   const adapter = new GitHubPrAdapter(grant, () => "fake-test-token", 15_000, H.data); let teamWrites = 0; (E.deps as any).teamStaffing = () => { teamWrites++; return null; };
   const room = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data), github: () => adapter, web: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
   const script: any[][] = [], prompts: { text: string }[] = [], selects: any[] = [], tutor = scriptedTutor(H, script, prompts);
+  room.setSettings({ autoTeach: false }); // off for the confirmation tests below; auto-teach on paste is tested at the end of this block
   E.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ run: x.run.id, node: x.node.id, role: c?.role, pick: p }); return { ...tutor(p.provider, p.model), reasoningEffort: p.effort ?? null } as any; };
   const localBefore = JSON.stringify({ refs: must(local, ["for-each-ref"]), objects: must(local, ["count-objects", "-v"]), status: must(local, ["status", "--porcelain"]) });
   // another vendor is usable too: a host room still runs on the project's crew reviewer, never adaptive
@@ -545,6 +547,37 @@ const TOOLRES: [string, any][] = [];
   const hr = E.get(host.id)!;
   ok(!hr.ctx.worktree && !hr.ctx.repo && JSON.stringify({ refs: must(local, ["for-each-ref"]), objects: must(local, ["count-objects", "-v"]), status: must(local, ["status", "--porcelain"]) }) === localBefore && sim.calls.every((c) => c.method === "GET"),
     "no writes anywhere: the host has no worktree or repository, the project's checkout is untouched, every GitHub call a GET", JSON.stringify(sim.calls.filter((c) => c.method !== "GET")));
+  // ---- auto-teach: pasting a pull request starts its lesson by itself (the paste is the consent); once per head; switchable ----
+  { const url = "https://github.com/fixture/project/pull/5", turns = () => (room.view(opened.id) as any).turns.length;
+    headAs(B); const n0 = turns(); await room.openPr(url); await room.settle(opened.id);
+    ok(turns() === n0 && room.settings().autoTeach === false, "auto-teach off (the Studio-wide setting): pasting the pull request starts nothing", JSON.stringify(room.settings()));
+    room.setSettings({ autoTeach: true }); script.push([["msg", "Reading the change."], ["say", "It adds a third line [diff:a.txt]."]]);
+    headAs(B); const out: any = await room.openPr(url, "captain"), running = out.room.running, t = (room.view(opened.id) as any).turns.at(-1); await room.settle(opened.id);
+    const led = E.trusted(host.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
+    ok(running != null && t.action === "teach" && t.auto === true && t.head === B && led?.data.auto === true && led.data.action === "teach" && !(room.view(opened.id) as any).images,
+      "pasting a pull request starts its lesson by itself, no click and no confirmation: an ordinary paid turn marked auto on the ledger, pictures off", JSON.stringify({ running, turn: [t.action, t.auto, t.status], led: led?.data.auto }));
+    const n1 = turns(); headAs(B); await room.openPr(url); room.view(opened.id, true); await room.settle(opened.id);
+    ok(turns() === n1, "pasting it again (or reopening the room) on the same head starts no second lesson", String(turns() - n1));
+    // a new head with a finished lesson already there: nothing starts
+    writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\n"); must(scratch, [...id, "commit", "-qam", "Add four"]); const C = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${C}:refs/pull/5/head`]);
+    headAs(C); const vc: any = await room.check(opened.id); const nC = (vc.turns as any[]).length + 2; // the turn opens with Studio's "what changed" scene first
+    script.push([["board_draw", { items: [{ type: "arch", title: "One file", nodes: [{ id: "reader", label: "Reader", kind: "actor" }, { id: "file", label: "a.txt", kind: "store", mark: "changed" }], edges: [{ from: "reader", to: "file", label: "reads", cite: "diff:a.txt" }] }, { type: "item", title: "Lines", name: "a.txt", before: "Three lines", after: "Four lines", cites: ["diff:a.txt"] }] }],
+      ["scene_show", { chapter: "what", title: "A fourth line", points: [{ text: "It adds a line [diff:a.txt].", cites: ["diff:a.txt"] }, { text: "Nothing else.", cites: [] }] }],
+      ["scene_show", { chapter: "talks", title: "Who reads it", picture: `B${nC}-1`, points: [{ text: "A reader reads it [diff:a.txt].", cites: ["diff:a.txt"] }, { text: "That is all.", cites: [] }] }],
+      ["scene_show", { chapter: "change", title: "Lines", picture: `B${nC}-2`, points: [{ text: "Four lines now [diff:a.txt].", cites: ["diff:a.txt"] }, { text: "One added.", cites: [] }] }],
+      ["chapter_skip", { chapter: "lifecycle", reason: "No state in a text file [diff:a.txt].", cites: ["diff:a.txt"] }], ["chapter_skip", { chapter: "sequence", reason: "No calls in a text file [diff:a.txt].", cites: ["diff:a.txt"] }],
+      ["say", "The lesson [diff:a.txt]."]]);
+    await room.start(opened.id, { action: "teach", confirm: vc.offer.hash }, "captain"); await room.settle(opened.id);
+    const taughtC = (room.view(opened.id) as any).turns.at(-1), n2 = turns(); headAs(C); await room.openPr(url); await room.settle(opened.id);
+    ok(taughtC.status === "done" && taughtC.head === C && turns() === n2, "a head that already has its finished lesson starts nothing when the pull request is pasted", JSON.stringify([taughtC.status, taughtC.error, turns() - n2]));
+    // the room's own switch, off: a new head starts nothing
+    writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\nfive\n"); must(scratch, [...id, "commit", "-qam", "Add five"]); const D = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${D}:refs/pull/5/head`]);
+    headAs(D); await room.check(opened.id); const off: any = room.autoTeachFor(opened.id, false), n3 = turns(); headAs(D); await room.openPr(url); await room.settle(opened.id);
+    ok(off.autoTeach.on === false && off.autoTeach.global === true && turns() === n3, "the room's own switch turned off: a new head starts nothing, whatever the Studio-wide setting", JSON.stringify(off.autoTeach));
+    // when it cannot start, the room keeps why (and shows the ordinary teach button with it)
+    room.autoTeachFor(opened.id, true); const realStart = room.start; (room as any).start = async () => { throw Object.assign(new Error("No tutor can run on this Mac now"), { code: "no_tutor" }); };
+    headAs(D); await room.openPr(url); (room as any).start = realStart; const vs: any = room.view(opened.id);
+    ok(turns() === n3 && /No tutor can run on this Mac now/.test(vs.autoTeach.skipped ?? ""), "when the lesson cannot start by itself, nothing runs and the room says why", JSON.stringify(vs.autoTeach)); }
   sim.stop(); H.stop();
 }
 end();
