@@ -73,7 +73,7 @@ const diamondPath = (x, y, w, h) => `M${x + w / 2},${y} L${x + w},${y + h / 2} L
 /** the parts of a picture this viewer has seen drawn (a diagram's steps share one set, so a step draws only what it adds) */
 const drawnOf = (card, it) => { const key = `${card}/${it.group ? `${it.turn}:${it.group}` : it.id}`; if (!RR.drawn.has(key)) RR.drawn.set(key, new Set()); return RR.drawn.get(key); };
 /** the picture's box, roughly: the board's left column on a desktop, the top of the board on a phone */
-const picBox = () => innerWidth <= 760 ? { narrow: true, w: innerWidth - 40, h: innerHeight * 0.42 } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.classList.contains("room-focus") ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
+const picBox = () => innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.classList.contains("room-focus") ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
 const reduceMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 /** a flowchart's places, left to right (horiz) or top down; node size from its longest label */
 function flowLayout(g, horiz, fs) {
@@ -90,9 +90,11 @@ function flowLayout(g, horiz, fs) {
  *  (the step before) are marked new; what this viewer has not seen drawn yet (`seen`, kept per picture) is drawn by the pen,
  *  180ms apart; the rest shows at once. Studio picks the layout that reads largest in the box: top down on a phone. */
 function flowSvg(g, prev, seen, box) {
-  const fs = 19, narrow = box?.narrow, want = g.dir === "LR" || g.dir === "RL";
-  const cands = narrow ? [flowLayout(g, false, fs)] : [flowLayout(g, want, fs), flowLayout(g, !want, fs)];
+  const narrow = box?.narrow, want = g.dir === "LR" || g.dir === "RL";
   const fit = (L) => Math.min(1.5, (box?.w || 800) / L.maxX, (box?.h || 520) / L.maxY);
+  // on a phone: top down, and the labels at least 14px on screen (a larger font in the picture when it is scaled down)
+  let fs = 19; if (narrow) for (let i = 0; i < 4; i++) { const sc = fit(flowLayout(g, false, fs)); if (fs * sc >= 14) break; fs = Math.ceil(14 / sc) + 1; }
+  const cands = narrow ? [flowLayout(g, false, fs)] : [flowLayout(g, want, fs), flowLayout(g, !want, fs)];
   const L = cands.reduce((a, b) => (fit(b) > fit(a) * 1.15 ? b : a)), { horiz, W, H, pos, maxX, maxY, labels } = L;
   if (L.horiz === want && (g.dir === "RL" || g.dir === "BT")) for (const p of pos.values()) { if (g.dir === "RL") p.x = maxX - W - p.x; else p.y = maxY - H - p.y; }
   const old = prev ? { nodes: new Set(prev.nodes.map((n) => n.id)), edges: new Set(prev.edges.map((e) => `${e.from}>${e.to}`)) } : null;
@@ -105,7 +107,7 @@ function flowSvg(g, prev, seen, box) {
   for (const n of g.nodes) { const p = pos.get(n.id), isNew = old && !old.nodes.has(n.id), grp = sv("g", { class: `rr-node${isNew ? " rr-new" : ""}`, "data-node": n.id });
     const shape = sv("path", { class: "rr-box", pathLength: 1, d: n.shape === "diamond" ? diamondPath(p.x, p.y, W, H) : boxPath(p.x, p.y, W, H, n.shape === "round" || n.shape === "circle" ? 26 : 10) });
     grp.append(pen(shape, `n:${n.id}`, 0.45));
-    const ls = labels.get(n.id); ls.forEach((l, i) => { const tx = sv("text", { x: p.x + W / 2, y: p.y + H / 2 + (i - (ls.length - 1) / 2) * (fs + 4) + fs * 0.35, "text-anchor": "middle" }); tx.textContent = l; grp.append(write(tx, `n:${n.id}`, t + 0.3 + i * 0.12)); });
+    const ls = labels.get(n.id); ls.forEach((l, i) => { const tx = sv("text", { x: p.x + W / 2, y: p.y + H / 2 + (i - (ls.length - 1) / 2) * (fs + 4) + fs * 0.35, "text-anchor": "middle", "font-size": fs, style: `font-size:${fs}px` }); tx.textContent = l; grp.append(write(tx, `n:${n.id}`, t + 0.3 + i * 0.12)); });
     if (anim && !seen.has(`n:${n.id}`)) { fresh.push(`n:${n.id}`); t += 0.18; }
     svg.append(grp); }
   for (const e of g.edges) { const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) continue;

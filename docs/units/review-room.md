@@ -33,6 +33,11 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   picture's step, the point and the caption move together; a point stays max(2.6 s, 170 ms a character), or as long as
   the voice reads it. Studio lays a flowchart out left to right or top down, whichever reads larger in the box. The caption
   is a paper strip.
+- **On a phone** (390×844): the room is still one screen. The picture is on top (Studio lays a flowchart out top down,
+  with a larger font when it has to scale the picture down, so its labels read at 14px or more), one point card under it
+  (the current point; the caption is merged into it), the play bar, and in place of the prompt a read-only note: a phone
+  cannot start a paid turn (the server refuses it anyway). The header keeps back, the subject, the pull request's state
+  and Firstmate.
 - **The welcome scene** (scene 1, Studio's own, free): "This room is only about <the pull request or branch>", the change's
   line counts by file as a chart, three points (the size of the change and where most of it is, its state: a reviewer's
   verdict, Studio's review or checks, and how to start), and "Teach me this change" (教我這個 PR), a paid turn that asks to
@@ -464,6 +469,8 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     pen draws only what is new …", "the board is paper …", "the handwriting is Studio's own …", "with reduced motion …",
     "dark: the paper is #1b1f27 …", "a new room opens on Studio's welcome scene …", "the welcome scene's lesson still asks
     to confirm …".
+27. A phone: the picture on top, one point card under it, a top-down flowchart with labels of 14px or more, the prompt a
+    read-only note, nothing scrolls. — review-room-ui "390×844: the picture on top and one point card under it …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

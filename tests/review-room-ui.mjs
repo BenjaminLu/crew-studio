@@ -374,6 +374,14 @@ try {
     ok(/裝置上的語音辨識/.test(await p.getAttribute("[data-mic]", "title")), "without on-device recognition the mic stays off and says why");
     ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] header")) && /語音關/.test(await p.textContent("[data-voice]")), "zh-TW: the stage, the transcript and the voice choice read in Chinese");
     ok(await noScroll(p), "no sideways scroll at 390");
+    // a phone: the picture on top (a flowchart laid out top down, its labels at least 14px), one point card under it that is
+    // the caption, a read-only note instead of the prompt
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
+    const ph = await p.evaluate(() => { const vis = (e) => !!e && e.checkVisibility(), v = document.querySelector("[data-visual]").getBoundingClientRect(), pts = [...document.querySelectorAll("[data-stage] .rr-point")].filter(vis), card = pts[0]?.getBoundingClientRect(), main = document.querySelector("#main");
+      const svg = document.querySelector("[data-visual] svg.rr-flow"), label = svg?.querySelector("[data-node] text"), px = label ? parseFloat(getComputedStyle(label).fontSize) * svg.getScreenCTM().a : 0;
+      return { doc: document.documentElement.scrollHeight - innerHeight, main: main.scrollHeight - main.clientHeight, above: !!card && v.bottom <= card.top + 1, inView: v.top >= 0 && (card?.bottom ?? 999) <= innerHeight, shown: pts.length, caption: vis(document.querySelector("[data-caption]")), layout: svg?.dataset.layout, px: Math.round(px * 10) / 10,
+        note: vis(document.querySelector("[data-room-phone]")), chips: vis(document.querySelector("[data-room-action]")), input: vis(document.querySelector("[data-room-text]")) }; });
+    ok(ph.doc <= 0 && ph.main <= 0 && ph.above && ph.inView && ph.shown === 1 && !ph.caption && ph.layout === "TD" && ph.px >= 14 && ph.note && !ph.chips && !ph.input, "390×844: the picture on top and one point card under it (the caption merged into it), a top-down flowchart with labels of 14px or more, the prompt a read-only note; nothing scrolls", JSON.stringify(ph));
     await p.screenshot({ path: join(shots, "room-390-zh.png") });
     await ctx.close(); }
 
