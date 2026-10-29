@@ -233,7 +233,7 @@ try {
     await ctx.close(); }
 
   // ---------- a pull request by its URL: the URL box, its room (state, new commits, what reviewers asked, what changed) ----------
-  { const PRID = "PR-0123456789ab-7", EVIL = 'Why? <img src=x onerror="window.__pwned=1"> [diff:a.txt]';
+  { const PRID = "PR-0123456789ab-7", EVIL = 'Why? <img src=x onerror="window.__pwned=1"> [diff:a.txt]\nAnd a second line the gist leaves for the original.';
     const rq = (text, ref, quote) => ({ text, kind: "claim", basis: "reviewer", cites: [ok1(ref)], quote });
     const PRROOM = { ...ROOM, card: { id: PRID, run: "R-050", node: "review", title: { en: "Pull request #7: Shout", "zh-TW": "Pull request #7：Shout" }, status: "open" }, task: { id: "R-050", title: "Add percent" },
       subject: { kind: "pr", room: PRID, url: "https://github.com/fixture/project/pull/7", repository: "fixture/project", number: 7 }, pr: { id: "7", url: "https://github.com/fixture/project/pull/7" }, summary: null,
@@ -267,6 +267,12 @@ try {
     const q = await p.evaluate(() => ({ quote: document.querySelector('[data-untrusted="review"]')?.textContent, imgs: document.querySelectorAll(".rr-quote img, .rr-point img").length, pwned: !!window.__pwned, badge: document.querySelector('[data-basis="reviewer"]')?.textContent, chips: [...document.querySelectorAll(".rr-point [data-cite]")].map((e) => e.dataset.cite) }));
     ok(/What reviewers asked/.test(s.title) && q.quote?.includes('<img src=x onerror="window.__pwned=1">') && q.quote.includes("[diff:a.txt]") && q.imgs === 0 && !q.pwned && /Reviewer's words/.test(q.badge) && JSON.stringify(q.chips) === JSON.stringify(["review:c11"]),
       "what reviewers asked: each comment is its words as text (markup stays text, a citation-looking text is no link), labelled a reviewer's words, cited to the comment", JSON.stringify(q));
+    const fold = await p.evaluate(() => { const d = document.querySelector('.rr-point [data-untrusted-fold="review"]'); return d && { open: d.open, gist: d.querySelector(".rr-gist")?.textContent ?? "", shown: d.querySelector("blockquote")?.checkVisibility() ? 1 : 0 }; });
+    await p.click('.rr-point [data-untrusted-fold="review"] summary'); await p.evaluate(() => render());
+    const kept = await p.evaluate(() => document.querySelector('.rr-point [data-untrusted-fold="review"]')?.open === true && document.querySelector('.rr-point [data-untrusted-fold="review"] blockquote')?.checkVisibility());
+    ok(kept, "an opened original stays open across a redraw");
+    await p.click('.rr-point [data-untrusted-fold="review"] summary');
+    ok(!!fold && fold.open === false && fold.shown === 0 && fold.gist.length > 0 && fold.gist.length <= 120, "a reviewer's words show as a one-line gist; the full text stays folded until the captain opens it", JSON.stringify(fold));
     await p.click('[data-cite="review:c11"]'); await p.waitForSelector('[data-cite-panel="review:c11"] [data-untrusted="review"]');
     ok(/rita/.test(await p.textContent("[data-cite-panel]")) && (await p.getAttribute("[data-review-link]", "href")) === "https://github.com/fixture/project/pull/7#discussion_r11" && await p.evaluate(() => !document.querySelector("[data-cite-panel] img")), "the citation opens the comment, as text, with a link to it on GitHub");
     const shown = await p.evaluate(() => [...document.querySelectorAll("[data-stage] .rr-point")].map((e) => { const b = e.getBoundingClientRect(); return [b.height > 0, e.textContent.slice(0, 40)]; }));

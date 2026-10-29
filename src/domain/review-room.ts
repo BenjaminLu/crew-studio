@@ -595,10 +595,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   }
   /** A pull request's reviewers' notes not shown yet: Studio's "what reviewers asked" scene, each one their own words as text, cited to it. */
   function reviewersScene(k: Key, room: Room) {
-    const shown = new Set(room.shown ?? []), notes = (room.pr?.notes ?? []).filter((x) => !shown.has(x.id) && (x.body.trim() || x.state === "APPROVED" || x.state === "CHANGES_REQUESTED")).slice(-30); if (!notes.length) return null;
+    const shown = new Set(room.shown ?? []), fresh = (room.pr?.notes ?? []).filter((x) => !shown.has(x.id) && (x.body.trim() || x.state === "APPROVED" || x.state === "CHANGES_REQUESTED")).slice(-30); if (!fresh.length) return null;
+    // a bot's plain comment (coverage tables, CI summaries) is not a reviewer's question: counted, not shown. A bot's review or
+    // inline comment (an AI reviewer's) is shown like a person's
+    const isBot = (x: Note) => x.kind === "comment" && /\[bot\]$/i.test(x.author), notes = fresh.filter((x) => !isBot(x)), bots = fresh.length - notes.length;
     const claims: Claim[] = notes.map((x) => ({ text: `${x.author} · ${x.kind === "review" ? `review${x.state ? ` (${x.state.toLowerCase().replace(/_/g, " ")}${x.commit ? ` at ${x.commit.slice(0, 8)}` : ""})` : ""}` : x.kind === "inline" ? `on ${glyph(x.path)}${x.line ? `:L${x.line}` : ""}${x.outdated ? " (outdated)" : ""}` : "comment"} [review:${x.id}]`,
       kind: "claim" as const, basis: "reviewer" as const, cites: [{ ref: `review:${x.id}`, ok: true }], quote: x.body.slice(0, 1200) }));
-    const t = studioTurn(room, "reviewers", "What reviewers asked", room.pr!.head, claims); room.turns.push(t); room.shown = [...shown, ...notes.map((x) => x.id)]; return t;
+    if (bots) claims.push({ text: `${bots} bot comment${bots === 1 ? "" : "s"} (coverage, CI and the like) not shown here; they are on GitHub.`, kind: "aside", basis: null, cites: [] });
+    room.shown = [...shown, ...fresh.map((x) => x.id)]; if (!notes.length) return null;
+    const t = studioTurn(room, "reviewers", "What reviewers asked", room.pr!.head, claims); room.turns.push(t); return t;
   }
 
   // ---------- a pull request by its URL: read on GitHub (GET only), its head's objects fetched into Studio's own cache ----------
