@@ -245,7 +245,7 @@ function scenesOf(r) {
   const out = [], opening = r.board.filter((b) => b.turn === 0);
   if (opening.length) out.push({ key: "t0", turn: 0, title: T("This change at a glance", "一眼看懂這個改動"), question: null, visuals: opening, points: [], questions: [] });
   for (const t of r.turns) {
-    const questions = r.check.questions.filter((q) => q.turn === t.n), turnBoard = r.board.filter((b) => b.turn === t.n);
+    const asked = r.check.questions.filter((q) => q.turn === t.n), questions = asked.filter((q) => !q.options), quiz = asked.filter((q) => q.options), turnBoard = r.board.filter((b) => b.turn === t.n);
     const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]) : [];
     // a scene Studio made itself (no model): what changed since the captain last looked, what GitHub reviewers asked
     if (t.studio) { const [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action]; out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: T(en, zh), question: null, visuals: turnBoard, points: claims, questions: [] }); continue; }
@@ -254,11 +254,14 @@ function scenesOf(r) {
       const used = new Set(t.scenes.map((s) => s.picture));
       t.scenes.forEach((s, m) => { const pic = r.board.find((b) => b.id === s.picture), last = m === t.scenes.length - 1;
         out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
-      continue; }
+    } else {
     const heading = claims.find((c) => c.kind === "heading"), { points, extra } = legacyPoints(`t${t.n}`, claims);
     // the scene's title: the answer's heading, else the question itself (shown once, never as "Question: …" beside itself)
     out.push({ key: `t${t.n}`, turn: t.n, t, title: heading ? plain(heading.text.replace(/^\s*#+\s*/, "")) : clip(plain(t.text), 48), question: heading ? t.text : null,
       visuals: [...turnBoard, ...extra], points, questions });
+    }
+    // a multiple-choice check is a scene of its own: one question a page, the options on the board
+    if (quiz.length) out.push({ key: `t${t.n}-quiz`, turn: t.n, t, quiz: true, title: quiz[0].q, question: null, visuals: [], questions: [], points: quiz.map((q) => ({ kind: "quiz", text: q.q, q, cites: q.cites || [], basis: null })) });
   }
   return out;
 }
@@ -317,7 +320,7 @@ function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null
 function advance(card) {
   if (!onRoom(card)) return stopPlay();
   const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), sc = scenes[sceneState(card, scenes)]; if (!sc) return;
-  const k = revealOf(card, sc); if (k >= sc.points.length) { stopPlay(); rerender(); return; }
+  const k = revealOf(card, sc); if (k >= sc.points.length || sc.quiz) { stopPlay(); rerender(); return; }
   RR.pick.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
   if (RR.playing !== card || RR.audio) return;
   const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
@@ -360,6 +363,34 @@ function voicePicker(r) {
   return h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"),
     onchange: (e) => { prefs.set("crew.room.voice", e.target.value === "off" ? null : e.target.value); stopPlay(); rerender(); } }, opts.map(([v, l]) => h("option", { value: v, selected: v === cur || (v === "off" && !opts.some(([x]) => x === cur)) }, l))));
 }
+// ---------- the check on the board: multiple choice, graded by Studio (no model) the moment the captain picks ----------
+const LETTERS = "ABCD";
+async function pickOption(card, q, i, at) {
+  const key = `${card}/q${q.n}`; if (RR.posting.has(key)) return; if (at) RR.reveal.set(at[0], at[1]); // the verdict stays in view: no jump to the next question RR.posting.add(key); RR.err.delete(card); rerender();
+  try { const out = await postJ(`/api/review-room/${enc(card)}/check-answer`, { n: q.n, choice: i }); RR.rooms.set(card, out.room); }
+  catch (e) { RR.err.set(card, e.message); } finally { RR.posting.delete(key); redraw(card); }
+}
+/** a check mark drawn by the pen (a path; the motion only on the first showing) */
+const checkMark = (ok) => sv("svg", { viewBox: "0 0 24 24", class: `rr-mk ${ok ? "ok" : "miss"}`, "aria-hidden": "true" }, sv("path", { d: ok ? "M5 12.5l4.5 4.5L19 7" : "M7 7l10 10M17 7L7 17", pathLength: 1 }));
+function quizView(card, r, q, at) {
+  const answered = !!q.result, open = r.open && !r.offer?.error, busy = RR.posting.has(`${card}/q${q.n}`);
+  return h("div", { class: "rr-quiz", "data-scene-check": "", "data-quiz": q.n, "data-check-result": answered ? (q.result.correct ? "correct" : "missed") : "open" },
+    h("p", { class: "rr-quiz-q rr-hand" }, q.q),
+    h("div", { class: "rr-opts", role: "group", "aria-label": T("Options", "選項") }, q.options.map((o, i) => {
+      const right = answered && i === q.answer, wrong = answered && i === q.choice && !right;
+      return h("button", { type: "button", class: `rr-opt${right ? " right" : wrong ? " wrong" : ""}`, "data-quiz-option": `${q.n}:${i}`, "aria-pressed": String(q.choice === i), disabled: answered || busy || !open, onclick: () => pickOption(card, q, i, at) },
+        h("span", { class: "rr-optk" }, LETTERS[i]), h("span", { class: "rr-optt" }, o), right || wrong ? checkMark(right) : h("span"));
+    })),
+    answered ? h("div", { class: `rr-verdict ${q.result.correct ? "ok" : "miss"}`, role: "status", "data-quiz-verdict": q.result.correct ? "correct" : "missed" },
+      h("b", {}, q.result.correct ? T("Right. ", "答對了。") : T("Not quite. ", "沒答對，再看一次：")), q.why || "", " ", (q.cites || []).map((c) => citeChip(card, c.ref, c.ok))) : null,
+    answered && !q.result.correct && open ? h("button", { type: "button", class: "rr-chip", "data-quiz-reteach": q.n, onclick: () => askTurn(card, "ask", T(`Re-explain question ${q.n} with the board: “${q.q}” I picked ${LETTERS[q.choice]} (${q.options[q.choice]}); the right one is ${LETTERS[q.answer]} (${q.options[q.answer]}).`, `用白板重講第 ${q.n} 題：「${q.q}」我選了 ${LETTERS[q.choice]}（${q.options[q.choice]}），正確是 ${LETTERS[q.answer]}（${q.options[q.answer]}）。`)) },
+      T("Re-explain with the board (a paid round)", "用白板重講（付費一回合）")) : null);
+}
+function quizSide(r, sc) {
+  const qs = sc.points.map((p) => p.q), done = qs.filter((q) => q.result), right = done.filter((q) => q.result.correct).length;
+  return [h("p", { class: "rr-quiz-help" }, T("Pick one. Studio grades it at once (no model, nothing paid); a missed one can be re-explained on the board.", "選一個答案。Studio 立刻評分（不用模型、不付費）；答錯的可以在白板上重講。")),
+    h("p", { class: "rr-ppage", "data-quiz-score": `${right}/${done.length}` }, T(`${right} of ${done.length} right · ${qs.length - done.length} to go`, `答對 ${right}/${done.length} · 還有 ${qs.length - done.length} 題`))];
+}
 /** The stage: the board (the scene's title, its picture on the left, at most four of its points on the right), the caption
  *  and the play bar. One viewport tall with the header and the dock: nothing in it grows the page. */
 function stageView(r) {
@@ -368,14 +399,17 @@ function stageView(r) {
     h("div", { class: "rr-board" }, h("div", { class: "rr-empty", "data-board-empty": "" },
       h("h2", { class: "rr-hand" }, T("Board", "白板")), h("p", { class: "faint" }, T("Ask below. Each answer becomes a scene here: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, revealed one at a time.", "在下方提問。每個回答會在這裡變成一個場景：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個出現。")))),
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }), h("div", { class: "rr-playbar" }, voicePicker(r)));
-  const i = sceneState(card, scenes), sc = scenes[i], k = revealOf(card, sc), n = sc.points.length, picked = RR.pick.get(`${card}/${sc.key}`);
+  const i = sceneState(card, scenes), sc = scenes[i], n = sc.points.length,
+    // a check opens on its first question not answered yet
+    k = sc.quiz && !RR.reveal.has(`${card}/${sc.key}`) ? (sc.points.findIndex((p) => !p.q.result) + 1 || n) : revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`);
   const running = sc.t?.status === "running";
-  const v = (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, k) || (running ? null : fallbackVisual(r, sc));
+  const quizQ = sc.quiz ? sc.points[Math.max(0, k - 1)]?.q : null;
+  const v = sc.quiz ? null : (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, k) || (running ? null : fallbackVisual(r, sc));
   const prev = v?.group ? r.board.filter((b) => b.turn === v.turn && b.group === v.group && (b.step || 0) < (v.step || 0)).sort((a, b) => (a.step || 0) - (b.step || 0)).at(-1) : null;
   const cur = sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
   const page = pageOf(k), shown = sc.points.slice(page * PER, Math.max(page * PER, k)), pages = Math.max(1, Math.ceil(n / PER));
   const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
-  const kicker = sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
+  const kicker = sc.quiz ? T(`Check me · question ${k} of ${n}`, `考考我 · 第 ${k} 題 / ${n}`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
   const pointView = (c, j) => { const at = page * PER + j, now = at === k - 1;
     if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}`, "data-claim": "code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
     return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : " done"}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
@@ -392,17 +426,17 @@ function stageView(r) {
   return h("section", { class: "rr-stage", "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") },
     h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
       h("div", { class: "rr-stitle" },
-        h("span", { class: "rr-kicker" }, sc.studio ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker, pages > 1 ? ` · ${page + 1}/${pages}` : "",
+        h("span", { class: "rr-kicker" }, sc.studio ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker, pages > 1 && !sc.quiz ? ` · ${page + 1}/${pages}` : "",
           sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null),
-        h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, sc.title)),
+        h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, sc.quiz ? T("Check me", "考考我") : sc.title)),
       h("div", { class: "rr-scene" },
-        h("figure", { class: "rr-visual", "data-visual": v?.id || "" },
-          v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")),
+        h("figure", { class: "rr-visual", "data-visual": quizQ ? `quiz-${quizQ.n}` : v?.id || "" },
+          quizQ ? quizView(card, r, quizQ, [`${card}/${sc.key}`, k]) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")),
           sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
         h("div", { class: "rr-points" },
           sc.t && sc.t.status !== "done" ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
-          h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
-          n ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
+          sc.quiz ? quizSide(r, sc) : h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
+          n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
           sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
           sc.t?.status === "done" && sc.t.cost?.usd != null ? h("p", { class: "faint rr-cost" }, `$${Number(sc.t.cost.usd).toFixed(2)} · ${sc.t.provider} · ${sc.t.model}`) : null))),
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),
@@ -410,8 +444,8 @@ function stageView(r) {
       h("button", { type: "button", class: "rr-ibtn", "data-point-prev": "", disabled: i === 0 && k <= 1, onclick: () => stepPoint(card, -1), "aria-label": T("Previous point", "上一點"), title: T("Previous point (←)", "上一點（←）") }, ic("prev")),
       h("div", { class: "rr-dots", role: "group", "aria-label": T("Scenes and points", "場景與重點") }, dots),
       h("button", { type: "button", class: "rr-ibtn", "data-point-next": "", disabled: i === scenes.length - 1 && k >= n, onclick: () => stepPoint(card, 1), "aria-label": T(`Next point (${k}/${n})`, `下一點（${k}/${n}）`), title: T("Next point (→)", "下一點（→）") }, ic("next")),
-      h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play")),
-      h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay")),
+      h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n || sc.quiz, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play")),
+      h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay")),
       h("span", { class: "rr-scenenav" },
         h("button", { type: "button", class: "rr-mini", "data-scene-prev": "", disabled: i === 0, onclick: () => goScene(card, i - 1), "aria-label": T("Previous scene", "上一個場景") }, "«"),
         h("span", { class: "faint", "data-scene-pos": `${i + 1}/${scenes.length}` }, T(`Scene ${i + 1} of ${scenes.length}`, `場景 ${i + 1} / ${scenes.length}`)),
@@ -489,8 +523,8 @@ function drawer(r) {
             h("summary", { onclick: (e) => { const k = `${card}/answer/${sc.t.n}`; e.currentTarget.parentElement.open ? RR.fold.delete(k) : RR.fold.add(k); } }, T("The tutor's full answer", "導師的完整回答")),
             String(sc.t.answer).split(/\n\s*\n/).filter((x) => x.trim()).map((para) => h("p", { class: isTable(para) ? "rr-ans-table" : "" }, inline(card, para.trim(), (sc.t.claims || []).flatMap((c) => c.cites || []))))) : null))),
         h("h3", {}, T("Understanding check", "理解檢查")),
-        q.length ? [h("p", { "data-check-score": "" }, graded.length ? T(`${right} of ${graded.length} correct`, `答對 ${right}/${graded.length}`) : T("Not answered yet: answer in the prompt.", "還沒作答：請在輸入框回答。")),
-          h("ol", { class: "rr-check" }, q.map((x) => h("li", { "data-check": x.n, "data-check-result": x.result ? (x.result.correct ? "correct" : "missed") : "open" }, x.q, x.result?.note ? h("div", { class: "faint" }, x.result.note) : null)))]
+        q.length ? [h("p", { "data-check-score": "" }, graded.length ? T(`${right} of ${graded.length} correct`, `答對 ${right}/${graded.length}`) : (q.some((x) => x.options) ? T("Not answered yet: pick an option on the board.", "還沒作答：請在白板上選一個答案。") : T("Not answered yet: answer in the prompt.", "還沒作答：請在輸入框回答。"))),
+          h("ol", { class: "rr-check" }, q.map((x) => h("li", { "data-check": x.n, "data-check-result": x.result ? (x.result.correct ? "correct" : "missed") : "open" }, x.q, x.options && x.result ? h("div", { class: "faint" }, T(`You picked ${LETTERS[x.choice]} (${x.options[x.choice]}); right: ${LETTERS[x.answer]} (${x.options[x.answer]})`, `你選 ${LETTERS[x.choice]}（${x.options[x.choice]}）；正確 ${LETTERS[x.answer]}（${x.options[x.answer]}）`)) : null, x.result?.note ? h("div", { class: "faint" }, x.result.note) : null)))]
           : h("p", { class: "faint" }, T("Press “Check me” for 2 to 4 short questions. Display only: it never blocks the merge.", "按「考考我」會有 2 到 4 個小問題。僅供參考，不會擋合併。")),
         h("h3", {}, T("Sources", "來源")),
         r.sources.length ? h("ul", { class: "rr-sources" }, r.sources.map((s) => h("li", { "data-source": s.n, "data-source-ok": String(s.ok) }, h("span", { class: "vbadge" }, `${s.n} ${s.kind === "search" ? T("search", "搜尋") : T("page", "網頁")}`), " ",
@@ -584,7 +618,7 @@ routes.room = (arg) => {
   // a scene that arrives while the page is open is revealed point by point; scenes already there show whole
   const scenes = scenesOf(r), seen = RR.seen.get(arg);
   if (!seen) RR.seen.set(arg, new Set(scenes.filter((s) => !s.t || s.t.status !== "running").map((s) => s.key)));
-  else for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key); RR.scene.delete(arg); RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); }
+  else for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key); RR.scene.delete(arg); if (sc.quiz) continue; RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); }
   return h("div", { class: "rr-room", "data-review-room": r.card.id },
     header(r), stageView(r), promptBar(r), drawer(r), citePanel(r),
     RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } } },

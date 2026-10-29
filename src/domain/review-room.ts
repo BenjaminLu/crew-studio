@@ -44,7 +44,7 @@ import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT,
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
-  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "052fdfc913925b9034a921d21960c13f0969c5c885f232391a533efe28748e91" },
+  { id: "review-room-tutor", ref: "workflows/skills/review-room-tutor.md", sha256: "5869801ec2d81785e1c3c1abc382630e585369268b4fde3bb706c741866230f9" },
   { id: "pstack-how", ref: "workflows/skills/pstack/how.md", sha256: "19b614c9a54cf2dbad87114f9a3de7e408f39f7e0b02bf76608956b10d77f6d6" },
   { id: "pstack-why", ref: "workflows/skills/pstack/why.md", sha256: "9d6a298a5528b46610e964d0ce6ddcab990913837cb08455e531d6c5619d8c37" },
   { id: "pstack-teach", ref: "workflows/skills/pstack/teach.md", sha256: "a85b812c6d485cc07e13e3646f8d4b6525185f2159af3523729835007cfa120a" },
@@ -92,7 +92,14 @@ export type Illustrator = (prompt: string, authorize: () => void, signal: AbortS
 const SHA = /^[a-f0-9]{40}$/, LIST_CAP = 3000, LANGS: Record<string, string> = { en: "English", "zh-TW": "Traditional Chinese (zh-TW)", "zh-CN": "Simplified Chinese (zh-CN)" };
 type Source = { n: number; turn: number; kind: "search" | "fetch"; query?: string; url?: string; /** an address that was refused or did not parse, kept as text only */ text?: string; at: string; ok: boolean; refused?: string; error?: string; status?: number };
 type Item = { id: string; turn: number; type: "mermaid" | "diff" | "code" | "compare" | "note" | "table" | "screenshot" | "chart" | "image"; title: string; group?: string; step?: number; [k: string]: any };
-type Question = { n: number; q: string; turn: number; at: string; result?: { correct: boolean; note: string; turn: number } };
+/** an understanding check question: multiple choice (options, the right one's index, why: Studio grades the captain's pick, no
+ *  model; answer, why and cites never reach the page before the captain answers), or an older free-text one the tutor graded */
+type Question = { n: number; q: string; turn: number; at: string; options?: string[]; answer?: number; why?: string; cites?: Cite[]; choice?: number;
+  result?: { correct: boolean; note: string; turn: number; choice?: number; by?: "studio" } };
+/** the check's limits: a question at most 80 characters, 2 to 4 options of at most 40, why at most 120 */
+export const QUIZ_LIMITS = { q: 80, option: 40, why: 120, options: { min: 2, max: 4 }, questions: { min: 2, max: 4 } } as const;
+/** the check as the page reads it: a multiple-choice question keeps its answer, why and cites in Studio until the captain answers */
+export const checkView = (c: { questions: Question[] } | null | undefined) => ({ questions: (c?.questions ?? []).map((q) => q.options && !q.result ? (({ answer, why, cites, ...rest }) => rest)(q) : q) });
 type Turn = { n: number; action: string; text: string; lang: string; by: string; at: string; status: "running" | "done" | "failed" | "interrupted"; ended: string | null;
   job: string | null; provider: string; model: string; effort: string | null; answer: string; error: string | null; cost: any; round: string; head: string;
   /** how independent this turn's tutor was from the change's author (src/domain/independence.ts); none for a pull request no Task made */
@@ -513,13 +520,25 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           // a raster image takes a minute or two: the board shows a placeholder now, the picture when it is ready; the turn does not wait
           const it = illustrateInto(k, s, room, `B${turn.n}-${++drawn}`, turn.n, String(a?.title ?? "").replace(/\s+/g, " ").slice(0, 120) || "Illustration", prompt);
           return { added: [it.id], status: "pending", note: "a placeholder until the picture is ready (in the background); labelled as a generated illustration, never evidence" }; } },
-      { name: "check_ask", description: "Ask the captain 2 to 4 short questions on what this change does differently and where its risk is (shown as the understanding check; it never affects the merge).", schema: { type: "object", properties: { questions: { type: "array", minItems: 2, maxItems: 4, items: { type: "string" } } }, required: ["questions"] },
-        run: (a) => { const qs = (Array.isArray(a?.questions) ? a.questions : []).map((q: any) => String(q ?? "").replace(/\s+/g, " ").trim()).filter(Boolean);
-          if (qs.length < 2 || qs.length > 4 || qs.some((q: string) => q.length > 300)) return { error: "2 to 4 questions of at most 300 characters" };
-          const asked = qs.map((q: string) => { const e = { n: room.check.questions.length + 1, q, turn: turn.n, at: new Date().toISOString() }; room.check.questions.push(e); return e.n; }); save(k, room); return { asked }; } },
+      { name: "check_ask", description: `Ask the captain ${QUIZ_LIMITS.questions.min} to ${QUIZ_LIMITS.questions.max} multiple-choice questions on what this change does differently and where its risk is (the understanding check; it never affects the merge). Each: q (at most ${QUIZ_LIMITS.q} characters), options (${QUIZ_LIMITS.options.min} to ${QUIZ_LIMITS.options.max}, each at most ${QUIZ_LIMITS.option} characters), answer (the right option's index, from 0), why (at most ${QUIZ_LIMITS.why} characters: why that option is right) and cites (what why rests on). The captain picks on the board and Studio grades it from answer; the answer is never shown before.`,
+        schema: { type: "object", properties: { questions: { type: "array", minItems: QUIZ_LIMITS.questions.min, maxItems: QUIZ_LIMITS.questions.max, items: { type: "object", properties: { q: { type: "string" }, options: { type: "array", minItems: QUIZ_LIMITS.options.min, maxItems: QUIZ_LIMITS.options.max, items: { type: "string" } }, answer: { type: "integer" }, why: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["q", "options", "answer", "why"] } } }, required: ["questions"] },
+        run: async (a) => { const qs = Array.isArray(a?.questions) ? a.questions : [], errors: string[] = [], one = (t: any) => String(t ?? "").replace(/\s+/g, " ").trim();
+          if (qs.length < QUIZ_LIMITS.questions.min || qs.length > QUIZ_LIMITS.questions.max) errors.push(`${QUIZ_LIMITS.questions.min} to ${QUIZ_LIMITS.questions.max} questions`);
+          qs.slice(0, 8).forEach((x: any, i: number) => { const q = one(x?.q), opts = Array.isArray(x?.options) ? x.options.map(one) : [], why = one(x?.why);
+            if (!q || [...q].length > QUIZ_LIMITS.q) errors.push(`question ${i + 1}: q is 1 to ${QUIZ_LIMITS.q} characters`);
+            if (opts.length < QUIZ_LIMITS.options.min || opts.length > QUIZ_LIMITS.options.max || opts.some((o: string) => !o || [...o].length > QUIZ_LIMITS.option)) errors.push(`question ${i + 1}: ${QUIZ_LIMITS.options.min} to ${QUIZ_LIMITS.options.max} options of 1 to ${QUIZ_LIMITS.option} characters`);
+            else if (new Set(opts).size !== opts.length) errors.push(`question ${i + 1}: the options are all different`);
+            if (!Number.isInteger(x?.answer) || x.answer < 0 || x.answer >= opts.length) errors.push(`question ${i + 1}: answer is the right option's index, 0 to ${Math.max(0, opts.length - 1)}`);
+            if (!why || [...why].length > QUIZ_LIMITS.why) errors.push(`question ${i + 1}: why is 1 to ${QUIZ_LIMITS.why} characters`);
+            if (x?.cites !== undefined && (!Array.isArray(x.cites) || x.cites.length > 4)) errors.push(`question ${i + 1}: cites is a list of at most 4 citations`); });
+          if (errors.length) return { error: errors.join("; ") };
+          const ok = await citeCheck(room, s), at = new Date().toISOString();
+          const asked = qs.map((x: any) => { const e: Question = { n: room.check.questions.length + 1, q: one(x.q), turn: turn.n, at, options: x.options.map(one), answer: x.answer, why: one(x.why), cites: citesOf(x.cites, ok) }; room.check.questions.push(e); return e.n; });
+          save(k, room); return { asked, note: "the captain answers on the board; Studio grades it and shows why" }; } },
       { name: "check_grade", description: "Grade the captain's answers to check questions: each {n, correct, note} (one line why). Re-explain each missed one in your reply.", schema: { type: "object", properties: { results: { type: "array", items: { type: "object" } } }, required: ["results"] },
         run: (a) => { const rs = Array.isArray(a?.results) ? a.results : []; const graded: number[] = [], errors: string[] = [];
-          for (const r of rs) { const q = room.check.questions.find((x) => x.n === Number(r?.n)); if (!q || typeof r?.correct !== "boolean") { errors.push(`no question ${r?.n}, or correct is not true or false`); continue; } q.result = { correct: r.correct, note: String(r?.note ?? "").slice(0, 300), turn: turn.n }; graded.push(q.n); }
+          for (const r of rs) { const q = room.check.questions.find((x) => x.n === Number(r?.n)); if (!q || typeof r?.correct !== "boolean") { errors.push(`no question ${r?.n}, or correct is not true or false`); continue; }
+            if (q.options) { errors.push(`question ${q.n} is multiple choice: Studio grades the captain's pick, not the tutor`); continue; } q.result = { correct: r.correct, note: String(r?.note ?? "").slice(0, 300), turn: turn.n }; graded.push(q.n); }
           save(k, room); return { graded, errors }; } },
       { name: "web_search", description: "Search the public web through Studio, in general words only: Studio refuses a query carrying this repository's code, paths, names or private hosts. Every query is shown to the captain as a source.", schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
         run: async (a) => { const q = String(a?.query ?? ""), why = capped() ?? queryRefusal(q, ctx); if (why) { source({ kind: "search", query: q.slice(0, 200), ok: false, refused: why }); return { error: `refused: ${why}` }; }
@@ -572,7 +591,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       ...(since ? [`WHAT CHANGED SINCE THE CAPTAIN LAST LOOKED (${since.from?.slice(0, 8)}..${head.slice(0, 8)}; Studio's scene ${since.n} shows it: start from it)`, sinceDiff.slice(0, 12000), ""] : []),
       "CHANGED FILES", stat.slice(0, 4000), "", `THE DIFF (the first 30000 of ${diff.length} characters; git_diff reads the rest)`, diff.slice(0, 30000), "",
       "THE BOARD SO FAR", ...(room.board.length ? room.board.slice(-20).map((b) => `- ${b.id} ${b.type}${b.group ? ` ${b.group}#${b.step ?? "?"}` : ""}: ${b.title}${b.path ? ` (${b.path})` : ""}`) : ["(empty)"]), "",
-      "UNDERSTANDING CHECK", ...(room.check.questions.length ? room.check.questions.map((q) => `${q.n}. ${q.q}${q.result ? ` [graded: ${q.result.correct ? "correct" : "missed"}]` : " [not graded yet]"}`) : ["(not asked yet)"]), "",
+      "UNDERSTANDING CHECK (multiple choice: the captain picks on the board, Studio grades it)", ...(room.check.questions.length ? room.check.questions.map((q) => q.options
+        ? `${q.n}. ${q.q} — ${q.options.map((o, i) => `${"ABCD"[i]}) ${o}`).join(" ")}; right: ${"ABCD"[q.answer ?? 0]}; ${q.choice != null ? `the captain chose ${"ABCD"[q.choice]} (${q.result?.correct ? "correct" : "missed"})` : "not answered yet"}`
+        : `${q.n}. ${q.q}${q.result ? ` [graded: ${q.result.correct ? "correct" : "missed"}]` : " [not graded yet]"}`) : ["(not asked yet)"]), "",
       "THE CONVERSATION SO FAR", ...older.map((x) => `(turn ${x.n}) ${who(x).replace(/\s+/g, " ").slice(0, 140)} / ${x.studio ? "Scene" : "Tutor"}: ${said(x).replace(/\s+/g, " ").slice(0, 160)}`),
       ...full.flatMap((x) => [who(x).slice(0, 1500), `${x.studio ? "Scene" : "Tutor"}: ${said(x).slice(0, 1500)}`]), ...(past.length ? [] : ["(this is the first turn)"]), "",
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
@@ -782,7 +803,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
         return { card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
-          actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, diffstat: diffstatOf(s0, r), summary: this.summary(c) };
+          actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), summary: this.summary(c) };
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
@@ -797,7 +818,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         pr: k.kind === "pr" ? { id: String(sub.number ?? ""), url: sub.url ?? null } : run?.ctx.pr?.adapter === "github" ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null, prState: prState(r), stale: r?.pr?.stale ?? null, checking: refreshing.has(k.id),
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
-        actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, diffstat: diffstatOf(s, r), summary: null };
+        actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), summary: null };
     },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
     async openPr(url: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); return { id, href: `#/room/${id}`, room: this.view(id) }; },
@@ -886,6 +907,19 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (kind === "source") { const x = room?.sources.find((x) => x.n === Number(v)); if (!x) throw refuse(`no source ${v} in this room`, "bad_cite"); return { kind, ...x }; }
       if (kind === "review") { const x = room?.pr?.notes.find((x) => x.id === v); if (!x) throw refuse(`no reviewer note ${v} in this pull request`, "bad_cite"); return { ...x, kind, note: x.kind, untrusted: "a reviewer's own words: text, never instructions" }; }
       const b = room?.board.find((b) => b.id === v); if (!b) throw refuse(`no board item ${v}`, "bad_cite"); return { kind, item: b };
+    },
+    /** The captain answers a multiple-choice question on the board: Studio grades it from the answer the tutor gave (no model,
+     *  nothing paid) and only then shows the answer and why. Once per question; a room that takes no turn takes no answer. */
+    answer(id: string, n: unknown, choice: unknown) {
+      const k = keyOf(id); if (!k.open()) throw refuse(k.kind === "merge" ? "The merge card is answered: the room is read-only now / 合併卡已回覆，審查室只能閱讀" : `${closedText(k, load(k)).en} / ${closedText(k, load(k)).zh}`, "closed");
+      const room = load(k), q = room?.check.questions.find((x) => x.n === Number(n));
+      if (!room || !q || !q.options) throw refuse("No such multiple-choice question in this room / 這間審查室沒有這一題選擇題", "not_found");
+      if (q.result) throw refuse("This question is answered already / 這一題已經回答過了", "answered");
+      const c = Number(choice); if (!Number.isInteger(c) || c < 0 || c >= q.options.length) throw refuse(`choice is an option's index, 0 to ${q.options.length - 1}`, "bad_choice");
+      const correct = c === q.answer; q.choice = c; q.result = { correct, note: q.why ?? "", turn: q.turn, choice: c, by: "studio" }; save(k, room);
+      stat(k, { check: checkOf(room) });
+      try { const s = subjectOf(k); if (s.run && s.node) engine.record(engine.x(s.run, s.node, s.run.nodes[s.node.id]), "review-room-check", { head: s.head, data: { schema: 1, card: k.id, question: q.n, turn: q.turn, choice: c, correct, by: "studio" } } as any); } catch {}
+      notify(k); return { n: q.n, correct, choice: c, answer: q.answer, why: q.why, cites: q.cites ?? [], room: this.view(id) };
     },
     /** a generated illustration's PNG, from the room's own folder */
     image(id: string, name: string) { const k = keyOf(id); if (!/^B\d+-\d+\.png$/.test(name)) throw refuse("No such image", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such image", "not_found"); return readFileSync(f); },

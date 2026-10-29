@@ -264,6 +264,27 @@ try {
     ok(zh.title === "一眼看懂這個改動" && /一眼看懂這個改動/.test(zh.foot) && !/This change at a glance|mermaid/.test(zh.stage + flow) && /流程圖/.test(flow), "a Chinese room has no English titles or badges: Studio's titles and every picture's kind read in Chinese", JSON.stringify({ zh, flow }));
     await ctx.close(); }
 
+  // ---------- the check as multiple choice: option buttons on the board, Studio grades the pick, a miss can be re-explained ----------
+  { const MC = [{ n: 3, q: "What does percent(1999, 15) return?", turn: 3, at: "t", options: ["300", "299", "299.85"] }, { n: 4, q: "Where could rounding surprise a user?", turn: 3, at: "t", options: ["Negative amounts", "Halves of a cent"] }];
+    const R3 = { ...ROOM, turns: [...ROOM.turns, { n: 3, action: "quiz", text: "Check my understanding: ask me a few questions.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "Two questions are on the board.", claims: [cl("Two questions are on the board.")] }], check: { questions: [...ROOM.check.questions, ...MC] } };
+    const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const picks = [];
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: R3 }));
+    await p.route(/\/api\/review-room\/SC-50\/check-answer$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); picks.push(b);
+      const qs = R3.check.questions.map((q) => q.n === b.n ? { ...q, choice: b.choice, answer: 0, why: "Math.round rounds 299.85 up to 300", cites: [ok1("diff:src/percent.ts:L2-3")], result: { correct: b.choice === 0, note: "Math.round rounds 299.85 up to 300", turn: 3, choice: b.choice, by: "studio" } } : q);
+      r.fulfill({ json: { n: b.n, correct: b.choice === 0, room: { ...R3, check: { questions: qs } } } }); });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    let s = await stage(p);
+    const before = await p.evaluate(() => ({ opts: [...document.querySelectorAll("[data-visual] [data-quiz-option]")].map((e) => [e.dataset.quizOption, e.disabled, e.textContent]), marks: document.querySelectorAll("[data-visual] .rr-mk").length, q: document.querySelector(".rr-quiz-q")?.textContent, play: document.querySelector("[data-play]").disabled }));
+    ok(s.scene === "t3-quiz" && before.q === MC[0].q && JSON.stringify(before.opts.map((o) => o[0])) === JSON.stringify(["3:0", "3:1", "3:2"]) && before.opts.every((o) => !o[1]) && !before.marks && before.play, "the check is a scene of option buttons, one question at a time; nothing is marked before the captain picks, and playback never runs through it", JSON.stringify({ s, before }));
+    await p.click('[data-quiz-option="3:1"]'); await p.waitForSelector("[data-quiz-verdict]");
+    const after = await p.evaluate(() => ({ verdict: document.querySelector("[data-quiz-verdict]")?.dataset.quizVerdict, text: document.querySelector("[data-quiz-verdict]")?.textContent, right: document.querySelector('[data-quiz-option="3:0"]').className, wrong: document.querySelector('[data-quiz-option="3:1"]').className, marks: document.querySelectorAll("[data-visual] .rr-mk").length, disabled: [...document.querySelectorAll("[data-quiz-option]")].every((e) => e.disabled), cite: !!document.querySelector('[data-quiz-verdict] [data-cite="diff:src/percent.ts:L2-3"]') }));
+    ok(JSON.stringify(picks) === JSON.stringify([{ n: 3, choice: 1 }]) && after.verdict === "missed" && /299\.85 up to 300/.test(after.text) && /right/.test(after.right) && /wrong/.test(after.wrong) && after.marks === 2 && after.disabled && after.cite && !posts.length, "a pick is sent as {n, choice} and graded by Studio: the right option and the wrong pick are marked, why is shown with its citation; nothing paid ran", JSON.stringify({ picks, after }));
+    await p.click("[data-quiz-reteach]"); await p.waitForSelector('[data-room-confirm="ask"]');
+    ok(/paid model round/.test(await p.textContent("[data-room-confirm]")) && !posts.length, "a missed question offers “re-explain with the board”, a normal paid turn that asks to confirm first");
+    await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector("[data-room-busy]"));
+    ok(posts.length === 1 && posts[0].action === "ask" && /question 3/.test(posts[0].text) && /picked B/.test(posts[0].text), "the re-explanation asks about that question, saying what the captain picked", JSON.stringify(posts));
+    await ctx.close(); }
+
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });
@@ -398,6 +419,9 @@ try {
     ok(r[0] === 404 && r[1] === 404 && r[2] === "not_found" && r[3] === 404, "the real routes answer: no room, no turn and no voice for a card that does not exist", JSON.stringify(r));
     const raw = await fetch(`${base}/api/review-room/SC-999/turn`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(raw.status === 401 || raw.status === 403, "a write without Studio's session is refused", String(raw.status));
+    const ca = await p.evaluate(async () => { const x = await fetch("/api/review-room/SC-999/check-answer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 1, choice: 0 }) }); return [x.status, (await x.json()).code]; });
+    const caRaw = await fetch(`${base}/api/review-room/SC-999/check-answer`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    ok(ca[0] === 404 && ca[1] === "not_found" && (caRaw.status === 401 || caRaw.status === 403), "the check's answer route is real, and like every write it needs Studio's session", JSON.stringify([ca, caRaw.status]));
     await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally { await browser.close(); app.kill(); }

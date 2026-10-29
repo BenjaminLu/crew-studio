@@ -143,7 +143,10 @@ script.push([
   ["illustrate", { title: "Rounding", concepts: ["number", "rounding", "whole number"], layout: "flow" }],
   ["illustrate", { title: "Halves", concepts: ["number line", "half"], layout: "comparison" }],
   ["illustrate", { title: "One too many", concepts: ["number"] }],
+  // the old free-text form is refused; a question over its limits is refused saying which; then the check as multiple choice
   ["check_ask", { questions: ["What does percent(1999, 15) return, and why?", "Where could rounding go wrong for a user?"] }],
+  ["check_ask", { questions: [{ q: "x".repeat(81), options: ["a"], answer: 3, why: "" }, { q: "ok?", options: ["a", "a"], answer: 0, why: "w" }] }],
+  ["check_ask", { questions: [{ q: "What does percent(1999, 15) return?", options: ["300", "299", "299.85"], answer: 0, why: "Math.round rounds 299.85 to 300", cites: ["diff:src/percent.ts:L2-3"] }, { q: "Where could rounding go wrong for a user?", options: ["Negative amounts", "Halves of a cent"], answer: 1, why: "A half cent rounds up, which a user may not expect", cites: ["diff:src/percent.ts:L2-3"] }] }],
   ["fs_write", { path: "src/percent.ts", content: "x" }],
   // a small table on the board, drawn by Studio as text; one too wide is refused
   ["board_draw", { items: [{ type: "table", title: "Rounding cases", rows: [["amount", "15%"], ["1999", "300"], ["1000", 150]], cites: ["diff:src/percent.ts:L2-3"] }, { type: "table", title: "Too wide", rows: [["a", "b", "c", "d", "e", "f"], ["1", "2", "3", "4", "5", "6"]] }] }],
@@ -254,15 +257,28 @@ ok(JSON.stringify(webCalls) === JSON.stringify([["search", "JavaScript Math.roun
 // ---------- the next turn carries the history; the check is graded ----------
 // a codex tutor streams a preamble before its tools and a progress message before its answer: neither is the answer
 const FINAL2 = "You missed how halves round [board:B1-3]. Math.round rounds 0.5 up [source:8].";
-script.push([["msg", "I’ll use the how guidance to explain the mode change and the compatibility check together."], ["check_grade", { results: [{ n: 1, correct: true, note: "300 cents" }, { n: 2, correct: false, note: "missed half-cent rounding" }] }],
+script.push([["msg", "I’ll use the how guidance to explain the mode change and the compatibility check together."], ["check_grade", { results: [{ n: 1, correct: true, note: "300 cents" }] }],
   ["web_fetch", { url: "javascript:alert(document.cookie)" }], ["web_fetch", { url: "https://example.org/rounding-guide" }],
   ["web_search", { query: "half up rounding" }], ["web_fetch", { url: "https://example.org/rounding-guide" }], ["web_fetch", { url: "https://example.org/other-page" }],
   ["web_search", { query: "bankers rounding" }], ["web_search", { query: "rounding modes" }], ["web_search", { query: "decimal rounding" }], ["web_search", { query: "one too many" }], ["msg", "Now I have what I need."], ["msg", FINAL2]]);
-await room.start(merge.id, { action: "ask", text: "1: it returns 300. 2: I am not sure.", lang: "en", confirm: offer.hash }, "captain"); await room.settle(merge.id);
+// ---------- the check: multiple choice, the answer kept in Studio until the captain picks; Studio grades it, no model ----------
+{ const before = room.view(merge.id) as any, qs = before.check.questions, runs = runArgs.length, calls = prompts.length;
+  const cks = results.filter(([n]) => n === "check_ask").map(([, j]) => j);
+  ok(/options of 1 to 40|q is 1 to 80/.test(cks[0].error ?? ""), "the old free-text check is refused: questions are multiple choice now", JSON.stringify(cks[0]));
+  ok(/q is 1 to 80/.test(cks[1].error) && /2 to 4 options/.test(cks[1].error) && /answer is the right option's index/.test(cks[1].error) && /why is 1 to 120/.test(cks[1].error) && /all different/.test(cks[1].error) && JSON.stringify(cks[2].asked) === "[1,2]", "check_ask refuses a question, options, answer or why over its limits, saying which; a valid one is asked", JSON.stringify(cks));
+  ok(qs.length === 2 && qs.every((q: any) => Array.isArray(q.options) && !("answer" in q) && !("why" in q) && !("cites" in q)) && !/Math\.round rounds 299\.85/.test(JSON.stringify(before)), "before the captain answers, the page gets the options and never the answer, why or its citations", JSON.stringify(qs));
+  const r1: any = room.answer(merge.id, 1, 0), r2: any = room.answer(merge.id, 2, 0);
+  let again: any = null; try { room.answer(merge.id, 2, 1); } catch (e) { again = e; }
+  ok(r1.correct === true && r1.answer === 0 && r2.correct === false && r2.answer === 1 && /half cent/.test(r2.why) && r2.cites[0].ok === true && again?.code === "answered", "Studio grades the pick against the tutor's answer and only then shows the answer, why and its citation; a question is answered once", JSON.stringify({ r1: { ...r1, room: 0 }, r2: { ...r2, room: 0 }, again: again?.code }));
+  ok(prompts.length === calls && runArgs.length === runs && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-check" && e.data.question === 2 && e.data.correct === false && e.data.by === "studio"), "grading runs no model and pays nothing; each answer is on the Task's ledger", String(prompts.length));
+  const shown = (room.view(merge.id) as any).check.questions;
+  ok(shown[1].answer === 1 && shown[1].choice === 0 && shown[1].result.correct === false && !!shown[1].why, "once answered, the page shows the captain's pick, the right one and why", JSON.stringify(shown[1])); }
+await room.start(merge.id, { action: "ask", text: "Re-explain question 2 with the board.", lang: "en", confirm: offer.hash }, "captain"); await room.settle(merge.id);
 const v2 = room.view(merge.id) as any;
-ok(prompts[1].text.includes("Captain [teach]: 教我這個改動。") && prompts[1].text.includes("Tutor: ## Overview") && /1\. What does percent\(1999, 15\) return, and why\? \[not graded yet\]/.test(prompts[1].text) && /B1-3 code/.test(prompts[1].text), "the next turn's prompt carries the conversation, the open check and the board", prompts[1].text.slice(-1500));
+ok(prompts[1].text.includes("Captain [teach]: 教我這個改動。") && prompts[1].text.includes("Tutor: ## Overview") && /1\. What does percent\(1999, 15\) return\? — A\) 300 B\) 299 C\) 299\.85; right: A; the captain chose A \(correct\)/.test(prompts[1].text) && /2\. .*the captain chose A \(missed\)/.test(prompts[1].text) && /B1-3 code/.test(prompts[1].text), "the next turn's prompt carries the conversation, the open check and the board", prompts[1].text.slice(-1500));
 ok(v2.turns[1].status === "done" && v2.turns[1].claims.every((c: any) => c.basis === "cited"), "a reply citing a board excerpt and a source is cited");
 ok(v2.turns[1].answer === FINAL2 && !v2.turns[1].claims.some((c: any) => /guidance|what I need/.test(c.text)), "only the tutor's final message is the answer: a preamble before its tools or a progress message before its answer never shows", JSON.stringify(v2.turns[1].answer));
+ok(/multiple choice: Studio grades/.test(results.find(([n]) => n === "check_grade")?.[1].errors[0] ?? "") && (room.view(merge.id) as any).check.questions[0].result.by === "studio", "the tutor cannot grade a multiple-choice question: Studio's grade stands", JSON.stringify(results.find(([n]) => n === "check_grade")));
 const t2src = (v2.sources as any[]).filter((x) => x.turn === 2);
 ok(t2src[0].refused && t2src[0].url === undefined && t2src[0].text === "javascript:alert(document.cookie)", "a javascript: address is refused and kept as plain text, never an address", JSON.stringify(t2src[0]));
 ok(/search results or a documentation host/.test(t2src[1].refused) && t2src[3].ok && t2src[3].url === "https://example.org/rounding-guide" && /search results/.test(t2src[4].refused), "a page is read only after this turn's search returned it, and only that page", JSON.stringify(t2src.slice(1, 5)));

@@ -80,9 +80,18 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   (`SpeechRecognition.available({processLocally: true})`); the transcript fills the question field and is sent only when
   the captain presses Ask. Without on-device recognition the mic stays off and says why.
 
-The **understanding check** (2 to 4 short questions on what the change does differently and where its risk is) appears in
-the scene that asks it; the tutor grades each answer and re-explains a missed one. Answers are as long as the question
-needs: to the point, no filler, not limited to one line.
+The **understanding check** is multiple choice: `check_ask` takes 2 to 4 questions, each `{q, options, answer, why, cites}`
+(a question at most 80 characters, 2 to 4 different options of at most 40, `answer` the right option's index, `why` at most
+120 characters with its citations; `QUIZ_LIMITS`; over a limit the tool says which). The answer, why and its citations stay
+in Studio: the page gets the question and its options only (`checkView`) until the captain picks. The check is a scene of
+its own, one question a page with big option buttons (playback never runs through it); a pick is
+`POST /api/review-room/<card>/check-answer {n, choice}` (the desktop captain, the same gates as a turn; once per
+question), and Studio grades it from the tutor's answer, no model and nothing paid: the right option and a wrong pick are
+marked by colour and a drawn mark, why is shown with its citation, a `review-room-check` ledger entry records it. A missed
+question offers "Re-explain with the board", a normal paid turn (confirmed like any other) that names the question and the
+pick. The tutor's prompt lists each question's options, the right one and the captain's pick; `check_grade` grades only an
+older free-text question (shown read-only in its scene). Answers are as long as the question needs: to the point, no
+filler, not limited to one line.
 
 The merge card shows a summary: questions asked in the room, the check score, sources consulted. Display only: the room
 never answers the merge card, never holds or releases it, and never changes merge readiness. The card's stored file, its
@@ -425,6 +434,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "a table is a board item …", "a markdown table in an answer is not a claim …"; review-room-ui "a scene the tutor
     showed …", "the tutor's full answer is in the transcript …", "an older long answer is split by sentence …", "the table
     is drawn by Studio as text cells", "a Chinese room has no English titles or badges …".
+25. The check is multiple choice, graded by Studio: check_ask refuses the old free-text form and anything over its limits;
+    the page never gets the answer, why or its citations before the captain picks; a pick is graded once, with no model,
+    and recorded; the tutor cannot grade it; its prompt carries the picks. — review-room "the old free-text check is
+    refused …", "check_ask refuses a question …", "before the captain answers, the page gets the options …", "Studio
+    grades the pick …", "grading runs no model …", "once answered, the page shows …", "the tutor cannot grade a
+    multiple-choice question …", "the next turn's prompt carries …"; review-room-ui "the check is a scene of option
+    buttons …", "a pick is sent as {n, choice} …", "a missed question offers …", "the re-explanation asks about that
+    question …", "the check's answer route is real …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

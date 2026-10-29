@@ -206,3 +206,20 @@ body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bot
 .rr-answer summary { cursor: pointer; color: var(--text-2); }
 .rr-answer p { margin: 6px 0; }
 .rr-ans-table { white-space: pre-wrap; font: 12px/1.5 var(--f-mono); }
+/* the check on the board: big option buttons; right and wrong by colour and by a drawn mark */
+.rr-quiz { width: 100%; height: 100%; display: grid; align-content: center; gap: 10px; min-height: 0; overflow: auto; }
+.rr-quiz-q { margin: 0 0 4px; font-size: 22px; line-height: 1.35; overflow-wrap: anywhere; }
+.rr-opts { display: grid; gap: 8px; }
+.rr-opt { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; gap: 10px; text-align: left; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); border-radius: 12px; padding: 10px 12px; min-height: 48px; font: inherit; font-size: 15px; cursor: pointer; transition: border-color .2s, background-color .2s, transform .12s; }
+.rr-opt:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+.rr-opt:disabled { cursor: default; }
+.rr-optk { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid currentColor; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: var(--text-2); }
+.rr-optt { overflow-wrap: anywhere; }
+.rr-opt.right { border-color: var(--ok); background: var(--ok-soft); } .rr-opt.right .rr-optk { color: var(--ok); }
+.rr-opt.wrong { border-color: var(--bad); background: var(--bad-soft); } .rr-opt.wrong .rr-optk { color: var(--bad); }
+.rr-mk { width: 22px; height: 22px; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.rr-mk.ok { stroke: var(--ok); } .rr-mk.miss { stroke: var(--bad); }
+.rr-verdict { font-size: 14px; border-radius: 10px; padding: 8px 12px; background: var(--surface-2); }
+.rr-verdict.ok { background: var(--ok-soft); } .rr-verdict.miss { background: var(--bad-soft); }
+.rr-quiz-help { margin: 0; font-size: 15px; color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .rr-opt { transition: none; } }
