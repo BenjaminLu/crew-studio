@@ -699,6 +699,17 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const verdicts = [...latest.values()].map((x) => ({ author: x.author, state: x.state!, commit: x.commit ?? null, current: x.commit === pr.head }));
     return { state: pr.merged ? "merged" : pr.state, draft: pr.draft, mergedAt: pr.mergedAt, closedAt: pr.closedAt, checkedAt: pr.checkedAt, head: pr.head, headRef: pr.headRef, headRepo: pr.headRepo, baseRef: pr.baseRef, author: pr.author, title: pr.title,
       files: pr.files.length, truncated: pr.truncated, verdicts, approved: verdicts.some((v) => v.state === "APPROVED" && v.current) && !verdicts.some((v) => v.state === "CHANGES_REQUESTED") }; };
+  /** the change's line counts per file, counted by git (base to head; a pull request Studio has no commits of yet: what GitHub
+   *  listed): the room's free pictures (the welcome scene, an answer that drew none) are drawn from these. Cached per head. */
+  const statMemo = new Map<string, { files: { path: string; added: number; removed: number }[]; total: { files: number; added: number; removed: number }; from: "git" | "github" }>();
+  const diffstatOf = (s: { wt: string; base: string; head: string } | null, room: Room | null) => {
+    const sum = (files: { path: string; added: number; removed: number }[], from: "git" | "github") => ({ files: files.slice(0, 300), total: { files: files.length, added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) }, from });
+    if (s) { const key = `${s.wt}\0${s.base}\0${s.head}`, had = statMemo.get(key); if (had) return had;
+      const r = git(s.wt, ["diff", "--numstat", "-M", s.base, s.head]); if (r.ok) {
+        const v = sum(r.out.split("\n").filter(Boolean).map((l) => { const [a, d, ...rest] = l.split("\t"); return { path: glyph(rest.join("\t")).slice(0, 300), added: Number(a) || 0, removed: Number(d) || 0 }; }), "git");
+        if (statMemo.size > 200) statMemo.clear(); statMemo.set(key, v); return v; } }
+    return room?.pr?.files?.length ? sum(room.pr.files.map((f) => ({ path: f.path, added: f.added, removed: f.removed })), "github") : null;
+  };
   /** the head moved past the one the captain last looked at: how many commits (null when the branch was rewritten) */
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
     const known = git(s.wt, ["cat-file", "-e", `${from}^{commit}`]).ok, anc = known && git(s.wt, ["merge-base", "--is-ancestor", from, s.head]).ok;
@@ -724,9 +735,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (k.kind === "merge") { const c = k.card!;
         if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); pregenerate(k); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
+        let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
         return { card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
-          actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, summary: this.summary(c) };
+          actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, diffstat: diffstatOf(s0, r), summary: this.summary(c) };
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
@@ -741,7 +753,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         pr: k.kind === "pr" ? { id: String(sub.number ?? ""), url: sub.url ?? null } : run?.ctx.pr?.adapter === "github" ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null, prState: prState(r), stale: r?.pr?.stale ?? null, checking: refreshing.has(k.id),
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
-        actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, summary: null };
+        actions: Object.entries(ROOM_ACTIONS).filter(([, v]) => v).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: r?.check ?? { questions: [] }, diffstat: diffstatOf(s, r), summary: null };
     },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
     async openPr(url: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); return { id, href: `#/room/${id}`, room: this.view(id) }; },

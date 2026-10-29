@@ -56,6 +56,7 @@ const ROOM = { card: { id: "SC-50", run: "R-050", node: "merge-card", title: { e
     { n: 3, turn: 2, kind: "fetch", text: "javascript:alert(document.cookie)", ok: false, refused: "only http and https addresses", at: "t" },
     // defence in depth: even a stored record that claims an ok javascript: address must never become a link
     { n: 4, turn: 2, kind: "fetch", url: "javascript:alert(2)", ok: true, status: 200, at: "t" }],
+  diffstat: { files: [{ path: "src/percent.ts", added: 4, removed: 0 }, { path: "test/percent.test.ts", added: 3, removed: 1 }], total: { files: 2, added: 7, removed: 1 }, from: "git" },
   check: { questions: [{ n: 1, q: "What does percent(1999, 15) return?", turn: 1, at: "t", result: { correct: true, note: "300", turn: 2 } }, { n: 2, q: "Where could rounding go wrong?", turn: 1, at: "t", result: { correct: false, note: "halves", turn: 2 } }] }, summary };
 
 // speech, stubbed: two on-device voices and one the browser would send to a server; on-device recognition; an audio player
@@ -88,7 +89,7 @@ async function open(width, lang, mic = "available") {
   return { ctx, p, posts, cites, speech, release: () => hold?.() };
 }
 const noScroll = (p) => p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
-const stage = (p) => p.$eval("[data-stage]", (e) => ({ scene: e.dataset.scene, pos: e.querySelector("[data-scene-pos]")?.dataset.scenePos, title: e.querySelector("[data-scene-title]")?.textContent, points: e.querySelectorAll(".rr-point").length,
+const stage = (p) => p.$eval("[data-stage]", (e) => ({ scene: e.dataset.scene, pos: e.querySelector("[data-scene-pos]")?.dataset.scenePos, title: e.querySelector("[data-scene-title]")?.textContent, points: e.querySelectorAll(".rr-point").length, at: e.querySelector("[data-point-pos]")?.dataset.pointPos,
   visual: e.querySelector("[data-visual]")?.dataset.visual, caption: e.querySelector("[data-caption]")?.textContent, nodes: [...e.querySelectorAll("[data-node]")].map((n) => n.dataset.node + (n.classList.contains("rr-new") ? "*" : "")) }));
 try {
   // ---------- the merge card's entry ----------
@@ -122,21 +123,23 @@ try {
     ok(!(await p.$('[data-cite-panel] a')) && /javascript:alert\(2\)/.test(await p.textContent('[data-cite-panel] [data-source-text]')), "a source whose address is not http(s) shows as text in the citation panel, never a link");
     await p.click('[data-cite-panel] .btn');
     const layout = await p.evaluate(() => { const st = document.querySelector("[data-stage]").getBoundingClientRect(), bar = document.querySelector("[data-chat]").getBoundingClientRect(), d = document.querySelector("[data-transcript]");
-      return { stageH: st.height, barH: bar.height, below: bar.top >= st.bottom - 1, drawerOpen: d.open }; });
+      return { stageH: st.height, barH: bar.height, below: bar.top >= st.bottom - 1, drawerOpen: d.dataset.open === "true" }; });
     ok(layout.stageH > layout.barH * 2 && layout.below && layout.drawerOpen === false, "the board takes most of the screen; a slim prompt bar sits under it; the transcript drawer starts closed", JSON.stringify(layout));
-    await p.click("[data-transcript] summary"); const jumps = await p.$$eval("[data-jump]", (els) => els.map((e) => [e.dataset.jump, e.textContent]));
+    await p.click("[data-transcript-toggle]"); const jumps = await p.$$eval("[data-jump]", (els) => els.map((e) => [e.dataset.jump, e.textContent]));
     const links = await p.evaluate(() => ({ js: document.querySelectorAll('a[href^="javascript:" i]').length, src: [...document.querySelectorAll("[data-source]")].map((e) => [e.dataset.source, !!e.querySelector("a"), e.querySelector("[data-source-text]")?.textContent ?? null]) }));
     ok(links.js === 0 && JSON.stringify(links.src) === JSON.stringify([["1", true, null], ["2", false, null], ["3", false, "javascript:alert(document.cookie)"], ["4", false, "javascript:alert(2)"]]), "only a fetched http(s) page is a link; a refused or non-http address is plain text, never an anchor", JSON.stringify(links));
     ok(jumps.length === 3 && /This change at a glance/.test(jumps[0][1]) && /Teach me this change\. → How percent works/.test(jumps[1][1]), "the transcript lists each question and its scene's title", JSON.stringify(jumps));
     await p.click('[data-jump="t1"]'); s = await stage(p);
-    ok(s.scene === "t1" && s.pos === "2/3" && s.title === "How percent works" && s.points === 5 && s.visual === "B1-7", "a click in the transcript jumps to its scene; the visual is the one the last point cites", JSON.stringify(s));
+    ok(s.scene === "t1" && s.pos === "2/3" && s.title === "How percent works" && s.at === "5/5" && s.points === 1 && s.visual === "B1-7" && await p.$eval("[data-transcript]", (e) => e.dataset.open === "false"), "a click in the transcript jumps to its scene and closes the transcript; the visual is the one the last point cites; past four points the next ones are the next page", JSON.stringify(s));
+    await p.keyboard.press("ArrowLeft"); s = await stage(p);
+    ok(s.at === "4/5" && s.points === 4 && s.visual === "B1-7", "← goes back a point: the first page again, at most four points on it", JSON.stringify(s));
     ok(await p.$eval('[data-claim="inference"]', (e) => /Inference/.test(e.textContent)) && await p.evaluate(() => !window.__pwned && !document.querySelector(".rr-point img")), "an uncited point reads Inference; model text with markup stays text");
     // screenshots: before / after toggle
     ok(await p.$eval("[data-visual] [data-shot-side]", (e) => e.dataset.shotSide) === "after" && /screenshot · base and head/.test(await p.textContent('[data-visual] [data-kind="screenshot"]')), "the screenshot is labelled with its kind and shows the head first");
     await p.click('[data-shot-toggle="before"]');
     ok(await p.$eval("[data-visual] [data-shot-img]", (e) => e.dataset.shotImg + " " + e.getAttribute("src")) === "before /api/wruns/R-050/captures/x/before/index.html.png", "Before shows the base's screenshot");
     // play: points appear one at a time, the visual follows the point, the caption reads it
-    await p.click("[data-play]"); s = await stage(p);
+    await p.click("[data-replay]"); s = await stage(p);
     ok(s.points === 1 && s.visual === "B1-1" && /An amount in cents goes into percent/.test(s.caption) && s.nodes.join() === "A,B", "Play starts the scene again: the first point, its picture (the flow's first step) and its caption", JSON.stringify(s));
     await p.click("[data-play]"); await p.click("[data-point-next]"); s = await stage(p);
     ok(s.points === 2 && s.visual === "B1-2" && s.nodes.join() === "A,B,C*" && /rounded to whole cents/.test(s.caption), "the next point brings the next step of the diagram, the part it adds marked new", JSON.stringify(s));
@@ -152,25 +155,25 @@ try {
     await p.click("[data-visual] [data-illustration]"); await p.waitForSelector("[data-zoom] img");
     ok((await p.getAttribute("[data-zoom] img", "src")) === "/api/review-room/SC-50/image/B1-9.png", "a click enlarges the picture");
     await p.click("[data-zoom] button"); ok(!(await p.$("[data-zoom]")), "and Close puts it back");
-    await p.click('[data-jump="t0"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t0"]'); });
+    await p.click('[data-jump="t0"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]'); });
     ok(!!(await p.$("[data-visual] [data-illustration-pending]")) && /paid generated image, made once/.test(await p.textContent("[data-visual] [data-paid-image]")), "the opening picture still being drawn shows a placeholder, labelled as a paid generated image made once");
     // voice: off by default; on-device voices only, the best first; the vendor's own voice for the whole scene
     await p.click('[data-jump="t1"]').catch(() => {});
     const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
     ok(JSON.stringify(voices) === JSON.stringify(["off", "vendor", "local:ava", "local:com.apple.voice.enhanced.en-US.Zoe", "local:com.apple.voice.compact.en-US.Samantha"]) && (await p.$eval("[data-voice]", (e) => e.value)) === "off", "voice is off by default; the choices are the tutor vendor's own voice and this Mac's on-device voices, the best first (none a browser would send away, no novelty or robotic legacy voice)", JSON.stringify(voices));
     // a voice picked before it was dropped (a robotic one) is not kept as silence: the best voice there is takes its place
-    await p.evaluate(() => localStorage.setItem("crew.room.voice", "local:fred")); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t1"]'); });
+    await p.evaluate(() => localStorage.setItem("crew.room.voice", "local:fred")); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); });
     ok((await p.$eval("[data-voice]", (e) => e.value)) === "local:ava", "a saved voice no longer offered falls back to the best one on this Mac", await p.$eval("[data-voice]", (e) => e.value));
     await p.selectOption("[data-voice]", "off");
     // an older macOS: Safari gives every voice, the good ones too, a com.apple.speech.synthesis.voice. address
-    const voicesWith = async (list) => { await p.evaluate((l) => { window.__voices = l; }, list); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t1"]'); }); return p.$$eval("[data-voice] option", (els) => els.map((e) => e.value)); };
+    const voicesWith = async (list) => { await p.evaluate((l) => { window.__voices = l; }, list); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); }); return p.$$eval("[data-voice] option", (els) => els.map((e) => e.value)); };
     const old = (n) => ({ name: n, lang: "en-US", localService: true, voiceURI: `com.apple.speech.synthesis.voice.${n.replace(/ /g, "")}` });
     let vs = await voicesWith(["Samantha", "Zarvox", "Alex", "Fred", "Bad News"].map(old));
     ok(JSON.stringify(vs) === JSON.stringify(["off", "vendor", "local:com.apple.speech.synthesis.voice.Samantha", "local:com.apple.speech.synthesis.voice.Alex"]), "on an older macOS the good voices are offered though they share the legacy address; novelty and legacy voices are still left out", JSON.stringify(vs));
     vs = await voicesWith(["Fred", "Zarvox", "Ralph", "Bubbles"].map(old));
     ok(JSON.stringify(vs) === JSON.stringify(["off", "vendor", "local:com.apple.speech.synthesis.voice.Fred", "local:com.apple.speech.synthesis.voice.Ralph"]), "when this Mac has only legacy voices, they are offered rather than none; a novelty voice never is", JSON.stringify(vs));
     await voicesWith(null);
-    await p.selectOption("[data-voice]", "local:ava"); await p.click("[data-play]"); await p.waitForFunction(() => window.__spoken.length >= 2);
+    await p.selectOption("[data-voice]", "local:ava"); await p.click("[data-replay]"); await p.waitForFunction(() => window.__spoken.length >= 2);
     ok(await p.evaluate(() => window.__spoken[0][0] === "An amount in cents goes into percent ." || /^An amount in cents goes into percent/.test(window.__spoken[0][0])) && await p.evaluate(() => window.__spoken[0][1] === "ava"), "with this Mac's voice each point is spoken as it appears", JSON.stringify(await p.evaluate(() => window.__spoken)));
     await p.click("[data-play]").catch(() => {}); await p.evaluate(() => { window.__spoken = []; });
     await p.selectOption("[data-voice]", "vendor"); await p.click("[data-play]"); await p.waitForFunction(() => !!window.__audio);
@@ -178,7 +181,7 @@ try {
     await p.evaluate(() => { const a = window.__audio; a.currentTime = 6; a.ontimeupdate(); }); s = await stage(p);
     ok(s.points >= 3 && s.points < 5, "the points appear as the narration reaches them", JSON.stringify(s));
     await p.evaluate(() => window.__audio.onended()); s = await stage(p);
-    ok(s.points === 5 && (await p.evaluate(() => window.__spoken.length)) === 0, "when it ends every point is shown; no browser voice spoke over it");
+    ok(s.at === "5/5" && (await p.evaluate(() => window.__spoken.length)) === 0, "when it ends every point is shown; no browser voice spoke over it", JSON.stringify(s));
     await p.selectOption("[data-voice]", "off");
     // a spoken question: on-device recognition, push to talk, the transcript shown before it is sent
     ok(await p.evaluate(() => JSON.stringify(window.__micAsked)) === JSON.stringify({ langs: ["en"], processLocally: true }), "the mic is offered only after the browser says it recognises speech on this device");
@@ -198,11 +201,58 @@ try {
     await p.screenshot({ path: join(shots, "room-1440.png") });
     // leaving the room (a turn still running, a scene playing) leaves its page alone: neither the turn's poll nor the
     // playback redraws the page now on screen, so nothing replaces the button the captain is pressing there
-    await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript] summary"); await p.click('[data-jump="t1"]'); });
+    await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); });
     await p.click("[data-play]"); await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]');
     await p.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.querySelector("#view"), { childList: true }); document.querySelector('[data-pr-url="home"]').dataset.mark = "1"; });
     await p.waitForTimeout(4000);
     ok(await p.evaluate(() => window.__redraws === 0 && document.querySelector('[data-pr-url="home"]').dataset.mark === "1"), "once the captain leaves a room, its poll and its playback no longer redraw the page on screen", String(await p.evaluate(() => window.__redraws)));
+    await ctx.close(); }
+
+  // ---------- one viewport: at 1440×900 the page never scrolls and the picture stays in view at every point ----------
+  { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]');
+    const seen = []; let bad = null;
+    for (let i = 0; i < 30; i++) {
+      const m = await p.evaluate(() => { const v = document.querySelector("[data-visual]").getBoundingClientRect(), main = document.querySelector("#main"), pts = document.querySelector(".rr-points").getBoundingClientRect(), board = document.querySelector(".rr-board").getBoundingClientRect();
+        return { doc: document.documentElement.scrollHeight - innerHeight, main: main.scrollHeight - main.clientHeight, top: Math.round(v.top), bottom: Math.round(v.bottom), left: v.left, right: v.right, w: innerWidth, h: innerHeight, vh: Math.round(v.height), points: document.querySelectorAll("[data-stage] .rr-point").length, ptsIn: pts.bottom <= board.bottom + 1,
+          scene: document.querySelector("[data-stage]").dataset.scene, at: document.querySelector("[data-point-pos]")?.dataset.pointPos ?? null, y: scrollY + main.scrollTop }; });
+      seen.push(`${m.scene}:${m.at}`);
+      if (m.doc > 0 || m.main > 0 || m.top < 0 || m.bottom > m.h || m.left < 0 || m.right > m.w || m.vh < 200 || m.points > 4 || !m.ptsIn || m.y) { bad = m; break; }
+      if (await p.$eval("[data-point-next]", (e) => e.disabled)) break;
+      await p.keyboard.press("ArrowRight");
+    }
+    ok(!bad && seen.length >= 8 && seen.at(-1) === "t2:3/3" && seen.includes("t1:5/5"), "at 1440×900 the page never scrolls and the picture stays fully in view at every point of every scene (→ walks them all), at most four points shown", JSON.stringify({ bad, seen }));
+    await p.keyboard.press(" "); const playing = await p.$eval("[data-play]", (e) => e.getAttribute("aria-pressed"));
+    await p.keyboard.press(" "); const paused = await p.$eval("[data-play]", (e) => e.getAttribute("aria-pressed"));
+    ok(playing === "true" && paused === "false", "Space plays and pauses", JSON.stringify([playing, paused]));
+    // an answer that drew no picture gets Studio's own, free: a key card of the files it is about, never "no picture"
+    let s = await stage(p); const key = await p.evaluate(() => ({ type: document.querySelector("[data-visual] [data-item-type]")?.dataset.itemType, notes: [...document.querySelectorAll("[data-visual] .rr-sticky-name")].map((e) => e.textContent), none: /no picture/i.test(document.querySelector("[data-stage]").textContent) }));
+    ok(s.scene === "t2" && s.visual === "t2-key" && key.type === "keycard" && key.notes.includes("percent.ts") && !key.none && !(await p.$(".rr-novisual")), "an answer with no picture shows Studio's key card (its title, the change's files as notes), never “No picture”", JSON.stringify({ s, key }));
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: { ...ROOM, turns: ROOM.turns.map((t) => t.n === 2 ? { ...t, claims: [...t.claims, cl("The test pins it [diff:test/percent.test.ts].", [ok1("diff:test/percent.test.ts")])] } : t) } }));
+    await p.reload(); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    s = await stage(p); const chart = await p.evaluate(() => ({ chart: document.querySelector("[data-visual] [data-chart]")?.dataset.chart, rows: [...document.querySelectorAll("[data-visual] .rr-chart-l")].map((e) => e.textContent), kind: document.querySelector("[data-visual] [data-kind]")?.textContent }));
+    ok(s.visual === "t2-files" && chart.chart === "diffstat" && JSON.stringify(chart.rows) === JSON.stringify(["test/percent.test.ts"]) && /counted by git/.test(chart.kind), "an answer that cites files but drew nothing gets those files' line counts, counted by git", JSON.stringify({ s, chart }));
+    await ctx.close(); }
+
+  // ---------- focus mode: the room takes the screen and gives it back as it was ----------
+  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });
+    await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    await ctx.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: ROOM }));
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
+    const shell = () => p.evaluate(() => ({ focus: document.body.classList.contains("room-focus"), side: document.body.classList.contains("side-collapsed"), chat: !document.body.classList.contains("chat-closed"), sideW: Math.round(document.querySelector(".side").getBoundingClientRect().width), store: [localStorage.getItem("crew.side"), localStorage.getItem("crew.chatOpen")] }));
+    await p.goto(`${base}/#/board`); await p.waitForFunction(() => S.route?.name === "board"); await p.waitForTimeout(300);
+    const before = await shell();
+    await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForTimeout(300);
+    const inRoom = await shell();
+    ok(before.side === false && before.chat === true && inRoom.focus && inRoom.side && !inRoom.chat && inRoom.sideW <= 64 && JSON.stringify(inRoom.store) === JSON.stringify(["open", "1"]), "in a room the sidebar folds to its 64px rail and Firstmate closes, without changing the saved preferences", JSON.stringify({ before, inRoom }));
+    await p.click("[data-room-firstmate]"); const sheet = await p.evaluate(() => { const c = document.querySelector("#chat").getBoundingClientRect(), st = document.querySelector("[data-stage]").getBoundingClientRect(); return { open: !document.body.classList.contains("chat-closed"), fixed: getComputedStyle(document.querySelector("#chat")).position, stageW: Math.round(st.width) }; });
+    await p.click("#chatClose"); const after = await shell();
+    ok(sheet.open && sheet.fixed === "fixed" && sheet.stageW > 1100 && !after.chat && JSON.stringify(after.store) === JSON.stringify(["open", "1"]), "the header's Firstmate opens it as a sheet over the room (the board keeps its width); closing it saves nothing", JSON.stringify({ sheet, after }));
+    await p.evaluate(() => { location.hash = "#/board"; }); await p.waitForFunction(() => S.route?.name === "board"); await p.waitForTimeout(200);
+    const left = await shell();
+    ok(!left.focus && left.side === false && left.chat === true && JSON.stringify(left.store) === JSON.stringify(["open", "1"]), "leaving the room gives the sidebar and Firstmate back as they were", JSON.stringify(left));
     await ctx.close(); }
 
   // ---------- leaving a room mid-flight: a turn being sent, a citation loading, the mic listening, a scene playing ----------
@@ -227,7 +277,7 @@ try {
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
     await p.waitForFunction(() => document.querySelector("[data-mic]")?.disabled === true);
     ok(/裝置上的語音辨識/.test(await p.getAttribute("[data-mic]", "title")), "without on-device recognition the mic stays off and says why");
-    ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] summary")) && /語音關/.test(await p.textContent("[data-voice]")), "zh-TW: the stage, the transcript and the voice choice read in Chinese");
+    ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] header")) && /語音關/.test(await p.textContent("[data-voice]")), "zh-TW: the stage, the transcript and the voice choice read in Chinese");
     ok(await noScroll(p), "no sideways scroll at 390");
     await p.screenshot({ path: join(shots, "room-390-zh.png") });
     await ctx.close(); }

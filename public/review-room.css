@@ -1,60 +1,139 @@
-/* The review room (public/review-room.js): the board is the stage (a scene: the visual beside the tutor's points, with a
-   caption), a slim prompt bar under it, the transcript in a drawer closed by default. */
-.rr-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
-.rr-top b { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
-.rr-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.rr-stage { padding: 12px 14px; min-width: 0; }
-.rr-scene-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
-.rr-scene-title { flex: 1 1 auto; min-width: 0; display: grid; overflow-wrap: anywhere; }
-.rr-scene-title b { font-size: 17px; }
-.rr-scene { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; min-height: 46vh; }
-@media (max-width: 900px) { .rr-scene { grid-template-columns: minmax(0, 1fr); min-height: 0; } }
-.rr-visual { min-width: 0; }
-.rr-visual .rr-item { border: 0; padding: 0; }
-.rr-novisual { padding: 40px 0; text-align: center; }
-.rr-vstrip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.rr-vchip { font: 12px var(--sans, system-ui); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
-.rr-vchip.on { border-color: var(--accent); color: var(--accent-text, var(--accent)); }
-.rr-points { min-width: 0; overflow-wrap: anywhere; }
-.rr-q { margin: 0 0 10px; color: var(--text-2); }
-.rr-pointlist { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
-.rr-point { animation: rr-in .35s ease-out; }
-.rr-point.now { font-weight: 500; }
-.rr-point.inference { border-left: 3px solid var(--warn, #c9861a); padding-left: 8px; list-style-position: inside; }
+/* The review room (public/review-room.js). A room is the whole screen (focus mode: the sidebar folds to its rail, Firstmate
+   is a sheet over the room): the header, the stage (the board, its caption, the play bar) and the dock, one viewport tall.
+   Nothing in the room grows the page: the board has a fixed height, the picture scales to it, the points column shows at
+   most four points (the next ones are the next page). The transcript and a citation open over the room. */
+
+/* ---------- focus mode ---------- */
+body.room-focus .main { overflow: hidden !important; padding: 0 !important; max-height: none !important; }
+body.room-focus .fab, body.room-focus .ob-tour { display: none !important; }
+body.room-focus:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bottom: 0; height: auto; z-index: 80; width: min(var(--chat-w), 92vw); box-shadow: var(--shadow-2); }
+@media (max-width: 760px) { body.room-focus .side { display: none; } body.room-focus { overflow: hidden; } }
+
+/* ---------- the room: five fixed rows, only the board flexes ---------- */
+.rr-room { height: 100vh; height: 100dvh; display: grid; grid-template-rows: 48px minmax(0, 1fr) 56px; gap: 10px; padding: 12px 24px; box-sizing: border-box; max-width: 1480px; margin: 0 auto; min-width: 0; }
+.rr-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rr-back { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 13px; white-space: nowrap; flex: none; text-decoration: none; cursor: pointer; }
+.rr-back:hover { color: var(--text); background: var(--surface-2); }
+.rr-back:disabled { opacity: .55; cursor: default; }
+.rr-htitle { display: grid; min-width: 0; flex: 1 1 200px; }
+.rr-htitle b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-htitle span { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-pills { display: flex; gap: 6px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.rr-pill { display: inline-block; height: 28px; line-height: 26px; padding: 0 10px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; min-width: 0; flex: 0 1 auto; box-sizing: border-box; }
+.rr-pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; font-weight: 600; }
+.rr-pill.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.rr-pill.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.rr-pill .add { color: var(--ok); } .rr-pill .del { color: var(--bad); }
+.rr-ic { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* the stage: the board, then its caption and its play bar */
+.rr-stage { display: grid; grid-template-rows: minmax(0, 1fr) 52px 40px; gap: 10px; min-height: 0; min-width: 0; }
+.rr-board { min-height: 0; min-width: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 16px; border: 1px solid var(--border); background: var(--surface); padding: 14px 24px; }
+.rr-stitle { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin: 0 0 8px; }
+.rr-kicker { flex: none; font-size: 12px; color: var(--text-3); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.rr-stitle h2 { margin: 0; font-size: 22px; line-height: 1.2; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr-scene { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 28px; min-height: 0; min-width: 0; }
+.rr-visual { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 6px; }
+.rr-visual > .rr-item { min-height: 0; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: 4px; border: 0; padding: 0; margin: 0; background: none; }
+.rr-body { min-height: 0; min-width: 0; overflow: auto; }
+.rr-body.pic { display: grid; place-items: center; overflow: hidden; }
+.rr-body.pic > *, .rr-flow-wrap, .rr-chart-wrap { width: 100%; height: 100%; min-height: 0; min-width: 0; }
+.rr-flow-wrap, .rr-chart-wrap { display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; }
+.rr-flow, .rr-chart, .rr-keycard { width: 100%; height: 100%; display: block; }
+.rr-drawing { display: grid; place-items: center; min-height: 0; }
+.rr-empty { display: grid; align-content: center; justify-items: start; gap: 8px; max-width: 640px; }
+.rr-vstrip { display: flex; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
+.rr-vchip { font: 12px var(--f-sans); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; flex: 0 1 auto; }
+.rr-vchip.on { border-color: var(--accent); color: var(--accent-text); }
+
+/* the points: at most four (a page), each at most three lines; the column never grows the page */
+.rr-points { min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+.rr-pointlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.rr-point { position: relative; padding: 8px 12px 8px 14px; border-left: 3px solid var(--border); border-radius: 0 10px 10px 0; color: var(--text-2); font-size: 15px; line-height: 1.55; animation: rr-in .35s ease-out; }
+.rr-point.now { color: var(--text); border-left-color: var(--accent); background: var(--accent-soft); }
+.rr-point.inference { border-left-style: dashed; }
+.rr-ptext { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.rr-point.code pre { max-height: 9em; overflow: hidden; }
+.rr-ppage { margin: 0; font-size: 12px; }
 @keyframes rr-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .rr-point { animation: none; } }
-.rr-sceneq { margin-top: 12px; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); }
+.rr-sceneq { padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); font-size: 13px; }
 .rr-sceneq ol { margin: 4px 0 0; padding-left: 18px; }
-.rr-caption { margin: 12px 0 0; min-height: 2.6em; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,.78); color: #fff; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
-.rr-caption:empty { visibility: hidden; }
-.rr-playbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-.rr-voice select { max-width: 100%; }
-.rr-bar { display: grid; gap: 6px; min-width: 0; }
-.rr-askrow { display: flex; gap: 8px; min-width: 0; }
-.rr-askrow .input { flex: 1 1 auto; min-width: 0; }
-.rr-drawer summary { cursor: pointer; font-weight: 600; }
-.rr-drawer h3 { font-size: 14px; margin: 12px 0 6px; }
-.rr-jump { background: transparent; border: 0; padding: 2px 0; text-align: left; cursor: pointer; color: var(--text); font: inherit; overflow-wrap: anywhere; }
-.rr-jump:hover .rr-jq { text-decoration: underline; }
+
+/* the caption follows the point being read */
+.rr-caption { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 16px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); font-size: 16px; line-height: 1.4; }
+.rr-who { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); padding-right: 12px; border-right: 1px solid var(--border); }
+.rr-ctext { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.rr-ctext:empty::before { content: "\00a0"; }
+
+/* the play bar: point back, the dots, point forward, play, replay, the scene, the voice */
+.rr-playbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rr-ibtn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); display: grid; place-items: center; flex: none; padding: 0; cursor: pointer; }
+.rr-ibtn:disabled { opacity: .4; cursor: default; }
+.rr-ibtn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+.rr-ibtn.primary .rr-ic { fill: currentColor; }
+.rr-dots { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
+.rr-dot { border: 0; padding: 0 2px; background: none; height: 22px; display: grid; place-items: center; cursor: pointer; }
+.rr-dot i { display: block; width: 8px; height: 8px; border-radius: 99px; background: var(--border-strong); transition: width .25s, background-color .25s; }
+.rr-dot[aria-current="step"] i { width: 24px; background: var(--accent); }
+.rr-scenenav { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.rr-mini { border: 0; background: none; color: var(--text-2); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 14px; }
+.rr-mini:disabled { opacity: .35; cursor: default; }
+.rr-voice select { max-width: 220px; height: 34px; }
+
+/* the dock: quick actions, the question, the transcript; what needs a word opens above it */
+.rr-dock { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-sizing: border-box; }
+.rr-quick { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.rr-chip { height: 36px; padding: 0 12px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; white-space: nowrap; cursor: pointer; flex: none; }
+.rr-chip.lead { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.rr-chip:disabled { opacity: .5; cursor: default; }
+.rr-askrow { flex: 1 1 auto; min-width: 140px; display: flex; align-items: center; gap: 6px; height: 40px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); padding: 0 4px 0 14px; box-sizing: border-box; }
+.rr-askin { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; height: 36px; color: var(--text); font: inherit; }
+.rr-mic, .rr-send { height: 32px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12px; padding: 0 10px; white-space: nowrap; cursor: pointer; }
+.rr-mic.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.rr-send { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+.rr-mic:disabled, .rr-send:disabled { opacity: .5; cursor: default; }
+.rr-dock-note { flex: 1; margin: 0 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-ro-note { display: none; margin: 0 8px; flex: 1; font-size: 13px; }
+.rr-pops { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); display: grid; justify-items: end; gap: 6px; z-index: 20; pointer-events: none; }
+.rr-pops > * { pointer-events: auto; max-width: min(720px, 100%); }
+.rr-pops > [data-heard] { pointer-events: none; }
+.rr-busy { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
+.rr-busy i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; animation: rr-pulse 1s ease-in-out infinite; }
+@keyframes rr-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .rr-busy i { animation: none; } }
+.rr-pop { margin: 0; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-2); font-size: 13px; }
+.rr-pop.rr-err { color: var(--bad); }
+.rr-confirm { border-color: var(--accent); }
+.rr-confirm p { margin: 0 0 8px; }
+
+/* the transcript drawer and a citation: over the room, never pushing the board */
+.rr-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 40; }
+.rr-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 92vw); z-index: 41; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-2); display: grid; grid-template-rows: auto minmax(0, 1fr); transition: transform .25s cubic-bezier(.2, .7, .2, 1), visibility .25s; }
+.rr-drawer[data-open="false"] { transform: translateX(100%); visibility: hidden; }
+.rr-drawer > header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.rr-drawer > header b { flex: 1; font-size: 14px; }
+.rr-drawer-body { overflow: auto; padding: 8px 16px 24px; overflow-wrap: anywhere; }
+.rr-drawer h3 { font-size: 12px; color: var(--text-3); font-weight: 600; margin: 14px 0 6px; }
+@media (prefers-reduced-motion: reduce) { .rr-drawer { transition: none; } }
+.rr-cite-panel { position: fixed; right: 16px; bottom: 96px; width: min(560px, calc(100vw - 32px)); max-height: 60vh; overflow: auto; z-index: 45; border: 1px solid var(--accent); box-shadow: var(--shadow-2); }
+.rr-jump { background: transparent; border: 0; padding: 6px 8px; border-radius: 8px; text-align: left; cursor: pointer; color: var(--text); font: inherit; overflow-wrap: anywhere; width: 100%; }
+.rr-jump:hover { background: var(--surface-2); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.rr-board, .rr-chat, .rr-side, .rr-cite-panel { min-width: 0; overflow-wrap: anywhere; }
-.rr-board h2, .rr-chat h2, .rr-side h2 { font-size: 15px; margin: 0 0 8px; }
-.rr-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin: 0 0 10px; background: var(--surface, transparent); min-width: 0; }
-.rr-item-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 0 0 6px; min-width: 0; }
-.rr-item-h code { overflow-wrap: anywhere; }
-.rr-pre > span { display: block; min-width: max-content; }
-.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--code-bg, rgba(127,127,127,.08)); font: 12px/1.45 var(--mono, ui-monospace, monospace); overflow-x: auto; max-width: 100%; white-space: pre; }
+
+/* ---------- the board's pictures and excerpts ---------- */
+.rr-item { min-width: 0; }
+.rr-item-h { display: flex; flex-wrap: nowrap; gap: 6px; align-items: baseline; margin: 0; min-width: 0; overflow: hidden; font-size: 12px; color: var(--text-2); }
+.rr-item-h b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rr-item-h code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rr-pre > span { display: block; }
+.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--code-bg, rgba(127,127,127,.08)); font: 12.5px/1.5 var(--mono, ui-monospace, monospace); max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rr-diff .add { background: rgba(40,160,80,.16); }
 .rr-diff .del { background: rgba(210,60,60,.16); }
 .rr-diff .hunk { color: var(--text-2); }
 .rr-code i { font-style: normal; color: var(--text-2); user-select: none; }
 .rr-code .hl { background: var(--accent-soft); }
 .rr-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-@media (max-width: 640px) { .rr-compare { grid-template-columns: minmax(0, 1fr); } }
-.rr-steps { border: 1px dashed var(--accent); border-radius: 12px; padding: 8px; margin: 0 0 10px; }
-.rr-step-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 6px; }
-.rr-flow-wrap { overflow-x: auto; max-width: 100%; }
-.rr-flow { max-width: none; height: auto; }
 .rr-flow rect, .rr-flow polygon { fill: var(--surface, #fff); stroke: var(--border-strong); stroke-width: 1.4; }
 .rr-flow text { fill: var(--text, #111); font: 12px var(--sans, system-ui, sans-serif); }
 .rr-flow .rr-edge { stroke: var(--text-2, #666); stroke-width: 1.4; }
@@ -63,40 +142,33 @@
 .rr-flow .rr-elabel { fill: var(--text-2, #555); font-size: 11px; }
 .rr-flow .rr-new rect, .rr-flow .rr-new polygon { stroke: var(--accent); stroke-width: 2.6; fill: var(--accent-soft); }
 .rr-flow line.rr-new { stroke: var(--accent); stroke-width: 2.4; }
-.rr-turns { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px; }
-.rr-msg { padding: 8px 10px; border-radius: 10px; min-width: 0; overflow-wrap: anywhere; }
-.rr-msg.captain { background: var(--accent-soft); margin-left: 12%; }
-.rr-msg.tutor { border: 1px solid var(--border); margin-right: 4%; }
-.rr-answer p, .rr-answer h4 { margin: 0 0 8px; }
-.rr-claim.inference { border-left: 3px solid var(--warn, #c9861a); padding-left: 8px; }
+.rr-keycard .rr-key-title { font-size: 34px; fill: var(--text); }
+.rr-keycard .rr-key-line { stroke: var(--accent); stroke-width: 3; fill: none; stroke-linecap: round; }
+.rr-keycard .rr-sticky rect { fill: #fff3b0; }
+.rr-keycard .rr-sticky-name { font-size: 22px; fill: #1f2a44; }
+.rr-keycard .rr-sticky-dir { font-size: 14px; fill: #5b6478; font-family: var(--f-mono); }
+.rr-turns { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
 .rr-inference { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; margin-right: 6px; border-radius: 6px; background: rgba(201,134,26,.16); color: var(--warn-text, #8a5a0b); }
 .rr-tier { font-size: 11px; font-weight: 600; padding: 0 4px; border-radius: 4px; background: rgba(127,127,127,.14); }
-.rr-cite { font: 11px var(--mono, ui-monospace, monospace); padding: 1px 6px; margin: 0 2px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent-text, var(--accent)); cursor: pointer; max-width: 100%; overflow-wrap: anywhere; }
+.rr-cite { font: 11px var(--mono, ui-monospace, monospace); padding: 1px 6px; margin: 0 2px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent-text, var(--accent)); cursor: pointer; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: 1px; }
 .rr-cite.bad { border-color: var(--bad, #c33); color: var(--bad, #c33); text-decoration: line-through; }
-.rr-basis { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
-.rr-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-.rr-confirm { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: var(--accent-soft); }
-.rr-confirm p { margin: 0 0 6px; }
+.rr-basis { display: flex; flex-wrap: nowrap; gap: 4px; overflow: hidden; }
 .rr-err { color: var(--bad, #c33); }
-.rr-indep { margin: 0 0 6px; }
-.rr-indep.rr-warn { color: var(--warn, #b26b00); }
-.rr-cost { display: block; font-size: 11px; margin-top: 4px; }
+.rr-cost { display: block; font-size: 11px; margin: 0; }
 .rr-check, .rr-sources { margin: 0 0 10px; padding-left: 18px; }
 .rr-sources { list-style: none; padding-left: 0; }
 .rr-sources li { margin: 0 0 4px; overflow-wrap: anywhere; }
 .rr-mark.ok { color: var(--ok, #1d8a4a); }
 .rr-mark.miss { color: var(--bad, #c33); }
-.rr-cite-panel { margin: 0 0 12px; border: 1px solid var(--accent); }
 /* pictures: screenshots (before / after), charts, generated illustrations; a click enlarges one */
-.rr-kind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
+.rr-kind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text, var(--accent)); white-space: nowrap; }
 .rr-kind.illustration { background: rgba(140,90,200,.16); color: var(--text); }
-.rr-fig { margin: 0 0 8px; min-width: 0; }
-.rr-fig img { display: block; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; cursor: zoom-in; background: #fff; }
+.rr-shots { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-height: 0; }
+.rr-fig { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; height: 100%; }
+.rr-fig img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; cursor: zoom-in; background: #fff; }
 .rr-fig figcaption { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
-.rr-toggle { display: flex; gap: 6px; margin: 0 0 8px; }
+.rr-toggle { display: flex; gap: 6px; }
 .rr-toggle [aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text, var(--accent)); font-weight: 600; }
-.rr-chart-wrap { overflow-x: auto; max-width: 100%; }
-.rr-chart { max-width: none; height: auto; }
 .rr-chart text { fill: var(--text, #111); font: 11px var(--sans, system-ui, sans-serif); }
 .rr-chart .add, .rr-legend .add { fill: rgba(40,160,80,.7); background: rgba(40,160,80,.7); }
 .rr-chart .del, .rr-legend .del { fill: rgba(210,60,60,.7); background: rgba(210,60,60,.7); }
@@ -104,26 +176,23 @@
 .rr-chart .after, .rr-legend .after { fill: var(--accent); background: var(--accent); }
 .rr-legend { display: flex; gap: 12px; font-size: 12px; margin-top: 4px; }
 .rr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-.rr-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
-.rr-thumb { display: grid; gap: 4px; justify-items: start; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: transparent; cursor: zoom-in; max-width: 160px; }
-.rr-thumb img { max-width: 150px; max-height: 100px; border-radius: 6px; }
-.rr-thumb-chart { font-size: 20px; letter-spacing: -2px; color: var(--accent); }
 .rr-zoom { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.72); display: grid; place-items: center; padding: 16px; gap: 8px; grid-template-rows: auto 1fr; }
 .rr-zoom img { max-width: 100%; max-height: 82vh; border-radius: 8px; background: #fff; }
 .rr-zoom .btn { justify-self: end; }
-@media (max-width: 560px) { .rr-quick .btn, .rr-step-bar .btn, .rr-top .btn, .rr-confirm .btn { min-height: 44px; } .rr-msg.captain { margin-left: 0; } }
-.rr-ph { display: grid; place-items: center; min-height: 220px; padding: 16px; border: 2px dashed var(--border-strong); border-radius: 10px; color: var(--text-2); text-align: center; }
-/* a branch's or a pull request's room: what it is about (the pull request on GitHub, new commits since the captain last looked),
-   the URL box, and someone else's words (a reviewer, a commit message) quoted as plain text */
-.rr-subject { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 0 0 12px; overflow-wrap: anywhere; }
-.rr-subject p { margin: 0; flex: 1 1 320px; min-width: 0; }
-.rr-moved { padding: 6px 10px; border-radius: 8px; background: rgba(201,134,26,.12); }
+.rr-ph { display: grid; place-items: center; min-height: 160px; padding: 16px; border: 2px dashed var(--border-strong); border-radius: 10px; color: var(--text-2); text-align: center; }
+/* someone else's words (a reviewer, a commit message), quoted as plain text: a gist, the original folded */
 .rr-quote-fold { margin: 4px 0 0; font-size: 13px; }
-.rr-quote-fold > summary { cursor: pointer; color: var(--text-2); }
+.rr-quote-fold > summary { cursor: pointer; color: var(--text-2); display: flex; gap: 6px; min-width: 0; }
+.rr-quote-fold > summary .rr-gist { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rr-gist { font-style: italic; }
 .rr-quote { margin: 6px 0 0; padding: 4px 10px; border-left: 3px solid var(--border); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.rr-quote-fold[open] .rr-quote { max-height: 14em; overflow: auto; }
+/* the Review Room's home and a project's page: the pull request URL box */
 .rr-prbox { display: grid; gap: 8px; max-width: 720px; }
 .rr-prlabel { display: grid; gap: 4px; }
 .rr-prbox .input { width: 100%; min-width: 0; }
 .rr-prbox .btn { justify-self: start; }
-@media (max-width: 560px) { .rr-prbox .btn, .rr-subject .btn { min-height: 44px; } }
+@media (max-width: 560px) { .rr-prbox .btn { min-height: 44px; } }
+
+/* a narrower window: the dock's quick actions give way to the question */
+@media (max-width: 1100px) { .rr-room { padding: 10px 14px; } .rr-quick .rr-chip:not(.lead) { display: none; } .rr-pill { max-width: 180px; } }

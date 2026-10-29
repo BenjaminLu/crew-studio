@@ -3,11 +3,27 @@
 What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/room/<merge card>`; `#/review/<artifact>/<n>` is the Library's artifact review,
 `public/review-room.js`) works like an interactive whiteboard tutor:
 
-- **The board is the stage** and takes most of the screen. Each tutor answer is a **scene**: a visual on the left and the
-  tutor's points beside it, revealed one at a time (Next point, or Play from the start), with the current point as a
-  **caption** under the stage. A point that cites a board item (`[board:B1-2]`) brings that item into view, so a diagram
-  builds up as the points reach its steps. Scenes are paged (← →). A scene that arrives while the page is open plays
-  itself; scenes already there show whole.
+- **A room is the whole screen** (focus mode, `body.room-focus` on `#/room/<id>`): the sidebar folds to its 64px rail and
+  Firstmate closes; the header's Firstmate button opens it as a sheet over the room, never a column beside the board.
+  Neither is saved as the captain's preference (`crew.side`, `crew.chatOpen` stay as they were; a fold the captain makes on
+  purpose with the sidebar's own toggle is saved and wins), the onboarding journey and the chat button step aside, and
+  leaving the room gives the sidebar and Firstmate back as they were.
+- **One viewport tall**: the header (back, the subject, its state as pills: the pull request on GitHub, new commits, the
+  change's line counts, the tutor and its independence), the board, the caption, the play bar and the dock are fixed rows;
+  only the board flexes and nothing in the room grows the page. At 1440×900 the page never scrolls and the picture stays
+  fully in view at every point.
+- **The board is the stage.** Each tutor answer is one or more **scenes**: a handwritten title, a picture on the left that
+  scales to its box (no sideways scroll), and the tutor's points beside it, revealed one at a time with the current point
+  as the **caption** under the board. At most four points show at once: the next ones are the next page, reached like
+  any other point, and a point shows at most three lines. A point that cites a board item (`[board:B1-2]`) brings that
+  item into view, so a diagram builds up as the points reach its steps. The play bar: the previous point, a dot per scene
+  (the current one opened into its points), the next point, play / pause (from where it stands, or from the start when the
+  scene is whole), replay, the scene (« ») and the voice. The keyboard: ← → a point back or forward (past a scene's last
+  point is the next scene), Space play / pause, Escape closes what is open over the room. A scene that arrives while the
+  page is open plays itself; scenes already there show whole.
+- **Never "no picture".** An answer that drew no picture gets one from Studio, free: the line counts of the files it cites
+  (git's numbers, `view().diffstat`: `git diff --numstat` base to head, cached per head; a pull request Studio has no
+  commits of yet: GitHub's file list), else a key card (the scene's title and the files it is about as sticky notes).
 - **Visuals Studio draws at once** from what the tutor emits: a flowchart built up step by step (one `group`, steps 1, 2,
   3, the part each step adds marked new; Studio draws mermaid's `flowchart` subset itself, no library, text only through
   text nodes, any other diagram kind as its source), a `diff` item (a changed file's real hunks), a `code` item (real head
@@ -26,9 +42,11 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   records that it started before anything is paid, so a reload, another device or a restart does not make it again. An
   illustration still pending when Studio stopped reads as interrupted after the restart.
 - Every picture is labelled with its kind; a click enlarges it. A scene's answer lists its pictures as chips to switch to.
-- **The prompt bar** under the stage is slim: How, Why, Teach me, Before merging, Check me, a question field, Hold to talk
-  and Ask. The **transcript** is a drawer, closed by default: each question with its scene's title (a click jumps to the
-  scene), the understanding check and the sources.
+- **The dock** under the stage is one line: How, Why, Teach me, Before merging, Check me, a question field, Hold to talk,
+  Ask and the transcript. The paid round's confirmation, a voice question heard and an error open above it, over the
+  board, never pushing it; a turn being sent shows in the dock. The **transcript** is a drawer over the room, closed by
+  default: each question with its scene's title (a click shows the scene and closes the drawer, nothing scrolls), the
+  understanding check and the sources. A citation's basis opens over the room too.
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
   Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
   folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
@@ -378,6 +396,13 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     goes …", "the next check fetches the commits again …", "a paid turn on a pull request read a while ago …", "the branch's
     head moved past the reviewed one …", "a ready-on-branch head with no tainted-ready ledger entry …", "an auxiliary owner
     owns its node until it is released"; smoke "even allowed to drive, a phone cannot open a pull request's review room …".
+23. A room is one viewport: focus mode folds the sidebar to its rail and closes Firstmate without saving either, opens
+    Firstmate as a sheet over the room and gives both back on leaving; at 1440×900 the page never scrolls and the picture
+    stays fully in view at every point; at most four points show; ← → and Space drive it; an answer with no picture gets
+    Studio's. — review-room-ui "at 1440×900 the page never scrolls …", "in a room the sidebar folds to its 64px rail …",
+    "the header's Firstmate opens it as a sheet …", "leaving the room gives the sidebar and Firstmate back …", "a click in
+    the transcript jumps to its scene and closes the transcript …", "← goes back a point …", "Space plays and pauses", "an
+    answer with no picture shows Studio's key card …", "an answer that cites files but drew nothing …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
