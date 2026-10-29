@@ -18,7 +18,8 @@ How: public/runtime.js reads the open cards on every `scard` event and on every 
 (`crew:live`, sent by public/app.js on `hello`); #/inbox/<id> shows that card first and every other
 waiting card under it; Inbox mounts reuse the element and skip the update when the card is unchanged;
 public/board.js reloads its cards on `crew:live` too; public/app.js keeps
-the focus and caret of a field the new view keeps.
+the focus and caret of a field the new view keeps. A field the new view draws anew is found again by its stable key (id, else
+its first data- attribute); when it comes back empty, what was typed is carried into it.
 
 Done when (`tests/inbox-live-ui.mjs`; red on 2215408, 6 of 17 assertions fail there):
 1. With the Inbox open, a card raised by the runtime appears in it without a reload. — "a card raised while the Inbox is open appears in it without a reload".
