@@ -329,7 +329,15 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   // another vendor is usable too: a host room still runs on the project's crew reviewer, never adaptive
   (E.deps as any).usableModels = () => [{ provider: "codex", model: "other-model", efforts: ["medium"], verified: true, runnable: true, isDefault: true }, { provider: "claude", model: "reviewer-model", efforts: [], verified: true, runnable: true }];
   const auxes: any[] = [], realReceipt = E.deps.instructionReceipt; E.deps.instructionReceipt = (...a: any[]) => { auxes.push(a[4]); return (realReceipt as any)(...a); };
+  // the commits cannot be fetched yet: an open pull request's room says so (and how to retry), never that it is closed on GitHub
+  { const real = adapter.fetchPull.bind(adapter); (adapter as any).fetchPull = async () => { throw new Error("fixture: the network is down"); };
+    headAs(A); const r: any = await room.openPr("https://github.com/fixture/project/pull/5"); (adapter as any).fetchPull = real; const vs: any = room.view(r.id);
+    ok(vs.open === false && /has not read this pull request's commits yet/.test(vs.closed?.en ?? "") && /Check for new commits/.test(vs.closed?.en ?? "") && /fixture: the network is down|could not fetch/.test(vs.closed?.zh ?? "") && !/closed on GitHub/.test(vs.closed?.en ?? "") && /還沒讀到/.test(vs.closed?.zh ?? ""),
+      "an open pull request whose commits are not fetched yet is not shown as closed on GitHub", JSON.stringify(vs.closed)); }
   headAs(A); const opened: any = await room.openPr("https://github.com/fixture/project/pull/5"), v0: any = room.view(opened.id);
+  { const { createHash } = await import("node:crypto"); const cache = join(H.data, "review-room", "cache", createHash("sha256").update("fixture/project").digest("hex").slice(0, 16) + ".git");
+    const seeded = Bun.spawnSync(["git", "rev-parse", "--verify", "-q", "refs/crew/seed/base"], { cwd: cache }).stdout.toString().trim();
+    ok(seeded === must(local, ["rev-parse", "main"]), "an empty pull request cache is first seeded from the project's own clone (its base branch), so GitHub sends only what it lacks", JSON.stringify([cache, seeded])); }
   ok(v0.task === null && v0.offer?.provider === "claude" && v0.offer.model === "reviewer-model" && v0.offer.effort === "high" && !E.list().some((r: any) => r.workflow === "review-room-host"),
     "an external pull request's room offers the project's approved crew reviewer; nothing is made before the captain confirms", JSON.stringify(v0.offer));
   const unconfirmed = await refused(() => room.start(opened.id, { action: "how" }, "captain"));
