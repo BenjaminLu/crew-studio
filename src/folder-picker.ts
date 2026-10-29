@@ -20,6 +20,8 @@ const PROMPT = "Choose a local Git repository / 選擇本機 Git 儲存庫";
 export const spawnRun: PickRun = (cmd, args, o) => new Promise((resolve) => {
   const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "", stderr = "", timedOut = false, done = false;
+  // decoded as a stream, so a character split across two chunks stays whole
+  child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
   child.stdout.on("data", (b) => { if (stdout.length < 64_000) stdout += b; });
   child.stderr.on("data", (b) => { if (stderr.length < 64_000) stderr += b; });
   const kill = () => { try { child.kill("SIGTERM"); } catch {} };
