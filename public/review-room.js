@@ -5,7 +5,7 @@
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
 const RR = { audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
-  scene: new Map(), reveal: new Map(), lang: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
+  scene: new Map(), reveal: new Map(), lang: new Map(), ver: new Map(), regen: new Set(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -357,8 +357,12 @@ function welcomeScene(r, opening) {
 function scenesOf(r) {
   const out = [], opening = r.board.filter((b) => b.turn === 0), lang = roomLang(r); CUR = { lang };
   out.push(welcomeScene(r, opening));
+  const rootOf = (t) => t.regenOf ?? t.n, versions = new Map();
+  for (const t of r.turns) if (!t.studio) { const k = rootOf(t); if (!versions.has(k)) versions.set(k, []); versions.get(k).push(t); }
+  const shownOf = (root) => { const vs = versions.get(root) || [], pick = RR.ver.get(`${r.card.id}/${root}`); return vs.find((t) => t.n === pick) || vs.at(-1); };
   for (const t0 of r.turns) {
-    const t = localTurn(r, t0, lang);
+    if (!t0.studio && shownOf(rootOf(t0)) !== t0) continue;
+    const t = { ...localTurn(r, t0, lang), versions: t0.studio ? null : versions.get(rootOf(t0)) };
     const asked = r.check.questions.filter((q) => q.turn === t.n), questions = asked.filter((q) => !q.options), quiz = asked.filter((q) => q.options), turnBoard = r.board.filter((b) => b.turn === t.n);
     const claims = t.status === "done" ? (t.claims?.length ? t.claims : [{ text: t.answer, kind: "claim", basis: "inference", cites: [] }]).map((c) => (t.studio ? studioClaim(c, lang) : c)) : [];
     // a scene Studio made itself (no model): what changed since the captain last looked, what GitHub reviewers asked
@@ -506,6 +510,20 @@ function quizSide(r, sc) {
   return [h("p", { class: "rr-quiz-help" }, T("Pick one. Studio grades it at once (no model, nothing paid); a missed one can be re-explained on the board.", "選一個答案。Studio 立刻評分（不用模型、不付費）；答錯的可以在白板上重講。")),
     h("p", { class: "rr-ppage", "data-quiz-score": `${right}/${done.length}` }, T(`${right} of ${done.length} right · ${qs.length - done.length} to go`, `答對 ${right}/${done.length} · 還有 ${qs.length - done.length} 題`))];
 }
+/** Explain a turn again with another model: the models this machine can run (adaptive staffing's facts), the current one and
+ *  the author's vendor marked; a held one is listed but cannot be picked. A pick is a paid turn, confirmed like any other. */
+function regenList(r, t) {
+  const card = r.card.id, lvl = { vendor: ["another vendor than the author", "和作者不同供應商"], model: ["same vendor as the author", "和作者同一個供應商"], same: ["same model as the author", "和作者同一個模型"] };
+  const pick = async (m) => { RR.regen.delete(card); RR.posting.add(card); RR.err.delete(card); rerender();
+    try { await postJ(`/api/review-room/${enc(card)}/turn`, { regenerate: t.n, pick: { provider: m.provider, model: m.model }, lang: uiLang() }); }
+    catch (e) { if (e.code === "confirm_required" && e.offer) RR.confirm.set(card, { action: t.action, text: t.text, regenerate: t.n, pick: { provider: m.provider, model: m.model }, offer: e.offer }); else RR.err.set(card, e.message); }
+    finally { RR.posting.delete(card); redraw(card); } };
+  return h("div", { class: "rr-regenlist", role: "group", "data-regen-list": t.n, "aria-label": T("Models on this machine", "這台機器上的模型") },
+    (r.tutors || []).map((m) => h("button", { type: "button", class: "rr-regenopt", "data-regen-pick": `${m.provider}|${m.model}`, disabled: !m.runnable || RR.posting.has(card), title: m.held || "", onclick: () => pick(m) },
+      h("b", {}, `${m.provider} · ${m.model}`), m.current ? h("span", { class: "rr-pill ok" }, T("current", "目前")) : null,
+      m.level ? h("span", { class: `rr-pill${m.level === "vendor" ? "" : " warn"}`, "data-regen-level": m.level }, T(...lvl[m.level])) : null,
+      m.held ? h("span", { class: "rr-pill bad", "data-regen-held": "" }, T(`held: ${m.held}`, `暫停：${m.held}`)) : null)));
+}
 /** The stage: the board (the scene's title, its picture on the left, at most four of its points on the right), the caption
  *  and the play bar. One viewport tall with the header and the dock: nothing in it grows the page. */
 function stageView(r) {
@@ -544,7 +562,10 @@ function stageView(r) {
     h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
       h("div", { class: "rr-stitle" },
         h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker, pages > 1 && !sc.quiz ? ` · ${page + 1}/${pages}` : "",
-          sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null),
+          sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null,
+          sc.t?.versions?.length > 1 && !sc.quiz ? h("span", { class: "rr-vers", role: "group", "data-versions": sc.t.regenOf ?? sc.t.n, "aria-label": T("Answers to this question", "這一題的回答") }, sc.t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === sc.t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${sc.t.regenOf ?? sc.t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null,
+          sc.t && !sc.studio && !sc.quiz && sc.t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": sc.t.n, "aria-expanded": String(RR.regen.has(card)), onclick: () => { RR.regen.has(card) ? RR.regen.delete(card) : RR.regen.add(card); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null),
+        RR.regen.has(card) && sc.t && !sc.studio ? regenList(r, sc.t) : null,
         h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
       h("div", { class: "rr-scene" },
         h("figure", { class: "rr-visual", "data-visual": quizQ ? `quiz-${quizQ.n}` : v?.id || "" },
@@ -600,7 +621,7 @@ function promptBar(r) {
   if (RR.mic == null) void micReady(card);
   const ask = (action) => askTurn(card, action, action === "ask" ? (RR.draft.get(card) || "").trim() : "");
   const start = async () => { const c = RR.confirm.get(card); if (!c || busy) return; RR.posting.add(card); RR.err.delete(card); rerender();
-    try { const room = await postJ(`/api/review-room/${enc(card)}/turn`, { action: c.action, text: c.text, lang: uiLang(), confirm: offer?.hash }); RR.rooms.set(card, room); RR.confirm.delete(card); if (c.action === "ask") RR.draft.delete(card); RR.heard = false; RR.scene.delete(card); }
+    try { const room = await postJ(`/api/review-room/${enc(card)}/turn`, c.regenerate ? { regenerate: c.regenerate, pick: c.pick, lang: uiLang(), confirm: c.offer?.hash } : { action: c.action, text: c.text, lang: uiLang(), confirm: offer?.hash }); RR.rooms.set(card, room); RR.confirm.delete(card); if (c.action === "ask") RR.draft.delete(card); RR.heard = false; RR.scene.delete(card); }
     catch (e) { RR.err.set(card, e.message); if (e.offer) RR.rooms.set(card, { ...r, offer: e.offer }); }
     finally { RR.posting.delete(card); redraw(card); schedule(); } };
   const talk = !!RR.rec;
@@ -611,7 +632,7 @@ function promptBar(r) {
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-translate-start": "", disabled: RR.posting.has(card), onclick: () => startTranslate(r, conf.lang, offer?.translate?.hash, true) }, T("Translate", "翻譯")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); RR.lang.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
-      h("p", {}, T(`This starts a paid model round on ${offer.provider} · ${offer.model ?? "default model"}${offer.effort ? ` (${offer.effort})` : ""}; the tutor may also ask for up to two illustrations, each a paid image job made in the background. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
+      h("p", {}, conf.regenerate ? T(`Explain this again with ${conf.offer.provider} · ${conf.offer.model ?? "default model"}: `, `改由 ${conf.offer.provider} · ${conf.offer.model ?? "預設模型"} 重講這一題：`) : null, T(`This starts a paid model round on ${(conf.offer || offer).provider} · ${(conf.offer || offer).model ?? "default model"}${(conf.offer || offer).effort ? ` (${(conf.offer || offer).effort})` : ""}; the tutor may also ask for up to two illustrations, each a paid image job made in the background. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
         `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}；導師也可能要求最多兩張插圖，每張都是在背景進行的付費圖片工作。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-room-start": "", disabled: busy, onclick: start }, T("Start the round", "開始這一回合")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", disabled: RR.posting.has(card), onclick: () => { RR.confirm.delete(card); rerender(); } }, T("Cancel", "取消")))) : null,

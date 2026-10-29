@@ -108,6 +108,8 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   claims?: Claim[];
   /** a scene Studio made itself, no model and nothing paid: "since" (what changed since the captain last looked) or "reviewers" (what GitHub reviewers asked) */
   studio?: true; title?: string; from?: string;
+  /** a regeneration: the turn whose question this one asks again, on a model the captain picked (both answers are kept) */
+  regenOf?: number; picked?: { provider: string; model: string | null; effort: string | null };
   /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
   scenes?: { n: number; title: string; picture: string; points: Claim[] }[] };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
@@ -346,6 +348,33 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     if (!fallback) throw refuse("No signed-in model can run the tutor on this machine now: sign in to a vendor, then open the room again / 這台機器目前沒有已登入、可用的模型能當導師：請先登入一個供應商，再打開審查室", "no_tutor");
     return done(fallback, "same", !inCrew.length, why);
   };
+  /** every node that wrote the change, as staffed and as it ran (the author the tutor is judged against) */
+  const makersOf = (run: any, usable: Usable[] | null): { provider: string; model: string | null }[] => {
+    const resolve = (p: AgentPick): AgentPick => p.model || !usable ? p : { ...p, model: usable.find((u) => u.provider === p.provider && u.isDefault)?.model ?? null };
+    const makerRole = run.def.nodes.find((n: any) => n.kind === "agent" && n.mode === "build")?.role ?? "worker";
+    const writers = run.def.nodes.filter((n: any) => (n.kind === "agent" || n.kind === "loop") && (n.mode === "build" || n.role === makerRole || n.args?.producer === "build"));
+    return [...writers.flatMap((n: any) => { try { return [engine.x(run, n, run.nodes[n.id]).pick()]; } catch { return []; } }), ...run.steps.filter((st: any) => writers.some((n: any) => n.id === st.node) && st.provider).map((st: any) => ({ provider: st.provider, model: st.model }))]
+      .map((m: AgentPick) => resolve(m)).map((m) => ({ provider: m.provider, model: m.model ?? null }));
+  };
+  /** the models the captain may pick to explain a turn again: what this machine has (adaptive staffing's facts), each with how
+   *  independent it is from the author; a held one (out of quota, unreadable, in its verification backoff) is listed, not pickable */
+  const tutorsOf = (run: any, current: { provider: string; model: string | null } | null) => {
+    const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null; if (!usable) return [];
+    const group = run && !isHostRun(run) ? makersOf(run, usable) : [];
+    return usable.map((u) => { const backoff = !!engine.deps.verifyBackoff?.({ provider: u.provider, model: u.model } as AgentPick);
+      return { provider: u.provider, model: u.model, effort: defaultEffort(u), runnable: !!u.runnable && !backoff, held: !u.runnable ? (u.held ?? "it cannot run now") : backoff ? "its verification is being retried" : null,
+        level: group.length ? levelAgainst({ provider: u.provider, model: u.model }, group) : null, current: !!current && current.provider === u.provider && (current.model ?? null) === u.model }; });
+  };
+  /** the tutor the captain picked for a regeneration: refused unless this machine runs it now */
+  const pickedTutor = (run: any, want: any): Tutor => {
+    const provider = String(want?.provider ?? ""), model = want?.model == null ? null : String(want.model), list = tutorsOf(run, null), u = list.find((x) => x.provider === provider && x.model === model);
+    if (!u) throw refuse(`${provider} ${model ?? ""} is not a model this machine can run / 這台機器不能跑這個模型`, "not_usable");
+    if (!u.runnable) throw refuse(`${provider} ${model} is held: ${u.held} / 這個模型目前不能用：${u.held}`, "held");
+    const level = (u.level ?? "vendor") as Level;
+    // the author's own model only when nothing else can run, as for the room's own tutor
+    if (level === "same" && list.some((x) => x.runnable && x.level !== "same")) throw refuse(`${provider} ${model} is the author's own model; another model can run now / 這是作者自己的模型；還有別的模型可以用`, "same_as_author");
+    return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level, adaptive: true, outside: true, label: { en: `${LEVEL_TEXT[level].en}. Picked by the captain to explain this again.`, zh: `${LEVEL_TEXT[level].zh}。船長選來重講這一題。` } };
+  };
   /** the seat a turn runs on: the hosting Task's reviewer (tutorPick); on a review-room-host Task, the project's approved crew reviewer */
   const crewTutor = (pick: AgentPick): Tutor => ({ pick, level: null as unknown as Level, adaptive: false, outside: false,
     label: { en: "The project's crew reviewer. The change's author is outside Studio, so its independence is not measured.", zh: "專案船員的審查者。改動的作者不在 Studio 裡，所以不衡量獨立程度。" } });
@@ -364,14 +393,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     if (team) return { provider: team.provider, model: team.model, effort: team.effort ?? null };
     throw none(why); };
   const noHost = () => refuse("No Studio Task made this pull request, so no reviewer seat can host a tutor here: the room shows the pull request, its reviewers' comments and what changed, without paid turns / 這個 pull request 不是 Studio 的任務開的，沒有審查座位可以當導師：審查室只顯示 PR、審查者的意見和改了什麼，不能付費提問", "no_host");
-  const offerOf = (k: Key) => {
+  const offerOf = (k: Key, want?: any) => {
     try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr") throw noHost();
+      if (want && (!s.run || !s.node)) throw noHost();
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
-      const t = s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)), p = t.pick, effort = p.effort ?? null;
+      const t = want ? pickedTutor(s.run, want) : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)), p = t.pick, effort = p.effort ?? null;
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
       return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label },
-        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside })).slice(0, 16) }; }
+        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}) })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
   const skills = () => ROOM_SKILLS.map((s) => { const t = bundledText(s.ref); if (t == null || sha(t) !== s.sha256) throw refuse(`The pinned skill ${s.id} changed or is missing; Studio refuses the turn`, "skill_pin"); return { ...s, text: t }; });
@@ -685,7 +715,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
     turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
-    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
+    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }
@@ -871,6 +901,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   };
   /** the room's languages for the page: the translations kept, the last translation turn, and what translating would cost */
   const langView = (r: Room | null, open: boolean) => ({ translations: r?.translations ?? {}, translating: r?.translating ?? null, langs: ROOM_LANGS,
+    tutors: open && r ? (() => { try { const k0 = keyOf(r.card); const s0 = subjectOf(k0); return s0.run && s0.node ? tutorsOf(s0.run, (() => { const o0 = offerOf(k0); return "error" in o0 ? null : { provider: o0.provider, model: o0.model }; })()) : []; } catch { return []; } })() : [],
     translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
   /** the head moved past the one the captain last looked at: how many commits (null when the branch was rewritten) */
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
@@ -922,7 +953,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
-    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown }, by: string) {
+    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown }, by: string) {
       let k = keyOf(id);
       if (k.kind === "pr") { const r0 = load(k);
         // a paid turn reads the pull request again first when it was read a while ago: merged or closed by now, the turn is refused
@@ -930,6 +961,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (load(k)?.pr?.stale && load(k)?.pr?.state === "open") throw refuse("GitHub shows newer commits Studio could not fetch yet: check for new commits before a paid turn / GitHub 上有 Studio 還沒抓到的新 commit：付費提問前請先檢查新的 commit", "stale"); }
       if (!k.open()) throw refuse(k.kind === "merge" ? "The merge card is answered: the room is read-only now / 合併卡已回覆，審查室只能閱讀" : `${closedText(k, load(k)).en} / ${closedText(k, load(k)).zh}`, "closed");
       const s = subjectOf(k);
+      // a regeneration: the same question, asked again on a model the captain picked; the answer it replaces is kept
+      const base = a.regenerate != null ? load(k)?.turns.find((t) => t.n === Number(a.regenerate) && t.status === "done" && !t.studio) ?? null : null;
+      if (a.regenerate != null && !base) throw refuse("There is no finished answer to explain again / 沒有可以重講的回答", "not_found");
+      if (base) { a = { ...a, action: base.action, text: base.text }; if (!a.pick) throw refuse("Pick the model to explain it again / 請選一位導師重講", "bad_pick"); }
       const action = String(a.action ?? ""); if (!Object.hasOwn(ROOM_ACTIONS, action)) throw refuse(`action is one of ${Object.keys(ROOM_ACTIONS).join(", ")}`, "bad_action");
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ROOM_ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
@@ -953,16 +988,17 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         return this.start(id, a, by);
       }
       if (!s.run || !s.node) throw noHost();
-      const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
+      if (a.pick) { const o0 = offerOf(k, a.pick); if ("error" in o0) throw refuse(o0.error!, (o0 as any).code ?? "held"); }
+      const offer = offerOf(k, a.pick); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
       if (a.confirm !== offer.hash) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
-      const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, seatPick(s.run, s.node));
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
-      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head };
+      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
       void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); });
       return this.view(k.id);

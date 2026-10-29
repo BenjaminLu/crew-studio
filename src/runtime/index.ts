@@ -781,7 +781,7 @@ export function createRuntime(d: RuntimeDeps) {
         // the explanation in another language: a small paid translation turn, confirmed once per room (the same gates as a turn)
         if (room[2] === "translate") { try { return json(await rr.translate(room[1], { lang: b?.lang, confirm: b?.confirm }, by)); } catch (e: any) { return fail(e); } }
         if (room[2] === "check-answer") { try { return json(rr.answer(room[1], b?.n, b?.choice)); } catch (e: any) { return fail(e); } }
-        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm }, by)); } catch (e: any) { return fail(e); }
+        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm, pick: b?.pick, regenerate: b?.regenerate }, by)); } catch (e: any) { return fail(e); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });

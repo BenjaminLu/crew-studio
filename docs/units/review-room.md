@@ -96,6 +96,16 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   Studio's own scenes (the welcome scene, what reviewers asked, what changed) switch for free from Studio's own strings
   (their Chinese lines are kept beside the English, `zh`); a reviewer's quoted words are never translated. The voice follows
   the language shown: this Mac's voice in that language, or the vendor's narration of the translated text.
+- **Regenerate with another tutor** ("Regenerate with…" / 換一位導師重講, on any finished tutor scene): the models this
+  machine can run, from the facts adaptive staffing uses (`usableModels`: codex, claude, cursor, …), each with how independent
+  it is from the change's author (another vendor; "same vendor as the author"; the author's own model), the current tutor
+  marked. A held model (out of quota, its quota unreadable, its verification being retried) is listed with the reason and
+  cannot be picked; the author's own model only when nothing else can run, as for the room's own tutor. A pick is a paid
+  turn on that model (`POST …/turn {regenerate: n, pick: {provider, model}, confirm}`): its own offer and confirmation hash,
+  then the same admission as any turn (the staffing receipt names the picked member, `adaptive`), and the same question
+  asked again. Both answers are kept: the scene shows the latest with a switcher naming each model ("codex gpt-x · claude
+  y"). The turn records `regenOf` and `picked`; its `review-room-turn` ledger entry carries `regenerate: {of, provider,
+  model, by: "captain"}`.
 - **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
   Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
   folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
@@ -493,6 +503,12 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     a language already kept runs nothing …"; review-room-ui "a kept translation shows at once …", "a translation is text …",
     "the voice follows the language shown …", "简体 comes from the 繁體 text …", "a language not kept yet asks to confirm …",
     "confirmed, the translation is sent …".
+29. Regenerate with another model: the room lists this machine's models with their independence, a held one not
+    pickable; a pick asks to confirm its own paid round; the same question runs on that model; both answers are kept, the
+    latest shown, with a switcher; the choice is on the turn and the ledger. — review-room "the room lists the models …",
+    "a held model cannot be picked …", "the regeneration asks the same question on the picked model …"; review-room-ui "a
+    regenerated answer is kept beside the first …", "the switcher shows the first answer again", "“Regenerate with…” lists
+    this machine's models …", "picking a model asks to confirm …", "confirmed, the same question is asked again …".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

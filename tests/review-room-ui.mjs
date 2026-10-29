@@ -355,6 +355,27 @@ try {
     ok(trs.length === 2 && trs[0].lang === "zh-TW" && trs[1].confirm === "tr0123456789abcd" && !posts.length, "confirmed, the translation is sent with the room's confirmation; the dock says it is translating", JSON.stringify(trs));
     await ctx.close(); }
 
+  // ---------- regenerate with another model: both answers kept, the latest shown, a held model not pickable ----------
+  { const R7 = { ...ROOM, turns: [...ROOM.turns, { n: 3, action: "ask", text: "1: 300. 2: not sure.", regenOf: 2, picked: { provider: "claude", model: "opus-x", effort: null }, lang: "en", status: "done", provider: "claude", model: "opus-x", answer: "z", claims: [cl("Halves round away from zero, said again [source:1].", [ok1("source:1")])] }],
+      tutors: [{ provider: "codex", model: "gpt-6", effort: "high", runnable: true, held: null, level: "same", current: true }, { provider: "claude", model: "opus-x", effort: null, runnable: true, held: null, level: "vendor", current: false }, { provider: "codex", model: "gpt-5", effort: "medium", runnable: true, held: null, level: "model", current: false }, { provider: "cursor", model: "c-9", effort: null, runnable: false, held: "out of quota", level: "vendor", current: false }] };
+    const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const turns = [];
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: R7 }));
+    await p.route(/\/api\/review-room\/SC-50\/turn$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); turns.push(b);
+      if (!b.confirm) return r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: { ...ROOM.offer, provider: b.pick.provider, model: b.pick.model, hash: "re0123456789abcd" } } });
+      r.fulfill({ json: { ...R7, running: 4 } }); });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    let s7 = await stage(p); const vers = await p.$$eval("[data-version-pick]", (els) => els.map((e) => [e.dataset.versionPick, e.getAttribute("aria-pressed"), e.textContent]));
+    ok(s7.scene === "t3" && /said again/.test(await p.textContent("[data-stage] .rr-pointlist")) && JSON.stringify(vers) === JSON.stringify([["2", "false", "codex gpt-6"], ["3", "true", "claude opus-x"]]), "a regenerated answer is kept beside the first: the scene shows the latest, with a switcher naming each model", JSON.stringify({ s7, vers }));
+    await p.click('[data-version-pick="2"]'); s7 = await stage(p);
+    ok(s7.scene === "t2" && /Halves round up/.test(await p.textContent("[data-stage] .rr-pointlist")), "the switcher shows the first answer again", JSON.stringify(s7));
+    await p.click("[data-regen]"); const list = await p.$$eval("[data-regen-pick]", (els) => els.map((e) => [e.dataset.regenPick, e.disabled, e.textContent]));
+    ok(list.length === 4 && list[0][2].includes("current") && list[2][2].includes("same vendor as the author") && list[3][1] === true && /out of quota/.test(list[3][2]) && list.slice(0, 3).every((x) => !x[1]), "“Regenerate with…” lists this machine's models: the current one marked, the author's vendor said, a held one not pickable", JSON.stringify(list));
+    await p.click('[data-regen-pick="claude|opus-x"]'); await p.waitForSelector('[data-room-confirm]');
+    ok(turns.length === 1 && turns[0].regenerate === 2 && turns[0].pick.provider === "claude" && !turns[0].confirm && /claude · opus-x/.test(await p.textContent("[data-room-confirm]")), "picking a model asks to confirm a paid round on that model first", JSON.stringify(turns));
+    await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector("[data-room-busy]"));
+    ok(turns.length === 2 && turns[1].confirm === "re0123456789abcd" && turns[1].regenerate === 2 && !posts.length, "confirmed, the same question is asked again on the picked model", JSON.stringify(turns));
+    await ctx.close(); }
+
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });
