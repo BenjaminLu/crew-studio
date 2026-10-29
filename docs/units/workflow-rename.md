@@ -17,24 +17,30 @@ definitions.
 ## How
 
 - **Store.** `data/workflow-names.json` (src/runtime/workflow-names.ts): `{ schema: 1, names: { <id>: { name, by, at } } }`,
-  written atomically (`writeAtomic`) under a lock. A name is trimmed, 1–80 characters, with no control characters or
-  bidirectional overrides; the page renders it as a text node only. A blank name or Reset removes the rename. A name
-  equal to the shipped default keeps no rename. An unreadable file shows the defaults and refuses renames, so a rename
-  never overwrites what the captain had.
+  written atomically (`writeAtomic`) under a lock. A name is trimmed, 1–80 characters, with no control (`\p{Cc}`) or
+  format (`\p{Cf}`: bidirectional marks and overrides, LRM/RLM/ALM, zero-width characters) characters, and must still
+  show once spaces and default-ignorable fillers are removed; the page renders it as a text node only. A name may not
+  equal, ignoring case, another workflow's id, display name or default name, so the captain and Firstmate never mean
+  two workflows by one name. A blank name or Reset removes the rename. A name equal to the shipped default keeps no
+  rename. An unreadable file shows the defaults and refuses renames; an entry this Studio cannot read is kept as it is
+  on the next write. Either way a rename never overwrites what the captain had.
 - **Default.** `DEFAULT_DISPLAY_NAMES` in the same file ships `code-firstmate` → `coding`: a fresh Studio shows "coding".
   The captain can still rename it (even back to "code-firstmate") or reset it to "coding".
 - **Serving.** `WorkflowDefs.displayName(id)` and `names.map()` are the one server-side source. `/api/wf` lists each
   workflow with `displayName` and `renamed` beside its definition's `name`, plus `names` (id → display name);
   `/api/wf/<id>` returns `displayName`, `renamed` and `defaultName` **beside** `def`, never inside it, because the editor
-  saves `def` back. The Crew page's workflows carry `displayName`. Firstmate's `studio_list_workflows` gives the display
-  name as `name` (the id stays `id`) and `studio_work_status` gives each Task's `workflowName`.
+  saves `def` back. The Crew page's workflows carry `displayName`, and so do the project page's crew tile and the crew
+  tools' outputs and seat-card text. Firstmate's `studio_list_workflows` gives the display name as `name` (the id stays
+  `id`), `studio_work_status` gives each Task's `workflowName`, and a dispatch card names a renamed workflow with its id,
+  "coding (code-firstmate) v12".
 - **Rename.** `POST /api/workflow-names {workflow, name}` (blank or null resets). Desktop captain only, behind the same
   session and origin gate as the other workflow edits; the phone and any other caller get 403. Each rename and reset is
   recorded in the Studio event log as `workflow_renamed` with the captain, the name before and after.
 - **Board.** `public/app.js` keeps the id → display name map (`wfName(id, fallback)`), read at load, from `/api/wf`, and
   again when another tab's rename arrives on the event stream. The Workflows list, the editor header, the Start form,
-  the Runs list, a Task page, the Board's task rows, the Inbox, cards, the project page's crew ("coding v12"), the Crew
-  page and the staffing picker all show it. Workflows list cards and the editor header have **Rename / 改名**, a dialog
+  the Runs list, a Task page, the Inbox, cards, the project page's crew ("coding v12"), the Crew page, the staffing
+  picker, the skill pages' "Used by" chips and the Improve page all show it. A Board task row keeps the workflow's id
+  and shows `wfName(id, definition name)`, so any renamed workflow (not only code-firstmate) reads by its display name. Workflows list cards and the editor header have **Rename / 改名**, a dialog
   with Save and, when renamed, **Reset to default / 恢復預設名稱**.
 
 ## What does not change
@@ -43,15 +49,19 @@ definitions.
   Tasks' own copies, workflow ids and every hash or signature read the definition as saved.
 - **Exports and packages keep the definition's own name.** A display name is local to this Studio: exporting
   `code-firstmate` still says `"name": "code-firstmate"`, and importing it elsewhere shows that Studio's own name for it.
-- A Task's title and its "started" event keep the text they were written with.
+- A Task's title keeps the text it was written with, and so does the event log's "started" summary (the engine writes
+  the definition's name there). The Task page's timeline draws its "Started (… vN)" line live, so it shows the current
+  display name.
 - The operating manual, Firstmate's tools and docs keep using the id `code-firstmate` wherever an id is meant.
 
 ## Tests
 
 - `tests/workflow-rename.ts`: fresh Studio shows coding (list, editor, Firstmate); rename persists across a store
   restart and shows in the list, the editor and Firstmate's tools; reset and blank; validation (length, NUL, tab,
-  newline, bidi, non-text); unknown id; phone and non-desktop refused; ledger events; staffing hash, saved versions and
+  newline, bidi, LRM/RLM/ALM, zero-width, invisible fillers, non-text); names taken by another workflow; unknown id;
+  a malformed entry kept across a rename; the dispatch card line; phone and non-desktop refused; ledger events; staffing hash, saved versions and
   the export unchanged; an unreadable file is kept.
 - `tests/board-start.ts`: a renamed code-firstmate keeps its approved crew on the Start form.
 - `tests/workflow-rename-ui.mjs`: real server and Chromium, list and editor rename, reset, inline refusal, markup shown
-  as text, the Start form and a Task page, zh-TW at 390px, unauthenticated rename refused.
+  as text, the Start form, a Task page and the Board row of a renamed file-organization Task, zh-TW at 390px,
+  unauthenticated rename refused.

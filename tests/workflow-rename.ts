@@ -62,6 +62,13 @@ try {
   // ---- a personal workflow is renamed the same way ----
   rt.defs.create("my-flow", "My flow", "captain", "en", undefined, "starter");
   ok((await rename("my-flow", "Weekly report")).status === 200 && (await listed("my-flow"))?.displayName === "Weekly report" && rt.defs.get("my-flow")!.name === "My flow", "a captain's own workflow is renamed without a new version");
+  // a name another workflow answers to (its id, its display name, its default name), ignoring case, is refused
+  for (const [taken, why] of [["DOCUMENTS", "another workflow's id"], ["my coding crew", "another workflow's display name"], ["hello", "another workflow's display name (a rename)"], [` ${rt.defs.get("web-prototype")!.name.toUpperCase()} `, "another workflow's definition name"]] as const) {
+    const res = await rename("my-flow", taken);
+    ok(res.status === 400 && /already called/.test(res.body.error), `a rename to ${why} is refused`, JSON.stringify(res));
+  }
+  ok((await rename("hello-crew-studio", "Weekly Report")).status === 400, "a rename to a name another captain rename holds is refused, ignoring case");
+  ok((await rename("my-flow", "Weekly Report")).status === 200, "a workflow may change the case of its own name");
 
   // ---- reset ----
   const reset = await rename("code-firstmate", null);
@@ -73,11 +80,11 @@ try {
 
   // ---- the ledger: each rename and reset is a captain event ----
   const ev = events();
-  ok(ev.length === 8 && ev[0].workflow === "code-firstmate" && ev[0].actor === "captain" && ev[0].data.from === "coding" && ev[0].data.to === "My coding crew" && ev.at(-1).data.reset === true, "every rename and reset is recorded in the event log with the captain, from and to", JSON.stringify(ev.map((e) => e.data)));
+  ok(ev.length === 9 && ev[0].workflow === "code-firstmate" && ev[0].actor === "captain" && ev[0].data.from === "coding" && ev[0].data.to === "My coding crew" && ev.at(-1).data.reset === true, "every rename and reset is recorded in the event log with the captain, from and to", JSON.stringify(ev.map((e) => e.data)));
 
   // ---- validation ----
   const before = readFileSync(join(data, "workflow-names.json"), "utf8");
-  for (const [bad, why] of [["x".repeat(81), "81 characters"], ["a\u0000b", "a NUL"], ["tab\there", "a tab"], ["line\nbreak", "a newline"], ["‮evil", "a bidi override"], [42, "a number"], [["coding"], "an array"]] as const) {
+  for (const [bad, why] of [["x".repeat(81), "81 characters"], ["a\u0000b", "a NUL"], ["tab\there", "a tab"], ["line\nbreak", "a newline"], ["‮evil", "a bidi override"], ["a‎b", "an LRM"], ["a‏b", "an RLM"], ["a؜b", "an ALM"], ["a​b", "a zero-width space"], ["a‍b", "a zero-width joiner"], ["a⁠b", "a word joiner"], ["ㅤ", "an invisible filler alone"], ["ㅤ ㅤ", "only fillers and spaces"], [42, "a number"], [["coding"], "an array"]] as const) {
     const res = await rename("code-firstmate", bad);
     ok(res.status === 400, `validation refuses ${why}`, JSON.stringify(res));
   }
@@ -93,6 +100,15 @@ try {
   ok((await rename("code-firstmate", "remote name", { kind: "remote" })).status === 403, "a non-desktop caller cannot rename");
   ok((await call("/api/workflow-names", undefined, { kind: "phone", device: { name: "p" } })).status === 200, "reading the names is allowed everywhere the board reads");
   ok((await listed("code-firstmate"))?.displayName === "coding", "refused callers changed nothing");
+
+  // ---- an entry this Studio cannot read is skipped on read and kept on the next write ----
+  writeFileSync(join(data, "workflow-names.json"), JSON.stringify({ schema: 1, names: { documents: { name: "Docs", by: "captain", at: "t" }, "future-flow": { name: 42, kind: "later" }, "Bad Id": { name: "x" }, "hello-crew-studio": { name: "line\nbreak" } } }));
+  ok((await listed("documents"))?.displayName === "Docs" && (await listed("hello-crew-studio"))?.displayName === rt.defs.get("hello-crew-studio")!.name, "a malformed entry is skipped; its neighbours still show");
+  ok((await rename("code-firstmate", "Ship code")).status === 200, "a rename next to malformed entries works");
+  const kept = JSON.parse(readFileSync(join(data, "workflow-names.json"), "utf8")).names;
+  ok(JSON.stringify(kept["future-flow"]) === JSON.stringify({ name: 42, kind: "later" }) && JSON.stringify(kept["Bad Id"]) === JSON.stringify({ name: "x" }) && kept["hello-crew-studio"]?.name === "line\nbreak" && kept.documents?.name === "Docs" && kept["code-firstmate"]?.name === "Ship code", "malformed and unknown entries are kept as they were on the next write", JSON.stringify(kept));
+  ok((await rename("hello-crew-studio", null)).status === 200 && !Object.hasOwn(JSON.parse(readFileSync(join(data, "workflow-names.json"), "utf8")).names, "hello-crew-studio"), "a reset removes a malformed entry of that workflow");
+  await rename("code-firstmate", null);
 
   // ---- an unreadable file: defaults show, writes refuse instead of clobbering it ----
   writeFileSync(join(data, "workflow-names.json"), "{not json");

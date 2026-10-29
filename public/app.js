@@ -616,8 +616,6 @@ function connect() {
   es.onerror = () => conn("down");
   es.addEventListener("events", (m) => {
     const d = JSON.parse(m.data); S.tasks = d.tasks; S.events += d.events.length;
-    // a rename in another tab: this tab shows the new name too
-    if (d.events.some((e) => e?.type === "workflow_renamed")) loadWorkflowNames().then(() => soft());
     if (S.route?.name === "activity") {
       const fresh = d.events.filter(matchAF).reverse();
       if (fresh.length) { AF.items = fresh.concat(AF.items).slice(0, 600); const list = $("#evlist");
@@ -630,7 +628,9 @@ function connect() {
   es.addEventListener("crew", (m) => { const d = JSON.parse(m.data); S.crew = d.crew; S.tasks = d.tasks;
     if (S.route?.name === "crew" && !S.route.arg) soft(); else if (S.route?.name === "board") soft(); else updateNav(); });
   es.addEventListener("github", (m) => { S.github = JSON.parse(m.data); if (S.route?.name === "board") soft(); });
-  es.addEventListener("intents", (m) => window.onIntents?.(JSON.parse(m.data)));
+  // a rename in another tab or by another device: this page shows the new name too (src/runtime/index.ts sends it)
+  es.addEventListener("workflow-names", (m) => { try { setWorkflowNames(JSON.parse(m.data)?.names); } catch {} soft(); });
+  es.addEventListener("intents",(m) => window.onIntents?.(JSON.parse(m.data)));
   es.addEventListener("chat", (m) => window.onChatInfo?.(JSON.parse(m.data)));
   for (const t of ["artifacts", "run", "lane"]) es.addEventListener(t, (m) => window.onM3?.(t, JSON.parse(m.data)));
   for (const t of ["improve", "agent", "changes", "packs", "fileorg", "skins"]) es.addEventListener(t, (m) => { for (const f of window.onExt || []) f(t, JSON.parse(m.data)); });

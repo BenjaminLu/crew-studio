@@ -12,7 +12,7 @@ import {withLock} from "../ids";
 import {Ledger} from "./checks";
 import { bundledList, bundledText, parseYaml } from "../bundled";
 import { compareProblem } from "../compare";
-import { WorkflowNames } from "./workflow-names";
+import { WorkflowNames, DEFAULT_DISPLAY_NAMES } from "./workflow-names";
 
 export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; // a closed set (architecture §3.1)
 export type NodeKind = (typeof NODE_KINDS)[number];
@@ -255,6 +255,18 @@ export class WorkflowDefs {
   readonly names: WorkflowNames;
   /** The name the captain sees for a workflow; every hash, signature and export keeps the definition's own name. */
   displayName(id: string): string { return this.names.of(id, this.versions(id).at(-1)?.name); }
+  /** Rename or reset a workflow's display name. It may not take another workflow's id, display name or default name. */
+  rename(id: string, name: unknown, by: string) {
+    return this.names.set(id, name, by, () => {
+      const shown = this.names.map(), out: string[] = [];
+      for (const other of new Set([...this.ids(), ...Object.keys(DEFAULT_DISPLAY_NAMES)])) {
+        if (other === id) continue;
+        const own = this.listable(other).at(-1)?.name;
+        out.push(other, ...[shown[other], DEFAULT_DISPLAY_NAMES[other], own].filter((x): x is string => typeof x === "string"));
+      }
+      return out;
+    });
+  }
   constructor(readonly dataDir: string, readonly bundled = defaultDefinitions, public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
     this.dir = join(dataDir, "workflows"); mkdirSync(this.dir, { recursive: true });
     this.names = new WorkflowNames(dataDir);

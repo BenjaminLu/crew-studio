@@ -50,6 +50,13 @@ try{
   const started=await api('/api/wruns',{workflow:'hello-crew-studio',text:'Say hello'});ok(started.status<300&&started.body.id,'a Task starts',JSON.stringify(started.body).slice(0,300));
   await p.goto(base+'/#/run/'+started.body.id);await p.locator(`[data-task-title="${started.body.id}"]`).waitFor();
   await p.waitForFunction(()=>document.querySelector('.phead')?.textContent.includes('Hello renamed v'));ok(true,'the Task page names its workflow by display name');
+  // the Board row of a renamed workflow other than code-firstmate (its row keeps the id; the meta line shows the display name)
+  const tidy=await api('/api/wruns',{workflow:'file-organization',text:'Organize the sample folder'});ok(tidy.status<300&&tidy.body.id,'a file-organization Task starts',JSON.stringify(tidy.body).slice(0,300));
+  const fileOrgName=(await api('/api/wf/file-organization')).body.def.name;
+  ok((await api('/api/workflow-names',{workflow:'file-organization',name:'Tidy folders'})).status===200,'file-organization is renamed');
+  await p.goto(base+'/#/board');await p.locator(`[data-task="${tidy.body.id}"] .tb-meta`).waitFor();
+  await p.waitForFunction(id=>document.querySelector(`[data-task="${id}"] .tb-meta`)?.textContent.includes('Tidy folders'),tidy.body.id);
+  ok(!(await text(p,`[data-task="${tidy.body.id}"] .tb-meta`)).includes(fileOrgName),'the Board row shows a renamed file-organization by its display name, not its definition name');
   ok(errors.length===0,'no browser errors',errors.join('\n'));await p.close();}
  // ---- phone width, zh-TW ----
  {const p=await browser.newPage({viewport:{width:390,height:900}});const errors=[];p.on('pageerror',e=>errors.push(String(e)));

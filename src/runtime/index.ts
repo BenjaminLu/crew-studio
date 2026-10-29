@@ -455,9 +455,11 @@ export function createRuntime(d: RuntimeDeps) {
         if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>!['workflow','name'].includes(k))||typeof b.workflow!=='string')return json({error:'Pass the workflow id and its new name (blank resets it)'},400);
         if(!/^[a-z0-9][a-z0-9-]{0,40}$/.test(b.workflow)||!defs.versions(b.workflow).length)return json({error:'no such workflow'},404);
         const before=defs.displayName(b.workflow);let done;
-        try{done=defs.names.set(b.workflow,b.name,by);}catch(e:any){return json({error:e.message},e instanceof DisplayNameError?400:409);}
+        try{done=defs.rename(b.workflow,b.name,by);}catch(e:any){return json({error:e.message},e instanceof DisplayNameError?400:409);}
         const after=defs.displayName(b.workflow);
         d.log.emit({type:'workflow_renamed',workflow:b.workflow,actor:by,summary:`${b.workflow} ${done.renamed?`renamed "${before}" → "${after}"`:`name reset to "${after}"`} by ${by}`,data:{from:before,to:after,reset:!done.renamed}});
+        // every open Board (other tabs, the phone) redraws with the new name
+        try{d.send('workflow-names',{workflow:b.workflow,names:defs.names.map()});}catch{}
         return json({workflow:b.workflow,displayName:after,renamed:done.renamed,defaultName:DEFAULT_DISPLAY_NAMES[b.workflow]??defs.get(b.workflow)?.name??b.workflow,names:defs.names.map()});
       }
       if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), trash:defs.trashCatalog(), names:defs.names.map(), checks: engine.registry.all().map(checkView) });

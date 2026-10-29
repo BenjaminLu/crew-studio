@@ -119,7 +119,7 @@ ok(pg.project.id === "harbor-api" && pg.project.path === harbor && pg.project.ba
 const hk = Object.fromEntries(pg.health.map((t: any) => [t.key, t]));
 ok(pg.health.map((t: any) => t.key).join() === "enabled,registered,base,crew,test,rules,gitconfig", "seven health tiles, in order");
 ok(hk.enabled.tone === "ok" && hk.registered.en === "Registered" && hk.base.tone === "ok" && hk.base.detail.en === `main · ${head.slice(0, 7)}`, "enabled, registered, base found with its sha", JSON.stringify(hk.base));
-ok(hk.crew.tone === "ok" && hk.crew.detail.en === "code-firstmate v1 · config v1", "crew approved: workflow and config version", JSON.stringify(hk.crew));
+ok(hk.crew.tone === "ok" && hk.crew.detail.en === "coding v1 · config v1", "crew approved: workflow (its display name, code-firstmate shows as coding) and config version", JSON.stringify(hk.crew));
 ok(hk.test.code === "bun test" && hk.test.detail.en === "from .crew/gates.json", "the test command from .crew/gates.json");
 ok(hk.rules.detail.en === "Not checked yet" && hk.gitconfig.detail.en === "Not checked yet" && hk.rules.detail.tw === "尚未檢查", "operating rules and shared git config: not checked yet");
 ok(pg.tasks.length === 2 && pg.tasks.some((t: any) => t.id === a.id && t.waitsOn.kind === "captain" && t.waitsOn.nodeLabel === "Merge" && t.pipe.join() === "done,human") && pg.tasks.some((t: any) => t.id === "R-900" && t.waitsOn.kind === "queue"), "active Tasks with who each waits on and its pipe", JSON.stringify(pg.tasks.map((t: any) => [t.id, t.waitsOn.kind, t.pipe])));
