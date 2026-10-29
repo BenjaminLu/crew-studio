@@ -2,7 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { checkedTempDir } from "./lib/git-hygiene.mjs"; // temp folders only through the checked helper
 // Skills by duty (captain: "every node's default skill is plain-writing; reviewers don't get code-review, designers don't get
 // design review, workers have no matching skill"). Every built-in workflow pins its nodes' skills by what the node does:
-//   - every agent node, every judged check and every hook that runs a model turn (pr.open, image.generate) pins at least one
+//   - every agent node (but those of DUTY_EXEMPT's workflows), every judged check and every hook that runs a model turn (pr.open, image.generate) pins at least one
 //     duty skill beyond plain-writing, each pin matching the built-in library text (packs/core/skills/<id>/SKILL.md, v1);
 //   - a code workflow's reviewer nodes pin code-review; design reviewers (agent nodes and judged checks) pin visual-design-review;
 //   - the system text a stub agent receives carries its role skill, then the member's skills, then the node's, in that order;
@@ -29,6 +29,9 @@ const files = [...readdirSync(join(root, "workflows/v2")).filter((f) => f.endsWi
 const manifest = (use: string): any => { const [pack, id] = use.split("/"); try { return parse(readFileSync(join(root, "packs", pack, "checks", id, "check.yaml"), "utf8")); } catch { return null; } };
 // the startup competition keeps its own two-vendor pick and its own judge brief; no library skill fits a pitch judge
 const EXEMPT = new Set(["startup-recursion"]);
+// issue triage and issue categories read issues against the code under their own role skill and no library skill fits
+// them, so their agent nodes pin no duty skill; every other check here still covers them
+const DUTY_EXEMPT = new Set(["issue-triage", "issue-categories"]);
 const MODEL_HOOKS: Record<string, string> = { "pr.open": "commit-and-pr-text", "image.generate": "image-prompting" };
 const duty = (pins: any[] | undefined) => (pins ?? []).filter((p) => p.id !== "plain-writing");
 const badPins = (pins: any[] | undefined) => (pins ?? []).filter((p) => { try { return p.v !== 1 || p.sha256 !== sha(skillText(p.id)); } catch { return true; } }).map((p) => p.id);
@@ -38,7 +41,7 @@ for (const f of files) {
   const seatOf = (n: any) => n.seat ?? d.roles?.find((r: any) => r.id === n.role)?.seat;
   for (const n of d.nodes ?? []) {
     if (n.kind === "agent") { agents++;
-      ok(duty(n.skills).length > 0, `${d.id}/${n.id}: an agent node pins a duty skill beyond plain-writing`, JSON.stringify(n.skills?.map((p: any) => p.id)));
+      if (!DUTY_EXEMPT.has(d.id)) ok(duty(n.skills).length > 0, `${d.id}/${n.id}: an agent node pins a duty skill beyond plain-writing`, JSON.stringify(n.skills?.map((p: any) => p.id)));
       if (d.kind === "code" && n.role === "reviewer") ok(n.skills?.some((p: any) => p.id === "code-review"), `${d.id}/${n.id}: a code reviewer pins code-review`, JSON.stringify(n.skills?.map((p: any) => p.id)));
       if (seatOf(n) === "design-reviewer") ok(n.skills?.some((p: any) => p.id === "visual-design-review"), `${d.id}/${n.id}: a design reviewer pins visual-design-review`, JSON.stringify(n.skills?.map((p: any) => p.id)));
     }
