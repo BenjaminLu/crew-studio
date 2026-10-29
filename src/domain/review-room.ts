@@ -531,7 +531,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (!transitions.length || transitions.length > FIGURE_LIMITS.transitions || transitions.some((x: any) => !ids.has(x.from) || !ids.has(x.to))) throw new Error(`item ${i + 1}: transitions is 1 to ${FIGURE_LIMITS.transitions} {from, to, label, cite}, between the states listed`);
         // drawn as a mermaid flowchart: an id is prefixed (a state called "end", "style" or "class" is a keyword there) and a label
         // loses what would end it early ([ ] | ; ) })
-        const sid = (id: string) => `s_${id}`, lab = (t: string) => t.replace(/[\[\]|;(){}]/g, " ").replace(/\s+/g, " ").trim();
+        const sid = (id: string) => `s_${id}`, lab = (t: string) => t.replace(/-->|---|--x|==>/g, " ").replace(/[\[\]|;(){}&]/g, " ").replace(/\s+/g, " ").trim();
         const code = ["flowchart LR", ...states.map((x: any) => `  ${sid(x.id)}[${lab(x.label) || x.id}]`), ...transitions.map((x: any) => `  ${sid(x.from)} -->${lab(x.label) ? `|${lab(x.label)}|` : ""} ${sid(x.to)}`)].join("\n");
         const cites = transitions.map((x: any) => x.cite).filter(Boolean);
         return { ...at, type, states, transitions, code, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" }; }
@@ -849,7 +849,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const board = (view.board ?? []).map((b: any) => b.type === "image" && b.src ? { ...b, src: names.has(b.src) ? `asset:${names.get(b.src)}` : null } : b.type === "screenshot" ? { ...b, pages: (b.pages ?? []).map((p: any) => ({ ...p, before: shot(p.before), after: shot(p.after) })) } : b);
       // every citation, resolved now: a snapshot opens them without the cache, the Task or GitHub
       const refs = new Set<string>(), add = (c: any) => { if (c?.ref && c.ok !== false) refs.add(c.ref); };
-      for (const t of room.turns) { (t.claims ?? []).forEach((c) => c.cites.forEach(add)); (t.scenes ?? []).forEach((sc) => sc.points.forEach((p) => p.cites.forEach(add))); for (const m of String(t.answer ?? "").matchAll(CITE)) refs.add(`${m[1]}:${m[2]}`); }
+      for (const t of room.turns) { if (t.hidden) continue; (t.claims ?? []).forEach((c) => c.cites.forEach(add)); (t.scenes ?? []).forEach((sc) => sc.points.forEach((p) => p.cites.forEach(add))); for (const m of String(t.answer ?? "").matchAll(CITE)) refs.add(`${m[1]}:${m[2]}`); }
       for (const b of room.board) (b.cites ?? []).forEach(add); for (const q of room.check.questions) if (q.result) (q.cites ?? []).forEach(add);
       const cites: Record<string, any> = {}; for (const ref of [...refs].slice(0, 300)) { try { cites[ref] = await api.cite(k.id, ref); } catch (e: any) { cites[ref] = { error: String(e?.message ?? e).slice(0, 200) }; } }
       for (const c of Object.values(cites)) if (c?.kind === "board" && c.item) c.item = board.find((b: any) => b.id === c.item.id) ?? c.item;

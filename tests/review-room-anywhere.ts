@@ -298,6 +298,17 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
     old.turns = [...old.turns.filter((t: any) => t.action !== "reviewers"), dump(90), dump(91)]; writeFileSync(f, JSON.stringify(old));
     const fresh = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data) }), vo: any = fresh.view(pid), dumps = vo.turns.filter((t: any) => t.action === "reviewers");
     ok(dumps.length === 2 && dumps[0].hidden === true && !dumps[1].hidden && dumps[1].claims.every((c: any) => !c.quote) && /notes on GitHub/.test(dumps[1].claims[0].text), "an older room's reviewers' dumps become one card for the head (the rest hidden), nobody's words on the board", JSON.stringify(dumps.map((t: any) => [t.n, t.hidden, t.claims.length])));
+    // saved while an older dump is still hidden in the room: the snapshot resolves the citations of what it shows, never the
+    // hidden dump's (they would carry a reviewer's whole note); the tutor's own [review:…] citation still resolves
+    { const withHidden = JSON.parse(saved), at = withHidden.turns.findIndex((t: any) => t.action === "reviewers" && t.head === head);
+      const hid = { ...dump(92), claims: [{ text: "lint-im · inline [review:c519]", kind: "claim", basis: "reviewer", cites: [{ ref: "review:c519", ok: true }], quote: "a long quoted body" }] };
+      withHidden.turns.splice(at < 0 ? withHidden.turns.length : at, 0, hid); writeFileSync(f, JSON.stringify(withHidden));
+      const { ArtifactStore } = await import("../src/artifacts"), lib = new ArtifactStore(H.data), aid = `room-${pid.toLowerCase()}`;
+      const fresh2 = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data) }), hidden = fresh2.view(pid).turns.find((t: any) => t.n === 92);
+      await fresh2.saveToLibrary(pid, "captain"); const snap: any = fresh2.librarySnapshot(aid), all = JSON.stringify(snap.cites);
+      ok(hidden?.hidden === true && !("review:c519" in snap.cites) && !all.includes("lint-im finding 119") && /lint-im finding 11:/.test(snap.cites["review:r311"]?.text ?? JSON.stringify(snap.cites["review:r311"] ?? "")),
+        "a snapshot saved while an older dump is hidden keeps none of that dump's notes; the tutor's own review citation still opens", JSON.stringify({ hidden: hidden?.hidden, keys: Object.keys(snap.cites) }));
+      lib.remove(aid); }
     writeFileSync(f, saved); }
   const turnsBeforeMerge = room.view(pid).turns.length; const P = sim.pulls.get(1); Object.assign(P, { state: "closed", merged: true, merged_at: "2026-10-28T13:00:00Z", closed_at: "2026-10-28T13:00:00Z" });
   process.env.CREW_REVIEW_PR_FRESH_MS = "0"; const calls1 = sim.calls.length, lateTurn = await refused(() => room.start(pid, { action: "how", confirm: v5.offer.hash }, "captain")); delete process.env.CREW_REVIEW_PR_FRESH_MS;

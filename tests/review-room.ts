@@ -334,7 +334,7 @@ ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.len
 // ---------- a tutor that ends without an answer: the turn fails and says so, never a blank scene ----------
 // outside a lesson a scene may leave its chapter out, or name chapters in any order; a state called "end", a label with ";"
 const r4 = results.length;
-script.push([["board_draw", { items: [{ type: "states", title: "Ends", states: [{ id: "start", label: "Start" }, { id: "end", label: "End; (done) {x}" }], transitions: [{ from: "start", to: "end", label: "finish; now)", cite: "diff:src/percent.ts:L2-3" }] }] }],
+script.push([["board_draw", { items: [{ type: "states", title: "Ends", states: [{ id: "start", label: "Start" }, { id: "end", label: "End; (done) {x}" }], transitions: [{ from: "start", to: "end", label: "finish; now) --> & go ==> on", cite: "diff:src/percent.ts:L2-3" }] }] }],
   ["scene_show", { title: "No chapter", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
   ["scene_show", { chapter: "watch", title: "A risk", picture: "B1-1", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Pinned [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }] }],
   ["scene_show", { chapter: "what", title: "Back to what", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
@@ -343,7 +343,7 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
 { const v4 = room.view(merge.id) as any, t4s = v4.turns[3]?.scenes ?? [], made = results.slice(r4).filter(([n]) => n === "scene_show").map(([, j]) => j.error ?? "ok"), fig = v4.board.find((b: any) => b.turn === 4 && b.type === "states");
   ok(JSON.stringify(made) === JSON.stringify(["ok", "ok", "ok"]) && JSON.stringify(t4s.map((x: any) => x.chapter ?? null)) === JSON.stringify([null, "watch", "what"]),
     "outside a lesson (why, how, a question, a quiz) a scene may leave its chapter out or name chapters in any order", JSON.stringify({ made, chapters: t4s.map((x: any) => x.chapter) }));
-  const g = fig && /flowchart LR\n {2}s_start\[Start\]\n {2}s_end\[End done x\]\n {2}s_start -->\|finish now\| s_end$/.test(fig.code);
+  const g = fig && /flowchart LR\n {2}s_start\[Start\]\n {2}s_end\[End done x\]\n {2}s_start -->\|finish now go on\| s_end$/.test(fig.code);
   ok(!!g, "a state machine's states are drawn under Studio's own ids (a state called end is not a keyword) and labels lose ; ) } that would cut them", fig?.code); }
 { const t4 = (room.view(merge.id) as any).turns[3];
   ok(t4?.status === "failed" && /the tutor ended without an answer/.test(t4.error ?? "") && t4.answer === "" && !t4.claims.length, "a tutor that ends after a tool call with no final message fails the turn with the reason; its preamble is not the answer", JSON.stringify(t4 && { status: t4.status, error: t4.error, answer: t4.answer, claims: t4.claims })); }
