@@ -71,7 +71,7 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
 - **Short on the board, long in the transcript.** The tutor builds an answer as scenes with `scene_show` {title, picture,
   points: [{text, cites}]}: a title of at most 20 CJK characters or 48 Latin ones, a picture (a board item it drew), 2 to 4
   points of at most 60 CJK characters or 120 Latin ones each (citations not counted; a CJK character weighs as many Latin
-  ones as the two limits trade it for, `SCENE_LIMITS`, `boardLength`), at most six scenes a turn. Over a limit the tool
+  ones as the two limits trade it for, `SCENE_LIMITS`, `boardLength`), at most twelve scenes a turn. Over a limit the tool
   refuses the scene and says which part, so the tutor rewrites; the longer explanation is its final answer, which the
   transcript shows. An older answer (no scenes) is split on the page, sentence by sentence, into points of at most 120 (a
   CJK character counting two), each citation staying with its sentence; its markdown tables become a `table` picture and
@@ -224,15 +224,48 @@ The offer is read only: it reads the project's approved staffing, else what the 
 (`teamReviewerPreview`, nothing written); the team's staffing version is written only when the captain's confirmed turn makes
 the host, which is started as that captain (`by`). The host Task's page links back to the pull request's room.
 
-**What reviewers asked.** Each read of a pull request turns the reviewer notes not shown yet (reviews with a body or a
-verdict, inline comments, comments) into a Studio scene: each note is a point labelled "Reviewer's words", Studio's own
-line (who, where, which verdict) cited `[review:<id>]` (`r…` a review, `c…` an inline comment, `i…` a comment), and the
-words themselves as plain text beside it (`quote`: never parsed for citations or markup), shown as a one-line gist with
-the full text folded under "Original" until the captain opens it. A bot's plain comment (an author ending in `[bot]`: coverage tables, CI summaries) is
-not a reviewer's question: the scene counts such comments in one line and shows none of them; a bot's review or inline
-comment (an AI reviewer's) is shown like a person's. An opened original stays open across redraws; a one-line quote (a
-commit subject) is shown as it is.
-A citation opens the note.
+**What reviewers did.** Reading a pull request gives the room one short Studio card per head (free, no model): how many
+reviews, inline comments and comments, from how many people (bots' plain comments counted apart, an AI reviewer's account
+counted as a reviewer), each reviewer's latest verdict and whether it is on this head, how many notes are on the current head
+and how many inline comments are outdated. Nobody's words are on the board: the notes themselves are in the transcript,
+newest first, folded until the captain opens them (each a gist with its original folded, cited `[review:<id>]`; a citation
+opens the note). Re-reading GitHub, re-opening the pull request or re-entering the room updates that card in place and never
+adds a scene; an older room's repeated dumps become one card per head (the rest kept, hidden). **The digest is the tutor's**:
+its prompt carries the notes newest first, at most 40, a repeated note once, outdated inline comments marked, fenced as
+untrusted, and asks it, when the captain asks to be taught the change or presses **Digest reviews** (a quick action of a
+room with notes, a paid turn confirmed like any other), to show a "What reviewers raised" scene with scene_show: the concerns
+still open and the ones resolved, each point cited to the notes. Nothing is paid without the captain's confirmation.
+The "what changed since last time" scene names a reviewer's inline comment whose lines changed, not its words.
+
+**Coming back.** Every room is listed on the Review room's home (`#/room`, `GET /api/review-room`: open rooms first, then
+the most recent; a link back into each), which the sidebar's own **Review room** item opens (on the rail too when it is
+folded). The room's header shows where you are ("Review room › the room", the first a link to the list). The browser's back
+walks Studio's own pages (each is a route). Studio runs in an app window without a back button, so a link that leaves
+Studio (GitHub, a cited page, anything not Studio's origin) always opens in a new window (`target=_blank`, `noopener`): the
+links Studio draws say so, and a document-level handler opens any other external link the same way, never in place.
+
+**Answers stay in view.** Coming back while a turn runs, the stage shows that turn: the scenes it already made and what it
+has said so far and how many tools it used (`progress`, read back from its round record, so it survives a reload, and a
+restart shows what an interrupted turn had said). When it finishes the stage moves to its answer, unless the captain moved
+elsewhere meanwhile: then "The answer is ready — show it" waits on the board. Asking a quick action again on a head that
+already has its finished answer (or the same question) first offers "Show the existing explanation" or "Explain again
+(paid)", the latter confirmed as usual. Every finished answer is a scene of its own, reachable from the transcript (its
+button shows how many answers the room holds).
+
+**A lesson, chapter by chapter.** Asked to teach the change, the tutor builds the lesson as chapters, in this order, each
+left out when its source is empty: what this is; what talks to what (an architecture drawing, said to be inferred when no
+design doc of the repository shows it); the change itself, one scene per item (a commit group, a subsystem, a fix), each an
+`item` board item (name, before, after, the mechanism) that Studio draws with one layout for every item; its life, state by
+state (a `states` item: every state and every transition, each transition citing its code and opening it); one request, in
+order (a `sequence` item: calls, returns, async calls, and loops, alternatives and options as frames); what reviewers raised;
+what to watch (risks only, every point cited and verified: an empty list is a finding, said with what was checked); open
+questions or a check. Studio holds the shape as it holds a scene's size: in a lesson `scene_show` names its `chapter` and a chapter
+never follows a later one (other answers may name one, in any order, or none); the change, lifecycle and sequence chapters show their own kind of drawing, and a risk without a
+verified citation is refused. Every figure is drawn by Studio from the tutor's data (text nodes, sizes checked against its
+layout). Nothing about deployment is claimed: whether a migration ran is not in the repository. The room's chapters rail
+(left of the board; a strip above it on a phone) lists every answer's scenes under its question, the lesson by chapter: a
+click jumps to it, the current one is marked, and finished answers stay listed. The chapters are kept in the room file and
+its Library snapshot.
 
 **Following the head.** The room keeps the head the captain last looked at (`seen`) and every head it saw (`heads`). On
 re-entry (the desktop page, at most once a minute from the last attempt) or "Check for new commits" (`POST …/check`, the
@@ -557,6 +590,28 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     know the one before; a deleted saved room is forgotten and saved again from v1; a refusal reaches the Library only as
     Studio's fixed words. — review-room "answered while a turn still runs …", "once the turn has ended the room is saved …",
     "three saves at once …", "deleted from the Library, the room no longer links it …", "the Library keeps no refused text …".
+33. Reviewers digested, ways back, answers kept in view: a busy pull request is one short card per head, updated in place
+    (re-reading, re-opening, re-entering add nothing; an older room's dumps become one card); their words only in the
+    transcript, folded; the tutor reads the notes newest first, deduped, outdated marked, and is asked for "What reviewers
+    raised"; Digest reviews is confirmed; the sidebar's Review room, the room list and the crumb lead back; external links open
+    in a new window; a running turn shows on entry with its persisted progress, its answer is shown when it ends (or waits
+    behind a chip); an existing answer is offered before paying again. — review-room-anywhere "the reviewers' scene is one
+    short card …", "a busy pull request … is one short card, updated in place …", "the card says each reviewer's latest
+    verdict …", "“Digest reviews” is a paid turn …", "the tutor reads the notes newest first …", "an older room's reviewers'
+    dumps become one card …"; review-room "a running turn's progress is persisted …"; review-room-ui "the sidebar has a Review
+    room item …", "the Review room's home lists the rooms …", "the room's header says where you are …", "the browser's back
+    walks Studio's own pages …", "a link that leaves Studio opens in a new window …", "the board shows Studio's short card of
+    the reviews …", "their notes are in the transcript, folded …", "coming back while a turn runs …", "when it finishes, the
+    room shows the answer", "asking again what this head already has …", "the captain looked elsewhere while it ran …",
+    "“The answer is ready — show it” goes to the answer".
+34. A lesson, chapter by chapter: chapters in their order, per-item before → after figures from one layout, a state machine
+    with every transition cited and openable, a sequence with its loop; out-of-order chapters, the wrong drawing and uncited
+    risks refused; the chapters rail jumps and marks the current scene; chapters kept in the Library snapshot. — review-room
+    "the lesson is chapters in their order …", "Studio holds the chapter shape …", "per-item figures, a state machine …",
+    "the lesson's chapters and their figures are kept …"; review-room-ui "the chapters' rail lists every answer's scenes …",
+    "a click jumps to its chapter, marked current …", "every changed item is drawn from the same layout …", "the state
+    machine draws every transition …", "one request in order …", "the rail sits beside the board …", "on a phone the chapters
+    are a strip above the board".
 
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.

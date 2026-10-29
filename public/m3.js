@@ -242,7 +242,7 @@ function lineage(a, vs, runs) {
   vs.forEach((v, i) => {
     if (i) { const run = runs.find((r) => r.version === v.n); parts.push(h("span", { class: "a3-arrow" }, "→"),
       h("span", { class: "lstep" }, h("b", {}, v.annotations?.length ? v.annotations.join(", ") : T("new file", "新檔案")), h("span", {}, run ? `${run.provider} · ${money(run.cost)}` : maker(v.createdBy))), h("span", { class: "a3-arrow" }, "→")); }
-    parts.push(h("a", { class: `lstep ${v.status === "approved" ? "ok" : ""}`, href: a.source === "url" ? (v.url || "#") : a.source === "room" ? `#/room/lib:${a.id}@${v.n}` : `#/review/${a.id}/${v.n}` }, h("b", {}, `v${v.n}`), h("span", {}, VST[v.status]?.[1]() || v.status)));
+    parts.push(h("a", { class: `lstep ${v.status === "approved" ? "ok" : ""}`, ...(a.source === "url" ? { target: "_blank", rel: "noopener noreferrer" } : {}), href: a.source === "url" ? (v.url || "#") : a.source === "room" ? `#/room/lib:${a.id}@${v.n}` : `#/review/${a.id}/${v.n}` }, h("b", {}, `v${v.n}`), h("span", {}, VST[v.status]?.[1]() || v.status)));
   });
   return h("div", { class: "lineage" }, parts);
 }

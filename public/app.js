@@ -694,6 +694,16 @@ $$(".nav-item").forEach((b) => b.addEventListener("click", () => { location.hash
 $("#sideTog").addEventListener("click", () => setSide(!document.body.classList.contains("side-collapsed")));
 addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setSide(!document.body.classList.contains("side-collapsed")); } });
 addEventListener("hashchange", route);
+// Studio runs in an app window with no back button: a link that leaves Studio always opens in a new window (target=_blank,
+// rel=noopener), never in this one, whatever page drew it; Studio's own pages stay in place (the browser's back works for them). It listens
+// in the bubble phase, so a link's own handler runs first and can take the click (preventDefault)
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.("a[href]"); if (!a || e.defaultPrevented || a.hasAttribute("download") || e.button > 0) return;
+  let u; try { u = new URL(a.getAttribute("href"), location.href); } catch { return; }
+  if (!/^https?:$/.test(u.protocol) || u.origin === location.origin) return;
+  if (a.target === "_blank") { if (!/noopener/.test(a.rel)) a.rel = "noopener noreferrer"; return; }
+  e.preventDefault(); window.open(u.href, "_blank", "noopener,noreferrer");
+});
 setInterval(() => { if (S.route?.name === "board") render(); }, 30_000); // keep "ago" fresh
 setLang(lang, false);
 load().then(connect).catch((e) => { $("#view").replaceChildren(h("div", { class: "card" }, h("div", { class: "empty" }, icon("alert"), h("b", {}, "Crew Studio could not load"), String(e)))); });
