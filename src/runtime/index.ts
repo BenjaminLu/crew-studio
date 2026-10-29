@@ -758,6 +758,8 @@ export function createRuntime(d: RuntimeDeps) {
       // round only the desktop captain starts, confirming its provider and model; nothing here answers the card ----------
       // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
       // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
+      // the Review Room's home: every room on this machine, open ones first (read on any authenticated page)
+      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [] }); }
       if (p === "/api/review-room/open-pr") {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);

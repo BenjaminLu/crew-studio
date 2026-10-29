@@ -192,16 +192,16 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   ok(caches.length === 1 && must(cache, ["rev-parse", "--is-bare-repository"]) === "true" && must(cache, ["cat-file", "-t", A]) === "commit" && !Bun.spawnSync(["git", "cat-file", "-e", `${A}^{commit}`], { cwd: local }).success,
     "the head's commits are in a bare repository under Studio's data folder; the project's checkout does not have them", JSON.stringify(caches));
   ok(localState() === localBefore && remoteRefs() === remoteBefore, "the project's checkout is untouched (refs, objects, files) and nothing was pushed to GitHub");
-  // ---- what reviewers asked: their words as text, cited to the comment, never a citation of their own ----
-  const rv = v1.turns.find((t: any) => t.studio && t.action === "reviewers"), inline = rv?.claims.find((c: any) => c.cites.some((x: any) => x.ref === "review:c11"));
-  const said = rv?.claims.filter((c: any) => c.basis === "reviewer") ?? [];
-  ok(rv?.claims.every((c: any) => typeof c.zh === "string" && c.zh && c.zh !== c.text && JSON.stringify([...c.zh.matchAll(/\[review:[^\]]+\]/g)].map(String)) === JSON.stringify([...c.text.matchAll(/\[review:[^\]]+\]/g)].map(String)) && (!c.quote || !c.zh.includes(c.quote))),
-    "Studio's own lines carry their Chinese beside the English, citations kept; the reviewers' words are never translated", JSON.stringify(rv?.claims.map((c: any) => c.zh)));
-  ok(!!rv && rv.provider === "studio" && said.length === 4 && said.every((c: any) => c.cites.length === 1 && c.cites[0].ok), "the reviewers' review, inline comment and comment are a Studio scene, each cited to its note", JSON.stringify(rv?.claims));
-  ok(rv.claims.length === 5 && /^1 bot comment \(coverage, CI and the like\) not shown here/.test(rv.claims[4].text) && !rv.claims.some((c: any) => /Coverage report|github-actions/.test((c.quote ?? "") + c.text)),
-    "a bot's comment (a coverage table) is counted, never shown as a reviewer's words", JSON.stringify(rv.claims.at(-1)));
-  ok(inline?.quote.includes('‹img src=x onerror="window.__pwned=1"›') && inline.quote.includes("[diff:a.txt]") && !/[<>]/.test(inline.quote) && rv.claims.every((c: any) => !/[<>]/.test(c.text + (c.quote ?? ""))) && !inline.text.includes("[diff:") && /rita · on a\.txt:L2/.test(inline.text),
-    "a comment is kept as its words (markup and a citation-looking text stay text, nothing can close its fence), apart from Studio's line", JSON.stringify(inline));
+  // ---- what reviewers did: one short Studio card, no one's words on the board; their words folded in the transcript ----
+  const rvs = v1.turns.filter((t: any) => t.studio && t.action === "reviewers"), rv = rvs[0], inline = v1.notes.find((x: any) => x.id === "c11");
+  ok(rvs.length === 1 && rv.provider === "studio" && rv.claims.length <= 4 && rv.claims.every((c: any) => !c.quote && c.text.length <= 400) && /^\d+ notes? on GitHub from \d+ (person|people): \d+ reviews?, \d+ inline comments?, \d+ comments?/.test(rv.claims[0].text) && /bot comment/.test(rv.claims[0].text),
+    "the reviewers' scene is one short card of counts (bots counted apart), never their quoted words", JSON.stringify(rv?.claims.map((c: any) => c.text)));
+  ok(rv.claims.every((c: any) => typeof c.zh === "string" && c.zh && c.zh !== c.text && JSON.stringify([...c.zh.matchAll(/\[review:[^\]]+\]/g)].map(String)) === JSON.stringify([...c.text.matchAll(/\[review:[^\]]+\]/g)].map(String))),
+    "Studio's own lines carry their Chinese beside the English, citations kept", JSON.stringify(rv.claims.map((c: any) => c.zh)));
+  ok(!rv.claims.some((c: any) => /Coverage report|github-actions|Why TWO/.test(c.text)) && v1.notes.length >= 3 && v1.notes.some((x: any) => x.bot) && v1.actions.some((a: any) => a.id === "reviews"),
+    "the notes themselves (bots marked) go to the transcript, and the room offers “Digest reviews”", JSON.stringify(v1.notes.map((x: any) => [x.id, x.bot])));
+  ok(inline?.body.includes('‹img src=x onerror="window.__pwned=1"›') && inline.body.includes("[diff:a.txt]") && !/[<>]/.test(inline.body),
+    "a comment is kept as its words (markup and a citation-looking text stay text, nothing can close its fence)", JSON.stringify(inline));
   const cited: any = await room.cite(pid, "review:c11");
   ok(cited.kind === "review" && cited.author === "rita" && cited.path === "a.txt" && cited.line === 2 && cited.url === "https://github.com/fixture/project/pull/1#discussion_r11", "a reviewer citation opens the comment", JSON.stringify(cited));
   // ---- a turn: the host Task's reviewer seat, the reviewers fenced as untrusted data ----
@@ -233,7 +233,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
     "the next turn's first scene is Studio's what changed since last time, then the tutor's answer", JSON.stringify(since?.claims?.map((c: any) => c.text)));
   ok(sinceItem?.type === "diff" && sinceItem.range.from === A && sinceItem.range.to === B && sinceItem.text.includes("-TWO") && sinceItem.text.includes("+Two, quietly"), "its picture is the diff from the old head to the new one", JSON.stringify(sinceItem));
   const addressed = since.claims.find((c: any) => c.cites.some((x: any) => x.ref === "review:c11"));
-  ok(/^Changed since: the code this comment points at/.test(addressed?.text ?? "") && addressed.quote.includes("Why TWO?") && since.claims.some((c: any) => c.quote === "Answer review: quieter"), "it names the reviewer comment whose lines changed since, and the new commit, their words as text", JSON.stringify(since.claims));
+  ok(/^Changed since: the code this comment points at/.test(addressed?.text ?? "") && !addressed.quote && since.claims.some((c: any) => c.quote === "Answer review: quieter"), "it names the reviewer comment whose lines changed since (not its words) and the new commit", JSON.stringify(since.claims));
   ok(/WHAT CHANGED SINCE THE CAPTAIN LAST LOOKED/.test(prompts.at(-1)!.text) && prompts.at(-1)!.text.includes("+Two, quietly") && v4.moved === null && v4.heads.map((h: any) => h.head).join() === `${A},${B}`, "the tutor starts from that diff; the room no longer says new commits; both heads are in the room's record", JSON.stringify(v4.heads));
   const scene = E.trusted(host.id).entries.filter((x: any) => x.record === "review-room-scene").at(-1) as any, rec2 = E.trusted(host.id).entries.filter((x: any) => x.record === "review-room-turn").at(-1) as any;
   ok(scene?.data.from === A && scene.data.to === B && scene.data.subject.url === "https://github.com/fixture/project/pull/1" && rec2.data.subject.head === B && rec2.head === B, "each head's comprehension is on the ledger: the scene of what changed, then the turn at the new head", JSON.stringify([scene?.data, rec2?.data?.subject]));
@@ -260,7 +260,7 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
     release(); await room.settle(pid); }
   process.env.CREW_REVIEW_PR_CACHE_MB = "0.0001"; const vc: any = await room.check(pid); delete process.env.CREW_REVIEW_PR_CACHE_MB;
   const staleTurn = await refused(() => room.start(pid, { action: "how", confirm: v4.offer?.hash ?? "x" }, "captain"));
-  ok(/larger than the review room keeps/.test(vc.stale?.error ?? "") && vc.turns.some((t: any) => t.action === "reviewers" && t.claims.some((c: any) => c.quote === "One more thing.")) && !existsSync(cache) && staleTurn?.code === "stale",
+  ok(/larger than the review room keeps/.test(vc.stale?.error ?? "") && vc.notes.some((x: any) => x.body === "One more thing.") && !existsSync(cache) && staleTurn?.code === "stale",
     "over the cap the cache goes (no turn was reading it), GitHub's new comment is still kept, and a paid turn is refused until the commits are fetched", JSON.stringify([vc.stale, staleTurn?.message]));
   const vr: any = await room.check(pid);
   ok(vr.stale === null && vr.head === B && existsSync(cache) && (await room.cite(pid, "diff:a.txt")).text.includes("Two, quietly"), "the next check fetches the commits again: the room is current and its citations open", JSON.stringify(vr.stale));
@@ -269,13 +269,41 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
   lists(1, { reviews: [{ id: 21, user: { login: "rita" }, state: "COMMENTED", body: "A few questions.", commit_id: A, submitted_at: "2026-10-28T10:00:00Z" }, { id: 22, user: { login: "rita" }, state: "APPROVED", body: "", commit_id: B, submitted_at: "2026-10-28T12:00:00Z" }],
     inline: [{ id: 11, user: { login: "rita" }, body: EVIL, path: "a.txt", line: 2, position: null, commit_id: A, created_at: "2026-10-28T10:01:00Z" }], files: [{ filename: "a.txt", status: "modified", additions: 1, deletions: 1 }] });
   const v5: any = await room.check(pid);
-  ok(v5.prState.state === "open" && v5.prState.approved === true && v5.prState.verdicts.some((x: any) => x.author === "rita" && x.state === "APPROVED" && x.current) && v5.open && v5.turns.at(-1).action === "reviewers" && /approved at/.test(v5.turns.at(-1).claims[0].text),
-    "an approval at the current head shows on the room (and as a new note of what reviewers said); the room still takes turns", JSON.stringify(v5.prState));
-  const P = sim.pulls.get(1); Object.assign(P, { state: "closed", merged: true, merged_at: "2026-10-28T13:00:00Z", closed_at: "2026-10-28T13:00:00Z" });
+  ok(v5.prState.state === "open" && v5.prState.approved === true && v5.prState.verdicts.some((x: any) => x.author === "rita" && x.state === "APPROVED" && x.current) && v5.open && v5.turns.filter((t: any) => t.action === "reviewers" && t.head === v5.prState.head && !t.hidden).length === 1 && v5.turns.filter((t: any) => t.action === "reviewers" && t.head === v5.prState.head).at(-1).claims.some((c: any) => /rita approved at this head/.test(c.text)),
+    "an approval at the current head shows on the room (and in the head's one reviewers' card); the room still takes turns", JSON.stringify(v5.prState));
+  // ---- a busy review: many long notes, AI reviewer accounts (not "[bot]"), repeats; the room stays a short card ----
+  { const long = (who: string, n: number) => `${who} finding ${n}: ` + "the cache key ignores the port and the scheme, so two origins share one approval; ".repeat(12);
+    const reviews = [{ id: 21, user: { login: "rita" }, state: "COMMENTED", body: "A few questions.", commit_id: A, submitted_at: "2026-10-28T10:00:00Z" }, { id: 22, user: { login: "rita" }, state: "APPROVED", body: "", commit_id: B, submitted_at: "2026-10-28T12:00:00Z" },
+      ...Array.from({ length: 12 }, (_, i) => ({ id: 300 + i, user: { login: i % 2 ? "lint-im" : "sage-im" }, state: i === 11 ? "CHANGES_REQUESTED" : "COMMENTED", body: long(i % 2 ? "lint-im" : "sage-im", i), commit_id: i < 6 ? A : B, submitted_at: `2026-10-28T13:${String(10 + i).padStart(2, "0")}:00Z` }))];
+    const inline = [{ id: 11, user: { login: "rita" }, body: EVIL, path: "a.txt", line: 2, position: null, commit_id: A, created_at: "2026-10-28T10:01:00Z" },
+      ...Array.from({ length: 20 }, (_, i) => ({ id: 500 + i, user: { login: "lint-im" }, body: i % 4 === 0 ? "Same remark again." : long("lint-im", 100 + i), path: "a.txt", line: 2, position: i < 10 ? null : 3, commit_id: i < 10 ? A : B, created_at: `2026-10-28T14:${String(10 + i).padStart(2, "0")}:00Z` }))];
+    lists(1, { reviews, inline, files: [{ filename: "a.txt", status: "modified", additions: 1, deletions: 1 }] });
+    const before = room.view(pid).turns.length; await room.check(pid); await room.openPr("https://github.com/fixture/project/pull/1"); room.view(pid, true); await room.settle(pid); await room.check(pid);
+    const vb: any = room.view(pid), cards = vb.turns.filter((t: any) => t.studio && t.action === "reviewers" && !t.hidden && t.head === vb.prState.head);
+    ok(vb.turns.length === before && cards.length === 1 && cards[0].claims.length <= 4 && cards[0].claims.every((c: any) => !c.quote && c.text.length <= 400) && !/the cache key ignores the port/.test(JSON.stringify(cards[0].claims)) && /^35 notes on GitHub from 3 people: 14 reviews, 21 inline comments/.test(cards[0].claims[0].text),
+      "a busy pull request (AI reviewers' long notes, repeats) is one short card, updated in place: re-reading, re-opening and re-entering never add a scene", JSON.stringify({ before, after: vb.turns.length, cards: cards.map((t: any) => t.claims.map((c: any) => c.text)) }));
+    ok(/lint-im changes requested at this head/.test(cards[0].claims[1].text) && /rita approved at this head/.test(cards[0].claims[1].text), "the card says each reviewer's latest verdict and whether it is on this head", cards[0].claims[1].text);
+    // the tutor digests them: newest first, a repeat once, outdated marked, and asked to show what reviewers raised
+    script.push([["say", "Reviewers asked about the cache key [review:r311]."]]);
+    const asked: any = await refused(() => room.start(pid, { action: "reviews" }, "captain"));
+    ok(asked?.code === "confirm_required" && vb.actions.some((a: any) => a.id === "reviews"), "“Digest reviews” is a paid turn like any other: it asks to confirm first", asked?.message);
+    await room.start(pid, { action: "reviews", confirm: vb.offer.hash, lang: "en" }, "captain"); await room.settle(pid);
+    const pd = prompts.at(-1)!.text, nonce = /<untrusted-review-comments-([0-9a-f]{12})>/.exec(pd)?.[1] ?? "", body = pd.slice(pd.indexOf(`<untrusted-review-comments-${nonce}>`), pd.indexOf(`</untrusted-review-comments-${nonce}>`)), ids = [...body.matchAll(/\[review:(\w+)\]/g)].map((m) => m[1]);
+    ok(ids.length === 31 && ids[0] === "c519" && ids.indexOf("c519") < ids.indexOf("r311") && body.split("Same remark again.").length - 1 === 1 && /outdated/.test(body) && /What reviewers raised/.test(pd) && /concerns still open and the ones resolved/.test(pd) && /\[THE CAPTAIN'S NEW MESSAGE \[reviews\]|\[reviews\]/.test(pd),
+      "the tutor reads the notes newest first, at most 40, a repeat once, outdated marked, and is asked for a scene of what reviewers raised (open vs resolved, each cited)", JSON.stringify(ids.slice(0, 6))); }
+  // ---- an older room's dumps: one card per head, the rest hidden, nobody's words on the board ----
+  { const f = join(H.data, "review-room", "pr", `${pid}.json`), saved = readFileSync(f, "utf8"), old = JSON.parse(saved), head = old.pr.head;
+    const dump = (n: number) => ({ n, action: "reviewers", text: "", lang: "en", by: "studio", at: "t", status: "done", ended: "t", job: null, provider: "studio", model: "", effort: null, answer: "x", error: null, cost: null, round: "", head, studio: true, title: "What reviewers asked",
+      claims: [{ text: "lint-im · review [review:r300]", kind: "claim", basis: "reviewer", cites: [{ ref: "review:r300", ok: true }], quote: "a long quoted body" }] });
+    old.turns = [...old.turns.filter((t: any) => t.action !== "reviewers"), dump(90), dump(91)]; writeFileSync(f, JSON.stringify(old));
+    const fresh = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data) }), vo: any = fresh.view(pid), dumps = vo.turns.filter((t: any) => t.action === "reviewers");
+    ok(dumps.length === 2 && dumps[0].hidden === true && !dumps[1].hidden && dumps[1].claims.every((c: any) => !c.quote) && /notes on GitHub/.test(dumps[1].claims[0].text), "an older room's reviewers' dumps become one card for the head (the rest hidden), nobody's words on the board", JSON.stringify(dumps.map((t: any) => [t.n, t.hidden, t.claims.length])));
+    writeFileSync(f, saved); }
+  const turnsBeforeMerge = room.view(pid).turns.length; const P = sim.pulls.get(1); Object.assign(P, { state: "closed", merged: true, merged_at: "2026-10-28T13:00:00Z", closed_at: "2026-10-28T13:00:00Z" });
   process.env.CREW_REVIEW_PR_FRESH_MS = "0"; const calls1 = sim.calls.length, lateTurn = await refused(() => room.start(pid, { action: "how", confirm: v5.offer.hash }, "captain")); delete process.env.CREW_REVIEW_PR_FRESH_MS;
   ok(lateTurn?.code === "closed" && sim.calls.slice(calls1).some((c) => c.path === "/pulls/1") && (room.view(pid) as any).prState.state === "merged", "a paid turn on a pull request read a while ago reads it again first: merged since, the turn is refused", lateTurn?.message);
   const v6: any = await room.check(pid), closedTurn = await refused(() => room.start(pid, { action: "how", confirm: v5.offer.hash }, "captain"));
-  ok(v6.prState.state === "merged" && v6.open === false && /merged on GitHub/.test(v6.closed.en) && v6.offer === null && closedTurn?.code === "closed" && v6.turns.length === v5.turns.length && (await room.cite(pid, "diff:a.txt")).text.includes("Two, quietly"),
+  ok(v6.prState.state === "merged" && v6.open === false && /merged on GitHub/.test(v6.closed.en) && v6.offer === null && closedTurn?.code === "closed" && v6.turns.length === turnsBeforeMerge && (await room.cite(pid, "diff:a.txt")).text.includes("Two, quietly"),
     "merged on GitHub: the room shows it, takes no turn and stays readable (its scenes and citations open)", JSON.stringify([v6.prState.state, v6.closed, closedTurn?.code]));
   // the room ended: Studio saved it to the Library, and the snapshot reads with Studio's copy of the pull request's commits gone
   await room.settle(pid);

@@ -298,7 +298,7 @@ function lineageChain(l, merged) {
   if (merged?.checks) parts.push(arrow(), h("a", { class: "lstep", href: merged.url + "/checks", target: "_blank", rel: "noopener" }, h("b", {}, "CI"),
     h("span", {}, merged.checks.fail ? T(`${merged.checks.fail} failed`, `${merged.checks.fail} 項失敗`) : T(`${merged.checks.pass} passed`, `${merged.checks.pass} 項通過`))));
   if (l.merge) parts.push(arrow(), step("pr", l.merge.id.replace(/^D-[a-z-]+-/, "D-…"), T(`merge ${l.merge.chosen} by ${l.merge.by} · ${ago(l.merge.ts)}`, `合併 ${l.merge.chosen}（${l.merge.by}）· ${ago(l.merge.ts)}`), `#/event/${l.merge.seq}`));
-  if (l.merged) parts.push(arrow(), merged?.commit ? h("a", { class: "lstep", href: `https://github.com/${repo}/commit/${merged.commit}`, target: "_blank", rel: "noopener" }, h("b", {}, merged.commit.slice(0, 8)), h("span", {}, T(`merged ${ago(l.merged.ts)}`, `${ago(l.merged.ts)}合併`)))
+  if (l.merged) parts.push(arrow(), merged?.commit ? h("a", { class: "lstep", target: "_blank", rel: "noopener noreferrer", href: `https://github.com/${repo}/commit/${merged.commit}`, target: "_blank", rel: "noopener" }, h("b", {}, merged.commit.slice(0, 8)), h("span", {}, T(`merged ${ago(l.merged.ts)}`, `${ago(l.merged.ts)}合併`)))
     : step("check", l.merged.pr ? `#${l.merged.pr}` : T("merged", "已合併"), T(`merged ${ago(l.merged.ts)}`, `${ago(l.merged.ts)}合併`), `#/event/${l.merged.seq}`));
   return h("div", { class: "lineage", "data-lineage": l.task }, parts);
 }

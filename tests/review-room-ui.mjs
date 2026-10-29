@@ -203,7 +203,7 @@ try {
     // leaving the room (a turn still running, a scene playing) leaves its page alone: neither the turn's poll nor the
     // playback redraws the page now on screen, so nothing replaces the button the captain is pressing there
     await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); });
-    await p.click("[data-play]"); await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]');
+    await p.click("[data-play]"); await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]'); await p.waitForSelector("[data-room-list]:not([data-room-list-loading])"); await p.waitForTimeout(300);
     await p.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.querySelector("#view"), { childList: true }); document.querySelector('[data-pr-url="home"]').dataset.mark = "1"; });
     await p.waitForTimeout(4000);
     ok(await p.evaluate(() => window.__redraws === 0 && document.querySelector('[data-pr-url="home"]').dataset.mark === "1"), "once the captain leaves a room, its poll and its playback no longer redraw the page on screen", String(await p.evaluate(() => window.__redraws)));
@@ -419,6 +419,77 @@ try {
     ok(libPage.replay === "#/room/lib:room-sc-50@2" && libPage.versions.length === 2 && !libPage.review && !libPage.compare && !libPage.focus, "the Library shows a saved room with “Replay in the review room” for each version, and no review, approval or compare", JSON.stringify(libPage));
     await ctx.close(); }
 
+  // ---------- getting back: the sidebar's Review room, its list of rooms, the room's crumb, external links in a new window ----------
+  { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
+    await p.addInitScript(() => { window.__opened = []; window.open = (u, t, f) => { window.__opened.push([u, t, f]); return null; }; });
+    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [{ id: "SC-50", kind: "merge", title: "Merge: Add percent", titleZh: "合併：新增 percent", open: true, running: false, turns: 2, repository: null, updatedAt: "2026-10-28T10:00:00Z" }, { id: "PR-0123456789ab-7", kind: "pr", title: "Pull request #7: Shout", open: false, running: false, turns: 1, repository: "fixture/project", updatedAt: "2026-10-28T12:00:00Z" }] } }));
+    await p.goto(`${base}/#/board`); await p.waitForFunction(() => S.route?.name === "board");
+    const navItem = await p.evaluate(() => { const b = document.querySelector('.nav-item[data-view="room"]'); return b && { inLabs: !!b.closest(".nav-labs"), hidden: b.hidden, text: b.textContent }; });
+    ok(navItem && !navItem.inLabs && !navItem.hidden && /Review room/.test(navItem.text), "the sidebar has a Review room item of its own (on the rail too when it is folded)", JSON.stringify(navItem));
+    await p.click('.nav-item[data-view="room"]'); await p.waitForSelector("[data-room-link]", { timeout: 15000 });
+    const list = await p.$$eval("[data-room-link]", (els) => els.map((e) => [e.dataset.roomLink, e.getAttribute("href")]));
+    ok(JSON.stringify(list) === JSON.stringify([["SC-50", "#/room/SC-50"], ["PR-0123456789ab-7", "#/room/PR-0123456789ab-7"]]) && /open/.test(await p.textContent('[data-room-list]')), "the Review room's home lists the rooms on this machine, open ones first, each a link back into it", JSON.stringify(list));
+    await p.click('[data-room-link="SC-50"]'); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    ok(await p.getAttribute("[data-room-home]", "href") === "#/room" && /Review room/.test(await p.textContent(".rr-crumb")), "the room's header says where you are: Review room › the room, the first a link to the list");
+    await p.goBack(); await p.waitForFunction(() => S.route?.name === "room" && !S.route.arg); await p.goBack(); await p.waitForFunction(() => S.route?.name === "board");
+    ok(true, "the browser's back walks Studio's own pages: room → the room list → the board");
+    await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-stage]");
+    const ext = await p.evaluate(() => { const a = document.createElement("a"); a.href = "https://example.org/docs"; a.textContent = "x"; document.querySelector("#view").append(a); const before = location.href; a.click(); return { opened: window.__opened, same: location.href === before }; });
+    ok(ext.same && ext.opened.length === 1 && ext.opened[0][0] === "https://example.org/docs" && ext.opened[0][1] === "_blank" && /noopener/.test(ext.opened[0][2]), "a link that leaves Studio opens in a new window, never in Studio's own (an app window has no back button)", JSON.stringify(ext));
+    const inApp = await p.evaluate(() => { window.__opened = []; const a = document.createElement("a"); a.href = "#/board"; document.querySelector("#view").append(a); a.click(); return window.__opened.length; });
+    await p.waitForFunction(() => S.route?.name === "board");
+    ok(inApp === 0, "Studio's own pages still open in place");
+    await ctx.close(); }
+
+  // ---------- a pull request's reviewers: a short card on the board, their words folded in the transcript ----------
+  { const LONG = "the cache key ignores the port and the scheme, so two origins share one approval; ".repeat(10);
+    const notes = Array.from({ length: 30 }, (_, i) => ({ id: `c${100 + i}`, kind: i % 3 ? "inline" : "review", author: i % 2 ? "lint-im" : "sage-im", body: `${LONG} (${i})`, at: `2026-10-28T1${i % 10}:00:00Z`, url: null, state: i % 3 ? undefined : "COMMENTED", path: i % 3 ? "a.txt" : null, line: i % 3 ? 2 : null, outdated: i > 20, bot: false }));
+    const PRR = { ...ROOM, card: { id: "PR-0123456789ab-8", run: "R-050", node: "review", title: { en: "Pull request #8: Busy", "zh-TW": "Pull request #8：Busy" }, status: "open" }, subject: { kind: "pr", room: "PR-0123456789ab-8", url: "https://github.com/fixture/project/pull/8", repository: "fixture/project", number: 8 }, pr: { id: "8", url: "https://github.com/fixture/project/pull/8" }, summary: null,
+      prState: { state: "open", draft: false, approved: false, checkedAt: "2026-10-28T12:00:00Z", headRepo: "fixture/project", verdicts: [] }, notes, board: [],
+      actions: [...ROOM.actions, { id: "reviews", en: "Digest", zh: "整理" }],
+      turns: [{ n: 1, action: "reviewers", studio: true, title: "What reviewers asked", status: "done", provider: "studio", model: "", text: "", answer: "x", head: H, claims: [cl("30 notes on GitHub from 2 people: 10 reviews, 20 inline comments, 0 comments."), { text: "20 of them are on the current head. Ask “Digest reviews”.", kind: "aside", basis: null, cites: [] }] }], check: { questions: [] } };
+    const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
+    await p.route(/\/api\/review-room\/PR-0123456789ab-8(\?open=1)?$/, (r) => r.fulfill({ json: PRR }));
+    await p.goto(`${base}/#/room/PR-0123456789ab-8`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    const st = await p.evaluate(() => ({ stage: document.querySelector("[data-stage]").textContent, points: document.querySelectorAll("[data-stage] .rr-point").length, digest: !!document.querySelector('[data-room-action="reviews"]') }));
+    ok(!/the cache key ignores the port/.test(st.stage) && st.points <= 4 && st.digest, "the board shows Studio's short card of the reviews, none of their words; “Digest reviews” is a quick action", JSON.stringify({ points: st.points, digest: st.digest }));
+    await p.click("[data-transcript-toggle]");
+    const fold = await p.evaluate(() => { const d = document.querySelector("[data-notes]"); return d && { open: d.open, n: d.querySelectorAll("[data-note]").length, first: d.querySelector("[data-note]")?.dataset.note }; });
+    ok(fold && fold.open === false && fold.n === 30, "their notes are in the transcript, folded until the captain opens them", JSON.stringify(fold));
+    await ctx.close(); }
+
+  // ---------- coming back while a turn runs; an answer already there; the answer that finished while the captain looked away ----------
+  { const RUN = { ...ROOM, running: 3, progress: { turn: 3, status: "running", said: "Reading the diff and the tests first.", tools: 3, at: "t" },
+      turns: [...ROOM.turns.map((t) => ({ ...t, head: H })), { n: 3, action: "teach", text: "Teach me this change.", lang: "en", status: "running", provider: "codex", model: "gpt-6", answer: "", head: H }, { n: 4, action: "since", studio: true, title: "What changed", status: "done", provider: "studio", model: "", text: "", answer: "x", head: H, claims: [cl("Nothing new.")] }] };
+    const DONE = { ...RUN, running: null, progress: null, turns: RUN.turns.map((t) => t.n === 3 ? { ...t, status: "done", answer: "y", claims: [cl("The finished explanation [board:B1-1].", [ok1("board:B1-1")])] } : t) };
+    const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); let now = RUN;
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    let s1 = await stage(p);
+    ok(s1.scene === "t3" && /Reading the diff and the tests first/.test(await p.textContent("[data-turn-progress]")) && /3 tool calls/.test(await p.textContent("[data-turn-progress]")), "coming back while a turn runs, the stage shows that turn and what it has said so far (not a later Studio scene)", JSON.stringify(s1));
+    now = DONE; await p.waitForFunction(() => document.querySelector("[data-stage]")?.dataset.scene === "t3" && /finished explanation/.test(document.querySelector("[data-stage] .rr-pointlist")?.textContent || ""), null, { timeout: 15000 });
+    ok(true, "when it finishes, the room shows the answer");
+    // an explanation for this head is already there: show it, or explain again (paid, still confirmed)
+    await p.click('[data-room-action="teach"]'); await p.waitForSelector("[data-existing-offer]");
+    ok(!(await p.$("[data-room-confirm]")) && !posts.length, "asking again what this head already has offers the existing explanation first, nothing paid");
+    await p.click("[data-existing-show]"); s1 = await stage(p);
+    ok(s1.scene === "t3" && !(await p.$("[data-existing-offer]")), "“Show the existing explanation” goes to it", JSON.stringify(s1));
+    await p.click('[data-room-action="teach"]'); await p.click("[data-existing-again]"); await p.waitForSelector('[data-room-confirm="teach"]');
+    ok(!posts.length, "“Explain again” is a new paid round: it still asks to confirm");
+    await ctx.close(); }
+  { const RUN = { ...ROOM, running: 3, progress: { turn: 3, status: "running", said: "Working.", tools: 1, at: "t" }, turns: [...ROOM.turns, { n: 3, action: "how", text: "How does this change work?", lang: "en", status: "running", provider: "codex", model: "gpt-6", answer: "" }] };
+    const DONE = { ...RUN, running: null, progress: null, turns: RUN.turns.map((t) => t.n === 3 ? { ...t, status: "done", answer: "y", claims: [cl("It works like this.")] } : t) };
+    const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); let now = RUN;
+    await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.keyboard.press("ArrowLeft"); const away = (await stage(p)).scene;
+    now = DONE; await p.waitForSelector("[data-answer-ready]", { timeout: 15000 });
+    const s2 = await stage(p);
+    ok(away !== "t3" && s2.scene === away, "the captain looked elsewhere while it ran: the finished answer does not pull the stage away", JSON.stringify({ away, s2 }));
+    await p.click("[data-answer-ready]"); const s3 = await stage(p);
+    ok(s3.scene === "t3" && !(await p.$("[data-answer-ready]")), "“The answer is ready — show it” goes to the answer", JSON.stringify(s3));
+    await ctx.close(); }
+
   // ---------- focus mode: the room takes the screen and gives it back as it was ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); localStorage.setItem("crew.side", "open"); localStorage.setItem("crew.chatOpen", "1"); } } catch {} });
@@ -447,7 +518,7 @@ try {
     await p.dispatchEvent("[data-mic]", "pointerdown"); await p.waitForSelector("[data-heard]");
     await p.click("[data-cite]"); await p.click('[data-room-action="how"]'); await p.click("[data-room-start]"); await p.waitForSelector("[data-room-busy]");
     await p.click("[data-play]");
-    await p.evaluate(() => { window.__cancels = 0; window.__recStopped = false; location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]');
+    await p.evaluate(() => { window.__cancels = 0; window.__recStopped = false; location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]'); await p.waitForSelector("[data-room-list]:not([data-room-list-loading])"); await p.waitForTimeout(300);
     const eager = await p.evaluate(() => ({ cancels: window.__cancels, rec: window.__recStopped }));
     ok(eager.cancels > 0 && eager.rec === true, "leaving the room stops its playback and its mic at once", JSON.stringify(eager));
     await p.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.querySelector("#view"), { childList: true }); document.querySelector('[data-pr-url="home"]').dataset.mark = "1"; });

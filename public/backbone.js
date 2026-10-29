@@ -6,7 +6,7 @@
 (() => {
 const BACKBONE = [
   ["board", "board", "Board", "看板"], ["firstmate", "message", "Firstmate", "Firstmate"], ["terminals", "terminal", "Terminals", "終端機"], ["inbox", "inbox", "Inbox", "收件匣"], ["crew", "crew", "Crew", "船員"],
-  ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["skills", "library", "Skills", "技能"], ["library", "library", "Library", "成品庫"],
+  ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["skills", "library", "Skills", "技能"], ["library", "library", "Library", "成品庫"], ["room", "monitor", "Review room", "審查室"],
   // Projects: on a desktop the sidebar's own Projects section (public/projects.js); this item shows only in the phone's top bar
   ["projects", "folder", "Projects", "專案"],
 ];

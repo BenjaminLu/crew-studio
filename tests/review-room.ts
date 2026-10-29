@@ -380,8 +380,12 @@ const fetchedBefore = fetched.length, sv1: any = await room.saveToLibrary(merge.
 // ---------- the room never answers the card; once the card is answered the room is read-only ----------
 // a tutor turn still running when the card is answered: the room's save waits for it to end, never a half-finished scene
 let releaseTurn!: () => void; const turnGate = new Promise<void>((res) => (releaseTurn = res));
-script.push([["wait", turnGate], ["say", "A late answer [diff:src/percent.ts:L2-3]."]]);
+script.push([["msg", "Reading the diff first."], ["wait", turnGate], ["say", "A late answer [diff:src/percent.ts:L2-3]."]]);
 await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merge.id) as any).offer.hash }, "captain");
+// what the tutor has said so far is on the room's record while it works: a reload (another instance reads the files) sees it
+await until(() => /Reading the diff first/.test((room.view(merge.id) as any).progress?.said ?? ""), 20000);
+{ const pg = (installReviewRoom(E, { dataDir: data }).view(merge.id) as any).progress;
+  ok(/Reading the diff first/.test(pg?.said ?? "") && pg.turn === (room.view(merge.id) as any).turns.at(-1).n, "a running turn's progress is persisted as it works: another instance reading the files (a restart: the turn reads interrupted) still shows what the tutor had said", JSON.stringify(pg)); }
 // the room finishes (the engine's call when its card is answered) while the turn still runs
 room.cardAnswered(E.cards.get(merge.id)!);
 { const f0 = JSON.parse(readFileSync(join(data, "runs", r.id, "review-room", `${merge.id}.json`), "utf8"));
