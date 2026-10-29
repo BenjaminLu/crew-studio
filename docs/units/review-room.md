@@ -305,10 +305,12 @@ label on a line, no connector through a box that is not one of its ends, no labe
 tutor redraws (at most eight tries a turn). The page rebuilds the tree element by element (createElementNS, setAttribute,
 textContent; never markup), its ids kept to the figure, each text in the room's language. Or the tutor gives the structure
 and Studio lays it out, baton's way. A lifecycle puts the way it should go on one row, left to right (the longest path from
-where it starts to an end that went well), the states that end badly or need attention on the rows below, the others above;
-the state this change adds or changes (`mark`) in the accent, the ends coloured by how they end. The architecture runs in
+where it starts to an end that went well); its ways back and its skips over a state are arcs above the row, nested by span
+(the shorter inside); the states that end badly or need attention sit in the lane below, the others in the lane above,
+each under the median of the states it meets, in the order that crosses fewest connectors; the state this change adds or
+changes (`mark`) in the accent, the ends coloured by how they end. The architecture runs in
 layers left to right, the stores and queues last, drawn as cylinders. Every connector is a straight line or one smooth
-curve, bowed only as far as it must to clear the boxes and never along another connector (two between the same boxes bow
+curve, bowed only as far as it must to clear the boxes, or under them, crossing as few others as it can and never along one (two between the same boxes bow
 apart, a state's way back to itself a small loop); its numbered chip sits on it near its middle, and a picked chip opens the
 transaction panel right under the map. The sequence is one event a band, each fragment's tab on its own band, calls,
 returns and async calls in their own colours.

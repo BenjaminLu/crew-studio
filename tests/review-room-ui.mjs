@@ -819,9 +819,19 @@ try {
       edges.forEach((e, i) => edges.forEach((f, j) => { if (j <= i) return; let run = 0, best = 0; const step = e.L / 120;
         for (const p of e.pts) { if (inNode(p, 10)) { run = 0; continue; } if (near(p, f.pts, 2)) { run += step; best = Math.max(best, run); } else run = 0; }
         if (best > 12) bad.push(`${e.ends.join(">")} runs along ${f.ends.join(">")} for ${Math.round(best)}px`); }));
-      return { nodes: nodes.length, edges: edges.length, labels: labels.length, bad }; }));
-    ok(geo.length === 3 && geo.map((g) => g.nodes).join() === "7,8,7" && geo.map((g) => g.edges).join() === "8,12,12" && geo.every((g) => !g.bad.length),
-      "Studio's drawings read: the architecture and both lifecycles with each chip on its own connector near its middle (never on a box, another connector or chip, never underlined), no connector through a box that is not one of its ends, no two sharing a stretch", JSON.stringify(geo.map((g) => [g.nodes, g.edges, g.bad.slice(0, 6)])));
+      // crossings: two connectors meeting anywhere but at a box they share
+      const X = (p, q, r, t) => { const d = (q[0] - p[0]) * (t[1] - r[1]) - (q[1] - p[1]) * (t[0] - r[0]); if (!d) return null; const u = ((r[0] - p[0]) * (t[1] - r[1]) - (r[1] - p[1]) * (t[0] - r[0])) / d, v = ((r[0] - p[0]) * (q[1] - p[1]) - (r[1] - p[1]) * (q[0] - p[0])) / d; return u >= 0 && u <= 1 && v >= 0 && v <= 1 ? [p[0] + u * (q[0] - p[0]), p[1] + u * (q[1] - p[1])] : null; };
+      const crossed = [];
+      edges.forEach((e, i) => edges.forEach((f, j) => { if (j <= i) return; const shared = e.ends.filter((id) => f.ends.includes(id)).map((id) => nodes.find((n) => n.id === id)?.b).filter(Boolean); let n = 0;
+        for (let a = 1; a < e.pts.length; a++) for (let b = 1; b < f.pts.length; b++) { const x = X(e.pts[a - 1], e.pts[a], f.pts[b - 1], f.pts[b]); if (x && !shared.some((sb) => x[0] > sb.x - 14 && x[0] < sb.x + sb.w + 14 && x[1] > sb.y - 14 && x[1] < sb.y + sb.h + 14)) n++; }
+        if (n) crossed.push(`${e.ends.join(">")} × ${f.ends.join(">")}`); }));
+      // along one row (a lifecycle's main row): a connector is the straight step or an arc above the row, never below it
+      if (svg.closest("[data-statemap]")) edges.forEach((e) => { const [a, b] = e.ends.map((id) => nodes.find((n) => n.id === id)?.b); if (!a || !b || e.ends[0] === e.ends[1]) return;
+        const cy = a.y + a.h / 2; if (Math.abs(b.y + b.h / 2 - cy) > 1) return; if (e.pts.every(([, y]) => Math.abs(y - cy) < 2)) return;
+        if (e.pts.some(([, y]) => y > Math.min(a.y, b.y) + 2)) bad.push(`${e.ends.join(">")} leaves its row below or through the boxes, not as an arc above`); });
+      return { nodes: nodes.length, edges: edges.length, labels: labels.length, bad, crossed }; }));
+    ok(geo.length === 3 && geo.map((g) => g.nodes).join() === "7,8,7" && geo.map((g) => g.edges).join() === "8,12,12" && geo.every((g) => !g.bad.length) && !geo[0].crossed.length && !geo[1].crossed.length && geo[2].crossed.length <= 1,
+      "Studio's drawings read: the architecture and both lifecycles with each chip on its own connector near its middle (never on a box, another connector or chip, never underlined), no connector through a box that is not one of its ends, no two sharing a stretch, ways back along a lifecycle's row as arcs above it, no crossing (one at most in the authorization's)", JSON.stringify(geo.map((g) => [g.nodes, g.edges, g.bad.slice(0, 6), g.crossed])));
     const colours = await p.evaluate(() => { const sv = document.querySelectorAll("[data-report] svg.rr-ortho"), fill = (sel) => { const e = sv[0].querySelector(sel); return e ? getComputedStyle(e).stroke : null; };
       return { changed: fill('[data-node="api"] .rr-box'), plain: fill('[data-node="orders"] .rr-box'), added: fill('[data-node="worker"] .rr-box'), back: sv[1] ? getComputedStyle(sv[1].querySelector("path.rr-edge.back")).stroke : null, edge: sv[1] ? getComputedStyle(sv[1].querySelector("path.rr-edge.next")).stroke : null }; });
     ok(colours.changed && colours.changed !== colours.plain && colours.added !== colours.plain && colours.added !== colours.changed && colours.back !== colours.edge, "the point stands out by colour: the changed component, the new one and the ways back each in their own", JSON.stringify(colours));

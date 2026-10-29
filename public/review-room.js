@@ -332,35 +332,49 @@ const longestPaths = (ids, edges, back) => { const rank = new Map(ids.map((id) =
 const CHIP_FS = 12, chipText = (e) => String(e.label || "").slice(0, 40), chipW = (e) => textW(chipText(e), CHIP_FS) + 18;
 const nodeSize = (n, fs) => { const lines = wrapLabel(n.label, 196, fs, 2), w = Math.max(n.shape === "cyl" ? 140 : 112, Math.ceil((Math.max(0, ...lines.map((l) => textW(l, fs))) + 44) / 4) * 4);
   return { w, h: n.shape === "cyl" ? 72 : lines.length > 1 ? 60 : 44, lines }; };
-/** boxes from a grid of [row, col] cells: each column as wide as its widest box, a gap wide enough for the chips between */
-function gridBoxes(nodes, edges, cell, fs, rowGap) {
-  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), cols = [...new Set([...cell.values()].map(([, c]) => c))].sort((a, b) => a - b), rows = [...new Set([...cell.values()].map(([r]) => r))].sort((a, b) => a - b);
-  const gap = Math.min(170, Math.max(110, Math.max(0, ...edges.map(chipW)) + 44)), colW = new Map(cols.map((c) => [c, Math.max(...nodes.filter((n) => cell.get(n.id)[1] === c).map((n) => size.get(n.id).w))]));
-  const rowH = new Map(rows.map((r) => [r, Math.max(...nodes.filter((n) => cell.get(n.id)[0] === r).map((n) => size.get(n.id).h))]));
-  const cx = new Map(); { let x = 0; for (const c of cols) { cx.set(c, x + colW.get(c) / 2); x += colW.get(c) + gap; } }
-  const cy = new Map(); { let y = 0; for (const r of rows) { cy.set(r, y + rowH.get(r) / 2); y += rowH.get(r) + rowGap; } }
-  return new Map(nodes.map((n) => { const [r, c] = cell.get(n.id), s = size.get(n.id); return [n.id, { x: cx.get(c) - s.w / 2, y: cy.get(r) - s.h / 2, w: s.w, h: s.h, lines: s.lines }]; }));
-}
-/** a lifecycle, baton's way: the way it should go on one row left to right (the longest path from where it starts to an end
- *  that went well), the states that end badly or need attention on the rows below, any other state on the rows above, each
- *  as near its neighbours as a free place allows */
+/** a segment crossing: where p–q meets r–s, or null */
+const segCross = (p, q, r, t) => { const d = (q[0] - p[0]) * (t[1] - r[1]) - (q[1] - p[1]) * (t[0] - r[0]); if (!d) return null;
+  const u = ((r[0] - p[0]) * (t[1] - r[1]) - (r[1] - p[1]) * (t[0] - r[0])) / d, v = ((r[0] - p[0]) * (q[1] - p[1]) - (r[1] - p[1]) * (q[0] - p[0])) / d;
+  return u >= 0 && u <= 1 && v >= 0 && v <= 1 ? [p[0] + u * (q[0] - p[0]), p[1] + u * (q[1] - p[1])] : null; };
+/** a lifecycle, baton's way. The way it should go on one row left to right (the longest path from where it starts to an end
+ *  that went well). The ways back along that row, and the skips over a state on it, are arcs above it, nested by span (the
+ *  shorter inside). The states that end badly or need attention sit in the lane below, the others in the lane above, each
+ *  under the median of the states it meets, in the order that crosses the fewest connectors. */
 function statePlace(nodes, edges, fs) {
   const ids = nodes.map((n) => n.id), cls = new Map(nodes.map((n) => [n.id, n.cls || ""])), back = backEdges(ids, edges), { rank, pred } = longestPaths(ids, edges, back);
   const bad = (id) => /\b(seal|amber)\b/.test(cls.get(id)), ends = ids.filter((id) => !edges.some((e) => e.from === id && e.to !== id)), good = ends.filter((id) => !bad(id));
   const end = (good.length ? good : ids).reduce((a, b) => (rank.get(b) > rank.get(a) ? b : a));
   const main = [end]; while (pred.has(main[0]) && !main.includes(pred.get(main[0]))) main.unshift(pred.get(main[0]));
   while (main.length > 2 && bad(main[main.length - 1])) main.pop();
-  const cell = new Map(), taken = new Set(), key = (r, c) => `${r}:${c}`;
-  main.forEach((id, c) => { cell.set(id, [0, c]); taken.add(key(0, c)); });
-  const left = ids.filter((id) => !cell.has(id)), other = (e, id) => (e.from === id ? e.to : e.from);
-  while (left.length) {
-    const nb = (id) => edges.filter((e) => e.from !== e.to && (e.from === id || e.to === id) && cell.has(other(e, id)));
-    left.sort((a, b) => nb(b).length - nb(a).length || ids.indexOf(a) - ids.indexOf(b));
-    const id = left.shift(), ns = nb(id), want = ns.length ? Math.round(ns.reduce((s, e) => s + cell.get(other(e, id))[1], 0) / ns.length) : 0;
-    let spot = null;
-    for (let ring = 1; !spot; ring++) { const row = bad(id) ? ring : -ring; for (const d of [0, 1, -1, 2, -2, 3, -3]) { const c = want + d; if (c >= 0 && !taken.has(key(row, c))) { spot = [row, c]; break; } } }
-    cell.set(id, spot); taken.add(key(...spot)); }
-  return { box: gridBoxes(nodes, edges, cell, fs, 124), back };
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(110, Math.max(0, ...edges.map(chipW)) + 44)), box = new Map(), col = new Map();
+  const H0 = Math.max(...main.map((id) => size.get(id).h)); let x = 0;
+  main.forEach((id, c) => { const z = size.get(id); col.set(id, c); box.set(id, { x, y: -z.h / 2, w: z.w, h: z.h, lines: z.lines }); x += z.w + gap; });
+  // along the main row: the first step forward between two neighbours is a straight line; every other one an arc above
+  const straight = new Set(), arcs = [], seen = new Set();
+  edges.forEach((e, i) => { if (e.from === e.to || !col.has(e.from) || !col.has(e.to)) return; const d = col.get(e.to) - col.get(e.from), k = `${e.from}>${e.to}`;
+    if (d === 1 && !seen.has(k)) { straight.add(i); seen.add(k); } else arcs.push(i); });
+  const iv = (i) => [Math.min(col.get(edges[i].from), col.get(edges[i].to)), Math.max(col.get(edges[i].from), col.get(edges[i].to))];
+  arcs.sort((i, j) => iv(i)[1] - iv(i)[0] - (iv(j)[1] - iv(j)[0]) || i - j);
+  const arc = new Map(); // edge → its level: one above every shorter arc it overlaps
+  for (const i of arcs) { const [a0, a1] = iv(i); let lv = 0; for (const [j, l] of arc) { const [b0, b1] = iv(j); if (b0 < a1 && a0 < b1 || (b0 === a0 && b1 === a1)) lv = Math.max(lv, l + 1); } arc.set(i, lv); }
+  const arcTop = arcs.length ? 40 + 30 * Math.max(...arc.values()) + 30 : 0, cx = (id) => box.get(id).x + box.get(id).w / 2;
+  // the lanes: each state under the median of the main-row states it meets; the order that crosses fewest straight connectors
+  const rest = ids.filter((id) => !col.has(id)), lanes = [[rest.filter(bad), H0 / 2 + 112], [rest.filter((id) => !bad(id)), -H0 / 2 - arcTop - 70]];
+  for (const [list, y0] of lanes) { if (!list.length) continue;
+    const want = new Map(list.map((id) => { const xs = edges.filter((e) => e.from !== e.to && (e.from === id || e.to === id)).map((e) => (e.from === id ? e.to : e.from)).filter((o) => col.has(o)).map(cx).sort((a, b) => a - b);
+      return [id, xs.length ? (xs[(xs.length - 1) >> 1] + xs[xs.length >> 1]) / 2 : cx(main[0])]; }));
+    const lay = (perm) => { const out = new Map(); let right = -Infinity;
+      for (const id of perm) { const z = size.get(id), left = Math.max(want.get(id) - z.w / 2, right + 48); out.set(id, { x: left, y: y0 > 0 ? y0 : y0 - z.h, w: z.w, h: z.h, lines: z.lines }); right = left + z.w; }
+      // shifted back as far as it can go toward where they want to be (the order kept)
+      const shift = [...out].reduce((m, [id, b]) => Math.min(m, b.x + b.w / 2 - want.get(id)), Infinity); if (shift > 0) for (const b of out.values()) b.x -= shift; return out; };
+    const perms = (a) => (a.length <= 1 ? [a] : a.flatMap((v, k) => perms([...a.slice(0, k), ...a.slice(k + 1)]).map((p) => [v, ...p])));
+    const cand = list.length <= 5 ? perms(list) : [[...list].sort((a, b) => want.get(a) - want.get(b))];
+    const score = (perm) => { const lb = lay(perm), at = (id) => lb.get(id) ?? box.get(id), c = (id) => { const b = at(id); return b ? [b.x + b.w / 2, b.y + b.h / 2] : null; };
+      const segs = edges.map((e, i) => (e.from === e.to || straight.has(i) || arc.has(i) || !c(e.from) || !c(e.to) ? null : [c(e.from), c(e.to), e])).filter(Boolean);
+      let n = 0; for (let a = 0; a < segs.length; a++) for (let b2 = a + 1; b2 < segs.length; b2++) { const [p, q, e] = segs[a], [r, t, g] = segs[b2]; if ([e.from, e.to].some((id) => id === g.from || id === g.to)) continue; if (segCross(p, q, r, t)) n++; }
+      return n * 1e5 + [...lb].reduce((m, [id, b]) => m + Math.abs(b.x + b.w / 2 - want.get(id)), 0); };
+    const best = cand.reduce((a, b) => (score(b) < score(a) ? b : a)); for (const [id, b] of lay(best)) box.set(id, b); }
+  return { box, back, straight, arc };
 }
 /** what talks to what: layers left to right by the longest path, the stores and queues in the last layer, each layer's
  *  boxes ordered by where their neighbours sit and centred on one another */
@@ -390,6 +404,18 @@ function curveSvg(nodes, edges, placed, opt = {}) {
     const k = Math.max(-1, Math.min(1, bow / 36)), p0 = slideOn(a, rayOut(a, bx - ax, by - ay), nx, ny, k), p3 = slideOn(b, rayOut(b, ax - bx, ay - by), nx, ny, k);
     const q = [(p0[0] + p3[0]) / 2 + nx * bow * 2, (p0[1] + p3[1]) / 2 + ny * bow * 2];
     return bow ? [p0, lerp(p0, q, 2 / 3), lerp(p3, q, 2 / 3), p3] : [p0, lerp(p0, p3, 1 / 3), lerp(p0, p3, 2 / 3), p3]; };
+  // an arc above the main row: out of the top of one box, into the top of the other, higher by level (outer arcs leave
+  // and land further out, so the nested ones never meet)
+  const arcOf = (e, lv) => { const a = box.get(e.from), b = box.get(e.to), aLeft = a.x < b.x, [l, r] = aLeft ? [a, b] : [b, a];
+    const lx = Math.max(l.x + 12, l.x + l.w * 0.74 - 24 * lv), rx = Math.min(r.x + r.w - 12, r.x + r.w * 0.26 + 24 * lv), H = (40 + 30 * lv) * 4 / 3;
+    const L = [lx, l.y], R = [rx, r.y], [p0, p3] = aLeft ? [L, R] : [R, L]; return [p0, [p0[0], p0[1] - H], [p3[0], p3[1] - H], p3]; };
+  // a way back from a state in a lane, round the outside: out of its far side, round, into the side of its target
+  const aroundOf = (e, sd) => { const a = box.get(e.from), b = box.get(e.to), p0 = [sd > 0 ? a.x + a.w : a.x, a.y + a.h / 2], p3 = [sd > 0 ? b.x + b.w : b.x, b.y + b.h / 2];
+    const ox = sd > 0 ? Math.max(p0[0], p3[0]) + 70 : Math.min(p0[0], p3[0]) - 70; return [p0, [ox, p0[1] + 30], [ox, p3[1]], p3]; };
+  // under everything between its ends: out of the bottom of one box, into the bottom of the other
+  const underOf = (e) => { const a = box.get(e.from), b = box.get(e.to), x0 = Math.min(a.x, b.x), x1 = Math.max(a.x + a.w, b.x + b.w);
+    const lo = Math.max(...[...box.values()].filter((o) => o.x + o.w > x0 && o.x < x1).map((o) => o.y + o.h)) + 30, p0 = [a.x + a.w / 2, a.y + a.h], p3 = [b.x + b.w / 2, b.y + b.h];
+    return [p0, [p0[0], p0[1] + (lo - p0[1]) * 4 / 3], [p3[0], p3[1] + (lo - p3[1]) * 4 / 3], p3]; };
   const loopOf = (e, s) => { const b = box.get(e.from), cx = b.x + b.w / 2, y = s > 0 ? b.y + b.h : b.y; return [[cx - 16, y], [cx - 40, y + s * 58], [cx + 40, y + s * 58], [cx + 16, y]]; };
   const inBox = ([x, y], b, pad) => x > b.x - pad && x < b.x + b.w + pad && y > b.y - pad && y < b.y + b.h + pad;
   const segDist = ([px, py], [ax, ay], [bx, by]) => { const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l)) : 0; return Math.hypot(px - ax - t * dx, py - ay - t * dy); };
@@ -402,16 +428,19 @@ function curveSvg(nodes, edges, placed, opt = {}) {
       const hard = boxes0.filter((b) => over(r, b, 3)).length + chips.filter((c) => over(r, c, 3)).length, soft = drawn.filter((o) => o.pts.some((p) => inBox(p, r, 2))).length;
       return { r, x, y, cost: hard * 1000 + soft * 400 + Math.abs(t - 0.5) * 20 }; }).reduce((a, b) => (b.cost < a.cost ? b : a)); };
   // a candidate's faults: through a box not its end (or back into its own), along another connector (a run of samples on it), crossings
-  const judge = (e, P) => { const pts = sample(P), ends = [box.get(e.from), box.get(e.to)]; let hard = 0, cross = 0;
+  // crossings with the connectors already drawn (where two meet at a box they share does not count)
+  const crossings = (e, pts, d) => { const g = edges[d.i], shared = [e.from, e.to].filter((id) => id === g.from || id === g.to).map((id) => box.get(id)); let n = 0;
+    for (let a = 1; a < pts.length; a++) for (let b = 1; b < d.pts.length; b++) { const x = segCross(pts[a - 1], pts[a], d.pts[b - 1], d.pts[b]); if (x && !shared.some((sb) => inBox(x, sb, 14))) n++; } return n; };
+  const judge = (e, P) => { const pts = sample(P, 40), ends = [box.get(e.from), box.get(e.to)]; let hard = 0, cross = 0;
     for (const [id, b] of box) { if (id === e.from || id === e.to) continue; if (pts.some((p) => inBox(p, b, 8))) hard++; }
     if (pts.slice(4, -4).some((p) => ends.some((b) => inBox(p, b, -2)))) hard++;
     // along another connector: a stretch of 12px or more within 3px of it, away from the boxes they meet at (a crossing at
     // a fair angle is shorter)
     const step = pts.slice(1).reduce((n, p, k) => n + Math.hypot(p[0] - pts[k][0], p[1] - pts[k][1]), 0) / (pts.length - 1);
     for (const d of drawn) { let run = 0, best = 0, hit = 0; for (const p of pts) { if (boxes0.some((b) => inBox(p, b, 10))) { run = 0; continue; } if (near(p, d.pts, 3)) { run += step; hit = 1; best = Math.max(best, run); } else run = 0; }
-      if (best >= 12) hard++; cross += hit; }
+      if (best >= 12) hard++; cross += crossings(e, pts, d); }
     const onChip = chips.filter((c) => pts.some((p) => inBox(p, c, 2))).length, chip = chipFor(e, P);
-    return { hard, cross, pts, chip, cost: hard * 1000 + onChip * 400 + (chip ? chip.cost * 0.6 : 0) + cross * 30 }; };
+    return { hard, cross, pts, chip, cost: hard * 1000 + onChip * 400 + (chip ? chip.cost * 0.6 : 0) + cross * 260 }; };
   const keep = (i, c) => { drawn.push({ i, P: c.P, pts: c.pts, chip: c.chip }); if (c.chip) chips.push(c.chip.r); };
   // the order: the plain steps forward first (they take the straight lines), then the longer ones, the ways back, the loops
   const span = (e) => Math.hypot(...[0, 1].map((k) => cen(box.get(e.to))[k] - cen(box.get(e.from))[k]));
@@ -421,12 +450,16 @@ function curveSvg(nodes, edges, placed, opt = {}) {
   // a connector's best way, the others as they are
   const route = (i) => { const e = edges[i];
     if (e.from === e.to) return [1, -1].map((s) => loopOf(e, s)).map((P) => ({ P, ...judge(e, P) })).reduce((a, b) => (b.cost < a.cost ? b : a));
-    const grp = pairs.get([e.from, e.to].sort().join("\u0000")), k = grp.indexOf(i), canon = [e.from, e.to].sort()[0] === e.from ? 1 : -1;
+    if (placed.straight?.has(i)) { const P = curveOf(e, 0); return { P, bow: 0, ...judge(e, P) }; }
+    if (placed.arc?.has(i)) { const P = arcOf(e, placed.arc.get(i)); return { P, bow: 0, ...judge(e, P) }; }
+    const grp = pairs.get([e.from, e.to].sort().join("\u0000")).filter((j) => !placed.straight?.has(j) && !placed.arc?.has(j)), k = grp.indexOf(i), canon = [e.from, e.to].sort()[0] === e.from ? 1 : -1;
     // apart from the others between the same boxes: far enough that their chips, side by side, do not meet
     const [ax, ay] = cen(box.get(e.from)), [bx, by] = cen(box.get(e.to)), upright = Math.abs(by - ay) > Math.abs(bx - ax);
     const off = grp.length > 1 ? (k - (grp.length - 1) / 2) * (upright ? Math.max(44, ...grp.map((j) => chipW(edges[j]))) + 10 : 44) * canon : 0;
     const pref = grp.length > 1 ? off : back.has(i) ? -40 : 0, cands = [];
     for (const d of [0, 24, -24, 48, -48, 72, -72, 100, -100, 136, -136, 180, -180, 240, -240, 320, -320]) { const bow = pref + d; if (grp.length > 1 && (Math.abs(bow) < 16 || Math.sign(bow) !== Math.sign(off))) continue; const P = curveOf(e, bow); cands.push({ P, bow, ...judge(e, P) }); }
+    if (placed.arc && back.has(i)) for (const sd of [1, -1]) { const P = aroundOf(e, sd); cands.push({ P, bow: pref + 120, ...judge(e, P) }); }
+    if (placed.arc && grp.length < 2) { const P = underOf(e); cands.push({ P, bow: pref + 100, ...judge(e, P) }); }
     return cands.reduce((a, b) => { const s = (x) => x.cost + Math.abs(x.bow - pref) * 0.8; return s(b) < s(a) ? b : a; }); };
   for (const i of order) keep(i, route(i));
   // twice more, each connector again with every other one in place: one routed early now sees the ones that came after it
