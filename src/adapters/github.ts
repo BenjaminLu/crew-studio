@@ -315,7 +315,8 @@ export class GitHubPrAdapter implements PrAdapter {
         if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") throw new Error("GitHub 403 rate-limited");
         throw new Error(`GitHub ${response.status}`);
       }
-      return JSON.parse(await boundedResponse(response, 1_000_000));
+      // a page of a pull request's files carries each file's patch: a large pull request's first page passes a megabyte
+      return JSON.parse(await boundedResponse(response, /^\/pulls\/[1-9][0-9]*\/files\?/.test(suffix) ? 32_000_000 : 1_000_000));
     } catch (e: any) { throw new Error(/^GitHub \d+(?: protection-(?:plan|none)| rate-limited)?$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
     finally { await disposeOwnedResponse(response,controller);clearTimeout(timer); }
   }
