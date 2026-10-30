@@ -240,6 +240,22 @@ try {
   { const l = await listed(p); ok(l.some((t) => t.id === failed && !t.running) && !l.some((t) => t.id === clean), "after the restart a failed shell is listed again, a shell that ended well is not", JSON.stringify(l)); }
   await p.locator(`[data-term-row="${gone}"]`).first().click();
   ok(await until(async () => (await p.locator(`.wt-pane[data-term-pane="${gone}"]`).count()) === 1 && /old-output-mark/.test(await rowsOf(p, gone))), "opened on purpose from the list, its old output shows");
+
+  // ---------- a command that finished while no window was open, then a restart ----------
+  // the window last saw it running; it ended on its own before Studio restarted: its tab stays, and no toast blames the restart
+  const finished = await startCmd(p, "sleep 2; echo finished-alone");
+  await p.goto(`${base}/#/terminals/${encodeURIComponent(finished)}`); await p.locator(`.wt-pane[data-term-pane="${finished}"] .xterm-rows`).waitFor({ timeout: 10000 });
+  await p.reload(); await p.waitForFunction(() => window.crewTerminals?.list !== null); // the window's last load sees it running
+  ok((await listed(p)).some((t) => t.id === finished && t.running), "the command runs when the window closes");
+  await p.close(); await new Promise((r) => setTimeout(r, 3500)); // it finishes with no window open
+  app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
+  app = await boot();
+  { const s = await ctx.newPage(); await s.goto(`${base}/session?t=${encodeURIComponent(TOKEN)}`); await s.close(); }
+  const seenToasts = []; p = await page(); await p.exposeFunction("__toastSeen", (t) => seenToasts.push(t));
+  await p.addInitScript(() => { addEventListener("DOMContentLoaded", () => new MutationObserver((ms) => { for (const m of ms) for (const el of m.addedNodes) if (el.classList?.contains("toast")) window.__toastSeen(el.textContent); }).observe(document.body, { childList: true })); });
+  await p.goto(`${base}/#/terminals`); await p.waitForFunction(() => window.crewTerminals?.list !== null); await p.waitForTimeout(1500);
+  ok((await panes(p)).includes(finished), "a command that finished before the restart keeps its tab", JSON.stringify(await panes(p)));
+  ok(!seenToasts.some((t) => /ended when Studio restarted/.test(t)), "and no toast says the restart ended it", JSON.stringify(seenToasts));
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
   try { await browser?.close(); } catch {}

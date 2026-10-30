@@ -216,6 +216,9 @@ export class Terminals {
   appWindowAt = 0; appWindowBusy = false;
   /** This run of Studio: the page compares it with the one it saw last, to say once that a restart ended its terminals */
   readonly boot = randomBytes(6).toString("hex");
+  /** The terminals a Studio stop ended (their records say studio-stopped, removed ones included): a page tells these from
+   * terminals that had ended on their own before the restart */
+  restartEnded = new Set<string>();
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
   constructor(readonly o: TerminalsOpts) {
     this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
@@ -402,7 +405,7 @@ export class Terminals {
    */
   private restore() {
     const recs: any[] = [];
-    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
+    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && m.reason === "studio-stopped") this.restartEnded.add(m.id); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
     recs.sort((a, b) => String(a.endedAt).localeCompare(String(b.endedAt)));
     for (const m of recs.slice(-20)) {
       const now = this.o.projects().find((p) => p.id === m.project.id);
@@ -572,7 +575,7 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
       if (!cookie || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin") return json({ error: "terminals take input only from Studio's own page on this Mac (its session cookie, same origin); a script's x-crew-session is not enough", code: "pageOnly" }, 403);
     }
     if (p === "/api/terminals" && !writing) {
-      return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs, boot: svc.boot,
+      return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs, boot: svc.boot, restartEnded: [...svc.restartEnded],
         ...(desktop ? { presets: svc.presets().map(({ id, label, kind, remoteControl, path }) => ({ id, label, kind, remoteControl: !!remoteControl, path })), projects: svc.projects() } : {}) });
     }
     if (p === "/api/terminals" && writing) { const b = await req.json().catch(() => null); return json({ terminal: await svc.create(b ?? {}, "desktop") }); }

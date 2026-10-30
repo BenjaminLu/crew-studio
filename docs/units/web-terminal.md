@@ -200,8 +200,9 @@ window does) and SIGKILL two seconds later.
   PTY: the next page drops the tabs of the terminals that were running when it last loaded the list and run no more,
   opens none in their place, and says once how many "Terminal sessions ended when Studio restarted" (工作階段在 Studio
   重啟時結束), from the run's `boot` in `GET /api/terminals` against the one it saw last with the terminals then
-  running; a terminal that had already ended (an agent kept for Send for review) keeps its tab, and a reload in the same
-  run says nothing. What a window saw is its own (sessionStorage, which a reload of that window keeps), so every open
+  running, counting only those whose records say Studio's stop ended them (`restartEnded` in the same answer); a
+  terminal that had already ended on its own (an agent kept for Send for review, even one that finished while no window
+  was open) keeps its tab, and a reload in the same run says nothing. What a window saw is its own (sessionStorage, which a reload of that window keeps), so every open
   window cleans its own tabs when Studio comes back; a new window starts from the last any window saw (localStorage). A
   terminal seen running on the live stream (started in another window) counts as seen too. A window reopened at the
   address of a terminal the restart ended (`#/terminals/<id>`) has that address replaced, so the tab does not come back;

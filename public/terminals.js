@@ -23,7 +23,7 @@ const onScreen = (id) => cur() === id || panesOf(curTab()?.root).some((p) => p.t
 
 // ---------- data ----------
 async function load() {
-  try { const j = await getJ("/api/terminals"); TM.err = null; TM.canWrite = !!j.canWrite; TM.presets = j.presets || []; TM.projects = j.projects || []; apply(j.terminals || []); restarted(j.boot); }
+  try { const j = await getJ("/api/terminals"); TM.err = null; TM.canWrite = !!j.canWrite; TM.presets = j.presets || []; TM.projects = j.projects || []; apply(j.terminals || []); restarted(j.boot, j.restartEnded); }
   catch (e) { TM.err = String(e.message || e); if (TM.list === null) TM.list = []; }
   if (!TM.project || !TM.projects.some((p) => p.id === TM.project)) TM.project = TM.projects[0]?.id || "";
   redraw();
@@ -55,12 +55,14 @@ function seeRunning() {
   for (const s of [() => sessionStorage, () => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null");
     if (v && v.boot === TM.boot && Array.isArray(v.running) && ids.some((id) => !v.running.includes(id))) s().setItem(SEEN, JSON.stringify({ boot: v.boot, running: [...new Set([...v.running, ...ids])] })); } catch {} }
 }
-function restarted(boot) {
+function restarted(boot, ended = []) {
   if (!boot) return; const was = seenBefore(); TM.boot = boot;
   const now = JSON.stringify({ boot, running: TM.list.filter((t) => t.running).map((t) => t.id) });
   for (const s of [() => sessionStorage, () => localStorage]) { try { s().setItem(SEEN, now); } catch {} }
   if (!was || was.boot === boot) return;
-  const died = new Set(was.running.filter((id) => !TM.list.some((t) => t.id === id && t.running))); let n = 0;
+  // only those Studio's stop ended (their records say so): one that had ended on its own, while no window looked, keeps its tab
+  const byStop = new Set(Array.isArray(ended) ? ended : []);
+  const died = new Set(was.running.filter((id) => byStop.has(id) && !TM.list.some((t) => t.id === id && t.running))); let n = 0;
   for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (died.has(pn.term)) { n++; detachPane(tab, pn); }
   if (!n) return;
   TM.autoOpened = true; // the tabs were the captain's: none is opened in their place
