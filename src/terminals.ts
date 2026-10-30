@@ -159,7 +159,7 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
 /** A view of a terminal's output. mux: one of several terminals on one stream (GET /api/terminals/mux), each event naming its terminal. */
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string; mux?: boolean };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; dismissedAtShutdown?: boolean; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
   line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[];
   /** the transcript's file name in the record: kept for a terminal listed after a restart (it writes no more to it) */
   transcriptName: string | null; reviewing?: boolean };
@@ -382,7 +382,7 @@ export class Terminals {
     const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated, git, review } = t;
     try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, git, review,
       transcript: t.tFile ? `${id}.log` : t.transcriptName, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
-      sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}), ...extra }, null, 1), { mode: 0o600 }); } catch {}
+      sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}), ...(t.dismissedAtShutdown ? { dismissed: true } : {}), ...extra }, null, 1), { mode: 0o600 }); } catch {}
   }
   /** The terminals' own records (data/terminals/<id>.json), not their input files. */
   private records() { return readdirSync(this.dir).filter((f) => RECORD.test(f)); }
@@ -499,7 +499,9 @@ export class Terminals {
   shutdown() { for (const t of this.terms.values()) if (t.running) { for (const s of ["SIGHUP", "SIGKILL"] as const) { try { process.kill(-t.proc.pid, s); } catch { try { t.proc.kill(s); } catch {} } }
     t.stopped = "studio-stopped"; t.endedAt ??= new Date().toISOString(); try { t.git.end = gitFacts(t.project.path, t.project.base); } catch {}
     // a shell with nothing to send for review is not listed again after the restart (the page says once that it ended)
-    this.saveMeta(t, t.kind === "shell" && nothingToReview(t) ? { dismissed: true } : {}); } }
+    // (kept on the terminal: its own exit, seen after this while Studio finishes stopping, writes the record again)
+    if (t.kind === "shell" && nothingToReview(t)) t.dismissedAtShutdown = true;
+    this.saveMeta(t); } }
 
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {
