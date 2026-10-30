@@ -76,7 +76,9 @@ export class Sidecar {
     const once = async () => {
       if (!this.proc) this.start();
       const hello = this.ready!;
-      await Promise.race([hello, new Promise((_, bad) => setTimeout(() => bad(new Error("the voice engine did not start in time")), this.o.loadTimeoutMs ?? 30_000))]).catch((e) => { this.stop(); throw e; });
+      let t: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([hello, new Promise((_, bad) => { t = setTimeout(() => bad(new Error("the voice engine did not start in time")), this.o.loadTimeoutMs ?? 30_000); })])
+        .catch((e) => { this.stop(); throw e; }).finally(() => clearTimeout(t));
       if (!this.loaded) { const r = await this.send({ op: "load", config: this.o.config, idleMs: this.o.idleMs ?? 10 * 60_000 }, this.o.loadTimeoutMs ?? 30_000);
         this.loaded = true; this.info.sampleRate = r.sampleRate ?? null; this.info.loadMs = r.ms ?? null; }
       return this.send(msg, this.o.timeoutMs ?? 60_000);
