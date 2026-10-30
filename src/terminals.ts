@@ -15,7 +15,7 @@
 //   running (default 8), a transcript file per terminal capped at CREW_TERMINAL_TRANSCRIPT bytes (default 5 MiB), the 100
 //   newest records kept. Studio stopping kills every terminal (the process group, SIGHUP then SIGKILL); nothing is
 //   re-attached on restart: a record left open is closed as `studio-stopped` on the next start, and the ended terminals
-//   (the 20 newest, not removed, never a shell: an ended shell leaves the list at once) are listed again from their records
+//   (the 20 newest, not removed: a shell that ended well with nothing to review removes itself) are listed again from their records
 //   (`restored`), so Send for review still works on them.
 //   Record: data/terminals/<id>.json (who, project, command, start, end, exit code) and <id>.log (the transcript), and a
 //   `terminal.start` / `terminal.exit` line in Studio's activity log. A log only: never evidence for a merge or a gate.
@@ -193,6 +193,13 @@ export function gitFacts(path: string, base?: string | null): TermGit | null {
   if (base && git(path, ["rev-parse", "--verify", `${base}^{commit}`]).ok) { const c = git(path, ["rev-list", "--count", `${base}..${head.out}`]); if (c.ok) commits = Number(c.out) || 0; }
   return { branch: br.ok && br.out ? br.out : null, head: head.out, commits, base: base ?? null };
 }
+/** Nothing in the checkout to send for review: no commits beyond the base, and no uncommitted change (or no git at all). */
+function nothingToReview(t: { project: TermProject; git: { end: TermGit | null } }): boolean {
+  const g = t.git.end; if (!g) return true;
+  if (g.commits) return false;
+  const st = git(t.project.path, ["status", "--porcelain"]);
+  return st.ok && !st.out.trim();
+}
 const AGENT_KINDS = new Set<AgentKind>(["claude", "codex", "cursor", "aider", "opencode", "gemini", "amp"]);
 
 export class Terminals {
@@ -359,10 +366,10 @@ export class Terminals {
     this.evaluate(t); this.saveMeta(t);
     for (const s of t.subs) this.emit(t, s, this.ev(s, t, "exit", JSON.stringify({ exitCode: t.exitCode, signal: t.signal })));
     this.o.log?.("terminal.exit", `terminal ${t.id} (${t.label}) ended: ${t.signal ? `signal ${t.signal}` : `exit ${t.exitCode}`}`, { id: t.id, project: t.project.id, exitCode: t.exitCode, signal: t.signal });
-    // a shell that ended well (exit 0, or the captain's Stop) leaves the list (and the page's tabs) on its own, as a
-    // Terminal window closes on exit; its record and transcript stay. One that failed (an exit code, a signal: a broken
-    // rc file) stays, with its last output, until removed.
-    if (t.kind === "shell" && (t.userStopped || (t.exitCode === 0 && !t.signal))) { this.saveMeta(t, { dismissed: true }); if (this.terms.get(t.id) === t) this.terms.delete(t.id); }
+    // a shell that ended well (exit 0, or the captain's Stop) with nothing to send for review leaves the list (and the
+    // page's tabs) on its own, as a Terminal window closes on exit; its record and transcript stay. One that failed (an
+    // exit code, a signal: a broken rc file) or left work to review stays, with its last output, until removed.
+    if (t.kind === "shell" && (t.userStopped || (t.exitCode === 0 && !t.signal)) && nothingToReview(t)) { this.saveMeta(t, { dismissed: true }); if (this.terms.get(t.id) === t) this.terms.delete(t.id); }
     this.changed();
   }
   private saveMeta(t: Term, extra: Record<string, unknown> = {}) {
@@ -485,8 +492,8 @@ export class Terminals {
   // studio-stopped and Send for review's guard (the checkout moved since) has a head to compare with.
   shutdown() { for (const t of this.terms.values()) if (t.running) { for (const s of ["SIGHUP", "SIGKILL"] as const) { try { process.kill(-t.proc.pid, s); } catch { try { t.proc.kill(s); } catch {} } }
     t.stopped = "studio-stopped"; t.endedAt ??= new Date().toISOString(); try { t.git.end = gitFacts(t.project.path, t.project.base); } catch {}
-    // a shell is not listed again after the restart (the page says once that it ended)
-    this.saveMeta(t, t.kind === "shell" ? { dismissed: true } : {}); } }
+    // a shell with nothing to send for review is not listed again after the restart (the page says once that it ended)
+    this.saveMeta(t, t.kind === "shell" && nothingToReview(t) ? { dismissed: true } : {}); } }
 
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {

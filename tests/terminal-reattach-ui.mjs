@@ -5,7 +5,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   (a marker) replayed, and typing reaches the same shell (the same $$); the replay is bounded (CREW_TERMINAL_SCROLLBACK)
 //   and says what it dropped; `exit` in a shell closes its tab and takes it off the list, and a reload lists live shells
 //   only; Stop ends the shell (its process is gone) and it leaves too; a shell that fails (an rc file that exits 3) stays,
-//   with its last output and its exit code, until removed; a Studio restart ends every shell: the next page
+//   with its last output and its exit code, until removed; a shell that exits 0 with a commit beyond main stays with Send
+//   for review, one with uncommitted changes stays, one with nothing to review leaves; a Studio restart ends every shell: the next page
 //   says so once ("ended when Studio restarted"), shows no dead tab and lists none of them, and a second load says nothing.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -114,6 +115,23 @@ try {
   ok(await until(async () => { const r = await rowsOf(p, e); return /rc: this setup is broken/.test(r) && /process ended: exit 3/.test(r); }), "its pane shows its last output and exit 3", await rowsOf(p, e));
   ok(await until(async () => /Exited 3/.test(await p.locator(`.wt-pane[data-term-pane="${e}"] .wt-pbar, [data-term-detail="${e}"] .wt-dhead`).allInnerTexts().then((x) => x.join(" ")))), "and its badge says Exited 3");
   ok(await dismiss(p, e) && await until(async () => !(await listed(p)).some((t) => t.id === e)), "the captain removes it");
+
+  // a shell that exits 0 with work to send for review stays, with Send for review; one with nothing to review leaves
+  const r1 = await startShell(p, "repo"); await show(p, r1);
+  await say(p, `git checkout -q -b work && git ${G.join(" ")} commit -q --allow-empty -m work && exit`);
+  ok(await until(async () => (await listed(p)).some((t) => t.id === r1 && !t.running)), "a shell that committed on a branch exits 0");
+  await p.waitForTimeout(800);
+  ok((await listed(p)).some((t) => t.id === r1), "it stays listed: it has a commit beyond main to send for review");
+  ok(await until(async () => (await p.locator(`[data-term-send="${r1}"]:not([disabled])`).count()) === 1), "with Send for review, ready");
+  await dismiss(p, r1); execFileSync("git", ["checkout", "-q", "main"], { cwd: repo });
+  const r2 = await startShell(p, "repo"); await show(p, r2);
+  await say(p, "echo draft > notes.txt; exit");
+  await p.waitForTimeout(1500);
+  ok((await listed(p)).some((t) => t.id === r2 && !t.running), "a shell that leaves uncommitted work behind stays listed (the tree is not clean)");
+  await dismiss(p, r2); rmSync(join(repo, "notes.txt"), { force: true });
+  const r3 = await startShell(p, "repo"); await show(p, r3);
+  await say(p, "exit");
+  ok(await until(async () => !(await listed(p)).some((t) => t.id === r3) && !(await p.locator(`.wt-pane[data-term-pane="${r3}"]`).count())), "a shell in the repository with nothing beyond main and a clean tree leaves on exit 0");
 
   // a browser with no tabs saved (another profile, cleared site data) gets a tab for every running terminal, not just one
   const d = await startShell(p);

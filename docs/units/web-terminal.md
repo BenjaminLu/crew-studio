@@ -180,10 +180,12 @@ window does) and SIGKILL two seconds later.
 - Scrollback: a byte ring per terminal (`CREW_TERMINAL_SCROLLBACK`, default 2 MiB); a replay says how much was dropped.
 - At most `CREW_TERMINAL_MAX` running (default 8), and at most 4 open views (streams) of one terminal. Ended terminals stay
   listed (with their replay) until removed; at most 20. A shell (the Shell preset) that ends well (exit 0 with no signal, or
-  the captain's Stop) is the exception: it leaves the list and closes its tab on its own, as a Terminal window does, and
+  the captain's Stop) with nothing to send for review (no git checkout, or no commits beyond the base and a clean tree)
+  is the exception: it leaves the list and closes its tab on its own, as a Terminal window does, and
   its record is marked dismissed, so a restart does not list it again either; its record and transcript stay. A shell that
   fails (an exit code, a signal, a broken rc file that exits as it starts) stays, with its exit code and last output, until
-  the captain removes it. Agents and commands stay, for their output and Send for review.
+  the captain removes it, and so does one that left work behind (a commit beyond the base: Send for review, as for an
+  agent; uncommitted changes: the row says to commit them). Agents and commands stay, for their output and Send for review.
 - Closing the page (the app window, a browser tab, a reload) never stops a terminal: it runs on inside Studio. A page
   opened again gets its tabs back (this browser's saved layout; with none saved, another profile or cleared site data, a
   tab for every running terminal), the scrollback replayed from the ring, and its keys reach the same process
