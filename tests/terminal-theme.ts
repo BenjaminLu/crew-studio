@@ -36,6 +36,15 @@ for (const [side, v] of Object.entries(sides)) {
   const roomy = TT.NAMES.filter((n: string, i: number) => TT.contrast(theme[n], theme.background) >= 7 && dim.ansi[i] === theme[n]);
   ok(!roomy.length, `${side}: a colour with room above AA has a dimmer dim form`, roomy.join(","));
   ok(TT.contrast(dim.foreground, theme.background) < fgc, `${side}: dim default text is dimmer than the foreground`);
+  // the selection and the cursor are seen: 3:1 against the background (WCAG's non-text contrast), and selected text reads
+  const r = (a: string, b: string) => (a && b ? TT.contrast(a, b) : 0);
+  ok(r(theme.selectionBackground, theme.background) >= 3, `${side}: the selection ${theme.selectionBackground} is ${fmt(r(theme.selectionBackground, theme.background))}:1 against the background`);
+  ok(r(theme.selectionInactiveBackground, theme.background) >= 3, `${side}: the selection in an unfocused terminal ${theme.selectionInactiveBackground} is ${fmt(r(theme.selectionInactiveBackground, theme.background))}:1`);
+  ok(r(theme.selectionForeground, theme.selectionBackground) >= TT.AA && r(theme.selectionForeground, theme.selectionInactiveBackground) >= TT.AA,
+    `${side}: selected text ${theme.selectionForeground} reads on both selections (${fmt(r(theme.selectionForeground, theme.selectionBackground))}:1, ${fmt(r(theme.selectionForeground, theme.selectionInactiveBackground))}:1)`);
+  ok(r(theme.cursor, theme.background) >= 3 && r(theme.cursorAccent, theme.cursor) >= 3, `${side}: the cursor ${theme.cursor} is ${fmt(r(theme.cursor, theme.background))}:1, the character under it ${fmt(r(theme.cursorAccent, theme.cursor))}:1`);
+  const weak = TT.themeFor(v.bg, v.fg, v.bg).theme; // an accent no one can see on this surface
+  ok(r(weak.cursor, weak.background) >= 3, `${side}: an accent that does not show on the surface gives way to a cursor that does`, weak.cursor);
 }
 // what xterm 5.5.0 drew before (its built-in Tango palette, dim at half opacity) fails on Studio's dark surface: the check bites
 {

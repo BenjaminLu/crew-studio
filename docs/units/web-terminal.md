@@ -100,7 +100,9 @@ is drawn in a dim form of its colour that moves toward the background only as fa
 opacity, which halves the contrast), on the terminal's background and on each ANSI background (SGR 41–47, 100–107)
 against that background; a colour that does not read on a background stays itself there, and xterm moves it. These
 rules carry no `!important`: a colour xterm sets on a cell itself (its minimum contrast, inline) always wins. Any other colour a program asks for (256-colour, truecolor, as Claude Code's greys
-are) xterm keeps at 4.5:1 itself (`minimumContrastRatio`). `tests/terminal-theme.ts` computes every ratio from the theme
+are) xterm keeps at 4.5:1 itself (`minimumContrastRatio`). The selection (focused and not) and the cursor are 3:1 or more against the surface (WCAG's
+non-text contrast), selected text 4.5:1 on both selections; an accent that does not show on the surface gives the cursor
+the foreground's colour. `tests/terminal-theme.ts` computes every ratio from the theme
 object against the surfaces in `public/styles.css`; `tests/terminal-input-ui.mjs` reads the colours drawn in both themes.
 
 ## A Studio window

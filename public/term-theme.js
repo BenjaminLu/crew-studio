@@ -12,7 +12,9 @@ const DARK = ["#8b93a5", "#ff7b72", "#3fb950", "#d29922", "#58a6ff", "#d2a8ff", 
   "#a3abbd", "#ffa198", "#56d364", "#e3b341", "#79c0ff", "#e2c5ff", "#56d4dd", "#f0f6fc"];
 const LIGHT = ["#24292f", "#b3261e", "#116329", "#7a4d00", "#0550ae", "#8250df", "#0b6670", "#4b535d",
   "#57606a", "#a40e26", "#1a7f37", "#6b4500", "#0a58c2", "#6639ba", "#0a5c63", "#353c44"];
-const AA = 4.5;
+const AA = 4.5, SEEN = 3; // text; what must be seen but is not text (the selection, the cursor: WCAG's non-text contrast)
+// the selection, focused and not, and the text on it: 3:1 or more against the surface, the text at AA on both
+const SELECT = { dark: { background: "#5b7fc7", inactive: "#7a8fb8", text: "#0b0d12" }, light: { background: "#4a6fc0", inactive: "#52699c", text: "#ffffff" } };
 const rgb = (hex) => { const h = String(hex).trim().replace(/^#/, ""); const f = h.length === 3 ? [...h].map((c) => c + c).join("") : h.slice(0, 6);
   return /^[0-9a-f]{6}$/i.test(f) ? [0, 2, 4].map((i) => parseInt(f.slice(i, i + 2), 16)) : null; };
 const hex = (c) => "#" + c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
@@ -36,7 +38,10 @@ function themeFor(bg, fg, cursor) {
   const b = rgb(bg) ? hex(rgb(bg)) : "#111111", dark = isDark(b), pal = dark ? DARK : LIGHT;
   let f = rgb(fg) ? hex(rgb(fg)) : dark ? "#e8ebf1" : "#171a21";
   if (contrast(f, b) < AA) f = dark ? "#e8ebf1" : "#171a21";
-  const theme = { background: b, foreground: f, cursor: rgb(cursor) ? hex(rgb(cursor)) : f, cursorAccent: b };
+  // the cursor is the accent where it shows (3:1), else the foreground; the character under it is the background's colour
+  const cur = rgb(cursor) && contrast(hex(rgb(cursor)), b) >= SEEN ? hex(rgb(cursor)) : f, sel = SELECT[dark ? "dark" : "light"];
+  const theme = { background: b, foreground: f, cursor: cur, cursorAccent: b,
+    selectionBackground: sel.background, selectionInactiveBackground: sel.inactive, selectionForeground: sel.text };
   NAMES.forEach((n, i) => { theme[n] = pal[i]; });
   // dim text on the terminal's background, and on each of the 16 ANSI backgrounds (on[fg][bg], fg 16 being the default)
   const dim = { foreground: dimOf(f, b), ansi: pal.map((c) => dimOf(c, b)), on: [...pal, f].map((c) => pal.map((x) => dimOn(c, x))) };
@@ -56,5 +61,5 @@ function dimCss(scope, dim) {
   (dim.on || []).forEach((row, i) => row.forEach((c, j) => { css += `${S} ${i < 16 ? `.xterm-fg-${i}` : ""}.xterm-bg-${j}.xterm-dim${i < 16 ? "" : dflt}{color:${c}}`; }));
   return css;
 }
-globalThis.crewTermTheme = { NAMES, DARK, LIGHT, AA, contrast, dimOf, themeFor, dimCss, isDark };
+globalThis.crewTermTheme = { NAMES, DARK, LIGHT, AA, SEEN, contrast, dimOf, themeFor, dimCss, isDark };
 })();
