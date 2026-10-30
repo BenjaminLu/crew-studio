@@ -280,7 +280,9 @@ function reconcile() { const known = new Set((TM.list || []).map((t) => t.id)); 
 // the address names the focused terminal; replaced in place, so moving between panes does not add history or re-route
 function syncHash() { const t = termOf(focusPane()), want = t ? `#/terminals/${encodeURIComponent(t.id)}` : "#/terminals";
   if (location.hash !== want) { history.replaceState(null, "", want); if (S.route?.name === "terminals") S.route.arg = t?.id ?? null; } TM.lastArg = t?.id ?? null; }
-function focusTerm() { if (!TM.canWrite || TM.ui.picker || TM.ui.naming || TM.ui.help) return; const id = focusPane()?.term, go = () => TM.panes.get(id)?.term?.focus(); go(); requestAnimationFrame(go); }
+// asked again on the next frame: a sheet opened in between (a double-click's rename) keeps its field's focus
+const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help;
+function focusTerm() { if (!TM.canWrite || sheetOpen()) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(go); }
 const redo = () => { saveLay(); syncHash(); render(); focusTerm(); };
 // a click in a pane moves the focus without rebuilding the page (xterm keeps its focus and selection)
 function markFocus() { syncHash(); const tab = curTab(), t = termOf(focusPane(tab)), sec = document.querySelector("[data-term-detail]"); if (!tab || !t || !sec) return;
