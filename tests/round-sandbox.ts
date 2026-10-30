@@ -115,18 +115,21 @@ ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds =
 // deny list; the settings, memory, hooks and plugins there stay read-only (they load into the captain's own sessions); and the
 // round may run only the CLI, Studio's runtime and the few helpers the CLI runs itself
 { delete process.env.CREW_CLAUDE_BILLING; const before = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
-  const C = join(realHome, ".claude"), kc = join(realHome, "Library", "Keychains", "probe.keychain-db");
+  const C = join(realHome, ".claude"), kc = join(realHome, "Library", "Keychains", "login.keychain-db"), otherKc = join(realHome, "Library", "Keychains", "probe.keychain-db");
+  writeFileSync(kc, "LOGIN-KEYCHAIN-STAND-IN");
   const accountEntries = [join(C, "probe-secret"), join(realHome, ".claude.json")];
   const ap = { secrets: SECRET_FILES.filter((f) => !accountEntries.includes(f)), accountWrites: [join(C, "projects", "x", "session.jsonl"), join(realHome, ".claude.json"), join(C, "settings.json"), join(C, "settings.local.json"), join(C, "CLAUDE.md"), join(C, "hooks", "h.sh"), join(C, "plugins", "p.json")],
-    accountReads: [join(realHome, ".claude.json"), kc], exec: ["/bin/cat", "/usr/bin/curl", process.execPath] };
+    accountReads: [join(realHome, ".claude.json"), kc, otherKc], exec: ["/bin/cat", "/usr/bin/curl", process.execPath] };
   const a = await agents.run({ kind: "t", title: "own account", system: "s", text: `PROBE ${JSON.stringify(ap)}`, tools: [], provider, timeoutMs: 30000, sandbox: { writes: [wt] } });
   let o: any = {}; try { o = JSON.parse(a.said); } catch {}
   process.env.ANTHROPIC_API_KEY = before; process.env.CREW_CLAUDE_BILLING = "api-key";
   const { isCredentialName } = await import("../src/secure"); const creds = (o.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
   ok(a.status === "done" && o.home === realHome && JSON.stringify(creds) === JSON.stringify(["CREW_TOOL_TOKEN_FILE"]) && o.oauth === null && o.apiKey === null, "on the captain's own account the round runs in that account context and Studio hands it no credential at all", JSON.stringify([a.error, o.home, creds]));
-  ok(o.accountWrites?.[join(C, "projects", "x", "session.jsonl")] === true && o.accountWrites?.[join(realHome, ".claude.json")] === true && o.accountReads?.[join(realHome, ".claude.json")] === true, "the CLI may keep its own state in its account context (~/.claude, ~/.claude.json)", JSON.stringify([o.accountWrites, o.accountReads]));
+  ok(o.accountWrites?.[join(C, "projects", "x", "session.jsonl")] === true && o.accountReads?.[join(realHome, ".claude.json")] === true && o.accountWrites?.[join(realHome, ".claude.json")] === false, "the CLI keeps its own state in its Claude folder and reads ~/.claude.json, which stays read-only (it names the MCP servers every later session starts)", JSON.stringify([o.accountWrites, o.accountReads]));
   ok(["settings.json", "settings.local.json", "CLAUDE.md", join("hooks", "h.sh"), join("plugins", "p.json")].every((f) => o.accountWrites?.[join(C, f)] === false) && !existsSync(join(C, "settings.json")) && !existsSync(join(C, "hooks")), "the settings, memory, hooks and plugins of the captain's own account stay read-only to a round", JSON.stringify(o.accountWrites));
-  ok(o.accountReads?.[kc] === (process.platform === "darwin"), "the login keychain opens to the claude process only on the captain's own account (where the CLI keeps its sign-in)", JSON.stringify(o.accountReads));
+  // (the login keychain database it does open is the account's own, from the directory service, not this test's HOME:
+  // tests/own-account-rounds.ts checks that rule in the profile)
+  ok(o.accountReads?.[otherKc] === false && o.accountReads?.[kc] === false, "no keychain under the round's HOME opens: only the account's own login keychain database is ever named", JSON.stringify(o.accountReads));
   ok(Array.isArray(o.secretReads) && o.secretReads.length === 0 && o.key === null, "every other entry of the deny list stays closed (Studio's keys, ~/.ssh, ~/.aws, ~/.codex …)", JSON.stringify(o.secretReads));
   ok(o.exec?.["/bin/cat"] === false && o.exec?.["/usr/bin/curl"] === false && o.exec?.[process.execPath] === true, "the round may run only the CLI, Studio's runtime and the CLI's own helpers: no other program starts", JSON.stringify(o.exec)); }
 // a provider that cannot be sandboxed is refused; only the stub is sandbox-free

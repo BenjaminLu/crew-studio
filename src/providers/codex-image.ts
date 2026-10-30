@@ -87,14 +87,14 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   const needs = codexNeeds(bin, ['api.openai.com','chatgpt.com','auth.openai.com'], o.approved);
   const egress = new Egress(); let lease: Awaited<ReturnType<typeof openScopedProxy>> | null = null;
   let proc: ReturnType<typeof probeProcess> | undefined; let clean = true, timer: ReturnType<typeof setTimeout> | undefined;
-  let failure: Error | null = null;
+  let failure: Error | null = null; let savedInOwnHome: string | null = null;
   let failTurn: (e: Error) => void = () => {}; const pending = new Map<number,{resolve(v:any):void;reject(e:Error):void}>();
   const stop = (e: Error) => { failure ??= e; failTurn(e); for (const w of pending.values()) w.reject(e); pending.clear(); proc?.kill(); };
   const abort = () => stop(new Error('Codex image cancelled'));
   try {
     const login = needs.login(home); if (!login.ok) throw new Error('Codex image login unavailable'); guard();
     if(!localUnrestricted()){await egress.start(); guard(); lease = await openScopedProxy(egress, needs.hosts); guard();}
-    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1,account:needs.account?.()??null }));
+    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1,account:needs.account?.()??null,exec:needs.exec?.()??null }));
     const proxy = lease?.url ?? "";
     const env:Record<string,string> = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',CODEX_HOME:join(home,'.codex'),...login.env,HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };
     if(localUnrestricted())for(const key of ['HTTPS_PROXY','HTTP_PROXY','https_proxy','http_proxy','ALL_PROXY','all_proxy'])delete env[key];
@@ -113,8 +113,10 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
         terminal=true; complete();
       } else if (m.method === 'error') stop(new Error('Codex image server refused'));
     };
-    // Private HOME has no original config or hooks; explicit source policy allows only image generation.
-    const args=['app-server','--listen','stdio://','--disable','shell_tool','--enable','image_generation','-c','web_search="disabled"','-c','approval_policy="never"','-c',localUnrestricted()?'sandbox_mode="danger-full-access"':'sandbox_mode="read-only"','-c','analytics.enabled=false'];
+    // On Studio's API key the home is private; on the captain's own codex home its config.toml loads (app-server has no
+    // --ignore-user-config), so what it could start or reach is switched off here and contained by the profile: no notify
+    // program, no MCP server, exec narrowed to the CLI and egress to the provider's hosts (needs.exec, the scoped proxy).
+    const args=['app-server','--listen','stdio://','--disable','shell_tool','--enable','image_generation','-c','web_search="disabled"','-c','approval_policy="never"','-c',localUnrestricted()?'sandbox_mode="danger-full-access"':'sandbox_mode="read-only"','-c','analytics.enabled=false','-c','notify=[]','-c','mcp_servers={}'];
     proc=probeProcess(localUnrestricted()?binArgv(bin,args):['/usr/bin/sandbox-exec','-f',profile,...binArgv(bin,args)],work,env,m=>{
       if (m.id !== undefined && !m.method) { const w=pending.get(m.id);if(w){pending.delete(m.id);m.error?w.reject(new Error('Codex image RPC refused')):w.resolve(m.result);} }
       else if(m.id !== undefined && m.method) { proc?.write({jsonrpc:'2.0',id:m.id,error:{code:-32601,message:'image owner refuses tool or permission requests'}});stop(new Error('Codex image unexpected permission or tool request')); }
@@ -135,17 +137,19 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
     await proc.stop();clean=true;guard();if(failure)throw failure;if(proc.output().failure)throw new Error('Codex image protocol limit or deadline exceeded');
     let bytes:Buffer;
     if (typeof item.savedPath==='string' && item.savedPath) {
-      const generated=join(env.CODEX_HOME,'generated_images'),path=item.savedPath;
-      const rel=relative(generated,path);if(!isAbsolute(path)||!rel||rel.startsWith('..')||isAbsolute(rel)||realpathSync(generated)!==generated)throw new Error('Codex image saved path outside owned generation root');
+      const generated=realpathSync(join(env.CODEX_HOME,'generated_images')),path=realpathSync(item.savedPath); // a codex home may itself be a link (dotfiles)
+      const rel=relative(generated,path);if(!isAbsolute(path)||!rel||rel.startsWith('..')||isAbsolute(rel))throw new Error('Codex image saved path outside owned generation root');
       let at=generated;for(const part of rel.split('/')){at=join(at,part);if(lstatSync(at).isSymbolicLink())throw new Error('Codex image saved path contains symlink');}
+      if(env.CODEX_HOME!==join(home,'.codex'))savedInOwnHome=path; // inside the captain's generation folder, no link on the way: Studio removes it
       if(realpathSync(path)!==path||!lstatSync(path).isFile()||lstatSync(path).size>MAX_IMAGE)throw new Error('Codex image saved file unsupported');bytes=readFileSync(path);
-      if(env.CODEX_HOME!==join(home,'.codex'))try{rmSync(path,{force:true});}catch{} // the captain's own codex home keeps none of Studio's images
     } else {
       if(typeof item.result!=='string'||item.result.length>Math.ceil(MAX_IMAGE*4/3)+4||!item.result.length||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.result))throw new Error('Codex image bytes unavailable');bytes=Buffer.from(item.result,'base64');
     }
     const size=verifyImagePng(bytes);guard();
     return {bytes,...size,mime:'image/png',sha256:createHash('sha256').update(bytes).digest('hex'),provider:'codex',model:o.approved.model,effort:o.approved.effort,operatingRules:o.rules.hash};
   } finally {
+    // the captain's own codex home keeps none of Studio's images, whether the image passed its checks or not (never through a link)
+    if(savedInOwnHome)try{if(lstatSync(savedInOwnHome).isFile())rmSync(savedInOwnHome,{force:true});}catch{}
     clearTimeout(timer);o.signal?.removeEventListener('abort',abort);
     for(const w of pending.values())w.reject(new Error('Codex image owner closed'));pending.clear();
     try {if(proc)await proc.stop();}catch{clean=false;}

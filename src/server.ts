@@ -261,7 +261,9 @@ const takeover = createTakeover({ claudePair: claudePrimaryPair, cursorPrimary, 
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
 let firstmateId: string | null = null;
-const refreshFirstmate = async () => { try { const own = takeover.copies(); firstmateId = (await main.discover("claude")).find((x) => !own.has(x.id))?.id ?? null; } catch {} };
+// Studio's own fresh Claude primary keeps its transcript in the captain's ~/.claude/projects (it runs on the captain's own account):
+// never mistake it for the captain's Firstmate session
+const refreshFirstmate = async () => { try { const own = new Set(takeover.copies()); const v = main.view(); if (v.host === "claude" && v.drive?.path === "fresh" && v.sessionId) own.add(v.sessionId); firstmateId = (await main.discover("claude")).find((x) => !own.has(x.id))?.id ?? null; } catch {} };
 void refreshFirstmate(); setInterval(refreshFirstmate, 15_000);
 const graphMode = createGraphMode(DATA);
 const transcripts = createTranscripts({ stateDir: STATE, dataDir: DATA, sessionFile: () => {
@@ -464,13 +466,15 @@ const coffeeTools = (()=>{const rendering=renderEnv();return discoverCoffeeFilmC
 let staffingClaudeCapabilities:ProviderCapability[]=[];
 /** Login presence per provider for the readiness gate, read once per gate run and kept 30 s: an API key's presence in the
  *  environment, or that the captain's own codex login file exists (never what it holds); Claude's own sign-in is the CLI's
- *  own status, read elsewhere. Nothing is written and no sign-in is ever started. */
+ *  own `claude auth status` (no secret read). Nothing is written and no sign-in is ever started. */
 let gateLoginCache: { at: number; v: Promise<Record<string, "logged-in" | "not-logged-in" | "unknown">> } | null = null;
 const gateLogins = () => {
   if (gateLoginCache && Date.now() - gateLoginCache.at < 30_000) return gateLoginCache.v;
   const v = (async () => {
     const out: Record<string, "logged-in" | "not-logged-in" | "unknown"> = {};
-    try { out.claude = (await claudeLoginPresenceAsync()).ok ? "logged-in" : "not-logged-in"; } catch { out.claude = "unknown"; }
+    // Claude: an API key's presence under API billing; on the captain's own account, the CLI's own `claude auth status`
+    try { const pr = await claudeLoginPresenceAsync(); if (!pr.ok) out.claude = "not-logged-in"; else if (pr.kind === "api-key") out.claude = "logged-in";
+      else { const st = await nativeClaude.status(claudePrimaryPair()); out.claude = st.loginState === "logged-in" ? "logged-in" : st.loginState === "not-logged-in" ? "not-logged-in" : "unknown"; } } catch { out.claude = "unknown"; }
     try { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) out.codex = "logged-in"; else out.codex = codexLogin(join(DATA, "codex-gate-unused")).ok ? "logged-in" : "not-logged-in"; } catch { out.codex = "unknown"; }
     try { const c = probeCursor([]); out.cursor = c.available && c.auth !== "missing" ? "logged-in" : "not-logged-in"; } catch { out.cursor = "unknown"; }
     out.stub = allowStub ? "logged-in" : "not-logged-in";
