@@ -129,7 +129,7 @@ try {
     ok(far.lod === "far" && far.out.length === 0 && far.cards === 0 && !far.links && far.maps.every((m) => JSON.stringify(m.kids) === JSON.stringify(["rb-mn", "rb-mt", "rb-mg", "rb-mq"]) && m.oneLine),
       "far away (fit all) each chapter shows only its number, its title, one line and its question badges: no text, card, pin or line besides", JSON.stringify(far).slice(0, 900));
     const t1 = far.maps.find((m) => m.id === "t1"), t5 = far.maps.find((m) => m.id === "t1-5"), end = far.maps.find((m) => m.id === "end");
-    ok(/未解 1/.test(t1.open) && /懂了 0/.test(t1.done) && /未解 0/.test(t5.open) && /懂了 1/.test(t5.done) && /未解 2/.test(end.open), "the map's badges count each chapter's open and understood questions", JSON.stringify([t1, t5, end]));
+    ok(/未解 2/.test(t1.open) && /懂了 0/.test(t1.done) && /未解 0/.test(t5.open) && /懂了 1/.test(t5.done) && /未解 3/.test(end.open), "the map's badges count each chapter's open and understood questions", JSON.stringify([t1, t5, end]));
     await p.screenshot({ path: join(shots, "desktop-light-map.png") });
     // mid: the cards say what was asked and the answer's first lines, without their actions
     await p.click('[data-outline="t1"]'); await settle(p); const vc = (await geo(p)).vp; await p.mouse.move(vc.x + vc.w / 2, vc.y + vc.h / 2);
@@ -149,7 +149,7 @@ try {
     ok(all && g.cards.length >= 5 && !bad.length, "no question's card overlaps another card or any region, and no region overlaps another", JSON.stringify({ n: g.cards.length, bad }));
     const pins = await p.evaluate(() => [...document.querySelectorAll(".rb-pin[data-pin-for]")].map((pin) => { const a = document.querySelector(`[data-akey="${CSS.escape(pin.dataset.pinFor)}"]`), pr = pin.getBoundingClientRect(), cx = pr.left + pr.width / 2, cy = pr.top + pr.height / 2;
       const rs = a ? [...a.getClientRects()] : [], on = rs.some((r) => cx >= r.left - 14 && cx <= r.right + 14 && cy >= r.top - 18 && cy <= r.bottom + 14); return { key: pin.dataset.pinFor, n: pin.dataset.pin, on, inside: !!a?.contains(pin) }; }));
-    ok(pins.length === 4 && pins.every((x) => x.on) && pins.some((x) => x.inside) && pins.some((x) => !x.inside), "each question's numbered pin sits on its place: inside a sentence, at a drawing's part", JSON.stringify(pins));
+    ok(pins.length === 5 && pins.every((x) => x.on) && pins.some((x) => x.inside) && pins.some((x) => !x.inside), "each question's numbered pin sits on its place: inside a sentence, at a drawing's part", JSON.stringify(pins));
     // the anchor's card branches beside it, joined to it
     const near = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p0.s1"]').getBoundingClientRect(), c = document.querySelector('[data-tcard="1:n1"]').getBoundingClientRect(), ex = document.querySelector('[data-tcard="1:n2"]').getBoundingClientRect();
       return { right: c.left > a.right, level: Math.abs(c.top - a.top) < 60, side: ex.left > c.right && Math.abs(ex.top - c.top) < 4, line: document.querySelectorAll('[data-board-links] path[data-link="1"]').length }; });
@@ -166,28 +166,29 @@ try {
     await p.keyboard.press("Escape"); await settle(p, 80);
     ok(!(await p.$(".rb-pop")) && await p.evaluate(() => document.activeElement?.dataset?.akey === "what/t1/sentence#p0.s0"), "Escape closes the popover and gives the focus back to the place");
     // asking: the question waits in its card for the confirmation, inline; nothing is sent before it
-    await p.mouse.click(b1.x + 8, b1.y + 6); await p.waitForSelector(".rb-pop"); await p.click('.rb-pop [data-chip="deeper"]'); await p.waitForSelector("[data-pending]");
-    const pend = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), c = document.querySelector("[data-pending]").getBoundingClientRect(); return { text: document.querySelector("[data-board-confirm]")?.textContent, right: c.left > a.right, modal: !!document.querySelector("[data-room-confirm], [role=dialog][aria-modal=true]"), pop: !!document.querySelector(".rb-pop") }; });
+    await p.mouse.click(b1.x + 8, b1.y + 6); await p.waitForSelector(".rb-pop"); await p.click('.rb-pop [data-chip="deeper"]'); await p.waitForSelector("[data-pending]", { timeout: 5000 }).catch(() => {});
+    const pend = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), c = document.querySelector("[data-pending]")?.getBoundingClientRect() ?? { left: -1 }; return { text: document.querySelector("[data-board-confirm]")?.textContent, right: c.left > a.right, modal: !!document.querySelector("[data-room-confirm], [role=dialog][aria-modal=true]"), pop: !!document.querySelector(".rb-pop") }; });
     ok(S.turns.length === 0 && /付費的模型執行：codex · gpt-6（high）/.test(pend.text) && pend.right && !pend.modal && !pend.pop, "a paid chip asks for the round's confirmation inside the new card beside its place, not as a modal; nothing is sent yet", JSON.stringify(pend));
     await p.click("[data-board-start]"); await p.waitForSelector("[data-thinking]", { timeout: 15000 }).catch(() => {});
     const sent = S.turns.at(-1), think = await p.evaluate(() => ({ thinking: document.querySelector("[data-thinking]")?.textContent, said: document.querySelector("[data-streaming]")?.textContent, card: document.querySelector("[data-thinking]")?.closest("[data-tcard]")?.dataset.tcard }));
     ok(sent?.confirm === "feedc0ffee654321" && sent.thread?.chip === "deeper" && sent.thread.anchor?.scene === "t1" && sent.thread.anchor.kind === "sentence" && sent.thread.anchor.part === "p1.s0" && /同一筆付款只結算一次/.test(sent.thread.anchor.text) && !sent.action,
       "confirmed, the question is sent as the room's paid turn with the room's offer and the place (scene, kind, part, its words)", JSON.stringify(sent));
-    ok(think.thinking === "思考中" && /Reading src\/recheck\.ts/.test(think.said || "") && think.card === "5:n1", "while the tutor works, its card says 思考中 and streams what it has said so far", JSON.stringify(think));
+    ok(think.thinking === "思考中" && /Reading src\/recheck\.ts/.test(think.said || "") && think.card === "6:n1", "while the tutor works, its card says 思考中 and streams what it has said so far", JSON.stringify(think));
     // the answer arrives (the room's poll): text only
     S.room = clone(S.room); const tr = S.room.turns.at(-1); Object.assign(tr, { status: "done", answer: "x", claims: [{ text: "Both paths call settle(), whose CAS lets one win <img src=x onerror=\"window.__pwned=1\"> [diff:src/settle.ts:L8-30].", kind: "claim", basis: "cited", cites: [{ ref: "diff:src/settle.ts:L8-30", ok: true }] }] }); S.room.running = null; S.room.progress = null;
-    await p.waitForFunction(() => /CAS lets one win/.test(document.querySelector('[data-tcard="5:n1"]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
-    const done = await p.evaluate(() => ({ text: document.querySelector('[data-tcard="5:n1"] .rb-cbody')?.textContent, img: !!document.querySelector(".rb-card img"), pwned: !!window.__pwned, cite: !!document.querySelector('[data-tcard="5:n1"] [data-cite="diff:src/settle.ts:L8-30"]') }));
+    await p.waitForFunction(() => /CAS lets one win/.test(document.querySelector('[data-tcard="6:n1"]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+    const done = await p.evaluate(() => ({ text: document.querySelector('[data-tcard="6:n1"] .rb-cbody')?.textContent, img: !!document.querySelector(".rb-card img"), pwned: !!window.__pwned, cite: !!document.querySelector('[data-tcard="6:n1"] [data-cite="diff:src/settle.ts:L8-30"]') }));
+    await p.screenshot({ path: join(shots, "desktop-light-thread.png") });
     ok(/CAS lets one win <img src=x/.test(done.text || "") && !done.img && !done.pwned && done.cite, "the answer shows in its card as text (markup stays text), its citation a chip", JSON.stringify(done));
     // follow-ups: an example beside, deeper below, each confirmed in its own card
-    await p.click('[data-tcard="5:n1"] [data-follow="example"]'); await p.waitForSelector("[data-pending]");
-    const side = await p.evaluate(() => { const a = document.querySelector('[data-tcard="5:n1"]').getBoundingClientRect(), c = document.querySelector("[data-pending]").getBoundingClientRect(); return { beside: c.left > a.right && Math.abs(c.top - a.top) < 4 }; });
+    await p.click('[data-tcard="6:n1"] [data-follow="example"]'); await p.waitForSelector("[data-pending]");
+    const side = await p.evaluate(() => { const a = document.querySelector('[data-tcard="6:n1"]').getBoundingClientRect(), c = document.querySelector("[data-pending]").getBoundingClientRect(); return { beside: c.left > a.right && Math.abs(c.top - a.top) < 4 }; });
     await p.click("[data-board-start]"); await until(() => S.turns.length === 2);
-    ok(side.beside && S.turns.at(-1).thread?.n === 5 && S.turns.at(-1).thread.node === "n1" && S.turns.at(-1).thread.chip === "example" && S.turns.at(-1).confirm === "feedc0ffee654321", "例子 → asks in a card beside its parent, then sends the follow-up on that card with the confirmation", JSON.stringify([side, S.turns.at(-1)]));
+    ok(side.beside && S.turns.at(-1).thread?.n === 6 && S.turns.at(-1).thread.node === "n1" && S.turns.at(-1).thread.chip === "example" && S.turns.at(-1).confirm === "feedc0ffee654321", "例子 → asks in a card beside its parent, then sends the follow-up on that card with the confirmation", JSON.stringify([side, S.turns.at(-1)]));
     Object.assign(S.room.turns.at(-1), { status: "done", claims: [{ text: "Order 7731 at 14:07.", kind: "claim", basis: null, cites: [] }] }); S.room.running = null; S.room = clone(S.room);
     await p.waitForFunction(() => !document.querySelector("[data-thinking]"), null, { timeout: 15000 }).catch(() => {});
-    await p.click('[data-tcard="5:n1"] [data-follow="deeper"]'); await p.waitForSelector("[data-pending]");
-    const below = await p.evaluate(() => { const a = document.querySelector('[data-tcard="5:n1"]').getBoundingClientRect(), c = document.querySelector("[data-pending]").getBoundingClientRect(); return c.top > a.bottom && Math.abs(c.left - a.left) < 4; });
+    await p.click('[data-tcard="6:n1"] [data-follow="deeper"]'); await p.waitForSelector("[data-pending]");
+    const below = await p.evaluate(() => { const a = document.querySelector('[data-tcard="6:n1"]').getBoundingClientRect(), c = document.querySelector("[data-pending]").getBoundingClientRect(); return c.top > a.bottom && Math.abs(c.left - a.left) < 4; });
     await p.click("[data-board-cancel]"); await settle(p, 80);
     ok(below && !(await p.$("[data-pending]")) && S.turns.length === 2, "更深 ↓ asks in a card below its parent; cancelled, nothing is sent", JSON.stringify(below));
     // a rephrasing is a version tab of the same card
@@ -199,9 +200,9 @@ try {
     // show the code: free, no turn
     const turns0 = S.turns.length, tr0 = await p.$('[data-akey="lifecycle/t1-6/transition/B1-5#transition:0"]'); await p.click('[data-outline="t1-6"]'); await settle(p);
     await p.evaluate(() => document.querySelector('[data-akey="lifecycle/t1-6/transition/B1-5#transition:0"]').dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 600, clientY: 400 }))); await p.waitForSelector(".rb-pop");
-    await p.click('.rb-pop [data-chip="code"]'); await p.waitForFunction(() => /getCharge/.test(document.querySelector('.rb-card[data-thread="6"][data-chip="code"]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+    await p.click('.rb-pop [data-chip="code"]'); await p.waitForFunction(() => /getCharge/.test(document.querySelector('.rb-card[data-thread="7"][data-chip="code"]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
     const code = S.lessons.find((x) => x.op === "code");
-    ok(tr0 && S.turns.length === turns0 && code?.ref === "diff:src/pay.ts:L40-58" && code.anchor?.kind === "transition" && code.anchor.part === "transition:0" && S.cites.includes("diff:src/pay.ts:L40-58") && await p.evaluate(() => /getCharge/.test(document.querySelector('.rb-card[data-thread="6"][data-chip="code"]')?.textContent || "")),
+    ok(tr0 && S.turns.length === turns0 && code?.ref === "diff:src/pay.ts:L40-58" && code.anchor?.kind === "transition" && code.anchor.part === "transition:0" && S.cites.includes("diff:src/pay.ts:L40-58") && await p.evaluate(() => /getCharge/.test(document.querySelector('.rb-card[data-thread="7"][data-chip="code"]')?.textContent || "")),
       "看程式碼 on a transition is free: no turn, a code card holding its citation, the diff read through the citation viewer", JSON.stringify({ code, cites: S.cites, turns: S.turns.length - turns0, cards: await p.evaluate(() => [...document.querySelectorAll('.rb-card[data-chip="code"]')].map((c) => c.dataset.tcard + ':' + c.textContent.slice(0, 80))) }));
     // understood: folded into a chip
     await p.click('[data-outline="t1"]'); await settle(p); await p.click('[data-tcard="1:n1"] [data-resolve="1"]'); await p.waitForSelector('[data-tchip="1"]', { timeout: 15000 }).catch(() => {});
@@ -235,7 +236,7 @@ try {
     ok(only.dim && only.framed && only.n >= 4, "“只看有問題的” frames only the chapters with questions and dims the rest", JSON.stringify(only));
     // the notes and the last region list every question
     const notes = await p.evaluate(() => ({ side: [...document.querySelectorAll('[data-notes-list="side"] [data-note-thread]')].map((b) => [b.dataset.noteThread, b.dataset.noteState]), end: document.querySelectorAll('[data-notes-list="end"] [data-note-thread]').length, count: document.querySelector("[data-end-count]")?.textContent }));
-    ok(JSON.stringify(notes.side) === JSON.stringify([["1", "merged"], ["2", "merged"], ["3", "open"], ["4", "merged"], ["5", "open"], ["6", "open"]]) && notes.end === 6 && /問了 6 處/.test(notes.count || ""), "the notes panel lists every question with its state; the last region lists them too", JSON.stringify(notes));
+    ok(JSON.stringify(notes.side) === JSON.stringify([["1", "merged"], ["2", "merged"], ["3", "open"], ["4", "merged"], ["5", "open"], ["6", "open"], ["7", "open"]]) && notes.end === 7 && /問了 7 處/.test(notes.count || ""), "the notes panel lists every question with its state; the last region lists them too", JSON.stringify(notes));
     await p.click('[data-notes-list="side"] [data-note-thread="3"]'); await settle(p, 300);
     ok(await p.$eval("[data-board-plane]", (e) => e.dataset.focus) === "3", "a click on a question in the notes focuses it");
     await p.keyboard.press("Escape");
@@ -297,7 +298,7 @@ try {
     ok(sheet.left === 0 && sheet.right === sheet.W && sheet.bottom === sheet.H && sheet.chips === 5 && sheet.chipH >= 32, "on a phone the popover is a bottom sheet across the screen, its chips big enough to tap", JSON.stringify(sheet));
     await p.keyboard.press("Escape"); await p.click('[data-sheet="notes"]'); await settle(p, 200);
     const nt = await p.evaluate(() => ({ open: document.querySelector("[data-board-notes]").classList.contains("open"), n: document.querySelectorAll('[data-board-notes] [data-note-thread]').length, badge: document.querySelector('[data-sheet="notes"] b')?.textContent }));
-    ok(nt.open && nt.n === 4 && nt.badge === "4", "標註 opens the questions as a sheet, its count on the button", JSON.stringify(nt));
+    ok(nt.open && nt.n === 5 && nt.badge === "5", "標註 opens the questions as a sheet, its count on the button", JSON.stringify(nt));
     await ctx.close(); }
   { const { ctx, p } = await open(390, "zh-TW", { dark: true }); await p.click('[data-outline="t1"]'); await settle(p, 300); await p.screenshot({ path: join(shots, "phone-dark-chapter.png") }); await ctx.close(); }
 

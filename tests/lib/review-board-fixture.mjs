@@ -57,6 +57,7 @@ export function boardRoom(lang = "zh-TW", { seeded = true, visited = null } = {}
       ans(4, T("Version 2 is read by both; the first UPDATE makes it 3, so the second matches no row [diff:src/settle.ts:L8-30].", "兩邊都讀到 version 2；先 UPDATE 的把它改成 3，後到的對不到任何列 [diff:src/settle.ts:L8-30]。"), [C("diff:src/settle.ts:L8-30")], { n: 2, node: "n1" }),
       ans(5, T("Like a ticket number at a counter: once it is served, the same ticket is void [diff:src/settle.ts:L8-30].", "像櫃台的號碼牌：叫過一次，同一張牌就作廢 [diff:src/settle.ts:L8-30]。"), [C("diff:src/settle.ts:L8-30")], { n: 2, node: "n1" }),
       ans(6, T("Thirty minutes comes from the checkout page's timeout, not from the gateway's numbers [diff:src/recheck.ts:L40-52].", "30 分鐘沿用結帳頁的逾時，不是依閘道的數字訂的 [diff:src/recheck.ts:L40-52]。"), [C("diff:src/recheck.ts:L40-52")], { n: 3, node: "n1" }),
+      ans(8, T("The first one tells what changed: a job now asks the gateway itself [diff:src/recheck.ts:L10-30].", "第一句說改了什麼：工作現在會自己去問閘道 [diff:src/recheck.ts:L10-30]。"), [C("diff:src/recheck.ts:L10-30")], { n: 5, node: "n1" }),
       ans(7, T("Because the gateway retries a webhook only on a non-2xx answer [diff:src/webhook.ts:L5-30].", "因為閘道只在非 2xx 時才重送 webhook [diff:src/webhook.ts:L5-30]。"), [C("diff:src/webhook.ts:L5-30")], { n: 4, node: "n1" }, { action: "why" }));
     const anc = (scene, chapter, kind, item, part, text) => ({ turn: 1, scene, chapter, kind, item, part, text, start: null, end: null });
     const key = (a) => `${a.chapter}/${a.scene}/${a.kind}${a.item ? `/${a.item}` : ""}${a.part ? `#${a.part}` : ""}`;
@@ -66,6 +67,7 @@ export function boardRoom(lang = "zh-TW", { seeded = true, visited = null } = {}
       th(1, anc("t1", "what", "sentence", null, "p0.s1", T("After five minutes a job asks the gateway itself.", "五分鐘後由工作主動去問閘道。")), [nd("n1", null, "root", "deeper", [2]), nd("n2", "n1", "side", "example", [3])]),
       th(2, anc("t1-5", "change", "sentence", null, "p0.s0", T("Both paths call the same settle()", "兩條路都呼叫同一個 settle()")), [nd("n1", null, "root", "rephrase", [4, 5])], "resolved"),
       th(3, anc("t1-6", "lifecycle", "transition", "B1-5", "transition:3", T("Pending → Expired · 30 min", "等待中 → 已逾時 · 30 分鐘")), [nd("n1", null, "root", "why", [6]), nd("n2", "n1", "below", "code", [], null, "diff:src/recheck.ts:L40-52")]),
+      th(5, anc("t1", "what", "sentence", null, "p0.s0", T("A payment no longer waits only for the gateway's webhook", "付款不再只等閘道的 webhook")), [nd("n1", null, "root", "free", [8], T("What is new here?", "這裡新的是什麼？"))]),
       th(4, anc("t1-8", "calls", "field", "B1-7", "c1.request.1", T("request: signature hmac", "request: signature hmac")), [nd("n1", null, "root", "why", [7])], "resolved", { at: "t", gist: T("Because the gateway retries a webhook only on a non-2xx answer [diff:src/webhook.ts:L5-30].", "因為閘道只在非 2xx 時才重送 webhook [diff:src/webhook.ts:L5-30]。"), cites: [C("diff:src/webhook.ts:L5-30")] }));
   }
   const keys = ["t1", "t1-2", "t1-3", "t1-4", "t1-5", "t1-6", "t1-7", "t1-8", "t1-9", "t1-10", "end"];

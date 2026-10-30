@@ -53,7 +53,7 @@ const scripted = (pid: string, model: string) => ({ id: pid, model, sandboxFree:
 const baseProvider = E.deps.provider; E.deps.provider = (pid?: string, model?: string) => pid === "tutor" ? scripted(pid, model ?? "") : baseProvider(pid, model);
 const baseRun = E.deps.agents.run.bind(E.deps.agents); E.deps.agents.run = (o: any) => { if (o.kind === "review-room") runs.push(o); return baseRun(o); };
 const offer = (room.view(id) as any).offer;
-const turn = async (a: any) => { await room.start(id, { lang: "en", confirm: offer.hash, ...a }, "captain"); await room.settle(id); return (room.view(id) as any).turns.at(-1); };
+const turn = async (a: any) => { await room.settle(id); await room.start(id, { lang: "en", confirm: offer.hash, ...a }, "captain"); await room.settle(id); return (room.view(id) as any).turns.at(-1); };
 const refused = async (f: () => any) => { try { await f(); return null; } catch (e: any) { return e; } };
 
 // ---------- a finished lesson: what this is, the change (an item), its life (a state map), talks and sequence left out ----------
@@ -96,7 +96,7 @@ const transition = { scene: "t1-4", kind: "transition", item: "B1-2", part: "tra
 // ---------- confirmed: a turn of the room's machinery, about that place ----------
 script.push([["say", "Math.round turns 299.85 into 300 [diff:src/percent.ts:L2-3]. Halves go up."]]);
 const t2 = await turn({ thread: { anchor: sentence, chip: "deeper" } });
-{ const th = onDisk().lesson.threads[0], p = prompts.at(-1)!.text;
+{ const th = onDisk().lesson?.threads?.[0] ?? {}, p = prompts.at(-1)!.text;
   ok(t2.status === "done" && t2.action === "how" && JSON.stringify(t2.thread) === '{"n":1,"node":"n1"}' && th.n === 1 && th.nodes.length === 1 && th.nodes[0].rel === "root" && JSON.stringify(th.nodes[0].versions) === `[${t2.n}]` && th.state === "open",
     "confirmed, the question is an ordinary how turn of the room: its thread and its card (n1) answered by that turn are kept", JSON.stringify([t2.status, t2.action, t2.thread, th]));
   ok(/THE PLACE ON THE LESSON BOARD/.test(p) && /Chapter: what/.test(p) && /It rounds to the cent/.test(p) && /<untrusted-anchor-[0-9a-f]+>/.test(p) && /diff:src\/percent\.ts:L2-3/.test(p) && /Math\.round\(\(amount \* pct\) \/ 100\)/.test(p) && /Go one level deeper/.test(p),
