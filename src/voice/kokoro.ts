@@ -89,7 +89,8 @@ export async function roomClip(dir: string, text: string, o: { lang: "zh" | "en"
   const name = clipName(t, { lang: o.lang, mode: o.mode, voices, engine: o.engine }), f = join(dir, name), key = f;
   if (existsSync(f)) { o.store.touch(f); return { name, cached: true, voice: "" }; }
   if (o.signal?.aborted) throw Object.assign(new Error("stopped"), { code: "aborted" });
-  let shared = inflight.get(key);
+  // a job every request gave up on is stopping: never joined (it leaves the map at once, and this checks it too)
+  let shared = inflight.get(key); if (shared?.ac.signal.aborted) { inflight.delete(key); shared = undefined; }
   if (!shared) {
     const ac = new AbortController();
     const job = (async () => {
@@ -99,14 +100,14 @@ export async function roomClip(dir: string, text: string, o: { lang: "zh" | "en"
         if (out.bytes.length < 64 || out.bytes.length > 50_000_000) throw new Error("the voice came back empty or too large");
         mkdirSync(dir, { recursive: true }); writeFileSync(f + ".tmp", out.bytes); renameSync(f + ".tmp", f); o.store.add(f, out.bytes.length);
         return { name, cached: false, voice: out.voice }; }
-      finally { clearTimeout(timer); if (inflight.get(key)?.job === job) inflight.delete(key); }
+      finally { clearTimeout(timer); if (inflight.get(key)?.ac === ac) inflight.delete(key); }
     })();
     job.catch(() => {});
     shared = { job, ac, subs: 0 }; inflight.set(key, shared);
   }
   const mine = shared; mine.subs++;
   let leave: () => void = () => {};
-  const gaveUp = new Promise<never>((_, bad) => { leave = () => { mine.subs--; if (mine.subs <= 0) mine.ac.abort(); bad(Object.assign(new Error("stopped"), { code: "aborted" })); }; });
+  const gaveUp = new Promise<never>((_, bad) => { leave = () => { mine.subs--; if (mine.subs <= 0) { mine.ac.abort(); if (inflight.get(key) === mine) inflight.delete(key); } bad(Object.assign(new Error("stopped"), { code: "aborted" })); }; });
   gaveUp.catch(() => {});
   o.signal?.addEventListener("abort", leave, { once: true });
   try { return await Promise.race([mine.job, gaveUp]); }
