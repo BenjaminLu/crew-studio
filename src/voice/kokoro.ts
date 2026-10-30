@@ -130,14 +130,16 @@ export async function localSynth(): Promise<Synth> {
   const runtime = runtimeState(), m = await findKokoro();
   if (!runtime.ok) throw Object.assign(new Error(`The local voice is not installed: ${runtime.why} (Doctor → Voice)`), { code: "no_voice" });
   if (!m.ok) throw Object.assign(new Error("The local voice model is not on this Mac (Doctor → Voice)"), { code: "no_voice" });
+  if (stopping) throw Object.assign(new Error("Studio is shutting down"), { code: "shutdown" });
   if (!engine || engine.dir !== m.dir) {
-    engine?.sidecar.stop(); ensureScripts();
+    engine?.sidecar.shutdown(); ensureScripts();
     engine = { dir: m.dir, sidecar: new Sidecar({ node: runtime.node!, script: scriptIn(voiceTools()), config: kokoroConfig(m.dir), reads: [m.dir], idleMs: 10 * 60_000 }) };
   }
   return engine.sidecar;
 }
 /** Studio is stopping: the engine goes with it */
-export const stopLocal = () => { engine?.sidecar.stop(); engine = null; };
+export const stopLocal = () => { stopping = true; engine?.sidecar.shutdown(); engine = null; };
+let stopping = false;
 
 /** what Doctor shows for the local voice (src/doctor.ts voiceItems); reads only */
 export async function voiceDoctorInput(mac: import("./mac").MacVoice[] | null) {

@@ -71,9 +71,11 @@ export function sidecarArgv(o: Pick<SidecarOpts, "node" | "script" | "sandbox" |
 export const CRASH_LIMIT = 5;
 export const crashingError = () => Object.assign(new Error("The local voice engine keeps crashing; this Mac's voice speaks instead / 語音引擎一直當掉，改用這台 Mac 的聲音"), { code: "voice_crashing" });
 const stopped = () => Object.assign(new Error("stopped"), { code: "aborted" });
+const closedError = () => Object.assign(new Error("Studio is shutting down: the voice engine is stopped"), { code: "shutdown" });
 /** every engine Studio started, so Studio's shutdown stops them all */
 const live = new Set<Sidecar>();
-export const stopAllSidecars = () => { for (const s of live) s.stop(); };
+/** Studio is stopping: every engine is shut down for good (its queued requests refused, never started again) */
+export const stopAllSidecars = () => { for (const s of live) s.shutdown(); };
 
 export class Sidecar {
   private proc: ReturnType<typeof Bun.spawn> | null = null;
@@ -85,7 +87,7 @@ export class Sidecar {
   /** how many children were started (tests: idle exit, restart, back-off) */
   starts = 0;
   /** failures in a row, and when the next start may happen (exponential back-off, capped) */
-  failures = 0; private notBefore = 0;
+  failures = 0; private notBefore = 0; private closed = false;
   info: { sherpa: string | null; sampleRate: number | null; loadMs: number | null } = { sherpa: null, sampleRate: null, loadMs: null };
   constructor(readonly o: SidecarOpts & { backoffMs?: number; backoffMaxMs?: number }) { live.add(this); }
   get running() { return !!this.proc; }
@@ -134,11 +136,13 @@ export class Sidecar {
    *  while it waits its turn is dropped without reaching the engine. */
   request(msg: Record<string, any>, signal?: AbortSignal): Promise<any> {
     const once = async () => {
+      if (this.closed) throw closedError();
       if (signal?.aborted) throw stopped();
       if (!this.proc) {
         if (this.crashing && Date.now() < this.notBefore) throw crashingError();
         const wait = this.notBefore - Date.now(); if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         if (signal?.aborted) throw stopped();
+        if (this.closed) throw closedError();
         this.start();
       }
       const hello = this.ready!;
@@ -158,6 +162,9 @@ export class Sidecar {
     const r = await this.request({ op: "tts", text, sid, speed }, signal);
     return { pcm: Buffer.from(String(r.pcm ?? ""), "base64"), sampleRate: Number(r.sampleRate) || 24000, ms: Number(r.ms) || 0 };
   }
+  /** a stop for good (Studio is shutting down): the running request and every queued one are refused, and nothing starts
+   *  the engine again; a plain stop (a timeout, a cancelled request) lets the next request start it */
+  shutdown() { this.closed = true; this.stop(); live.delete(this); }
   stop() { const p = this.proc; this.proc = null; this.loaded = false; if (p) { try { p.kill(); } catch {} const why = new Error("the voice engine was stopped"); for (const w of this.waiting.values()) w.bad(why); this.waiting.clear(); } }
 }
 export const scriptIn = (dir: string) => join(dir, "sidecar.cjs");
