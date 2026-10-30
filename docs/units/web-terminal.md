@@ -210,7 +210,8 @@ window does) and SIGKILL two seconds later.
   too). Nothing is re-attached on restart: no process, no input, no Restart in place. A terminal still running when Studio
   stops gets its end and where its checkout stood (its git end) in its record, marked `studio-stopped`; a record left open
   (Studio killed with SIGKILL) is closed as `studio-stopped` on the next start, with no git end. After the restart the
-  ended terminals (the 20 newest that were not removed, shells never) are listed again from their records, marked `restored` (and
+  ended terminals (the 20 newest that were not removed: a shell that removed itself on a clean end is not either, while a
+  failed shell or one kept for review is) are listed again from their records, marked `restored` (and
   `stopped: "studio-stopped"` for one Studio stopped), with their git end, their review state and their transcript as the
   replay; Send for review works on them under the same guards (below). Remove is kept in the record (`dismissed`), so a
   removed terminal does not come back. What can survive: a process that left the group on purpose (`setsid`, `nohup … &` with its own process group,

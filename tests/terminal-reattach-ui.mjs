@@ -224,6 +224,10 @@ try {
   await p.goto(`${base}/#/terminals/${encodeURIComponent(gone)}`); await p.locator(`.wt-pane[data-term-pane="${gone}"] .xterm-rows`).waitFor({ timeout: 10000 });
   await p.keyboard.type("old-output-mark"); await p.keyboard.press("Enter");
   await until(async () => /old-output-mark/.test(await rowsOf(p, gone)));
+  // and a shell that failed (not removed) is listed again after the restart, as the unit says; one that ended well is not
+  const failed = await startShell(p, "broken"), clean = await startShell(p);
+  await p.evaluate(async (id) => fetch(`/api/terminals/${id}/input`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ data: "exit\r" }) }), clean);
+  await until(async () => (await listed(p)).some((t) => t.id === failed && !t.running) && !(await listed(p)).some((t) => t.id === clean));
   await p.close();
   app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
   app = await boot();
@@ -233,6 +237,7 @@ try {
   await p.waitForTimeout(800);
   ok(!(await panes(p)).includes(gone) && !(await p.locator(`.wt-pane[data-term-pane="${gone}"]`).count()), "and its tab does not come back", JSON.stringify(await panes(p)));
   ok(!p.url().includes(encodeURIComponent(gone)), "and the address no longer names it", p.url());
+  { const l = await listed(p); ok(l.some((t) => t.id === failed && !t.running) && !l.some((t) => t.id === clean), "after the restart a failed shell is listed again, a shell that ended well is not", JSON.stringify(l)); }
   await p.locator(`[data-term-row="${gone}"]`).first().click();
   ok(await until(async () => (await p.locator(`.wt-pane[data-term-pane="${gone}"]`).count()) === 1 && /old-output-mark/.test(await rowsOf(p, gone))), "opened on purpose from the list, its old output shows");
   ok(!errors.length, "no page errors", errors.join(" | "));
