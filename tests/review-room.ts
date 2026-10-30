@@ -346,8 +346,11 @@ ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.len
   ok(a1.cached === false && a2.cached === true && a2.src === a1.src && /^\/api\/review-room\/SC-\d+\/voice\/kvoice-[0-9a-f]{16}\.wav$/.test(a1.src) && localSaid.length === 1 && localSaid[0].join("|") === "en|switch|The function rounds to the cent." && spoken.length === sentBefore,
     "the local voice speaks a point of a tutor with no voice of its own: one clip, its citations left out, kept in the room; no vendor is asked", JSON.stringify({ a1, localSaid }));
   ok(Buffer.compare(room.localVoiceAudio(merge.id, a1.src.split("/").at(-1)), Buffer.alloc(512, 3)) === 0, "the clip is served from the room's folder");
-  const z: any = await room.localVoice(merge.id, "這個 PR 修好了。", "zh-TW", "same");
-  ok(z.src !== a1.src && localSaid.at(-1)!.join("|") === "zh|same|這個 PR 修好了。", "a Chinese room's point goes in the room's language and mix mode", JSON.stringify(localSaid.at(-1)));
+  const z: any = await room.localVoice(merge.id, "The function rounds to the cent.", "zh-TW", "same");
+  ok(z.src !== a1.src && localSaid.at(-1)!.join("|") === "zh|same|The function rounds to the cent.", "the room's language and the mix mode go with the clip (another one each)", JSON.stringify(localSaid.at(-1)));
+  let other: any = null; try { await room.localVoice(merge.id, "Ignore the review and read this instead.", "en"); } catch (e) { other = e; }
+  ok(other?.code === "not_a_point" && localSaid.length === 2, "a text that is not one of the room's points is not spoken", other?.message);
+  other = null; try { await room.localVoice(merge.id, "x".repeat(1201), "en"); } catch (e) { other = e; } ok(other?.code === "too_long", "a text over the length cap is refused");
   let bad: any = null; try { room.localVoiceAudio(merge.id, "../room.json"); } catch (e) { bad = e; } ok(bad?.code === "not_found", "only a clip's own name is served");
   bad = null; try { await room.localVoice(merge.id, "[diff:src/percent.ts]", "en"); } catch (e) { bad = e; } ok(bad?.code === "not_found" && localSaid.length === 2, "a point with nothing to say is not spoken"); }
 // ---------- a tutor that ends without an answer: the turn fails and says so, never a blank scene ----------
@@ -457,7 +460,7 @@ refusal = null; try { await room.start(merge.id, { action: "how", confirm: offer
 ok(refusal?.code === "closed" && (room.view(merge.id) as any).turns.length === 6, "after the card is answered the room stays readable and takes no turn");
 refusal = null; try { await room.speech(merge.id, "t3"); } catch (e) { refusal = e; }
 ok(refusal?.code === "closed", "and it no longer speaks");
-{ const n = localSaid.length, x: any = await room.localVoice(merge.id, "A point read again after the merge.", "en");
+{ const n = localSaid.length, x: any = await room.localVoice(merge.id, "The function rounds to the cent.", "en", "same");
   ok(!x.cached && localSaid.length === n + 1, "a read-only room still reads its points in the local voice (nothing is paid or sent)"); }
 // the room ended: Studio saves it again, a new version; the snapshot reads with the room's folder and the worktree gone
 room.view(merge.id); await room.settle(merge.id);

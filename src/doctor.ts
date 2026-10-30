@@ -138,7 +138,7 @@ export type DoctorInput = {
   /** the pinned HyperFrames film tools (src/render/coffee-film.ts discovery): ready, or why not */
   film?: { ready: boolean; reason?: string | null };
   /** the review room's local voice (src/voice): the runtime, the model and this Mac's own voices */
-  voice?: { runtime: RuntimeState; model: { ok: boolean; source: "agent-wardrobe" | "studio" | null; state?: string | null; why: string | null }; bytes: number; voices: { zh: string; en: string }; mac: MacVoice[] | null };
+  voice?: { runtime: RuntimeState; model: { ok: boolean; source: "agent-wardrobe" | "studio" | null; state?: string | null; why: string | null }; bytes: number; voices: { zh: string; en: string }; mac: MacVoice[] | null; crashing?: boolean };
   /** the egress proxy agent rounds go through */
   egress?: { running: boolean; port: number; rounds: number };
   /** how claude rounds sign in: the login Studio hands them (v1 option A) */
@@ -312,12 +312,13 @@ export function voiceItems(v: NonNullable<DoctorInput["voice"]>): Item[] {
     fixZh: r.ok ? "" : !r.node ? "先安裝 Node.js，再安裝語音執行環境。" : `一鍵安裝 sherpa-onnx-node ${SHERPA_VERSION}（不需要管理員權限）。`,
     action: r.ok ? { kind: "none" } : { kind: "install", item: !r.node ? "node" : "voice-runtime" } });
   const mb = Math.round(v.bytes / 1e6), where = m.source === "agent-wardrobe" ? ["from Agent Wardrobe's copy (read only; Studio never writes into it)", "使用 Agent Wardrobe 的副本（唯讀，Studio 不會寫入）"] : ["Studio's own copy in ~/.crew-studio/models", "Studio 自己在 ~/.crew-studio/models 的副本"];
-  const corrupt = !m.ok && m.state === "corrupt";
-  out.push({ id: "voice-tts", title: "Local neural voice (Kokoro v1.0)", titleZh: "本機神經語音（Kokoro v1.0）", group: "voice", status: m.ok ? "ok" : corrupt ? "degraded" : "info",
-    availability: m.ok ? "available" : corrupt ? "unusable" : "missing",
-    detail: m.ok ? `Kokoro-82M v1.0 (Apache-2.0), verified against its pinned SHA-256, ${where[0]}. Voices: ${v.voices.zh} (Chinese), ${v.voices.en} (English).${r.ok ? "" : " Needs the runtime above."} ${LOCAL}`
+  const corrupt = !m.ok && m.state === "corrupt", crash = m.ok && !!v.crashing;
+  const CRASH = "The local voice engine keeps crashing: Studio waits before starting it again, and this Mac's voice speaks meanwhile.", CRASH_ZH = "語音引擎一直當掉：Studio 會等一陣子再啟動它，這段時間改用這台 Mac 的聲音。";
+  out.push({ id: "voice-tts", title: "Local neural voice (Kokoro v1.0)", titleZh: "本機神經語音（Kokoro v1.0）", group: "voice", status: crash ? "degraded" : m.ok ? "ok" : corrupt ? "degraded" : "info",
+    availability: crash ? "unusable" : m.ok ? "available" : corrupt ? "unusable" : "missing",
+    detail: crash ? `${CRASH} ${LOCAL}` : m.ok ? `Kokoro-82M v1.0 (Apache-2.0), verified against its pinned SHA-256, ${where[0]}. Voices: ${v.voices.zh} (Chinese), ${v.voices.en} (English).${r.ok ? "" : " Needs the runtime above."} ${LOCAL}`
       : `${corrupt ? `Refused: ${m.why}.` : "Not found on this Mac."} Download: about ${mb} MB from Hugging Face at a pinned revision, every file checked. Kokoro-82M is Apache-2.0. ${LOCAL}`,
-    detailZh: m.ok ? `Kokoro-82M v1.0（Apache-2.0），已對照釘住的 SHA-256 驗證，${where[1]}。聲音：${v.voices.zh}（中文）、${v.voices.en}（英文）。${r.ok ? "" : "還需要上面的執行環境。"}${LOCAL_ZH}`
+    detailZh: crash ? `${CRASH_ZH}${LOCAL_ZH}` : m.ok ? `Kokoro-82M v1.0（Apache-2.0），已對照釘住的 SHA-256 驗證，${where[1]}。聲音：${v.voices.zh}（中文）、${v.voices.en}（英文）。${r.ok ? "" : "還需要上面的執行環境。"}${LOCAL_ZH}`
       : `${corrupt ? `拒用：${m.why}。` : "這台 Mac 上找不到。"}下載約 ${mb} MB，來自 Hugging Face 的釘住版本，每個檔案都會檢查。Kokoro-82M 採 Apache-2.0。${LOCAL_ZH}`,
     adds: "Each point of the review room spoken by a neural voice, free, with English terms in an English voice.", addsZh: "審查室的每一點都用神經語音朗讀，免費；英文詞用英文聲音唸。",
     fix: m.ok ? "" : `Download the pinned model (about ${mb} MB) into ~/.crew-studio/models.`, fixZh: m.ok ? "" : `下載釘住版本的模型（約 ${mb} MB）到 ~/.crew-studio/models。`,

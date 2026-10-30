@@ -47,7 +47,8 @@ import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { parseLocator, type Finding, type Locator } from "../runtime/locator";
-import { kokoroSpeaker, localSynth, readClip, roomClip } from "../voice/kokoro";
+import { clipStore, kokoroSpeaker, localSynth, MAX_POINT, readClip, roomClip } from "../voice/kokoro";
+import { isRoomPoint } from "../voice/points";
 import { langOf, type Mix } from "../voice/runs";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
@@ -1639,6 +1640,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const at = new Date().toISOString(), arch = join(dirname(k.file), ".archive", `${k.id}-${at.replace(/[:.]/g, "-")}`), moved: string[] = [];
       mkdirSync(arch, { recursive: true });
       if (existsSync(k.file)) { renameSync(k.file, join(arch, "room.json")); moved.push("room"); }
+      clipStore(o.dataDir).dropDir(k.dir); // the local voice's clips are deleted, never archived
       if (existsSync(k.dir)) { renameSync(k.dir, join(arch, "images")); moved.push("images"); }
       if (room) startedOver.add(room); cache.delete(k.file); resetGen.set(k.id, (resetGen.get(k.id) ?? 0) + 1); statMemo.clear(); saving.delete(k.id); refreshing.delete(k.id);
       // a pull request's room is its file: a fresh one now, from the pull request as Studio last read it (its link to the Library kept)
@@ -1758,14 +1760,19 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** a narration file, from the room's own folder */
     audio(id: string, name: string) { const k = keyOf(id); if (!/^voice-t\d+-[0-9a-f]{12}\.mp3$/.test(name)) throw refuse("No such audio", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such audio", "not_found"); return readFileSync(f); },
     /** One point in this Mac's local neural voice (src/voice): free and on-device, so any tutor's room may use it, read-only
-     *  rooms too. The page sends the point as it shows it; the clip is made once and kept in the room's folder. */
-    async localVoice(id: string, text: unknown, lang?: unknown, mix?: unknown) {
-      const k = keyOf(id), t = narration(String(text ?? "")).slice(0, 1200); if (!t) throw refuse("Nothing to say", "not_found");
+     *  rooms too. The page sends the point as it shows it; only the room's own words are spoken (src/voice/points.ts);
+     *  the clip is made once and kept in the room's folder, within the clips' bounds. */
+    async localVoice(id: string, text: unknown, lang?: unknown, mix?: unknown, signal?: AbortSignal) {
+      const k = keyOf(id), raw = String(text ?? "");
+      if (raw.length > MAX_POINT) throw refuse(`A point to speak is at most ${MAX_POINT} characters`, "too_long");
+      const t = narration(raw); if (!t) throw refuse("Nothing to say", "not_found");
+      if (!isRoomPoint(load(k), t, narration)) throw refuse("That is not a point of this room", "not_a_point");
       const mode = mix === "same" ? "same" : "switch", l = langOf(lang), born = resetGen.get(k.id) ?? 0;
-      const out = await roomClip(k.dir, t, { lang: l, mode, speaker: (s, signal) => (o.localSpeak ? o.localSpeak(l, mode) : kokoroSpeaker(localSynth(), { lang: l, mode }))(s, signal), alive: () => (resetGen.get(k.id) ?? 0) === born });
+      const out = await roomClip(k.dir, t, { lang: l, mode, store: clipStore(o.dataDir), signal, alive: () => (resetGen.get(k.id) ?? 0) === born,
+        speaker: async (s, sig) => (o.localSpeak ? o.localSpeak(l, mode) : kokoroSpeaker(await localSynth(), { lang: l, mode }))(s, sig) });
       return { src: `/api/review-room/${k.id}/voice/${out.name}`, cached: out.cached, engine: "kokoro" };
     },
-    localVoiceAudio(id: string, name: string) { const k = keyOf(id), b = readClip(k.dir, name); if (!b) throw refuse("No such audio", "not_found"); return b; },
+    localVoiceAudio(id: string, name: string) { const k = keyOf(id), b = readClip(k.dir, name, clipStore(o.dataDir)); if (!b) throw refuse("No such audio", "not_found"); return b; },
     /** tests: wait for a room's running turn and its background pictures */
     async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size || saving.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
   });
