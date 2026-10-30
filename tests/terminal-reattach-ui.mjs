@@ -36,8 +36,13 @@ const G = ["-c", "user.name=T", "-c", "user.email=t@example.invalid"];
 execFileSync("git", ["init", "-q", "-b", "main", repo]); writeFileSync(join(repo, "README.md"), "fixture\n");
 execFileSync("git", [...G, "add", "README.md"], { cwd: repo }); execFileSync("git", [...G, "commit", "-q", "-m", "init"], { cwd: repo });
 writeFileSync(join(broken, ".broken"), "");
-const P = (id, path) => ({ id, name: id, path, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true });
-writeFileSync(join(data, "projects.json"), JSON.stringify([P("demo", proj), P("repo", repo), P("broken", broken)]));
+// a repository just made (no commit yet, so no HEAD), and one whose configured base does not exist
+const fresh = join(ck, "fresh"), nobase = join(ck, "nobase"); for (const d of [fresh, nobase]) mkdirSync(d, { recursive: true });
+execFileSync("git", ["init", "-q", "-b", "main", fresh]);
+execFileSync("git", ["init", "-q", "-b", "main", nobase]); writeFileSync(join(nobase, "README.md"), "fixture\n");
+execFileSync("git", [...G, "add", "README.md"], { cwd: nobase }); execFileSync("git", [...G, "commit", "-q", "-m", "init"], { cwd: nobase });
+const P = (id, path, base = "main") => ({ id, name: id, path, base, sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true });
+writeFileSync(join(data, "projects.json"), JSON.stringify([P("demo", proj), P("repo", repo), P("broken", broken), P("fresh", fresh), P("nobase", nobase, "trunk")]));
 writeFileSync(join(home, ".bash_profile"), "PS1='$ '\nif [ -f .broken ]; then echo 'rc: this setup is broken'; exit 3; fi\n");
 const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bun"], { encoding: "utf8" }).trim();
 const TOKEN = "terminal-reattach-ui-session", CAP = 65536;
@@ -154,6 +159,14 @@ try {
   const r3 = await startShell(p, "repo"); await show(p, r3);
   await say(p, "exit");
   ok(await until(async () => !(await listed(p)).some((t) => t.id === r3) && !(await p.locator(`.wt-pane[data-term-pane="${r3}"]`).count())), "a shell in the repository with nothing beyond main and a clean tree leaves on exit 0");
+  // where git cannot show there is nothing to review, the shell stays: a repository with no commit yet and a new file in
+  // it, and a clean branch whose base does not exist (its commit count unknown)
+  for (const [project, what, line] of [["fresh", "a just-initialised repository with an untracked file", "echo draft > notes.txt; exit"], ["nobase", "a clean checkout whose base (trunk) does not exist", "exit"]]) {
+    const id = await startShell(p, project); await show(p, id); await say(p, line);
+    await until(async () => !(await listed(p)).some((t) => t.id === id && t.running)); await p.waitForTimeout(1200);
+    ok((await listed(p)).some((t) => t.id === id && !t.running), `a shell in ${what} stays listed on exit 0: git cannot show there is nothing to review`);
+    await dismiss(p, id);
+  }
 
   // a browser with no tabs saved (another profile, cleared site data) gets a tab for every running terminal, not just one
   const d = await startShell(p);

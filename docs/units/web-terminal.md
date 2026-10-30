@@ -185,9 +185,10 @@ window does) and SIGKILL two seconds later.
 - Scrollback: a byte ring per terminal (`CREW_TERMINAL_SCROLLBACK`, default 2 MiB); a replay says how much was dropped.
 - At most `CREW_TERMINAL_MAX` running (default 8), and at most 4 open views (streams) of one terminal. Ended terminals stay
   listed (with their replay) until removed; at most 20. A shell (the Shell preset) that ends well (exit 0 with no signal, or
-  the captain's Stop) with nothing to send for review (no git checkout, or no commits beyond the base and a clean tree)
-  is the exception: it leaves the list and closes its tab on its own, as a Terminal window does, and
-  its record is marked dismissed, so a restart does not list it again either; its record and transcript stay. A shell that
+  the captain's Stop) with nothing to send for review (no git checkout, or a clean tree, untracked files included, and
+  no commits beyond a base that resolves; when git cannot tell, as in a repository with no commit yet or with a base that
+  does not exist, it stays) is the exception: it leaves the list and closes its tab on its own, as a Terminal window
+  does, and its record is marked dismissed, so a restart does not list it again either; its record and transcript stay. A shell that
   fails (an exit code, a signal, a broken rc file that exits as it starts) stays, with its exit code and last output, until
   the captain removes it, and so does one that left work behind (a commit beyond the base: Send for review, as for an
   agent; uncommitted changes: the row says to commit them). Agents and commands stay, for their output and Send for review.

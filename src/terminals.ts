@@ -193,12 +193,18 @@ export function gitFacts(path: string, base?: string | null): TermGit | null {
   if (base && git(path, ["rev-parse", "--verify", `${base}^{commit}`]).ok) { const c = git(path, ["rev-list", "--count", `${base}..${head.out}`]); if (c.ok) commits = Number(c.out) || 0; }
   return { branch: br.ok && br.out ? br.out : null, head: head.out, commits, base: base ?? null };
 }
-/** Nothing in the checkout to send for review: no commits beyond the base, and no uncommitted change (or no git at all). */
+/**
+ * Git shows there is nothing in the checkout to send for review: a folder that is no git checkout at all, or a clean tree
+ * (no change, staged, unstaged or untracked) with no commits beyond a base that resolves. Whenever git cannot show it (the
+ * tree unreadable, a base that does not resolve, so the count is unknown) there may be work: the shell stays.
+ */
 function nothingToReview(t: { project: TermProject; git: { end: TermGit | null } }): boolean {
-  const g = t.git.end; if (!g) return true;
-  if (g.commits) return false;
-  const st = git(t.project.path, ["status", "--porcelain"]);
-  return st.ok && !st.out.trim();
+  const inside = git(t.project.path, ["rev-parse", "--is-inside-work-tree"]);
+  if (!inside.ok || inside.out !== "true") return true;
+  // the tree is read even without a HEAD (a repository with no commit yet): a new file there is work
+  const st = git(t.project.path, ["status", "--porcelain"]); if (!st.ok || st.out.trim()) return false;
+  const g = t.git.end; if (!g) return true; // a clean repository with no commit yet
+  return g.commits === 0;
 }
 const AGENT_KINDS = new Set<AgentKind>(["claude", "codex", "cursor", "aider", "opencode", "gemini", "amp"]);
 
