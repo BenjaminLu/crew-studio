@@ -96,6 +96,13 @@ if (sandboxed) {
   ok(a?.code === "aborted" && b?.code === "aborted" && !s.running, "a request given up while the engine works on it is cancelled (the engine stopped); one given up in the queue is dropped", JSON.stringify([a?.code, b?.code]));
   await s.tts("next", 45); const ping: any = await s.request({ op: "ping" });
   ok(!ping.seen.includes("queued") && ping.seen.includes("next"), "the dropped request never reached the engine; the next one does", JSON.stringify(ping.seen)); s.stop(); }
+// a request given up while Node is still starting: refused at once, and the child nobody wants is stopped
+{ const slowDir = join(tmp, "slow-start"); mkdirSync(slowDir, { recursive: true }); const slow = join(slowDir, "sidecar.cjs");
+  writeFileSync(slow, `setTimeout(() => require(${JSON.stringify(fake)}), 1500);\n`);
+  const s = mk({ script: slow, reads: [dirname(fake)] }), ac = new AbortController(), t0 = Date.now(), p = s.tts("x", 45, 1, ac.signal);
+  await Bun.sleep(150); ac.abort(); const e = await err(() => Promise.race([p, Bun.sleep(3000).then(() => { throw new Error("still waiting"); })])), ms = Date.now() - t0;
+  ok(e?.code === "aborted" && ms < 1000 && !s.running, "a request given up while the engine is still starting is refused at once and the starting child is stopped", JSON.stringify({ code: e?.code, msg: e?.message, ms, running: s.running }));
+  s.stop(); }
 { const a = mk(), b = mk(); await a.tts("x", 45); await b.tts("y", 45); stopAllSidecars();
   ok(!a.running && !b.running, "Studio's shutdown stops every engine it started");
   // shutting down while one clip runs and another waits: both refused, and the waiting one never starts a new engine
@@ -159,7 +166,10 @@ const mkWav = (bytes: number) => wav([Buffer.alloc(bytes - 44)], 24000);
   const q1 = roomClip(dir, "第五點", { lang: "zh", mode: "switch", store, speaker: never, signal: a1.signal }), q2 = roomClip(dir, "第五點", { lang: "zh", mode: "switch", store, speaker: never, signal: a2.signal });
   await Bun.sleep(20); const bounded = (q: Promise<unknown>) => err(() => Promise.race([q, Bun.sleep(2000).then(() => { throw new Error("still waiting"); })]));
   a1.abort(); await bounded(q1); const after1 = (sig2 as AbortSignal | null)?.aborted; a2.abort(); await bounded(q2);
-  ok(after1 === false && (sig2 as AbortSignal | null)?.aborted === true, "when every request sharing it has given up, the synthesis is stopped", JSON.stringify({ after1, after2: (sig2 as AbortSignal | null)?.aborted })); }
+  ok(after1 === false && (sig2 as AbortSignal | null)?.aborted === true, "when every request sharing it has given up, the synthesis is stopped", JSON.stringify({ after1, after2: (sig2 as AbortSignal | null)?.aborted }));
+  // that stopped job (its synthesis still winding down) is never joined: a replay right after gets a fresh one
+  const replay = await err(() => Promise.race([roomClip(dir, "第五點", { lang: "zh", mode: "switch", store, speaker: async () => ({ bytes: mkWav(200), model: "k", voice: "zf_xiaobei" }) }), Bun.sleep(2000).then(() => { throw new Error("still waiting"); })]));
+  ok(replay === null && existsSync(join(dir, clipName("第五點", { lang: "zh", mode: "switch", voices: DEFAULT_VOICE }))), "a replay after every request gave up makes the clip anew instead of joining the stopped job", replay?.message); }
 { const store = new ClipStore(join(tmp, "clips-b.json"), { room: 1000, total: 1500 }), r1 = join(tmp, "lru-1-images"), r2 = join(tmp, "lru-2-images");
   const make = (dir: string, t: string) => roomClip(dir, t, { lang: "en", mode: "switch", store, speaker: async () => ({ bytes: mkWav(400), model: "k", voice: "af_heart" }) });
   const a = await make(r1, "a"); await Bun.sleep(5); const b = await make(r1, "b"); await Bun.sleep(5); readClip(r1, a.name, store); await Bun.sleep(5);
@@ -345,15 +355,21 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   ok(found["voice-mac"].status === "info" && /Spoken Content/.test(found["voice-mac"].fix) && /語音內容/.test(found["voice-mac"].fixZh!) && /Meijia \(compact\)/.test(found["voice-mac"].detail), "only compact Mac voices: a tip to download Premium or Enhanced ones in System Settings", JSON.stringify(found["voice-mac"]));
   const better = rows({ mac: [{ ...mac[0], quality: 3 }, { ...mac[1], quality: 2, name: "Ava" }] }); ok(better["voice-mac"].status === "ok" && !better["voice-mac"].fix && /Meijia \(Premium\)/.test(better["voice-mac"].detail), "Premium and Enhanced voices: no tip");
   const tts = methodsFor("voice-tts", "darwin")[0], rt = methodsFor("voice-runtime", "darwin")[0];
-  ok(/fetch-model\.cjs/.test(tts.argv.join(" ")) && /401 MB/.test(tts.label) && tts.needs.join() === "node" && /f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/.test(tts.source) && !tts.admin, "the model's installer: the pinned download, its size and revision named, no admin rights", JSON.stringify(tts));
+  ok(/fetch-model\.cjs/.test(tts.argv.join(" ")) && /401 MB/.test(tts.label) && JSON.stringify(tts.needs) === JSON.stringify(Bun.which("node") ? [] : ["node"]) && /f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/.test(tts.source) && !tts.admin, "the model's installer: the pinned download, its size and revision named, no admin rights", JSON.stringify(tts));
   ok(rt.argv.join(" ").includes(installCommand()) && rt.needs.join() === "npm", "the runtime's installer is the pinned npm line");
   // CREW_VOICE_TOOLS and CREW_VOICE_MODELS set: Doctor installs and downloads into exactly the folders Studio then reads
   const was = [process.env.CREW_VOICE_TOOLS, process.env.CREW_VOICE_MODELS];
   process.env.CREW_VOICE_TOOLS = join(tmp, "own tools"); process.env.CREW_VOICE_MODELS = join(tmp, "own models");
   const rt2 = methodsFor("voice-runtime", "darwin")[0].argv.join(" "), tts2 = methodsFor("voice-tts", "darwin")[0].argv.join(" ");
-  ok(rt2.includes(`mkdir -p '${join(tmp, "own tools")}'`) && rt2.includes(`--prefix '${join(tmp, "own tools")}'`) && !rt2.includes("~/.crew-studio") && tts2.includes(`node '${join(tmp, "own tools", "fetch-model.cjs")}' --models '${join(tmp, "own models")}'`),
+  ok(rt2.includes(`mkdir -p '${join(tmp, "own tools")}'`) && rt2.includes(`--prefix '${join(tmp, "own tools")}'`) && !rt2.includes("~/.crew-studio") && tts2.includes(`'${join(tmp, "own tools", "fetch-model.cjs")}' --models '${join(tmp, "own models")}'`),
     "with the folders configured, Doctor's install and download use them (the download is told its models folder)", JSON.stringify({ rt2, tts2 }));
   ensureScripts(); const fm = join(tmp, "own tools", "fetch-model.cjs");
   ok(existsSync(fm) && tts2.includes(fm), "and the download script is where that command runs it");
+  // a Node Studio finds only through CREW_NODE_BIN (not on PATH): the download runs that Node and is offered as usable
+  const nodeDir = join(tmp, "own node", "bin"); mkdirSync(nodeDir, { recursive: true }); const ownNode = join(nodeDir, "node"); writeFileSync(ownNode, "#!/bin/sh\n", { mode: 0o755 });
+  const path0 = process.env.PATH; process.env.PATH = "/usr/bin:/bin"; process.env.CREW_NODE_BIN = ownNode;
+  const tts3 = methodsFor("voice-tts", "darwin")[0];
+  process.env.PATH = path0; delete process.env.CREW_NODE_BIN;
+  ok(tts3.usable && tts3.argv.join(" ").startsWith(`/bin/bash -c '${ownNode}' `) || (tts3.usable && tts3.argv[2].startsWith(`'${ownNode}' `)), "with Node only at CREW_NODE_BIN, the download runs that Node and is usable without node on PATH", JSON.stringify({ usable: tts3.usable, argv: tts3.argv }));
   [process.env.CREW_VOICE_TOOLS, process.env.CREW_VOICE_MODELS] = was; }
 end();
