@@ -1,0 +1,248 @@
+/* The lesson board (public/review-board.js; docs/units/review-room.md, "The lesson board"): a finished lesson as regions on
+   a canvas the camera owns. The room's own tokens (--rr-*, review-room.css) and the app's (--text, --surface, --border)
+   in light and dark; nothing scrolls natively in the viewport. */
+.rr-stage.board { --rp-serif: "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", Georgia, serif;
+  grid-template-rows: minmax(0, 1fr); grid-template-columns: 196px minmax(0, 1fr) 272px; column-gap: 12px; position: relative; }
+.rr-stage.board.nonotes { grid-template-columns: 196px minmax(0, 1fr); }
+.rr-stage.board > * { grid-row: 1; }
+
+/* the rail: the lesson, the map, the filter, the chapters */
+.rb-rail { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 6px 16px 0; border-right: 1px solid var(--border); }
+.rb-rail h6, .rb-notes h6 { margin: 6px 4px 0; font: 600 11px var(--f-sans); letter-spacing: .06em; color: var(--text-3); }
+.rb-lesson { display: grid; gap: 4px; padding: 2px 4px; font-size: 13px; color: var(--text); }
+.rb-lesson b { font-weight: 600; line-height: 1.35; }
+.rb-lesson .rr-auto-note { font-size: 11.5px; margin: 0; }
+.rb-minimap { flex: none; display: block; width: 100%; height: auto; max-height: 220px; border: 1px solid var(--border); border-radius: 8px; background: var(--rr-paper); cursor: pointer; }
+.rb-minimap rect.r { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1; }
+.rb-minimap rect.r.un { fill: none; stroke-dasharray: 3 2; }
+.rb-minimap rect.r.cur { stroke: var(--rr-marker); stroke-width: 2; }
+.rb-minimap rect.vw { fill: var(--rr-marker); fill-opacity: .08; stroke: var(--rr-marker); stroke-width: 1.5; }
+.rb-minimap circle { fill: var(--rr-marker); } .rb-minimap circle.q { fill: var(--rr-inf-ink); }
+.rb-filter { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); padding: 0 4px; cursor: pointer; }
+.rb-outline, .rb-others { display: grid; gap: 1px; }
+.rb-ol { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 7px; background: none; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.rb-ol:hover { background: var(--surface-2); }
+.rb-ol.on { color: var(--text); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+.rb-ol.un .rb-olb { color: var(--text-3); }
+.rb-ol.skipped .rb-olb { text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.rb-ol.other { grid-template-columns: minmax(0, 1fr); font-size: 12px; }
+.rb-onum { font: 600 11px var(--f-mono); color: var(--text-3); }
+.rb-olb { min-width: 0; display: grid; overflow: hidden; }
+.rb-olb, .rb-olb small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-olb small { font-size: 11px; color: var(--text-3); }
+.rb-ocnt { font: 600 10.5px var(--f-mono); color: var(--text-3); white-space: nowrap; }
+.rb-ocnt b { color: var(--rr-inf-ink); }
+
+/* the viewport: dotted paper the camera moves over; it never scrolls by itself */
+.rb-main { position: relative; min-width: 0; min-height: 0; display: grid; }
+.rb-vp { position: relative; overflow: hidden; min-width: 0; min-height: 0; touch-action: none; user-select: none; -webkit-user-select: none; border-radius: 14px; border: 1px solid var(--rr-paper-edge);
+  background-color: var(--rr-paper); background-image: radial-gradient(var(--rr-dot) 1px, transparent 1.2px); color: var(--rr-ink); cursor: grab; outline: none; }
+.rb-vp.dragging, .rb-vp.grab { cursor: grabbing; }
+.rb-plane { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; font-family: var(--f-sans); }
+.rb-links { position: absolute; left: 0; top: 0; width: 10px; height: 10px; overflow: visible; pointer-events: none; }
+.rb-links path { fill: none; stroke: var(--border-strong); stroke-width: 1.6; }
+.rb-links path.anchor { stroke: var(--rr-marker); stroke-opacity: .55; }
+
+/* a region: its title above, the chapter's card and its drawing, the questions' cards beside */
+.rb-region { position: absolute; margin: 0; }
+.rb-rtitle { position: absolute; left: 2px; top: -30px; display: flex; gap: 10px; align-items: baseline; font-size: 13px; color: var(--rr-ink-2); white-space: nowrap; }
+.rb-rtitle b { font: 600 12px var(--f-mono); color: var(--rr-new); }
+.rb-rtitle span:first-of-type { color: var(--rr-ink); font-weight: 600; }
+.rb-cnt { font: 600 11.5px var(--f-mono); } .rb-cnt i { font-style: normal; color: var(--rr-inf-ink); }
+.rb-rbody { position: relative; display: grid; gap: 12px; }
+.rb-region.cur > .rb-rbody > .rp-card { box-shadow: 0 0 0 2px var(--rr-new-soft), var(--rr-shadow); }
+.rb-rbody .rp-fig { margin: 0; }
+.rb-rbody .rp-figbody { overflow: visible; }
+.rb-rbody .rp-figbody svg { min-width: 0 !important; }
+.rb-plane .rr-flow text, .rb-plane .rr-itemfig text, .rb-plane .rr-seq .rr-actor-l { font-family: var(--f-sans); }
+.rb-plane .rr-flow text { font-size: 16px; } .rb-plane .rr-flow .rr-elabel { font: 13px var(--f-mono); }
+.rb-plane .rr-itemfig text { font-size: 15px; } .rb-plane .rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); }
+.rb-tlayer { position: absolute; left: 0; top: 0; }
+.rb-tlayer > * { position: absolute; }
+.rb-region.unvisited .rb-rbody > :not(.rb-ph):not(.rb-map) { visibility: hidden; }
+.rb-region.unvisited .rb-rtitle { opacity: .5; }
+.rb-ph { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 2px dashed var(--border-strong); border-radius: 10px;
+  background: color-mix(in srgb, var(--rr-paper) 88%, transparent); color: var(--rr-ink-2); font: inherit; cursor: pointer; text-align: center; padding: 24px; }
+.rb-ph b { font-size: 22px; color: var(--rr-ink); font-weight: 600; } .rb-ph span { font-size: 14px; }
+.rb-end .rb-end-n { margin: 0 0 8px; font-size: 14px; color: var(--rr-ink-2); }
+
+/* far away: each chapter a map label, nothing else */
+.rb-map { display: none; position: absolute; inset: 0; z-index: 4; flex-direction: column; justify-content: center; gap: 22px; padding: 40px 52px; border-radius: 12px; background: var(--rr-paper); border: 3px solid var(--border-strong); overflow: hidden; }
+.rb-mn { font: 700 40px var(--f-mono); color: var(--rr-new); }
+.rb-mt { font-size: 76px; font-weight: 700; line-height: 1.2; color: var(--rr-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-mg { font-size: 46px; line-height: 1.4; color: var(--rr-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-mq { display: flex; gap: 18px; flex-wrap: wrap; }
+.rb-badge { font: 600 40px var(--f-sans); padding: 4px 22px; border-radius: 999px; background: var(--surface-2); color: var(--rr-ink-2); }
+.rb-badge.q { background: var(--rr-inf-bg); color: var(--rr-inf-ink); } .rb-badge.ok { background: var(--rr-ok-soft); color: var(--rr-ok); }
+.rb-plane[data-lod="far"] .rb-map { display: flex; }
+.rb-plane[data-lod="far"] .rb-rbody > :not(.rb-map) { visibility: hidden; }
+.rb-plane[data-lod="far"] .rb-rtitle, .rb-plane[data-lod="far"] .rb-tlayer, .rb-plane[data-lod="far"] .rb-links { display: none; }
+.rb-plane[data-lod="far"] .rb-region.unvisited .rb-map { border-style: dashed; opacity: .7; }
+.rb-plane[data-lod="far"] .rb-region.cur .rb-map { border-color: var(--rr-marker); }
+/* mid: the cards say what was asked and the answer's first lines */
+.rb-plane[data-lod="mid"] .rb-acts, .rb-plane[data-lod="mid"] .rb-anchor, .rb-plane[data-lod="mid"] .rb-alttag { display: none; }
+.rb-plane[data-lod="mid"] .rb-cbody { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rb-plane[data-lod="mid"] .rb-cbody pre { display: none; }
+
+/* a place to ask about, and its pins */
+.rb-ann { cursor: pointer; border-radius: 3px; transition: background-color .15s, box-shadow .15s; }
+.rb-s.rb-ann:hover, tr.rb-ann:hover td, li.rb-ann:hover, header.rb-ann:hover { background: var(--rr-new-soft); box-shadow: 0 1px 0 var(--rr-marker); }
+.rb-ann:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
+svg .rb-ann:hover, svg .rb-ann:focus-visible { outline: none; }
+svg .rb-ann:hover > :is(rect, path, .rr-chip-bg, .rr-box), svg .rb-ann:focus-visible > :is(rect, path, .rr-chip-bg, .rr-box) { stroke: var(--rr-marker) !important; stroke-width: 2.6; }
+svg path.rb-ann:hover, svg path.rb-ann:focus-visible, svg line.rb-ann:hover { stroke: var(--rr-marker) !important; stroke-width: 3; }
+.rb-pin { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; margin: 0 2px; border: 0; border-radius: 9px; background: var(--rr-marker); color: var(--rr-paper); font: 700 10.5px/1 var(--f-mono); vertical-align: super; cursor: pointer; }
+.rb-pin.q { background: var(--rr-inf-ink); color: var(--rr-paper); }
+.rb-pin.done { background: var(--rr-ok); } .rb-pin.mg { background: var(--rr-ink-2); }
+.rb-pin.abs { position: absolute; margin: 0; vertical-align: 0; z-index: 2; box-shadow: 0 0 0 2px var(--rr-paper); }
+.rb-absorbed { margin: 10px 0 0; padding-top: 8px; border-top: 1px dashed var(--rr-paper-edge); }
+.rb-abs-tag { font-size: 12px; font-weight: 600; color: var(--rr-ok); margin: 0 0 4px; }
+.rb-absorbed p { margin: 0 0 6px; font-size: 14.5px; line-height: 1.65; }
+ins.rb-abs { text-decoration: none; background: var(--rr-ok-soft); color: var(--rr-ink); border-radius: 4px; padding: 1px 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+
+/* a question's cards */
+.rb-card { width: 300px; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-left: 3px solid var(--rr-marker); border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.6; box-shadow: 0 1px 2px rgba(0,0,0,.05); user-select: text; -webkit-user-select: text; cursor: auto; }
+.rb-card.q { border-left-color: var(--rr-inf-ink); }
+.rb-card.stack { box-shadow: 6px 6px 0 -1px var(--surface), 6px 6px 0 0 var(--border-strong); }
+.rb-card.pending { border-style: dashed; border-left-style: solid; background: var(--surface-2); }
+.rb-ch { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.rb-ch .rb-pin { margin: 0; vertical-align: middle; }
+.rb-cq { flex: 1; min-width: 0; font-weight: 600; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-tabs { display: inline-flex; align-items: center; gap: 2px; }
+.rb-tabs button { width: 20px; height: 20px; border-radius: 5px; border: 1px solid var(--border); background: none; font: 600 10.5px var(--f-mono); color: var(--text-3); cursor: pointer; padding: 0; }
+.rb-tabs button[aria-pressed="true"] { background: var(--rr-inf-ink); border-color: var(--rr-inf-ink); color: var(--rr-paper); }
+.rb-tabs em { font-style: normal; font: 10.5px var(--f-mono); color: var(--text-3); }
+.rb-x { width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--text-3); font-size: 14px; cursor: pointer; }
+.rb-x:hover { background: var(--surface-2); color: var(--text); }
+.rb-anchor { display: block; margin: 4px 0 2px; font-size: 12px; color: var(--text-3); quotes: "“" "”"; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html:lang(zh-TW) .rb-anchor, html:lang(zh-CN) .rb-anchor { quotes: "「" "」"; }
+.rb-alttag { font-size: 11.5px; font-weight: 600; color: var(--rr-inf-ink); margin: 2px 0; }
+.rb-cbody { margin-top: 4px; }
+.rb-cbody p { margin: 0 0 6px; } .rb-cbody p:last-child { margin-bottom: 0; }
+.rb-cbody .rr-pre { font-size: 11.5px; max-height: 260px; overflow: hidden; }
+.rb-thinking { color: var(--text-3); }
+.rb-thinking::after { content: ""; display: inline-block; width: 1.4em; text-align: left; animation: rb-ell 1s steps(4) infinite; }
+@keyframes rb-ell { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+.rb-said { font-size: 13px; color: var(--text-2); border-left: 3px solid var(--border); padding-left: 8px; }
+.rb-confirm { font-size: 13px; color: var(--text-2); }
+.rb-coderef { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; } .rb-coderef code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-acts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.rb-btn { font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.rb-btn:hover:not(:disabled) { border-color: var(--rr-marker); color: var(--rr-marker); }
+.rb-btn:disabled { opacity: .5; cursor: default; }
+.rb-btn.ok { border-color: var(--rr-ok); color: var(--rr-ok); }
+.rb-btn.primary { background: var(--rr-marker); border-color: var(--rr-marker); color: var(--rr-paper); }
+.rb-btn.primary:hover:not(:disabled) { color: var(--rr-paper); filter: brightness(1.1); }
+.rb-btn.ghost { background: var(--surface); }
+.rb-btn:focus-visible, .rb-chip:focus-visible, .rb-ol:focus-visible, .rb-tchip:focus-visible, .rb-pin:focus-visible, .rb-nitem:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
+.rb-tchip { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--rr-ok-soft); color: var(--rr-ok); border: 1px solid transparent; white-space: nowrap; cursor: pointer; }
+.rb-tchip.merged { background: var(--surface-2); color: var(--text-2); border-color: var(--border-strong); }
+.rb-tchip:hover { border-color: currentColor; }
+
+/* focus on one question: the rest dims */
+.rb-plane.focusing .rb-region > .rb-rbody, .rb-plane.focusing .rb-card:not(.lit), .rb-plane.focusing .rb-tchip, .rb-plane.focusing .rb-links path:not(.lit), .rb-plane.focusing .rb-rtitle { opacity: .14; }
+.rb-plane.focusing .rb-links path.lit { stroke: var(--rr-marker); stroke-opacity: 1; stroke-width: 2.2; }
+.rb-plane.focusing .rb-region:has(.rb-card.lit) > .rb-rbody { opacity: 1; }
+.rb-vp.only .rb-region:not(.hasq) { opacity: .12; }
+
+/* over the viewport: the tools, the focus bar, the next chapter, the zoom, a toast */
+.rb-tools { position: absolute; left: 12px; top: 12px; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: calc(100% - 24px); }
+.rb-tools .rb-btn { height: 30px; font-size: 12.5px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.rb-toolnote { font-size: 12px; color: var(--text-3); background: var(--surface); border-radius: 6px; padding: 2px 8px; }
+.rb-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.rb-seg button { font: inherit; font-size: 12.5px; padding: 4px 10px; border: 0; border-left: 1px solid var(--border-strong); background: none; color: var(--text-2); cursor: pointer; }
+.rb-seg button:first-child { border-left: 0; }
+.rb-seg button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
+.rb-focusbar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 21; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 14px; border-radius: 999px; background: var(--text); color: var(--surface); font-size: 13px; box-shadow: var(--rr-shadow); white-space: nowrap; max-width: 90%; }
+.rb-focusbar button { font: inherit; font-size: 12px; padding: 3px 10px; border: 0; border-radius: 999px; background: var(--surface); color: var(--text); cursor: pointer; }
+.rb-next { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 20; padding: 9px 18px; border: 0; border-radius: 999px; background: var(--text); color: var(--surface); font: inherit; font-size: 14px; font-weight: 500; box-shadow: var(--rr-shadow); white-space: nowrap; cursor: pointer; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+.rb-next:focus-visible, .rb-zoom button:focus-visible, .rb-focusbar button:focus-visible, .rb-seg button:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
+.rb-zoom { position: absolute; right: 12px; bottom: 12px; z-index: 20; display: flex; align-items: center; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--rr-shadow); overflow: hidden; }
+.rb-zoom button { height: 32px; min-width: 32px; padding: 0 10px; border: 0; background: none; font: inherit; font-size: 15px; color: var(--text-2); cursor: pointer; }
+.rb-zoom button:hover { background: var(--surface-2); color: var(--text); }
+.rb-zoom span { font: 600 12px var(--f-mono); color: var(--text-3); min-width: 46px; text-align: center; }
+.rb-zoom .fit { font-size: 12.5px; border-left: 1px solid var(--border); }
+.rb-toast { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 25; padding: 7px 14px; border-radius: 9px; background: var(--rr-ok); color: #fff; font-size: 13px; box-shadow: var(--rr-shadow); max-width: 80%; }
+.rb-toast.bad { background: var(--rr-bad); }
+
+/* the notes: every question */
+.rb-notes { min-height: 0; overflow: auto; padding: 8px 4px 16px 12px; border-left: 1px solid var(--border); }
+.rb-notes h3 { margin: 2px 0 4px; font-size: 14px; }
+.rb-hint { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); }
+.rb-empty { font-size: 13px; color: var(--text-3); border: 1px dashed var(--border-strong); border-radius: 10px; padding: 12px; }
+.rb-nlist { list-style: none; margin: 0; padding: 0; display: grid; }
+.rb-nitem { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; width: 100%; text-align: left; padding: 8px 6px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: none; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; }
+.rb-nitem:hover { background: var(--surface-2); }
+.rb-nitem .rb-pin { margin: 3px 0 0; vertical-align: 0; }
+.rb-nitem q { quotes: "“" "”"; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"; }
+.rb-nitem small { grid-column: 2; color: var(--text-3); font-size: 11.5px; }
+.rb-nitem small b { font-weight: 500; } .rb-nitem small b.open { color: var(--rr-inf-ink); font-weight: 600; }
+.rb-end .rb-nitem { border-bottom-color: var(--rr-paper-edge); }
+
+/* the popover: what to ask here */
+.rb-pop { position: fixed; z-index: 60; width: 340px; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 14px 34px rgba(0,0,0,.18); padding: 12px; }
+.rb-pq { font-size: 12px; color: var(--text-3); margin: 0 22px 8px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rb-chip { font: inherit; font-size: 13px; padding: 4px 11px; border-radius: 999px; border: 0; background: var(--surface-2); color: var(--text); cursor: pointer; }
+.rb-chip:hover:not(:disabled) { background: var(--rr-new-soft); color: var(--rr-marker); }
+.rb-chip.free { background: var(--rr-ok-soft); color: var(--rr-ok); }
+.rb-chip:disabled { opacity: .45; cursor: default; }
+.rb-popform { display: flex; gap: 6px; margin-top: 10px; }
+.rb-popform input { flex: 1; min-width: 0; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); border-radius: 8px; padding: 6px 10px; font: 13.5px var(--f-sans); }
+.rb-popform input:focus { outline: 2px solid var(--rr-marker); outline-offset: -1px; }
+.rb-popnote { margin: 8px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--text-3); }
+.rb-popx { position: absolute; right: 8px; top: 6px; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--text-3); font-size: 16px; cursor: pointer; }
+.rb-phonebar, .rb-sheetx, .rb-scrim { display: none; }
+
+@media (max-width: 1180px) {
+  .rr-stage.board { grid-template-columns: 180px minmax(0, 1fr); }
+  .rr-stage.board .rb-notes { position: absolute; right: 0; top: 0; bottom: 0; width: 280px; z-index: 30; background: var(--bg, var(--surface)); box-shadow: var(--rr-shadow); }
+}
+/* a phone: the board fills the screen; the chapters and the questions are sheets from the bottom; the popover too */
+@media (max-width: 760px) {
+  .rr-room:has(.rr-stage.board) { grid-template-rows: 44px minmax(0, 1fr); }
+  .rr-room:has(.rr-stage.board) > .rr-dock { display: none; }
+  .rr-stage.board, .rr-stage.board.nonotes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 52px; row-gap: 0; }
+  .rr-stage.board > .rb-main { grid-row: 1; }
+  .rb-vp { border-radius: 12px 12px 0 0; }
+  .rb-rail, .rb-notes { display: flex; flex-direction: column; position: fixed; left: 0; right: 0; bottom: 0; height: 72vh; z-index: 55; overflow: auto; border: 0; border-top: 1px solid var(--border-strong); border-radius: 16px 16px 0 0;
+    background: var(--surface); box-shadow: 0 -10px 30px rgba(0,0,0,.18); padding: 16px 16px 24px; transform: translateY(105%); transition: transform .25s; }
+  .rb-rail.open, .rb-notes.open { transform: none; }
+  /* the questions' sheet over its scrim (the narrow desktop's absolute overlay does not apply on a phone) */
+  .rr-stage.board .rb-notes { position: fixed; z-index: 55; width: auto; top: auto; right: 0; }
+  .rb-sheetx { display: block; position: absolute; right: 10px; top: 8px; width: 32px; height: 32px; border: 0; background: none; color: var(--text-3); font-size: 20px; }
+  .rb-scrim { display: block; position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.18); }
+  .rb-minimap { max-width: 260px; }
+  .rb-ol { font-size: 15px; padding: 10px 8px; }
+  .rr-stage.board > .rb-phonebar { display: grid; grid-template-columns: repeat(3, 1fr); grid-row: 2; grid-column: 1; z-index: 40; background: var(--surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 12px 12px; }
+  .rb-phonebar button { font: inherit; font-size: 14px; color: var(--text-2); background: none; border: 0; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; }
+  .rb-phonebar button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
+  .rb-phonebar b { font: 700 11px var(--f-mono); background: var(--rr-marker); color: var(--rr-paper); border-radius: 9px; padding: 1px 6px; }
+  .rb-next { display: none; }
+  .rb-tools { left: 8px; top: 8px; } .rb-tools [data-report-step], .rb-toolnote { display: none; }
+  .rb-zoom { right: 8px; bottom: 8px; } .rb-zoom button { min-width: 30px; padding: 0 6px; }
+  .rb-card { width: 300px; }
+  .rb-pop { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; border-radius: 16px 16px 0 0; padding: 16px 16px calc(20px + env(safe-area-inset-bottom, 0px)); }
+  .rb-chip { font-size: 14px; padding: 8px 12px; }
+  .rb-popform input { font-size: 16px; padding: 9px 10px; }
+  .rb-mt { font-size: 40px; }
+}
+@media (prefers-reduced-motion: reduce) { .rb-thinking::after { animation: none; content: "…"; } .rb-rail, .rb-notes { transition: none; } }
+.rb-main:has(.rb-focusbar) .rb-tools { display: none; }
+/* far away a region is at least as tall as its map label */
+.rb-plane[data-lod="far"] .rb-rbody { min-height: 420px; }
+.rb-eyebrow { font: 600 10.5px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); overflow-wrap: anywhere; margin: 0; }
+.rb-paid { margin-left: auto; align-self: center; font: 11px var(--f-mono); color: var(--text-3); white-space: nowrap; }
+.rb-consent { display: flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.rb-agree { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.rb-askbtn { justify-self: end; font: inherit; font-size: 11.5px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-3); cursor: pointer; }
+.rb-askbtn:hover { color: var(--rr-marker); border-color: var(--rr-marker); }
+.rb-askbtn:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
+.rb-chip.c-q { background: var(--rr-inf-bg); color: var(--rr-inf-ink); }
+.rb-cfigs { display: grid; gap: 6px; margin-top: 6px; }
+.rb-cfigs .rp-fig { padding: 6px; box-shadow: none; }
+.rb-cfigs svg { max-width: 100% !important; min-width: 0 !important; height: auto; }
+.rb-card[data-thread]:not([data-pending]) { cursor: zoom-in; }
+.rb-card[data-thread]:not([data-pending]) :is(button, a, pre, .rb-cbody p) { cursor: auto; }
+.rb-card[data-thread]:not([data-pending]) button { cursor: pointer; }
