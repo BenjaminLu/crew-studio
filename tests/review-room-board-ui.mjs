@@ -271,8 +271,8 @@ try {
     await p.$eval('[data-akey="what/t1/sentence#p0.s0"]', (e) => e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 500, clientY: 300 }))); await p.waitForSelector(".rb-pop");
     await p.click('.rb-pop [data-chip="code"]'); await until(async () => (await p.evaluate(() => window.__opened.length)) > 0 || S.cites.length > 0 || !!(await p.$("[data-cite-panel]")), 5000);
     const gh = await p.evaluate(() => ({ opened: window.__opened, panel: !!document.querySelector("[data-cite-panel]") }));
-    ok(!S.lessons.some((x) => x.op === "code") && (await p.$$eval('.rb-card[data-chip="code"]', (e) => e.length)) === cards0 && (gh.opened.length > 0 || gh.panel || S.cites.includes("diff:src/recheck.ts:L10-30")),
-      "in a pull request's room 看程式碼 opens the code through the room's citation opener (the pull request on GitHub), never an inline code card", JSON.stringify({ gh, cites: S.cites, lessons: S.lessons }));
+    ok(!S.lessons.some((x) => x.op === "code") && (await p.$$eval('.rb-card[data-chip="code"]', (e) => e.length)) === cards0 && gh.opened.length === 1 && /^https:\/\/github\.com\/example\/lumen-pay\/pull\/318\/files#diff-[0-9a-f]{64}R10-R30$/.test(gh.opened[0][0]) && gh.opened[0][1] === "_blank" && /noopener/.test(gh.opened[0][2]) && !gh.panel && !S.cites.length,
+      "in a pull request's room 看程式碼 opens the pull request's files on GitHub at those lines in a new window, never an inline code card or Studio's panel", JSON.stringify({ gh, cites: S.cites, lessons: S.lessons }));
     await ctx.close(); }
 
   // ---------- dark ----------

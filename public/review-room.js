@@ -1343,7 +1343,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
 });
 // the lesson board, built with the room's own helpers (public/review-board.js)
-const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule });
+const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl });
 routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }

@@ -10,7 +10,7 @@
 // the original); the notes panel and the last region list every question. Model text only ever goes into text nodes.
 (() => {
 window.crewReviewBoard = (D) => {
-const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule } = D;
+const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl } = D;
 // the board's own state, per room: the camera, what it is locked on, the regions read, the popover, a question waiting for
 // its confirmation, the thread in focus, the filters, the open sheet (a phone), the last layout
 const B = { cam: new Map(), lock: new Map(), cur: new Map(), visited: new Map(), pop: null, pend: new Map(), focus: new Map(), only: new Set(), before: new Set(), peek: new Set(), sheet: new Map(), ver: new Map(),
@@ -188,6 +188,8 @@ function cardEl(card, r, t, nd, ctx) {
 }
 /** a code card: what the place cites, read through Studio's citation viewer (free; a saved room from its snapshot) */
 function codeBody(card, r, ref) {
+  // a pull request on GitHub: its code is read there, at those lines (the room's citation opener), never fetched into Studio
+  if (githubDiffUrl(r, ref)) return h("div", { class: "rb-coderef" }, h("code", {}, ref), h("button", { type: "button", class: "rb-btn", "data-open-cite": ref, onclick: (e) => { e.stopPropagation(); openCite(card, ref); } }, T("Open on GitHub", "在 GitHub 開啟")));
   const k = `${card}/${ref}`; let c = B.code.get(k);
   if (!c) { const snap = r.snapshot; if (snap) { const d = snap.cites?.[ref]; c = d && !d.error ? { data: d } : { error: T("Not in this snapshot", "這份存檔裡沒有") }; B.code.set(k, c); }
     else { c = { loading: true }; B.code.set(k, c); api(`/api/review-room/${enc(card)}/cite?ref=${enc(ref)}`).then((d) => B.code.set(k, { data: d })).catch((e) => B.code.set(k, { error: e.message })).finally(() => redraw(card)); } }
@@ -216,13 +218,11 @@ function ask(card, r, p) {
   B.pend.set(card, p); B.err.delete(card); B.reveal.set(card, "pending"); B.pop = null; rerender();
   requestAnimationFrame(() => document.querySelector("[data-board-start]")?.focus({ preventScroll: true }));
 }
-/** the room's subject is a pull request on GitHub (its code opens there, never in a card) */
-const onGitHub = (r) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(String(r?.subject?.url || r?.pr?.url || ""));
 async function showCode(card, r, p) {
   const ref = p.refs?.[0]; B.pop = null; if (!ref) { rerender(); return; }
   // a pull request on GitHub: its code is read there (openCite opens the pull request's files at those lines); a saved room
   // or one that takes no change: Studio's citation viewer, read from what it has. Only then a code card on the board.
-  if (!r.open || r.snapshot || onGitHub(r)) { rerender(); openCite(card, ref); return; }
+  if (!r.open || r.snapshot || githubDiffUrl(r, ref)) { rerender(); openCite(card, ref); return; }
   await lessonOp(card, p.n != null ? { op: "code", n: p.n, node: p.node, ref } : { op: "code", anchor: p.anchor, ref }); B.reveal.set(card, p.n != null ? `${p.n}` : "new");
 }
 async function startPending(card) {

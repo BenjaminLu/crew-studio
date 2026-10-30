@@ -309,8 +309,8 @@ the confirmation with nothing kept. The tutor's prompt carries the place: its ch
 words (fenced), the citations under it with their diff hunks, the thread so far and what the chip asks. Its answer is a
 card of a **thread** branching beside the place, a numbered pin on the place: "Thinking" and what the tutor has said so far
 while it works, then the answer as text with its citations; a deeper answer and a why go below their card, an example
-beside it, a rephrasing is a version tab of the same card. Show the code is free: in a pull request's room it opens the
-room's citation opener (the pull request on GitHub), otherwise a code card holding the citation, read through the citation
+beside it, a rephrasing is a version tab of the same card. Show the code is free: in a GitHub pull request's room it opens the
+pull request's files on GitHub at those lines in a new window (`openCite`; a code card there is only that link), otherwise a code card holding the citation, read through the citation
 check (`op: code`). "Got it ✓" marks a question understood (`op: resolve`) and folds its cards into a chip; ⤢ frames the
 thread and dims the rest, Escape returns the camera where it was. "Tidy the board" (`op: tidy`, no model, nothing paid) folds
 every understood question into its chapter as "↳ Folded in from your questions #n": the first sentence of each card's shown
