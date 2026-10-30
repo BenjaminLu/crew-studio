@@ -4,7 +4,9 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   a shell keeps running when its page closes; a new page (the app window reopened) gets its tab back, the output it had
 //   (a marker) replayed, and typing reaches the same shell (the same $$); the replay is bounded (CREW_TERMINAL_SCROLLBACK)
 //   and says what it dropped; `exit` in a shell closes its tab and takes it off the list, and a reload lists live shells
-//   only; Stop ends the shell (its process is gone) and it leaves too; a shell that fails (an rc file that exits 3) stays,
+//   only; a shell ending while the captain types in the go-to picker or a tab's name leaves that field alone (same element,
+//   text, caret) and its tab goes once the field closes; Stop ends the shell (its process is gone) and it leaves too; a
+//   shell that fails (an rc file that exits 3) stays,
 //   with its last output and its exit code, until removed; a shell that exits 0 with a commit beyond main stays with Send
 //   for review, one with uncommitted changes stays, one with nothing to review leaves; a Studio restart ends every shell: the next page
 //   says so once ("ended when Studio restarted"), shows no dead tab and lists none of them, and a second load says nothing.
@@ -99,6 +101,23 @@ try {
   await p.reload(); await p.waitForFunction(() => window.crewTerminals?.list !== null); await p.waitForTimeout(500);
   const afterReload = await listed(p);
   ok(afterReload.length === 1 && afterReload[0].id === a && afterReload[0].running && (await tabsOf(p)) === 1, "a reload lists the live shell only, in its one tab", JSON.stringify(afterReload));
+
+  // a shell that ends in the background while the captain types in a field of the page (the go-to picker, the tab's
+  // name): the field is not redrawn (the same element keeps the focus, the text and the caret); the tab goes once it is left
+  for (const [what, act, sel] of [["the go-to picker", "goto", "#termPickQ"], ["the tab's name", "renameTab", "#termName"]]) {
+    const live = await startShell(p), gone = await startShell(p); await show(p, live); await show(p, gone);
+    await p.evaluate((act) => window.crewTerminals.run(act), act);
+    await p.locator(sel).waitFor(); await p.locator(sel).click(); await p.keyboard.press("End"); await p.keyboard.type(" typed");
+    const before = await p.evaluate((sel) => { const el = document.querySelector(sel); el.dataset.mark = "kept"; return el.value; }, sel);
+    await p.evaluate(async (id) => fetch(`/api/terminals/${id}/input`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ data: "exit\r" }) }), gone);
+    await until(async () => !(await listed(p)).some((t) => t.id === gone)); await p.waitForTimeout(600);
+    const after = await p.evaluate(() => { const a = document.activeElement; return { mark: a?.dataset?.mark ?? null, value: a?.value ?? null, caret: a?.selectionStart ?? null, len: a?.value?.length ?? null }; });
+    ok(after.mark === "kept" && after.value === before && before.endsWith(" typed") && after.caret === after.len, `a shell ending while the captain types in ${what}: the same field keeps the focus, the text and the caret`, JSON.stringify({ before, after }));
+    await p.keyboard.press("Escape");
+    ok(await until(async () => !(await p.locator(`.wt-pane[data-term-pane="${gone}"]`).count()) && !(await p.locator(sel).count())), `and once ${what} closes, the ended shell's tab is gone`);
+    await p.evaluate(async (id) => fetch(`/api/terminals/${id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), live);
+    await until(async () => !(await listed(p)).some((t) => t.id === live));
+  }
 
   // Stop ends the shell: its process is gone, and it leaves too
   const c = await startShell(p); await show(p, c); const pidC = await pidOf(p, c, "PIDC");

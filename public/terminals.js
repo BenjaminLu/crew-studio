@@ -496,11 +496,16 @@ function patchPage() {
   const tab = curTab(), t = termOf(focusPane(tab));
   const list = document.querySelector(".wt-list"); if (list) list.replaceChildren(...listRows(t || selected(cur())));
   const sec = document.querySelector("[data-term-detail]"), stage = sec?.querySelector(":scope > .wt-stage");
-  // a pane whose terminal went (a shell that exited leaves the list): drawn again now, unless the captain is typing in
-  // another terminal (the redraw then waits for the blur); the field left focused is the gone terminal's own
+  // a pane whose terminal went (a shell that exited leaves the list): drawn again now, unless the captain is typing in a
+  // field (another terminal, the go-to picker, a tab's name, the command field: the app's own deferral, soft(), waits for
+  // its blur); the gone terminal's own input is no field to keep
   if (sec && tab && panesOf(tab.root).some((pn) => !termOf(pn))) {
-    const a = document.activeElement, typing = a && [...TM.panes.entries()].some(([id, pn]) => pn.host.contains(a) && TM.list.some((x) => x.id === id && x.running));
-    if (!typing) { redo(); return; }
+    const a = document.activeElement, own = a && [...TM.panes.entries()].some(([id, pn]) => pn.host.contains(a) && !TM.list.some((x) => x.id === id));
+    const editing = a && !own && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
+    if (!editing) { redo(); return; }
+    // soft() waits for an input, a textarea or a select; a contenteditable (none on this page today) waits here
+    if (a.isContentEditable && !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) { a.addEventListener("blur", () => redraw(), { once: true }); return; }
+    return soft();
   }
   // a focus the page does not show: the page is drawn again
   if (!sec || !stage || !t || sec.dataset.termDetail !== t.id || panesOf(tab.root).some((pn) => !termOf(pn))) return soft();
