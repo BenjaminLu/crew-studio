@@ -5,7 +5,8 @@
 // the system's libraries, its own folder and the verified model, and nothing else: no network, no file writes, no
 // other program, no Apple events, no system services.
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, normalize } from "node:path";
 
 export type SidecarOpts = {
   node: string; script: string;
@@ -24,10 +25,32 @@ type Pending = { id: number; msg: Record<string, any>; ms: number; ok: (v: any) 
 
 const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
 const q = (p: string) => JSON.stringify(p); // an SBPL string: quotes and backslashes escaped
-/** The child's sandbox: deny by default; exec of its own Node only; reads of that Node, the system's libraries and
- *  frameworks, timezone and ICU data, a few devices and the given folders; file metadata (so paths resolve); nothing else. */
-export function sandboxProfile(node: string, reads: string[]): string {
-  const n = real(node), dirs = [...new Set(reads.map(real))];
+/** a binary's linked libraries as `otool -L` lists them (tests pass their own) */
+export type Otool = (bin: string) => string;
+const otoolL: Otool = (bin) => { try { const r = Bun.spawnSync(["/usr/bin/otool", "-L", bin], { env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "ignore", timeout: 5000 }); return r.success ? r.stdout.toString() : ""; } catch { return ""; } };
+/** The folders of the libraries Node links beyond the system's (a Homebrew Node links icu4c, libuv, OpenSSL… from
+ *  /opt/homebrew/opt, which are links into its Cellar), each by its real path: absolute paths only, never a home folder
+ *  unless it is inside Node's own install prefix (an nvm Node's own lib folder). Found when the engine starts. */
+export function nodeLibDirs(node: string, otool: Otool = otoolL): string[] {
+  const n = real(node), home = homedir(), prefix = dirname(dirname(n));
+  const tooWide = (d: string) => d === "/" || d === home || d === dirname(home) || /^\/(Users|home|usr|private|opt)?$/.test(d) || /^(\/private)?\/(tmp|var\/tmp|var\/folders)(\/|$)/.test(d);
+  const inPrefix = (d: string) => !tooWide(prefix) && (d === prefix || d.startsWith(prefix + "/"));
+  const atHome = (d: string) => d === home || d.startsWith(home + "/") || /^\/(Users|home)\//.test(d);
+  const out = new Set<string>();
+  for (const line of otool(n).split("\n").slice(1)) {
+    const m = /^\s+(\/.+?) \(compatibility version/.exec(line); if (!m) continue;
+    const lib = normalize(m[1]); if (!isAbsolute(lib) || lib.startsWith("/usr/lib/") || lib.startsWith("/System/")) continue;
+    const d = dirname(real(lib));
+    if (!isAbsolute(d) || tooWide(d) || (atHome(d) && !inPrefix(d))) continue;
+    out.add(d);
+  }
+  return [...out].sort();
+}
+/** The child's sandbox: deny by default; exec of its own Node only; reads of that Node, its own linked libraries, the
+ *  system's libraries and frameworks, timezone and ICU data, a few devices and the given folders; file metadata (so paths
+ *  resolve); nothing else. */
+export function sandboxProfile(node: string, reads: string[], otool?: Otool): string {
+  const n = real(node), dirs = [...new Set([...reads.map(real), ...nodeLibDirs(node, otool)])];
   return ["(version 1)", "(deny default)",
     `(allow process-exec (literal ${q(n)}))`,
     "(allow file-read-metadata)",
