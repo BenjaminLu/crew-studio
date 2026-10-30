@@ -274,8 +274,8 @@ citation of their kind. `lesson_check` tells the tutor what is still missing, an
 owes is refused: the turn fails, saying which (the paid round is still recorded). Other answers (a question, how, why,
 a quiz, the merge check) are scenes on the board and may name a chapter in any order, or none.
 
-A finished lesson reads as a **report** in the room (the default for teach): a header (the subject, the room's title), then
-one section a scene, numbered, its chapter and title, its points as prose (what this is) or as findings with a tone stripe
+A finished lesson is the **lesson board** in the room (the default for teach; `public/review-board.js`): each scene a
+region of a canvas, numbered, its chapter and title, its points as prose (what this is) or as findings with a tone stripe
 (reviewers, roads, risks, questions) and Studio's drawing in a figure card under them, its kind and basis beneath it. Every
 drawing is laid out by Studio from the tutor's data (text nodes only, sizes checked; no image model): an architecture as a
 layered flowchart sized for its labels, edges leaving and entering a box spread along its side, every label placed clear of
@@ -283,12 +283,46 @@ boxes, lines and other labels (and masked by the paper), a cycle's way back bowe
 same way bowed apart, a state's way back to itself a loop beside it; a decision as the question over the
 option taken and the ones turned down, dashed, each listed under it with the record that shows it (its citation is the
 decision's own, so the Library resolves it); the state map with every transition numbered, a row per transition that
-opens its code and shows what it writes. The report scrolls inside the room (the page never does), a strip under the
-chapters on a phone. The chapters rail lists every answer's scenes; a chapter of several items (the change, the
-decisions) is one heading with its items under it; a click scrolls the report to it, and the section in view is marked.
-"Step through on the board" shows the lesson scene by scene on the stage, "Read as a report" goes back. A translation
-covers the report's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
-came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
+shows what it writes. "Step through on the stage" shows the lesson scene by scene, "Back to the board" returns. A translation
+covers the board's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
+came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The board replays from the Library snapshot, offline.
+
+**The lesson board.** The camera owns the view: the viewport never scrolls itself (a place reached with Tab is brought into
+view by the camera). Drag or Space and drag pans; the wheel, a pinch and ± zoom at the pointer; "Fit all"; the zoom as a
+percentage; a minimap in the rail with the outline (each chapter, its questions and the open ones). Three levels of detail
+by scale: far (under 0.42) shows only each chapter's number, its title, one line and two badges (open, understood), no card,
+pin or line; mid (under 0.7) keeps each question's card short without its actions; near is the whole chapter. Regions sit
+three a row (one on a phone), each as wide as its chapter and its questions' cards, so a card added re-flows the board and
+nothing overlaps. "Next" (n, →; back p, ←) and the outline fly to a chapter at a readable scale (0.88 or more on a desktop,
+the phone's width on a phone); a chapter not reached yet is a placeholder ("Not covered yet"); the chapters read are kept in
+the room (`lesson.visited`, `POST /api/review-room/<room>/lesson {op: visit, scene}`). A last region lists the questions
+asked on the way, as the notes panel beside the board does.
+
+**Asking on the board.** Every sentence of a point, a risk, a drawing's node, edge or transition (Studio's and a
+`figure_svg` figure's `data-node` / `data-edge`), a transition's row, a transaction's field, a call and its fields, a
+turned-down option, a before / after box and a sequence step is a place: a click, or Enter on it, opens a popover (a bottom
+sheet on a phone) with deeper, example, say it another way, why, show the code and a question of one's own. A paid chip
+opens a card beside the place that asks for the room's confirmation inline (the same offer and hash as any turn; no modal);
+confirmed, the question is a turn of the room's own machinery (`POST …/turn {thread: {anchor | n, node, chip, q?}, confirm}`:
+deeper is a how turn, why a why turn, example, say it another way and a question of one's own an ask turn), refused before
+the confirmation with nothing kept. The tutor's prompt carries the place: its chapter and scene, what was clicked and its
+words (fenced), the citations under it with their diff hunks, the thread so far and what the chip asks. Its answer is a
+card of a **thread** branching beside the place, a numbered pin on the place: "Thinking" and what the tutor has said so far
+while it works, then the answer as text with its citations; a deeper answer and a why go below their card, an example
+beside it, a rephrasing is a version tab of the same card. Show the code is free: in a pull request's room it opens the
+room's citation opener (the pull request on GitHub), otherwise a code card holding the citation, read through the citation
+check (`op: code`). "Got it ✓" marks a question understood (`op: resolve`) and folds its cards into a chip; ⤢ frames the
+thread and dims the rest, Escape returns the camera where it was. "Tidy the board" (`op: tidy`, no model, nothing paid) folds
+every understood question into its chapter as "↳ Folded in from your questions #n": the first sentence of each card's shown
+answer, its citations kept; the open ones stay on the board, and asking again on a folded place opens it again.
+Before / after shows the chapter's original text. "Only the chapters with questions" frames those and dims the rest.
+
+Threads, their cards and versions, understood and folded state and the chapters read are kept in the room (`lesson`); each
+place is stored as a text locator of the shared schema (docs/check-contract.md) whose section is its stable key (chapter /
+scene / board item # the part clicked), and the room's open questions read as findings (`GET /api/review-room/<room>/findings`,
+`?all=1` for every one; class `captain-question`, source human). Starting over archives them with the room; a Library
+snapshot keeps them (the code cards' citations resolved inside it) and replays the board read-only: every chapter shown,
+the cards visible, no paid chip, tidy or follow-up.
 
 **Figures, drawn as diagram-design draws them.** A lesson's figures follow diagram-design (MIT, credited in
 THIRD_PARTY_NOTICES.md; adapted in `workflows/skills/diagram-design/`, pinned in `ROOM_SKILLS`), as baton's do: a semantic
@@ -744,6 +778,18 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     is refused with what is wrong …", "the figure is kept as Studio's tree …", "a lifecycle names its entity …", "a lesson may
     show one lifecycle for each entity …"; review-room-ui "Studio's drawings read …", "the point stands out by colour …",
     "one lifecycle for each entity; picking a state shows …", "every call: …", "a figure the tutor drew is rebuilt …".
+39. The lesson board: the camera owns the view; far shows only each chapter's number, title, one line and question badges;
+    Next frames a chapter at 0.85 or more at 1440; unread chapters are placeholders and reading one is kept; every place asks
+    through a popover inside the screen (a bottom sheet on a phone); a paid chip confirms inline in its card; answers stream
+    into their card; deeper below, example beside, rephrasing a version tab; show the code free; got it folds; focus and
+    Escape; tidy with before / after; nothing overlaps; pins on their place; keyboard; phone outline first; snapshot
+    read-only. — review-room-board-ui (each rule); review-room-ui "a finished lesson is the lesson board …", "the lesson is a
+    board the camera moves over …", "a chapter picked in the rail flies the board to it …", "a transition picked shows what
+    it writes and asks there …", "on a phone the lesson is the board …".
+40. Questions on the board are the room's turns, kept on the shared locator schema: refused without the confirmation (a
+    follow-up too), nothing kept before it; the tutor gets the place; threads, cards, versions and reading state kept; each
+    anchor a text locator, the open questions findings; tidy folds with no paid call; reset archives them; the snapshot keeps
+    them read-only. — review-room-board (each rule).
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 
