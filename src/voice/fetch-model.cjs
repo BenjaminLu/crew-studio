@@ -70,7 +70,9 @@ async function fetchOne(rel, size, sha) {
     catch (e) { if (!e.closed) try { fs.closeSync(w); } catch {} throw e; }
     fs.closeSync(w);
     const got = hash.digest("hex");
-    if (n !== size || got !== sha) throw mismatch(n, got);
+    // a response that ended before the file did (a short Range answer, a dropped connection): what came is kept for the next press
+    if (n < size) throw new Error(`${rel}: the transfer ended at ${n} of ${size} bytes (${mb(n)} MB kept)`);
+    if (got !== sha) throw mismatch(n, got);
     fs.renameSync(tmp, dest); return { fetched: n - from, kept: false, from };
   } catch (e) { const why = ac.signal.aborted && ac.signal.reason ? ac.signal.reason.message : null; throw why ? new Error(`${rel}: ${why} (${mb(fs.existsSync(tmp) ? fs.statSync(tmp).size : 0)} MB kept)`) : e; }
   finally { clearTimeout(stall); clearTimeout(whole); }
