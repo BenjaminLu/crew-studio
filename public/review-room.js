@@ -905,7 +905,13 @@ const localVoices = () => { try { const want = (CUR.lang || uiLang()).toLowerCas
 // this Mac's local neural voice (Kokoro, src/voice): offered when Studio says its engine is ready; a room in the Library
 // (lib:…) has no folder to keep clips in. Picked, it speaks each point from a clip Studio makes once and keeps in the room.
 const KV = { stat: null, asked: 0, clips: new Map() };
-const kokoroStat = () => { if (!KV.stat && Date.now() - KV.asked > 30000) { KV.asked = Date.now(); api("/api/voice/status").then((s) => { KV.stat = s; rerender(); }).catch(() => {}); } return KV.stat; };
+/** ask Studio again (fresh: it looks at the model again): when the picker opens and when the page comes back into focus,
+ *  so a model installed or removed in Doctor shows in the room without a reload */
+const kokoroRefresh = (fresh = true) => { if (Date.now() - KV.asked < 1500) return; KV.asked = Date.now();
+  api(`/api/voice/status${fresh ? "?fresh=1" : ""}`).then((s) => { const was = JSON.stringify(KV.stat); KV.stat = s; if (JSON.stringify(s) !== was) rerender(); }).catch(() => {}); };
+const kokoroStat = () => { if (!KV.stat && Date.now() - KV.asked > 30000) kokoroRefresh(false); return KV.stat; };
+addEventListener("focus", () => { if (S.route?.name === "room") kokoroRefresh(); });
+addEventListener("hashchange", () => { if (S.route?.name === "room") kokoroRefresh(); });
 const kokoroReady = (card) => !!kokoroStat()?.ready && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+)$/.test(String(card || S.route?.arg || ""));
 const kokoroVoice = () => (LANG_BASE(CUR.lang) === "en" ? kokoroStat()?.voices?.en : kokoroStat()?.voices?.zh) || "";
 /** mixed Chinese and English: "switch" speaks Latin runs with the English voice (the default), "same" keeps one voice */
@@ -932,7 +938,7 @@ function kokoroClip(card, text) {
 /** speak point k with the local voice; the caption is the point's text, shown as it starts. A clip that fails: this Mac's voice, else reading pace */
 async function sayKokoro(card, sc, k, text, next, paced) {
   const after = sc.points[k + 1], gen = KV.gen;
-  let src; try { src = await kokoroClip(card, text); } catch (e) { if (RR.playing !== card || KV.gen !== gen) return; RR.err.set(card, T(`The local voice could not speak: ${e.message}`, `本機語音無法朗讀：${e.message}`)); return void (speak(text, next, paced, true) || paced()); }
+  let src; try { src = await kokoroClip(card, text); } catch (e) { if (RR.playing !== card || KV.gen !== gen) return; if (e.code !== "not_a_point") RR.err.set(card, T(`The local voice could not speak: ${e.message}`, `本機語音無法朗讀：${e.message}`)); return void (speak(text, next, paced, true) || paced()); }
   if (RR.playing !== card || KV.gen !== gen || !onRoom(card)) return;
   if (after && !after.q) kokoroClip(card, plain(after.text)).catch(() => {});
   const a = new Audio(src); KV.clip = a;
@@ -950,7 +956,8 @@ function advance(card) {
   if (RR.playing !== card || RR.audio) return;
   const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
   const paced = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170)); };
-  if (voicePref() === "kokoro") return void sayKokoro(card, sc, k, text, next, paced);
+  // Studio's own welcome scene is not a tutor's point: this Mac's voice reads it
+  if (voicePref() === "kokoro") return void (sc.welcome ? speak(text, next, paced, true) || paced() : sayKokoro(card, sc, k, text, next, paced));
   if (speak(text, next, paced)) return;
   paced();
 }
@@ -993,8 +1000,8 @@ function voicePicker(r) {
   const mix = pref === "kokoro" ? h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Mixed Chinese and English", "中英混合")), h("select", { class: "input", "data-voice-mix": "", "aria-label": T("Mixed Chinese and English", "中英混合"),
     onchange: (e) => { prefs.set("crew.room.voice.mix", e.target.value === "switch" ? null : e.target.value); stopPlay(); rerender(); } },
     [["switch", T("English words in an English voice", "英文詞換英文聲音")], ["same", T("One voice for everything", "全部同一個聲音")]].map(([v, l]) => h("option", { value: v, selected: v === voiceMix() }, l)))) : null;
-  const opts = [...kokoro, ...(vs.length ? [["auto", T(`This Mac's best voice (${vs[0].name})`, `這台 Mac 最好的聲音（${vs[0].name}）`)]] : []), ["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
-  const pick = h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"),
+  const opts = [...(vs.length ? [["auto", T(`This Mac's best voice (${vs[0].name})`, `這台 Mac 最好的聲音（${vs[0].name}）`)]] : []), ...kokoro, ["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
+  const pick = h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"), onfocus: () => kokoroRefresh(), onmousedown: () => kokoroRefresh(),
     onchange: (e) => { prefs.set("crew.room.voice", e.target.value === "auto" ? null : e.target.value); stopPlay(); rerender(); } }, opts.map(([v, l]) => h("option", { value: v, selected: v === cur || (v === "off" && !opts.some(([x]) => x === cur)) }, l))));
   return mix ? h("span", { class: "rr-voices" }, pick, mix) : pick;
 }

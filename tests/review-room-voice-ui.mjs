@@ -44,20 +44,21 @@ const stubs = () => {
   // a clip "plays" until the test ends it: the test decides when each point is over
   window.Audio = function (src) { const a = { src, onended: null, onerror: null, paused: false, play: async () => { window.__clips.push(a); }, pause() { a.paused = true; } }; return a; };
 };
-async function open(ready, failClip = false) {
+async function open(readyAt, failClip = false) {
+  const state = { ready: readyAt, statusAsks: 0 };
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 } });
   await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); });
   await ctx.addInitScript(stubs);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   const asked = [];
   await ctx.route(/\/api\/review-room\/SC-60(\?open=1)?$/, (r) => r.fulfill({ json: ROOM }));
-  await ctx.route(/\/api\/voice\/status$/, (r) => r.fulfill({ json: { ready, engine: "kokoro-test", voices: { zh: "zf_xiaobei", en: "af_heart" }, runtime: { ok: ready }, model: { ok: ready, source: "studio", why: null } } }));
+  await ctx.route(/\/api\/voice\/status(\?fresh=1)?$/, (r) => { state.statusAsks++; const ready = state.ready; r.fulfill({ json: { ready, engine: "kokoro-test", voices: { zh: "zf_xiaobei", en: "af_heart" }, runtime: { ok: ready }, model: { ok: ready, source: "studio" } } }); });
   await ctx.route(/\/api\/review-room\/SC-60\/voice$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); asked.push(b); if (failClip) return r.fulfill({ status: 409, json: { error: "The local voice is not installed", code: "no_voice" } });
     r.fulfill({ json: { src: `/api/review-room/SC-60/voice/kvoice-${String(asked.length).padStart(16, "0")}.wav`, cached: false, engine: "kokoro" } }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message)); if (process.env.VOICE_UI_DEBUG) p.on("console", (m) => console.log("console:", m.text().slice(0, 300)));
   await p.goto(`${base}/#/room/SC-60`); await p.waitForSelector("[data-voice]");
   await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]").catch(() => {}); await p.click('[data-jump="t1"]').catch(() => {}); });
-  return { ctx, p, asked };
+  return { ctx, p, asked, state };
 }
 const caption = (p) => p.$eval("[data-caption-text]", (e) => e.textContent).catch(() => null);
 const options = (p) => p.$$eval("[data-voice] option", (els) => els.map((e) => [e.value, e.textContent]));
@@ -67,11 +68,20 @@ try {
     await p.waitForTimeout(300); const o = await options(p);
     ok(!o.some(([v]) => v === "kokoro") && o[0][0] === "auto", "while Studio's local voice is not ready, Kokoro is not offered", JSON.stringify(o));
     await ctx.close(); }
-  // ---------- ready: offered first, the default unchanged ----------
+  // ---------- installed or removed in Doctor: the room follows without a reload ----------
+  { const { ctx, p, state } = await open(false);
+    await p.waitForTimeout(300); state.ready = true; await p.waitForTimeout(1600);
+    await p.focus("[data-voice]"); await p.waitForFunction(() => !!document.querySelector('[data-voice] option[value="kokoro"]'), null, { timeout: 5000 }).catch(() => {});
+    ok(!!(await p.$('[data-voice] option[value="kokoro"]')), "a model installed in Doctor shows in the room when the picker is opened, without a reload", String(state.statusAsks));
+    state.ready = false; await p.waitForTimeout(1600); await p.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await p.waitForFunction(() => !document.querySelector('[data-voice] option[value="kokoro"]'), null, { timeout: 5000 }).catch(() => {});
+    ok(!(await p.$('[data-voice] option[value="kokoro"]')), "one deleted while away is hidden when the page comes back into focus");
+    await ctx.close(); }
+  // ---------- ready: offered after this Mac's best voice, the default unchanged ----------
   { const { ctx, p, asked } = await open(true);
     await p.waitForFunction(() => !!document.querySelector('[data-voice] option[value="kokoro"]'));
     const o = await options(p);
-    ok(o[0][0] === "kokoro" && /Kokoro local neural voice \(af_heart\)/.test(o[0][1]) && o.some(([v]) => v === "auto") && o.some(([v]) => v === "local:ava") && o.some(([v]) => v === "off"), "when the voice API says it is ready, Kokoro is offered first, beside this Mac's best voice, each Mac voice and off", JSON.stringify(o));
+    ok(o[0][0] === "auto" && o[1][0] === "kokoro" && /Kokoro local neural voice \(af_heart\)/.test(o[1][1]) && o.some(([v]) => v === "local:ava") && o.some(([v]) => v === "off"), "when the voice API says it is ready, Kokoro is offered right after this Mac's best voice, beside each Mac voice and off", JSON.stringify(o));
     ok((await p.$eval("[data-voice]", (e) => e.value)) === "auto" && !(await p.$("[data-voice-mix]")), "this Mac's best voice stays the default until Kokoro is picked");
     // even a tutor with no voice of its own (Claude) may use it: nothing leaves the Mac
     await p.selectOption("[data-voice]", "kokoro");
