@@ -363,6 +363,11 @@ try {
     const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
     ok(voices.includes("local:mj") && !voices.includes("local:ava"), "the voice follows the language shown: this Mac's Chinese voice now", JSON.stringify(voices));
     ok(JSON.stringify(voices.filter((v) => v.startsWith("local:"))) === JSON.stringify(["local:mj", "local:com.apple.eloquence.zh-TW.Eddy"]), "Taiwan Mandarin offers Mei-Jia first and Eddy beside it; the other legacy voices stay out", JSON.stringify(voices));
+    await p.evaluate(() => { window.__voices = [{ name: "Eddy (Chinese (Taiwan))", lang: "zh-TW", localService: true, voiceURI: "com.apple.eloquence.zh-TW.Eddy" }, { name: "Mei-Jia", lang: "zh-TW", localService: true, voiceURI: "com.apple.voice.compact.zh-TW.Mei-Jia" }]; });
+    await p.click('[data-lang-pick="zh-TW"]'); await p.waitForTimeout(100);
+    const compact = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value).filter((v) => v.startsWith("local:")));
+    ok(JSON.stringify(compact) === JSON.stringify(["local:com.apple.voice.compact.zh-TW.Mei-Jia", "local:com.apple.eloquence.zh-TW.Eddy"]), "a compact Mei-Jia still comes before Eddy: Eddy never becomes this Mac's best voice", JSON.stringify(compact));
+    await p.evaluate(() => { window.__voices = null; }); await p.click('[data-lang-pick="zh-TW"]');
     await p.click('[data-lang-pick="zh-CN"]'); s6 = await stage(p);
     ok(s6.title === "百分比怎么算" && !trs.length, "简体 comes from the 繁體 text through OpenCC: nothing paid", JSON.stringify(s6));
     await p.click('[data-lang-pick="en"]'); await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t2"]');
