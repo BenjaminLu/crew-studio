@@ -227,6 +227,34 @@ script.push([...LESSON]);
   const e3 = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "deeper" }, lang: "en" }, "captain"));
   ok(!onDisk().followUps && e3?.code === "confirm_required", "the room's switch turns the agreement off: board questions ask again", e3?.message); }
 
+// ---------- the agreement is bounded: ten follow-ups, then the room asks once more; a wrong confirmation records nothing ----------
+{ const { followPrint, FOLLOW_LIMIT } = await import("../src/domain/review-room");
+  const base = { provider: "codex", model: "m", effort: "high", independence: { level: "different-vendor", outside: false } };
+  ok(followPrint(base) !== followPrint({ ...base, independence: { ...base.independence, level: "same-vendor" } }) && followPrint(base) !== followPrint({ ...base, independence: { ...base.independence, outside: true } }),
+    "the agreement is bound to the tutor's independence too (level, outside the crew): a change asks again");
+  const e0 = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "deeper" }, lang: "en", confirm: "wrong", consent: true }, "captain"));
+  ok(e0?.code === "confirm_required" && !onDisk().followUps, "consent with a wrong confirmation is refused and records no agreement", e0?.message);
+  script.push([["say", "Deeper [diff:src/percent.ts]."]]);
+  await turn({ thread: { n: 2, node: "n1", chip: "deeper" }, consent: true });
+  const used = () => onDisk().followUps?.used;
+  ok(FOLLOW_LIMIT === 10 && used() === 0, "confirmed with consent, the room's follow-up count starts at 0", JSON.stringify(onDisk().followUps));
+  const started: any[] = [];
+  for (let i = 0; i < FOLLOW_LIMIT; i++) { script.push([["say", `Follow-up ${i} [diff:src/percent.ts].`]]); await room.settle(id);
+    const e = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "why" }, lang: "en" }, "captain")); await room.settle(id); if (e) { script.pop(); break; } started.push(onDisk().turns.at(-1).follow); }
+  ok(started.length === FOLLOW_LIMIT && started.at(-1) === FOLLOW_LIMIT && used() === FOLLOW_LIMIT, "ten follow-ups start without asking, each turn counting how many the agreement started", JSON.stringify([started, used()]));
+  const e11 = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "why" }, lang: "en" }, "captain")), v11: any = room.view(id);
+  ok(e11?.code === "confirm_required" && v11.followUps?.current === false && v11.followUps?.used === FOLLOW_LIMIT, "the eleventh follow-up asks for the confirmation again", JSON.stringify([e11?.code, v11.followUps]));
+  script.push([["say", "Again [diff:src/percent.ts]."]]);
+  await turn({ thread: { n: 2, node: "n1", chip: "why" }, consent: true });
+  ok(used() === 0 && (room.view(id) as any).followUps?.current === true, "confirmed again, the count starts over", JSON.stringify(onDisk().followUps));
+  script.push([["say", "Wrong [diff:src/percent.ts]."]]); await room.settle(id);
+  const ew = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "why" }, lang: "en", confirm: "wrong", consent: true }, "captain")); await room.settle(id);
+  ok(!ew && used() === 1, "consent with a wrong confirmation never renews the agreement: it is counted as one the agreement started", JSON.stringify([ew?.code, onDisk().followUps]));
+  // the switch turned off while the question was being admitted: honoured, nothing starts
+  const sp = E.deps.selectProvider; E.deps.selectProvider = async (_x: any, pick: any) => { E.deps.selectProvider = sp; await room.lesson(id, { op: "consent", on: false }); return E.deps.provider(pick.provider, pick.model ?? undefined); };
+  const runs0 = runs.length, ea = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "why" }, lang: "en" }, "captain")); E.deps.selectProvider = sp;
+  ok(ea?.code === "confirm_required" && runs.length === runs0 && !onDisk().followUps, "the agreement turned off while a follow-up was admitted: it is refused, nothing runs", JSON.stringify([ea?.code, ea?.message])); }
+
 // ---------- the board's growth is capped: questions a room, cards a question, versions a card ----------
 { const { LESSON_LIMITS } = await import("../src/domain/review-room");
   for (let i = 0; i < 4; i++) { script.push([["say", `Another way ${i} [diff:src/percent.ts].`]]); await turn({ thread: { n: 1, node: "n1", chip: "rephrase" } }); }
@@ -252,7 +280,10 @@ script.push([...LESSON]);
   finally { E.cards.get = get; } }
 
 // ---------- started over while a question was being admitted: nothing is added to the fresh room ----------
-{ const before = E.deps.refreshUsable; E.deps.refreshUsable = async () => { E.deps.refreshUsable = before; room.reset(id, "captain"); };
+{ script.push([["say", "Agreed [diff:src/percent.ts]."]]); await turn({ thread: { n: 1, node: "n1", chip: "why" }, consent: true });
+  const agreed0 = !!(room.view(id) as any).followUps?.current;
+const before = E.deps.refreshUsable; E.deps.refreshUsable = async () => { E.deps.refreshUsable = before; room.reset(id, "captain"); };
   const runs0 = runs.length, e = await refused(() => room.start(id, { thread: { n: 1, node: "n1", chip: "why" }, confirm: offer.hash }, "captain"));
-  ok(e?.code === "not_found" && runs.length === runs0 && !existsSync(file) && room.findings(id, true).length === 0, "a question whose room was started over while it was admitted is refused: no turn, no card on the fresh room", JSON.stringify([e?.code, e?.message])); }
+  ok(e?.code === "not_found" && runs.length === runs0 && !existsSync(file) && room.findings(id, true).length === 0, "a question whose room was started over while it was admitted is refused: no turn, no card on the fresh room", JSON.stringify([e?.code, e?.message]));
+  ok(agreed0 && !(room.view(id) as any).followUps, "starting over clears the room's agreement to start follow-ups", JSON.stringify((room.view(id) as any).followUps)); }
 end();

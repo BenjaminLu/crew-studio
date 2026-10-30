@@ -202,7 +202,9 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
   scenes?: { n: number; title: string; picture: string; points: Claim[]; chapter?: string; skip?: true }[];
   /** a question asked on the lesson board: the thread and the node (card) this turn answers */
-  thread?: { n: number; node: string } };
+  thread?: { n: number; node: string };
+  /** a board follow-up the room's agreement started without a confirmation: how many it has started since the last one */
+  follow?: number };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
 export type Subject = { kind: "merge" | "branch" | "pr"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null };
 type Note = { id: string; kind: "review" | "inline" | "comment"; author: string; body: string; at: string | null; url: string | null; state?: string; commit?: string | null; path?: string | null; line?: number | null; outdated?: boolean };
@@ -249,7 +251,7 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   /** the lesson board: the captain's questions on it (threads), the regions read, when it was last tidied */
   lesson?: Lesson;
   /** the captain agreed to start this room's board questions without asking each time, for this plan (followPrint) */
-  followUps?: { plan: string; by: string; at: string } };
+  followUps?: { plan: string; by: string; at: string; used?: number } };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
 /** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
  *  citations, board items and pictures are the original's */
@@ -337,7 +339,13 @@ export function threadGist(t: Thread, turns: { n: number; status: string; claims
 export const notUnderstood = (t: Thread) => !!t.confused && t.state === "open";
 /** a board question's plan fingerprint (who answers it, at what effort): the room's agreement to start follow-ups without
  *  asking holds only while the plan is this one */
-export const followPrint = (o: { provider: string; model?: string | null; effort?: string | null }) => sha(JSON.stringify({ board: true, provider: o.provider, model: o.model ?? null, effort: o.effort ?? null })).slice(0, 16);
+/** the plan an agreement is bound to: the offer's hash fields but the head (the tutor, its effort and its independence) */
+export const followPrint = (o: { provider: string; model?: string | null; effort?: string | null; independence?: { level?: string | null; outside?: boolean | null } | null }) =>
+  sha(JSON.stringify({ board: true, provider: o.provider, model: o.model ?? null, effort: o.effort ?? null, level: o.independence?.level ?? null, outside: o.independence?.outside ?? null })).slice(0, 16);
+/** follow-ups an agreement starts before the room asks once more */
+export const FOLLOW_LIMIT = 10;
+/** the room agreed to start follow-ups on this very plan, and has follow-ups left before it asks again */
+export const agreedTo = (r: { followUps?: { plan: string; used?: number } } | null | undefined, offer: any) => !!r?.followUps && r.followUps.plan === followPrint(offer) && (r.followUps.used ?? 0) < FOLLOW_LIMIT;
 /** a room's open questions as findings: the same type a check produces (docs/units/locators.md): those still on the board
  *  (not understood, not folded into a chapter) */
 export const threadFindings = (lesson: Lesson | undefined | null, all = false): Finding[] => (lesson?.threads ?? []).filter((t) => all || (t.state === "open" && !t.merged)).map((t) => {
@@ -1445,7 +1453,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const known = git(s.wt, ["cat-file", "-e", `${from}^{commit}`]).ok, anc = known && git(s.wt, ["merge-base", "--is-ancestor", from, s.head]).ok;
     return { from, to: s.head, commits: anc ? Number(git(s.wt, ["rev-list", "--count", `${from}..${s.head}`]).out) || 0 : null, rewritten: known && !anc }; };
   /** the room's agreement for board questions as the page reads it: on, and whether it holds for the plan offered now */
-  const followView = (r: Room | null, offer: any) => r?.followUps ? { on: true, at: r.followUps.at, current: !!offer && !offer.error && r.followUps.plan === followPrint(offer) } : null;
+  const followView = (r: Room | null, offer: any) => r?.followUps ? { on: true, at: r.followUps.at, used: r.followUps.used ?? 0, limit: FOLLOW_LIMIT, current: !!offer && !offer.error && agreedTo(r, offer) } : null;
   let self: any = null;
   return (self = {
     /** the summary a merge card shows: never readiness, never an answer */
@@ -1560,17 +1568,23 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (a.pick) { const o0 = offerOf(k, a.pick); if ("error" in o0) throw refuse(o0.error!, (o0 as any).code ?? "held"); }
       const offer = offerOf(k, a.pick); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
       // a board question starts without asking once the room agreed to this very plan (a new model or effort asks again)
-      const agreed = !!plan && !!load(k)?.followUps && load(k)!.followUps!.plan === followPrint(offer);
-      if (a.confirm !== offer.hash && !agreed) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
+      const agreed = () => !!plan && a.confirm !== offer.hash && agreedTo(load(k), offer);
+      if (a.confirm !== offer.hash && !agreed()) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
       // started over (or the question's place gone) while it was admitted: nothing is added to the fresh room
       if (plan) { try { if (plan.thread != null && !room.lesson?.threads.some((t) => t.n === plan!.thread)) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); anchorOf(room, plan.anchor); }
         catch (e) { held?.release(); throw e; } }
+      // the agreement read again: turned off (or used up) while this question was admitted, it asks
+      if (a.confirm !== offer.hash && !agreed()) { held?.release(); throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer }); }
+      const auto = a.confirm !== offer.hash;
       // generated pictures as the captain set them on this confirmed paid round (the confirmation said which images they may make)
       // the captain confirmed this question with “start the next ones without asking”: the room keeps it, bound to this plan
-      if (plan && a.consent === true && a.confirm === offer.hash) room.followUps = { plan: followPrint(offer), by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
+      if (plan && a.consent === true && a.confirm === offer.hash) room.followUps = { plan: followPrint(offer), by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString(), used: 0 };
+      // a confirmation starts the count over; a follow-up the agreement started counts against it
+      else if (plan && room.followUps && !auto) room.followUps.used = 0;
+      else if (plan && room.followUps && auto) room.followUps.used = (room.followUps.used ?? 0) + 1;
       // a question on the board never changes the room's pictures (and pays for none)
       if (typeof a.images === "boolean" && !plan) room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
@@ -1580,6 +1594,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), ...(a.auto ? { auto: true as const } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
       // the question's card on the board, made now, with the turn that answers it (nothing before the confirmation)
       if (plan) turn.thread = applyThread(room, plan, n);
+      if (plan && auto) turn.follow = room.followUps!.used;
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
       // the room's opening picture, once, only now: a confirmed paid round with pictures on
       if (room.images?.on && !plan) pregenerate(k);

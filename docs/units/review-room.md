@@ -304,13 +304,16 @@ turned-down option, a before / after box and a sequence step is a place: a click
 sheet on a phone) with 詳細一點, 舉個例子, 為什麼這樣做, 看程式碼, 我不懂這句 (say it another way) and a question of one's own.
 The first paid question opens a card beside the place showing the plan once, with "Start follow-ups at once (this room)"
 checked; confirmed with it checked, the room keeps that agreement bound to the plan's fingerprint (`followUps`: the
-provider, model and effort, `followPrint`) and every later question starts at once, its card marked "paid · model".
+provider, model and effort, `followPrint`) and every later question starts at once, its card marked "follow-up n · paid · model"; after ten (`FOLLOW_LIMIT`, counted
+by Studio and started over by each confirmation) the next one shows the plan and asks again. The plan is the offer's hash
+without the head: provider, model, effort and the tutor's independence (level, outside the crew).
 A changed plan asks again, the room's switch turns it off (`op: consent, on: false`), and without it each question is
 confirmed (the same offer and hash as any turn; no modal). The question is a turn of the room's own machinery (`POST …/turn
 {thread: {anchor | n, node, chip, q?}, confirm?, consent?}`: deeper is a how turn, why a why turn, example, say it another
 way and a question of one's own an ask turn), refused before the confirmation with nothing kept. A thread turn never draws
-pictures and never sends the place's words as the captain's: they go only fenced. A phone asks nothing paid: its paid chips
-are off, saying "Ask on a computer"; show the code stays. A room holds at most 200 threads, a thread 50 cards and a card 5
+pictures and never sends the place's words as the captain's: they go only fenced. A paired phone asks nothing paid (as `GET
+/api/remote/me` says; a narrow window on the Mac is not a phone): its paid chips and a card's follow-ups are off, saying
+"Ask on a computer", and the popover stays open; show the code stays. A room holds at most 200 threads, a thread 50 cards and a card 5
 versions (`LESSON_LIMITS`), refused with a clear error. The tutor's prompt carries the place: its chapter and scene, what was clicked and its
 words (fenced), the citations under it with their diff hunks, the thread so far and what the chip asks. Its answer is a
 card of a **thread** branching beside the place, a numbered pin on the place: "Thinking" and what the tutor has said so far

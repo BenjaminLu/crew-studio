@@ -44,6 +44,8 @@ async function open(width, lang = "zh-TW", o = {}) {
     Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak: () => {}, cancel: () => {} } }); window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined; }, [lang]);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   const S = { room: o.room ?? boardRoom(lang), turns: [], lessons: [], cites: [] };
+  // the server says who is looking (GET /api/remote/me: a paired phone or this Mac), whatever the window's width
+  await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: o.viewer ?? (phone ? "phone" : "desktop"), device: null } }));
   await ctx.route(/\/api\/review-room\/SC-60(\?open=1)?$/, (r) => r.fulfill({ json: S.room }));
   await ctx.route(/\/api\/review-room\/SC-60\/cite\?/, (r) => { S.cites.push(new URL(r.request().url()).searchParams.get("ref")); r.fulfill({ json: { kind: "diff", path: "src/recheck.ts", from: 40, to: 52, head: "a".repeat(40), text: DIFF } }); });
   await ctx.route(/\/api\/review-room\/SC-60\/turn$/, async (r) => { const b = JSON.parse(r.request().postData() || "{}"); S.turns.push(b);
@@ -59,8 +61,11 @@ async function open(width, lang = "zh-TW", o = {}) {
     else if (th.chip === "rephrase") { parent.versions.push(n); node = parent; }
     else { node = { id: `n${t.nodes.length + 1}`, parent: parent.id, rel: th.chip === "example" ? "side" : "below", chip: th.chip, q: th.q ?? null, versions: [n], code: null, at: now }; t.nodes.push(node); }
     if (th.chip === "rephrase") t.confused = true; t.state = "open"; t.merged = null;
-    if (b.consent === true && b.confirm === room.offer.hash) room.followUps = { on: true, at: now, current: true };
-    room.turns.push({ n, action: "ask", text: "q", lang, status: "running", provider: "codex", model: "gpt-6", answer: "", head: "a".repeat(40), thread: { n: t.n, node: node.id } });
+    const auto = b.confirm !== room.offer.hash;
+    if (b.consent === true && !auto) room.followUps = { on: true, at: now, current: true, used: 0, limit: 10 };
+    else if (room.followUps && !auto) Object.assign(room.followUps, { used: 0, current: true });
+    else if (room.followUps && auto) { room.followUps.used = (room.followUps.used ?? 0) + 1; room.followUps.current = room.followUps.used < 10; }
+    room.turns.push({ n, action: "ask", text: "q", lang, status: "running", provider: "codex", model: "gpt-6", answer: "", head: "a".repeat(40), thread: { n: t.n, node: node.id }, ...(auto ? { follow: room.followUps.used } : {}) });
     room.running = n; room.progress = { turn: n, status: "running", said: o.said ?? "Reading src/recheck.ts to see when it asks again", tools: 2, at: null };
     S.room = room; r.fulfill({ json: room }); });
   await ctx.route(/\/api\/review-room\/SC-60\/lesson$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); S.lessons.push(b); const room = clone(S.room), L = room.lesson;
@@ -322,6 +327,19 @@ try {
     ok(kept.card && kept.anchor, "a follow-up three cards down: the camera shows its card and keeps the place asked about in view", JSON.stringify(kept));
     await ctx.close(); }
 
+  // ---------- the agreement's count: each card it started says so; after ten the room asks once more ----------
+  { const room = boardRoom("zh-TW"); room.followUps = { on: true, at: "t", current: true, used: 9, limit: 10 };
+    const { ctx, p, S } = await open(1440, "zh-TW", { room }); await p.click('[data-outline="t1"]'); await settle(p);
+    await p.evaluate(() => document.querySelector('[data-tcard="1:n1"] [data-follow="example"]')?.click()); await until(() => S.turns.length === 1); await settle(p, 500);
+    const tenth = await p.evaluate(() => [...document.querySelectorAll('[data-thread="1"] [data-paid-note]')].map((e) => e.textContent).find((x) => /已追問/.test(x)) ?? null);
+    ok(!("confirm" in (S.turns[0] || {})) && /已追問 10 次 · 付費/.test(tenth || ""), "a follow-up the agreement started says so on its card: 已追問 n 次 · 付費", JSON.stringify([S.turns[0], tenth]));
+    Object.assign(S.room.turns.at(-1), { status: "done", claims: [{ text: "Order 7731.", kind: "claim", basis: null, cites: [] }] }); S.room.running = null; S.room = clone(S.room);
+    await p.waitForFunction(() => !document.querySelector("[data-thinking]"), null, { timeout: 15000 }).catch(() => {});
+    await p.evaluate(() => document.querySelector('[data-tcard="1:n1"] [data-follow="deeper"]')?.click()); await p.waitForSelector("[data-pending]", { timeout: 5000 }).catch(() => {});
+    const ask = await p.evaluate(() => ({ pending: !!document.querySelector("[data-pending]"), note: document.querySelector("[data-follow-limit]")?.textContent }));
+    ok(ask.pending && S.turns.length === 1 && /10/.test(ask.note || ""), "after ten follow-ups the next one shows the plan and asks again, saying why", JSON.stringify(ask));
+    await ctx.close(); }
+
   // ---------- sixty questions: the layout stays fast and nothing overlaps ----------
   { const room = boardRoom("zh-TW"), L = room.lesson, scenes = ["t1", "t1-2", "t1-4", "t1-5", "t1-6", "t1-9"], chapters = { t1: "what", "t1-2": "talks", "t1-4": "change", "t1-5": "change", "t1-6": "lifecycle", "t1-9": "watch" };
     for (let i = 0; i < 60; i++) { const sc = scenes[i % scenes.length], n = 100 + i, part = `p${i % 2}.s${i % 3}`, kind = sc === "t1-9" ? "risk" : "sentence", key = `${chapters[sc]}/${sc}/${kind}#${part}x${i}`;
@@ -332,7 +350,7 @@ try {
     const g = await geo(p), bad = [];
     for (let i = 0; i < g.cards.length; i++) { for (let j = i + 1; j < g.cards.length; j++) if (hit(g.cards[i], g.cards[j])) bad.push(`${g.cards[i].id}×${g.cards[j].id}`); for (const b of g.bodies) if (hit(g.cards[i], b)) bad.push(`${g.cards[i].id}×${b.id}`); }
     ok(g.cards.length >= 64 && !bad.length, "sixty more questions on the board: no card overlaps another card or a region", JSON.stringify({ n: g.cards.length, bad: bad.slice(0, 6) }));
-    ok(times.every((ms) => ms < 50), "a redraw with sixty more questions lays the board out in under 50 ms", JSON.stringify(times));
+    ok(times.every((ms) => ms < 250), "a redraw with sixty more questions lays the board out without a stall (wall clock, loose: the layout count below is the guard)", JSON.stringify(times));
     // the layout reads every box before it writes any (the cards moved first, so a write left before a read would show): one forced layout, not one per card (Chromium's own count)
     const cdp = await ctx.newCDPSession(p); await cdp.send("Performance.enable");
     const layouts = async () => (await cdp.send("Performance.getMetrics")).metrics.find((m) => m.name === "LayoutCount")?.value ?? NaN;
@@ -380,6 +398,14 @@ try {
     await p.click('[data-board-notes] [data-note-thread="1"]', { timeout: 3000 }).catch(() => {}); await settle(p, 300);
     const tap = await p.evaluate(() => ({ focus: document.querySelector("[data-board-plane]")?.dataset.focus, sheet: document.querySelector("[data-board-notes]")?.classList.contains("open") }));
     ok(tap.focus === "1" && !tap.sheet, "a tap on a question in the phone's sheet opens that thread (the sheet sits over its scrim)", JSON.stringify(tap));
+    const cardOff = await p.evaluate(() => { const c = document.querySelector('[data-tcard="1:n1"]'); return { off: [...c.querySelectorAll("[data-follow]")].map((b) => b.disabled), desk: c.querySelector("[data-ask-desktop]")?.textContent }; });
+    ok(cardOff.off.length === 3 && cardOff.off.every(Boolean) && /在電腦上問/.test(cardOff.desk || ""), "on a phone a card's follow-ups are off and the card says 在電腦上問", JSON.stringify(cardOff));
+    await ctx.close(); }
+  // a narrow window on this Mac is not a phone: the server says who is looking
+  { const { ctx, p } = await open(390, "zh-TW", { viewer: "desktop" }); if (await p.$("[data-board-rail].open")) { await p.click('[data-outline="t1-6"]'); await settle(p, 300); }
+    const a = await p.$('[data-region="t1-6"] [data-akind="sentence"]'); const ab = await a.boundingBox(); await p.mouse.click(ab.x + 10, ab.y + 6); await p.waitForSelector(".rb-pop", { timeout: 5000 }).catch(() => {});
+    const on = await p.evaluate(() => ({ paid: [...document.querySelectorAll('.rb-pop [data-chip]:not([data-chip="code"])')].map((b) => b.disabled), desk: !!document.querySelector("[data-ask-desktop]") }));
+    ok(on.paid.length === 4 && on.paid.every((d) => !d) && !on.desk, "a narrow window on the Mac is not a phone: its paid chips stay on", JSON.stringify(on));
     await ctx.close(); }
   { const { ctx, p } = await open(390, "zh-TW", { dark: true }); await p.click('[data-outline="t1"]'); await settle(p, 300); await p.screenshot({ path: join(shots, "phone-dark-chapter.png") }); await ctx.close(); }
 

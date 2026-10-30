@@ -14,7 +14,7 @@ const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ,
 // the board's own state, per room: the camera, what it is locked on, the regions read, the popover, a question waiting for
 // its confirmation, the thread in focus, the filters, the open sheet (a phone), the last layout
 const B = { cam: new Map(), lock: new Map(), cur: new Map(), visited: new Map(), pop: null, pend: new Map(), focus: new Map(), only: new Set(), before: new Set(), peek: new Set(), sheet: new Map(), ver: new Map(),
-  code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0 };
+  viewer: null, code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0 };
 const phone = () => innerWidth <= 760;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const LOD = (s) => (s < 0.42 ? "far" : s < 0.7 ? "mid" : "near");
@@ -26,8 +26,11 @@ const POP = [["deeper", "More detail", "詳細一點"], ["example", "An example"
 const FOLLOW = ["deeper", "example", "rephrase"];
 /** 還沒懂: the reader said so (我不懂這句, 換個說法 or 還沒懂) and has not said 懂了 since (src/domain/review-room.ts notUnderstood) */
 const confusedOf = (t) => !!t.confused && t.state === "open";
-/** this page cannot start a paid round: a phone (its session is refused one) */
-const phoneSession = () => phone() || !!window.crewRemote?.token?.();
+/** this page cannot start a paid round: a paired phone, as the server says who is looking (a narrow window on the Mac is not one) */
+const phoneSession = () => B.viewer ? B.viewer === "phone" : !!window.crewRemote?.token?.();
+// who is looking, as the server says (GET /api/remote/me: a paired phone or this Mac)
+fetch("/api/remote/me").then((x) => x.json()).then((m) => { if (m?.kind === "phone" || m?.kind === "desktop") { B.viewer = m.kind; rerender(); } }).catch(() => {});
+const deskNote = () => h("p", { class: "rb-popnote", "data-ask-desktop": "" }, T("Ask on the desktop: a phone reads the room.", "在電腦上問：手機只能閱讀。"));
 /** an anchor's stable key, as Studio keeps it (src/domain/review-room.ts anchorKey) */
 const akey = (chapter, scene, kind, item, part) => `${chapter}/${scene}/${kind}${item ? `/${item}` : ""}${part ? `#${part}` : ""}`;
 const kindLabel = { sentence: ["a sentence", "一句話"], risk: ["a risk", "風險"], node: ["a box of the drawing", "圖上的框"], edge: ["a line of the drawing", "圖上的線"], transition: ["a transition", "狀態轉換"], tx: ["a field the transaction writes", "交易寫入的欄位"], field: ["a field of the call", "呼叫的欄位"], call: ["a call", "呼叫"], row: ["a row", "一列"] };
@@ -168,6 +171,7 @@ function pendingCard(card, r, p, group, parent, ctx) {
     h("div", { class: "rb-cbody" }, o?.error ? h("p", { class: "rr-err" }, o.error)
       : [h("p", { class: "rb-confirm", "data-board-confirm": "" }, T(`One paid round on ${o?.provider} · ${o?.model ?? "default model"}${o?.effort ? ` (${o.effort})` : ""}, no generated picture. The tutor only reads the code.`,
         `付費一回合：${o?.provider} · ${o?.model ?? "預設模型"}${o?.effort ? `（${o.effort}）` : ""}，不產生圖片。導師只讀程式碼。`)),
+        r.followUps?.on && !r.followUps.current && (r.followUps.used ?? 0) >= (r.followUps.limit ?? 10) ? h("p", { class: "rb-confirm", "data-follow-limit": "" }, T(`${r.followUps.used} follow-ups started without asking: confirm once more to go on.`, `已直接追問 ${r.followUps.used} 次：再確認一次就繼續。`)) : null,
         h("label", { class: "rb-consent" }, h("input", { type: "checkbox", "data-board-consent": "", checked: agree, onchange: (e) => B.consent.set(card, e.target.checked) }), T(" Start the next questions right away (this room)", " 之後追問直接開始（這個房間）"))],
       busy && r.running != null ? h("p", { class: "faint" }, T("The tutor is working on another question; one turn at a time.", "導師正在回答另一個問題；一次一回合。")) : null,
       err ? h("p", { class: "rr-err", role: "alert", "data-board-error": "" }, err) : null),
@@ -187,12 +191,14 @@ function cardEl(card, r, t, nd, ctx) {
   else { const lt = localTurn(r, turn, roomLang(r)), claims = (lt.claims?.length ? lt.claims : [{ text: lt.answer || "", kind: "claim", basis: null, cites: [] }]).filter((c) => c.kind !== "heading");
     body = claims.map((c) => (c.kind === "code" || c.kind === "table") ? h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")) : h("p", { class: "rb-ans" }, c.basis === "inference" ? inferenceBadge() : null, inline(card, c.text.replace(/^\s*[-*+]\s+/, "").replace(/\s*\[(inference|inferred|speculative)\]/gi, c.basis === "inference" ? "" : "$&"), c.cites))); }
   const acts = live && !nd.code && turn?.status !== "running" ? FOLLOW.map((c) => h("button", { type: "button", class: "rb-btn", "data-follow": c, disabled: B.pend.has(card) || phoneSession(), title: phoneSession() ? T("Ask on the desktop", "在電腦上問") : "", onclick: (e) => { e.stopPropagation(); ask(card, r, { n: t.n, node: nd.id, chip: c, rel: c === "example" ? "side" : c === "rephrase" ? "version" : "below", key: t.key }); } }, chipName(c))) : [];
+  if (acts.length && phoneSession()) acts.push(deskNote());
   if (live && root) acts.push(t.state === "resolved" ? h("button", { type: "button", class: "rb-btn", "data-reopen": t.n, onclick: (e) => { e.stopPropagation(); lessonOp(card, { op: "resolve", n: t.n, on: false }); } }, T("Not yet", "還沒懂"))
     : h("button", { type: "button", class: "rb-btn ok", "data-resolve": t.n, onclick: (e) => { e.stopPropagation(); B.peek.delete(`${card}/${t.n}`); if (B.focus.get(card)?.n === t.n) unfocus(card); lessonOp(card, { op: "resolve", n: t.n }); } }, T("Got it ✓", "懂了 ✓")));
   if (root && (t.state === "resolved" || t.merged) && B.peek.has(`${card}/${t.n}`)) acts.push(h("button", { type: "button", class: "rb-btn", "data-fold": t.n, onclick: (e) => { e.stopPropagation(); B.peek.delete(`${card}/${t.n}`); rerender(); } }, T("Fold", "收起")));
   // the drawings and pictures this answer made (board_draw, a figure), with Studio's own renderers
   const figs = turn && turn.status === "done" ? (r.board || []).filter((b) => b.turn === turn.n).map((it) => { try { return reportFigure(card, r, it, { narrow: true, w: 260, h: 520 }); } catch { return null; } }) : [];
-  const paid = turn && turn.model ? h("span", { class: "rb-paid", "data-paid-note": "", title: T("A paid round", "付費一回合") }, T(`paid · ${turn.model}`, `付費 · ${turn.model}`)) : null;
+  const paid = turn && turn.model ? h("span", { class: "rb-paid", "data-paid-note": "", title: T("A paid round", "付費一回合") },
+    turn.follow ? T(`follow-up ${turn.follow} started without asking · paid · ${turn.model}`, `已追問 ${turn.follow} 次 · 付費 · ${turn.model}`) : T(`paid · ${turn.model}`, `付費 · ${turn.model}`)) : null;
   return h("article", { class: `rb-card${root ? " root" : ""}${confusedOf(t) ? " q" : ""}${nd.versions.length > 1 ? " stack" : ""}${focus ? " lit" : ""}`, "data-group": t.key, "data-tcard": `${t.n}:${nd.id}`, "data-thread": t.n, "data-tnode": nd.id, "data-parent": nd.parent ?? "", "data-rel": nd.rel, "data-chip": nd.chip },
     h("div", { class: "rb-ch" }, h("span", { class: `rb-pin ${pinCls(card, t)}` }, String(t.n)), h("span", { class: "rb-cq", title: label }, label),
       nd.versions.length > 1 ? h("span", { class: "rb-tabs", role: "group", "aria-label": T("Versions", "版本") }, nd.versions.map((v, i) => h("button", { type: "button", "data-version-tab": i, "aria-pressed": String(i === vi), onclick: (e) => { e.stopPropagation(); B.ver.set(vk, i); rerender(); } }, String(i + 1))), h("em", {}, `/${nd.versions.length}`)) : null,
@@ -231,7 +237,8 @@ function ask(card, r, p) {
   if (p.chip === "code") return showCode(card, r, p);
   const th = (r.lesson?.threads || []).find((t) => (p.n != null ? t.n === p.n : t.key === p.key));
   if (th && p.n == null) { const root = th.nodes.find((n) => n.rel === "root"); Object.assign(p, { n: th.n, node: root?.id, rel: p.chip === "example" ? "side" : p.chip === "rephrase" ? "version" : "below" }); if (th.state !== "open") B.peek.add(`${card}/${th.n}`); }
-  if (phoneSession()) { B.pop = null; rerender(); return; }
+  // a phone asks nothing paid: the popover stays, saying where to ask
+  if (phoneSession()) return;
   B.pend.set(card, p); B.err.delete(card); B.reveal.set(card, "pending"); B.pop = null; rerender();
   // the room agreed to this plan: it starts now (the card says it is paid); otherwise the card asks once
   if (r.followUps?.current) { startPending(card); return; }
@@ -525,7 +532,7 @@ function popover(card, r) {
       h("input", { "data-pop-input": p.key, maxlength: 1000, value: p.text || "", placeholder: T("Or ask in your own words…", "或直接問…"), "aria-label": T("Your question about this place", "你對這裡的問題"), autocomplete: "off", oninput: (e) => { if (B.pop) B.pop.text = e.target.value; } }),
       h("button", { type: "submit", class: "rb-btn primary" }, T("Ask", "問"))) : null,
     !live ? h("p", { class: "rb-popnote" }, r.snapshot ? T("A saved room: reading only. Show the code opens what it saved.", "存檔的審查室：只能閱讀。看程式碼會打開存下的內容。") : T("This room takes no question now.", "這個審查室現在不能提問。"))
-      : !desk ? h("p", { class: "rb-popnote", "data-ask-desktop": "" }, T("Ask on the desktop: a phone reads the room.", "在電腦上問：手機只能閱讀。")) : r.offer?.error ? h("p", { class: "rb-popnote" }, r.offer.error) : null,
+      : !desk ? deskNote() : r.offer?.error ? h("p", { class: "rb-popnote" }, r.offer.error) : null,
     h("button", { type: "button", class: "rb-popx", "aria-label": T("Close", "關閉"), onclick: (e) => { e.stopPropagation(); closePop(); } }, "×"));
 }
 function view(r, scenes, i) {
