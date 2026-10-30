@@ -4,7 +4,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   a shell keeps running when its page closes; a new page (the app window reopened) gets its tab back, the output it had
 //   (a marker) replayed, and typing reaches the same shell (the same $$); the replay is bounded (CREW_TERMINAL_SCROLLBACK)
 //   and says what it dropped; `exit` in a shell closes its tab and takes it off the list, and a reload lists live shells
-//   only; Stop ends the shell (its process is gone) and it leaves too; a Studio restart ends every shell: the next page
+//   only; Stop ends the shell (its process is gone) and it leaves too; a shell that fails (an rc file that exits 3) stays,
+//   with its last output and its exit code, until removed; a Studio restart ends every shell: the next page
 //   says so once ("ended when Studio restarted"), shows no dead tab and lists none of them, and a second load says nothing.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -12,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePort, waitUp, withSession } from "./boot.mjs";
+import { checkedTempDir } from "./lib/git-hygiene.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, ".."), tmp = mkdtempSync(join(tmpdir(), "crew-terminal-reattach-ui-"));
 const home = join(tmp, "home"), proj = join(tmp, "proj"), state = join(tmp, "state"), data = join(tmp, "data");
@@ -21,8 +23,16 @@ const ok = (v, n, extra = "") => { if (v) { pass++; console.log("ok " + n); } el
 const until = async (f, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await f(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
-writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "demo", name: "Demo", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
-writeFileSync(join(home, ".bashrc"), "PS1='$ '\n");
+// a git project (Send for review needs a branch with commits beyond its base), and one whose shell's rc file fails
+// the repository lives in a checked temp folder (tests/lib/git-hygiene.mjs)
+const ck = checkedTempDir("crew-terminal-reattach-repo-"), repo = join(ck, "repo"), broken = join(tmp, "broken"); for (const d of [repo, broken]) mkdirSync(d, { recursive: true });
+const G = ["-c", "user.name=T", "-c", "user.email=t@example.invalid"];
+execFileSync("git", ["init", "-q", "-b", "main", repo]); writeFileSync(join(repo, "README.md"), "fixture\n");
+execFileSync("git", [...G, "add", "README.md"], { cwd: repo }); execFileSync("git", [...G, "commit", "-q", "-m", "init"], { cwd: repo });
+writeFileSync(join(broken, ".broken"), "");
+const P = (id, path) => ({ id, name: id, path, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true });
+writeFileSync(join(data, "projects.json"), JSON.stringify([P("demo", proj), P("repo", repo), P("broken", broken)]));
+writeFileSync(join(home, ".bash_profile"), "PS1='$ '\nif [ -f .broken ]; then echo 'rc: this setup is broken'; exit 3; fi\n");
 const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bun"], { encoding: "utf8" }).trim();
 const TOKEN = "terminal-reattach-ui-session", CAP = 65536;
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"]) delete env[k];
@@ -43,8 +53,9 @@ try {
   const page = async () => { const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(String(e))); return p; };
   const rowsOf = (p, id) => p.locator(`.wt-pane[data-term-pane="${id}"] .xterm-rows`).innerText().catch(() => "");
   const tabsOf = (p) => p.locator(".wt-tabs [data-term-tab]").count();
-  const listed = (p) => p.evaluate(async () => (await (await fetch("/api/terminals")).json()).terminals.map((t) => ({ id: t.id, running: t.running, kind: t.kind })));
-  const startShell = (p) => p.evaluate(async () => { const r = await fetch("/api/terminals", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project: "demo", preset: "shell", cols: 100, rows: 30 }) }); return (await r.json()).terminal.id; });
+  const listed = (p) => p.evaluate(async () => (await (await fetch("/api/terminals")).json()).terminals.map((t) => ({ id: t.id, running: t.running, kind: t.kind, exitCode: t.exitCode, signal: t.signal })));
+  const startShell = (p, project = "demo") => p.evaluate(async (project) => { const r = await fetch("/api/terminals", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project, preset: "shell", cols: 100, rows: 30 }) }); return (await r.json()).terminal.id; }, project);
+  const dismiss = (p, id) => p.evaluate(async (id) => (await fetch(`/api/terminals/${id}/dismiss`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).ok, id);
   const show = async (p, id) => { await p.goto(`${base}/#/terminals/${encodeURIComponent(id)}`); await p.locator(`.wt-pane[data-term-pane="${id}"] .xterm-rows`).waitFor({ timeout: 10000 });
     const hide = p.locator('[data-term-appwin] button[aria-label="Hide"]'); if (await hide.count()) await hide.click();
     await p.locator(`.wt-pane[data-term-pane="${id}"] .xterm-screen`).click(); await until(async () => /\$ $/m.test(await rowsOf(p, id))); };
@@ -94,6 +105,16 @@ try {
   ok(await until(async () => !alive(pidC), 6000), "Stop ends the shell (its process is gone)", String(pidC));
   ok(await until(async () => !(await listed(p)).some((t) => t.id === c) && !(await p.locator(`.wt-pane[data-term-pane="${c}"]`).count())), "and it leaves the list and its tab");
 
+  // a shell that fails stays, with its exit code and its last words: one whose rc file exits 3 dies as it starts
+  const e = await startShell(p, "broken");
+  await p.goto(`${base}/#/terminals/${encodeURIComponent(e)}`);
+  ok(await until(async () => (await listed(p)).some((t) => t.id === e && !t.running)), "a shell whose rc file exits 3 ends at once");
+  await p.waitForTimeout(800);
+  ok((await listed(p)).some((t) => t.id === e) && (await p.locator(`.wt-pane[data-term-pane="${e}"]`).count()) === 1, "it stays listed and in its tab: an error is not cleaned away");
+  ok(await until(async () => { const r = await rowsOf(p, e); return /rc: this setup is broken/.test(r) && /process ended: exit 3/.test(r); }), "its pane shows its last output and exit 3", await rowsOf(p, e));
+  ok(await until(async () => /Exited 3/.test(await p.locator(`.wt-pane[data-term-pane="${e}"] .wt-pbar, [data-term-detail="${e}"] .wt-dhead`).allInnerTexts().then((x) => x.join(" ")))), "and its badge says Exited 3");
+  ok(await dismiss(p, e) && await until(async () => !(await listed(p)).some((t) => t.id === e)), "the captain removes it");
+
   // a browser with no tabs saved (another profile, cleared site data) gets a tab for every running terminal, not just one
   const d = await startShell(p);
   {
@@ -122,7 +143,7 @@ try {
 } finally {
   try { await browser?.close(); } catch {}
   try { app?.kill("SIGTERM"); } catch {}
-  await new Promise((r) => setTimeout(r, 300)); rmSync(tmp, { recursive: true, force: true });
+  await new Promise((r) => setTimeout(r, 300)); rmSync(tmp, { recursive: true, force: true }); rmSync(ck, { recursive: true, force: true });
 }
 console.log(`terminal-reattach-ui: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

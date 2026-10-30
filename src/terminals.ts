@@ -159,7 +159,7 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
 /** A view of a terminal's output. mux: one of several terminals on one stream (GET /api/terminals/mux), each event naming its terminal. */
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string; mux?: boolean };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
   line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[];
   /** the transcript's file name in the record: kept for a terminal listed after a restart (it writes no more to it) */
   transcriptName: string | null; reviewing?: boolean };
@@ -359,9 +359,10 @@ export class Terminals {
     this.evaluate(t); this.saveMeta(t);
     for (const s of t.subs) this.emit(t, s, this.ev(s, t, "exit", JSON.stringify({ exitCode: t.exitCode, signal: t.signal })));
     this.o.log?.("terminal.exit", `terminal ${t.id} (${t.label}) ended: ${t.signal ? `signal ${t.signal}` : `exit ${t.exitCode}`}`, { id: t.id, project: t.project.id, exitCode: t.exitCode, signal: t.signal });
-    // an ended shell has nothing to show or send for review: it leaves the list (and the page's tabs) on its own, as a
-    // Terminal window closes on exit; its record and transcript stay. An agent or a command stays listed until removed.
-    if (t.kind === "shell") { this.saveMeta(t, { dismissed: true }); if (this.terms.get(t.id) === t) this.terms.delete(t.id); }
+    // a shell that ended well (exit 0, or the captain's Stop) leaves the list (and the page's tabs) on its own, as a
+    // Terminal window closes on exit; its record and transcript stay. One that failed (an exit code, a signal: a broken
+    // rc file) stays, with its last output, until removed.
+    if (t.kind === "shell" && (t.userStopped || (t.exitCode === 0 && !t.signal))) { this.saveMeta(t, { dismissed: true }); if (this.terms.get(t.id) === t) this.terms.delete(t.id); }
     this.changed();
   }
   private saveMeta(t: Term, extra: Record<string, unknown> = {}) {
@@ -388,7 +389,7 @@ export class Terminals {
    */
   private restore() {
     const recs: any[] = [];
-    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.kind !== "shell" && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
+    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
     recs.sort((a, b) => String(a.endedAt).localeCompare(String(b.endedAt)));
     for (const m of recs.slice(-20)) {
       const now = this.o.projects().find((p) => p.id === m.project.id);
@@ -472,7 +473,7 @@ export class Terminals {
   /** SIGHUP to the process group (what closing a terminal window does), SIGKILL two seconds later if it is still there. */
   kill(id: string) {
     const t = this.need(id); if (!t.running) return this.view(t, true);
-    const pid = t.proc.pid; const sig = (s: NodeJS.Signals) => { try { process.kill(-pid, s); } catch { try { t.proc.kill(s); } catch {} } };
+    t.userStopped = true; const pid = t.proc.pid; const sig = (s: NodeJS.Signals) => { try { process.kill(-pid, s); } catch { try { t.proc.kill(s); } catch {} } };
     sig("SIGHUP"); t.killTimer = setTimeout(() => { if (t.running) sig("SIGKILL"); }, 2000);
     return this.view(t, true);
   }
@@ -483,7 +484,9 @@ export class Terminals {
   // Its record gets its end and where the checkout stood (Studio's own git, sync), so after the restart it is listed as
   // studio-stopped and Send for review's guard (the checkout moved since) has a head to compare with.
   shutdown() { for (const t of this.terms.values()) if (t.running) { for (const s of ["SIGHUP", "SIGKILL"] as const) { try { process.kill(-t.proc.pid, s); } catch { try { t.proc.kill(s); } catch {} } }
-    t.stopped = "studio-stopped"; t.endedAt ??= new Date().toISOString(); try { t.git.end = gitFacts(t.project.path, t.project.base); } catch {} this.saveMeta(t); } }
+    t.stopped = "studio-stopped"; t.endedAt ??= new Date().toISOString(); try { t.git.end = gitFacts(t.project.path, t.project.base); } catch {}
+    // a shell is not listed again after the restart (the page says once that it ended)
+    this.saveMeta(t, t.kind === "shell" ? { dismissed: true } : {}); } }
 
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {
