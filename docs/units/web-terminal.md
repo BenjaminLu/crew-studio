@@ -82,6 +82,12 @@ one committed up to where the new one starts, and cancels the send xterm had que
 Chromium's input-method layer over CDP (`Input.imeSetComposition`, `Input.insertText`) and reads the bytes the page posts;
 it is not the operating system's Zhuyin keyboard, which no test here presses.
 
+Tab is the shell's: xterm sends it as `\t` and keeps the focus (the login shell, `$SHELL -l` on a PTY with
+`TERM=xterm-256color`, is interactive, so bash and zsh complete). A press on the pane around the terminal (its bar, the
+frame's padding) used to take the focus to the page, and the next Tab moved it to the pane's × instead of completing;
+such a press now keeps the focus in the pane's terminal (buttons and links in the pane keep theirs). The same test checks
+`\t` reaches the PTY, the focus stays, and bash and zsh complete `ech` to `echo`.
+
 ## A Studio window
 
 A browser tab keeps ⌘T, ⌘W and ⌘N (Ctrl+Shift+T, W, N; Ctrl+Tab) for itself: the page never sees them. A Chromium app

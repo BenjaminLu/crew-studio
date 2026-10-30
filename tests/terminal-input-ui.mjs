@@ -1,15 +1,16 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Typing into a web terminal in a real browser (public/terminals.js, docs/units/web-terminal.md, "Typing"), a stub server
-// with temporary data and a plain command only (no agent CLI, no model). What the page POSTs to /api/terminals/<id>/input is
+// with temporary data and plain shells only (no agent CLI, no model). What the page POSTs to /api/terminals/<id>/input is
 // what reaches the PTY, so the test reads those bodies:
 //   an input method (Chromium's own, driven over CDP: Input.imeSetComposition, Input.insertText) composing 中文 in steps
 //   (ㄓ → 中 → 中ㄨ → 中文) sends 中文 exactly once; an input method that commits the front of what it composes while the
 //   rest goes on composing (中 committed, 文 still open, as Zhuyin and Pinyin do when the buffer fills or a word is
 //   confirmed) sends each character once, not the whole word again (xterm.js 5.5.0's own composition helper did);
-//   two words in a row each arrive once.
+//   two words in a row each arrive once; Tab reaches the PTY as "\t", the focus stays in the terminal, and the shell
+//   completes the command with it.
 // Not covered: the operating system's own Zhuyin keyboard (macOS) - CDP drives Chromium's input-method layer, not the OS's.
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,8 @@ const ok = (v, n, extra = "") => { if (v) { pass++; console.log("ok " + n); } el
 const until = async (f, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await f(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
 
 writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "demo", name: "Demo", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
+writeFileSync(join(home, ".bashrc"), "PS1='$ '\n");
+writeFileSync(join(home, ".zshrc"), "PS1='%% '\n");
 const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bun"], { encoding: "utf8" }).trim();
 const TOKEN = "terminal-input-ui-session";
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"]) delete env[k];
@@ -82,6 +85,37 @@ try {
   s = await typed();
   ok(s === "你好 ok 世界", "two words with plain keys between them: each once", JSON.stringify(s));
 
+  // ---------- Tab ----------
+  const shell = await open({ preset: "shell" });
+  await until(async () => /\$ $/m.test(await rows()), 8000); sent.length = 0;
+  await p.keyboard.type("ech"); await p.keyboard.press("Tab"); await p.keyboard.type("tab-done-$((40+2))"); await p.keyboard.press("Enter");
+  s = await typed();
+  ok(s.startsWith("ech\t"), "Tab reaches the PTY as \\t", JSON.stringify(s));
+  ok(await p.evaluate((id) => !!document.activeElement?.closest(`.wt-pane[data-term-pane="${id}"]`) && document.activeElement.classList.contains("xterm-helper-textarea"), shell), "the focus stays in the terminal after Tab");
+  ok(await until(async () => /tab-done-42/.test(await rows())), "the shell completed ech to echo with it (tab-done-42 printed)", await rows());
+  // zsh, macOS's login shell, with no completion system loaded (compinit): its own completion still runs on Tab
+  if (existsSync("/bin/zsh")) {
+    await open({ command: "exec /bin/zsh -i" });
+    await until(async () => /% $/m.test(await p.locator(".wt-pane.focus .xterm-rows").innerText()), 8000);
+    await p.keyboard.type("ech"); await p.keyboard.press("Tab"); await p.keyboard.type("tab-zsh-$((40+4))"); await p.keyboard.press("Enter");
+    ok(await until(async () => /tab-zsh-44/.test(await p.locator(".wt-pane.focus .xterm-rows").innerText())), "zsh completes ech to echo on Tab too", await p.locator(".wt-pane.focus .xterm-rows").innerText());
+  }
+  // started from the launcher's Shell button, typed into without a click: the new terminal has the focus, Tab is its own
+  await p.goto(base + "/#/terminals"); await p.locator("[data-term-new]").click(); await p.locator('[data-preset="shell"]').click();
+  await until(async () => (await p.locator(".wt-pane.focus .xterm-rows").count()) && /\$ $/m.test(await p.locator(".wt-pane.focus .xterm-rows").innerText()), 10000);
+  await p.waitForTimeout(300); sent.length = 0;
+  const where = () => p.evaluate(() => { const a = document.activeElement; return a ? `${a.tagName}.${a.className}` : "none"; });
+  const w0 = await where();
+  await p.keyboard.type("ech"); await p.keyboard.press("Tab"); const w1 = await where(); await p.keyboard.type("tab-two-$((40+3))"); await p.keyboard.press("Enter");
+  s = await typed();
+  ok(s.startsWith("ech\t") && /xterm-helper-textarea/.test(w0) && /xterm-helper-textarea/.test(w1), "a terminal just started from the launcher has the focus, and Tab goes to it", JSON.stringify({ s, w0, w1 }));
+  ok(await until(async () => /tab-two-43/.test(await p.locator(".wt-pane.focus .xterm-rows").innerText())), "and the shell completes with it");
+  // a click on the pane around the terminal (its bar, the frame's padding) or the page around it, then Tab
+  for (const [what, sel, pos] of [["the pane's bar", ".wt-pane.focus .wt-pbar b", null], ["the frame's padding", ".wt-pane.focus .wt-xterm", { x: 2, y: 2 }]]) {
+    await p.locator(sel).first().click(pos ? { position: pos } : {}); await p.waitForTimeout(150); sent.length = 0;
+    const before = await where(); await p.keyboard.press("Tab"); const after = await where(); const t = await typed();
+    ok(t === "\t" && /xterm-helper-textarea/.test(after), `a click on ${what}, then Tab: \\t reaches the terminal, the focus stays in it`, JSON.stringify({ t, before, after }));
+  }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
   try { await browser?.close(); } catch {}
