@@ -8,8 +8,11 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   text, caret) and its tab goes once the field closes; Stop ends the shell (its process is gone) and it leaves too; a
 //   shell that fails (an rc file that exits 3) stays,
 //   with its last output and its exit code, until removed; a shell that exits 0 with a commit beyond main stays with Send
-//   for review, one with uncommitted changes stays, one with nothing to review leaves; a Studio restart ends every shell: the next page
-//   says so once ("ended when Studio restarted"), shows no dead tab and lists none of them, and a second load says nothing.
+//   for review, one with uncommitted changes stays, one with nothing to review leaves; a Studio restart ends every shell:
+//   the next page says so once ("ended when Studio restarted"), shows no dead tab and lists none of them, and a second
+//   load says nothing;
+//   with two windows open through a restart, each drops the tab of the command the restart ended, a command that had
+//   finished before (kept, as an agent is for review) keeps its tab, and the toast counts only the one.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -177,26 +180,28 @@ try {
   await p.reload(); await p.waitForFunction(() => window.crewTerminals?.list !== null); await p.waitForTimeout(1500);
   ok(!(await p.locator(".toast, [role=status]").allInnerTexts()).some((x) => /ended when Studio restarted/i.test(x)), "a second load says nothing more");
 
-  // ---------- a restart, with a finished agent kept for review ----------
+  // ---------- a restart, with two windows open and a finished agent kept for review ----------
   // a command that finished before the restart (kept listed, as an agent is for Send for review) keeps its tab; the one
   // that was running when the windows last saw it, and died with the restart, leaves both windows' tabs; the toast counts it
   const startCmd = (q, command) => q.evaluate(async (command) => (await (await fetch("/api/terminals", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project: "demo", command, cols: 100, rows: 30 }) })).json()).terminal.id, command);
   const kept = await startCmd(p, "echo finished-before-restart"), died = await startCmd(p, "exec cat");
   await until(async () => (await listed(p)).some((t) => t.id === kept && !t.running));
   for (const id of [kept, died]) { await p.goto(`${base}/#/terminals/${encodeURIComponent(id)}`); await p.locator(`.wt-pane[data-term-pane="${id}"] .xterm-rows`).waitFor({ timeout: 10000 }); }
+  const p2 = await page(); await p2.goto(`${base}/#/terminals/${encodeURIComponent(died)}`); await p2.locator(`.wt-pane[data-term-pane="${died}"] .xterm-rows`).waitFor({ timeout: 10000 });
   const panes = (q) => q.evaluate(() => { const out = []; const walk = (n) => { if (!n) return; if (n.t === "pane") out.push(n.term); else { walk(n.a); walk(n.b); } }; for (const t of window.crewTerminals.lay.tabs) walk(t.root); return out; });
-  ok((await panes(p)).includes(kept) && (await panes(p)).includes(died), "the window shows the running command and the finished one", JSON.stringify(await panes(p)));
-  const toasts = []; for (const [n, q] of [["first", p]]) await q.exposeFunction(`__toast_${n}`, (t) => toasts.push(`${n}: ${t}`)).catch(() => {});
-  for (const [n, q] of [["first", p]]) await q.evaluate((n) => { new MutationObserver((ms) => { for (const m of ms) for (const el of m.addedNodes) if (el.classList?.contains("toast")) window[`__toast_${n}`](el.textContent); }).observe(document.body, { childList: true }); }, n);
+  ok((await panes(p)).includes(kept) && (await panes(p)).includes(died) && (await panes(p2)).includes(died), "two windows show the running command; the first also the finished one", JSON.stringify({ p: await panes(p), p2: await panes(p2) }));
+  const toasts = []; for (const [n, q] of [["first", p], ["second", p2]]) await q.exposeFunction(`__toast_${n}`, (t) => toasts.push(`${n}: ${t}`)).catch(() => {});
+  for (const [n, q] of [["first", p], ["second", p2]]) await q.evaluate((n) => { new MutationObserver((ms) => { for (const m of ms) for (const el of m.addedNodes) if (el.classList?.contains("toast")) window[`__toast_${n}`](el.textContent); }).observe(document.body, { childList: true }); }, n);
   app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
   app = await boot();
   { const s = await ctx.newPage(); await s.goto(`${base}/session?t=${encodeURIComponent(TOKEN)}`); await s.close(); }
-  // the window is not reloaded: it sees the new run on its stream
-  for (const [n, q] of [["first", p]]) {
+  // neither window is reloaded: each sees the new run on its own stream and cleans its own tabs
+  for (const [n, q] of [["first", p], ["second", p2]]) {
     ok(await until(async () => !(await panes(q)).includes(died) && !(await q.locator(`.wt-pane[data-term-pane="${died}"]`).count()), 15000), `the ${n} window drops the tab of the command the restart ended, without a reload`, JSON.stringify(await panes(q)));
   }
   ok((await panes(p)).includes(kept), "the finished command, kept for review, keeps its tab", JSON.stringify(await panes(p)));
   ok(await until(async () => toasts.some((t) => /^(first|second): A terminal session ended when Studio restarted$/.test(t))), "the toast counts the one session the restart ended, not the finished one", JSON.stringify(toasts));
+  await p2.close();
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
   try { await browser?.close(); } catch {}

@@ -195,7 +195,8 @@ window does) and SIGKILL two seconds later.
   opens none in their place, and says once how many "Terminal sessions ended when Studio restarted" (工作階段在 Studio
   重啟時結束), from the run's `boot` in `GET /api/terminals` against the one it saw last with the terminals then
   running; a terminal that had already ended (an agent kept for Send for review) keeps its tab, and a reload in the same
-  run says nothing.
+  run says nothing. What a window saw is its own (sessionStorage, which a reload of that window keeps), so every open
+  window cleans its own tabs when Studio comes back; a new window starts from the last any window saw (localStorage).
 - Studio stopping kills every terminal's process group (SIGHUP then SIGKILL; `tests/terminals.ts` checks a grandchild goes
   too). Nothing is re-attached on restart: no process, no input, no Restart in place. A terminal still running when Studio
   stops gets its end and where its checkout stood (its git end) in its record, marked `studio-stopped`; a record left open

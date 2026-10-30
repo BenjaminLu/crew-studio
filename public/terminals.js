@@ -41,16 +41,17 @@ function apply(list) {
   }
   TM.list = list;
 }
-// Studio restarted since this browser last saw it (a PTY cannot outlive Studio): the terminals that were running when
-// the page last loaded the list, and are not running now, leave the tabs, and the page says once how many, rather than
-// drawing a dead tab. A terminal that had already ended (an agent kept for Send for review) keeps its tab. A reload of
-// the same run says nothing.
+// Studio restarted since this window last saw it (a PTY cannot outlive Studio): the terminals that were running when
+// this window last loaded the list, and are not running now, leave its tabs, and the page says once how many, rather
+// than drawing a dead tab. A terminal that had already ended (an agent kept for Send for review) keeps its tab. What the
+// window saw is its own (sessionStorage, which a reload of the same window keeps), so every open window cleans its own
+// tabs; a new window starts from the last one any window saw (localStorage). A reload of the same run says nothing.
 const SEEN = "crew.term.seen";
-function seenBefore() { for (const s of [() => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null"); if (v && typeof v.boot === "string" && Array.isArray(v.running)) return v; } catch {} } return null; }
+function seenBefore() { for (const s of [() => sessionStorage, () => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null"); if (v && typeof v.boot === "string" && Array.isArray(v.running)) return v; } catch {} } return null; }
 function restarted(boot) {
   if (!boot) return; const was = seenBefore();
   const now = JSON.stringify({ boot, running: TM.list.filter((t) => t.running).map((t) => t.id) });
-  try { localStorage.setItem(SEEN, now); } catch {}
+  for (const s of [() => sessionStorage, () => localStorage]) { try { s().setItem(SEEN, now); } catch {} }
   if (!was || was.boot === boot) return;
   const died = new Set(was.running.filter((id) => !TM.list.some((t) => t.id === id && t.running))); let n = 0;
   for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (died.has(pn.term)) { n++; detachPane(tab, pn); }
