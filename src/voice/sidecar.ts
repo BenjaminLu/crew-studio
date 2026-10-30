@@ -146,9 +146,12 @@ export class Sidecar {
         this.start();
       }
       const hello = this.ready!;
-      let t: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([hello, new Promise((_, bad) => { t = setTimeout(() => bad(new Error("the voice engine did not start in time")), this.o.loadTimeoutMs ?? 30_000); })])
-        .catch((e) => { if (this.proc) { this.failed(); this.stop(); } throw e; }).finally(() => clearTimeout(t));
+      // the start-up wait ends early when the request is given up: the child just started for it is stopped
+      let t: ReturnType<typeof setTimeout> | undefined, onAbort: () => void = () => {};
+      const gaveUp = new Promise((_, bad) => { onAbort = () => bad(stopped()); signal?.addEventListener("abort", onAbort, { once: true }); });
+      await Promise.race([hello, gaveUp, new Promise((_, bad) => { t = setTimeout(() => bad(new Error("the voice engine did not start in time")), this.o.loadTimeoutMs ?? 30_000); })])
+        .catch((e) => { if (this.proc) { if (e?.code !== "aborted") this.failed(); this.stop(); } throw e; })
+        .finally(() => { clearTimeout(t); signal?.removeEventListener("abort", onAbort); });
       if (!this.loaded) { const r = await this.send({ op: "load", config: this.o.config, idleMs: this.o.idleMs ?? 10 * 60_000 }, this.o.loadTimeoutMs ?? 30_000, signal);
         this.loaded = true; this.info.sampleRate = r.sampleRate ?? null; this.info.loadMs = r.ms ?? null; }
       const r = await this.send(msg, this.o.timeoutMs ?? 60_000, signal); this.failures = 0; return r;
