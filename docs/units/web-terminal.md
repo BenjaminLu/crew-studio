@@ -8,7 +8,7 @@ Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state he
 `public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 5.5.0 and its fit addon 0.10.0,
 pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
 `tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs`, `tests/terminal-keys.ts`, `tests/terminal-launch.ts`,
-`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`.
+`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs`, `tests/terminal-theme.ts` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`. Colours: `public/term-theme.js`.
 
 ## Focus mode
 
@@ -87,6 +87,18 @@ Tab is the shell's: xterm sends it as `\t` and keeps the focus (the login shell,
 frame's padding) used to take the focus to the page, and the next Tab moved it to the pane's × instead of completing;
 such a press now keeps the focus in the pane's terminal (buttons and links in the pane keep theirs). The same test checks
 `\t` reaches the PTY, the focus stays, and bash and zsh complete `ech` to `echo`.
+
+## Colours
+
+The terminal is drawn on Studio's `--surface-2` with `--text`, in the light theme and the dark one (read when a pane is
+made). xterm.js's own palette (Tango) was made for a black background: on the dark surface bright black (hints,
+autosuggestions) was 2.2:1, blue 2.8:1 and dim bright black 1.5:1; on the light one yellow, cyan and the whites were under
+2:1. `public/term-theme.js` gives each side its own 16 ANSI colours, every one at WCAG AA (4.5:1) on that surface (black is
+a readable grey on the dark side, white a dark grey on the light one, as their roles are swapped there); dim text (SGR 2)
+is drawn in a dim form of its colour that moves toward the background only as far as AA allows (xterm's own is half
+opacity, which halves the contrast). Any other colour a program asks for (256-colour, truecolor, as Claude Code's greys
+are) xterm keeps at 4.5:1 itself (`minimumContrastRatio`). `tests/terminal-theme.ts` computes every ratio from the theme
+object against the surfaces in `public/styles.css`; `tests/terminal-input-ui.mjs` reads the colours drawn in both themes.
 
 ## A Studio window
 

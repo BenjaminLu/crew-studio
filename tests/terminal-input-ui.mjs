@@ -7,7 +7,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   rest goes on composing (中 committed, 文 still open, as Zhuyin and Pinyin do when the buffer fills or a word is
 //   confirmed) sends each character once, not the whole word again (xterm.js 5.5.0's own composition helper did);
 //   two words in a row each arrive once; Tab reaches the PTY as "\t", the focus stays in the terminal, and the shell
-//   completes the command with it.
+//   completes the command with it; the colours drawn (public/term-theme.js): dim bright black, blue and dim default text
+//   reach 4.5:1 against the terminal's background in the light and the dark theme.
 // Not covered: the operating system's own Zhuyin keyboard (macOS) - CDP drives Chromium's input-method layer, not the OS's.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -116,6 +117,31 @@ try {
     const before = await where(); await p.keyboard.press("Tab"); const after = await where(); const t = await typed();
     ok(t === "\t" && /xterm-helper-textarea/.test(after), `a click on ${what}, then Tab: \\t reaches the terminal, the focus stays in it`, JSON.stringify({ t, before, after }));
   }
+  // ---------- the colours drawn, in both themes ----------
+  for (const theme of ["dark", "light"]) {
+    await p.evaluate((t) => setTheme(t), theme); // Settings' own switch (app.js)
+    const id = await open({ command: "printf '\\033[2;90mDIMHINT\\033[0m \\033[34mBLUETXT\\033[0m \\033[2mDIMFG\\033[0m \\033[90mHINTTXT\\033[0m\\n'; exec cat >/dev/null" });
+    await until(async () => /HINTTXT/.test(await rows()));
+    const got = await p.evaluate((id) => {
+      const TT = window.crewTermTheme, host = document.querySelector(`[data-term-host="${CSS.escape(id)}"]`);
+      const hex = (c) => { const m = c.match(/\d+(\.\d+)?/g).map(Number); const a = m[3] ?? 1; return { rgb: m.slice(0, 3), a }; };
+      const bgc = getComputedStyle(host.querySelector(".xterm-viewport")).backgroundColor, bg = hex(bgc).rgb;
+      const toHex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+      const out = { bg: toHex(bg), theme: document.documentElement.dataset.theme || "" };
+      for (const w of ["DIMHINT", "BLUETXT", "DIMFG", "HINTTXT"]) {
+        const span = [...host.querySelectorAll(".xterm-rows span")].find((s) => s.textContent.includes(w[0]) && s.closest("div").textContent.includes(w)) ;
+        const all = [...host.querySelectorAll(".xterm-rows span")].filter((s) => w.includes(s.textContent.trim()) && s.textContent.trim());
+        const el = all[0] || span; if (!el) { out[w] = null; continue; }
+        const c = hex(getComputedStyle(el).color), mixed = c.rgb.map((v, i) => v * c.a + bg[i] * (1 - c.a)); // what the eye sees
+        out[w] = { color: toHex(mixed), ratio: +TT.contrast(toHex(mixed), toHex(bg)).toFixed(2) };
+      }
+      return out;
+    }, id);
+    const words = ["DIMHINT", "BLUETXT", "DIMFG", "HINTTXT"];
+    ok(got.theme === theme && got.bg === (theme === "dark" ? "#1c2029" : "#f2f4f7"), `${theme} theme: the terminal is drawn on that theme's surface`, JSON.stringify(got));
+    ok(words.every((w) => got[w] && got[w].ratio >= 4.5), `${theme} theme: dim bright black, blue, dim default text and bright black are drawn at 4.5:1 or more`, JSON.stringify(got));
+  }
+  await p.evaluate(() => setTheme("system"));
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
   try { await browser?.close(); } catch {}

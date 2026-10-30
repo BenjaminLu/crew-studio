@@ -118,8 +118,12 @@ function pane(t) {
   p = { host: h("div", { class: "wt-xterm", "data-term-host": t.id }), term: null, fit: null, queue: "", sending: Promise.resolve(), flushT: null, sizeT: null, err: null };
   TM.panes.set(t.id, p);
   xterm().then(() => {
+    // colours that read (public/term-theme.js): the 16 ANSI colours and their dim forms at 4.5:1 on this background, and
+    // xterm keeps any other colour a program asks for (256-colour, truecolor) at 4.5:1 too
+    const TT = window.crewTermTheme, { theme, dim } = TT.themeFor(css("--surface-2", "#111111"), css("--text", "#dddddd"), css("--accent", "#6699ff"));
+    p.host.append(h("style", {}, TT.dimCss(`[data-term-host="${CSS.escape(t.id)}"]`, dim)));
     const term = new window.Terminal({ cursorBlink: TM.canWrite, disableStdin: !TM.canWrite, scrollback: 5000, fontSize: 13, allowProposedApi: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: { background: css("--surface-2", "#111"), foreground: css("--text", "#ddd"), cursor: css("--accent", "#69f") } });
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme, minimumContrastRatio: TT.AA });
     const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit); term.open(p.host); p.term = term; p.fit = fit; imeOnce(term);
     // a phone watches: no input element at all, so a tap never opens a keyboard
     if (!TM.canWrite) p.host.querySelectorAll("textarea, input").forEach((e) => e.remove());
