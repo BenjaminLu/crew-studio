@@ -6,6 +6,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // round's confirmation and the controls wait while it runs. Model text stays text. At 1440 (en) and 390 (zh-TW).
 // The room's routes are answered by the test: nothing paid runs.        node tests/review-room-ui.mjs
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -468,6 +469,35 @@ try {
     await p.click("[data-transcript-toggle]");
     const fold = await p.evaluate(() => { const d = document.querySelector("[data-notes]"); return d && { open: d.open, n: d.querySelectorAll("[data-note]").length, first: d.querySelector("[data-note]")?.dataset.note }; });
     ok(fold && fold.open === false && fold.n === 30, "their notes are in the transcript, folded until the captain opens them", JSON.stringify(fold));
+    await ctx.close(); }
+
+  // ---------- a diff citation on a GitHub pull request opens GitHub's own diff at those lines, in a new window; Studio shows no copy ----------
+  { const GH = { ...ROOM, card: { ...ROOM.card, id: "SC-77" }, pr: { id: "77", url: "https://github.com/fixture/project/pull/77" } };
+    const { ctx, p } = await open(1440, "en"); const asked = [];
+    await p.addInitScript(() => { window.__opened = []; window.open = (...a) => { window.__opened.push(a); return null; }; });
+    await p.route(/\/api\/review-room\/SC-77(\?open=1)?$/, (r) => r.fulfill({ json: GH }));
+    await p.route(/\/api\/review-room\/SC-77\/cite\?/, (r) => { asked.push(new URL(r.request().url()).searchParams.get("ref")); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "+x" } }); });
+    await p.goto(`${base}/#/room/SC-77`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
+    const title = await p.getAttribute('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]', "title"); await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]');
+    await p.waitForFunction(() => window.__opened.length > 0, null, { timeout: 3000 }).catch(() => {}); await p.waitForTimeout(150);
+    const opened = await p.evaluate(() => window.__opened), want = createHash("sha256").update("src/percent.ts").digest("hex");
+    ok(opened.length === 1 && /^https:\/\/github\.com\/fixture\/project\/pull\/77\/files#diff-[0-9a-f]{64}(R\d+-R\d+)?$/.test(opened[0][0]) && opened[0][0].includes(`#diff-${want}`) && opened[0][1] === "_blank" && /noopener/.test(opened[0][2]) && /GitHub/.test(title || ""),
+      "a diff citation on a GitHub pull request opens that file's diff on GitHub at the cited lines, in a new window", JSON.stringify({ opened, title }));
+    ok(opened[0]?.[0] === `https://github.com/fixture/project/pull/77/files#diff-${want}R2-R3`, "the cited lines are the head side's lines on GitHub", String(opened[0]?.[0]));
+    ok(!asked.length && !(await p.$("[data-cite-panel]")), "no copy of the code is fetched or shown in Studio", JSON.stringify(asked));
+    await ctx.close(); }
+
+  // a pull request address that is not github.com's own (a look-alike host): the citation panel, never a window to it
+  { const BAD = { ...ROOM, card: { ...ROOM.card, id: "SC-78" }, pr: { id: "78", url: "https://github.com.evil.example/fixture/project/pull/78" } };
+    const { ctx, p } = await open(1440, "en"); const asked = [];
+    await p.addInitScript(() => { window.__opened = []; window.open = (...a) => { window.__opened.push(a); return null; }; });
+    await p.route(/\/api\/review-room\/SC-78(\?open=1)?$/, (r) => r.fulfill({ json: BAD }));
+    await p.route(/\/api\/review-room\/SC-78\/cite\?/, (r) => { asked.push(1); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "+x" } }); });
+    await p.goto(`${base}/#/room/SC-78`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
+    await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff", { timeout: 5000 }).catch(() => {});
+    ok(!(await p.evaluate(() => window.__opened.length)) && asked.length === 1 && !!(await p.$("[data-cite-panel] .rr-diff")), "a pull request address on any other host opens nothing outside Studio: the citation panel as before");
     await ctx.close(); }
 
   // ---------- coming back while a turn runs; an answer already there; the answer that finished while the captain looked away ----------
