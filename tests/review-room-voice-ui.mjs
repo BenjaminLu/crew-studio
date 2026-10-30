@@ -45,7 +45,7 @@ const stubs = () => {
   window.Audio = function (src) { const a = { src, onended: null, onerror: null, paused: false, play: async () => { window.__clips.push(a); }, pause() { a.paused = true; } }; return a; };
 };
 async function open(readyAt, failClip = false) {
-  const state = { ready: readyAt, statusAsks: 0 };
+  const state = { ready: readyAt, statusAsks: 0, hold: false, held: [], failed: [], resets: 0 };
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 } });
   await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); });
   await ctx.addInitScript(stubs);
@@ -53,9 +53,10 @@ async function open(readyAt, failClip = false) {
   const asked = [];
   await ctx.route(/\/api\/review-room\/SC-60(\?open=1)?$/, (r) => r.fulfill({ json: ROOM }));
   await ctx.route(/\/api\/voice\/status(\?fresh=1)?$/, (r) => { state.statusAsks++; const ready = state.ready; r.fulfill({ json: { ready, engine: "kokoro-test", voices: { zh: "zf_xiaobei", en: "af_heart" }, runtime: { ok: ready }, model: { ok: ready, source: "studio" } } }); });
-  await ctx.route(/\/api\/review-room\/SC-60\/voice$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); asked.push(b); if (failClip) return r.fulfill({ status: 409, json: { error: "The local voice is not installed", code: "no_voice" } });
+  await ctx.route(/\/api\/review-room\/SC-60\/reset$/, (r) => { state.resets++; r.fulfill({ json: { ok: true, moved: ["room"] } }); });
+  await ctx.route(/\/api\/review-room\/SC-60\/voice$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); asked.push(b); if (state.hold) { state.held.push(r); return; } if (failClip) return r.fulfill({ status: 409, json: { error: "The local voice is not installed", code: "no_voice" } });
     r.fulfill({ json: { src: `/api/review-room/SC-60/voice/kvoice-${String(asked.length).padStart(16, "0")}.wav`, cached: false, engine: "kokoro" } }); });
-  const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message)); if (process.env.VOICE_UI_DEBUG) p.on("console", (m) => console.log("console:", m.text().slice(0, 300)));
+  const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message)); p.on("requestfailed", (q) => { if (/\/voice$/.test(q.url())) state.failed.push(q.failure()?.errorText || "failed"); }); if (process.env.VOICE_UI_DEBUG) p.on("console", (m) => console.log("console:", m.text().slice(0, 300)));
   await p.goto(`${base}/#/room/SC-60`); await p.waitForSelector("[data-voice]");
   await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]").catch(() => {}); await p.click('[data-jump="t1"]').catch(() => {}); });
   return { ctx, p, asked, state };
@@ -105,6 +106,26 @@ try {
     ok(asked.at(-1).mix === "same" && asked.slice(3).every((b) => b.mix === "same"), "the mixed-language setting goes with each clip, so the other mode is a clip of its own", JSON.stringify(asked.slice(3)));
     await p.click("[data-play]").catch(() => {});
     ok((await p.evaluate(() => window.__clips[3].paused)), "pausing stops the clip that plays");
+    await ctx.close(); }
+  // ---------- a clip gone from Studio is asked for again; a stopped play cancels what it waits for; a reset forgets ----------
+  { const { ctx, p, asked, state } = await open(true);
+    await p.waitForFunction(() => !!document.querySelector('[data-voice] option[value="kokoro"]'));
+    await p.selectOption("[data-voice]", "kokoro"); await p.click("[data-replay]"); await p.waitForFunction(() => window.__clips.length === 1);
+    await p.evaluate(() => window.__clips[0].onerror()); await p.waitForFunction(() => window.__clips.length === 2, null, { timeout: 5000 }).catch(() => {});
+    const firsts = asked.filter((b) => b.text === POINTS[0]).length, second = await p.evaluate(() => window.__clips[1]?.src || "");
+    ok(firsts === 2 && second && second !== (await p.evaluate(() => window.__clips[0].src)) && !(await p.evaluate(() => window.__spoken.length)), "a clip whose file is gone is asked for again and the new one plays (no Mac fallback)", JSON.stringify({ firsts, second }));
+    await p.click("[data-play]").catch(() => {});
+    state.hold = true; await p.selectOption("[data-voice-mix]", "same"); await p.click("[data-replay]");
+    await p.waitForFunction(() => true); for (let i = 0; i < 50 && !state.held.length; i++) await p.waitForTimeout(50);
+    await p.click("[data-play]").catch(() => {}); for (let i = 0; i < 50 && !state.failed.length; i++) await p.waitForTimeout(50);
+    ok(state.held.length >= 1 && state.failed.length >= 1, "pausing while a clip is being made cancels its request, so Studio stops making it", JSON.stringify({ held: state.held.length, failed: state.failed }));
+    state.hold = false; await p.selectOption("[data-voice-mix]", "switch");
+    if (!(await p.isVisible("[data-room-reset]"))) await p.click("[data-transcript-toggle]").catch(() => {});
+    await p.click("[data-room-reset]", { timeout: 3000 }).catch(() => {}); await p.click("[data-reset-confirm]", { timeout: 3000 }).catch(() => {}); for (let i = 0; i < 50 && !state.resets; i++) await p.waitForTimeout(50);
+    await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]").catch(() => {}); await p.click('[data-jump="t1"]').catch(() => {}); });
+    const before = asked.filter((b) => b.text === POINTS[0] && b.mix === "switch").length; await p.click("[data-replay]");
+    for (let i = 0; i < 50 && asked.filter((b) => b.text === POINTS[0] && b.mix === "switch").length === before; i++) await p.waitForTimeout(50);
+    ok(state.resets === 1 && asked.filter((b) => b.text === POINTS[0] && b.mix === "switch").length === before + 1, "after the room is started over its clips are asked for anew (their files were deleted)", JSON.stringify({ resets: state.resets, before }));
     await ctx.close(); }
   // ---------- a clip that cannot be made: this Mac's voice speaks instead ----------
   { const { ctx, p, asked } = await open(true, true);

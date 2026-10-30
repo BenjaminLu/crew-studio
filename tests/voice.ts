@@ -97,7 +97,13 @@ if (sandboxed) {
   await s.tts("next", 45); const ping: any = await s.request({ op: "ping" });
   ok(!ping.seen.includes("queued") && ping.seen.includes("next"), "the dropped request never reached the engine; the next one does", JSON.stringify(ping.seen)); s.stop(); }
 { const a = mk(), b = mk(); await a.tts("x", 45); await b.tts("y", 45); stopAllSidecars();
-  ok(!a.running && !b.running, "Studio's shutdown stops every engine it started"); }
+  ok(!a.running && !b.running, "Studio's shutdown stops every engine it started");
+  // shutting down while one clip runs and another waits: both refused, and the waiting one never starts a new engine
+  const c = mk(); await c.tts("warm", 45); const startsBefore = c.starts;
+  const running = c.tts("SLOW", 45), waiting = c.tts("queued", 45); await Bun.sleep(100); stopAllSidecars();
+  const [ra, rb] = await Promise.all([err(() => running), err(() => waiting)]); await Bun.sleep(300);
+  ok(!!ra && rb?.code === "shutdown" && !c.running && c.starts === startsBefore, "a shutdown refuses the running and the queued request, and nothing starts the engine again", JSON.stringify({ ra: ra?.message, rb: rb?.code, starts: c.starts - startsBefore }));
+  ok((await err(() => c.tts("later", 45)))?.code === "shutdown" && c.starts === startsBefore, "after a shutdown no request starts it"); }
 { const src = readFileSync(join(root, "src/server.ts"), "utf8");
   ok(src.includes('process.once(sig,()=>{try{terminals.shutdown();}catch{}try{stopLocal();}catch{}') && src.includes('process.on("exit", () => { try { terminals.shutdown(); } catch {} try { stopLocal(); } catch {} });'), "SIGTERM, SIGINT and exit stop the local voice engine"); }
 
@@ -246,14 +252,14 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
 { const srcDir = join(tmp, "dl-src"); makeModel(srcDir); writeFileSync(join(srcDir, "model.onnx"), Buffer.from(Array.from({ length: 200_000 }, (_, i) => (i * 7919) % 251))); const sp = spec(srcDir), tools = join(tmp, "dl-tools"); mkdirSync(tools, { recursive: true });
   copyFileSync(join(root, "src/voice/fetch-model.cjs"), join(tools, "fetch-model.cjs"));
   writeFileSync(join(tools, "kokoro-manifest.json"), JSON.stringify({ repo: "csukuangfj/kokoro-multi-lang-v1_0", revision: sp.revision, files: sp.files }));
-  let mode: "good" | "tamper" | "redirect" | "big" | "stall" = "good"; const served: string[] = [], ranges: string[] = [];
+  let mode: "good" | "tamper" | "redirect" | "big" | "stall" | "short" = "good"; const served: string[] = [], ranges: string[] = [];
   const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) { const u = new URL(req.url); if (u.pathname === "/elsewhere") return new Response("x");
     const p = decodeURIComponent(u.pathname.split(`/resolve/${sp.revision}/`)[1] ?? ""); served.push(p);
     const f = join(srcDir, p); if (!p || !existsSync(f)) return new Response("no", { status: 404 });
     if (mode === "redirect" && p === "voices.bin") return new Response(null, { status: 302, headers: { location: `http://127.0.0.1:${srv.port}/elsewhere` } });
     if (mode === "big" && p === "voices.bin") return new Response(Buffer.alloc(5_000_000, 1));
     const b = readFileSync(f), range = /^bytes=(\d+)-$/.exec(req.headers.get("range") ?? "");
-    if (range) { ranges.push(`${p}:${range[1]}`); const at = Number(range[1]); return new Response(b.subarray(at), { status: 206, headers: { "content-range": `bytes ${at}-${b.length - 1}/${b.length}` } }); }
+    if (range) { ranges.push(`${p}:${range[1]}`); const at = Number(range[1]), upto = mode === "short" ? at + Math.floor((b.length - at) / 2) : b.length; return new Response(b.subarray(at, upto), { status: 206, headers: { "content-range": `bytes ${at}-${b.length - 1}/${b.length}` } }); }
     // a slow network: half of model.onnx, then nothing more
     if (mode === "stall" && p === "model.onnx") return new Response(new ReadableStream({ start(c) { c.enqueue(b.subarray(0, 100_000)); }, pull() { return new Promise(() => {}); } }));
     return new Response(mode === "tamper" && p === "voices.bin" ? Buffer.from("VOICEX") : b); } });
@@ -276,6 +282,12 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   mode = "good"; ranges.length = 0; const on = await fetchModel(slow);
   ok(on.exitCode === 0 && JSON.stringify(ranges) === JSON.stringify(["model.onnx:100000"]) && /resumed model\.onnx from byte 100000/.test(on.stdout) && (await verifyModel(join(slow, "kokoro-multi-lang-v1_0"), { spec: sp, memo: false })).ok,
     "the next press resumes model.onnx from byte 100000 with a Range request and the whole file verifies", JSON.stringify({ ranges, out: on.stdout.slice(-200), err: on.stderr }));
+  // a Range answer shorter than asked: what came is kept, and the press after resumes from there
+  mode = "stall"; const shortDir = join(tmp, "dl-short"); await fetchModel(shortDir); mode = "short"; const sh1 = await fetchModel(shortDir), sp1 = join(shortDir, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
+  const keptShort = existsSync(sp1) ? statSync(sp1).size : -1;
+  ok(sh1.exitCode === 1 && /ended at 150000 of 200000/.test(sh1.stderr) && keptShort === 150_000, "a Range answer that ends short keeps its bytes instead of erasing the progress", JSON.stringify({ err: sh1.stderr.slice(-160), keptShort }));
+  mode = "good"; ranges.length = 0; const sh2 = await fetchModel(shortDir);
+  ok(sh2.exitCode === 0 && JSON.stringify(ranges) === JSON.stringify(["model.onnx:150000"]) && (await verifyModel(join(shortDir, "kokoro-multi-lang-v1_0"), { spec: sp, memo: false })).ok, "and the next press resumes from byte 150000 and verifies", JSON.stringify({ ranges, err: sh2.stderr }));
   // kept bytes that are not the file's: the whole file then fails its pin, and only then is .download deleted
   mode = "stall"; const bad = join(tmp, "dl-badpart"); await fetchModel(bad); const bp = join(bad, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
   writeFileSync(bp, Buffer.alloc(100_000, 9)); mode = "good"; const wrongPart = await fetchModel(bad);
@@ -296,8 +308,8 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   install({ ...SHERPA_PINS, [plat]: "sha512-other" }); ok(!runtimeState(dir).ok && /pinned build/.test(runtimeState(dir).why!), "a platform package with another integrity is refused", runtimeState(dir).why!);
   install(SHERPA_PINS, "1.14.0"); ok(!runtimeState(dir).ok && /pins 1\.13\.8/.test(runtimeState(dir).why!), "another version is refused", runtimeState(dir).why!);
   process.env.CREW_NODE_BIN = "/nonexistent/node"; ok(!runtimeState(dir).ok && /Node/.test(runtimeState(dir).why!), "without Node it cannot run"); delete process.env.CREW_NODE_BIN;
-  ok(/--save-exact/.test(installCommand()) && /--ignore-scripts/.test(installCommand()) && installCommand().includes(`sherpa-onnx-node@${SHERPA_VERSION}`) && installCommand("x64").includes(`sherpa-onnx-darwin-x64@${SHERPA_VERSION}`) && installCommand("arm64").includes("~/.crew-studio/tools/voice"),
-    "Doctor's install pins both packages exactly, runs no install script and stays in ~/.crew-studio/tools/voice", installCommand());
+  ok(/--save-exact/.test(installCommand()) && /--ignore-scripts/.test(installCommand()) && installCommand().includes(`sherpa-onnx-node@${SHERPA_VERSION}`) && installCommand("x64").includes(`sherpa-onnx-darwin-x64@${SHERPA_VERSION}`) && installCommand("arm64").includes(`--prefix '${process.env.CREW_VOICE_TOOLS}'`),
+    "Doctor's install pins both packages exactly, runs no install script and stays in the runtime folder", installCommand());
   const t = join(tmp, "scripts"); ok(ensureScripts(t) && ["sidecar.cjs", "fetch-model.cjs", "kokoro-manifest.json"].every((n) => existsSync(join(t, n))) && JSON.parse(readFileSync(join(t, "kokoro-manifest.json"), "utf8")).revision === KOKORO.revision, "Studio writes its own sidecar, download script and manifest into the runtime folder when asked"); }
 { process.env.CREW_VOICE_TOOLS = join(tmp, "untouched-tools");
   const d = await voiceDoctorInput(null), st = await voiceStatus(true);
@@ -305,6 +317,16 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   ok(!/\/(Users|home|private|var|tmp)\//.test(JSON.stringify(st)) && typeof st.ready === "boolean" && st.engine === ENGINE_VERSION && !("dir" in (st.runtime as any)), "the voice status names no path of this Mac: only booleans, versions and voices", JSON.stringify(st));
   const srv = readFileSync(join(root, "src/server.ts"), "utf8");
   ok(/who\.kind === "desktop" \? v : \{ ready: false, engine: v\.engine, desktopOnly: true \}/.test(srv), "a phone is told only that the voice speaks on the Mac"); }
+
+// ---------- this Mac's voices: read asynchronously, one osascript at a time, never blocking Studio ----------
+{ const { macVoices } = await import("../src/voice/mac"); let runs = 0, finish!: (v: string) => void;
+  const slow = () => { runs++; return new Promise<string | null>((r) => (finish = r)); };
+  const a = macVoices(true, slow), b = macVoices(false, slow); let ticked = false; setTimeout(() => (ticked = true), 0); await Bun.sleep(20);
+  ok(ticked && runs === 1, "while osascript runs Studio keeps answering (a timer fires), and a second ask shares the first", JSON.stringify({ ticked, runs }));
+  finish(JSON.stringify([["zh-TW", "Meijia", 1, "com.apple.voice.compact.zh-TW.Meijia"], ["en-US", "Zarvox", 1, "com.apple.speech.synthesis.voice.Zarvox"], ["en-US", "Ava", 3, "com.apple.voice.premium.en-US.Ava"]]));
+  const [va, vb] = (await Promise.race([Promise.all([a, b]), Bun.sleep(2000).then(() => [null, undefined])])) as any[];
+  ok(JSON.stringify(va?.map((v) => v.name)) === JSON.stringify(["Ava", "Meijia"]) && va === vb && (await macVoices(false, slow)) === va && runs === 1, "both get the same answer, best first, novelty voices out; it is remembered", JSON.stringify(va));
+  ok(!/spawnSync/.test(readFileSync(join(root, "src/voice/mac.ts"), "utf8")) && /macVoices\(\)\.then\(\(mac\) => voiceDoctorInput\(mac\)\)/.test(readFileSync(join(root, "src/server.ts"), "utf8")), "Doctor waits for it inside its bounded race, never synchronously"); }
 
 // ---------- Doctor: the voice group, found / missing / corrupt / crashing ----------
 { const rtOk = { ok: true, node: "/usr/bin/node", dir: "~/.crew-studio/tools/voice", version: SHERPA_VERSION, why: null }, rtNo = { ok: false, node: "/usr/bin/node", dir: "", version: null, why: "sherpa-onnx-node is not installed" };
@@ -324,5 +346,14 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   const better = rows({ mac: [{ ...mac[0], quality: 3 }, { ...mac[1], quality: 2, name: "Ava" }] }); ok(better["voice-mac"].status === "ok" && !better["voice-mac"].fix && /Meijia \(Premium\)/.test(better["voice-mac"].detail), "Premium and Enhanced voices: no tip");
   const tts = methodsFor("voice-tts", "darwin")[0], rt = methodsFor("voice-runtime", "darwin")[0];
   ok(/fetch-model\.cjs/.test(tts.argv.join(" ")) && /401 MB/.test(tts.label) && tts.needs.join() === "node" && /f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/.test(tts.source) && !tts.admin, "the model's installer: the pinned download, its size and revision named, no admin rights", JSON.stringify(tts));
-  ok(rt.argv.join(" ").includes(installCommand()) && rt.needs.join() === "npm", "the runtime's installer is the pinned npm line"); }
+  ok(rt.argv.join(" ").includes(installCommand()) && rt.needs.join() === "npm", "the runtime's installer is the pinned npm line");
+  // CREW_VOICE_TOOLS and CREW_VOICE_MODELS set: Doctor installs and downloads into exactly the folders Studio then reads
+  const was = [process.env.CREW_VOICE_TOOLS, process.env.CREW_VOICE_MODELS];
+  process.env.CREW_VOICE_TOOLS = join(tmp, "own tools"); process.env.CREW_VOICE_MODELS = join(tmp, "own models");
+  const rt2 = methodsFor("voice-runtime", "darwin")[0].argv.join(" "), tts2 = methodsFor("voice-tts", "darwin")[0].argv.join(" ");
+  ok(rt2.includes(`mkdir -p '${join(tmp, "own tools")}'`) && rt2.includes(`--prefix '${join(tmp, "own tools")}'`) && !rt2.includes("~/.crew-studio") && tts2.includes(`node '${join(tmp, "own tools", "fetch-model.cjs")}' --models '${join(tmp, "own models")}'`),
+    "with the folders configured, Doctor's install and download use them (the download is told its models folder)", JSON.stringify({ rt2, tts2 }));
+  ensureScripts(); const fm = join(tmp, "own tools", "fetch-model.cjs");
+  ok(existsSync(fm) && tts2.includes(fm), "and the download script is where that command runs it");
+  [process.env.CREW_VOICE_TOOLS, process.env.CREW_VOICE_MODELS] = was; }
 end();
