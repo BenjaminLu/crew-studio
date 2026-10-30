@@ -15,7 +15,8 @@
 //   running (default 8), a transcript file per terminal capped at CREW_TERMINAL_TRANSCRIPT bytes (default 5 MiB), the 100
 //   newest records kept. Studio stopping kills every terminal (the process group, SIGHUP then SIGKILL); nothing is
 //   re-attached on restart: a record left open is closed as `studio-stopped` on the next start, and the ended terminals
-//   (the 20 newest, not removed) are listed again from their records (`restored`), so Send for review still works on them.
+//   (the 20 newest, not removed: a shell that ended well with nothing to review removes itself) are listed again from their records
+//   (`restored`), so Send for review still works on them.
 //   Record: data/terminals/<id>.json (who, project, command, start, end, exit code) and <id>.log (the transcript), and a
 //   `terminal.start` / `terminal.exit` line in Studio's activity log. A log only: never evidence for a merge or a gate.
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -158,7 +159,7 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
 /** A view of a terminal's output. mux: one of several terminals on one stream (GET /api/terminals/mux), each event naming its terminal. */
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string; mux?: boolean };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; dismissedAtShutdown?: boolean; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
   line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[];
   /** the transcript's file name in the record: kept for a terminal listed after a restart (it writes no more to it) */
   transcriptName: string | null; reviewing?: boolean };
@@ -192,6 +193,19 @@ export function gitFacts(path: string, base?: string | null): TermGit | null {
   if (base && git(path, ["rev-parse", "--verify", `${base}^{commit}`]).ok) { const c = git(path, ["rev-list", "--count", `${base}..${head.out}`]); if (c.ok) commits = Number(c.out) || 0; }
   return { branch: br.ok && br.out ? br.out : null, head: head.out, commits, base: base ?? null };
 }
+/**
+ * Git shows there is nothing in the checkout to send for review: a folder that is no git checkout at all, or a clean tree
+ * (no change, staged, unstaged or untracked) with no commits beyond a base that resolves. Whenever git cannot show it (the
+ * tree unreadable, a base that does not resolve, so the count is unknown) there may be work: the shell stays.
+ */
+function nothingToReview(t: { project: TermProject; git: { end: TermGit | null } }): boolean {
+  const inside = git(t.project.path, ["rev-parse", "--is-inside-work-tree"]);
+  if (!inside.ok || inside.out !== "true") return true;
+  // the tree is read even without a HEAD (a repository with no commit yet): a new file there is work
+  const st = git(t.project.path, ["status", "--porcelain"]); if (!st.ok || st.out.trim()) return false;
+  const g = t.git.end; if (!g) return true; // a clean repository with no commit yet
+  return g.commits === 0;
+}
 const AGENT_KINDS = new Set<AgentKind>(["claude", "codex", "cursor", "aider", "opencode", "gemini", "amp"]);
 
 export class Terminals {
@@ -200,6 +214,11 @@ export class Terminals {
   readonly keepTranscripts: boolean; readonly maxSubs = 4;
   /** when the page last asked for a Studio window (POST /api/terminals/app-window), for its rate limit */
   appWindowAt = 0; appWindowBusy = false;
+  /** This run of Studio: the page compares it with the one it saw last, to say once that a restart ended its terminals */
+  readonly boot = randomBytes(6).toString("hex");
+  /** The terminals a Studio stop ended (their records say studio-stopped, removed ones included): a page tells these from
+   * terminals that had ended on their own before the restart */
+  restartEnded = new Set<string>();
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
   constructor(readonly o: TerminalsOpts) {
     this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
@@ -356,13 +375,17 @@ export class Terminals {
     this.evaluate(t); this.saveMeta(t);
     for (const s of t.subs) this.emit(t, s, this.ev(s, t, "exit", JSON.stringify({ exitCode: t.exitCode, signal: t.signal })));
     this.o.log?.("terminal.exit", `terminal ${t.id} (${t.label}) ended: ${t.signal ? `signal ${t.signal}` : `exit ${t.exitCode}`}`, { id: t.id, project: t.project.id, exitCode: t.exitCode, signal: t.signal });
+    // a shell that ended well (exit 0, or the captain's Stop) with nothing to send for review leaves the list (and the
+    // page's tabs) on its own, as a Terminal window closes on exit; its record and transcript stay. One that failed (an
+    // exit code, a signal: a broken rc file) or left work to review stays, with its last output, until removed.
+    if (t.kind === "shell" && (t.userStopped || (t.exitCode === 0 && !t.signal)) && nothingToReview(t)) { this.saveMeta(t, { dismissed: true }); if (this.terms.get(t.id) === t) this.terms.delete(t.id); }
     this.changed();
   }
   private saveMeta(t: Term, extra: Record<string, unknown> = {}) {
     const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated, git, review } = t;
     try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, git, review,
       transcript: t.tFile ? `${id}.log` : t.transcriptName, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
-      sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}), ...extra }, null, 1), { mode: 0o600 }); } catch {}
+      sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}), ...(t.dismissedAtShutdown ? { dismissed: true } : {}), ...extra }, null, 1), { mode: 0o600 }); } catch {}
   }
   /** The terminals' own records (data/terminals/<id>.json), not their input files. */
   private records() { return readdirSync(this.dir).filter((f) => RECORD.test(f)); }
@@ -382,7 +405,7 @@ export class Terminals {
    */
   private restore() {
     const recs: any[] = [];
-    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
+    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && m.reason === "studio-stopped") this.restartEnded.add(m.id); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
     recs.sort((a, b) => String(a.endedAt).localeCompare(String(b.endedAt)));
     for (const m of recs.slice(-20)) {
       const now = this.o.projects().find((p) => p.id === m.project.id);
@@ -466,7 +489,7 @@ export class Terminals {
   /** SIGHUP to the process group (what closing a terminal window does), SIGKILL two seconds later if it is still there. */
   kill(id: string) {
     const t = this.need(id); if (!t.running) return this.view(t, true);
-    const pid = t.proc.pid; const sig = (s: NodeJS.Signals) => { try { process.kill(-pid, s); } catch { try { t.proc.kill(s); } catch {} } };
+    t.userStopped = true; const pid = t.proc.pid; const sig = (s: NodeJS.Signals) => { try { process.kill(-pid, s); } catch { try { t.proc.kill(s); } catch {} } };
     sig("SIGHUP"); t.killTimer = setTimeout(() => { if (t.running) sig("SIGKILL"); }, 2000);
     return this.view(t, true);
   }
@@ -477,7 +500,11 @@ export class Terminals {
   // Its record gets its end and where the checkout stood (Studio's own git, sync), so after the restart it is listed as
   // studio-stopped and Send for review's guard (the checkout moved since) has a head to compare with.
   shutdown() { for (const t of this.terms.values()) if (t.running) { for (const s of ["SIGHUP", "SIGKILL"] as const) { try { process.kill(-t.proc.pid, s); } catch { try { t.proc.kill(s); } catch {} } }
-    t.stopped = "studio-stopped"; t.endedAt ??= new Date().toISOString(); try { t.git.end = gitFacts(t.project.path, t.project.base); } catch {} this.saveMeta(t); } }
+    t.stopped = "studio-stopped"; t.endedAt ??= new Date().toISOString(); try { t.git.end = gitFacts(t.project.path, t.project.base); } catch {}
+    // a shell with nothing to send for review is not listed again after the restart (the page says once that it ended)
+    // (kept on the terminal: its own exit, seen after this while Studio finishes stopping, writes the record again)
+    if (t.kind === "shell" && nothingToReview(t)) t.dismissedAtShutdown = true;
+    this.saveMeta(t); } }
 
   /** The output stream: a replay of the ring first (the phone's with the link removed), then live output, state, exit. */
   attach(id: string, phone: boolean, device?: string): Response {
@@ -548,7 +575,7 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
       if (!cookie || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin") return json({ error: "terminals take input only from Studio's own page on this Mac (its session cookie, same origin); a script's x-crew-session is not enough", code: "pageOnly" }, 403);
     }
     if (p === "/api/terminals" && !writing) {
-      return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs,
+      return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs, boot: svc.boot, restartEnded: [...svc.restartEnded],
         ...(desktop ? { presets: svc.presets().map(({ id, label, kind, remoteControl, path }) => ({ id, label, kind, remoteControl: !!remoteControl, path })), projects: svc.projects() } : {}) });
     }
     if (p === "/api/terminals" && writing) { const b = await req.json().catch(() => null); return json({ terminal: await svc.create(b ?? {}, "desktop") }); }

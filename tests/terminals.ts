@@ -64,6 +64,22 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   rmSync(d, { recursive: true, force: true });
 }
 
+// ---------- Studio stopping: a shell with nothing to review stays dismissed, even when its exit is seen after ----------
+// shutdown() kills and records at once; Studio then waits for other services, so the shell's own exit (seen ~60 ms later)
+// can run before the process ends: it must not write the record again without the dismissal
+{
+  const d = mkdtempSync(join(tmpdir(), "crew-terminals-shutdown-")), pr = join(d, "plain"); mkdirSync(pr);
+  const mk = () => new Terminals({ dataDir: d, projects: () => [{ id: "p", name: "P", path: pr, base: "main" }], shell: "/bin/sh", env: { PATH: "/usr/bin:/bin" } });
+  const a = mk(), sh = await a.create({ project: "p", preset: "shell" });
+  await sleep(300);
+  a.shutdown();
+  await sleep(600); // the exit callback has run by now
+  const rec = JSON.parse(readFileSync(join(d, "terminals", `${sh.id}.json`), "utf8"));
+  ok(rec.dismissed === true && rec.reason === "studio-stopped", "a shell Studio stopped, with nothing to review, keeps its dismissal after its exit is seen", JSON.stringify({ dismissed: rec.dismissed, reason: rec.reason }));
+  ok(!mk().list().some((t) => t.id === sh.id), "and is not listed after the restart");
+  rmSync(d, { recursive: true, force: true });
+}
+
 // ---------- a restart: ended terminals are listed again from their records, and Send for review still works ----------
 // Running terminals are killed when Studio stops and never re-attached; a finished one comes back from data/terminals/<id>.json,
 // marked as from before the restart, with its git end and review state. One that was running at shutdown comes back as

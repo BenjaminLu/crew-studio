@@ -174,17 +174,18 @@ import a170 from "../public/takeover.js" with { type: "file" };
 import a171 from "../public/team.css" with { type: "file" };
 import a172 from "../public/team.js" with { type: "file" };
 import a173 from "../public/term-keys.js" with { type: "file" };
-import a174 from "../public/terminals.css" with { type: "file" };
-import a175 from "../public/terminals.js" with { type: "file" };
-import a176 from "../public/transcripts.css" with { type: "file" };
-import a177 from "../public/transcripts.js" with { type: "file" };
-import a178 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
-import a179 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
-import a180 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a181 from "../public/vendor/xterm-5.5.0.css" with { type: "file" };
-import a182 from "../public/vendor/xterm-5.5.0.min.js" with { type: "file" };
-import a183 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
-import a184 from "../public/vendor/xterm-addon-fit-0.10.0.min.js" with { type: "file" };
+import a174 from "../public/term-theme.js" with { type: "file" };
+import a175 from "../public/terminals.css" with { type: "file" };
+import a176 from "../public/terminals.js" with { type: "file" };
+import a177 from "../public/transcripts.css" with { type: "file" };
+import a178 from "../public/transcripts.js" with { type: "file" };
+import a179 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a180 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a181 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a182 from "../public/vendor/xterm-5.5.0.css" with { type: "file" };
+import a183 from "../public/vendor/xterm-5.5.0.min.js" with { type: "file" };
+import a184 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
+import a185 from "../public/vendor/xterm-addon-fit-0.10.0.min.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -361,15 +362,16 @@ export const ASSETS: Record<string, string> = {
   "/team.css": a171,
   "/team.js": a172,
   "/term-keys.js": a173,
-  "/terminals.css": a174,
-  "/terminals.js": a175,
-  "/transcripts.css": a176,
-  "/transcripts.js": a177,
-  "/vendor/opencc-js-1.4.2-t2cn.min.js": a178,
-  "/vendor/opencc-js-LICENSE.txt": a179,
-  "/vendor/qrcode-1.4.4.min.js": a180,
-  "/vendor/xterm-5.5.0.css": a181,
-  "/vendor/xterm-5.5.0.min.js": a182,
-  "/vendor/xterm-LICENSE.txt": a183,
-  "/vendor/xterm-addon-fit-0.10.0.min.js": a184,
+  "/term-theme.js": a174,
+  "/terminals.css": a175,
+  "/terminals.js": a176,
+  "/transcripts.css": a177,
+  "/transcripts.js": a178,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a179,
+  "/vendor/opencc-js-LICENSE.txt": a180,
+  "/vendor/qrcode-1.4.4.min.js": a181,
+  "/vendor/xterm-5.5.0.css": a182,
+  "/vendor/xterm-5.5.0.min.js": a183,
+  "/vendor/xterm-LICENSE.txt": a184,
+  "/vendor/xterm-addon-fit-0.10.0.min.js": a185,
 };

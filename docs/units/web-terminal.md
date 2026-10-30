@@ -8,7 +8,7 @@ Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state he
 `public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 5.5.0 and its fit addon 0.10.0,
 pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
 `tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs`, `tests/terminal-keys.ts`, `tests/terminal-launch.ts`,
-`tests/terminal-panes-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`.
+`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs`, `tests/terminal-theme.ts`, `tests/terminal-reattach-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`. Colours: `public/term-theme.js`.
 
 ## Focus mode
 
@@ -69,6 +69,41 @@ Studio window ⌥T, ⌥W and ⌥⇧] are Option-as-Meta and the shell's. The hin
 button; both platforms one click apart) show the chord that works where the page is, and strike out the other. The table
 also lists copy mode and a new workspace (⇧⌘C, ⌘N on a Mac): this page has no workspaces and xterm selects and copies by
 itself, so those chords are not taken and reach the terminal.
+
+## Typing
+
+An input method (Zhuyin, Pinyin, Japanese, Korean) composes in xterm.js's own hidden textarea; nothing is sent while it
+composes, and what it commits is sent once. One case is Studio's: an input method that commits the front of what it
+composes while the rest goes on composing (compositionend, then compositionstart, in one keystroke: Zhuyin and Pinyin do
+when the buffer fills or a word is confirmed) made xterm.js 5.5.0 send the committed text together with the part still
+composing, and that part again once committed (中文 came out as 中文文; a longer run repeated every tail). 6.0.0 fixed
+it upstream; until the pin moves, `imeOnce` in `public/terminals.js` sends, when a new composition starts, what the last
+one committed up to where the new one starts, and cancels the send xterm had queued. `tests/terminal-input-ui.mjs` drives
+Chromium's input-method layer over CDP (`Input.imeSetComposition`, `Input.insertText`) and reads the bytes the page posts;
+it is not the operating system's Zhuyin keyboard, which no test here presses.
+
+Tab is the shell's: xterm sends it as `\t` and keeps the focus (the login shell, `$SHELL -l` on a PTY with
+`TERM=xterm-256color`, is interactive, so bash and zsh complete). A press on the pane around the terminal (its bar, the
+frame's padding) used to take the focus to the page, and the next Tab moved it to the pane's × instead of completing;
+a click there now gives the keys back to the pane's terminal: the first button only, and not a click that ends a drag
+selecting the bar's text (the press itself is left alone, so that text can be selected; buttons and links keep theirs). The same test checks
+`\t` reaches the PTY, the focus stays, and bash and zsh complete `ech` to `echo`.
+
+## Colours
+
+The terminal is drawn on Studio's `--surface-2` with `--text`, in the light theme and the dark one (read when a pane is
+made). xterm.js's own palette (Tango) was made for a black background: on the dark surface bright black (hints,
+autosuggestions) was 2.2:1, blue 2.8:1 and dim bright black 1.5:1; on the light one yellow, cyan and the whites were under
+2:1. `public/term-theme.js` gives each side its own 16 ANSI colours, every one at WCAG AA (4.5:1) on that surface (black is
+a readable grey on the dark side, white a dark grey on the light one, as their roles are swapped there); dim text (SGR 2)
+is drawn in a dim form of its colour that moves toward the background only as far as AA allows (xterm's own is half
+opacity, which halves the contrast), on the terminal's background and on each ANSI background (SGR 41–47, 100–107)
+against that background; a colour that does not read on a background stays itself there, and xterm moves it. These
+rules carry no `!important`: a colour xterm sets on a cell itself (its minimum contrast, inline) always wins. Any other colour a program asks for (256-colour, truecolor, as Claude Code's greys
+are) xterm keeps at 4.5:1 itself (`minimumContrastRatio`). The selection (focused and not) and the cursor are 3:1 or more against the surface (WCAG's
+non-text contrast), selected text 4.5:1 on both selections; an accent that does not show on the surface gives the cursor
+the foreground's colour. `tests/terminal-theme.ts` computes every ratio from the theme
+object against the surfaces in `public/styles.css`; `tests/terminal-input-ui.mjs` reads the colours drawn in both themes.
 
 ## A Studio window
 
@@ -149,12 +184,35 @@ window does) and SIGKILL two seconds later.
 
 - Scrollback: a byte ring per terminal (`CREW_TERMINAL_SCROLLBACK`, default 2 MiB); a replay says how much was dropped.
 - At most `CREW_TERMINAL_MAX` running (default 8), and at most 4 open views (streams) of one terminal. Ended terminals stay
-  listed (with their replay) until removed; at most 20.
+  listed (with their replay) until removed; at most 20. A shell (the Shell preset) that ends well (exit 0 with no signal, or
+  the captain's Stop) with nothing to send for review (no git checkout, or a clean tree, untracked files included, and
+  no commits beyond a base that resolves; when git cannot tell, as in a repository with no commit yet or with a base that
+  does not exist, it stays) is the exception: it leaves the list and closes its tab on its own, as a Terminal window
+  does, and its record is marked dismissed, so a restart does not list it again either; its record and transcript stay. A shell that
+  fails (an exit code, a signal, a broken rc file that exits as it starts) stays, with its exit code and last output, until
+  the captain removes it, and so does one that left work behind (a commit beyond the base: Send for review, as for an
+  agent; uncommitted changes: the row says to commit them). Agents and commands stay, for their output and Send for review.
+- Closing the page (the app window, a browser tab, a reload) never stops a terminal: it runs on inside Studio. A page
+  opened again gets its tabs back (this browser's saved layout; with none saved, another profile or cleared site data, a
+  tab for every running terminal), the scrollback replayed from the ring, and its keys reach the same process
+  (`tests/terminal-reattach-ui.mjs`: a marker replayed, the same `$$`). Reattaching is the same stream and input as
+  opening, under the same guards (the desktop page's cookie to type; a phone watches only). A Studio restart cannot keep a
+  PTY: the next page drops the tabs of the terminals that were running when it last loaded the list and run no more,
+  opens none in their place, and says once how many "Terminal sessions ended when Studio restarted" (工作階段在 Studio
+  重啟時結束), from the run's `boot` in `GET /api/terminals` against the one it saw last with the terminals then
+  running, counting only those whose records say Studio's stop ended them (`restartEnded` in the same answer); a
+  terminal that had already ended on its own (an agent kept for Send for review, even one that finished while no window
+  was open) keeps its tab, and a reload in the same run says nothing. What a window saw is its own (sessionStorage, which a reload of that window keeps), so every open
+  window cleans its own tabs when Studio comes back; a new window starts from the last any window saw (localStorage). A
+  terminal seen running on the live stream (started in another window) counts as seen too. A window reopened at the
+  address of a terminal the restart ended (`#/terminals/<id>`) has that address replaced, so the tab does not come back;
+  opening the terminal from the list afterwards shows its old output as ever.
 - Studio stopping kills every terminal's process group (SIGHUP then SIGKILL; `tests/terminals.ts` checks a grandchild goes
   too). Nothing is re-attached on restart: no process, no input, no Restart in place. A terminal still running when Studio
   stops gets its end and where its checkout stood (its git end) in its record, marked `studio-stopped`; a record left open
   (Studio killed with SIGKILL) is closed as `studio-stopped` on the next start, with no git end. After the restart the
-  ended terminals (the 20 newest that were not removed) are listed again from their records, marked `restored` (and
+  ended terminals (the 20 newest that were not removed: a shell that removed itself on a clean end is not either, while a
+  failed shell or one kept for review is) are listed again from their records, marked `restored` (and
   `stopped: "studio-stopped"` for one Studio stopped), with their git end, their review state and their transcript as the
   replay; Send for review works on them under the same guards (below). Remove is kept in the record (`dismissed`), so a
   removed terminal does not come back. What can survive: a process that left the group on purpose (`setsid`, `nohup … &` with its own process group,
