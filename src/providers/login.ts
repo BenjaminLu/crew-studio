@@ -12,9 +12,10 @@
 //   The round's sandbox opens that context to the claude process only (src/providers/needs.ts);
 //   the model in it has no tool of its own, only Studio's MCP tools, which run sandboxed elsewhere.
 // codex: CODEX_API_KEY in a private auth.json of the round's own CODEX_HOME (Studio's own key);
-//   otherwise "account": the codex CLI runs with the captain's own CODEX_HOME, whose login it reads
-//   and refreshes itself. Studio checks only that its auth.json exists, never what it holds.
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+//   otherwise "account": the round's private CODEX_HOME holds a link to the captain's own auth.json,
+//   which the codex CLI reads and refreshes in place; nothing else of the captain's codex home loads.
+//   Studio checks only that the file exists, never what it holds.
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { registerSecretValues, scrubEnv } from "../secure";
@@ -22,7 +23,7 @@ import { keptKeys } from "../keys";
 
 /** Which kind of credential a login is, for code to decide on (the source text is for people). */
 export type LoginKind = "account" | "api-key";
-export type Login = { ok: true; env: Record<string, string>; source: string; warn: string | null; kind?: LoginKind } | { ok: false; error: string };
+export type Login = { ok: true; env: Record<string, string>; source: string; warn: string | null; kind?: LoginKind; /** the captain's own login file a round reaches in place (codex), never read by Studio */ account?: string } | { ok: false; error: string };
 const handed = new Set<string>();
 // every login value Studio hands a round is a known secret for the one redactor, from the moment it is read
 registerSecretValues(() => [...handed]);
@@ -131,8 +132,9 @@ export const CODEX_KEY_SHAPE = /^sk-[A-Za-z0-9_-]{20,}$/;
 /** The captain's own codex home: CODEX_HOME when the captain's environment sets one, else ~/.codex. */
 export const codexAccountHome = () => process.env.CODEX_HOME?.trim() || join(home(), ".codex");
 /** The login a codex round gets: CODEX_API_KEY in a private auth.json of the round's own `codexHome`; else the captain's own
- *  codex home, whose sign-in the codex CLI reads and refreshes itself. Studio checks only that its auth.json exists as a plain
- *  file and never reads what it holds. */
+ *  codex sign-in, linked into that private home: `codexHome/auth.json` is a symbolic link to the captain's auth.json, which the
+ *  codex CLI reads and refreshes in place (it writes through the link). Studio checks only that the captain's file exists and
+ *  never reads what it holds, and nothing else of the captain's codex home (config, hooks, instructions, rules) loads. */
 export function codexLogin(codexHome: string): Login {
   const failed: string[] = [];
   if (process.env.CODEX_API_KEY !== undefined && !process.env.CODEX_API_KEY.trim()) failed.push("CODEX_API_KEY: it is set but empty");
@@ -145,9 +147,12 @@ export function codexLogin(codexHome: string): Login {
     return { ok: true, env: { CODEX_HOME: codexHome }, source: "CODEX_API_KEY in Studio's environment", warn: null, kind: "api-key" };
   }
   if (k) failed.push("CODEX_API_KEY: it is not an OpenAI API key (expected sk-…)");
-  const own = codexAccountHome(), file = join(own, "auth.json");
-  let plain = false; try { plain = lstatSync(file).isFile(); } catch {}
-  if (plain) return { ok: true, env: { CODEX_HOME: own }, source: "your own codex sign-in (the codex CLI reads it itself; Studio never reads it)", warn: failed.length ? `tried first and failed: ${failed.join("; ")}` : null, kind: "account" };
+  const file = join(codexAccountHome(), "auth.json");
+  let real: string | null = null; try { const r = realpathSync(file); if (statSync(r).isFile()) real = r; } catch {}
+  if (real) {
+    mkdirSync(codexHome, { recursive: true, mode: 0o700 }); rmSync(join(codexHome, "auth.json"), { force: true }); symlinkSync(real, join(codexHome, "auth.json"));
+    return { ok: true, env: { CODEX_HOME: codexHome }, source: "your own codex sign-in, linked in place (the codex CLI reads and refreshes it itself; Studio never reads it)", warn: failed.length ? `tried first and failed: ${failed.join("; ")}` : null, kind: "account", account: real };
+  }
   const hint = "sign in to codex once (codex login), or set CODEX_API_KEY";
   return { ok: false, error: failed.length ? `no codex login for rounds works (${failed.join("; ")}; ${file} is missing): ${hint}` : `no codex login (${file} is missing): ${hint}` };
 }

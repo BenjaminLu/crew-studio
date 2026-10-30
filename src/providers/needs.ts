@@ -41,14 +41,16 @@ const which = (bin: string): string | null => {
 };
 const installOf = (bin: string) => { const found = which(bin); if (!found) return []; let r = found; try { r = realpathSync(found); } catch {} return [dirname(r), dirname(dirname(r))]; };
 /** What a round may execute to start a CLI: its real binary, the folder it ships in (an npm package or a versioned install,
- *  never a shared bin folder or what holds one), and the interpreter its #! line names (an npm launcher runs under node). */
-const SHARED_BIN = /^\/(usr(\/local)?|opt\/homebrew|opt\/local)?\/?s?bin$|^\/(usr(\/local)?|opt\/homebrew|opt\/local)$/;
+ *  never a shared folder), and the interpreter its #! line names (an npm launcher runs under node). */
+/** Install layouts whose folder belongs to the CLI alone (an npm package, a versioned install, a cask, a vendored binary). */
+const PACKAGE = /\/node_modules\/|\/\.local\/share\/claude\/|\/Caskroom\/|\/Cellar\/|\/vendor\//;
 export function execOf(bin: string): string[] {
   const found = which(bin); if (!found) return [];
   let r = found; try { r = realpathSync(found); } catch {}
+  // its folder and the package above it only in a layout that is the CLI's alone; a binary in a shared folder (~/.local/bin,
+  // ~/.bun/bin, /usr/local/bin …) is allowed as itself only
   const out = [r], dir = dirname(r), pkg = dirname(dir);
-  if (!SHARED_BIN.test(dir) && dir !== homedir()) out.push(dir);
-  if (/\/node_modules\/|\/\.local\/share\/claude\/|\/vendor\//.test(r) && !SHARED_BIN.test(pkg) && pkg !== homedir()) out.push(pkg);
+  if (PACKAGE.test(r) && dir !== homedir()) { out.push(dir); if (PACKAGE.test(pkg + "/") && pkg !== homedir()) out.push(pkg); }
   try { const head = readFileSync(r, { encoding: "latin1" }).slice(0, 200); const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(head);
     if (m) { out.push(m[1]); if (/\/env$/.test(m[1]) && m[2]) { const i = which(m[2]); if (i) { out.push(i); try { out.push(realpathSync(i)); } catch {} } } } } catch {}
   return [...new Set(out)];
@@ -66,15 +68,14 @@ export const claudeExecAllow = (bin: string) => [...execOf(bin), process.execPat
 const regexQuote = (p: string) => p.replace(/[\\^$.*+?()[\]{}|]/g, (c) => `\\${c}`);
 /** What the captain's own Claude folder loads into every one of the captain's sessions: read-only to a round. */
 export const CLAUDE_ACCOUNT_READ_ONLY = ["CLAUDE.md", "hooks", "plugins", "skills", "agents", "commands", "output-styles", "rules", "keybindings.json", "managed-settings.json", ".claude.json"];
-/** What the captain's own codex home loads into every codex session: read-only to a round. */
-export const CODEX_ACCOUNT_READ_ONLY = ["config.toml", ".env", "AGENTS.md", "AGENTS.override.md", "rules", "prompts", "skills", "hooks.json"];
 /** The captain's own Claude account context as a round opens it: the Claude folder read and write (the CLI's own state), with
  *  what loads into the captain's sessions read-only; ~/.claude.json read only (it names the MCP servers every later session
  *  starts: the CLI runs without writing it); and on macOS only the login keychain database, where the CLI keeps its sign-in. */
 export function claudeAccountRules(): AccountContext {
   const c = claudeAccountContext(), cfg = realish(c.configDir), h = realish(c.home), kc = realish(join(accountHomeDir(), "Library", "Keychains"));
   return { dirs: [cfg], files: c.env.CLAUDE_CONFIG_DIR ? [] : [join(h, ".claude.json")],
-    writeRegex: process.platform === "darwin" ? [`^${regexQuote(kc)}/login\\.keychain(-db)?(-journal|-wal|-shm)?$`] : [],
+    // the login keychain database and the temporary and lock files written beside it when an item is updated
+    writeRegex: process.platform === "darwin" ? [`^${regexQuote(kc)}/login\\.keychain(-db)?([.-][^/]*)?$`, `^${regexQuote(kc)}/\\.fl[0-9A-Fa-f]+$`] : [],
     readOnly: CLAUDE_ACCOUNT_READ_ONLY.map((x) => join(cfg, x)), readOnlyRegex: [`^${regexQuote(cfg)}/settings[^/]*\\.json$`] };
 }
 export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedClaudeConfig): SandboxNeeds {
@@ -93,19 +94,18 @@ export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedCla
     login: () => {
       if (!approved) { const l = claudeLogin(); return l.ok && l.kind !== mode ? { ok: false, error: "Claude billing changed while the round was being set up; start it again" } : l; }
       if (!approved.live()) return { ok: false, error: "Claude native verification expired or was revoked" };
-      if (mode !== now) return { ok: false, error: "Claude billing changed since Studio verified this model; it verifies again before the next round" };
+      if (mode !== now) { approved.invalidate("billingChanged"); return { ok: false, error: "Claude billing changed since Studio verified this model; it verifies again before the next round" }; }
       return approved.login(); },
     account: () => own ? claudeAccountRules() : null,
     exec: () => own ? claudeExecAllow(bin) : null };
 }
 export type ApprovedCodexConfig = { model: string; effort: string | null };
-/** The captain's own codex home as a round opens it: read and write (the CLI refreshes its own login there), with its config,
- *  environment, instructions and rules read-only. */
-export function codexAccountRules(codexHome: string): AccountContext { const h = realish(codexHome); return { dirs: [h], readOnly: CODEX_ACCOUNT_READ_ONLY.map((x) => join(h, x)) }; }
-export const codexExecAllow = (bin: string) => [...execOf(bin), process.execPath];
+/** On the captain's own codex sign-in a round opens only that login file, read and write (the CLI refreshes it in place through
+ *  the link in the round's private CODEX_HOME); nothing else of the captain's codex home is reachable or loads. */
+export function codexAccountRules(loginFile: string): AccountContext { return { dirs: [], writeFiles: [loginFile] }; }
 export function codexNeeds(bin: string, hosts: string[], approved?: ApprovedCodexConfig): SandboxNeeds {
-  // codex signs in from CODEX_HOME: a private one holding Studio's own API key, or the captain's own, whose login the codex CLI
-  // reads and refreshes itself (Studio never reads it). The model and effort Studio approved go on the command line
+  // codex signs in from a private CODEX_HOME: holding Studio's own API key, or a link to the captain's own auth.json, which
+  // the codex CLI reads and refreshes in place (Studio never reads it). The model and effort Studio approved go on the command line
   // (src/providers/codex.ts), so nothing is ever written into the captain's codex home.
   let login: Login | null = null;
   return { reads: installOf(bin), hosts, tmpEnv: [],
@@ -114,10 +114,7 @@ export function codexNeeds(bin: string, hosts: string[], approved?: ApprovedCode
       if (approved && (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(approved.model) || approved.effort !== null && !["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(approved.effort))) return (login = { ok: false, error: "approved Codex model/effort snapshot is invalid" });
       return (login = codexLogin(join(dir, ".codex")));
     },
-    account: () => login?.ok && login.kind === "account" ? codexAccountRules(login.env.CODEX_HOME) : null,
-    // on the captain's own codex home the round runs the CLI and Studio's runtime only: nothing its config names (a notify
-    // program, a stdio MCP server) can start, even where the CLI cannot be told to ignore that config
-    exec: () => login?.ok && login.kind === "account" ? codexExecAllow(bin) : null };
+    account: () => login?.ok && login.kind === "account" && login.account ? codexAccountRules(login.account) : null };
 }
 /** A private root for one cursor-agent turn, short enough for its data folder: past 84 characters cursor-agent falls back to a
  *  shared /tmp/.cursor (v1 bin/adapters/cursor-agent.sh). h/ is its HOME (h/.config its XDG_CONFIG_HOME), w/ its workspace,

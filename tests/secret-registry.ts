@@ -134,18 +134,20 @@ ok(sec.redactText("call with tok-7f3a9c2e5b8d1f40aa here", ["tok-7f3a9c2e5b8d1f4
   const ch = join(home, ".codex"); fs.mkdirSync(ch, { recursive: true }); process.env.CODEX_HOME = ch;
   const own = JSON.stringify({ tokens: { access_token: "own-access-never-read", refresh_token: "own-refresh-never-read" } }); writeFileSync(join(ch, "auth.json"), own, { mode: 0o600 });
   const i = L(codexLogin(join(home, "r1")));
-  ok(i.ok && i.kind === "account" && i.env.CODEX_HOME === ch && JSON.stringify(Object.keys(i.env)) === '["CODEX_HOME"]' && !fs.existsSync(join(home, "r1")) && fs.readFileSync(join(ch, "auth.json"), "utf8") === own && !JSON.stringify(i).includes("never-read"),
-    "codex: the captain's own codex home, in place: nothing read, copied or written", JSON.stringify(i));
+  ok(i.ok && i.kind === "account" && i.env.CODEX_HOME === join(home, "r1") && JSON.stringify(Object.keys(i.env)) === '["CODEX_HOME"]' && fs.lstatSync(join(home, "r1", "auth.json")).isSymbolicLink() && fs.realpathSync(join(home, "r1", "auth.json")) === fs.realpathSync(join(ch, "auth.json")) && fs.readFileSync(join(ch, "auth.json"), "utf8") === own && !JSON.stringify(i).includes("never-read"),
+    "codex: the round's private home links the captain's own login in place: nothing read, copied or written", JSON.stringify(i));
   process.env.CODEX_API_KEY = BAD; const j = L(codexLogin(join(home, "r2"))); delete process.env.CODEX_API_KEY;
-  ok(j.ok && j.kind === "account" && /CODEX_API_KEY: it is not an OpenAI API key/.test(j.warn ?? "") && !fs.existsSync(join(home, "r2")), "shape: a wrong-shape CODEX_API_KEY moves on to the captain's own codex home", JSON.stringify(j));
+  ok(j.ok && j.kind === "account" && /CODEX_API_KEY: it is not an OpenAI API key/.test(j.warn ?? "") && fs.lstatSync(join(home, "r2", "auth.json")).isSymbolicLink(), "shape: a wrong-shape CODEX_API_KEY moves on to the captain's own codex login", JSON.stringify(j));
   process.env.CODEX_API_KEY = "sk-codex-studio-key-fixture-0123456789"; const k = L(codexLogin(join(home, "r3"))); delete process.env.CODEX_API_KEY;
   const kf = join(home, "r3", "auth.json");
   ok(k.ok && k.kind === "api-key" && k.env.CODEX_HOME === join(home, "r3") && JSON.parse(fs.readFileSync(kf, "utf8")).OPENAI_API_KEY === "sk-codex-studio-key-fixture-0123456789" && (fs.statSync(kf).mode & 0o777) === 0o600 && sec.redactText("x sk-codex-studio-key-fixture-0123456789 y") === `x ${M} y`,
     "codex: Studio's own CODEX_API_KEY goes in a private auth.json (0600) of the round's own home, and is redacted", JSON.stringify(k));
-  fs.rmSync(join(ch, "auth.json")); fs.symlinkSync(join(home, ".claude", ".credentials.json"), join(ch, "auth.json")); const sl = L(codexLogin(join(home, "r4")));
-  fs.rmSync(join(ch, "auth.json")); process.env.CODEX_API_KEY = "   "; const none = L(codexLogin(join(home, "r5"))); delete process.env.CODEX_API_KEY;
-  ok(!sl.ok && !none.ok && /no codex login for rounds works \(CODEX_API_KEY: it is set but empty; .*auth\.json is missing\)/.test(none.error) && /codex login/.test(none.error),
-    "codex: refused when there is no plain login file (a symlink is none) and no key, saying why", JSON.stringify([sl, none]));
+  // a linked login file (dotfiles) is followed to the real file; a dangling link or no file at all is no login
+  const dot = join(home, "dotfiles-auth.json"); fs.renameSync(join(ch, "auth.json"), dot); fs.symlinkSync(dot, join(ch, "auth.json")); const sl = L(codexLogin(join(home, "r4")));
+  ok(sl.ok && fs.realpathSync(join(home, "r4", "auth.json")) === fs.realpathSync(dot) && sl.account === fs.realpathSync(dot), "codex: a captain's login file that is itself a link is reached at its real file", JSON.stringify(sl));
+  fs.rmSync(dot); process.env.CODEX_API_KEY = "   "; const none = L(codexLogin(join(home, "r5"))); delete process.env.CODEX_API_KEY;
+  ok(!none.ok && /no codex login for rounds works \(CODEX_API_KEY: it is set but empty; .*auth\.json is missing\)/.test(none.error) && /codex login/.test(none.error) && !fs.existsSync(join(home, "r5")),
+    "codex: refused when there is no login file (a dangling link is none) and no key, saying why, with nothing made", JSON.stringify(none));
   const all = shown.join("\n");
   ok(!all.includes("QQQQ") && !all.includes("z9z9"), "shape: across every branch, no character of a wrong-shape value appears in any error or warning", all.match(/.{20}(QQQQ|z9z9).{20}/)?.[0] ?? "");
   for (const kk of keep) { if (saved[kk] === undefined) delete process.env[kk]; else process.env[kk] = saved[kk]; } }

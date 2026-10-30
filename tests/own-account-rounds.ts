@@ -5,7 +5,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // login keychain only where the CLI keeps its sign-in, and lets it run only itself, Studio's runtime and its own helpers. The model
 // in the round has Studio's tools and nothing else: a CLI that announces any other tool or MCP server stops the round.
 // Offline: profiles are checked as text, the CLIs are stubs.            bun tests/own-account-rounds.ts
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { suite } from "./rt-harness";
@@ -77,7 +77,7 @@ const { codexProvider } = await import("../src/providers/codex");
   ok(e[0] === realpathSync(launcher) && e.includes(realpathSync(pkg)) && e.includes(realpathSync(join(pkg, ".."))) && e.includes("/usr/bin/env") && (!node || e.includes(node)), "an npm launcher: its file, its package, /usr/bin/env and the node it names", JSON.stringify(e));
   const lone = join(root, "usr", "local", "bin"); mkdirSync(lone, { recursive: true }); const sh = join(lone, "tool"); writeFileSync(sh, "\x7fELF"); chmodSync(sh, 0o755);
   const e2 = execOf(sh);
-  ok(e2.includes(realpathSync(sh)) && e2.includes(realpathSync(lone)) && !e2.includes(realpathSync(join(lone, ".."))), "a binary outside a package: its file and folder, never the folder above", JSON.stringify(e2)); }
+  ok(JSON.stringify(e2) === JSON.stringify([realpathSync(sh)]), "a binary in a shared folder (here …/usr/local/bin): the file itself only, never its folder", JSON.stringify(e2)); }
 
 // ---------- claude.ts: no settings scope ever loads; a CLI offering any other tool or MCP server stops the round ----------
 { const bin = join(root, "claude-stub.mjs"), argvFile = join(root, "argv.json");
@@ -95,15 +95,13 @@ const put=o=>process.stdout.write(JSON.stringify(o)+'\\n');put({type:'system',su
   const mcp = await run({ STUB_MCP: JSON.stringify([{ name: "studio" }, { name: "captain-github" }]) });
   ok(mcp.out.some((e) => e.type === "turnEnd" && e.status === "error" && e.code === "toolsNotLocked"), "a CLI that loads another MCP server stops the round", JSON.stringify(mcp.out)); }
 
-// ---------- codex: the captain's own codex home in place, its config read-only; model and effort on the command line ----------
-{ writeFileSync(join(home, ".codex", "auth.json"), "{}", { mode: 0o600 });
+// ---------- codex: a private home linking the captain's own login; nothing else of the captain's codex home ----------
+{ writeFileSync(join(home, ".codex", "auth.json"), "{}", { mode: 0o600 }); writeFileSync(join(home, ".codex", "config.toml"), 'notify=["/bin/touch","x"]\n');
   const n = codexNeeds("codex", [], { model: "fixture-model", effort: "low" }), dir = join(root, "codex-round"); n.home(dir);
-  const login = n.login(dir), acct = n.account!();
-  ok(login.ok && login.kind === "account" && JSON.stringify(login.env) === JSON.stringify({ CODEX_HOME: join(home, ".codex") }), "codex: the round signs in from the captain's own codex home", JSON.stringify(login));
-  ok(JSON.stringify(acct?.dirs) === JSON.stringify([join(home, ".codex")]) && ["config.toml", ".env", "rules", "AGENTS.md"].every((x) => acct!.readOnly!.includes(join(home, ".codex", x))) && !acct!.writeRegex?.length, "codex: that home opens to the round, its config, environment, instructions and rules read-only, no keychain", JSON.stringify(acct));
-  const cx = n.exec!();
-  const { execOf } = await import("../src/providers/needs");
-  ok(Array.isArray(cx) && cx.includes(process.execPath) && cx.every((x) => x === process.execPath || execOf("codex").includes(x)) && !cx.includes("/usr/bin/security"), "codex: on the captain's own home the round runs only the CLI and Studio's runtime, so nothing its config names can start", JSON.stringify(cx));
+  const login = n.login(dir), acct = n.account!(), priv = join(dir, ".codex");
+  ok(login.ok && login.kind === "account" && JSON.stringify(login.env) === JSON.stringify({ CODEX_HOME: priv }) && lstatSync(join(priv, "auth.json")).isSymbolicLink() && realpathSync(join(priv, "auth.json")) === realpathSync(join(home, ".codex", "auth.json")) && readdirSync(priv).join() === "auth.json",
+    "codex: the round's private CODEX_HOME holds only a link to the captain's own auth.json (no config.toml, no hooks, no rules)", JSON.stringify(login));
+  ok(JSON.stringify(acct) === JSON.stringify({ dirs: [], writeFiles: [realpathSync(join(home, ".codex", "auth.json"))] }) && !("exec" in n && n.exec), "codex: the round reaches that one login file (read and write, for the CLI's own refresh), and no folder of the captain's", JSON.stringify(acct));
   const bin = join(root, "codex-stub.mjs"), argvFile = join(root, "codex-argv.json");
   writeFileSync(bin, `import{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(process.argv.slice(2)));console.log(JSON.stringify({type:'turn.completed'}));`); chmodSync(bin, 0o755);
   const p = codexProvider("fixture-model", bin, { model: "fixture-model", effort: "low" }); const tokenFile = join(root, "codex-token"); writeFileSync(tokenFile, "t", { mode: 0o600 });

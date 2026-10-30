@@ -173,11 +173,12 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     intermediate Claude.ai credentials, and a copy is a credential a round could leak). On the captain's own account the
     vendor's CLI signs in from that account context in place, and the profile opens exactly that context to the round
     after the secret deny list: the captain's Claude folder, `~/.claude.json` (read only: it names the MCP servers every
-    later session starts) and on macOS the login keychain database, where the CLI keeps its sign-in; or the captain's
-    codex home. Their settings, memory, hooks, plugins, environment and rules stay read-only (paths resolved through
-    links), and a round may execute only the CLI, Studio's runtime and the CLI's own helpers, so nothing a captain's
-    config names (a notify program, a stdio MCP server) can start. Inside one login keychain the OS sandbox cannot tell
-    items apart: the boundary there is that the model has no tool and only those programs can run. The model in the round has
+    later session starts) and on macOS the login keychain database, where the CLI keeps its sign-in. Its settings,
+    memory, hooks, plugins and rules stay read-only (paths resolved through links), and a claude round may execute only
+    the CLI, Studio's runtime and the CLI's own helpers. Inside one login keychain the OS sandbox cannot tell items
+    apart: the boundary there is that the model has no tool and only those programs can run. A codex round's private
+    `CODEX_HOME` holds only a link to the captain's own `auth.json`, which the CLI reads and refreshes in place; that one
+    file opens to the round, and none of the captain's codex config, hooks, instructions or rules load. The model in the round has
     Studio's tools only (`--tools ""`, `--strict-mcp-config`, `--setting-sources ""`); a CLI that announces any other tool
     or MCP server stops the round. On API billing Studio hands its own key through an inherited descriptor (Claude) or a
     private `auth.json` (Codex) and nothing of the account is opened;

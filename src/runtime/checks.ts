@@ -430,9 +430,10 @@ ${accountRules(o.account, [...(data ? [data] : []), ...protect])}${execRules(o.e
  *  the files beside them, and the login keychain when the CLI keeps its sign-in there. Nothing of it is ever Studio's to read. */
 /** The captain's own account context a vendor CLI signs in from (SandboxNeeds.account), all paths already resolved to their
  *  real location: folders it reads and writes (`dirs`), files it reads only (`files`), file patterns it reads and writes (SBPL
- *  regexes: the login keychain database where the CLI keeps its sign-in), and what inside those folders stays read-only (the
+ *  regexes: the login keychain database where the CLI keeps its sign-in), files it reads and writes in place (`writeFiles`: a
+ *  login file the CLI refreshes), and what inside those folders stays read-only (the
  *  settings, memory, hooks and plugins the captain's own sessions load: a round must never be able to plant one). */
-export type AccountContext = { dirs: string[]; files?: string[]; writeRegex?: string[]; readOnly?: string[]; readOnlyRegex?: string[] };
+export type AccountContext = { dirs: string[]; files?: string[]; writeFiles?: string[]; writeRegex?: string[]; readOnly?: string[]; readOnlyRegex?: string[] };
 /** The real location of a path that may not exist yet: its deepest existing ancestor resolved, the rest appended. */
 export function realish(p: string): string {
   const rest: string[] = []; let d = p;
@@ -447,7 +448,8 @@ function accountRules(a: AccountContext | null | undefined, closed: string[]): s
   const homes = [homedir(), accountHomeDir(), ...(process.env.HOME ? [process.env.HOME] : [])].map(realish);
   const dirs = a.dirs.filter((d) => isAbsolute(d)).map(realish).filter((d) => d !== "/" && !homes.includes(d) && !closed.some((c) => inside(d, c) || inside(c, d)));
   const files = (a.files ?? []).filter((f) => isAbsolute(f)).map(realish).filter((f) => !closed.some((c) => inside(f, c)));
-  const rw = [...dirs.map((p) => `(subpath ${q(p)})`), ...(a.writeRegex ?? []).map(sbplRegex)];
+  const writeFiles = (a.writeFiles ?? []).filter((f) => isAbsolute(f)).map(realish).filter((f) => !homes.includes(f) && !closed.some((c) => inside(f, c)));
+  const rw = [...dirs.map((p) => `(subpath ${q(p)})`), ...writeFiles.map((f) => `(literal ${q(f)})`), ...(a.writeRegex ?? []).map(sbplRegex)];
   if (!rw.length && !files.length) return "";
   const ro = [...(a.readOnly ?? []).filter((p) => isAbsolute(p)).map(realish).map((p) => `(subpath ${q(p)})`), ...(a.readOnlyRegex ?? []).map(sbplRegex)];
   return `${rw.length ? `(allow file-read* file-write* ${rw.join(" ")})\n` : ""}${files.length ? `(allow file-read* ${files.map((f) => `(literal ${q(f)})`).join(" ")})\n` : ""}${ro.length ? `(deny file-write* ${ro.join(" ")})\n` : ""}`;
