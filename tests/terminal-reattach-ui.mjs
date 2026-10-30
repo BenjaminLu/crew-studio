@@ -1,11 +1,11 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// Closing and reopening Studio's page in a real browser (public/terminals.js, src/terminals.ts,
+// Closing and reopening Studio's page, and ended shells, in a real browser (public/terminals.js, src/terminals.ts,
 // docs/units/web-terminal.md "Bounds, lifetime, record"), a stub server with temporary data and plain shells only:
 //   a shell keeps running when its page closes; a new page (the app window reopened) gets its tab back, the output it had
 //   (a marker) replayed, and typing reaches the same shell (the same $$); the replay is bounded (CREW_TERMINAL_SCROLLBACK)
-//   and says what it dropped; a browser with no tabs saved opens one for each running terminal; a Studio restart ends
-//   every shell: the next page says so once ("ended when Studio restarted"), shows no dead tab, and a second load says
-//   nothing.
+//   and says what it dropped; `exit` in a shell closes its tab and takes it off the list, and a reload lists live shells
+//   only; Stop ends the shell (its process is gone) and it leaves too; a Studio restart ends every shell: the next page
+//   says so once ("ended when Studio restarted"), shows no dead tab and lists none of them, and a second load says nothing.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,6 +78,22 @@ try {
   }, a);
   ok(replay.bytes <= CAP && replay.bytes > CAP / 2 && replay.dropped > 0, `the replay is at most CREW_TERMINAL_SCROLLBACK (${CAP} bytes) and says what it dropped`, JSON.stringify(replay));
 
+  // ---------- an ended shell leaves ----------
+  const b = await startShell(p); await show(p, b);
+  await say(p, "exit");
+  ok(await until(async () => !(await p.locator(`.wt-pane[data-term-pane="${b}"]`).count()) && !(await p.locator(`[data-term-tab]`).filter({ has: p.locator(`[data-term-pane="${b}"]`) }).count())), "`exit` in a shell closes its tab");
+  ok(await until(async () => !(await listed(p)).some((t) => t.id === b)), "and takes it off the list");
+  ok(await until(async () => !(await p.locator(`[data-term-row="${b}"]`).count())), "the page lists it nowhere");
+  await p.reload(); await p.waitForFunction(() => window.crewTerminals?.list !== null); await p.waitForTimeout(500);
+  const afterReload = await listed(p);
+  ok(afterReload.length === 1 && afterReload[0].id === a && afterReload[0].running && (await tabsOf(p)) === 1, "a reload lists the live shell only, in its one tab", JSON.stringify(afterReload));
+
+  // Stop ends the shell: its process is gone, and it leaves too
+  const c = await startShell(p); await show(p, c); const pidC = await pidOf(p, c, "PIDC");
+  await p.locator(`[data-term-kill="${c}"]`).click();
+  ok(await until(async () => !alive(pidC), 6000), "Stop ends the shell (its process is gone)", String(pidC));
+  ok(await until(async () => !(await listed(p)).some((t) => t.id === c) && !(await p.locator(`.wt-pane[data-term-pane="${c}"]`).count())), "and it leaves the list and its tab");
+
   // a browser with no tabs saved (another profile, cleared site data) gets a tab for every running terminal, not just one
   const d = await startShell(p);
   {
@@ -99,6 +115,7 @@ try {
   const toast = await until(async () => { const t = await p.locator(".toast, [role=status]").allInnerTexts(); return t.find((x) => /ended when Studio restarted/i.test(x)); }, 6000);
   ok(!!toast, "the next page says once that the sessions ended when Studio restarted", String(toast));
   ok(await until(async () => (await tabsOf(p)) === 0 && !(await p.locator(".wt-pane[data-term-pane]").count())), "and shows no dead tab", String(await tabsOf(p)));
+  ok(!(await listed(p)).length && !(await p.locator("[data-term-row]").count()), "and lists none of the ended shells", JSON.stringify(await listed(p)));
   await p.reload(); await p.waitForFunction(() => window.crewTerminals?.list !== null); await p.waitForTimeout(1500);
   ok(!(await p.locator(".toast, [role=status]").allInnerTexts()).some((x) => /ended when Studio restarted/i.test(x)), "a second load says nothing more");
   ok(!errors.length, "no page errors", errors.join(" | "));

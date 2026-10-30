@@ -496,7 +496,13 @@ function patchPage() {
   const tab = curTab(), t = termOf(focusPane(tab));
   const list = document.querySelector(".wt-list"); if (list) list.replaceChildren(...listRows(t || selected(cur())));
   const sec = document.querySelector("[data-term-detail]"), stage = sec?.querySelector(":scope > .wt-stage");
-  // a pane whose terminal went, or a focus the page does not show: the page is drawn again
+  // a pane whose terminal went (a shell that exited leaves the list): drawn again now, unless the captain is typing in
+  // another terminal (the redraw then waits for the blur); the field left focused is the gone terminal's own
+  if (sec && tab && panesOf(tab.root).some((pn) => !termOf(pn))) {
+    const a = document.activeElement, typing = a && [...TM.panes.entries()].some(([id, pn]) => pn.host.contains(a) && TM.list.some((x) => x.id === id && x.running));
+    if (!typing) { redo(); return; }
+  }
+  // a focus the page does not show: the page is drawn again
   if (!sec || !stage || !t || sec.dataset.termDetail !== t.id || panesOf(tab.root).some((pn) => !termOf(pn))) return soft();
   const tabs = document.querySelector(".wt-tabs"); if (tabs) tabs.replaceChildren(...tabEls());
   for (const k of [...sec.children]) if (k !== stage) k.remove();

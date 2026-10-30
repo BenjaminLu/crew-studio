@@ -179,7 +179,10 @@ window does) and SIGKILL two seconds later.
 
 - Scrollback: a byte ring per terminal (`CREW_TERMINAL_SCROLLBACK`, default 2 MiB); a replay says how much was dropped.
 - At most `CREW_TERMINAL_MAX` running (default 8), and at most 4 open views (streams) of one terminal. Ended terminals stay
-  listed (with their replay) until removed; at most 20.
+  listed (with their replay) until removed; at most 20. A shell (the Shell preset) is the exception: once it ends (`exit`,
+  Stop, a crash) it leaves the list and closes its tab on its own, as a Terminal window does, and its record is marked
+  dismissed, so a restart does not list it again either; its record and transcript stay. Agents and commands stay, for
+  their output and Send for review.
 - Closing the page (the app window, a browser tab, a reload) never stops a terminal: it runs on inside Studio. A page
   opened again gets its tabs back (this browser's saved layout; with none saved, another profile or cleared site data, a
   tab for every running terminal), the scrollback replayed from the ring, and its keys reach the same process
@@ -192,7 +195,7 @@ window does) and SIGKILL two seconds later.
   too). Nothing is re-attached on restart: no process, no input, no Restart in place. A terminal still running when Studio
   stops gets its end and where its checkout stood (its git end) in its record, marked `studio-stopped`; a record left open
   (Studio killed with SIGKILL) is closed as `studio-stopped` on the next start, with no git end. After the restart the
-  ended terminals (the 20 newest that were not removed) are listed again from their records, marked `restored` (and
+  ended terminals (the 20 newest that were not removed, shells never) are listed again from their records, marked `restored` (and
   `stopped: "studio-stopped"` for one Studio stopped), with their git end, their review state and their transcript as the
   replay; Send for review works on them under the same guards (below). Remove is kept in the record (`dismissed`), so a
   removed terminal does not come back. What can survive: a process that left the group on purpose (`setsid`, `nohup … &` with its own process group,

@@ -15,7 +15,8 @@
 //   running (default 8), a transcript file per terminal capped at CREW_TERMINAL_TRANSCRIPT bytes (default 5 MiB), the 100
 //   newest records kept. Studio stopping kills every terminal (the process group, SIGHUP then SIGKILL); nothing is
 //   re-attached on restart: a record left open is closed as `studio-stopped` on the next start, and the ended terminals
-//   (the 20 newest, not removed) are listed again from their records (`restored`), so Send for review still works on them.
+//   (the 20 newest, not removed, never a shell: an ended shell leaves the list at once) are listed again from their records
+//   (`restored`), so Send for review still works on them.
 //   Record: data/terminals/<id>.json (who, project, command, start, end, exit code) and <id>.log (the transcript), and a
 //   `terminal.start` / `terminal.exit` line in Studio's activity log. A log only: never evidence for a merge or a gate.
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -358,6 +359,9 @@ export class Terminals {
     this.evaluate(t); this.saveMeta(t);
     for (const s of t.subs) this.emit(t, s, this.ev(s, t, "exit", JSON.stringify({ exitCode: t.exitCode, signal: t.signal })));
     this.o.log?.("terminal.exit", `terminal ${t.id} (${t.label}) ended: ${t.signal ? `signal ${t.signal}` : `exit ${t.exitCode}`}`, { id: t.id, project: t.project.id, exitCode: t.exitCode, signal: t.signal });
+    // an ended shell has nothing to show or send for review: it leaves the list (and the page's tabs) on its own, as a
+    // Terminal window closes on exit; its record and transcript stay. An agent or a command stays listed until removed.
+    if (t.kind === "shell") { this.saveMeta(t, { dismissed: true }); if (this.terms.get(t.id) === t) this.terms.delete(t.id); }
     this.changed();
   }
   private saveMeta(t: Term, extra: Record<string, unknown> = {}) {
@@ -384,7 +388,7 @@ export class Terminals {
    */
   private restore() {
     const recs: any[] = [];
-    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
+    for (const f of this.records()) { try { const m = JSON.parse(readFileSync(join(this.dir, f), "utf8")); if (m && f === `${m.id}.json` && typeof m.endedAt === "string" && !m.dismissed && m.kind !== "shell" && m.project && typeof m.project.id === "string") recs.push(m); } catch {} }
     recs.sort((a, b) => String(a.endedAt).localeCompare(String(b.endedAt)));
     for (const m of recs.slice(-20)) {
       const now = this.o.projects().find((p) => p.id === m.project.id);
