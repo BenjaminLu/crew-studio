@@ -85,7 +85,8 @@ it is not the operating system's Zhuyin keyboard, which no test here presses.
 Tab is the shell's: xterm sends it as `\t` and keeps the focus (the login shell, `$SHELL -l` on a PTY with
 `TERM=xterm-256color`, is interactive, so bash and zsh complete). A press on the pane around the terminal (its bar, the
 frame's padding) used to take the focus to the page, and the next Tab moved it to the pane's × instead of completing;
-such a press now keeps the focus in the pane's terminal (buttons and links in the pane keep theirs). The same test checks
+a click there now gives the keys back to the pane's terminal: the first button only, and not a click that ends a drag
+selecting the bar's text (the press itself is left alone, so that text can be selected; buttons and links keep theirs). The same test checks
 `\t` reaches the PTY, the focus stays, and bash and zsh complete `ech` to `echo`.
 
 ## Colours

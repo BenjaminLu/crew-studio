@@ -373,10 +373,12 @@ function paneBar(t, pn) {
 function drawNode(n, tab) {
   if (n.t === "pane") { const t = termOf(n); if (!t) return h("div", { class: "wt-pane" });
     return h("div", { class: `wt-pane${n.id === tab.focus ? " focus" : ""}`, "data-pane": n.id, "data-term-pane": t.id,
-      // a press on the pane around the terminal (its bar, the frame) keeps the keys in the terminal: left to the browser it
-      // took the focus to the page, and Tab then moved it to the next button instead of completing in the shell
-      onmousedown: (e) => { if (tab.focus !== n.id) { tab.focus = n.id; saveLay(); markFocus(); }
-        if (!e.target.closest?.(".xterm, button, a, input, select, textarea")) { e.preventDefault(); focusTerm(); } } }, paneBar(t, n), pane(t).host); }
+      onmousedown: () => { if (tab.focus !== n.id) { tab.focus = n.id; saveLay(); markFocus(); } },
+      // a click on the pane around the terminal (its bar, the frame) gives the keys back to the terminal: left to the
+      // browser the focus stayed on the page, and Tab then moved it to the next button instead of completing in the shell.
+      // The first button only, and not after a drag that selected text (the bar's label can be selected and copied)
+      onclick: (e) => { if (e.button !== 0 || e.target.closest?.(".xterm, button, a, input, select, textarea")) return;
+        if (String(window.getSelection?.() ?? "")) return; focusTerm(); } }, paneBar(t, n), pane(t).host); }
   const wrap = h("div", { class: `wt-split ${n.dir}` });
   const a = h("div", { class: "wt-slot", style: `flex:${n.ratio} 1 0` }, drawNode(n.a, tab)), b = h("div", { class: "wt-slot", style: `flex:${1 - n.ratio} 1 0` }, drawNode(n.b, tab));
   const d = h("div", { class: "wt-div", role: "separator", "aria-orientation": n.dir === "row" ? "vertical" : "horizontal", "data-split": n.id });

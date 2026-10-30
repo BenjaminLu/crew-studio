@@ -117,6 +117,31 @@ try {
     const before = await where(); await p.keyboard.press("Tab"); const after = await where(); const t = await typed();
     ok(t === "\t" && /xterm-helper-textarea/.test(after), `a click on ${what}, then Tab: \\t reaches the terminal, the focus stays in it`, JSON.stringify({ t, before, after }));
   }
+  // the bar's text can still be selected by dragging: the press is not cancelled
+  {
+    const bar = p.locator(".wt-pane.focus .wt-pbar b").first(), box = await bar.boundingBox(), label = (await bar.innerText()).trim();
+    await p.mouse.move(box.x + 1, box.y + box.height / 2); await p.mouse.down(); await p.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 6 });
+    const sel = await p.evaluate(() => String(window.getSelection())); await p.mouse.up();
+    ok(sel.length > 0 && label.includes(sel.trim().slice(0, 3)), "dragging across the pane's bar selects its text", JSON.stringify({ sel, label }));
+  }
+  // a click on the bar gives the keys to the terminal only with the first button and no text selected
+  {
+    const click = (button, selectBar) => p.evaluate(({ button, selectBar }) => {
+      window.getSelection().removeAllRanges(); document.activeElement?.blur?.();
+      const b = document.querySelector(".wt-pane.focus .wt-pbar b");
+      if (selectBar) { const r = document.createRange(); r.selectNodeContents(b); window.getSelection().addRange(r); }
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button }));
+      const a = document.activeElement; return a ? `${a.tagName}.${a.className}` : "none";
+    }, { button, selectBar });
+    ok(/xterm-helper-textarea/.test(await click(0, false)), "a first-button click on the bar, nothing selected: the terminal has the keys");
+    ok(!/xterm-helper-textarea/.test(await click(0, true)), "a click that ends a selection of the bar's text leaves the selection and the focus be");
+    ok(!/xterm-helper-textarea/.test(await click(2, false)), "a click with another button does not move the focus");
+    await p.locator(".wt-pane.focus .wt-pbar b").first().click({ button: "right" }); await p.keyboard.press("Escape");
+    await p.evaluate(() => { window.getSelection().removeAllRanges(); document.activeElement?.blur?.(); });
+    await p.locator(".wt-pane.focus .wt-pbar b").first().click({ button: "right" }); await p.waitForTimeout(150);
+    ok(!/xterm-helper-textarea/.test(await where()), "a real right-click on the bar does not move the focus into the terminal", await where());
+    await p.keyboard.press("Escape");
+  }
   // ---------- the colours drawn, in both themes ----------
   for (const theme of ["dark", "light"]) {
     await p.evaluate((t) => setTheme(t), theme); // Settings' own switch (app.js)
