@@ -759,19 +759,26 @@ export function createRuntime(d: RuntimeDeps) {
       // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
       // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
       // the Review Room's home: every room on this machine, open ones first (read on any authenticated page)
-      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [] }); }
+      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null }); }
+      // the review room's Studio-wide settings (auto-teach on paste): read anywhere, changed by the captain on this Mac
+      if (p === "/api/review-room/settings") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        if (!writing) return json(rr.settings());
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac changes the review room's settings", code: "desktopOnly" }, 403);
+        try { return json(rr.setSettings(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
+      // what pasting a pull request's address would start: auto-teach on or off, the tutor and the paid round (read only)
+      if (p === "/api/review-room/paste-offer" && !writing) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); return json(rr.pasteOffer(url.searchParams.get("url"))); }
       if (p === "/api/review-room/open-pr") {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a pull request's room / 只有這台 Mac 上的船長能開啟 pull request 的審查室", code: "desktopOnly" }, 403);
-        try { return json(await rr.openPr(b?.url)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
+        try { return json(await rr.openPr(b?.url, by, b?.lang, b?.auto, b?.plan)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
       }
       // a room saved in the Library: read it (any authenticated page), its pictures and narration from the snapshot itself
       const libRoom = /^\/api\/review-room\/library\/(room-[a-z0-9-]{1,60})(?:\/(\d{1,6})\/asset\/([A-Za-z0-9._-]+\.(png|mp3)))?$/.exec(p);
       if (libRoom) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); if (writing) return json({ error: "a saved room is read-only" }, 405);
         try { if (libRoom[3]) return new Response(rr.libraryAsset(libRoom[1], Number(libRoom[2]), libRoom[3]), { headers: { "content-type": libRoom[4] === "png" ? "image/png" : "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); return json(rr.librarySnapshot(libRoom[1], url.searchParams.get("v"))); }
         catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); } }
-      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|auto)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
@@ -779,7 +786,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         if (!writing && room[2] === "reset") return json({ error: "POST /api/review-room/<room>/reset" }, 405);
         if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
-        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
+        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "auto") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
         // Check for new commits reads GitHub: at most once every few seconds per room, whatever the page sends
         if (room[2] === "check") { const last = roomChecks.get(room[1]) ?? 0; if (Date.now() - last < 5000) return json({ error: "Checked a moment ago; try again in a few seconds / 剛剛才檢查過，請稍候再試", code: "rate_limited" }, 429);
@@ -791,6 +798,8 @@ export function createRuntime(d: RuntimeDeps) {
         // Save to the Library: a new version of the room's read-only snapshot (nothing goes to GitHub)
         if (room[2] === "save") { try { return json(await rr.saveToLibrary(room[1], by)); } catch (e: any) { return fail(e); } }
         // generated pictures (paid image jobs) on or off for this room: off unless the captain turns them on
+        // this room's own auto-teach switch
+        if (room[2] === "auto") { try { return json(rr.autoTeachFor(room[1], b?.on)); } catch (e: any) { return fail(e); } }
         // start the room over: archived, never deleted; refused while a turn or a translation runs
         if (room[2] === "reset") { try { return json(rr.reset(room[1], by)); } catch (e: any) { return fail(e); } }
         if (room[2] === "images") { try { return json(rr.images(room[1], b?.on, by)); } catch (e: any) { return fail(e); } }

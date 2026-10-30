@@ -282,6 +282,8 @@ function itemView(card, it, prev) {
   else if (it.type === "keycard") body = keycardView(it, drawnOf(card, it));
   else if (it.type === "item") body = itemFigure(it, drawnOf(card, it));
   else if (it.type === "arch") body = archView(card, it);
+  else if (it.type === "svg") body = svgFigureView(card, it);
+  else if (it.type === "calls") body = callsView(card, it);
   else if (it.type === "decision") body = decisionView(card, it);
   else if (it.type === "states") body = statesView(card, it);
   else if (it.type === "sequence") body = sequenceView(it, drawnOf(card, it));
@@ -290,7 +292,7 @@ function itemView(card, it, prev) {
   else if (it.type === "snippet") body = h("pre", { class: "rr-pre" }, it.text || "");
   else body = h("p", { class: "rr-note" }, inline(card, it.text || "", it.cites));
   // the picture first, filling its box; what it is (kind, title, path) and its basis under it
-  const pic = ["mermaid", "chart", "screenshot", "image", "keycard", "item", "states", "sequence", "arch", "decision"].includes(it.type);
+  const pic = ["mermaid", "chart", "screenshot", "image", "keycard", "item", "states", "sequence", "arch", "decision", "svg", "calls"].includes(it.type);
   return h("article", { class: `rr-item rr-item-${it.type}`, id: `rr-${it.id}`, "data-board-item": it.id, "data-item-type": it.type }, h("div", { class: `rr-body${pic ? " pic" : " text"}` }, body), head, basisRow(card, it));
 }
 /** One changed item, before and after, from one layout for every item (baton's per-fix card): the same three boxes in two
@@ -307,47 +309,288 @@ function itemFigure(it, seen) {
   svg.append(label(140, T("After", "之後")), box(90, 154, 210, 64, "fix", [...wrapLabel(it.name, 190, 16, 1), ...(it.mechanism ? [clip(it.mechanism, 37)] : [])], "a1", 0.5), arrow(300, 370, 186, "new", 0.7), box(372, 154, 250, 64, "now", wrapLabel(it.after, 230, 16, 2), "a2", 0.8));
   return svg;
 }
+/** Studio's own layout for a lifecycle or a "what talks to what", baton's way (diagram-design's connector rules, applied by
+ *  code). The caller places the boxes (statePlace: the way it should go on one row, the bad ends below, the side states
+ *  above; archPlace: layers left to right, the stores last). Every connector is a straight line or one smooth curve between
+ *  the two boxes' borders, bowed only as far as it must to clear every other box and never to run along another connector
+ *  (two between the same boxes bow apart); a box's way back to itself is a small loop. Each connector's chip, its number and
+ *  words on a paper pill, sits on the connector near its middle. nodes: [{id, label, cls, shape}], edges: [{from, to, label, n, cls}] */
+const CJK_W = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯①-⓿]/;
+const textW = (s, fs) => [...String(s || "")].reduce((n, ch) => n + (CJK_W.test(ch) ? fs : fs * 0.6), 0);
+/** the connectors that close a cycle (the ways back), walking from the first node */
+function backEdges(ids, edges) {
+  const adj = new Map(ids.map((id) => [id, []])), mark = new Map(), back = new Set();
+  edges.forEach((e, i) => { if (e.from !== e.to && adj.has(e.from) && adj.has(e.to)) adj.get(e.from).push([e.to, i]); });
+  const dfs = (u) => { mark.set(u, 1); for (const [v, i] of adj.get(u)) { if (mark.get(v) === 1) back.add(i); else if (!mark.has(v)) dfs(v); } mark.set(u, 2); };
+  for (const id of ids) if (!mark.has(id)) dfs(id);
+  return back;
+}
+/** each node's longest path from a source (the ways back left out), and the node it came from */
+const longestPaths = (ids, edges, back) => { const rank = new Map(ids.map((id) => [id, 0])), pred = new Map();
+  for (let k = 0; k < ids.length; k++) edges.forEach((e, i) => { if (e.from !== e.to && !back.has(i) && rank.has(e.from) && rank.has(e.to) && rank.get(e.to) < rank.get(e.from) + 1) { rank.set(e.to, rank.get(e.from) + 1); pred.set(e.to, e.from); } });
+  return { rank, pred }; };
+const CHIP_FS = 12, chipText = (e) => String(e.label || "").slice(0, 40), chipW = (e) => textW(chipText(e), CHIP_FS) + 18;
+const nodeSize = (n, fs) => { const lines = wrapLabel(n.label, 196, fs, 2), w = Math.max(n.shape === "cyl" ? 140 : 112, Math.ceil((Math.max(0, ...lines.map((l) => textW(l, fs))) + 44) / 4) * 4);
+  return { w, h: n.shape === "cyl" ? 72 : lines.length > 1 ? 60 : 44, lines }; };
+/** a segment crossing: where p–q meets r–s, or null */
+const segCross = (p, q, r, t) => { const d = (q[0] - p[0]) * (t[1] - r[1]) - (q[1] - p[1]) * (t[0] - r[0]); if (!d) return null;
+  const u = ((r[0] - p[0]) * (t[1] - r[1]) - (r[1] - p[1]) * (t[0] - r[0])) / d, v = ((r[0] - p[0]) * (q[1] - p[1]) - (r[1] - p[1]) * (q[0] - p[0])) / d;
+  return u >= 0 && u <= 1 && v >= 0 && v <= 1 ? [p[0] + u * (q[0] - p[0]), p[1] + u * (q[1] - p[1])] : null; };
+/** a lifecycle, baton's way. The way it should go on one row left to right (the longest path from where it starts to an end
+ *  that went well). The ways back along that row, and the skips over a state on it, are arcs above it, nested by span (the
+ *  shorter inside). The states that end badly or need attention sit in the lane below, the others in the lane above, each
+ *  under the median of the states it meets, in the order that crosses the fewest connectors. */
+function statePlace(nodes, edges, fs) {
+  const ids = nodes.map((n) => n.id), cls = new Map(nodes.map((n) => [n.id, n.cls || ""])), back = backEdges(ids, edges), { rank, pred } = longestPaths(ids, edges, back);
+  const bad = (id) => /\b(seal|amber)\b/.test(cls.get(id)), ends = ids.filter((id) => !edges.some((e) => e.from === id && e.to !== id)), good = ends.filter((id) => !bad(id));
+  const end = (good.length ? good : ids).reduce((a, b) => (rank.get(b) > rank.get(a) ? b : a));
+  const main = [end]; while (pred.has(main[0]) && !main.includes(pred.get(main[0]))) main.unshift(pred.get(main[0]));
+  while (main.length > 2 && bad(main[main.length - 1])) main.pop();
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(110, Math.max(0, ...edges.map(chipW)) + 44)), box = new Map(), col = new Map();
+  const H0 = Math.max(...main.map((id) => size.get(id).h)); let x = 0;
+  main.forEach((id, c) => { const z = size.get(id); col.set(id, c); box.set(id, { x, y: -z.h / 2, w: z.w, h: z.h, lines: z.lines }); x += z.w + gap; });
+  // along the main row: the first step forward between two neighbours is a straight line; every other one an arc above
+  const straight = new Set(), arcs = [], seen = new Set();
+  edges.forEach((e, i) => { if (e.from === e.to || !col.has(e.from) || !col.has(e.to)) return; const d = col.get(e.to) - col.get(e.from), k = `${e.from}>${e.to}`;
+    if (d === 1 && !seen.has(k)) { straight.add(i); seen.add(k); } else arcs.push(i); });
+  const iv = (i) => [Math.min(col.get(edges[i].from), col.get(edges[i].to)), Math.max(col.get(edges[i].from), col.get(edges[i].to))];
+  arcs.sort((i, j) => iv(i)[1] - iv(i)[0] - (iv(j)[1] - iv(j)[0]) || i - j);
+  const arc = new Map(); // edge → its level: one above every shorter arc it overlaps
+  for (const i of arcs) { const [a0, a1] = iv(i); let lv = 0; for (const [j, l] of arc) { const [b0, b1] = iv(j); if (b0 < a1 && a0 < b1 || (b0 === a0 && b1 === a1)) lv = Math.max(lv, l + 1); } arc.set(i, lv); }
+  const arcTop = arcs.length ? 40 + 30 * Math.max(...arc.values()) + 30 : 0, cx = (id) => box.get(id).x + box.get(id).w / 2;
+  // the lanes: each state under the median of the main-row states it meets; the order that crosses fewest straight connectors
+  const rest = ids.filter((id) => !col.has(id)), lanes = [[rest.filter(bad), H0 / 2 + 112], [rest.filter((id) => !bad(id)), -H0 / 2 - arcTop - 70]];
+  for (const [list, y0] of lanes) { if (!list.length) continue;
+    const want = new Map(list.map((id) => { const xs = edges.filter((e) => e.from !== e.to && (e.from === id || e.to === id)).map((e) => (e.from === id ? e.to : e.from)).filter((o) => col.has(o)).map(cx).sort((a, b) => a - b);
+      return [id, xs.length ? (xs[(xs.length - 1) >> 1] + xs[xs.length >> 1]) / 2 : cx(main[0])]; }));
+    const lay = (perm) => { const out = new Map(); let right = -Infinity;
+      for (const id of perm) { const z = size.get(id), left = Math.max(want.get(id) - z.w / 2, right + 48); out.set(id, { x: left, y: y0 > 0 ? y0 : y0 - z.h, w: z.w, h: z.h, lines: z.lines }); right = left + z.w; }
+      // shifted back as far as it can go toward where they want to be (the order kept)
+      const shift = [...out].reduce((m, [id, b]) => Math.min(m, b.x + b.w / 2 - want.get(id)), Infinity); if (shift > 0) for (const b of out.values()) b.x -= shift; return out; };
+    const perms = (a) => (a.length <= 1 ? [a] : a.flatMap((v, k) => perms([...a.slice(0, k), ...a.slice(k + 1)]).map((p) => [v, ...p])));
+    const cand = list.length <= 5 ? perms(list) : [[...list].sort((a, b) => want.get(a) - want.get(b))];
+    const score = (perm) => { const lb = lay(perm), at = (id) => lb.get(id) ?? box.get(id), c = (id) => { const b = at(id); return b ? [b.x + b.w / 2, b.y + b.h / 2] : null; };
+      const segs = edges.map((e, i) => (e.from === e.to || straight.has(i) || arc.has(i) || !c(e.from) || !c(e.to) ? null : [c(e.from), c(e.to), e])).filter(Boolean);
+      let n = 0; for (let a = 0; a < segs.length; a++) for (let b2 = a + 1; b2 < segs.length; b2++) { const [p, q, e] = segs[a], [r, t, g] = segs[b2]; if ([e.from, e.to].some((id) => id === g.from || id === g.to)) continue; if (segCross(p, q, r, t)) n++; }
+      return n * 1e5 + [...lb].reduce((m, [id, b]) => m + Math.abs(b.x + b.w / 2 - want.get(id)), 0); };
+    const best = cand.reduce((a, b) => (score(b) < score(a) ? b : a)); for (const [id, b] of lay(best)) box.set(id, b); }
+  return { box, back, straight, arc };
+}
+/** what talks to what: layers left to right by the longest path, the stores and queues in the last layer, each layer's
+ *  boxes ordered by where their neighbours sit and centred on one another */
+function archPlace(nodes, edges, fs) {
+  const ids = nodes.map((n) => n.id), back = backEdges(ids, edges), { rank } = longestPaths(ids, edges, back), max = Math.max(0, ...rank.values());
+  for (const n of nodes) if (n.shape === "cyl" && !edges.some((e) => e.from === n.id && e.to !== n.id)) rank.set(n.id, max);
+  const cols = Array.from({ length: max + 1 }, () => []); for (const id of ids) cols[rank.get(id)].push(id);
+  const pos = new Map(); cols.forEach((c) => c.forEach((id, i) => pos.set(id, i - (c.length - 1) / 2)));
+  for (let sweep = 0; sweep < 3; sweep++) cols.forEach((c, r) => { if (!r) return;
+    const bc = (id) => { const ns = edges.filter((e) => e.from !== e.to && (e.to === id || e.from === id)).map((e) => (e.to === id ? e.from : e.to)).filter((o) => rank.get(o) !== r).map((o) => pos.get(o)); return ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : pos.get(id); };
+    c.sort((a, b) => bc(a) - bc(b) || ids.indexOf(a) - ids.indexOf(b)); c.forEach((id, i) => pos.set(id, i - (c.length - 1) / 2)); });
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(100, Math.max(0, ...edges.map(chipW)) + 40)), box = new Map(); let x = 0;
+  cols.forEach((c) => { const w = Math.max(0, ...c.map((id) => size.get(id).w)), hs = c.map((id) => size.get(id).h), total = hs.reduce((a, b) => a + b, 0) + (c.length - 1) * 72; let y = -total / 2;
+    c.forEach((id, i) => { const s = size.get(id); box.set(id, { x: x + (w - s.w) / 2, y, w: s.w, h: s.h, lines: s.lines }); y += hs[i] + 72; }); x += w + gap; });
+  return { box, back };
+}
+function curveSvg(nodes, edges, placed, opt = {}) {
+  const fs = opt.fs || 15, { box, back } = placed, cen = (b) => [b.x + b.w / 2, b.y + b.h / 2];
+  const rayOut = (b, dx, dy) => { const [cx, cy] = cen(b), t = Math.min(dx ? b.w / 2 / Math.abs(dx) : Infinity, dy ? b.h / 2 / Math.abs(dy) : Infinity); return [cx + dx * t, cy + dy * t]; };
+  const bez = (P, t) => { const u = 1 - t; return [0, 1].map((k) => u * u * u * P[0][k] + 3 * u * u * t * P[1][k] + 3 * u * t * t * P[2][k] + t * t * t * P[3][k]); };
+  const sample = (P, n = 60) => Array.from({ length: n + 1 }, (_, k) => bez(P, k / n));
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  // an attach point slid along its face toward the side the connector bows to (two between the same boxes leave apart)
+  const slideOn = (b, [px, py], nx, ny, k) => { const side = Math.abs(px - b.x) < 0.5 || Math.abs(px - b.x - b.w) < 0.5;
+    return side ? [px, Math.max(b.y + 8, Math.min(b.y + b.h - 8, py + ny * k * (b.h / 2 - 8)))] : [Math.max(b.x + 14, Math.min(b.x + b.w - 14, px + nx * k * (b.w / 2 - 14))), py]; };
+  const curveOf = (e, bow) => { const a = box.get(e.from), b = box.get(e.to), [ax, ay] = cen(a), [bx, by] = cen(b), L = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / L, ny = (bx - ax) / L;
+    const k = Math.max(-1, Math.min(1, bow / 36)), p0 = slideOn(a, rayOut(a, bx - ax, by - ay), nx, ny, k), p3 = slideOn(b, rayOut(b, ax - bx, ay - by), nx, ny, k);
+    const q = [(p0[0] + p3[0]) / 2 + nx * bow * 2, (p0[1] + p3[1]) / 2 + ny * bow * 2];
+    return bow ? [p0, lerp(p0, q, 2 / 3), lerp(p3, q, 2 / 3), p3] : [p0, lerp(p0, p3, 1 / 3), lerp(p0, p3, 2 / 3), p3]; };
+  // an arc above the main row: out of the top of one box, into the top of the other, higher by level (outer arcs leave
+  // and land further out, so the nested ones never meet)
+  const arcOf = (e, lv) => { const a = box.get(e.from), b = box.get(e.to), aLeft = a.x < b.x, [l, r] = aLeft ? [a, b] : [b, a];
+    const lx = Math.max(l.x + 12, l.x + l.w * 0.74 - 24 * lv), rx = Math.min(r.x + r.w - 12, r.x + r.w * 0.26 + 24 * lv), H = (40 + 30 * lv) * 4 / 3;
+    const L = [lx, l.y], R = [rx, r.y], [p0, p3] = aLeft ? [L, R] : [R, L]; return [p0, [p0[0], p0[1] - H], [p3[0], p3[1] - H], p3]; };
+  // a way back from a state in a lane, round the outside: out of its far side, round, into the side of its target
+  const aroundOf = (e, sd) => { const a = box.get(e.from), b = box.get(e.to), p0 = [sd > 0 ? a.x + a.w : a.x, a.y + a.h / 2], p3 = [sd > 0 ? b.x + b.w : b.x, b.y + b.h / 2];
+    const ox = sd > 0 ? Math.max(p0[0], p3[0]) + 70 : Math.min(p0[0], p3[0]) - 70; return [p0, [ox, p0[1] + 30], [ox, p3[1]], p3]; };
+  // under everything between its ends: out of the bottom of one box, into the bottom of the other
+  const underOf = (e) => { const a = box.get(e.from), b = box.get(e.to), x0 = Math.min(a.x, b.x), x1 = Math.max(a.x + a.w, b.x + b.w);
+    const lo = Math.max(...[...box.values()].filter((o) => o.x + o.w > x0 && o.x < x1).map((o) => o.y + o.h)) + 30, p0 = [a.x + a.w / 2, a.y + a.h], p3 = [b.x + b.w / 2, b.y + b.h];
+    return [p0, [p0[0], p0[1] + (lo - p0[1]) * 4 / 3], [p3[0], p3[1] + (lo - p3[1]) * 4 / 3], p3]; };
+  const loopOf = (e, s) => { const b = box.get(e.from), cx = b.x + b.w / 2, y = s > 0 ? b.y + b.h : b.y; return [[cx - 16, y], [cx - 40, y + s * 58], [cx + 40, y + s * 58], [cx + 16, y]]; };
+  const inBox = ([x, y], b, pad) => x > b.x - pad && x < b.x + b.w + pad && y > b.y - pad && y < b.y + b.h + pad;
+  const segDist = ([px, py], [ax, ay], [bx, by]) => { const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l)) : 0; return Math.hypot(px - ax - t * dx, py - ay - t * dy); };
+  const near = (p, pts, d) => { for (let k = 1; k < pts.length; k++) if (segDist(p, pts[k - 1], pts[k]) < d) return true; return false; };
+  const drawn = [], boxes0 = [...box.values()], chips = []; // drawn: [{i, P, pts, chip}]
+  const over = (r, o, pad) => r.x < o.x + o.w + pad && r.x + r.w + pad > o.x && r.y < o.y + o.h + pad && r.y + r.h + pad > o.y;
+  // a connector's chip: on it, at its middle or as near it as a place clear of the boxes, the chips and the other connectors allows
+  const chipFor = (e, P) => { if (!e.label) return null; const w = chipW(e), hh = 20;
+    return [0.5, 0.45, 0.55, 0.4, 0.6, 0.34, 0.66, 0.28, 0.72, 0.22, 0.78].map((t) => { const [x, y] = bez(P, t), r = { x: x - w / 2, y: y - hh / 2, w, h: hh };
+      const hard = boxes0.filter((b) => over(r, b, 3)).length + chips.filter((c) => over(r, c, 3)).length, soft = drawn.filter((o) => o.pts.some((p) => inBox(p, r, 2))).length;
+      return { r, x, y, cost: hard * 1000 + soft * 400 + Math.abs(t - 0.5) * 20 }; }).reduce((a, b) => (b.cost < a.cost ? b : a)); };
+  // a candidate's faults: through a box not its end (or back into its own), along another connector (a run of samples on it), crossings
+  // crossings with the connectors already drawn (where two meet at a box they share does not count)
+  const crossings = (e, pts, d) => { const g = edges[d.i], shared = [e.from, e.to].filter((id) => id === g.from || id === g.to).map((id) => box.get(id)); let n = 0;
+    for (let a = 1; a < pts.length; a++) for (let b = 1; b < d.pts.length; b++) { const x = segCross(pts[a - 1], pts[a], d.pts[b - 1], d.pts[b]); if (x && !shared.some((sb) => inBox(x, sb, 14))) n++; } return n; };
+  const judge = (e, P) => { const pts = sample(P, 40), ends = [box.get(e.from), box.get(e.to)]; let hard = 0, cross = 0;
+    for (const [id, b] of box) { if (id === e.from || id === e.to) continue; if (pts.some((p) => inBox(p, b, 8))) hard++; }
+    if (pts.slice(4, -4).some((p) => ends.some((b) => inBox(p, b, -2)))) hard++;
+    // along another connector: a stretch of 12px or more within 3px of it, away from the boxes they meet at (a crossing at
+    // a fair angle is shorter)
+    const step = pts.slice(1).reduce((n, p, k) => n + Math.hypot(p[0] - pts[k][0], p[1] - pts[k][1]), 0) / (pts.length - 1);
+    for (const d of drawn) { let run = 0, best = 0, hit = 0; for (const p of pts) { if (boxes0.some((b) => inBox(p, b, 10))) { run = 0; continue; } if (near(p, d.pts, 3)) { run += step; hit = 1; best = Math.max(best, run); } else run = 0; }
+      if (best >= 12) hard++; cross += crossings(e, pts, d); }
+    const onChip = chips.filter((c) => pts.some((p) => inBox(p, c, 2))).length, chip = chipFor(e, P);
+    return { hard, cross, pts, chip, cost: hard * 1000 + onChip * 400 + (chip ? chip.cost * 0.6 : 0) + cross * 260 }; };
+  const keep = (i, c) => { drawn.push({ i, P: c.P, pts: c.pts, chip: c.chip }); if (c.chip) chips.push(c.chip.r); };
+  // the order: the plain steps forward first (they take the straight lines), then the longer ones, the ways back, the loops
+  const span = (e) => Math.hypot(...[0, 1].map((k) => cen(box.get(e.to))[k] - cen(box.get(e.from))[k]));
+  const order = edges.map((e, i) => i).filter((i) => box.has(edges[i].from) && box.has(edges[i].to)).sort((i, j) => {
+    const w = (k) => (edges[k].from === edges[k].to ? 3 : back.has(k) ? 2 : 1); return w(i) - w(j) || span(edges[i]) - span(edges[j]) || i - j; });
+  const pairs = new Map(); edges.forEach((e, i) => { if (e.from === e.to) return; const k = [e.from, e.to].sort().join("\u0000"); if (!pairs.has(k)) pairs.set(k, []); pairs.get(k).push(i); });
+  // a connector's best way, the others as they are
+  const route = (i) => { const e = edges[i];
+    if (e.from === e.to) return [1, -1].map((s) => loopOf(e, s)).map((P) => ({ P, ...judge(e, P) })).reduce((a, b) => (b.cost < a.cost ? b : a));
+    if (placed.straight?.has(i)) { const P = curveOf(e, 0); return { P, bow: 0, ...judge(e, P) }; }
+    if (placed.arc?.has(i)) { const P = arcOf(e, placed.arc.get(i)); return { P, bow: 0, ...judge(e, P) }; }
+    const grp = pairs.get([e.from, e.to].sort().join("\u0000")).filter((j) => !placed.straight?.has(j) && !placed.arc?.has(j)), k = grp.indexOf(i), canon = [e.from, e.to].sort()[0] === e.from ? 1 : -1;
+    // apart from the others between the same boxes: far enough that their chips, side by side, do not meet
+    const [ax, ay] = cen(box.get(e.from)), [bx, by] = cen(box.get(e.to)), upright = Math.abs(by - ay) > Math.abs(bx - ax);
+    const off = grp.length > 1 ? (k - (grp.length - 1) / 2) * (upright ? Math.max(44, ...grp.map((j) => chipW(edges[j]))) + 10 : 44) * canon : 0;
+    const pref = grp.length > 1 ? off : back.has(i) ? -40 : 0, cands = [];
+    for (const d of [0, 24, -24, 48, -48, 72, -72, 100, -100, 136, -136, 180, -180, 240, -240, 320, -320]) { const bow = pref + d; if (grp.length > 1 && (Math.abs(bow) < 16 || Math.sign(bow) !== Math.sign(off))) continue; const P = curveOf(e, bow); cands.push({ P, bow, ...judge(e, P) }); }
+    if (placed.arc && back.has(i)) for (const sd of [1, -1]) { const P = aroundOf(e, sd); cands.push({ P, bow: pref + 120, ...judge(e, P) }); }
+    if (placed.arc && grp.length < 2) { const P = underOf(e); cands.push({ P, bow: pref + 100, ...judge(e, P) }); }
+    return cands.reduce((a, b) => { const s = (x) => x.cost + Math.abs(x.bow - pref) * 0.8; return s(b) < s(a) ? b : a; }); };
+  for (const i of order) keep(i, route(i));
+  // twice more, each connector again with every other one in place: one routed early now sees the ones that came after it
+  for (let pass = 0; pass < 2; pass++) for (const i of order) { const k = drawn.findIndex((d) => d.i === i), [d] = drawn.splice(k, 1); if (d.chip) chips.splice(chips.indexOf(d.chip.r), 1); keep(i, route(i)); }
+  drawn.sort((a, b) => a.i - b.i);
+  const svg = sv("svg", { class: "rr-flow rr-ortho rr-curve", role: "img", preserveAspectRatio: "xMidYMid meet" });
+  const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }, grow = (x, y) => { ext.x0 = Math.min(ext.x0, x); ext.y0 = Math.min(ext.y0, y); ext.x1 = Math.max(ext.x1, x); ext.y1 = Math.max(ext.y1, y); };
+  const kindOf = (i) => (edges[i].from === edges[i].to ? "loop" : back.has(i) ? "back" : "next");
+  for (const d of drawn) { const e = edges[d.i], P = d.P, kind = kindOf(d.i), cl = `${kind}${e.cls ? ` ${e.cls}` : ""}`; d.pts.forEach(([x, y]) => grow(x, y));
+    const [ex, ey] = P[3], ang = Math.atan2(ey - P[2][1], ex - P[2][0]);
+    svg.append(sv("path", { d: `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)} C${P[1].map((v) => v.toFixed(1))} ${P[2].map((v) => v.toFixed(1))} ${P[3].map((v) => v.toFixed(1))}`, class: `rr-edge ${cl}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i, fill: "none" }),
+      sv("path", { d: `M${ex - 10 * Math.cos(ang - 0.42)},${ey - 10 * Math.sin(ang - 0.42)} L${ex},${ey} L${ex - 10 * Math.cos(ang + 0.42)},${ey - 10 * Math.sin(ang + 0.42)} Z`, class: `rr-ahead ${cl}` })); }
+  for (const n of nodes) { const b = box.get(n.id), grp = sv("g", { class: `rr-node${n.cls ? ` ${n.cls}` : ""}`, "data-node": n.id, "data-box": `${b.x},${b.y},${b.w},${b.h}` }), e = 9;
+    grow(b.x, b.y); grow(b.x + b.w, b.y + b.h);
+    if (n.shape === "cyl") grp.append(sv("path", { class: "rr-box", d: `M${b.x},${b.y + e} A${b.w / 2},${e} 0 0 1 ${b.x + b.w},${b.y + e} V${b.y + b.h - e} A${b.w / 2},${e} 0 0 1 ${b.x},${b.y + b.h - e} Z` }), sv("path", { class: "rr-cyl-lip", d: `M${b.x},${b.y + e} A${b.w / 2},${e} 0 0 0 ${b.x + b.w},${b.y + e}`, fill: "none" }));
+    else grp.append(sv("path", { class: "rr-box", d: boxPath(b.x, b.y, b.w, b.h, n.shape === "pill" ? b.h / 2 : 8) }));
+    const dy = n.shape === "cyl" ? e / 2 : 0; b.lines.forEach((l, k) => { const tx = sv("text", { x: b.x + b.w / 2, y: b.y + b.h / 2 + dy + (k - (b.lines.length - 1) / 2) * (fs + 3) + fs * 0.35, "text-anchor": "middle", class: "rr-nlabel", style: `font-size:${fs}px` }); tx.textContent = l; grp.append(tx); });
+    svg.append(grp); }
+  // the chips, placed with their connectors
+  for (const d of drawn) { const e = edges[d.i], c = d.chip; if (!c) continue; const hh = c.r.h; grow(c.r.x, c.r.y); grow(c.r.x + c.r.w, c.r.y + c.r.h);
+    const g = sv("g", { class: `rr-chip ${kindOf(d.i)}${e.cls ? ` ${e.cls}` : ""}`, "data-elabel": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i }), t = sv("text", { x: c.x, y: c.y + 4.2, "text-anchor": "middle", class: "rr-elabel" });
+    t.textContent = chipText(e); g.append(sv("rect", { class: "rr-chip-bg", x: c.r.x, y: c.r.y, width: c.r.w, height: c.r.h, rx: hh / 2 }), t); svg.append(g); }
+  const vw = ext.x1 - ext.x0 + 24, vh = ext.y1 - ext.y0 + 24;
+  svg.setAttribute("viewBox", `${(ext.x0 - 12).toFixed(1)} ${(ext.y0 - 12).toFixed(1)} ${vw.toFixed(1)} ${vh.toFixed(1)}`);
+  svg.style.maxWidth = `${Math.round(vw * 1.15)}px`; svg.style.minWidth = `${Math.round(Math.min(vw * 0.8, 860))}px`;
+  return svg;
+}
 const NUMS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+/** a state's colour by what it is: where it starts, an end that went well, an end that did not (failed, voided, cancelled) */
+const stateCls = (it, x, i) => { const outs = (it.transitions || []).filter((t) => t.from === x.id && t.to !== x.id).length, bad = /fail|error|cancel|void|reject|expire|refund|declin|abort/i.test(`${x.id} ${x.label}`);
+  return x.mark === "changed" || x.mark === "new" ? `accent${i === 0 ? " start" : ""}` : i === 0 ? "start" : !outs ? (bad ? "seal" : "ok") : bad ? "amber" : ""; };
 /** a lifecycle's graph from its data: every state, every transition numbered (the number is the transition's chip) */
-const statesGraph = (it) => ({ dir: "LR", nodes: (it.states || []).map((x) => ({ id: x.id, label: x.label || x.id, shape: "round" })),
-  edges: (it.transitions || []).map((t, i) => ({ from: t.from, to: t.to, label: `${NUMS[i] || i + 1} ${t.label || ""}`.trim(), n: i })) });
+const statesGraph = (it) => ({ nodes: (it.states || []).map((x, i) => ({ id: x.id, label: x.label || x.id, shape: "pill", cls: stateCls(it, x, i) })),
+  edges: (it.transitions || []).map((t, i) => ({ from: t.from, to: t.to, label: `${NUMS[i] || i + 1} ${t.label || ""}`.trim(), n: i, cls: t.tx?.tables?.length ? "tx" : "" })) });
 /** an SVG label made a control: Enter and Space as a click */
 const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
 /** a lifecycle: the state machine drawn from the tutor's states and transitions (every transition kept), each transition's
  *  label opening the code it rests on (onPick: the report also selects the transition to show what it writes) */
 function statesView(card, it, onPick) {
   if (!it.states?.length) { const g = parseFlow(it.code); return h("div", { class: "rr-flow-wrap", "data-states": it.id }, g ? flowSvg(g, null, drawnOf(card, it), picBox()) : null); }
-  const wrap = h("div", { class: "rr-flow-wrap", "data-states": it.id }, flowSvg(statesGraph(it), null, drawnOf(card, it), picBox()));
+  const g = statesGraph(it), wrap = h("div", { class: "rr-flow-wrap rr-states", "data-states": it.id }, curveSvg(g.nodes, g.edges, statePlace(g.nodes, g.edges, 15)));
   (it.transitions || []).forEach((t, i) => { const el = wrap.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el || (!onPick && !t.cite?.ok)) return;
     if (t.cite?.ok) { el.classList.add("rr-cite-label"); el.setAttribute("data-transition-cite", t.cite.ref); }
     el.setAttribute("data-transition-pick", String(i)); asControl(el, () => (onPick ? onPick(i, t) : openCite(card, t.cite.ref))); });
+  // a state picked: the transaction that brings the entity into it
+  if (onPick) for (const nodeEl of wrap.querySelectorAll("[data-node]")) { const id = nodeEl.getAttribute("data-node"), k = (it.transitions || []).findIndex((t) => t.to === id && t.from !== id);
+    if (k >= 0) { nodeEl.setAttribute("data-state-pick", id); asControl(nodeEl, () => onPick(k, it.transitions[k], true)); } }
   return wrap;
+}
+/** one transaction: the tables it writes (op, the guard, each field was → now) inside its envelope, what it writes outside set apart */
+function txView(tx) {
+  if (!tx || tx.error) return null;
+  return h("div", { class: "rp-tx", "data-tx": "" }, (tx.tables || []).length ? h("div", { class: "rp-tx-env" }, h("div", { class: "rp-tx-cap" }, T("One database transaction", "同一個資料庫交易")),
+      tx.tables.map((t) => h("div", { class: "rp-tx-row", "data-tx-table": t.table }, h("div", { class: "rp-tx-h" }, h("span", { class: `rp-op ${t.op.toLowerCase()}` }, t.op), h("code", {}, t.table), t.guard ? h("span", { class: "rp-guard" }, `${T("guard", "條件")}: `, h("code", {}, t.guard)) : null),
+        h("table", { class: "rp-fields" }, t.fields.map((x) => h("tr", {}, h("td", { class: "k" }, h("code", {}, x.k)), h("td", {}, x.was != null ? h("s", { class: "was" }, x.was) : null, x.was != null ? " → " : "", h("b", { class: "now" }, x.now)))))))) : null,
+    (tx.outside || []).length ? h("div", { class: "rp-outside", "data-tx-outside": "" }, h("div", { class: "rp-tx-cap" }, T("Outside the transaction", "交易之外")), h("ul", {}, tx.outside.map((o) => h("li", {}, o.kind ? h("span", { class: "rp-op" }, o.kind) : null, " ", o.what)))) : null);
+}
+/** every transition as a numbered row: from → to, what it writes (its transaction, when the tutor read one), the code it rests on */
+function transitionRows(card, it, sel, pick, lab) {
+  return h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
+    h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
+    h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
+      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
 }
 /** the lifecycle in the report: the map, and every transition as a numbered row (what it writes, the code it rests on) */
 function statemapView(card, it) {
   const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, lab = new Map((it.states || []).map((x) => [x.id, x.label || x.id]));
-  const pick = (i, t) => { RR.tsel.set(key, i); if (t.cite?.ok) openCite(card, t.cite.ref); else rerender(); };
-  return h("div", { class: "rp-smap", "data-statemap": it.id }, statesView(card, it, pick),
-    h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
-      h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
-      h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
-        t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge()))))));
+  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t.cite?.ok && !quiet) openCite(card, t.cite.ref); else rerender(); };
+  const map = statesView(card, it, pick); map.querySelector(`[data-elabel][data-edge-n="${sel}"]`)?.classList.add("on");
+  return h("div", { class: "rp-smap", "data-statemap": it.id }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, map,
+    h("div", { class: "rp-legend" }, [...((it.states || []).some((x) => x.mark) ? [["accent", T("this change", "這個改動")]] : []), ["start", T("where it starts", "起點")], ["ok", T("ends well", "正常結束")], ["seal", T("ends badly, cannot be undone", "失敗結束，無法回頭")], ["back", T("a way back", "回頭的轉換")]].map(([c, l]) => h("span", {}, h("i", { class: `sw ${c}` }), l)), h("span", { class: "rp-hint" }, T("Pick a numbered chip or a state: its transaction shows below.", "點編號或狀態：下方顯示它的交易。"))),
+    txPanel(card, it, sel, lab), transitionRows(card, it, sel, pick, lab));
+}
+/** the picked transition's transaction, right under the map (baton's panel): from → to, the tables it writes, what it writes outside */
+function txPanel(card, it, sel, lab) {
+  const t = (it.transitions || [])[sel]; if (!t) return null;
+  return h("div", { class: "rp-txpanel", "data-tx-panel": sel, "aria-live": "polite" }, h("div", { class: "rp-txp-h" }, h("span", { class: "rp-tn" }, NUMS[sel] || String(sel + 1)), h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null, t.cite ? citeChip(card, t.cite.ref, t.cite.ok) : inferenceBadge()),
+    txView(t.tx) ?? h("p", { class: "rp-td" }, T("No transaction read for this transition.", "這個轉換沒有讀到交易。")));
 }
 /** what talks to what: Studio's layout of the tutor's components and connections; the kind sets the shape, the change is
- *  marked on the node itself, a connection opens what shows it */
-const ARCH_SHAPE = { store: "round", queue: "round", actor: "circle", external: "rect", service: "rect" };
+ *  marked on the node itself in the room's colours (changed, new, removed, outside), a connection opens what shows it */
+const ARCH_SHAPE = { store: "cyl", queue: "cyl", actor: "pill", external: "rect", service: "rect" };
 const MARK = { new: ["new", "新增"], changed: ["changed", "改動"], removed: ["removed", "移除"] };
+const ARCH_CLS = { new: "ok", changed: "accent", removed: "seal" };
 function archView(card, it) {
-  const g = { dir: "LR", nodes: (it.nodes || []).map((n) => ({ id: n.id, label: n.label, shape: ARCH_SHAPE[n.kind] || "rect" })), edges: (it.edges || []).map((e, i) => ({ from: e.from, to: e.to, label: e.label || "", n: i })) };
-  const svg = flowSvg(g, null, drawnOf(card, it), picBox());
+  const nodes = (it.nodes || []).map((n) => ({ id: n.id, label: n.label, shape: ARCH_SHAPE[n.kind] || "rect", cls: [n.mark ? ARCH_CLS[n.mark] : "", n.kind === "external" ? "muted" : "", `k-${n.kind}`].filter(Boolean).join(" ") }));
+  const edges = (it.edges || []).map((e, i) => ({ from: e.from, to: e.to, label: e.label || "", n: i })), svg = curveSvg(nodes, edges, archPlace(nodes, edges, 15));
   for (const n of it.nodes || []) { const el = svg.querySelector(`[data-node="${CSS.escape(n.id)}"]`); if (!el) continue; el.classList.add(`rr-k-${n.kind}`);
     if (n.mark) { el.classList.add(`rr-m-${n.mark}`); el.setAttribute("data-mark", n.mark); const [x, y, w] = (el.getAttribute("data-box") || "0,0,0").split(",").map(Number);
-      const tg = sv("text", { x: x + w - 8, y: y + 15, "text-anchor": "end", class: "rr-mark-t" }); tg.textContent = T(...MARK[n.mark]); el.append(tg); } }
+      const tg = sv("text", { x: x + w - 8, y: y + 14, "text-anchor": "end", class: "rr-mark-t" }); tg.textContent = T(...MARK[n.mark]); el.append(tg); } }
   (it.edges || []).forEach((e, i) => { if (!e.cite?.ok) return; const el = svg.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el) return; el.classList.add("rr-cite-label"); el.setAttribute("data-edge-cite", e.cite.ref); asControl(el, () => openCite(card, e.cite.ref)); });
   const marks = [...new Set((it.nodes || []).map((n) => n.mark).filter(Boolean))];
   return h("div", { class: "rr-flow-wrap rr-arch", "data-arch": it.id }, svg,
-    h("div", { class: "rp-legend" }, marks.map((m) => h("span", {}, h("i", { class: `sw ${m}` }), T(...MARK[m]))), (it.nodes || []).some((n) => n.kind === "external") ? h("span", {}, h("i", { class: "sw ctx" }), T("outside this change", "這個改動之外")) : null,
+    h("div", { class: "rp-legend" }, marks.map((m) => h("span", {}, h("i", { class: `sw ${ARCH_CLS[m]}` }), T(...MARK[m]))), (it.nodes || []).some((n) => n.kind === "external") ? h("span", {}, h("i", { class: "sw ctx" }), T("outside this change", "這個改動之外")) : null,
       h("span", { "data-arch-basis": it.inferred ? "inferred" : "shown" }, it.inferred ? T("Drawn from the code: Studio's layout of the tutor's reading (inferred)", "依程式碼畫出：導師的理解，由 Studio 排版（推論）") : T("As the cited document or record shows it", "依引用的文件或紀錄"))));
+}
+/** every call: its request and its response (and errors), the transaction it runs, the code it rests on */
+function callsView(card, it) {
+  const kv = (rows) => h("table", { class: "rp-kv" }, rows.map((x) => h("tr", {}, h("td", { class: "k" }, h("code", {}, x.k)), h("td", {}, h("code", {}, x.v)))));
+  return h("div", { class: "rp-calls", "data-calls": it.id }, (it.calls || []).map((c, i) => h("section", { class: "rp-call", "data-call": i },
+    h("header", {}, c.method ? h("span", { class: "rp-op" }, c.method) : null, h("code", { class: "rp-call-name" }, c.name), c.cite ? citeChip(card, c.cite.ref, c.cite.ok) : inferenceBadge()),
+    h("div", { class: "rp-call-cols" }, h("div", { "data-call-part": "request" }, h("h5", {}, T("Request", "Request")), kv(c.request)),
+      h("div", { "data-call-part": "response" }, h("h5", {}, T("Response", "Response")), kv(c.response), (c.errors || []).length ? h("ul", { class: "rp-errs" }, c.errors.map((x) => h("li", {}, h("code", {}, x.code), ` ${x.when}`))) : null),
+      h("div", { "data-call-part": "transaction" }, h("h5", {}, T("Transaction", "交易")), txView(c.tx) || h("p", { class: "faint" }, T("Writes nothing", "不寫入任何東西")))))));
+}
+/** a figure the tutor drew (workflows/skills/diagram-design), as Studio took it: its tree rebuilt element by element with
+ *  createElementNS, setAttribute and textContent (no markup), each text in the room's language, its ids kept to this figure */
+const FIG_EL = new Set(["svg", "g", "rect", "path", "line", "polyline", "polygon", "circle", "ellipse", "text", "tspan", "marker", "defs", "title", "desc"]);
+const FIG_OK = /^(id|role|aria-label|aria-labelledby|data-node|data-edge|data-cite|data-en|data-hant|data-hans|data-kind|fill|stroke|stroke-width|stroke-dasharray|stroke-linecap|stroke-linejoin|opacity|fill-opacity|stroke-opacity|font-size|font-weight|font-family|font-style|text-anchor|dominant-baseline|letter-spacing|marker-start|marker-mid|marker-end|x|y|dx|dy|width|height|rx|ry|cx|cy|r|x1|y1|x2|y2|points|d|transform|viewBox|markerWidth|markerHeight|refX|refY|orient|markerUnits)$/;
+function figTree(n, lang, pre) {
+  if (!n || !FIG_EL.has(n.t)) return null; const el = document.createElementNS(SVGNS, n.t);
+  for (const [k, v0] of Object.entries(n.a || {})) { if (!FIG_OK.test(k)) continue; let v = String(v0);
+    if (/^(fill|stroke)$/.test(k) && !/^(none|transparent|var\(--fig-[a-z0-9-]+\))$/.test(v)) continue;
+    if (/^marker-/.test(k)) { const m = /^url\(#([\w-]+)\)$/.exec(v); if (!m) continue; v = `url(#${pre}-${m[1]})`; }
+    if (k === "id") v = `${pre}-${v}`; if (k === "aria-labelledby") v = v.split(/\s+/).map((x) => `${pre}-${x}`).join(" ");
+    el.setAttribute(k, v); }
+  const leaf = !(n.c || []).some((c) => typeof c !== "string"), say = (n.t === "text" || n.t === "tspan") && leaf ? (LANG_BASE(lang) === "en" ? n.a?.["data-en"] : lang === "zh-CN" ? n.a?.["data-hans"] : n.a?.["data-hant"]) : null;
+  if (say) el.textContent = say;
+  else for (const c of n.c || []) { if (typeof c === "string") el.append(document.createTextNode(c)); else { const ch = figTree(c, lang, pre); if (ch) el.append(ch); } }
+  return el;
+}
+function svgFigureView(card, it) {
+  const r = RR.rooms.get(card), lang = r ? roomLang(r) : uiLang(), svg = figTree(it.tree, lang, `f${it.id}`);
+  if (svg) { svg.classList.add("rr-figsvg-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number); if (vb[2]) svg.style.maxWidth = `${Math.round(vb[2] * 1.2)}px`; }
+  const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, tr = it.transitions || [];
+  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t?.cite?.ok && !quiet) openCite(card, t.cite.ref); else rerender(); };
+  if (svg) { for (const el of svg.querySelectorAll("[data-edge]")) { const e = el.getAttribute("data-edge"), k = tr.findIndex((t) => t.edge === e), cite = el.getAttribute("data-cite");
+      if (k >= 0) { el.classList.add("rr-pickable"); if (k === sel) el.classList.add("on"); asControl(el, () => pick(k, tr[k])); } else if (cite) { el.classList.add("rr-pickable"); asControl(el, () => openCite(card, cite)); } }
+    for (const el of svg.querySelectorAll("[data-node]")) { const id = el.getAttribute("data-node"), k = tr.findIndex((t) => t.to === id && t.from !== id); if (k >= 0) { el.classList.add("rr-pickable"); asControl(el, () => pick(k, tr[k], true)); } } }
+  const lab = new Map(); return h("div", { class: `rr-figsvg rr-figsvg-${it.kind}`, "data-svg-figure": it.id, "data-figure-kind": it.kind }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, svg,
+    tr.length ? transitionRows(card, { ...it, transitions: tr }, sel, pick, lab) : null);
 }
 /** one decision: the question, the option taken and why; the options turned down (only as the record shows them) set apart */
 function decisionFigure(it, seen) {
@@ -395,18 +638,22 @@ function figIn(r, it) {
  *  options as frames around their steps */
 function sequenceView(it, seen) {
   const anim = seen && !seen.has("seq") && !reduceMotion(); if (seen) seen.add("seq");
-  const n = it.actors.length, GX = 150, X0 = 90, RH = 40, top = 70, W = X0 * 2 + GX * (n - 1), H = top + it.steps.length * RH + 40;
+  // one event a band; a frame (or an alternative inside it) gets a band of its own for its tab, so no tab sits on a message
+  const n = it.actors.length, GX = 150, X0 = 90, RH = 40, top = 70, W = X0 * 2 + GX * (n - 1);
+  const opens = it.steps.map((st, i) => !!st.frame && (i === 0 || it.steps[i - 1].frame !== st.frame) && !(st.frame === "else" && it.steps[i - 1]?.frame === "else"));
+  const YS = []; { let extra = 0; it.steps.forEach((_, i) => { if (opens[i]) extra += 20; YS.push(top + i * RH + extra); }); }
+  const yOf = (i) => (i < YS.length ? YS[i] : YS[YS.length - 1] + RH), H = (YS.length ? YS[YS.length - 1] + RH : top) + 40;
   const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "rr-seq", role: "img", "data-sequence": it.id, preserveAspectRatio: "xMidYMid meet", style: `max-width:${W * 1.5}px;max-height:${H * 1.5}px` });
   const x = (a) => X0 + it.actors.indexOf(a) * GX;
   // frames first, behind: consecutive steps that share a frame
   for (let i = 0; i < it.steps.length;) { const f = it.steps[i].frame; if (!f) { i++; continue; } let j = i; while (j + 1 < it.steps.length && (it.steps[j + 1].frame === f || (f === "alt" && it.steps[j + 1].frame === "else"))) j++;
-    const y0 = top + i * RH - 10, y1 = top + (j + 1) * RH - 14, fr = sv("g", { class: "rr-frame", "data-frame": f }); fr.append(sv("rect", { x: 12, y: y0, width: W - 24, height: y1 - y0, rx: 6 }));
+    const y0 = yOf(i) - 30, y1 = yOf(j) + RH - 14, fr = sv("g", { class: "rr-frame", "data-frame": f }); fr.append(sv("rect", { x: 12, y: y0, width: W - 24, height: y1 - y0, rx: 6 }));
     const t = sv("text", { x: 20, y: y0 + 14, class: "rr-frame-l" }); t.textContent = `${f}${it.steps[i].frameLabel ? ` [${it.steps[i].frameLabel}]` : ""}`; fr.append(t);
-    for (let k = i + 1; k <= j; k++) if (it.steps[k].frame === "else") { const ye = top + k * RH - 12; fr.append(sv("line", { x1: 12, y1: ye, x2: W - 12, y2: ye, class: "rr-frame-else" })); const te = sv("text", { x: 20, y: ye + 12, class: "rr-frame-l" }); te.textContent = `else${it.steps[k].frameLabel ? ` [${it.steps[k].frameLabel}]` : ""}`; fr.append(te); }
+    for (let k = i + 1; k <= j; k++) if (it.steps[k].frame === "else" && it.steps[k - 1].frame !== "else") { const ye = yOf(k) - 30; fr.append(sv("line", { x1: 12, y1: ye, x2: W - 12, y2: ye, class: "rr-frame-else" })); const te = sv("text", { x: 20, y: ye + 12, class: "rr-frame-l" }); te.textContent = `else${it.steps[k].frameLabel ? ` [${it.steps[k].frameLabel}]` : ""}`; fr.append(te); }
     svg.append(fr); i = j + 1; }
   it.actors.forEach((a) => { const g = sv("g", { class: "rr-actor" }); g.append(sv("rect", { x: x(a) - 62, y: 14, width: 124, height: 34, rx: 8 }), sv("line", { x1: x(a), y1: 48, x2: x(a), y2: H - 14, class: "rr-lifeline" }));
     const t = sv("text", { x: x(a), y: 36, "text-anchor": "middle", class: "rr-actor-l" }); t.textContent = clip(a, 16); g.append(t); svg.append(g); });
-  it.steps.forEach((st, i) => { const y = top + i * RH + 10, x1 = x(st.from), x2 = x(st.to), self = x1 === x2, g = sv("g", { class: `rr-step ${st.kind}`, "data-step": i + 1 });
+  it.steps.forEach((st, i) => { const y = yOf(i) + 10, x1 = x(st.from), x2 = x(st.to), self = x1 === x2, g = sv("g", { class: `rr-step ${st.kind}${st.frame ? ` in-${st.frame}` : ""}`, "data-step": i + 1 });
     const d = self ? `M${x1},${y - 8} h36 v16 h-36` : `M${x1},${y} L${x2},${y}`, dir = x2 >= x1 ? 1 : -1, ex = self ? x1 : x2;
     const line = sv("path", { d, pathLength: 1, class: "rr-step-line" }), head = sv("path", { d: self ? `M${ex + 10},${y + 2} L${ex},${y + 8} L${ex + 10},${y + 14}` : `M${ex - 10 * dir},${y - 6} L${ex},${y} L${ex - 10 * dir},${y + 6}${st.kind === "async" ? "" : " Z"}`, class: "rr-step-head" });
     if (anim) { line.classList.add("rr-pen"); line.style.setProperty("--dl", `${(i * 0.18).toFixed(2)}s`); }
@@ -487,11 +734,11 @@ const plain = (s) => String(s || "").replace(CITE, "").replace(/\*\*|`/g, "").re
 const STUDIO_TITLES = { "This change at a glance": "一眼看懂這個改動", "What changed since you last looked": "你上次看過之後改了什麼", "The app, before and after": "這個 app 改動前後", "Chart": "圖表", "Illustration": "插圖" };
 const itemTitle = (it) => (STUDIO_TITLES[it?.title] ? T(it.title, STUDIO_TITLES[it.title]) : it?.title || "");
 /** a lesson's chapters, in order (src/domain/review-room.ts CHAPTERS) */
-const CHAPTER = { what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
+const CHAPTER = { calls: ["Every call: request, response, transaction", "每個呼叫：request、response、交易"], what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
 const chapterName = (id) => (CHAPTER[id] ? TL(...CHAPTER[id]) : "");
 /** the chapters' order (src/domain/review-room.ts CHAPTERS): a lesson is shown in it */
-const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "reviewers", "roads", "watch", "questions"];
-const TYPE_LABEL = { arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
+const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "calls", "reviewers", "roads", "watch", "questions"];
+const TYPE_LABEL = { svg: ["drawn by the tutor, checked by Studio", "導師畫的圖，Studio 檢查過"], calls: ["every call", "每個呼叫"], arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
 const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
 // ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
 const CJK_RE = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿︰-﹏＀-￯]/g;
@@ -732,7 +979,7 @@ function reportFigure(card, r, it) {
   // a report figure reads at its drawn size, left to right where it fits: the content column, not the board's box
   BOX = innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 };
   const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionView(card, v) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
-    : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : itemView(card, v, null); } finally { BOX = null; }
+    : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : v.type === "svg" ? svgFigureView(card, v) : v.type === "calls" ? callsView(card, v) : itemView(card, v, null); } finally { BOX = null; }
   // never blown up: at most a little over the size it was laid out at
   for (const sg of [body, ...(body.querySelectorAll ? body.querySelectorAll("svg") : [])]) if (sg?.tagName === "svg" && sg.viewBox?.baseVal?.width) sg.style.maxWidth = `${Math.round(sg.viewBox.baseVal.width * 1.15)}px`;
   return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
@@ -749,6 +996,13 @@ function reportSection(card, r, x, j, nth) {
     : h("div", { class: `rp-prose${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: m === 0 && ch === "what" ? "lead" : "" }, ...pointText(card, p))));
   return h("section", { class: `rp-sec${x.skip ? " skipped" : ""}`, id: `rp-${card}-${x.key}`, "data-report-section": x.key, "data-chapter": ch }, h("div", { class: "rp-card" }, head, body), pic ? reportFigure(card, r, pic) : null);
 }
+/** a lesson auto-teach started: said so, with what it ran on, and the room's switch to stop it starting on the next paste */
+function autoNote(r, t) {
+  if (!t?.auto) return null; const card = r.card.id;
+  return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n }, T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
+    !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+      T(" start by itself on the next paste", " 下次貼上時自動開始")) : null);
+}
 /** the report: the lesson's sections in order, a quiet footer with the rules it keeps; it scrolls inside the room */
 function reportView(r, scenes, i, toc) {
   const card = r.card.id, sc = scenes[i], t = sc.t, secs = scenes.filter((x) => x.turn === sc.turn && x.chapter);
@@ -760,7 +1014,7 @@ function reportView(r, scenes, i, toc) {
     cur = cur || secs[0]?.key; const at = scenes.findIndex((x) => x.key === cur); if (at >= 0 && RR.scene.get(card) !== at) { RR.scene.set(card, at);
       for (const b of document.querySelectorAll("[data-toc-scene]")) b.setAttribute("aria-current", b.dataset.tocScene === cur ? "true" : "false"); } };
   const rep = h("div", { class: "rr-report", "data-report": t.n, tabindex: "0", onscroll: spy, "aria-label": T("The lesson, as a report", "這一課（報告）") },
-    h("header", { class: "rp-top" }, eyebrow ? h("div", { class: "rp-eyebrow" }, eyebrow) : null, h("h1", { class: "rp-title" }, title),
+    h("header", { class: "rp-top" }, eyebrow ? h("div", { class: "rp-eyebrow" }, eyebrow) : null, h("h1", { class: "rp-title" }, title), autoNote(r, t),
       h("p", { class: "rp-lede" }, T(`A lesson in ${secs.length} sections. Every drawing is laid out by Studio from the tutor's data; a point without a verified citation is marked as an inference.`, `這一課共 ${secs.length} 節。每張圖都由 Studio 依導師給的資料排版；沒有可驗證引用的重點會標成推論。`))),
     secs.map((x, j) => reportSection(card, r, x, j, x.chapter === "decisions" ? ++nth : 0)),
     h("footer", { class: "rp-foot" }, h("span", {}, T("Nothing here says whether this change is deployed: that is not in the repository.", "這裡不說這個改動是否已部署：那不在 repository 裡。")),
@@ -807,7 +1061,7 @@ function stageView(r) {
   const toc = scenes.some((x) => x.chapter) ? h("nav", { class: "rr-toc", "data-toc": "", "aria-label": T("Chapters", "章節") },
     (() => { const out = [], seenTurn = new Set(); scenes.forEach((x, j) => { const tn = x.turn ?? 0;
       if (!seenTurn.has(tn)) { seenTurn.add(tn); out.push(h("p", { class: "rr-toc-h" }, x.welcome ? T("Welcome", "開場") : x.t ? clip(x.question || x.t.text || T(...(ACTION_LABEL[x.t.action] || [x.t.action, x.t.action])), 40) : "")); }
-      const prev = scenes[j - 1], run = x.chapter && (x.chapter === "change" || x.chapter === "decisions"), cont = run && prev?.turn === x.turn && prev?.chapter === x.chapter;
+      const prev = scenes[j - 1], run = x.chapter && ["change", "decisions", "lifecycle", "calls"].includes(x.chapter), cont = run && prev?.turn === x.turn && prev?.chapter === x.chapter;
       if (run && !cont) out.push(h("p", { class: "rr-toc-ch", "data-toc-chapter": x.chapter }, chapterName(x.chapter)));
       if (run) { const nth = scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === x.chapter).length;
         out.push(h("button", { type: "button", class: "rr-toc-i sub", "data-toc-scene": x.key, "data-toc-item": nth, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
@@ -833,10 +1087,12 @@ function stageView(r) {
         h("div", { class: "rr-points" },
           RR.ready.has(card) ? h("button", { type: "button", class: "rr-chip lead", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.reveal.set(`${card}/${key}`, 0); queueMicrotask(() => play(card, scenes[at])); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示")) : null,
           sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
+          autoNote(r, sc.t),
           sc.t && sc.t.status !== "done" ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
           sc.quiz ? quizSide(r, sc) : h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
           n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
           // the welcome scene's one action: the lesson, a paid turn that asks to confirm first
+          sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
           sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
             T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
           sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
@@ -956,6 +1212,8 @@ function drawer(r) {
           s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
           : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")),
         // start the room over: confirmed first; what goes and what stays said plainly; refused while a turn or a translation runs
+        !r.snapshot && r.subject?.kind === "pr" ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+          h("span", {}, T("Start the lesson by itself when this pull request is pasted again on a new head", "這個 pull request 在新的 head 再次貼上時自動開始教學"))) : null,
         r.snapshot ? null : h("div", { class: "rr-reset", "data-reset-zone": "" }, h("h3", {}, T("Start over", "清空重來")),
           RR.resetAsk.has(card) ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-reset-confirm-box": "", "aria-label": T("Start this room over", "清空這個審查室重來") },
             h("p", {}, T("Start this room over? Its answers, its board, its translations and its generated pictures go (moved to an archive folder beside the room, not deleted; a Task's room keeps that archive in the Task's own folder, so it goes if the Task is deleted). The Library's saved snapshots and the Task's ledger stay.", "要清空這個審查室重來嗎？它的回答、白板、翻譯和生成圖片都會移走（搬到審查室旁的封存資料夾，不會刪除；任務的審查室會把封存放在任務自己的資料夾裡，任務被刪除時封存也會一起刪除）。成品庫裡存過的快照和任務的帳本都會保留。")),
@@ -977,17 +1235,40 @@ async function resetRoom(card) {
   finally { RR.posting.delete(card); rerender(); }
 }
 // ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------
-const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set() };
+const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(), offer: new Map(), shown: new Map() };
+/** a switch changed: what a paste starts is asked again */
+const dropPasteOffers = () => { PR.offer.clear(); PR.shown.clear(); };
+const PR_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?$/;
+/** what pasting this address would start, asked of Studio once per address (the paste box says it before the paste) */
+const pasteOffer = (url) => { if (!PR_URL.test(url) || PR.offer.has(url)) return PR.offer.get(url); PR.offer.set(url, { loading: true });
+  api(`/api/review-room/paste-offer?url=${encodeURIComponent(url)}`).then((o) => PR.offer.set(url, o)).catch((e) => PR.offer.set(url, { error: e.message })).finally(rerenderAny); return PR.offer.get(url); };
+/** the paste box's line about the paste: a paid round on this tutor when auto-teach is on, else nothing runs until asked */
+function pasteLine(url, where) {
+  const o = url ? pasteOffer(url) : null; if (!o || o.loading) { PR.shown.delete(where); return null; }
+  PR.shown.set(where, { url, auto: o.auto !== false && !o.error, plan: o.plan || null }); // what go() may start: only what this line said
+  if (o.auto === false) return h("p", { class: "faint", "data-paste-offer": "off" }, T("Pasting opens the room; nothing runs until you ask (auto-teach is off).", "貼上只會開啟審查室；你開口之前什麼都不跑（自動教學已關）。"));
+  if (o.error) return h("p", { class: "faint", "data-paste-offer": "none" }, T(`Pasting opens the room; no lesson starts by itself: ${o.error}`, `貼上會開啟審查室，不會自動開始教學：${o.error}`));
+  const who = `${o.provider} · ${o.model ?? T("default model", "預設模型")}${o.effort ? ` (${o.effort})` : ""}`;
+  return h("p", { class: "rr-paste-offer", "data-paste-offer": "on", "data-paste-images": o.images ? "on" : "off", "data-paste-host": o.createsHost ? "new" : "kept" },
+    T(`Pasting starts the lesson by itself: ${o.createsHost ? "it creates this pull request's host Task and its tutor's staffing, then runs " : ""}one paid model round on ${who}; ${o.images ? "the tutor may also ask for up to two generated pictures, each a paid image job" : "no generated pictures"}. The tutor only reads the code, and nothing is sent to GitHub.`,
+      `貼上就會自動開始這一課：${o.createsHost ? "會先為這個 pull request 建立承載它的任務和導師的人員配置，再" : ""}在 ${who} 上付費執行一回合；${o.images ? "導師也可能要求最多兩張生成圖片，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼，也不送任何東西到 GitHub。`));
+}
 /** the URL box (the Review Room's home, and a small one on a connected project's page) */
 function prBox(where, repository) {
   const busy = PR.busy.has(where), err = PR.err.get(where);
   const go = async () => { const url = (PR.url.get(where) || "").trim(); if (!url || busy) return; PR.busy.add(where); PR.err.delete(where); rerenderAny();
-    try { const out = await postJ("/api/review-room/open-pr", { url }); RR.rooms.set(out.id, out.room); PR.url.delete(where); location.hash = out.href; }
+    // the lesson starts by itself only when this box has said so for this very address; before that the paste opens the room only
+    const said = PR.shown.get(where), auto = !!(said && said.url === url && said.auto && said.plan);
+    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang(), ...(auto ? { auto: true, plan: said.plan } : {}) }); RR.rooms.set(out.id, out.room);
+      // the plan changed since the box said it (a new tutor, pictures, a host): nothing started; the box shows the new plan to paste again
+      if (out.plan) { PR.offer.set(url, out.plan); PR.err.set(where, T("What a paste starts has changed (above): nothing started. Paste again to start it.", "貼上會開始的內容變了（見上方）：什麼都沒有開始。再貼一次才會開始。")); return; }
+      PR.url.delete(where); dropPasteOffers(); location.hash = out.href; }
     catch (e) { PR.err.set(where, e.message); } finally { PR.busy.delete(where); rerenderAny(); } };
   return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
     h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),
       h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 300, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>", value: PR.url.get(where) || "",
-        oninput: (e) => PR.url.set(where, e.target.value), "aria-label": T("Pull request URL", "Pull request 網址") })),
+        oninput: (e) => { PR.url.set(where, e.target.value); if (PR_URL.test(e.target.value.trim()) && !PR.offer.has(e.target.value.trim())) { pasteOffer(e.target.value.trim()); } }, "aria-label": T("Pull request URL", "Pull request 網址") })),
+    pasteLine((PR.url.get(where) || "").trim(), where),
     h("button", { type: "submit", class: "btn primary", "data-pr-open": where, disabled: busy }, busy ? T("Reading it on GitHub…", "正在讀取 GitHub…") : T("Open its review room", "開啟它的審查室")),
     h("p", { class: "faint" }, T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
     err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);
@@ -1057,8 +1338,8 @@ addEventListener("keydown", (e) => {
   else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
 });
 routes.room = (arg) => {
-  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
-    else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
+  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
+    else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
     const rooms = RR.list.rooms || [];
     return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 的網址。"),
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
@@ -1066,7 +1347,9 @@ routes.room = (arg) => {
           h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, T(x.title, x.titleZh || x.title))), " ",
           h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("a turn is running", "有一回合在跑") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
           h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`)))) : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
-      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null))); }
+      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null),
+        h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); dropPasteOffers(); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),
+          h("span", {}, T("Teach a pasted pull request by itself: pasting it starts the lesson (one paid round on the room's tutor, with the room's pictures setting; the paste box says which before you paste), once per head.", "貼上 pull request 就自動開始教學：貼上即開始這一課（用房間的導師付費一回合，圖片依房間設定；貼上前貼上框會先說明），每個 head 只一次。"))))); }
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
@@ -1091,5 +1374,5 @@ routes.room = (arg) => {
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
-window.crewReviewRoom = { parseFlow, scenesOf };
+window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace };
 })();

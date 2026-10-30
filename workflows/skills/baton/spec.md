@@ -19,8 +19,14 @@ with the citations it rests on (`diff:path:Lstart-end`, `commit:<sha>`, `review:
 - `decision`: `{type: "decision", title, question, chosen, because, rejected?: [{option, why, cite}], cites}`: at most 3
   rejected options, each cited to a commit, a review note, the ledger or a source.
 - `item`: `{type: "item", title, name, before, after, mechanism?, cites}`.
-- `states`: `{type: "states", title, states: [{id, label}], transitions: [{from, to, label, detail?, cite}]}`: 2 to 10
-  states, 1 to 16 transitions.
+- `states`: `{type: "states", title, entity, states: [{id, label, mark?: "new"|"changed"}], transitions: [{from, to, label, detail?, cite, tx?}]}`:
+  2 to 10 states, 1 to 16 transitions; `tx` = `{tables: [{table, op: INSERT|UPDATE|DELETE|UPSERT, guard?, fields: [{k,
+  was?, now}]}], outside?: [{what, kind?: cache|call|event|file|queue}]}`.
+- `calls`: `{type: "calls", title, calls: [{name, method?, request: [{k, v}], response: [{k, v}], errors?: [{code, when}],
+  tx?, cite}]}`: 1 to 6 calls.
+- A figure you draw: `figure_svg {kind: state|sequence|architecture|flow|decision|item, title, svg, entity?, cites?,
+  transitions?: [{edge: "from>to", label, cite, tx}]}` (a state figure lists every `data-edge` it draws). The SVG follows
+  workflows/skills/diagram-design/output-spec.md.
 - `sequence`: `{type: "sequence", title, actors: [names], steps: [{from, to, label, kind?: call|return|async, frame?:
   loop|alt|else|opt, frameLabel?}], cites}`: 2 to 6 actors, 1 to 16 steps.
 

@@ -152,6 +152,43 @@ const TOOLRES: [string, any][] = [];
     ok(sk[0]?.skipped === "talks" && td.scenes.find((x: any) => x.chapter === "talks")?.title === "谁跟谁说话" && td.scenes.at(-1)?.chapter === "what" && /at most 12 scenes a turn/.test(sk[1]?.error ?? "") && JSON.stringify(lc?.missing) === JSON.stringify(["change", "lifecycle", "sequence"]),
       "a lesson's chapters come in any order (what after the decisions); talks may be left out with a cited reason (its title in the turn's language, 简体 too); a chapter left out counts toward the scene limit; lesson_check names only what is missing", JSON.stringify({ sk, lc, chapters: td.scenes.map((x: any) => x.chapter) }));
     ok(board?.cites.some((c: any) => c.ref === `commit:${th}` && c.ok) && board.rejected[0].cite.ok, "a rejected option's citation is the decision's own too (the Library resolves it)", JSON.stringify(board?.cites)); }
+  // ---- figures: one the tutor draws itself (taken through Studio's allowlist and geometric gate), a lifecycle per entity with
+  //      each transition's transaction, every call with its request, response and transaction ----
+  { const nF = (room.view(t.id) as any).turns.length + 1, rF = TOOLRES.length;
+    const tx1 = { tables: [{ table: "orders", op: "UPDATE", guard: "WHERE status='draft'", fields: [{ k: "status", was: "draft", now: "priced" }] }], outside: [{ what: "price cache", kind: "cache" }] };
+    const T = (x: number, y: number, s: string) => `<text x="${x}" y="${y}" text-anchor="middle" font-size="13" fill="var(--fig-ink)" data-en="${s}" data-hant="${s}" data-hans="${s}">${s}</text>`;
+    const stateSvg = (labelY: number) => `<svg viewBox="0 0 400 140" role="img"><defs><marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--fig-muted)"/></marker></defs>
+<path d="M140,70 H260" fill="none" stroke="var(--fig-muted)" marker-end="url(#ar)" data-edge="draft>priced" data-cite="diff:src/percent.ts"/><rect x="20" y="48" width="120" height="44" rx="8" fill="var(--fig-card)" stroke="var(--fig-ink)" data-node="draft" data-cite="diff:src/not-in-this-change.ts"/>${T(80, 75, "Draft")}
+<rect x="260" y="48" width="120" height="44" rx="8" fill="var(--fig-accent-tint)" stroke="var(--fig-accent)" data-node="priced"/>${T(320, 75, "Priced")}${T(200, labelY, "price")}<script>x()</script></svg>`;
+    script.push([
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(74), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", tx: tx1 }] }],
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", tx: tx1 }] }],
+      ["figure_svg", { kind: "state", title: "Orders", svg: stateSvg(58), transitions: [] }],
+      ["board_draw", { items: [{ type: "states", title: "Invoices", entity: "invoices.state", states: [{ id: "open", label: "Open", mark: "changed" }, { id: "paid", label: "Paid", mark: "<b>" }], transitions: [{ from: "open", to: "paid", label: "pay", cite: "diff:src/percent.ts", tx: tx1 }] },
+        { type: "states", title: "Bad", states: [{ id: "a", label: "A" }, { id: "b", label: "B" }], transitions: [{ from: "a", to: "b", label: "x", tx: { tables: [{ table: "t", op: "MERGE", fields: [] }] } }] },
+        { type: "states", title: "Uncited", states: [{ id: "a", label: "A" }, { id: "b", label: "B" }], transitions: [{ from: "a", to: "b", label: "x" }] },
+        { type: "calls", title: "Calls", calls: [{ name: "/price", method: "POST", request: [{ k: "amount", v: "1999" }], response: [{ k: "cents", v: "300" }], errors: [{ code: "400", when: "negative" }], tx: tx1, cite: "diff:src/percent.ts" }] },
+        { type: "calls", title: "No response", calls: [{ name: "/x", request: [{ k: "a", v: "b" }], response: [] }] }] }],
+      ["scene_show", { chapter: "lifecycle", title: "Orders", picture: `B${nF}-1`, points: [{ text: "Pricing is one UPDATE [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "The cache is outside it.", cites: [] }] }],
+      ["scene_show", { chapter: "lifecycle", title: "Invoices", picture: `B${nF}-2`, points: [{ text: "Paying is one UPDATE [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "One way only.", cites: [] }] }],
+      ["scene_show", { chapter: "lifecycle", title: "Uncited", picture: `B${nF}-4`, points: [{ text: "One [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Two.", cites: [] }] }],
+      ["scene_show", { chapter: "calls", title: "The price call", picture: `B${nF}-5`, points: [{ text: "It answers in cents [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Negative amounts fail.", cites: [] }] }],
+      ["say", "Figures [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "teach", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const rr = TOOLRES.slice(rF), get = (n: string) => rr.filter(([x]) => x === n).map(([, j]) => j), fs = get("figure_svg"), bd = get("board_draw")[0], sh = get("scene_show");
+    const vF: any = room.view(t.id), svgIt = vF.board.find((b: any) => b.id === `B${nF}-1`), inv = vF.board.find((b: any) => b.id === `B${nF}-2`), callIt = vF.board.find((b: any) => b.id === `B${nF}-5`), tf = vF.turns.at(-1);
+    ok(/Studio refused the figure \(redraw it\): text "price" sits on a line/.test(fs[0]?.error ?? "") && JSON.stringify(fs[1]?.added) === JSON.stringify([`B${nF}-1`]) && fs[1].stripped.includes("<script>") && /transitions lists every data-edge/.test(fs[2]?.error ?? ""),
+      "a figure the tutor draws is refused with what is wrong (a label on its line) and taken once redrawn, anything off the allowlist dropped; a state figure lists every transition it draws", JSON.stringify(fs));
+    { const all: any[] = [], walk = (n: any) => { all.push(n); for (const c of n.c ?? []) if (typeof c !== "string") walk(c); }; if (svgIt?.tree) walk(svgIt.tree);
+      const edge = all.find((n) => n.a["data-edge"] === "draft>priced"), draft = all.find((n) => n.a["data-node"] === "draft");
+      ok(edge?.a["data-cite"] === "diff:src/percent.ts" && draft && !("data-cite" in draft.a) && svgIt.cites.filter((c: any) => c.ref === "diff:src/percent.ts" && c.ok).length === 2 && !svgIt.cites.some((c: any) => /not-in-this-change/.test(c.ref)),
+        "a figure's data-cite is checked like any citation: one that resolves is kept and joins the figure's cites (the Library resolves it), one that does not is dropped", JSON.stringify({ edge: edge?.a, draft: draft?.a, cites: svgIt?.cites })); }
+    ok(svgIt?.type === "svg" && svgIt.kind === "state" && svgIt.entity === "orders.status" && svgIt.transitions[0].tx.tables[0].fields[0].now === "priced" && svgIt.transitions[0].cite.ok && !JSON.stringify(svgIt.tree).includes("script"),
+      "the figure is kept as Studio's tree of allowed elements, with its entity and each transition's transaction", JSON.stringify(svgIt?.transitions));
+    ok(inv?.entity === "invoices.state" && inv.states[0].mark === "changed" && !("mark" in inv.states[1]) && inv.transitions[0].tx.outside[0].kind === "cache" && /transition 1: tx:/.test(bd?.errors?.[0] ?? "") && callIt?.calls[0].tx.tables[0].table === "orders" && callIt.calls[0].errors[0].code === "400" && /calls is 1 to 6/.test(bd?.errors?.[1] ?? ""),
+      "a lifecycle names its entity, the states this change adds or changes, and each transition's transaction (tables, guard, fields was → now, writes outside); every call has its request, response, errors and transaction; a malformed one is refused", JSON.stringify(bd?.errors));
+    ok(sh[0]?.scene && sh[1]?.scene && /every transition cites the code that makes it/.test(sh[2]?.error ?? "") && sh[3]?.scene && tf.scenes.filter((x: any) => x.chapter === "lifecycle").length === 2,
+      "a lesson may show one lifecycle for each entity; a lifecycle with a transition that cites nothing is refused; every call has a chapter of its own", JSON.stringify(sh.map((x: any) => x.error ?? x.scene))); }
   // ---- start the room over: refused while a turn or a translation runs; archived, never deleted; nothing writes the old room back ----
   { const rd = join(E.rdir(t.id), "review-room"), f = join(rd, `${t.id}.json`), dir = join(rd, `${t.id}-images`), arch = join(rd, ".archive");
     let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:src/percent.ts]."]]);
@@ -271,6 +308,7 @@ const TOOLRES: [string, any][] = [];
   const adapter = new GitHubPrAdapter(grant, () => "fake-test-token", 15_000, H.data);
   const room = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data), github: (p: any) => p.github?.repository === grant.repository ? adapter : null,
     web: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
+  room.setSettings({ autoTeach: false }); // a pasted pull request's lesson starting by itself is tested on its own (the host block)
   E.actions.prep = async (x: any) => { Object.assign(x.ctx, { project: "proj", repo: local, worktree: local, baseCommit: must(local, ["rev-parse", "main"]), head: A, pr: { adapter: "github", id: "1", url: "https://github.com/fixture/project/pull/1", head: A } }); x.save(); return "ok"; };
   const host = E.start({ workflow: "pr-host", params: {} }); await until(() => E.cards.list({ run: host.id, open: true }).length > 0, 20000);
   const script: any[][] = [], prompts: { text: string }[] = [], tutor = scriptedTutor(H, script, prompts), baseProvider = E.deps.provider;
@@ -289,7 +327,11 @@ const TOOLRES: [string, any][] = [];
 
   // ---- a connected repository's pull request: read with GET, its commits into Studio's own cache ----
   sim.transformNext("GET", (v: any) => ({ ...v, head: { ...v.head, ref: EVIL_REF } }), "/pulls/1");
+  const before: any = room.pasteOffer("https://github.com/fixture/project/pull/1");
   const opened: any = await room.openPr("https://github.com/fixture/project/pull/1/"), pid = prRoomId("fixture/project", 1);
+  { const o: any = (room.view(pid) as any).offer;
+    ok(before.createsHost === false && before.provider === o.provider && (before.model ?? null) === (o.model ?? null) && (before.effort ?? null) === (o.effort ?? null) && typeof before.plan === "string",
+      "a pull request a Studio Task published, pasted before it has a room: the paste box names that Task's tutor seat and no host Task to create", JSON.stringify({ before, offer: [o.provider, o.model, o.effort] })); }
   const v1: any = room.view(pid, true), cacheDir = join(H.data, "review-room", "cache"), caches = existsSync(cacheDir) ? Bun.spawnSync(["ls", cacheDir]).stdout.toString().trim().split("\n") : [];
   ok(opened.id === pid && opened.href === `#/room/${pid}` && v1.subject.url === "https://github.com/fixture/project/pull/1" && v1.head === A && v1.prState.state === "open" && v1.task?.id === host.id, "the pasted URL opens the pull request's room at its head, hosted by the Task that published it", JSON.stringify({ s: v1.subject, head: v1.head, task: v1.task }));
   ok(sim.calls.length > 0 && sim.calls.every((c) => c.method === "GET") && ["/pulls/1", "/pulls/1/reviews?per_page=100&page=1", "/pulls/1/comments?per_page=100&page=1", "/issues/1/comments?per_page=100&page=1", "/pulls/1/files?per_page=100&page=1"].every((p) => sim.calls.some((c) => c.path === p)),
@@ -495,6 +537,7 @@ const TOOLRES: [string, any][] = [];
   const adapter = new GitHubPrAdapter(grant, () => "fake-test-token", 15_000, H.data); let teamWrites = 0; (E.deps as any).teamStaffing = () => { teamWrites++; return null; };
   const room = installReviewRoom(E, { dataDir: H.data, projects: new Projects(H.data), github: () => adapter, web: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
   const script: any[][] = [], prompts: { text: string }[] = [], selects: any[] = [], tutor = scriptedTutor(H, script, prompts);
+  room.setSettings({ autoTeach: false }); // off for the confirmation tests below; auto-teach on paste is tested at the end of this block
   E.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ run: x.run.id, node: x.node.id, role: c?.role, pick: p }); return { ...tutor(p.provider, p.model), reasoningEffort: p.effort ?? null } as any; };
   const localBefore = JSON.stringify({ refs: must(local, ["for-each-ref"]), objects: must(local, ["count-objects", "-v"]), status: must(local, ["status", "--porcelain"]) });
   // another vendor is usable too: a host room still runs on the project's crew reviewer, never adaptive
@@ -545,6 +588,66 @@ const TOOLRES: [string, any][] = [];
   const hr = E.get(host.id)!;
   ok(!hr.ctx.worktree && !hr.ctx.repo && JSON.stringify({ refs: must(local, ["for-each-ref"]), objects: must(local, ["count-objects", "-v"]), status: must(local, ["status", "--porcelain"]) }) === localBefore && sim.calls.every((c) => c.method === "GET"),
     "no writes anywhere: the host has no worktree or repository, the project's checkout is untouched, every GitHub call a GET", JSON.stringify(sim.calls.filter((c) => c.method !== "GET")));
+  // ---- auto-teach: pasting a pull request starts its lesson by itself (the paste is the consent); once per head; switchable ----
+  { const url = "https://github.com/fixture/project/pull/5", turns = () => (room.view(opened.id) as any).turns.length;
+    const paste = (u = url) => room.openPr(u, "captain", "en", true, (room.pasteOffer(u) as any).plan);
+    headAs(B); const n0 = turns(); await paste(); await room.settle(opened.id);
+    ok(turns() === n0 && room.settings().autoTeach === false, "auto-teach off (the Studio-wide setting): pasting the pull request starts nothing", JSON.stringify(room.settings()));
+    const offOffer: any = room.pasteOffer(url); room.setSettings({ autoTeach: true }); const onOffer: any = room.pasteOffer(url), badOffer: any = room.pasteOffer("https://example.com/x");
+    script.push([["msg", "Reading the change."], ["say", "It adds a third line [diff:a.txt]."]]);
+    headAs(B); const out: any = await paste(), running = out.room.running, t = (room.view(opened.id) as any).turns.at(-1); await room.settle(opened.id);
+    const led = E.trusted(host.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1) as any;
+    ok(running != null && t.action === "teach" && t.auto === true && t.head === B && led?.data.auto === true && led.data.action === "teach" && !(room.view(opened.id) as any).images,
+      "pasting a pull request starts its lesson by itself, no click and no confirmation: an ordinary paid turn marked auto on the ledger, pictures off", JSON.stringify({ running, turn: [t.action, t.auto, t.status], led: led?.data.auto }));
+    ok(offOffer.auto === false && onOffer.auto === true && onOffer.provider === t.provider && (onOffer.model ?? "") === (t.model ?? "") && onOffer.paid === true && badOffer.code === "bad_url",
+      "before the paste, the paste box can say what it starts: auto-teach on or off, and the tutor and the paid round (the one the lesson then ran on)", JSON.stringify({ offOffer, onOffer, ran: [t.provider, t.model] }));
+    const n1 = turns(); headAs(B); await paste(); room.view(opened.id, true); await room.settle(opened.id);
+    ok(turns() === n1, "pasting it again (or reopening the room) on the same head starts no second lesson", String(turns() - n1));
+    // a new head with a finished lesson already there: nothing starts
+    writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\n"); must(scratch, [...id, "commit", "-qam", "Add four"]); const C = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${C}:refs/pull/5/head`]);
+    headAs(C); const vc: any = await room.check(opened.id); const nC = (vc.turns as any[]).length + 2; // the turn opens with Studio's "what changed" scene first
+    script.push([["board_draw", { items: [{ type: "arch", title: "One file", nodes: [{ id: "reader", label: "Reader", kind: "actor" }, { id: "file", label: "a.txt", kind: "store", mark: "changed" }], edges: [{ from: "reader", to: "file", label: "reads", cite: "diff:a.txt" }] }, { type: "item", title: "Lines", name: "a.txt", before: "Three lines", after: "Four lines", cites: ["diff:a.txt"] }] }],
+      ["scene_show", { chapter: "what", title: "A fourth line", points: [{ text: "It adds a line [diff:a.txt].", cites: ["diff:a.txt"] }, { text: "Nothing else.", cites: [] }] }],
+      ["scene_show", { chapter: "talks", title: "Who reads it", picture: `B${nC}-1`, points: [{ text: "A reader reads it [diff:a.txt].", cites: ["diff:a.txt"] }, { text: "That is all.", cites: [] }] }],
+      ["scene_show", { chapter: "change", title: "Lines", picture: `B${nC}-2`, points: [{ text: "Four lines now [diff:a.txt].", cites: ["diff:a.txt"] }, { text: "One added.", cites: [] }] }],
+      ["chapter_skip", { chapter: "lifecycle", reason: "No state in a text file [diff:a.txt].", cites: ["diff:a.txt"] }], ["chapter_skip", { chapter: "sequence", reason: "No calls in a text file [diff:a.txt].", cites: ["diff:a.txt"] }],
+      ["say", "The lesson [diff:a.txt]."]]);
+    await room.start(opened.id, { action: "teach", confirm: vc.offer.hash }, "captain"); await room.settle(opened.id);
+    const taughtC = (room.view(opened.id) as any).turns.at(-1), n2 = turns(); headAs(C); await paste(); await room.settle(opened.id);
+    ok(taughtC.status === "done" && taughtC.head === C && turns() === n2, "a head that already has its finished lesson starts nothing when the pull request is pasted", JSON.stringify([taughtC.status, taughtC.error, turns() - n2]));
+    // the room's own switch, off: a new head starts nothing
+    writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\nfive\n"); must(scratch, [...id, "commit", "-qam", "Add five"]); const D = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${D}:refs/pull/5/head`]);
+    headAs(D); await room.check(opened.id); const off: any = room.autoTeachFor(opened.id, false), n3 = turns(); headAs(D); await paste(); await room.settle(opened.id);
+    ok(off.autoTeach.on === false && off.autoTeach.global === true && turns() === n3, "the room's own switch turned off: a new head starts nothing, whatever the Studio-wide setting", JSON.stringify(off.autoTeach));
+    // when it cannot start, the room keeps why (and shows the ordinary teach button with it)
+    room.autoTeachFor(opened.id, true); const realStart = room.start; (room as any).start = async () => { throw Object.assign(new Error("No tutor can run on this Mac now"), { code: "no_tutor" }); };
+    headAs(D); await paste(); (room as any).start = realStart; const vs: any = room.view(opened.id);
+    ok(turns() === n3 && /No tutor can run on this Mac now/.test(vs.autoTeach.skipped ?? ""), "when the lesson cannot start by itself, nothing runs and the room says why", JSON.stringify(vs.autoTeach));
+    // the Library's snapshot never carries that notice (it would replay forever)
+    await room.saveToLibrary(opened.id, "captain"); const snapView: any = (room.librarySnapshot(`room-${opened.id.toLowerCase()}`) as any)?.view;
+    ok(!!snapView && snapView.autoTeach === undefined, "a room saved to the Library keeps no auto-teach notice", JSON.stringify(snapView?.autoTeach ?? null));
+    // the auto turn keeps the room's own pictures setting: it never passes one
+    writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\n"); must(scratch, [...id, "commit", "-qam", "Add six"]); const E6 = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${E6}:refs/pull/5/head`]);
+    // what the paste box says is what starts: the room's pictures on, its switch on while the Studio-wide one is off, a host Task there
+    room.setSettings({ autoTeach: false }); room.autoTeachFor(opened.id, true); room.images(opened.id, true, "captain");
+    const plan: any = room.pasteOffer(url), offerNow: any = (room.view(opened.id) as any).offer;
+    let asked: any = null; (room as any).start = async (_id: string, a: any) => { asked = a; return {}; }; headAs(E6);
+    const offNoAuto: any = await room.openPr(url, "captain", "en"), skippedNoAuto = asked; // a page that sends no auto (stale JS): nothing starts
+    const stale: any = await room.openPr(url, "captain", "en", true, "0000000000000000"), skippedStale = asked; // a plan that is not the room's now
+    await paste(); (room as any).start = realStart; const offerAt: any = (room.view(opened.id) as any).offer;
+    ok(asked?.auto === true && !("images" in asked), "the lesson started on paste keeps the room's pictures setting (it does not turn them off)", JSON.stringify(asked));
+    ok(plan.auto === true && plan.images === true && plan.createsHost === false && plan.provider === offerNow.provider && (plan.model ?? null) === (offerNow.model ?? null) && (plan.effort ?? null) === (offerNow.effort ?? null) && asked?.confirm === offerAt.hash && offerAt.provider === plan.provider && (offerAt.model ?? null) === (plan.model ?? null) && !("hash" in plan),
+      "the paste box's offer is what the paste then starts: the room's switch over the Studio-wide one, the room's pictures, the host Task's tutor (its very offer)", JSON.stringify({ plan, offer: [offerNow.provider, offerNow.model, offerNow.effort], confirm: asked?.confirm === offerAt.hash }));
+    ok(!!offNoAuto?.id && skippedNoAuto === null && !offNoAuto.plan, "a paste with no auto (a page that has not said what it starts, or an older page) opens the room and starts nothing", JSON.stringify(skippedNoAuto));
+    ok(skippedStale === null && stale.plan?.plan === plan.plan && stale.plan.provider === plan.provider && stale.plan.images === true && !("hash" in stale.plan),
+      "a paste whose plan is not the room's plan now (its fingerprint does not match) opens the room, starts nothing, and returns the plan to show", JSON.stringify(stale.plan));
+    const fresh5: any = room.pasteOffer("https://github.com/fixture/project/pull/77");
+    ok(fresh5.createsHost === true && fresh5.auto === false && fresh5.images === false && !!fresh5.provider, "a pull request with no room yet: its paste would make the host Task (and its staffing), with the Studio-wide switch and no pictures", JSON.stringify(fresh5));
+    room.images(opened.id, false, "captain"); room.setSettings({ autoTeach: true });
+    // a reset keeps the room's switch: pasted again on the same head, a room whose auto-teach is off starts nothing
+    room.autoTeachFor(opened.id, false); await room.settle(opened.id); room.reset(opened.id, "captain"); const vr: any = room.view(opened.id);
+    headAs(E6); await paste(); await room.settle(opened.id); const va: any = room.view(opened.id);
+    ok(vr.autoTeach.room === false && vr.turns.length === 0 && va.turns.length === 0 && va.running == null, "started over, the room keeps its auto-teach switch: pasted again on the same head, nothing starts", JSON.stringify({ before: vr.autoTeach, turns: va.turns.length })); }
   sim.stop(); H.stop();
 }
 end();

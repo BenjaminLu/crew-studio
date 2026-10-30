@@ -481,3 +481,78 @@ html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
 /* an edge's label masked by the paper: a line never runs through its words */
 .rr-flow .rr-elabel { paint-order: stroke; stroke: var(--rr-paper); stroke-width: 5px; stroke-linejoin: round; }
 .rp-rej { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; text-align: left; width: 100%; }
+
+/* ---------- figures in the room's semantic palette (workflows/skills/diagram-design style guide, mapped to the room's tokens):
+   accent = this change (1–2 focal), ok = new / ends well, amber = needs attention / a way back, seal = cannot be undone,
+   muted = context, outside this change. A figure the tutor draws uses only these as var(--fig-…). */
+:root { --fig-paper: var(--rr-paper); --fig-card: #ffffff; --fig-card-2: #f2efe6; --fig-ink: #2d3142; --fig-muted: #4f5d75; --fig-soft: #7a8399; --fig-rule: rgba(45,49,66,.14); --fig-rule-strong: #bfc0c0;
+  --fig-accent: #e0622c; --fig-accent-tint: rgba(235,108,54,.10); --fig-ok: #4f7d4a; --fig-ok-tint: rgba(79,125,74,.10); --fig-amber: #a8792c; --fig-amber-tint: rgba(184,145,90,.14); --fig-seal: #9c4f38; --fig-seal-tint: rgba(156,79,56,.10); --fig-link: #2e5aa8;
+  --fig-sans: var(--f-sans); --fig-mono: var(--f-mono); --fig-serif: "Songti TC", Georgia, serif; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fig-card: #262b36; --fig-card-2: #2e3442; --fig-ink: #ece6d6; --fig-muted: #b6bdcb; --fig-soft: #8e98ac; --fig-rule: rgba(245,245,245,.14); --fig-rule-strong: rgba(191,192,192,.3);
+  --fig-accent: #f08a59; --fig-accent-tint: rgba(240,138,89,.14); --fig-ok: #8fbf86; --fig-ok-tint: rgba(143,191,134,.14); --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); --fig-seal: #d08a72; --fig-seal-tint: rgba(208,138,114,.14); --fig-link: #8eb0ff; } }
+:root[data-theme="dark"] { --fig-card: #262b36; --fig-card-2: #2e3442; --fig-ink: #ece6d6; --fig-muted: #b6bdcb; --fig-soft: #8e98ac; --fig-rule: rgba(245,245,245,.14); --fig-rule-strong: rgba(191,192,192,.3);
+  --fig-accent: #f08a59; --fig-accent-tint: rgba(240,138,89,.14); --fig-ok: #8fbf86; --fig-ok-tint: rgba(143,191,134,.14); --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); --fig-seal: #d08a72; --fig-seal-tint: rgba(208,138,114,.14); --fig-link: #8eb0ff; }
+.rr-ortho .rr-box { fill: var(--fig-card); stroke: var(--fig-ink); stroke-width: 1.4; }
+.rr-ortho .rr-nlabel { fill: var(--fig-ink); font-family: var(--f-sans) !important; font-weight: 600; }
+.rr-ortho .rr-node.start .rr-box { stroke-width: 2.2; }
+.rr-ortho .rr-node.ok .rr-box { stroke: var(--fig-ok); fill: var(--fig-ok-tint); }
+.rr-ortho .rr-node.seal .rr-box { stroke: var(--fig-seal); fill: var(--fig-seal-tint); }
+.rr-ortho .rr-node.amber .rr-box { stroke: var(--fig-amber); fill: var(--fig-amber-tint); }
+.rr-ortho .rr-node.accent .rr-box { stroke: var(--fig-accent); fill: var(--fig-accent-tint); stroke-width: 2; }
+.rr-ortho .rr-node.muted .rr-box { stroke: var(--fig-soft); stroke-dasharray: 5 4; fill: var(--fig-card-2); }
+.rr-ortho .rr-node.muted .rr-nlabel { fill: var(--fig-muted); font-weight: 500; }
+.rr-ortho .rr-node.k-store .rr-box { fill: var(--fig-card-2); }
+.rr-ortho .rr-edge { fill: none; stroke: var(--fig-muted); stroke-width: 1.5; }
+.rr-ortho .rr-ahead { fill: var(--fig-muted); stroke: none; }
+.rr-ortho .rr-edge.back { stroke: var(--fig-amber); } .rr-ortho .rr-ahead.back { fill: var(--fig-amber); }
+.rr-ortho .rr-edge.tx { stroke: var(--fig-ink); }
+.rr-ortho .rr-edge.back.back { stroke: var(--fig-amber); } .rr-ortho .rr-ahead.back.back { fill: var(--fig-amber); }
+.rr-ortho .rr-elabel { fill: var(--fig-muted); font: 12px var(--f-mono) !important; paint-order: stroke; stroke: var(--rr-paper); stroke-width: 5px; stroke-linejoin: round; }
+.rr-ortho .rr-elabel.back { fill: var(--fig-amber); }
+.rr-ortho .rr-cite-label, .rr-ortho .rr-cite-label .rr-elabel { text-decoration: none; cursor: pointer; }
+.rr-ortho .rr-chip-bg { fill: var(--fig-card); stroke: var(--fig-rule-strong); stroke-width: 1.2; }
+.rr-ortho .rr-chip .rr-elabel { stroke: none; fill: var(--fig-ink); font: 12px var(--f-mono) !important; }
+.rr-ortho .rr-chip.back .rr-chip-bg { stroke: var(--fig-amber); } .rr-ortho .rr-chip.back .rr-elabel { fill: var(--fig-amber); }
+.rr-ortho .rr-chip.rr-cite-label .rr-chip-bg { stroke: var(--fig-link); } .rr-ortho .rr-chip.rr-cite-label .rr-elabel { fill: var(--fig-link); }
+.rr-ortho .rr-chip.rr-cite-label:hover .rr-chip-bg, .rr-ortho .rr-chip:focus-visible .rr-chip-bg { fill: var(--fig-accent-tint); }
+.rr-ortho .rr-chip.on .rr-chip-bg { stroke: var(--fig-accent); stroke-width: 2.2; fill: var(--fig-card); }
+.rp-txpanel { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--rr-paper-edge); border-radius: 8px; background: var(--fig-card); display: grid; gap: 8px; }
+.rp-txp-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; } .rp-txp-h .rp-tn { color: var(--fig-accent); font-weight: 700; }
+.rp-legend .rp-hint { color: var(--fig-soft); }
+.rr-ortho .rr-cyl-lip { stroke: var(--fig-ink); stroke-width: 1.4; }
+.rr-ortho .rr-node.muted .rr-cyl-lip { stroke: var(--fig-soft); }
+.rr-ortho [data-state-pick] { cursor: pointer; }
+.rr-ortho .rr-mark-t { font: 600 11px var(--f-mono) !important; fill: var(--fig-accent); }
+.rr-ortho .rr-m-new .rr-mark-t { fill: var(--fig-ok); } .rr-ortho .rr-m-removed .rr-mark-t { fill: var(--fig-seal); }
+.rp-legend .sw.start { border-color: var(--fig-ink); background: none; } .rp-legend .sw.ok { border-color: var(--fig-ok); background: var(--fig-ok-tint); }
+.rp-legend .sw.seal { border-color: var(--fig-seal); background: var(--fig-seal-tint); } .rp-legend .sw.back { border-color: var(--fig-amber); border-style: dashed; background: none; }
+.rp-legend .sw.accent { border-color: var(--fig-accent); background: var(--fig-accent-tint); }
+.rp-entity { margin: 0; font-size: 12.5px; color: var(--rr-ink-2); align-self: start; }
+.rr-seq .rr-step.call .rr-step-line { stroke: var(--fig-link); } .rr-seq .rr-step.call .rr-step-head { fill: var(--fig-link); stroke: var(--fig-link); }
+.rr-seq .rr-step.return .rr-step-line { stroke: var(--fig-muted); } .rr-seq .rr-step.return .rr-step-head { fill: var(--fig-muted); stroke: var(--fig-muted); }
+.rr-seq .rr-step.async .rr-step-line { stroke: var(--fig-amber); stroke-dasharray: 4 3; } .rr-seq .rr-step.async .rr-step-head { stroke: var(--fig-amber); }
+/* a transaction: the envelope solid, what is written outside it dashed and set apart */
+.rp-tx { display: grid; gap: 8px; margin: 6px 0; }
+.rp-tx-env { border: 2px solid var(--fig-accent); border-radius: 6px; padding: 8px 10px; background: var(--fig-accent-tint); }
+.rp-tx-cap { font: 700 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--rr-ink-2); margin-bottom: 4px; }
+.rp-tx-env > .rp-tx-cap { color: var(--fig-accent); }
+.rp-tx-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.rp-op { font: 700 10px var(--f-mono); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--fig-rule-strong); color: var(--rr-ink-2); text-transform: uppercase; }
+.rp-op.insert, .rp-op.upsert { border-color: var(--fig-ok); color: var(--fig-ok); } .rp-op.update { border-color: var(--fig-amber); color: var(--fig-amber); } .rp-op.delete { border-color: var(--fig-seal); color: var(--fig-seal); }
+.rp-guard { font-size: 12px; color: var(--rr-ink-2); }
+.rp-fields, .rp-kv { border-collapse: collapse; font-size: 12.5px; width: 100%; } .rp-fields td, .rp-kv td { padding: 2px 6px; border-bottom: 1px solid var(--fig-rule); vertical-align: top; }
+.rp-fields .k, .rp-kv .k { width: 1%; white-space: nowrap; color: var(--rr-ink-2); } .rp-fields .was { color: var(--rr-ink-2); } .rp-fields .now { color: var(--rr-ink); }
+.rp-outside { border: 1.5px dashed var(--fig-muted); border-radius: 6px; padding: 8px 10px; } .rp-outside ul { margin: 0; padding-left: 1.1em; font-size: 12.5px; }
+/* every call */
+.rp-calls { display: grid; gap: 12px; width: 100%; text-align: left; }
+.rp-call { border: 1px solid var(--rr-paper-edge); border-radius: 6px; padding: 10px 12px; background: var(--fig-card); }
+.rp-call header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; } .rp-call-name { font-weight: 700; }
+.rp-call-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; } .rp-call-cols h5 { margin: 0 0 4px; font: 700 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--rr-ink-2); }
+.rp-errs { margin: 6px 0 0; padding-left: 1.1em; font-size: 12px; color: var(--fig-seal); }
+@media (max-width: 760px) { .rp-call-cols { grid-template-columns: minmax(0, 1fr); } }
+/* a figure the tutor drew: as Studio took it */
+.rr-figsvg { width: 100%; display: grid; gap: 10px; justify-items: center; }
+.rr-figsvg-svg { width: 100%; height: auto; } .rr-figsvg-svg text { font-family: var(--f-sans); }
+.rr-figsvg .rr-pickable { cursor: pointer; } .rr-figsvg .rr-pickable.on { stroke-width: 2.4; }
+.rp-figbody { justify-items: start; } .rp-figbody > .rr-flow-wrap, .rp-figbody > .rp-smap, .rp-figbody > .rr-figsvg { justify-items: center; }
+.rr-paste-offer { font-size: 12.5px; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--fig-amber); background: var(--fig-amber-tint); } .rr-auto-note { font-size: 12.5px; } .rr-auto-note label { display: inline-flex; gap: 4px; align-items: center; }

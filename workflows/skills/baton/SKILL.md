@@ -45,12 +45,15 @@ chapter by chapter"):
   Left out only with chapter_skip and a cited reason (nothing talks: a docs or config-only change).
 - *The decisions*: one `decision` drawing a decision the change makes, when it makes some.
 - *The change itself*: one `item` drawing a changed item, at least one.
-- *Its life, state by state*: one `states` drawing, the full set, each transition citing its code and saying what it
-  writes. Left out only with chapter_skip and a cited reason (no state transitions in this diff).
+- *Its life, state by state*: one statemap for each entity the change moves (the full set of states and transitions,
+  each transition citing its code and carrying the database transaction it runs). When the diff writes a state or status
+  column it is owed and cannot be left out; otherwise left out only with chapter_skip and a cited reason.
 - *One request, in order*: one `sequence` drawing, real loops, alternatives and options kept. Left out only with
   chapter_skip and a cited reason (no call chain across services or I/O).
+- *Every call*: for each API call, its request, its response, the transaction it runs (a `calls` item).
 - *What reviewers raised*, *Roads not taken*, *What to watch*, *Open questions*: points, each cited; shown only when there
   is something.
 
-One drawing a chapter, except the change (one per item) and the decisions (one per decision). `diagrams.md` says what each
+One drawing a chapter, except the change (one per item), the decisions (one per decision), the lifecycles (one per
+  entity) and the calls. Every drawing follows workflows/skills/diagram-design. `diagrams.md` says what each
 drawing needs; `spec.md` is the exact shape of each.

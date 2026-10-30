@@ -11,9 +11,13 @@ version of the documented one; it is wrong.
 **When no document exists, draw it anyway.** Read the entry points, what calls what, where state changes, what is
 written, and draw what you understood. Studio marks it inferred. An imperfect drawing is far better than none.
 
-**Studio draws, you supply the data.** board_draw takes the structure (nodes and edges, states and transitions, actors
-and steps, before and after) and Studio lays it out, in the room's light and dark themes and in the captain's language.
-You never send coordinates, colours or markup.
+**The drawing goes through diagram-design, as baton's does** (workflows/skills/diagram-design: semantic pattern first,
+then the type's reference, its connector rules, the 4px grid, the budgets, the pre-output checks). Two ways in the room:
+draw it yourself with `figure_svg` (one SVG by those rules, colours only as `var(--fig-…)`, `data-node`, `data-edge` and
+the three languages on every text; Studio drops what is off its allowlist and refuses a figure whose labels overlap or sit
+on a line, or whose connector runs through a box that is not one of its ends: redraw it), or give board_draw the structure
+(an `arch`, `states`, `sequence`, `item`, `decision` or `calls` item) and Studio lays it out by the same rules. Either way
+the page owns light and dark and the captain's language; never send hex colours, fonts or other markup.
 
 ## What each drawing shows
 
@@ -26,8 +30,13 @@ You never send coordinates, colours or markup.
 - **item** (one per changed item): before and after on the same component, the mechanism named with its proper noun
   (`ENV == "development"`, `esc() at all 47 builders`, `checked at dial`), not a euphemism. Labels short enough for the
   one layout: the name at most 33 Latin or 16 CJK characters, each side at most 40 Latin or 20 CJK.
-- **states** (the lifecycle): every state and every transition the code has; each transition cites the code that makes it
-  and says in `detail` what it writes (the table and the fields, the guard). The captain opens each transition to its code.
+- **states** (the lifecycle, baton's statemap): one figure for each entity the change moves (an order, its
+  authorization), each naming its `entity` (the column). Every state and every transition the code has; each transition
+  cites the code that makes it and carries its database transaction in `tx`: the tables written (INSERT/UPDATE/DELETE,
+  each field was → now), the guard (the CAS predicate, the unique key, the row condition), and what is written outside it
+  (a cache, the outbound call, an event), which the page sets apart. The captain picks a state or a transition to see it.
+- **calls** (every call): for each API call the change adds or changes, its request, its response (and the errors a
+  client sees), and the transaction it runs (`tx`), cited.
 - **sequence** (one request): one event a step; calls, returns and async calls; the loops, alternatives (`alt` / `else`)
   and options (`opt`) the code really has, as frames. Keep proper nouns intact (`POST /authorize`, EIP-712).
 

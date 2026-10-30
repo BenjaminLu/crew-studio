@@ -290,6 +290,69 @@ decisions) is one heading with its items under it; a click scrolls the report to
 covers the report's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
 came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The report replays from the Library snapshot, offline.
 
+**Figures, drawn as diagram-design draws them.** A lesson's figures follow diagram-design (MIT, credited in
+THIRD_PARTY_NOTICES.md; adapted in `workflows/skills/diagram-design/`, pinned in `ROOM_SKILLS`), as baton's do: a semantic
+pattern first, the type's reference, orthogonal connectors with rounded corners, each on its own attach point, labels off
+their lines, the 4px grid, the budgets, and colour by meaning from one palette (`--fig-accent` this change, `--fig-ok` new or
+ended well, `--fig-amber` needs attention or a way back, `--fig-seal` cannot be undone, `--fig-muted`/`--fig-soft` context),
+which the room maps to its light and dark themes. Two ways in. The tutor draws a figure itself with `figure_svg` (kinds
+state, sequence, architecture, flow, decision, item): Studio parses the SVG into a tree of allowed elements and attributes
+(`src/domain/figure-svg.ts`: svg g rect path line polyline polygon circle ellipse text tspan marker defs title desc; no
+script, style, foreignObject, image, use, link, href, class, filter, on* handler or outside url(); colours only the
+palette's tokens; at most 80 000 characters, 900 elements, 2400 × 2400) and runs a geometric gate: no label on another, no
+label on a line, no connector through a box that is not one of its ends, no label outside the viewBox, no Chinese under
+12px, every label with `data-en`, `data-hant` and `data-hans`. A figure that fails is refused with each problem, and the
+tutor redraws (at most eight tries a turn). The page rebuilds the tree element by element (createElementNS, setAttribute,
+textContent; never markup, from the client's own allowlist too, so a tampered room file adds nothing), its ids kept to the
+figure, each text in the room's language (a label of several lines keeps its tspans, each line in the room's language). The
+gate is bounded: every coordinate within the viewBox (plus 40), at most 40 000 sample points a figure, the label-on-line scan
+only where boxes meet; it measures what the page draws (each tspan at its own x/y/dy; a path is a connector unless it is a
+closed filled shape). A `data-cite` is checked like any citation: kept and added to the figure's cites when it resolves,
+dropped when it does not. Or the tutor gives the structure
+and Studio lays it out, baton's way. A lifecycle puts the way it should go on one row, left to right (the longest path from
+where it starts to an end that went well); its ways back and its skips over a state are arcs above the row, nested by span
+(the shorter inside); the states that end badly or need attention sit in the lane below, the others in the lane above,
+each under the median of the states it meets, in the order that crosses fewest connectors; the state this change adds or
+changes (`mark`) in the accent, the ends coloured by how they end. The architecture runs in
+layers left to right, the stores and queues last, drawn as cylinders. Every connector is a straight line or one smooth
+curve, bowed only as far as it must to clear the boxes, or under them, crossing as few others as it can and never along one (two between the same boxes bow
+apart, a state's way back to itself a small loop); its numbered chip sits on it near its middle, and a picked chip opens the
+transaction panel right under the map. The sequence is one event a band, each fragment's tab on its own band, calls,
+returns and async calls in their own colours.
+
+**A database lifecycle per entity; every call.** A lifecycle is owed only for a real state write: UPDATE … SET status/state,
+INSERT INTO … (status), an ORM write with a status/state key, setState / setStatus / transition(), or an entity's status
+assigned, the key in any case (`this.state =`, `self.status = :paid`, `o.Status = StatusPaid`, `order["status"] = 3`,
+Django `.update(status=`, Rails `update!(status:`, GORM `Update("status"`, or a status key on its own line inside a
+multi-line ORM call); never a .set or .patch call (a URL's, a cache's, a form's), a React component's own this.setState
+in a .jsx/.tsx file or a class extending Component, a comparison, an HTTP response's status, a local named state, setState without a status or
+state key, or an object literal outside an ORM call. A lifecycle names its entity and gives each transition its database
+transaction (`tx`: the tables written, INSERT, UPDATE, DELETE or UPSERT, each field was → now, the guard, and what is written
+outside the transaction). The report's statemap numbers every transition; picking a state shows the transaction that brings
+the entity into it, picking a transition shows its own, the writes outside set apart dashed. A lesson shows one lifecycle for
+each entity (the chapter takes several), each transition cited; when the diff writes a state or status column the
+lifecycle is owed (chapter_skip refuses it, lesson_check names the lines). A `calls` item shows every API call: request,
+response, the errors a client sees, the transaction it runs.
+
+**A pasted pull request teaches itself.** When the captain pastes a pull request (`POST …/open-pr`) and its room has no
+lesson for the current head (none done or running), the lesson starts by itself: the paste is the consent, so there is no
+click and no confirmation. So the paste box says what a paste starts before it is pasted (`GET …/paste-offer?url=`), from
+the same plan the start reads (auto-teach as the room has it, else the Studio-wide setting; the tutor its offer would use,
+the host Task's seat or the project's crew reviewer; the room's pictures; whether the first paid turn creates the host Task
+and its staffing; for a pull request a Studio Task published, that Task's seat and no host to create). It is fail-closed and
+bound to what the box showed: the lesson starts only when the paste sends `open-pr {auto: true, plan}` with the fingerprint
+the box got, and only if Studio's plan is still that one; a paste with no `auto` (Enter before the line is on screen, an
+older page) opens the room only, and a plan that changed opens the room only and returns the new plan, which the box shows
+for a second paste. A switch changed asks for the line again. The lesson says it started on paste, with the
+tutor it ran on and the room's switch beside it. It is an ordinary paid turn on the room's tutor, marked `auto` on the
+ledger; it keeps the room's own pictures setting (a new room's is off). It starts once per head: the head is recorded before anything starts, so a reload, a revisit or a second
+paste starts nothing. The Studio-wide setting (`GET/POST /api/review-room/settings {autoTeach}`, on the room list's page,
+default on) and the room's own switch (`POST …/auto {on}`, in its drawer) turn it off. When it cannot start (no tutor can
+run, admission refuses) nothing runs, the reason is kept and the welcome scene shows it above the ordinary teach button;
+a Library snapshot never carries that notice. Starting the room over keeps its switch and the heads it already taught by
+itself, so pasting the same head again after a reset starts nothing.
+Merge-card rooms and Task rooms never start by themselves; only a pasted pull request does.
+
 **Start this room over / 清空重來.** In the transcript drawer, the captain on this Mac can start a room over (`POST
 …/reset`, the same session, origin and desktop gates as the room's other writes; refused with 409 while a turn or a
 translation runs). It asks first, saying what goes (the answers, the board, the translations, the generated pictures) and
@@ -668,6 +731,19 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     fresh room …", "a pull request's room started over is fresh at once …"; review-room-ui "starting a room over is a POST
     only …", "starting a room over asks first …", "confirmed, the room is started over …"; smoke "even allowed to drive, a
     phone cannot … start it over".
+37. A pasted pull request teaches itself: no click, no confirmation, marked auto on the ledger, pictures off; once per head;
+    never over a finished lesson at that head; the Studio-wide setting and the room's switch turn it off; when it cannot
+    start, the room says why. — review-room-anywhere "auto-teach off …", "pasting a pull request starts its lesson by itself
+    …", "pasting it again … starts no second lesson", "a head that already has its finished lesson starts nothing …", "the
+    room's own switch turned off …", "when the lesson cannot start by itself …".
+38. Figures by diagram-design: a figure the tutor draws is taken through the allowlist (script, foreignObject, style,
+    links, handlers, outside references dropped; colours only the palette) and the geometric gate (overlapping labels, a
+    label on a line, a connector through a box, a label outside, Chinese under 12px, a label without three languages
+    refused); Studio's own layouts keep labels clear and connectors out of boxes; a lifecycle per entity with each
+    transition's transaction; every call. — review-room-figures (each rule); review-room-anywhere "a figure the tutor draws
+    is refused with what is wrong …", "the figure is kept as Studio's tree …", "a lifecycle names its entity …", "a lesson may
+    show one lifecycle for each entity …"; review-room-ui "Studio's drawings read …", "the point stands out by colour …",
+    "one lifecycle for each entity; picking a state shows …", "every call: …", "a figure the tutor drew is rebuilt …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 
