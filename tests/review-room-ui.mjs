@@ -679,8 +679,9 @@ try {
     ok(rp && rp.scroll <= 0 && rp.own && /example\/shop/.test(rp.eyebrow) && rp.cites >= 10, "the lesson is a board the camera moves over (the page never scrolls); its eyebrow names the subject; its points keep Studio's citations", JSON.stringify(rp));
     // the rail jumps to a section and marks it; the state map: every transition numbered, each opens its own code and shows what it writes
     await p.click('[data-toc-scene="t3-6"]'); await p.waitForTimeout(400);
-    const jump = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]"), sec = vp.querySelector('[data-report-section="t3-6"]'); return { top: Math.round(sec.getBoundingClientRect().top - vp.getBoundingClientRect().top), cur: document.querySelector('[data-toc-scene="t3-6"]').getAttribute("aria-current"), labels: [...sec.querySelectorAll("[data-elabel]")].map((e) => e.textContent), rows: sec.querySelectorAll("[data-transition]").length }; });
-    ok(jump.top >= 0 && jump.top < 140 && jump.cur === "true" && JSON.stringify(jump.labels) === JSON.stringify(["① price", "② pay", "③ cancel", "④ edit", "⑤ pay later", "⑥ reprice"]) && jump.rows === 6,
+    // the chapter's title lands right under the board's tools, as the report's section landed at its top
+    const jump = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]"), sec = vp.querySelector('[data-report-section="t3-6"]'); return { top: Math.round(sec.querySelector(".rb-rtitle").getBoundingClientRect().top - document.querySelector(".rb-tools").getBoundingClientRect().bottom), cur: document.querySelector('[data-toc-scene="t3-6"]').getAttribute("aria-current"), labels: [...sec.querySelectorAll("[data-elabel]")].map((e) => e.textContent), rows: sec.querySelectorAll("[data-transition]").length }; });
+    ok(Math.abs(jump.top) < 40 && jump.cur === "true" && JSON.stringify(jump.labels) === JSON.stringify(["① price", "② pay", "③ cancel", "④ edit", "⑤ pay later", "⑥ reprice"]) && jump.rows === 6,
       "a chapter picked in the rail flies the board to it, marked current; the state map draws every transition, numbered, each a row of its own", JSON.stringify(jump));
     const geo2 = await p.evaluate(() => { const sec = document.querySelector('[data-report-section="t3-6"]'), arch = document.querySelector("[data-arch]");
       const rect = (e) => { const b = e.getBBox(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }, over = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -701,9 +702,15 @@ try {
     // what talks to what: the change marked on its nodes, inferred said so, a connection opens what shows it
     await p.click('[data-toc-scene="t3-2"]'); await p.waitForTimeout(300); await p.$eval('[data-edge-cite="diff:src/pricing.ts:L10-14"]', (e) => e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 600, clientY: 400 }))); await p.waitForSelector("[data-board-pop]", { timeout: 3000 }).catch(() => {});
     const ar = await p.evaluate(() => ({ marks: [...document.querySelectorAll("[data-arch] [data-mark]")].map((e) => e.dataset.mark), basis: document.querySelector("[data-arch-basis]")?.dataset.archBasis, pop: document.querySelector("[data-board-pop]")?.dataset.boardPop, refs: document.querySelector('[data-edge-cite="diff:src/pricing.ts:L10-14"]')?.getAttribute("data-arefs"), panel: !!document.querySelector("[data-cite-panel]") }));
-    await p.keyboard.press("Escape");
-    ok(JSON.stringify(ar.marks) === JSON.stringify(["changed", "new"]) && ar.basis === "inferred" && /talks\/t3-2\/edge\/B3-1#edge:cart>pricing/.test(ar.pop || "") && ar.refs === "diff:src/pricing.ts:L10-14" && !ar.panel,
-      "the architecture marks the change on its nodes, says it is inferred, and a connection asks there, its code the popover's show-the-code", JSON.stringify(ar));
+    // 看程式碼 on the connection: free, a code card that reads what it cites through the citation viewer
+    const codeOps = []; await p.route(/\/api\/review-room\/SC-50\/lesson$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); codeOps.push(b); if (b.op !== "code") return r.fulfill({ json: { visited: [] } });
+      const key = `talks/${b.anchor.scene}/${b.anchor.kind}/${b.anchor.item}#${b.anchor.part}`, room = { ...RP, lesson: { visited: [], threads: [{ n: 1, key, anchor: { ...b.anchor, turn: 3, chapter: "talks" }, locator: { type: "text", section: key }, state: "open", at: "t", resolvedAt: null, merged: null, nodes: [{ id: "n1", parent: null, rel: "root", chip: "code", q: null, versions: [], code: b.ref, at: "t" }] }] } };
+      r.fulfill({ json: room }); });
+    await p.click('.rb-pop [data-chip="code"]'); await p.waitForFunction(() => !!document.querySelector('.rb-card[data-chip="code"] .rr-diff'), null, { timeout: 15000 }).catch(() => {});
+    const opened = { op: codeOps.find((x) => x.op === "code"), cite: cites.at(-1), card: !!(await p.$('.rb-card[data-chip="code"] .rr-diff')) };
+    ok(JSON.stringify(ar.marks) === JSON.stringify(["changed", "new"]) && ar.basis === "inferred" && /talks\/t3-2\/edge\/B3-1#edge:cart>pricing/.test(ar.pop || "") && ar.refs === "diff:src/pricing.ts:L10-14" && !ar.panel
+      && opened.op?.ref === "diff:src/pricing.ts:L10-14" && opened.cite === "diff:src/pricing.ts:L10-14" && opened.card,
+      "the architecture marks the change on its nodes, says it is inferred, and a connection opens its code (看程式碼: a code card read through the citation viewer)", JSON.stringify({ ar, opened }));
     // every changed item from one layout; a decision's rejected option set apart
     const geo = await p.evaluate(() => [...document.querySelectorAll("[data-report-figure] [data-item-figure]")].map((f) => [...f.querySelectorAll(".rr-ib path")].map((e) => e.getAttribute("d")).join("|")));
     const dec = await p.evaluate(() => ({ boxes: document.querySelectorAll("[data-decision] .rr-ib").length, gone: document.querySelectorAll("[data-decision] .rr-ib.gone").length }));
@@ -724,8 +731,9 @@ try {
     await p.click('[data-lang-pick="en"]');
     // a phone: the report reads top to bottom under the chapters' strip, nothing wider than the screen
     await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(300);
-    const ph = await p.evaluate(() => { const r = document.querySelector("[data-report]")?.getBoundingClientRect(), bar = document.querySelector(".rb-phonebar")?.getBoundingClientRect(); return { report: !!r, bar: !!bar && bar.bottom <= innerHeight + 1, chapters: !!document.querySelector('.rb-phonebar [data-sheet="outline"]'), wide: document.documentElement.scrollWidth - innerWidth, scroll: document.documentElement.scrollHeight - innerHeight }; });
-    ok(ph.report && ph.bar && ph.chapters && ph.wide <= 0 && ph.scroll <= 0, "on a phone the lesson is the board with its chapters a sheet away, never wider than the screen", JSON.stringify(ph));
+    const ph = await p.evaluate(() => { const r = document.querySelector("[data-report]")?.getBoundingClientRect(), vp = document.querySelector("[data-board-vp]")?.getBoundingClientRect(), bar = document.querySelector(".rb-phonebar")?.getBoundingClientRect();
+      return { report: !!r, bar: !!bar && bar.bottom <= innerHeight + 1, joined: !!bar && !!vp && vp.bottom <= bar.top + 1 && bar.top - vp.bottom < 4, chapters: !!document.querySelector('.rb-phonebar [data-sheet="outline"]'), wide: document.documentElement.scrollWidth - innerWidth, scroll: document.documentElement.scrollHeight - innerHeight }; });
+    ok(ph.report && ph.bar && ph.joined && ph.chapters && ph.wide <= 0 && ph.scroll <= 0, "on a phone the lesson is the board read right above its chapters' bar, never wider than the screen", JSON.stringify(ph));
     ok(!errs.length, "the report draws with no page error", errs.join(" | "));
     await ctx.close();
     // replayed from the Library: the same report, offline, read-only, no reviewer notes
@@ -847,7 +855,7 @@ try {
     const BAD = "https://x.example", TAMPER = { ...FIG_TREE, a: { ...FIG_TREE.a, onload: "window.__pwn=1", style: `background:url(${BAD}/a)` }, c: [...FIG_TREE.c,
       { t: "script", a: {}, c: ["window.__pwn=1"] }, { t: "foreignObject", a: { width: "10", height: "10" }, c: [{ t: "div", a: {}, c: ["x"] }] }, { t: "a", a: { href: "javascript:window.__pwn=1" }, c: [{ t: "text", a: { x: "5", y: "5" }, c: ["click"] }] },
       { t: "image", a: { href: `${BAD}/i.png` }, c: [] }, { t: "use", a: { href: "#ar" }, c: [] }, { t: "style", a: {}, c: ["*{fill:red}"] },
-      { t: "rect", a: { x: "1", y: "1", width: "2", height: "2", onclick: "window.__pwn=1", onmouseover: "window.__pwn=1", href: BAD, "xlink:href": BAD, style: `fill:url(${BAD}/p)`, fill: `url(${BAD}/p)`, stroke: "javascript:x", "marker-end": `url(${BAD}/m#a)`, class: "x", filter: `url(${BAD}/f)` }, c: [] },
+      { t: "rect", a: { x: "1", y: "1", width: "2", height: "2", onclick: "window.__pwn=1", onmouseover: "window.__pwn=1", href: BAD, "xlink:href": BAD, style: `fill:url(${BAD}/p)`, fill: `url(${BAD}/p)`, stroke: "javascript:x", "marker-end": `url(${BAD}/m#a)`, class: "rb-evil rb-pin x", filter: `url(${BAD}/f)` }, c: [] },
       { t: "text", a: { x: "320", y: "232", "text-anchor": "middle", "font-size": "12", fill: "var(--fig-ink)", "data-en": "Line one Line two", "data-hant": "第一行第二行", "data-hans": "第一行第二行" }, c: [{ t: "tspan", a: { x: "320", dy: "0", "data-en": "Line one", "data-hant": "第一行", "data-hans": "第一行" }, c: ["Line one"] }, { t: "tspan", a: { x: "320", dy: "14", "data-en": "Line two", "data-hant": "第二行", "data-hans": "第二行" }, c: ["Line two"] }] }] };
     const ZP = PAY_OF("zh-TW", H, ok1, cl); ZP.figs.find((f) => f.type === "svg").tree = TAMPER; ZP.turn.auto = true;
     const RF = { ...ROOM, subject: { kind: "pr", repository: "example/lumen-pay" }, autoTeach: { on: true, room: null, global: true, skipped: null }, head: H, board: [...ROOM.board, ...ZP.figs], turns: [...ROOM.turns.map((t) => ({ ...t, lang: "zh-TW" })), ZP.turn] };
@@ -905,7 +913,7 @@ try {
     const tamper = await p.evaluate((bad) => { const f = document.querySelector("[data-svg-figure] svg"), all = f ? [f, ...f.querySelectorAll("*")] : [];
       return { names: [...new Set(all.map((e) => e.localName))], attrs: [...new Set(all.flatMap((e) => [...e.attributes].map((a) => a.name)))], classes: [...new Set(all.flatMap((e) => [...e.classList]))], styles: all.map((e) => e.getAttribute("style")).filter(Boolean), values: all.flatMap((e) => [...e.attributes].map((a) => a.value)).filter((v) => v.includes(bad) || /javascript:|url\(http/i.test(v)), pwned: !!window.__pwn,
         lines: [...(f?.querySelectorAll("text") ?? [])].filter((t) => t.querySelector("tspan")).map((t) => [...t.querySelectorAll("tspan")].map((x) => [x.textContent, x.getAttribute("dy")])) }; }, BAD);
-    ok(!["script", "foreignObject", "foreignobject", "a", "image", "use", "style", "div"].some((n) => tamper.names.includes(n)) && !tamper.attrs.some((a) => /^on|^(href|xlink:href|filter)$/.test(a)) && tamper.classes.every((c) => /^(rr|rb)-/.test(c)) && tamper.styles.every((v) => !/url\(|background/i.test(v)) && !tamper.values.length && !tamper.pwned,
+    ok(!["script", "foreignObject", "foreignobject", "a", "image", "use", "style", "div"].some((n) => tamper.names.includes(n)) && !tamper.attrs.some((a) => /^on|^(href|xlink:href|filter)$/.test(a)) && tamper.classes.every((c) => /^(rr-[\w-]+|rb-ann)$/.test(c)) && tamper.styles.every((v) => !/url\(|background/i.test(v)) && !tamper.values.length && !tamper.pwned,
       "a figure from a tampered room.json is still rebuilt only from the allowlist: no script, foreignObject, link, image, use or style; no handler, href, style or outside url() reaches the page", JSON.stringify(tamper));
     ok(JSON.stringify(tamper.lines) === JSON.stringify([[["第一行", "0"], ["第二行", "14"]]]), "a label of two lines keeps both, each in the room's language at its own place (not flattened into one)", JSON.stringify(tamper.lines));
     const note = await p.evaluate(() => ({ text: document.querySelector("[data-report] [data-auto-started]")?.textContent ?? null, sw: !!document.querySelector("[data-report] [data-auto-off]") }));
