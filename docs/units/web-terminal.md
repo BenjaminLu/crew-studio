@@ -191,9 +191,11 @@ window does) and SIGKILL two seconds later.
   tab for every running terminal), the scrollback replayed from the ring, and its keys reach the same process
   (`tests/terminal-reattach-ui.mjs`: a marker replayed, the same `$$`). Reattaching is the same stream and input as
   opening, under the same guards (the desktop page's cookie to type; a phone watches only). A Studio restart cannot keep a
-  PTY: the next page drops the tabs whose terminals no longer run, opens none in their place, and says once "Terminal
-  sessions ended when Studio restarted" (工作階段在 Studio 重啟時結束), from the run's `boot` in `GET /api/terminals`
-  against the one this browser saw last; a reload in the same run says nothing.
+  PTY: the next page drops the tabs of the terminals that were running when it last loaded the list and run no more,
+  opens none in their place, and says once how many "Terminal sessions ended when Studio restarted" (工作階段在 Studio
+  重啟時結束), from the run's `boot` in `GET /api/terminals` against the one it saw last with the terminals then
+  running; a terminal that had already ended (an agent kept for Send for review) keeps its tab, and a reload in the same
+  run says nothing.
 - Studio stopping kills every terminal's process group (SIGHUP then SIGKILL; `tests/terminals.ts` checks a grandchild goes
   too). Nothing is re-attached on restart: no process, no input, no Restart in place. A terminal still running when Studio
   stops gets its end and where its checkout stood (its git end) in its record, marked `studio-stopped`; a record left open

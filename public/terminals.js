@@ -41,15 +41,22 @@ function apply(list) {
   }
   TM.list = list;
 }
-// Studio restarted since this browser last saw it (a PTY cannot outlive Studio): the tabs' terminals that are not running
-// leave the tabs, and the page says so once, rather than drawing a dead tab; a reload of the same run says nothing
+// Studio restarted since this browser last saw it (a PTY cannot outlive Studio): the terminals that were running when
+// the page last loaded the list, and are not running now, leave the tabs, and the page says once how many, rather than
+// drawing a dead tab. A terminal that had already ended (an agent kept for Send for review) keeps its tab. A reload of
+// the same run says nothing.
+const SEEN = "crew.term.seen";
+function seenBefore() { for (const s of [() => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null"); if (v && typeof v.boot === "string" && Array.isArray(v.running)) return v; } catch {} } return null; }
 function restarted(boot) {
-  if (!boot) return; const was = store.get("crew.term.boot", null); store.set("crew.term.boot", boot);
-  if (!was || was === boot) return;
-  const live = new Set(TM.list.filter((t) => t.running).map((t) => t.id)); let n = 0;
-  for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (!live.has(pn.term)) { n++; detachPane(tab, pn); }
-  if (n) TM.autoOpened = true; // the tabs were the captain's: none is opened in their place
-  if (n) toast(T(`${n === 1 ? "A terminal session" : `${n} terminal sessions`} ended when Studio restarted`, `${n} 個工作階段在 Studio 重啟時結束`));
+  if (!boot) return; const was = seenBefore();
+  const now = JSON.stringify({ boot, running: TM.list.filter((t) => t.running).map((t) => t.id) });
+  try { localStorage.setItem(SEEN, now); } catch {}
+  if (!was || was.boot === boot) return;
+  const died = new Set(was.running.filter((id) => !TM.list.some((t) => t.id === id && t.running))); let n = 0;
+  for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (died.has(pn.term)) { n++; detachPane(tab, pn); }
+  if (!n) return;
+  TM.autoOpened = true; // the tabs were the captain's: none is opened in their place
+  toast(T(`${n === 1 ? "A terminal session" : `${n} terminal sessions`} ended when Studio restarted`, `${n} 個工作階段在 Studio 重啟時結束`));
 }
 let redrawT = null;
 function redraw() {
@@ -496,11 +503,12 @@ function patchPage() {
   const tab = curTab(), t = termOf(focusPane(tab));
   const list = document.querySelector(".wt-list"); if (list) list.replaceChildren(...listRows(t || selected(cur())));
   const sec = document.querySelector("[data-term-detail]"), stage = sec?.querySelector(":scope > .wt-stage");
-  // a pane whose terminal went (a shell that exited leaves the list): drawn again now, unless the captain is typing in a
-  // field (another terminal, the go-to picker, a tab's name, the command field: the app's own deferral, soft(), waits for
-  // its blur); the gone terminal's own input is no field to keep
-  if (sec && tab && panesOf(tab.root).some((pn) => !termOf(pn))) {
-    const a = document.activeElement, own = a && [...TM.panes.entries()].some(([id, pn]) => pn.host.contains(a) && !TM.list.some((x) => x.id === id));
+  // a pane whose terminal went (a shell that exited leaves the list) or left the tabs (a restart ended it): drawn again
+  // now, unless the captain is typing in a field (another terminal, the go-to picker, a tab's name, the command field:
+  // the app's own deferral, soft(), waits for its blur); the gone terminal's own input is no field to keep
+  const inTabs = new Set(TM.lay.tabs.flatMap((x) => panesOf(x.root).map((pn) => pn.term)));
+  if (sec && (!tab || panesOf(tab.root).some((pn) => !termOf(pn)) || [...sec.querySelectorAll(".wt-pane[data-term-pane]")].some((e) => !inTabs.has(e.dataset.termPane)))) {
+    const a = document.activeElement, own = a && [...TM.panes.entries()].some(([id, pn]) => pn.host.contains(a) && (!inTabs.has(id) || !TM.list.some((x) => x.id === id)));
     const editing = a && !own && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
     if (!editing) { redo(); return; }
     // soft() waits for an input, a textarea or a select; a contenteditable (none on this page today) waits here
