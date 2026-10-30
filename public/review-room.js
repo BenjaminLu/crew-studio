@@ -879,7 +879,7 @@ function showItem(r, id) {
   if (i >= 0) { stopPlay(); RR.scene.set(card, i); RR.pick.set(`${card}/${scenes[i].key}`, id); }
   rerender();
 }
-// ---------- narration: captions always; a voice only when the captain picks one (off by default) ----------
+// ---------- narration: captions always; a voice of this Mac by default (on-device, free), off only when the captain says so ----------
 // The voice is the tutor vendor's own neural voice when it has one (the narration goes only to that vendor, the one the
 // tutor already uses; generated once per scene and kept in the room), else a voice of this Mac (on-device only: a voice
 // the browser would send to a server is never offered), the best first (Premium, Enhanced, Siri).
@@ -895,9 +895,9 @@ const localVoices = () => { try { const want = (CUR.lang || uiLang()).toLowerCas
   const mine = (window.speechSynthesis?.getVoices?.() || []).filter((v) => v.localService && v.lang?.toLowerCase().startsWith(l) && !NOVELTY.test(baseName(v)));
   const good = mine.filter((v) => !LEGACY.test(baseName(v)));
   return (good.length ? good : mine).sort((a, b) => voiceRank(b) - voiceRank(a) || exact(b) - exact(a)); } catch { return []; } };
-const voicePref = () => prefs.get("crew.room.voice") || "off";
+const voicePref = () => prefs.get("crew.room.voice") || "auto";
 /** the Mac voice to speak with: the one picked, or, when that one is no longer offered (a robotic voice picked before), the best there is */
-const chosenLocal = () => { const p = voicePref(); if (!p.startsWith("local:")) return null; const vs = localVoices(); return vs.find((v) => v.voiceURI === p.slice(6)) || vs[0] || null; };
+const chosenLocal = () => { const p = voicePref(); if (p !== "auto" && !p.startsWith("local:")) return null; const vs = localVoices(); return (p === "auto" ? null : vs.find((v) => v.voiceURI === p.slice(6))) || vs[0] || null; };
 function speak(text, done) {
   const v = chosenLocal(); if (!v) return false;
   try { const u = new SpeechSynthesisUtterance(text); u.voice = v; u.lang = v.lang; u.onend = done; u.onerror = done; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); return true; } catch { return false; }
@@ -949,9 +949,9 @@ const markMoved = (card) => { if (RR.rooms.get(card)?.running != null) RR.moved.
 const goScene = (card, n) => { markMoved(card); const { scenes } = curScene(card); if (!scenes?.length) return; stopPlay(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
 function voicePicker(r) {
   const vs = localVoices(), vendor = r.offer?.voice, pref = voicePref(), alt = pref.startsWith("local:") ? chosenLocal() : null, cur = alt ? `local:${alt.voiceURI}` : pref;
-  const opts = [["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
+  const opts = [...(vs.length ? [["auto", T(`This Mac's best voice (${vs[0].name})`, `這台 Mac 最好的聲音（${vs[0].name}）`)]] : []), ["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
   return h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"),
-    onchange: (e) => { prefs.set("crew.room.voice", e.target.value === "off" ? null : e.target.value); stopPlay(); rerender(); } }, opts.map(([v, l]) => h("option", { value: v, selected: v === cur || (v === "off" && !opts.some(([x]) => x === cur)) }, l))));
+    onchange: (e) => { prefs.set("crew.room.voice", e.target.value === "auto" ? null : e.target.value); stopPlay(); rerender(); } }, opts.map(([v, l]) => h("option", { value: v, selected: v === cur || (v === "off" && !opts.some(([x]) => x === cur)) }, l))));
 }
 // ---------- the check on the board: multiple choice, graded by Studio (no model) the moment the captain picks ----------
 const LETTERS = "ABCD";
