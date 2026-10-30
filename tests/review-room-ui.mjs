@@ -672,16 +672,16 @@ try {
     await p.click('[data-toc-scene="t3"]'); await p.waitForSelector("[data-report]", { timeout: 5000 }).catch(() => {});
     const rp = await p.evaluate(() => { const r = document.querySelector("[data-report]"); return r && { chapters: [...r.querySelectorAll("[data-report-section]")].map((x) => x.dataset.chapter), figures: [...r.querySelectorAll("[data-report-figure]")].map((x) => x.dataset.figureType),
       points: [...r.querySelectorAll("[data-points-chapter]")].map((x) => [x.dataset.pointsChapter, x.querySelectorAll("li").length]), lead: !!r.querySelector('[data-chapter="what"] .rp-prose p.lead'), title: r.querySelector(".rp-title")?.textContent, eyebrow: r.querySelector(".rp-eyebrow")?.textContent,
-      scroll: document.documentElement.scrollHeight - innerHeight, own: r.scrollHeight > r.clientHeight, cites: r.querySelectorAll("[data-cite]").length, stage: !!document.querySelector("[data-visual]") }; });
+      scroll: document.documentElement.scrollHeight - innerHeight, own: !!r.querySelector("[data-board-vp]") && getComputedStyle(r.querySelector("[data-board-vp]")).overflow === "hidden", cites: r.querySelectorAll("[data-cite]").length, stage: !!document.querySelector("[data-visual]") }; });
     ok(rp && JSON.stringify(rp.chapters) === JSON.stringify(["what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "roads", "watch", "questions"])
       && JSON.stringify(rp.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence"]) && JSON.stringify(rp.points) === JSON.stringify([["roads", 2], ["watch", 2], ["questions", 2]]) && rp.lead && !rp.stage,
-      "a finished lesson reads as a report: every section in order, prose for what it is, Studio's drawings (architecture, a decision, each changed item, the state map, the sequence) and the roads, risks and questions as points", JSON.stringify(rp));
-    ok(rp && rp.scroll <= 0 && rp.own && /example\/shop/.test(rp.eyebrow) && rp.cites >= 10, "the report scrolls inside the room (the page never does); its eyebrow names the subject; its points keep Studio's citations", JSON.stringify(rp));
+      "a finished lesson is the lesson board: every section in order, prose for what it is, Studio's drawings (architecture, a decision, each changed item, the state map, the sequence) and the roads, risks and questions as points", JSON.stringify(rp));
+    ok(rp && rp.scroll <= 0 && rp.own && /example\/shop/.test(rp.eyebrow) && rp.cites >= 10, "the lesson is a board the camera moves over (the page never scrolls); its eyebrow names the subject; its points keep Studio's citations", JSON.stringify(rp));
     // the rail jumps to a section and marks it; the state map: every transition numbered, each opens its own code and shows what it writes
     await p.click('[data-toc-scene="t3-6"]'); await p.waitForTimeout(400);
-    const jump = await p.evaluate(() => { const r = document.querySelector("[data-report]"), sec = r.querySelector('[data-report-section="t3-6"]'); return { top: Math.round(sec.getBoundingClientRect().top - r.getBoundingClientRect().top), cur: document.querySelector('[data-toc-scene="t3-6"]').getAttribute("aria-current"), labels: [...sec.querySelectorAll("[data-elabel]")].map((e) => e.textContent), rows: sec.querySelectorAll("[data-transition]").length }; });
-    ok(Math.abs(jump.top) < 40 && jump.cur === "true" && JSON.stringify(jump.labels) === JSON.stringify(["① price", "② pay", "③ cancel", "④ edit", "⑤ pay later", "⑥ reprice"]) && jump.rows === 6,
-      "a chapter picked in the rail scrolls the report to it, marked current; the state map draws every transition, numbered, each a row of its own", JSON.stringify(jump));
+    const jump = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]"), sec = vp.querySelector('[data-report-section="t3-6"]'); return { top: Math.round(sec.getBoundingClientRect().top - vp.getBoundingClientRect().top), cur: document.querySelector('[data-toc-scene="t3-6"]').getAttribute("aria-current"), labels: [...sec.querySelectorAll("[data-elabel]")].map((e) => e.textContent), rows: sec.querySelectorAll("[data-transition]").length }; });
+    ok(jump.top >= 0 && jump.top < 140 && jump.cur === "true" && JSON.stringify(jump.labels) === JSON.stringify(["① price", "② pay", "③ cancel", "④ edit", "⑤ pay later", "⑥ reprice"]) && jump.rows === 6,
+      "a chapter picked in the rail flies the board to it, marked current; the state map draws every transition, numbered, each a row of its own", JSON.stringify(jump));
     const geo2 = await p.evaluate(() => { const sec = document.querySelector('[data-report-section="t3-6"]'), arch = document.querySelector("[data-arch]");
       const rect = (e) => { const b = e.getBBox(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }, over = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
       const clash = (root) => { const els = [...root.querySelectorAll("[data-elabel]")], ls = els.map(rect), ns = [...root.querySelectorAll("[data-node] .rr-box")].map(rect), out = [];
@@ -691,15 +691,19 @@ try {
       return { twins, selfLen: self ? Math.round(self.getTotalLength()) : 0, states: clash(sec), arch: clash(arch) }; });
     ok(geo2.twins.length === 2 && geo2.twins[0] !== geo2.twins[1] && geo2.selfLen > 70 && !geo2.states.length && !geo2.arch.length,
       "two transitions the same way between two states are drawn apart, a state's way back to itself is a loop, and no chip sits on a box, another connector or another chip", JSON.stringify(geo2));
-    await p.click('[data-transition-pick="1"]'); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {});
-    const t1 = { cite: cites.at(-1), on: await p.$eval('[data-transition="1"]', (e) => e.getAttribute("aria-current")).catch(() => null), detail: await p.$eval('[data-transition="1"] .rp-td', (e) => getComputedStyle(e).display !== "none" ? e.textContent : null).catch(() => null) };
+    // on the board a transition picked shows what it writes and asks there (its popover); its citation opens its code
+    await p.$eval('[data-transition-pick="1"]', (e) => e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 600, clientY: 400 }))); await p.waitForSelector("[data-board-pop]", { timeout: 3000 }).catch(() => {});
+    const t1 = { pop: await p.$eval("[data-board-pop]", (e) => [e.dataset.boardPop, !e.querySelector('[data-chip="code"]').disabled]).catch(() => null), on: await p.$eval('[data-transition="1"]', (e) => e.getAttribute("aria-current")).catch(() => null), detail: await p.$eval('[data-transition="1"] .rp-td', (e) => getComputedStyle(e).display !== "none" ? e.textContent : null).catch(() => null) };
+    await p.keyboard.press("Escape"); await p.$eval('[data-transition="1"] [data-cite]', (e) => e.click()); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {}); t1.cite = cites.at(-1);
     await p.click("[data-cite-panel] .btn").catch(() => {});
-    ok(t1.cite === "diff:src/ledger.ts:L5-9" && t1.on === "true" && /invoices\.status/.test(t1.detail || ""), "a transition opens the code it rests on and shows what it writes", JSON.stringify(t1));
+    ok(t1.cite === "diff:src/ledger.ts:L5-9" && t1.on === "true" && /invoices\.status/.test(t1.detail || "") && /lifecycle\/t3-6\/transition\/B3-5#transition:1/.test(t1.pop?.[0] || "") && t1.pop?.[1] === true,
+      "a transition picked shows what it writes and asks there (show the code ready); its citation opens the code it rests on", JSON.stringify(t1));
     // what talks to what: the change marked on its nodes, inferred said so, a connection opens what shows it
-    await p.click('[data-toc-scene="t3-2"]'); await p.waitForTimeout(300); await p.click('[data-edge-cite="diff:src/pricing.ts:L10-14"]'); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {});
-    const ar = await p.evaluate(() => ({ marks: [...document.querySelectorAll("[data-arch] [data-mark]")].map((e) => e.dataset.mark), basis: document.querySelector("[data-arch-basis]")?.dataset.archBasis }));
-    ok(cites.at(-1) === "diff:src/pricing.ts:L10-14" && JSON.stringify(ar.marks) === JSON.stringify(["changed", "new"]) && ar.basis === "inferred", "the architecture marks the change on its nodes, says it is inferred, and a connection opens its code", JSON.stringify({ ar, cite: cites.at(-1) }));
-    await p.click("[data-cite-panel] .btn").catch(() => {});
+    await p.click('[data-toc-scene="t3-2"]'); await p.waitForTimeout(300); await p.$eval('[data-edge-cite="diff:src/pricing.ts:L10-14"]', (e) => e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 600, clientY: 400 }))); await p.waitForSelector("[data-board-pop]", { timeout: 3000 }).catch(() => {});
+    const ar = await p.evaluate(() => ({ marks: [...document.querySelectorAll("[data-arch] [data-mark]")].map((e) => e.dataset.mark), basis: document.querySelector("[data-arch-basis]")?.dataset.archBasis, pop: document.querySelector("[data-board-pop]")?.dataset.boardPop, refs: document.querySelector('[data-edge-cite="diff:src/pricing.ts:L10-14"]')?.getAttribute("data-arefs"), panel: !!document.querySelector("[data-cite-panel]") }));
+    await p.keyboard.press("Escape");
+    ok(JSON.stringify(ar.marks) === JSON.stringify(["changed", "new"]) && ar.basis === "inferred" && /talks\/t3-2\/edge\/B3-1#edge:cart>pricing/.test(ar.pop || "") && ar.refs === "diff:src/pricing.ts:L10-14" && !ar.panel,
+      "the architecture marks the change on its nodes, says it is inferred, and a connection asks there, its code the popover's show-the-code", JSON.stringify(ar));
     // every changed item from one layout; a decision's rejected option set apart
     const geo = await p.evaluate(() => [...document.querySelectorAll("[data-report-figure] [data-item-figure]")].map((f) => [...f.querySelectorAll(".rr-ib path")].map((e) => e.getAttribute("d")).join("|")));
     const dec = await p.evaluate(() => ({ boxes: document.querySelectorAll("[data-decision] .rr-ib").length, gone: document.querySelectorAll("[data-decision] .rr-ib.gone").length }));
@@ -720,8 +724,8 @@ try {
     await p.click('[data-lang-pick="en"]');
     // a phone: the report reads top to bottom under the chapters' strip, nothing wider than the screen
     await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(300);
-    const ph = await p.evaluate(() => { const r = document.querySelector("[data-report]")?.getBoundingClientRect(), t = document.querySelector("[data-toc]")?.getBoundingClientRect(); return { report: !!r, under: r && t ? t.bottom <= r.top + 1 : false, wide: document.documentElement.scrollWidth - innerWidth, scroll: document.documentElement.scrollHeight - innerHeight }; });
-    ok(ph.report && ph.under && ph.wide <= 0 && ph.scroll <= 0, "on a phone the report reads under the chapters' strip, never wider than the screen", JSON.stringify(ph));
+    const ph = await p.evaluate(() => { const r = document.querySelector("[data-report]")?.getBoundingClientRect(), bar = document.querySelector(".rb-phonebar")?.getBoundingClientRect(); return { report: !!r, bar: !!bar && bar.bottom <= innerHeight + 1, chapters: !!document.querySelector('.rb-phonebar [data-sheet="outline"]'), wide: document.documentElement.scrollWidth - innerWidth, scroll: document.documentElement.scrollHeight - innerHeight }; });
+    ok(ph.report && ph.bar && ph.chapters && ph.wide <= 0 && ph.scroll <= 0, "on a phone the lesson is the board with its chapters a sheet away, never wider than the screen", JSON.stringify(ph));
     ok(!errs.length, "the report draws with no page error", errs.join(" | "));
     await ctx.close();
     // replayed from the Library: the same report, offline, read-only, no reviewer notes
@@ -901,7 +905,7 @@ try {
     const tamper = await p.evaluate((bad) => { const f = document.querySelector("[data-svg-figure] svg"), all = f ? [f, ...f.querySelectorAll("*")] : [];
       return { names: [...new Set(all.map((e) => e.localName))], attrs: [...new Set(all.flatMap((e) => [...e.attributes].map((a) => a.name)))], classes: [...new Set(all.flatMap((e) => [...e.classList]))], styles: all.map((e) => e.getAttribute("style")).filter(Boolean), values: all.flatMap((e) => [...e.attributes].map((a) => a.value)).filter((v) => v.includes(bad) || /javascript:|url\(http/i.test(v)), pwned: !!window.__pwn,
         lines: [...(f?.querySelectorAll("text") ?? [])].filter((t) => t.querySelector("tspan")).map((t) => [...t.querySelectorAll("tspan")].map((x) => [x.textContent, x.getAttribute("dy")])) }; }, BAD);
-    ok(!["script", "foreignObject", "foreignobject", "a", "image", "use", "style", "div"].some((n) => tamper.names.includes(n)) && !tamper.attrs.some((a) => /^on|^(href|xlink:href|filter)$/.test(a)) && tamper.classes.every((c) => /^rr-/.test(c)) && tamper.styles.every((v) => !/url\(|background/i.test(v)) && !tamper.values.length && !tamper.pwned,
+    ok(!["script", "foreignObject", "foreignobject", "a", "image", "use", "style", "div"].some((n) => tamper.names.includes(n)) && !tamper.attrs.some((a) => /^on|^(href|xlink:href|filter)$/.test(a)) && tamper.classes.every((c) => /^(rr|rb)-/.test(c)) && tamper.styles.every((v) => !/url\(|background/i.test(v)) && !tamper.values.length && !tamper.pwned,
       "a figure from a tampered room.json is still rebuilt only from the allowlist: no script, foreignObject, link, image, use or style; no handler, href, style or outside url() reaches the page", JSON.stringify(tamper));
     ok(JSON.stringify(tamper.lines) === JSON.stringify([[["第一行", "0"], ["第二行", "14"]]]), "a label of two lines keeps both, each in the room's language at its own place (not flattened into one)", JSON.stringify(tamper.lines));
     const note = await p.evaluate(() => ({ text: document.querySelector("[data-report] [data-auto-started]")?.textContent ?? null, sw: !!document.querySelector("[data-report] [data-auto-off]") }));
