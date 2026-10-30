@@ -8,7 +8,7 @@ Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state he
 `public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 5.5.0 and its fit addon 0.10.0,
 pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
 `tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs`, `tests/terminal-keys.ts`, `tests/terminal-launch.ts`,
-`tests/terminal-panes-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`.
+`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`.
 
 ## Focus mode
 
@@ -69,6 +69,18 @@ Studio window ⌥T, ⌥W and ⌥⇧] are Option-as-Meta and the shell's. The hin
 button; both platforms one click apart) show the chord that works where the page is, and strike out the other. The table
 also lists copy mode and a new workspace (⇧⌘C, ⌘N on a Mac): this page has no workspaces and xterm selects and copies by
 itself, so those chords are not taken and reach the terminal.
+
+## Typing
+
+An input method (Zhuyin, Pinyin, Japanese, Korean) composes in xterm.js's own hidden textarea; nothing is sent while it
+composes, and what it commits is sent once. One case is Studio's: an input method that commits the front of what it
+composes while the rest goes on composing (compositionend, then compositionstart, in one keystroke: Zhuyin and Pinyin do
+when the buffer fills or a word is confirmed) made xterm.js 5.5.0 send the committed text together with the part still
+composing, and that part again once committed (中文 came out as 中文文; a longer run repeated every tail). 6.0.0 fixed
+it upstream; until the pin moves, `imeOnce` in `public/terminals.js` sends, when a new composition starts, what the last
+one committed up to where the new one starts, and cancels the send xterm had queued. `tests/terminal-input-ui.mjs` drives
+Chromium's input-method layer over CDP (`Input.imeSetComposition`, `Input.insertText`) and reads the bytes the page posts;
+it is not the operating system's Zhuyin keyboard, which no test here presses.
 
 ## A Studio window
 

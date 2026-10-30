@@ -94,6 +94,25 @@ function xterm() {
 }
 const css = (n, d) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d;
 const b64bytes = (s) => { const b = atob(s), o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = b.charCodeAt(i); return o; };
+// An input method that commits the front of what it composes while the rest goes on composing (Zhuyin and Pinyin do, when
+// the buffer fills or a word is confirmed: compositionend, then compositionstart, in one keystroke) made xterm.js 5.5.0
+// send the committed text together with the part still composing, which it then sent again when that was committed:
+// 中文 typed came out as 中文文 (its CompositionHelper reads up to the old composition's end; 6.0.0 reads up to the new
+// one's start). Here a new composition first sends what the last one committed, up to where the new one starts, and
+// cancels the send the old one had queued. Pinned to 5.5.0 (public/vendor); tests/terminal-input-ui.mjs checks the bytes.
+function imeOnce(term) {
+  const c = term._core?._compositionHelper;
+  if (!c || typeof c.compositionstart !== "function" || !("_isSendingComposition" in c) || !c._textarea || !c._coreService) return;
+  const start = c.compositionstart.bind(c);
+  c.compositionstart = () => {
+    if (c._isSendingComposition) {
+      c._isSendingComposition = false;
+      const d = c._textarea.value.substring(c._compositionPosition.start + c._dataAlreadySent.length);
+      if (d) c._coreService.triggerDataEvent(d, true);
+    }
+    return start();
+  };
+}
 function pane(t) {
   let p = TM.panes.get(t.id); if (p) return p;
   p = { host: h("div", { class: "wt-xterm", "data-term-host": t.id }), term: null, fit: null, queue: "", sending: Promise.resolve(), flushT: null, sizeT: null, err: null };
@@ -101,7 +120,7 @@ function pane(t) {
   xterm().then(() => {
     const term = new window.Terminal({ cursorBlink: TM.canWrite, disableStdin: !TM.canWrite, scrollback: 5000, fontSize: 13, allowProposedApi: false,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: { background: css("--surface-2", "#111"), foreground: css("--text", "#ddd"), cursor: css("--accent", "#69f") } });
-    const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit); term.open(p.host); p.term = term; p.fit = fit;
+    const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit); term.open(p.host); p.term = term; p.fit = fit; imeOnce(term);
     // a phone watches: no input element at all, so a tap never opens a keyboard
     if (!TM.canWrite) p.host.querySelectorAll("textarea, input").forEach((e) => e.remove());
     else {
