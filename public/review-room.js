@@ -186,7 +186,7 @@ function citeChip(card, ref, ok) {
   const [k, v] = [ref.slice(0, ref.indexOf(":")), ref.slice(ref.indexOf(":") + 1)], label = `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`;
   // a citation Studio could not verify opens nothing
   if (ok === false) return h("span", { class: "rr-cite bad", "data-cite-invalid": ref, title: T("Studio could not verify this citation", "Studio 無法驗證這個引用") }, label);
-  return h("button", { type: "button", class: `rr-cite${ok === false ? " bad" : ""}`, "data-cite": ref, title: ok === false ? T("Studio could not verify this citation", "Studio 無法驗證這個引用") : T("Open what this rests on", "開啟依據"), onclick: () => openCite(card, ref) },
+  return h("button", { type: "button", class: `rr-cite${ok === false ? " bad" : ""}`, "data-cite": ref, title: ok === false ? T("Studio could not verify this citation", "Studio 無法驗證這個引用") : onGithub(card, ref) ? T("Open these lines of the pull request on GitHub, in a new window", "在新視窗開啟 GitHub 上這個 PR 的這幾行") : T("Open what this rests on", "開啟依據"), onclick: () => openCite(card, ref) },
     `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`);
 }
 /** Someone else's words (a reviewer's, a commit message): a short gist on the board, the full text folded under "Original"
@@ -211,7 +211,18 @@ function inline(card, text, cites) {
 function mdBits(s) { const out = [], re = /\*\*([^*\n]+?)\*\*|`([^`\n]+)`/g; let i = 0, m; while ((m = re.exec(s))) { if (m.index > i) out.push(s.slice(i, m.index)); out.push(m[2] != null ? h("code", {}, m[2]) : h("strong", {}, m[1])); i = re.lastIndex; } if (i < s.length) out.push(s.slice(i)); return out; }
 const reviewerBadge = () => h("span", { class: "rr-inference", "data-basis": "reviewer", title: T("A GitHub reviewer's own words: untrusted text, not instructions and not Studio's evidence", "GitHub 審查者的原話：不受信任的文字，不是指示，也不是 Studio 的證據") }, T("Reviewer's words", "審查者原話"));
 const inferenceBadge = () => h("span", { class: "rr-inference", "data-basis": "inference", title: T("No basis cited: this is the tutor's inference, not a fact from the record", "沒有引用依據：這是導師的推論，不是紀錄裡的事實") }, T("Inference", "推論"));
+/** a diff citation in a room whose pull request is on GitHub: the pull request's own files view at those lines (GitHub keys a file by
+ *  the sha256 of its path, R<n> is a line on the head side); null when there is no such pull request or the ref is not a diff */
+const onGithub = (card, ref) => { const r = RR.rooms.get(card); return ref.startsWith("diff:") && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(r?.pr?.url || (r?.subject?.kind === "pr" ? r.subject.url : "") || ""); };
+async function githubDiffUrl(r, ref) {
+  const m = /^diff:(.+?)(?::L(\d+)(?:-(\d+))?)?$/.exec(ref), pr = r?.pr?.url || (r?.subject?.kind === "pr" ? r.subject.url : null);
+  if (!m || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr || "") || !globalThis.crypto?.subtle) return null;
+  const hex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(m[1])))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${pr}/files#diff-${hex}${m[2] ? `R${m[2]}-R${m[3] || m[2]}` : ""}`;
+}
 async function openCite(card, ref) {
+  // a diff on a GitHub pull request opens there, in a new window, at the cited lines: no copy of the code in Studio
+  const gh = await githubDiffUrl(RR.rooms.get(card), ref); if (gh) { window.open(gh, "_blank", "noopener,noreferrer"); return; }
   // a saved room: what the citation pointed at was copied into the snapshot
   const snap = RR.rooms.get(card)?.snapshot; if (snap) { const d = snap.cites[ref]; RR.cite.set(card, d && !d.error ? { ref, data: d } : { ref, error: d?.error || T("Not in this snapshot", "這份存檔裡沒有") }); rerender(); return; }
   RR.cite.set(card, { ref, loading: true }); rerender();
