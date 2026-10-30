@@ -14,7 +14,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { HYPERFRAMES_VERSION } from "./render/hyperframes";
-import { downloadCommand, installCommand, SHERPA_VERSION, type RuntimeState } from "./voice/runtime";
+import { downloadCommand, downloadNeeds, installCommand, SHERPA_VERSION, type RuntimeState } from "./voice/runtime";
 import type { MacVoice } from "./voice/mac";
 
 export type Status = "ok" | "degraded" | "missing" | "info";
@@ -78,7 +78,7 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
     "voice-runtime": [{ id: "npm", label: `sherpa-onnx-node ${SHERPA_VERSION} into ~/.crew-studio/tools/voice (exact versions, no install scripts, no admin rights)`, get argv() { return ["/bin/bash", "-c", installCommand()]; },
       source: "https://www.npmjs.com/package/sherpa-onnx-node — documented at https://k2-fsa.github.io/sherpa/onnx/ (Apache-2.0)", location: "~/.crew-studio/tools/voice", needs: ["npm"], admin: false }],
     "voice-tts": [{ id: "download", label: "Kokoro-82M v1.0 (about 401 MB, Apache-2.0) into ~/.crew-studio/models, every file checked against its pinned SHA-256", get argv() { return ["/bin/bash", "-c", downloadCommand()]; },
-      source: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0 at revision f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b", location: "~/.crew-studio/models/kokoro-multi-lang-v1_0", needs: ["node"], admin: false }],
+      source: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0 at revision f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b", location: "~/.crew-studio/models/kokoro-multi-lang-v1_0", get needs() { return downloadNeeds(); }, admin: false }],
     renderer: [
       { id: "npm", label: "Playwright + Chromium into ~/.crew-studio/tools (no admin rights)", argv: ["/bin/bash", "-c", "mkdir -p ~/.crew-studio/tools && npm install --prefix ~/.crew-studio/tools playwright@1 && ~/.crew-studio/tools/node_modules/.bin/playwright install chromium"],
         source: "https://www.npmjs.com/package/playwright — documented at https://playwright.dev/docs/browsers", location: "~/.crew-studio/tools and Playwright's browser cache", needs: ["npm"], admin: false },
