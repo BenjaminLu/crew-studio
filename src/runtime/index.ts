@@ -771,7 +771,7 @@ export function createRuntime(d: RuntimeDeps) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a pull request's room / 只有這台 Mac 上的船長能開啟 pull request 的審查室", code: "desktopOnly" }, 403);
-        try { return json(await rr.openPr(b?.url, by, b?.lang, b?.auto)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
+        try { return json(await rr.openPr(b?.url, by, b?.lang, b?.auto, b?.plan)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
       }
       // a room saved in the Library: read it (any authenticated page), its pictures and narration from the snapshot itself
       const libRoom = /^\/api\/review-room\/library\/(room-[a-z0-9-]{1,60})(?:\/(\d{1,6})\/asset\/([A-Za-z0-9._-]+\.(png|mp3)))?$/.exec(p);

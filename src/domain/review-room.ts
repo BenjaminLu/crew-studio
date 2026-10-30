@@ -121,20 +121,23 @@ export function txOf(v: any): { tables: { table: string; op: string; guard: stri
 export const STATE_WRITES: RegExp[] = [
   /\bSET\s+(?:[\w.`"]+\s*=\s*[^,;]+,\s*)*[\w.`"]*?\b(?:status|state)\b[`"]?\s*=(?![=>])/i,
   /\bINSERT\s+INTO\b[^;(]*\([^)]*\b(?:status|state)\b/i,
-  /\.(?:update|update_?all|updateone|updatemany|updates|update_?columns?|upsert|insert|create|set|patch|save)!?\s*\(\s*\{?[^;]*?["'`]?\b(?:status|state)\b["'`]?\s*(?::(?!:)|=(?![=>])|,)/i,
+  /(?<!\b(?:searchParams|params|cache|form|headers|map)\s*)\.(?:update|update_?all|updateone|updatemany|updates|update_?columns?|upsert|insert|create|save)!?\s*\(\s*\{?[^;]*?["'`]?\b(?:status|state)\b["'`]?\s*(?::(?!:)|=(?![=>])|,)/i,
   /\bsetState\s*\(\s*(?:\w+\s*=>\s*\(?\s*)?\{[^}]*\b(?:status|state)\s*:/i,
   /\b(?:setStatus|transition(?:To)?)\s*\(/i,
-  /(?<![\w$.])(?!(?:res|response|reply|ctx|req|request|props)\.)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\.(?:status|state)\b|\[\s*["'](?:status|state)["']\s*\])\s*=(?![=>~])\s*(?:['"`:]|[A-Za-z_]|-?\d)/i,
+  /(?<![\w$.])(?!(?:res|response|reply|ctx|req|request|props|form|cache|params|searchParams)\.)[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\.(?:status|state)\b|\[\s*["'](?:status|state)["']\s*\])\s*=(?![=>~])\s*(?:['"`:]|[A-Za-z_]|-?\d)/i,
 ];
 /** a status or state key on a line of its own, and the ORM call (or its data: { …) it belongs to a few lines above */
-const STATE_KEY = /^\s*["'`]?(?:status|state)["'`]?\s*:\s*\S/i, ORM_CALL = /\.(?:update|update_?all|updateone|updatemany|upsert|insert|create|set|patch|save)\w*!?\s*\(|\bdata\s*:\s*\{/i;
+const STATE_KEY = /^\s*["'`]?(?:status|state)["'`]?\s*:\s*\S/i, ORM_CALL = /\.(?:update|update_?all|updateone|updatemany|upsert|insert|create|save)\w*!?\s*\(|\bdata\s*:\s*\{/i;
+/** a React component's own this.setState({ status }) is the component's state, not the entity's */
+const REACT_FILE = /\.(jsx|tsx)$/i, REACT_CLASS = /\bextends\s+(?:React\.)?(?:Pure)?Component\b/;
 /** the added lines (not tests, not docs) that write a state or status: a lifecycle is owed when there is one */
 export function stateWrites(diff: string): string[] {
-  const out: string[] = []; let file = "", line = 0, back: string[] = [];
-  for (const l of diff.split("\n")) { const f = /^\+\+\+ b\/(.+)$/.exec(l); if (f) { file = f[1]; back = []; continue; } const h = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(l); if (h) { line = Number(h[1]); back = []; continue; }
+  const out: string[] = []; let file = "", line = 0, back: string[] = [], react = false;
+  for (const l of diff.split("\n")) { const f = /^\+\+\+ b\/(.+)$/.exec(l); if (f) { file = f[1]; back = []; react = REACT_FILE.test(file); continue; } const h = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(l); if (h) { line = Number(h[1]); back = []; continue; }
     if (l.startsWith("-")) continue;
-    const code = l.slice(1), added = l.startsWith("+") && !l.startsWith("+++");
-    if (added && !/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|\.md$/i.test(file) && (STATE_WRITES.some((re) => re.test(code)) || (STATE_KEY.test(code) && back.some((b) => ORM_CALL.test(b))))) out.push(`${file}:${line}`);
+    const code = l.slice(1), added = l.startsWith("+") && !l.startsWith("+++"); if (REACT_CLASS.test(code)) react = true;
+    const writes = STATE_WRITES.filter((re) => !(react && re === STATE_WRITES[3] && /\bthis\.setState\s*\(/.test(code)));
+    if (added && !/(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.|\.md$/i.test(file) && (writes.some((re) => re.test(code)) || (STATE_KEY.test(code) && back.some((b) => ORM_CALL.test(b))))) out.push(`${file}:${line}`);
     back = [...back, code].slice(-6); line++; }
   return [...new Set(out)].slice(0, 20);
 }
@@ -1016,25 +1019,34 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
    *  host Task and its staffing. */
   const planOf = (k: Key, room: Room | null, project: string | null | undefined) => {
     const auto = (room?.autoTeach ?? settings().autoTeach) !== false, images = !!room?.images?.on, createsHost = !k.run;
-    const o: any = room ? offerOf(k) : (() => { try { const p = crewPick(project); return { provider: p.provider, model: p.model ?? null, effort: p.effort ?? null, paid: true }; } catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "no_crew" }; } })();
+    const o: any = room ? offerOf(k) : (() => { try {
+      const run = k.run ? engine.get(k.run) : null, node = run?.def.nodes.find((n: any) => n.id === k.node);
+      const p = run && node ? seatPick(run, node).pick : crewPick(project); return { provider: p.provider, model: p.model ?? null, effort: p.effort ?? null, paid: true }; }
+      catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "no_crew" }; } })();
     return "error" in o ? { auto, images, createsHost, error: String(o.error).slice(0, 300), code: o.code ?? null } : { auto, images, createsHost, provider: o.provider, model: o.model ?? null, effort: o.effort ?? null, paid: true, hash: o.hash as string | undefined };
   };
+  /** a plan's fingerprint: the paste box sends it back, and the lesson starts only if the plan is still that one */
+  const planPrint = (p: any) => sha(JSON.stringify({ provider: p.provider ?? null, model: p.model ?? null, effort: p.effort ?? null, images: !!p.images, createsHost: !!p.createsHost })).slice(0, 16);
   const autoPlan = (url: unknown) => {
     const p = parsePrUrl(String(url ?? "").slice(0, 400)); if (!p) return { auto: settings().autoTeach, error: "not a pull request's address", code: "bad_url" };
     const project: any = connected(p.repository); if (!project) return { auto: settings().autoTeach, error: `github.com/${p.repository} is not the repository of a project connected to GitHub`, code: "not_connected" };
-    let k: Key | null = null; try { k = keyOf(prRoomId(p.repository, p.n)); } catch { /* no room for it yet */ }
-    const room = k ? load(k) : null; if (k) hostInto(k, room);
-    const { hash: _h, ...plan } = planOf(k ?? ({ run: null } as unknown as Key), room, project.id ?? project.name); return plan;
+    const id = prRoomId(p.repository, p.n), canonical = `https://github.com/${String(project.github?.repository ?? p.repository)}/pull/${p.n}`;
+    let k: Key | null = null; try { k = keyOf(id); } catch { /* no room for it yet */ }
+    const room = k ? load(k) : null, kk = k ?? ({ id, kind: "pr", run: null, node: null } as unknown as Key);
+    hostInto(kk, room ?? ({ subject: { url: canonical } } as unknown as Room)); // the host as readPr finds it: the Task that published it
+    const { hash: _h, ...plan } = planOf(kk, room, project.id ?? project.name); return "error" in plan ? plan : { ...plan, plan: planPrint(plan) };
   };
   /** A pasted pull request's lesson, started by Studio: the captain's paste is the consent. Only a pull request's room, only when
    *  auto-teach is on (the room's switch, else the global setting), once per head (recorded before anything starts, so a reload
    *  or a revisit never starts another), never when a lesson for this head is done or running. Pictures as the room has them. When it cannot
    *  start (no tutor can run, admission refuses), the reason is kept and the room shows the ordinary teach button with it. */
-  async function autoTeach(api: any, id: string, by: string, lang = "en") {
+  async function autoTeach(api: any, id: string, by: string, lang = "en", shown = ""): Promise<{ changed?: any } | void> {
     let k: Key; try { k = keyOf(id); } catch { return; } if (k.kind !== "pr") return;
     const room = load(k); if (!room || !k.open() || live.has(k.id)) return;
     const head = room.pr?.head ?? room.head; if (!head) return;
     const plan = planOf(k, room, room.subject?.project); if (!plan.auto) return;
+    // only the plan the paste box showed: changed since (a new tutor, pictures, a host), nothing starts and the box shows the new one
+    if ("error" in plan || shown !== planPrint(plan)) { if ("error" in plan) return; const { hash: _h, ...pub } = plan; return { changed: { ...pub, plan: planPrint(plan) } }; }
     if ((room.autoTaught ?? []).some((x) => x.head === head)) return;
     if (room.turns.some((t) => t.action === "teach" && t.head === head && (t.status === "done" || t.status === "running"))) return;
     const mark = { head, at: new Date().toISOString() } as { head: string; at: string; turn?: number; skipped?: string };
@@ -1341,8 +1353,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       for (const run of engine.list()) { const d = join(engine.rdir(run.id), "review-room"); if (!existsSync(d)) continue; try { for (const f of readdirSync(d)) if (/^(SC-\d+|R-\d+)\.json$/.test(f)) push(f.slice(0, -5), join(d, f)); } catch {} }
       return out.sort((a, b) => Number(b.open) - Number(a.open) || b.updatedAt.localeCompare(a.updatedAt)).slice(0, 60); },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
-    /** a pasted pull request: its room, and its lesson started by itself unless the paste box had not yet said what that starts (auto: false) */
-    async openPr(url: unknown, by = "captain", lang?: unknown, auto?: unknown) { const id = await readPr(String(url ?? "").slice(0, 400)); if (auto !== false) await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en"); return { id, href: `#/room/${id}`, room: this.view(id) }; },
+    /** a pasted pull request: its room, and its lesson started by itself only when the paste box said so (auto: true, plan: the
+     *  fingerprint of what it showed) and the plan is still that one; otherwise the room only, with the new plan when it changed */
+    async openPr(url: unknown, by = "captain", lang?: unknown, auto?: unknown, plan?: unknown) { const id = await readPr(String(url ?? "").slice(0, 400));
+      // fail-closed: only an explicit auto with the fingerprint of the plan the box showed starts the lesson
+      const r = auto === true ? await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en", typeof plan === "string" ? plan.slice(0, 32) : "") : undefined;
+      return { id, href: `#/room/${id}`, room: this.view(id), ...(r?.changed ? { plan: r.changed } : {}) }; },
     /** Studio-wide settings of the review room (autoTeach: a pasted pull request's lesson starts by itself) */
     settings() { return settings(); },
     /** what pasting this pull request's address would start (the paste box shows it before the paste): auto-teach on or off,

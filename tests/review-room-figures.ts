@@ -93,6 +93,12 @@ const all = (n: FigNode, out: FigNode[] = []) => { out.push(n); for (const c of 
   const fp = not.filter((l) => at([l]).length), tp = yes.filter((l) => !at([l]).length);
   ok(!fp.length, "not a state write: a comparison (== / ===), an HTTP response's status, a local called state, an object literal, React's own this.state", JSON.stringify(fp));
   ok(!tp.length, "a state write, the key in any case: UPDATE … SET status, INSERT INTO … (status), an ORM write naming it (JS, Django, Rails, GORM), setState with a status key, transition(), an entity's status or state assigned (this., self., [\"status\"], a symbol, a number, an enum)", JSON.stringify(tp));
+  const atF = (file: string, lines: string[]) => stateWrites([`+++ b/${file}`, `@@ -1,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`)].join("\n"));
+  const notOrm = ["url.searchParams.set(\"status\", s);", "params.set('state', next);", "cache.set(\"status\", value);", "await cache.set({ status: 'warm' });", "form.status = 'dirty';", "form.setValue(\"status\", v);", "store.set({ status: 'x' });", "await api.patch({ status: 'paid' });"].filter((l) => at([l]).length);
+  const reactTsx = atF("src/OrderPanel.tsx", ["    this.setState({ status: 'loading' });"]), reactClass = atF("src/panel.js", ["class Panel extends React.Component {", "  load() { this.setState({ status: 'loading' }); }"]);
+  const plainSet = atF("src/orders.ts", ["    this.setState({ status: 'loading' });"]);
+  ok(!notOrm.length && !reactTsx.length && !reactClass.length && plainSet.length === 1,
+    "not a state write either: .set/.patch calls, a URL's or a cache's set, a form's fields, a React component's own this.setState({ status }) (a .jsx/.tsx file or a class extending Component); setState({ status }) elsewhere still counts", JSON.stringify({ notOrm, reactTsx, reactClass, plainSet }));
   const multi = at(["await prisma.order.update({", "  where: { id },", "  data: {", "    status: 'paid',", "  },", "});"]), plain = at(["return {", "  state: loading,", "  items,", "};"]);
   ok(JSON.stringify(multi) === JSON.stringify(["src/x.ts:4"]) && !plain.length, "a status key on its own line inside a multi-line ORM call (its data: { …) counts; the same key in a plain object literal does not", JSON.stringify({ multi, plain })); }
 

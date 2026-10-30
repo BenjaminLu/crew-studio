@@ -324,7 +324,8 @@ returns and async calls in their own colours.
 INSERT INTO … (status), an ORM write with a status/state key, setState / setStatus / transition(), or an entity's status
 assigned, the key in any case (`this.state =`, `self.status = :paid`, `o.Status = StatusPaid`, `order["status"] = 3`,
 Django `.update(status=`, Rails `update!(status:`, GORM `Update("status"`, or a status key on its own line inside a
-multi-line ORM call); never a comparison, an HTTP response's status, a local named state, setState without a status or
+multi-line ORM call); never a .set or .patch call (a URL's, a cache's, a form's), a React component's own this.setState
+in a .jsx/.tsx file or a class extending Component, a comparison, an HTTP response's status, a local named state, setState without a status or
 state key, or an object literal outside an ORM call. A lifecycle names its entity and gives each transition its database
 transaction (`tx`: the tables written, INSERT, UPDATE, DELETE or UPSERT, each field was → now, the guard, and what is written
 outside the transaction). The report's statemap numbers every transition; picking a state shows the transaction that brings
@@ -338,8 +339,11 @@ lesson for the current head (none done or running), the lesson starts by itself:
 click and no confirmation. So the paste box says what a paste starts before it is pasted (`GET …/paste-offer?url=`), from
 the same plan the start reads (auto-teach as the room has it, else the Studio-wide setting; the tutor its offer would use,
 the host Task's seat or the project's crew reviewer; the room's pictures; whether the first paid turn creates the host Task
-and its staffing). A paste sent before that line is on screen (Enter at once) opens the room without starting a lesson
-(`open-pr {auto: false}`), and a switch changed asks for the line again. The lesson says it started on paste, with the
+and its staffing; for a pull request a Studio Task published, that Task's seat and no host to create). It is fail-closed and
+bound to what the box showed: the lesson starts only when the paste sends `open-pr {auto: true, plan}` with the fingerprint
+the box got, and only if Studio's plan is still that one; a paste with no `auto` (Enter before the line is on screen, an
+older page) opens the room only, and a plan that changed opens the room only and returns the new plan, which the box shows
+for a second paste. A switch changed asks for the line again. The lesson says it started on paste, with the
 tutor it ran on and the room's switch beside it. It is an ordinary paid turn on the room's tutor, marked `auto` on the
 ledger; it keeps the room's own pictures setting (a new room's is off). It starts once per head: the head is recorded before anything starts, so a reload, a revisit or a second
 paste starts nothing. The Studio-wide setting (`GET/POST /api/review-room/settings {autoTeach}`, on the room list's page,

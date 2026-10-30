@@ -1245,7 +1245,7 @@ const pasteOffer = (url) => { if (!PR_URL.test(url) || PR.offer.has(url)) return
 /** the paste box's line about the paste: a paid round on this tutor when auto-teach is on, else nothing runs until asked */
 function pasteLine(url, where) {
   const o = url ? pasteOffer(url) : null; if (!o || o.loading) { PR.shown.delete(where); return null; }
-  PR.shown.set(where, { url, auto: o.auto !== false && !o.error }); // what go() may start: only what this line said
+  PR.shown.set(where, { url, auto: o.auto !== false && !o.error, plan: o.plan || null }); // what go() may start: only what this line said
   if (o.auto === false) return h("p", { class: "faint", "data-paste-offer": "off" }, T("Pasting opens the room; nothing runs until you ask (auto-teach is off).", "貼上只會開啟審查室；你開口之前什麼都不跑（自動教學已關）。"));
   if (o.error) return h("p", { class: "faint", "data-paste-offer": "none" }, T(`Pasting opens the room; no lesson starts by itself: ${o.error}`, `貼上會開啟審查室，不會自動開始教學：${o.error}`));
   const who = `${o.provider} · ${o.model ?? T("default model", "預設模型")}${o.effort ? ` (${o.effort})` : ""}`;
@@ -1258,8 +1258,11 @@ function prBox(where, repository) {
   const busy = PR.busy.has(where), err = PR.err.get(where);
   const go = async () => { const url = (PR.url.get(where) || "").trim(); if (!url || busy) return; PR.busy.add(where); PR.err.delete(where); rerenderAny();
     // the lesson starts by itself only when this box has said so for this very address; before that the paste opens the room only
-    const said = PR.shown.get(where), auto = !!(said && said.url === url && said.auto);
-    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang(), ...(auto ? {} : { auto: false }) }); RR.rooms.set(out.id, out.room); PR.url.delete(where); dropPasteOffers(); location.hash = out.href; }
+    const said = PR.shown.get(where), auto = !!(said && said.url === url && said.auto && said.plan);
+    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang(), ...(auto ? { auto: true, plan: said.plan } : {}) }); RR.rooms.set(out.id, out.room);
+      // the plan changed since the box said it (a new tutor, pictures, a host): nothing started; the box shows the new plan to paste again
+      if (out.plan) { PR.offer.set(url, out.plan); PR.err.set(where, T("What a paste starts has changed (above): nothing started. Paste again to start it.", "貼上會開始的內容變了（見上方）：什麼都沒有開始。再貼一次才會開始。")); return; }
+      PR.url.delete(where); dropPasteOffers(); location.hash = out.href; }
     catch (e) { PR.err.set(where, e.message); } finally { PR.busy.delete(where); rerenderAny(); } };
   return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
     h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),

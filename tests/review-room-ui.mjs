@@ -940,7 +940,7 @@ try {
     let globalAuto = true; const asked = [];
     await ctx.route(/\/api\/review-room\/settings$/, (r) => { if (r.request().method() === "POST") globalAuto = JSON.parse(r.request().postData() || "{}").autoTeach; r.fulfill({ json: { autoTeach: globalAuto } }); });
     await ctx.route(/\/api\/review-room\/paste-offer\?/, (r) => { const u = new URL(r.request().url()).searchParams.get("url"); asked.push(u);
-      r.fulfill({ json: /fixture\/project\/pull\/7$/.test(u) ? { auto: globalAuto, provider: "codex", model: "gpt-6", effort: "high", paid: true, images: true, createsHost: true } : { auto: true, error: "github.com/someone/else is not the repository of a project connected to GitHub", code: "not_connected" } }); });
+      r.fulfill({ json: /fixture\/project\/pull\/7$/.test(u) ? { auto: globalAuto, provider: "codex", model: "gpt-6", effort: "high", paid: true, images: true, createsHost: true, plan: "fp-7" } : { auto: true, error: "github.com/someone/else is not the repository of a project connected to GitHub", code: "not_connected" } }); });
     await ctx.route(/\/api\/review-room\/open-pr$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); opens.push(b.url);
       if (!/^https:\/\/github\.com\/fixture\/project\/pull\/7$/.test(b.url)) return r.fulfill({ status: 400, json: { error: "github.com/someone/else is not the GitHub repository of a registered project connected to GitHub; Studio reads only those", code: "not_connected" } });
       r.fulfill({ json: { id: PRID, href: `#/room/${PRID}`, room: PRROOM } }); });
@@ -1015,13 +1015,19 @@ try {
       await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/issues/1"); await p.click(`[data-pr-open="project:${pid}"]`); await p.waitForSelector(`[data-pr-error="project:${pid}"]`);
       ok(/Paste a pull request's address/.test(await p.textContent(`[data-pr-error="project:${pid}"]`)), "the project page's box shows why an address is refused");
       const sent = []; p.on("request", (q) => { if (/\/api\/review-room\/open-pr$/.test(q.url())) sent.push(JSON.parse(q.postData() || "{}")); });
-      await p.route(/\/api\/review-room\/paste-offer\?/, async (r) => { await new Promise((ok2) => setTimeout(ok2, 700)); r.fulfill({ json: { auto: true, provider: "codex", model: "gpt-6", effort: null, paid: true, images: false, createsHost: false } }); });
+      await p.route(/\/api\/review-room\/paste-offer\?/, async (r) => { await new Promise((ok2) => setTimeout(ok2, 700)); const pu = new URL(r.request().url()).searchParams.get("url"); r.fulfill({ json: { auto: true, provider: "codex", model: "gpt-6", effort: null, paid: true, images: false, createsHost: false, plan: `fp-${pu.split("/").pop()}` } }); });
       await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/pull/8"); await p.press(`[data-pr-url="project:${pid}"]`, "Enter"); await p.waitForSelector(`[data-pr-error="project:${pid}"]`);
       const early = sent.at(-1);
       await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/pull/9"); await p.waitForSelector(`[data-pr-box="project:${pid}"] [data-paste-offer="on"]`, { timeout: 5000 }).catch(() => {});
       await p.press(`[data-pr-url="project:${pid}"]`, "Enter"); await p.waitForTimeout(300); const late = sent.at(-1);
-      ok(early?.url === "https://github.com/fixture/project/pull/8" && early.auto === false && late?.url === "https://github.com/fixture/project/pull/9" && !("auto" in late),
-        "Enter at once after the paste, before the box has said what it starts, opens the room without starting a lesson; once it has said so, the paste starts it", JSON.stringify({ early, late })); }
+      ok(early?.url === "https://github.com/fixture/project/pull/8" && !("auto" in early) && !("plan" in early) && late?.url === "https://github.com/fixture/project/pull/9" && late.auto === true && late.plan === "fp-9",
+        "Enter at once after the paste, before the box has said what it starts, opens the room without starting a lesson; once it has said so, the paste asks to start it with that plan's fingerprint", JSON.stringify({ early, late }));
+      // the plan changed on Studio's side since the box said it: nothing starts, the box shows the new plan and says so
+      await p.route(/\/api\/review-room\/open-pr$/, (r) => r.fulfill({ json: { id: "PR-x-10", href: "#/room/PR-x-10", room: { card: { id: "PR-x-10" } }, plan: { auto: true, provider: "claude", model: "m-2", effort: null, paid: true, images: true, createsHost: false, plan: "fp-new" } } }));
+      await p.fill(`[data-pr-url="project:${pid}"]`, "https://github.com/fixture/project/pull/10"); await p.waitForSelector(`[data-pr-box="project:${pid}"] [data-paste-offer="on"]`, { timeout: 5000 }).catch(() => {});
+      await p.press(`[data-pr-url="project:${pid}"]`, "Enter"); await p.waitForSelector(`[data-pr-error="project:${pid}"]`, { timeout: 5000 }).catch(() => {});
+      const moved = await p.evaluate((w) => ({ hash: location.hash, line: document.querySelector(`[data-pr-box="${w}"] [data-paste-offer]`)?.textContent ?? "", err: document.querySelector(`[data-pr-error="${w}"]`)?.textContent ?? "" }), `project:${pid}`);
+      ok(/claude · m-2/.test(moved.line) && /up to two generated pictures/.test(moved.line) && /nothing started/.test(moved.err) && !/PR-x-10/.test(moved.hash), "when what a paste starts changed since the box said it, nothing starts: the box shows the new plan and asks for a second paste", JSON.stringify(moved)); }
     else ok(false, "fixture: the UI server lists a project to show", JSON.stringify(real));
     await ctx.close(); }
 
