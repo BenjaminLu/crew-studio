@@ -46,7 +46,15 @@ for (const [side, v] of Object.entries(sides)) {
 // the CSS for dim: each ANSI colour's dim form, and the default colour's, scoped to the terminal; not truecolor cells
 {
   const { dim } = TT.themeFor(sides.dark.bg, sides.dark.fg, sides.dark.accent), s = TT.dimCss(".wt-xterm", dim);
-  ok(s.includes(`.wt-xterm .xterm-rows .xterm-fg-8.xterm-dim{color:${dim.ansi[8]}!important}`) && s.includes(`:not([style*="color"]){color:${dim.foreground}!important}`), "the dim CSS draws each colour's dim form and leaves a cell with its own colour alone");
+  ok(s.includes(`.wt-xterm .xterm .xterm-rows .xterm-fg-8.xterm-dim:not([class*="xterm-bg-"]):not([style*="background"]){color:${dim.ansi[8]}}`) && s.includes(`:not([style*="color"]):not([class*="xterm-bg-"]):not([style*="background"]){color:${dim.foreground}}`), "the dim CSS draws each colour's dim form on the terminal's own background only, and leaves a cell with its own colour alone");
+  // dim text on each ANSI background: where the colour reads at AA on that background, its dim form there still does
+  for (const [side, v] of Object.entries(sides)) {
+    const { theme, dim } = TT.themeFor(v.bg, v.fg, v.accent), fgs = [...TT.NAMES.map((n: string) => theme[n]), theme.foreground], bad: string[] = [];
+    fgs.forEach((c: string, i: number) => TT.NAMES.forEach((bn: string, j: number) => { const full = TT.contrast(c, theme[bn]), d = TT.contrast(dim.on[i][j], theme[bn]);
+      if (d + 1e-9 < Math.min(TT.AA, full)) bad.push(`${i}/${bn}:${d.toFixed(2)}<${Math.min(TT.AA, full).toFixed(2)}`); }));
+    ok(dim.on.length === 17 && dim.on.every((r: string[]) => r.length === 16) && !bad.length, `${side}: dim text on each ANSI background keeps AA where the colour has it there (else stays the colour itself)`, bad.join(" "));
+  }
+  ok(!s.includes("!important"), "the dim CSS never overrides a colour xterm sets on a cell itself (no !important)");
 }
 // the page uses it: terminals.js builds xterm from themeFor, with minimumContrastRatio 4.5 for every other colour
 {

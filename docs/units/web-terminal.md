@@ -97,7 +97,9 @@ autosuggestions) was 2.2:1, blue 2.8:1 and dim bright black 1.5:1; on the light 
 2:1. `public/term-theme.js` gives each side its own 16 ANSI colours, every one at WCAG AA (4.5:1) on that surface (black is
 a readable grey on the dark side, white a dark grey on the light one, as their roles are swapped there); dim text (SGR 2)
 is drawn in a dim form of its colour that moves toward the background only as far as AA allows (xterm's own is half
-opacity, which halves the contrast). Any other colour a program asks for (256-colour, truecolor, as Claude Code's greys
+opacity, which halves the contrast), on the terminal's background and on each ANSI background (SGR 41–47, 100–107)
+against that background; a colour that does not read on a background stays itself there, and xterm moves it. These
+rules carry no `!important`: a colour xterm sets on a cell itself (its minimum contrast, inline) always wins. Any other colour a program asks for (256-colour, truecolor, as Claude Code's greys
 are) xterm keeps at 4.5:1 itself (`minimumContrastRatio`). `tests/terminal-theme.ts` computes every ratio from the theme
 object against the surfaces in `public/styles.css`; `tests/terminal-input-ui.mjs` reads the colours drawn in both themes.
 

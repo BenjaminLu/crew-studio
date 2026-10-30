@@ -23,6 +23,9 @@ const mix = (a, b, t) => hex(rgb(a).map((v, i) => v + (rgb(b)[i] - v) * t));
 /** A colour's dim form: as far toward the background as half-opacity would take it, but never under AA (a colour already at AA stays). */
 function dimOf(c, bg) { let lo = 0, hi = 0.5; if (contrast(mix(c, bg, hi), bg) >= AA) return mix(c, bg, hi);
   for (let i = 0; i < 20; i++) { const m = (lo + hi) / 2; if (contrast(mix(c, bg, m), bg) >= AA) lo = m; else hi = m; } return mix(c, bg, lo); }
+/** Dim text on a cell's own background: its dim form there when the colour reads at AA on it, else the colour itself
+ * (xterm's minimum contrast then moves it, inline, off a background it does not read on). */
+const dimOn = (c, bg) => (contrast(c, bg) >= AA ? dimOf(c, bg) : c);
 /** Dark when the background is darker than mid grey. */
 const isDark = (bg) => lum(rgb(bg) || [0, 0, 0]) < 0.18;
 /**
@@ -35,13 +38,23 @@ function themeFor(bg, fg, cursor) {
   if (contrast(f, b) < AA) f = dark ? "#e8ebf1" : "#171a21";
   const theme = { background: b, foreground: f, cursor: rgb(cursor) ? hex(rgb(cursor)) : f, cursorAccent: b };
   NAMES.forEach((n, i) => { theme[n] = pal[i]; });
-  const dim = { foreground: dimOf(f, b), ansi: pal.map((c) => dimOf(c, b)) };
+  // dim text on the terminal's background, and on each of the 16 ANSI backgrounds (on[fg][bg], fg 16 being the default)
+  const dim = { foreground: dimOf(f, b), ansi: pal.map((c) => dimOf(c, b)), on: [...pal, f].map((c) => pal.map((x) => dimOn(c, x))) };
   return { theme, dim, dark };
 }
-/** The CSS that draws dim text in those dim forms (xterm's own is half opacity), scoped to a terminal's host. */
+/**
+ * The CSS that draws dim text in those dim forms (xterm's own is half opacity, which halves the contrast), scoped to a
+ * terminal's host: on the terminal's own background, and on each ANSI background (SGR 41–47, 100–107) against that
+ * background. A cell with a truecolor background is xterm's. No !important: a colour xterm sets on a cell itself (inline,
+ * its minimum contrast) wins; the rules win over xterm's half-opacity ones by being more specific.
+ */
 function dimCss(scope, dim) {
-  // the default colour's dim cells only: one in a truecolor or 256-colour carries its own colour (inline, or a class above 15)
-  return `${scope} .xterm-rows .xterm-dim:not([class*="xterm-fg-"]):not([style*="color"]){color:${dim.foreground}!important}` + dim.ansi.map((c, i) => `${scope} .xterm-rows .xterm-fg-${i}.xterm-dim{color:${c}!important}`).join("");
+  const own = ':not([class*="xterm-bg-"]):not([style*="background"])', S = `${scope} .xterm .xterm-rows`;
+  // the default colour's dim cells: one in a truecolor or 256-colour carries its own colour (inline, or a class above 15)
+  const dflt = ':not([class*="xterm-fg-"]):not([style*="color"])';
+  let css = `${S} .xterm-dim${dflt}${own}{color:${dim.foreground}}` + dim.ansi.map((c, i) => `${S} .xterm-fg-${i}.xterm-dim${own}{color:${c}}`).join("");
+  (dim.on || []).forEach((row, i) => row.forEach((c, j) => { css += `${S} ${i < 16 ? `.xterm-fg-${i}` : ""}.xterm-bg-${j}.xterm-dim${i < 16 ? "" : dflt}{color:${c}}`; }));
+  return css;
 }
 globalThis.crewTermTheme = { NAMES, DARK, LIGHT, AA, contrast, dimOf, themeFor, dimCss, isDark };
 })();

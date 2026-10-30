@@ -145,26 +145,58 @@ try {
   // ---------- the colours drawn, in both themes ----------
   for (const theme of ["dark", "light"]) {
     await p.evaluate((t) => setTheme(t), theme); // Settings' own switch (app.js)
-    const id = await open({ command: "printf '\\033[2;90mDIMHINT\\033[0m \\033[34mBLUETXT\\033[0m \\033[2mDIMFG\\033[0m \\033[90mHINTTXT\\033[0m\\n'; exec cat >/dev/null" });
-    await until(async () => /HINTTXT/.test(await rows()));
+    const id = await open({ command: "printf '\\033[2;90mDIMHINT\\033[0m \\033[34mBLUETXT\\033[0m \\033[2mDIMFG\\033[0m \\033[90mHINTTXT\\033[0m \\033[31;41mREDONRED\\033[0m \\033[2;31;41mDIMREDBG\\033[0m\\n'; exec cat >/dev/null" });
+    await until(async () => /DIMREDBG/.test(await rows()));
     const got = await p.evaluate((id) => {
       const TT = window.crewTermTheme, host = document.querySelector(`[data-term-host="${CSS.escape(id)}"]`);
       const hex = (c) => { const m = c.match(/\d+(\.\d+)?/g).map(Number); const a = m[3] ?? 1; return { rgb: m.slice(0, 3), a }; };
       const bgc = getComputedStyle(host.querySelector(".xterm-viewport")).backgroundColor, bg = hex(bgc).rgb;
       const toHex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
       const out = { bg: toHex(bg), theme: document.documentElement.dataset.theme || "" };
-      for (const w of ["DIMHINT", "BLUETXT", "DIMFG", "HINTTXT"]) {
+      for (const w of ["DIMHINT", "BLUETXT", "DIMFG", "HINTTXT", "REDONRED", "DIMREDBG"]) {
         const span = [...host.querySelectorAll(".xterm-rows span")].find((s) => s.textContent.includes(w[0]) && s.closest("div").textContent.includes(w)) ;
         const all = [...host.querySelectorAll(".xterm-rows span")].filter((s) => w.includes(s.textContent.trim()) && s.textContent.trim());
         const el = all[0] || span; if (!el) { out[w] = null; continue; }
-        const c = hex(getComputedStyle(el).color), mixed = c.rgb.map((v, i) => v * c.a + bg[i] * (1 - c.a)); // what the eye sees
-        out[w] = { color: toHex(mixed), ratio: +TT.contrast(toHex(mixed), toHex(bg)).toFixed(2) };
+        // the cell's own background when it has one (SGR 41), else the terminal's
+        const cb = hex(getComputedStyle(el).backgroundColor), under = cb.a > 0 ? cb.rgb.map((v, i) => v * cb.a + bg[i] * (1 - cb.a)) : bg;
+        const c = hex(getComputedStyle(el).color), mixed = c.rgb.map((v, i) => v * c.a + under[i] * (1 - c.a)); // what the eye sees
+        out[w] = { color: toHex(mixed), under: toHex(under), ratio: +TT.contrast(toHex(mixed), toHex(under)).toFixed(2) };
       }
       return out;
     }, id);
     const words = ["DIMHINT", "BLUETXT", "DIMFG", "HINTTXT"];
     ok(got.theme === theme && got.bg === (theme === "dark" ? "#1c2029" : "#f2f4f7"), `${theme} theme: the terminal is drawn on that theme's surface`, JSON.stringify(got));
     ok(words.every((w) => got[w] && got[w].ratio >= 4.5), `${theme} theme: dim bright black, blue, dim default text and bright black are drawn at 4.5:1 or more`, JSON.stringify(got));
+    // red on red: xterm's minimum contrast moves the text off its background (4.5:1; for dim text xterm asks half that,
+    // so dim stays dimmer), and the page's own dim colours never override it
+    ok(got.REDONRED && got.REDONRED.ratio >= 4.5, `${theme} theme: red text on a red background (SGR 31;41) is drawn at 4.5:1 or more`, JSON.stringify(got.REDONRED));
+    ok(got.DIMREDBG && got.DIMREDBG.ratio >= 2.25 && got.DIMREDBG.under !== got.bg, `${theme} theme: dim red on red (SGR 2;31;41) is moved off its background too (at least xterm's dim target, 2.25:1)`, JSON.stringify(got.DIMREDBG));
+  }
+  // every ANSI colour on every ANSI background, plain and dim: plain at 4.5:1 (xterm's minimum contrast), dim at least the
+  // half that xterm asks of dim text; the page's dim colours apply to cells on the terminal's own background only
+  for (const theme of ["dark", "light"]) {
+    await p.evaluate((t) => setTheme(t), theme);
+    // the terminals above are stopped first (at most CREW_TERMINAL_MAX run at once)
+    await p.evaluate(async () => { for (const t of (await (await fetch("/api/terminals")).json()).terminals) if (t.running) await fetch(`/api/terminals/${t.id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); });
+    const grid = "for d in 0 2; do for f in 0 1 2 3 4 5 6 7; do for b in 0 1 2 3 4 5 6 7; do printf \"\\033[$d;3$f;4${b}m\"; [ $d = 2 ] && printf d || printf p; printf \"$f$b\\033[0m \"; done; done; done; printf '\\nGRIDEND\\n'; exec cat >/dev/null";
+    const id = await open({ command: grid });
+    await until(async () => /GRIDEND/.test(await rows()));
+    const res = await p.evaluate((id) => {
+      const TT = window.crewTermTheme, host = document.querySelector(`[data-term-host="${CSS.escape(id)}"]`);
+      const px = (c) => { const m = c.match(/\d+(\.\d+)?/g).map(Number); return { rgb: m.slice(0, 3), a: m[3] ?? 1 }; };
+      const toHex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+      const bg = px(getComputedStyle(host.querySelector(".xterm-viewport")).backgroundColor).rgb, out = { plain: [], dim: [] };
+      for (const el of host.querySelectorAll(".xterm-rows span")) {
+        const t = el.textContent.trim(); if (!/^[pd][0-7][0-7]$/.test(t)) continue;
+        const cb = px(getComputedStyle(el).backgroundColor), under = cb.a > 0 ? cb.rgb.map((v, i) => v * cb.a + bg[i] * (1 - cb.a)) : bg;
+        const c = px(getComputedStyle(el).color), seen = c.rgb.map((v, i) => v * c.a + under[i] * (1 - c.a));
+        out[t[0] === "p" ? "plain" : "dim"].push([t, +TT.contrast(toHex(seen), toHex(under)).toFixed(2)]);
+      }
+      return out;
+    }, id);
+    const low = (xs, min) => xs.filter(([, r]) => r < min);
+    ok(res.plain.length >= 56 && !low(res.plain, 4.5).length, `${theme} theme: each ANSI colour on each ANSI background is drawn at 4.5:1 or more`, JSON.stringify(low(res.plain, 4.5)));
+    ok(res.dim.length >= 56 && !low(res.dim, 2.25).length, `${theme} theme: dim text on each ANSI background is at least 2.25:1 (xterm's dim target), none overridden by the page`, JSON.stringify({ n: res.dim.length, low: low(res.dim, 2.25), seen: res.dim.map(([t]) => t).join(" ") }));
   }
   await p.evaluate(() => setTheme("system"));
   ok(!errors.length, "no page errors", errors.join(" | "));
