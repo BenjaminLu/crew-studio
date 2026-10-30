@@ -928,15 +928,26 @@ function speak(text, done, fail, best = false) {
 }
 // a browser lists its voices late: the picker and the default voice follow when they arrive
 try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
-function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; }
-/** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while one plays) */
+function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
+/** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while
+ *  one plays). A request playback no longer needs (paused, left, another mix) is cancelled, so Studio stops making it. */
 function kokoroClip(card, text) {
   const lang = LANG_BASE(CUR.lang), mix = voiceMix(), key = `${card}|${lang}|${mix}|${text}`;
-  if (!KV.clips.has(key)) { const job = postJ(`/api/review-room/${enc(card)}/voice`, { text, lang, mix }).then((o) => o.src); job.catch(() => KV.clips.delete(key)); KV.clips.set(key, job); if (KV.clips.size > 300) KV.clips.delete(KV.clips.keys().next().value); }
-  return KV.clips.get(key);
+  if (!KV.clips.has(key)) {
+    const ac = new AbortController(), entry = { ac, settled: false };
+    entry.job = fetch(`/api/review-room/${enc(card)}/voice`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, lang, mix }), signal: ac.signal })
+      .then(async (res) => { let j = {}; try { j = await res.json(); } catch {} if (!res.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${res.status}`), { code: j.code }); return j.src; })
+      .finally(() => { entry.settled = true; });
+    entry.job.catch(() => { if (KV.clips.get(key) === entry) KV.clips.delete(key); });
+    KV.clips.set(key, entry); if (KV.clips.size > 300) KV.clips.delete(KV.clips.keys().next().value);
+  }
+  return KV.clips.get(key).job;
 }
+/** a clip whose address no longer plays (its file was dropped: the room started over, the clips' bounds): asked for again */
+const forgetClip = (card, text) => KV.clips.delete(`${card}|${LANG_BASE(CUR.lang)}|${voiceMix()}|${text}`);
+function dropPendingClips(card) { for (const [key, e] of [...KV.clips]) if (!e.settled && (!card || key.startsWith(`${card}|`))) { e.ac.abort(); KV.clips.delete(key); } }
 /** speak point k with the local voice; the caption is the point's text, shown as it starts. A clip that fails: this Mac's voice, else reading pace */
-async function sayKokoro(card, sc, k, text, next, paced) {
+async function sayKokoro(card, sc, k, text, next, paced, again = false) {
   const after = sc.points[k + 1], gen = KV.gen;
   let src; try { src = await kokoroClip(card, text); } catch (e) { if (RR.playing !== card || KV.gen !== gen) return; if (e.code !== "not_a_point") RR.err.set(card, T(`The local voice could not speak: ${e.message}`, `本機語音無法朗讀：${e.message}`)); return void (speak(text, next, paced, true) || paced()); }
   if (RR.playing !== card || KV.gen !== gen || !onRoom(card)) return;
@@ -944,7 +955,8 @@ async function sayKokoro(card, sc, k, text, next, paced) {
   const a = new Audio(src); KV.clip = a;
   a.onended = () => { if (KV.clip === a) { KV.clip = null; next(); } };
   const mac = () => speak(text, next, paced, true) || paced();
-  a.onerror = () => { if (KV.clip === a) { KV.clip = null; mac(); } };
+  // the clip is gone (the room started over, the bounds dropped it): ask for it once more, then this Mac's voice
+  a.onerror = () => { if (KV.clip !== a) return; KV.clip = null; forgetClip(card, text); if (!again) sayKokoro(card, sc, k, text, next, paced, true); else mac(); };
   try { await a.play(); } catch { if (KV.clip === a) { KV.clip = null; mac(); } }
 }
 /** show one more point of the current scene; while playing, the next one follows when its caption has been read (or spoken) */
@@ -1272,6 +1284,7 @@ async function resetRoom(card) {
   if (RR.posting.has(card)) return; RR.posting.add(card); RR.err.delete(card); rerender();
   try { await postJ(`/api/review-room/${enc(card)}/reset`, {});
     stopPlay(); clearTimeout(RR.poll); RR.poll = null;
+    for (const key of [...KV.clips.keys()]) if (key.startsWith(`${card}|`)) KV.clips.delete(key); // its clips were deleted with it
     for (const m of [RR.scene, RR.seen, RR.confirm, RR.draft, RR.cite, RR.err, RR.reveal, RR.ready, RR.rscroll, RR.jump, RR.lang]) m.delete(card);
     for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
     for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);
