@@ -15,10 +15,10 @@ import { wavInfo } from "../src/voice/wav";
 
 const out = process.argv[2] || mkdtempSync(join(tmpdir(), "crew-voice-local-")); mkdirSync(out, { recursive: true });
 const rt = runtimeState(); if (!rt.ok) { console.error(`voice runtime not ready: ${rt.why} (Doctor → Voice)`); process.exit(2); }
-let t = Date.now(); const m = findKokoro(true); const verifyMs = Date.now() - t;
+let t = Date.now(); const m = await findKokoro(true); const verifyMs = Date.now() - t;
 if (!m.ok) { console.error(`no verified Kokoro model: ${m.tried.map((x) => (x.ok ? "" : `${x.source}: ${x.why}`)).join("; ")}`); process.exit(2); }
 ensureScripts();
-const sc = new Sidecar({ node: rt.node!, script: scriptIn(voiceTools()), config: kokoroConfig(m.dir), idleMs: 60_000 });
+const sc = new Sidecar({ node: rt.node!, script: scriptIn(voiceTools()), config: kokoroConfig(m.dir), reads: [m.dir], idleMs: 60_000 });
 console.log(`model: ${m.source} (verified in ${verifyMs} ms); runtime: sherpa-onnx-node ${rt.version} under ${rt.node}`);
 const cases: [string, "zh" | "en", "switch" | "same", string][] = [
   ["zh-switch", "zh", "switch", "這個 PR 修好了 GitHub 的 diff 引用，審查室現在用本機的神經語音。"],
