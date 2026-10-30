@@ -4,8 +4,8 @@
 // runs (runs.ts), each spoken by its language's voice, and the runs are joined into one WAV. Clips are bounded: by
 // bytes per room and across every room, the least recently played going first.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, normalize, sep } from "node:path";
 import { findKokoro, KOKORO, kokoroBytes, kokoroConfig, type Found } from "./models";
 import { DEFAULT_VOICE, MIXES, SPEAKERS, splitRuns, type Mix } from "./runs";
 import { ensureScripts, runtimeState, SHERPA_VERSION, SIDECAR_PROTOCOL, voiceTools, type RuntimeState } from "./runtime";
@@ -46,12 +46,20 @@ export const CLIP_NAME = /^kvoice-[0-9a-f]{16}\.wav$/;
 // ---------- the clips' bounds: bytes per room and across rooms, least recently used first ----------
 export const CLIP_LIMITS = { room: 50 * 1024 ** 2, total: 200 * 1024 ** 2 };
 type Entry = { size: number; at: number };
-/** Every clip Studio made, by its file, with its size and when it was last made or played; kept in Studio's data folder. */
+/** Every clip Studio made, by its file, with its size and when it was last made or played; kept in Studio's data folder.
+ *  The index is a file on disk, so it is never trusted to name what may be deleted: only a clip's own name, as a regular
+ *  file, in a room's clip folder (…-images) inside one of the roots Studio keeps rooms in. */
 export class ClipStore {
   private all: Record<string, Entry>;
-  constructor(readonly file: string, readonly limits = CLIP_LIMITS) { try { this.all = JSON.parse(readFileSync(file, "utf8")); } catch { this.all = {}; } }
+  constructor(readonly file: string, readonly limits = CLIP_LIMITS, readonly roots: string[] = [dirname(file)]) { try { const j = JSON.parse(readFileSync(file, "utf8")); this.all = j && typeof j === "object" ? j : {}; } catch { this.all = {}; } }
+  /** may f be deleted? a clip's name, a regular file (not a link), in a room's clip folder under a root, by real paths */
+  isClip(f: string) {
+    if (typeof f !== "string" || !isAbsolute(f) || normalize(f) !== f || !CLIP_NAME.test(basename(f)) || !/-images$/.test(basename(dirname(f)))) return false;
+    try { if (!lstatSync(f).isFile()) return false; const d = realpathSync(dirname(f));
+      return this.roots.some((r) => { let root = r; try { root = realpathSync(r); } catch {} return d.startsWith(root + sep); }); } catch { return false; }
+  }
   private save() { try { mkdirSync(dirname(this.file), { recursive: true }); writeFileSync(this.file + ".tmp", JSON.stringify(this.all)); renameSync(this.file + ".tmp", this.file); } catch {} }
-  private drop(f: string) { try { unlinkSync(f); } catch {} delete this.all[f]; }
+  private drop(f: string) { if (this.isClip(f)) try { unlinkSync(f); } catch {} delete this.all[f]; }
   get bytes() { return Object.values(this.all).reduce((n, e) => n + e.size, 0); }
   add(f: string, size: number) { this.all[f] = { size, at: Date.now() }; this.enforce(f); this.save(); }
   touch(f: string) { const e = this.all[f]; if (e) { e.at = Date.now(); this.save(); } }
@@ -67,28 +75,42 @@ export class ClipStore {
   has(f: string) { return !!this.all[f]; }
 }
 let defaultStore: ClipStore | null = null;
-export const clipStore = (dataDir: string) => (defaultStore && defaultStore.file === join(dataDir, "voice-clips.json") ? defaultStore : (defaultStore = new ClipStore(join(dataDir, "voice-clips.json"))));
+/** the store of Studio's data folder; roots: where rooms keep their folders (the data folder and the Tasks' folders) */
+export const clipStore = (dataDir: string, roots: string[] = [dataDir]) => (defaultStore && defaultStore.file === join(dataDir, "voice-clips.json") ? defaultStore : (defaultStore = new ClipStore(join(dataDir, "voice-clips.json"), CLIP_LIMITS, roots)));
 
-const inflight = new Map<string, Promise<{ name: string; cached: boolean; voice: string }>>();
-/** One point's clip in a room folder: made once (two requests at once make one), then served from the folder. */
+type Shared = { job: Promise<{ name: string; cached: boolean; voice: string }>; ac: AbortController; subs: number };
+const inflight = new Map<string, Shared>();
+/** One point's clip in a room folder: made once (two requests at once share one job), then served from the folder. A
+ *  shared job stops only when every request waiting on it has given up; one that gives up alone just stops waiting. */
 export async function roomClip(dir: string, text: string, o: { lang: "zh" | "en"; mode: Mix; voices?: Voices; speaker: Speaker; store: ClipStore; engine?: string; timeoutMs?: number; alive?: () => boolean; signal?: AbortSignal }) {
   const voices = { ...DEFAULT_VOICE, ...(o.voices ?? {}) }, t = String(text ?? "").replace(/\s+/g, " ").trim();
   if (!MIXES.includes(o.mode)) throw new Error("unknown mix mode");
   if (t.length > MAX_POINT) throw Object.assign(new Error(`A point to speak is at most ${MAX_POINT} characters`), { code: "too_long" });
   const name = clipName(t, { lang: o.lang, mode: o.mode, voices, engine: o.engine }), f = join(dir, name), key = f;
   if (existsSync(f)) { o.store.touch(f); return { name, cached: true, voice: "" }; }
-  const running = inflight.get(key); if (running) return running;
-  const job = (async () => {
-    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), o.timeoutMs ?? 120_000), stop = () => ac.abort();
-    o.signal?.addEventListener("abort", stop);
-    try { const out = await o.speaker(t, ac.signal);
-      if (o.alive && !o.alive()) throw Object.assign(new Error("The room was started over"), { code: "reset" });
-      if (out.bytes.length < 64 || out.bytes.length > 50_000_000) throw new Error("the voice came back empty or too large");
-      mkdirSync(dir, { recursive: true }); writeFileSync(f + ".tmp", out.bytes); renameSync(f + ".tmp", f); o.store.add(f, out.bytes.length);
-      return { name, cached: false, voice: out.voice }; }
-    finally { clearTimeout(timer); o.signal?.removeEventListener("abort", stop); }
-  })();
-  inflight.set(key, job); try { return await job; } finally { inflight.delete(key); }
+  if (o.signal?.aborted) throw Object.assign(new Error("stopped"), { code: "aborted" });
+  let shared = inflight.get(key);
+  if (!shared) {
+    const ac = new AbortController();
+    const job = (async () => {
+      const timer = setTimeout(() => ac.abort(), o.timeoutMs ?? 120_000);
+      try { const out = await o.speaker(t, ac.signal);
+        if (o.alive && !o.alive()) throw Object.assign(new Error("The room was started over"), { code: "reset" });
+        if (out.bytes.length < 64 || out.bytes.length > 50_000_000) throw new Error("the voice came back empty or too large");
+        mkdirSync(dir, { recursive: true }); writeFileSync(f + ".tmp", out.bytes); renameSync(f + ".tmp", f); o.store.add(f, out.bytes.length);
+        return { name, cached: false, voice: out.voice }; }
+      finally { clearTimeout(timer); if (inflight.get(key)?.job === job) inflight.delete(key); }
+    })();
+    job.catch(() => {});
+    shared = { job, ac, subs: 0 }; inflight.set(key, shared);
+  }
+  const mine = shared; mine.subs++;
+  let leave: () => void = () => {};
+  const gaveUp = new Promise<never>((_, bad) => { leave = () => { mine.subs--; if (mine.subs <= 0) mine.ac.abort(); bad(Object.assign(new Error("stopped"), { code: "aborted" })); }; });
+  gaveUp.catch(() => {});
+  o.signal?.addEventListener("abort", leave, { once: true });
+  try { return await Promise.race([mine.job, gaveUp]); }
+  finally { o.signal?.removeEventListener("abort", leave); if (!o.signal?.aborted) mine.subs--; }
 }
 export function readClip(dir: string, name: string, store?: ClipStore): Buffer | null {
   if (!CLIP_NAME.test(name)) return null; const f = join(dir, name); if (!existsSync(f)) return null; store?.touch(f); return readFileSync(f);

@@ -9,7 +9,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync, copyFileSync, rmSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { suite } from "./rt-harness";
 const { ok, end } = suite("voice");
 const root = join(import.meta.dir, "..");
@@ -47,6 +47,20 @@ process.env.OPENAI_API_KEY = "sk-test-not-for-the-sidecar";
 { const prof = sandboxProfile(node, ["/x/model dir \"q\""]);
   ok(/\(deny default\)/.test(prof) && !/\(allow default\)/.test(prof) && !/network/.test(prof) && !/file-write\*/.test(prof) && !/mach-lookup|appleevent/.test(prof) && /\(allow process-exec \(literal "[^"]+"\)\)/.test(prof) && prof.includes('(subpath "/x/model dir \\"q\\"")'),
     "the profile denies by default; it allows only the exec of Node, reads of Node, the system and the given folders: no network, no writes, no Apple events, no services", prof);
+  // a Homebrew Node links libraries from /opt/homebrew/opt: their folders are readable, nothing else of what otool lists
+  const otherHome = ["", "Users", "someone"].join("/"); // built at run time: no tracked file names a home path
+  const brew = "/opt/homebrew/Cellar/node/25.2.1/bin/node", home = (await import("node:os")).homedir(), nvm = join(home, ".nvm/versions/node/v20.19.6");
+  const listing = (bin: string, libs: string[]) => () => `${bin}:\n${libs.map((l) => `\t${l} (compatibility version 1.0.0, current version 1.0.0)`).join("\n")}\n`;
+  const brewLibs = listing(brew, ["/opt/homebrew/opt/icu4c@77/lib/libicui18n.77.dylib", "/opt/homebrew/opt/libuv/lib/libuv.1.dylib", "/opt/homebrew/opt/icu4c@77/lib/libicuuc.77.dylib",
+    "/usr/lib/libSystem.B.dylib", "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation", `${otherHome}/evil lib/libx.dylib`, `${home}/lib/liby.dylib`, "@rpath/libz.dylib", "/opt/homebrew/opt/simdjson/../../../../tmp/libw.dylib"]);
+  const subpaths = (p: string) => [...p.matchAll(/\(subpath "([^"]+)"\)/g)].map((m) => m[1]).filter((d) => !["/usr/lib", "/System/Library", "/System/Cryptexes", "/private/var/db/timezone", "/usr/share/icu", "/private/var/db/dyld"].includes(d));
+  const bp = sandboxProfile(brew, [], brewLibs);
+  ok(JSON.stringify(subpaths(bp)) === JSON.stringify(["/opt/homebrew/opt/icu4c@77/lib", "/opt/homebrew/opt/libuv/lib"]) && !bp.includes(otherHome) && !bp.includes(`${home}/lib`),
+    "a Homebrew Node's linked libraries' folders are readable, exactly those; a home or temp folder otool lists, the system's own and @rpath are not added", JSON.stringify(subpaths(bp)));
+  const np = sandboxProfile(join(nvm, "bin/node"), [], listing(join(nvm, "bin/node"), [join(nvm, "lib/libnode.dylib"), join(home, "other/libq.dylib")]));
+  ok(JSON.stringify(subpaths(np)) === JSON.stringify([join(nvm, "lib")]), "a home folder is allowed only inside the Node's own install prefix", JSON.stringify(subpaths(np)));
+  const hp = sandboxProfile(join(home, "bin/node"), [], listing(join(home, "bin/node"), [join(home, "lib/libnode.dylib")]));
+  ok(!subpaths(hp).length, "a Node whose prefix would be the home folder itself gets no home folder", JSON.stringify(subpaths(hp)));
   const argv = sidecarArgv({ node: "/x/node", script: "/x/tools/sidecar.cjs", sandbox: true });
   ok(argv[0] === "/usr/bin/sandbox-exec" && argv[2].includes('(subpath "/x/tools")') && argv.slice(-2).join() === "/x/node,/x/tools/sidecar.cjs", "on macOS the engine runs under that profile, its own folder readable", JSON.stringify(argv.slice(-2))); }
 if (sandboxed) {
@@ -113,7 +127,7 @@ const mkWav = (bytes: number) => wav([Buffer.alloc(bytes - 44)], 24000);
     clipName("一點", { lang: "zh", mode: "switch", voices: { ...v, zh: "zf_xiaoxiao" } }), clipName("一點", { lang: "zh", mode: "switch", voices: { ...v, en: "bf_emma" } }), clipName("一點", { lang: "zh", mode: "switch", voices: v, engine: "kokoro@other" })];
   ok(/^kvoice-[0-9a-f]{16}\.wav$/.test(base) && base === clipName("一點", { lang: "zh", mode: "switch", voices: v }) && new Set([base, ...variants]).size === 7, "a clip's name changes with its text, mix, language, either voice and the engine version; the same point keeps its name", JSON.stringify([base, ...variants]));
   ok(ENGINE_VERSION.includes(KOKORO.revision.slice(0, 12)) && ENGINE_VERSION.includes(`sherpa-onnx-node@${SHERPA_VERSION}`), "the engine version names the model revision and the runtime", ENGINE_VERSION);
-  const store = new ClipStore(join(tmp, "clips-a.json")), dir = join(tmp, "room-a"); let calls = 0;
+  const store = new ClipStore(join(tmp, "clips-a.json")), dir = join(tmp, "room-a-images"); let calls = 0;
   const speaker = async () => { calls++; await Bun.sleep(30); return { bytes: mkWav(400), model: "k", voice: "zf_xiaobei" }; };
   const [a, b] = await Promise.all([roomClip(dir, "第一點", { lang: "zh", mode: "switch", speaker, store }), roomClip(dir, "第一點", { lang: "zh", mode: "switch", speaker, store })]);
   const c = await roomClip(dir, "第一點", { lang: "zh", mode: "switch", speaker, store });
@@ -125,14 +139,42 @@ const mkWav = (bytes: number) => wav([Buffer.alloc(bytes - 44)], 24000);
   const long = await err(() => roomClip(dir, "長".repeat(MAX_POINT + 1), { lang: "zh", mode: "switch", speaker, store }));
   ok(long?.code === "too_long" && calls === 2, `a text longer than ${MAX_POINT} characters is refused, not cut`, long?.message);
   const ac = new AbortController(); const gone = roomClip(dir, "第三點", { lang: "zh", mode: "switch", store, signal: ac.signal, speaker: (_t, sig) => new Promise((_, bad) => sig.addEventListener("abort", () => bad(new Error("stopped")))) });
-  ac.abort(); ok(/stopped/.test((await err(() => gone))?.message ?? ""), "a page that goes away stops the synthesis of its clip"); }
-{ const store = new ClipStore(join(tmp, "clips-b.json"), { room: 1000, total: 1500 }), r1 = join(tmp, "lru-1"), r2 = join(tmp, "lru-2");
+  ac.abort(); ok(/stopped/.test((await err(() => gone))?.message ?? ""), "a page that goes away stops the synthesis of its clip");
+  // two requests share one job: one giving up does not stop it for the other; only when both give up does it stop
+  let sig: AbortSignal | null = null, release!: () => void; const held = new Promise<void>((r) => (release = r));
+  const shared = async (_t: string, s: AbortSignal) => { sig = s; await held; return { bytes: mkWav(200), model: "k", voice: "af_heart" }; };
+  const one = new AbortController(), two = new AbortController();
+  const p1 = roomClip(dir, "第四點", { lang: "zh", mode: "switch", store, speaker: shared, signal: one.signal }), p2 = roomClip(dir, "第四點", { lang: "zh", mode: "switch", store, speaker: shared, signal: two.signal });
+  await Bun.sleep(20); one.abort(); const e1 = await err(() => Promise.race([p1, Bun.sleep(2000).then(() => { throw new Error("still waiting"); })])); await Bun.sleep(20);
+  ok(e1?.code === "aborted" && sig !== null && !(sig as AbortSignal).aborted, "one of two requests sharing a clip gives up: it stops waiting, the shared synthesis goes on", JSON.stringify({ e1: e1?.code, aborted: (sig as AbortSignal | null)?.aborted }));
+  release(); const r2 = await p2; ok(!r2.cached && existsSync(join(dir, r2.name)), "and the other gets its clip");
+  let sig2: AbortSignal | null = null; const never = async (_t: string, s: AbortSignal) => { sig2 = s; return new Promise<never>(() => {}); };
+  const a1 = new AbortController(), a2 = new AbortController();
+  const q1 = roomClip(dir, "第五點", { lang: "zh", mode: "switch", store, speaker: never, signal: a1.signal }), q2 = roomClip(dir, "第五點", { lang: "zh", mode: "switch", store, speaker: never, signal: a2.signal });
+  await Bun.sleep(20); const bounded = (q: Promise<unknown>) => err(() => Promise.race([q, Bun.sleep(2000).then(() => { throw new Error("still waiting"); })]));
+  a1.abort(); await bounded(q1); const after1 = (sig2 as AbortSignal | null)?.aborted; a2.abort(); await bounded(q2);
+  ok(after1 === false && (sig2 as AbortSignal | null)?.aborted === true, "when every request sharing it has given up, the synthesis is stopped", JSON.stringify({ after1, after2: (sig2 as AbortSignal | null)?.aborted })); }
+{ const store = new ClipStore(join(tmp, "clips-b.json"), { room: 1000, total: 1500 }), r1 = join(tmp, "lru-1-images"), r2 = join(tmp, "lru-2-images");
   const make = (dir: string, t: string) => roomClip(dir, t, { lang: "en", mode: "switch", store, speaker: async () => ({ bytes: mkWav(400), model: "k", voice: "af_heart" }) });
   const a = await make(r1, "a"); await Bun.sleep(5); const b = await make(r1, "b"); await Bun.sleep(5); readClip(r1, a.name, store); await Bun.sleep(5);
   const c = await make(r1, "c");
   ok(existsSync(join(r1, a.name)) && !existsSync(join(r1, b.name)) && existsSync(join(r1, c.name)), "over a room's bytes the least recently played clip goes first (one just played stays)", JSON.stringify(readdirSync(r1)));
   const d = await make(r2, "d"); await Bun.sleep(5); const e2 = await make(r2, "e");
   ok(store.bytes <= 1500 && !existsSync(join(r1, a.name)) && existsSync(join(r2, e2.name)), "over the total across rooms the oldest clip anywhere goes", JSON.stringify({ bytes: store.bytes, r1: readdirSync(r1), r2: readdirSync(r2) }));
+  // a tampered index names other files: none of them is ever deleted, only clips of rooms under the roots
+  { const base = join(tmp, "tamper"), roomDir = join(base, "data", "R-1-images"), outside = join(tmp, "outside"); mkdirSync(roomDir, { recursive: true }); mkdirSync(outside, { recursive: true });
+    const victims = { note: join(outside, "notes.txt"), named: join(outside, "kvoice-00000000000000aa.wav"), plain: join(base, "data", "kvoice-00000000000000bb.wav"), loose: join(base, "data", "other-dir", "kvoice-00000000000000cc.wav"), picture: join(roomDir, "B1-2.png"), away: join(tmp, "elsewhere", "R-9-images", "kvoice-00000000000000ab.wav") };
+    mkdirSync(dirname(victims.away), { recursive: true });
+    mkdirSync(dirname(victims.loose), { recursive: true }); for (const f of Object.values(victims)) writeFileSync(f, "keep me");
+    const link = join(roomDir, "kvoice-00000000000000dd.wav"); symlinkSync(victims.note, link);
+    const dotted = `${roomDir}/../R-1-images/kvoice-00000000000000ee.wav`; writeFileSync(join(roomDir, "kvoice-00000000000000ee.wav"), "x");
+    const idx = join(base, "data", "voice-clips.json"), old = 1;
+    writeFileSync(idx, JSON.stringify(Object.fromEntries([...Object.values(victims), link, dotted, "relative/kvoice-00000000000000ff.wav"].map((f) => [f, { size: 10_000, at: old }]))));
+    const ts = new ClipStore(idx, { room: 100, total: 100 }, [join(base, "data")]);
+    await roomClip(roomDir, "new", { lang: "en", mode: "switch", store: ts, speaker: async () => ({ bytes: mkWav(64), model: "k", voice: "af_heart" }) });
+
+    ok(Object.values(victims).every((f) => existsSync(f) && readFileSync(f, "utf8") === "keep me") && existsSync(join(roomDir, "kvoice-00000000000000ee.wav")) && existsSync(link) && readFileSync(victims.note, "utf8") === "keep me",
+      "a tampered voice-clips.json deletes nothing but clips: no file outside the roots, no other name, no clip outside a room's folder, no link, no unnormalised path", JSON.stringify(readdirSync(roomDir))); }
   store.dropDir(r2); ok(!readdirSync(r2).some((n) => n.endsWith(".wav")) && !store.has(join(r2, e2.name)), "a room's clips can be dropped with it (started over: deleted, not archived)"); }
 
 // ---------- only the room's own words ----------
@@ -201,17 +243,21 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   ok(KOKORO.files.every(([p]) => !p.startsWith("/") && !p.split("/").includes("..")), "no manifest path leaves the model folder"); }
 
 // ---------- the pinned download (Doctor's install), from a local server ----------
-{ const srcDir = join(tmp, "dl-src"); makeModel(srcDir); const sp = spec(srcDir), tools = join(tmp, "dl-tools"); mkdirSync(tools, { recursive: true });
+{ const srcDir = join(tmp, "dl-src"); makeModel(srcDir); writeFileSync(join(srcDir, "model.onnx"), Buffer.from(Array.from({ length: 200_000 }, (_, i) => (i * 7919) % 251))); const sp = spec(srcDir), tools = join(tmp, "dl-tools"); mkdirSync(tools, { recursive: true });
   copyFileSync(join(root, "src/voice/fetch-model.cjs"), join(tools, "fetch-model.cjs"));
   writeFileSync(join(tools, "kokoro-manifest.json"), JSON.stringify({ repo: "csukuangfj/kokoro-multi-lang-v1_0", revision: sp.revision, files: sp.files }));
-  let mode: "good" | "tamper" | "redirect" | "big" = "good"; const served: string[] = [];
+  let mode: "good" | "tamper" | "redirect" | "big" | "stall" = "good"; const served: string[] = [], ranges: string[] = [];
   const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) { const u = new URL(req.url); if (u.pathname === "/elsewhere") return new Response("x");
     const p = decodeURIComponent(u.pathname.split(`/resolve/${sp.revision}/`)[1] ?? ""); served.push(p);
     const f = join(srcDir, p); if (!p || !existsSync(f)) return new Response("no", { status: 404 });
     if (mode === "redirect" && p === "voices.bin") return new Response(null, { status: 302, headers: { location: `http://127.0.0.1:${srv.port}/elsewhere` } });
     if (mode === "big" && p === "voices.bin") return new Response(Buffer.alloc(5_000_000, 1));
-    const b = readFileSync(f); return new Response(mode === "tamper" && p === "voices.bin" ? Buffer.from("VOICEX") : b); } });
-  const fetchModel = async (models: string) => { const p = Bun.spawn(["node", join(tools, "fetch-model.cjs"), "--models", models], { env: { PATH: process.env.PATH!, CREW_VOICE_MODEL_BASE: `http://127.0.0.1:${srv.port}` }, stdout: "pipe", stderr: "pipe" });
+    const b = readFileSync(f), range = /^bytes=(\d+)-$/.exec(req.headers.get("range") ?? "");
+    if (range) { ranges.push(`${p}:${range[1]}`); const at = Number(range[1]); return new Response(b.subarray(at), { status: 206, headers: { "content-range": `bytes ${at}-${b.length - 1}/${b.length}` } }); }
+    // a slow network: half of model.onnx, then nothing more
+    if (mode === "stall" && p === "model.onnx") return new Response(new ReadableStream({ start(c) { c.enqueue(b.subarray(0, 100_000)); }, pull() { return new Promise(() => {}); } }));
+    return new Response(mode === "tamper" && p === "voices.bin" ? Buffer.from("VOICEX") : b); } });
+  const fetchModel = async (models: string) => { const p = Bun.spawn(["node", join(tools, "fetch-model.cjs"), "--models", models], { env: { PATH: process.env.PATH!, CREW_VOICE_MODEL_BASE: `http://127.0.0.1:${srv.port}`, CREW_VOICE_FETCH_STALL_MS: "400" }, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); return { exitCode, stdout, stderr }; };
   const leftovers = (d: string) => { const out: string[] = []; const walk = (x: string) => { for (const n of (existsSync(x) ? readdirSync(x) : [])) { const f = join(x, n); if (statSync(f).isDirectory()) walk(f); else if (n.endsWith(".download")) out.push(n); } }; walk(d); return out; };
   const models = join(tmp, "dl-models"), r1 = await fetchModel(models), dest = join(models, "kokoro-multi-lang-v1_0");
@@ -223,6 +269,20 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   // resume: the files a stopped download verified are kept (hashed again), the rest fetched
   mode = "tamper"; const res = join(tmp, "dl-resume"); await fetchModel(res); mode = "good"; served.length = 0; const r2 = await fetchModel(res);
   ok(r2.exitCode === 0 && served.length < sp.files.length && served.includes("voices.bin") && /kept from an earlier try/.test(r2.stdout) && (await verifyModel(join(res, "kokoro-multi-lang-v1_0"), { spec: sp, memo: false })).ok, "a second press resumes: verified files are kept, the failed one fetched again", JSON.stringify({ served, out: r2.stdout.slice(-200) }));
+  // a transfer cut short keeps its bytes; the next press hashes them and asks only for the rest (HTTP Range), then verifies
+  mode = "stall"; const slow = join(tmp, "dl-slow"), cut = await fetchModel(slow), part = join(slow, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
+  const kept = existsSync(part) ? statSync(part).size : -1;
+  ok(cut.exitCode === 1 && /stalled/.test(cut.stderr) && kept === 100_000, "a stalled transfer stops the press and keeps the bytes it got in .download", JSON.stringify({ err: cut.stderr.slice(-160), kept }));
+  mode = "good"; ranges.length = 0; const on = await fetchModel(slow);
+  ok(on.exitCode === 0 && JSON.stringify(ranges) === JSON.stringify(["model.onnx:100000"]) && /resumed model\.onnx from byte 100000/.test(on.stdout) && (await verifyModel(join(slow, "kokoro-multi-lang-v1_0"), { spec: sp, memo: false })).ok,
+    "the next press resumes model.onnx from byte 100000 with a Range request and the whole file verifies", JSON.stringify({ ranges, out: on.stdout.slice(-200), err: on.stderr }));
+  // kept bytes that are not the file's: the whole file then fails its pin, and only then is .download deleted
+  mode = "stall"; const bad = join(tmp, "dl-badpart"); await fetchModel(bad); const bp = join(bad, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
+  writeFileSync(bp, Buffer.alloc(100_000, 9)); mode = "good"; const wrongPart = await fetchModel(bad);
+  ok(wrongPart.exitCode === 1 && /does not match the pin/.test(wrongPart.stderr) && !existsSync(bp), "resumed bytes that do not hash to the pin are thrown away with the attempt", wrongPart.stderr);
+  const again = await fetchModel(bad); ok(again.exitCode === 0, "and the press after that fetches the file whole", again.stderr);
+  const press = /const PRESS_MS = (\d+) \* 60_000;/.exec(readFileSync(join(root, "src/voice/fetch-model.cjs"), "utf8")), runner = /setTimeout\(\(\) => \{ try \{ p\.kill\(\); \} catch \{\} \}, (\d+) \* 60_000\)/.exec(readFileSync(join(root, "src/doctor.ts"), "utf8"));
+  ok(!!press && !!runner && Number(press[1]) < Number(runner[1]), "a press ends on its own before Doctor's installer timeout, keeping what it has", JSON.stringify([press?.[1], runner?.[1]]));
   srv.stop(true); }
 
 // ---------- the runtime: Studio's own pinned sherpa-onnx-node, accepted only with the pinned integrity ----------
