@@ -47,6 +47,8 @@ import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { parseLocator, type Finding, type Locator } from "../runtime/locator";
+import { kokoroSpeaker, localSynth, readClip, roomClip } from "../voice/kokoro";
+import { langOf, type Mix } from "../voice/runs";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -416,6 +418,8 @@ const login = (u: any) => { const l = String(u?.login ?? ""); return /^[A-Za-z0-
 const ghUrl = (u: unknown, repository: string) => { const t = String(u ?? ""); return t.toLowerCase().startsWith(`https://github.com/${repository.toLowerCase()}/`) && !/[\s"<>]/.test(t) ? t.slice(0, 300) : null; };
 
 export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: WebBackend | ((check: (url: string) => string | null) => WebBackend); illustrate?: Illustrator; speak?: Speaker;
+  /** this Mac's local voice for a room language and mix mode (production: Kokoro through src/voice; tests stub it) */
+  localSpeak?: (lang: "zh" | "en", mix: Mix) => Speaker;
   /** the registered projects (a pull request is read only for a project connected to GitHub with that repository) */
   projects?: Projects;
   /** the GitHub adapter of a connected project (production: its grant's adapter, verified; tests: the simulator's) */
@@ -1753,6 +1757,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     },
     /** a narration file, from the room's own folder */
     audio(id: string, name: string) { const k = keyOf(id); if (!/^voice-t\d+-[0-9a-f]{12}\.mp3$/.test(name)) throw refuse("No such audio", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such audio", "not_found"); return readFileSync(f); },
+    /** One point in this Mac's local neural voice (src/voice): free and on-device, so any tutor's room may use it, read-only
+     *  rooms too. The page sends the point as it shows it; the clip is made once and kept in the room's folder. */
+    async localVoice(id: string, text: unknown, lang?: unknown, mix?: unknown) {
+      const k = keyOf(id), t = narration(String(text ?? "")).slice(0, 1200); if (!t) throw refuse("Nothing to say", "not_found");
+      const mode = mix === "same" ? "same" : "switch", l = langOf(lang), born = resetGen.get(k.id) ?? 0;
+      const out = await roomClip(k.dir, t, { lang: l, mode, speaker: (s, signal) => (o.localSpeak ? o.localSpeak(l, mode) : kokoroSpeaker(localSynth(), { lang: l, mode }))(s, signal), alive: () => (resetGen.get(k.id) ?? 0) === born });
+      return { src: `/api/review-room/${k.id}/voice/${out.name}`, cached: out.cached, engine: "kokoro" };
+    },
+    localVoiceAudio(id: string, name: string) { const k = keyOf(id), b = readClip(k.dir, name); if (!b) throw refuse("No such audio", "not_found"); return b; },
     /** tests: wait for a room's running turn and its background pictures */
     async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size || saving.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
   });
