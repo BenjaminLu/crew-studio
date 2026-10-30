@@ -213,16 +213,36 @@ const reviewerBadge = () => h("span", { class: "rr-inference", "data-basis": "re
 const inferenceBadge = () => h("span", { class: "rr-inference", "data-basis": "inference", title: T("No basis cited: this is the tutor's inference, not a fact from the record", "沒有引用依據：這是導師的推論，不是紀錄裡的事實") }, T("Inference", "推論"));
 /** a diff citation in a room whose pull request is on GitHub: the pull request's own files view at those lines (GitHub keys a file by
  *  the sha256 of its path, R<n> is a line on the head side); null when there is no such pull request or the ref is not a diff */
-const onGithub = (card, ref) => { const r = RR.rooms.get(card); return ref.startsWith("diff:") && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(r?.pr?.url || (r?.subject?.kind === "pr" ? r.subject.url : "") || ""); };
-async function githubDiffUrl(r, ref) {
+/*  A saved room keeps its frozen copy (GitHub's pull request may have moved on). Synchronous, so window.open keeps the click's activation. */
+function githubDiffUrl(r, ref) {
   const m = /^diff:(.+?)(?::L(\d+)(?:-(\d+))?)?$/.exec(ref), pr = r?.pr?.url || (r?.subject?.kind === "pr" ? r.subject.url : null);
-  if (!m || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr || "") || !globalThis.crypto?.subtle) return null;
-  const hex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(m[1])))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `${pr}/files#diff-${hex}${m[2] ? `R${m[2]}-R${m[3] || m[2]}` : ""}`;
+  if (!m || r?.snapshot || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr || "")) return null;
+  return `${pr}/files#diff-${sha256hex(m[1])}${m[2] ? `R${m[2]}-R${m[3] || m[2]}` : ""}`;
 }
-async function openCite(card, ref) {
+const onGithub = (card, ref) => !!githubDiffUrl(RR.rooms.get(card), ref);
+/** SHA-256 of a UTF-8 string, hex (FIPS 180-4); crypto.subtle is async and absent outside a secure context */
+function sha256hex(s) {
+  const K = [], H = [], isP = (n) => { for (let d = 2; d * d <= n; d++) if (n % d === 0) return false; return true; }, fr = (x) => ((x - Math.floor(x)) * 2 ** 32) | 0;
+  for (let n = 2, i = 0; i < 64; n++) if (isP(n)) { if (i < 8) H[i] = fr(n ** (1 / 2)); K[i++] = fr(n ** (1 / 3)); }
+  const b = [...new TextEncoder().encode(s)], bits = b.length * 8; b.push(0x80); while (b.length % 64 !== 56) b.push(0);
+  for (let i = 7; i >= 0; i--) b.push(i > 3 ? 0 : (bits >>> (i * 8)) & 0xff);
+  const rot = (x, n) => (x >>> n) | (x << (32 - n)), w = new Array(64);
+  for (let o = 0; o < b.length; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = (b[o + i * 4] << 24) | (b[o + i * 4 + 1] << 16) | (b[o + i * 4 + 2] << 8) | b[o + i * 4 + 3];
+    for (let i = 16; i < 64; i++) { const s0 = rot(w[i - 15], 7) ^ rot(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = rot(w[i - 2], 17) ^ rot(w[i - 2], 19) ^ (w[i - 2] >>> 10); w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0; }
+    let [a, bb, c, d, e, f, g, hh] = H;
+    for (let i = 0; i < 64; i++) { const t1 = (hh + (rot(e, 6) ^ rot(e, 11) ^ rot(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0, t2 = ((rot(a, 2) ^ rot(a, 13) ^ rot(a, 22)) + ((a & bb) ^ (a & c) ^ (bb & c))) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0; }
+    [a, bb, c, d, e, f, g, hh].forEach((v, i) => { H[i] = (H[i] + v) | 0; });
+  }
+  return H.map((v) => (v >>> 0).toString(16).padStart(8, "0")).join("");
+}
+function openCite(card, ref) {
   // a diff on a GitHub pull request opens there, in a new window, at the cited lines: no copy of the code in Studio
-  const gh = await githubDiffUrl(RR.rooms.get(card), ref); if (gh) { window.open(gh, "_blank", "noopener,noreferrer"); return; }
+  const gh = githubDiffUrl(RR.rooms.get(card), ref); if (gh) { window.open(gh, "_blank", "noopener,noreferrer"); rerender(); return; }
+  return openPanel(card, ref);
+}
+async function openPanel(card, ref) {
   // a saved room: what the citation pointed at was copied into the snapshot
   const snap = RR.rooms.get(card)?.snapshot; if (snap) { const d = snap.cites[ref]; RR.cite.set(card, d && !d.error ? { ref, data: d } : { ref, error: d?.error || T("Not in this snapshot", "這份存檔裡沒有") }); rerender(); return; }
   RR.cite.set(card, { ref, loading: true }); rerender();

@@ -488,6 +488,18 @@ try {
     ok(!asked.length && !(await p.$("[data-cite-panel]")), "no copy of the code is fetched or shown in Studio", JSON.stringify(asked));
     await ctx.close(); }
 
+  // a pull request address that is not github.com's own (a look-alike host): the citation panel, never a window to it
+  { const BAD = { ...ROOM, card: { ...ROOM.card, id: "SC-78" }, pr: { id: "78", url: "https://github.com.evil.example/fixture/project/pull/78" } };
+    const { ctx, p } = await open(1440, "en"); const asked = [];
+    await p.addInitScript(() => { window.__opened = []; window.open = (...a) => { window.__opened.push(a); return null; }; });
+    await p.route(/\/api\/review-room\/SC-78(\?open=1)?$/, (r) => r.fulfill({ json: BAD }));
+    await p.route(/\/api\/review-room\/SC-78\/cite\?/, (r) => { asked.push(1); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "+x" } }); });
+    await p.goto(`${base}/#/room/SC-78`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
+    await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff", { timeout: 5000 }).catch(() => {});
+    ok(!(await p.evaluate(() => window.__opened.length)) && asked.length === 1 && !!(await p.$("[data-cite-panel] .rr-diff")), "a pull request address on any other host opens nothing outside Studio: the citation panel as before");
+    await ctx.close(); }
+
   // ---------- coming back while a turn runs; an answer already there; the answer that finished while the captain looked away ----------
   { const RUN = { ...ROOM, running: 3, progress: { turn: 3, status: "running", said: "Reading the diff and the tests first.", tools: 3, at: "t" },
       turns: [...ROOM.turns.map((t) => ({ ...t, head: H })), { n: 3, action: "teach", text: "Teach me this change.", lang: "en", status: "running", provider: "codex", model: "gpt-6", answer: "", head: H }, { n: 4, action: "since", studio: true, title: "What changed", status: "done", provider: "studio", model: "", text: "", answer: "x", head: H, claims: [cl("Nothing new.")] }] };
