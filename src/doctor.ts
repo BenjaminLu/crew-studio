@@ -75,9 +75,9 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
       { id: "download", label: "Official installer", argv: [], kind: "open", url: "https://nodejs.org/en/download", source: "https://nodejs.org/en/download", location: "/usr/local (you install it)", needs: [], admin: true },
     ],
     // the review room's local voice: Studio's own pinned runtime, and the pinned model only on the captain's click
-    "voice-runtime": [{ id: "npm", label: `sherpa-onnx-node ${SHERPA_VERSION} into ~/.crew-studio/tools/voice (exact versions, no install scripts, no admin rights)`, argv: ["/bin/bash", "-c", installCommand()],
+    "voice-runtime": [{ id: "npm", label: `sherpa-onnx-node ${SHERPA_VERSION} into ~/.crew-studio/tools/voice (exact versions, no install scripts, no admin rights)`, get argv() { return ["/bin/bash", "-c", installCommand()]; },
       source: "https://www.npmjs.com/package/sherpa-onnx-node — documented at https://k2-fsa.github.io/sherpa/onnx/ (Apache-2.0)", location: "~/.crew-studio/tools/voice", needs: ["npm"], admin: false }],
-    "voice-tts": [{ id: "download", label: "Kokoro-82M v1.0 (about 401 MB, Apache-2.0) into ~/.crew-studio/models, every file checked against its pinned SHA-256", argv: ["/bin/bash", "-c", downloadCommand()],
+    "voice-tts": [{ id: "download", label: "Kokoro-82M v1.0 (about 401 MB, Apache-2.0) into ~/.crew-studio/models, every file checked against its pinned SHA-256", get argv() { return ["/bin/bash", "-c", downloadCommand()]; },
       source: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0 at revision f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b", location: "~/.crew-studio/models/kokoro-multi-lang-v1_0", needs: ["node"], admin: false }],
     renderer: [
       { id: "npm", label: "Playwright + Chromium into ~/.crew-studio/tools (no admin rights)", argv: ["/bin/bash", "-c", "mkdir -p ~/.crew-studio/tools && npm install --prefix ~/.crew-studio/tools playwright@1 && ~/.crew-studio/tools/node_modules/.bin/playwright install chromium"],

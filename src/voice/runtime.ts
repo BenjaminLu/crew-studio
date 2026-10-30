@@ -11,6 +11,7 @@ import { renderEnv } from "../render";
 import sidecarSrc from "./sidecar.cjs" with { type: "text" };
 import fetchSrc from "./fetch-model.cjs" with { type: "text" };
 import manifest from "./kokoro-manifest.json";
+import { studioModels } from "./models";
 
 export const SHERPA_VERSION = "1.13.8";
 /** npm's registry integrity of each pinned package (npm view <pkg>@1.13.8 dist.integrity) */
@@ -55,5 +56,10 @@ export function runtimeState(dir = voiceTools()): RuntimeState {
 }
 
 /** the install Doctor runs on the captain's click: exact versions, no install scripts, into the runtime folder only */
-export const installCommand = (arch = process.arch) => `mkdir -p ~/.crew-studio/tools/voice && npm install --prefix ~/.crew-studio/tools/voice --save-exact --ignore-scripts --no-audit --no-fund sherpa-onnx-node@${SHERPA_VERSION} ${platformPackage(arch)}@${SHERPA_VERSION}`;
-export const downloadCommand = () => "node ~/.crew-studio/tools/voice/fetch-model.cjs";
+/** a path as one shell word */
+const sh = (p: string) => `'${p.replace(/'/g, `'\\''`)}'`;
+/** the install Doctor runs on the captain's click: exact versions, no install scripts, into the runtime folder Studio
+ *  reads (CREW_VOICE_TOOLS when set, else ~/.crew-studio/tools/voice) and nowhere else */
+export const installCommand = (arch = process.arch, dir = voiceTools()) => `mkdir -p ${sh(dir)} && npm install --prefix ${sh(dir)} --save-exact --ignore-scripts --no-audit --no-fund sherpa-onnx-node@${SHERPA_VERSION} ${platformPackage(arch)}@${SHERPA_VERSION}`;
+/** the model download: Studio's script in that runtime folder, into the models folder Studio reads (CREW_VOICE_MODELS) */
+export const downloadCommand = (dir = voiceTools(), models = studioModels()) => `node ${sh(join(dir, "fetch-model.cjs"))} --models ${sh(models)}`;
