@@ -1,10 +1,11 @@
 // Downloads the review room's local voice model into Studio's own models folder, only when the captain presses Install
 // in Doctor (Doctor runs: node ~/.crew-studio/tools/voice/fetch-model.cjs). Every file comes from one pinned Hugging Face
 // revision over HTTPS (a redirect to anything but https is refused) and must match the pinned size and SHA-256 in
-// kokoro-manifest.json beside this file; anything else stops the download. A file that stalls or takes too long stops it
-// too. Files go into <name>.partial, each first as <file>.download, renamed only once verified; a stopped download
-// removes its .download files, and keeps the verified files of .partial, which a second press hashes again before it
-// keeps them (a resume). A finished, verified folder gets .complete (the revision) and is renamed into place.
+// kokoro-manifest.json beside this file; anything else stops the download. Files go into <name>.partial, each first as
+// <file>.download, renamed only once verified. A press that stalls, runs out of its time or is killed keeps what it
+// wrote; the next press hashes those bytes again and asks for the rest with an HTTP Range request (a slow network still
+// finishes, press by press). A .download is deleted only when its whole file does not match its pin, or grows past it.
+// A finished, verified folder gets .complete (the revision) and is renamed into place.
 //   --models <dir>   the models folder (default ~/.crew-studio/models)
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
@@ -22,12 +23,15 @@ const deadline = (size) => 60_000 + Math.ceil(size / 200_000) * 1000;
 const url = (p) => `${local || "https://huggingface.co"}/${m.repo}/resolve/${m.revision}/${p.split("/").map(encodeURIComponent).join("/")}`;
 const inside = (rel) => { const p = path.normalize(path.join(partial, rel)); if (!p.startsWith(path.normalize(partial) + path.sep)) throw new Error(`a manifest path leaves the folder: ${rel}`); return p; };
 const hashOf = (f) => new Promise((ok, bad) => { const h = crypto.createHash("sha256"); fs.createReadStream(f).on("data", (d) => h.update(d)).on("end", () => ok(h.digest("hex"))).on("error", bad); });
-const downloads = new Set();
+/** One press of Install may run this long: less than Doctor's installer timeout (src/doctor.ts RealRunner, 15 min), so a
+ *  slow network ends a press on its own, keeping what it has, and the next press goes on from there. */
+const PRESS_MS = 13 * 60_000;
+const started = Date.now();
 
 /** GET a file, following at most five redirects, each to an https address only */
-async function get(u, signal) {
+async function get(u, signal, headers) {
   for (let hops = 0; hops <= 5; hops++) {
-    const r = await fetch(u, { redirect: "manual", signal });
+    const r = await fetch(u, { redirect: "manual", signal, headers });
     if (r.status >= 300 && r.status < 400) {
       const to = new URL(r.headers.get("location") || "", u);
       if (to.protocol !== "https:") throw new Error(`a redirect to a non-HTTPS address was refused (${to.protocol}//${to.host})`);
@@ -37,36 +41,51 @@ async function get(u, signal) {
   }
   throw new Error("too many redirects");
 }
+const hashInto = (h, f) => new Promise((ok, bad) => { fs.createReadStream(f).on("data", (d) => h.update(d)).on("end", ok).on("error", bad); });
 async function fetchOne(rel, size, sha) {
   const dest = inside(rel); fs.mkdirSync(path.dirname(dest), { recursive: true });
-  // resume: a file kept from a stopped download is used only when it is a regular file with the pinned size and hash
-  try { const s = fs.lstatSync(dest); if (s.isFile() && s.size === size && (await hashOf(dest)) === sha) return false; fs.rmSync(dest, { force: true, recursive: true }); } catch {}
-  const ac = new AbortController(), tmp = dest + ".download"; downloads.add(tmp);
-  let stall = setTimeout(() => ac.abort(new Error("stalled")), STALL_MS); const whole = setTimeout(() => ac.abort(new Error("took too long")), deadline(size));
+  // a file kept from an earlier press is used only when it is a regular file with the pinned size and hash
+  try { const s = fs.lstatSync(dest); if (s.isFile() && s.size === size && (await hashOf(dest)) === sha) return { fetched: 0, kept: true }; fs.rmSync(dest, { force: true, recursive: true }); } catch {}
+  // a transfer cut short (a stall, the press's time, a kill) left <file>.download: its bytes are hashed again and the
+  // rest is asked for with an HTTP Range request; it is deleted only when the whole file does not match its pin
+  const tmp = dest + ".download"; let h = crypto.createHash("sha256"), have = 0;
+  try { const s = fs.lstatSync(tmp); if (s.isFile() && s.size <= size) { await hashInto(h, tmp); have = s.size; } else fs.rmSync(tmp, { force: true, recursive: true }); } catch {}
+  const mismatch = (n, got) => { fs.rmSync(tmp, { force: true }); return new Error(`${rel}: size ${n} / SHA-256 ${got.slice(0, 12)}… does not match the pin (${size} / ${sha.slice(0, 12)}…)`); };
+  if (have === size) { const got = h.digest("hex"); if (got !== sha) throw mismatch(have, got); fs.renameSync(tmp, dest); return { fetched: 0, kept: false, from: have }; }
+  const left = PRESS_MS - (Date.now() - started); if (left <= 0) throw new Error("this press's time is up");
+  const ac = new AbortController();
+  let stall = setTimeout(() => ac.abort(new Error("stalled")), STALL_MS); const whole = setTimeout(() => ac.abort(new Error("this press's time is up")), Math.min(deadline(size), left));
   try {
-    const r = await get(url(rel), ac.signal);
+    let r = await get(url(rel), ac.signal, have ? { range: `bytes=${have}-` } : undefined), from = have;
+    if (have && !(r.status === 206 && new RegExp(`^bytes ${have}-`).test(r.headers.get("content-range") || ""))) {
+      // the server sent the whole file: start again from its first byte
+      if (!r.ok) throw new Error(`${rel}: HTTP ${r.status}`);
+      from = 0; have = 0; h = undefined;
+    }
     if (!r.ok || !r.body) throw new Error(`${rel}: HTTP ${r.status}`);
-    const h = crypto.createHash("sha256"), w = fs.openSync(tmp, "w"); let n = 0;
+    const hash = from ? h : crypto.createHash("sha256"), w = fs.openSync(tmp, from ? "a" : "w"); let n = from;
     try { for await (const d of r.body) { clearTimeout(stall); stall = setTimeout(() => ac.abort(new Error("stalled")), STALL_MS);
-        n += d.length; if (n > size) throw new Error(`${rel}: larger than its pinned ${size} bytes`); h.update(d); fs.writeSync(w, d); } }
-    finally { fs.closeSync(w); }
-    const got = h.digest("hex");
-    if (n !== size || got !== sha) throw new Error(`${rel}: size ${n} / SHA-256 ${got.slice(0, 12)}… does not match the pin (${size} / ${sha.slice(0, 12)}…)`);
-    fs.renameSync(tmp, dest); downloads.delete(tmp); return true;
-  } catch (e) { const why = ac.signal.aborted && ac.signal.reason ? ac.signal.reason.message : null; throw why ? new Error(`${rel}: ${why}`) : e; }
+        if (n + d.length > size) { fs.closeSync(w); fs.rmSync(tmp, { force: true }); throw Object.assign(new Error(`${rel}: larger than its pinned ${size} bytes`), { closed: true }); }
+        n += d.length; hash.update(d); fs.writeSync(w, d); } }
+    catch (e) { if (!e.closed) try { fs.closeSync(w); } catch {} throw e; }
+    fs.closeSync(w);
+    const got = hash.digest("hex");
+    if (n !== size || got !== sha) throw mismatch(n, got);
+    fs.renameSync(tmp, dest); return { fetched: n - from, kept: false, from };
+  } catch (e) { const why = ac.signal.aborted && ac.signal.reason ? ac.signal.reason.message : null; throw why ? new Error(`${rel}: ${why} (${mb(fs.existsSync(tmp) ? fs.statSync(tmp).size : 0)} MB kept)`) : e; }
   finally { clearTimeout(stall); clearTimeout(whole); }
 }
-const cleanup = () => { for (const f of downloads) try { fs.rmSync(f, { force: true }); } catch {} };
 (async () => {
   console.log(`Kokoro-82M v1.0 (Apache-2.0) from ${m.repo} at ${m.revision.slice(0, 12)}: ${m.files.length} files, ${mb(total)} MB, into ${partial.replace(os.homedir(), "~")}`);
   fs.mkdirSync(partial, { recursive: true });
   let done = 0, last = -1, kept = 0;
   for (const [rel, size, sha] of m.files) {
-    if (!(await fetchOne(rel, size, sha))) kept++; done += size;
+    const r = await fetchOne(rel, size, sha); if (r.kept) kept++; if (r.from) console.log(`resumed ${rel} from byte ${r.from}`); done += size;
     const pct = Math.floor((done / total) * 100); if (pct >= last + 5 || size > 5e6) { last = pct; console.log(`${pct}%  ${mb(done)} / ${mb(total)} MB  ${rel}`); }
   }
   fs.writeFileSync(path.join(partial, ".complete"), m.revision + "\n");
   fs.rmSync(final, { recursive: true, force: true }); fs.renameSync(partial, final);
   console.log(`verified ${m.files.length} files against the pinned SHA-256 (${kept} kept from an earlier try); ready at ${final.replace(os.homedir(), "~")}`);
-})().catch((e) => { cleanup(); console.error(`download stopped: ${String((e && e.message) || e)}; press Install again to resume`); process.exit(1); });
-for (const sig of ["SIGTERM", "SIGINT"]) process.once(sig, () => { cleanup(); process.exit(143); });
+})().catch((e) => { console.error(`download stopped: ${String((e && e.message) || e)}; press Install again to go on from here`); process.exit(1); });
+// a kill keeps what was written (each chunk is written synchronously): the next press resumes it
+for (const sig of ["SIGTERM", "SIGINT"]) process.once(sig, () => process.exit(143));
