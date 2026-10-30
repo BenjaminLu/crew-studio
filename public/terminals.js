@@ -39,7 +39,7 @@ function apply(list) {
     }
     TM.prev.set(t.id, t.state);
   }
-  TM.list = list;
+  TM.list = list; seeRunning();
 }
 // Studio restarted since this window last saw it (a PTY cannot outlive Studio): the terminals that were running when
 // this window last loaded the list, and are not running now, leave its tabs, and the page says once how many, rather
@@ -48,8 +48,15 @@ function apply(list) {
 // tabs; a new window starts from the last one any window saw (localStorage). A reload of the same run says nothing.
 const SEEN = "crew.term.seen";
 function seenBefore() { for (const s of [() => sessionStorage, () => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null"); if (v && typeof v.boot === "string" && Array.isArray(v.running)) return v; } catch {} } return null; }
+// a terminal seen running on the page's live stream (started in another window, say) counts as seen in this run too;
+// a live list never removes one (after a restart the stream's first list comes before the run is known)
+function seeRunning() {
+  if (!TM.boot) return; const ids = TM.list.filter((t) => t.running).map((t) => t.id); if (!ids.length) return;
+  for (const s of [() => sessionStorage, () => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null");
+    if (v && v.boot === TM.boot && Array.isArray(v.running) && ids.some((id) => !v.running.includes(id))) s().setItem(SEEN, JSON.stringify({ boot: v.boot, running: [...new Set([...v.running, ...ids])] })); } catch {} }
+}
 function restarted(boot) {
-  if (!boot) return; const was = seenBefore();
+  if (!boot) return; const was = seenBefore(); TM.boot = boot;
   const now = JSON.stringify({ boot, running: TM.list.filter((t) => t.running).map((t) => t.id) });
   for (const s of [() => sessionStorage, () => localStorage]) { try { s().setItem(SEEN, now); } catch {} }
   if (!was || was.boot === boot) return;
@@ -57,6 +64,9 @@ function restarted(boot) {
   for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (died.has(pn.term)) { n++; detachPane(tab, pn); }
   if (!n) return;
   TM.autoOpened = true; // the tabs were the captain's: none is opened in their place
+  // an address that names a terminal the restart ended (the window reopened where it was) is replaced, or the page would
+  // reveal that tab again; opening it from the list later is a new address, and works as ever
+  if (died.has(cur())) { history.replaceState(null, "", "#/terminals"); S.route.arg = null; TM.lastArg = null; }
   toast(T(`${n === 1 ? "A terminal session" : `${n} terminal sessions`} ended when Studio restarted`, `${n} 個工作階段在 Studio 重啟時結束`));
 }
 let redrawT = null;

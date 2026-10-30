@@ -215,6 +215,26 @@ try {
   ok((await panes(p)).includes(kept), "the finished command, kept for review, keeps its tab", JSON.stringify(await panes(p)));
   ok(await until(async () => toasts.some((t) => /^(first|second): A terminal session ended when Studio restarted$/.test(t))), "the toast counts the one session the restart ended, not the finished one", JSON.stringify(toasts));
   await p2.close();
+
+  // ---------- reopened at the address of a terminal the restart ended ----------
+  // the window closed on a running command's address (#/terminals/<id>); Studio restarts; the app opens again at that
+  // address: the restart's cleanup holds (no dead tab comes back, the address no longer names it), and the captain can
+  // still open its old output on purpose from the list
+  const gone = await startCmd(p, "exec cat");
+  await p.goto(`${base}/#/terminals/${encodeURIComponent(gone)}`); await p.locator(`.wt-pane[data-term-pane="${gone}"] .xterm-rows`).waitFor({ timeout: 10000 });
+  await p.keyboard.type("old-output-mark"); await p.keyboard.press("Enter");
+  await until(async () => /old-output-mark/.test(await rowsOf(p, gone)));
+  await p.close();
+  app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
+  app = await boot();
+  { const s = await ctx.newPage(); await s.goto(`${base}/session?t=${encodeURIComponent(TOKEN)}`); await s.close(); }
+  p = await page(); await p.goto(`${base}/#/terminals/${encodeURIComponent(gone)}`); await p.waitForFunction(() => window.crewTerminals?.list !== null);
+  ok(await until(async () => (await p.locator(".toast").allInnerTexts()).some((x) => /ended when Studio restarted/.test(x)), 6000), "opened again at the ended command's address: the toast says the restart ended it");
+  await p.waitForTimeout(800);
+  ok(!(await panes(p)).includes(gone) && !(await p.locator(`.wt-pane[data-term-pane="${gone}"]`).count()), "and its tab does not come back", JSON.stringify(await panes(p)));
+  ok(!p.url().includes(encodeURIComponent(gone)), "and the address no longer names it", p.url());
+  await p.locator(`[data-term-row="${gone}"]`).first().click();
+  ok(await until(async () => (await p.locator(`.wt-pane[data-term-pane="${gone}"]`).count()) === 1 && /old-output-mark/.test(await rowsOf(p, gone))), "opened on purpose from the list, its old output shows");
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
   try { await browser?.close(); } catch {}
