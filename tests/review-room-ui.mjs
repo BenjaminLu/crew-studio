@@ -66,7 +66,8 @@ const stubs = ([mic]) => {
   // this Mac's voices as Chrome and Safari list them: novelty and legacy (MacinTalk, Eloquence) voices among the good ones
   const voices = [mac("Samantha", "com.apple.voice.compact.en-US.Samantha"), mac("Fred", "fred"), mac("Ava (Premium)", "ava"), { name: "Google US English", lang: "en-US", localService: false, voiceURI: "google" }, mac("Mei-Jia (Premium)", "mj", "zh-TW"),
     mac("Zarvox", "com.apple.speech.synthesis.voice.Zarvox"), mac("Bad News", "com.apple.speech.synthesis.voice.BadNews"), mac("Good News", "good-news"), mac("Bubbles", "bubbles"), mac("Whisper", "com.apple.speech.synthesis.voice.Whisper"),
-    mac("Eddy (English (US))", "com.apple.eloquence.en-US.Eddy"), mac("Grandma (English (UK))", "com.apple.eloquence.en-GB.Grandma", "en-GB"), mac("Kathy", "kathy"), mac("Zoe", "com.apple.voice.enhanced.en-US.Zoe")];
+    mac("Eddy (English (US))", "com.apple.eloquence.en-US.Eddy"), mac("Grandma (English (UK))", "com.apple.eloquence.en-GB.Grandma", "en-GB"), mac("Kathy", "kathy"), mac("Zoe", "com.apple.voice.enhanced.en-US.Zoe"),
+    mac("Eddy (Chinese (Taiwan))", "com.apple.eloquence.zh-TW.Eddy", "zh-TW"), mac("Flo (Chinese (Taiwan))", "com.apple.eloquence.zh-TW.Flo", "zh-TW")];
   Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => window.__voices || voices, speak: (u) => { window.__spoken.push([u.text, u.voice?.voiceURI]); setTimeout(() => window.__speakFails ? u.onerror && u.onerror({ error: "not-allowed" }) : u.onend && u.onend(), 5); }, cancel: () => { window.__cancels = (window.__cancels || 0) + 1; } } });
   window.SpeechSynthesisUtterance = function (t) { this.text = t; };
   class Rec { static async available(o) { window.__micAsked = o; return mic; } start() { window.__rec = this; window.__recStarted = { lang: this.lang, local: this.processLocally }; setTimeout(() => this.onresult && this.onresult({ results: [[{ transcript: "why do halves round up" }]] }), 10); } stop() { window.__recStopped = true; this.onend && this.onend(); } }
@@ -361,6 +362,7 @@ try {
     ok(await p.evaluate(() => !window.__pwned && !document.querySelector(".rr-point img")) && s6.visual === "B1-1", "a translation is text: markup in it stays text, and the board's pictures are the original's", JSON.stringify(s6));
     const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
     ok(voices.includes("local:mj") && !voices.includes("local:ava"), "the voice follows the language shown: this Mac's Chinese voice now", JSON.stringify(voices));
+    ok(JSON.stringify(voices.filter((v) => v.startsWith("local:"))) === JSON.stringify(["local:mj", "local:com.apple.eloquence.zh-TW.Eddy"]), "Taiwan Mandarin offers Mei-Jia first and Eddy beside it; the other legacy voices stay out", JSON.stringify(voices));
     await p.click('[data-lang-pick="zh-CN"]'); s6 = await stage(p);
     ok(s6.title === "百分比怎么算" && !trs.length, "简体 comes from the 繁體 text through OpenCC: nothing paid", JSON.stringify(s6));
     await p.click('[data-lang-pick="en"]'); await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t2"]');

@@ -893,7 +893,8 @@ const baseName = (v) => String(v.name || "").replace(/\s*\(.*\)\s*$/, "").trim()
 const voiceRank = (v) => { const s = `${v.name} ${v.voiceURI || ""}`; return /premium/i.test(s) ? 4 : /enhanced/i.test(s) ? 3 : /siri|neural|natural/i.test(s) ? 2 : /compact/i.test(s) ? 0 : 1; };
 const localVoices = () => { try { const want = (CUR.lang || uiLang()).toLowerCase(), l = want.slice(0, 2), exact = (v) => (v.lang || "").toLowerCase().replace("_", "-") === want ? 1 : 0;
   const mine = (window.speechSynthesis?.getVoices?.() || []).filter((v) => v.localService && v.lang?.toLowerCase().startsWith(l) && !NOVELTY.test(baseName(v)));
-  const good = mine.filter((v) => !LEGACY.test(baseName(v)));
+  // Taiwan Mandarin has no Premium voice; the captain picked Eddy (Chinese (Taiwan)) to sit beside Mei-Jia, so it is not left out there
+  const good = mine.filter((v) => !LEGACY.test(baseName(v)) || (l === "zh" && /^eddy$/i.test(baseName(v)) && /tw/i.test(v.lang || "")));
   return (good.length ? good : mine).sort((a, b) => voiceRank(b) - voiceRank(a) || exact(b) - exact(a)); } catch { return []; } };
 const voicePref = () => prefs.get("crew.room.voice") || "auto";
 /** the Mac voice to speak with: the one picked, or, when that one is no longer offered (a robotic voice picked before), the best there is */
