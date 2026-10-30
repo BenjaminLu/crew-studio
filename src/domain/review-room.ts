@@ -312,6 +312,8 @@ export type Thread = { n: number; key: string; anchor: Anchor; locator: Locator;
   /** folded back into its chapter by "tidy the board": a gist built from its answers (no model) */
   merged: { at: string; gist: string; cites: Cite[] } | null };
 export type Lesson = { threads: Thread[]; visited: string[]; tidiedAt?: string | null };
+/** how far the board grows: questions a room, cards a question, versions (rephrasings) a card */
+export const LESSON_LIMITS = { threads: 200, nodes: 50, versions: 5 } as const;
 /** an anchor's stable key, also its locator's section: chapter / scene [/ board item] [# the part clicked] */
 export const anchorKey = (a: Pick<Anchor, "chapter" | "scene" | "kind" | "item" | "part">) => `${a.chapter}/${a.scene}/${a.kind}${a.item ? `/${a.item}` : ""}${a.part ? `#${a.part}` : ""}`;
 /** the shared locator schema (docs/check-contract.md): the text locator whose section is the anchor's stable key */
@@ -656,8 +658,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const item = a?.item == null || a.item === "" ? null : String(a.item); if (item && !room.board.some((b) => b.id === item && b.turn === t.n)) throw refuse("No such drawing in this lesson / 這一課沒有這張圖", "bad_anchor");
     const part = a?.part == null || a.part === "" ? null : String(a.part); if (part && !/^[\w.:>#-]{1,140}$/.test(part)) throw refuse("part is a short key of letters, digits and . : > # - _", "bad_anchor");
     const text = String(a?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300); if (!text) throw refuse("The words of the place asked about are required / 需要被問的那段文字", "bad_anchor");
-    const num = (v: any) => Number.isInteger(v) && v >= 0 && v <= 4000 ? Number(v) : null;
-    return { turn: t.n, scene, chapter: sc.chapter, kind, item, part, text, start: num(a?.start), end: num(a?.end) };
+    const num = (v: any) => Number.isInteger(v) && v >= 0 && v <= 4000 ? Number(v) : null, start = num(a?.start), end = num(a?.end);
+    if (start != null && end != null && start > end) throw refuse("An anchor ends after it starts / 錨點的結尾不能在開頭之前", "bad_anchor");
+    return { turn: t.n, scene, chapter: sc.chapter, kind, item, part, text, start, end };
   };
   /** what a question on the board asks: its turn (action and the words the tutor gets), the thread (the one on that anchor
    *  already, else a new one) and the card it answers (a new one below or beside, or a new version of the same card) */
@@ -672,9 +675,17 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     else { anchor = anchorOf(room, x?.anchor); th = threads.find((t) => t.key === anchorKey(anchor)) ?? null; }
     const on = th ? (x?.node != null ? th.nodes.find((n) => n.id === String(x.node)) : th.nodes.find((n) => n.rel === "root")) ?? null : null;
     if (th && x?.node != null && !on) throw refuse("No such card on the board / 白板上沒有這張卡", "not_found");
+    const rel = on?.code && spec.rel === "version" ? "below" as const : spec.rel;
+    capped(threads, th, on, rel);
+    // the captain's message is the chip's question (or their own words) alone: the place's words reach the tutor only fenced
     const zh = lang !== "en", words = chip === "free" ? q : zh ? spec.zh : spec.en;
-    return { chip, q: chip === "free" ? q : null, action: spec.action, rel: on?.code && spec.rel === "version" ? "below" as const : spec.rel, anchor, thread: th?.n ?? null, node: on?.id ?? null,
-      text: `${words}\n${zh ? "白板上的這裡" : "This place on the board"}: “${anchor.text}”`.slice(0, 4000) };
+    return { chip, q: chip === "free" ? q : null, action: spec.action, rel, anchor, thread: th?.n ?? null, node: on?.id ?? null, text: words.slice(0, 4000) };
+  };
+  /** the board's growth, capped (LESSON_LIMITS): a new question, a new card or a new version past its cap is refused */
+  const capped = (threads: Thread[], th: Thread | null, on: ThreadNode | null, rel: string) => {
+    if (!th && threads.length >= LESSON_LIMITS.threads) throw refuse(`This room holds at most ${LESSON_LIMITS.threads} questions on its board: tidy it or start over / 這個房間的白板最多 ${LESSON_LIMITS.threads} 個問題`, "limit");
+    if (th && rel !== "version" && th.nodes.length >= LESSON_LIMITS.nodes) throw refuse(`A question holds at most ${LESSON_LIMITS.nodes} cards / 一個問題最多 ${LESSON_LIMITS.nodes} 張卡`, "limit");
+    if (th && rel === "version" && on && on.versions.length >= LESSON_LIMITS.versions) throw refuse(`A card holds at most ${LESSON_LIMITS.versions} versions / 一張卡最多 ${LESSON_LIMITS.versions} 個版本`, "limit");
   };
   /** the question asked, on the room: its thread made when it is the anchor's first, its card added (or a version of it) */
   const applyThread = (room: Room, p: ReturnType<typeof threadPlan>, turnN: number): { n: number; node: string } => {
@@ -975,7 +986,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           catch (e: any) { const m = String(e?.message ?? e); source({ kind: "fetch", url: u, ok: false, ...(m.startsWith("refused:") ? { refused: m.slice(9) } : { error: m.slice(0, 300) }) }); return { error: m }; } } },
     ];
     // a generated picture is a paid image job: the tutor gets the tool only where the captain turned pictures on
-    return all.filter((t) => t.name !== "illustrate" || !!room.images?.on);
+    // a question on the board is cheap: never a generated picture (no illustrate), whatever the room's setting
+    return all.filter((t) => t.name !== "illustrate" || (!!room.images?.on && !turn.thread));
   }
 
   /** What may not leave Studio for this room: the change, its paths and its names (src/review-web.ts). */
@@ -1029,7 +1041,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       ...full.flatMap((x) => [who(x).slice(0, 1500), `${x.studio ? "Scene" : "Tutor"}: ${said(x).slice(0, 1500)}`]), ...(past.length ? [] : ["(this is the first turn)"]), "",
       ...(turn.action === "teach" ? [`A LESSON (baton's packet, workflows/skills/baton): chapters ${CHAPTERS.map((c) => c.id).join(" → ")} (shown in that order whatever order you make them in). Always show what and change (one item drawing a change, at least one); show talks (an arch drawing), lifecycle and sequence, or leave each out with chapter_skip and a cited reason; one drawing a chapter except change and decisions; roads only as the record shows them. Call lesson_check before your final answer: Studio refuses a lesson that misses one.`, ""] : []),
       ...(turn.thread ? await threadLines(room, turn, s, fence) : []),
-      room.images?.on ? "Generated pictures are ON in this room (illustrate, at most two a turn, paid)." : "Generated pictures are OFF in this room: draw with board_draw (Studio lays every drawing out); there is no illustrate tool.", "",
+      room.images?.on && !turn.thread ? "Generated pictures are ON in this room (illustrate, at most two a turn, paid)." : "Generated pictures are OFF in this room: draw with board_draw (Studio lays every drawing out); there is no illustrate tool.", "",
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
 
@@ -1539,8 +1551,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
+      // started over (or the question's place gone) while it was admitted: nothing is added to the fresh room
+      if (plan) { try { if (plan.thread != null && !room.lesson?.threads.some((t) => t.n === plan!.thread)) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); anchorOf(room, plan.anchor); }
+        catch (e) { held?.release(); throw e; } }
       // generated pictures as the captain set them on this confirmed paid round (the confirmation said which images they may make)
-      if (typeof a.images === "boolean") room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
+      // a question on the board never changes the room's pictures (and pays for none)
+      if (typeof a.images === "boolean" && !plan) room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
@@ -1550,7 +1566,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (plan) turn.thread = applyThread(room, plan, n);
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
       // the room's opening picture, once, only now: a confirmed paid round with pictures on
-      if (room.images?.on) pregenerate(k);
+      if (room.images?.on && !plan) pregenerate(k);
       void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); autoSave(self, k); });
       return this.view(k.id);
     },
@@ -1664,8 +1680,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (op === "code") { const ref = String(a?.ref ?? ""); await this.cite(id, ref);
         let t = a?.n != null ? find() : null;
         if (!t) { const anchor = anchorOf(room, a?.anchor), key = anchorKey(anchor); t = L.threads.find((x) => x.key === key) ?? null;
-          if (!t) { t = { n: Math.max(0, ...L.threads.map((x) => x.n)) + 1, key, anchor, locator: anchorLocator(anchor), nodes: [], state: "open", at, resolvedAt: null, merged: null }; L.threads.push(t); } }
+          if (!t) { capped(L.threads, null, null, "below"); t = { n: Math.max(0, ...L.threads.map((x) => x.n)) + 1, key, anchor, locator: anchorLocator(anchor), nodes: [], state: "open", at, resolvedAt: null, merged: null }; L.threads.push(t); } }
+        if (a?.node != null && !t.nodes.some((n) => n.id === String(a.node))) throw refuse("No such card on the board / 白板上沒有這張卡", "not_found");
         const parent = (a?.node != null ? t.nodes.find((n) => n.id === String(a.node)) : null) ?? t.nodes.find((n) => n.rel === "root");
+        if (parent && !t.nodes.some((n) => n.code === ref && (n.parent === parent.id || n === parent))) capped(L.threads, t, parent, "below");
         if (!parent) t.nodes.push({ id: "n1", parent: null, rel: "root", chip: "code", q: null, versions: [], code: ref, at });
         else if (!t.nodes.some((n) => n.code === ref && (n.parent === parent.id || n === parent))) t.nodes.push({ id: `n${t.nodes.length + 1}`, parent: parent.id, rel: "below", chip: "code", q: null, versions: [], code: ref, at });
         save(k, room); notify(k); return this.view(id); }
