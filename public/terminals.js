@@ -23,7 +23,7 @@ const onScreen = (id) => cur() === id || panesOf(curTab()?.root).some((p) => p.t
 
 // ---------- data ----------
 async function load() {
-  try { const j = await getJ("/api/terminals"); TM.err = null; TM.canWrite = !!j.canWrite; TM.presets = j.presets || []; TM.projects = j.projects || []; apply(j.terminals || []); }
+  try { const j = await getJ("/api/terminals"); TM.err = null; TM.canWrite = !!j.canWrite; TM.presets = j.presets || []; TM.projects = j.projects || []; apply(j.terminals || []); restarted(j.boot, j.restartEnded); }
   catch (e) { TM.err = String(e.message || e); if (TM.list === null) TM.list = []; }
   if (!TM.project || !TM.projects.some((p) => p.id === TM.project)) TM.project = TM.projects[0]?.id || "";
   redraw();
@@ -39,7 +39,37 @@ function apply(list) {
     }
     TM.prev.set(t.id, t.state);
   }
-  TM.list = list;
+  TM.list = list; seeRunning();
+}
+// Studio restarted since this window last saw it (a PTY cannot outlive Studio): the terminals that were running when
+// this window last loaded the list, and are not running now, leave its tabs, and the page says once how many, rather
+// than drawing a dead tab. A terminal that had already ended (an agent kept for Send for review) keeps its tab. What the
+// window saw is its own (sessionStorage, which a reload of the same window keeps), so every open window cleans its own
+// tabs; a new window starts from the last one any window saw (localStorage). A reload of the same run says nothing.
+const SEEN = "crew.term.seen";
+function seenBefore() { for (const s of [() => sessionStorage, () => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null"); if (v && typeof v.boot === "string" && Array.isArray(v.running)) return v; } catch {} } return null; }
+// a terminal seen running on the page's live stream (started in another window, say) counts as seen in this run too;
+// a live list never removes one (after a restart the stream's first list comes before the run is known)
+function seeRunning() {
+  if (!TM.boot) return; const ids = TM.list.filter((t) => t.running).map((t) => t.id); if (!ids.length) return;
+  for (const s of [() => sessionStorage, () => localStorage]) { try { const v = JSON.parse(s().getItem(SEEN) || "null");
+    if (v && v.boot === TM.boot && Array.isArray(v.running) && ids.some((id) => !v.running.includes(id))) s().setItem(SEEN, JSON.stringify({ boot: v.boot, running: [...new Set([...v.running, ...ids])] })); } catch {} }
+}
+function restarted(boot, ended = []) {
+  if (!boot) return; const was = seenBefore(); TM.boot = boot;
+  const now = JSON.stringify({ boot, running: TM.list.filter((t) => t.running).map((t) => t.id) });
+  for (const s of [() => sessionStorage, () => localStorage]) { try { s().setItem(SEEN, now); } catch {} }
+  if (!was || was.boot === boot) return;
+  // only those Studio's stop ended (their records say so): one that had ended on its own, while no window looked, keeps its tab
+  const byStop = new Set(Array.isArray(ended) ? ended : []);
+  const died = new Set(was.running.filter((id) => byStop.has(id) && !TM.list.some((t) => t.id === id && t.running))); let n = 0;
+  for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (died.has(pn.term)) { n++; detachPane(tab, pn); }
+  if (!n) return;
+  TM.autoOpened = true; // the tabs were the captain's: none is opened in their place
+  // an address that names a terminal the restart ended (the window reopened where it was) is replaced, or the page would
+  // reveal that tab again; opening it from the list later is a new address, and works as ever
+  if (died.has(cur())) { history.replaceState(null, "", "#/terminals"); S.route.arg = null; TM.lastArg = null; }
+  toast(T(`${n === 1 ? "A terminal session" : `${n} terminal sessions`} ended when Studio restarted`, `${n} 個工作階段在 Studio 重啟時結束`));
 }
 let redrawT = null;
 function redraw() {
@@ -94,14 +124,37 @@ function xterm() {
 }
 const css = (n, d) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d;
 const b64bytes = (s) => { const b = atob(s), o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = b.charCodeAt(i); return o; };
+// An input method that commits the front of what it composes while the rest goes on composing (Zhuyin and Pinyin do, when
+// the buffer fills or a word is confirmed: compositionend, then compositionstart, in one keystroke) made xterm.js 5.5.0
+// send the committed text together with the part still composing, which it then sent again when that was committed:
+// 中文 typed came out as 中文文 (its CompositionHelper reads up to the old composition's end; 6.0.0 reads up to the new
+// one's start). Here a new composition first sends what the last one committed, up to where the new one starts, and
+// cancels the send the old one had queued. Pinned to 5.5.0 (public/vendor); tests/terminal-input-ui.mjs checks the bytes.
+function imeOnce(term) {
+  const c = term._core?._compositionHelper;
+  if (!c || typeof c.compositionstart !== "function" || !("_isSendingComposition" in c) || !c._textarea || !c._coreService) return;
+  const start = c.compositionstart.bind(c);
+  c.compositionstart = () => {
+    if (c._isSendingComposition) {
+      c._isSendingComposition = false;
+      const d = c._textarea.value.substring(c._compositionPosition.start + c._dataAlreadySent.length);
+      if (d) c._coreService.triggerDataEvent(d, true);
+    }
+    return start();
+  };
+}
 function pane(t) {
   let p = TM.panes.get(t.id); if (p) return p;
   p = { host: h("div", { class: "wt-xterm", "data-term-host": t.id }), term: null, fit: null, queue: "", sending: Promise.resolve(), flushT: null, sizeT: null, err: null };
   TM.panes.set(t.id, p);
   xterm().then(() => {
+    // colours that read (public/term-theme.js): the 16 ANSI colours and their dim forms at 4.5:1 on this background, and
+    // xterm keeps any other colour a program asks for (256-colour, truecolor) at 4.5:1 too
+    const TT = window.crewTermTheme, { theme, dim } = TT.themeFor(css("--surface-2", "#111111"), css("--text", "#dddddd"), css("--accent", "#6699ff"));
+    p.host.append(h("style", {}, TT.dimCss(`[data-term-host="${CSS.escape(t.id)}"]`, dim)));
     const term = new window.Terminal({ cursorBlink: TM.canWrite, disableStdin: !TM.canWrite, scrollback: 5000, fontSize: 13, allowProposedApi: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: { background: css("--surface-2", "#111"), foreground: css("--text", "#ddd"), cursor: css("--accent", "#69f") } });
-    const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit); term.open(p.host); p.term = term; p.fit = fit;
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme, minimumContrastRatio: TT.AA });
+    const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit); term.open(p.host); p.term = term; p.fit = fit; imeOnce(term);
     // a phone watches: no input element at all, so a tap never opens a keyboard
     if (!TM.canWrite) p.host.querySelectorAll("textarea, input").forEach((e) => e.remove());
     else {
@@ -239,7 +292,9 @@ function reconcile() { const known = new Set((TM.list || []).map((t) => t.id)); 
 // the address names the focused terminal; replaced in place, so moving between panes does not add history or re-route
 function syncHash() { const t = termOf(focusPane()), want = t ? `#/terminals/${encodeURIComponent(t.id)}` : "#/terminals";
   if (location.hash !== want) { history.replaceState(null, "", want); if (S.route?.name === "terminals") S.route.arg = t?.id ?? null; } TM.lastArg = t?.id ?? null; }
-function focusTerm() { if (!TM.canWrite || TM.ui.picker || TM.ui.naming || TM.ui.help) return; const id = focusPane()?.term, go = () => TM.panes.get(id)?.term?.focus(); go(); requestAnimationFrame(go); }
+// asked again on the next frame: a sheet opened in between (a double-click's rename) keeps its field's focus
+const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help;
+function focusTerm() { if (!TM.canWrite || sheetOpen()) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(go); }
 const redo = () => { saveLay(); syncHash(); render(); focusTerm(); };
 // a click in a pane moves the focus without rebuilding the page (xterm keeps its focus and selection)
 function markFocus() { syncHash(); const tab = curTab(), t = termOf(focusPane(tab)), sec = document.querySelector("[data-term-detail]"); if (!tab || !t || !sec) return;
@@ -332,7 +387,12 @@ function paneBar(t, pn) {
 function drawNode(n, tab) {
   if (n.t === "pane") { const t = termOf(n); if (!t) return h("div", { class: "wt-pane" });
     return h("div", { class: `wt-pane${n.id === tab.focus ? " focus" : ""}`, "data-pane": n.id, "data-term-pane": t.id,
-      onmousedown: () => { if (tab.focus !== n.id) { tab.focus = n.id; saveLay(); markFocus(); } } }, paneBar(t, n), pane(t).host); }
+      onmousedown: () => { if (tab.focus !== n.id) { tab.focus = n.id; saveLay(); markFocus(); } },
+      // a click on the pane around the terminal (its bar, the frame) gives the keys back to the terminal: left to the
+      // browser the focus stayed on the page, and Tab then moved it to the next button instead of completing in the shell.
+      // The first button only, and not after a drag that selected text (the bar's label can be selected and copied)
+      onclick: (e) => { if (e.button !== 0 || e.target.closest?.(".xterm, button, a, input, select, textarea")) return;
+        if (String(window.getSelection?.() ?? "")) return; focusTerm(); } }, paneBar(t, n), pane(t).host); }
   const wrap = h("div", { class: `wt-split ${n.dir}` });
   const a = h("div", { class: "wt-slot", style: `flex:${n.ratio} 1 0` }, drawNode(n.a, tab)), b = h("div", { class: "wt-slot", style: `flex:${1 - n.ratio} 1 0` }, drawNode(n.b, tab));
   const d = h("div", { class: "wt-div", role: "separator", "aria-orientation": n.dir === "row" ? "vertical" : "horizontal", "data-split": n.id });
@@ -401,8 +461,9 @@ function focusView(arg) {
   if (!TM.err) reconcile(); // a list that did not load says nothing about which terminals are gone: the saved tabs stay
   if (arg && !TM.list.some((t) => t.id === arg)) return null; // a link to a terminal that is gone says so
   if (arg !== TM.lastArg) { TM.lastArg = arg; if (arg && TM.list.some((t) => t.id === arg)) reveal(arg); }
-  // a first visit opens the terminal the list would pick; once the captain closes every tab, the launcher stays
-  if (!TM.lay.tabs.length && !TM.autoOpened && !arg) { const s = selected(null); if (s) reveal(s.id); }
+  // a first visit (this browser has no tabs saved: another profile, a cleared one) opens a tab for every running terminal,
+  // else the one the list would pick; once the captain closes every tab, the launcher stays
+  if (!TM.lay.tabs.length && !TM.autoOpened && !arg) { const run = TM.list.filter((t) => t.running); if (run.length) run.forEach((t) => openTab(t.id)); else { const s = selected(null); if (s) reveal(s.id); } }
   TM.autoOpened = true;
   const tab = curTab(), t = termOf(focusPane(tab)); if (!tab || !t) return null;
   if (arg && arg !== t.id) queueMicrotask(syncHash); else if (!arg) queueMicrotask(syncHash);
@@ -459,7 +520,19 @@ function patchPage() {
   const tab = curTab(), t = termOf(focusPane(tab));
   const list = document.querySelector(".wt-list"); if (list) list.replaceChildren(...listRows(t || selected(cur())));
   const sec = document.querySelector("[data-term-detail]"), stage = sec?.querySelector(":scope > .wt-stage");
-  // a pane whose terminal went, or a focus the page does not show: the page is drawn again
+  // a pane whose terminal went (a shell that exited leaves the list) or left the tabs (a restart ended it): drawn again
+  // now, unless the captain is typing in a field (another terminal, the go-to picker, a tab's name, the command field:
+  // the app's own deferral, soft(), waits for its blur); the gone terminal's own input is no field to keep
+  const inTabs = new Set(TM.lay.tabs.flatMap((x) => panesOf(x.root).map((pn) => pn.term)));
+  if (sec && (!tab || panesOf(tab.root).some((pn) => !termOf(pn)) || [...sec.querySelectorAll(".wt-pane[data-term-pane]")].some((e) => !inTabs.has(e.dataset.termPane)))) {
+    const a = document.activeElement, own = a && [...TM.panes.entries()].some(([id, pn]) => pn.host.contains(a) && (!inTabs.has(id) || !TM.list.some((x) => x.id === id)));
+    const editing = a && !own && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
+    if (!editing) { redo(); return; }
+    // soft() waits for an input, a textarea or a select; a contenteditable (none on this page today) waits here
+    if (a.isContentEditable && !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) { a.addEventListener("blur", () => redraw(), { once: true }); return; }
+    return soft();
+  }
+  // a focus the page does not show: the page is drawn again
   if (!sec || !stage || !t || sec.dataset.termDetail !== t.id || panesOf(tab.root).some((pn) => !termOf(pn))) return soft();
   const tabs = document.querySelector(".wt-tabs"); if (tabs) tabs.replaceChildren(...tabEls());
   for (const k of [...sec.children]) if (k !== stage) k.remove();
