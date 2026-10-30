@@ -23,7 +23,7 @@ const onScreen = (id) => cur() === id || panesOf(curTab()?.root).some((p) => p.t
 
 // ---------- data ----------
 async function load() {
-  try { const j = await getJ("/api/terminals"); TM.err = null; TM.canWrite = !!j.canWrite; TM.presets = j.presets || []; TM.projects = j.projects || []; apply(j.terminals || []); }
+  try { const j = await getJ("/api/terminals"); TM.err = null; TM.canWrite = !!j.canWrite; TM.presets = j.presets || []; TM.projects = j.projects || []; apply(j.terminals || []); restarted(j.boot); }
   catch (e) { TM.err = String(e.message || e); if (TM.list === null) TM.list = []; }
   if (!TM.project || !TM.projects.some((p) => p.id === TM.project)) TM.project = TM.projects[0]?.id || "";
   redraw();
@@ -40,6 +40,16 @@ function apply(list) {
     TM.prev.set(t.id, t.state);
   }
   TM.list = list;
+}
+// Studio restarted since this browser last saw it (a PTY cannot outlive Studio): the tabs' terminals that are not running
+// leave the tabs, and the page says so once, rather than drawing a dead tab; a reload of the same run says nothing
+function restarted(boot) {
+  if (!boot) return; const was = store.get("crew.term.boot", null); store.set("crew.term.boot", boot);
+  if (!was || was === boot) return;
+  const live = new Set(TM.list.filter((t) => t.running).map((t) => t.id)); let n = 0;
+  for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (!live.has(pn.term)) { n++; detachPane(tab, pn); }
+  if (n) TM.autoOpened = true; // the tabs were the captain's: none is opened in their place
+  if (n) toast(T(`${n === 1 ? "A terminal session" : `${n} terminal sessions`} ended when Studio restarted`, `${n} 個工作階段在 Studio 重啟時結束`));
 }
 let redrawT = null;
 function redraw() {
@@ -427,8 +437,9 @@ function focusView(arg) {
   if (!TM.err) reconcile(); // a list that did not load says nothing about which terminals are gone: the saved tabs stay
   if (arg && !TM.list.some((t) => t.id === arg)) return null; // a link to a terminal that is gone says so
   if (arg !== TM.lastArg) { TM.lastArg = arg; if (arg && TM.list.some((t) => t.id === arg)) reveal(arg); }
-  // a first visit opens the terminal the list would pick; once the captain closes every tab, the launcher stays
-  if (!TM.lay.tabs.length && !TM.autoOpened && !arg) { const s = selected(null); if (s) reveal(s.id); }
+  // a first visit (this browser has no tabs saved: another profile, a cleared one) opens a tab for every running terminal,
+  // else the one the list would pick; once the captain closes every tab, the launcher stays
+  if (!TM.lay.tabs.length && !TM.autoOpened && !arg) { const run = TM.list.filter((t) => t.running); if (run.length) run.forEach((t) => openTab(t.id)); else { const s = selected(null); if (s) reveal(s.id); } }
   TM.autoOpened = true;
   const tab = curTab(), t = termOf(focusPane(tab)); if (!tab || !t) return null;
   if (arg && arg !== t.id) queueMicrotask(syncHash); else if (!arg) queueMicrotask(syncHash);

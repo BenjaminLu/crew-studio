@@ -200,6 +200,8 @@ export class Terminals {
   readonly keepTranscripts: boolean; readonly maxSubs = 4;
   /** when the page last asked for a Studio window (POST /api/terminals/app-window), for its rate limit */
   appWindowAt = 0; appWindowBusy = false;
+  /** This run of Studio: the page compares it with the one it saw last, to say once that a restart ended its terminals */
+  readonly boot = randomBytes(6).toString("hex");
   readonly dir: string; readonly cap: number; readonly max: number; readonly tMax: number; readonly idleMs: number;
   constructor(readonly o: TerminalsOpts) {
     this.dir = join(o.dataDir, "terminals"); mkdirSync(this.dir, { recursive: true, mode: 0o700 }); try { chmodSync(this.dir, 0o700); } catch {}
@@ -548,7 +550,7 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
       if (!cookie || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin") return json({ error: "terminals take input only from Studio's own page on this Mac (its session cookie, same origin); a script's x-crew-session is not enough", code: "pageOnly" }, 403);
     }
     if (p === "/api/terminals" && !writing) {
-      return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs,
+      return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs, boot: svc.boot,
         ...(desktop ? { presets: svc.presets().map(({ id, label, kind, remoteControl, path }) => ({ id, label, kind, remoteControl: !!remoteControl, path })), projects: svc.projects() } : {}) });
     }
     if (p === "/api/terminals" && writing) { const b = await req.json().catch(() => null); return json({ terminal: await svc.create(b ?? {}, "desktop") }); }

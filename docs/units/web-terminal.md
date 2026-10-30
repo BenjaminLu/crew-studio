@@ -8,7 +8,7 @@ Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state he
 `public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 5.5.0 and its fit addon 0.10.0,
 pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
 `tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs`, `tests/terminal-keys.ts`, `tests/terminal-launch.ts`,
-`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs`, `tests/terminal-theme.ts` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`. Colours: `public/term-theme.js`.
+`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs`, `tests/terminal-theme.ts`, `tests/terminal-reattach-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`. Colours: `public/term-theme.js`.
 
 ## Focus mode
 
@@ -180,6 +180,14 @@ window does) and SIGKILL two seconds later.
 - Scrollback: a byte ring per terminal (`CREW_TERMINAL_SCROLLBACK`, default 2 MiB); a replay says how much was dropped.
 - At most `CREW_TERMINAL_MAX` running (default 8), and at most 4 open views (streams) of one terminal. Ended terminals stay
   listed (with their replay) until removed; at most 20.
+- Closing the page (the app window, a browser tab, a reload) never stops a terminal: it runs on inside Studio. A page
+  opened again gets its tabs back (this browser's saved layout; with none saved, another profile or cleared site data, a
+  tab for every running terminal), the scrollback replayed from the ring, and its keys reach the same process
+  (`tests/terminal-reattach-ui.mjs`: a marker replayed, the same `$$`). Reattaching is the same stream and input as
+  opening, under the same guards (the desktop page's cookie to type; a phone watches only). A Studio restart cannot keep a
+  PTY: the next page drops the tabs whose terminals no longer run, opens none in their place, and says once "Terminal
+  sessions ended when Studio restarted" (工作階段在 Studio 重啟時結束), from the run's `boot` in `GET /api/terminals`
+  against the one this browser saw last; a reload in the same run says nothing.
 - Studio stopping kills every terminal's process group (SIGHUP then SIGKILL; `tests/terminals.ts` checks a grandchild goes
   too). Nothing is re-attached on restart: no process, no input, no Restart in place. A terminal still running when Studio
   stops gets its end and where its checkout stood (its git end) in its record, marked `studio-stopped`; a record left open
