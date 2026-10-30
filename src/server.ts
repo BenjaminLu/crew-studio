@@ -324,7 +324,7 @@ const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.leg
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 // the local voice's rows: checked asynchronously (hashing a model never stalls Studio), the last answer shown
 let voiceDoctorNow: Awaited<ReturnType<typeof voiceDoctorInput>> | null = null;
-const refreshVoiceDoctor = () => Promise.race([voiceDoctorInput(macVoices()).then((v) => { voiceDoctorNow = v; }), new Promise((r) => setTimeout(r, 10_000))]).catch(() => {});
+const refreshVoiceDoctor = () => Promise.race([macVoices().then((mac) => voiceDoctorInput(mac)).then((v) => { voiceDoctorNow = v; }), new Promise((r) => setTimeout(r, 10_000))]).catch(() => {});
 installs.onFinished = () => { refreshTs(); void refreshVoiceDoctor().then(() => send("doctor", doctor())); };
 
 // --- chat tools: callable only with a token issued for one question ---
