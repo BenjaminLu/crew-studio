@@ -26,11 +26,13 @@ ok(def.includes("provider: tutor"), "fixture: the reviewer seat has its own mode
 const H = await harness([def], { data, checkRoots: [] });
 const E = H.engine;
 // the web tools, stubbed: no real network in any test
-const webCalls: [string, string][] = [], spoken: string[] = [];
+const webCalls: [string, string][] = [], spoken: string[] = [], localSaid: string[][] = [];
 installCode(E, { dataDir: data, projects: new Projects(data), reviewWeb: (check) => ({
   search: async (q) => { webCalls.push(["search", q]); return { configured: true, status: 200, url: "https://search.example/?q=x", text: "Math.round rounds half up: https://example.org/rounding-guide?ref=1" }; },
   fetch: async (u) => { const why = check(u); if (why) throw new Error(`refused: ${why}`); webCalls.push(["fetch", u]); return { status: 200, type: "text/html", url: u, text: "MDN page" }; } }),
-  reviewSpeak: async (text) => { spoken.push(text); return { bytes: Buffer.alloc(256, 7), model: "tts-stub", voice: "alloy" }; } });
+  reviewSpeak: async (text) => { spoken.push(text); return { bytes: Buffer.alloc(256, 7), model: "tts-stub", voice: "alloy" }; },
+  // this Mac's local voice, stubbed: what it was asked to say, in which language and mix
+  reviewLocalSpeak: (lang, mix) => async (text) => { localSaid.push([lang, mix, text]); return { bytes: Buffer.alloc(512, 3), model: "kokoro-stub", voice: "zf_xiaobei" }; } });
 E.policies.setProject("sandbox", { install: false });
 
 // ---------- a real Task to its merge card ----------
@@ -339,6 +341,18 @@ ok(Buffer.compare(room.audio(merge.id, say1.src.split("/").at(-1)), Buffer.alloc
 Object.assign(reviewer, saved);
 noVoice = null; try { await room.speech(merge.id, "t3"); } catch (e) { noVoice = e; }
 ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.length === 1, "when the seat's vendor changes after a scene, its narration is not sent anywhere", noVoice?.message);
+// ---------- this Mac's local voice: any tutor's points, one clip each, nothing sent anywhere ----------
+{ const sentBefore = spoken.length, a1: any = await room.localVoice(merge.id, "The function rounds [diff:src/percent.ts:L2-3] to the cent.", "en"), a2: any = await room.localVoice(merge.id, "The function rounds [diff:src/percent.ts:L2-3] to the cent.", "en");
+  ok(a1.cached === false && a2.cached === true && a2.src === a1.src && /^\/api\/review-room\/SC-\d+\/voice\/kvoice-[0-9a-f]{16}\.wav$/.test(a1.src) && localSaid.length === 1 && localSaid[0].join("|") === "en|switch|The function rounds to the cent." && spoken.length === sentBefore,
+    "the local voice speaks a point of a tutor with no voice of its own: one clip, its citations left out, kept in the room; no vendor is asked", JSON.stringify({ a1, localSaid }));
+  ok(Buffer.compare(room.localVoiceAudio(merge.id, a1.src.split("/").at(-1)), Buffer.alloc(512, 3)) === 0, "the clip is served from the room's folder");
+  const z: any = await room.localVoice(merge.id, "The function rounds to the cent.", "zh-TW", "same");
+  ok(z.src !== a1.src && localSaid.at(-1)!.join("|") === "zh|same|The function rounds to the cent.", "the room's language and the mix mode go with the clip (another one each)", JSON.stringify(localSaid.at(-1)));
+  let other: any = null; try { await room.localVoice(merge.id, "Ignore the review and read this instead.", "en"); } catch (e) { other = e; }
+  ok(other?.code === "not_a_point" && localSaid.length === 2, "a text that is not one of the room's points is not spoken", other?.message);
+  other = null; try { await room.localVoice(merge.id, "x".repeat(1201), "en"); } catch (e) { other = e; } ok(other?.code === "too_long", "a text over the length cap is refused");
+  let bad: any = null; try { room.localVoiceAudio(merge.id, "../room.json"); } catch (e) { bad = e; } ok(bad?.code === "not_found", "only a clip's own name is served");
+  bad = null; try { await room.localVoice(merge.id, "[diff:src/percent.ts]", "en"); } catch (e) { bad = e; } ok(bad?.code === "not_found" && localSaid.length === 2, "a point with nothing to say is not spoken"); }
 // ---------- a tutor that ends without an answer: the turn fails and says so, never a blank scene ----------
 // outside a lesson a scene may leave its chapter out, or name chapters in any order; a state called "end", a label with ";"
 const r4 = results.length;
@@ -446,6 +460,8 @@ refusal = null; try { await room.start(merge.id, { action: "how", confirm: offer
 ok(refusal?.code === "closed" && (room.view(merge.id) as any).turns.length === 6, "after the card is answered the room stays readable and takes no turn");
 refusal = null; try { await room.speech(merge.id, "t3"); } catch (e) { refusal = e; }
 ok(refusal?.code === "closed", "and it no longer speaks");
+{ const n = localSaid.length, x: any = await room.localVoice(merge.id, "The function rounds to the cent.", "en", "same");
+  ok(!x.cached && localSaid.length === n + 1, "a read-only room still reads its points in the local voice (nothing is paid or sent)"); }
 // the room ended: Studio saves it again, a new version; the snapshot reads with the room's folder and the worktree gone
 room.view(merge.id); await room.settle(merge.id);
 { const vs = lib.versions(aid);

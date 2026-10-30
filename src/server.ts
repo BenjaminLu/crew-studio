@@ -66,6 +66,9 @@ import { LiveRunner, StubRunner, readStatus, serveCommand, serveOffCommand, type
 import { MemoryStore } from "./memory";
 import { createM3 } from "./m3";
 import { renderEnv, TOOLS_DIR } from "./render";
+import { kokoroSpeaker, localSynth, stopLocal, voiceDoctorInput, voiceStatus } from "./voice/kokoro";
+import { ensureScripts } from "./voice/runtime";
+import { macVoices } from "./voice/mac";
 import { dirname } from "node:path";
 import { Agents } from "./agent";
 import { RawLog, StudioLog } from "./rawlog";
@@ -230,7 +233,7 @@ main.onEvent = (e: HostEvent) => {
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>{const v=main.view();return v.state!=="detached"&&v.host!=="claude"&&v.host!=="cursor";},configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 // Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{try{terminals.shutdown();}catch{}void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{try{terminals.shutdown();}catch{}try{stopLocal();}catch{}void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
 // a fresh Claude primary: the model the Claude account card checks, Studio's own config folder, the crew token
 const claudePrimaryPair = () => { const model = chatSettings().models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5"; let effort: string | null = null; try { effort = configuredClaudeEffort(model); } catch {} return { model, effort }; };
 // a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone
@@ -317,9 +320,12 @@ setInterval(() => { try { cursorAccount(true); } catch {} }, 60_000).unref();
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
 const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), voice: voiceDoctorNow ?? undefined, roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
-installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
+// the local voice's rows: checked asynchronously (hashing a model never stalls Studio), the last answer shown
+let voiceDoctorNow: Awaited<ReturnType<typeof voiceDoctorInput>> | null = null;
+const refreshVoiceDoctor = () => Promise.race([macVoices().then((mac) => voiceDoctorInput(mac)).then((v) => { voiceDoctorNow = v; }), new Promise((r) => setTimeout(r, 10_000))]).catch(() => {});
+installs.onFinished = () => { refreshTs(); void refreshVoiceDoctor().then(() => send("doctor", doctor())); };
 
 // --- chat tools: callable only with a token issued for one question ---
 const ctx: ToolCtx = { fm, gh, store, tasks, pending: () => pending, crew: () => crewCache,
@@ -391,7 +397,7 @@ const terminals = new Terminals({ dataDir: DATA,
   secrets: () => { let lk: string | null = null; try { lk = readFileSync(join(DATA, "ledger.key"), "utf8"); } catch {} return [SESSION, lk]; },
   log: (type, summary, data) => { try { studioLog.emit({ type, workflow: "terminal", summary, data }); } catch {} },
   changed: (list) => send("terminals", { terminals: list }) });
-process.on("exit", () => { try { terminals.shutdown(); } catch {} });
+process.on("exit", () => { try { terminals.shutdown(); } catch {} try { stopLocal(); } catch {} });
 { const prev = remote.onRevoke; remote.onRevoke = (id) => { prev(id); terminals.cutDevice(id); }; }
 const flows = new Workflows(dirname(STATE));
 // A clean CLI home may omit model settings. Only a verified official catalog can supply them.
@@ -710,8 +716,19 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // --- Doctor ---
     // which process answers (tests check they reach the server they started)
     if (p === "/api/instance" && !writing) return json(launchAuthority.respond(url.searchParams.get("challenge")));
-    if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock", execution: executionMode(),
-      jobs: [...installs.jobs.values()].slice(-5) });
+    if (p === "/api/doctor") { await refreshVoiceDoctor(); return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock", execution: executionMode(),
+      jobs: [...installs.jobs.values()].slice(-5) }); }
+    // the review room's local voice: whether it can speak (the room's picker), and Doctor's test phrase (desktop only)
+    // the picker asks it; a phone gets only whether this Mac's voice is ready (the voice speaks on the Mac only), never a path
+    if (p === "/api/voice/status" && !writing) { const v = await voiceStatus(url.searchParams.get("fresh") === "1"); return json(who.kind === "desktop" ? v : { ready: false, engine: v.engine, desktopOnly: true }); }
+    if (p === "/api/voice/test" && writing) {
+      if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      let b: any = {}; try { b = await req.json(); } catch {}
+      const zh = /^zh/.test(String(b?.lang ?? "")), text = zh ? "這是審查室的本機神經語音：這個 PR 在 GitHub 上的 diff，會用英文聲音唸英文詞。" : "This is the review room's local neural voice. Nothing you hear left this Mac.";
+      try { const out = await kokoroSpeaker(await localSynth(), { lang: zh ? "zh" : "en", mode: "switch" })(text, req.signal);
+        return new Response(out.bytes, { headers: { "content-type": "audio/wav", "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
+      catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? "no_voice" }, 409); }
+    }
     if (p === "/api/doctor/methods") { const item = url.searchParams.get("item") ?? ""; return json({ item, methods: methodsFor(item), login: LOGINS[item] ?? null }); }
     if (p.startsWith("/api/doctor/job/")) { const j = installs.jobs.get(p.slice("/api/doctor/job/".length)); return j ? json(j) : json({ error: "no such job" }, 404); }
     if (p === "/api/doctor/install" && writing) {
@@ -721,6 +738,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (m.kind === "open") return json({ open: m.url });
       if (!m.usable) return json({ error: `this method needs ${m.needs.join(", ")}` }, 409);
       if (b?.confirm !== true) return json({ error: "confirm first", command: m.argv.join(" "), source: m.source, location: m.location }, 400);
+      // the local voice's download runs Studio's own script: it is put in place now, on the captain's click, never on a view
+      if (String(b.item).startsWith("voice-")) ensureScripts();
       try { return json(installs.start(String(b.item), m)); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
     }
     if(p==="/api/codex/account"&&!writing)return json(codexAccount.view());

@@ -128,6 +128,10 @@ if (ownRuntime) {
   env.CREW_RUNTIME_DIR = ownRuntime;
   process.on("exit", () => rmSync(ownRuntime, { recursive: true, force: true }));
 }
+// the review room's local voice (src/voice): no test reads this Mac's real model files or writes its tools folder;
+// a test that needs a voice folder sets these itself
+for (const [k, v] of [["CREW_VOICE_TOOLS", "voice-tools"], ["CREW_VOICE_MODELS", "voice-models"], ["CREW_VOICE_WARDROBE", null]])
+  if (env[k] === undefined) env[k] = v ? join(env.CREW_RUNTIME_DIR || tmpdir(), v) : "none";
 
 // 6. the real-CLI sentinel: installed once, by the outermost entry; nested entries share it (and its record)
 const SENTINEL = "CREW_TEST_CLI_SENTINEL";

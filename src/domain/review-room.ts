@@ -47,6 +47,9 @@ import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { parseLocator, type Finding, type Locator } from "../runtime/locator";
+import { clipStore, kokoroSpeaker, localSynth, MAX_POINT, readClip, roomClip } from "../voice/kokoro";
+import { isRoomPoint } from "../voice/points";
+import { langOf, type Mix } from "../voice/runs";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -416,6 +419,8 @@ const login = (u: any) => { const l = String(u?.login ?? ""); return /^[A-Za-z0-
 const ghUrl = (u: unknown, repository: string) => { const t = String(u ?? ""); return t.toLowerCase().startsWith(`https://github.com/${repository.toLowerCase()}/`) && !/[\s"<>]/.test(t) ? t.slice(0, 300) : null; };
 
 export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: WebBackend | ((check: (url: string) => string | null) => WebBackend); illustrate?: Illustrator; speak?: Speaker;
+  /** this Mac's local voice for a room language and mix mode (production: Kokoro through src/voice; tests stub it) */
+  localSpeak?: (lang: "zh" | "en", mix: Mix) => Speaker;
   /** the registered projects (a pull request is read only for a project connected to GitHub with that repository) */
   projects?: Projects;
   /** the GitHub adapter of a connected project (production: its grant's adapter, verified; tests: the simulator's) */
@@ -423,6 +428,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** the Library (src/artifacts.ts): where a room's read-only snapshot is kept; production passes Studio's own store */
   artifacts?: ArtifactStore }) {
   const live = new Map<string, number>(), speaking = new Map<string, Promise<any>>();
+  /** where rooms keep their folders: Studio's data folder and the Tasks' folders (the local voice deletes clips only there) */
+  const clipRoots = () => [o.dataDir, dirname(engine.rdir("R-0"))];
   // the seat staffing admits: the reviewer's approved member, with exactly these pinned texts as its instructions
   engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256), adaptive: true } };
   /** The tutor's seat: the reviewer's member (its own read-only role and skill), on a different model from the maker. */
@@ -1635,6 +1642,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const at = new Date().toISOString(), arch = join(dirname(k.file), ".archive", `${k.id}-${at.replace(/[:.]/g, "-")}`), moved: string[] = [];
       mkdirSync(arch, { recursive: true });
       if (existsSync(k.file)) { renameSync(k.file, join(arch, "room.json")); moved.push("room"); }
+      clipStore(o.dataDir, clipRoots()).dropDir(k.dir); // the local voice's clips are deleted, never archived
       if (existsSync(k.dir)) { renameSync(k.dir, join(arch, "images")); moved.push("images"); }
       if (room) startedOver.add(room); cache.delete(k.file); resetGen.set(k.id, (resetGen.get(k.id) ?? 0) + 1); statMemo.clear(); saving.delete(k.id); refreshing.delete(k.id);
       // a pull request's room is its file: a fresh one now, from the pull request as Studio last read it (its link to the Library kept)
@@ -1753,6 +1761,20 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     },
     /** a narration file, from the room's own folder */
     audio(id: string, name: string) { const k = keyOf(id); if (!/^voice-t\d+-[0-9a-f]{12}\.mp3$/.test(name)) throw refuse("No such audio", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such audio", "not_found"); return readFileSync(f); },
+    /** One point in this Mac's local neural voice (src/voice): free and on-device, so any tutor's room may use it, read-only
+     *  rooms too. The page sends the point as it shows it; only the room's own words are spoken (src/voice/points.ts);
+     *  the clip is made once and kept in the room's folder, within the clips' bounds. */
+    async localVoice(id: string, text: unknown, lang?: unknown, mix?: unknown, signal?: AbortSignal) {
+      const k = keyOf(id), raw = String(text ?? "");
+      if (raw.length > MAX_POINT) throw refuse(`A point to speak is at most ${MAX_POINT} characters`, "too_long");
+      const t = narration(raw); if (!t) throw refuse("Nothing to say", "not_found");
+      if (!isRoomPoint(load(k), t, narration)) throw refuse("That is not a point of this room", "not_a_point");
+      const mode = mix === "same" ? "same" : "switch", l = langOf(lang), born = resetGen.get(k.id) ?? 0;
+      const out = await roomClip(k.dir, t, { lang: l, mode, store: clipStore(o.dataDir, clipRoots()), signal, alive: () => (resetGen.get(k.id) ?? 0) === born,
+        speaker: async (s, sig) => (o.localSpeak ? o.localSpeak(l, mode) : kokoroSpeaker(await localSynth(), { lang: l, mode }))(s, sig) });
+      return { src: `/api/review-room/${k.id}/voice/${out.name}`, cached: out.cached, engine: "kokoro" };
+    },
+    localVoiceAudio(id: string, name: string) { const k = keyOf(id), b = readClip(k.dir, name, clipStore(o.dataDir, clipRoots())); if (!b) throw refuse("No such audio", "not_found"); return b; },
     /** tests: wait for a room's running turn and its background pictures */
     async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size || saving.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
   });
