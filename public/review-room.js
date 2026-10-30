@@ -525,6 +525,8 @@ const stateCls = (it, x, i) => { const outs = (it.transitions || []).filter((t) 
 /** a lifecycle's graph from its data: every state, every transition numbered (the number is the transition's chip) */
 const statesGraph = (it) => ({ nodes: (it.states || []).map((x, i) => ({ id: x.id, label: x.label || x.id, shape: "pill", cls: stateCls(it, x, i) })),
   edges: (it.transitions || []).map((t, i) => ({ from: t.from, to: t.to, label: `${NUMS[i] || i + 1} ${t.label || ""}`.trim(), n: i, cls: t.tx?.tables?.length ? "tx" : "" })) });
+/** on the lesson board a click on a drawing asks there (its popover's "Show the code" opens what it cites) */
+const onBoard = () => !!document.querySelector("[data-board-vp]");
 /** an SVG label made a control: Enter and Space as a click */
 const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
 /** a lifecycle: the state machine drawn from the tutor's states and transitions (every transition kept), each transition's
@@ -534,7 +536,7 @@ function statesView(card, it, onPick) {
   const g = statesGraph(it), wrap = h("div", { class: "rr-flow-wrap rr-states", "data-states": it.id }, curveSvg(g.nodes, g.edges, statePlace(g.nodes, g.edges, 15)));
   (it.transitions || []).forEach((t, i) => { const el = wrap.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el || (!onPick && !t.cite?.ok)) return;
     if (t.cite?.ok) { el.classList.add("rr-cite-label"); el.setAttribute("data-transition-cite", t.cite.ref); }
-    el.setAttribute("data-transition-pick", String(i)); asControl(el, () => (onPick ? onPick(i, t) : openCite(card, t.cite.ref))); });
+    el.setAttribute("data-transition-pick", String(i)); asControl(el, () => (onPick ? onPick(i, t) : !onBoard() && openCite(card, t.cite.ref))); });
   // a state picked: the transaction that brings the entity into it
   if (onPick) for (const nodeEl of wrap.querySelectorAll("[data-node]")) { const id = nodeEl.getAttribute("data-node"), k = (it.transitions || []).findIndex((t) => t.to === id && t.from !== id);
     if (k >= 0) { nodeEl.setAttribute("data-state-pick", id); asControl(nodeEl, () => onPick(k, it.transitions[k], true)); } }
@@ -558,7 +560,7 @@ function transitionRows(card, it, sel, pick, lab) {
 /** the lifecycle in the report: the map, and every transition as a numbered row (what it writes, the code it rests on) */
 function statemapView(card, it) {
   const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, lab = new Map((it.states || []).map((x) => [x.id, x.label || x.id]));
-  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t.cite?.ok && !quiet) openCite(card, t.cite.ref); else rerender(); };
+  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t.cite?.ok && !quiet && !onBoard()) openCite(card, t.cite.ref); else rerender(); };
   const map = statesView(card, it, pick); map.querySelector(`[data-elabel][data-edge-n="${sel}"]`)?.classList.add("on");
   return h("div", { class: "rp-smap", "data-statemap": it.id }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, map,
     h("div", { class: "rp-legend" }, [...((it.states || []).some((x) => x.mark) ? [["accent", T("this change", "這個改動")]] : []), ["start", T("where it starts", "起點")], ["ok", T("ends well", "正常結束")], ["seal", T("ends badly, cannot be undone", "失敗結束，無法回頭")], ["back", T("a way back", "回頭的轉換")]].map(([c, l]) => h("span", {}, h("i", { class: `sw ${c}` }), l)), h("span", { class: "rp-hint" }, T("Pick a numbered chip or a state: its transaction shows below.", "點編號或狀態：下方顯示它的交易。"))),
@@ -581,7 +583,7 @@ function archView(card, it) {
   for (const n of it.nodes || []) { const el = svg.querySelector(`[data-node="${CSS.escape(n.id)}"]`); if (!el) continue; el.classList.add(`rr-k-${n.kind}`);
     if (n.mark) { el.classList.add(`rr-m-${n.mark}`); el.setAttribute("data-mark", n.mark); const [x, y, w] = (el.getAttribute("data-box") || "0,0,0").split(",").map(Number);
       const tg = sv("text", { x: x + w - 8, y: y + 14, "text-anchor": "end", class: "rr-mark-t" }); tg.textContent = T(...MARK[n.mark]); el.append(tg); } }
-  (it.edges || []).forEach((e, i) => { if (!e.cite?.ok) return; const el = svg.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el) return; el.classList.add("rr-cite-label"); el.setAttribute("data-edge-cite", e.cite.ref); asControl(el, () => openCite(card, e.cite.ref)); });
+  (it.edges || []).forEach((e, i) => { if (!e.cite?.ok) return; const el = svg.querySelector(`[data-elabel][data-edge-n="${i}"]`); if (!el) return; el.classList.add("rr-cite-label"); el.setAttribute("data-edge-cite", e.cite.ref); asControl(el, () => { if (!onBoard()) openCite(card, e.cite.ref); }); });
   const marks = [...new Set((it.nodes || []).map((n) => n.mark).filter(Boolean))];
   return h("div", { class: "rr-flow-wrap rr-arch", "data-arch": it.id }, svg,
     h("div", { class: "rp-legend" }, marks.map((m) => h("span", {}, h("i", { class: `sw ${ARCH_CLS[m]}` }), T(...MARK[m]))), (it.nodes || []).some((n) => n.kind === "external") ? h("span", {}, h("i", { class: "sw ctx" }), T("outside this change", "這個改動之外")) : null,
@@ -616,9 +618,9 @@ function svgFigureView(card, it) {
   const r = RR.rooms.get(card), lang = r ? roomLang(r) : uiLang(), svg = figTree(it.tree, lang, `f${it.id}`);
   if (svg) { svg.classList.add("rr-figsvg-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number); if (vb[2]) svg.style.maxWidth = `${Math.round(vb[2] * 1.2)}px`; }
   const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, tr = it.transitions || [];
-  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t?.cite?.ok && !quiet) openCite(card, t.cite.ref); else rerender(); };
+  const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t?.cite?.ok && !quiet && !onBoard()) openCite(card, t.cite.ref); else rerender(); };
   if (svg) { for (const el of svg.querySelectorAll("[data-edge]")) { const e = el.getAttribute("data-edge"), k = tr.findIndex((t) => t.edge === e), cite = el.getAttribute("data-cite");
-      if (k >= 0) { el.classList.add("rr-pickable"); if (k === sel) el.classList.add("on"); asControl(el, () => pick(k, tr[k])); } else if (cite) { el.classList.add("rr-pickable"); asControl(el, () => openCite(card, cite)); } }
+      if (k >= 0) { el.classList.add("rr-pickable"); if (k === sel) el.classList.add("on"); asControl(el, () => pick(k, tr[k])); } else if (cite) { el.classList.add("rr-pickable"); asControl(el, () => { if (!onBoard()) openCite(card, cite); }); } }
     for (const el of svg.querySelectorAll("[data-node]")) { const id = el.getAttribute("data-node"), k = tr.findIndex((t) => t.to === id && t.from !== id); if (k >= 0) { el.classList.add("rr-pickable"); asControl(el, () => pick(k, tr[k], true)); } } }
   const lab = new Map(); return h("div", { class: `rr-figsvg rr-figsvg-${it.kind}`, "data-svg-figure": it.id, "data-figure-kind": it.kind }, it.entity ? h("p", { class: "rp-entity" }, T("Entity", "實體"), ": ", h("code", {}, it.entity)) : null, svg,
     tr.length ? transitionRows(card, { ...it, transitions: tr }, sel, pick, lab) : null);
@@ -828,7 +830,8 @@ function scenesOf(r) {
   for (const t of r.turns) if (!t.studio) { const k = rootOf(t); if (!versions.has(k)) versions.set(k, []); versions.get(k).push(t); }
   const shownOf = (root) => { const vs = versions.get(root) || [], pick = RR.ver.get(`${r.card.id}/${root}`); return vs.find((t) => t.n === pick) || vs.at(-1); };
   for (const t0 of r.turns) {
-    if (t0.hidden) continue;
+    // a question asked on the lesson board is answered in its card there, never a scene of the stage
+    if (t0.hidden || t0.thread) continue;
     if (!t0.studio && shownOf(rootOf(t0)) !== t0) continue;
     const t = { ...localTurn(r, t0, lang), versions: t0.studio ? null : versions.get(rootOf(t0)) };
     const asked = r.check.questions.filter((q) => q.turn === t.n), questions = asked.filter((q) => !q.options), quiz = asked.filter((q) => q.options), turnBoard = r.board.filter((b) => b.turn === t.n);
@@ -1007,15 +1010,12 @@ function regenList(r, t) {
 }
 /** The stage: the board (the scene's title, its picture on the left, at most four of its points on the right), the caption
  *  and the play bar. One viewport tall with the header and the dock: nothing in it grows the page. */
-// ---------- the lesson report (baton's packet, workflows/skills/baton): a teach answer read top to bottom ----------
+// ---------- a finished lesson is the lesson board (public/review-board.js): its chapters are regions of a canvas ----------
 const POINTS_TONE = { watch: ["risk", ["risk", "風險"]], reviewers: ["warn", ["reviewer", "審查"]], roads: ["ok", ["not taken", "沒走"]], questions: ["", ["open", "待解"]] };
-/** one point as text: its basis badge, its words with their citations (text nodes only) */
-const pointText = (card, c) => [c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null,
-  h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites))];
 /** a figure in the report: the drawing Studio lays out from the tutor's data, its title and what it rests on */
-function reportFigure(card, r, it) {
-  // a report figure reads at its drawn size, left to right where it fits: the content column, not the board's box
-  BOX = innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 };
+function reportFigure(card, r, it, box) {
+  // a lesson's figure reads at its drawn size, left to right where it fits: its region's column, not the stage's box
+  BOX = box || (innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 });
   const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionView(card, v) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
     : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : v.type === "svg" ? svgFigureView(card, v) : v.type === "calls" ? callsView(card, v) : itemView(card, v, null); } finally { BOX = null; }
   // never blown up: at most a little over the size it was laid out at
@@ -1023,46 +1023,12 @@ function reportFigure(card, r, it) {
   return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
     h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)));
 }
-/** one section: its number, its chapter, its title, then its points (text chapters) or its points and its drawing */
-function reportSection(card, r, x, j, nth) {
-  const ch = x.chapter, tone = POINTS_TONE[ch], pic = x.pic && !x.skip ? x.pic : null;
-  const head = h("div", { class: "rp-head" }, h("span", { class: "rp-num" }, String(j + 1).padStart(2, "0")),
-    h("h3", {}, chapterName(ch), ch === "decisions" ? h("span", { class: "rp-of" }, ` · ${T(`Choice ${nth}`, `決定 ${nth}`)}`) : null),
-    h("p", { class: "rp-sub", "data-section-title": "" }, x.title));
-  const body = x.skip ? h("p", { class: "rp-skip", "data-skip": ch }, h("span", { class: "rp-skip-k" }, T("Not drawn here", "這一章沒有畫")), " ", ...pointText(card, x.points[0] || { text: "", cites: [] }))
-    : tone ? h("ul", { class: "rp-points", "data-points-chapter": ch }, x.points.map((p) => h("li", { class: tone[0] }, h("span", { class: "rp-tag" }, T(...tone[1])), h("div", {}, ...pointText(card, p)))))
-    : h("div", { class: `rp-prose${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: m === 0 && ch === "what" ? "lead" : "" }, ...pointText(card, p))));
-  return h("section", { class: `rp-sec${x.skip ? " skipped" : ""}`, id: `rp-${card}-${x.key}`, "data-report-section": x.key, "data-chapter": ch }, h("div", { class: "rp-card" }, head, body), pic ? reportFigure(card, r, pic) : null);
-}
 /** a lesson auto-teach started: said so, with what it ran on, and the room's switch to stop it starting on the next paste */
 function autoNote(r, t) {
   if (!t?.auto) return null; const card = r.card.id;
   return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n }, T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
     !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
       T(" start by itself on the next paste", " 下次貼上時自動開始")) : null);
-}
-/** the report: the lesson's sections in order, a quiet footer with the rules it keeps; it scrolls inside the room */
-function reportView(r, scenes, i, toc) {
-  const card = r.card.id, sc = scenes[i], t = sc.t, secs = scenes.filter((x) => x.turn === sc.turn && x.chapter);
-  const head = r.head ? String(r.head).slice(0, 8) : "", eyebrow = [r.subject?.repository, r.pr?.id ? `PR #${r.pr.id}` : null, r.task?.id || null, head ? `head ${head}` : null].filter(Boolean).join(" · ");
-  const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
-  let nth = 0;
-  const spy = (e) => { const el = e.currentTarget; RR.rscroll.set(card, el.scrollTop); if (Date.now() < (RR.spyHold || 0)) return; const top = el.getBoundingClientRect().top + 90;
-    let cur = null; for (const sec of el.querySelectorAll("[data-report-section]")) { if (sec.getBoundingClientRect().top <= top) cur = sec.dataset.reportSection; }
-    cur = cur || secs[0]?.key; const at = scenes.findIndex((x) => x.key === cur); if (at >= 0 && RR.scene.get(card) !== at) { RR.scene.set(card, at);
-      for (const b of document.querySelectorAll("[data-toc-scene]")) b.setAttribute("aria-current", b.dataset.tocScene === cur ? "true" : "false"); } };
-  const rep = h("div", { class: "rr-report", "data-report": t.n, tabindex: "0", onscroll: spy, "aria-label": T("The lesson, as a report", "這一課（報告）") },
-    h("header", { class: "rp-top" }, eyebrow ? h("div", { class: "rp-eyebrow" }, eyebrow) : null, h("h1", { class: "rp-title" }, title), autoNote(r, t),
-      h("p", { class: "rp-lede" }, T(`A lesson in ${secs.length} sections. Every drawing is laid out by Studio from the tutor's data; a point without a verified citation is marked as an inference.`, `這一課共 ${secs.length} 節。每張圖都由 Studio 依導師給的資料排版；沒有可驗證引用的重點會標成推論。`))),
-    secs.map((x, j) => reportSection(card, r, x, j, x.chapter === "decisions" ? ++nth : 0)),
-    h("footer", { class: "rp-foot" }, h("span", {}, T("Nothing here says whether this change is deployed: that is not in the repository.", "這裡不說這個改動是否已部署：那不在 repository 裡。")),
-      t.cost?.usd != null ? h("span", { class: "rp-cost" }, `$${Number(t.cost.usd).toFixed(2)} · ${t.provider} · ${t.model}`) : null,
-      h("button", { type: "button", class: "btn ghost", "data-report-step": t.n, onclick: () => { RR.step.add(`${card}/${t.n}`); stopPlay(); rerender(); } }, T("Step through on the board", "在白板上逐步看"))));
-  // the place in the report survives a redraw; a jump (a chapter picked in the rail) scrolls to its section
-  requestAnimationFrame(() => { const el = document.querySelector(`[data-report="${t.n}"]`); if (!el) return; const want = RR.jump.get(card); RR.jump.delete(card);
-    if (want) { const sec = el.querySelector(`[data-report-section="${CSS.escape(want)}"]`); if (sec) { RR.spyHold = Date.now() + 500; el.scrollTo({ top: Math.max(0, sec.offsetTop - el.offsetTop - 8), behavior: "instant" }); RR.rscroll.set(card, el.scrollTop); return; } }
-    if (RR.rscroll.has(card)) el.scrollTop = RR.rscroll.get(card); });
-  return h("section", { class: "rr-stage with-toc report", "data-stage": card, "data-scene": sc.key, "data-view": "report", "aria-label": T("Lesson", "課程") }, toc, rep);
 }
 function stageView(r) {
   const card = r.card.id, scenes = scenesOf(r);
@@ -1107,7 +1073,7 @@ function stageView(r) {
       out.push(h("button", { type: "button", class: "rr-toc-i", "data-toc-scene": x.key, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
         x.chapter ? h("b", {}, chapterName(x.chapter)) : null, h("span", {}, clip(x.title, 36)), x.t && x.t.status === "running" ? h("i", { class: "rr-toc-run" }, "…") : null)); }); return out; })()) : null;
   // a finished lesson reads as a report (baton's packet); the captain may step through it on the board instead
-  if (sc.t?.action === "teach" && sc.t.status === "done" && sc.chapter && !RR.step.has(`${card}/${sc.t.n}`)) return reportView(r, scenes, i, toc);
+  if (sc.t?.action === "teach" && sc.t.status === "done" && sc.chapter && !RR.step.has(`${card}/${sc.t.n}`)) return BOARD.view(r, scenes, i);
   return h("section", { class: `rr-stage${toc ? " with-toc" : ""}`, "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") }, toc,
     h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
       h("div", { class: "rr-stitle" },
@@ -1115,7 +1081,7 @@ function stageView(r) {
           sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null,
           sc.t?.versions?.length > 1 && !sc.quiz ? h("span", { class: "rr-vers", role: "group", "data-versions": sc.t.regenOf ?? sc.t.n, "aria-label": T("Answers to this question", "這一題的回答") }, sc.t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === sc.t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${sc.t.regenOf ?? sc.t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null,
           sc.t && !sc.studio && !sc.quiz && sc.t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": sc.t.n, "aria-expanded": String(RR.regen.has(card)), onclick: () => { RR.regen.has(card) ? RR.regen.delete(card) : RR.regen.add(card); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null),
-        sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" ? h("button", { type: "button", class: "rr-mini", "data-report-back": sc.t.n, onclick: () => { RR.step.delete(`${card}/${sc.t.n}`); RR.jump.set(card, sc.key); stopPlay(); rerender(); } }, T("Read as a report", "以報告閱讀")) : null,
+        sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" ? h("button", { type: "button", class: "rr-mini", "data-report-back": sc.t.n, onclick: () => { RR.step.delete(`${card}/${sc.t.n}`); RR.jump.set(card, sc.key); stopPlay(); rerender(); } }, T("Back to the board", "回到白板")) : null,
         RR.regen.has(card) && sc.t && !sc.studio ? regenList(r, sc.t) : null,
         h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
       h("div", { class: "rr-scene" },
@@ -1268,7 +1234,7 @@ async function resetRoom(card) {
     for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
     for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);
     for (const set of [RR.step, RR.titled, RR.fold]) for (const key of [...set]) if (key.startsWith(`${card}/`)) set.delete(key);
-    RR.rooms.delete(card); RR.scene.set(card, 0); await load(card, true); RR.scene.set(card, 0); }
+    BOARD.forget(card); RR.rooms.delete(card); RR.scene.set(card, 0); await load(card, true); RR.scene.set(card, 0); }
   catch (e) { RR.err.set(card, e.message); RR.resetAsk.delete(card); }
   finally { RR.posting.delete(card); rerender(); }
 }
@@ -1367,14 +1333,17 @@ addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room"
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
   const card = S.route.arg, t = e.target;
+  // the lesson board's own keys first (a chapter on or back, ask here, zoom, Escape closes what it opened)
+  if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && BOARD.keydown(e, card)) return;
   if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else return; e.preventDefault(); rerender(); return; }
   if (t?.closest?.("input,textarea,select,[contenteditable],[role=dialog]") || RR.zoom) return;
-  if (document.querySelector("[data-report]") && e.key === " ") return; // Space scrolls the report
-  if (document.querySelector("[data-report]") && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { if (t?.closest?.("[data-report]") || t === document.body) { e.preventDefault(); const { scenes } = curScene(card), at = sceneState(card, scenes) + (e.key === "ArrowRight" ? 1 : -1); if (scenes[at]) { RR.scene.set(card, at); RR.jump.set(card, scenes[at].key); rerender(); } } return; }
+  if (document.querySelector("[data-board-vp]")) return; // the board's keys are its own
   if (e.key === "ArrowRight") { e.preventDefault(); stepPoint(card, 1); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); stepPoint(card, -1); }
   else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
 });
+// the lesson board, built with the room's own helpers (public/review-board.js)
+const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule });
 routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
@@ -1412,5 +1381,5 @@ routes.room = (arg) => {
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
-window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace };
+window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, board: BOARD };
 })();
