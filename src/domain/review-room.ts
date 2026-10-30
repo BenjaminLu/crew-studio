@@ -46,6 +46,7 @@ import { openScopedProxy, type ProxyAuthority } from "../egress-client";
 import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
+import { parseLocator, type Finding, type Locator } from "../runtime/locator";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -199,7 +200,11 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   /** a regeneration: the turn whose question this one asks again, on a model the captain picked (both answers are kept) */
   regenOf?: number; picked?: { provider: string; model: string | null; effort: string | null };
   /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
-  scenes?: { n: number; title: string; picture: string; points: Claim[]; chapter?: string; skip?: true }[] };
+  scenes?: { n: number; title: string; picture: string; points: Claim[]; chapter?: string; skip?: true }[];
+  /** a question asked on the lesson board: the thread and the node (card) this turn answers */
+  thread?: { n: number; node: string; chip?: string };
+  /** a board follow-up the room's agreement started without a confirmation: how many it has started since the last one */
+  follow?: number };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
 export type Subject = { kind: "merge" | "branch" | "pr"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null };
 type Note = { id: string; kind: "review" | "inline" | "comment"; author: string; body: string; at: string | null; url: string | null; state?: string; commit?: string | null; path?: string | null; line?: number | null; outdated?: boolean };
@@ -242,7 +247,11 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   /** generated pictures (the opening illustration, the tutor's illustrate tool: paid image jobs) are on: off unless the captain turns them on */
   images?: { on: boolean; by: string; at: string };
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
-  illustrations?: { turn: number; prompt: string; refused: string; at: string }[] };
+  illustrations?: { turn: number; prompt: string; refused: string; at: string }[];
+  /** the lesson board: the captain's questions on it (threads), the regions read, when it was last tidied */
+  lesson?: Lesson;
+  /** the captain agreed to start this room's board questions without asking each time, for this plan (followPrint) */
+  followUps?: { plan: string; by: string; at: string; used?: number } };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
 /** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
  *  citations, board items and pictures are the original's */
@@ -282,6 +291,66 @@ export function translationErrors(t: { scenes?: { title: string; points: { text:
   return errs;
 }
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+
+// ---------- the lesson board: a finished lesson as regions on a canvas, and the captain's questions on it ----------
+/** what a reader can click on the board and ask about */
+export const ANCHOR_KINDS = ["sentence", "risk", "node", "edge", "transition", "tx", "field", "call", "row"] as const;
+export type AnchorKind = typeof ANCHOR_KINDS[number];
+/** a question's chips: the turn each one asks (an ask, how or why turn, the room's own machinery) and where its answer goes
+ *  on the board (below its card, beside it, or a new version of the same card); code is free (no turn: the cite viewer) */
+export const THREAD_CHIPS: Record<string, { action: "ask" | "how" | "why"; en: string; zh: string; rel: "below" | "side" | "version" } | null> = {
+  deeper: { action: "how", en: "Go one level deeper on this", zh: "這裡再講深一層", rel: "below" },
+  example: { action: "ask", en: "Give one concrete example of this", zh: "給這裡舉一個具體的例子", rel: "side" },
+  rephrase: { action: "ask", en: "Say this another way: an analogy, real numbers or a small picture", zh: "換個說法講這裡：比喻、實際數字或一張小圖", rel: "version" },
+  why: { action: "why", en: "Why is it built this way", zh: "為什麼要這樣做", rel: "below" },
+  free: { action: "ask", en: "", zh: "", rel: "below" },
+  code: null,
+};
+/** where on the board a question was asked: a lesson's scene (its chapter), what was clicked there (a sentence of a point,
+ *  a node, an edge or a transition of its drawing, a row of a transaction or a call), and the words it showed */
+export type Anchor = { turn: number; scene: string; chapter: string; kind: AnchorKind; item: string | null; part: string | null; text: string; start: number | null; end: number | null };
+/** one card of a thread: the root, a deeper answer below its parent, an example beside it; versions are the turns that answered
+ *  it (a rephrasing adds one); a code card is free and holds the citation it opens */
+export type ThreadNode = { id: string; parent: string | null; rel: "root" | "below" | "side"; chip: string; q: string | null; versions: number[]; code: string | null; at: string };
+export type Thread = { n: number; key: string; anchor: Anchor; locator: Locator; nodes: ThreadNode[]; state: "open" | "resolved"; at: string; resolvedAt: string | null;
+  /** the reader said they do not understand (我不懂這句 / 換個說法, or 還沒懂): 還沒懂 until understood (懂了) */
+  confused?: boolean;
+  /** folded back into its chapter by "tidy the board": a gist built from its answers (no model) */
+  merged: { at: string; gist: string; cites: Cite[] } | null };
+export type Lesson = { threads: Thread[]; visited: string[]; tidiedAt?: string | null };
+/** how far the board grows: questions a room, cards a question, versions (rephrasings) a card */
+export const LESSON_LIMITS = { threads: 200, nodes: 50, versions: 5 } as const;
+/** an anchor's stable key, also its locator's section: chapter / scene [/ board item] [# the part clicked] */
+export const anchorKey = (a: Pick<Anchor, "chapter" | "scene" | "kind" | "item" | "part">) => `${a.chapter}/${a.scene}/${a.kind}${a.item ? `/${a.item}` : ""}${a.part ? `#${a.part}` : ""}`;
+/** the shared locator schema (docs/check-contract.md): the text locator whose section is the anchor's stable key */
+export const anchorLocator = (a: Anchor): Locator => parseLocator({ type: "text", section: anchorKey(a), start: a.start, end: a.end })!;
+/** a thread's first sentence of each answer, joined: what "tidy the board" folds into the chapter (Studio's own words: no model) */
+export function threadGist(t: Thread, turns: { n: number; status: string; claims?: Claim[] }[]): { gist: string; cites: Cite[] } {
+  const parts: string[] = [], cites: Cite[] = [];
+  for (const nd of t.nodes) { if (nd.code) continue; const tn = nd.versions.at(-1), turn = turns.find((x) => x.n === tn && x.status === "done"); if (!turn) continue;
+    const c = (turn.claims ?? []).find((x) => x.kind === "claim" || x.kind === "aside"); if (!c) continue;
+    // its first sentence, with the citations that close it
+    const norm = String(c.text).replace(/^\s*(#+|[-*+]|\d+\.)\s+/, "").replace(/\s+/g, " ").trim();
+    let s = (norm.split(/(?<=[。！？])|(?<=[.!?])\s+(?=[^\s[])/)[0] ?? "").trim(); const tail = /^\s*((?:\[[a-z]+:[^\]\s]+\]\s*)+)/i.exec(norm.slice(s.length)); if (tail) s = `${s} ${tail[1].trim()}`;
+    if (!s) continue; parts.push(s); for (const x of c.cites) if (s.includes(`[${x.ref}]`) && !cites.some((y) => y.ref === x.ref)) cites.push(x); }
+  const gist = parts.join(" "); return { gist: gist.length > 600 ? `${gist.slice(0, 599)}…` : gist, cites };
+}
+/** 還沒懂: the reader said so (a rephrasing asked, or 還沒懂) and has not said 懂了 since */
+export const notUnderstood = (t: Thread) => !!t.confused && t.state === "open";
+/** a board question's plan fingerprint (who answers it, at what effort): the room's agreement to start follow-ups without
+ *  asking holds only while the plan is this one */
+/** the plan an agreement is bound to: the offer's hash fields but the head (the tutor, its effort and its independence) */
+export const followPrint = (o: { provider: string; model?: string | null; effort?: string | null; independence?: { level?: string | null; outside?: boolean | null } | null }) =>
+  sha(JSON.stringify({ board: true, provider: o.provider, model: o.model ?? null, effort: o.effort ?? null, level: o.independence?.level ?? null, outside: o.independence?.outside ?? null })).slice(0, 16);
+/** follow-ups an agreement starts before the room asks once more */
+export const FOLLOW_LIMIT = 10;
+/** the room agreed to start follow-ups on this very plan, and has follow-ups left before it asks again */
+export const agreedTo = (r: { followUps?: { plan: string; used?: number } } | null | undefined, offer: any) => !!r?.followUps && r.followUps.plan === followPrint(offer) && (r.followUps.used ?? 0) < FOLLOW_LIMIT;
+/** a room's open questions as findings: the same type a check produces (docs/units/locators.md): those still on the board
+ *  (not understood, not folded into a chapter) */
+export const threadFindings = (lesson: Lesson | undefined | null, all = false): Finding[] => (lesson?.threads ?? []).filter((t) => all || (t.state === "open" && !t.merged)).map((t) => {
+  const root = t.nodes.find((x) => x.rel === "root"), chip = root ? THREAD_CHIPS[root.chip] : null, q = root?.q || chip?.en || "Show the code this rests on";
+  return { locator: t.locator, message: `${q}: “${t.anchor.text}”`.slice(0, 1500), expected: null, class: "captain-question", severity: "minor", source: "human", check: `room-thread:${t.n}` }; });
 
 // ---------- grounding: every claim names its basis; one without a valid basis reads as an inference ----------
 export const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})\]/g;
@@ -596,6 +665,84 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if ("refused" in p) { save(k, room); return; }
       illustrateInto(k, s, room, "B0-1", 0, "This change at a glance", p.prompt); } catch {}
   }
+  // ---------- the lesson board's questions: anchors checked against the room, threads of cards each answered by a turn ----------
+  /** a place on the board, checked: a scene of a finished lesson in this room (its chapter Studio's, not the page's), a board
+   *  item of that lesson, a short key for the part clicked, the words it showed */
+  const anchorOf = (room: Room, a: any): Anchor => {
+    const scene = String(a?.scene ?? ""), m = /^t([1-9]\d{0,3})(?:-([1-9]\d?))?$/.exec(scene);
+    const t = m ? room.turns.find((x) => x.n === Number(m[1])) : undefined, sc = m ? t?.scenes?.[m[2] ? Number(m[2]) - 1 : 0] : undefined;
+    if (!t || t.action !== "teach" || t.status !== "done" || !sc?.chapter) throw refuse("No such place on the lesson board / 白板上沒有這個位置", "bad_anchor");
+    const kind = String(a?.kind ?? "") as AnchorKind; if (!(ANCHOR_KINDS as readonly string[]).includes(kind)) throw refuse(`kind is one of ${ANCHOR_KINDS.join(", ")}`, "bad_anchor");
+    const item = a?.item == null || a.item === "" ? null : String(a.item); if (item && !room.board.some((b) => b.id === item && b.turn === t.n)) throw refuse("No such drawing in this lesson / 這一課沒有這張圖", "bad_anchor");
+    const part = a?.part == null || a.part === "" ? null : String(a.part); if (part && !/^[\w.:>#-]{1,140}$/.test(part)) throw refuse("part is a short key of letters, digits and . : > # - _", "bad_anchor");
+    const text = String(a?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300); if (!text) throw refuse("The words of the place asked about are required / 需要被問的那段文字", "bad_anchor");
+    const num = (v: any) => Number.isInteger(v) && v >= 0 && v <= 4000 ? Number(v) : null, start = num(a?.start), end = num(a?.end);
+    if (start != null && end != null && start > end) throw refuse("An anchor ends after it starts / 錨點的結尾不能在開頭之前", "bad_anchor");
+    return { turn: t.n, scene, chapter: sc.chapter, kind, item, part, text, start, end };
+  };
+  /** what a question on the board asks: its turn (action and the words the tutor gets), the thread (the one on that anchor
+   *  already, else a new one) and the card it answers (a new one below or beside, or a new version of the same card) */
+  const threadPlan = (room: Room, x: any, lang: string) => {
+    const chip = String(x?.chip ?? ""), spec = Object.hasOwn(THREAD_CHIPS, chip) ? THREAD_CHIPS[chip] : undefined;
+    if (spec === null) throw refuse("Show the code is free: it opens what the place cites, with no turn / 看程式碼不用付費：直接打開引用", "bad_chip");
+    if (!spec) throw refuse(`chip is one of ${Object.keys(THREAD_CHIPS).join(", ")}`, "bad_chip");
+    const q = chip === "free" ? String(x?.q ?? "").trim() : ""; if (chip === "free" && (!q || q.length > 1000)) throw refuse("Write the question (at most 1000 characters) / 請寫下問題（最多 1000 字）", "bad_text");
+    const threads = room.lesson?.threads ?? [];
+    let th: Thread | null = null, anchor: Anchor;
+    if (x?.n != null) { th = threads.find((t) => t.n === Number(x.n)) ?? null; if (!th) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); anchor = th.anchor; }
+    else { anchor = anchorOf(room, x?.anchor); th = threads.find((t) => t.key === anchorKey(anchor)) ?? null; }
+    const on = th ? (x?.node != null ? th.nodes.find((n) => n.id === String(x.node)) : th.nodes.find((n) => n.rel === "root")) ?? null : null;
+    if (th && x?.node != null && !on) throw refuse("No such card on the board / 白板上沒有這張卡", "not_found");
+    const rel = on?.code && spec.rel === "version" ? "below" as const : spec.rel;
+    capped(threads, th, on, rel);
+    // the captain's message is the chip's question (or their own words) alone: the place's words reach the tutor only fenced
+    const zh = lang !== "en", words = chip === "free" ? q : zh ? spec.zh : spec.en;
+    return { chip, q: chip === "free" ? q : null, action: spec.action, rel, anchor, thread: th?.n ?? null, node: on?.id ?? null, text: words.slice(0, 4000) };
+  };
+  /** the board's growth, capped (LESSON_LIMITS): a new question, a new card or a new version past its cap is refused */
+  const capped = (threads: Thread[], th: Thread | null, on: ThreadNode | null, rel: string) => {
+    if (!th && threads.length >= LESSON_LIMITS.threads) throw refuse(`This room holds at most ${LESSON_LIMITS.threads} questions on its board: tidy it or start over / 這個房間的白板最多 ${LESSON_LIMITS.threads} 個問題`, "limit");
+    if (th && rel !== "version" && th.nodes.length >= LESSON_LIMITS.nodes) throw refuse(`A question holds at most ${LESSON_LIMITS.nodes} cards / 一個問題最多 ${LESSON_LIMITS.nodes} 張卡`, "limit");
+    if (th && rel === "version" && on && on.versions.length >= LESSON_LIMITS.versions) throw refuse(`A card holds at most ${LESSON_LIMITS.versions} versions / 一張卡最多 ${LESSON_LIMITS.versions} 個版本`, "limit");
+  };
+  /** the question asked, on the room: its thread made when it is the anchor's first, its card added (or a version of it) */
+  const applyThread = (room: Room, p: ReturnType<typeof threadPlan>, turnN: number): { n: number; node: string; chip: string } => {
+    const L = (room.lesson ??= { threads: [], visited: [] }), at = new Date().toISOString(), key = anchorKey(p.anchor);
+    let th = (p.thread != null ? L.threads.find((t) => t.n === p.thread) : null) ?? L.threads.find((t) => t.key === key);
+    if (!th) { th = { n: Math.max(0, ...L.threads.map((t) => t.n)) + 1, key, anchor: p.anchor, locator: anchorLocator(p.anchor), nodes: [], state: "open", at, resolvedAt: null, merged: null }; L.threads.push(th); }
+    const parent = (p.node ? th.nodes.find((n) => n.id === p.node) : null) ?? th.nodes.find((n) => n.rel === "root");
+    let node: ThreadNode;
+    if (!parent) { node = { id: "n1", parent: null, rel: "root", chip: p.chip, q: p.q, versions: [turnN], code: null, at }; th.nodes.push(node); }
+    else if (p.rel === "version") { parent.versions.push(turnN); node = parent; }
+    else { node = { id: `n${th.nodes.length + 1}`, parent: parent.id, rel: p.rel, chip: p.chip, q: p.q, versions: [turnN], code: null, at }; th.nodes.push(node); }
+    // asked again: a question on the board again (no longer folded into its chapter); a rephrasing says it is not understood
+    th.state = "open"; th.resolvedAt = null; th.merged = null; if (p.chip === "rephrase") th.confused = true;
+    return { n: th.n, node: node.id, chip: p.chip };
+  };
+  /** the tutor's view of the place asked about: the chapter and scene, what was clicked, its words (fenced: the page sent
+   *  them), the citations under it with their code, the thread so far, and what the chip asks for */
+  const threadLines = async (room: Room, turn: Turn, s: S, fence: string): Promise<string[]> => {
+    const th = room.lesson?.threads.find((t) => t.n === turn.thread?.n); if (!th) return [];
+    const a = th.anchor, src = room.turns.find((t) => t.n === a.turn), m = /-(\d+)$/.exec(a.scene), sc = src?.scenes?.[m ? Number(m[1]) - 1 : 0];
+    const it = a.item ? room.board.find((b) => b.id === a.item) : sc?.picture ? room.board.find((b) => b.id === sc.picture) : undefined;
+    const num = (re: RegExp) => { const x = re.exec(a.part ?? ""); return x ? Number(x[1]) : null; };
+    const p = num(/^p(\d+)/), tr = num(/^(?:transition:|tx:|t)(\d+)/), call = num(/^c(\d+)/);
+    const cites: Cite[] = p != null && sc?.points[p] ? sc.points[p].cites : tr != null && it?.transitions?.[tr]?.cite ? [it.transitions[tr].cite] : call != null && it?.calls?.[call]?.cite ? [it.calls[call].cite] : [...(it?.cites ?? []), ...(sc?.points ?? []).flatMap((x) => x.cites)];
+    const refs = [...new Set(cites.filter((c) => c?.ok).map((c) => c.ref))].slice(0, 4), code: string[] = [];
+    for (const ref of refs.filter((r) => r.startsWith("diff:")).slice(0, 3)) { const d = /^diff:(.+?)(?::L(\d+)(?:-(\d+))?)?$/.exec(ref); if (!d) continue;
+      try { const h = await hunksOf(s, d[1], Number(d[2]) || 0, Number(d[3]) || Number(d[2]) || 0); if (h.text) code.push(`[${ref}]`, h.text.slice(0, 2500)); } catch {} }
+    // what this turn asked (a rephrasing of a deeper card asks to say it another way), else what its card first asked
+    const node = th.nodes.find((n) => n.id === turn.thread?.node), chip = turn.thread?.chip ?? (node ? node.chip : "free");
+    const ask: Record<string, string> = { deeper: "Go one level deeper than the lesson did on this place: the mechanism under it, cited.", example: "Give one concrete example: real values going through this place in the code, cited.",
+      rephrase: "Say it another way than the lesson and your earlier answers in this thread: an analogy, real numbers, or a small picture (board_draw).", why: "Say why it is built this way: the constraint or the decision behind it, as the record shows it.", free: "Answer the captain's question about this place." };
+    const said = th.nodes.flatMap((n) => n.versions.filter((v) => v !== turn.n).map((v) => `card ${n.id} (${n.rel}, ${n.chip}) answered in turn ${v}`));
+    return ["THE PLACE ON THE LESSON BOARD THE CAPTAIN ASKS ABOUT (they clicked it in the lesson; your answer is a card beside it: keep it short, cite what it rests on, no new lesson)",
+      `Chapter: ${a.chapter} (${CHAPTERS.find((c) => c.id === a.chapter)?.en ?? a.chapter}); scene “${glyph(sc?.title ?? "")}” of the lesson (turn ${a.turn})`,
+      `What was clicked: a ${a.kind}${a.part ? ` (${a.part})` : ""}${it ? ` of board item ${it.id} (${it.type}: ${glyph(it.title)})` : ""}. Its words, as the page showed them:`,
+      `<untrusted-anchor-${fence}>`, glyph(a.text), `</untrusted-anchor-${fence}>`,
+      `The citations under it: ${refs.join(" ") || "(none)"}`, ...(code.length ? ["Their code:", ...code] : []),
+      ...(said.length ? [`This question's thread so far: ${said.join("; ")}`] : []), ask[chip] ?? ask.free, ""];
+  };
   const fresh = (k: Key, s: { run: any; head: string; base: string }): Room => ({ schema: 1, run: s.run?.id ?? "", card: k.id, node: k.node ?? "", head: s.head, base: s.base, turns: [], board: [], sources: [], check: { questions: [] },
     ...(k.kind === "merge" ? {} : { subject: subjectRecord(k, s, null), seen: { head: s.head, at: new Date().toISOString() }, heads: [{ head: s.head, base: s.base, at: new Date().toISOString() }] }) });
   function tools(k: Key, room: Room, turn: Turn, s: S, web: WebBackend, ctx: WebContext, allowed: { urls: Set<string>; hosts: Set<string> }): AgentTool[] {
@@ -858,7 +1005,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           catch (e: any) { const m = String(e?.message ?? e); source({ kind: "fetch", url: u, ok: false, ...(m.startsWith("refused:") ? { refused: m.slice(9) } : { error: m.slice(0, 300) }) }); return { error: m }; } } },
     ];
     // a generated picture is a paid image job: the tutor gets the tool only where the captain turned pictures on
-    return all.filter((t) => t.name !== "illustrate" || !!room.images?.on);
+    // a question on the board is cheap: never a generated picture (no illustrate), whatever the room's setting
+    return all.filter((t) => t.name !== "illustrate" || (!!room.images?.on && !turn.thread));
   }
 
   /** What may not leave Studio for this room: the change, its paths and its names (src/review-web.ts). */
@@ -911,7 +1059,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       "THE CONVERSATION SO FAR", ...older.map((x) => `(turn ${x.n}) ${who(x).replace(/\s+/g, " ").slice(0, 140)} / ${x.studio ? "Scene" : "Tutor"}: ${said(x).replace(/\s+/g, " ").slice(0, 160)}`),
       ...full.flatMap((x) => [who(x).slice(0, 1500), `${x.studio ? "Scene" : "Tutor"}: ${said(x).slice(0, 1500)}`]), ...(past.length ? [] : ["(this is the first turn)"]), "",
       ...(turn.action === "teach" ? [`A LESSON (baton's packet, workflows/skills/baton): chapters ${CHAPTERS.map((c) => c.id).join(" → ")} (shown in that order whatever order you make them in). Always show what and change (one item drawing a change, at least one); show talks (an arch drawing), lifecycle and sequence, or leave each out with chapter_skip and a cited reason; one drawing a chapter except change and decisions; roads only as the record shows them. Call lesson_check before your final answer: Studio refuses a lesson that misses one.`, ""] : []),
-      room.images?.on ? "Generated pictures are ON in this room (illustrate, at most two a turn, paid)." : "Generated pictures are OFF in this room: draw with board_draw (Studio lays every drawing out); there is no illustrate tool.", "",
+      ...(turn.thread ? await threadLines(room, turn, s, fence) : []),
+      room.images?.on && !turn.thread ? "Generated pictures are ON in this room (illustrate, at most two a turn, paid)." : "Generated pictures are OFF in this room: draw with board_draw (Studio lays every drawing out); there is no illustrate tool.", "",
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
 
@@ -1066,7 +1215,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   let saveChain: Promise<unknown> = Promise.resolve();
   const queueSave = <T>(id: string, fn: () => Promise<T>): Promise<T> => { const job = saveChain.then(fn, fn); saveChain = job.catch(() => null); saving.set(id, job); void job.catch(() => null).finally(() => { if (saving.get(id) === job) saving.delete(id); }); return job; };
   /** what a snapshot shows (the scenes, the board, the check's answers, the languages): a re-read of GitHub alone does not change it */
-  const contentSig = (r: Room) => sha(JSON.stringify([r.turns.map((t) => [t.n, t.status, t.answer?.length ?? 0, t.scenes?.length ?? 0]), r.board.map((b) => [b.id, b.status ?? null]), r.check.questions.map((q) => [q.n, q.choice ?? null, !!q.result]), Object.entries(r.translations ?? {}).map(([l, x]) => [l, Object.keys(x)])])).slice(0, 16);
+  const contentSig = (r: Room) => sha(JSON.stringify([r.turns.map((t) => [t.n, t.status, t.answer?.length ?? 0, t.scenes?.length ?? 0]), r.board.map((b) => [b.id, b.status ?? null]), r.check.questions.map((q) => [q.n, q.choice ?? null, !!q.result]), Object.entries(r.translations ?? {}).map(([l, x]) => [l, Object.keys(x)]), (r.lesson?.threads ?? []).map((t) => [t.n, t.state, !!t.merged, t.nodes.map((x) => `${x.versions.length}${x.code ? "c" : ""}`).join(".")])])).slice(0, 16);
   /** what the room is about, for the snapshot's record */
   const subjectMeta = (k: Key, room: Room, view: any) => ({ kind: k.kind, room: k.id, repository: room.subject?.repository ?? null, number: room.subject?.number ?? (view.pr?.id ?? null), url: room.subject?.url ?? view.pr?.url ?? null,
     branch: k.kind === "branch" ? engine.get(k.run!)?.ctx.branch ?? null : room.pr?.headRef ?? null, head: room.head, base: room.base, task: view.task?.id ?? null, title: view.card?.title ?? null });
@@ -1087,6 +1236,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const refs = new Set<string>(), add = (c: any) => { if (c?.ref && c.ok !== false) refs.add(c.ref); };
       for (const t of room.turns) { if (t.hidden) continue; (t.claims ?? []).forEach((c) => c.cites.forEach(add)); (t.scenes ?? []).forEach((sc) => sc.points.forEach((p) => p.cites.forEach(add))); for (const m of String(t.answer ?? "").matchAll(CITE)) refs.add(`${m[1]}:${m[2]}`); }
       for (const b of room.board) (b.cites ?? []).forEach(add); for (const q of room.check.questions) if (q.result) (q.cites ?? []).forEach(add);
+      // the lesson board's code cards and the gists folded into its chapters open from the snapshot too
+      for (const t of room.lesson?.threads ?? []) { for (const nd of t.nodes) if (nd.code) refs.add(nd.code); (t.merged?.cites ?? []).forEach(add); }
       const cites: Record<string, any> = {}; for (const ref of [...refs].slice(0, 300)) { try { cites[ref] = await api.cite(k.id, ref); } catch (e: any) { cites[ref] = { error: String(e?.message ?? e).slice(0, 200) }; } }
       for (const c of Object.values(cites)) if (c?.kind === "board" && c.item) c.item = board.find((b: any) => b.id === c.item.id) ?? c.item;
       const tutors = [...new Map(room.turns.filter((t) => !t.studio && t.provider).map((t) => [`${t.provider} ${t.model}`, { provider: t.provider, model: t.model }])).values()];
@@ -1302,6 +1453,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
     const known = git(s.wt, ["cat-file", "-e", `${from}^{commit}`]).ok, anc = known && git(s.wt, ["merge-base", "--is-ancestor", from, s.head]).ok;
     return { from, to: s.head, commits: anc ? Number(git(s.wt, ["rev-list", "--count", `${from}..${s.head}`]).out) || 0 : null, rewritten: known && !anc }; };
+  /** the room's agreement for board questions as the page reads it: on, and whether it holds for the plan offered now */
+  const followView = (r: Room | null, offer: any) => r?.followUps ? { on: true, at: r.followUps.at, used: r.followUps.used ?? 0, limit: FOLLOW_LIMIT, current: !!offer && !offer.error && agreedTo(r, offer) } : null;
   let self: any = null;
   return (self = {
     /** the summary a merge card shows: never readiness, never an answer */
@@ -1327,7 +1480,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
         return { ...langView(r, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
-          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), summary: this.summary(c) };
+          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, followUps: followView(r, c.status === "open" ? offerOf(k) : null), summary: this.summary(c) };
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
@@ -1343,7 +1496,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
         notes: [...(r?.pr?.notes ?? [])].reverse().slice(0, 200).map((x) => ({ ...x, bot: isBot(x) })), progress: progressOf(k, r),
-        actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), summary: null };
+        actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), lesson: r?.lesson ?? null, followUps: followView(r, open ? offerOf(k) : null), summary: null };
     },
     /** every review room on this machine (merge cards, branches, pull requests), open ones first, then the most recent */
     list() { const out: any[] = [], push = (id: string, file: string) => { try { const k = keyOf(id), r = load(k); if (!r) return; const st = statSync(file);
@@ -1371,7 +1524,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
-    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown; auto?: boolean }, by: string) {
+    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown; auto?: boolean; thread?: unknown; consent?: unknown }, by: string) {
       let k = keyOf(id);
       if (k.kind === "pr") { const r0 = load(k);
         // a paid turn reads the pull request again first when it was read a while ago: merged or closed by now, the turn is refused
@@ -1384,6 +1537,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (a.regenerate != null && !base) throw refuse("There is no finished answer to explain again / 沒有可以重講的回答", "not_found");
       if (base) { a = { ...a, action: base.action, text: base.text }; if (!a.pick) throw refuse("Pick the model to explain it again / 請選一位導師重講", "bad_pick"); }
       else if (a.pick != null) throw refuse("A model is picked only to explain a finished answer again (regenerate); a new question runs on the room's tutor / 只有重講一個已完成的回答時才能選導師", "bad_pick");
+      // a question asked on the lesson board: an ask, how or why turn like any other (the same offer and confirmation), about that place
+      let plan: ReturnType<typeof threadPlan> | null = null;
+      if (a.thread != null) { if (base) throw refuse("A question on the board is a turn of its own, never a regeneration / 白板上的問題是自己的一回合，不是重講", "bad_request");
+        const r0 = load(k); if (!r0) throw refuse("No such place on the lesson board / 白板上沒有這個位置", "bad_anchor");
+        plan = threadPlan(r0, a.thread, LANGS[String(a.lang)] ? String(a.lang) : "en"); a = { ...a, action: plan.action, text: plan.text }; }
       const action = String(a.action ?? ""); if (!Object.hasOwn(ROOM_ACTIONS, action)) throw refuse(`action is one of ${Object.keys(ROOM_ACTIONS).join(", ")}`, "bad_action");
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ROOM_ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
@@ -1410,20 +1568,37 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!s.run || !s.node) throw noHost();
       if (a.pick) { const o0 = offerOf(k, a.pick); if ("error" in o0) throw refuse(o0.error!, (o0 as any).code ?? "held"); }
       const offer = offerOf(k, a.pick); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
-      if (a.confirm !== offer.hash) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
+      // a board question starts without asking once the room agreed to this very plan (a new model or effort asks again)
+      const agreed = () => !!plan && a.confirm !== offer.hash && agreedTo(load(k), offer);
+      if (a.confirm !== offer.hash && !agreed()) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
+      // started over (or the question's place gone) while it was admitted: nothing is added to the fresh room
+      if (plan) { try { if (plan.thread != null && !room.lesson?.threads.some((t) => t.n === plan!.thread)) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); anchorOf(room, plan.anchor); }
+        catch (e) { held?.release(); throw e; } }
+      // the agreement read again: turned off (or used up) while this question was admitted, it asks
+      if (a.confirm !== offer.hash && !agreed()) { held?.release(); throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer }); }
+      const auto = a.confirm !== offer.hash;
       // generated pictures as the captain set them on this confirmed paid round (the confirmation said which images they may make)
-      if (typeof a.images === "boolean") room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
+      // the captain confirmed this question with “start the next ones without asking”: the room keeps it, bound to this plan
+      if (plan && a.consent === true && a.confirm === offer.hash) room.followUps = { plan: followPrint(offer), by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString(), used: 0 };
+      // confirmed without “start the next ones at once”: the agreement ends (never renewed); one the agreement started counts against it
+      else if (plan && room.followUps && !auto) delete room.followUps;
+      else if (plan && room.followUps && auto) room.followUps.used = (room.followUps.used ?? 0) + 1;
+      // a question on the board never changes the room's pictures (and pays for none)
+      if (typeof a.images === "boolean" && !plan) room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
       const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), ...(a.auto ? { auto: true as const } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
+      // the question's card on the board, made now, with the turn that answers it (nothing before the confirmation)
+      if (plan) turn.thread = applyThread(room, plan, n);
+      if (plan && auto) turn.follow = room.followUps!.used;
       room.turns.push(turn); save(k, room); live.set(k.id, n); notify(k, n);
       // the room's opening picture, once, only now: a confirmed paid round with pictures on
-      if (room.images?.on) pregenerate(k);
+      if (room.images?.on && !plan) pregenerate(k);
       void runTurn(k, room, turn, s, provider, sk, offer.hash, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k, n); autoSave(self, k); });
       return this.view(k.id);
     },
@@ -1521,6 +1696,44 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       try { const s = subjectOf(k); if (s.run && s.node) engine.record(engine.x(s.run, s.node, s.run.nodes[s.node.id]), "review-room-check", { head: s.head, data: { schema: 1, card: k.id, question: q.n, turn: q.turn, choice: c, correct, by: "studio" } } as any); } catch {}
       notify(k); return { n: q.n, correct, choice: c, answer: q.answer, why: q.why, cites: q.cites ?? [], room: this.view(id) };
     },
+    /** The lesson board's free actions (no model, nothing paid): visit (a region read, kept for the room), resolve (understood:
+     *  `on` false opens it again), code (a card that opens what the place cites, through the citation check) and tidy (every
+     *  understood question folded into its chapter as a gist of its answers; the open ones stay on the board). */
+    async lesson(id: string, a: { op?: unknown; scene?: unknown; n?: unknown; on?: unknown; anchor?: unknown; node?: unknown; ref?: unknown }) {
+      const k = keyOf(id), op = String(a?.op ?? ""), room = load(k);
+      if (!room) throw refuse("This room has no lesson yet / 這個審查室還沒有課", "not_found");
+      const at = new Date().toISOString();
+      if (op === "visit") { const scene = String(a?.scene ?? ""); if (scene !== "end") anchorOf(room, { scene, kind: "sentence", text: "-" });
+        const L = (room.lesson ??= { threads: [], visited: [] }); if (!L.visited.includes(scene)) { L.visited = [...L.visited, scene].slice(-200); save(k, room); }
+        return { visited: L.visited }; }
+      // the room's agreement to start board questions without asking: only turned off here (on comes with a confirmed question)
+      if (op === "consent") { if (a?.on !== false) throw refuse("The agreement is given with a confirmed question (consent: true); here it is only turned off", "bad_request"); delete room.followUps; save(k, room); notify(k); return this.view(id); }
+      if (!k.open()) throw refuse(k.kind === "merge" ? "The merge card is answered: the room is read-only now / 合併卡已回覆，審查室只能閱讀" : `${closedText(k, room).en} / ${closedText(k, room).zh}`, "closed");
+      const L = (room.lesson ??= { threads: [], visited: [] }), find = () => { const t = L.threads.find((x) => x.n === Number(a?.n)); if (!t) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); return t; };
+      // 懂了 (on) clears 還沒懂; 還沒懂 (on: false) says not understood and takes the question back out of its chapter
+      if (op === "resolve") { const t = find(), on = a?.on !== false; t.state = on ? "resolved" : "open"; t.resolvedAt = on ? at : null; t.confused = !on; if (!on) t.merged = null; save(k, room); notify(k); return this.view(id); }
+      if (op === "code") { const ref = String(a?.ref ?? ""); await this.cite(id, ref);
+        let t = a?.n != null ? find() : null;
+        if (!t) { const anchor = anchorOf(room, a?.anchor), key = anchorKey(anchor); t = L.threads.find((x) => x.key === key) ?? null;
+          if (!t) { capped(L.threads, null, null, "below"); t = { n: Math.max(0, ...L.threads.map((x) => x.n)) + 1, key, anchor, locator: anchorLocator(anchor), nodes: [], state: "open", at, resolvedAt: null, merged: null }; L.threads.push(t); } }
+        if (a?.node != null && !t.nodes.some((n) => n.id === String(a.node))) throw refuse("No such card on the board / 白板上沒有這張卡", "not_found");
+        const parent = (a?.node != null ? t.nodes.find((n) => n.id === String(a.node)) : null) ?? t.nodes.find((n) => n.rel === "root");
+        if (parent && !t.nodes.some((n) => n.code === ref && (n.parent === parent.id || n === parent))) capped(L.threads, t, parent, "below");
+        if (!parent) t.nodes.push({ id: "n1", parent: null, rel: "root", chip: "code", q: null, versions: [], code: ref, at });
+        else if (!t.nodes.some((n) => n.code === ref && (n.parent === parent.id || n === parent))) t.nodes.push({ id: `n${t.nodes.length + 1}`, parent: parent.id, rel: "below", chip: "code", q: null, versions: [], code: ref, at });
+        save(k, room); notify(k); return this.view(id); }
+      if (op === "tidy") { let merged = 0;
+        // every answered question the reader did not say 還沒懂 about (a code card counts as answered)
+        for (const t of L.threads) { if (t.merged || notUnderstood(t) || !t.nodes.some((n) => n.code || n.versions.some((v) => room.turns.find((x) => x.n === v)?.status === "done"))) continue;
+          // an answer still being written is not folded in half-way
+          if (t.nodes.some((n) => n.versions.some((v) => room.turns.find((x) => x.n === v)?.status === "running"))) continue;
+          const g = threadGist(t, room.turns), codes = t.nodes.filter((n) => n.code).map((n) => n.code!);
+          t.merged = g.gist ? { at, ...g } : { at, gist: codes.map((c) => `[${c}]`).join(" "), cites: codes.map((ref) => ({ ref, ok: true })) }; merged++; }
+        L.tidiedAt = at; save(k, room); notify(k); return { merged, open: L.threads.filter((t) => !t.merged && t.state === "open").length, view: this.view(id) }; }
+      throw refuse("op is visit, resolve, code, tidy or consent", "bad_request");
+    },
+    /** the room's open questions (with all: every one) as findings of the shared locator schema (docs/units/locators.md) */
+    findings(id: string, all = false) { const k = keyOf(id); return threadFindings(load(k)?.lesson, all); },
     /** a generated illustration's PNG, from the room's own folder */
     image(id: string, name: string) { const k = keyOf(id); if (!/^B\d+-\d+\.png$/.test(name)) throw refuse("No such image", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such image", "not_found"); return readFileSync(f); },
     /** A scene's narration in the tutor vendor's own neural voice (paid; the captain turned the voice on): generated once,
