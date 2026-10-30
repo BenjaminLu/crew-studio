@@ -778,15 +778,17 @@ export function createRuntime(d: RuntimeDeps) {
       if (libRoom) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); if (writing) return json({ error: "a saved room is read-only" }, 405);
         try { if (libRoom[3]) return new Response(rr.libraryAsset(libRoom[1], Number(libRoom[2]), libRoom[3]), { headers: { "content-type": libRoom[4] === "png" ? "image/png" : "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); return json(rr.librarySnapshot(libRoom[1], url.searchParams.get("v"))); }
         catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); } }
-      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|auto)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|auto|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         if (!writing && room[2] === "audio") { try { return new Response(rr.audio(room[1], room[3] ?? ""), { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
-        if (!writing && room[2] === "reset") return json({ error: "POST /api/review-room/<room>/reset" }, 405);
+        if (!writing && (room[2] === "reset" || room[2] === "lesson")) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405);
+        // the room's open questions on its lesson board, as findings of the shared locator schema (?all=1: every one)
+        if (!writing && room[2] === "findings") { try { return json(rr.findings(room[1], url.searchParams.get("all") === "1")); } catch (e: any) { return fail(e); } }
         if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
-        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "auto") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
+        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "auto" && room[2] !== "lesson") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
         // Check for new commits reads GitHub: at most once every few seconds per room, whatever the page sends
         if (room[2] === "check") { const last = roomChecks.get(room[1]) ?? 0; if (Date.now() - last < 5000) return json({ error: "Checked a moment ago; try again in a few seconds / 剛剛才檢查過，請稍候再試", code: "rate_limited" }, 429);
@@ -804,7 +806,9 @@ export function createRuntime(d: RuntimeDeps) {
         if (room[2] === "reset") { try { return json(rr.reset(room[1], by)); } catch (e: any) { return fail(e); } }
         if (room[2] === "images") { try { return json(rr.images(room[1], b?.on, by)); } catch (e: any) { return fail(e); } }
         if (room[2] === "check-answer") { try { return json(rr.answer(room[1], b?.n, b?.choice)); } catch (e: any) { return fail(e); } }
-        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm, pick: b?.pick, regenerate: b?.regenerate, images: b?.images }, by)); } catch (e: any) { return fail(e); }
+        // the lesson board's free actions: a region read, a question understood, a code card, tidy the board (no model, nothing paid)
+        if (room[2] === "lesson") { try { return json(await rr.lesson(room[1], { op: b?.op, scene: b?.scene, n: b?.n, on: b?.on, anchor: b?.anchor, node: b?.node, ref: b?.ref })); } catch (e: any) { return fail(e); } }
+        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm, pick: b?.pick, regenerate: b?.regenerate, images: b?.images, thread: b?.thread }, by)); } catch (e: any) { return fail(e); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });
