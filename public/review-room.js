@@ -898,10 +898,13 @@ const localVoices = () => { try { const want = (CUR.lang || uiLang()).toLowerCas
 const voicePref = () => prefs.get("crew.room.voice") || "auto";
 /** the Mac voice to speak with: the one picked, or, when that one is no longer offered (a robotic voice picked before), the best there is */
 const chosenLocal = () => { const p = voicePref(); if (p !== "auto" && !p.startsWith("local:")) return null; const vs = localVoices(); return (p === "auto" ? null : vs.find((v) => v.voiceURI === p.slice(6))) || vs[0] || null; };
-function speak(text, done) {
+/** speak a point; when the browser refuses (no click yet, a voice gone) the caller's reading-pace timer takes over (fail) */
+function speak(text, done, fail) {
   const v = chosenLocal(); if (!v) return false;
-  try { const u = new SpeechSynthesisUtterance(text); u.voice = v; u.lang = v.lang; u.onend = done; u.onerror = done; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); return true; } catch { return false; }
+  try { const u = new SpeechSynthesisUtterance(text); u.voice = v; u.lang = v.lang; u.onend = done; u.onerror = () => fail(); window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); return true; } catch { return false; }
 }
+// a browser lists its voices late: the picker and the default voice follow when they arrive
+try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
 function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; }
 /** show one more point of the current scene; while playing, the next one follows when its caption has been read (or spoken) */
 function advance(card) {
@@ -911,8 +914,9 @@ function advance(card) {
   RR.pick.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
   if (RR.playing !== card || RR.audio) return;
   const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
-  if (speak(text, next)) return;
-  RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170));
+  const paced = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170)); };
+  if (speak(text, next, paced)) return;
+  paced();
 }
 /** the vendor's voice for a whole scene: the points appear as the audio reaches them (by their share of the text) */
 async function playVendor(card, sc) {

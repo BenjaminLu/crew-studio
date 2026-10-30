@@ -67,7 +67,7 @@ const stubs = ([mic]) => {
   const voices = [mac("Samantha", "com.apple.voice.compact.en-US.Samantha"), mac("Fred", "fred"), mac("Ava (Premium)", "ava"), { name: "Google US English", lang: "en-US", localService: false, voiceURI: "google" }, mac("Mei-Jia (Premium)", "mj", "zh-TW"),
     mac("Zarvox", "com.apple.speech.synthesis.voice.Zarvox"), mac("Bad News", "com.apple.speech.synthesis.voice.BadNews"), mac("Good News", "good-news"), mac("Bubbles", "bubbles"), mac("Whisper", "com.apple.speech.synthesis.voice.Whisper"),
     mac("Eddy (English (US))", "com.apple.eloquence.en-US.Eddy"), mac("Grandma (English (UK))", "com.apple.eloquence.en-GB.Grandma", "en-GB"), mac("Kathy", "kathy"), mac("Zoe", "com.apple.voice.enhanced.en-US.Zoe")];
-  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => window.__voices || voices, speak: (u) => { window.__spoken.push([u.text, u.voice?.voiceURI]); setTimeout(() => u.onend && u.onend(), 5); }, cancel: () => { window.__cancels = (window.__cancels || 0) + 1; } } });
+  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => window.__voices || voices, speak: (u) => { window.__spoken.push([u.text, u.voice?.voiceURI]); setTimeout(() => window.__speakFails ? u.onerror && u.onerror({ error: "not-allowed" }) : u.onend && u.onend(), 5); }, cancel: () => { window.__cancels = (window.__cancels || 0) + 1; } } });
   window.SpeechSynthesisUtterance = function (t) { this.text = t; };
   class Rec { static async available(o) { window.__micAsked = o; return mic; } start() { window.__rec = this; window.__recStarted = { lang: this.lang, local: this.processLocally }; setTimeout(() => this.onresult && this.onresult({ results: [[{ transcript: "why do halves round up" }]] }), 10); } stop() { window.__recStopped = true; this.onend && this.onend(); } }
   window.SpeechRecognition = Rec;
@@ -178,6 +178,10 @@ try {
     await p.selectOption("[data-voice]", "local:ava"); await p.click("[data-replay]"); await p.waitForFunction(() => window.__spoken.length >= 2);
     ok(await p.evaluate(() => window.__spoken[0][0] === "An amount in cents goes into percent ." || /^An amount in cents goes into percent/.test(window.__spoken[0][0])) && await p.evaluate(() => window.__spoken[0][1] === "ava"), "with this Mac's voice each point is spoken as it appears", JSON.stringify(await p.evaluate(() => window.__spoken)));
     await p.click("[data-play]").catch(() => {}); await p.evaluate(() => { window.__spoken = []; });
+    // a voice the browser refuses (no click yet): the points keep their reading pace, never racing through
+    await p.evaluate(() => { window.__speakFails = true; }); await p.click("[data-replay]"); await p.waitForTimeout(1500); s = await stage(p);
+    ok(s.points <= 2 && (await p.evaluate(() => window.__spoken.length)) >= 1, "a refused voice falls back to reading pace: the points do not race through", JSON.stringify(s));
+    await p.click("[data-play]").catch(() => {}); await p.evaluate(() => { window.__speakFails = false; window.__spoken = []; });
     await p.selectOption("[data-voice]", "vendor"); await p.click("[data-play]"); await p.waitForFunction(() => !!window.__audio);
     ok(speech.length === 1 && speech[0].scene === "t1" && (await p.evaluate(() => window.__audio.src)) === "/api/review-room/SC-50/audio/voice-t1-0123456789ab.mp3", "the vendor's voice is asked for the whole scene once and played", JSON.stringify(speech));
     await p.evaluate(() => { const a = window.__audio; a.currentTime = 6; a.ontimeupdate(); }); s = await stage(p);
