@@ -20,8 +20,11 @@ export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-
         env: { CREW_STUDIO_URL: ctx.studioUrl, CREW_TOOL_TOKEN_FILE: ctx.tokenFile } } } };
       const args = ["-p", "{TEXT}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", model,
         "--tools", "", "--strict-mcp-config", "--mcp-config", JSON.stringify(mcp), "--allowedTools", tools.map((t) => `mcp__studio__${t.name}`).join(","),
-        "--system-prompt", systemPrompt, "--disable-slash-commands", "--no-session-persistence", "--restricted"];
-      if(approved)args.push('--setting-sources','','--settings',JSON.stringify(claudeSettings(approved)),'--permission-mode','dontAsk','--permission-prompts','none','--no-chrome',...(approved.effort?['--effort',approved.effort]:[]));
+        "--system-prompt", systemPrompt, "--disable-slash-commands", "--no-session-persistence", "--restricted",
+        // a round may run in the captain's own account context (its sign-in), never in its settings: no user, project or local
+        // settings, so none of its CLAUDE.md memory, hooks, plugins or permission rules load (src/providers/needs.ts)
+        "--setting-sources", "", "--settings", JSON.stringify(claudeSettings(approved ?? { model, effort: null }))];
+      if(approved)args.push('--permission-mode','dontAsk','--permission-prompts','none','--no-chrome',...(approved.effort?['--effort',approved.effort]:[]));
       const cmd = () => (/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
       const env={...ctx.env};if(approved){for(const k of['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_EFFORT_LEVEL'])delete env[k];const login=approved.login();if(!login.ok)throw new Error('Claude isolated login unavailable');Object.assign(env,login.env,approved.effort?{CLAUDE_CODE_EFFORT_LEVEL:approved.effort}:{});}
       const session=processSession(cmd, ctx.cwd, env,()=>parser(approved,tools),ctx.sandbox,{requireSuccessfulExit:!!approved,credentialFds:true});
@@ -33,13 +36,15 @@ export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-
 const short = (n: string) => n.replace(/^mcp__studio__/, "");
 function parser(approved?:ApprovedClaudeConfig,tools:ToolSpec[]=[]): LineParser {
   let sawDelta = false, text = "",init=false,failed=false,resultSeen=false;
-  const refuse=(code:string,m:any):NEvent[]=>{failed=true;if(approved)approved.invalidate(code,m);else nativeClaude.invalidate(code,m);return[{type:'turnEnd',status:'error',code,message:code==='quotaExhausted'?'Claude quota is exhausted; wait for reset. Do not sign in again. / Claude 額度已耗盡；請等待重設，不需重新登入。':code==='modelMismatch'?'Claude actual model differs from the approved model; work stopped.':'Claude authentication or execution was refused; readiness was invalidated.'}];};
+  const refuse=(code:string,m:any):NEvent[]=>{failed=true;if(approved)approved.invalidate(code,m);else nativeClaude.invalidate(code,m);return[{type:'turnEnd',status:'error',code,message:code==='quotaExhausted'?'Claude quota is exhausted; wait for reset. Do not sign in again. / Claude 額度已耗盡；請等待重設，不需重新登入。':code==='modelMismatch'?'Claude actual model differs from the approved model; work stopped.':code==='toolsNotLocked'?'The Claude CLI offered the model a tool or MCP server other than Studio\'s; work stopped. / Claude CLI 提供了 Studio 以外的工具或 MCP server；已停止工作。':'Claude authentication or execution was refused; readiness was invalidated.'}];};
   return {
     line(m: any): NEvent[] {
       if(failed)return[];
       if(!m||typeof m!=='object'||Array.isArray(m)||(m.type==='assistant'||m.type==='user')&&m.message?.content!==undefined&&!Array.isArray(m.message.content))return refuse('cliError',m);
       if((m.type==='assistant'||m.type==='user')&&m.message?.content?.some((c:any)=>!c||typeof c!=='object'||Array.isArray(c)))return refuse('cliError',m);
       const denied=claudeFailureCode(m);if(denied)return refuse(denied,m);
+      // the model has Studio's tools and nothing else: a round whose CLI announces any other tool or MCP server stops at once
+      if(m.type==='system'&&m.subtype==='init'&&(Array.isArray(m.tools)&&m.tools.some((t:unknown)=>typeof t!=='string'||!t.startsWith('mcp__studio__'))||Array.isArray(m.mcp_servers)&&m.mcp_servers.some((x:any)=>x?.name!=='studio')))return refuse('toolsNotLocked',m);
       if(approved&&m.type==='system'&&m.subtype==='init'){if(init||m.model!==approved.model)return refuse('modelMismatch',m);init=true;}
       if(approved&&(m.type==='assistant'&&(!init||m.message?.model!==approved.model)||m.type==='stream_event'&&m.event?.type==='message_start'&&(!init||m.event?.message?.model!==approved.model)))return refuse('modelMismatch',m);
       if(approved&&m.type==='result'&&(!init||!m.modelUsage||Object.keys(m.modelUsage).length!==1||!Object.hasOwn(m.modelUsage,approved.model)))return refuse('modelMismatch',m);

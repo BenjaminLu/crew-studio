@@ -20,7 +20,10 @@ const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.
 // a home of the test's own: the "real" provider config a round must never write
 const realHome = mkdtempSync(join(tmpdir(), "crew-home-")); process.env.HOME = realHome;
 // nothing from the runner's own environment decides a login here: every input the login reads is cleared (or set by this test)
-for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING", "CODEX_API_KEY", "CODEX_HOME", "CREW_KEYCHAIN_TOOL"]) delete process.env[k];
+for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING", "CODEX_API_KEY", "CODEX_HOME", "CREW_KEYCHAIN_TOOL", "CLAUDE_CONFIG_DIR"]) delete process.env[k];
+// the isolation suite below runs claude on API billing (a key Studio hands in, a throwaway home, no keychain); a round on the
+// captain's own account (the subscription) is probed apart, further down
+const API_KEY = "sk-ant-api03-round-key-fixture-0123456789-abcdefghijklmnopqrstuvwxyz"; process.env.CREW_CLAUDE_BILLING = "api-key";
 mkdirSync(join(realHome, ".claude"), { recursive: true });
 // the user's other secret folders, each with a file a round must not read
 writeFileSync(join(realHome, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "someone@example.com" }, userID: "u1", projects: { "/x": {} } }));
@@ -48,11 +51,10 @@ const tools = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (req) => 
   return Response.json(u.pathname === "/api/tools" ? agents.toolList(t) : await agents.callTool(t, u.pathname.slice(11), {})); } });
 agents.egress = egress; agents.toolUrl = () => `http://127.0.0.1:${tools.port}`;
 const protectedRoot = mkdtempSync(join(tmpdir(), "crew-protected-")); agents.protect = () => [protectedRoot];
-process.env.GITHUB_TOKEN = "ghp_x"; process.env.ANTHROPIC_API_KEY = "sk-ant-own"; process.env.OPENAI_API_KEY = "sk-other";
-// the keychain, as Studio (outside the sandbox) reads it: a stand-in security(1) holding the crew's token
-const CREW_TOKEN = "sk-ant-oat01-crew-oauth-fixture-0123456789-abcdefghijklmnopqrstuvwxyz";
+process.env.GITHUB_TOKEN = "ghp_x"; process.env.ANTHROPIC_API_KEY = API_KEY; process.env.OPENAI_API_KEY = "sk-other";
+// a stand-in security(1) that records every call: Studio never asks the keychain for a Claude login
 let kcCalls = ""; { const kcd = mkdtempSync(join(tmpdir(), "crew-kc-")); const tool = join(kcd, "security");
-  writeFileSync(tool, `#!/bin/sh\necho "$@" >> ${join(kcd, "calls.log")}\nfor a in "$@"; do [ "$a" = crew-studio-claude-token ] && { echo ${CREW_TOKEN}; exit 0; }; done\nexit 44\n`, { mode: 0o755 }); process.env.CREW_KEYCHAIN_TOOL = tool; kcCalls = join(kcd, "calls.log"); }
+  writeFileSync(tool, `#!/bin/sh\necho "$@" >> ${join(kcd, "calls.log")}\nexit 44\n`, { mode: 0o755 }); process.env.CREW_KEYCHAIN_TOOL = tool; kcCalls = join(kcd, "calls.log"); }
 const provider = claudeProvider("test-model", join(import.meta.dir, "fixture", "round-cli.cjs"));
 mkdirSync(join(data, "cards"), { recursive: true }); writeFileSync(join(data, "cards", "SC-1.json"), "CARD");
 const probe = { outside, inside: join(wt, "inside.txt"), key: join(data, "ledger.key"), dataFile: join(data, "cards", "SC-1.json"), badHost: "evil.example",
@@ -79,8 +81,8 @@ ok(r.proxyNoCred !== undefined && r.proxyNoCred !== 407, "the admitted round's s
 }
 { const { isCredentialName } = await import("../src/secure");
   const creds = (r.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
-  ok(JSON.stringify(creds) === JSON.stringify(["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CREW_TOOL_TOKEN_FILE"]) && r.oauth === CREW_TOKEN && /^http:\/\/127\.0\.0\.1:\d+$/.test(r.proxyEnv ?? ""),
-    "the round's env holds only its vendor credential descriptor and a PATH to its tool token (never either token itself, which KERN_PROCARGS2 would expose): no GitHub token, no API key from Studio's environment; its traffic goes to the proxy", JSON.stringify([creds, r.oauth === CREW_TOKEN]));
+  ok(JSON.stringify(creds) === JSON.stringify(["CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CREW_TOOL_TOKEN_FILE"]) && r.apiKey === API_KEY && r.oauth === null && /^http:\/\/127\.0\.0\.1:\d+$/.test(r.proxyEnv ?? ""),
+    "the round's env holds only its API key's descriptor and a PATH to its tool token (never either value itself, which KERN_PROCARGS2 would expose): no GitHub token, no other key from Studio's environment; its traffic goes to the proxy", JSON.stringify([creds, r.apiKey === API_KEY]));
   ok(!(r.envKeys ?? []).includes("CREW_TOOL_TOKEN") && r.toolTokenEnv == null && r.toolTokenFileIsPath === true, "the tool token is not anywhere in the round's environment; CREW_TOOL_TOKEN_FILE names a 0600 file, and the token lives only there", JSON.stringify([r.toolTokenEnv, r.toolTokenFileIsPath])); }
 ok(r.claudeTmp === r.tmpdir && /\/rounds\/J\w+\/tmp$/.test(r.tmpdir ?? ""), "the CLI's own temporary folder is the round's tmp, never a shared /tmp folder", `${r.claudeTmp} ${r.tmpdir}`);
 ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds === 0, "after the round its throwaway home and its proxy credential are gone");
@@ -104,11 +106,29 @@ ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds =
   let k2: any = {}; try { k2 = JSON.parse(kr.said); } catch {}
   ok(kr.status === "done" && Array.isArray(k2.secretReads) && k2.secretReads.length === 0, "a round cannot open the login keychain (a probe from inside)", JSON.stringify([kr.error, k2.secretReads]));
   ok(k2.proxyRefused === 403, "no GitHub host is reachable from a round (api.github.com is refused by its proxy)", String(k2.proxyRefused)); }
-{ const missing = mkdtempSync(join(tmpdir(), "crew-nokc-")); const none = join(missing, "security"); writeFileSync(none, "#!/bin/sh\nexit 44\n", { mode: 0o755 });
-  const before = process.env.CREW_KEYCHAIN_TOOL; process.env.CREW_KEYCHAIN_TOOL = none;
+{ const before = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
   const k = await agents.run({ kind: "t", title: "no login", system: "s", text: "PROBE {}", tools: [], provider, timeoutMs: 5000, sandbox: { writes: [wt] } });
-  process.env.CREW_KEYCHAIN_TOOL = before;
-  ok(k.status === "failed" && /has no login for a round/.test(k.error ?? ""), "with no login to hand, a claude round is refused before it starts", k.error ?? ""); }
+  process.env.ANTHROPIC_API_KEY = before;
+  ok(k.status === "failed" && /has no login for a round/.test(k.error ?? ""), "with API billing and no key to hand, a claude round is refused before it starts", k.error ?? ""); }
+// the captain's own account (the subscription): the claude process signs in from it in place. Studio hands no credential; the round
+// reaches that account context (its Claude folder and ~/.claude.json, and on macOS the login keychain) and nothing else of the
+// deny list; the settings, memory, hooks and plugins there stay read-only (they load into the captain's own sessions); and the
+// round may run only the CLI, Studio's runtime and the few helpers the CLI runs itself
+{ delete process.env.CREW_CLAUDE_BILLING; const before = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+  const C = join(realHome, ".claude"), kc = join(realHome, "Library", "Keychains", "probe.keychain-db");
+  const accountEntries = [join(C, "probe-secret"), join(realHome, ".claude.json")];
+  const ap = { secrets: SECRET_FILES.filter((f) => !accountEntries.includes(f)), accountWrites: [join(C, "projects", "x", "session.jsonl"), join(realHome, ".claude.json"), join(C, "settings.json"), join(C, "settings.local.json"), join(C, "CLAUDE.md"), join(C, "hooks", "h.sh"), join(C, "plugins", "p.json")],
+    accountReads: [join(realHome, ".claude.json"), kc], exec: ["/bin/cat", "/usr/bin/curl", process.execPath] };
+  const a = await agents.run({ kind: "t", title: "own account", system: "s", text: `PROBE ${JSON.stringify(ap)}`, tools: [], provider, timeoutMs: 30000, sandbox: { writes: [wt] } });
+  let o: any = {}; try { o = JSON.parse(a.said); } catch {}
+  process.env.ANTHROPIC_API_KEY = before; process.env.CREW_CLAUDE_BILLING = "api-key";
+  const { isCredentialName } = await import("../src/secure"); const creds = (o.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
+  ok(a.status === "done" && o.home === realHome && JSON.stringify(creds) === JSON.stringify(["CREW_TOOL_TOKEN_FILE"]) && o.oauth === null && o.apiKey === null, "on the captain's own account the round runs in that account context and Studio hands it no credential at all", JSON.stringify([a.error, o.home, creds]));
+  ok(o.accountWrites?.[join(C, "projects", "x", "session.jsonl")] === true && o.accountWrites?.[join(realHome, ".claude.json")] === true && o.accountReads?.[join(realHome, ".claude.json")] === true, "the CLI may keep its own state in its account context (~/.claude, ~/.claude.json)", JSON.stringify([o.accountWrites, o.accountReads]));
+  ok(["settings.json", "settings.local.json", "CLAUDE.md", join("hooks", "h.sh"), join("plugins", "p.json")].every((f) => o.accountWrites?.[join(C, f)] === false) && !existsSync(join(C, "settings.json")) && !existsSync(join(C, "hooks")), "the settings, memory, hooks and plugins of the captain's own account stay read-only to a round", JSON.stringify(o.accountWrites));
+  ok(o.accountReads?.[kc] === (process.platform === "darwin"), "the login keychain opens to the claude process only on the captain's own account (where the CLI keeps its sign-in)", JSON.stringify(o.accountReads));
+  ok(Array.isArray(o.secretReads) && o.secretReads.length === 0 && o.key === null, "every other entry of the deny list stays closed (Studio's keys, ~/.ssh, ~/.aws, ~/.codex …)", JSON.stringify(o.secretReads));
+  ok(o.exec?.["/bin/cat"] === false && o.exec?.["/usr/bin/curl"] === false && o.exec?.[process.execPath] === true, "the round may run only the CLI, Studio's runtime and the CLI's own helpers: no other program starts", JSON.stringify(o.exec)); }
 // a provider that cannot be sandboxed is refused; only the stub is sandbox-free
 { const fake = { id: "fake", model: "m", start: () => { throw new Error("must not start"); } } as any;
   const f = await agents.run({ kind: "t", title: "fake", system: "s", text: "x", tools: [], provider: fake, timeoutMs: 5000, sandbox: { writes: [] } });
@@ -185,10 +205,11 @@ ok(off.status === "failed" && /refused/.test(off.error ?? ""), "without an OS sa
 ok(di(egress.status())?.status === "missing", "and the Doctor says the round sandbox is missing");
 { const rlOf = (roundLogin: any) => diagnose({ state: data, board: { writable: false }, gh: { connected: false, tokenSource: null, enabled: false }, keys: { anthropic: null, openai: null, compatBaseUrl: null }, chatProvider: "stub", lanIp: null,
     tailscale: { installed: false, running: false, dnsName: null }, compiled: false, egress: egress.status(), roundLogin } as any).find((i) => i.id === "round-login")?.status;
-  const st = [rlOf({ ok: true, verified: false, source: "the crew's token (keychain item crew-studio-claude-token)", warn: "crew keychain item present, but its content is checked when a round starts" }), rlOf({ ok: true, verified: true, source: "x", warn: null }), rlOf({ ok: false, error: "crew token is not a claude setup-token result" })];
-  ok(JSON.stringify(st) === JSON.stringify(["degraded", "ok", "missing"]), "the Doctor's round login: warn (degraded) while the crew item is present but no round has signed in with it, ok once one has, fail (missing) when the last outcome failed and nothing later works", JSON.stringify(st)); }
+  const st = [rlOf({ ok: true, verified: true, source: "your own Claude sign-in", warn: null, kind: "account" }), rlOf({ ok: true, verified: true, source: "an Anthropic API key (API billing)", warn: null, kind: "api-key" }), rlOf({ ok: false, error: "API billing is chosen and Studio has no Anthropic API key" })];
+  ok(JSON.stringify(st) === JSON.stringify(["ok", "ok", "missing"]), "the Doctor's round login: ok on the captain's own account or an API key, missing when API billing has no key", JSON.stringify(st)); }
 delete process.env.CREW_FORCE_NO_SANDBOX;
 egress.stop(); main.stop(); tools.stop();
+delete process.env.CREW_CLAUDE_BILLING; delete process.env.ANTHROPIC_API_KEY; // a Studio of its own decides its billing (subscription by default, or its saved choice)
 // Studio itself: the proxy and the tool listener start with it, its page hands out no session, the Doctor shows the keychain sign-in
 { const { spawn } = await import("node:child_process");
   const tmp = mkdtempSync(join(tmpdir(), "crew-roundboot-")); for (const x of ["state", "home", "proj", "data"]) mkdirSync(join(tmp, x));
@@ -206,8 +227,8 @@ egress.stop(); main.stop(); tools.stop();
   ok(it?.status === "ok" && /proxy on 127\.0\.0\.1:\d+/.test(it.detail), "Studio starts the egress proxy with itself, and its Doctor shows the round sandbox", JSON.stringify(it));
   ok(!existsSync(leftHome), "at start Studio removes the throwaway homes and tmp an earlier Studio's rounds left behind");
   const calls = readFileSync(kcCalls, "utf8").trim().split("\n").filter(Boolean);
-  ok(calls.length > 0 && calls.every((c) => !/(^| )-w( |$)/.test(c)), "the Doctor's status never decrypts a login: it asks the keychain whether the item exists (no -w)", JSON.stringify(calls));
-  ok(kc?.title === "Vendor token handed to rounds; keychain not reachable" && kc.status === "degraded" && /crew-studio-claude-token/.test(kc.detail) && /checked when a round starts/.test(kc.detail), "the Doctor says rounds get the vendor token Studio hands them, and no keychain; an untried crew keychain item is a warn", JSON.stringify(kc));
+  ok(calls.every((c) => !/claude/i.test(c)), "the Doctor never asks the keychain for a Claude login", JSON.stringify(calls));
+  ok(kc?.title === "How rounds sign in; Studio never reads a subscription login" && kc.status === "ok" && /your own Claude sign-in/.test(kc.detail) && /never reads, copies or hands on a Claude login/.test(kc.detail), "the Doctor says rounds sign in with the captain's own account, which Studio never reads", JSON.stringify(kc));
   ok(page.status === 200 && !page.headers.get("set-cookie") && bad.status === 403 && !bad.headers.get("set-cookie") && good.status === 303 && good.headers.get("set-cookie") === sessionCookie("boot-session"),
     "Studio's page hands out no session; only its session link (`crew-studio open`) starts one", JSON.stringify([page.headers.get("set-cookie"), bad.status, good.status]));
   ok(answer.status === 403, "Studio refuses a card answer without its session (POST /api/scards/x/answer → 403), so a local process that reached its port still could not answer for the captain", String(answer.status)); }

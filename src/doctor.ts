@@ -133,7 +133,7 @@ export type DoctorInput = {
   /** the egress proxy agent rounds go through */
   egress?: { running: boolean; port: number; rounds: number };
   /** how claude rounds sign in: the login Studio hands them (v1 option A) */
-  roundLogin?: { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string };
+  roundLogin?: { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string; kind?: "account" | "api-key" };
   /** the captain's operating rules: an unreadable text is a visible problem, never a silent "none" */
   operatingRules?: { studio: { text: string; unreadable?: string }; projects: { id: string; text: string; unreadable?: string }[] };
   /** the shared git config of Studio's own checkout, every registered project and the built-in sandbox (src/git-config-health.ts) */
@@ -249,11 +249,14 @@ export function diagnose(i: DoctorInput): Item[] {
       fixZh: bad.length ? `Studio 不會自動修改。先找出寫入來源，再手動修正：${bad.map((p) => p.fix).join("；")}` : "",
       group: "coding", action: { kind: "none" } }); }
   const rl = i.roundLogin;
-  // degraded (the Doctor's warn) while the login is a keychain item no round has signed in with yet; ok once one has; missing when no source works
-  if (rl) items.push({ id: "round-login", title: "Vendor token handed to rounds; keychain not reachable", status: !rl.ok ? "missing" : rl.verified === false ? "degraded" : "ok",
-    detail: rl.ok ? `Claude rounds get ${rl.source} as their one credential (CLAUDE_CODE_OAUTH_TOKEN); no keychain, no GitHub token and no other credential reaches a round.${rl.warn ? ` Note: ${rl.warn}.` : ""}` : `Claude rounds are refused: ${rl.error}`,
-    adds: "How agent rounds sign in: Studio reads the vendor's own login outside the sandbox and hands the round only its token.",
-    fix: rl.ok ? (rl.warn ? "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600)." : "") : "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600).", action: { kind: "none" } });
+  // ok while a login works: the captain's own account (whose sign-in only the CLI reads) or an API key; missing when API billing has no key
+  if (rl) items.push({ id: "round-login", title: "How rounds sign in; Studio never reads a subscription login", titleZh: "回合如何登入；Studio 從不讀取訂閱登入", status: rl.ok ? "ok" : "missing",
+    detail: rl.ok ? (rl.kind === "account" ? "Claude rounds sign in with your own Claude sign-in: the claude CLI reads and refreshes it itself, inside the round; Studio never reads, copies or hands on a Claude login. Only the claude process reaches your Claude account folder (and on macOS the login keychain); the model in it has Studio's tools only, which run in their own sandbox without credentials." : `Claude rounds get ${rl.source} as their one credential, handed in through a file descriptor; no keychain, no GitHub token and no other credential reaches a round.`) + (rl.warn ? ` Note: ${rl.warn}.` : "") : `Claude rounds are refused: ${rl.error}`,
+    detailZh: rl.ok ? (rl.kind === "account" ? "Claude 回合使用你自己的 Claude 登入：由 claude CLI 在回合內自行讀取與更新；Studio 從不讀取、複製或轉交 Claude 登入。只有 claude 程式能碰到你的 Claude 帳號資料夾（macOS 上還有登入鑰匙圈）；其中的模型只能用 Studio 的工具，而這些工具在沒有憑證的獨立沙箱裡執行。" : "Claude 回合只拿到這把 Anthropic API 金鑰，經由檔案描述符傳入；鑰匙圈、GitHub token 與其他憑證都不會進入回合。") : `Claude 回合會被拒絕：${rl.error}`,
+    adds: "How agent rounds sign in: the vendor's own CLI uses your own sign-in, or Studio hands it the API key you chose for API billing.",
+    addsZh: "代理回合如何登入：由廠商自己的 CLI 使用你自己的登入，或在 API 計費時由 Studio 交給它你選的 API 金鑰。",
+    fix: rl.ok ? "" : "Add an Anthropic API key in Doctor → API keys, or switch Claude back to your subscription.",
+    fixZh: rl.ok ? "" : "請在 Doctor → API keys 加入 Anthropic API 金鑰，或把 Claude 改回使用你的訂閱。", action: { kind: "none" } });
   const cl = i.cursorLogin;
   if (cl && cursorV) items.push({ id: "round-login-cursor", title: "Cursor API key handed to rounds", titleZh: "交給回合的 Cursor API 金鑰", status: cl.ok ? "ok" : i.cursorInUse ? "missing" : "info",
     detail: cl.ok ? `Cursor rounds get ${cl.source} as their one credential (CURSOR_API_KEY); cursor-agent's own keychain login is never used.` : `Cursor rounds are refused: ${cl.error}`,

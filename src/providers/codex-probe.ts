@@ -18,8 +18,8 @@ export async function probeCodex(bin = process.env.CREW_CODEX_BIN ?? "codex", si
   try {
     if (signal?.aborted) return unavailable("capability probe cancelled");
     const login = codexLogin(cfg); if (!login.ok) return unavailable("no verified native Codex login is available");
-    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, TMPDIR: dir, LANG: "en_US.UTF-8", ...login.env, CODEX_HOME: cfg };
-    // The copied login has no refresh token; no original home/config is passed.
+    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, TMPDIR: dir, LANG: "en_US.UTF-8", CODEX_HOME: cfg, ...login.env };
+    // CODEX_HOME: a private one holding Studio's own API key, or the captain's own, whose login the codex CLI reads itself.
     status = probeProcess(binArgv(bin, ["login", "status"]), dir, env, undefined, { timeoutMs: 10_000, bytes: 64 * 1024 });
     const stopStatus = () => status!.kill(); signal?.addEventListener("abort", stopStatus, { once: true });
     let auth = false; try { const code = await status.exited, output = status.output(); auth = !output.failure && code === 0 && /logged in/i.test(output.out + output.err) && !/not logged in/i.test(output.out + output.err); } finally { signal?.removeEventListener("abort", stopStatus); }

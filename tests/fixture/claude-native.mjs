@@ -1,11 +1,12 @@
 // Strict offline installed-CLI stand-in. Never contains a real credential.
-import{appendFileSync,readFileSync,writeFileSync}from'node:fs';import{dirname,join,basename}from'node:path';
+import{appendFileSync,existsSync,readFileSync,writeFileSync}from'node:fs';import{dirname,join,basename}from'node:path';
 // Stand in for Claude's descriptor transport; credentials become process-local after exec.
 for(const [key,descriptor]of[['CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'],['ANTHROPIC_API_KEY','CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR']])if(process.env[descriptor])process.env[key]=readFileSync(Number(process.env[descriptor]),'utf8').trim();
 const root=dirname(process.argv[1]),mode=basename(process.argv[1]).replace('.mjs',''),args=process.argv.slice(2),trace=join(root,'trace.jsonl');
 const put=x=>process.stdout.write(JSON.stringify(x)+'\n');
 // the acceptance harness's login (tests/acceptance.ts) leaves no trace next to this file: its rounds cannot write here
-const acceptance=/^sk-ant-oat01-acceptance/.test(process.env.CLAUDE_CODE_OAUTH_TOKEN??'');
+// (its marker file in the captain's own Claude folder, which a round reaches in place: tests/acceptance/studio.ts)
+const acceptance=existsSync(join(process.env.CLAUDE_CONFIG_DIR||join(process.env.HOME??'/nonexistent','.claude'),'.fixture-acceptance.json'));
 // the free model list (src/providers/claude-native.ts models()): print mode over stream-json with no prompt, answered on initialize
 const listing=args[0]==='-p'&&args[1]==='--input-format'&&args[2]==='stream-json',has=(k,v)=>args.includes(k)&&(v===undefined||args[args.indexOf(k)+1]===v);
 // a listing only with the discovery's authority: no prompt, no tools, no MCP, no settings, no session file, restricted

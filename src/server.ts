@@ -91,7 +91,7 @@ import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
 import { Egress } from "./egress";
 import { Worktrees } from "./worktrees";
-import { claudeLogin as claudeLogin_, cursorLogin, claudeLoginPresence, claudeLoginPresenceAsync, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
+import { claudeLogin as claudeLogin_, cursorLogin, codexLogin, claudeLoginPresence, claudeLoginPresenceAsync, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
 import { installCode } from "./domain/code";
 import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-repo";
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
@@ -368,7 +368,7 @@ const toolListener = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (r
 } });
 const PROTECTED = startup.protectedRoots; // the one list of protected roots: rounds, worktrees and the runtime all read it
 // how claude rounds sign in (v1 option A): Studio reads the vendor's login outside the sandbox and hands the round only its token; checked once a minute for the Doctor
-let loginCache: { at: number; v: { ok: boolean; source?: string; warn?: string | null; error?: string } } | null = null;
+let loginCache: { at: number; v: { ok: boolean; source?: string; warn?: string | null; error?: string; kind?: "account" | "api-key" } } | null = null;
 // the Doctor's status never decrypts a login: items by existence only (claudeLoginStatus); the token is read when a round starts
 const roundLogin = () => { if (!loginCache || Date.now() - loginCache.at > 60_000) loginCache = { at: Date.now(), v: claudeLoginStatus() }; return loginCache.v; };
 // a captain who chose API billing for claude rounds (the earlier keychain/API-key switch, data/round-auth.json) keeps it: moved to data/claude-billing.json, never switched silently
@@ -462,16 +462,16 @@ const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;
 const coffeeTools = (()=>{const rendering=renderEnv();return discoverCoffeeFilmCapability([process.env.CREW_HYPERFRAMES_ROOT,TOOLS_DIR,!COMPILED?ROOT:null,join(dirname(process.execPath),"..")].filter(Boolean)as string[],{browser:process.env.HYPERFRAMES_BROWSER_PATH,playwright:rendering.playwright,ffmpeg:process.env.CREW_FFMPEG||Bun.which("ffmpeg"),ffprobe:Bun.which("ffprobe")});})();
 let staffingClaudeCapabilities:ProviderCapability[]=[];
-/** Login presence per provider for the readiness gate, read once per gate run and kept 30 s: environment and files are read
- *  directly; Claude's keychain items are asked about with an async `security find-generic-password` (existence only, no secret
- *  read), so the event loop never waits on it. Nothing is written and no sign-in is ever started. */
+/** Login presence per provider for the readiness gate, read once per gate run and kept 30 s: an API key's presence in the
+ *  environment, or that the captain's own codex login file exists (never what it holds); Claude's own sign-in is the CLI's
+ *  own status, read elsewhere. Nothing is written and no sign-in is ever started. */
 let gateLoginCache: { at: number; v: Promise<Record<string, "logged-in" | "not-logged-in" | "unknown">> } | null = null;
 const gateLogins = () => {
   if (gateLoginCache && Date.now() - gateLoginCache.at < 30_000) return gateLoginCache.v;
   const v = (async () => {
     const out: Record<string, "logged-in" | "not-logged-in" | "unknown"> = {};
     try { out.claude = (await claudeLoginPresenceAsync()).ok ? "logged-in" : "not-logged-in"; } catch { out.claude = "unknown"; }
-    try { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) out.codex = "logged-in"; else { const f = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json"); if (!existsSync(f)) out.codex = "not-logged-in"; else { const j = JSON.parse(await Bun.file(f).text()); out.codex = j?.tokens?.access_token || j?.OPENAI_API_KEY ? "logged-in" : "not-logged-in"; } } } catch { out.codex = "unknown"; }
+    try { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) out.codex = "logged-in"; else out.codex = codexLogin(join(DATA, "codex-gate-unused")).ok ? "logged-in" : "not-logged-in"; } catch { out.codex = "unknown"; }
     try { const c = probeCursor([]); out.cursor = c.available && c.auth !== "missing" ? "logged-in" : "not-logged-in"; } catch { out.cursor = "unknown"; }
     out.stub = allowStub ? "logged-in" : "not-logged-in";
     return out;

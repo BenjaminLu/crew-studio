@@ -33,6 +33,11 @@ const viaProxy = (host, withCred = true) => new Promise((res) => { const u = new
   r.toolTokenFileIsPath = !!process.env.CREW_TOOL_TOKEN_FILE && process.env.CREW_TOOL_TOKEN_FILE !== TOOL_TOKEN && /\//.test(process.env.CREW_TOOL_TOKEN_FILE);
   r.proxyEnv = process.env.HTTPS_PROXY ? process.env.HTTPS_PROXY : null;
   r.oauth = process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR ? fs.readFileSync(Number(process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR), "utf8").trim() : process.env.CLAUDE_CODE_OAUTH_TOKEN || null;
+  r.apiKey = process.env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR ? fs.readFileSync(Number(process.env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR), "utf8").trim() : null;
+  // the captain's own account context (a round on the subscription): what the CLI may write there, what stays read-only, what it may run
+  r.accountWrites = Object.fromEntries((p.accountWrites || []).map((f) => [f, tryWrite(f)]));
+  r.accountReads = Object.fromEntries((p.accountReads || []).map((f) => { try { fs.readFileSync(f); return [f, true]; } catch { return [f, false]; } }));
+  r.exec = Object.fromEntries((p.exec || []).map((c) => { const x = require("child_process").spawnSync(c, ["/dev/null"], { stdio: "ignore" }); return [c, !x.error && x.status !== null]; }));
   r.claudeTmp = process.env.CLAUDE_CODE_TMPDIR || null; r.tmpdir = process.env.TMPDIR || null; r.home = process.env.HOME || null;
   out(r);
 })();

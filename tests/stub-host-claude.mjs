@@ -19,7 +19,7 @@ const want = argv.includes("--session-id") ? argv[argv.indexOf("--session-id") +
 if (argv.includes("--dangerously-skip-permissions") || argv.includes("bypassPermissions")) { console.error("stub: refuses bypass"); process.exit(9); }
 const id = argv.includes("--fork-session") ? `${want}-copy` : want.startsWith("fork-") ? `${want}-new` : want;
 if (process.env.STUB_ARGV_FILE) appendFileSync(process.env.STUB_ARGV_FILE, JSON.stringify({ argv, FM_IN_ROUND: process.env.FM_IN_ROUND ?? null, pid: process.pid,
-  CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null, oauthToken: oauthToken ? (oauthToken === process.env.STUB_EXPECT_CREW ? "expected" : "other") : null }) + "\n");
+  CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null, HOME: process.env.HOME ?? null, env: Object.fromEntries(Object.keys(process.env).filter((k) => k.startsWith("CREW_PRIMARY")).map((k) => [k, true])), oauthToken: oauthToken ? (oauthToken === process.env.STUB_EXPECT_CREW ? "expected" : "other") : null }) + "\n");
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dir = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"));

@@ -98,7 +98,7 @@ scripted agent try, from inside its sandboxed CLI process, everything a real `co
 connection to a public address and to a loopback port the harness listens on (both refused by the OS), Studio's tool
 listener (reachable), a CONNECT through the egress proxy to its provider's API host (allowed; closed as soon as the proxy
 answers, before any TLS byte, so no request reaches the provider), to another host (403) and without the round's
-credential (407), its own login (readable; Codex's copy has no refresh token), the source login, Studio's ledger key and
+credential (407), its own login (the captain's own account context, reached in place; never a copy of a login in the round's home), Studio's ledger key and
 projects, the account's own dotfiles and the private folders beside each tool on PATH (none readable), and writes into
 Studio's data and HOME (refused). The result is one `ACCEPT_PROBE_RESULT` line in the round record; the harness fails the
 run on any way out.

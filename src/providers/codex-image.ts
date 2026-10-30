@@ -94,9 +94,9 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   try {
     const login = needs.login(home); if (!login.ok) throw new Error('Codex image login unavailable'); guard();
     if(!localUnrestricted()){await egress.start(); guard(); lease = await openScopedProxy(egress, needs.hosts); guard();}
-    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1 }));
+    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1,account:needs.account?.()??null }));
     const proxy = lease?.url ?? "";
-    const env:Record<string,string> = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',...login.env,CODEX_HOME:join(home,'.codex'),HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };
+    const env:Record<string,string> = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',CODEX_HOME:join(home,'.codex'),...login.env,HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };
     if(localUnrestricted())for(const key of ['HTTPS_PROXY','HTTP_PROXY','https_proxy','http_proxy','ALL_PROXY','all_proxy'])delete env[key];
     let id = 0, thread = '', turn = '', item: any = null, terminal = false;
     const early: any[] = [];
@@ -135,10 +135,11 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
     await proc.stop();clean=true;guard();if(failure)throw failure;if(proc.output().failure)throw new Error('Codex image protocol limit or deadline exceeded');
     let bytes:Buffer;
     if (typeof item.savedPath==='string' && item.savedPath) {
-      const generated=join(home,'.codex','generated_images'),path=item.savedPath;
+      const generated=join(env.CODEX_HOME,'generated_images'),path=item.savedPath;
       const rel=relative(generated,path);if(!isAbsolute(path)||!rel||rel.startsWith('..')||isAbsolute(rel)||realpathSync(generated)!==generated)throw new Error('Codex image saved path outside owned generation root');
       let at=generated;for(const part of rel.split('/')){at=join(at,part);if(lstatSync(at).isSymbolicLink())throw new Error('Codex image saved path contains symlink');}
       if(realpathSync(path)!==path||!lstatSync(path).isFile()||lstatSync(path).size>MAX_IMAGE)throw new Error('Codex image saved file unsupported');bytes=readFileSync(path);
+      if(env.CODEX_HOME!==join(home,'.codex'))try{rmSync(path,{force:true});}catch{} // the captain's own codex home keeps none of Studio's images
     } else {
       if(typeof item.result!=='string'||item.result.length>Math.ceil(MAX_IMAGE*4/3)+4||!item.result.length||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.result))throw new Error('Codex image bytes unavailable');bytes=Buffer.from(item.result,'base64');
     }

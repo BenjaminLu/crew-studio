@@ -123,11 +123,12 @@ async function sandboxProbe(prompt) {
     providerViaProxy: host ? await viaProxy(`${host}:443`) : { status: null, error: "no host" },
     otherViaProxy: await viaProxy("example.com:443"),
     noCredentialViaProxy: await viaProxy(`${host || "example.com"}:443`, false),
-    // its own login (what Studio handed the round), and nothing else
-    ownLogin: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")) ? "file:$HOME/.codex/auth.json" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : null,
-    ownLoginRefresh: (() => { try { return JSON.parse(readFileSync(joinPath(process.env.HOME, ".codex", "auth.json"), "utf8")).tokens?.refresh_token ?? null; } catch { return null; } })(),
+    // its own login: the captain's own account the vendor's CLI signs in from, in place (a Claude folder, a codex home), or a
+    // Cursor round's API key; and never a copy of a login in the round's own home
+    ownLogin: readable(joinPath(process.env.CLAUDE_CONFIG_DIR || joinPath(process.env.HOME ?? "/nonexistent", ".claude"), ".fixture-acceptance.json")) ? "account:claude" : process.env.CODEX_HOME && readable(joinPath(process.env.CODEX_HOME, "auth.json")) ? "account:codex" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : null,
+    loginCopy: process.env.CODEX_HOME !== joinPath(process.env.HOME ?? "/nonexistent", ".codex") && readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")) ? "$HOME/.codex/auth.json" : process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : null,
     // a Cursor round's own key is its login; in any other round it is someone else's credential
-    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CURSOR_API_KEY"].filter((k) => process.env[k] && !(k === "CURSOR_API_KEY" && !process.env.CLAUDE_CODE_OAUTH_TOKEN && !readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")))),
+    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CURSOR_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"].filter((k) => process.env[k] && !(k === "CURSOR_API_KEY" && !process.env.CODEX_HOME && !readable(joinPath(process.env.CLAUDE_CONFIG_DIR || joinPath(process.env.HOME ?? "/nonexistent", ".claude"), ".fixture-acceptance.json")))),
     denied: Object.fromEntries(list("deny").map((p) => [p, readable(p)])),
     tmpWritable: writable(process.env.TMPDIR ?? "/nonexistent"),
     nowrite: Object.fromEntries(list("nowrite").map((p) => [p, writable(p)])),

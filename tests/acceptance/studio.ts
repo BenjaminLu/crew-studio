@@ -20,9 +20,9 @@ export const SANDBOXED = process.env.ACCEPTANCE_PROFILE === "sandboxed" || proce
  *  Playwright browsers, read by Studio's renderer only; ffmpeg; node) as the live board has them: every run must pass, none is skipped
  *  (scripts/acceptance-sandboxed.ts --e2e, bun run test:sandboxed-e2e) */
 export const SANDBOXED_E2E = process.env.ACCEPTANCE_PROFILE === "sandboxed-e2e";
-/** The CLI stubs (tests/fixture/codex-account.mjs, tests/fixture/claude-native.mjs) switch to the scripted agent on these logins. */
+/** The CLI stubs (tests/fixture/codex-account.mjs, tests/fixture/claude-native.mjs) switch to the scripted agent on these logins:
+ *  the codex login in the captain's own codex home, and a marker in the captain's own Claude folder (never a token Studio hands). */
 const CODEX_AUTH = { auth_mode: "chatgpt", last_refresh: "2020-02-29T12:34:56.123+08:00", tokens: { access_token: "abcdefgh.abcdefgh.abcdefgh", id_token: "fixture-id-token", account_id: "fixture-acceptance", refresh_token: "acceptance-refresh-must-not-copy" } };
-const CLAUDE_TOKEN = "sk-ant-oat01-acceptance" + "0".repeat(40); // a fixture login of the official shape; not a credential
 
 export type Api = (path: string, body?: unknown) => Promise<{ status: number; body: any }>;
 export type Studio = { name: string; base: string; data: string; root: string; api: Api; output: () => string; close: () => Promise<void> };
@@ -50,13 +50,13 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
     writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
     writeFileSync(join(home, ".codex", ".fixture-account.json"), '{"authenticated":true}');
     writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify(CODEX_AUTH), { mode: 0o600 });
+    mkdirSync(join(home, ".claude"), { recursive: true }); writeFileSync(join(home, ".claude", ".fixture-acceptance.json"), '{"authenticated":true}');
   }
   const port = await freePort(), base = `http://127.0.0.1:${port}`, token = `acceptance-${name}-session`;
   const env: Record<string, string> = { ...(process.env as Record<string, string>), HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data, CREW_RUNTIME_DIR: join(root, "runtime"), CREW_PORT: String(port),
     CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_GH_NO_CLI: "1", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1",
     CREW_CODEX_BIN: o.codexBin??join(REPO, "tests/fixture/codex-account.mjs"), CREW_CLAUDE_BIN: join(REPO, "tests/fixture/claude-native.mjs"),
     CREW_HOST_CODEX_BIN: o.codexBin??join(REPO, "tests/fixture/codex-account.mjs"), CREW_HOST_CLAUDE_BIN: "/nonexistent/claude",
-    CLAUDE_CODE_OAUTH_TOKEN: CLAUDE_TOKEN,
     // the film renderer is a local tool, not a provider: its existing stub (src/render.ts) stands in for Playwright + ffmpeg
     CREW_RENDER_STUB: "1", ...(filmSample.path ? { CREW_RENDER_STUB_MP4: filmSample.path } : {}),
     CREW_LOCAL_UNRESTRICTED: o.localUnrestricted ? "1" : "0", ...(o.localUnrestricted ? { CREW_LOCAL_DEPENDENCY_ROOT: deps } : {}),
@@ -69,7 +69,7 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
     delete env.CREW_RENDER_STUB; delete env.CREW_RENDER_STUB_MP4; env.PLAYWRIGHT_BROWSERS_PATH = browsers;
     for (const k of ["PLAYWRIGHT_MODULE", "CREW_PLAYWRIGHT_MODULE", "NODE_PATH", "CREW_LOCAL_DEPENDENCY_ROOT"]) delete env[k];
   }
-  for (const k of [...(filmSample.path ? [] : ["CREW_RENDER_STUB_MP4"]), "CREW_MAIN_PROJECT", "CREW_FM_STATE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CREW_CHAT_PROVIDER", "CLAUDE_CONFIG_DIR", "CREW_CODEX_MODEL", "CREW_CLAUDE_MODEL", "CREW_CLAUDE_BILLING", "CREW_TEST_IN_PROCESS"]) delete env[k];
+  for (const k of [...(filmSample.path ? [] : ["CREW_RENDER_STUB_MP4"]), "CREW_MAIN_PROJECT", "CREW_FM_STATE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CREW_CHAT_PROVIDER", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "CREW_CODEX_MODEL", "CREW_CLAUDE_MODEL", "CREW_CLAUDE_BILLING", "CREW_TEST_IN_PROCESS"]) delete env[k];
   if (!o.localUnrestricted) delete env.CREW_LOCAL_DEPENDENCY_ROOT;
   for (const k of ["CURSOR_API_KEY", "CREW_CURSOR_MODEL", "CREW_CURSOR_ROOT"]) delete env[k];
   // on Cursor: the Cursor stub and its fixture key only; the Codex and Claude CLIs do not exist and neither login is there
@@ -78,7 +78,6 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
     Object.assign(env, { CREW_CODEX_BIN: `${none}/codex`, CREW_HOST_CODEX_BIN: `${none}/codex`, CREW_CLAUDE_BIN: `${none}/claude`, CREW_HOST_CLAUDE_BIN: `${none}/claude`,
       CREW_CURSOR_BIN: join(REPO, "tests/fixture/cursor-agent.mjs"), CREW_HOST_CURSOR_BIN: join(REPO, "tests/fixture/cursor-agent.mjs"),
       CURSOR_API_KEY: CURSOR_KEY, CREW_KEYCHAIN_TOOL: "none", CREW_CHAT_PROVIDER: "cursor" });
-    delete env.CLAUDE_CODE_OAUTH_TOKEN;
   }
   await o.beforeStart?.(data);
   let out = "";

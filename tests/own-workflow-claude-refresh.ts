@@ -29,7 +29,7 @@ for(const mode of ['success','no-grant','tamper-pair','tamper-def','untrusted','
 // Native fixture: a real bounded subprocess produces the opaque execution receipt.
 {
  const {ClaudeNative,isClaudeExecutionAdmission}=await import('../src/providers/claude-native');const {mkdtempSync,copyFileSync,readFileSync,rmSync}=await import('node:fs');const {join}=await import('node:path');
- const dir=mkdtempSync('/private/tmp/crew-own-claude-provider-'),bin=join(dir,'success.mjs');copyFileSync(join(import.meta.dirname,'fixture/claude-native.mjs'),bin);const native=new ClaudeNative({bin,login:()=>({ok:true,env:{CLAUDE_CODE_OAUTH_TOKEN:'sk-ant-oat01-'+'x'.repeat(48)},source:'offline fixture only',warn:null})});const F=await fixture();
+ const dir=mkdtempSync('/private/tmp/crew-own-claude-provider-'),bin=join(dir,'success.mjs');copyFileSync(join(import.meta.dirname,'fixture/claude-native.mjs'),bin);const native=new ClaudeNative({bin,login:()=>({ok:true,env:{},source:'offline fixture only (own account)',warn:null,kind:'account'})});const F=await fixture();
  try{const c=await refreshOwnWorkflowClaude(F.x,input,pair,cap,{verify:(p,o)=>native.verify(p,o),admitted:isClaudeExecutionAdmission});assert(isClaudeExecutionAdmission(c,pair));assert.equal(c.quota,'unknown');const rows=readFileSync(join(dir,'trace.jsonl'),'utf8').trim().split('\n').map(l=>JSON.parse(l));assert.equal(rows.filter(r=>r.phase==='model').length,1);assert.equal(rows.find(r=>r.phase==='model').effort,'medium');console.log('PASS real native exact pair bounded verification');}finally{await F.stop();rmSync(dir,{recursive:true,force:true});}
 }
 // Existing task: a signed new grant resumes its original readiness card and pin.

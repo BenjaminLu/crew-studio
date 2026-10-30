@@ -168,9 +168,16 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     reach a round. A home folder is never opened this way;
   - the provider CLI's own install (the real path of its binary and the folder above), read-only;
   - the round's worktree (read and write, except the worktree's `.git` link: Studio commits outside the sandbox), its
-    `tmp` (also `TMPDIR` and the CLI's own temp variable) and a throwaway home where the CLI keeps its config, sessions
-    and caches. Its login is a copy Studio made outside the sandbox: an inherited descriptor (Claude) or a login
-    file without its refresh token in the throwaway home (Codex). No keychain, no source login file;
+    `tmp` (also `TMPDIR` and the CLI's own temp variable) and a throwaway home where the CLI keeps its caches. Studio
+    never reads, copies or hands on a subscription login (Anthropic's terms forbid a third-party app to collect or
+    intermediate Claude.ai credentials, and a copy is a credential a round could leak). On the captain's own account the
+    vendor's CLI signs in from that account context in place, and the profile opens exactly that context to the round
+    after the secret deny list: the captain's Claude folder and `~/.claude.json` (and on macOS the login keychain, where
+    the CLI keeps its sign-in), or the captain's codex home. Its settings, memory, hooks, plugins and rules stay read-only,
+    and a claude round may execute only the CLI, Studio's runtime and the CLI's own helpers. The model in the round has
+    Studio's tools only (`--tools ""`, `--strict-mcp-config`, `--setting-sources ""`); a CLI that announces any other tool
+    or MCP server stops the round. On API billing Studio hands its own key through an inherited descriptor (Claude) or a
+    private `auth.json` (Codex) and nothing of the account is opened;
   - the network: only `localhost:<scoped relay>` (Studio retains the round's proxy credential and host list: its provider's API
     hosts plus what policy `egress.allow` grants) and `localhost:<tool listener>`; `NO_PROXY` is loopback only. Every
     other address, the rest of loopback included, is refused by the OS;
