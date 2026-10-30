@@ -66,6 +66,8 @@ import { LiveRunner, StubRunner, readStatus, serveCommand, serveOffCommand, type
 import { MemoryStore } from "./memory";
 import { createM3 } from "./m3";
 import { renderEnv, TOOLS_DIR } from "./render";
+import { kokoroSpeaker, localSynth, voiceDoctorInput, voiceStatus } from "./voice/kokoro";
+import { macVoices } from "./voice/mac";
 import { dirname } from "node:path";
 import { Agents } from "./agent";
 import { RawLog, StudioLog } from "./rawlog";
@@ -317,7 +319,7 @@ setInterval(() => { try { cursorAccount(true); } catch {} }, 60_000).unref();
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
 const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), voice: voiceDoctorInput(macVoices()), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
 
@@ -712,6 +714,16 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/api/instance" && !writing) return json(launchAuthority.respond(url.searchParams.get("challenge")));
     if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock", execution: executionMode(),
       jobs: [...installs.jobs.values()].slice(-5) });
+    // the review room's local voice: whether it can speak (the room's picker), and Doctor's test phrase (desktop only)
+    if (p === "/api/voice/status" && !writing) return json(voiceStatus());
+    if (p === "/api/voice/test" && writing) {
+      if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      let b: any = {}; try { b = await req.json(); } catch {}
+      const zh = /^zh/.test(String(b?.lang ?? "")), text = zh ? "這是審查室的本機神經語音：這個 PR 在 GitHub 上的 diff，會用英文聲音唸英文詞。" : "This is the review room's local neural voice. Nothing you hear left this Mac.";
+      try { const out = await kokoroSpeaker(localSynth(), { lang: zh ? "zh" : "en", mode: "switch" })(text, req.signal);
+        return new Response(out.bytes, { headers: { "content-type": "audio/wav", "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
+      catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? "no_voice" }, 409); }
+    }
     if (p === "/api/doctor/methods") { const item = url.searchParams.get("item") ?? ""; return json({ item, methods: methodsFor(item), login: LOGINS[item] ?? null }); }
     if (p.startsWith("/api/doctor/job/")) { const j = installs.jobs.get(p.slice("/api/doctor/job/".length)); return j ? json(j) : json({ error: "no such job" }, 404); }
     if (p === "/api/doctor/install" && writing) {
