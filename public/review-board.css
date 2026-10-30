@@ -209,7 +209,8 @@ html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"
   .rb-rail, .rb-notes { display: flex; flex-direction: column; position: fixed; left: 0; right: 0; bottom: 0; height: 72vh; z-index: 55; overflow: auto; border: 0; border-top: 1px solid var(--border-strong); border-radius: 16px 16px 0 0;
     background: var(--surface); box-shadow: 0 -10px 30px rgba(0,0,0,.18); padding: 16px 16px 24px; transform: translateY(105%); transition: transform .25s; }
   .rb-rail.open, .rb-notes.open { transform: none; }
-  .rr-stage.board .rb-notes { width: auto; top: auto; }
+  /* the questions' sheet over its scrim (the narrow desktop's absolute overlay does not apply on a phone) */
+  .rr-stage.board .rb-notes { position: fixed; z-index: 55; width: auto; top: auto; right: 0; }
   .rb-sheetx { display: block; position: absolute; right: 10px; top: 8px; width: 32px; height: 32px; border: 0; background: none; color: var(--text-3); font-size: 20px; }
   .rb-scrim { display: block; position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.18); }
   .rb-minimap { max-width: 260px; }
@@ -232,3 +233,16 @@ html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"
 /* far away a region is at least as tall as its map label */
 .rb-plane[data-lod="far"] .rb-rbody { min-height: 420px; }
 .rb-eyebrow { font: 600 10.5px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); overflow-wrap: anywhere; margin: 0; }
+.rb-paid { margin-left: auto; align-self: center; font: 11px var(--f-mono); color: var(--text-3); white-space: nowrap; }
+.rb-consent { display: flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.rb-agree { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.rb-askbtn { justify-self: end; font: inherit; font-size: 11.5px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-3); cursor: pointer; }
+.rb-askbtn:hover { color: var(--rr-marker); border-color: var(--rr-marker); }
+.rb-askbtn:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
+.rb-chip.c-q { background: var(--rr-inf-bg); color: var(--rr-inf-ink); }
+.rb-cfigs { display: grid; gap: 6px; margin-top: 6px; }
+.rb-cfigs .rp-fig { padding: 6px; box-shadow: none; }
+.rb-cfigs svg { max-width: 100% !important; min-width: 0 !important; height: auto; }
+.rb-card[data-thread]:not([data-pending]) { cursor: zoom-in; }
+.rb-card[data-thread]:not([data-pending]) :is(button, a, pre, .rb-cbody p) { cursor: auto; }
+.rb-card[data-thread]:not([data-pending]) button { cursor: pointer; }

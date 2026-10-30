@@ -301,20 +301,27 @@ asked on the way, as the notes panel beside the board does.
 **Asking on the board.** Every sentence of a point, a risk, a drawing's node, edge or transition (Studio's and a
 `figure_svg` figure's `data-node` / `data-edge`), a transition's row, a transaction's field, a call and its fields, a
 turned-down option, a before / after box and a sequence step is a place: a click, or Enter on it, opens a popover (a bottom
-sheet on a phone) with deeper, example, say it another way, why, show the code and a question of one's own. A paid chip
-opens a card beside the place that asks for the room's confirmation inline (the same offer and hash as any turn; no modal);
-confirmed, the question is a turn of the room's own machinery (`POST …/turn {thread: {anchor | n, node, chip, q?}, confirm}`:
-deeper is a how turn, why a why turn, example, say it another way and a question of one's own an ask turn), refused before
-the confirmation with nothing kept. The tutor's prompt carries the place: its chapter and scene, what was clicked and its
+sheet on a phone) with 詳細一點, 舉個例子, 為什麼這樣做, 看程式碼, 我不懂這句 (say it another way) and a question of one's own.
+The first paid question opens a card beside the place showing the plan once, with "Start follow-ups at once (this room)"
+checked; confirmed with it checked, the room keeps that agreement bound to the plan's fingerprint (`followUps`: the
+provider, model and effort, `followPrint`) and every later question starts at once, its card marked "paid · model".
+A changed plan asks again, the room's switch turns it off (`op: consent, on: false`), and without it each question is
+confirmed (the same offer and hash as any turn; no modal). The question is a turn of the room's own machinery (`POST …/turn
+{thread: {anchor | n, node, chip, q?}, confirm?, consent?}`: deeper is a how turn, why a why turn, example, say it another
+way and a question of one's own an ask turn), refused before the confirmation with nothing kept. A thread turn never draws
+pictures and never sends the place's words as the captain's: they go only fenced. A phone asks nothing paid: its paid chips
+are off, saying "Ask on a computer"; show the code stays. A room holds at most 200 threads, a thread 50 cards and a card 5
+versions (`LESSON_LIMITS`), refused with a clear error. The tutor's prompt carries the place: its chapter and scene, what was clicked and its
 words (fenced), the citations under it with their diff hunks, the thread so far and what the chip asks. Its answer is a
 card of a **thread** branching beside the place, a numbered pin on the place: "Thinking" and what the tutor has said so far
 while it works, then the answer as text with its citations; a deeper answer and a why go below their card, an example
 beside it, a rephrasing is a version tab of the same card. Show the code is free: in a GitHub pull request's room it opens the
 pull request's files on GitHub at those lines in a new window (`openCite`; a code card there is only that link), otherwise a code card holding the citation, read through the citation
-check (`op: code`). "Got it ✓" marks a question understood (`op: resolve`) and folds its cards into a chip; ⤢ frames the
+check (`op: code`). A question is **not understood yet** (還沒懂, red) only when the captain said so (我不懂這句, say it another
+way, or "not yet" on an understood one) and has not marked it understood since. "Got it ✓" marks a question understood (`op: resolve`) and folds its cards into a chip; ⤢ frames the
 thread and dims the rest, Escape returns the camera where it was. "Tidy the board" (`op: tidy`, no model, nothing paid) folds
-every understood question into its chapter as "↳ Folded in from your questions #n": the first sentence of each card's shown
-answer, its citations kept; the open ones stay on the board, and asking again on a folded place opens it again.
+every answered question that is not 還沒懂 into its chapter as "↳ Folded in from your questions #n": the first sentence of each card's shown
+answer, its citations kept; the 還沒懂 ones stay on the board, and asking again on a folded place opens it again.
 Before / after shows the chapter's original text. "Only the chapters with questions" frames those and dims the rest.
 
 Threads, their cards and versions, understood and folded state and the chapters read are kept in the room (`lesson`); each

@@ -46,7 +46,8 @@ export function boardRoom(lang = "zh-TW", { seeded = true, visited = null } = {}
     { n: 9, chapter: "watch", title: T("What to watch", "要注意的地方"), picture: "", points: [P("Thirty minutes may drop a late success [diff:src/recheck.ts:L40-52].", "30 分鐘判逾時可能丟掉晚到的成功 [diff:src/recheck.ts:L40-52]。", [C("diff:src/recheck.ts:L40-52")]), P("The order update runs outside the transaction [diff:src/settle.ts:L8-30].", "訂單更新在交易之外 [diff:src/settle.ts:L8-30]。", [C("diff:src/settle.ts:L8-30")])] },
     { n: 10, chapter: "questions", title: T("Open questions", "待解問題"), picture: "", points: [P("Should the order update move into an outbox in this change?", "訂單更新要不要在這次就改成 outbox？")] }];
   const lesson = { n, action: "teach", text: T("Teach me this change.", "教我這個改動。"), lang, status: "done", provider: "codex", model: "gpt-6", cost: { usd: 0.21 }, answer: "z", head: H, claims: [cl("x")], scenes };
-  const board = [arch, decision, item, item2, states, seq, calls];
+  // a drawing the tutor made for one of the answers on the board (a rephrasing): it shows in that answer's card
+  const board = [arch, decision, item, item2, states, seq, calls, { id: "B5-1", turn: 5, type: "mermaid", title: T("A ticket, served once", "號碼牌只叫一次"), code: "flowchart LR\n  A[ticket 2] --> B[served]\n  B --> C[void]", basis: "inference", cites: [] }];
   // questions asked on the board: each answer a turn, as Studio keeps them (src/domain/review-room.ts)
   const ans = (nn, text, cites, thread, extra = {}) => ({ n: nn, action: "ask", text: "q", lang, status: "done", provider: "codex", model: "gpt-6", cost: { usd: 0.02 }, answer: text, head: H, claims: [cl(text, cites)], thread, ...extra });
   const turns = [lesson];
@@ -66,7 +67,7 @@ export function boardRoom(lang = "zh-TW", { seeded = true, visited = null } = {}
     threads.push(
       th(1, anc("t1", "what", "sentence", null, "p0.s1", T("After five minutes a job asks the gateway itself.", "五分鐘後由工作主動去問閘道。")), [nd("n1", null, "root", "deeper", [2]), nd("n2", "n1", "side", "example", [3])]),
       th(2, anc("t1-5", "change", "sentence", null, "p0.s0", T("Both paths call the same settle()", "兩條路都呼叫同一個 settle()")), [nd("n1", null, "root", "rephrase", [4, 5])], "resolved"),
-      th(3, anc("t1-6", "lifecycle", "transition", "B1-5", "transition:3", T("Pending → Expired · 30 min", "等待中 → 已逾時 · 30 分鐘")), [nd("n1", null, "root", "why", [6]), nd("n2", "n1", "below", "code", [], null, "diff:src/recheck.ts:L40-52")]),
+      { ...th(3, anc("t1-6", "lifecycle", "transition", "B1-5", "transition:3", T("Pending → Expired · 30 min", "等待中 → 已逾時 · 30 分鐘")), [nd("n1", null, "root", "why", [6]), nd("n2", "n1", "below", "code", [], null, "diff:src/recheck.ts:L40-52")]), confused: true },
       th(5, anc("t1", "what", "sentence", null, "p0.s0", T("A payment no longer waits only for the gateway's webhook", "付款不再只等閘道的 webhook")), [nd("n1", null, "root", "free", [8], T("What is new here?", "這裡新的是什麼？"))]),
       th(4, anc("t1-8", "calls", "field", "B1-7", "c1.request.1", T("request: signature hmac", "request: signature hmac")), [nd("n1", null, "root", "why", [7])], "resolved", { at: "t", gist: T("Because the gateway retries a webhook only on a non-2xx answer [diff:src/webhook.ts:L5-30].", "因為閘道只在非 2xx 時才重送 webhook [diff:src/webhook.ts:L5-30]。"), cites: [C("diff:src/webhook.ts:L5-30")] }));
   }
