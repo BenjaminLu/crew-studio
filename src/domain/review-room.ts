@@ -202,7 +202,7 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
   scenes?: { n: number; title: string; picture: string; points: Claim[]; chapter?: string; skip?: true }[];
   /** a question asked on the lesson board: the thread and the node (card) this turn answers */
-  thread?: { n: number; node: string };
+  thread?: { n: number; node: string; chip?: string };
   /** a board follow-up the room's agreement started without a confirmation: how many it has started since the last one */
   follow?: number };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
@@ -706,7 +706,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     if (th && rel === "version" && on && on.versions.length >= LESSON_LIMITS.versions) throw refuse(`A card holds at most ${LESSON_LIMITS.versions} versions / 一張卡最多 ${LESSON_LIMITS.versions} 個版本`, "limit");
   };
   /** the question asked, on the room: its thread made when it is the anchor's first, its card added (or a version of it) */
-  const applyThread = (room: Room, p: ReturnType<typeof threadPlan>, turnN: number): { n: number; node: string } => {
+  const applyThread = (room: Room, p: ReturnType<typeof threadPlan>, turnN: number): { n: number; node: string; chip: string } => {
     const L = (room.lesson ??= { threads: [], visited: [] }), at = new Date().toISOString(), key = anchorKey(p.anchor);
     let th = (p.thread != null ? L.threads.find((t) => t.n === p.thread) : null) ?? L.threads.find((t) => t.key === key);
     if (!th) { th = { n: Math.max(0, ...L.threads.map((t) => t.n)) + 1, key, anchor: p.anchor, locator: anchorLocator(p.anchor), nodes: [], state: "open", at, resolvedAt: null, merged: null }; L.threads.push(th); }
@@ -717,7 +717,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     else { node = { id: `n${th.nodes.length + 1}`, parent: parent.id, rel: p.rel, chip: p.chip, q: p.q, versions: [turnN], code: null, at }; th.nodes.push(node); }
     // asked again: a question on the board again (no longer folded into its chapter); a rephrasing says it is not understood
     th.state = "open"; th.resolvedAt = null; th.merged = null; if (p.chip === "rephrase") th.confused = true;
-    return { n: th.n, node: node.id };
+    return { n: th.n, node: node.id, chip: p.chip };
   };
   /** the tutor's view of the place asked about: the chapter and scene, what was clicked, its words (fenced: the page sent
    *  them), the citations under it with their code, the thread so far, and what the chip asks for */
@@ -726,12 +726,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const a = th.anchor, src = room.turns.find((t) => t.n === a.turn), m = /-(\d+)$/.exec(a.scene), sc = src?.scenes?.[m ? Number(m[1]) - 1 : 0];
     const it = a.item ? room.board.find((b) => b.id === a.item) : sc?.picture ? room.board.find((b) => b.id === sc.picture) : undefined;
     const num = (re: RegExp) => { const x = re.exec(a.part ?? ""); return x ? Number(x[1]) : null; };
-    const p = num(/^p(\d+)/), tr = num(/^(?:transition:|t)(\d+)/), call = num(/^c(\d+)/);
+    const p = num(/^p(\d+)/), tr = num(/^(?:transition:|tx:|t)(\d+)/), call = num(/^c(\d+)/);
     const cites: Cite[] = p != null && sc?.points[p] ? sc.points[p].cites : tr != null && it?.transitions?.[tr]?.cite ? [it.transitions[tr].cite] : call != null && it?.calls?.[call]?.cite ? [it.calls[call].cite] : [...(it?.cites ?? []), ...(sc?.points ?? []).flatMap((x) => x.cites)];
     const refs = [...new Set(cites.filter((c) => c?.ok).map((c) => c.ref))].slice(0, 4), code: string[] = [];
     for (const ref of refs.filter((r) => r.startsWith("diff:")).slice(0, 3)) { const d = /^diff:(.+?)(?::L(\d+)(?:-(\d+))?)?$/.exec(ref); if (!d) continue;
       try { const h = await hunksOf(s, d[1], Number(d[2]) || 0, Number(d[3]) || Number(d[2]) || 0); if (h.text) code.push(`[${ref}]`, h.text.slice(0, 2500)); } catch {} }
-    const node = th.nodes.find((n) => n.id === turn.thread?.node), chip = node ? node.chip : "free";
+    // what this turn asked (a rephrasing of a deeper card asks to say it another way), else what its card first asked
+    const node = th.nodes.find((n) => n.id === turn.thread?.node), chip = turn.thread?.chip ?? (node ? node.chip : "free");
     const ask: Record<string, string> = { deeper: "Go one level deeper than the lesson did on this place: the mechanism under it, cited.", example: "Give one concrete example: real values going through this place in the code, cited.",
       rephrase: "Say it another way than the lesson and your earlier answers in this thread: an analogy, real numbers, or a small picture (board_draw).", why: "Say why it is built this way: the constraint or the decision behind it, as the record shows it.", free: "Answer the captain's question about this place." };
     const said = th.nodes.flatMap((n) => n.versions.filter((v) => v !== turn.n).map((v) => `card ${n.id} (${n.rel}, ${n.chip}) answered in turn ${v}`));
@@ -1582,8 +1583,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // generated pictures as the captain set them on this confirmed paid round (the confirmation said which images they may make)
       // the captain confirmed this question with “start the next ones without asking”: the room keeps it, bound to this plan
       if (plan && a.consent === true && a.confirm === offer.hash) room.followUps = { plan: followPrint(offer), by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString(), used: 0 };
-      // a confirmation starts the count over; a follow-up the agreement started counts against it
-      else if (plan && room.followUps && !auto) room.followUps.used = 0;
+      // confirmed without “start the next ones at once”: the agreement ends (never renewed); one the agreement started counts against it
+      else if (plan && room.followUps && !auto) delete room.followUps;
       else if (plan && room.followUps && auto) room.followUps.used = (room.followUps.used ?? 0) + 1;
       // a question on the board never changes the room's pictures (and pays for none)
       if (typeof a.images === "boolean" && !plan) room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };

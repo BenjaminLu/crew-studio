@@ -528,7 +528,8 @@ const statesGraph = (it) => ({ nodes: (it.states || []).map((x, i) => ({ id: x.i
 /** on the lesson board a click on a drawing asks there (its popover's "Show the code" opens what it cites) */
 const onBoard = () => !!document.querySelector("[data-board-vp]");
 /** an SVG label made a control: Enter and Space as a click */
-const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
+// on the lesson board a drawing's part is a place to ask: its keys open the board's popover (BOARD.keydown), not this control
+const asControl = (el, go) => { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (el.hasAttribute("data-akey") && el.closest("[data-board-vp]")) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
 /** a lifecycle: the state machine drawn from the tutor's states and transitions (every transition kept), each transition's
  *  label opening the code it rests on (onPick: the report also selects the transition to show what it writes) */
 function statesView(card, it, onPick) {

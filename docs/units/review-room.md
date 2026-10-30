@@ -305,7 +305,8 @@ sheet on a phone) with 詳細一點, 舉個例子, 為什麼這樣做, 看程式
 The first paid question opens a card beside the place showing the plan once, with "Start follow-ups at once (this room)"
 checked; confirmed with it checked, the room keeps that agreement bound to the plan's fingerprint (`followUps`: the
 provider, model and effort, `followPrint`) and every later question starts at once, its card marked "follow-up n · paid · model"; after ten (`FOLLOW_LIMIT`, counted
-by Studio and started over by each confirmation) the next one shows the plan and asks again. The plan is the offer's hash
+by Studio and started over by each confirmation with the box checked; confirmed with it unchecked, the agreement ends) the
+next one shows the plan and asks again. The plan is the offer's hash
 without the head: provider, model, effort and the tutor's independence (level, outside the crew).
 A changed plan asks again, the room's switch turns it off (`op: consent, on: false`), and without it each question is
 confirmed (the same offer and hash as any turn; no modal). The question is a turn of the room's own machinery (`POST …/turn

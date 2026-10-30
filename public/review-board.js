@@ -14,7 +14,7 @@ const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ,
 // the board's own state, per room: the camera, what it is locked on, the regions read, the popover, a question waiting for
 // its confirmation, the thread in focus, the filters, the open sheet (a phone), the last layout
 const B = { cam: new Map(), lock: new Map(), cur: new Map(), visited: new Map(), pop: null, pend: new Map(), focus: new Map(), only: new Set(), before: new Set(), peek: new Set(), sheet: new Map(), ver: new Map(),
-  viewer: null, code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0 };
+  viewer: null, shown: new Map(), code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0 };
 const phone = () => innerWidth <= 760;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const LOD = (s) => (s < 0.42 ? "far" : s < 0.7 ? "mid" : "near");
@@ -248,7 +248,8 @@ async function showCode(card, r, p) {
   const ref = p.refs?.[0]; B.pop = null; if (!ref) { rerender(); return; }
   // a pull request on GitHub: its code is read there (openCite opens the pull request's files at those lines); a saved room
   // or one that takes no change: Studio's citation viewer, read from what it has. Only then a code card on the board.
-  if (!r.open || r.snapshot || githubDiffUrl(r, ref)) { rerender(); openCite(card, ref); return; }
+  // a phone reads it the same way: the code card is a write to the room, which a phone never makes
+  if (!r.open || r.snapshot || githubDiffUrl(r, ref) || phoneSession()) { rerender(); openCite(card, ref); return; }
   await lessonOp(card, p.n != null ? { op: "code", n: p.n, node: p.node, ref } : { op: "code", anchor: p.anchor, ref }); B.reveal.set(card, p.n != null ? `${p.n}` : "new");
 }
 async function startPending(card) {
@@ -335,6 +336,9 @@ function step(card, dir) { const L = B.L.get(card); if (!L) return; const order 
   if (n) flyTo(card, n); else if (dir > 0) fitAll(card); }
 function focusThread(card, n) {
   const r = RR.rooms.get(card), t = (r?.lesson?.threads || []).find((x) => x.n === n); if (!t) return;
+  // a question from another lesson (taught again since): that lesson comes back to the board first
+  const sh = B.shown.get(card), j = sh ? sh.scenes.findIndex((x) => x.key === t.anchor.scene) : -1;
+  if (j >= 0 && sh.scenes[sh.i]?.turn !== sh.scenes[j].turn) { RR.scene.set(card, j); rerender(); }
   visit(card, r, t.anchor.scene); if (!B.focus.has(card)) B.focus.set(card, { n, prev: { ...camOf(card) } }); else B.focus.get(card).n = n;
   B.lock.set(card, { focus: n }); B.sheet.delete(card); B.pop = null; rerender(); layout(card);
   const to = focusCam(card, n); if (to) moveCam(card, to);
@@ -536,6 +540,7 @@ function popover(card, r) {
     h("button", { type: "button", class: "rb-popx", "aria-label": T("Close", "關閉"), onclick: (e) => { e.stopPropagation(); closePop(); } }, "×"));
 }
 function view(r, scenes, i) {
+  B.shown.set(r.card.id, { scenes, i });
   const card = r.card.id, sc = scenes[i], t = sc.t, secs = scenes.filter((x) => x.turn === sc.turn && x.chapter), live = r.open && !r.snapshot;
   const L = r.lesson || { threads: [], visited: [] }, threads = L.threads || [], TN = new Map((r.turns || []).map((x) => [x.n, x]));
   // a saved room shows every chapter; a live one the chapters read (the first always)

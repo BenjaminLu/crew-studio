@@ -176,6 +176,8 @@ try {
     await p.screenshot({ path: join(shots, "desktop-light-chapter.png") });
     // the popover: inside the screen, its chips and the free question
     const s1 = await p.$('[data-akey="what/t1/sentence#p1.s0"]'); const b1 = await s1.boundingBox(); await p.mouse.click(b1.x + b1.width - 4, b1.y + b1.height - 3); await p.waitForSelector(".rb-pop");
+    // the first chip takes the focus on the next frame: wait for it (a loaded machine paints late)
+    await p.waitForFunction(() => document.activeElement?.closest?.(".rb-pop"), null, { timeout: 3000 }).catch(() => {});
     const pop = await p.evaluate(() => { const r = document.querySelector(".rb-pop").getBoundingClientRect(); return { inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, chips: [...document.querySelectorAll(".rb-pop [data-chip]")].map((b) => b.textContent), input: !!document.querySelector(".rb-pop [data-pop-input]"), modal: !!document.querySelector("[data-room-confirm]"), focus: document.activeElement?.dataset?.chip ?? null }; });
     ok(pop.inside && JSON.stringify(pop.chips) === JSON.stringify(["詳細一點", "舉個例子", "為什麼這樣做", "看程式碼", "我不懂這句"]) && pop.input && !pop.modal && pop.focus === "deeper" && !(await p.$(".rb-pop .rb-popnote")), "a click on a sentence opens its popover inside the screen: 詳細一點, 舉個例子, 為什麼這樣做, 看程式碼, 我不懂這句 and a question of one's own (no paid disclosure repeated there)", JSON.stringify(pop));
     // a popover near the screen's right and bottom edges stays inside it
@@ -327,6 +329,16 @@ try {
     ok(kept.card && kept.anchor, "a follow-up three cards down: the camera shows its card and keeps the place asked about in view", JSON.stringify(kept));
     await ctx.close(); }
 
+  // ---------- taught again: a question from the earlier lesson, picked in the notes, brings that lesson back to the board ----------
+  { const room = boardRoom("zh-TW"), first = room.turns.find((t) => t.action === "teach"), n = Math.max(...room.turns.map((t) => t.n)) + 1;
+    room.turns.push({ ...clone(first), n });
+    const { ctx, p } = await open(1440, "zh-TW", { room }); await settle(p, 300);
+    const before = await p.evaluate(() => !!document.querySelector('[data-tcard="1:n1"]'));
+    await p.click('[data-notes-list="side"] [data-note-thread="1"]', { timeout: 5000 }).catch(() => {}); await settle(p, 600);
+    const after = await p.evaluate(() => ({ card: !!document.querySelector('[data-tcard="1:n1"]'), focus: document.querySelector("[data-board-plane]")?.dataset.focus, bar: !!document.querySelector("[data-focus-bar]") }));
+    ok(!before && after.card && after.focus === "1" && after.bar, "taught again, a question from the earlier lesson picked in the notes brings that lesson back and focuses it", JSON.stringify({ before, after }));
+    await ctx.close(); }
+
   // ---------- the agreement's count: each card it started says so; after ten the room asks once more ----------
   { const room = boardRoom("zh-TW"); room.followUps = { on: true, at: "t", current: true, used: 9, limit: 10 };
     const { ctx, p, S } = await open(1440, "zh-TW", { room }); await p.click('[data-outline="t1"]'); await settle(p);
@@ -392,6 +404,12 @@ try {
     ok(sheet.left === 0 && sheet.right === sheet.W && sheet.bottom === sheet.H && sheet.chips === 5 && sheet.chipH >= 32, "on a phone the popover is a bottom sheet across the screen, its chips big enough to tap", JSON.stringify(sheet));
     const off = await p.evaluate(() => ({ paid: [...document.querySelectorAll('.rb-pop [data-chip]:not([data-chip="code"])')].map((b) => b.disabled), desk: document.querySelector("[data-ask-desktop]")?.textContent, code: !document.querySelector('.rb-pop [data-chip="code"]').disabled, input: !!document.querySelector(".rb-pop [data-pop-input]") }));
     ok(off.paid.length === 4 && off.paid.every(Boolean) && /在電腦上問/.test(off.desk || "") && off.code && !off.input && S.turns.length === 0, "a phone's paid chips are off, saying 在電腦上問 (a phone cannot start a paid round); show the code stays", JSON.stringify(off));
+    // show the code on a phone: free, read through the citation viewer (a phone writes nothing to the room)
+    await p.keyboard.press("Escape"); await settle(p, 150);
+    const rk = await p.$('[data-region="t1-6"] [data-akind="sentence"][data-arefs]:not([data-arefs=""])'); const rb = await rk.boundingBox(); await p.mouse.click(rb.x + 10, rb.y + 6); await p.waitForSelector(".rb-pop");
+    const cites0 = S.cites.length; await p.click('.rb-pop [data-chip="code"]'); await until(() => S.cites.length > cites0, 5000); await settle(p, 300);
+    ok(S.cites.length > cites0 && !S.lessons.some((x) => x.op === "code"), "on a phone 看程式碼 opens the citation viewer and writes nothing to the room", JSON.stringify({ cites: S.cites.slice(cites0), ops: S.lessons.map((x) => x.op) }));
+    await p.keyboard.press("Escape"); await settle(p, 150);
     await p.keyboard.press("Escape"); await p.click('[data-sheet="notes"]'); await settle(p, 200);
     const nt = await p.evaluate(() => ({ open: document.querySelector("[data-board-notes]").classList.contains("open"), n: document.querySelectorAll('[data-board-notes] [data-note-thread]').length, badge: document.querySelector('[data-sheet="notes"] b')?.textContent }));
     ok(nt.open && nt.n === 5 && nt.badge === "5", "標註 opens the questions as a sheet, its count on the button", JSON.stringify(nt));

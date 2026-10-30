@@ -700,7 +700,13 @@ try {
     ok(t1.cite === "diff:src/ledger.ts:L5-9" && t1.on === "true" && /invoices\.status/.test(t1.detail || "") && /lifecycle\/t3-6\/transition\/B3-5#transition:1/.test(t1.pop?.[0] || "") && t1.pop?.[1] === true,
       "a transition picked shows what it writes and asks there (show the code ready); its citation opens the code it rests on", JSON.stringify(t1));
     // what talks to what: the change marked on its nodes, inferred said so, a connection opens what shows it
-    await p.click('[data-toc-scene="t3-2"]'); await p.waitForTimeout(300); await p.$eval('[data-edge-cite="diff:src/pricing.ts:L10-14"]', (e) => e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 600, clientY: 400 }))); await p.waitForSelector("[data-board-pop]", { timeout: 3000 }).catch(() => {});
+    await p.click('[data-toc-scene="t3-2"]'); await p.waitForTimeout(300);
+    // the keyboard asks there too: Enter on the connection opens its popover (a drawing's own control never swallows it)
+    await p.$eval('[data-edge-cite="diff:src/pricing.ts:L10-14"]', (e) => e.focus()); await p.keyboard.press("Enter"); await p.waitForSelector("[data-board-pop]", { timeout: 3000 }).catch(() => {});
+    const kb = await p.evaluate(() => document.querySelector("[data-board-pop]")?.dataset.boardPop ?? null);
+    ok(/talks\/t3-2\/edge\/B3-1#edge:cart>pricing/.test(kb || ""), "Enter on a drawing's connection opens its popover, as a click does", String(kb));
+    await p.keyboard.press("Escape"); await p.waitForTimeout(150);
+    await p.$eval('[data-edge-cite="diff:src/pricing.ts:L10-14"]', (e) => e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 600, clientY: 400 }))); await p.waitForSelector("[data-board-pop]", { timeout: 3000 }).catch(() => {});
     const ar = await p.evaluate(() => ({ marks: [...document.querySelectorAll("[data-arch] [data-mark]")].map((e) => e.dataset.mark), basis: document.querySelector("[data-arch-basis]")?.dataset.archBasis, pop: document.querySelector("[data-board-pop]")?.dataset.boardPop, refs: document.querySelector('[data-edge-cite="diff:src/pricing.ts:L10-14"]')?.getAttribute("data-arefs"), panel: !!document.querySelector("[data-cite-panel]") }));
     // 看程式碼 on the connection: free, a code card that reads what it cites through the citation viewer
     const codeOps = []; await p.route(/\/api\/review-room\/SC-50\/lesson$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); codeOps.push(b); if (b.op !== "code") return r.fulfill({ json: { visited: [] } });

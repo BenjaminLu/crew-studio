@@ -60,7 +60,8 @@ const refused = async (f: () => any) => { try { await f(); return null; } catch 
 const LESSON: any[] = [
   ["board_draw", { items: [{ type: "item", title: "Rounding", name: "percent()", before: "Fractions of a cent kept", after: "Rounded to the cent", mechanism: "Math.round", cites: ["diff:src/percent.ts:L2-3"] },
     { type: "states", title: "An invoice line", entity: "invoice_line", states: [{ id: "draft", label: "Draft" }, { id: "priced", label: "Priced", mark: "new" }],
-      transitions: [{ from: "draft", to: "priced", label: "price", cite: "diff:src/percent.ts:L2-3", tx: { tables: [{ table: "invoice_lines", op: "UPDATE", guard: "WHERE status='draft'", fields: [{ k: "total", was: "299.85", now: "300" }] }] } }] }] }],
+      transitions: [{ from: "draft", to: "priced", label: "price", cite: "diff:src/percent.ts:L2-3", tx: { tables: [{ table: "invoice_lines", op: "UPDATE", guard: "WHERE status='draft'", fields: [{ k: "total", was: "299.85", now: "300" }] }] } },
+        { from: "priced", to: "draft", label: "reprice", cite: "diff:src/percent.ts:L3", tx: { tables: [{ table: "invoice_lines", op: "UPDATE", guard: "WHERE status='priced'", fields: [{ k: "total", was: "300", now: "299.85" }] }] } }] }] }],
   ["scene_show", { chapter: "what", title: "A percent helper", picture: "", points: [{ text: "It adds percent. It rounds to the cent [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Nothing else changes.", cites: [] }] }],
   ["chapter_skip", { chapter: "talks", reason: "One function: nothing talks to anything [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
   ["scene_show", { chapter: "change", title: "Rounding", picture: "B1-1", points: [{ text: "It rounds to the cent [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "A test pins 1999 at 15% [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }] }],
@@ -98,7 +99,7 @@ const transition = { scene: "t1-4", kind: "transition", item: "B1-2", part: "tra
 script.push([["say", "Math.round turns 299.85 into 300 [diff:src/percent.ts:L2-3]. Halves go up."]]);
 const t2 = await turn({ thread: { anchor: sentence, chip: "deeper" } });
 { const th = onDisk().lesson?.threads?.[0] ?? {}, p = prompts.at(-1)!.text;
-  ok(t2.status === "done" && t2.action === "how" && JSON.stringify(t2.thread) === '{"n":1,"node":"n1"}' && th.n === 1 && th.nodes.length === 1 && th.nodes[0].rel === "root" && JSON.stringify(th.nodes[0].versions) === `[${t2.n}]` && th.state === "open",
+  ok(t2.status === "done" && t2.action === "how" && JSON.stringify(t2.thread) === '{"n":1,"node":"n1","chip":"deeper"}' && th.n === 1 && th.nodes.length === 1 && th.nodes[0].rel === "root" && JSON.stringify(th.nodes[0].versions) === `[${t2.n}]` && th.state === "open",
     "confirmed, the question is an ordinary how turn of the room: its thread and its card (n1) answered by that turn are kept", JSON.stringify([t2.status, t2.action, t2.thread, th]));
   ok(/THE PLACE ON THE LESSON BOARD/.test(p) && /Chapter: what/.test(p) && /It rounds to the cent/.test(p) && /<untrusted-anchor-[0-9a-f]+>/.test(p) && /diff:src\/percent\.ts:L2-3/.test(p) && /Math\.round\(\(amount \* pct\) \/ 100\)/.test(p) && /Go one level deeper/.test(p),
     "the tutor gets the place: its chapter, its words fenced, the citations under it and their code, and what the chip asks", p.slice(p.indexOf("THE PLACE"), p.indexOf("THE PLACE") + 700)); }
@@ -113,7 +114,7 @@ const t4 = await turn({ thread: { n: 1, node: "n1", chip: "rephrase" } });
 script.push([["say", "Because invoices are kept in whole cents [diff:src/percent.ts]."]]);
 const t5 = await turn({ thread: { n: 1, node: "n2", chip: "why" } });
 { const th = onDisk().lesson.threads[0], n = (x: string) => th.nodes.find((y: any) => y.id === x);
-  ok(t3.action === "ask" && n("n2")?.rel === "side" && n("n2")?.parent === "n1" && JSON.stringify(n("n1")?.versions) === `[${t2.n},${t4.n}]` && n("n3")?.rel === "below" && n("n3")?.parent === "n2" && t5.action === "why" && JSON.stringify(t5.thread) === '{"n":1,"node":"n3"}',
+  ok(t3.action === "ask" && n("n2")?.rel === "side" && n("n2")?.parent === "n1" && JSON.stringify(n("n1")?.versions) === `[${t2.n},${t4.n}]` && n("n3")?.rel === "below" && n("n3")?.parent === "n2" && t5.action === "why" && JSON.stringify(t5.thread) === '{"n":1,"node":"n3","chip":"why"}',
     "an example is a card beside its parent, a rephrasing a second version of the same card, a why a card below", JSON.stringify(th.nodes)); }
 { const e = await refused(() => room.start(id, { thread: { n: 1, node: "n9", chip: "deeper" }, confirm: offer.hash }, "captain"));
   ok(e?.code === "not_found" && onDisk().lesson.threads[0].nodes.length === 3, "a follow-up on a card that is not there is refused", e?.message); }
@@ -195,6 +196,8 @@ script.push([...LESSON]);
   ok(onDisk().lesson.threads.length === 12 && onDisk().lesson.threads.every((t: any) => !t.confused), "fixture: twelve answered questions, none said not understood", String(onDisk().lesson.threads.length));
   script.push([["say", "Like a till that rounds every line [diff:src/percent.ts]."]]);
   await turn({ thread: { n: 2, node: "n1", chip: "rephrase" } });
+  { const p = prompts.at(-1)!.text, chip0 = onDisk().lesson.threads.find((t: any) => t.n === 2).nodes[0].chip;
+    ok(chip0 !== "rephrase" && /Say it another way than the lesson/.test(p) && !/Go one level deeper|Give one concrete example|Say why it is built/.test(p), "a rephrasing of a card asks the tutor to say it another way, whatever that card first asked", JSON.stringify([chip0, p.slice(-300)])); }
   const confused = onDisk().lesson.threads.filter((t: any) => t.confused).map((t: any) => t.n);
   const runs0 = runs.length, out: any = await room.lesson(id, { op: "tidy" }), L = onDisk().lesson;
   ok(JSON.stringify(confused) === "[2]" && out.merged === 11 && runs.length === runs0 && L.threads.filter((t: any) => t.merged).length === 11 && !L.threads.find((t: any) => t.n === 2).merged && room.findings(id).length === 1 && room.findings(id)[0].check === "room-thread:2",
@@ -203,6 +206,12 @@ script.push([...LESSON]);
   ok(onDisk().lesson.threads.find((t: any) => t.n === 1).confused === true && onDisk().lesson.threads.find((t: any) => t.n === 1).merged === null, "還沒懂 on a question marks it not understood and takes it back out of its chapter");
   await room.lesson(id, { op: "resolve", n: 2 }); const t2 = onDisk().lesson.threads.find((t: any) => t.n === 2);
   ok(t2.state === "resolved" && t2.confused === false, "懂了 clears 還沒懂", JSON.stringify(t2)); }
+
+// ---------- a transaction field of a transition: the tutor reads that transition's code ----------
+{ script.push([["say", "It writes the total [diff:src/percent.ts:L2-3]."]]);
+  await turn({ thread: { anchor: { scene: "t1-4", kind: "tx", item: "B1-2", part: "tx:1.0.0", text: "invoice_lines.total 300 → 299.85" }, chip: "why" } });
+  const p = prompts.at(-1)!.text, line = /The citations under it: (.*)/.exec(p)?.[1];
+  ok(line === "diff:src/percent.ts:L3", "a question on a transaction's field cites the transition it belongs to, not the whole drawing", String(line)); }
 
 // ---------- follow-ups start without asking once the room has agreed to this plan; a new plan asks again ----------
 { const runs0 = runs.length;
@@ -244,6 +253,11 @@ script.push([...LESSON]);
   ok(started.length === FOLLOW_LIMIT && started.at(-1) === FOLLOW_LIMIT && used() === FOLLOW_LIMIT, "ten follow-ups start without asking, each turn counting how many the agreement started", JSON.stringify([started, used()]));
   const e11 = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "why" }, lang: "en" }, "captain")), v11: any = room.view(id);
   ok(e11?.code === "confirm_required" && v11.followUps?.current === false && v11.followUps?.used === FOLLOW_LIMIT, "the eleventh follow-up asks for the confirmation again", JSON.stringify([e11?.code, v11.followUps]));
+  // confirmed with the box unchecked: the agreement is cleared, never renewed
+  script.push([["say", "Unchecked [diff:src/percent.ts]."]]);
+  await turn({ thread: { n: 2, node: "n1", chip: "why" }, consent: false });
+  const eu = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "why" }, lang: "en" }, "captain"));
+  ok(!onDisk().followUps && eu?.code === "confirm_required", "a question confirmed with “start the next ones at once” unchecked clears the agreement: the next one asks", JSON.stringify([onDisk().followUps, eu?.code]));
   script.push([["say", "Again [diff:src/percent.ts]."]]);
   await turn({ thread: { n: 2, node: "n1", chip: "why" }, consent: true });
   ok(used() === 0 && (room.view(id) as any).followUps?.current === true, "confirmed again, the count starts over", JSON.stringify(onDisk().followUps));
