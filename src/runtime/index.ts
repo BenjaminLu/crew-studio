@@ -808,7 +808,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (room[2] === "check-answer") { try { return json(rr.answer(room[1], b?.n, b?.choice)); } catch (e: any) { return fail(e); } }
         // the lesson board's free actions: a region read, a question understood, a code card, tidy the board (no model, nothing paid)
         if (room[2] === "lesson") { try { return json(await rr.lesson(room[1], { op: b?.op, scene: b?.scene, n: b?.n, on: b?.on, anchor: b?.anchor, node: b?.node, ref: b?.ref })); } catch (e: any) { return fail(e); } }
-        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm, pick: b?.pick, regenerate: b?.regenerate, images: b?.images, thread: b?.thread }, by)); } catch (e: any) { return fail(e); }
+        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm, pick: b?.pick, regenerate: b?.regenerate, images: b?.images, thread: b?.thread, consent: b?.consent }, by)); } catch (e: any) { return fail(e); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });

@@ -140,9 +140,9 @@ const t5 = await turn({ thread: { n: 1, node: "n2", chip: "why" } });
 { await room.lesson(id, { op: "resolve", n: 1 });
   ok(room.findings(id).length === 1 && room.findings(id, true).length === 2 && onDisk().lesson.threads[0].state === "resolved", "an understood question leaves the open findings (all of them still read with all)");
   const runs0 = runs.length, out: any = await room.lesson(id, { op: "tidy" }), [a, b] = onDisk().lesson.threads;
-  ok(runs.length === runs0 && out.merged === 1 && out.open === 1 && a.merged && /^Like a till that never shows a fraction of a cent \[diff:src\/percent\.ts:L2-3\]\./.test(a.merged.gist) && !/Math\.round turns/.test(a.merged.gist) && /299\.85 before rounding/.test(a.merged.gist) && /Because invoices/.test(a.merged.gist) && /Like a till/.test(a.merged.gist)
-    && a.merged.cites.some((c: any) => c.ref === "diff:src/percent.ts:L2-3") && !b.merged && b.state === "open",
-    "tidying folds each understood question into its chapter as the first sentence of each card's shown answer (its latest version, its citations kept), no model and no paid call; an open question stays on the board", JSON.stringify([out.merged, a.merged, b.merged])); }
+  ok(runs.length === runs0 && out.merged === 2 && out.open === 0 && a.merged && /^Like a till that never shows a fraction of a cent \[diff:src\/percent\.ts:L2-3\]\./.test(a.merged.gist) && !/Math\.round turns/.test(a.merged.gist) && /299\.85 before rounding/.test(a.merged.gist) && /Because invoices/.test(a.merged.gist) && /Like a till/.test(a.merged.gist)
+    && a.merged.cites.some((c: any) => c.ref === "diff:src/percent.ts:L2-3") && !!b.merged && /diff:test\/percent\.test\.ts:L1/.test(b.merged.gist),
+    "tidying folds each answered question into its chapter as the first sentence of each card's shown answer (its latest version, its citations kept; a code card its citation), no model and no paid call", JSON.stringify([out.merged, a.merged, b.merged])); }
 { script.push([["say", "It is rounded once, at pricing [diff:src/percent.ts:L2-3]."]]);
   await turn({ thread: { anchor: sentence, chip: "free", q: "Is it rounded more than once?" } });
   const a = onDisk().lesson.threads[0];
@@ -188,6 +188,43 @@ script.push([...LESSON]);
   const e2 = await refused(() => room.lesson(id, { op: "code", anchor: { scene: "t1", kind: "sentence", part: "p1.s0", text: "x", start: 9, end: 2 }, ref: "diff:src/percent.ts" }));
   const e3 = await refused(() => room.lesson(id, { op: "code", n: 1, node: "n9", ref: "diff:src/percent.ts" }));
   ok(e1?.code === "bad_anchor" && e2?.code === "bad_anchor" && e3?.code === "not_found" && onDisk().lesson.threads.length === 2, "an anchor that ends before it starts is refused, and a code card on a card that is not there", JSON.stringify([e1?.message, e2?.message, e3?.message])); }
+
+// ---------- 還沒懂 is what the reader said; tidying folds every answered question that is not ----------
+{ const code = { scene: "t1-4", kind: "transition", item: "B1-2", text: "Draft → Priced" };
+  for (let i = 0; i < 10; i++) await room.lesson(id, { op: "code", anchor: { ...code, part: `node:c${i}` }, ref: "diff:src/percent.ts" });
+  ok(onDisk().lesson.threads.length === 12 && onDisk().lesson.threads.every((t: any) => !t.confused), "fixture: twelve answered questions, none said not understood", String(onDisk().lesson.threads.length));
+  script.push([["say", "Like a till that rounds every line [diff:src/percent.ts]."]]);
+  await turn({ thread: { n: 2, node: "n1", chip: "rephrase" } });
+  const confused = onDisk().lesson.threads.filter((t: any) => t.confused).map((t: any) => t.n);
+  const runs0 = runs.length, out: any = await room.lesson(id, { op: "tidy" }), L = onDisk().lesson;
+  ok(JSON.stringify(confused) === "[2]" && out.merged === 11 && runs.length === runs0 && L.threads.filter((t: any) => t.merged).length === 11 && !L.threads.find((t: any) => t.n === 2).merged && room.findings(id).length === 1 && room.findings(id)[0].check === "room-thread:2",
+    "a question is 還沒懂 only when the reader said so (換個說法); tidying folds every other answered question (11 of 12) with no paid call, and only the confused one stays open", JSON.stringify({ confused, merged: out.merged }));
+  await room.lesson(id, { op: "resolve", n: 1, on: false });
+  ok(onDisk().lesson.threads.find((t: any) => t.n === 1).confused === true && onDisk().lesson.threads.find((t: any) => t.n === 1).merged === null, "還沒懂 on a question marks it not understood and takes it back out of its chapter");
+  await room.lesson(id, { op: "resolve", n: 2 }); const t2 = onDisk().lesson.threads.find((t: any) => t.n === 2);
+  ok(t2.state === "resolved" && t2.confused === false, "懂了 clears 還沒懂", JSON.stringify(t2)); }
+
+// ---------- follow-ups start without asking once the room has agreed to this plan; a new plan asks again ----------
+{ const runs0 = runs.length;
+  const e0 = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "deeper" } }, "captain"));
+  ok(e0?.code === "confirm_required" && runs.length === runs0 && !onDisk().followUps, "without the room's agreement a board question still asks for the confirmation", e0?.message);
+  script.push([["say", "Deeper [diff:src/percent.ts]."]]);
+  const t = await turn({ thread: { n: 2, node: "n1", chip: "deeper" }, consent: true });
+  const fu = onDisk().followUps, view: any = room.view(id);
+  ok(t.status === "done" && fu?.plan && view.followUps?.on === true && view.followUps.current === true, "confirmed with “之後追問直接開始”, the room keeps its agreement bound to this plan", JSON.stringify([fu, view.followUps]));
+  script.push([["say", "An example [diff:src/percent.ts]."]]);
+  await room.settle(id); await room.start(id, { thread: { n: 2, node: "n1", chip: "example" }, lang: "en" }, "captain"); await room.settle(id);
+  const last = onDisk().turns.at(-1);
+  ok(last.thread?.n === 2 && last.status === "done" && runs.length === runs0 + 2, "agreed, the next follow-up starts with no confirmation", JSON.stringify([last.thread, last.status]));
+  const e1 = await refused(() => room.start(id, { action: "how", lang: "en" }, "captain"));
+  ok(e1?.code === "confirm_required", "the agreement covers board questions only: any other turn still asks", e1?.message);
+  const reviewer = E.get(r.id)!.def.roles.find((x: any) => x.id === "reviewer")!, model = reviewer.model; reviewer.model = "t-2";
+  const e2 = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "deeper" }, lang: "en" }, "captain")), current = (room.view(id) as any).followUps?.current;
+  reviewer.model = model;
+  ok(e2?.code === "confirm_required" && current === false && e2.offer?.model === "t-2", "a new plan (another model) asks once again", JSON.stringify([e2?.code, current]));
+  await room.lesson(id, { op: "consent", on: false });
+  const e3 = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "deeper" }, lang: "en" }, "captain"));
+  ok(!onDisk().followUps && e3?.code === "confirm_required", "the room's switch turns the agreement off: board questions ask again", e3?.message); }
 
 // ---------- the board's growth is capped: questions a room, cards a question, versions a card ----------
 { const { LESSON_LIMITS } = await import("../src/domain/review-room");

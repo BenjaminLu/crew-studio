@@ -247,7 +247,9 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   /** illustration prompts Studio refused (the privacy filter), kept with the reason */
   illustrations?: { turn: number; prompt: string; refused: string; at: string }[];
   /** the lesson board: the captain's questions on it (threads), the regions read, when it was last tidied */
-  lesson?: Lesson };
+  lesson?: Lesson;
+  /** the captain agreed to start this room's board questions without asking each time, for this plan (followPrint) */
+  followUps?: { plan: string; by: string; at: string } };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
 /** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
  *  citations, board items and pictures are the original's */
@@ -309,6 +311,8 @@ export type Anchor = { turn: number; scene: string; chapter: string; kind: Ancho
  *  it (a rephrasing adds one); a code card is free and holds the citation it opens */
 export type ThreadNode = { id: string; parent: string | null; rel: "root" | "below" | "side"; chip: string; q: string | null; versions: number[]; code: string | null; at: string };
 export type Thread = { n: number; key: string; anchor: Anchor; locator: Locator; nodes: ThreadNode[]; state: "open" | "resolved"; at: string; resolvedAt: string | null;
+  /** the reader said they do not understand (我不懂這句 / 換個說法, or 還沒懂): 還沒懂 until understood (懂了) */
+  confused?: boolean;
   /** folded back into its chapter by "tidy the board": a gist built from its answers (no model) */
   merged: { at: string; gist: string; cites: Cite[] } | null };
 export type Lesson = { threads: Thread[]; visited: string[]; tidiedAt?: string | null };
@@ -329,8 +333,14 @@ export function threadGist(t: Thread, turns: { n: number; status: string; claims
     if (!s) continue; parts.push(s); for (const x of c.cites) if (s.includes(`[${x.ref}]`) && !cites.some((y) => y.ref === x.ref)) cites.push(x); }
   const gist = parts.join(" "); return { gist: gist.length > 600 ? `${gist.slice(0, 599)}…` : gist, cites };
 }
-/** a room's open questions as findings: the same type a check produces (docs/units/locators.md) */
-export const threadFindings = (lesson: Lesson | undefined | null, all = false): Finding[] => (lesson?.threads ?? []).filter((t) => all || t.state === "open").map((t) => {
+/** 還沒懂: the reader said so (a rephrasing asked, or 還沒懂) and has not said 懂了 since */
+export const notUnderstood = (t: Thread) => !!t.confused && t.state === "open";
+/** a board question's plan fingerprint (who answers it, at what effort): the room's agreement to start follow-ups without
+ *  asking holds only while the plan is this one */
+export const followPrint = (o: { provider: string; model?: string | null; effort?: string | null }) => sha(JSON.stringify({ board: true, provider: o.provider, model: o.model ?? null, effort: o.effort ?? null })).slice(0, 16);
+/** a room's open questions as findings: the same type a check produces (docs/units/locators.md): those still on the board
+ *  (not understood, not folded into a chapter) */
+export const threadFindings = (lesson: Lesson | undefined | null, all = false): Finding[] => (lesson?.threads ?? []).filter((t) => all || (t.state === "open" && !t.merged)).map((t) => {
   const root = t.nodes.find((x) => x.rel === "root"), chip = root ? THREAD_CHIPS[root.chip] : null, q = root?.q || chip?.en || "Show the code this rests on";
   return { locator: t.locator, message: `${q}: “${t.anchor.text}”`.slice(0, 1500), expected: null, class: "captain-question", severity: "minor", source: "human", check: `room-thread:${t.n}` }; });
 
@@ -697,8 +707,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     if (!parent) { node = { id: "n1", parent: null, rel: "root", chip: p.chip, q: p.q, versions: [turnN], code: null, at }; th.nodes.push(node); }
     else if (p.rel === "version") { parent.versions.push(turnN); node = parent; }
     else { node = { id: `n${th.nodes.length + 1}`, parent: parent.id, rel: p.rel, chip: p.chip, q: p.q, versions: [turnN], code: null, at }; th.nodes.push(node); }
-    // asked again: not understood yet, so it is a question on the board again (no longer folded into its chapter)
-    th.state = "open"; th.resolvedAt = null; th.merged = null;
+    // asked again: a question on the board again (no longer folded into its chapter); a rephrasing says it is not understood
+    th.state = "open"; th.resolvedAt = null; th.merged = null; if (p.chip === "rephrase") th.confused = true;
     return { n: th.n, node: node.id };
   };
   /** the tutor's view of the place asked about: the chapter and scene, what was clicked, its words (fenced: the page sent
@@ -1434,6 +1444,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const movedOf = (s: { wt: string; head: string } | null, room: Room | null) => { const from = room?.seen?.head; if (!s || !from || from === s.head) return null;
     const known = git(s.wt, ["cat-file", "-e", `${from}^{commit}`]).ok, anc = known && git(s.wt, ["merge-base", "--is-ancestor", from, s.head]).ok;
     return { from, to: s.head, commits: anc ? Number(git(s.wt, ["rev-list", "--count", `${from}..${s.head}`]).out) || 0 : null, rewritten: known && !anc }; };
+  /** the room's agreement for board questions as the page reads it: on, and whether it holds for the plan offered now */
+  const followView = (r: Room | null, offer: any) => r?.followUps ? { on: true, at: r.followUps.at, current: !!offer && !offer.error && r.followUps.plan === followPrint(offer) } : null;
   let self: any = null;
   return (self = {
     /** the summary a merge card shows: never readiness, never an answer */
@@ -1459,7 +1471,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
         return { ...langView(r, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
-          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, summary: this.summary(c) };
+          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, followUps: followView(r, c.status === "open" ? offerOf(k) : null), summary: this.summary(c) };
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
@@ -1475,7 +1487,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
         notes: [...(r?.pr?.notes ?? [])].reverse().slice(0, 200).map((x) => ({ ...x, bot: isBot(x) })), progress: progressOf(k, r),
-        actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), lesson: r?.lesson ?? null, summary: null };
+        actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), lesson: r?.lesson ?? null, followUps: followView(r, open ? offerOf(k) : null), summary: null };
     },
     /** every review room on this machine (merge cards, branches, pull requests), open ones first, then the most recent */
     list() { const out: any[] = [], push = (id: string, file: string) => { try { const k = keyOf(id), r = load(k); if (!r) return; const st = statSync(file);
@@ -1503,7 +1515,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
-    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown; auto?: boolean; thread?: unknown }, by: string) {
+    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown; auto?: boolean; thread?: unknown; consent?: unknown }, by: string) {
       let k = keyOf(id);
       if (k.kind === "pr") { const r0 = load(k);
         // a paid turn reads the pull request again first when it was read a while ago: merged or closed by now, the turn is refused
@@ -1547,7 +1559,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!s.run || !s.node) throw noHost();
       if (a.pick) { const o0 = offerOf(k, a.pick); if ("error" in o0) throw refuse(o0.error!, (o0 as any).code ?? "held"); }
       const offer = offerOf(k, a.pick); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
-      if (a.confirm !== offer.hash) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
+      // a board question starts without asking once the room agreed to this very plan (a new model or effort asks again)
+      const agreed = !!plan && !!load(k)?.followUps && load(k)!.followUps!.plan === followPrint(offer);
+      if (a.confirm !== offer.hash && !agreed) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
@@ -1555,6 +1569,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (plan) { try { if (plan.thread != null && !room.lesson?.threads.some((t) => t.n === plan!.thread)) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); anchorOf(room, plan.anchor); }
         catch (e) { held?.release(); throw e; } }
       // generated pictures as the captain set them on this confirmed paid round (the confirmation said which images they may make)
+      // the captain confirmed this question with “start the next ones without asking”: the room keeps it, bound to this plan
+      if (plan && a.consent === true && a.confirm === offer.hash) room.followUps = { plan: followPrint(offer), by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
       // a question on the board never changes the room's pictures (and pays for none)
       if (typeof a.images === "boolean" && !plan) room.images = { on: a.images, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() };
       for (const t of room.turns) if (t.status === "running") t.status = "interrupted";
@@ -1674,9 +1690,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (op === "visit") { const scene = String(a?.scene ?? ""); if (scene !== "end") anchorOf(room, { scene, kind: "sentence", text: "-" });
         const L = (room.lesson ??= { threads: [], visited: [] }); if (!L.visited.includes(scene)) { L.visited = [...L.visited, scene].slice(-200); save(k, room); }
         return { visited: L.visited }; }
+      // the room's agreement to start board questions without asking: only turned off here (on comes with a confirmed question)
+      if (op === "consent") { if (a?.on !== false) throw refuse("The agreement is given with a confirmed question (consent: true); here it is only turned off", "bad_request"); delete room.followUps; save(k, room); notify(k); return this.view(id); }
       if (!k.open()) throw refuse(k.kind === "merge" ? "The merge card is answered: the room is read-only now / 合併卡已回覆，審查室只能閱讀" : `${closedText(k, room).en} / ${closedText(k, room).zh}`, "closed");
       const L = (room.lesson ??= { threads: [], visited: [] }), find = () => { const t = L.threads.find((x) => x.n === Number(a?.n)); if (!t) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); return t; };
-      if (op === "resolve") { const t = find(), on = a?.on !== false; t.state = on ? "resolved" : "open"; t.resolvedAt = on ? at : null; if (!on) t.merged = null; save(k, room); notify(k); return this.view(id); }
+      // 懂了 (on) clears 還沒懂; 還沒懂 (on: false) says not understood and takes the question back out of its chapter
+      if (op === "resolve") { const t = find(), on = a?.on !== false; t.state = on ? "resolved" : "open"; t.resolvedAt = on ? at : null; t.confused = !on; if (!on) t.merged = null; save(k, room); notify(k); return this.view(id); }
       if (op === "code") { const ref = String(a?.ref ?? ""); await this.cite(id, ref);
         let t = a?.n != null ? find() : null;
         if (!t) { const anchor = anchorOf(room, a?.anchor), key = anchorKey(anchor); t = L.threads.find((x) => x.key === key) ?? null;
@@ -1688,13 +1707,14 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         else if (!t.nodes.some((n) => n.code === ref && (n.parent === parent.id || n === parent))) t.nodes.push({ id: `n${t.nodes.length + 1}`, parent: parent.id, rel: "below", chip: "code", q: null, versions: [], code: ref, at });
         save(k, room); notify(k); return this.view(id); }
       if (op === "tidy") { let merged = 0;
-        for (const t of L.threads) { if (t.state !== "resolved" || t.merged) continue;
+        // every answered question the reader did not say 還沒懂 about (a code card counts as answered)
+        for (const t of L.threads) { if (t.merged || notUnderstood(t) || !t.nodes.some((n) => n.code || n.versions.some((v) => room.turns.find((x) => x.n === v)?.status === "done"))) continue;
           // an answer still being written is not folded in half-way
           if (t.nodes.some((n) => n.versions.some((v) => room.turns.find((x) => x.n === v)?.status === "running"))) continue;
           const g = threadGist(t, room.turns), codes = t.nodes.filter((n) => n.code).map((n) => n.code!);
           t.merged = g.gist ? { at, ...g } : { at, gist: codes.map((c) => `[${c}]`).join(" "), cites: codes.map((ref) => ({ ref, ok: true })) }; merged++; }
-        L.tidiedAt = at; save(k, room); notify(k); return { merged, open: L.threads.filter((t) => t.state === "open").length, view: this.view(id) }; }
-      throw refuse("op is visit, resolve, code or tidy", "bad_request");
+        L.tidiedAt = at; save(k, room); notify(k); return { merged, open: L.threads.filter((t) => !t.merged && t.state === "open").length, view: this.view(id) }; }
+      throw refuse("op is visit, resolve, code, tidy or consent", "bad_request");
     },
     /** the room's open questions (with all: every one) as findings of the shared locator schema (docs/units/locators.md) */
     findings(id: string, all = false) { const k = keyOf(id); return threadFindings(load(k)?.lesson, all); },
