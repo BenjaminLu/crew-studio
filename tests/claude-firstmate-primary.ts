@@ -130,6 +130,7 @@ try {
   r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 200 && r.body.ok && UUID.test(r.body.id), "signed in with the captain's own account: a fresh Claude primary starts with a new UUID");
   const first = r.body.id;
+  ok((() => { try { return JSON.parse(readFileSync(join(data, "studio-claude-sessions.json"), "utf8")).includes(first); } catch { return false; } })(), "Studio keeps the id of the session it started the moment the host names it, so its transcript in the captain's projects is never taken for the captain's Firstmate");
   await idle();
   const run = claudeRuns().at(-1), a: string[] = run?.argv ?? [];
   ok(!!run && !!first && a[a.indexOf("--session-id") + 1] === first && !a.includes("--resume") && !a.includes("--fork-session"), "the CLI creates exactly that session (--session-id), never resumes or forks one");

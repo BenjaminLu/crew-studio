@@ -208,7 +208,13 @@ const chatFiles = new AttachmentStore(DATA);
 const chatLog = new ChatLog(DATA);
 /** Retention runs at start and every hour: what the kept history or the queue references stays (src/attachments.ts sweep). */
 const sweepChatFiles = () => { try { const referenced = chatLog.referencedIds(); for (const q of main.queue.list()) for (const a of q.attachments ?? []) referenced.add(a.id); return chatFiles.sweep({ referenced }); } catch { return 0; } };
-const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
+// Studio's own fresh Claude primaries keep their transcripts in the captain's ~/.claude/projects (they run on the captain's own
+// account): every id Studio starts is kept the moment the host names it (data/studio-claude-sessions.json) and never mistaken
+// for the captain's Firstmate session
+const studioSessionsFile = join(DATA, "studio-claude-sessions.json");
+const studioSessions = new Set<string>((() => { try { const v = JSON.parse(readFileSync(studioSessionsFile, "utf8")); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; } })());
+const noteStudioSession = (host: string, id: string) => { if (host !== "claude" || !id || studioSessions.has(id)) return; studioSessions.add(id); try { writeFileSync(studioSessionsFile, JSON.stringify([...studioSessions].slice(-500)), { mode: 0o600 }); } catch {} };
+const main = new MainSession({ dataDir: DATA, onFreshSession: noteStudioSession, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
   // each captain turn carries Studio's note: the deliverables it routes to a workflow (src/firstmate-turn.ts)
   turnNote:(text)=>firstmateTurnNote(runtime.engine)(text),
@@ -261,12 +267,7 @@ const takeover = createTakeover({ claudePair: claudePrimaryPair, cursorPrimary, 
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
 let firstmateId: string | null = null;
-// Studio's own fresh Claude primaries keep their transcripts in the captain's ~/.claude/projects (they run on the captain's own
-// account): every id Studio started is kept (data/studio-claude-sessions.json) and never mistaken for the captain's Firstmate session
-const studioSessionsFile = join(DATA, "studio-claude-sessions.json");
-const studioSessions = new Set<string>((() => { try { const v = JSON.parse(readFileSync(studioSessionsFile, "utf8")); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; } })());
-const noteStudioSession = () => { const v = main.view(); if (v.host === "claude" && v.drive?.path === "fresh" && v.sessionId && !studioSessions.has(v.sessionId)) { studioSessions.add(v.sessionId); try { writeFileSync(studioSessionsFile, JSON.stringify([...studioSessions].slice(-500)), { mode: 0o600 }); } catch {} } };
-const refreshFirstmate = async () => { try { noteStudioSession(); const own = new Set([...takeover.copies(), ...studioSessions]); firstmateId = (await main.discover("claude")).find((x) => !own.has(x.id))?.id ?? null; } catch {} };
+const refreshFirstmate = async () => { try { const own = new Set([...takeover.copies(), ...studioSessions]); firstmateId = (await main.discover("claude")).find((x) => !own.has(x.id))?.id ?? null; } catch {} };
 void refreshFirstmate(); setInterval(refreshFirstmate, 15_000);
 const graphMode = createGraphMode(DATA);
 const transcripts = createTranscripts({ stateDir: STATE, dataDir: DATA, sessionFile: () => {

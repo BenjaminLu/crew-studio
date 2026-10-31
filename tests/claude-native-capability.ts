@@ -27,9 +27,9 @@ try{
 
  const trace=rows().find(r=>r.phase==='model');ok(trace.home!==process.env.HOME&&trace.config.startsWith(trace.home)&&trace.settings.fallbackModel.length===0&&trace.settings.switchModelsOnFlag===false,'verification uses private home/config and disables model fallback');ok(trace.effort==='low'&&trace.settings.effortLevel==='low'&&trace.credentialKeys.join()==='ANTHROPIC_API_KEY','exact approved effort and only selected isolated credential reach CLI');
  // the captain's own sign-in: the verification runs like a round, in a private home, with no credential at all (the CLI reads its own sign-in)
- {const bin=join(root,'success.mjs'),acct=new ClaudeNative({bin,login:()=>({ok:true,env:{},source:'own account fixture',warn:null,kind:'account'})}),before=rows().length;
+ {process.env.CREW_CLAUDE_KEYCHAIN='1';const bin=join(root,'success.mjs'),acct=new ClaudeNative({bin,login:()=>({ok:true,env:{},source:'own account fixture',warn:null,kind:'account'})}),before=rows().length;
   const v=await acct.verify(pair,{confirm:true,timeoutMs:4000}),t=rows().slice(before).find(r=>r.phase==='model');
-  ok(v.admission==='verified-execution'&&isClaudeExecutionAdmission(v,pair)&&t.home!==process.env.HOME&&t.config===undefined&&t.credentialKeys.length===0&&t.settings?.disableAllHooks===true,'the own sign-in verifies like a round: a private home, no CLAUDE_CONFIG_DIR (the CLI finds its own keychain item), no credential handed in, none of its settings loaded',JSON.stringify(t));}
+  ok(v.admission==='verified-execution'&&isClaudeExecutionAdmission(v,pair)&&t.home!==process.env.HOME&&t.config===undefined&&t.credentialKeys.length===0&&t.settings?.disableAllHooks===true,'the own sign-in verifies like a round: a private home, no CLAUDE_CONFIG_DIR (the CLI finds its own keychain item), no credential handed in, none of its settings loaded',JSON.stringify(t));}delete process.env.CREW_CLAUDE_KEYCHAIN;
  // a subscription token Studio read is never a credential it hands on, whatever its shape
  {const bin=join(root,'success.mjs'),tok=new ClaudeNative({bin,login:()=>({ok:true,env:{CLAUDE_CODE_OAUTH_TOKEN:'sk-ant-oat01-'+'x'.repeat(48)},source:'a copied token',warn:null})}),before=rows().filter(r=>r.phase==='model').length;
   const v=await tok.verify(pair,{confirm:true,timeoutMs:4000});

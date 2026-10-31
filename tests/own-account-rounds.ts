@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { suite } from "./rt-harness";
 const { ok, end } = suite("own-account-rounds");
 for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING", "CLAUDE_CONFIG_DIR", "CODEX_API_KEY", "CODEX_HOME", "ANTHROPIC_API_KEY"]) delete process.env[k];
+process.env.CREW_CLAUDE_KEYCHAIN = "1"; // as on macOS, where the CLI keeps its sign-in in the login keychain (checked apart below)
 const root = mkdtempSync(join(tmpdir(), "crew-own-account-")), home = join(root, "home"), data = join(root, "data"); mkdirSync(join(home, ".codex"), { recursive: true }); mkdirSync(data);
 process.env.HOME = home;
 const { roundProfile } = await import("../src/runtime/checks");
@@ -25,7 +26,7 @@ const { codexProvider } = await import("../src/providers/codex");
   ok(login.ok && login.kind === "account" && JSON.stringify(login.env) === "{}", "subscription: the login is the captain's own sign-in, with no value handed in", JSON.stringify(login));
   ok(env.HOME === dir && !("CLAUDE_CONFIG_DIR" in env) && !!env.USER, "subscription: a throwaway HOME, no CLAUDE_CONFIG_DIR (a set folder would rename the keychain item) and the login user the item is named for", JSON.stringify(env));
   ok(n.noWorkspace!() === true, "subscription: the CLI never reaches the worktree");
-  ok(!("dirs" in acct!) && !("files" in acct!) && (acct!.writeRegex ?? []).length === (process.platform === "darwin" ? 2 : 0) && (acct!.deny ?? []).length === 0, "subscription: the round opens no folder or file of the captain's, only (on macOS) the login keychain database", JSON.stringify(acct));
+  ok(!("dirs" in acct!) && !("files" in acct!) && (acct!.writeRegex ?? []).length === 2 && (acct!.deny ?? []).length === 0, "subscription: the round opens no folder or file of the captain's, only (on macOS) the login keychain database", JSON.stringify(acct));
   { const kc = join("/Users/someone", "Library/Keychains"), re = new RegExp(`^${kc}/login\\.keychain(-db)?([.-][^/]*)?$`);
     ok(re.test(join(kc, "login.keychain-db")) && re.test(join(kc, "login.keychain-db.sb-1a2b")) && !re.test(join(kc, "metadata.keychain-db")) && !re.test(join(kc, "ABC/keychain-2.db")), "on macOS the keychain rule names only the login keychain database and what is written beside it (the pattern Studio writes)"); }
   ok(JSON.stringify(exec.slice(-3)) === JSON.stringify([process.execPath, "/bin/sh", "/usr/bin/security"]) && !exec.includes("/usr/bin/git") && !exec.includes("/bin/bash"), "subscription: the round may run only the CLI, Studio's runtime and the keychain command (through /bin/sh)", JSON.stringify(exec));
@@ -42,7 +43,12 @@ const { codexProvider } = await import("../src/providers/codex");
   const receipt = { model: "claude-sonnet-5-5", effort: null, live: () => true, invalidate: (c?: string) => { invalidated = c ?? "?"; }, login: () => ({ ok: true, env: { ANTHROPIC_API_KEY: "sk-ant-api03-own-account-test-0123456789abcdef" }, source: "key", warn: null, kind: "api-key" as const }) };
   const n4 = claudeNeeds("claude", [], receipt as any), l4 = n4.login(dir);
   ok(!l4.ok && /verifies again/.test((l4 as any).error) && invalidated === "billingChanged" && n4.account!() === null, "a receipt made on API billing is refused and invalidated on the subscription, and its round never opens the keychain", JSON.stringify(l4));
-  delete process.env.ANTHROPIC_API_KEY; }
+  delete process.env.ANTHROPIC_API_KEY;
+  // off macOS the CLI keeps its sign-in in a file of the captain's config folder: there the round keeps the captain's own
+  // context (such rounds run only in local unrestricted mode), and nothing is reopened in a profile
+  process.env.CREW_CLAUDE_KEYCHAIN = "0"; const n5 = claudeNeeds("claude", []), e5 = n5.home(dir);
+  ok(e5.HOME === home && !("CLAUDE_CONFIG_DIR" in e5) && (n5.account!()!.writeRegex ?? []).length === 0, "without a keychain the CLI keeps the captain's own context, where its file-backed sign-in lives", JSON.stringify(e5));
+  process.env.CREW_CLAUDE_KEYCHAIN = "1"; }
 
 // ---------- the round profile: only the credential reopens after the deny list; exec narrowed; no worktree ----------
 { const n = claudeNeeds("claude", []), cwd = join(data, "rounds", "J1", "tmp");

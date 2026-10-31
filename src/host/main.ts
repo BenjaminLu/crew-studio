@@ -89,6 +89,8 @@ export type MainOpts = {
   dataDir: string; projectDir: string; stateDir: string; probe?: ProcProbe;
   hosts?: Record<HostId, Host>; permissionMcp: (bridge: PermissionBridge) => { command: string[]; env: Record<string, string> };
   pollMs?: number;
+  /** told the id of every fresh session Studio starts, the moment the host names it (src/server.ts keeps Claude's) */
+  onFreshSession?: (host: HostId, id: string) => void;
   /** Fresh Studio-owned workspace: no legacy repository handoff or dispatch scripts. */
   nativeWorkspace?: boolean;
   onGeneratedImage?: (image:import("./types").GeneratedImage,owner:import("../media-library").MediaOwner)=>Promise<void>;
@@ -444,6 +446,7 @@ export class MainSession {
     this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : host === "cursor" ? extra?.model ?? se.model : se.model, effort: host === "claude" ? extra?.effort ?? null : host === "cursor" ? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, effectivePermissionMode: null, autoMode: host === "claude" ? extra?.autoMode ?? null : null, executionMode: host === "claude" ? (localExecutionNotice() ? "local-unrestricted" : "default") : null,
       seededFrom: newest ? `state/${newest.name}` : null, handoff };
     this.sessionFile = se.file ?? null; this.lastSeenMtime = mtimeOf(this.sessionFile);
+    try { this.o.onFreshSession?.(host, se.id); } catch {}
     this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh",
       primary: this.o.nativeWorkspace ? { host, model: host === "claude" || host === "cursor" ? extra?.model ?? null : se.model ?? null, effort: host === "claude" ? extra?.effort ?? null : host === "cursor" ? null : se.effort ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, locale: extra?.locale ?? "en" } : null });
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;

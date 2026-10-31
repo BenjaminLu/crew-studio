@@ -12,9 +12,9 @@
 //   (`account`: the login keychain database, or one linked login file), never a folder of the
 //   captain's and never the repository (`noWorkspace`), and runs only what signing in needs (`exec`);
 // - the variables that name the CLI's own temporary folder (set to the round's tmp).
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { claudeBilling, claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
+import { claudeAccountContext, claudeBilling, claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
 import { dirname, join } from "node:path";
 import { accountHomeDir, type AccountContext } from "../runtime/checks";
 
@@ -54,7 +54,8 @@ export function execOf(bin: string): string[] {
   // ~/.bun/bin, /usr/local/bin …) is allowed as itself only
   const out = [r], dir = dirname(r), pkg = dirname(dir);
   if (PACKAGE.test(r) && dir !== homedir()) { out.push(dir); if (PACKAGE.test(pkg + "/") && pkg !== homedir()) out.push(pkg); }
-  try { const head = readFileSync(r, { encoding: "latin1" }).slice(0, 200); const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(head);
+  // only the first bytes (a native CLI is hundreds of megabytes): the #! line, if any
+  try { const fd = openSync(r, "r"), buf = Buffer.alloc(200); let n = 0; try { n = readSync(fd, buf, 0, 200, 0); } finally { closeSync(fd); } const head = buf.subarray(0, n).toString("latin1"); const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(head);
     if (m) { out.push(m[1]); if (/\/env$/.test(m[1]) && m[2]) { const i = which(m[2]); if (i) { out.push(i); try { out.push(realpathSync(i)); } catch {} } } } } catch {}
   return [...new Set(out)];
 }
@@ -65,6 +66,8 @@ export const claudeSettings = (approved: Pick<ApprovedClaudeConfig,'model'|'effo
  *  starts), and the shell and command the CLI reads its keychain item with. Nothing else, ever: the model has no tool. */
 export const claudeExecAllow = (bin: string) => [...execOf(bin), process.execPath, "/bin/sh", "/usr/bin/security"];
 const regexQuote = (p: string) => p.replace(/[\\^$.*+?()[\]{}|]/g, (c) => `\\${c}`);
+/** Whether the CLI keeps its sign-in in the login keychain (macOS; CREW_CLAUDE_KEYCHAIN=0/1 overrides, for tests). */
+export const KEYCHAIN = () => process.env.CREW_CLAUDE_KEYCHAIN ? process.env.CREW_CLAUDE_KEYCHAIN === "1" : process.platform === "darwin";
 /** The login user the CLI names its keychain item's account after (it reads USER, else the system's). */
 export const loginUserEnv = (): Record<string, string> => { let u = process.env.USER || process.env.LOGNAME || ""; if (!u) try { u = userInfo().username; } catch {} return u ? { USER: u, LOGNAME: u } : {}; };
 /** What of the captain's own Claude sign-in a round reaches: on macOS the login keychain database (and the temporary and lock
@@ -72,7 +75,7 @@ export const loginUserEnv = (): Record<string, string> => { let u = process.env.
  *  CLAUDE_CONFIG_DIR, named only so the CLI finds its keychain item (it names the item after that folder), kept closed. */
 export function claudeAccountRules(): AccountContext {
   const kc = join(accountHomeDir(), "Library", "Keychains"), own = process.env.CLAUDE_CONFIG_DIR?.trim();
-  return { writeRegex: process.platform === "darwin" ? [`^${regexQuote(kc)}/login\\.keychain(-db)?([.-][^/]*)?$`, `^${regexQuote(kc)}/\\.fl[0-9A-Fa-f]+$`] : [], deny: own ? [own] : [] };
+  return { writeRegex: KEYCHAIN() ? [`^${regexQuote(kc)}/login\\.keychain(-db)?([.-][^/]*)?$`, `^${regexQuote(kc)}/\\.fl[0-9A-Fa-f]+$`] : [], deny: own ? [own] : [] };
 }
 export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedClaudeConfig): SandboxNeeds {
   // claude's config, sessions and caches live in the round's own throwaway home in every case (v1 bin/adapters/claude.sh).
@@ -85,6 +88,9 @@ export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedCla
   const receipt = approved?.login(), mode = receipt?.ok && receipt.kind ? receipt.kind : now, own = mode === "account";
   return { reads: installOf(bin), hosts, tmpEnv: ["CLAUDE_CODE_TMPDIR"],
     home(dir) {
+      // where there is no keychain (off macOS) the CLI keeps its sign-in in a file of the captain's own config folder: there it
+      // runs in the captain's own account context (rounds there run only in local unrestricted mode; Linux rounds are refused)
+      if (own && !KEYCHAIN()) return { ...claudeAccountContext().env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ...loginUserEnv() };
       const cfg = join(dir, ".claude-config"), captain = process.env.CLAUDE_CONFIG_DIR?.trim();
       mkdirSync(cfg, { recursive: true });
       // on the captain's own sign-in with a CLAUDE_CONFIG_DIR of theirs, the CLI must be told that path to find its item; the
