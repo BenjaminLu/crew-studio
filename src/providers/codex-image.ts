@@ -94,7 +94,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   try {
     const login = needs.login(home); if (!login.ok) throw new Error('Codex image login unavailable'); guard();
     if(!localUnrestricted()){await egress.start(); guard(); lease = await openScopedProxy(egress, needs.hosts); guard();}
-    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1 }));
+    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1,account:needs.account?.()??null }));
     const proxy = lease?.url ?? "";
     const env:Record<string,string> = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',...login.env,CODEX_HOME:join(home,'.codex'),HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };
     if(localUnrestricted())for(const key of ['HTTPS_PROXY','HTTP_PROXY','https_proxy','http_proxy','ALL_PROXY','all_proxy'])delete env[key];
@@ -113,7 +113,8 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
         terminal=true; complete();
       } else if (m.method === 'error') stop(new Error('Codex image server refused'));
     };
-    // Private HOME has no original config or hooks; explicit source policy allows only image generation.
+    // The private CODEX_HOME holds only a login (Studio's key, or a link to the captain's own auth.json): no config, hooks,
+    // MCP servers or instructions of the captain's load; explicit source policy allows only image generation.
     const args=['app-server','--listen','stdio://','--disable','shell_tool','--enable','image_generation','-c','web_search="disabled"','-c','approval_policy="never"','-c',localUnrestricted()?'sandbox_mode="danger-full-access"':'sandbox_mode="read-only"','-c','analytics.enabled=false'];
     proc=probeProcess(localUnrestricted()?binArgv(bin,args):['/usr/bin/sandbox-exec','-f',profile,...binArgv(bin,args)],work,env,m=>{
       if (m.id !== undefined && !m.method) { const w=pending.get(m.id);if(w){pending.delete(m.id);m.error?w.reject(new Error('Codex image RPC refused')):w.resolve(m.result);} }

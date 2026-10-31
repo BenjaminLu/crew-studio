@@ -91,7 +91,7 @@ import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
 import { Egress } from "./egress";
 import { Worktrees } from "./worktrees";
-import { claudeLogin as claudeLogin_, cursorLogin, claudeLoginPresence, claudeLoginPresenceAsync, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
+import { claudeLogin as claudeLogin_, cursorLogin, codexLogin, claudeLoginPresence, claudeLoginPresenceAsync, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
 import { installCode } from "./domain/code";
 import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-repo";
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
@@ -208,7 +208,13 @@ const chatFiles = new AttachmentStore(DATA);
 const chatLog = new ChatLog(DATA);
 /** Retention runs at start and every hour: what the kept history or the queue references stays (src/attachments.ts sweep). */
 const sweepChatFiles = () => { try { const referenced = chatLog.referencedIds(); for (const q of main.queue.list()) for (const a of q.attachments ?? []) referenced.add(a.id); return chatFiles.sweep({ referenced }); } catch { return 0; } };
-const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
+// Studio's own fresh Claude primaries keep their transcripts in the captain's ~/.claude/projects (they run on the captain's own
+// account): every id Studio starts is kept the moment the host names it (data/studio-claude-sessions.json) and never mistaken
+// for the captain's Firstmate session
+const studioSessionsFile = join(DATA, "studio-claude-sessions.json");
+const studioSessions = new Set<string>((() => { try { const v = JSON.parse(readFileSync(studioSessionsFile, "utf8")); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; } })());
+const noteStudioSession = (host: string, id: string) => { if (host !== "claude" || !id || studioSessions.has(id)) return; studioSessions.add(id); try { writeFileSync(studioSessionsFile, JSON.stringify([...studioSessions].slice(-500)), { mode: 0o600 }); } catch {} };
+const main = new MainSession({ dataDir: DATA, onFreshSession: noteStudioSession, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
   // each captain turn carries Studio's note: the deliverables it routes to a workflow (src/firstmate-turn.ts)
   turnNote:(text)=>firstmateTurnNote(runtime.engine)(text),
@@ -261,7 +267,7 @@ const takeover = createTakeover({ claudePair: claudePrimaryPair, cursorPrimary, 
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
 let firstmateId: string | null = null;
-const refreshFirstmate = async () => { try { const own = takeover.copies(); firstmateId = (await main.discover("claude")).find((x) => !own.has(x.id))?.id ?? null; } catch {} };
+const refreshFirstmate = async () => { try { const own = new Set([...takeover.copies(), ...studioSessions]); firstmateId = (await main.discover("claude")).find((x) => !own.has(x.id))?.id ?? null; } catch {} };
 void refreshFirstmate(); setInterval(refreshFirstmate, 15_000);
 const graphMode = createGraphMode(DATA);
 const transcripts = createTranscripts({ stateDir: STATE, dataDir: DATA, sessionFile: () => {
@@ -368,7 +374,7 @@ const toolListener = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (r
 } });
 const PROTECTED = startup.protectedRoots; // the one list of protected roots: rounds, worktrees and the runtime all read it
 // how claude rounds sign in (v1 option A): Studio reads the vendor's login outside the sandbox and hands the round only its token; checked once a minute for the Doctor
-let loginCache: { at: number; v: { ok: boolean; source?: string; warn?: string | null; error?: string } } | null = null;
+let loginCache: { at: number; v: { ok: boolean; source?: string; warn?: string | null; error?: string; kind?: "account" | "api-key" } } | null = null;
 // the Doctor's status never decrypts a login: items by existence only (claudeLoginStatus); the token is read when a round starts
 const roundLogin = () => { if (!loginCache || Date.now() - loginCache.at > 60_000) loginCache = { at: Date.now(), v: claudeLoginStatus() }; return loginCache.v; };
 // a captain who chose API billing for claude rounds (the earlier keychain/API-key switch, data/round-auth.json) keeps it: moved to data/claude-billing.json, never switched silently
@@ -462,16 +468,18 @@ const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;
 const coffeeTools = (()=>{const rendering=renderEnv();return discoverCoffeeFilmCapability([process.env.CREW_HYPERFRAMES_ROOT,TOOLS_DIR,!COMPILED?ROOT:null,join(dirname(process.execPath),"..")].filter(Boolean)as string[],{browser:process.env.HYPERFRAMES_BROWSER_PATH,playwright:rendering.playwright,ffmpeg:process.env.CREW_FFMPEG||Bun.which("ffmpeg"),ffprobe:Bun.which("ffprobe")});})();
 let staffingClaudeCapabilities:ProviderCapability[]=[];
-/** Login presence per provider for the readiness gate, read once per gate run and kept 30 s: environment and files are read
- *  directly; Claude's keychain items are asked about with an async `security find-generic-password` (existence only, no secret
- *  read), so the event loop never waits on it. Nothing is written and no sign-in is ever started. */
+/** Login presence per provider for the readiness gate, read once per gate run and kept 30 s: an API key's presence in the
+ *  environment, or that the captain's own codex login file exists (never what it holds); Claude's own sign-in is the CLI's
+ *  own `claude auth status` (no secret read). Nothing is written and no sign-in is ever started. */
 let gateLoginCache: { at: number; v: Promise<Record<string, "logged-in" | "not-logged-in" | "unknown">> } | null = null;
 const gateLogins = () => {
   if (gateLoginCache && Date.now() - gateLoginCache.at < 30_000) return gateLoginCache.v;
   const v = (async () => {
     const out: Record<string, "logged-in" | "not-logged-in" | "unknown"> = {};
-    try { out.claude = (await claudeLoginPresenceAsync()).ok ? "logged-in" : "not-logged-in"; } catch { out.claude = "unknown"; }
-    try { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) out.codex = "logged-in"; else { const f = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json"); if (!existsSync(f)) out.codex = "not-logged-in"; else { const j = JSON.parse(await Bun.file(f).text()); out.codex = j?.tokens?.access_token || j?.OPENAI_API_KEY ? "logged-in" : "not-logged-in"; } } } catch { out.codex = "unknown"; }
+    // Claude: an API key's presence under API billing; on the captain's own account, the CLI's own `claude auth status`
+    try { const pr = await claudeLoginPresenceAsync(); if (!pr.ok) out.claude = "not-logged-in"; else if (pr.kind === "api-key") out.claude = "logged-in";
+      else { const st = await nativeClaude.status(claudePrimaryPair()); out.claude = st.loginState === "logged-in" ? "logged-in" : st.loginState === "not-logged-in" ? "not-logged-in" : "unknown"; } } catch { out.claude = "unknown"; }
+    try { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) out.codex = "logged-in"; else out.codex = codexLogin(join(DATA, "codex-gate-unused")).ok ? "logged-in" : "not-logged-in"; } catch { out.codex = "unknown"; }
     try { const c = probeCursor([]); out.cursor = c.available && c.auth !== "missing" ? "logged-in" : "not-logged-in"; } catch { out.cursor = "unknown"; }
     out.stub = allowStub ? "logged-in" : "not-logged-in";
     return out;

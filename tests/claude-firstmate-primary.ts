@@ -51,6 +51,9 @@ done
 exit 44
 `, { mode: 0o755 });
 const setKeychain = (m: string) => writeFileSync(kcMode, m);
+const kcCalls = () => existsSync(kcLog) ? readFileSync(kcLog, "utf8") : "";
+/** the captain's Claude billing choice (data/claude-billing.json, read on every login): "api-key", or null for the subscription */
+const billing = (b: "api-key" | null) => b ? writeFileSync(join(data, "claude-billing.json"), JSON.stringify({ billing: b })) : rmSync(join(data, "claude-billing.json"), { force: true });
 const signedIn = (yes: boolean) => yes ? writeFileSync(join(home, ".claude-login-marker"), "1") : rmSync(join(home, ".claude-login-marker"), { force: true });
 const seedFile = join(root, "claude-seed.jsonl");
 const claudeRuns = () => existsSync(argvFile) ? readFileSync(argvFile, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
@@ -101,41 +104,38 @@ try {
   const ready = async () => { try { return (await api("/api/main/start/claude-ready")).body; } catch { return {}; } };
 
   // --- typed refusals, never Codex ---
-  signedIn(false); setKeychain("crew");
+  signedIn(false);
   let r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 409 && r.body.code === "claudeNotSignedIn" && /Sign in to Claude on this card/.test(r.body.en) && /這張卡片/.test(r.body.zh), "not signed in: typed claudeNotSignedIn refusal that points at this card (no separate account card)");
   ok(codexStarts() === 0 && claudeRuns().length === 0 && (await view()).state === "detached", "not signed in: no Codex thread, no Claude process, nothing attached");
   ok((await ready()).code === "claudeNotSignedIn", "the read-only preflight says not signed in");
-  signedIn(true); setKeychain("none");
+  signedIn(true); billing("api-key");
   r = await api("/api/main/start", { host: "claude", confirm: true });
-  ok(r.status === 409 && r.body.code === "claudeCrewTokenMissing" && /claude setup-token/.test(r.body.reason) && !r.body.reason.includes(CREW), "no crew token: typed claudeCrewTokenMissing refusal, no secret in it");
+  ok(r.status === 409 && r.body.code === "claudeCrewTokenMissing" && /Anthropic API key/.test(r.body.reason) && /API key/.test(r.body.zh), "API billing without a key: typed refusal naming the missing API key, in English and Chinese");
   const pre = await ready();
-  ok(pre.code === "claudeCrewTokenMissing" && /claude setup-token/.test(pre.en) && /claude setup-token/.test(pre.zh), "the preflight gives the crew-token step, in English and Chinese");
-  setKeychain("own");
-  r = await api("/api/main/start", { host: "claude", confirm: true });
-  ok(r.status === 409 && r.body.code === "claudeCrewTokenMissing", "the captain's own interactive login is not used in place of the crew token");
-  ok((await ready()).code === "claudeCrewTokenMissing", "the preflight also refuses the captain's own login (typed login kind)");
-  ok(codexStarts() === 0 && claudeRuns().length === 0 && (await view()).state === "detached", "crew token missing: no Codex thread, no Claude process");
+  ok(pre.code === "claudeCrewTokenMissing" && /Doctor → API keys/.test(pre.en) && /Doctor → API keys/.test(pre.zh), "the preflight gives the same step, in English and Chinese");
+  ok(codexStarts() === 0 && claudeRuns().length === 0 && (await view()).state === "detached", "API key missing: no Codex thread, no Claude process");
+  billing(null);
   ok((await api("/api/main/start", { host: "claude" })).body.code === "confirm", "a start needs the captain's confirmation");
 
-  // --- a fresh Claude primary ---
-  setKeychain("crew");
-  const kcBefore = readFileSync(kcLog, "utf8");
+  // --- a fresh Claude primary, on the captain's own account ---
+  const kcBefore = kcCalls();
   const okPre = await ready();
   ok(okPre.ok === true && okPre.model === "claude-sonnet-5-5" && !existsSync(join(data, "claude-firstmate")), "the preflight passes without creating the config folder");
-  ok(!readFileSync(kcLog, "utf8").slice(kcBefore.length).includes(" -w"), "the preflight never decrypts a keychain item");
+  ok(!/claude|Claude Code/i.test(kcCalls().slice(kcBefore.length)), "Studio reads no Claude keychain item at all");
   // planted symlinks in the primary's config folder: Studio's settings write never follows one
   const cfgPlant = join(data, "claude-firstmate"), victimTmp = join(root, "victim-tmp.txt"), victimSettings = join(root, "victim-settings.txt");
   mkdirSync(cfgPlant, { recursive: true, mode: 0o700 }); writeFileSync(victimTmp, "untouched"); writeFileSync(victimSettings, "untouched");
   symlinkSync(victimTmp, join(cfgPlant, `settings.json.${app.pid}.tmp`)); symlinkSync(victimSettings, join(cfgPlant, "settings.json"));
   r = await api("/api/main/start", { host: "claude", confirm: true });
-  ok(r.status === 200 && r.body.ok && UUID.test(r.body.id), "signed in with a crew token: a fresh Claude primary starts with a new UUID");
+  ok(r.status === 200 && r.body.ok && UUID.test(r.body.id), "signed in with the captain's own account: a fresh Claude primary starts with a new UUID");
   const first = r.body.id;
+  ok((() => { try { return JSON.parse(readFileSync(join(data, "studio-claude-sessions.json"), "utf8")).includes(first); } catch { return false; } })(), "Studio keeps the id of the session it started the moment the host names it, so its transcript in the captain's projects is never taken for the captain's Firstmate");
   await idle();
   const run = claudeRuns().at(-1), a: string[] = run?.argv ?? [];
   ok(!!run && !!first && a[a.indexOf("--session-id") + 1] === first && !a.includes("--resume") && !a.includes("--fork-session"), "the CLI creates exactly that session (--session-id), never resumes or forks one");
-  ok(run?.CLAUDE_CONFIG_DIR === join(data, "claude-firstmate") && run.oauthToken === "expected", "its own config identity: Studio's config folder and the crew token");
-  ok(existsSync(join(data, "claude-firstmate", "projects")), "the transcript lives in Studio's config folder, apart from ~/.claude");
+  ok(run?.CLAUDE_CONFIG_DIR === null && run.oauthToken === null && run.HOME === home, "it runs in the captain's own account context (where the CLI finds its own sign-in); Studio hands it no token");
+  ok(a[a.indexOf("--setting-sources") + 1] === "" && a[a.indexOf("--settings") + 1] === join(data, "claude-firstmate", "settings.json") && !Object.keys(run.env ?? {}).includes("CREW_PRIMARY_SETTINGS_FILE"), "none of the captain's settings load: only Studio's settings file (--setting-sources \"\"), and Studio's instruction never reaches the CLI");
   const v1 = await view();
   ok(v1.host === "claude" && v1.sessionId === first && v1.drive?.path === "fresh" && v1.driver.holder === "studio" && v1.driver.sessionId === first && v1.driver.host === "claude", "the driver lock and view name the Claude primary and its id");
   // the introduction opens with the captain's dashboard language (2cdb845); the stub echoes its first line
@@ -150,7 +150,7 @@ try {
   ok(/已套用/.test(v1.drive?.autoMode?.summaryZh ?? "") && /soft_deny 2/.test(v1.drive?.autoMode?.summaryZh ?? ""), "the auto-mode rules summary also comes in Traditional Chinese");
   const denied = (a[a.indexOf("--disallowedTools") + 1] ?? "").split(",");
   const cfgDir = join(data, "claude-firstmate");
-  ok(denied.includes(`Edit(/${cfgDir}/settings*.json)`) && denied.includes(`Edit(/${cfgDir}/.claude.json)`) && denied.includes(`Edit(/${join(import.meta.dir, "..", ".env")})`) && [".env.local", ".env.development", ".env.production"].every((f) => denied.includes(`Edit(/${join(import.meta.dir, "..", f)})`)) && denied.every((d) => d.startsWith("Edit(//")), "deny rules keep the model's edit tools off Studio's primary settings and Studio's .env, whatever the classifier says");
+  ok(denied.includes(`Edit(/${cfgDir}/settings*.json)`) && denied.includes(`Edit(/${cfgDir}/.claude.json)`) && denied.includes(`Edit(/${join(home, ".claude")}/settings*.json)`) && denied.includes(`Edit(/${join(home, ".claude")}/hooks/**)`) && denied.includes(`Edit(/${join(home, ".claude.json")})`) && denied.includes(`Edit(/${join(import.meta.dir, "..", ".env")})`) && [".env.local", ".env.development", ".env.production"].every((f) => denied.includes(`Edit(/${join(import.meta.dir, "..", f)})`)) && denied.every((d) => d.startsWith("Edit(//")), "deny rules keep the model's edit tools off Studio's primary settings, the captain's own Claude settings and hooks, and Studio's .env, whatever the classifier says");
   ok(!(existsSync(seedFile) ? readFileSync(seedFile, "utf8") : "").includes("local unrestricted execution") && v1.drive?.executionMode === "default", "by default the primary is told nothing about unrestricted execution");
   const doc1 = ((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode");
   ok((doc1?.detailZh ?? "").startsWith("設定的 Claude 權限模式：auto") && /已套用/.test(doc1?.detailZh ?? ""), "Doctor's Chinese detail is Chinese from its first word");
@@ -164,7 +164,7 @@ try {
   const line = JSON.stringify(a);
   ok(!cfgFile.startsWith("{") && toolToken.length >= 32 && permToken.length >= 32 && !line.includes(toolToken) && !line.includes(permToken) && !line.includes(studio.env.CREW_STUDIO_SOCKET) && !/CREW_(TOOL|PERM)_TOKEN|tools\.sock/.test(line), "the spawned argv holds neither token nor the socket path: --mcp-config names a file");
   ok((statSync(priv).mode & 0o777) === 0o700 && [cfgFile, studio.env.CREW_TOOL_TOKEN_FILE, perm.env.CREW_PERM_TOKEN_FILE].every((f) => (statSync(f).mode & 0o777) === 0o600) && !perm.env.CREW_PERM_TOKEN && !studio.env.CREW_TOOL_TOKEN, "the config and token files are 0600 in a 0700 folder; no token in the config");
-  ok(a[a.indexOf("--setting-sources") + 1] === "user", "only user settings load, and user scope is Studio's own config folder (no workspace .claude settings or hooks)");
+  ok(a[a.indexOf("--setting-sources") + 1] === "" && a.includes("--settings"), "no settings scope loads (no user, workspace or local settings or hooks): only Studio's settings file");
   ok(studio && studio.command && studio.args.some((x: string) => x.endsWith("src/mcp.ts")) && studio.env.CREW_STUDIO_SOCKET && !studio.env.CREW_STUDIO_URL, "native tools come from Studio's MCP helper over owned stdio and a private socket");
 
   // --- native tools through MCP ---
@@ -213,7 +213,7 @@ try {
   ok(stopped.status === 200 && stopped.body.stopped === true && stopped.body.resume === null, "Stop answers stopped, with no terminal resume");
   ok(await until(() => !alive(pid)), "Stop kills the owned Claude process");
   ok(sv.state === "detached" && sv.driver.holder === "none" && !sv.driver.resume && sv.driver.host === "claude" && /Firstmate stopped/.test(sv.log.at(-1)?.text ?? ""), "Stop releases the lock like the Codex primary");
-  ok(existsSync(join(data, "claude-firstmate")) && !readFileSync(kcLog, "utf8").includes("delete"), "Stop keeps credentials and the config folder");
+  ok(existsSync(join(data, "claude-firstmate")) && !kcCalls().includes("delete"), "Stop keeps credentials and the config folder");
   ok(!existsSync(sock) && !existsSync(priv), "Stop closes the native tool socket and removes the private folder");
 
   // --- the Codex primary is unchanged ---
@@ -224,18 +224,15 @@ try {
   ok((await api("/api/main/start", { host: "claude", confirm: true })).status === 409, "Claude cannot start while the Codex primary holds the lock");
   // --- Switch from Codex to Claude, atomic on the server ---
   const codexThread = (await view()).sessionId;
-  for (const mode of ["empty", "bad"]) {
-    setKeychain(mode);
+  { billing("api-key");
     const pre = await ready();
     const sw = await api("/api/main/switch", { to: "claude", confirm: true }), after = await view();
-    // presence only, and a fixed item can always be tried again: the preflight passes; the server's full read refuses
-    ok(pre.ok === true && sw.status === 409 && sw.body.code === "claudeCrewTokenMissing" && sw.body.kept === "codex", `a ${mode} crew keychain item passes the presence preflight, but Switch refuses with claudeCrewTokenMissing`);
-    ok(after.state === "attached" && after.host === "codex" && after.sessionId === codexThread && claudeRuns().filter((x) => x.argv).length === runsBefore, `Switch with a ${mode} crew item keeps the Codex Firstmate attached and starts no Claude process`);
-  }
-  setKeychain("crew");
+    ok(pre.code === "claudeCrewTokenMissing" && sw.status === 409 && sw.body.code === "claudeCrewTokenMissing" && sw.body.kept === "codex", "API billing without a key: Switch refuses and keeps Codex");
+    ok(after.state === "attached" && after.host === "codex" && after.sessionId === codexThread && claudeRuns().filter((x) => x.argv).length === runsBefore, "Switch refused keeps the Codex Firstmate attached and starts no Claude process");
+    billing(null); }
   ok((await api("/api/main/switch", { to: "claude" })).body.code === "confirm", "Switch needs the captain's confirmation");
   const sw = await api("/api/main/switch", { to: "claude", confirm: true });
-  ok(sw.status === 200 && sw.body.ok && UUID.test(sw.body.id) && (await view()).host === "claude", "with a working crew token Switch stops Codex and starts a fresh Claude Firstmate");
+  ok(sw.status === 200 && sw.body.ok && UUID.test(sw.body.id) && (await view()).host === "claude", "on the captain's own account Switch stops Codex and starts a fresh Claude Firstmate");
   await idle();
   // the same host again: a new conversation (how a model change takes effect), the earlier one stays in the chat
   const again = await api("/api/main/switch", { to: "claude", confirm: true });
@@ -300,7 +297,7 @@ try {
   const ur = claudeRuns().at(-1), au: string[] = ur?.argv ?? [];
   const seeds = readFileSync(seedFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)), useed = seeds.find((x: any) => x.pid === ur.pid)?.seed ?? "";
   ok(useed.startsWith("The operator explicitly enabled local unrestricted execution") && useed.includes(root) && /Coffee onboarding/.test(useed), "its first message starts with the local unrestricted execution notice");
-  ok(au[au.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && au.includes("--strict-mcp-config") && au[au.indexOf("--setting-sources") + 1] === "user" && au.includes("--disallowedTools"), "the bridge, strict MCP config, user-only settings and deny rules stay");
+  ok(au[au.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && au.includes("--strict-mcp-config") && au[au.indexOf("--setting-sources") + 1] === "" && au.includes("--settings") && au.includes("--disallowedTools"), "the bridge, strict MCP config, Studio's settings file only and deny rules stay");
   const ucfg = JSON.parse(readFileSync(au[au.indexOf("--mcp-config") + 1], "utf8"));
   ok((statSync(ucfg.mcpServers.studio.env.CREW_TOOL_TOKEN_FILE).mode & 0o777) === 0o600 && !JSON.stringify(au).includes(readFileSync(ucfg.mcpServers.studio.env.CREW_TOOL_TOKEN_FILE, "utf8").trim()), "token files stay 0600 and off the command line");
   ok((await view()).drive?.executionMode === "local-unrestricted", "the view says the primary runs unrestricted");
@@ -359,7 +356,7 @@ try {
   // after the greeting the conversation's language rules: a captain writing Traditional Chinese gets the Traditional note on the turn
   { const run = claudeRuns().at(-1), sid = run.argv[run.argv.indexOf("--session-id") + 1];
     await say("我們來做一張海報");
-    const tx = join(run.CLAUDE_CONFIG_DIR, "projects"), files = readdirSync(tx).flatMap((d) => readdirSync(join(tx, d)).filter((f) => f === `${sid}.jsonl`).map((f) => join(tx, d, f)));
+    const tx = join(run.CLAUDE_CONFIG_DIR ?? join(home, ".claude"), "projects"), files = readdirSync(tx).flatMap((d) => readdirSync(join(tx, d)).filter((f) => f === `${sid}.jsonl`).map((f) => join(tx, d, f)));
     const { TRADITIONAL_NOTE } = await import("../src/captain-script");
     ok(files.length === 1 && readFileSync(files[0], "utf8").includes(`我們來做一張海報\\n\\n[Studio note: `) && readFileSync(files[0], "utf8").includes(JSON.stringify(TRADITIONAL_NOTE).slice(1, -1)),
       "a captain message in Traditional Chinese after the greeting reaches Firstmate with the follow-the-captain notes", files.join(","));

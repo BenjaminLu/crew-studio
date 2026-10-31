@@ -131,7 +131,8 @@ export class Agents {
       // the round's home and XDG folders are its own (v1 bin/fm-sandbox.sh, T-128): ordinary tools take their ordinary paths, inside the round
       Object.assign(roundEnvAdd, { XDG_CACHE_HOME: join(home, ".cache"), XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local", "share") }, needs.home(home));
       if (needs.writes?.length) { const rmHome = cleanup, extra = [...needs.writes]; cleanup = () => { rmHome(); for (const d of extra) try { rmSync(d, { recursive: true, force: true }); } catch {} }; }
-      // its vendor's own login, read here, outside the sandbox (v1 option A, T-117): the round gets that token and nothing else
+      // its vendor's login (src/providers/login.ts): an API key Studio keeps, or the captain's own sign-in, which the vendor's
+      // CLI reads itself inside the round (needs.account opens only that credential to it); Studio never reads a subscription credential
       const login = needs.login(home); if (!login.ok) { cleanup(); return refuse(`${o.provider.id} has no login for a round: ${login.error}`); }
       if (login.warn) this.log(job, "start", `${o.provider.id} signs in with ${login.source}: ${login.warn}`);
       Object.assign(roundEnvAdd, login.env); envKeys = [];
@@ -139,10 +140,13 @@ export class Agents {
       if (lease) { const rmBox = cleanup; cleanup = () => { lease.close(); rmBox(); }; }
       if (o.signal?.aborted || o.owns && !o.owns()) throw new QueueRefusal("round owner ended during sandbox setup");
       studioUrl = this.toolUrl();
-      cwd = o.sandbox.cwd ?? tmp;
+      // a CLI holding the captain's own credential is a model client only: it runs in the round's tmp and never reaches the
+      // worktree (its model works on files through Studio's tools, which run in their own sandbox without credentials)
+      const bare = needs.noWorkspace?.() === true;
+      cwd = bare ? tmp : o.sandbox.cwd ?? tmp;
       const prof = join(box, "round.sb");
-      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home, ...(needs.writes ?? [])], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: lease?.port??1, toolPort: Number(new URL(studioUrl).port),
-        dataDir: this.dataDir, protect: this.protect() }));
+      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...(bare ? [] : o.sandbox.writes), home, ...(needs.writes ?? [])], reads: [...needs.reads, ...helperReads(), ...(bare ? [] : o.sandbox.reads ?? [])], proxyPort: lease?.port??1, toolPort: Number(new URL(studioUrl).port),
+        dataDir: this.dataDir, protect: this.protect(), account: needs.account?.() ?? null, exec: needs.exec?.() ?? null }));
       const proxy = lease?.url ?? "";
       if(!localUnrestricted())Object.assign(roundEnvAdd, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, ALL_PROXY: proxy, all_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1", TMPDIR: tmp });
       // the tool token in a 0600 file inside the round's tmp (readable only in this round's sandbox), never on the CLI's argv

@@ -14,7 +14,7 @@ import {localUnrestricted} from "../local-execution";
 //   data/evidence/<R-id>/<seq>-<id>/out/               what a check wrote (its evidence)
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
 import { bundledBytes, bundledList, bundledText, parseYaml } from "../bundled";
@@ -376,7 +376,12 @@ ${o.localBinding ? LOCAL_BINDING_RULES + "\n" + closedPortRules(ports) : ""}
  */
 export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; reads: string[]; proxyPort: number; toolPort: number; dataDir?: string | null; protect?: string[];
   /** folders the round reads and executes but never writes (a skill's round copy, its prepared env, Studio's runtimes and tools), even inside Studio's data */
-  readOnly?: string[] }) {
+  readOnly?: string[];
+  /** the captain's own account context the provider's CLI signs in from (SandboxNeeds.account): opened after the secret deny
+   *  list, and only that context; the login keychain only when `keychain` */
+  account?: AccountContext | null;
+  /** the only programs the round may execute (SandboxNeeds.exec); unset: any */
+  exec?: string[] | null }) {
   // Studio's data folder is closed to the round, its file metadata included, except what the runtime materialized for it
   // (its worktree, its tmp, its throwaway home); a protected root (firstmate's checkout) is closed entirely; the user's
   // secret folders are denied last, the login keychain among them
@@ -419,7 +424,32 @@ ${protect.length ? `(deny file-read* file-read-metadata file-write* ${sub(protec
 (deny file-write* ${lit(gitLinks)} ${gitLinks.map((g) => `(subpath ${q(g)})`).join(" ")})
 ${readOnly.length ? `(deny file-write* ${sub(readOnly)})` : ""}
 ${deny.length ? `(deny file-read* file-write* ${sub(deny)})` : ""}
-`;
+${accountRules(o.account, [...(data ? [data] : []), ...protect])}${execRules(o.exec)}`;
+}
+/** The captain's own account context, opened last (after the secret deny list) to the CLI that signs in from it: its folders,
+ *  the files beside them, and the login keychain when the CLI keeps its sign-in there. Nothing of it is ever Studio's to read. */
+/** What of the captain's own account a vendor CLI needs to sign in by itself (SandboxNeeds.account): only its credential, never
+ *  a folder of the captain's. `writeFiles`: a login file it reads and refreshes in place (codex's auth.json, linked into the
+ *  round's private home); `writeRegex`: SBPL patterns for the same (the login keychain database, where claude keeps its sign-in
+ *  on macOS); `deny`: account folders named for the CLI's sake (a captain's own CLAUDE_CONFIG_DIR) that stay closed. */
+export type AccountContext = { writeFiles?: string[]; writeRegex?: string[]; deny?: string[] };
+const sbplRegex = (r: string) => `(regex #"${r.replace(/"/g, '\\"')}")`;
+function accountRules(a: AccountContext | null | undefined, closed: string[]): string {
+  if (!a) return "";
+  const inside = (p: string, root: string) => p === root || p.startsWith(root.replace(/\/$/, "") + "/");
+  const R = (p: string) => realIf(p) ?? p;
+  const files = (a.writeFiles ?? []).filter((f) => isAbsolute(f)).map(R).filter((f) => !closed.some((c) => inside(f, c)));
+  const rw = [...files.map((f) => `(literal ${q(f)})`), ...(a.writeRegex ?? []).map(sbplRegex)];
+  const deny = (a.deny ?? []).filter((d) => isAbsolute(d)).map(R);
+  return `${rw.length ? `(allow file-read* file-write* ${rw.join(" ")})\n` : ""}${deny.length ? `(deny file-read* file-write* ${deny.map((d) => `(subpath ${q(d)})`).join(" ")})\n` : ""}`;
+}
+/** Only these programs may start (the round's own CLI, Studio's runtime, the few helpers the CLI runs itself). */
+function execRules(exec?: string[] | null): string {
+  if (!exec) return "";
+  const R = (p: string) => realIf(p) ?? p;
+  const allowed = [...new Set(exec.filter((p) => isAbsolute(p) && p !== "/").map(R))];
+  const isDir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
+  return `(deny process-exec)\n${allowed.length ? `(allow process-exec ${allowed.map((p) => isDir(p) ? `(subpath ${q(p)})` : `(literal ${q(p)})`).join(" ")})\n` : ""}`;
 }
 
 /** Absolute paths an input names that exist: they become readable to the check (never a secret: the profile denies those last). */

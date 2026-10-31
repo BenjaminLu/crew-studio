@@ -6,6 +6,8 @@ const TOOL_TOKEN = process.env.CREW_TOOL_TOKEN_FILE ? fs.readFileSync(process.en
 const text = process.argv[process.argv.indexOf("-p") + 1] || "";
 const m = /PROBE (\{.*\})/s.exec(text); const p = m ? JSON.parse(m[1]) : {};
 const out = (o) => { process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: JSON.stringify(o), usage: {} }) + "\n"); };
+// like the CLI, it first says what the model may use: Studio's tools only (src/providers/claude.ts refuses a round without this)
+process.stdout.write(JSON.stringify({ type: "system", subtype: "init", tools: [], mcp_servers: [{ name: "studio" }] }) + "\n");
 const get = (url, headers = {}) => new Promise((res) => { try { const r = http.get(url, { headers, timeout: 3000 }, (resp) => { let b = ""; resp.on("data", (d) => (b += d)); resp.on("end", () => res({ status: resp.statusCode, cookie: resp.headers["set-cookie"] || null, body: b.slice(0, 200) })); });
   r.on("error", (e) => res({ status: String(e.code || e.message) })); r.on("timeout", () => { r.destroy(); res({ status: "timeout" }); }); } catch (e) { res({ status: String(e.message) }); } });
 // CONNECT through the proxy, with the round's credential (from HTTPS_PROXY) or without one
@@ -33,6 +35,11 @@ const viaProxy = (host, withCred = true) => new Promise((res) => { const u = new
   r.toolTokenFileIsPath = !!process.env.CREW_TOOL_TOKEN_FILE && process.env.CREW_TOOL_TOKEN_FILE !== TOOL_TOKEN && /\//.test(process.env.CREW_TOOL_TOKEN_FILE);
   r.proxyEnv = process.env.HTTPS_PROXY ? process.env.HTTPS_PROXY : null;
   r.oauth = process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR ? fs.readFileSync(Number(process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR), "utf8").trim() : process.env.CLAUDE_CODE_OAUTH_TOKEN || null;
+  r.apiKey = process.env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR ? fs.readFileSync(Number(process.env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR), "utf8").trim() : null;
+  // the captain's own account context (a round on the subscription): what the CLI may write there, what stays read-only, what it may run
+  r.accountWrites = Object.fromEntries((p.accountWrites || []).map((f) => [f, tryWrite(f)]));
+  r.accountReads = Object.fromEntries((p.accountReads || []).map((f) => { try { fs.readFileSync(f); return [f, true]; } catch { return [f, false]; } }));
+  r.exec = Object.fromEntries((p.exec || []).map((c) => { const x = require("child_process").spawnSync(c, ["/dev/null"], { stdio: "ignore" }); return [c, !x.error && x.status !== null]; }));
   r.claudeTmp = process.env.CLAUDE_CODE_TMPDIR || null; r.tmpdir = process.env.TMPDIR || null; r.home = process.env.HOME || null;
   out(r);
 })();

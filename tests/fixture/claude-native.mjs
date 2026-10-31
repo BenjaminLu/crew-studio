@@ -5,7 +5,8 @@ for(const [key,descriptor]of[['CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN
 const root=dirname(process.argv[1]),mode=basename(process.argv[1]).replace('.mjs',''),args=process.argv.slice(2),trace=join(root,'trace.jsonl');
 const put=x=>process.stdout.write(JSON.stringify(x)+'\n');
 // the acceptance harness's login (tests/acceptance.ts) leaves no trace next to this file: its rounds cannot write here
-const acceptance=/^sk-ant-oat01-acceptance/.test(process.env.CLAUDE_CODE_OAUTH_TOKEN??'');
+// (started as tests/fixture/claude-acceptance.mjs, whose name is the mode: tests/acceptance/studio.ts)
+const acceptance=mode==='claude-acceptance';
 // the free model list (src/providers/claude-native.ts models()): print mode over stream-json with no prompt, answered on initialize
 const listing=args[0]==='-p'&&args[1]==='--input-format'&&args[2]==='stream-json',has=(k,v)=>args.includes(k)&&(v===undefined||args[args.indexOf(k)+1]===v);
 // a listing only with the discovery's authority: no prompt, no tools, no MCP, no settings, no session file, restricted

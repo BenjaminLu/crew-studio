@@ -12,7 +12,8 @@ import { fromError, fromExternal } from '../runtime/failures';
 // If a terminal starts writing the session while Studio holds it, Studio
 // pauses and alerts the captain instead of forking the conversation.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { localExecutionNotice } from "../local-execution";
 import { claudeHost } from "./claude";
 import { codexHost } from "./codex";
@@ -88,6 +89,8 @@ export type MainOpts = {
   dataDir: string; projectDir: string; stateDir: string; probe?: ProcProbe;
   hosts?: Record<HostId, Host>; permissionMcp: (bridge: PermissionBridge) => { command: string[]; env: Record<string, string> };
   pollMs?: number;
+  /** told the id of every fresh session Studio starts, the moment the host names it (src/server.ts keeps Claude's) */
+  onFreshSession?: (host: HostId, id: string) => void;
   /** Fresh Studio-owned workspace: no legacy repository handoff or dispatch scripts. */
   nativeWorkspace?: boolean;
   onGeneratedImage?: (image:import("./types").GeneratedImage,owner:import("../media-library").MediaOwner)=>Promise<void>;
@@ -409,7 +412,7 @@ export class MainSession {
     try {
       this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability(),
         ...(host === "codex" && extra?.codexDefaultEffort ? {codexDefaultEffort:extra.codexDefaultEffort} : {}),
-        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", denyEdits: claudeDenyEdits(extra?.env?.CLAUDE_CONFIG_DIR), studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}),
+        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", denyEdits: claudeDenyEditsFor(extra?.env), studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}),
         ...(host === "cursor" ? { env: extra?.env, model: extra?.model ?? null, ...(this.o.nativeWorkspace ? { studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : { cursorProject: true, dataDir: this.o.dataDir }) } : {}) });
     } catch (e: any) {
       this.state = "detached"; this.changed();
@@ -443,6 +446,7 @@ export class MainSession {
     this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : host === "cursor" ? extra?.model ?? se.model : se.model, effort: host === "claude" ? extra?.effort ?? null : host === "cursor" ? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, effectivePermissionMode: null, autoMode: host === "claude" ? extra?.autoMode ?? null : null, executionMode: host === "claude" ? (localExecutionNotice() ? "local-unrestricted" : "default") : null,
       seededFrom: newest ? `state/${newest.name}` : null, handoff };
     this.sessionFile = se.file ?? null; this.lastSeenMtime = mtimeOf(this.sessionFile);
+    try { this.o.onFreshSession?.(host, se.id); } catch {}
     this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh",
       primary: this.o.nativeWorkspace ? { host, model: host === "claude" || host === "cursor" ? extra?.model ?? null : se.model ?? null, effort: host === "claude" ? extra?.effort ?? null : host === "cursor" ? null : se.effort ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, locale: extra?.locale ?? "en" } : null });
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;
@@ -806,10 +810,18 @@ export function claudeModeLine(requested: string | null, effective: string | nul
 }
 /** What the fresh Claude primary's edit tools may never write: Studio's settings for it (where hooks, allow rules or the mode would go)
  *  and Studio's .env files (the operator settings). Its auto memory under projects/ stays writable. */
-export function claudeDenyEdits(configDir: string | undefined): string[] {
-  const cfg = configDir ? ["settings*.json", ".claude.json", "CLAUDE.md", "hooks/**", "skills/**", "agents/**", "commands/**", "plugins/**", "output-styles/**"].map((x) => join(configDir, x)) : [];
+export function claudeDenyEdits(configDir: string | undefined, ...more: string[]): string[] {
+  const cfg = [configDir, ...more].filter((d): d is string => !!d).flatMap((d) => ["settings*.json", ".claude.json", "CLAUDE.md", "hooks/**", "skills/**", "agents/**", "commands/**", "plugins/**", "output-styles/**"].map((x) => join(d, x)));
   // every .env file Bun loads for Studio by itself
   return [...cfg, ...[".env", ".env.local", ".env.development", ".env.production", ".env.test"].map((f) => join(process.cwd(), f))];
+}
+/** The deny rules for a primary's identity: Studio's own config folder (an API key), or, on the captain's own account, Studio's
+ *  settings folder and the captain's own Claude folder and ~/.claude.json, whose settings and hooks every terminal session loads. */
+export function claudeDenyEditsFor(env: Record<string, string> | undefined): string[] {
+  const settings = env?.CREW_PRIMARY_SETTINGS_FILE;
+  if (!settings) return claudeDenyEdits(env?.CLAUDE_CONFIG_DIR);
+  const own = env?.CLAUDE_CONFIG_DIR || join(env?.HOME || homedir(), ".claude");
+  return [...claudeDenyEdits(dirname(settings), own), ...(env?.CLAUDE_CONFIG_DIR ? [] : [join(env?.HOME || homedir(), ".claude.json")])];
 }
 /** Firstmate answers in the captain's own language and script; the dashboard language only sets the greeting. */
 export const REPLY_LANGUAGE = "After the greeting, reply in the language and script of the captain's latest message, whatever the dashboard language: Traditional Chinese (繁體中文) gets Traditional Chinese, never Simplified; Simplified Chinese gets Simplified; English gets English. Titles, drafts and card text you write follow the same language. A captain turn may carry a Studio note that its Chinese is Traditional; when you reply in Chinese, follow it.";

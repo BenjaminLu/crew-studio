@@ -14,7 +14,7 @@ const root = mkdtempSync("/private/tmp/crew-staffing-verify-"), fixture = join(i
 const rows = () => { try { return readFileSync(join(root, "trace.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((s) => JSON.parse(s)); } catch { return []; } };
 const requests = (mode: string) => rows().filter((r) => r.mode === mode && r.phase === "model").length;
 const claudeAt = (mode: string) => { const bin = join(root, mode + ".mjs"); copyFileSync(fixture, bin);
-  return new ClaudeNative({ bin, login: () => ({ ok: true, env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-" + "x".repeat(48) }, source: "offline fixture only", warn: null }) } as any); };
+  return new ClaudeNative({ bin, login: () => ({ ok: true, env: {}, source: "offline fixture only (own account)", warn: null, kind: "account" }) } as any); };
 const role = { provider: "claude", model: "claude-sonnet-5-5", effort: "low" };
 try {
   { const verify = makeStaffingVerify({ claude: claudeAt("success") });

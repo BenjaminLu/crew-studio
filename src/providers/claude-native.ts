@@ -2,8 +2,8 @@
 // No metadata read makes a model request. A desktop Verify or signed bounded Task grant authorizes it.
 import {existsSync,mkdtempSync,mkdirSync,readFileSync,rmSync,realpathSync,statSync} from 'node:fs';
 import {join,dirname} from 'node:path';import{tmpdir,homedir}from'node:os';
-import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,CLAUDE_OAUTH_SHAPE,CLAUDE_API_KEY_SHAPE,type Login}from'./login';
-import{claudeProvider}from'./claude';import{claudeSettings}from'./needs';
+import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,claudeAccountContext,CLAUDE_API_KEY_SHAPE,type Login}from'./login';
+import{claudeProvider}from'./claude';import{claudeSettings,KEYCHAIN}from'./needs';
 import type{ProviderCapability}from'./policy';
 export type ClaudePair={model:string;effort:string|null};
 /** The models Studio can choose for Claude: read from the installed CLI, or (only when that is impossible) a fixed list marked unverified with the reason. */
@@ -81,7 +81,7 @@ export class ClaudeNative{
    return this.base(p,{auth:'verified',loginState:'logged-in',context,reason:'Signed in; remaining quota and actual selected model execution are unverified. Studio verifies the exact model with one bounded request before its first round.'});
   }catch{return this.base(p,{reason:'Claude auth metadata is unavailable in this context'});}finally{if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;}if(clean)rmSync(root,{recursive:true,force:true});}
  }
- private accountEnv():Record<string,string>{return{PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(process.env.CLAUDE_CODE_OAUTH_TOKEN?{CLAUDE_CODE_OAUTH_TOKEN:process.env.CLAUDE_CODE_OAUTH_TOKEN}:{}),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};}
+ private accountEnv():Record<string,string>{return{PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};}
  private inventory:{at:number;done:Promise<ClaudeModelInventory>}|null=null;
  /** The models the installed CLI offers this account: the stream-json `initialize` control request (the Agent SDK's
   * supportedModels()). Only that request is written and the process is stopped on its reply, so no user turn and no model
@@ -139,12 +139,17 @@ export class ClaudeNative{
   if(!Number.isInteger(timeoutMs)||timeoutMs<500||timeoutMs>120000)return this.base(p,{reason:'Claude verification deadline is invalid'});
   const auth=await this.status(p,signal);if(auth.loginState!=='logged-in'||signal.aborted)return auth;
   const login=(this.options.login??(()=>claudeLogin({record:false})))();if(!login.ok)return this.base(p,{auth:'verified',loginState:'logged-in',reason:'Selected CLI is signed in but its credential cannot be safely isolated for a native worker'});
-  const keys=Object.keys(login.env);if(keys.length!==1||!(keys[0]==='CLAUDE_CODE_OAUTH_TOKEN'&&CLAUDE_OAUTH_SHAPE.test(login.env[keys[0]])||keys[0]==='ANTHROPIC_API_KEY'&&CLAUDE_API_KEY_SHAPE.test(login.env[keys[0]])))return this.base(p,{reason:'Claude isolated credential snapshot is unsupported'});
+  // an API key Studio keeps, or the captain's own account (no value at all: the CLI reads its own sign-in); never a token Studio read
+  const keys=Object.keys(login.env),account=login.kind==='account'&&keys.length===0;if(!account&&(keys.length!==1||keys[0]!=='ANTHROPIC_API_KEY'||!CLAUDE_API_KEY_SHAPE.test(login.env[keys[0]])))return this.base(p,{reason:'Claude credential snapshot is unsupported'});
   const root=mkdtempSync(join(tmpdir(),'crew-claude-verify-')),home=join(root,'home'),config=join(home,'.claude'),work=join(root,'work'),temp=join(root,'tmp');for(const d of[config,work,temp])mkdirSync(d,{recursive:true});
   let proc:ReturnType<typeof probeProcess>|null=null,clean=true;const deadline=Date.now()+timeoutMs;const abort=()=>proc?.kill();signal.addEventListener('abort',abort,{once:true});
   try{
    if(signal.aborted)throw 0;const binary=this.currentBinary();if(!binary)throw 0;
-   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:home,...loginUser(),CLAUDE_CONFIG_DIR:config,TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
+   // on the captain's own sign-in the verification runs like a round: a private home, the CLI reading its own keychain item (named
+   // for the login user, and the captain's CLAUDE_CONFIG_DIR only when set), none of the captain's files
+   // (off macOS the CLI keeps its sign-in in a file of the captain's config folder: there it runs in the captain's own context)
+   const own=process.env.CLAUDE_CONFIG_DIR?.trim();
+   const env={PATH:process.env.PATH||'/usr/bin:/bin',...(account?(KEYCHAIN()?{HOME:home,...(own?{CLAUDE_CONFIG_DIR:own}:{})}:claudeAccountContext().env):{HOME:home,CLAUDE_CONFIG_DIR:config}),...loginUser(),TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
    let init=false,result=false,assistant=false,invalid=false;
    const args=['-p','Reply with OK only. Do not use any tools.','--output-format','stream-json','--verbose','--include-partial-messages','--model',p.model,...p.effort?['--effort',p.effort]:[],'--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--permission-mode','dontAsk','--permission-prompts','none','--setting-sources','','--settings',JSON.stringify(claudeSettings(p)),'--safe-mode','--no-chrome','--disable-slash-commands','--no-session-persistence','--restricted','--max-turns','1','--max-budget-usd','0.05'];
    proc=probeProcess(argv(binary,args),work,env,m=>{
