@@ -14,7 +14,7 @@ import {localUnrestricted} from "../local-execution";
 //   data/evidence/<R-id>/<seq>-<id>/out/               what a check wrote (its evidence)
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
 import { bundledBytes, bundledList, bundledText, parseYaml } from "../bundled";
@@ -428,31 +428,20 @@ ${accountRules(o.account, [...(data ? [data] : []), ...protect])}${execRules(o.e
 }
 /** The captain's own account context, opened last (after the secret deny list) to the CLI that signs in from it: its folders,
  *  the files beside them, and the login keychain when the CLI keeps its sign-in there. Nothing of it is ever Studio's to read. */
-/** The captain's own account context a vendor CLI signs in from (SandboxNeeds.account), all paths already resolved to their
- *  real location: folders it reads and writes (`dirs`), files it reads only (`files`), file patterns it reads and writes (SBPL
- *  regexes: the login keychain database where the CLI keeps its sign-in), files it reads and writes in place (`writeFiles`: a
- *  login file the CLI refreshes), and what inside those folders stays read-only (the
- *  settings, memory, hooks and plugins the captain's own sessions load: a round must never be able to plant one). */
-export type AccountContext = { dirs: string[]; files?: string[]; writeFiles?: string[]; writeRegex?: string[]; readOnly?: string[]; readOnlyRegex?: string[] };
-/** The real location of a path that may not exist yet: its deepest existing ancestor resolved, the rest appended. */
-export function realish(p: string): string {
-  const rest: string[] = []; let d = p;
-  while (d && d !== "/") { const r = realIf(d); if (r) return join(r, ...rest.reverse()); rest.push(basename(d)); d = dirname(d); }
-  return p;
-}
+/** What of the captain's own account a vendor CLI needs to sign in by itself (SandboxNeeds.account): only its credential, never
+ *  a folder of the captain's. `writeFiles`: a login file it reads and refreshes in place (codex's auth.json, linked into the
+ *  round's private home); `writeRegex`: SBPL patterns for the same (the login keychain database, where claude keeps its sign-in
+ *  on macOS); `deny`: account folders named for the CLI's sake (a captain's own CLAUDE_CONFIG_DIR) that stay closed. */
+export type AccountContext = { writeFiles?: string[]; writeRegex?: string[]; deny?: string[] };
 const sbplRegex = (r: string) => `(regex #"${r.replace(/"/g, '\\"')}")`;
 function accountRules(a: AccountContext | null | undefined, closed: string[]): string {
   if (!a) return "";
-  // never a whole home, Studio's data or a protected root, nor a folder inside them: those stay closed whatever a CLAUDE_CONFIG_DIR says
   const inside = (p: string, root: string) => p === root || p.startsWith(root.replace(/\/$/, "") + "/");
-  const homes = [homedir(), accountHomeDir(), ...(process.env.HOME ? [process.env.HOME] : [])].map(realish);
-  const dirs = a.dirs.filter((d) => isAbsolute(d)).map(realish).filter((d) => d !== "/" && !homes.includes(d) && !closed.some((c) => inside(d, c) || inside(c, d)));
-  const files = (a.files ?? []).filter((f) => isAbsolute(f)).map(realish).filter((f) => !closed.some((c) => inside(f, c)));
-  const writeFiles = (a.writeFiles ?? []).filter((f) => isAbsolute(f)).map(realish).filter((f) => !homes.includes(f) && !closed.some((c) => inside(f, c)));
-  const rw = [...dirs.map((p) => `(subpath ${q(p)})`), ...writeFiles.map((f) => `(literal ${q(f)})`), ...(a.writeRegex ?? []).map(sbplRegex)];
-  if (!rw.length && !files.length) return "";
-  const ro = [...(a.readOnly ?? []).filter((p) => isAbsolute(p)).map(realish).map((p) => `(subpath ${q(p)})`), ...(a.readOnlyRegex ?? []).map(sbplRegex)];
-  return `${rw.length ? `(allow file-read* file-write* ${rw.join(" ")})\n` : ""}${files.length ? `(allow file-read* ${files.map((f) => `(literal ${q(f)})`).join(" ")})\n` : ""}${ro.length ? `(deny file-write* ${ro.join(" ")})\n` : ""}`;
+  const R = (p: string) => realIf(p) ?? p;
+  const files = (a.writeFiles ?? []).filter((f) => isAbsolute(f)).map(R).filter((f) => !closed.some((c) => inside(f, c)));
+  const rw = [...files.map((f) => `(literal ${q(f)})`), ...(a.writeRegex ?? []).map(sbplRegex)];
+  const deny = (a.deny ?? []).filter((d) => isAbsolute(d)).map(R);
+  return `${rw.length ? `(allow file-read* file-write* ${rw.join(" ")})\n` : ""}${deny.length ? `(deny file-read* file-write* ${deny.map((d) => `(subpath ${q(d)})`).join(" ")})\n` : ""}`;
 }
 /** Only these programs may start (the round's own CLI, Studio's runtime, the few helpers the CLI runs itself). */
 function execRules(exec?: string[] | null): string {

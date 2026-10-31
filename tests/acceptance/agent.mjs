@@ -125,11 +125,13 @@ async function sandboxProbe(prompt) {
     noCredentialViaProxy: await viaProxy(`${host || "example.com"}:443`, false),
     // its own login: the captain's own account the vendor's CLI signs in from, in place (a Claude folder, a codex home), or a
     // Cursor round's API key; and never a copy of a login in the round's own home
-    ownLogin: readable(joinPath(process.env.CLAUDE_CONFIG_DIR || joinPath(process.env.HOME ?? "/nonexistent", ".claude"), ".fixture-acceptance.json")) ? "account:claude" : process.env.CODEX_HOME && readable(joinPath(process.env.CODEX_HOME, "auth.json")) ? "account:codex" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : null,
+    // (a claude round, the one that names CLAUDE_CODE_TMPDIR: its own sign-in is its keychain item, named for the login user, so
+    // it has USER and nothing of the captain's)
+    ownLogin: process.env.CODEX_HOME && readable(joinPath(process.env.CODEX_HOME, "auth.json")) ? "account:codex" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : process.env.CLAUDE_CODE_TMPDIR && process.env.USER && !process.env.CLAUDE_CODE_OAUTH_TOKEN ? "account:claude" : null,
     // a codex round's private CODEX_HOME links the captain's auth.json (the harness uses no API key): a plain file there is a copy
     loginCopy: process.env.CODEX_HOME && (() => { try { return !lstatSync(joinPath(process.env.CODEX_HOME, "auth.json")).isSymbolicLink(); } catch { return false; } })() ? "$CODEX_HOME/auth.json" : process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : null,
     // a Cursor round's own key is its login; in any other round it is someone else's credential
-    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CURSOR_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"].filter((k) => process.env[k] && !(k === "CURSOR_API_KEY" && !process.env.CODEX_HOME && !readable(joinPath(process.env.CLAUDE_CONFIG_DIR || joinPath(process.env.HOME ?? "/nonexistent", ".claude"), ".fixture-acceptance.json")))),
+    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CURSOR_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"].filter((k) => process.env[k] && !(k === "CURSOR_API_KEY" && !process.env.CODEX_HOME && !process.env.CLAUDE_CODE_TMPDIR)),
     denied: Object.fromEntries(list("deny").map((p) => [p, readable(p)])),
     tmpWritable: writable(process.env.TMPDIR ?? "/nonexistent"),
     nowrite: Object.fromEntries(list("nowrite").map((p) => [p, writable(p)])),

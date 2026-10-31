@@ -6,6 +6,8 @@ const TOOL_TOKEN = process.env.CREW_TOOL_TOKEN_FILE ? fs.readFileSync(process.en
 const text = process.argv[process.argv.indexOf("-p") + 1] || "";
 const m = /PROBE (\{.*\})/s.exec(text); const p = m ? JSON.parse(m[1]) : {};
 const out = (o) => { process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: JSON.stringify(o), usage: {} }) + "\n"); };
+// like the CLI, it first says what the model may use: Studio's tools only (src/providers/claude.ts refuses a round without this)
+process.stdout.write(JSON.stringify({ type: "system", subtype: "init", tools: [], mcp_servers: [{ name: "studio" }] }) + "\n");
 const get = (url, headers = {}) => new Promise((res) => { try { const r = http.get(url, { headers, timeout: 3000 }, (resp) => { let b = ""; resp.on("data", (d) => (b += d)); resp.on("end", () => res({ status: resp.statusCode, cookie: resp.headers["set-cookie"] || null, body: b.slice(0, 200) })); });
   r.on("error", (e) => res({ status: String(e.code || e.message) })); r.on("timeout", () => { r.destroy(); res({ status: "timeout" }); }); } catch (e) { res({ status: String(e.message) }); } });
 // CONNECT through the proxy, with the round's credential (from HTTPS_PROXY) or without one

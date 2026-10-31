@@ -5,16 +5,18 @@
 //   there, never into the user's real config (~/.claude, ~/.codex …), which a later,
 //   unsandboxed session would run;
 // - its login (src/providers/login.ts): an API key Studio keeps, handed in through a file
-//   descriptor; or the captain's own account, which the vendor's CLI reads and refreshes itself:
-//   then `account` opens that account's own folders to the round (read and write, kept after it),
-//   `keychain` the login keychain when the CLI keeps its sign-in there, and `exec` narrows what
-//   the round may execute. Studio never reads or copies a subscription credential;
+//   descriptor; or the captain's own sign-in, which the vendor's CLI reads and refreshes itself.
+//   Studio never reads or copies a subscription credential. The CLI is a credentialed model client
+//   and nothing more (the model has no tool of its own; every tool runs in Studio's own sandbox
+//   without credentials), so on the captain's own sign-in the round opens to it only that credential
+//   (`account`: the login keychain database, or one linked login file), never a folder of the
+//   captain's and never the repository (`noWorkspace`), and runs only what signing in needs (`exec`);
 // - the variables that name the CLI's own temporary folder (set to the round's tmp).
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { claudeAccountContext, claudeBilling, claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
+import { homedir, userInfo } from "node:os";
+import { claudeBilling, claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
 import { dirname, join } from "node:path";
-import { accountHomeDir, realish, type AccountContext } from "../runtime/checks";
+import { accountHomeDir, type AccountContext } from "../runtime/checks";
 
 export type SandboxNeeds = {
   reads: string[]; hosts: string[]; tmpEnv: string[];
@@ -28,9 +30,10 @@ export type SandboxNeeds = {
   writes?: string[];
   /** the vendor's own login for the round (src/providers/login.ts) */
   login(dir: string): Login;
-  /** the captain's own account context the vendor's CLI signs in from, opened to the round: folders it reads and writes
-   *  (never removed with the round), file-name patterns beside them (SBPL regexes), and whether the login keychain is opened */
+  /** the captain's own credential the vendor's CLI signs in with, opened to the round (runtime/checks.ts AccountContext) */
   account?: () => AccountContext | null;
+  /** the CLI never needs the round's worktree (its model has Studio's tools only): run it in the round's tmp, with no worktree access */
+  noWorkspace?: () => boolean;
   /** when set, the only programs the round may execute (subpaths or files); everything else is denied */
   exec?: () => string[] | null;
 };
@@ -58,51 +61,51 @@ export function execOf(bin: string): string[] {
 
 export type ApprovedClaudeConfig = { model: string; effort: string | null; login: () => Login; live: () => boolean; invalidate: (code?: string,event?: unknown) => void };
 export const claudeSettings = (approved: Pick<ApprovedClaudeConfig,'model'|'effort'>) => ({model:approved.model,...approved.effort?{effortLevel:approved.effort}:{},availableModels:[approved.model],fallbackModel:[],switchModelsOnFlag:false,disableAllHooks:true,disableAutoMemory:true,disableWorkflows:true,enabledPlugins:{}});
-/** The programs a claude round may run when it signs in with the captain's own account: the CLI (execOf), Studio's own
- *  runtime (its MCP server), the shell the CLI runs its keychain command through, that command, git, and a few read-only
- *  system facts. The model in the round has no tool of its own, so nothing else is ever needed; a shell it is somehow handed
- *  can start none of the rest. */
-export const claudeExecAllow = (bin: string) => [...execOf(bin), process.execPath, "/bin/sh", "/bin/bash", "/usr/bin/env", "/usr/bin/security", "/usr/bin/git", "/usr/bin/xcrun", "/Library/Developer/CommandLineTools/usr/bin/git",
-  // read-only facts the CLI asks for and copes without: its own process state (ps), the machine's name and version
-  "/bin/ps", "/usr/sbin/scutil", "/usr/bin/uname", "/usr/bin/sw_vers"];
+/** The programs a claude round may run on the captain's own sign-in: the CLI (execOf), Studio's runtime (the MCP relay it
+ *  starts), and the shell and command the CLI reads its keychain item with. Nothing else, ever: the model has no tool. */
+export const claudeExecAllow = (bin: string) => [...execOf(bin), process.execPath, "/bin/sh", "/usr/bin/security"];
 const regexQuote = (p: string) => p.replace(/[\\^$.*+?()[\]{}|]/g, (c) => `\\${c}`);
-/** What the captain's own Claude folder loads into every one of the captain's sessions: read-only to a round. */
-export const CLAUDE_ACCOUNT_READ_ONLY = ["CLAUDE.md", "hooks", "plugins", "skills", "agents", "commands", "output-styles", "rules", "keybindings.json", "managed-settings.json", ".claude.json"];
-/** The captain's own Claude account context as a round opens it: the Claude folder read and write (the CLI's own state), with
- *  what loads into the captain's sessions read-only; ~/.claude.json read only (it names the MCP servers every later session
- *  starts: the CLI runs without writing it); and on macOS only the login keychain database, where the CLI keeps its sign-in. */
+/** The login user the CLI names its keychain item's account after (it reads USER, else the system's). */
+export const loginUserEnv = (): Record<string, string> => { let u = process.env.USER || process.env.LOGNAME || ""; if (!u) try { u = userInfo().username; } catch {} return u ? { USER: u, LOGNAME: u } : {}; };
+/** What of the captain's own Claude sign-in a round reaches: on macOS the login keychain database (and the temporary and lock
+ *  files written beside it when the CLI refreshes its item), where the CLI keeps its sign-in; and a captain's own
+ *  CLAUDE_CONFIG_DIR, named only so the CLI finds its keychain item (it names the item after that folder), kept closed. */
 export function claudeAccountRules(): AccountContext {
-  const c = claudeAccountContext(), cfg = realish(c.configDir), h = realish(c.home), kc = realish(join(accountHomeDir(), "Library", "Keychains"));
-  return { dirs: [cfg], files: c.env.CLAUDE_CONFIG_DIR ? [] : [join(h, ".claude.json")],
-    // the login keychain database and the temporary and lock files written beside it when an item is updated
-    writeRegex: process.platform === "darwin" ? [`^${regexQuote(kc)}/login\\.keychain(-db)?([.-][^/]*)?$`, `^${regexQuote(kc)}/\\.fl[0-9A-Fa-f]+$`] : [],
-    readOnly: CLAUDE_ACCOUNT_READ_ONLY.map((x) => join(cfg, x)), readOnlyRegex: [`^${regexQuote(cfg)}/settings[^/]*\\.json$`] };
+  const kc = join(accountHomeDir(), "Library", "Keychains"), own = process.env.CLAUDE_CONFIG_DIR?.trim();
+  return { writeRegex: process.platform === "darwin" ? [`^${regexQuote(kc)}/login\\.keychain(-db)?([.-][^/]*)?$`, `^${regexQuote(kc)}/\\.fl[0-9A-Fa-f]+$`] : [], deny: own ? [own] : [] };
 }
 export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedClaudeConfig): SandboxNeeds {
-  // Under API billing: claude's config, sessions and caches live in the round's own throwaway home (v1 bin/adapters/claude.sh).
-  // With the captain's own account: claude runs in that account context (its HOME, and its CLAUDE_CONFIG_DIR only when the
-  // captain set one), where it finds and refreshes its own sign-in; Studio never reads it. The round opens that context to
-  // the claude process, and claude.ts loads none of its settings, hooks, plugins, memory or MCP servers (--setting-sources "").
-  // One decision per round: the login a verified receipt was made with, else the billing choice now; home, account and exec all
-  // follow it, and a receipt whose login no longer matches the billing choice is refused (verify again).
+  // claude's config, sessions and caches live in the round's own throwaway home in every case (v1 bin/adapters/claude.sh).
+  // Under API billing Studio hands its key through a descriptor. On the captain's own sign-in the CLI reads its keychain item
+  // itself: that item is named for the login user (USER) and, only when the captain set one, the CLAUDE_CONFIG_DIR path, never
+  // for HOME, so a throwaway HOME finds it; the round reaches that keychain database and nothing else of the captain's.
+  // One decision per round: the login a verified receipt was made with, else the billing choice now; a receipt whose login no
+  // longer matches the billing choice is invalidated (Studio verifies again).
   const now = claudeBilling() === "api-key" ? "api-key" : "account";
   const receipt = approved?.login(), mode = receipt?.ok && receipt.kind ? receipt.kind : now, own = mode === "account";
   return { reads: installOf(bin), hosts, tmpEnv: ["CLAUDE_CODE_TMPDIR"],
     home(dir) {
-      if (own) { mkdirSync(dir, { recursive: true }); return { ...claudeAccountContext().env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" }; }
-      const cfg = join(dir, ".claude-config"); mkdirSync(cfg, { recursive: true }); return { HOME: dir, CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" }; },
+      const cfg = join(dir, ".claude-config"), captain = process.env.CLAUDE_CONFIG_DIR?.trim();
+      mkdirSync(cfg, { recursive: true });
+      // on the captain's own sign-in with a CLAUDE_CONFIG_DIR of theirs, the CLI must be told that path to find its item; the
+      // profile keeps it closed (claudeAccountRules), so the CLI runs with an empty config there
+      // (without one, CLAUDE_CONFIG_DIR stays unset: a set folder renames the item, and the CLI keeps its config in HOME/.claude)
+      const config = own ? (captain ? { CLAUDE_CONFIG_DIR: captain } : {}) : { CLAUDE_CONFIG_DIR: cfg };
+      return { HOME: dir, ...config, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ...(own ? loginUserEnv() : {}) };
+    },
     login: () => {
       if (!approved) { const l = claudeLogin(); return l.ok && l.kind !== mode ? { ok: false, error: "Claude billing changed while the round was being set up; start it again" } : l; }
       if (!approved.live()) return { ok: false, error: "Claude native verification expired or was revoked" };
       if (mode !== now) { approved.invalidate("billingChanged"); return { ok: false, error: "Claude billing changed since Studio verified this model; it verifies again before the next round" }; }
       return approved.login(); },
     account: () => own ? claudeAccountRules() : null,
+    noWorkspace: () => own,
     exec: () => own ? claudeExecAllow(bin) : null };
 }
 export type ApprovedCodexConfig = { model: string; effort: string | null };
 /** On the captain's own codex sign-in a round opens only that login file, read and write (the CLI refreshes it in place through
  *  the link in the round's private CODEX_HOME); nothing else of the captain's codex home is reachable or loads. */
-export function codexAccountRules(loginFile: string): AccountContext { return { dirs: [], writeFiles: [loginFile] }; }
+export function codexAccountRules(loginFile: string): AccountContext { return { writeFiles: [loginFile] }; }
 export function codexNeeds(bin: string, hosts: string[], approved?: ApprovedCodexConfig): SandboxNeeds {
   // codex signs in from a private CODEX_HOME: holding Studio's own API key, or a link to the captain's own auth.json, which
   // the codex CLI reads and refreshes in place (Studio never reads it). The model and effort Studio approved go on the command line
@@ -114,7 +117,8 @@ export function codexNeeds(bin: string, hosts: string[], approved?: ApprovedCode
       if (approved && (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(approved.model) || approved.effort !== null && !["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(approved.effort))) return (login = { ok: false, error: "approved Codex model/effort snapshot is invalid" });
       return (login = codexLogin(join(dir, ".codex")));
     },
-    account: () => login?.ok && login.kind === "account" && login.account ? codexAccountRules(login.account) : null };
+    account: () => login?.ok && login.kind === "account" && login.account ? codexAccountRules(login.account) : null,
+    noWorkspace: () => !!(login?.ok && login.kind === "account") };
 }
 /** A private root for one cursor-agent turn, short enough for its data folder: past 84 characters cursor-agent falls back to a
  *  shared /tmp/.cursor (v1 bin/adapters/cursor-agent.sh). h/ is its HOME (h/.config its XDG_CONFIG_HOME), w/ its workspace,

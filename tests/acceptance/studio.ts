@@ -20,8 +20,8 @@ export const SANDBOXED = process.env.ACCEPTANCE_PROFILE === "sandboxed" || proce
  *  Playwright browsers, read by Studio's renderer only; ffmpeg; node) as the live board has them: every run must pass, none is skipped
  *  (scripts/acceptance-sandboxed.ts --e2e, bun run test:sandboxed-e2e) */
 export const SANDBOXED_E2E = process.env.ACCEPTANCE_PROFILE === "sandboxed-e2e";
-/** The CLI stubs (tests/fixture/codex-account.mjs, tests/fixture/claude-native.mjs) switch to the scripted agent on these logins:
- *  the codex login in the captain's own codex home, and a marker in the captain's own Claude folder (never a token Studio hands). */
+/** The CLI stubs switch to the scripted agent: tests/fixture/codex-account.mjs on the codex login in the captain's own codex home,
+ *  tests/fixture/claude-native.mjs when started as tests/fixture/claude-acceptance.mjs (never on a token Studio hands). */
 const CODEX_AUTH = { auth_mode: "chatgpt", last_refresh: "2020-02-29T12:34:56.123+08:00", tokens: { access_token: "abcdefgh.abcdefgh.abcdefgh", id_token: "fixture-id-token", account_id: "fixture-acceptance", refresh_token: "acceptance-refresh-must-not-copy" } };
 
 export type Api = (path: string, body?: unknown) => Promise<{ status: number; body: any }>;
@@ -50,12 +50,11 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
     writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
     writeFileSync(join(home, ".codex", ".fixture-account.json"), '{"authenticated":true}');
     writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify(CODEX_AUTH), { mode: 0o600 });
-    mkdirSync(join(home, ".claude"), { recursive: true }); writeFileSync(join(home, ".claude", ".fixture-acceptance.json"), '{"authenticated":true}');
   }
   const port = await freePort(), base = `http://127.0.0.1:${port}`, token = `acceptance-${name}-session`;
   const env: Record<string, string> = { ...(process.env as Record<string, string>), HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data, CREW_RUNTIME_DIR: join(root, "runtime"), CREW_PORT: String(port),
     CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_GH_NO_CLI: "1", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1",
-    CREW_CODEX_BIN: o.codexBin??join(REPO, "tests/fixture/codex-account.mjs"), CREW_CLAUDE_BIN: join(REPO, "tests/fixture/claude-native.mjs"),
+    CREW_CODEX_BIN: o.codexBin??join(REPO, "tests/fixture/codex-account.mjs"), CREW_CLAUDE_BIN: join(REPO, "tests/fixture/claude-acceptance.mjs"),
     CREW_HOST_CODEX_BIN: o.codexBin??join(REPO, "tests/fixture/codex-account.mjs"), CREW_HOST_CLAUDE_BIN: "/nonexistent/claude",
     // the film renderer is a local tool, not a provider: its existing stub (src/render.ts) stands in for Playwright + ffmpeg
     CREW_RENDER_STUB: "1", ...(filmSample.path ? { CREW_RENDER_STUB_MP4: filmSample.path } : {}),

@@ -35,16 +35,21 @@ export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-
 
 const short = (n: string) => n.replace(/^mcp__studio__/, "");
 function parser(approved?:ApprovedClaudeConfig,tools:ToolSpec[]=[]): LineParser {
-  let sawDelta = false, text = "",init=false,failed=false,resultSeen=false;
-  const refuse=(code:string,m:any):NEvent[]=>{failed=true;if(approved)approved.invalidate(code,m);else nativeClaude.invalidate(code,m);return[{type:'turnEnd',status:'error',code,message:code==='quotaExhausted'?'Claude quota is exhausted; wait for reset. Do not sign in again. / Claude 額度已耗盡；請等待重設，不需重新登入。':code==='modelMismatch'?'Claude actual model differs from the approved model; work stopped.':code==='toolsNotLocked'?'The Claude CLI offered the model a tool or MCP server other than Studio\'s; work stopped. / Claude CLI 提供了 Studio 以外的工具或 MCP server；已停止工作。':'Claude authentication or execution was refused; readiness was invalidated.'}];};
+  let sawDelta = false, text = "",init=false,failed=false,resultSeen=false,locked=false;
+  const refuse=(code:string,m:any):NEvent[]=>{failed=true;if(approved)approved.invalidate(code,m);else nativeClaude.invalidate(code,m);return[{type:'turnEnd',status:'error',code,message:code==='quotaExhausted'?'Claude quota is exhausted; wait for reset. Do not sign in again. / Claude 額度已耗盡；請等待重設，不需重新登入。':code==='modelMismatch'?'Claude actual model differs from the approved model; work stopped.':code==='toolsNotLocked'?'The Claude CLI did not confirm the model has Studio\'s tools only (no init listing them, or another tool or MCP server); work stopped. / Claude CLI 未確認模型只有 Studio 的工具（缺少列出工具的 init，或出現其他工具或 MCP server）；已停止工作。':'Claude authentication or execution was refused; readiness was invalidated.'}];};
   return {
     line(m: any): NEvent[] {
       if(failed)return[];
       if(!m||typeof m!=='object'||Array.isArray(m)||(m.type==='assistant'||m.type==='user')&&m.message?.content!==undefined&&!Array.isArray(m.message.content))return refuse('cliError',m);
       if((m.type==='assistant'||m.type==='user')&&m.message?.content?.some((c:any)=>!c||typeof c!=='object'||Array.isArray(c)))return refuse('cliError',m);
       const denied=claudeFailureCode(m);if(denied)return refuse(denied,m);
-      // the model has Studio's tools and nothing else: a round whose CLI announces any other tool or MCP server stops at once
-      if(m.type==='system'&&m.subtype==='init'&&(Array.isArray(m.tools)&&m.tools.some((t:unknown)=>typeof t!=='string'||!t.startsWith('mcp__studio__'))||Array.isArray(m.mcp_servers)&&m.mcp_servers.some((x:any)=>x?.name!=='studio')))return refuse('toolsNotLocked',m);
+      // the model has Studio's tools and nothing else, and the CLI must say so before anything else (fail closed): its init lists
+      // its tools and MCP servers; a round with no init, or one announcing any other tool or MCP server, stops at once
+      if(m.type==='system'&&m.subtype==='init'){if(!Array.isArray(m.tools)||m.tools.some((t:unknown)=>typeof t!=='string'||!t.startsWith('mcp__studio__'))||m.mcp_servers!==undefined&&(!Array.isArray(m.mcp_servers)||m.mcp_servers.some((x:any)=>x?.name!=='studio')))return refuse('toolsNotLocked',m);locked=true;}
+      if(!locked&&['assistant','user','result','stream_event'].includes(m.type))return refuse('toolsNotLocked',m);
+      // on every path: a tool call to anything but a Studio tool stops the round (which Studio tools a round may call, its tool
+      // token decides on Studio's side)
+      if(m.type==='assistant'&&m.message?.content?.some((c:any)=>c?.type==='tool_use'&&!(typeof c.name==='string'&&c.name.startsWith('mcp__studio__'))))return refuse('toolsNotLocked',m);
       if(approved&&m.type==='system'&&m.subtype==='init'){if(init||m.model!==approved.model)return refuse('modelMismatch',m);init=true;}
       if(approved&&(m.type==='assistant'&&(!init||m.message?.model!==approved.model)||m.type==='stream_event'&&m.event?.type==='message_start'&&(!init||m.event?.message?.model!==approved.model)))return refuse('modelMismatch',m);
       if(approved&&m.type==='result'&&(!init||!m.modelUsage||Object.keys(m.modelUsage).length!==1||!Object.hasOwn(m.modelUsage,approved.model)))return refuse('modelMismatch',m);

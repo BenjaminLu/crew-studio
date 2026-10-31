@@ -5,12 +5,12 @@
 //
 // claude: with API billing chosen (CREW_CLAUDE_BILLING=api-key, or data/claude-billing.json),
 //   ANTHROPIC_API_KEY or the key Studio keeps (handed in through a file descriptor, never argv or env);
-//   otherwise "account": the claude CLI runs in the captain's own account context (HOME, and
-//   CLAUDE_CONFIG_DIR only when the captain set one), where it finds its own sign-in (the login
-//   keychain on macOS, ~/.claude/.credentials.json elsewhere). Whether that context is signed in is
-//   the CLI's own `claude auth status` (src/providers/claude-native.ts); this resolver reads nothing.
-//   The round's sandbox opens that context to the claude process only (src/providers/needs.ts);
-//   the model in it has no tool of its own, only Studio's MCP tools, which run sandboxed elsewhere.
+//   otherwise "account": the claude CLI reads its own sign-in, the keychain item it named for the
+//   login user (and the captain's CLAUDE_CONFIG_DIR only when one is set). Whether the captain is
+//   signed in is the CLI's own `claude auth status` (src/providers/claude-native.ts); this resolver
+//   reads nothing. A round runs the CLI in a throwaway home and opens to it only the login keychain
+//   database (src/providers/needs.ts): the model in it has no tool of its own, only Studio's MCP
+//   tools, which run in their own sandbox without credentials.
 // codex: CODEX_API_KEY in a private auth.json of the round's own CODEX_HOME (Studio's own key);
 //   otherwise "account": the round's private CODEX_HOME holds a link to the captain's own auth.json,
 //   which the codex CLI reads and refreshes in place; nothing else of the captain's codex home loads.

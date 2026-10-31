@@ -1,11 +1,12 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// A round on the captain's own account (src/providers/login.ts, needs.ts, claude.ts, codex.ts, runtime/checks.ts): Studio never
-// reads, copies or hands on a subscription login. The vendor's unmodified CLI signs in from the captain's own account context in
-// place; the round's profile opens exactly that context to it (its settings, memory, hooks and plugins read-only), opens the
-// login keychain only where the CLI keeps its sign-in, and lets it run only itself, Studio's runtime and its own helpers. The model
-// in the round has Studio's tools and nothing else: a CLI that announces any other tool or MCP server stops the round.
+// A round on the captain's own sign-in (src/providers/login.ts, needs.ts, claude.ts, codex.ts, agent.ts, runtime/checks.ts):
+// Studio never reads, copies or hands on a subscription login, and the vendor's unmodified CLI is a credentialed model client
+// and nothing more. So the round opens to it only its credential (on macOS the login keychain database; for codex one link to
+// the captain's auth.json in a private home), never a folder of the captain's and never the worktree, and lets it run only
+// itself, Studio's runtime and the keychain command. Its model has Studio's tools and nothing else: a CLI that does not first
+// list exactly those, or announces any other tool or MCP server, stops the round.
 // Offline: profiles are checked as text, the CLIs are stubs.            bun tests/own-account-rounds.ts
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { suite } from "./rt-harness";
@@ -14,60 +15,48 @@ for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING", "CLAUDE_CONFI
 const root = mkdtempSync(join(tmpdir(), "crew-own-account-")), home = join(root, "home"), data = join(root, "data"); mkdirSync(join(home, ".codex"), { recursive: true }); mkdirSync(data);
 process.env.HOME = home;
 const { roundProfile } = await import("../src/runtime/checks");
-const { claudeNeeds, codexNeeds, CLAUDE_ACCOUNT_READ_ONLY } = await import("../src/providers/needs");
+const { claudeNeeds, codexNeeds } = await import("../src/providers/needs");
 const { claudeProvider } = await import("../src/providers/claude");
 const { codexProvider } = await import("../src/providers/codex");
 
-// ---------- claude: what a round gets on the captain's own account, and on API billing ----------
+// ---------- claude: on the captain's own sign-in the CLI gets its credential and nothing else of the captain's ----------
 { const n = claudeNeeds("claude", ["api.anthropic.com"]), dir = join(root, "round-home");
   const env = n.home(dir), login = n.login(dir), acct = n.account!(), exec = n.exec!();
-  ok(login.ok && login.kind === "account" && JSON.stringify(login.env) === "{}", "subscription: the login is the captain's own account, with no value handed in", JSON.stringify(login));
-  ok(env.HOME === home && !("CLAUDE_CONFIG_DIR" in env), "subscription: the CLI runs in the captain's own account context (its HOME; no CLAUDE_CONFIG_DIR unless the captain set one)", JSON.stringify(env));
-  const kcRe = acct!.writeRegex ?? [];
-  ok(JSON.stringify(acct?.dirs) === JSON.stringify([join(home, ".claude")]) && JSON.stringify(acct!.files) === JSON.stringify([join(home, ".claude.json")]) && kcRe.length === (process.platform === "darwin" ? 1 : 0),
-    "subscription: the account context is the captain's Claude folder, ~/.claude.json read only, and on macOS the login keychain", JSON.stringify(acct));
-  { const re = new RegExp(`^${join(home, "Library/Keychains").replace(/[.]/g, "\\.")}/login\\.keychain(-db)?(-journal|-wal|-shm)?$`);
-    ok(re.test(join(home, "Library/Keychains/login.keychain-db")) && !re.test(join(home, "Library/Keychains/metadata.keychain-db")) && !re.test(join(home, "Library/Keychains/ABC/keychain-2.db")), "on macOS only the login keychain database opens, never the whole Keychains folder (the pattern Studio writes)"); }
-  ok(CLAUDE_ACCOUNT_READ_ONLY.every((x) => acct!.readOnly!.includes(join(home, ".claude", x))) && new RegExp(acct!.readOnlyRegex![0]).test(join(home, ".claude", "settings.local.json")) && !new RegExp(acct!.readOnlyRegex![0]).test(join(home, ".claude", "projects", "settings.json")),
-    "subscription: its settings, memory, hooks, plugins and rules stay read-only", JSON.stringify(acct?.readOnly));
-  ok(exec.includes(process.execPath) && exec.includes("/usr/bin/security") && !exec.includes("/usr/bin/curl") && !exec.includes("/usr/bin"), "subscription: the round may run only the CLI, Studio's runtime and the CLI's own helpers", JSON.stringify(exec));
+  ok(login.ok && login.kind === "account" && JSON.stringify(login.env) === "{}", "subscription: the login is the captain's own sign-in, with no value handed in", JSON.stringify(login));
+  ok(env.HOME === dir && !("CLAUDE_CONFIG_DIR" in env) && !!env.USER, "subscription: a throwaway HOME, no CLAUDE_CONFIG_DIR (a set folder would rename the keychain item) and the login user the item is named for", JSON.stringify(env));
+  ok(n.noWorkspace!() === true, "subscription: the CLI never reaches the worktree");
+  ok(!("dirs" in acct!) && !("files" in acct!) && (acct!.writeRegex ?? []).length === (process.platform === "darwin" ? 2 : 0) && (acct!.deny ?? []).length === 0, "subscription: the round opens no folder or file of the captain's, only (on macOS) the login keychain database", JSON.stringify(acct));
+  { const kc = join("/Users/someone", "Library/Keychains"), re = new RegExp(`^${kc}/login\\.keychain(-db)?([.-][^/]*)?$`);
+    ok(re.test(join(kc, "login.keychain-db")) && re.test(join(kc, "login.keychain-db.sb-1a2b")) && !re.test(join(kc, "metadata.keychain-db")) && !re.test(join(kc, "ABC/keychain-2.db")), "on macOS the keychain rule names only the login keychain database and what is written beside it (the pattern Studio writes)"); }
+  ok(JSON.stringify(exec.slice(-3)) === JSON.stringify([process.execPath, "/bin/sh", "/usr/bin/security"]) && !exec.includes("/usr/bin/git") && !exec.includes("/bin/bash"), "subscription: the round may run only the CLI, Studio's runtime and the keychain command (through /bin/sh)", JSON.stringify(exec));
   process.env.CLAUDE_CONFIG_DIR = join(root, "own-claude");
   const n2 = claudeNeeds("claude", []), e2 = n2.home(dir), a2 = n2.account!();
-  ok(e2.CLAUDE_CONFIG_DIR === join(root, "own-claude") && JSON.stringify(a2?.dirs) === JSON.stringify([join(root, "own-claude")]) && a2!.files!.length === 0 && a2!.readOnly!.includes(join(root, "own-claude", ".claude.json")), "a captain's own CLAUDE_CONFIG_DIR is kept (the CLI names its keychain item after it): it is the account folder, its .claude.json read-only", JSON.stringify([e2, a2]));
+  ok(e2.HOME === dir && e2.CLAUDE_CONFIG_DIR === join(root, "own-claude") && JSON.stringify(a2!.deny) === JSON.stringify([join(root, "own-claude")]), "a captain's own CLAUDE_CONFIG_DIR is named (the CLI names its keychain item after it) and kept closed", JSON.stringify([e2, a2]));
   delete process.env.CLAUDE_CONFIG_DIR;
   process.env.CREW_CLAUDE_BILLING = "api-key"; process.env.ANTHROPIC_API_KEY = "sk-ant-api03-own-account-test-0123456789abcdef";
   const n3 = claudeNeeds("claude", []), e3 = n3.home(dir), l3 = n3.login(dir);
-  ok(e3.HOME === dir && e3.CLAUDE_CONFIG_DIR === join(dir, ".claude-config") && l3.ok && l3.kind === "api-key" && n3.account!() === null && n3.exec!() === null, "API billing: a throwaway home, the key Studio keeps, and no account context opened", JSON.stringify([e3, l3.ok && l3.kind]));
-  // one decision per round: billing that changes while the round is set up refuses it rather than mixing a home and a login
+  ok(e3.HOME === dir && e3.CLAUDE_CONFIG_DIR === join(dir, ".claude-config") && !e3.USER && l3.ok && l3.kind === "api-key" && n3.account!() === null && n3.exec!() === null && n3.noWorkspace!() === false, "API billing: a throwaway home, the key Studio keeps, and nothing of the captain's opened", JSON.stringify([e3, l3.ok && l3.kind]));
   delete process.env.CREW_CLAUDE_BILLING;
   ok(!n3.login(dir).ok && n3.account!() === null, "billing switched mid-setup: the round is refused, never an API-key home with an account login", JSON.stringify(n3.login(dir)));
-  // a receipt verified on one login, used after the billing choice changed: refused until Studio verifies again
-  const receipt = { model: "claude-sonnet-5-5", effort: null, live: () => true, invalidate: () => {}, login: () => ({ ok: true, env: { ANTHROPIC_API_KEY: "sk-ant-api03-own-account-test-0123456789abcdef" }, source: "key", warn: null, kind: "api-key" as const }) };
+  let invalidated = "";
+  const receipt = { model: "claude-sonnet-5-5", effort: null, live: () => true, invalidate: (c?: string) => { invalidated = c ?? "?"; }, login: () => ({ ok: true, env: { ANTHROPIC_API_KEY: "sk-ant-api03-own-account-test-0123456789abcdef" }, source: "key", warn: null, kind: "api-key" as const }) };
   const n4 = claudeNeeds("claude", [], receipt as any), l4 = n4.login(dir);
-  ok(!l4.ok && /verifies again/.test((l4 as any).error) && n4.account!() === null && n4.home(dir).HOME === dir, "a receipt made on API billing is refused on the subscription, and its round never opens the captain's account", JSON.stringify(l4));
+  ok(!l4.ok && /verifies again/.test((l4 as any).error) && invalidated === "billingChanged" && n4.account!() === null, "a receipt made on API billing is refused and invalidated on the subscription, and its round never opens the keychain", JSON.stringify(l4));
   delete process.env.ANTHROPIC_API_KEY; }
 
-// ---------- the round profile: the account opens last, only that, settings read-only; exec narrowed ----------
-{ const n = claudeNeeds("claude", []), acct = n.account!(), cwd = join(data, "work", "w");
+// ---------- the round profile: only the credential reopens after the deny list; exec narrowed; no worktree ----------
+{ const n = claudeNeeds("claude", []), cwd = join(data, "rounds", "J1", "tmp");
   const kcRule = `^${join(home, "Library/Keychains")}/login\\.keychain-db$`;
-  const prof = roundProfile({ cwd, tmp: join(data, "rounds", "J1", "tmp"), writes: [cwd], reads: [], proxyPort: 1, toolPort: 2, dataDir: data, account: { ...acct!, writeRegex: [kcRule] }, exec: n.exec!() });
-  const at = (s: string) => prof.indexOf(s), lastDeny = prof.lastIndexOf("(deny file-read* file-write*"), allow = at(`(allow file-read* file-write* (subpath ${JSON.stringify(join(home, ".claude"))})`);
-  ok(allow > lastDeny && lastDeny > 0, "the account context is opened after the secret deny list (the last matching rule wins), so it is the one exception", prof.slice(lastDeny, lastDeny + 200));
-  ok(prof.slice(allow).includes(`(regex #"${kcRule}")`) && prof.includes(`(allow file-read* (literal ${JSON.stringify(join(home, ".claude.json"))}))`) && !prof.includes(`file-write* (literal ${JSON.stringify(join(home, ".claude.json"))}`), "the login keychain database opens read-write; ~/.claude.json read only", prof.slice(allow, allow + 600));
-  const ro = at("(deny file-write* (subpath " + JSON.stringify(join(home, ".claude", "CLAUDE.md")));
-  ok(ro > allow && prof.includes(`(subpath ${JSON.stringify(join(home, ".claude", "hooks"))})`) && /settings\[\^\/\]\*\\\.json\$"\)/.test(prof), "then its settings, memory, hooks and plugins are denied writes again", prof.slice(ro, ro + 160));
-  ok(at("(deny process-exec)") > at("(allow process-exec)") && prof.includes(`(literal ${JSON.stringify(realpathSync(process.execPath))})`) && !prof.slice(at("(deny process-exec)")).includes("/usr/bin/curl"), "exec is narrowed to the allowed programs (a file as a literal, never its folder), after the general allow");
-  const none = roundProfile({ cwd, tmp: join(data, "t"), writes: [cwd], reads: [], proxyPort: 1, toolPort: 2, dataDir: data });
-  ok(!none.includes("(deny process-exec)") && !none.slice(none.lastIndexOf("(deny file-read* file-write*")).includes("(allow"), "without an account (API billing, other providers) nothing is reopened and exec is not narrowed");
-  const bad = roundProfile({ cwd, tmp: join(data, "t"), writes: [cwd], reads: [], proxyPort: 1, toolPort: 2, dataDir: data, account: { dirs: [home, homedir(), data, join(data, "x"), "/"] } });
-  ok(!bad.slice(bad.lastIndexOf("(deny file-read* file-write*")).includes("(allow"), "an account folder that is a whole home, Studio's data (or inside it) or / is never opened", bad.slice(bad.lastIndexOf("(deny file-read* file-write*")));
-  // a Claude folder that is a link (dotfiles): the folder opened and every read-only rule name the real folder, existing or not
-  const real = join(root, "dotfiles", "claude"); mkdirSync(real, { recursive: true }); const lhome = join(root, "lhome"); mkdirSync(lhome); symlinkSync(real, join(lhome, ".claude"));
-  process.env.HOME = lhome; const la = claudeNeeds("claude", []).account!(); process.env.HOME = home;
-  const lp = roundProfile({ cwd, tmp: join(data, "t"), writes: [cwd], reads: [], proxyPort: 1, toolPort: 2, dataDir: data, account: la });
-  const rr = realpathSync(real);
-  ok(JSON.stringify(la.dirs) === JSON.stringify([rr]) && la.readOnly!.includes(join(rr, "hooks")) && lp.includes(`(subpath ${JSON.stringify(join(rr, "hooks"))})`) && lp.includes(`(subpath ${JSON.stringify(join(rr, "CLAUDE.md"))})`) && la.readOnlyRegex![0].startsWith(`^${rr.replace(/[.]/g, "\\.")}/settings`) && !lp.includes(`(subpath ${JSON.stringify(join(lhome, ".claude", "hooks"))})`),
-    "a linked Claude folder: the real folder opens, and its hooks, memory and settings (not yet existing) are read-only by their real paths", JSON.stringify(la)); }
+  const prof = roundProfile({ cwd, tmp: cwd, writes: [join(data, "rounds", "J1", "home")], reads: [], proxyPort: 1, toolPort: 2, dataDir: data, account: { writeRegex: [kcRule], deny: [join(root, "own-claude")] }, exec: n.exec!() });
+  const at = (x: string) => prof.indexOf(x), lastDeny = prof.lastIndexOf("(deny file-read* file-write* (subpath");
+  ok(at(`(allow file-read* file-write* (regex #"${kcRule}"))`) > prof.indexOf("Library/Keychains") - 1 && at(`(regex #"${kcRule}")`) > at("(deny file-read* file-write*"), "the login keychain database reopens after the secret deny list (the last matching rule wins), and nothing else does", prof.slice(at("(allow file-read* file-write* (regex")));
+  ok(!/\(allow file-read\* file-write\* \(subpath[^)]*\.claude/.test(prof) && !prof.includes("(literal " + JSON.stringify(join(home, ".claude.json"))), "no folder or file of the captain's Claude account opens (not ~/.claude, not ~/.claude.json)");
+  ok(lastDeny > at(`(regex #"${kcRule}")`) && prof.slice(lastDeny).includes(join(root, "own-claude")), "a captain's own CLAUDE_CONFIG_DIR is denied after everything", prof.slice(lastDeny));
+  ok(at("(deny process-exec)") > at("(allow process-exec)") && prof.includes(`(literal ${JSON.stringify(realpathSync(process.execPath))})`) && prof.includes('(literal "/usr/bin/security")') && !prof.slice(at("(deny process-exec)")).includes("/usr/bin/curl"), "exec is narrowed to the allowed programs (files as literals), after the general allow");
+  const none = roundProfile({ cwd, tmp: cwd, writes: [], reads: [], proxyPort: 1, toolPort: 2, dataDir: data });
+  ok(!none.includes("(deny process-exec)") && !none.includes("keychain"), "without an account (API billing, other providers) nothing is reopened and exec is not narrowed");
+  const bad = roundProfile({ cwd, tmp: cwd, writes: [], reads: [], proxyPort: 1, toolPort: 2, dataDir: data, account: { writeFiles: [join(data, "keys.json"), join(data, "x", "y")] } });
+  ok(!bad.includes("(allow file-read* file-write* (literal"), "a login file inside Studio's data is never opened", bad.slice(bad.lastIndexOf("(deny"))); }
 
 // ---------- execOf: the CLI's real binary, its own folder (never a shared bin folder), and its #! interpreter ----------
 { const { execOf } = await import("../src/providers/needs");
@@ -82,7 +71,7 @@ const { codexProvider } = await import("../src/providers/codex");
 // ---------- claude.ts: no settings scope ever loads; a CLI offering any other tool or MCP server stops the round ----------
 { const bin = join(root, "claude-stub.mjs"), argvFile = join(root, "argv.json");
   writeFileSync(bin, `import{writeFileSync}from'node:fs';const a=process.argv.slice(2);writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(a));const tools=process.env.STUB_TOOLS?JSON.parse(process.env.STUB_TOOLS):['mcp__studio__fs_read'],mcp=process.env.STUB_MCP?JSON.parse(process.env.STUB_MCP):[{name:'studio',status:'connected'}];
-const put=o=>process.stdout.write(JSON.stringify(o)+'\\n');put({type:'system',subtype:'init',model:'claude-sonnet-5-5',tools,mcp_servers:mcp});put({type:'assistant',message:{model:'claude-sonnet-5-5',content:[{type:'text',text:'done'}]}});put({type:'result',subtype:'success',is_error:false,result:'done',usage:{}});`);
+const put=o=>process.stdout.write(JSON.stringify(o)+'\\n');if(!process.env.STUB_NO_INIT)put({type:'system',subtype:'init',model:'claude-sonnet-5-5',tools,mcp_servers:mcp});if(process.env.STUB_CALL)put({type:'assistant',message:{model:'claude-sonnet-5-5',content:[{type:'tool_use',id:'t1',name:process.env.STUB_CALL,input:{command:'id'}}]}});put({type:'assistant',message:{model:'claude-sonnet-5-5',content:[{type:'text',text:'done'}]}});put({type:'result',subtype:'success',is_error:false,result:'done',usage:{}});`);
   chmodSync(bin, 0o755); const tokenFile = join(root, "tool-token"); writeFileSync(tokenFile, "t", { mode: 0o600 });
   const run = async (env: Record<string, string>) => { const p = claudeProvider("claude-sonnet-5-5", bin); const out: any[] = [];
     for await (const e of p.start("sys", [{ name: "fs_read", description: "", inputSchema: {} }], { cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, ...env }, studioUrl: "http://127.0.0.1:1", tokenFile, token: "t", mcpCommand: ["/usr/bin/true"], sandbox: null } as any).send("go")) out.push(e);
@@ -93,7 +82,11 @@ const put=o=>process.stdout.write(JSON.stringify(o)+'\\n');put({type:'system',su
   const bash = await run({ STUB_TOOLS: JSON.stringify(["mcp__studio__fs_read", "Bash"]) });
   ok(bash.out.some((e) => e.type === "turnEnd" && e.status === "error" && e.code === "toolsNotLocked") && !bash.out.some((e) => e.type === "turnEnd" && e.status === "ok"), "a CLI that offers the model a built-in tool (Bash) stops the round", JSON.stringify(bash.out));
   const mcp = await run({ STUB_MCP: JSON.stringify([{ name: "studio" }, { name: "captain-github" }]) });
-  ok(mcp.out.some((e) => e.type === "turnEnd" && e.status === "error" && e.code === "toolsNotLocked"), "a CLI that loads another MCP server stops the round", JSON.stringify(mcp.out)); }
+  ok(mcp.out.some((e) => e.type === "turnEnd" && e.status === "error" && e.code === "toolsNotLocked"), "a CLI that loads another MCP server stops the round", JSON.stringify(mcp.out));
+  const silent = await run({ STUB_NO_INIT: "1" });
+  ok(silent.out.some((e) => e.type === "turnEnd" && e.status === "error" && e.code === "toolsNotLocked") && !silent.out.some((e) => e.type === "delta"), "fail closed: a CLI that never lists its tools (no init) is refused before any output is taken", JSON.stringify(silent.out));
+  const call = await run({ STUB_CALL: "Bash" });
+  ok(call.out.some((e) => e.type === "turnEnd" && e.code === "toolsNotLocked") && !call.out.some((e) => e.type === "toolStart"), "a tool call to anything but a Studio tool stops the round, even after a clean init", JSON.stringify(call.out)); }
 
 // ---------- codex: a private home linking the captain's own login; nothing else of the captain's codex home ----------
 { writeFileSync(join(home, ".codex", "auth.json"), "{}", { mode: 0o600 }); writeFileSync(join(home, ".codex", "config.toml"), 'notify=["/bin/touch","x"]\n');
@@ -101,7 +94,7 @@ const put=o=>process.stdout.write(JSON.stringify(o)+'\\n');put({type:'system',su
   const login = n.login(dir), acct = n.account!(), priv = join(dir, ".codex");
   ok(login.ok && login.kind === "account" && JSON.stringify(login.env) === JSON.stringify({ CODEX_HOME: priv }) && lstatSync(join(priv, "auth.json")).isSymbolicLink() && realpathSync(join(priv, "auth.json")) === realpathSync(join(home, ".codex", "auth.json")) && readdirSync(priv).join() === "auth.json",
     "codex: the round's private CODEX_HOME holds only a link to the captain's own auth.json (no config.toml, no hooks, no rules)", JSON.stringify(login));
-  ok(JSON.stringify(acct) === JSON.stringify({ dirs: [], writeFiles: [realpathSync(join(home, ".codex", "auth.json"))] }) && !("exec" in n && n.exec), "codex: the round reaches that one login file (read and write, for the CLI's own refresh), and no folder of the captain's", JSON.stringify(acct));
+  ok(JSON.stringify(acct) === JSON.stringify({ writeFiles: [realpathSync(join(home, ".codex", "auth.json"))] }) && n.noWorkspace!() === true && !("exec" in n && n.exec), "codex: the round reaches that one login file (read and write, for the CLI's own refresh), and no folder of the captain's", JSON.stringify(acct));
   const bin = join(root, "codex-stub.mjs"), argvFile = join(root, "codex-argv.json");
   writeFileSync(bin, `import{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(process.argv.slice(2)));console.log(JSON.stringify({type:'turn.completed'}));`); chmodSync(bin, 0o755);
   const p = codexProvider("fixture-model", bin, { model: "fixture-model", effort: "low" }); const tokenFile = join(root, "codex-token"); writeFileSync(tokenFile, "t", { mode: 0o600 });

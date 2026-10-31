@@ -110,28 +110,25 @@ ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds =
   const k = await agents.run({ kind: "t", title: "no login", system: "s", text: "PROBE {}", tools: [], provider, timeoutMs: 5000, sandbox: { writes: [wt] } });
   process.env.ANTHROPIC_API_KEY = before;
   ok(k.status === "failed" && /has no login for a round/.test(k.error ?? ""), "with API billing and no key to hand, a claude round is refused before it starts", k.error ?? ""); }
-// the captain's own account (the subscription): the claude process signs in from it in place. Studio hands no credential; the round
-// reaches that account context (its Claude folder and ~/.claude.json, and on macOS the login keychain) and nothing else of the
-// deny list; the settings, memory, hooks and plugins there stay read-only (they load into the captain's own sessions); and the
-// round may run only the CLI, Studio's runtime and the few helpers the CLI runs itself
+// the captain's own sign-in (the subscription): the claude process reads its own keychain item itself and Studio hands it no
+// credential. It is a model client only, so it runs in a throwaway home and the round's tmp: none of the captain's files (not
+// ~/.claude, not ~/.claude.json, nothing of the deny list) and not the worktree are reachable, and it may run only itself,
+// Studio's runtime and the keychain command
 { delete process.env.CREW_CLAUDE_BILLING; const before = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
-  const C = join(realHome, ".claude"), kc = join(realHome, "Library", "Keychains", "login.keychain-db"), otherKc = join(realHome, "Library", "Keychains", "probe.keychain-db");
-  writeFileSync(kc, "LOGIN-KEYCHAIN-STAND-IN");
-  const accountEntries = [join(C, "probe-secret"), join(realHome, ".claude.json")];
-  const ap = { secrets: SECRET_FILES.filter((f) => !accountEntries.includes(f)), accountWrites: [join(C, "projects", "x", "session.jsonl"), join(realHome, ".claude.json"), join(C, "settings.json"), join(C, "settings.local.json"), join(C, "CLAUDE.md"), join(C, "hooks", "h.sh"), join(C, "plugins", "p.json")],
-    accountReads: [join(realHome, ".claude.json"), kc, otherKc], exec: ["/bin/cat", "/usr/bin/curl", process.execPath] };
-  const a = await agents.run({ kind: "t", title: "own account", system: "s", text: `PROBE ${JSON.stringify(ap)}`, tools: [], provider, timeoutMs: 30000, sandbox: { writes: [wt] } });
+  const C = join(realHome, ".claude"), otherKc = join(realHome, "Library", "Keychains", "probe.keychain-db");
+  writeFileSync(join(C, "settings.json.probe"), "SECRET");
+  const ap = { secrets: SECRET_FILES, inside: join(wt, "own-account-inside.txt"), accountWrites: [join(C, "projects", "x", "session.jsonl"), join(C, "settings.json"), join(C, "hooks", "h.sh"), join(realHome, ".claude.json")],
+    accountReads: [join(realHome, ".claude.json"), join(C, "settings.json.probe"), otherKc, join(wt, ".git")], exec: ["/bin/cat", "/usr/bin/curl", "/usr/bin/git", process.execPath] };
+  const a = await agents.run({ kind: "t", title: "own account", system: "s", text: `PROBE ${JSON.stringify(ap)}`, tools: [], provider, timeoutMs: 30000, sandbox: { writes: [wt], cwd: wt } });
   let o: any = {}; try { o = JSON.parse(a.said); } catch {}
   process.env.ANTHROPIC_API_KEY = before; process.env.CREW_CLAUDE_BILLING = "api-key";
   const { isCredentialName } = await import("../src/secure"); const creds = (o.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
-  ok(a.status === "done" && o.home === realHome && JSON.stringify(creds) === JSON.stringify(["CREW_TOOL_TOKEN_FILE"]) && o.oauth === null && o.apiKey === null, "on the captain's own account the round runs in that account context and Studio hands it no credential at all", JSON.stringify([a.error, o.home, creds]));
-  ok(o.accountWrites?.[join(C, "projects", "x", "session.jsonl")] === true && o.accountReads?.[join(realHome, ".claude.json")] === true && o.accountWrites?.[join(realHome, ".claude.json")] === false, "the CLI keeps its own state in its Claude folder and reads ~/.claude.json, which stays read-only (it names the MCP servers every later session starts)", JSON.stringify([o.accountWrites, o.accountReads]));
-  ok(["settings.json", "settings.local.json", "CLAUDE.md", join("hooks", "h.sh"), join("plugins", "p.json")].every((f) => o.accountWrites?.[join(C, f)] === false) && !existsSync(join(C, "settings.json")) && !existsSync(join(C, "hooks")), "the settings, memory, hooks and plugins of the captain's own account stay read-only to a round", JSON.stringify(o.accountWrites));
-  // (the login keychain database it does open is the account's own, from the directory service, not this test's HOME:
-  // tests/own-account-rounds.ts checks that rule in the profile)
-  ok(o.accountReads?.[otherKc] === false && o.accountReads?.[kc] === false, "no keychain under the round's HOME opens: only the account's own login keychain database is ever named", JSON.stringify(o.accountReads));
-  ok(Array.isArray(o.secretReads) && o.secretReads.length === 0 && o.key === null, "every other entry of the deny list stays closed (Studio's keys, ~/.ssh, ~/.aws, ~/.codex …)", JSON.stringify(o.secretReads));
-  ok(o.exec?.["/bin/cat"] === false && o.exec?.["/usr/bin/curl"] === false && o.exec?.[process.execPath] === true, "the round may run only the CLI, Studio's runtime and the CLI's own helpers: no other program starts", JSON.stringify(o.exec)); }
+  ok(a.status === "done" && o.home !== realHome && /\/rounds\/J\w+\/home$/.test(o.home ?? "") && JSON.stringify(creds) === JSON.stringify(["CREW_TOOL_TOKEN_FILE"]) && o.oauth === null && o.apiKey === null && !o.envKeys.includes("CLAUDE_CONFIG_DIR") && o.envKeys.includes("USER"),
+    "on the captain's own sign-in the round runs in a throwaway home with no CLAUDE_CONFIG_DIR and the login user (the CLI finds its own keychain item), and Studio hands it no credential", JSON.stringify([a.error, o.home, creds]));
+  ok(Object.values(o.accountWrites ?? { x: true }).every((v) => v === false) && Object.values(o.accountReads ?? { x: true }).every((v) => v === false) && !existsSync(join(C, "settings.json")), "none of the captain's Claude files is readable or writable (not ~/.claude, not ~/.claude.json), and no other keychain", JSON.stringify([o.accountWrites, o.accountReads]));
+  ok(o.wroteInside === false && !existsSync(join(wt, "own-account-inside.txt")), "the credentialed CLI never reaches the worktree (its model works on files through Studio's tools)", String(o.wroteInside));
+  ok(Array.isArray(o.secretReads) && o.secretReads.length === 0 && o.key === null, "every entry of the deny list stays closed", JSON.stringify(o.secretReads));
+  ok(o.exec?.["/bin/cat"] === false && o.exec?.["/usr/bin/curl"] === false && o.exec?.["/usr/bin/git"] === false && o.exec?.[process.execPath] === true, "the round may run only the CLI, Studio's runtime and the keychain command: no other program starts", JSON.stringify(o.exec)); }
 // a provider that cannot be sandboxed is refused; only the stub is sandbox-free
 { const fake = { id: "fake", model: "m", start: () => { throw new Error("must not start"); } } as any;
   const f = await agents.run({ kind: "t", title: "fake", system: "s", text: "x", tools: [], provider: fake, timeoutMs: 5000, sandbox: { writes: [] } });
