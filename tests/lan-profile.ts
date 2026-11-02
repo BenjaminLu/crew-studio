@@ -42,7 +42,7 @@ E.actions["boom"] = () => { throw new Error("a deterministic fixture failure"); 
 // the test mode's round carries the tools a code round would: run_tests and run_command stay (without local binding), skill_run goes
 const testTools = E.modes.test.tools; E.modes.test.tools = (x: any) => [...testTools(x), ...["run_tests", "run_command", "skill_run", "fs_read", "fs_write"].map((name) => ({ name, description: name, schema: { type: "object" }, run: () => ({ ok: true, scope: sandboxScope.getStore() ?? null }) }))];
 const orig = H.agents.run.bind(H.agents);
-(H.agents as any).run = async (o: any) => { calls.push(o); const j = await orig(o); const t = String(E.get(o.ref)?.title ?? ""); if (t.startsWith("costly-")) j.cost = { usd: 0.6, inTokens: 1, outTokens: 1 }; if (t.startsWith("nocost-")) j.cost = null; return j; };
+(H.agents as any).run = async (o: any) => { if (o.title === "fake-round") return { id: `J-fake-${Math.random()}`, status: "done", cost: { usd: 0 } }; calls.push(o); const j = await orig(o); const t = String(E.get(o.ref)?.title ?? ""); if (t.startsWith("costly-")) j.cost = { usd: 0.6, inTokens: 1, outTokens: 1 }; if (t.startsWith("nocost-")) j.cost = null; return j; };
 const exec0 = E.exec.bind(E); E.exec = (x: any, man: any, ...rest: any[]) => { scopes.push({ run: x.run.id, ref: man.ref, scope: sandboxScope.getStore() ?? null }); return exec0(x, man, ...rest); };
 const asked: string[] = []; E.askFirstmate = (r: any) => { asked.push(r.id); return true; };
 installLanProfile(E);
@@ -84,10 +84,10 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   const ro = E.start({ workflow: "costly", title: "nocost-2", text: "x", params: mark(null, 9) }); await done(ro.id);
   ok(E.get(ro.id).status === "succeeded", "with a rounds-only cap the taker chose, unknown costs do not stop it (the rounds cap still holds)");
   // concurrency: rounds are reserved before they are admitted
-  const cc = E.start({ workflow: "lanwf", title: "concurrent", text: "x", params: mark(5, 1) }); await done(cc.id);
-  const r = E.get(cc.id); const p1 = E.deps.agents.run({ ref: cc.id, title: "x", tools: [], sandbox: { writes: [] } }).catch((e: any) => e), p2 = E.deps.agents.run({ ref: cc.id, title: "y", tools: [], sandbox: { writes: [] } }).catch((e: any) => e);
-  const [x1, x2] = await Promise.all([p1, p2]);
-  ok(r && /spend cap/.test(String(x1?.message ?? "")) && /spend cap/.test(String(x2?.message ?? "")), "two rounds started at once on a 1-round cap that is already used: both are refused (reserved before admission)", `${x1?.message} | ${x2?.message}`); }
+  const cc = E.start({ workflow: "pushwf", title: "concurrent", text: "x", params: mark(5, 1) }); await done(cc.id); // no round ran yet: one may start
+  const x1p = E.deps.agents.run({ ref: cc.id, title: "fake-round", tools: [], sandbox: { writes: [] } }).then(() => "ran", (e: any) => String(e?.message ?? e)), x2p = E.deps.agents.run({ ref: cc.id, title: "fake-round", tools: [], sandbox: { writes: [] } }).then(() => "ran", (e: any) => String(e?.message ?? e));
+  const [x1, x2] = await Promise.all([x1p, x2p]);
+  ok(!/spend cap/.test(x1) && /spend cap/.test(x2), "two rounds started at once on a 1-round cap: the first is admitted and reserved, the second is refused before it starts", `${x1} | ${x2}`); }
 // a Task from a peer is never repeated as a new Task (it would drop its marks) and never asks Firstmate
 { const lan = E.start({ workflow: "fails", text: "x", params: mark() }); await until(() => !!E.get(lan.id)?.failureCard, 15000);
   const card = E.get(lan.id).failureCard; let err = ""; try { await E.answer(card, { choice: "new-task", by: "captain" }); } catch (e: any) { err = e.message ?? String(e); }
@@ -202,10 +202,15 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
 
 // ---------- the secret scan ----------
 { const { scanText } = await import("../src/lan/scan");
-  const hit = (s: string) => scanText("f", s).length > 0, tok = "gh" + "p_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
-  ok(hit(tok) && hit(Buffer.from(tok).toString("base64")) && hit(`const a = "${tok.slice(0, 20)}";\nconst b = "${tok.slice(20)}";`) && hit(JSON.stringify({ v: 1, d: randomBytes(32).toString("base64url") })) && hit("-----BEGIN OPENSSH PRIVATE KEY-----") && hit(randomBytes(30).toString("base64")),
-    "the scan catches a token, the token in base64, a token split across string literals, Studio's own key file, a PEM header and a long random string");
-  ok(!hit("# 週報\n\n這週完成：區網協作\nsha256 8a5d12fe277a0c3c9b1e1f4c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2") && !hit("export const discount = (p: number) => Math.round(p * 90) / 100;"), "ordinary text, code and hex hashes pass"); }
+  const whats = (t: string) => scanText("f", t).map((h) => h.what), tok = "gh" + "p_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+  ok(whats(tok).includes("a credential"), "the scan finds a token on a line");
+  ok(whats(Buffer.from(tok).toString("base64")).includes("a credential in base64"), "it decodes base64 and finds the token inside");
+  ok(whats(`const a = "${tok.slice(0, 20)}";\nconst b = "${tok.slice(20)}";`).includes("a credential split across string literals"), "it joins string literals across lines");
+  ok(whats(JSON.stringify({ v: 1, d: randomBytes(32).toString("base64url") })).includes("a Studio key file"), "it knows Studio's own key file");
+  ok(whats("-----BEGIN OPENSSH PRIVATE KEY-----").includes("a private key block"), "it finds a PEM private-key header on its own");
+  ok(whats(randomBytes(30).toString("base64")).includes("a long random-looking string (a key or token?)"), "it flags a long random string");
+  ok(scanText("f", "the ACME launch plan", ["acme"]).some((h) => h.what === "a name on the privacy denylist"), "it finds a name on the privacy denylist");
+  ok(!scanText("f", "# 週報\n\n這週完成：區網協作\nsha256 8a5d12fe277a0c3c9b1e1f4c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2").length && !scanText("f", "export const discount = (p: number) => Math.round(p * 90) / 100;").length, "ordinary text, code and hex hashes pass"); }
 
 // ---------- receiving: transient refusals stay open, a frozen author's entries are not stored, unpair keeps a freeze ----------
 { const A = mk("rx-a"), B = mk("rx-b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
@@ -235,6 +240,14 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   let e2 = ""; try { loadIdentity(d2); } catch (e: any) { e2 = e.message; }
   ok(/cannot be read/.test(e1) && /Keychain/.test(e2) && readFileSync(join(d1, "lan", "identity.key"), "utf8") === "{not json", "an unreadable key file, or one moved to the Keychain, stops Studio loudly instead of minting a new identity", `${e1} | ${e2}`); }
 
+// ---------- a test run inside the profile's scope cannot listen ----------
+if (process.platform === "darwin") {
+  const { sandboxed } = await import("../src/runtime/checks");
+  const dir = mkdtempSync(join(tmpdir(), "crew-lan-bind-")), script = join(dir, "listen.mjs"); writeFileSync(script, "const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') }); console.log('listening', s.port); s.stop(true);\n");
+  const go = (scoped: boolean) => { const o = { cwd: dir, out: join(dir, scoped ? "o1" : "o2"), tmp: join(dir, scoped ? "t1" : "t2"), timeoutS: 30, network: false, testRun: true, reads: [dir] } as any; const run = () => sandboxed([process.execPath, script], o); return scoped ? sandboxScope.run({ noLocalBinding: true }, run) : run(); };
+  const free = await go(false), held = await go(true);
+  ok(free.code === 0 && /listening/.test(free.stdout), "control: an ordinary test run may listen on loopback", JSON.stringify([free.code, free.refused, free.stderr.slice(0, 200)]));
+  ok(held.code !== 0 && !/listening/.test(held.stdout), "inside the profile's scope the same test run cannot listen", JSON.stringify([held.code, held.refused, held.stderr.slice(0, 200)])); }
 // ---------- the Keychain: never by default, never in a test; its own path only through a stand-in ----------
 { const spawned: string[][] = [], real = keychainSpawn.run;
   keychainSpawn.run = (argv: string[]) => { spawned.push(argv); throw new Error("the keychain tool must not run here"); };
@@ -248,6 +261,8 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
     ok(id2.store === "file" && !spawned.length && !keychainWanted(d2), "even with CREW_KEYSTORE=keychain, a test run or a temporary data folder never reaches the Keychain", JSON.stringify(spawned));
     delete process.env.CREW_TEST_ENV_ISOLATED;
     ok(!keychainWanted(d2), "a data folder under the temporary directory never reaches the Keychain, test mark or not");
+    delete process.env.CREW_KEYSTORE;
+    ok(!keychainWanted("/var/empty/crew-lan-not-temp") && !spawned.length, "without CREW_KEYSTORE=keychain no data folder reaches the Keychain, even outside a test and outside the temporary directory");
   } finally { keychainSpawn.run = real; if (saved.ks === undefined) delete process.env.CREW_KEYSTORE; else process.env.CREW_KEYSTORE = saved.ks; if (saved.iso !== undefined) process.env.CREW_TEST_ENV_ISOLATED = saved.iso; } }
 { // the opt-in path itself, against an in-memory stand-in (no process, nothing on the Mac's Keychain)
   const db = new Map<string, string>(), calls: { argv: string[]; stdin: string }[] = [], real = keychainSpawn.run;
