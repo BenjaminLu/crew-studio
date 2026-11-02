@@ -18,7 +18,9 @@ export type ArtifactType = "web" | "video" | "image" | "doc" | "audio";
 export type Status = "draft" | "in-review" | "approved" | "superseded";
 export type Maker = { kind: "captain" | "agent" | "import" | "host"; provider?: string; model?: string; run?: string };
 export type FileRec = { path: string; sha256: string; size: number };
-export type Cost = { usd: number | null; inTokens: number | null; outTokens: number | null };
+/** what a job used, as its provider reports it; `inTokens` includes cache reads and writes, `cacheReadTokens` (where the
+ *  provider says) is the part of it read from the prompt cache */
+export type Cost = { usd: number | null; inTokens: number | null; outTokens: number | null; cacheReadTokens?: number | null };
 export type MediaProvenance = {schema:1;request:string;task:string;generation:number;dependencies:Record<string,string>;provider:string|null;model:string|null;origin:"generated"|"import"};
 export type Version = {
   refinement?:import("./domain/image-refinement").ImageRefinementSnapshot;

@@ -23,6 +23,7 @@
 import { localDay, SpendLedger } from "./ledger";
 import { ProfileRefusal } from "../runtime/engine";
 import { codeOf } from "../runtime/failures";
+import { billingOf } from "./billing";
 import { sandboxScope } from "../runtime/checks";
 import { writeRefused } from "./paths";
 
@@ -90,7 +91,11 @@ export function nodeNotRun(node: any, manifest?: (ref: string) => { test_run?: b
  *  the round is admitted, what it used when it ends (tokens null: the provider reported none). */
 export type LanRound = { n: number; at: string; job: string | null; ended: boolean; tokens?: number | null; minutes?: number | null;
   /** the local day it counts on, and what was reserved for it there while it ran (src/lan/ledger.ts) */
-  day?: string; reservedTokens?: number; reservedMinutes?: number };
+  day?: string; reservedTokens?: number; reservedMinutes?: number;
+  /** the part of the round's input read from the prompt cache (kept apart: it counts toward no token ceiling) */
+  cacheReadTokens?: number | null;
+  /** a round on a sign-in billed per token (an API key): the dollars it reported, shown; never on a subscription */
+  billing?: "per-token"; usd?: number | null };
 /** every round of a peer's Task, whatever its cap: at most 15 minutes and 60 tool calls; a round that reports more tokens
  *  than this ends the Task's rounds (a token count is known only when the round ends) */
 export const LAN_ROUND = { timeoutMs: 15 * 60_000, maxTools: 60, tokens: 2_000_000 };
@@ -120,7 +125,10 @@ export function pausedRefusal(ledger: SpendLedger | null, provider: string | nul
   try { const p = ledger.paused().find((x) => x.provider === provider); return p ? `paused: ${provider} reported its subscription limit on a peer's round (${p.why.slice(0, 160)}, ${p.at}); peer work on ${provider} waits until you resume it on the Peers page` : null; }
   catch (e: any) { return `paused: ${String(e?.message ?? e).slice(0, 300)}`; }
 }
-const tokensOf = (j: any) => { const a = j?.cost?.inTokens, b = j?.cost?.outTokens; if (typeof a !== "number" && typeof b !== "number") return null; const n = Number(a ?? 0) + Number(b ?? 0); return Number.isFinite(n) && n >= 0 ? n : null; };
+/** what a round counts toward the token ceilings: input and output as the CLI reports them (cache writes included),
+ *  less the cache reads (reported apart by Claude, Codex and Cursor; a cached prefix read again is not new work) */
+const tokensOf = (j: any) => { const a = j?.cost?.inTokens, b = j?.cost?.outTokens; if (typeof a !== "number" && typeof b !== "number") return null;
+  const cr = typeof j?.cost?.cacheReadTokens === "number" ? j.cost.cacheReadTokens : 0, n = Number(a ?? 0) + Number(b ?? 0) - cr; return Number.isFinite(n) ? Math.max(0, n) : null; };
 /** a round that ended because its provider's subscription limit (quota or rate limit) was reached: the provider's own code
  *  (Claude's quotaExhausted), or the words of its error (Codex and Cursor report these as a CLI error) */
 export function subscriptionLimit(j: any): string | null {
@@ -129,12 +137,24 @@ export function subscriptionLimit(j: any): string | null {
   if (code === "quotaExhausted") return text || "the provider reported its usage limit";
   const c = codeOf(text); return c === "env.quota" || c === "transient.rate-limit" ? text : null;
 }
+/** a reset time the provider's limit error gives (an ISO time, or "in N seconds/minutes/hours"), or null: shown on the
+ *  Peers page; Studio does not resume by itself */
+export function resetOf(text: string, now = Date.now()): string | null {
+  const iso = /\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))/.exec(text); if (iso) { const t = Date.parse(iso[1]); if (Number.isFinite(t)) return new Date(t).toISOString(); }
+  const rel = /\b(?:in|after)\s+(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)\b/i.exec(text);
+  if (rel) { const n = Number(rel[1]), u = rel[2][0].toLowerCase(); return new Date(now + n * (u === "s" ? 1000 : u === "m" ? 60_000 : 3_600_000)).toISOString(); }
+  return null;
+}
 const providerOf = (opts: any): string | null => typeof opts?.provider === "string" ? opts.provider : opts?.provider?.id ? String(opts.provider.id) : null;
 /** What a LAN-originated Task has used on this Mac: every round it was admitted to (agent turns, coordinators, judges),
  *  from its own record, which survives a restart; the tokens and agent-minutes they reported. */
-export function spent(_engine: any, run: any): { rounds: number; tokens: number; minutes: number } {
+export function spent(_engine: any, run: any): { rounds: number; tokens: number; minutes: number; usd?: number } {
   const rs: LanRound[] = Array.isArray(run?.ctx?.lanRounds) ? run.ctx.lanRounds : [];
-  return { rounds: rs.length, tokens: rs.reduce((a, r) => a + (r.tokens ?? 0), 0), minutes: Math.round(rs.reduce((a, r) => a + (r.minutes ?? 0), 0) * 10) / 10 };
+  const out: { rounds: number; tokens: number; minutes: number; usd?: number } = { rounds: rs.length, tokens: rs.reduce((a, r) => a + (r.tokens ?? 0), 0), minutes: Math.round(rs.reduce((a, r) => a + (r.minutes ?? 0), 0) * 10) / 10 };
+  // dollars only for rounds billed per token (an API-key sign-in) that reported them: a subscription shows none
+  const billed = rs.filter((r) => r.billing === "per-token" && typeof r.usd === "number");
+  if (billed.length) out.usd = Math.round(billed.reduce((a, r) => a + r.usd!, 0) * 10000) / 10000;
+  return out;
 }
 const persist = (engine: any, run: any, why: string) => { try { engine.commit?.(run, why); } catch {} };
 export function capRefusal(engine: any, run: any, mark: LanMark): string | null {
@@ -166,7 +186,8 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
     // scripts, no local binding; recorded on the Task itself before it starts, its dollars when it ends
     wrapRound: (r: any, opts: any, next: (o: any) => Promise<any>) => {
       const mark = lanOf(r)!;
-      const c = ceilings(), L = ledger(), provider = providerOf(opts);
+      // the provider the round runs on: the one it names, else Studio's default (the one a pause must name)
+      const c = ceilings(), L = ledger(), provider = providerOf(opts) ?? (() => { try { const d = engine.deps?.defaultProvider?.(); return d?.provider ? String(d.provider) : null; } catch { return null; } })();
       const over = capRefusal(engine, r, mark) ?? pausedRefusal(L, provider) ?? dailyRefusal(L, c); // every round, whatever its provider, counts
       if (over) return Promise.reject(new ProfileRefusal(stop(r, over)));
       if (!opts.sandbox) return Promise.reject(new ProfileRefusal("a LAN-originated round runs only in the round sandbox"));
@@ -177,23 +198,30 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
       rounds.push(me); persist(engine, r, "LAN round admitted");
       const t0 = Date.now();
       const book = (tokens: number | null) => { me.minutes = (Date.now() - t0) / 60_000; try { L!.settle(day, { tokens: reservedTokens, minutes: ROUND_MINUTES }, { tokens, minutes: me.minutes }, tokens === null ? null : pm); } catch {} }; // a ledger that fails here keeps the reservation
+      // the subscription limit, on whichever path the round ended: the Task stops at once (no retry, no queue), and peer
+      // work on the provider the job really ran on (after any fallback) pauses until the captain resumes it
+      const limited = (j: any) => {
+        const limit = subscriptionLimit(j), ran = j?.provider ? String(j.provider) : provider; if (!limit || !ran) return;
+        try { L!.pause(ran, limit, r.id, resetOf(limit)); } catch {}
+        try { o.onLimit?.(r, ran, limit); } catch {}
+        const why = stop(r, `subscription limit: ${ran} reported it on this round (${limit.slice(0, 200)}); the Task stops, and peer work on ${ran} is paused until you resume it on the Peers page`);
+        queueMicrotask(() => { try { engine.cancel?.(r.id, "studio", why); } catch {} });
+        throw new ProfileRefusal(why);
+      };
       const settle = (j: any) => {
-        me.job = j?.id ? String(j.id) : null; me.tokens = tokensOf(j); me.ended = true; book(me.tokens); persist(engine, r, "LAN round counted");
-        // the subscription limit: the Task stops at once (no retry, no queue), and peer work on this provider pauses
-        const limit = subscriptionLimit(j);
-        if (limit && provider) {
-          try { L!.pause(provider, limit, r.id); } catch {}
-          try { o.onLimit?.(r, provider, limit); } catch {}
-          const why = stop(r, `subscription limit: ${provider} reported it on this round (${limit.slice(0, 200)}); the Task stops, and peer work on ${provider} is paused until you resume it on the Peers page`);
-          queueMicrotask(() => { try { engine.cancel?.(r.id, "studio", why); } catch {} });
-          throw new ProfileRefusal(why);
-        }
+        me.job = j?.id ? String(j.id) : null; me.tokens = tokensOf(j); me.ended = true;
+        if (typeof j?.cost?.cacheReadTokens === "number") me.cacheReadTokens = j.cost.cacheReadTokens;
+        if (billingOf(j?.provider ? String(j.provider) : provider) === "per-token") { me.billing = "per-token"; me.usd = typeof j?.cost?.usd === "number" ? j.cost.usd : null; }
+        book(me.tokens); persist(engine, r, "LAN round counted");
+        limited(j);
         return j;
       };
       // the per-round ceilings: wall clock and tool calls, whatever the mode asked for
       const timeoutMs = Math.min(Number(opts.timeoutMs) || LAN_ROUND.timeoutMs, LAN_ROUND.timeoutMs), maxTools = Math.min(Number(opts.maxTools) || LAN_ROUND.maxTools, LAN_ROUND.maxTools);
       return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => next({ ...opts, timeoutMs, maxTools, tools: (opts.tools ?? []).filter((t: any) => !LAN_DENIED_TOOLS.has(t.name)), sandbox: { ...opts.sandbox, allow: [] } })))
-        .then(settle, (e: any) => { if (!me.ended) { me.ended = true; book(null); persist(engine, r, "LAN round ended"); } throw e; });
+        .then(settle, (e: any) => { if (!me.ended) { me.ended = true; book(null); persist(engine, r, "LAN round ended"); }
+          if (!(e instanceof ProfileRefusal)) limited({ status: "failed", error: String(e?.message ?? e), errorCode: e?.code ?? null, provider: e?.provider ?? null });
+          throw e; });
     },
     // every tool: no write to a protected path, and it runs without local binding
     wrapTool: (_r: any, t: any) => {

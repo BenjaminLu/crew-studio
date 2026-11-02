@@ -21,7 +21,7 @@ import { checkHeld, checkNotMissing, Sentinel } from "./sentinel";
 export function localDay(d = new Date()) { const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
 export type DayUse = { rounds: number; minutes: number; tokens: number; unknown: number };
 export type StoredCeilings = { dailyRounds: number; dailyMinutes: number | null; dailyTokens: number | null; unknownRoundTokens: number };
-export type Paused = { provider: string; at: string; why: string; task: string | null };
+export type Paused = { provider: string; at: string; why: string; task: string | null; resets?: string | null };
 
 export class SpendLedger {
   private db: Database | null = null;
@@ -68,6 +68,10 @@ export class SpendLedger {
     const r = exact?.n ? exact : this.live().query("SELECT sum(n) AS n, sum(tokens) AS tokens FROM rates WHERE pm LIKE ? ESCAPE '\\'").get(`${pm.split("/")[0].replace(/[\\%_]/g, (c) => `\\${c}`)}/%`) as any;
     return r?.n ? Number(r.tokens) / Number(r.n) : fallback;
   }
+  // The sentinel's high-water mark is the sum of `days.rounds`: any future pruning of old `days` rows must lower the
+  // sentinel by the rounds it removes in the same step (Sentinel.write), or every later start finds fewer rounds than
+  // the sentinel says and refuses (the ledger reads as restored from an older copy). Pauses and settings are kept in
+  // `settings` and never counted by the sentinel.
   /** a round admitted: it counts now, its tokens and minutes reserved until it ends */
   admit(day: string, tokens: number, minutes: number) {
     this.add(day, { rounds: 1, tokens, minutes });
@@ -90,7 +94,8 @@ export class SpendLedger {
   setCeilings(c: StoredCeilings) { this.put("ceilings", c); }
   /** providers paused by their subscription limit (peer work on them waits until the captain resumes it) */
   paused(): Paused[] { return this.setting<Paused[]>("paused") ?? []; }
-  pause(provider: string, why: string, task: string | null) { const now = this.paused().filter((p) => p.provider !== provider); this.put("paused", [...now, { provider, at: new Date().toISOString(), why: String(why).slice(0, 300), task }]); }
+  /** even a short rate limit pauses until the captain resumes it: a reset time the provider gave is kept to show, never acted on */
+  pause(provider: string, why: string, task: string | null, resets: string | null = null) { const now = this.paused().filter((p) => p.provider !== provider); this.put("paused", [...now, { provider, at: new Date().toISOString(), why: String(why).slice(0, 300), task, resets }]); }
   /** true when it was paused */
   resume(provider: string): boolean { const all = this.paused(), rest = all.filter((p) => p.provider !== provider); this.put("paused", rest); return rest.length !== all.length; }
   close() { try { this.db?.close(); } catch {} this.db = null; }

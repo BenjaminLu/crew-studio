@@ -6,8 +6,14 @@ import { blocksText } from "../tool-content";
 import { claudeNeeds,claudeSettings,type ApprovedClaudeConfig } from "./needs";
 import {claudeFailureCode,nativeClaude} from './claude-native';
 import { processSession, type LineParser } from "./proc";
-import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec } from "./types";
+import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec, type Usage } from "./types";
 
+/** Claude's result usage: inTokens is input plus cache reads and writes (as Studio counted it), cache reads also apart */
+export function claudeUsage(m: any): Usage {
+  const u = m?.usage ?? {}, n = (v: unknown) => (typeof v === "number" ? v : 0);
+  return { usd: typeof m?.total_cost_usd === "number" ? m.total_cost_usd : null, inTokens: typeof u.input_tokens === "number" ? u.input_tokens + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens) : null,
+    outTokens: typeof u.output_tokens === "number" ? u.output_tokens : null, cacheReadTokens: typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : null };
+}
 export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-sonnet-5-5", bin = process.env.CREW_CLAUDE_BIN ?? "claude", approved?:ApprovedClaudeConfig): Provider {
   return {
     id: "claude", model, reasoningEffort:approved?.effort,envKeys: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR"],
@@ -66,8 +72,7 @@ function parser(approved?:ApprovedClaudeConfig,tools:ToolSpec[]=[]): LineParser 
         if (m.is_error || m.subtype !== "success") out.push({ type: "turnEnd", status: "error", code: LOGIN_RE.test(r) ? "notLoggedIn" : "cliError", message: r || "the model run failed" });
         else { if (!text.trim() && r) out.push({ type: "delta", text: r }, { type: "message", text: r });
           const u = m.usage ?? {};
-          out.push({ type: "turnEnd", status: "ok", usage: { usd: typeof m.total_cost_usd === "number" ? m.total_cost_usd : null,
-            inTokens: typeof u.input_tokens === "number" ? u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : null, outTokens: typeof u.output_tokens === "number" ? u.output_tokens : null } }); }
+          void u; out.push({ type: "turnEnd", status: "ok", usage: claudeUsage(m) }); }
       }
       return out;
     },

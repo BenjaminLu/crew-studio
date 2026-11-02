@@ -16,6 +16,7 @@ import { Store } from "./store";
 import { TaintStore, clearTaintRef, markTaintRef, taintRefs } from "./taint";
 import { lanIp } from "../remote/lan";
 import type { SpendLedger } from "./ledger";
+import { billingAll } from "./billing";
 import type { TaintRow } from "./taint";
 
 export type PeerRec = { key: string; fp: string; petname: string; claimed: string; host: string; port: number; introducedAt: string;
@@ -42,7 +43,7 @@ export type RoundRec = { n: number; fence: string; briefing: { hash: string; siz
   assign: null | { entry: string; take: string; taker: string };
   /** the run this round started. Its claim (`claimed`, the assignment item) is written, synced, before the Task starts; a
    *  restart finds the Task by that item (`found`), or marks it gone: a claim is never released by a restart */
-  run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean; auto?: boolean; spent?: { rounds: number; tokens: number; minutes: number } | null };
+  run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean; auto?: boolean; spent?: { rounds: number; tokens: number; minutes: number; usd?: number } | null };
   result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number; base?: string | null } };
 export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null; waiting?: string | null };
 export type ThreadRec = { id: string; owner: string; peer: string; title: string; acceptance: string[]; suggested: WorkflowRef | null; rounds: RoundRec[];
@@ -74,7 +75,7 @@ type State = { v: 2; settings: { enabled: boolean; name: string; ceilings?: Ceil
 export type LanRunner = {
   workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; mayStop?: string[]; output?: "text" | "patch" | null; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
   start(o: { workflow: string; text: string; title: string; item: string; cap: { rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
-  status(run: string): { state: string; result: string | null; spent: { rounds: number; tokens: number; minutes: number }; stopped: string | null; ready?: boolean } | null;
+  status(run: string): { state: string; result: string | null; spent: { rounds: number; tokens: number; minutes: number; usd?: number }; stopped: string | null; ready?: boolean } | null;
   /** the Task a received assignment started (by the item id in its LAN mark), after a restart: its id, or null */
   findByItem?(item: string): string | null;
   output(run: string): Promise<{ files: { path: string; text: string | null; bytes: number }[]; changed: string[]; protectedHits: string[]; checks: { pass: number; fail: number; other: number; summary: string }; workflow: WorkflowRef; kind?: "files" | "patch"; base?: string | null }>;
@@ -1059,7 +1060,8 @@ export class Lan {
         // the file keystore: any program of this user can read the identity (shown plainly)
         warning: ks?.kind === "file" ? { en: "This Mac's identity can be read by local programs (no Touch ID protection)", zh: "這台的身分可被本機程式讀取（沒有 Touch ID 保護）" } : null, fallback: this.fallback },
       lost: this.lost, retired: this.st.retired.map((r) => ({ key: r.key, at: r.at, pending: this.st.idOut.filter((x) => x.from === r.key).map((x) => ({ to: this.who(x.to), tries: x.tries, error: x.error })) })),
-      ceilings: this.ceilings(), paused: (() => { try { return this.o.spend?.paused() ?? []; } catch { return []; } })(), estimates: (() => { try { return this.o.estimates?.(this.ceilings()) ?? {}; } catch { return {}; } })(), enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
+      // how each provider's sign-in is billed (per token: an API key; a subscription; null: Studio cannot tell)
+      billing: billingAll(), ceilings: this.ceilings(), paused: (() => { try { return this.o.spend?.paused() ?? []; } catch { return []; } })(), estimates: (() => { try { return this.o.estimates?.(this.ceilings()) ?? {}; } catch { return {}; } })(), enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
       introOpenUntil: this.st.introUntil && this.st.introUntil > Date.now() ? new Date(this.st.introUntil).toISOString() : null,
       introFailures: (this.st.introFailures ?? []).filter((f) => Date.parse(f.at) >= (this.st.introOpenedAt ?? 0) - 3600_000).slice(-5),
       intros: this.st.intros.filter(live).map((i) => ({ ...i, similar: similar(i.claimed, i.key), successorOf: successorOf(i.key) })),

@@ -35,7 +35,8 @@ const now = () => new Date().toISOString();
 
 /** two usage reports of one job, added (a count one of them does not give stays as the other gives it) */
 const addUsage = (a: Cost | null, u: any): Cost => { const sum = (x: number | null | undefined, y: unknown) => typeof y === "number" ? (x ?? 0) + y : (x ?? null);
-  return { usd: sum(a?.usd, u?.usd), inTokens: sum(a?.inTokens, u?.inTokens), outTokens: sum(a?.outTokens, u?.outTokens) }; };
+  const c = { usd: sum(a?.usd, u?.usd), inTokens: sum(a?.inTokens, u?.inTokens), outTokens: sum(a?.outTokens, u?.outTokens) }, cr = sum(a?.cacheReadTokens, u?.cacheReadTokens);
+  return cr === null ? c : { ...c, cacheReadTokens: cr }; };
 export class Agents {
   jobs = new Map<string, AgentJob>();
   readonly queue = new NativeQueue();

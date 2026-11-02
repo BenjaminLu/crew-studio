@@ -251,9 +251,12 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   New task from an issue-text Task keeps the issue profile and its mark. A queue, poller or timer first made inside a
   step runs detached from it (`engine.detached`), so its later work carries no Task.
 - **What is counted: the subscription's quota, never dollars.** Local providers run on subscriptions: a CLI's dollar
-  figure is notional and Codex and Cursor report none, so no limit is in dollars and no dollar figure is shown (one
-  would be shown only for a provider billed per API key, and none is today). No page shows a percentage of a quota
-  either (it is not known).
+  figure is notional and Codex and Cursor report none, so no limit is in dollars. A provider signed in with an API key
+  is billed per token: the take dialog and the daily ceilings say "billed per token", and a round's dollars are shown
+  where the provider reports them. Studio tells which from the sign-in checks it already makes (Claude's `auth status`
+  authMethod `api_key`; Codex's account type `apiKey`; src/lan/billing.ts); Cursor's sign-in does not say how it is
+  billed, so nothing is shown for it. A subscription shows no dollars. No page shows a percentage of a quota (it is not
+  known).
 - **Rounds cap**: the only per-Task cap. Every round (agent turns, coordinators, judges) is recorded on the Task itself
   (`ctx.lanRounds`, saved with it) when it is admitted, and the tokens and agent-minutes it used when it ends; before
   the next one, the rounds are compared with the item's cap, so neither concurrency nor a restart reopens it (a round
@@ -262,8 +265,11 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   tokens and agent-minutes a Task used. A job's token counts add up over every usage report of the job.
 - **Daily ceilings**: over every peer's Task on this Mac, Studio-wide and on by default (60 rounds, 300 agent-minutes
   and 30,000,000 tokens a day; editable on the Peers page, the minute and token ones may be turned off), per local day
-  (they reset at this Mac's midnight). Tokens are in and out as each CLI reports them (Claude's include its cache
-  tokens); agent-minutes are the rounds' wall clock. They are counted in the spend ledger (`src/lan/ledger.ts`,
+  (they reset at this Mac's midnight). Tokens are input and output as each CLI reports them, cache writes included and
+  cache reads left out: Claude (`cache_read_input_tokens`), Codex (`cached_input_tokens`) and Cursor (`cacheReadTokens`)
+  all report cache reads apart, and a cached prefix read again on every turn of a long round is not new work (the
+  round keeps them, apart, on its record). The same count is what the 2,000,000-token per-round ceiling reads.
+  Agent-minutes are the rounds' wall clock. They are counted in the spend ledger (`src/lan/ledger.ts`,
   `lan/spend.db`, its own store, open at every start whatever the relay does), never summed over the Tasks Studio still
   lists, so a Task archived or purged keeps today's use; the ceilings themselves are kept there too, so they hold while
   the relay is starting, off or without its identity. A round counts when it is admitted, reserving 15 agent-minutes and
@@ -274,10 +280,12 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   refuses every round. The take dialog states the rounds cap, the per-round bounds, the daily ceilings and, when there
   is a record, about how many tokens a round of that provider uses here.
 - **Subscription limit**: a round whose provider reports its quota or rate limit (Claude's `quotaExhausted`; Codex's
-  and Cursor's rate- or usage-limit errors, read by the failure classes `env.quota` and `transient.rate-limit`) stops
-  that Task at once, with no retry and no queue, and pauses peer work on that provider: no take, no auto-start and no
-  round of any peer's Task runs on it until the captain resumes it on the Peers page. The pause is kept in the spend
-  ledger and audited (`provider-paused`, `provider-resumed`).
+  and Cursor's rate- or usage-limit errors, read by the failure classes `env.quota` and `transient.rate-limit`), as a
+  result or as a rejected call, stops that Task at once, with no retry and no queue, and pauses peer work on the
+  provider the round really ran on (Studio's default when the round names none; the provider a fallback chose): no
+  take, no auto-start and no round of any peer's Task runs on it until the captain resumes it on the Peers page. Even a
+  short rate limit pauses until then; a reset time the provider's error gives is shown, never acted on. The pause is
+  kept in the spend ledger and audited (`provider-paused`, `provider-resumed`).
 - **Auto-start, opt-in**: at the take the taker may tick "start as soon as they assign it, with this exact cap"
   (unticked by default). It lasts 30 minutes after the take. When the assignment arrives every check is made again (the
   peer still introduced, not frozen or revoked; the round current; the prompt the one the taker read; the item's cap,

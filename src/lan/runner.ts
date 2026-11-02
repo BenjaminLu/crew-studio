@@ -89,7 +89,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       // a step the profile refused carries code "profile" (the engine sets it from the refusal, never from its message)
       const stopped = r.steps?.filter((s: any) => s.state === "error" && s.code === "profile").map((s: any) => String(s.error)).at(-1) ?? null;
       const s = spent(d.engine, r);
-      return { state: r.status, result: r.result ?? null, spent: { rounds: s.rounds, tokens: s.tokens, minutes: s.minutes }, stopped, ready: r.status === "succeeded" || !!r.ctx?.taintedReady };
+      return { state: r.status, result: r.result ?? null, spent: { rounds: s.rounds, tokens: s.tokens, minutes: s.minutes, ...(s.usd !== undefined ? { usd: s.usd } : {}) }, stopped, ready: r.status === "succeeded" || !!r.ctx?.taintedReady };
     },
     async output(id) {
       const r = d.engine.get(id); if (!r) throw new Error("no such Task");

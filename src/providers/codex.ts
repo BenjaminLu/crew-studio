@@ -11,10 +11,15 @@ import {localUnrestricted} from "../local-execution";
 import { blocksText } from "../tool-content";
 import { codexNeeds, type ApprovedCodexConfig } from "./needs";
 import { processSession, type LineParser } from "./proc";
-import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec } from "./types";
+import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec, type Usage } from "./types";
 
 const toml = (s: string) => JSON.stringify(s); // a TOML basic string is a JSON string
 
+/** Codex's turn usage: input_tokens includes the cached input (cached_input_tokens, reported apart) */
+export function codexUsage(u: any): Usage {
+  return { usd: null, inTokens: typeof u?.input_tokens === "number" ? u.input_tokens : null, outTokens: typeof u?.output_tokens === "number" ? u.output_tokens : null,
+    cacheReadTokens: typeof u?.cached_input_tokens === "number" ? u.cached_input_tokens : null };
+}
 export function codexProvider(model = process.env.CREW_CODEX_MODEL ?? "", bin = process.env.CREW_CODEX_BIN ?? "codex", approved?: ApprovedCodexConfig): Provider {
   if (approved && approved.model !== model) throw new Error("approved model snapshot differs from selected Codex model");
   return {
@@ -52,7 +57,7 @@ function parser(): LineParser {
       }
       if (m.type === "item.completed" && it.type === "agent_message" && it.text) return [{ type: "delta", text: String(it.text) }, { type: "message", text: String(it.text) }];
       if (m.type === "turn.completed") { done = true; const u = m.usage ?? {};
-        return [{ type: "turnEnd", status: "ok", usage: { usd: null, inTokens: typeof u.input_tokens === "number" ? u.input_tokens : null, outTokens: typeof u.output_tokens === "number" ? u.output_tokens : null } }]; }
+        return [{ type: "turnEnd", status: "ok", usage: codexUsage(u) }]; }
       if (m.type === "turn.failed" || m.type === "error") {
         const msg = String(m.error?.message ?? m.message ?? "the model run failed");
         done = true;
