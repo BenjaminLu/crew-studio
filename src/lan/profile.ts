@@ -62,6 +62,7 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
       const over = s.rounds >= mark.rounds ? `spend cap: this received item allows ${mark.rounds} agent round(s) and ${s.rounds} ran; Studio stopped before the next one`
         : s.usd > 0 && s.usd >= mark.usd ? `spend cap: this received item allows $${mark.usd.toFixed(2)} and $${s.usd.toFixed(2)} was spent; Studio stopped before the next round` : null;
       if (over) { o.onStop?.(r, over); return Promise.reject(new RoundBlocked(over)); }
+      if (!opts.sandbox) return Promise.reject(new RoundBlocked("a LAN-originated round runs only in the round sandbox"));
       opts = { ...opts, tools: (opts.tools ?? []).filter((t: any) => !LAN_DENIED_TOOLS.has(t.name)), sandbox: opts.sandbox ? { ...opts.sandbox, allow: [] } : opts.sandbox };
     }
     return run(opts);

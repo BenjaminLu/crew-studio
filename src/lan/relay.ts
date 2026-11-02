@@ -241,19 +241,20 @@ export class Lan {
     const r = this.cur(t);
     switch (b.kind) {
       case "take": if (t.owner !== me) return "only the dispatcher receives a take"; if (t.peer !== from) return "this peer was not asked";
-        if (b.round !== r.n) return "the take names another round";
+        if (b.round !== r.n) return "the take names another round"; if (r.assign) return "this round is already assigned";
         if (b.briefing !== r.briefing.hash) return "briefing hash mismatch: the take names a different briefing than this thread's";
         return null;
-      case "assign": if (t.owner !== from) return "only the dispatcher assigns"; if (b.taker !== me) return "the assignment names another taker";
+      case "assign": if (t.owner !== from) return "only the dispatcher assigns"; if (b.taker !== me) return "the assignment names another taker"; if (r.assign) return "this round is already assigned";
         if (b.round !== r.n || !r.take || r.take.entry !== b.take || r.take.by !== me) return "the assignment does not name this Studio's take";
         return null;
       case "result": if (t.owner !== me) return "only the dispatcher receives a result"; if (!r.assign || r.assign.taker !== from) return "the result's author was not assigned";
-        if (b.round !== r.n || b.take !== r.assign.take) return "the result does not name the assigned take";
+        if (b.round !== r.n || b.take !== r.assign.take) return "the result does not name the assigned take"; if (r.result) return "this round already has a result";
         if (b.briefing !== r.briefing.hash) return "briefing hash mismatch: the result names a different briefing";
         return null;
       case "refine": if (t.owner !== from) return "only the dispatcher refines"; if (b.round !== r.n + 1 || !r.result) return "a refinement follows a result"; return null;
       case "done": if (t.owner !== from) return "only the dispatcher closes a thread"; if (!r.result || r.result.entry !== b.result) return "done names another result"; return null;
-      case "revoke": { const target = this.entry(b.target); if (!target || target.a !== from) return "a revocation names one of its author's own entries"; return null; }
+      case "revoke": { const target = this.entry(b.target); if (!target || target.a !== from || this.body(b.target)?.thread !== t.id) return "a revocation names one of its author's own entries in this thread";
+        if (t.owner !== from && t.peer !== from) return "only the thread's two Studios revoke in it"; return null; }
     }
     return null;
   }
