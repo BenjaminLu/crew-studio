@@ -82,11 +82,13 @@ type Shared = { job: Promise<{ name: string; cached: boolean; voice: string }>; 
 const inflight = new Map<string, Shared>();
 /** One point's clip in a room folder: made once (two requests at once share one job), then served from the folder. A
  *  shared job stops only when every request waiting on it has given up; one that gives up alone just stops waiting. */
-export async function roomClip(dir: string, text: string, o: { lang: "zh" | "en"; mode: Mix; voices?: Voices; speaker: Speaker; store: ClipStore; engine?: string; timeoutMs?: number; alive?: () => boolean; signal?: AbortSignal }) {
+export async function roomClip(dir: string, text: string, o: { lang: "zh" | "en"; mode: Mix; voices?: Voices; speaker: Speaker; store: ClipStore; engine?: string; timeoutMs?: number; alive?: () => boolean; signal?: AbortSignal;
+  /** the room's reset generation: requests share a job only within one (a restarted room never joins the old room's job) */
+  generation?: number }) {
   const voices = { ...DEFAULT_VOICE, ...(o.voices ?? {}) }, t = String(text ?? "").replace(/\s+/g, " ").trim();
   if (!MIXES.includes(o.mode)) throw new Error("unknown mix mode");
   if (t.length > MAX_POINT) throw Object.assign(new Error(`A point to speak is at most ${MAX_POINT} characters`), { code: "too_long" });
-  const name = clipName(t, { lang: o.lang, mode: o.mode, voices, engine: o.engine }), f = join(dir, name), key = f;
+  const name = clipName(t, { lang: o.lang, mode: o.mode, voices, engine: o.engine }), f = join(dir, name), key = `${f}\n${o.generation ?? 0}`;
   if (existsSync(f)) { o.store.touch(f); return { name, cached: true, voice: "" }; }
   if (o.signal?.aborted) throw Object.assign(new Error("stopped"), { code: "aborted" });
   // a job every request gave up on is stopping: never joined (it leaves the map at once, and this checks it too)

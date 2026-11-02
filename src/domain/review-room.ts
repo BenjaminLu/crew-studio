@@ -1770,7 +1770,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const t = narration(raw); if (!t) throw refuse("Nothing to say", "not_found");
       if (!isRoomPoint(load(k), t, narration)) throw refuse("That is not a point of this room", "not_a_point");
       const mode = mix === "same" ? "same" : "switch", l = langOf(lang), born = resetGen.get(k.id) ?? 0;
-      const out = await roomClip(k.dir, t, { lang: l, mode, store: clipStore(o.dataDir, clipRoots()), signal, alive: () => (resetGen.get(k.id) ?? 0) === born,
+      const out = await roomClip(k.dir, t, { lang: l, mode, store: clipStore(o.dataDir, clipRoots()), signal, generation: born, alive: () => (resetGen.get(k.id) ?? 0) === born,
         speaker: async (s, sig) => (o.localSpeak ? o.localSpeak(l, mode) : kokoroSpeaker(await localSynth(), { lang: l, mode }))(s, sig) });
       return { src: `/api/review-room/${k.id}/voice/${out.name}`, cached: out.cached, engine: "kokoro" };
     },
