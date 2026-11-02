@@ -55,7 +55,7 @@ const allow = (...k: Keystore[]) => k.map((x) => ({ id: x.key, dh: b64u(x.dhPub)
   const rb = await readBody(e, reader(B)); ok("body" in rb && rb.body.kind === "done", "the recipient reads the body");
   ok("problem" in await readBody(e, reader(C)), "a non-recipient cannot read the body");
   ok(entryHash(e) === entryHash(JSON.parse(JSON.stringify(e))), "the entry hash is canonical");
-  ok(/protocol 1/.test(envelopeProblem({ ...e, v: 1 }) ?? ""), "a protocol 1 entry is refused (no fallback)"); }
+  ok(envelopeProblem({ ...e, v: 1 }) === "not an entry", "a protocol 1 entry is refused (no fallback)"); }
 { ok(cleanText("a‮b​c\u0007d", 100) === "a⟦U+202E⟧b⟦U+200B⟧cd", "bidi overrides and zero-width characters are shown, control characters dropped", cleanText("a‮b​c\u0007d", 100)); }
 { // the address guard: loopback only for the demo, never metadata, link-local, public or tailnet
   const saved = process.env.CREW_LAN_ALLOW_LOOPBACK; delete process.env.CREW_LAN_ALLOW_LOOPBACK;

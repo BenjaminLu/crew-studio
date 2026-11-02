@@ -14,7 +14,7 @@ const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", heade
 const onPage = () => S.route?.name === "lan";
 const typing = () => { const a = document.activeElement; return !!a && a.closest?.("[data-lan]") && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
 async function load() {
-  try { LN.v = await getJ("/api/lan"); LN.err = null; } catch (e) { LN.err = String(e.message || e); }
+  try { LN.v = await getJ("/api/lan"); LN.err = null; } catch (e) { LN.err = String(e.message || e); if (/區網協作啟動中/.test(LN.err)) setTimeout(() => { void load(); }, 2000); } // starting: the relay opens in the background
   if (onPage() && !LN.wf) { try { LN.wf = (await getJ("/api/lan/workflows")).workflows; } catch {} }
   if (onPage() && !LN.projects) { try { const p = await getJ("/api/projects"); LN.projects = (Array.isArray(p) ? p : p.projects || []).filter((x) => x.enabled !== false && x.path); } catch { LN.projects = []; } }
   badgeNav(); if (onPage() && !typing()) render();
@@ -127,14 +127,19 @@ function peers(v) {
 }
 /** commits this Studio applied from a peer's work: nothing trusted starts from them or publishes them until reviewed */
 function taints(v) {
-  const list = v.taints || []; if (!list.length) return null;
+  // one row per commit (it may be recorded in several folders: it is tainted in every repository that holds it)
+  const list = [...new Map((v.taints || []).map((t) => [t.sha, t])).values()];
+  if (v.taintProblem) return h("section", { class: "card lan-card", "data-lan-taints": "", "data-lan-taint-problem": "" },
+    h("div", { class: "card-h" }, icon("alert"), h("b", {}, T("The list of commits from peers cannot be read", "讀不到來自同事的 commit 清單"))),
+    h("div", { class: "lan-body" }, h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T(`Studio refuses every trusted start, review, merge and push until it can: ${v.taintProblem}`, `在能讀到之前，Studio 拒絕所有受信任的開始、送審、合併與推送：${v.taintProblem}`))));
+  if (!list.length) return null;
   return h("section", { class: "card lan-card", "data-lan-taints": "" },
     h("div", { class: "card-h" }, icon("alert"), h("b", {}, T("Commits from peers, not reviewed", "來自同事、尚未審查的 commit")), h("span", { class: "badge human" }, String(list.length))),
     h("div", { class: "lan-body" },
       h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T("Studio starts no trusted Task from these commits or anything built on them, sends none for review, merges or pushes none. Do not check a lan-untrusted/ branch out in a terminal, and do not ask Firstmate to review it: read the diff yourself.", "Studio 不會從這些 commit（或建立在它們之上的任何 commit）開始受信任的 Task、送審、合併或推送。不要在終端機 checkout lan-untrusted/ 分支，也不要請 Firstmate 審查：請自己讀 diff。")),
       list.map((t) => h("div", { class: "lan-row", "data-lan-taint": t.sha },
         h("b", { class: "mono" }, t.sha.slice(0, 12)), h("span", { class: "faint" }, `${t.project} · ${t.peer.name} · ${t.why}`),
-        h("button", { class: "btn", "data-lan-taint-clear": t.sha, onclick: () => { if (confirm(T(`You read commit ${t.sha.slice(0, 12)} yourself and keep it? It leaves this list (audited).`, `你親自讀過 commit ${t.sha.slice(0, 12)} 並要保留它？它會離開這個清單（會記入稽核）。`))) act("", () => postJ("/api/lan/taint/clear", { sha: t.sha, repo: t.repo })); } }, T(`I reviewed commit ${t.sha.slice(0, 7)}`, `我審查過 commit ${t.sha.slice(0, 7)}`))))));
+        h("button", { class: "btn", "data-lan-taint-clear": t.sha, onclick: () => { if (confirm(T(`You read commit ${t.sha.slice(0, 12)} yourself and keep it? It leaves this list (audited).`, `你親自讀過 commit ${t.sha.slice(0, 12)} 並要保留它？它會離開這個清單（會記入稽核）。`))) act("", () => postJ("/api/lan/taint/clear", { sha: t.sha })); } }, T(`I reviewed commit ${t.sha.slice(0, 7)}`, `我審查過 commit ${t.sha.slice(0, 7)}`))))));
 }
 function dispatchForm(v) {
   const peersOk = (v.peers || []).filter((p) => p.state === "trusted" && !p.frozen);
@@ -198,8 +203,11 @@ function itemDetail(i) {
       w?.output ? h("p", { class: "faint" }, w.output === "patch" ? T("It hands back one patch of what its worktree changed.", "它交回一份 patch（worktree 的變更）。") : T("It hands back the text files it made.", "它交回它產生的文字檔。")) : null,
       w?.needsProject ? field(T("Project (a code workflow works in its own worktree of it)", "專案（程式流程在它自己的 worktree 裡工作）"), h("select", { "data-lan-project": i.id, onchange: (e) => { t.project = e.target.value; } }, h("option", { value: "" }, T("Choose a project", "選擇專案")), (LN.projects || []).map((p) => h("option", { value: p.id, selected: p.id === t.project }, p.name || p.id)))) : null,
       h("label", { class: "lan-row" }, h("input", { type: "checkbox", "data-lan-rounds-only": i.id, checked: t.roundsOnly, onchange: (e) => { t.roundsOnly = e.target.checked; render(); } }), T("Rounds only: no dollar cap; every paid round of this Task, on any provider and judges included, counts toward the rounds cap", "只限輪數：不設金額上限；這個 Task 的每一輪付費 agent（任何供應商，含評審）都算進輪數上限")),
-      t.roundsOnly ? h("p", { class: "lan-warn", "data-lan-worst": i.id }, icon("alert", "ic sm"), (() => { const c = LN.v?.ceilings || { unknownRoundUsd: 1, dailyUsd: 20 }, n = Number(t.rounds) || 6, worst = (n * c.unknownRoundUsd).toFixed(2);
-        return T(`No dollar limit on this item. Worst case at the estimate: ${n} rounds × $${c.unknownRoundUsd.toFixed(2)} = $${worst}; every round is at most 15 minutes and 60 tool calls, and the daily ceiling over all work from peers${c.dailyUsd === null ? " is off" : ` ($${c.dailyUsd.toFixed(2)})`} still applies.`, `這個項目沒有金額上限。以估計值算的最壞情況：${n} 輪 × $${c.unknownRoundUsd.toFixed(2)} = $${worst}；每輪最多 15 分鐘、60 次工具呼叫，所有同事工作的每日上限${c.dailyUsd === null ? "已關閉" : `（$${c.dailyUsd.toFixed(2)}）`}仍然有效。`); })()) : null,
+      t.roundsOnly ? h("p", { class: "lan-warn", "data-lan-estimate": i.id }, icon("alert", "ic sm"), (() => { const c = LN.v?.ceilings || { unknownRoundUsd: 1, dailyUsd: 20 }, n = Number(t.rounds) || 6;
+        // the estimate a running round reserves: what this provider's rounds cost on this Mac, else the figure set for a round of unknown cost
+        const e = (LN.v?.estimates || {})[t.provider], known = typeof e === "number", est = known ? e : c.unknownRoundUsd, total = (n * est).toFixed(2);
+        const basis = known ? T(`what ${t.provider} rounds cost on this Mac so far`, `${t.provider} 在這台 Mac 上每輪的平均花費`) : T("the figure set for a round of unknown cost: no round of this provider reported one here yet", "未知花費一輪的設定值：這個供應商在這裡還沒有回報過花費");
+        return T(`No dollar limit on this item. Estimated $${est.toFixed(2)} per round (${basis}): about ${n} rounds × $${est.toFixed(2)} = $${total}, an estimate, not a limit; every round is at most 15 minutes and 60 tool calls, and the daily ceiling over all work from peers${c.dailyUsd === null ? " is off" : ` ($${c.dailyUsd.toFixed(2)})`} still applies.`, `這個項目沒有金額上限。估計每輪 $${est.toFixed(2)}（${basis}）：約 ${n} 輪 × $${est.toFixed(2)} = $${total}，這是估計、不是上限；每輪最多 15 分鐘、60 次工具呼叫，所有同事工作的每日上限${c.dailyUsd === null ? "已關閉" : `（$${c.dailyUsd.toFixed(2)}）`}仍然有效。`); })()) : null,
       h("p", { class: "faint" }, T(`The agent reads all of ${t.project || "its folder"}; anything it reads may be in the hand-back.`, `agent 會讀 ${t.project || "它的資料夾"} 的全部內容；它讀到的任何東西都可能出現在交回的內容裡。`)),
       h("label", { class: "lan-row" }, h("input", { type: "checkbox", "data-lan-auto-start": i.id, checked: t.autoStart, onchange: (e) => { t.autoStart = e.target.checked; } }), T("Start as soon as they assign it, with this exact cap (for 30 minutes; every check is made again then, and you get a notice and a stop button)", "對方一指派就開工，用這個上限（30 分鐘內有效；開工時會重新檢查，並通知你、附停止按鈕）")),
       w?.staffing ? h("label", { class: "lan-row" }, h("input", { type: "checkbox", checked: t.staffing, onchange: (e) => { t.staffing = e.target.checked; } }), T("I confirm who works on each node of this workflow", "我確認這個流程每個節點的人員配置")) : null,

@@ -12,10 +12,11 @@ the CSO review of the LAN boards prototype (its blockers are requirements) and t
    listeners.
 
 v1 has no auto-accept: every received item waits for a person on the desktop (the one exception is the taker's own opt-in auto-start of an assignment, below). Protocol 2 is the only protocol; nothing
-of protocol 1 (its single-key identity, its routes, its envelopes) is read or answered.
+of protocol 1 (its single-key identity, its routes, its envelopes) is read or answered, and no code migrates it: a
+protocol 1 key left in `lan/identity.key` is overwritten and removed when the identity is retired.
 
 Code: `src/lan/` (`crypto.ts`, `keystore.ts`, `se-helper.swift`, `noise.ts`, `wire.ts`, `protocol.ts`, `store.ts`,
-`relay.ts`, `profile.ts`, `runner.ts`, `apply.ts`, `paths.ts`, `scan.ts`, `routes.ts`), `startLan` in
+`relay.ts`, `profile.ts`, `ledger.ts`, `taint.ts`, `runner.ts`, `apply.ts`, `paths.ts`, `scan.ts`, `routes.ts`), `startLan` in
 `src/runtime/index.ts`, the engine's profile seam in `src/runtime/engine.ts`, `public/lan.js`, `public/lan.css`.
 Tests: `tests/lan-crypto.ts`, `tests/lan-keys.ts`, `tests/lan-identity.ts`, `tests/lan-store.ts`, `tests/lan-profile.ts`,
 `tests/lan-relay.ts`, `tests/lan-workflows.ts`, `tests/lan-ui.mjs` (`bun run test:lan`); mutations:
@@ -28,7 +29,8 @@ Tests: `tests/lan-crypto.ts`, `tests/lan-keys.ts`, `tests/lan-identity.ts`, `tes
   Every decision (allowlist, freeze, revocation, who may take a round) is keyed by it.
 - The admin key signs only what a person decides on this Mac: the certificate of the daily keys, each introduction (its
   signature is what puts a peer on the allowlist: a peer written into the state without it is not on it), a
-  revocation, a successor, a replacement.
+  revocation, a successor, a replacement, and "I reviewed commit X" (purpose `reviewed`: the commit leaves the taint
+  list, below).
 - Two **daily keys** do the rest: a signing key signs every entry of the own log, and a key agreement key is the Noise
   static key and the key every box sealed to this Studio is opened with. One certificate, signed by the admin key, binds
   both to the identity from a sequence number on; an entry names the hash of the certificate whose key signed it, and
@@ -36,14 +38,19 @@ Tests: `tests/lan-crypto.ts`, `tests/lan-keys.ts`, `tests/lan-identity.ts`, `tes
   v1 makes no new daily keys: replacing them is a new identity, below).
 - Three keystores, one contract (`src/lan/keystore.ts`, `tests/lan-keys.ts`):
   - **Secure Enclave** (a Mac with one, the default for a new identity): every key is made inside the enclave by a small
-    Swift helper Studio builds from `src/lan/se-helper.swift` on this Mac (`swiftc`, ad-hoc signed, no entitlements, no
-    Keychain) and talks to over stdin/stdout (one JSON request per line). Studio keeps only the blobs the enclave wrapped
+    Swift helper Studio builds from `src/lan/se-helper.swift` on this Mac (the compiler run as `/usr/bin/xcrun --sdk
+    macosx swiftc`, never from PATH; ad-hoc signed, no entitlements, no Keychain) and talks to over stdin/stdout (one
+    JSON request per line). The build runs in the background: Studio answers meanwhile and the Peers page says the relay
+    is starting until it opens. Two helper processes: the admin key's own, whose calls wait for Touch ID (up to two
+    minutes), and the daily keys', which never wait behind a prompt. Studio keeps only the blobs the enclave wrapped
     for this device (`lan/enclave.json`, 0600): copied to another machine they are useless. The admin key needs Touch ID
     or the login password for every signature (`.userPresence`; opt-in "biometry only" binds it to the fingerprints
     enrolled now, and the page warns that a change of fingerprints makes it unusable, so the identity must then be
     replaced in person), and the helper builds the prompt itself from what it
-    signs (a peer's fingerprint, a key's fingerprint, a sequence number), never from text Studio passes. The helper
-    signs a daily purpose only with a daily key and an admin purpose only with the admin key, and checks every field.
+    signs (a peer's fingerprint, a key's fingerprint, a sequence number, a commit), never from text Studio passes. The
+    helper signs a daily purpose (entries only) only with a daily key and an admin purpose only with the admin key, and
+    checks every field; a daily signature or key agreement loads its key with interaction not allowed, so a key that
+    needs Touch ID fails there instead of prompting.
   - **Files** (Linux, a Mac without an enclave, a helper that does not build): `lan/identity.json` and `lan/admin.key`,
     0600. The page and Doctor say plainly: 這台的身分可被本機程式讀取 (no Touch ID protection).
   - **Soft enclave** (tests only): the enclave's code over a stand-in with the same protocol and software keys
@@ -239,6 +246,10 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   get no inbound and no bind, so nothing in them can serve this Mac's LAN address; a check that wants the network does
   not run; no skill script runs; no dependency install runs and no install script (policies `install` and
   `install_scripts` are off for it).
+- **From a Task to a Task**: a Task started inside a step of a profiled Task (a tool, a staffing source, a review-room
+  host, a fresh proposal from a failure card) carries that profile, named explicitly, or it is not made (a profile
+  refusal). New task and Re-propose from a peer's Task's failure card are refused (it is taken again from the inbox);
+  New task from an issue-text Task keeps the issue profile and its mark.
 - **Spend cap**: every paid round (agent turns, coordinators, judges) is recorded on the Task itself
   (`ctx.lanRounds`, saved with it) when it is admitted, and its dollars when it ends; before the next one, the rounds
   and dollars are compared with the item's cap, so neither concurrency nor a restart reopens it. A provider that reports
@@ -249,9 +260,15 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   and a round that reports more than 2,000,000 tokens ends the Task's paid rounds. Dollars are shown on the thread as
   they are reported.
 - **Daily ceilings**: over every peer's Task on this Mac (rounds-only ones included), Studio-wide and on by default
-  ($20 and 60 rounds a day; editable on the Peers page): a round of unknown cost counts at an estimate ($1 by default)
-  against the dollar ceiling, and every round against the round ceiling. A round past either is refused before it starts.
-  A rounds-only take says so: no dollar limit, its worst case at the estimate, and the daily ceiling that still applies.
+  ($20 and 60 rounds a day; editable on the Peers page), per local day (they reset at this Mac's midnight). They are
+  counted in the spend ledger (`src/lan/ledger.ts`, `lan/spend.db`, its own store, open at every start whatever the relay
+  does), never summed over the Tasks Studio still lists, so a Task archived or purged keeps today's spend. A round counts
+  when it is admitted, its dollars reserved at the estimate for its provider and model (what that provider's rounds
+  reported here on average; the figure for a round of unknown cost, $1 by default, when none did); when it ends its
+  reported dollars replace the reservation, and a round whose provider reported none keeps it. A round past either
+  ceiling is refused before it starts; a ledger that cannot be read refuses every paid round. A rounds-only take says
+  so: no dollar limit, the estimated dollars per round and what that comes to (an estimate, not a limit), and the daily
+  ceiling that still applies.
 - **Auto-start, opt-in**: at the take the taker may tick "start as soon as they assign it, with this exact cap"
   (unticked by default). It lasts 30 minutes after the take. When the assignment arrives every check is made again (the
   peer still introduced, not frozen or revoked; the round current; the prompt the one the taker read; the item's cap
@@ -329,14 +346,21 @@ temporary index (`apply --cached`), committed with `commit-tree` onto the base t
 `lan-untrusted/<thread>-r<n>` with `update-ref`, so no clean or smudge filter of the repository and no hook runs.
 Nothing is merged, built, tested or pushed: the branch is read and diffed like any untrusted change.
 
-The commit joins Studio's **taint list** (`src/lan/taint.ts`, kept in the store with its peer and thread, audited). A
-commit is tainted when any recorded commit is its ancestor (`git merge-base --is-ancestor`), whatever its branch is
-called, so one commit on top of it under another name is still the peer's work. Studio starts no trusted Task from a
-tainted commit (repo.prepare checks the Task's base, a base Firstmate set included), sends none for review (Send for
-review, From existing branch), merges none and publishes none (every Studio push and pull request). The Peers page lists
-them, says not to check a `lan-untrusted/` branch out in a terminal or ask Firstmate to review it, and clears one only
-when a person says "I reviewed commit X" (audited). A commit from a peer that was later removed or replaced stays on
-the list, marked so.
+The commit joins Studio's **taint list** (`src/lan/taint.ts`) before any branch names it: after `commit-tree` and
+before `update-ref`, its row (the commit, the peer, the thread) is written to the list and an `apply-pending` audit row
+to the relay's store; a failure of either stops the apply with no branch, an `update-ref` that fails afterwards keeps
+the row, and an applier that names no recorded commit is an error. The list is its own store, `lan/taint.db` (0600,
+WAL, synchronous FULL), opened when Studio starts whatever the relay does (CREW_LAN=0, an identity lost, a relay that
+does not open) and never set aside with the relay's store. A commit is tainted when a recorded commit is it or its
+ancestor (`git merge-base --is-ancestor`) in any repository that holds the recorded commit, wherever the row was
+recorded (a moved folder, a second clone, a fetch into another clone), whatever its branch is called, so one commit on
+top of it under another name is still the peer's work. A list that cannot be read refuses every check, in every
+repository, with the reason. Studio starts no trusted Task from a tainted commit (repo.prepare checks the Task's base, a
+base Firstmate set included), sends none for review (Send for review, From existing branch), merges none and publishes
+none (every Studio push and pull request). The Peers page lists them, says not to check a `lan-untrusted/` branch out in
+a terminal or ask Firstmate to review it, and clears one only when a person says "I reviewed commit X": an admin
+signature (Touch ID on a Secure Enclave identity, its prompt naming the commit), kept in the audit row; the commit is
+then clear in every repository. A commit from a peer that was later removed or replaced stays on the list, marked so.
 
 ## Audit
 

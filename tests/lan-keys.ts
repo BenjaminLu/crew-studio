@@ -55,6 +55,16 @@ await contract("soft-enclave");
 { const d = dirOf("deny"), ks = (await openKeystore(d, { create: true, kind: "soft-enclave" })).ks!; writeFileSync(deny, "");
   let e = ""; try { await ks.admin("revoke", [ks.key, "3", "-", new Date().toISOString()]); } catch (x: any) { e = String(x?.message ?? x); }
   ok(/cancelled/.test(e), "an admin signature the person cancels is refused (nothing is signed)", e); Bun.spawnSync(["rm", deny]); ks.close(); }
+// a Touch ID prompt that waits for the person does not hold up the daily keys: the admin key has a helper process of its
+// own (each helper answers one request at a time, as the Swift helper does)
+{ const hold = join(dirOf("hold"), "hold"); process.env.CREW_SOFT_ENCLAVE_HOLD = hold;
+  const ks = (await openKeystore(dirOf("twohelpers"), { create: true, kind: "soft-enclave" })).ks!; writeFileSync(hold, "");
+  const pending = ks.admin("introduce", [b64u(generateKeyPair().pub), "a".repeat(64), new Date().toISOString()]).then(() => "signed", (e: any) => String(e?.message ?? e));
+  await Bun.sleep(200);
+  const daily = await Promise.race([Promise.all([ks.sign("entry", Buffer.from("x")), ks.dh(generateKeyPair().pub)]).then(() => "answered"), Bun.sleep(3000).then(() => "waited")]);
+  Bun.spawnSync(["rm", hold]); const adm = await pending;
+  ok(daily === "answered" && adm === "signed", "a daily signature and a key agreement are answered while an admin signature waits for Touch ID (two helper processes)", JSON.stringify([daily, adm]));
+  ks.close(); delete process.env.CREW_SOFT_ENCLAVE_HOLD; }
 // opt-in biometry only: the admin key is made for the fingerprints enrolled now (shown as such), daily keys unchanged
 { const d = dirOf("bio"), ks = (await openKeystore(d, { create: true, kind: "soft-enclave", presence: "biometry" })).ks!;
   const j = JSON.parse(readFileSync(join(d, "lan", "enclave.json"), "utf8")); ks.close();
@@ -71,22 +81,34 @@ await contract("soft-enclave");
   ok(/incomplete/.test(e), "a file identity missing its admin key is refused, never replaced", e); }
 
 // golden vectors: the Swift helper builds the same admin message and prompt as TypeScript (no Secure Enclave needed)
-{ const bin = process.platform === "darwin" && Bun.which("swiftc") ? buildHelper(dirOf("build")) : null;
+// the helper builds without blocking Studio (a background build while the relay waits), with the compiler found at a fixed
+// place (xcode-select's developer folder, or /usr/bin/xcrun), never from PATH
+{ const { swiftcPath } = await import("../src/lan/keystore") as any;
+  if (process.platform === "darwin") { const path0 = process.env.PATH; process.env.PATH = "/nonexistent"; const sw = swiftcPath(); process.env.PATH = path0;
+    ok(sw === null || (sw[0] === "/usr/bin/xcrun" && sw.at(-1) === "swiftc"), "the Swift compiler runs from a fixed place (/usr/bin/xcrun), not from PATH", JSON.stringify(sw));
+    if (sw) { let ticks = 0; const iv = setInterval(() => ticks++, 20); const t0 = Date.now(); const built = await buildHelper(dirOf("bg")); clearInterval(iv);
+      ok(!!built && ticks >= Math.floor((Date.now() - t0) / 20 / 3), "building the helper does not block the event loop (it runs in the background)", JSON.stringify({ ms: Date.now() - t0, ticks })); } } }
+{ const bin = process.platform === "darwin" && Bun.which("swiftc") ? await buildHelper(dirOf("build")) : null;
   if (!bin) console.log("  skip  golden vectors: no swiftc on this machine (the helper is built only on a Mac)");
   else {
     const swift = new Helper([bin]), soft = new Helper([process.execPath, join(import.meta.dir, "lan/soft-enclave.ts")]);
     const k1 = b64u(generateKeyPair().pub), k2 = b64u(generateKeyPair().pub), at = "2026-11-02T08:00:00.000Z";
-    const vectors: [string, string[]][] = [["cert", [k1, k2, "1", at]], ["introduce", [k1, "f".repeat(64), at]], ["revoke", [k1, "42", "-", at]], ["revoke", [k1, "42", k2, at]], ["successor", [k1, k2, at]], ["replace", [k1, k2, at]]];
+    const vectors: [string, string[]][] = [["cert", [k1, k2, "1", at]], ["introduce", [k1, "f".repeat(64), at]], ["revoke", [k1, "42", "-", at]], ["revoke", [k1, "42", k2, at]], ["successor", [k1, k2, at]], ["replace", [k1, k2, at]], ["reviewed", ["0123456789abcdef0123456789abcdef01234567", at]]];
     for (const [purpose, fields] of vectors) {
       const a = await swift.call({ op: "message", purpose, fields }), b = await soft.call({ op: "message", purpose, fields });
       ok(a.msg === b64u(adminMessage(fields)) && a.msg === b.msg && a.prompt === b.prompt, `golden: ${purpose} (${fields.length} fields): the Swift helper's message and prompt equal TypeScript's`, JSON.stringify([a.prompt, b.prompt]));
     }
-    for (const [purpose, fields] of [["cert", ["not a key", k2, "1", at]], ["introduce", [k1, "x y", at]], ["entry", [k1]], ["revoke", [k1, "-3", "-", at]]] as [string, string[]][]) {
+    for (const [purpose, fields] of [["cert", ["not a key", k2, "1", at]], ["introduce", [k1, "x y", at]], ["entry", [k1]], ["revoke", [k1, "-3", "-", at]], ["reviewed", ["not-a-commit", at]], ["reviewed", ["0123456789ABCDEF0123456789ABCDEF01234567", at]]] as [string, string[]][]) {
       let e = ""; try { await swift.call({ op: "message", purpose, fields }); } catch (x: any) { e = String(x?.message ?? x); }
       ok(!!e, `golden: the Swift helper refuses ${purpose} with ${JSON.stringify(fields).slice(0, 40)}`, e);
     }
     let e = ""; try { await swift.call({ op: "available", extra: 1 }); } catch (x: any) { e = String(x?.message ?? x); }
     ok(/unknown field/.test(e), "golden: the Swift helper refuses a field it does not know", e);
+    // a daily signature is an entry only: "cert-request" is not a daily purpose any more (the admin key certifies)
+    if ((await swift.call({ op: "available" })).se) { let e2 = ""; try { await swift.call({ op: "sign", blob: "AAAA", purpose: "cert-request", msg: "" }); } catch (x: any) { e2 = String(x?.message ?? x); }
+      ok(/not a daily purpose/.test(e2), "the Swift helper signs no daily purpose but entries (cert-request refused)", e2); }
+    { let e3 = ""; try { await soft.call({ op: "sign", blob: "AAAA", purpose: "cert-request", msg: "" }); } catch (x: any) { e3 = String(x?.message ?? x); }
+      ok(/not a daily purpose/.test(e3), "the stand-in signs no daily purpose but entries (cert-request refused)", e3); }
     swift.close(); soft.close();
   }
 }

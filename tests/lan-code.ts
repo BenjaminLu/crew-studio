@@ -61,16 +61,60 @@ await A.approve(it.id);
 { const x: any = tryApply({ seen: sha256hex(patch + " ") }); ok(/^unread:/.test(x.err ?? ""), "an apply naming another patch's hash is refused", x.err); }
 { const p = (A as any).peer(B.id.key); p.frozen = { at: "x", seq: 1, entries: ["a", "b"], why: "test" }; const x: any = tryApply({ seen: sha256hex(patch) }); p.frozen = null;
   ok(/^peer:/.test(x.err ?? ""), "a frozen peer's result is not applied", x.err); }
+// the commit is on the taint list before any branch names it: written (with an "apply-pending" audit row) after commit-tree and
+// before update-ref. An audit write that fails leaves no branch; an update-ref that fails keeps the row; an applier that
+// reports no commit is an error, never a silent apply with nothing recorded
+const branchOf = `lan-untrusted/${t.id.toLowerCase().replace(/[^a-z0-9-]/g, "-")}-r1`;
+const hasBranch = () => Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchOf}`], { cwd: repoA }).exitCode === 0;
+{ const st = A.store as any, keep = st.audit.bind(st); st.audit = (kind: string, data: unknown) => { if (kind === "apply-pending") throw new Error("disk full"); return keep(kind, data); };
+  const x: any = tryApply({ seen: sha256hex(patch) }); st.audit = keep;
+  const rows = A.view().taints.filter((r: any) => r.thread === t.id);
+  ok(/^apply:/.test(x.err ?? "") && !hasBranch() && rows.length === 1, "an audit write that fails stops the apply before any branch exists, and the commit stays on the taint list", JSON.stringify([x.err, hasBranch(), rows.length])); }
+{ const lock = join(repoA, ".git", "refs", "heads", "lan-untrusted"); Bun.spawnSync(["mkdir", "-p", lock]); writeFileSync(join(repoA, ".git", `refs/heads/${branchOf}.lock`), "");
+  const x: any = tryApply({ seen: sha256hex(patch) }); Bun.spawnSync(["rm", "-f", join(repoA, ".git", `refs/heads/${branchOf}.lock`)]);
+  const pend = A.auditView().rows.filter((r: any) => r.what === "apply-pending");
+  ok(/^apply:/.test(x.err ?? "") && !hasBranch() && A.view().taints.some((r: any) => r.thread === t.id) && pend.length >= 1, "an update-ref that fails keeps the taint row (and the apply-pending audit row)", JSON.stringify([x.err, hasBranch(), pend.length])); }
+{ const o = (A as any).o, keep = o.apply; o.apply = (a: any) => ({ branch: a.branch, path: repoA, files: ["new.txt"] });
+  const x: any = tryApply({ seen: sha256hex(patch) }); o.apply = keep;
+  ok(/^apply: .*no commit/.test(x.err ?? ""), "an applier that names no commit recorded on the taint list is an error, never an apply with nothing tainted", x.err); }
 { const x: any = tryApply({ seen: sha256hex(patch) });
   ok(x.branch && g(repoA, "rev-parse", `${x.commit}^`) === base0 && g(repoA, "show", `${x.commit}:new.txt`) === "from the peer", "a good result applies onto the base it names (the commit dispatched), on its own branch", JSON.stringify(x));
   ok(A.view().taints.some((r: any) => r.sha === x.commit && r.peer.key === B.id.key) && !!taintOf(repoA, x.commit), "the applied commit joins the taint list, with its peer and thread");
+  // the taint list follows the commit, not the folder: a second clone, a fetch into another clone, a moved folder
+  { const c2 = mkdtempSync(join(tmpdir(), "crew-lan-code-clone-")); g(c2, "clone", "-q", "--no-local", repoA, "."); g(c2, "fetch", "-q", "origin", `+refs/heads/${x.branch}:refs/heads/elsewhere`);
+    g(repoB, "fetch", "-q", repoA, `+refs/heads/${x.branch}:refs/heads/from-a`);
+    const moved = repoA + "-moved"; Bun.spawnSync(["mv", repoA, moved]);
+    const hits = [taintOf(c2, "elsewhere"), taintOf(repoB, "from-a"), taintOf(moved, x.commit)];
+    Bun.spawnSync(["mv", moved, repoA]);
+    ok(hits.every(Boolean), "a commit applied from a peer is tainted in a second clone, in another clone it was fetched into, and after the folder moved", JSON.stringify(hits.map(Boolean))); }
   // the dispatcher's base branch moves on: the result still applies where it was based, never onto the new base
   writeFileSync(join(repoA, "later.txt"), "later\n"); g(repoA, "add", "later.txt"); g(repoA, "commit", "-qm", "later");
   const mine = g(repoA, "rev-parse", "main"); ok(mine !== base0 && g(repoA, "rev-parse", `${x.commit}^`) === base0, "the applied commit's parent is the dispatched base, not the base branch as it is now"); }
 // a result based on another commit than the one dispatched is not applied
 { const th = (A as any).thread(t.id), r = th.rounds[0]; r.result.base = "f".repeat(40);
   const x: any = tryApply({ seen: sha256hex(patch) }); ok(/^base:/.test(x.err ?? ""), "a result based on another commit than the one this thread dispatched is not applied (never onto another base)", x.err); r.result.base = base0; }
+// a step that fails is rolled back in place: a reference taken before it sees the state as it was, and is still the one
+// the relay holds (never an orphaned copy)
+{ const th = (A as any).thread(t.id), title0 = th.title, n0 = th.rounds.length, threads0 = (A as any).st.threads.length;
+  try { (A as any).step(() => { th.title = "changed in a step that fails"; th.rounds.push({ n: 99 }); (A as any).st.threads.unshift({ id: "ghost", rounds: [], steps: [] }); throw new Error("fails"); }); } catch {}
+  ok((A as any).thread(t.id) === th && th.title === title0 && th.rounds.length === n0 && (A as any).st.threads.length === threads0 && !(A as any).thread("ghost"), "a failed step is rolled back in place: a reference held before it is the relay's own again, with what it held before", JSON.stringify([(A as any).thread(t.id) === th, th.title, th.rounds.length])); }
+// the taint list outlives the relay: closed, its records are still in lan/taint.db, opened on their own (as at a start with
+// CREW_LAN=0); clearing one commit ("I reviewed commit X") clears it in every repository
+const dirA = (A as any).o.dataDir, applied = A.view().taints.find((r: any) => r.thread === t.id && hasBranch() && g(repoA, "rev-parse", branchOf) === r.sha)?.sha;
 A.close(); B.close();
+{ const { openTaintList, setTaintSource } = await import("../src/lan/taint") as any; setTaintSource(null);
+  const list = openTaintList(dirA);
+  ok(!!applied && !!taintOf(repoA, applied), "with the relay closed, the taint list opened on its own still holds the applied commit", String(applied));
+  list.close(); setTaintSource(null);
+  // "I reviewed commit X" is an admin signature (purpose "reviewed", over the commit and the time), kept in the audit row;
+  // the commit is then clear in every repository that holds it
+  const A2 = await Lan.open({ dataDir: dirA, runner: runner(), bind: "127.0.0.1", port: 0 });
+  await A2.clearTaint(applied);
+  const row = A2.auditView().rows.reverse().find((r: any) => r.what === "taint-cleared") as any;
+  const { verifyAdmin } = await import("../src/lan/keystore"), { unb64u } = await import("../src/lan/crypto");
+  ok(!!row && verifyAdmin((A2 as any).ks.identity, "reviewed", [applied!, row.data.at], unb64u(row.data.sig, 64)), "clearing a commit is signed with the admin key (purpose reviewed), and the audit row keeps the signature", JSON.stringify(row?.data));
+  ok(!taintOf(repoA, applied!) && !taintOf(repoB, "from-a"), "a commit cleared by its SHA is clear in every repository that holds it");
+  A2.close(); }
 
 // a hand-back cannot carry a binary file: the preview says so and the send is refused (never a silent drop)
 { const out = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }, { path: "chart.png", text: null, bytes: 2048 }], changed: ["report.md", "chart.png"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" as const };

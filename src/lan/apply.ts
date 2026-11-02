@@ -92,7 +92,7 @@ export function pinBase(repo: string, sha: string): string {
 }
 
 export function lanApplier(o: { dataDir: string; project: (id: string) => { path: string; base?: string } | null }) {
-  return ({ project, patch, branch, base: parent }: { project: string; patch: string; branch: string; base: string }) => {
+  return ({ project, patch, branch, base: parent, record }: { project: string; patch: string; branch: string; base: string; record: (commit: string, repo: string) => void }) => {
     const p = o.project(project); if (!p?.path || !run(p.path, ["rev-parse", "--git-dir"]).ok) throw new Error(`no registered project ${project} with a git repository`);
     if (!/^lan-untrusted\/[a-z0-9-]+-r\d+$/.test(branch)) throw new Error("bad branch name");
     // the result applies to the commit it names (the dispatcher's own base, sent with the dispatch): never to whatever the
@@ -116,6 +116,8 @@ export function lanApplier(o: { dataDir: string; project: (id: string) => { path
       const tree = must(["write-tree"]);
       for (const x of paths.filter((y) => /(^|\/)package\.json$/i.test(y))) { const hit = protectedHit(x, blob(tree, x), blob(baseCommit.out.trim(), x)); if (hit) throw new Error(`refused: ${hit}`); }
       const commit = must(["commit-tree", tree, "-p", baseCommit.out.trim(), "-m", `Work from a peer's Studio (${branch}): not reviewed yet`]);
+      // on the taint list (its row and the audit row written) before any branch names the commit
+      record(commit, repo);
       must(["update-ref", `refs/heads/${branch}`, commit, ""]); // "" as the old value: the branch must not exist yet
       return { branch, path: repo, files: paths, commit, repo };
     } finally { rmSync(tmp, { recursive: true, force: true }); }

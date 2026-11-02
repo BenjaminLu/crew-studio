@@ -141,6 +141,36 @@ try{
   const after=await tryIt(top,'agent/on-top');
   ok(!/holds work from a peer/.test(after),'once a person marked the commit reviewed, the taint no longer refuses it',after);
   setTaintSource(null);}
+ // the taint list is its own store (lan/taint.db), opened at start whatever the relay does, and it matches by commit, not by
+ // folder: with no relay (CREW_LAN=0), with this Studio's identity lost, after a replace set the relay's store aside, and for a
+ // row recorded under another folder (the project moved, a second clone), Send for review of a tainted commit is refused;
+ // a list that cannot be read refuses every trusted start and publish, in every repository, with the reason
+ {const {setTaintSource,TaintStore,openTaintList}=await import('../src/lan/taint') as any;const {Lan}=await import('../src/lan/relay');const {Store}=await import('../src/lan/store');
+  setTaintSource(null);
+  const pc=git(claudeRepo,['rev-parse','lan-untrusted/peer-thread-r1']),top=git(claudeRepo,['rev-parse','agent/on-top']),plain=(()=>{git(claudeRepo,['checkout','-q','-b','agent/plain','main']);writeFileSync(join(claudeRepo,'plain.txt'),'plain\n');git(claudeRepo,['add','plain.txt']);git(claudeRepo,['-c','user.name=Me','-c','user.email=me@example.invalid','commit','-q','-m','plain']);const c=git(claudeRepo,['rev-parse','HEAD']);git(claudeRepo,['checkout','-q','main']);return c;})();
+  const row={sha:pc,repo:join(repoHome,'moved-away'),project:'claude-crew',peer:'peer-key',thread:'t1',round:1,at:new Date().toISOString(),why:'applied from a peer'};
+  const tryIt=async(commit:string,branch:string)=>{try{await rt.startFromBranch({project:'claude-crew',commit,branch,terminal:'T-board-start',label:'claude',by:'desktop'});return 'started';}catch(e:any){return `${e?.code}: ${e?.message}`;}};
+  const seed=(d:string)=>{const s=new TaintStore(join(d,'lan','taint.db'));s.add(row);s.close();};
+  const runner:any={workflows:()=>[],start:async()=>{throw new Error('no');},status:()=>null,output:async()=>{throw new Error('no');},cancel:()=>{}};
+  {const d=checkedTempDir('board-start-taint-off-');seed(d);const list=openTaintList(d);
+   const r=await tryIt(top,'agent/on-top');
+   ok(/^lan_untrusted: .*holds work from a peer/.test(r),'with no relay at all (CREW_LAN=0) the taint list is open from its own store: Send for review of a tainted commit is refused, though the row names another folder',r);
+   list.close();setTaintSource(null);}
+  {const d=checkedTempDir('board-start-taint-lost-');seed(d);const st=new Store(join(d,'lan','relay.db'));st.putMeta({proto:2,identity:'gone',log:true,peers:1});st.close();
+   const list=openTaintList(d),lan=await Lan.open({dataDir:d,keystore:'file',runner,taint:list} as any);
+   const r1=await tryIt(top,'agent/on-top');
+   ok(!!lan.lost&&/^lan_untrusted: .*holds work from a peer/.test(r1),'with this Studio\'s LAN identity lost, Send for review of a tainted commit is still refused',JSON.stringify([lan.lost,r1]));
+   await lan.replaceLostIdentity({kind:'file'});const r2=await tryIt(top,'agent/on-top');
+   ok(/^lan_untrusted: .*holds work from a peer/.test(r2),'after a replace sets the relay\'s store aside, Send for review of a tainted commit is still refused',r2);
+   lan.close();list.close();setTaintSource(null);}
+  {const d=checkedTempDir('board-start-taint-bad-');spawnSync('mkdir',['-p',join(d,'lan')]);writeFileSync(join(d,'lan','taint.db'),'this is not a database, it was damaged\n'.repeat(200));
+   const list=openTaintList(d),r=await tryIt(plain,'agent/plain');
+   ok(/^lan_untrusted: .*cannot be read/.test(r),'a taint list that cannot be read refuses Send for review of any commit, with the reason',r);
+   const prepX={run:{id:'R-taint-bad',params:{project:'claude-crew',base:'main'}},ctx:{},rn:{note:''},policy:()=>'crew/'} as any;
+   let perr='';try{E.actions['repo.prepare'](prepX);}catch(e:any){perr=String(e?.message??e);}
+   ok(/cannot be read/.test(perr),'a taint list that cannot be read refuses a trusted Task\'s base, in any repository',perr.slice(0,200));
+   list.close();setTaintSource(null);}
+ }
  claudeVerified.clear();verifyPasses=false;
  // Codex whose quota cannot be read now: a hold with that reason, never a failed verification and no backoff
  {const keep=codexQuota;codexQuota='unknown';const calls=verifyCalls.length,o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'}});

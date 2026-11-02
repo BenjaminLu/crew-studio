@@ -89,6 +89,9 @@ try {
   await pb.reload(); await pb.locator("[data-lan-take-wf]").waitFor({ timeout: 15000 });
   ok(await pb.locator('[data-lan-take-wf] option[value="file-organization"]').isDisabled(), "a workflow outside the LAN profile (it moves your files) is offered but cannot be picked");
   await pb.selectOption("[data-lan-take-wf]", "documents"); await pb.selectOption("[data-lan-provider]", "codex");
+  await pb.locator("[data-lan-rounds-only]").check(); const est = await pb.locator("[data-lan-estimate]").innerText();
+  ok(/Estimated \$\d+\.\d\d per round|估計每輪 \$\d+\.\d\d/.test(est) && /an estimate, not a limit|這是估計、不是上限/.test(est) && !/worst|最壞/i.test(est), "rounds only: the dialog gives the estimated dollars per round, an estimate, never called a worst case", est);
+  await pb.locator("[data-lan-rounds-only]").uncheck();
   await pb.locator("[data-lan-content]").evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); }); // read to its end
   await pb.locator("[data-lan-approve]").click();
   await pa.reload(); await pa.locator('[data-lan-item]').first().waitFor({ timeout: 15000 });

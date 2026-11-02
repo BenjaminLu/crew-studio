@@ -19,8 +19,8 @@ import LocalAuthentication
 import Security
 
 let DOMAIN = "crew-studio/lan/v2"
-let DAILY: Set<String> = ["entry", "cert-request"]
-let ADMIN: Set<String> = ["cert", "introduce", "revoke", "successor", "replace"]
+let DAILY: Set<String> = ["entry"]
+let ADMIN: Set<String> = ["cert", "introduce", "revoke", "successor", "replace", "reviewed"]
 let BLOB = 4096
 
 func out(_ o: [String: Any]) {
@@ -65,6 +65,9 @@ func adminMessage(_ purpose: String, _ raw: Any?) throws -> (Data, String) {
     prompt = "確認新身分 \(try key(1)) 接替 \(try key(0))"
   case "replace": guard fields.count == 3 else { throw Refusal(why: "replace: old identity, new identity, time") }
     prompt = "以新身分 \(try key(1)) 取代同事 \(try key(0))（當面確認過短碼）"
+  case "reviewed": guard fields.count == 2 else { throw Refusal(why: "reviewed: commit, time") }
+    guard fields[0].count == 40, fields[0].unicodeScalars.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) }) else { throw Refusal(why: "field 0 is not a commit") }
+    prompt = "我已親自審查來自同事的 commit \(fields[0].prefix(12))，讓它離開不受信任清單"
   default: throw Refusal(why: "not an admin purpose")
   }
   return (Data(fields.joined(separator: "\u{0}").utf8), prompt)
@@ -96,12 +99,15 @@ func handle(_ req: [String: Any]) throws -> [String: Any] {
   case "sign":
     guard let purpose = req["purpose"] as? String, DAILY.contains(purpose) else { throw Refusal(why: "not a daily purpose") }
     let blob = try field(req["blob"], "blob", max: BLOB), msg = try field(req["msg"], "msg", max: 256 * 1024)
-    let k = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob)
+    // a daily key never prompts: a key that needs Touch ID or the password (the admin key) fails here instead of asking
+    let quiet = LAContext(); quiet.interactionNotAllowed = true
+    let k = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob, authenticationContext: quiet)
     return ["ok": true, "sig": b64url(try k.signature(for: signed(purpose, msg)).rawRepresentation)]
   case "dh":
     let blob = try field(req["blob"], "blob", max: BLOB), peer = try field(req["peer"], "peer", max: 65)
     guard peer.count == 65 else { throw Refusal(why: "bad peer key") }
-    let k = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob)
+    let quiet = LAContext(); quiet.interactionNotAllowed = true
+    let k = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob, authenticationContext: quiet)
     let s = try k.sharedSecretFromKeyAgreement(with: try P256.KeyAgreement.PublicKey(x963Representation: peer))
     return ["ok": true, "secret": b64url(s.withUnsafeBytes { Data($0) })]
   case "admin":

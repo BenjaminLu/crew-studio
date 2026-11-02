@@ -25,7 +25,9 @@ import { b64u, canonical, dh as softDh, fingerprint, generateKeyPair, keyPairOf,
 import { scrubEnv } from "../secure";
 
 export type KeystoreKind = "enclave" | "file" | "soft-enclave";
-export const ADMIN_PURPOSES = ["cert", "introduce", "revoke", "successor", "replace"] as const;
+/** admin signatures: certify the daily keys, introduce a peer, revoke this identity, accept a successor, replace a peer in
+ *  person, and mark a commit applied from a peer reviewed (it leaves the taint list) */
+export const ADMIN_PURPOSES = ["cert", "introduce", "revoke", "successor", "replace", "reviewed"] as const;
 export type AdminPurpose = typeof ADMIN_PURPOSES[number];
 /** daily signatures: entries only (an admin purpose is never signed by a daily key) */
 export const DAILY_PURPOSES = ["entry"] as const;
@@ -130,6 +132,8 @@ function openFile(home: string, create: boolean): FileKeystore | null {
 export class Helper {
   private p: ReturnType<typeof Bun.spawn> | null = null; private n = 0; private wait = new Map<number, { ok: (v: any) => void; no: (e: Error) => void }>(); private buf = "";
   constructor(private readonly argv: string[]) {}
+  /** another process of the same helper (the admin key's own: a Touch ID prompt never holds up a daily signature) */
+  twin() { return new Helper(this.argv); }
   private start() {
     if (this.p) return this.p;
     const p = Bun.spawn(this.argv, { stdin: "pipe", stdout: "pipe", stderr: "ignore", env: scrubEnv() });
@@ -153,14 +157,17 @@ export class Helper {
 const SE_KEY = (v: any) => !!v && typeof v.blob === "string" && v.blob.length <= 8192 && typeof v.pub === "string";
 class EnclaveKeystore implements Keystore {
   readonly key: string; readonly fingerprint: string; readonly identity: Buffer; readonly signPub: Buffer; readonly dhPub: Buffer; private sk?: Promise<Buffer>;
+  /** the admin key's own helper process: its calls wait for Touch ID (up to two minutes), the daily ones never do */
+  private readonly ha: Helper;
   constructor(readonly kind: "enclave" | "soft-enclave", private h: Helper, private blobs: { admin: string; sign: string; dh: string }, pubs: { admin: Buffer; sign: Buffer; dh: Buffer }, readonly cert: Cert, readonly adminGuard: "presence" | "biometry" = "presence") {
     this.identity = pubs.admin; this.key = b64u(pubs.admin); this.fingerprint = fingerprint(pubs.admin); this.signPub = pubs.sign; this.dhPub = pubs.dh;
+    this.ha = h.twin();
   }
   async sign(purpose: "entry", msg: Uint8Array) { const r = await this.h.call({ op: "sign", blob: this.blobs.sign, purpose, msg: Buffer.from(msg).toString("base64") }, 30_000); return unb64u(r.sig, 64); }
   async dh(peer: Uint8Array) { const r = await this.h.call({ op: "dh", blob: this.blobs.dh, peer: b64u(peer) }, 30_000); return unb64u(r.secret, 32); }
-  async admin(purpose: AdminPurpose, fields: string[]) { if (!adminFieldsOk(fields)) throw new Error("not an admin message"); const r = await this.h.call({ op: "admin", blob: this.blobs.admin, purpose, fields }); return unb64u(r.sig, 64); }
+  async admin(purpose: AdminPurpose, fields: string[]) { if (!adminFieldsOk(fields)) throw new Error("not an admin message"); const r = await this.ha.call({ op: "admin", blob: this.blobs.admin, purpose, fields }); return unb64u(r.sig, 64); }
   storageKey() { return (this.sk ??= storage(this)); }
-  close() { this.h.close(); }
+  close() { this.h.close(); this.ha.close(); }
 }
 async function openEnclave(home: string, kind: "enclave" | "soft-enclave", h: Helper, create: boolean, presence: boolean | "biometry"): Promise<EnclaveKeystore | null> {
   const f = files(home);
@@ -189,18 +196,30 @@ async function openEnclave(home: string, kind: "enclave" | "soft-enclave", h: He
   return new EnclaveKeystore(kind, h, { admin: admin.blob, sign: sign.blob, dh: dh.blob }, { admin: admin.pub, sign: sign.pub, dh: dh.pub }, cert, presence === "biometry" ? "biometry" : "presence");
 }
 
+/** How to run the Swift compiler, from a fixed place, never from PATH: /usr/bin/xcrun with the macOS SDK (it resolves the
+ *  compiler in the developer folder xcode-select names, and sets the SDK the compiler needs). Null without developer
+ *  tools (nothing is run that would offer to install them). */
+export function swiftcPath(): string[] | null {
+  if (process.platform !== "darwin" || !existsSync("/usr/bin/xcode-select") || !existsSync("/usr/bin/xcrun")) return null;
+  const dev = Bun.spawnSync(["/usr/bin/xcode-select", "-p"], { stdout: "pipe", stderr: "ignore", timeout: 10_000, env: scrubEnv() }); if (dev.exitCode !== 0) return null;
+  const root = dev.stdout.toString().trim(); if (!root.startsWith("/") || !existsSync(root)) return null;
+  const x = Bun.spawnSync(["/usr/bin/xcrun", "--sdk", "macosx", "--find", "swiftc"], { stdout: "pipe", stderr: "ignore", timeout: 20_000, env: scrubEnv() });
+  const p = x.exitCode === 0 ? x.stdout.toString().trim() : ""; return p.startsWith("/") && existsSync(p) ? ["/usr/bin/xcrun", "--sdk", "macosx", "swiftc"] : null;
+}
 /** The helper binary for this Mac: built once per source version into Studio's data folder, ad-hoc signed; null when
- *  swiftc is not here or the build fails (Studio then keeps a file identity and says so). */
-export function buildHelper(dataDir: string): string | null {
+ *  there is no Swift compiler or the build fails (Studio then keeps a file identity and says so). The build runs in the
+ *  background (Studio keeps answering; the relay opens when it is done). */
+export async function buildHelper(dataDir: string): Promise<string | null> {
   if (process.platform !== "darwin") return null;
-  const swiftc = Bun.which("swiftc"); if (!swiftc) return null;
   const dir = join(dataDir, "lan", "helper"), bin = join(dir, `crew-lan-se-${sha256hex(SRC).slice(0, 12)}`);
   if (existsSync(bin)) return bin;
+  const swiftc = swiftcPath(); if (!swiftc) return null;
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 }); const src = join(dir, "se-helper.swift"); writeFileSync(src, SRC, { mode: 0o600 });
     const tmp = `${bin}.${randomBytes(4).toString("hex")}.tmp`;
-    const b = Bun.spawnSync([swiftc, "-O", "-o", tmp, src], { stdout: "ignore", stderr: "pipe", timeout: 300_000, env: scrubEnv() }); if (b.exitCode !== 0) return null;
-    Bun.spawnSync(["/usr/bin/codesign", "--force", "-s", "-", tmp], { stdout: "ignore", stderr: "ignore", timeout: 60_000 });
+    const run = async (argv: string[], ms: number) => { const p = Bun.spawn(argv, { stdout: "ignore", stderr: "ignore", env: scrubEnv() }); const t = setTimeout(() => p.kill(), ms); try { return await p.exited; } finally { clearTimeout(t); } };
+    if (await run([...swiftc, "-O", "-o", tmp, src], 300_000) !== 0) { rmSync(tmp, { force: true }); return null; }
+    await run(["/usr/bin/codesign", "--force", "-s", "-", tmp], 60_000);
     renameSync(tmp, bin); return bin;
   } catch { return null; }
 }
@@ -225,7 +244,7 @@ export async function openKeystore(dataDir: string, o: { create: boolean; kind?:
     const h = new Helper(o.helper ?? [process.execPath, join(import.meta.dir, "../../tests/lan/soft-enclave.ts")]);
     return { ks: await openEnclave(home, "soft-enclave", h, o.create, o.presence ?? true) };
   }
-  const bin = o.helper ? null : buildHelper(dataDir);
+  const bin = o.helper ? null : await buildHelper(dataDir);
   if (!o.helper && !bin) {
     if (have === "enclave") return { ks: null, why: "the Secure Enclave helper cannot be built on this Mac (swiftc is needed): the identity kept in the enclave cannot be used" };
     return { ks: openFile(home, o.create), fallback: "the Secure Enclave helper could not be built; the identity is kept in files" };
@@ -242,6 +261,4 @@ function defaultEnclave(dataDir: string) {
   if (underTmp(dataDir) && process.env.CREW_LAN_REAL_SE !== "1") return false;
   return true;
 }
-/** the old version 1 identity file: not read by this version (protocol 2 has no single-key identity) */
-export const v1IdentityFile = (dataDir: string) => files(join(dataDir, "lan")).v1;
 export const identityFiles = files;

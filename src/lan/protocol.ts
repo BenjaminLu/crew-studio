@@ -55,7 +55,7 @@ export function bodyProblem(b: any): string | null {
 }
 /** The reason an envelope's shape is wrong (before any signature check), or null. */
 export function envelopeProblem(e: any): string | null {
-  if (!plainObj(e) || e.v !== 2) return plainObj(e) && e.v === 1 ? "a protocol 1 entry: this Studio speaks protocol 2 only" : "not an entry";
+  if (!plainObj(e) || e.v !== 2) return "not an entry";
   if (!only(e, ["v", "a", "c", "seq", "prev", "ts", "to", "box", "sig"])) return "not an entry";
   if (!HEX64.test(String(e.c))) return "bad certificate hash";
   let size = 0; try { size = canonical(e).length; } catch { return "not canonical data"; }

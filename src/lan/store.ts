@@ -11,7 +11,6 @@
 //   blobs      sealed briefings and results; `used` as above
 //   chain      each author's sequence numbers → entry hash (fork detection), with a per-author low-water mark in `marks`
 //   verdicts   the decision on every received entry (an entry sent again keeps it)
-//   taint      commits Studio applied from a peer's work, with the peer and the thread (src/lan/taint.ts)
 //   audit      the hash-chained audit log: each row carries the hash of the one before; a write that fails stops the step
 // Bodies are kept sealed (each to its recipients' keys); nothing here is plaintext of a peer's briefing or result.
 import { Database } from "bun:sqlite";
@@ -20,7 +19,6 @@ import { dirname } from "node:path";
 import { aeadOpen, aeadSeal, canonical, randomBytes, sha256hex } from "./crypto";
 
 export type AuditRow = { n: number; at: string; what: string; data: Record<string, unknown>; prev: string; hash: string };
-export type TaintRow = { sha: string; repo: string; project: string; peer: string; thread: string; round: number; at: string; why: string; cleared: string | null; clearedBy: string | null };
 
 const GENESIS = "0".repeat(64);
 const now = () => new Date().toISOString();
@@ -40,7 +38,6 @@ export class Store {
       CREATE TABLE IF NOT EXISTS chain (author TEXT NOT NULL, seq INTEGER NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (author, seq));
       CREATE TABLE IF NOT EXISTS marks (author TEXT PRIMARY KEY, low INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS verdicts (hash TEXT PRIMARY KEY, verdict TEXT NOT NULL, at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS taint (sha TEXT NOT NULL, repo TEXT NOT NULL, project TEXT NOT NULL, peer TEXT NOT NULL, thread TEXT NOT NULL, round INTEGER NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL, cleared TEXT, cleared_by TEXT, PRIMARY KEY (sha, repo));
       CREATE TABLE IF NOT EXISTS audit (n INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, what TEXT NOT NULL, data TEXT NOT NULL, prev TEXT NOT NULL, hash TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS entries_thread ON entries(thread);
       CREATE INDEX IF NOT EXISTS blobs_thread ON blobs(thread);
@@ -125,17 +122,6 @@ export class Store {
   verdict(hash: string): string | null { const r = this.db.query("SELECT verdict FROM verdicts WHERE hash = ?").get(hash) as { verdict: string } | null; return r?.verdict ?? null; }
   setVerdict(hash: string, v: string) { this.db.query("INSERT INTO verdicts (hash, verdict, at) VALUES (?, ?, ?) ON CONFLICT(hash) DO NOTHING").run(hash, v, now()); }
   trimVerdicts(keep: number) { this.db.query("DELETE FROM verdicts WHERE rowid IN (SELECT rowid FROM verdicts ORDER BY rowid DESC LIMIT -1 OFFSET ?)").run(keep); }
-
-  // ---------- taint ----------
-  addTaint(t: Omit<TaintRow, "cleared" | "clearedBy">) {
-    this.db.query("INSERT INTO taint (sha, repo, project, peer, thread, round, at, why) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sha, repo) DO UPDATE SET cleared = NULL, cleared_by = NULL").run(t.sha, t.repo, t.project, t.peer, t.thread, t.round, t.at, t.why);
-  }
-  taints(repo?: string): TaintRow[] {
-    const rows = (repo ? this.db.query("SELECT * FROM taint WHERE repo = ?").all(repo) : this.db.query("SELECT * FROM taint").all()) as any[];
-    return rows.map((r) => ({ sha: r.sha, repo: r.repo, project: r.project, peer: r.peer, thread: r.thread, round: r.round, at: r.at, why: r.why, cleared: r.cleared ?? null, clearedBy: r.cleared_by ?? null }));
-  }
-  retagTaint(peer: string, why: string) { this.db.query("UPDATE taint SET why = ? WHERE peer = ?").run(why, peer); }
-  clearTaint(sha: string, repo: string, by: string): boolean { return this.db.query("UPDATE taint SET cleared = ?, cleared_by = ? WHERE sha = ? AND repo = ? AND cleared IS NULL").run(now(), by, sha, repo).changes > 0; }
 
   // ---------- the hash-chained audit ----------
   /** one audit row, chained to the one before; it throws when it cannot be written (the step it records does not happen) */

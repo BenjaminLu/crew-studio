@@ -11,11 +11,12 @@ const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { sta
 const KEY = "[A-Za-z0-9_-]{87}", ID = "[A-Za-z0-9_-]{8,64}";
 const KINDS = ["file", "enclave"];
 
-export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean, pageCookie: boolean): Promise<Response | null> {
+export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean, pageCookie: boolean, opening = false): Promise<Response | null> {
   const p = url.pathname; if (p !== "/api/lan" && !p.startsWith("/api/lan/")) return null;
   if (who.kind !== "desktop") return json({ error: "board-to-board work is on the Mac only / 區網協作只能在這台 Mac 上操作", code: "desktopOnly" }, 403);
   if (!pageCookie || req.headers.get("sec-fetch-site") !== "same-origin" || (writing && req.headers.get("origin") !== url.origin))
     return json({ error: "board-to-board work answers only Studio's own page on this Mac (its session cookie, same origin); a script's x-crew-session is not enough / 區網協作只接受這台 Mac 上 Studio 自己的頁面", code: "pageOnly" }, 403);
+  if (!lan && opening) return json({ error: "board-to-board work is starting (a first start builds this Mac's Secure Enclave helper) / 區網協作啟動中", code: "starting" }, 503);
   if (!lan) return json({ error: "board-to-board work is not available in this Studio", code: "off" }, 404);
   let b: any = {}; if (writing) { try { b = await req.json(); } catch { return json({ error: "json only" }, 400); } if (!b || typeof b !== "object") b = {}; }
   const m = (re: string) => new RegExp(`^/api/lan/${re}$`).exec(p);
@@ -42,7 +43,7 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     if (p === "/api/lan/identity/drop-retired") return json(lan.dropRetirement(String(b.key ?? "")));
     if (p === "/api/lan/dispatch") return json(await lan.dispatch({ to: String(b.to ?? ""), title: b.title, briefing: b.briefing, acceptance: b.acceptance, workflow: b.workflow ? String(b.workflow) : null, project: b.project ? String(b.project) : null }));
     // "I reviewed commit X": a commit applied from a peer's work leaves the taint list
-    if (p === "/api/lan/taint/clear") return json(lan.clearTaint(b.sha, b.repo));
+    if (p === "/api/lan/taint/clear") return json(await lan.clearTaint(b.sha));
     let x = m(`intro/(${ID})/(confirm|cancel)`);
     if (x) return json(x[2] === "confirm" ? await lan.confirmIntro(x[1], b.code, b.petname, { replaces: typeof b.replaces === "string" && new RegExp(`^${KEY}$`).test(b.replaces) ? b.replaces : null, keepName: b.keepName === true }) : lan.cancelIntro(x[1]));
     x = m(`peers/(${KEY})/(rename|unpair|revoke|resolve|address)`);

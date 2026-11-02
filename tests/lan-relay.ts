@@ -17,6 +17,7 @@ import { drive } from "./acceptance/drive";
 import { bootPair, codeRelay, introduce, must, relay, seenOf, until, type Pair } from "./lan/flow";
 import { entryHash } from "../src/lan/protocol";
 import { suite } from "./rt-harness";
+import { bootStudio } from "./acceptance/studio";
 const { ok, end } = suite("lan-relay");
 process.env.CREW_LAN_ALLOW_LOOPBACK = "1"; // this process dials the two loopback listeners as a peer would
 
@@ -70,7 +71,11 @@ try {
     const shown = Bun.spawnSync(["git", "-C", proj.path, "show", `${c.applied.branch}:lib/discount.ts`], { stdout: "pipe", stderr: "pipe" }).stdout.toString();
     ok(/discount/.test(shown) && c.applied.branch.startsWith("lan-untrusted/"), "A applied the patch to its own project on a lan-untrusted/ branch of its own", c.applied.branch);
     const again = await p.A.api(`/api/lan/threads/${c.thread}/apply`, { project: "sandbox" });
-    ok(again.status === 409, "the same result is not applied twice", String(again.status)); }
+    ok(again.status === 409, "the same result is not applied twice", String(again.status));
+    // the applied commit is recorded in the taint list's own store (lan/taint.db), the one Studio opens at every start
+    const sha = Bun.spawnSync(["git", "-C", proj.path, "rev-parse", c.applied.branch], { stdout: "pipe" }).stdout.toString().trim();
+    const inList = (() => { const db = new Database(join(p.A.data, "lan", "taint.db"), { readonly: true }); try { return !!db.query("SELECT 1 FROM taint WHERE sha = ? AND cleared IS NULL").get(sha); } finally { db.close(); } })();
+    ok(inList, "the commit A applied is on the taint list in lan/taint.db, apart from the relay's store", sha); }
 
   // ---------- the routes answer only Studio's own page ----------
   { const scr = await fetch(`${p.B.base}/api/lan`, { headers: { "x-crew-session": "acceptance-lan-b-session" } });
@@ -237,5 +242,9 @@ try {
 } catch (e: any) { ok(false, `the suite ran to its end: ${e?.message ?? e}`); console.log(p.B.output().slice(-3000));
   for (const [n, s2] of [["A", p.A], ["B", p.B]] as const) { try { const v = await view(s2); console.log(n, "outbox", JSON.stringify(v.outbox).slice(0, 800), "refused", JSON.stringify(v.refused).slice(0, 800), "peers", JSON.stringify(v.peers.map((x: any) => [x.petname, x.state, x.vouched, x.key.slice(0, 8)]))); } catch {} } }
 finally { await p.close(); }
+// a Studio started with CREW_LAN=0 (no relay at all) still opens its taint list at start, and says when it cannot read it
+{ const s = await bootStudio("lan-off", { examples: false, env: { CREW_LAN: "0" }, beforeStart: async (data) => { mkdirSync(join(data, "lan"), { recursive: true }); writeFileSync(join(data, "lan", "taint.db"), "damaged\n".repeat(500)); } });
+  try { ok(/taint\.db\) cannot be read: .*trusted starts and publishes are refused/.test(s.output()) && (await s.api("/api/lan")).status !== 200, "a Studio with CREW_LAN=0 opens its taint list at start all the same (a damaged one is reported and refuses)", s.output().slice(-600)); }
+  finally { await s.close(); } }
 console.log("\n" + lines.join("\n"));
 end();

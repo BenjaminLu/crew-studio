@@ -99,6 +99,8 @@ import { createTranscripts } from "./transcripts";
 import { createTasksApi, taskAlias } from "./tasks-api";
 import { Lan } from "./lan/relay";
 import { lanRoutes } from "./lan/routes";
+import { openTaintList } from "./lan/taint";
+import { openSpendLedger } from "./lan/ledger";
 import { lanRunner } from "./lan/runner";
 import { lanApplier, baseOf as lanBaseOf, baseProblem as lanBaseProblem } from "./lan/apply";
 import { installLanProfile, DEFAULT_CEILINGS, dailyRefusal as lanDailyRefusal } from "./lan/profile";
@@ -524,11 +526,21 @@ const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) =
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
 // board-to-board work (docs/units/lan-relay.md): the restricted profile on every Task a peer's work started, and this
 // Studio's relay; its peer listener is a separate server that is off until the captain turns it on (CREW_LAN=0: no relay at all)
-installLanProfile(runtime.engine, { ceilings: () => { try { return lan?.ceilings() ?? DEFAULT_CEILINGS; } catch { return DEFAULT_CEILINGS; } } });
-let lan: Lan | null = null;
-if (process.env.CREW_LAN !== "0") {
+// what work from peers spent per local day (src/lan/ledger.ts): its own store, open whatever the relay does
+const lanLedger = openSpendLedger(DATA);
+if (lanLedger.broken) console.warn(`crew-studio: ${lanLedger.broken}: no paid round of a peer's Task runs until it can be read`);
+installLanProfile(runtime.engine, { ledger: () => lanLedger, ceilings: () => { try { return lan?.ceilings() ?? DEFAULT_CEILINGS; } catch { return DEFAULT_CEILINGS; } } });
+// the taint list (commits applied from a peer's work) is open from here on, whatever the relay does: CREW_LAN=0, an identity
+// lost, a relay that does not open. A list that cannot be read refuses every trusted start and publish (src/lan/taint.ts)
+const lanTaint = openTaintList(DATA);
+if (lanTaint.broken) console.warn(`crew-studio: ${lanTaint.broken}: trusted starts and publishes are refused until it can be read`);
+let lan: Lan | null = null, lanOpening = false;
+// the relay opens in the background (a first start may build this Mac's Secure Enclave helper): Studio answers meanwhile,
+// and the Peers page says the relay is starting
+if (process.env.CREW_LAN !== "0") { lanOpening = true; void (async () => {
   try {
-    lan = await Lan.open({ dataDir: DATA, send, dailyRefusal: (c) => lanDailyRefusal(runtime.engine, c), log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
+    lan = await Lan.open({ dataDir: DATA, send, taint: lanTaint, dailyRefusal: (c) => lanDailyRefusal(lanLedger, c),
+      estimates: () => { const out: Record<string, number> = {}; for (const id of choices.filter((x) => x !== "stub")) { try { const v = lanLedger.estimate(id, NaN); if (Number.isFinite(v)) out[id] = v; } catch {} } return out; }, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
       runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), needsProject: (def) => runtime.lanNeedsProject(def) }),
       apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
       baseOf: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? lanBaseOf(p.path, p.base || "main") : null; },
@@ -536,7 +548,8 @@ if (process.env.CREW_LAN !== "0") {
       privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } } });
     process.on("exit", () => { try { lan?.close(); } catch {} });
   } catch (e: any) { console.warn(`crew-studio: board-to-board work is unavailable: ${e?.message ?? e}`); }
-}
+  finally { lanOpening = false; }
+})(); }
 const compareApi = createCompare({ dataDir: DATA, get: (id) => runtime.engine.get(id), current: (wf) => runtime.engine.defs.get(wf), phoneRaw: () => transcripts.settings().phoneRaw });
 // rounds of an earlier Studio left their throwaway homes and tmp behind (it stopped mid-round): no job is live at start, so they go
 try { const rd = join(DATA, "rounds"); if (existsSync(rd)) for (const d of readdirSync(rd)) for (const x of ["home", "tmp"]) { const p = join(rd, d, x); if (existsSync(p)) rmSync(p, { recursive: true, force: true }); }
@@ -664,7 +677,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if((p==='/api/claude/account/login'||p==='/api/claude/account/cancel')&&writing){if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);if(p.endsWith('/cancel'))return json(await claudeLogin.cancel());try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await terminalRoutes(terminals, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rt) return rt; }
-    { const rl = await lanRoutes(lan, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rl) return rl; }
+    { const rl = await lanRoutes(lan, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION), lanOpening); if (rl) return rl; }
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
     { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }

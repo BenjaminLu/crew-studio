@@ -2,11 +2,14 @@
 // Secure Enclave). Its "blobs" are software keys, so it protects nothing: src/lan/keystore.ts refuses it unless the test
 // environment is isolated (CREW_TEST_ENV_ISOLATED) and the data folder is under the temporary directory. Every admin
 // signature with a presence key is a "prompt": its text is appended to CREW_SOFT_ENCLAVE_PROMPTS (one line each), and
-// while the file CREW_SOFT_ENCLAVE_DENY names exists it is answered as a person who cancelled Touch ID.
+// while the file CREW_SOFT_ENCLAVE_DENY names exists it is answered as a person who cancelled Touch ID; while the file
+// CREW_SOFT_ENCLAVE_HOLD names exists it waits, as a prompt nobody answered yet does. One request at a time, in order, as
+// the Swift helper answers them.
 import { appendFileSync, existsSync } from "node:fs";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 import { createECDH, createHash, createPrivateKey, sign as edSign } from "node:crypto";
 
-const DOMAIN = "crew-studio/lan/v2", DAILY = new Set(["entry", "cert-request"]), ADMIN = new Set(["cert", "introduce", "revoke", "successor", "replace"]);
+const DOMAIN = "crew-studio/lan/v2", DAILY = new Set(["entry"]), ADMIN = new Set(["cert", "introduce", "revoke", "successor", "replace", "reviewed"]);
 const b64u = (b: Uint8Array) => Buffer.from(b).toString("base64url");
 const fp = (pub: Buffer) => { const h = createHash("sha256").update(`${DOMAIN}\0fingerprint\0`).update(pub).digest(); return [0, 1, 2, 3, 4, 5].map((i) => String(h.readUIntBE(i * 5, 5) % 100000).padStart(5, "0")).join(" "); };
 const keyOf = (blob: string) => { const j = JSON.parse(Buffer.from(String(blob).replace(/^soft1\./, ""), "base64").toString("utf8")); const e = createECDH("prime256v1"); e.setPrivateKey(Buffer.from(j.d, "base64url")); return { ...j, e, pub: e.getPublicKey() }; };
@@ -24,9 +27,10 @@ function adminMessage(purpose: string, fields: unknown): { msg: Buffer; prompt: 
   if (purpose === "revoke") { n(4); prompt = fields[2] === "-" ? `作廢這台的身分 ${key(0)}（最後一筆 ${num(1)}）` : `作廢這台的身分 ${key(0)}（最後一筆 ${num(1)}），新身分 ${key(2)}`; }
   if (purpose === "successor") { n(3); prompt = `確認新身分 ${key(1)} 接替 ${key(0)}`; }
   if (purpose === "replace") { n(3); prompt = `以新身分 ${key(1)} 取代同事 ${key(0)}（當面確認過短碼）`; }
+  if (purpose === "reviewed") { n(2); if (!/^[0-9a-f]{40}$/.test(String(fields[0]))) throw new Error("field 0 is not a commit"); prompt = `我已親自審查來自同事的 commit ${String(fields[0]).slice(0, 12)}，讓它離開不受信任清單`; }
   return { msg: Buffer.from((fields as string[]).join("\0")), prompt };
 }
-function handle(q: any): any {
+async function handle(q: any): Promise<any> {
   for (const k of Object.keys(q)) if (!["id", "op", "kind", "presence", "blob", "purpose", "msg", "peer", "fields"].includes(k)) throw new Error(`unknown field ${k}`);
   switch (q.op) {
     case "available": return { ok: true, se: true };
@@ -40,17 +44,23 @@ function handle(q: any): any {
       return { ok: true, sig: b64u(sig(k, q.purpose, Buffer.from(String(q.msg), "base64"))) }; }
     case "dh": { const k = keyOf(q.blob); if (k.kind !== "dh") throw new Error("not a key agreement key"); return { ok: true, secret: b64u(k.e.computeSecret(Buffer.from(String(q.peer), "base64url"))) }; }
     case "admin": { const { msg, prompt } = adminMessage(String(q.purpose ?? ""), q.fields), k = keyOf(q.blob); if (k.kind !== "sign") throw new Error("not a signing key");
-      if (k.presence) { if (process.env.CREW_SOFT_ENCLAVE_PROMPTS) appendFileSync(process.env.CREW_SOFT_ENCLAVE_PROMPTS, `Crew Studio：${prompt}\n`); if (process.env.CREW_SOFT_ENCLAVE_DENY && existsSync(process.env.CREW_SOFT_ENCLAVE_DENY)) throw new Error("refused by the Secure Enclave: the person cancelled"); }
+      if (k.presence) { if (process.env.CREW_SOFT_ENCLAVE_PROMPTS) appendFileSync(process.env.CREW_SOFT_ENCLAVE_PROMPTS, `Crew Studio：${prompt}\n`);
+        while (process.env.CREW_SOFT_ENCLAVE_HOLD && existsSync(process.env.CREW_SOFT_ENCLAVE_HOLD)) await sleep(25);
+        if (process.env.CREW_SOFT_ENCLAVE_DENY && existsSync(process.env.CREW_SOFT_ENCLAVE_DENY)) throw new Error("refused by the Secure Enclave: the person cancelled"); }
       return { ok: true, sig: b64u(sig(k, String(q.purpose), msg)) }; }
     default: throw new Error("unknown op");
   }
 }
-let buf = "";
+let buf = "", busy = false; const lines: string[] = [];
+async function drain() {
+  if (busy) return; busy = true;
+  while (lines.length) { const line = lines.shift()!; let q: any = {};
+    try { q = JSON.parse(line); process.stdout.write(JSON.stringify({ ...(await handle(q)), id: q.id }) + "\n"); }
+    catch (e: any) { process.stdout.write(JSON.stringify({ id: q?.id ?? -1, ok: false, error: String(e?.message ?? e) }) + "\n"); } }
+  busy = false;
+}
 process.stdin.on("data", (d) => {
   buf += d.toString("utf8"); let i: number;
-  while ((i = buf.indexOf("\n")) >= 0) {
-    const line = buf.slice(0, i); buf = buf.slice(i + 1); let q: any = {};
-    try { q = JSON.parse(line); process.stdout.write(JSON.stringify({ ...handle(q), id: q.id }) + "\n"); }
-    catch (e: any) { process.stdout.write(JSON.stringify({ id: q?.id ?? -1, ok: false, error: String(e?.message ?? e) }) + "\n"); }
-  }
+  while ((i = buf.indexOf("\n")) >= 0) { lines.push(buf.slice(0, i)); buf = buf.slice(i + 1); }
+  void drain();
 });

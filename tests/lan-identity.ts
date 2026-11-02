@@ -47,7 +47,9 @@ async function pairUp(A: Lan, B: Lan, o: { replaces?: string } = {}) { B.openInt
 { const A = await mk("ra"), B = await mk("rb"); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
   const t = await A.dispatch({ to: B.id.key, title: "before", briefing: "work before the change" }); await A.flush(); await until(() => B.view().items.length === 1);
   const old = A.id.key, oldDir = (A as any).o.dataDir, lastSeq = st(A).logs[old].seq, before = promptLines().length;
-  await A.retireIdentity(); await A.flushIds(); await until(() => B.peer(old)?.state === "retired");
+  writeFileSync(join(oldDir, "lan", "identity.key"), "a protocol 1 key left behind\n", { mode: 0o600 });
+  await A.retireIdentity();
+  ok(!existsSync(join(oldDir, "lan", "identity.key")), "retiring the identity also overwrites and removes a protocol 1 key left in lan/identity.key"); await A.flushIds(); await until(() => B.peer(old)?.state === "retired");
   const pb = B.view().peers.find((p: any) => p.key === old), lines = promptLines().slice(before);
   ok(A.id.key !== old && lines.length === 3, "retiring makes a new identity (its certificate signed) and signs the revocation with the old admin key and the successor with the new one: three prompts", JSON.stringify(lines));
   ok(pb?.state === "retired" && pb?.retired?.lastSeq === lastSeq && /換了身分/.test(pb?.notice?.zh ?? "") && pb?.retired?.successor?.key === A.id.key && pb?.retired?.successor?.certified === true,

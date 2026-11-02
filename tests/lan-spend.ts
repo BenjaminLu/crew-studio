@@ -12,6 +12,7 @@ import { Lan, type LanRunner } from "../src/lan/relay";
 import { LIMITS } from "../src/lan/protocol";
 
 process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
+process.env.TZ = "Asia/Taipei"; // the daily ceilings reset at local midnight: a zone away from UTC shows it
 let pass = 0, fail = 0;
 const ok = (c: unknown, what: string, detail = "") => { if (c) { pass++; console.log(`  ok    ${what}`); } else { fail++; console.log(`  FAIL  ${what}${detail ? `\n        ${detail}` : ""}`); } };
 const until = async (f: () => boolean, ms = 8000) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > ms) return false; await Bun.sleep(25); } return true; };
@@ -27,15 +28,36 @@ const lanTask = (id: string, usd: number | null, rounds: number, lanRounds: any[
   // 2. a round that reported more tokens than the ceiling ends the Task's paid rounds
   let e2 = ""; try { await P.wrapRound(r, { ref: r.id, sandbox: { writes: [] }, tools: [] }, async () => ({ id: "J-2", status: "done" })); } catch (x: any) { e2 = String(x?.message); }
   ok(/over the per-round ceiling/.test(e2) && r.ctx.lanRounds[0].tokens === 3_000_010, "a round over the per-round token ceiling stops the next one", e2);
-  // 3. the daily ceilings over every peer's Task: rounds, dollars, and unknown-cost rounds at the estimate
-  runs.length = 0; const at = now();
-  runs.push(lanTask("R-a", 5, 9, [{ n: 1, at, job: "j", usd: 3, ended: true }, { n: 2, at, job: "j", usd: null, ended: true }]), lanTask("R-b", null, 9, [{ n: 1, at, job: "j", usd: null, ended: true }]));
-  ok(dailyRefusal(e, { dailyUsd: 10, dailyRounds: 60, unknownRoundUsd: 1 }) === null, "under the daily ceilings nothing is refused ($3 reported and two unknown rounds at $1 = $5 of $10)");
-  ok(/daily ceiling: .*\$3\.00 today and 2 round\(s\) of unknown cost/.test(dailyRefusal(e, { dailyUsd: 5, dailyRounds: 60, unknownRoundUsd: 1 }) ?? ""), "unknown-cost rounds count against the dollar ceiling at the estimate, across every peer's Task (rounds-only ones included)", String(dailyRefusal(e, { dailyUsd: 5, dailyRounds: 60, unknownRoundUsd: 1 })));
-  ok(/ran 3 paid round/.test(dailyRefusal(e, { dailyUsd: null, dailyRounds: 3, unknownRoundUsd: 1 }) ?? ""), "the daily round ceiling counts every peer's Task, even with the dollar ceiling off");
-  ceil = { dailyUsd: null, dailyRounds: 3, unknownRoundUsd: 1 }; const r3 = lanTask("R-c", null, 9); runs.push(r3);
-  let e3 = ""; try { await P.wrapRound(r3, { ref: r3.id, sandbox: { writes: [] }, tools: [] }, async () => ({ id: "J-3", status: "done" })); } catch (x: any) { e3 = String(x?.message); }
-  ok(/daily ceiling/.test(e3) && !r3.ctx.lanRounds.length, "a round past a daily ceiling is refused before it starts (rounds-only items included)", e3); void capRefusal; }
+  void capRefusal; }
+
+// 3. the daily ceilings over every peer's Task, from the spend ledger (lan/spend.db), never from the Tasks Studio still
+// lists: rounds, reported dollars, unknown-cost rounds and running rounds at the estimate for their provider and model
+{ const { SpendLedger, localDay } = await import("../src/lan/ledger");
+  const L = new SpendLedger(join(mkdtempSync(join(tmpdir(), "crew-lan-ledger-")), "spend.db")); let ceil: any = DEFAULT_CEILINGS; const runs: any[] = [];
+  const e: any = { profiles: {}, commit: () => {}, list: () => runs }; installLanProfile(e, { ceilings: () => ceil, ledger: () => L }); const P = e.profiles.lan;
+  const ra = lanTask("R-a", 5, 9), rb = lanTask("R-b", null, 9); runs.push(ra, rb);
+  const round = (r: any, usd: number | null, provider = { id: "codex", model: "m1" }, gate?: Promise<void>) => P.wrapRound(r, { ref: r.id, sandbox: { writes: [] }, tools: [], provider }, async () => { await gate; return { id: "J", status: "done", cost: usd === null ? {} : { usd } }; });
+  await round(ra, 3); await round(ra, null, { id: "claude", model: "x" }); await round(rb, null, { id: "claude", model: "x" });
+  ok(dailyRefusal(L, { dailyUsd: 10, dailyRounds: 60, unknownRoundUsd: 1 }) === null, "under the daily ceilings nothing is refused ($3 reported and two unknown rounds at the $1 estimate = $5 of $10)", JSON.stringify(L.get()));
+  ok(/daily ceiling: .*\$5\.00 today, 2 round\(s\) of it at the estimate/.test(dailyRefusal(L, { dailyUsd: 5, dailyRounds: 60, unknownRoundUsd: 1 }) ?? ""), "unknown-cost rounds count against the dollar ceiling at the estimate, across every peer's Task (rounds-only ones included)", String(dailyRefusal(L, { dailyUsd: 5, dailyRounds: 60, unknownRoundUsd: 1 })));
+  ok(/ran 3 paid round/.test(dailyRefusal(L, { dailyUsd: null, dailyRounds: 3, unknownRoundUsd: 1 }) ?? ""), "the daily round ceiling counts every peer's Task, even with the dollar ceiling off");
+  runs.length = 0;
+  ok(/ran 3 paid round/.test(dailyRefusal(L, { dailyUsd: null, dailyRounds: 3, unknownRoundUsd: 1 }) ?? ""), "a Task archived or purged from Studio's list takes none of today's spend with it (the ledger keeps it)");
+  // a running round reserves the estimate for its provider and model (what its rounds cost here), not the unknown-round figure
+  const rc = lanTask("R-c", null, 9); let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+  const before = L.get().usd, running = round(rc, 2.5, { id: "codex", model: "m1" }, gate); await Bun.sleep(20); const during = L.get().usd - before;
+  release(); await running; const after = L.get().usd - before;
+  ok(Math.abs(during - 3) < 1e-9 && Math.abs(after - 2.5) < 1e-9, "a running round reserves the estimate for its provider and model ($3, what codex/m1 rounds cost here), then counts what it reported", JSON.stringify({ during, after }));
+  // the day is this Mac's local date: the ceilings reset at local midnight, not at UTC midnight
+  ok(localDay(new Date("2026-03-01T17:30:00Z")) === "2026-03-02" && localDay(new Date("2026-03-01T15:30:00Z")) === "2026-03-01", "the daily ceilings reset at local midnight (Asia/Taipei here), not UTC");
+  ceil = { dailyUsd: null, dailyRounds: 4, unknownRoundUsd: 1 }; const rd = lanTask("R-d", null, 9); runs.push(rd);
+  let e3 = ""; try { await round(rd, 1); } catch (x: any) { e3 = String(x?.message); }
+  ok(/daily ceiling/.test(e3) && !rd.ctx.lanRounds.length, "a round past a daily ceiling is refused before it starts (rounds-only items included)", e3);
+  // a ledger that cannot be read refuses every paid round (fail closed)
+  const bad = join(mkdtempSync(join(tmpdir(), "crew-lan-ledger-bad-")), "spend.db"); (await import("node:fs")).writeFileSync(bad, "damaged\n".repeat(400));
+  const e2: any = { profiles: {}, commit: () => {}, list: () => [] }; installLanProfile(e2, { ceilings: () => DEFAULT_CEILINGS, ledger: () => new SpendLedger(bad) });
+  const re = lanTask("R-e", null, 9); let e4 = ""; try { await e2.profiles.lan.wrapRound(re, { ref: re.id, sandbox: { writes: [] }, tools: [] }, async () => ({ id: "J", status: "done" })); } catch (x: any) { e4 = String(x?.message); }
+  ok(/cannot be read/.test(e4) && !re.ctx.lanRounds.length, "a spend ledger that cannot be read refuses every paid round of a peer's Task", e4); }
 
 // 4. the opt-in auto-start: only when ticked at the take, and only if every check still holds when the assignment arrives
 const starts: string[] = [], cancelled: string[] = [];

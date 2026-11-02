@@ -624,6 +624,10 @@ export class Engine {
     const given = { ...(o.params ?? {}) }; delete given._lan; if (given._tainted === "lan") delete given._tainted;
     const profile: RunProfile | null = o.profile ? { name: String(o.profile.name), mark: o.profile.mark ?? null } : given._tainted ? { name: "issue", mark: { source: String(given._tainted) } } : null;
     if (profile?.name === "issue" && !given._tainted) given._tainted = "issue-text";
+    // a Task started inside a profiled Task's step (a tool, a staffing source, a review-room host, a fresh proposal) carries
+    // that profile, named explicitly, or it is not made: never an unrestricted child of restricted work
+    { const scope = this.runScope.getStore(), parent = scope ? this.runs.get(String(scope)) : undefined;
+      if (parent?.profile && profile?.name !== parent.profile.name) throw new ProfileRefusal(`Task ${parent.id} runs under the ${parent.profile.name} profile: a Task it starts must carry that profile (${profile ? `this one names ${profile.name}` : "this one names none"})`); }
     for (const [k, v] of Object.entries(given)) if (v != null && String(v) !== "") params[k] = String(v).slice(0, paramCap(k));
     const text = String(o.text ?? "").slice(0, 8000);
     const r: Run = { id, workflow: def.id, version: def.version, def, title: (o.title ? clampTitle(o.title) : deriveTitle(text)) || clampTitle(def.name), text, params, by: o.by ?? "captain",
@@ -1781,7 +1785,7 @@ export class Engine {
       // so does the taint: a Task drawn from untrusted issue text repeats as one
       const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing" || k === "_tainted"));
       // the new task runs the current release of the workflow (a run pinned to a replaced version keeps its old routes); the captain starts it, Firstmate is not involved
-      let next: Run; try { next = this.start({ workflow: r.workflow, version: reach.newerVersion ? undefined : r.version, title: r.title, text: r.text, params, by: a.by, profile: r.profile ?? null }); }
+      let next: Run; try { next = this.runScope.run(r.id, () => this.start({ workflow: r.workflow, version: reach.newerVersion ? undefined : r.version, title: r.title, text: r.text, params, by: a.by, profile: r.profile ?? null })); }
       catch (e: any) { refuse({ en: `New task refused: ${e?.message ?? e}`, "zh-TW": `已拒絕開始新任務：${e?.message ?? e}` }); throw e; }
       // the link goes both ways: the old task names its follower, the new one names the task it repeats
       next.ctx.follows = r.id; this.commit(next, `follows ${r.id}`); this.emit(next, "follows", `the same request as ${r.id}, started from its failure card`, { task: r.id, card: c.id });
@@ -1790,7 +1794,8 @@ export class Engine {
     }
     if (a.choice === ACT.repropose) {
       const fresh = this.reproposers[r.workflow]; if (!fresh) refuse({ en: "Re-propose refused: this workflow has no fresh proposal. Ask Firstmate to propose it again.", "zh-TW": "已拒絕重新提出：這個流程無法重新提出。請 Firstmate 重新提案。" });
-      let next: Run; try { next = fresh!(r, a.by); } catch (e: any) { refuse({ en: `Re-propose refused: ${e?.message ?? e}`, "zh-TW": `已拒絕重新提出：${e?.publicFailure?.reason?.["zh-TW"] ?? e?.message ?? e}` }); throw e; }
+      // inside the old Task's scope: a fresh proposal of a profiled Task carries its profile or is refused (start)
+      let next: Run; try { next = this.runScope.run(r.id, () => fresh!(r, a.by)); } catch (e: any) { refuse({ en: `Re-propose refused: ${e?.message ?? e}`, "zh-TW": `已拒絕重新提出：${e?.publicFailure?.reason?.["zh-TW"] ?? e?.message ?? e}` }); throw e; }
       const ans = this.cards.answer(c.id, a); r.parked = { by: a.by, at: now(), note: `followed by ${next.id}` }; r.ctx.followedBy = next.id;
       this.recordFailure(r, c, ACT.repropose, { task: next.id }); this.commit(r, `followed by ${next.id}`); this.emit(r, "failure_new_task", `${f.code}: a fresh proposal ${next.id} replaces this one`, { card: c.id, task: next.id }); return ans;
     }

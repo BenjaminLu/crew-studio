@@ -8,12 +8,12 @@ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:f
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { b64u, canonical, fingerprint, randomBytes, sha256hex, unb64u, type Recipient } from "./crypto";
-import { certHash, identityFiles, openKeystore, shred, staticOf, storedKind, v1IdentityFile, verifyAdmin, verifyCert, type Cert, type Keystore, type KeystoreKind } from "./keystore";
+import { certHash, identityFiles, openKeystore, shred, staticOf, verifyAdmin, verifyCert, type Cert, type Keystore, type KeystoreKind } from "./keystore";
 import { LIMITS, cleanName, cleanText, entryHash, envelopeProblem, makeEnvelope, openBlob, readBody, sealBlob, verifyEnvelope, INVISIBLE, type Author, type Blob, type Body, type Envelope, type WorkflowRef } from "./protocol";
 import { LanWire, call, introduce, peerTargetProblem, CallError, type IntroResult, type Me } from "./wire";
 import { scanText, type Hit } from "./scan";
 import { Store } from "./store";
-import { addTaintSource } from "./taint";
+import { TaintStore } from "./taint";
 import { lanIp } from "../remote/lan";
 
 export type PeerRec = { key: string; fp: string; petname: string; claimed: string; host: string; port: number; introducedAt: string;
@@ -72,14 +72,21 @@ export type LanRunner = {
 };
 export type LanOpts = { dataDir: string; runner: LanRunner;
   /** the dispatcher's side of a code result: apply its patch to a registered project on a branch of its own (src/lan/apply.ts) */
-  apply?: (o: { project: string; patch: string; branch: string; base: string }) => { branch: string; path: string; files: string[]; commit?: string; repo?: string };
+  apply?: (o: { project: string; patch: string; branch: string; base: string;
+    /** called with the commit after commit-tree and before update-ref: it records the commit on the taint list (a throw stops the apply before any branch names it) */
+    record: (commit: string, repo: string) => void }) => { branch: string; path: string; files: string[]; commit?: string; repo?: string };
   /** code work: a project's base (its root commit and the commit its base branch is at), and why a project cannot take a base */
   baseOf?: (project: string) => { root: string; sha: string } | null; baseProblem?: (project: string, base: { root: string; sha: string }) => string | null;
   send?: (type: string, data: unknown) => void; log?: (summary: string, data?: unknown) => void; bind?: string; port?: number; privacyDenylist?: () => string[];
   /** a keystore kind to ask for (tests); CREW_LAN_KEYSTORE otherwise */
   keystore?: KeystoreKind;
   /** why the next paid round of any peer's Task would pass a daily ceiling (src/lan/profile.ts dailyRefusal), or null */
-  dailyRefusal?: (c: Ceilings) => string | null };
+  dailyRefusal?: (c: Ceilings) => string | null;
+  /** what a paid round costs here per provider, on average, for the providers with a record (src/lan/ledger.ts estimate):
+   *  the take dialog's per-round estimate */
+  estimates?: (c: Ceilings) => Record<string, number>;
+  /** the taint list Studio opened at its start (src/lan/taint.ts openTaintList); the relay opens its data folder's own when none is given (tests) */
+  taint?: TaintStore };
 
 export class LanError extends Error { constructor(readonly status: number, message: string, readonly code = "lan") { super(message); } }
 const now = () => new Date().toISOString();
@@ -90,11 +97,30 @@ const newFence = () => randomBytes(6).toString("hex");
 const short = (k: string) => { try { return fingerprint(unb64u(k, 65)).split(" ").slice(0, 2).join(" "); } catch { return "?"; } };
 const fresh = (): State => ({ v: 2, settings: { enabled: false, name: cleanName(hostname().replace(/\.local$/, "")) || "Studio" }, logs: {}, peers: [], intros: [], introUntil: null, threads: [], items: [], introFailures: [], outbox: [], idOut: [], refused: [], daily: {}, retired: [] });
 const ENDED = ["succeeded", "failed", "cancelled", "gone"];
+/** a failed step's rollback: `live` is made equal to `snap` in place, so a reference taken before the step (a thread, a
+ *  round, a peer) is the relay's own again, holding what it held before. Records in a list are matched by their id (id,
+ *  key, entry or n), so one the step moved or removed never takes another's contents. */
+const recordKey = (v: any) => v && typeof v === "object" && !Array.isArray(v) ? v.id ?? v.key ?? v.entry ?? v.n ?? null : null;
+function restoreInPlace(live: any, snap: any): any {
+  if (Array.isArray(live) && Array.isArray(snap)) {
+    const byKey = new Map<unknown, any>(); for (const x of live) { const k = recordKey(x); if (k !== null && !byKey.has(k)) byKey.set(k, x); }
+    const out = snap.map((s, i) => { const k = recordKey(s), mine = k !== null ? byKey.get(k) : live[i]; return mine !== undefined && typeof mine === "object" && mine !== null && typeof s === "object" && s !== null && Array.isArray(mine) === Array.isArray(s) ? restoreInPlace(mine, s) : s; });
+    live.length = 0; live.push(...out); return live;
+  }
+  if (live && snap && typeof live === "object" && typeof snap === "object" && !Array.isArray(live) && !Array.isArray(snap)) {
+    for (const k of Object.keys(live)) if (!(k in snap)) delete live[k];
+    for (const k of Object.keys(snap)) { const a = live[k], b = snap[k]; live[k] = a && b && typeof a === "object" && typeof b === "object" && Array.isArray(a) === Array.isArray(b) ? restoreInPlace(a, b) : b; }
+    return live;
+  }
+  return snap;
+}
 /** a bounded cache of what this Studio decrypted (memory only: the disk keeps every body sealed) */
 class Plain<T> { private m = new Map<string, T>(); constructor(private max = 4000) {} get(k: string) { const v = this.m.get(k); if (v !== undefined) { this.m.delete(k); this.m.set(k, v); } return v; } set(k: string, v: T) { this.m.delete(k); this.m.set(k, v); if (this.m.size > this.max) this.m.delete(this.m.keys().next().value!); } clear() { this.m.clear(); } }
 
 export class Lan {
   readonly dir: string; readonly wire: LanWire; readonly store: Store;
+  /** the taint list (its own store, lan/taint.db: never set aside with the relay's) */
+  readonly taint: TaintStore; private ownTaint = false;
   private st: State; private timers: any[] = []; private closed = false;
   /** the identity this Studio speaks as (null: lost, see `lost`) */
   private ks: Keystore | null;
@@ -105,7 +131,8 @@ export class Lan {
   /** identities this Studio retired, still open to deliver their revocation */
   private retiredKs = new Map<string, Keystore>();
   private constructor(private readonly o: LanOpts, store: Store, ks: Keystore | null, lost: string | null, st: State, fallback: string | null) {
-    this.dir = join(o.dataDir, "lan"); this.store = store; this.ks = ks; this.lost = lost; this.st = st; this.fallback = fallback;
+    this.dir = join(o.dataDir, "lan"); this.store = store;
+    if (o.taint) this.taint = o.taint; else { this.taint = new TaintStore(join(this.dir, "taint.db")).register(); this.ownTaint = true; } this.ks = ks; this.lost = lost; this.st = st; this.fallback = fallback;
     this.wire = new LanWire({ me: () => this.me(), allowlist: () => this.allowlist(), introOpen: () => !!this.st.introUntil && Date.now() < this.st.introUntil,
       self: () => ({ name: this.st.settings.name, port: this.wire.port }), request: (from, op, body, ip, port) => this.request(from, op, body, ip, port),
       introduced: (r) => { this.addIntro(r, "responder"); }, introFailed: (ip, why) => this.introFailure(ip, why),
@@ -121,10 +148,6 @@ export class Lan {
    */
   static async open(o: LanOpts): Promise<Lan> {
     const dir = join(o.dataDir, "lan"); mkdirSync(dir, { recursive: true, mode: 0o700 });
-    // protocol 1 left a single-key identity and an unsealed state: neither is read (peers are introduced again)
-    if (existsSync(join(dir, "relay.db"))) { const old = new Store(join(dir, "relay.db")); const v1 = old.hasState() && !old.getMeta(); old.close();
-      if (v1) { for (const f of ["relay.db", "relay.db-wal", "relay.db-shm"]) if (existsSync(join(dir, f))) renameSync(join(dir, f), join(dir, f.replace("relay.db", `relay.v1-${Date.now()}.db`))); o.log?.("LAN relay: the protocol 1 store was set aside (lan/relay.v1-*.db); peers are introduced again"); } }
-    if (existsSync(v1IdentityFile(o.dataDir)) && !storedKind(dir)) o.log?.("LAN relay: the protocol 1 identity (lan/identity.key) is not used by protocol 2; a new identity is made");
     const store = new Store(join(dir, "relay.db")), meta = store.getMeta();
     const lostWith = (why: string) => new Lan(o, store, null, why, { ...fresh(), settings: { ...fresh().settings, enabled: false } }, null);
     let opened; try { opened = await openKeystore(o.dataDir, { create: !meta || (!meta.log && !meta.peers), kind: o.keystore }); }
@@ -139,7 +162,6 @@ export class Lan {
     try { st = meta && meta.identity === ks.key ? { ...fresh(), ...(store.getState<State>() ?? {}) } : fresh(); }
     catch (e: any) { ks.close(); return lostWith(String(e?.message ?? e)); }
     const lan = new Lan(o, store, ks, null, st, opened.fallback ?? null);
-    lan.untaint = addTaintSource(() => { try { return store.taints(); } catch { return []; } });
     await lan.afterOpen();
     return lan;
   }
@@ -159,8 +181,7 @@ export class Lan {
     for (const h of hs) { const b = await this.loadBody(h); if (!b) continue; const need = b.kind === "dispatch" || b.kind === "refine" ? b.briefing.hash : b.kind === "result" ? b.output.hash : null; if (need) await this.loadText(need); }
     this.o.send?.("lan", { changed: Date.now() });
   }
-  untaint: () => void = () => {};
-  close() { if (this.closed) return; this.untaint(); for (const t of this.timers) clearInterval(t); this.wire.stop(); try { if (!this.lost) this.flushState(); } finally { this.closed = true; this.store.close(); this.ks?.close(); for (const k of this.retiredKs.values()) k.close(); } }
+  close() { if (this.closed) return; if (this.ownTaint) this.taint.close(); for (const t of this.timers) clearInterval(t); this.wire.stop(); try { if (!this.lost) this.flushState(); } finally { this.closed = true; this.store.close(); this.ks?.close(); for (const k of this.retiredKs.values()) k.close(); } }
 
   // ---------- who this Studio is ----------
   get id(): { key: string; fingerprint: string; store: KeystoreKind | "lost" } { return this.ks ? { key: this.ks.key, fingerprint: this.ks.fingerprint, store: this.ks.kind } : { key: "", fingerprint: "", store: "lost" }; }
@@ -188,7 +209,7 @@ export class Lan {
     if (this.stepDepth) return fn();
     const snap = structuredClone(this.st); this.stepDepth++;
     try { const v = this.store.tx(() => { const x = fn(); this.store.putState(this.st); this.putMeta(); return x; }); this.o.send?.("lan", { changed: Date.now() }); return v; }
-    catch (e) { this.st = snap; throw e; }
+    catch (e) { restoreInPlace(this.st, snap); throw e; }
     finally { this.stepDepth--; }
   }
   flushState() { this.store.tx(() => { this.trim(); this.store.putState(this.st); this.putMeta(); }); }
@@ -301,7 +322,7 @@ export class Lan {
     this.stopPeer(old, `the peer ${old.petname} was replaced by a new identity`);
     old.state = "revoked"; old.replacedBy = by.key;
     for (const t of this.st.threads) if ((t.peer === old.key || t.owner === old.key) && t.state === "open") { t.state = "closed"; t.closedWhy = "its peer's identity was replaced; threads are not moved: dispatch it again"; }
-    this.store.retagTaint(old.key, "from a replaced identity");
+    this.retagTaint(old.key, "from a replaced identity");
   }
   /** stop everything a peer's work holds here: its open items, its queued entries, every Task its work started */
   private stopPeer(p: PeerRec, why: string, after?: number) {
@@ -322,7 +343,7 @@ export class Lan {
   removePeer(key: string, how: "unpair" | "revoke") {
     const p = this.peer(key); if (!p) throw new LanError(404, "no such peer");
     this.step(() => { this.store.audit(how, { key, fingerprint: p.fp, petname: p.petname }); this.stopPeer(p, `the peer ${p.petname} was ${how === "revoke" ? "removed" : "unpaired"}`);
-      p.state = how === "revoke" ? "revoked" : "unpaired"; if (how === "revoke") this.store.retagTaint(p.key, "from a removed peer"); });
+      p.state = how === "revoke" ? "revoked" : "unpaired"; if (how === "revoke") this.retagTaint(p.key, "from a removed peer"); });
     this.o.log?.(`LAN peer ${p.petname} ${how === "revoke" ? "removed (revoked)" : "unpaired"}`);
     return this.view();
   }
@@ -362,6 +383,8 @@ export class Lan {
     for (const n of ["identity", "admin", "enclave"] as const) if (existsSync(f[n])) renameSync(f[n], k[n]);
     for (const n of ["identity", "admin", "enclave"] as const) if (existsSync(g[n])) renameSync(g[n], f[n]);
     rmSync(home, { recursive: true, force: true });
+    // a protocol 1 key left in the data folder (lan/identity.key) goes with the identity it belonged to
+    if (existsSync(f.v1)) shred(f.v1);
     this.retiredKs.set(old.key, old);
     const peers = this.st.peers.filter((p) => p.state === "trusted");
     this.store.setSeal(await next.storageKey()); this.ks = next; this.bodies.clear(); this.texts.clear();
@@ -596,7 +619,7 @@ export class Lan {
       this.stopPeer(p, `the peer ${p.petname} revoked its identity`, lastSeq);
       // threads are not moved to a successor: they are closed, and the work is dispatched again after a new introduction
       for (const t of this.st.threads) if ((t.peer === p.key || t.owner === p.key) && t.state === "open") { t.state = "closed"; t.closedWhy = "its peer revoked its identity; threads are not moved: dispatch it again after introducing its new identity"; }
-      this.store.retagTaint(p.key, `from a revoked identity (entries after #${lastSeq} are not vouched for)`);
+      this.retagTaint(p.key, `from a revoked identity (entries after #${lastSeq} are not vouched for)`);
       this.store.audit("peer-retired", { key: p.key, fingerprint: p.fp, lastSeq, successor: succ?.id ?? null, certified });
     });
     this.o.log?.(`LAN peer ${p.petname} revoked its identity${succ ? `; it names a successor (${certified ? "certified" : "not certified"})` : ""}`);
@@ -874,18 +897,35 @@ export class Lan {
     const base = r.result.base ?? null;
     if (!base || (t.base && base !== t.base.sha)) throw new LanError(409, t.base ? `the result is based on ${String(base ?? "nothing").slice(0, 12)}, not on the commit this thread dispatched (${t.base.sha.slice(0, 12)}): it is not applied` : "the result names no base commit this Studio dispatched: it is not applied", "base");
     const project = String(o.project ?? ""); if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(project)) throw new LanError(400, "choose one of this Studio's projects");
-    try { const done = this.o.apply({ project, patch, branch: `lan-untrusted/${t.id.toLowerCase().replace(/[^a-z0-9-]/g, "-")}-r${r.n}`, base });
-      // the commit joins the taint list: nothing trusted starts from it or publishes it until a person marks it reviewed
+    const branch = `lan-untrusted/${t.id.toLowerCase().replace(/[^a-z0-9-]/g, "-")}-r${r.n}`;
+    try { let recorded: string | null = null;
+      // the commit joins the taint list before any branch names it (after commit-tree, before update-ref): its row first, in
+      // its own store, then the audit row. A failure of either stops the apply with no branch; an update-ref that fails
+      // after it keeps the row (an unused commit on the list is harmless, an untainted branch is not)
+      const done = this.o.apply({ project, patch, branch, base, record: (commit, repo) => {
+        this.taint.add({ sha: commit, repo, project, peer: t.peer, thread: t.id, round: r.n, at: now(), why: `applied from ${p.petname}'s Studio, thread ${t.id} round ${r.n}` });
+        this.step(() => { this.store.audit("apply-pending", { thread: t.id, round: r.n, project, branch, commit, base, seen: o.seen }); });
+        recorded = commit; } });
+      if (!recorded || done.commit !== recorded) throw new Error("the applier reported no commit recorded on the taint list: nothing is applied without its taint row");
       this.step(() => { this.store.markUsed([r.result!.output.hash, r.result!.entry]);
-        if (done.commit && done.repo) this.store.addTaint({ sha: done.commit, repo: done.repo, project, peer: t.peer, thread: t.id, round: r.n, at: now(), why: `applied from ${p.petname}'s Studio, thread ${t.id} round ${r.n}` });
-        this.store.audit("apply", { thread: t.id, round: r.n, project, branch: done.branch, files: done.files.length, commit: done.commit ?? null, base, seen: o.seen }); }); return done; }
+        this.store.audit("apply", { thread: t.id, round: r.n, project, branch: done.branch, files: done.files.length, commit: done.commit, base, seen: o.seen }); }); return done; }
     catch (e: any) { throw new LanError(409, `the patch was not applied: ${String(e?.message ?? e).slice(0, 400)}`, "apply"); }
   }
-  /** "I reviewed commit X": a person clears one commit from the taint list (audited); its descendants are clear of it too */
-  clearTaint(sha: unknown, repo: unknown) {
-    const s = String(sha ?? ""), rp = String(repo ?? ""); if (!/^[0-9a-f]{40}$/.test(s)) throw new LanError(400, "name the commit");
-    const row = this.store.taints().find((t) => t.sha === s && t.repo === rp && !t.cleared); if (!row) throw new LanError(404, "no such commit from a peer");
-    this.step(() => { this.store.clearTaint(s, rp, "captain (desktop)"); this.store.audit("taint-cleared", { sha: s, repo: rp, project: row.project, peer: row.peer, thread: row.thread }); });
+  /** the reason on a peer's rows (a label only: a list that cannot be written keeps its rows, still tainted) */
+  private retagTaint(peer: string, why: string) { try { this.taint.retag(peer, why); } catch (e: any) { this.o.log?.(`LAN taint list: ${e?.message ?? e}`); } }
+  private taintView() {
+    try { return { taints: this.taint.rows().filter((t) => !t.cleared).map((t) => ({ ...t, peer: this.who(t.peer) })), taintProblem: null as string | null }; }
+    catch (e: any) { return { taints: [], taintProblem: String(e?.message ?? e) }; }
+  }
+  /** "I reviewed commit X": a person clears one commit from the taint list (audited), in every repository that holds it;
+   *  its descendants are clear of it too */
+  async clearTaint(sha: unknown) {
+    const s = String(sha ?? ""); if (!/^[0-9a-f]{40}$/.test(s)) throw new LanError(400, "name the commit");
+    const rows = this.taint.rows().filter((t) => t.sha === s && !t.cleared); if (!rows.length) throw new LanError(404, "no such commit from a peer");
+    // the admin key signs it (Touch ID on a Secure Enclave identity): the prompt names the commit
+    const at = now(), sig = b64u(await this.live().admin("reviewed", [s, at]));
+    this.step(() => { this.store.audit("taint-cleared", { sha: s, at, sig, repos: rows.map((x) => x.repo), project: rows[0].project, peer: rows[0].peer, thread: rows[0].thread }); });
+    this.taint.clear(s, "captain (desktop)");
     return this.view();
   }
   async withdraw(threadId: string, reason?: unknown) {
@@ -974,7 +1014,7 @@ export class Lan {
         // the file keystore: any program of this user can read the identity (shown plainly)
         warning: ks?.kind === "file" ? { en: "This Mac's identity can be read by local programs (no Touch ID protection)", zh: "這台的身分可被本機程式讀取（沒有 Touch ID 保護）" } : null, fallback: this.fallback },
       lost: this.lost, retired: this.st.retired.map((r) => ({ key: r.key, at: r.at, pending: this.st.idOut.filter((x) => x.from === r.key).map((x) => ({ to: this.who(x.to), tries: x.tries, error: x.error })) })),
-      ceilings: this.ceilings(), enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
+      ceilings: this.ceilings(), estimates: (() => { try { return this.o.estimates?.(this.ceilings()) ?? {}; } catch { return {}; } })(), enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
       introOpenUntil: this.st.introUntil && this.st.introUntil > Date.now() ? new Date(this.st.introUntil).toISOString() : null,
       introFailures: (this.st.introFailures ?? []).filter((f) => Date.parse(f.at) >= (this.st.introOpenedAt ?? 0) - 3600_000).slice(-5),
       intros: this.st.intros.filter(live).map((i) => ({ ...i, similar: similar(i.claimed, i.key), successorOf: successorOf(i.key) })),
@@ -983,7 +1023,7 @@ export class Lan {
       threads: this.st.threads.map((t) => this.threadView(t)).reverse(),
       items: this.st.items.filter((i) => i.state === "open" || i.state === "frozen").map((i) => this.itemView(i)).reverse(),
       outbox: this.st.outbox.map((x) => ({ to: this.who(x.to), entry: x.entry, tries: x.tries, error: x.error })),
-      taints: this.store.taints().filter((t) => !t.cleared).map((t) => ({ ...t, peer: this.who(t.peer) })),
+      ...this.taintView(),
       refused: this.st.refused.slice(-10).reverse().map((r) => ({ ...r, from: this.who(r.from) })) };
   }
   private inspectSafe(h: string) { try { return this.inspect(h); } catch { return null; } }

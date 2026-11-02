@@ -18,6 +18,18 @@ import type { Studio } from "./acceptance/studio";
 let pass = 0, fail = 0;
 const ok = (c: unknown, what: string, detail = "") => { if (c) { pass++; console.log(`  ok    ${what}`); } else { fail++; console.log(`  FAIL  ${what}${detail ? `\n        ${detail}` : ""}`); } };
 
+// the expected table, pinned: a workflow that should be relayed and is refused (or the reverse), a reason that changed, a
+// workflow that ships without a row here, each fails. Refused rows name the reason the take must give.
+const EXPECTED: Record<string, "passes" | RegExp> = {
+  "code-firstmate": "passes", documents: "passes", "web-prototype": "passes",
+  "coffee-kit": /publishes a website and makes images and a film/, "file-organization": /moves files outside its own folder/,
+  "hello-crew-studio": /a guided tour of this Studio/, images: /binary output \(PNG\)/, video: /binary output \(MP4\)/,
+  "pack-genesis": /writes a workflow pack into this Studio/, "startup-recursion": /two-vendor demonstration/,
+  "github-review": /is held/, "refine-demo": /not installed/, "trivial-lane": /not installed/,
+  ...Object.fromEntries(["crew-change", "firstmate-connect-github", "firstmate-grant-merge", "firstmate-proposal", "firstmate-register-project", "firstmate-staffing", "issue-categories", "issue-triage", "local-project-register", "review-room-host"].map((id) => [id, /is internal: Studio starts it itself/])),
+};
+// the profile's no-binding scope is enforced only on macOS: anywhere else every workflow would refuse, which proves nothing
+if (process.platform !== "darwin") { console.log(`  FAIL  the two-board workflow table runs on macOS only (this is ${process.platform}): it is not a pass that every workflow refuses here`); process.exit(1); }
 const files = [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml") || (f.startsWith("packs/") && f.endsWith(".flow.yaml")));
 const bundled = [...new Set(files.map((f) => String((parseYaml(bundledText(f) ?? "") as any)?.id ?? f)))].sort();
 const scenarios = new Map(scenarioFiles().map((f) => { const s = loadScenario(f); return [s.workflow, s] as const; }));
@@ -85,8 +97,12 @@ try {
   ok(listed.length > 0 && listed.every((w) => w.eligible || w.why.length), "B lists every installed workflow, and each one it does not offer names its reason");
   // classified: every workflow a person can start declares what it would hand back to a peer (lan.output) or why it
   // takes no work from one (lan.refuse); a new workflow fails here until it does
-  const defOf = new Map(files.filter((f) => f.endsWith(".wf.yaml")).map((f) => parseYaml(bundledText(f) ?? "") as any).filter((d) => d?.id).map((d) => [String(d.id), d]));
-  const unclassified = listed.filter((w) => !w.why.some((y: string) => / is (internal|retired|held|not installed)/.test(y))).map((w) => w.id).filter((id) => defOf.has(id) && !defOf.get(id).lan);
+  // the declarations of every source of a workflow (workflows/v2/*.wf.yaml, pack *.wf.yaml and pack *.flow.yaml): a
+  // workflow a person can start is classified when one of its sources declares lan.output or lan.refuse, and one with no
+  // source that declares anything is unclassified (never skipped because the source is a pack flow)
+  const defsOf = new Map<string, any[]>(); for (const f of files) { const d = parseYaml(bundledText(f) ?? "") as any; if (d?.id) defsOf.set(String(d.id), [...(defsOf.get(String(d.id)) ?? []), d]); }
+  const declared = (id: string) => (defsOf.get(id) ?? []).some((d) => d.lan && (d.lan.output || d.lan.refuse));
+  const unclassified = listed.filter((w) => !w.why.some((y: string) => / is (internal|retired|held|not installed)/.test(y))).map((w) => w.id).filter((id) => !declared(id));
   ok(!unclassified.length, "every workflow a person can start says what it hands back to a peer or why it takes none (lan.output / lan.refuse)", unclassified.join(", "));
   for (const id of ["images", "video"]) { const w = listed.find((x) => x.id === id); ok(w && !w.eligible && w.why.some((y: string) => /binary output/.test(y)), `${id} is refused at the take: its output is binary`, JSON.stringify(w?.why)); }
   // B's setup steps (an approved crew for the code workflow) run as the scenario's own; A applies a patch to its own sandbox project
@@ -126,6 +142,13 @@ try {
     } catch (e: any) { ok(false, `${id}: relayed end to end across two Studios`, String(e?.message ?? e).slice(0, 1200)); rows.push({ id, verdict: "FAIL", why: String(e?.message ?? e).slice(0, 200) }); }
   }
 } finally { await p.close(); }
+// the table against the pinned one: the same workflows, each with its verdict (and a refusal with its reason)
+{ const shipped = new Set(bundled), pinned = new Set(Object.keys(EXPECTED));
+  const unpinned = [...shipped].filter((id) => !pinned.has(id)), gone = [...pinned].filter((id) => !shipped.has(id));
+  ok(!unpinned.length && !gone.length, "every shipped workflow has a row in the pinned table, and every row ships", JSON.stringify({ unpinned, gone }));
+  for (const [id, want] of Object.entries(EXPECTED)) { const r = rows.find((x) => x.id === id);
+    const good = !!r && (want === "passes" ? r.verdict === "passes" : r.verdict === "refuses" && want.test(r.why));
+    ok(good, `${id}: ${want === "passes" ? "relayed across two boards" : `refused at the take (${want.source})`}, as pinned`, r ? `${r.verdict}: ${r.why.slice(0, 300)}` : "not in the table"); } }
 
 console.log("\nworkflow                     verdict   reason / evidence");
 for (const r of rows) console.log(`${r.id.padEnd(28)} ${r.verdict.padEnd(9)} ${r.why}`);

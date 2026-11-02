@@ -1,34 +1,81 @@
 // Commits Studio applied from a peer's work (docs/units/lan-relay.md, Applying a code result): the taint list. A branch
 // name is not enough (one commit on top of a lan-untrusted/ branch, under another name, is still the peer's work), so
-// Studio keeps the SHA of every commit it applied, with the peer and the thread, in its store (src/lan/store.ts), and a
-// commit is tainted when any recorded SHA is its ancestor (git merge-base --is-ancestor). The check runs wherever trusted
-// work would start from or publish such a commit: a Task's base (repo.prepare, a base Firstmate set included), Send for
-// review and From existing branch, a merge, and every Studio push or pull request. Only an audited desktop action ("I
-// reviewed commit X") clears a record.
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+// Studio keeps the SHA of every commit it applied, with the peer and the thread, and a commit is tainted when a recorded
+// SHA is its ancestor (git merge-base --is-ancestor). The check runs wherever trusted work would start from or publish
+// such a commit: a Task's base (repo.prepare, a base Firstmate set included), Send for review and From existing branch, a
+// merge, and every Studio push or pull request. Only an audited desktop action ("I reviewed commit X") clears a record.
+//   - Its own store, lan/taint.db, opened when Studio starts whatever the relay does (CREW_LAN=0, an identity lost, a
+//     relay that does not open): the relay's store may be set aside (作廢並換新身分), this one never is.
+//   - It matches by commit, never by folder: a row counts in every repository that holds its commit (a moved folder, a
+//     second clone, a fetch into another clone), and clearing a commit clears it everywhere.
+//   - It fails closed: a list that cannot be read refuses every check, in every repository, with the reason.
+import { Database } from "bun:sqlite";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { git } from "../git";
-import type { TaintRow } from "./store";
 
-export type Tainted = { sha: string; peer: string; thread: string; why: string };
+export type TaintRow = { sha: string; repo: string; project: string; peer: string; thread: string; round: number; at: string; why: string; cleared: string | null; clearedBy: string | null };
+export type Tainted = { sha: string; peer: string; thread: string; why: string; unreadable?: boolean };
 type Source = () => TaintRow[];
 const sources = new Set<Source>();
-/** the relay registers its store's taint rows when it opens (it removes them when it closes) */
+/** a list of rows the checks read (a source that throws refuses every check) */
 export function addTaintSource(s: Source): () => void { sources.add(s); return () => { sources.delete(s); }; }
 /** tests: one source in place of every other (null: none) */
 export function setTaintSource(s: Source | null) { sources.clear(); if (s) sources.add(s); }
-const rowsOf = () => [...sources].flatMap((s) => { try { return s(); } catch { return []; } });
-const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
-/** The recorded commit from a peer this commit is or descends from (in this repository), or null. A commit git cannot
- *  resolve is treated as tainted when the repository has records (fail closed). */
+
+/** lan/taint.db: 0600, WAL, synchronous FULL. A file that is there but cannot be opened or read leaves `broken` set and
+ *  every read throws (so every check refuses). */
+export class TaintStore {
+  private db: Database | null = null;
+  readonly broken: string | null = null;
+  private remove: () => void = () => {};
+  constructor(readonly path: string) {
+    try {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      const db = new Database(path, { create: true, readwrite: true });
+      try {
+        db.exec("PRAGMA journal_mode = WAL"); db.exec("PRAGMA synchronous = FULL"); db.exec("PRAGMA busy_timeout = 5000");
+        db.exec("CREATE TABLE IF NOT EXISTS taint (sha TEXT NOT NULL, repo TEXT NOT NULL, project TEXT NOT NULL, peer TEXT NOT NULL, thread TEXT NOT NULL, round INTEGER NOT NULL, at TEXT NOT NULL, why TEXT NOT NULL, cleared TEXT, cleared_by TEXT, PRIMARY KEY (sha, repo))");
+        db.query("SELECT count(*) AS n FROM taint").get();
+      } catch (e) { db.close(); throw e; }
+      for (const f of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(f)) try { chmodSync(f, 0o600); } catch {}
+      this.db = db;
+    } catch (e: any) { this.broken = `the list of commits applied from peers (${path}) cannot be read: ${String(e?.message ?? e).slice(0, 200)}`; }
+  }
+  private live(): Database { if (!this.db) throw new Error(this.broken ?? "the list of commits applied from peers is closed"); return this.db; }
+  /** every row (cleared ones included); throws when the list cannot be read */
+  rows(): TaintRow[] {
+    return (this.live().query("SELECT * FROM taint").all() as any[]).map((r) => ({ sha: r.sha, repo: r.repo, project: r.project, peer: r.peer, thread: r.thread, round: r.round, at: r.at, why: r.why, cleared: r.cleared ?? null, clearedBy: r.cleared_by ?? null }));
+  }
+  /** a commit joins the list (again, if it was cleared): written and synced before it returns */
+  add(t: Omit<TaintRow, "cleared" | "clearedBy">) {
+    this.live().query("INSERT INTO taint (sha, repo, project, peer, thread, round, at, why) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sha, repo) DO UPDATE SET cleared = NULL, cleared_by = NULL, why = excluded.why").run(t.sha, t.repo, t.project, t.peer, t.thread, t.round, t.at, t.why);
+  }
+  /** "I reviewed commit X": every row of that commit, whatever folder it was recorded in */
+  clear(sha: string, by: string): number { return this.live().query("UPDATE taint SET cleared = ?, cleared_by = ? WHERE sha = ? AND cleared IS NULL").run(new Date().toISOString(), by, sha).changes; }
+  retag(peer: string, why: string) { this.live().query("UPDATE taint SET why = ? WHERE peer = ?").run(why, peer); }
+  /** the checks read this list (until close) */
+  register(): this { this.remove(); this.remove = addTaintSource(() => this.rows()); return this; }
+  close() { this.remove(); this.remove = () => {}; try { this.db?.close(); } catch {} this.db = null; }
+}
+/** Studio's start: the taint list of this data folder, open and read by every check, whatever the relay does */
+export function openTaintList(dataDir: string): TaintStore { return new TaintStore(join(dataDir, "lan", "taint.db")).register(); }
+
+const rowsOf = () => [...sources].flatMap((s) => s());
+/** The recorded commit from a peer this commit is or descends from (in this repository, wherever the row was recorded),
+ *  or null. A list that cannot be read, or a commit git cannot resolve while the list has records, is tainted (fail closed). */
 export function taintOf(repo: string, commit: string): Tainted | null {
   if (!sources.size) return null;
-  const r = real(repo), rows = rowsOf().filter((t) => !t.cleared && real(t.repo) === r);
+  let rows: TaintRow[];
+  try { rows = rowsOf().filter((t) => !t.cleared); }
+  catch (e: any) { return { sha: "?", peer: "?", thread: "?", why: String(e?.message ?? e).slice(0, 300), unreadable: true }; }
   if (!rows.length) return null;
-  const head = git(repo, ["rev-parse", "--verify", `${commit}^{commit}`]); if (!head.ok) return { sha: "?", peer: rows[0].peer, thread: rows[0].thread, why: `${commit} cannot be resolved in a repository that holds work from a peer` };
-  const sha = head.out.trim();
+  const head = git(repo, ["rev-parse", "--verify", `${commit}^{commit}`]); if (!head.ok) return { sha: "?", peer: rows[0].peer, thread: rows[0].thread, why: `${commit} cannot be resolved while Studio holds work from a peer` };
+  const sha = head.out.trim(), seen = new Set<string>();
   for (const t of rows) {
+    if (seen.has(t.sha)) continue; seen.add(t.sha);
     if (t.sha === sha) return { sha: t.sha, peer: t.peer, thread: t.thread, why: t.why };
+    if (!git(repo, ["cat-file", "-e", `${t.sha}^{commit}`]).ok) continue; // this repository does not hold that commit
     const a = git(repo, ["merge-base", "--is-ancestor", t.sha, sha]);
     if (a.ok) return { sha: t.sha, peer: t.peer, thread: t.thread, why: t.why };
   }
@@ -36,6 +83,7 @@ export function taintOf(repo: string, commit: string): Tainted | null {
 }
 /** the refusal a trusted step gives a tainted commit, or null */
 export function taintRefusal(repo: string, commit: string, what: string): string | null {
-  const t = taintOf(repo, commit);
-  return t ? `${what}: ${commit.slice(0, 12)} holds work from a peer's Studio (commit ${t.sha.slice(0, 12)}, ${t.why}); Studio does not start or publish trusted work from it until a person marks that commit reviewed on the Peers page` : null;
+  const t = taintOf(repo, commit); if (!t) return null;
+  if (t.unreadable) return `${what}: refused, because ${t.why}. Studio does not start or publish trusted work while it cannot tell which commits hold work from a peer's Studio`;
+  return `${what}: ${commit.slice(0, 12)} holds work from a peer's Studio (commit ${t.sha.slice(0, 12)}, ${t.why}); Studio does not start or publish trusted work from it until a person marks that commit reviewed on the Peers page`;
 }
