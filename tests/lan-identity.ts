@@ -86,7 +86,8 @@ async function pairUp(A: Lan, B: Lan, o: { replaces?: string } = {}) { B.openInt
   const A2 = await mk("la2"); A2.setEnabled(true);
   B.openIntro(1); const ia = await A2.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros.find((i: any) => i.key === A2.id.key);
   ok(!ib.successorOf?.length, "a new identity that no revocation named carries no successor label (confirm in person)");
-  await A2.confirmIntro(ia.id, ib.sas, "B"); await B.confirmIntro(ib.id, ia.sas, "A's new Mac", { replaces: oldKey });
+  await A2.confirmIntro(ia.id, ib.sas, "B"); await B.confirmIntro(ib.id, ia.sas, "A's new Mac", { replaces: oldKey, keepName: true });
+  ok(B.peer(A2.id.key)?.petname === "A", "the replaced peer's name carries over only when chosen", B.peer(A2.id.key)?.petname);
   ok(B.peer(oldKey)?.state === "revoked" && B.thread(t.id)?.state === "closed" && B.view().items.every((i: any) => i.from.key !== oldKey) && B.peer(A2.id.key)?.replaces === oldKey,
     "replacing a peer at the code revokes the old identity for good, closes its threads and withdraws its items", JSON.stringify([B.peer(oldKey)?.state, B.thread(t.id)?.state]));
   let e = ""; try { await B.confirmIntro("nope", "000000", "x", { replaces: oldKey }); } catch (x: any) { e = String(x?.code); }

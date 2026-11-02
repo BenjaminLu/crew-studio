@@ -39,7 +39,9 @@ Tests: `tests/lan-crypto.ts`, `tests/lan-keys.ts`, `tests/lan-identity.ts`, `tes
     Swift helper Studio builds from `src/lan/se-helper.swift` on this Mac (`swiftc`, ad-hoc signed, no entitlements, no
     Keychain) and talks to over stdin/stdout (one JSON request per line). Studio keeps only the blobs the enclave wrapped
     for this device (`lan/enclave.json`, 0600): copied to another machine they are useless. The admin key needs Touch ID
-    or the login password for every signature (`.userPresence`), and the helper builds the prompt itself from what it
+    or the login password for every signature (`.userPresence`; opt-in "biometry only" binds it to the fingerprints
+    enrolled now, and the page warns that a change of fingerprints makes it unusable, so the identity must then be
+    replaced in person), and the helper builds the prompt itself from what it
     signs (a peer's fingerprint, a key's fingerprint, a sequence number), never from text Studio passes. The helper
     signs a daily purpose only with a daily key and an admin purpose only with the admin key, and checks every field.
   - **Files** (Linux, a Mac without an enclave, a helper that does not build): `lan/identity.json` and `lan/admin.key`,

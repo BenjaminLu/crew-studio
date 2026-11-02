@@ -37,7 +37,7 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     if (p === "/api/lan/intro/start") return json(await lan.startIntro(String(b.host ?? ""), Number(b.port)));
     if (p === "/api/lan/sync") { await lan.flush(); return json(lan.view()); }
     // 作廢並換新身分 (an upgrade from files to the Secure Enclave is the same step), and a lost identity replaced
-    if (p === "/api/lan/identity/retire") return json(await lan.retireIdentity({ kind: KINDS.includes(String(b.kind)) ? b.kind : undefined }));
+    if (p === "/api/lan/identity/retire") return json(await lan.retireIdentity({ kind: KINDS.includes(String(b.kind)) ? b.kind : undefined, biometry: b.biometry === true }));
     if (p === "/api/lan/identity/replace-lost") return json(await lan.replaceLostIdentity({ kind: KINDS.includes(String(b.kind)) ? b.kind : undefined }));
     if (p === "/api/lan/identity/drop-retired") return json(lan.dropRetirement(String(b.key ?? "")));
     if (p === "/api/lan/dispatch") return json(await lan.dispatch({ to: String(b.to ?? ""), title: b.title, briefing: b.briefing, acceptance: b.acceptance, workflow: b.workflow ? String(b.workflow) : null, project: b.project ? String(b.project) : null }));

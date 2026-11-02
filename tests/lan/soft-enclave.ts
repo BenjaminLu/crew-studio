@@ -32,6 +32,7 @@ function handle(q: any): any {
     case "available": return { ok: true, se: true };
     case "message": { const m = adminMessage(String(q.purpose ?? ""), q.fields); return { ok: true, msg: b64u(m.msg), prompt: m.prompt }; }
     case "create": { if (q.kind !== "sign" && q.kind !== "dh") throw new Error("kind is sign or dh"); if (q.kind === "dh" && q.presence) throw new Error("a key agreement key is never made with presence");
+      if (q.presence !== undefined && q.presence !== true && q.presence !== false && q.presence !== "biometry") throw new Error("presence is true, false or biometry");
       const e = createECDH("prime256v1"); e.generateKeys();
       return { ok: true, blob: "soft1." + Buffer.from(JSON.stringify({ kind: q.kind, presence: !!q.presence, d: b64u(e.getPrivateKey()) })).toString("base64"), pub: b64u(e.getPublicKey()) }; }
     case "pub": return { ok: true, pub: b64u(keyOf(q.blob).pub) };

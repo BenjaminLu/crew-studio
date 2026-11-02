@@ -55,6 +55,8 @@ export interface Keystore {
   /** the identity as peers name it (base64url of the admin key) and as people compare it */
   readonly key: string; readonly fingerprint: string;
   readonly signPub: Buffer; readonly dhPub: Buffer; readonly cert: Cert;
+  /** what guards the admin key: nothing (files), Touch ID or the password, or only the fingerprints enrolled now */
+  readonly adminGuard: "none" | "presence" | "biometry";
   /** a daily signature (entries) */
   sign(purpose: typeof DAILY_PURPOSES[number], msg: Uint8Array): Promise<Buffer>;
   /** key agreement with the daily key (the x coordinate) */
@@ -93,7 +95,7 @@ const storage = async (ks: Pick<Keystore, "dh" | "dhPub">) => sha256(Buffer.from
 
 // ---------- the file keystore ----------
 class FileKeystore implements Keystore {
-  readonly kind = "file" as const; readonly key: string; readonly fingerprint: string; readonly identity: Buffer; readonly signPub: Buffer; readonly dhPub: Buffer;
+  readonly kind = "file" as const; readonly adminGuard = "none" as const; readonly key: string; readonly fingerprint: string; readonly identity: Buffer; readonly signPub: Buffer; readonly dhPub: Buffer;
   private sk?: Promise<Buffer>;
   constructor(private admin_: KeyPair, private sign_: KeyPair, private dh_: KeyPair, readonly cert: Cert) {
     this.identity = admin_.pub; this.key = b64u(admin_.pub); this.fingerprint = fingerprint(admin_.pub); this.signPub = sign_.pub; this.dhPub = dh_.pub;
@@ -151,7 +153,7 @@ export class Helper {
 const SE_KEY = (v: any) => !!v && typeof v.blob === "string" && v.blob.length <= 8192 && typeof v.pub === "string";
 class EnclaveKeystore implements Keystore {
   readonly key: string; readonly fingerprint: string; readonly identity: Buffer; readonly signPub: Buffer; readonly dhPub: Buffer; private sk?: Promise<Buffer>;
-  constructor(readonly kind: "enclave" | "soft-enclave", private h: Helper, private blobs: { admin: string; sign: string; dh: string }, pubs: { admin: Buffer; sign: Buffer; dh: Buffer }, readonly cert: Cert) {
+  constructor(readonly kind: "enclave" | "soft-enclave", private h: Helper, private blobs: { admin: string; sign: string; dh: string }, pubs: { admin: Buffer; sign: Buffer; dh: Buffer }, readonly cert: Cert, readonly adminGuard: "presence" | "biometry" = "presence") {
     this.identity = pubs.admin; this.key = b64u(pubs.admin); this.fingerprint = fingerprint(pubs.admin); this.signPub = pubs.sign; this.dhPub = pubs.dh;
   }
   async sign(purpose: "entry", msg: Uint8Array) { const r = await this.h.call({ op: "sign", blob: this.blobs.sign, purpose, msg: Buffer.from(msg).toString("base64") }, 30_000); return unb64u(r.sig, 64); }
@@ -160,7 +162,7 @@ class EnclaveKeystore implements Keystore {
   storageKey() { return (this.sk ??= storage(this)); }
   close() { this.h.close(); }
 }
-async function openEnclave(home: string, kind: "enclave" | "soft-enclave", h: Helper, create: boolean, presence: boolean): Promise<EnclaveKeystore | null> {
+async function openEnclave(home: string, kind: "enclave" | "soft-enclave", h: Helper, create: boolean, presence: boolean | "biometry"): Promise<EnclaveKeystore | null> {
   const f = files(home);
   if (existsSync(f.enclave)) {
     let j: any; try { j = JSON.parse(readFileSync(f.enclave, "utf8")); } catch { throw new Error(`the LAN identity ${f.enclave} cannot be read`); }
@@ -173,10 +175,10 @@ async function openEnclave(home: string, kind: "enclave" | "soft-enclave", h: He
     try { pubs = { admin: await pub("sign", j.admin.blob), sign: await pub("sign", j.sign.blob), dh: await pub("dh", j.dh.blob) }; }
     catch (e: any) { throw new Error(`this Mac's Secure Enclave does not hold the LAN identity kept in ${f.enclave} (${String(e?.message ?? e).slice(0, 120)}): it cannot be used here`); }
     if (!verifyCert(j.cert, pubs.admin) || j.cert.sign !== b64u(pubs.sign) || j.cert.dh !== b64u(pubs.dh)) throw new Error("the LAN identity's certificate does not match its keys");
-    return new EnclaveKeystore(kind, h, { admin: j.admin.blob, sign: j.sign.blob, dh: j.dh.blob }, pubs, j.cert);
+    return new EnclaveKeystore(kind, h, { admin: j.admin.blob, sign: j.sign.blob, dh: j.dh.blob }, pubs, j.cert, j.admin.presence === "biometry" ? "biometry" : "presence");
   }
   if (!create) return null;
-  const mk = async (k: "sign" | "dh", p: boolean) => { const r = await h.call({ op: "create", kind: k, presence: p }, 60_000); return { blob: String(r.blob), pub: unb64u(r.pub, 65) }; };
+  const mk = async (k: "sign" | "dh", p: boolean | "biometry") => { const r = await h.call({ op: "create", kind: k, presence: p }, 60_000); return { blob: String(r.blob), pub: unb64u(r.pub, 65) }; };
   const admin = await mk("sign", presence), sign = await mk("sign", false), dh = await mk("dh", false), at = new Date().toISOString();
   const unsigned = { v: 2 as const, id: b64u(admin.pub), sign: b64u(sign.pub), dh: b64u(dh.pub), seq: 1, at };
   // the first admin signature: the person confirms the new identity once
@@ -184,7 +186,7 @@ async function openEnclave(home: string, kind: "enclave" | "soft-enclave", h: He
   const cert: Cert = { ...unsigned, sig: b64u(sig) };
   if (!verifyCert(cert, admin.pub)) throw new Error("the Secure Enclave's certificate did not verify");
   writeKeyFile(f.enclave, JSON.stringify({ v: 2, ...(kind === "soft-enclave" ? { soft: true } : {}), admin: { blob: admin.blob, pub: b64u(admin.pub), presence }, sign: { blob: sign.blob, pub: b64u(sign.pub) }, dh: { blob: dh.blob, pub: b64u(dh.pub) }, cert }));
-  return new EnclaveKeystore(kind, h, { admin: admin.blob, sign: sign.blob, dh: dh.blob }, { admin: admin.pub, sign: sign.pub, dh: dh.pub }, cert);
+  return new EnclaveKeystore(kind, h, { admin: admin.blob, sign: sign.blob, dh: dh.blob }, { admin: admin.pub, sign: sign.pub, dh: dh.pub }, cert, presence === "biometry" ? "biometry" : "presence");
 }
 
 /** The helper binary for this Mac: built once per source version into Studio's data folder, ad-hoc signed; null when
@@ -212,7 +214,7 @@ export type OpenResult = { ks: Keystore | null; why?: string; fallback?: string 
  * Enclave when this Mac has one and the helper builds (never in a test run unless CREW_LAN_REAL_SE=1), else in files.
  * CREW_LAN_KEYSTORE=file|enclave|soft-enclave asks for one kind.
  */
-export async function openKeystore(dataDir: string, o: { create: boolean; kind?: KeystoreKind; helper?: string[]; presence?: boolean; home?: string }): Promise<OpenResult> {
+export async function openKeystore(dataDir: string, o: { create: boolean; kind?: KeystoreKind; helper?: string[]; presence?: boolean | "biometry"; home?: string }): Promise<OpenResult> {
   const home = o.home ?? join(dataDir, "lan");
   const want = (o.kind ?? process.env.CREW_LAN_KEYSTORE ?? null) as KeystoreKind | null, have = storedKind(home);
   const kind: KeystoreKind = have ?? want ?? (defaultEnclave(dataDir) ? "enclave" : "file");

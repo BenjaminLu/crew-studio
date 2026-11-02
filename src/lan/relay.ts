@@ -343,10 +343,12 @@ export class Lan {
    * with the short code. Every open thread is closed here (threads are not moved). `kind` chooses the new keystore (an
    * upgrade from files to the Secure Enclave is this same step).
    */
-  async retireIdentity(o: { kind?: KeystoreKind } = {}) {
+  async retireIdentity(o: { kind?: KeystoreKind; biometry?: boolean } = {}) {
     const old = this.live(), at = now(), lastSeq = this.log.seq;
     const home = join(this.dir, `next-${Date.now()}`);
-    const made = await openKeystore(this.o.dataDir, { create: true, home, kind: o.kind ?? (old.kind === "soft-enclave" ? "soft-enclave" : undefined) });
+    // opt-in "biometry only": the admin key works only with the fingerprints enrolled now (a change makes it unusable,
+    // and the identity must then be replaced in person); Touch ID or the login password otherwise
+    const made = await openKeystore(this.o.dataDir, { create: true, home, kind: o.kind ?? (old.kind === "soft-enclave" ? "soft-enclave" : undefined), presence: o.biometry ? "biometry" : true });
     if (!made.ks) throw new LanError(409, `a new identity could not be made: ${made.why ?? "?"}`, "identity");
     const next = made.ks;
     let sig: string, ssig: string;
@@ -966,7 +968,9 @@ export class Lan {
     const similar = (n: string, key: string) => this.st.peers.filter((p) => p.key !== key && p.state === "trusted" && n && (p.petname.toLowerCase().replace(/\s/g, "") === n.toLowerCase().replace(/\s/g, "") || p.claimed === n)).map((p) => p.petname);
     const successorOf = (key: string) => this.st.peers.filter((p) => p.retired?.successor?.key === key).map((p) => ({ key: p.key, petname: p.petname, fp: p.fp, certified: !!p.retired?.successor?.certified }));
     const ks = this.ks;
-    return { me: { key: ks?.key ?? null, fingerprint: ks?.fingerprint ?? null, name: this.st.settings.name, store: ks?.kind ?? null,
+    return { me: { key: ks?.key ?? null, fingerprint: ks?.fingerprint ?? null, name: this.st.settings.name, store: ks?.kind ?? null, adminGuard: ks?.adminGuard ?? null,
+        // stated plainly: while Studio runs, any program of this user can have the daily keys sign and open boxes
+        residual: { en: "Any program running as you on this Mac can sign entries and open what is sealed to this Studio while it runs; the Secure Enclave stops the keys being copied off this Mac and needs you for introductions and revocations.", zh: "這台 Mac 上以你的身分執行的任何程式，在 Studio 執行時都能用日常金鑰簽署條目、打開加密給這台的內容；Secure Enclave 防止金鑰被複製到別台，並在引介與作廢時需要你本人確認。" },
         // the file keystore: any program of this user can read the identity (shown plainly)
         warning: ks?.kind === "file" ? { en: "This Mac's identity can be read by local programs (no Touch ID protection)", zh: "這台的身分可被本機程式讀取（沒有 Touch ID 保護）" } : null, fallback: this.fallback },
       lost: this.lost, retired: this.st.retired.map((r) => ({ key: r.key, at: r.at, pending: this.st.idOut.filter((x) => x.from === r.key).map((x) => ({ to: this.who(x.to), tries: x.tries, error: x.error })) })),

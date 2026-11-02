@@ -55,6 +55,11 @@ await contract("soft-enclave");
 { const d = dirOf("deny"), ks = (await openKeystore(d, { create: true, kind: "soft-enclave" })).ks!; writeFileSync(deny, "");
   let e = ""; try { await ks.admin("revoke", [ks.key, "3", "-", new Date().toISOString()]); } catch (x: any) { e = String(x?.message ?? x); }
   ok(/cancelled/.test(e), "an admin signature the person cancels is refused (nothing is signed)", e); Bun.spawnSync(["rm", deny]); ks.close(); }
+// opt-in biometry only: the admin key is made for the fingerprints enrolled now (shown as such), daily keys unchanged
+{ const d = dirOf("bio"), ks = (await openKeystore(d, { create: true, kind: "soft-enclave", presence: "biometry" })).ks!;
+  const j = JSON.parse(readFileSync(join(d, "lan", "enclave.json"), "utf8")); ks.close();
+  const again = (await openKeystore(d, { create: false, kind: "soft-enclave" })).ks!;
+  ok(j.admin.presence === "biometry" && again.adminGuard === "biometry" && (await openKeystore(dirOf("pres"), { create: true, kind: "soft-enclave" })).ks!.adminGuard === "presence", "biometry only is an opt-in for the admin key (kept and shown); the default is Touch ID or the password"); again.close(); }
 // the default in a test run is the file keystore (never the Secure Enclave, never the Keychain)
 { const r = await openKeystore(dirOf("default"), { create: true }); ok(r.ks?.kind === "file", "a test run's default identity is the file keystore", r.ks?.kind); r.ks?.close(); }
 // a kind on disk is never silently changed

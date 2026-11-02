@@ -4,7 +4,7 @@
 // handed back for Studio to keep in its data folder. No private key material ever leaves the enclave, so there is none
 // to print. Long-lived: one JSON request per line on stdin, one JSON answer per line on stdout, each with the request's id.
 //   {"id":n,"op":"available"}                                  -> {"id":n,"ok":true,"se":true|false}
-//   {"id":n,"op":"create","kind":"sign"|"dh","presence":bool}  -> {"id":n,"ok":true,"blob":b64,"pub":b64url (X9.63)}
+//   {"id":n,"op":"create","kind":"sign"|"dh","presence":bool|"biometry"} -> {"id":n,"ok":true,"blob":b64,"pub":b64url (X9.63)}
 //   {"id":n,"op":"pub","kind":"sign"|"dh","blob":b64}          -> {"id":n,"ok":true,"pub":b64url}
 //   {"id":n,"op":"sign","blob":b64,"purpose":p,"msg":b64}      -> {"id":n,"ok":true,"sig":b64url (r||s)}   a daily purpose only
 //   {"id":n,"op":"dh","blob":b64,"peer":b64url (X9.63)}        -> {"id":n,"ok":true,"secret":b64url (x coordinate)}
@@ -78,8 +78,10 @@ func handle(_ req: [String: Any]) throws -> [String: Any] {
   guard SecureEnclave.isAvailable else { throw Refusal(why: "no Secure Enclave on this Mac") }
   switch op {
   case "create":
-    let kind = req["kind"] as? String, presence = (req["presence"] as? Bool) ?? false
-    var flags: SecAccessControlCreateFlags = [.privateKeyUsage]; if presence { flags.insert(.userPresence) }
+    // presence: Touch ID or the login password on every use; "biometry": the fingerprints enrolled now, nothing else (a
+    // change of fingerprints makes the key unusable for good)
+    let kind = req["kind"] as? String, biometry = (req["presence"] as? String) == "biometry", presence = biometry || ((req["presence"] as? Bool) ?? false)
+    var flags: SecAccessControlCreateFlags = [.privateKeyUsage]; if biometry { flags.insert(.biometryCurrentSet) } else if presence { flags.insert(.userPresence) }
     var err: Unmanaged<CFError>?
     guard let ac = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, &err) else { throw Refusal(why: "access control") }
     if kind == "sign" { let k = try SecureEnclave.P256.Signing.PrivateKey(accessControl: ac); return ["ok": true, "blob": k.dataRepresentation.base64EncodedString(), "pub": b64url(k.publicKey.x963Representation)] }
