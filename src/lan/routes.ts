@@ -9,6 +9,7 @@ import { Lan, LanError } from "./relay";
 
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const KEY = "[A-Za-z0-9_-]{87}", ID = "[A-Za-z0-9_-]{8,64}";
+const KINDS = ["file", "enclave"];
 
 export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean, pageCookie: boolean): Promise<Response | null> {
   const p = url.pathname; if (p !== "/api/lan" && !p.startsWith("/api/lan/")) return null;
@@ -34,9 +35,13 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     if (p === "/api/lan/intro/close") return json(lan.closeIntro());
     if (p === "/api/lan/intro/start") return json(await lan.startIntro(String(b.host ?? ""), Number(b.port)));
     if (p === "/api/lan/sync") { await lan.flush(); return json(lan.view()); }
-    if (p === "/api/lan/dispatch") return json(lan.dispatch({ to: String(b.to ?? ""), title: b.title, briefing: b.briefing, acceptance: b.acceptance, workflow: b.workflow ? String(b.workflow) : null }));
+    // 作廢並換新身分 (an upgrade from files to the Secure Enclave is the same step), and a lost identity replaced
+    if (p === "/api/lan/identity/retire") return json(await lan.retireIdentity({ kind: KINDS.includes(String(b.kind)) ? b.kind : undefined }));
+    if (p === "/api/lan/identity/replace-lost") return json(await lan.replaceLostIdentity({ kind: KINDS.includes(String(b.kind)) ? b.kind : undefined }));
+    if (p === "/api/lan/identity/drop-retired") return json(lan.dropRetirement(String(b.key ?? "")));
+    if (p === "/api/lan/dispatch") return json(await lan.dispatch({ to: String(b.to ?? ""), title: b.title, briefing: b.briefing, acceptance: b.acceptance, workflow: b.workflow ? String(b.workflow) : null }));
     let x = m(`intro/(${ID})/(confirm|cancel)`);
-    if (x) return json(x[2] === "confirm" ? lan.confirmIntro(x[1], b.code, b.petname) : lan.cancelIntro(x[1]));
+    if (x) return json(x[2] === "confirm" ? await lan.confirmIntro(x[1], b.code, b.petname, { replaces: typeof b.replaces === "string" && new RegExp(`^${KEY}$`).test(b.replaces) ? b.replaces : null, keepName: b.keepName === true }) : lan.cancelIntro(x[1]));
     x = m(`peers/(${KEY})/(rename|unpair|revoke|resolve|address)`);
     if (x) { const k = x[1];
       if (x[2] === "rename") return json(lan.renamePeer(k, b.petname));
@@ -50,9 +55,9 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     if (x) { const id = x[1], edits = Array.isArray(b.edits) ? b.edits.slice(0, 60).map((e: any) => ({ path: String(e?.path ?? ""), text: e?.text === null ? null : String(e?.text ?? "") })) : undefined;
       if (x[2] === "handback/preview") return json(await lan.handbackPreview(id, edits));
       if (x[2] === "handback") return json(await lan.handback(id, { confirm: String(b.confirm ?? ""), edits }));
-      if (x[2] === "refine") return json(lan.refine(id, { briefing: b.briefing, note: b.note }));
-      if (x[2] === "done") return json(lan.done(id));
-      return json(lan.withdraw(id, b.reason)); }
+      if (x[2] === "refine") return json(await lan.refine(id, { briefing: b.briefing, note: b.note }));
+      if (x[2] === "done") return json(await lan.done(id));
+      return json(await lan.withdraw(id, b.reason)); }
     return json({ error: "not found" }, 404);
   } catch (e: any) {
     if (e instanceof LanError) return json({ error: e.message, code: e.code }, e.status);

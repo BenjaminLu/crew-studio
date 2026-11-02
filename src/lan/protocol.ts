@@ -1,14 +1,18 @@
-// The entries two Studios exchange (docs/units/lan-relay.md): per-author signed, append-only logs. An envelope carries
-// the author's full public key, its sequence number and the hash of its previous entry, the recipients' full keys, a
-// sealed body (encrypted to the recipients and the author) and the signature. Every field is checked by shape and size
+// The entries two Studios exchange (docs/units/lan-relay.md): per-author signed, append-only logs, protocol 2. An
+// envelope carries the author's identity (its admin key), the hash of the certificate whose daily signing key signed it,
+// its sequence number and the hash of its previous entry, the recipients' identities, a sealed body (encrypted to the
+// recipients' and the author's daily key agreement keys) and the signature. Every field is checked by shape and size
 // before any signature is verified, and every body by kind. A briefing or a result travels as a sealed blob beside the
 // entry that names its hash; nothing is fetched by hash afterwards, so there is no blob endpoint to ask "do you have X".
-import { b64u, canonical, checkPub, open, seal, sha256hex, sign, unb64u, verify, type Box, type KeyPair } from "./crypto";
+import { b64u, canonical, checkPub, open, seal, sha256hex, unb64u, verify, type Box, type Recipient, type StaticKey } from "./crypto";
 
 export const LIMITS = { envelope: 64 * 1024, blob: 256 * 1024, recipients: 8, title: 120, briefing: 6000, acceptance: 10, criterion: 300, files: 60, path: 240, note: 1000, reason: 300, push: 16, perDay: 500, rounds: 20, skewMs: 24 * 3600_000 };
 export const KINDS = ["dispatch", "take", "assign", "result", "refine", "done", "revoke"] as const;
 export type Kind = typeof KINDS[number];
-export type Envelope = { v: 1; a: string; seq: number; prev: string | null; ts: string; to: string[]; box: Box; sig: string };
+export type Envelope = { v: 2; a: string; c: string; seq: number; prev: string | null; ts: string; to: string[]; box: Box; sig: string };
+/** what signs this Studio's entries and opens what is sealed to it (src/lan/keystore.ts) */
+export type Author = { key: string; certHash: string; dhPub: Buffer; sign(purpose: "entry", msg: Uint8Array): Promise<Buffer> };
+export type Reader = { id: string; dh: StaticKey };
 export type WorkflowRef = { id: string; version: number; defHash: string };
 export type Body =
   | { kind: "dispatch"; thread: string; round: 1; title: string; briefing: { hash: string; size: number }; acceptance: string[]; suggested: WorkflowRef | null }
@@ -51,7 +55,9 @@ export function bodyProblem(b: any): string | null {
 }
 /** The reason an envelope's shape is wrong (before any signature check), or null. */
 export function envelopeProblem(e: any): string | null {
-  if (!plainObj(e) || !only(e, ["v", "a", "seq", "prev", "ts", "to", "box", "sig"]) || e.v !== 1) return "not an entry";
+  if (!plainObj(e) || e.v !== 2) return plainObj(e) && e.v === 1 ? "a protocol 1 entry: this Studio speaks protocol 2 only" : "not an entry";
+  if (!only(e, ["v", "a", "c", "seq", "prev", "ts", "to", "box", "sig"])) return "not an entry";
+  if (!HEX64.test(String(e.c))) return "bad certificate hash";
   let size = 0; try { size = canonical(e).length; } catch { return "not canonical data"; }
   if (size > LIMITS.envelope) return "entry too large";
   if (!keyOk(e.a)) return "bad author key";
@@ -59,33 +65,34 @@ export function envelopeProblem(e: any): string | null {
   if (!(e.prev === null || HEX64.test(String(e.prev))) || (e.seq === 1) !== (e.prev === null)) return "bad prev";
   if (!str(e.ts, 40) || !Number.isFinite(Date.parse(e.ts))) return "bad timestamp";
   if (!Array.isArray(e.to) || !e.to.length || e.to.length > LIMITS.recipients || !e.to.every(keyOk) || new Set(e.to).size !== e.to.length) return "bad recipients";
-  if (!plainObj(e.box) || !Array.isArray(e.box.keys) || e.box.keys.length > LIMITS.recipients + 1) return "bad box";
+  if (!plainObj(e.box) || e.box.alg !== "p256-hkdf-aesgcm-2" || !Array.isArray(e.box.keys) || e.box.keys.length > LIMITS.recipients + 1) return "bad box";
   if (!str(e.sig, 100)) return "bad signature";
   return null;
 }
-const unsigned = (e: Envelope) => Buffer.from(canonical({ v: e.v, a: e.a, seq: e.seq, prev: e.prev, ts: e.ts, to: e.to, box: e.box }));
+const unsigned = (e: Envelope) => Buffer.from(canonical({ v: e.v, a: e.a, c: e.c, seq: e.seq, prev: e.prev, ts: e.ts, to: e.to, box: e.box }));
 export const entryHash = (e: Envelope) => sha256hex(canonical(e));
-export const verifyEnvelope = (e: Envelope) => { try { return verify(unb64u(e.a, 65), "entry", unsigned(e), unb64u(e.sig, 64)); } catch { return false; } };
-/** A new signed entry: the body sealed to its recipients and to its author. */
-export function makeEnvelope(me: KeyPair, seq: number, prev: string | null, to: string[], body: Body, ts = new Date().toISOString()): Envelope {
+/** the signature, checked against the daily signing key of the certificate the entry names (the caller looks it up) */
+export const verifyEnvelope = (e: Envelope, signPub: Uint8Array) => { try { return verify(signPub, "entry", unsigned(e), unb64u(e.sig, 64)); } catch { return false; } };
+/** A new signed entry: the body sealed to its recipients and to its author (each by its daily key agreement key). */
+export async function makeEnvelope(me: Author, seq: number, prev: string | null, to: Recipient[], body: Body, ts = new Date().toISOString()): Promise<Envelope> {
   const problem = bodyProblem(body); if (problem) throw new Error(problem);
-  const box = seal(Buffer.from(canonical(body)), [...to.map((k) => unb64u(k, 65)), me.pub], "entry");
-  const e: Omit<Envelope, "sig"> & { sig?: string } = { v: 1, a: b64u(me.pub), seq, prev, ts, to, box };
-  e.sig = b64u(sign(me, "entry", unsigned(e as Envelope)));
+  const box = seal(Buffer.from(canonical(body)), [...to, { id: me.key, dh: me.dhPub }], "entry");
+  const e: Omit<Envelope, "sig"> & { sig?: string } = { v: 2, a: me.key, c: me.certHash, seq, prev, ts, to: to.map((r) => r.id), box };
+  e.sig = b64u(await me.sign("entry", unsigned(e as Envelope)));
   return e as Envelope;
 }
-/** The body of an envelope this key can read, checked; else the reason. */
-export function readBody(e: Envelope, me: KeyPair): { body: Body } | { problem: string } {
-  const plain = open(e.box, me, "entry"); if (!plain) return { problem: "not readable by this Studio" };
+/** The body of an envelope this Studio can read, checked; else the reason. */
+export async function readBody(e: Envelope, me: Reader): Promise<{ body: Body } | { problem: string }> {
+  const plain = await open(e.box, me, "entry"); if (!plain) return { problem: "not readable by this Studio" };
   let b: any; try { b = JSON.parse(plain.toString("utf8")); } catch { return { problem: "body is not JSON" }; }
   const p = bodyProblem(b); return p ? { problem: p } : { body: b as Body };
 }
 export type Blob = { hash: string; box: Box };
-export const sealBlob = (plain: Buffer, recipients: string[], me: KeyPair): Blob => ({ hash: sha256hex(plain), box: seal(plain, [...recipients.map((k) => unb64u(k, 65)), me.pub], "blob") });
-/** The blob's bytes when this key can open it and they hash to its name; else null. */
-export function openBlob(b: Blob, me: KeyPair): Buffer | null {
+export const sealBlob = (plain: Buffer, recipients: Recipient[], me: Recipient): Blob => ({ hash: sha256hex(plain), box: seal(plain, [...recipients, me], "blob") });
+/** The blob's bytes when this Studio can open it and they hash to its name; else null. */
+export async function openBlob(b: Blob, me: Reader): Promise<Buffer | null> {
   if (!plainObj(b) || !HEX64.test(String(b.hash))) return null;
-  const p = open(b.box, me, "blob"); if (!p || p.length > LIMITS.blob) return null;
+  const p = await open(b.box, me, "blob"); if (!p || p.length > LIMITS.blob) return null;
   return sha256hex(p) === b.hash ? p : null;
 }
 

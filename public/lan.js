@@ -1,12 +1,13 @@
 // Board-to-board work (docs/units/lan-relay.md): #/lan[/<thread>]. My address (fingerprint, device name, copy), the
 // introduction (a window of a few minutes, the short code both screens show, typed in to confirm), introduced peers
-// (petname, what they call themselves, fingerprint, unpair, revoke, a frozen author's two entries), the Studios nearby
-// (seen, never contacted), dispatching work, the inbox of received items (approve, take with a workflow, reject), and
+// (petname, what they call themselves, fingerprint, where they say their identity is kept, unpair, remove, a frozen
+// author's two entries, a peer that changed identity), this Studio's own identity (where it is kept, 作廢並換新身分, an
+// identity that is gone), dispatching work, the inbox of received items (approve, take with a workflow, reject), and
 // each work thread's relay track: where it is now, who holds it, every hand-off with device and time, what comes next.
 // Everything a peer wrote is drawn as text nodes (kit.js h()): never as HTML, never as SVG, never in a frame of this
 // origin. The approver sees the full briefing and the exact prompt the agent will get. Loaded before backbone.js.
 (() => {
-const LN = { applyTo: {}, projects: null, v: null, wf: null, err: null, sel: null, item: null, form: { title: "", briefing: "", acceptance: "", workflow: "", to: "" }, intro: { host: "", port: "" }, codes: {}, names: {}, take: {}, refine: {}, preview: {}, edits: {}, busy: false, insp: null, scrolled: {} };
+const LN = { applyTo: {}, projects: null, v: null, wf: null, err: null, sel: null, item: null, form: { title: "", briefing: "", acceptance: "", workflow: "", to: "" }, intro: { host: "", port: "" }, codes: {}, names: {}, replaces: {}, take: {}, refine: {}, preview: {}, edits: {}, busy: false, insp: null, scrolled: {} };
 window.crewLan = LN;
 const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
@@ -39,7 +40,19 @@ const copy = (text) => { try { navigator.clipboard.writeText(text); toast(T("Cop
 const KIND = { dispatch: ["派工", "Dispatch"], take: ["接下", "Take"], assign: ["指派", "Assign"], result: ["交回結果", "Result"], refine: ["再調整", "Refine"], done: ["結案", "Done"], revoke: ["撤回", "Withdraw"] };
 const kindName = (k) => T(KIND[k]?.[1] ?? k, KIND[k]?.[0] ?? k);
 
+const STORE = { enclave: ["the Secure Enclave of this Mac (Touch ID for introductions and revocations)", "這台 Mac 的 Secure Enclave（引介與作廢需 Touch ID）"], "soft-enclave": ["a test stand-in for the Secure Enclave", "Secure Enclave 的測試替身"], file: ["files in Studio's data folder", "Studio 資料夾裡的檔案"] };
+const storeName = (k) => T(STORE[k]?.[0] ?? k, STORE[k]?.[1] ?? k);
+/** this Studio's identity cannot be used (fail closed): replace it */
+function lostIdentity(v) {
+  return h("section", { class: "card lan-card", "data-lan-lost": "" },
+    h("div", { class: "card-h" }, icon("alert"), h("b", {}, T("This Studio's identity is gone", "這台 Studio 的身分已遺失"))),
+    h("div", { class: "lan-body" },
+      h("p", { class: "lan-warn", role: "alert" }, icon("alert", "ic sm"), T(`Board-to-board work is off: ${v.lost}. Nothing is signed or sent until you replace it.`, `區網協作已停止：${v.lost}。換新身分之前不會簽署或傳送任何東西。`)),
+      h("p", { class: "faint" }, T("Replacing it makes a new identity and sets the old store aside. Your peers cannot be told (the old keys are gone): each of them replaces you in person, with the short code.", "換新身分會建立新的身分，舊的資料先放到一旁。舊金鑰已遺失，無法通知同事：每位同事都要當面用短碼重新引介並取代你。")),
+      h("button", { class: "btn danger", "data-lan-replace-lost": "", onclick: () => { if (confirm(T("Make a new identity? Every peer introduces you again.", "建立新身分？每位同事都要重新引介你。"))) act("", () => postJ("/api/lan/identity/replace-lost", {})); } }, T("Retire it and make a new identity", "作廢並換新身分"))));
+}
 function myAddress(v) {
+  if (v.lost) return lostIdentity(v);
   const addr = v.host && v.port ? `${v.host}:${v.port}` : null;
   return h("section", { class: "card lan-card", "data-lan-me": "" },
     h("div", { class: "card-h" }, icon("link"), h("b", {}, T("My address", "我的地址")), h("span", { class: `badge ${v.listening ? "ok" : ""}` }, h("span", { class: "d" }), v.listening ? T("Listening", "已開啟") : T("Off", "關閉"))),
@@ -47,10 +60,16 @@ function myAddress(v) {
       h("div", { class: "kv" }, T("Device name", "裝置名稱"), h("b", {}, v.me.name)),
       h("div", { class: "kv" }, T("Fingerprint", "指紋"), fp(v.me.fingerprint)),
       h("div", { class: "kv" }, T("Address", "位址"), h("b", { class: "mono" }, addr || T("not listening", "未開啟"))),
-      h("div", { class: "kv" }, T("Key kept in", "金鑰存放"), h("b", {}, v.me.store === "keychain" ? T("the macOS Keychain", "macOS 鑰匙圈") : T("a 0600 file in Studio's data", "Studio 資料夾裡的 0600 檔案"))),
+      h("div", { class: "kv" }, T("Identity kept in", "身分存放"), h("b", { "data-lan-store": v.me.store }, storeName(v.me.store))),
+      v.me.warning ? h("p", { class: "lan-warn", "data-lan-store-warning": "" }, icon("alert", "ic sm"), T(v.me.warning.en, v.me.warning.zh)) : null,
+      v.me.fallback ? h("p", { class: "faint" }, v.me.fallback) : null,
+      (v.retired || []).filter((r) => r.pending.length).map((r) => h("p", { class: "faint", "data-lan-retiring": r.key }, T(`The old identity's revocation still waits for ${r.pending.map((x) => x.to.name).join(", ")} (its keys are deleted once it reached them).`, `舊身分的作廢通知還在等 ${r.pending.map((x) => x.to.name).join("、")}（送達後才刪除舊金鑰）。`),
+        " ", h("button", { class: "btn ghost", onclick: () => { if (confirm(T("Stop trying and delete the old keys now?", "不再嘗試，現在刪除舊金鑰？"))) act("", () => postJ("/api/lan/identity/drop-retired", { key: r.key })); } }, T("Delete the old keys now", "現在刪除舊金鑰")))),
       h("div", { class: "lan-row" },
         h("button", { class: "btn", "data-lan-copy": "", onclick: () => copy(`${v.me.name} · ${addr ?? "—"} · ${v.me.fingerprint}`) }, icon("copy"), T("Copy", "複製")),
-        h("button", { class: `btn ${v.listening ? "" : "primary"}`, "data-lan-toggle": "", onclick: () => act(T("Listener", "監聽"), () => postJ("/api/lan/settings", { enabled: !v.enabled })) }, v.listening ? T("Turn off", "關閉") : T("Turn on", "開啟"))),
+        h("button", { class: `btn ${v.listening ? "" : "primary"}`, "data-lan-toggle": "", onclick: () => act(T("Listener", "監聽"), () => postJ("/api/lan/settings", { enabled: !v.enabled })) }, v.listening ? T("Turn off", "關閉") : T("Turn on", "開啟")),
+        v.me.store === "file" ? h("button", { class: "btn", "data-lan-upgrade": "", onclick: () => { if (confirm(T("Move this Studio's identity into the Secure Enclave? This is a new identity: the old one is revoked and every peer introduces you again.", "把身分移到 Secure Enclave？這是一個新身分：舊身分會作廢，每位同事都要重新引介你。"))) act("", () => postJ("/api/lan/identity/retire", { kind: "enclave" })); } }, T("Upgrade to the Secure Enclave", "升級到 Secure Enclave")) : null,
+        h("button", { class: "btn danger", "data-lan-retire": "", onclick: () => { if (confirm(T("Retire this identity and make a new one? Your peers are told (signed by this Mac's admin key), they freeze the old one, and each introduces the new one in person. Open threads close.", "作廢這個身分並換新？會通知同事（由這台的管理金鑰簽署），他們會凍結舊身分，並各自當面引介新身分。進行中的工作串會關閉。"))) act("", () => postJ("/api/lan/identity/retire", {})); } }, T("Retire and make a new identity", "作廢並換新身分"))),
       h("p", { class: "faint lan-note" }, T("Only introduced Studios can talk to this listener, over an encrypted channel bound to their full keys. Browsers cannot reach it.", "只有當面引介過的 Studio 能連這個監聽，通道以雙方完整公鑰加密並互相驗證；瀏覽器無法連入。"))));
 }
 function introductions(v) {
@@ -58,7 +77,7 @@ function introductions(v) {
   return h("section", { class: "card lan-card", "data-lan-intros": "" },
     h("div", { class: "card-h" }, icon("human"), h("b", {}, T("Introduce in person", "當面引介")), open ? h("span", { class: "badge human" }, T(`open until ${clock(v.introOpenUntil)}`, `開放到 ${clock(v.introOpenUntil)}`)) : null),
     h("div", { class: "lan-body" },
-      h("p", { class: "faint" }, T("Seeing a Studio nearby is not trust. To exchange anything, sit together: one side opens its window, the other enters its address, and both type the code the other screen shows.", "看得到附近的 Studio 不代表信任。要交換任何東西，請坐在一起：一方開放引介，另一方輸入它的位址，雙方各自輸入對方螢幕上的短碼。")),
+      h("p", { class: "faint" }, T("To exchange anything, sit together: one side opens its window, the other enters its address, and both type the code the other screen shows.", "要交換任何東西，請坐在一起：一方開放引介，另一方輸入它的位址，雙方各自輸入對方螢幕上的短碼。")),
       h("div", { class: "lan-row" }, open ? h("button", { class: "btn", "data-lan-intro-close": "", onclick: () => act("", () => postJ("/api/lan/intro/close")) }, T("Close the window", "關閉引介"))
         : h("button", { class: "btn", "data-lan-intro-open": "", disabled: !v.listening, onclick: () => act("", () => postJ("/api/lan/intro/open", { minutes: 5 })) }, T("Open for 5 minutes", "開放引介 5 分鐘"))),
       h("div", { class: "lan-grid2" }, field(T("Their address (IP)", "對方位址（IP）"), inp(LN.intro, "host", { id: "lanIntroHost", placeholder: "192.168.1.23" })), field(T("Port", "埠"), inp(LN.intro, "port", { id: "lanIntroPort", placeholder: "7417", inputmode: "numeric" }))),
@@ -67,19 +86,28 @@ function introductions(v) {
       ...(v.intros || []).map((i) => h("div", { class: "lan-intro", "data-lan-intro": i.id },
         h("div", { class: "lan-sas", "aria-label": T(`This screen's code ${i.sas}`, `這個螢幕的短碼 ${i.sas}`) }, h("span", { class: "faint" }, T("This screen shows", "這個螢幕顯示")), h("b", { class: "num" }, `${i.sas.slice(0, 3)} ${i.sas.slice(3)}`)),
         h("div", { class: "kv" }, T("They call themselves", "自稱"), h("b", {}, i.claimed || "—")),
+        h("div", { class: "kv" }, T("They say their identity is kept in", "對方自稱身分存放"), h("b", { class: "faint" }, i.storage === "secure-enclave" ? "Secure Enclave" : i.storage === "file" ? T("files (no Touch ID protection)", "檔案（沒有 Touch ID 保護）") : i.storage || "—")),
+        (i.successorOf || []).map((o) => h("p", { class: o.certified ? "faint" : "lan-warn", "data-lan-successor": o.key }, o.certified ? T(`Certified successor of ${o.petname} (its old identity named this one when it retired). Still confirm the code in person.`, `${o.petname} 的認證繼任身分（舊身分作廢時指名了它）。仍請當面確認短碼。`) : T(`Says it replaces ${o.petname}, but it is not certified by the old identity: confirm in person.`, `自稱取代 ${o.petname}，但沒有舊身分的認證：請當面確認。`))),
         i.similar?.length ? h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T(`Looks like a peer you already know (${i.similar.join(", ")}): check the fingerprint.`, `和你已知的同事（${i.similar.join("、")}）名字相近：請比對指紋。`)) : null,
         h("div", { class: "kv" }, T("Their fingerprint", "對方指紋"), fp(i.fp)),
         h("div", { class: "lan-grid2" }, field(T("Code on their screen", "對方螢幕上的短碼"), inp(LN.codes, i.id, { "data-lan-code": i.id, inputmode: "numeric", autocomplete: "off", placeholder: "000 000" })), field(T("Your name for them", "你替對方取的名字"), inp(LN.names, i.id, { "data-lan-petname": i.id }))),
-        h("div", { class: "lan-row" }, h("button", { class: "btn primary", "data-lan-confirm": i.id, onclick: () => act(T("Confirm", "確認"), () => postJ(`/api/lan/intro/${i.id}/confirm`, { code: LN.codes[i.id] || "", petname: LN.names[i.id] || "" })) }, T("Codes match: add", "短碼相符，加入")),
+        // replacing a peer (a lost or stolen Mac, a new identity) happens only here, at the code, in person
+        (v.peers || []).some((p) => p.state === "trusted" || p.state === "retired") ? field(T("This identity replaces (only after checking in person)", "這個身分取代（當面確認後才選）"), h("select", { "data-lan-replaces": i.id, onchange: (e) => { LN.replaces[i.id] = e.target.value; } }, h("option", { value: "" }, T("no one: a new peer", "沒有：新同事")),
+          (v.peers || []).filter((p) => p.state === "trusted" || p.state === "retired").map((p) => h("option", { value: p.key, selected: LN.replaces[i.id] === p.key }, `${p.petname} · ${p.fp.split(" ").slice(0, 2).join(" ")}${p.state === "retired" ? T(" (retired)", "（已作廢）") : ""}`)))) : null,
+        LN.replaces[i.id] ? h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T("The replaced peer is revoked for good: its open items and Tasks stop, its threads close, and what it applied stays marked as from a replaced identity.", "被取代的同事會永久撤銷：待處理項目與 Task 停止、工作串關閉，它套用過的 commit 會標示為來自被取代的身分。")) : null,
+        h("div", { class: "lan-row" }, h("button", { class: "btn primary", "data-lan-confirm": i.id, onclick: () => act(T("Confirm", "確認"), () => postJ(`/api/lan/intro/${i.id}/confirm`, { code: LN.codes[i.id] || "", petname: LN.names[i.id] || "", replaces: LN.replaces[i.id] || null })) }, T("Codes match: add", "短碼相符，加入")),
           h("button", { class: "btn ghost", onclick: () => act("", () => postJ(`/api/lan/intro/${i.id}/cancel`)) }, T("Cancel", "取消")))))));
 }
 function peers(v) {
-  const list = (v.peers || []).filter((p) => p.state === "trusted" || p.frozen);
+  const list = (v.peers || []).filter((p) => p.state === "trusted" || p.state === "retired" || p.frozen);
   return h("section", { class: "card lan-card", "data-lan-peers": "" },
     h("div", { class: "card-h" }, icon("crew"), h("b", {}, T("Introduced peers", "已引介的同事")), h("span", { class: "badge" }, String(list.length))),
     h("div", { class: "lan-body" }, list.length ? list.map((p) => h("div", { class: `lan-peer${p.frozen ? " frozen" : ""}`, "data-lan-peer": p.key },
       h("div", { class: "lan-row" }, h("b", {}, p.petname), p.claimed && p.claimed !== p.petname ? h("span", { class: "faint" }, T(`calls itself ${p.claimed}`, `自稱 ${p.claimed}`)) : null, p.state === "revoked" ? h("span", { class: "badge bad" }, T("revoked", "已撤銷")) : null),
+      p.notice ? h("p", { class: "lan-warn", role: "status", "data-lan-peer-notice": p.key }, icon("alert", "ic sm"), T(p.notice.en, p.notice.zh)) : null,
+      p.state === "retired" && p.retired?.successor ? h("p", { class: "faint" }, T(`It names a successor ${p.retired.successor.fp} (${p.retired.successor.certified ? "certified by both keys" : "not certified"}). Introduce it in person to work together again.`, `它指名了繼任身分 ${p.retired.successor.fp}（${p.retired.successor.certified ? "新舊金鑰都已認證" : "未認證"}）。請當面引介後再合作。`)) : null,
       h("div", { class: "kv" }, T("Fingerprint", "指紋"), fp(p.fp)), h("div", { class: "kv" }, T("Address", "位址"), h("b", { class: "mono" }, `${p.host}:${p.port}`)),
+      h("div", { class: "kv" }, T("They say their identity is kept in", "對方自稱身分存放"), h("b", { class: "faint" }, p.storage === "secure-enclave" ? "Secure Enclave" : p.storage === "file" ? T("files (no Touch ID protection)", "檔案（沒有 Touch ID 保護）") : p.storage || "—")),
       p.frozen ? h("div", { class: "lan-frozen", role: "alert", "data-lan-frozen": p.key },
         h("p", {}, icon("alert", "ic sm"), h("b", {}, T("Frozen: a fork in this peer's log", "已凍結：此同事的帳本出現分岔")), " ", T(`Two different entries carry sequence number ${p.frozen.seq}, and both signatures are valid. Studio cannot tell which one the peer meant: the key may be stolen or the peer may be acting against you. Check with them in person.`, `序號 ${p.frozen.seq} 上有兩筆不同的條目，兩筆的簽章都合法。Studio 無法判斷哪一筆是對方本意：金鑰可能被偷，或對方在對你做不同的陳述。請當面確認。`)),
         h("div", { class: "lan-fork" }, [p.frozen.a, p.frozen.b].map((e, n) => e ? h("button", { class: "lan-step", "data-lan-fork-entry": e.hash, onclick: () => inspect(e.hash) }, h("b", {}, T(`Entry ${n + 1}`, `條目 ${n + 1}`)), h("span", { class: "mono faint" }, e.hash.slice(0, 12)), h("span", {}, `${e.kind ?? "?"} · ${T("signature valid", "簽章合法")}`)) : null)),
@@ -88,10 +116,8 @@ function peers(v) {
       p.state === "trusted" ? h("div", { class: "lan-row" },
         h("button", { class: "btn ghost", onclick: () => { const n = prompt(T("Your name for this peer", "你替這位同事取的名字"), p.petname); if (n) act("", () => postJ(`/api/lan/peers/${p.key}/rename`, { petname: n })); } }, T("Rename", "改名")),
         h("button", { class: "btn ghost", "data-lan-unpair": p.key, onclick: () => { if (confirm(T("Unpair? Its open items are withdrawn and its Tasks stop.", "解除配對？它的待處理項目會撤回，進行中的 Task 會停止。"))) act("", () => postJ(`/api/lan/peers/${p.key}/unpair`)); } }, T("Unpair", "解除配對")),
-        h("button", { class: "btn danger", "data-lan-revoke": p.key, onclick: () => { if (confirm(T("Revoke this key for good?", "永久撤銷這把金鑰？"))) act("", () => postJ(`/api/lan/peers/${p.key}/revoke`)); } }, T("Revoke", "撤銷"))) : null))
-      : h("p", { class: "faint" }, T("No one yet. Introduce a colleague in person to start.", "還沒有。先當面引介一位同事。"))),
-    (v.nearby || []).length ? h("div", { class: "lan-body lan-nearby", "data-lan-nearby": "" }, h("p", { class: "faint" }, T(`${v.nearby.length} Studio(s) nearby, not introduced: you can see that they exist, nothing more. Studio never contacts them.`, `附近有 ${v.nearby.length} 台 Studio（未引介）：只看得到它們存在，Studio 不會連過去。`)),
-      v.nearby.map((n) => h("span", { class: "chip mono" }, n.id))) : null);
+        h("button", { class: "btn danger", "data-lan-revoke": p.key, onclick: () => { if (confirm(T("Remove this colleague for good (a lost or stolen Mac)? Its open items and Tasks stop and it can never be introduced again.", "永久移除這個同事（Mac 遺失或被偷）？它的待處理項目與 Task 會停止，之後也不能再引介。"))) act("", () => postJ(`/api/lan/peers/${p.key}/revoke`)); } }, T("Remove this colleague", "移除這個同事"))) : null))
+      : h("p", { class: "faint" }, T("No one yet. Introduce a colleague in person to start.", "還沒有。先當面引介一位同事。"))));
 }
 function dispatchForm(v) {
   const peersOk = (v.peers || []).filter((p) => p.state === "trusted" && !p.frozen);

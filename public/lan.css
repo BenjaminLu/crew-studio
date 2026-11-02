@@ -25,7 +25,7 @@
 .lan-frozen{display:grid;gap:8px;padding:10px;border-radius:8px;background:var(--bad-soft);color:var(--text)}
 .lan-frozen p{margin:0}
 .lan-fork{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.lan-nearby{border-top:1px solid var(--border)}
+
 .lan-ib{display:flex;flex-wrap:wrap;min-height:220px}
 .lan-ib-list{display:grid;align-content:start;flex:1 1 220px;max-width:100%;border-right:1px solid var(--border)}
 .lan-ib-detail{flex:999 1 360px;min-width:0}

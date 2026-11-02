@@ -102,7 +102,6 @@ import { lanRoutes } from "./lan/routes";
 import { lanRunner } from "./lan/runner";
 import { lanApplier } from "./lan/apply";
 import { installLanProfile } from "./lan/profile";
-import { Discovery } from "./lan/mdns";
 import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
 import { createSkillRoutes } from "./skill-routes";
@@ -322,7 +321,7 @@ const CURSOR_NO_TAKEOVER = "Studio does not take over a Cursor session from a te
 setInterval(() => { try { cursorAccount(true); } catch {} }, 60_000).unref();
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
-const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
+const doctor = () => (doctorCache = diagnose({ lanKeystore: (() => { try { return lan ? lan.keystore() : null; } catch { return null; } })(), state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
   tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
@@ -529,11 +528,10 @@ installLanProfile(runtime.engine);
 let lan: Lan | null = null;
 if (process.env.CREW_LAN !== "0") {
   try {
-    lan = new Lan({ dataDir: DATA, send, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
+    lan = await Lan.open({ dataDir: DATA, send, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
       runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), needsProject: (def) => runtime.lanNeedsProject(def) }),
       apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
-      privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } },
-      discovery: new Discovery({ enabled: process.env.CREW_LAN_MDNS !== "0" }) });
+      privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } } });
     process.on("exit", () => { try { lan?.close(); } catch {} });
   } catch (e: any) { console.warn(`crew-studio: board-to-board work is unavailable: ${e?.message ?? e}`); }
 }

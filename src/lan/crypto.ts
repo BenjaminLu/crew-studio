@@ -4,8 +4,12 @@
 // for one purpose never verifies or opens for another (CSO M2).
 import { createCipheriv, createDecipheriv, createECDH, createHash, createHmac, createPrivateKey, createPublicKey, hkdfSync, randomBytes, sign as edSign, timingSafeEqual, verify as edVerify } from "node:crypto";
 
-export const DOMAIN = "crew-studio/lan/v1";
+/** Protocol 2's domain: no signature, box or derived key of protocol 1 verifies or opens under it. */
+export const DOMAIN = "crew-studio/lan/v2";
 export type KeyPair = { pub: Buffer; priv: Buffer };
+/** A key agreement key whose private half may live elsewhere (the Secure Enclave): its public key and its ECDH. */
+export type StaticKey = { pub: Buffer; dh(peer: Uint8Array): Promise<Buffer> };
+export const softStatic = (k: KeyPair): StaticKey => ({ pub: k.pub, dh: async (p) => dh(k.priv, p) });
 
 export const b64u = (b: Uint8Array) => Buffer.from(b).toString("base64url");
 export const unb64u = (s: unknown, len?: number): Buffer => {
@@ -55,27 +59,29 @@ const derive = (ikm: Uint8Array, salt: Uint8Array, info: string, len = 32) => Bu
 
 /**
  * A sealed box for named recipients: a fresh content key encrypts the bytes once (AES-256-GCM), and the content key is
- * wrapped for each recipient with a key from ECDH(ephemeral, recipient) (HKDF bound to both points and the purpose).
- * Only a holder of one of the recipients' private keys opens it; the box names recipients by full public key.
+ * wrapped for each recipient with a key from ECDH(ephemeral, the recipient's key agreement key) (HKDF bound to both
+ * points, the recipient's name and the purpose). Only a holder of one of those private keys opens it; the box names each
+ * recipient by its identity (its admin key, base64url) and the key agreement key it was sealed to.
  */
-export type Box = { alg: "p256-hkdf-aesgcm"; epk: string; iv: string; ct: string; keys: { to: string; iv: string; w: string }[] };
-export function seal(plain: Uint8Array, recipients: Uint8Array[], purpose: string): Box {
+export type Box = { alg: "p256-hkdf-aesgcm-2"; epk: string; iv: string; ct: string; keys: { to: string; k: string; iv: string; w: string }[] };
+export type Recipient = { id: string; dh: Uint8Array };
+export function seal(plain: Uint8Array, recipients: Recipient[], purpose: string): Box {
   if (!recipients.length || recipients.length > 8) throw new Error("a box has 1 to 8 recipients");
   const e = generateKeyPair(), cek = randomBytes(32), iv = randomBytes(12);
   const ad = Buffer.from(`${DOMAIN}\0box\0${purpose}`);
-  const keys = [...new Map(recipients.map((r) => [b64u(r), checkPub(r)])).values()].map((r) => {
-    const kek = derive(dh(e.priv, r), Buffer.concat([e.pub, r]), `wrap\0${purpose}`), wiv = randomBytes(12);
-    return { to: b64u(r), iv: b64u(wiv), w: b64u(aeadSeal(kek, wiv, cek, ad)) };
+  const keys = [...new Map(recipients.map((r) => [r.id, { id: r.id, dh: checkPub(r.dh) }])).values()].map((r) => {
+    const kek = derive(dh(e.priv, r.dh), Buffer.concat([e.pub, r.dh, Buffer.from(r.id)]), `wrap\0${purpose}`), wiv = randomBytes(12);
+    return { to: r.id, k: b64u(r.dh), iv: b64u(wiv), w: b64u(aeadSeal(kek, wiv, cek, ad)) };
   });
-  return { alg: "p256-hkdf-aesgcm", epk: b64u(e.pub), iv: b64u(iv), ct: b64u(aeadSeal(cek, iv, plain, ad)), keys };
+  return { alg: "p256-hkdf-aesgcm-2", epk: b64u(e.pub), iv: b64u(iv), ct: b64u(aeadSeal(cek, iv, plain, ad)), keys };
 }
-/** The plaintext, or null when this key is not a recipient or anything fails to verify. */
-export function open(box: any, me: KeyPair, purpose: string): Buffer | null {
+/** The plaintext, or null when this identity's key is not a recipient or anything fails to verify. */
+export async function open(box: any, me: { id: string; dh: StaticKey }, purpose: string): Promise<Buffer | null> {
   try {
-    if (!box || box.alg !== "p256-hkdf-aesgcm" || !Array.isArray(box.keys) || box.keys.length > 8) return null;
-    const mine = box.keys.find((k: any) => k?.to === b64u(me.pub)); if (!mine) return null;
+    if (!box || box.alg !== "p256-hkdf-aesgcm-2" || !Array.isArray(box.keys) || box.keys.length > 9) return null;
+    const mine = box.keys.find((k: any) => k?.to === me.id && k?.k === b64u(me.dh.pub)); if (!mine) return null;
     const epk = checkPub(unb64u(box.epk, 65)), ad = Buffer.from(`${DOMAIN}\0box\0${purpose}`);
-    const kek = derive(dh(me.priv, epk), Buffer.concat([epk, me.pub]), `wrap\0${purpose}`);
+    const kek = derive(await me.dh.dh(epk), Buffer.concat([epk, me.dh.pub, Buffer.from(me.id)]), `wrap\0${purpose}`);
     const cek = aeadOpen(kek, unb64u(mine.iv, 12), unb64u(mine.w), ad); if (!cek) return null;
     return aeadOpen(cek, unb64u(box.iv, 12), unb64u(box.ct), ad);
   } catch { return null; }

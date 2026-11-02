@@ -5,9 +5,11 @@
 //       answers nothing: an unintroduced key learns nothing, not even this Studio's public key.
 //   XX  only an introduction, and only while the captain has opened the introduction window on the desktop: both keys
 //       are learned and authenticated in the handshake, and the short code is derived from its handshake hash.
+// The static key is each Studio's daily key agreement key (src/lan/keystore.ts); its private half may live in the
+// Secure Enclave, so every DH with it is asynchronous. Ephemeral keys are made here, per handshake.
 // P-256 is not one of Noise's named DH functions; the construction is the framework's, with DHLEN = 32 (the x
 // coordinate) and 65-byte uncompressed public keys in the messages. The protocol name says so.
-import { aeadOpen, aeadSeal, dh, generateKeyPair, hmac, sha256, type KeyPair, checkPub } from "./crypto";
+import { aeadOpen, aeadSeal, dh, generateKeyPair, hmac, sha256, type KeyPair, type StaticKey, checkPub } from "./crypto";
 
 const DHLEN = 32, PUBLEN = 65, TAG = 16;
 const EMPTY = Buffer.alloc(0);
@@ -44,12 +46,12 @@ const PATTERNS: Record<"XX" | "KK", { pre: { i: Token[]; r: Token[] }; msgs: Tok
   XX: { pre: { i: [], r: [] }, msgs: [["e"], ["e", "ee", "s", "es"], ["s", "se"]] },
   KK: { pre: { i: ["s"], r: ["s"] }, msgs: [["e", "es", "ss"], ["e", "ee", "se"]] },
 };
-export const PROLOGUE = Buffer.from("crew-studio/lan/v1 prologue");
+export const PROLOGUE = Buffer.from("crew-studio/lan/v2 prologue");
 
 export class Handshake {
   readonly ss: SymmetricState; private msg = 0; private readonly tokens: Token[][];
   e: KeyPair | null = null; re: Buffer | null = null; rs: Buffer | null;
-  constructor(readonly pattern: "XX" | "KK", readonly initiator: boolean, readonly s: KeyPair, rs: Uint8Array | null = null, private readonly fixedE?: KeyPair) {
+  constructor(readonly pattern: "XX" | "KK", readonly initiator: boolean, readonly s: StaticKey, rs: Uint8Array | null = null, private readonly fixedE?: KeyPair) {
     this.ss = new SymmetricState(`Noise_${pattern}_P256_AESGCM_SHA256`); this.ss.mixHash(PROLOGUE);
     this.rs = rs ? checkPub(rs) : null; this.tokens = PATTERNS[pattern].msgs;
     const pre = PATTERNS[pattern].pre;
@@ -61,38 +63,50 @@ export class Handshake {
   get hash() { return this.ss.h; }
   get done() { return this.msg >= this.tokens.length; }
   private mine() { return (this.msg % 2 === 0) === this.initiator; }
-  private dhFor(t: Token): Buffer {
+  private async dhFor(t: Token): Promise<Buffer> {
     const I = this.initiator;
     // ee, es (initiator e, responder s), se (initiator s, responder e), ss
     if (t === "ee") return dh(this.e!.priv, this.re!);
-    if (t === "ss") return dh(this.s.priv, this.rs!);
-    if (t === "es") return I ? dh(this.e!.priv, this.rs!) : dh(this.s.priv, this.re!);
-    return I ? dh(this.s.priv, this.re!) : dh(this.e!.priv, this.rs!);
+    if (t === "ss") return this.s.dh(this.rs!);
+    if (t === "es") return I ? dh(this.e!.priv, this.rs!) : this.s.dh(this.re!);
+    return I ? this.s.dh(this.re!) : dh(this.e!.priv, this.rs!);
   }
-  writeMessage(payload: Buffer): Buffer {
+  async writeMessage(payload: Buffer): Promise<Buffer> {
     if (this.done || !this.mine()) throw new Error("not this side's message");
     const out: Buffer[] = [];
     for (const t of this.tokens[this.msg]) {
       if (t === "e") { this.e = this.fixedE ?? generateKeyPair(); out.push(this.e.pub); this.ss.mixHash(this.e.pub); }
       else if (t === "s") out.push(this.ss.encryptAndHash(this.s.pub));
-      else this.ss.mixKey(this.dhFor(t));
+      else this.ss.mixKey(await this.dhFor(t));
     }
     out.push(this.ss.encryptAndHash(payload)); this.msg++;
     return Buffer.concat(out);
   }
   /** the payload; throws on any malformed or unauthenticated message */
-  readMessage(m: Buffer): Buffer {
+  async readMessage(m: Buffer): Promise<Buffer> {
     if (this.done || this.mine()) throw new Error("not the peer's message");
     let off = 0; const take = (n: number) => { if (off + n > m.length) throw new Error("short message"); const b = m.subarray(off, off + n); off += n; return Buffer.from(b); };
     for (const t of this.tokens[this.msg]) {
       if (t === "e") { this.re = checkPub(take(PUBLEN)); this.ss.mixHash(this.re); }
       else if (t === "s") { const c = take(this.ss.cs.k ? PUBLEN + TAG : PUBLEN); this.rs = checkPub(this.ss.decryptAndHash(c)); }
-      else this.ss.mixKey(this.dhFor(t));
+      else this.ss.mixKey(await this.dhFor(t));
     }
     const p = this.ss.decryptAndHash(m.subarray(off)); this.msg++;
     return p;
   }
   /** [send, receive] cipher states once the handshake is complete */
   split(): { send: CipherState; recv: CipherState } { if (!this.done) throw new Error("handshake not complete"); const [a, b] = this.ss.split(); return this.initiator ? { send: a, recv: b } : { send: b, recv: a }; }
+}
+/** A static key that remembers its DH with a few known keys (the allowlisted peers' static keys: ss is the same for every
+ *  message with that peer), so a responder trying each introduced key costs the enclave one DH per message, not one per
+ *  peer. Within one message, a key it is asked twice (es, with every candidate) is asked once. */
+export function memoStatic(s: StaticKey, known: (pub: Buffer) => boolean, cache: Map<string, Buffer>): StaticKey {
+  const local = new Map<string, Promise<Buffer>>();
+  return { pub: s.pub, dh: (p) => {
+    // keyed by both static keys: a new identity of this Studio (a new static key) never reuses another key's DH
+    const k = `${s.pub.toString("base64url")}:${Buffer.from(p).toString("base64url")}`, hit = cache.get(k); if (hit) return Promise.resolve(hit);
+    let v = local.get(k); if (!v) { v = s.dh(p).then((x) => { if (known(Buffer.from(p))) { if (cache.size > 512) cache.clear(); cache.set(k, x); } return x; }); local.set(k, v); }
+    return v;
+  } };
 }
 export const NOISE = { DHLEN, PUBLEN };

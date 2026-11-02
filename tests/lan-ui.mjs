@@ -127,8 +127,8 @@ try {
   ok(/B 的看板/.test(it) && /合法|valid/.test(it) && /documents@v1 · [0-9a-f]{64}/.test(it) && /[0-9a-f]{64}/.test(it), "the entry inspector shows who signed, the signature, which briefing and which workflow@version", it.slice(0, 300));
   await pa.locator("[data-lan-inspector-close]").click();
   // ---------- a page cannot reach the peer listener ----------
-  const r = await pa.evaluate(async (port) => { try { const x = await fetch(`http://127.0.0.1:${port}/lan/v1/kk`, { method: "POST", body: new Uint8Array(64), headers: { "content-type": "application/octet-stream" } }); return `status ${x.status}`; } catch (e) { return `blocked: ${e.message}`; } }, info.lanB);
-  const r2 = await pa.evaluate(async (port) => { try { await fetch(`http://127.0.0.1:${port}/lan/v1/kk`, { method: "POST", mode: "no-cors", body: "x" }); return "sent"; } catch (e) { return `blocked: ${e.message}`; } }, info.lanB);
+  const r = await pa.evaluate(async (port) => { try { const x = await fetch(`http://127.0.0.1:${port}/lan/v2/kk`, { method: "POST", body: new Uint8Array(64), headers: { "content-type": "application/octet-stream" } }); return `status ${x.status}`; } catch (e) { return `blocked: ${e.message}`; } }, info.lanB);
+  const r2 = await pa.evaluate(async (port) => { try { await fetch(`http://127.0.0.1:${port}/lan/v2/kk`, { method: "POST", mode: "no-cors", body: "x" }); return "sent"; } catch (e) { return `blocked: ${e.message}`; } }, info.lanB);
   const refused = (await api(B, "/api/lan")).body.refused;
   ok(/^blocked/.test(r), "a page's fetch to the peer listener is blocked (no CORS: the preflight fails)", r);
   ok(r2 === "sent" || /^blocked/.test(r2), "a no-cors request gets no readable answer", r2);

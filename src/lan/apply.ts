@@ -95,7 +95,7 @@ export function lanApplier(o: { dataDir: string; project: (id: string) => { path
       for (const x of paths.filter((y) => /(^|\/)package\.json$/i.test(y))) { const hit = protectedHit(x, blob(tree, x), blob(baseCommit.out.trim(), x)); if (hit) throw new Error(`refused: ${hit}`); }
       const commit = must(["commit-tree", tree, "-p", baseCommit.out.trim(), "-m", `Work from a peer's Studio (${branch}): not reviewed yet`]);
       must(["update-ref", `refs/heads/${branch}`, commit, ""]); // "" as the old value: the branch must not exist yet
-      return { branch, path: repo, files: paths };
+      return { branch, path: repo, files: paths, commit, repo };
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   };
 }

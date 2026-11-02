@@ -1,9 +1,9 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Board-to-board work, in process (docs/units/lan-relay.md): the restricted profile on the runtime engine, each rule
 // against a control without it (a LAN-marked Task cannot reach a pushing hook, gets no egress beyond its provider and no
-// run_tests / run_command / skill_run, runs no test-run check, stops at its dollar cap), the relay between two Lan
-// instances (a spoofed mDNS answer is never contacted, a chain that does not join freezes its author, a revoked key
-// stays out), and the Keychain path through a stand-in `security` (the private key never on an argv).    bun tests/lan-profile.ts
+// run_tests / run_command / skill_run, runs no test-run check, stops at its dollar cap), and the relay between two Lan
+// instances, protocol 2 (the peer address guard, a chain that does not join freezes its author, a revoked identity stays
+// out, an identity that is gone fails closed).                                                    bun tests/lan-profile.ts
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,9 +11,8 @@ import { join } from "node:path";
 import { installLanProfile, workflowRefusals } from "../src/lan/profile";
 import { sandboxScope } from "../src/runtime/checks";
 import { Lan, type LanRunner } from "../src/lan/relay";
-import { Discovery } from "../src/lan/mdns";
-import { keychainSpawn, keychainWanted, loadIdentity } from "../src/lan/identity";
-import { b64u, canonical, generateKeyPair, randomBytes, sha256 } from "../src/lan/crypto";
+import { b64u, canonical, generateKeyPair, randomBytes, sha256, softStatic } from "../src/lan/crypto";
+import { openKeystore, staticOf } from "../src/lan/keystore";
 import { Handshake } from "../src/lan/noise";
 import { makeEnvelope, sealBlob, type Body } from "../src/lan/protocol";
 import { call } from "../src/lan/wire";
@@ -145,16 +144,14 @@ const lanTask = (id: string, usd: number | null, rounds: number, extra: any = {}
 // ---------- the relay, in process ----------
 const fakeRunner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
   start: async () => { throw new Error("not in this suite"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} });
-const mk = (name: string, disc?: Discovery) => { const dir = mkdtempSync(join(tmpdir(), `crew-lan-${name}-`)); return new Lan({ dataDir: dir, runner: fakeRunner(), bind: "127.0.0.1", port: 0, discovery: disc ?? null }); };
-// a spoofed mDNS answer: seen, listed, never contacted
+const mk = (name: string, run: LanRunner = fakeRunner()) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-${name}-`)), runner: run, bind: "127.0.0.1", port: 0 });
+/** what the wire, the envelopes and the boxes need to speak as one of these Studios, and to reach another */
+const meOf = (x: Lan) => (x as any).me(), authorOf = (x: Lan) => (x as any).author(), recOf = (x: Lan) => ({ id: x.id.key, dh: (x as any).ks.dhPub });
+const peerOf = (x: Lan) => ({ key: x.id.key, dh: b64u((x as any).ks.dhPub), host: "127.0.0.1", port: x.wire.port });
+async function pairUp(A: Lan, B: Lan) { B.openIntro(1); const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0]; await A.confirmIntro(ia.id, ib.sas, "B"); await B.confirmIntro(ib.id, ia.sas, "A"); }
+// the peer address guard: even a person cannot point an introduction at loopback or a metadata address
 { let hits = 0; const trap = createServer((c) => { hits++; c.destroy(); }); await new Promise<void>((r) => trap.listen(0, "127.0.0.1", () => r()));
-  const disc = new Discovery({ enabled: false }); const B = mk("mdns", disc); B.setEnabled(true);
-  disc.feed(`10:00:00.000  Add        3   4 local.               _crewstudio._tcp.    cs-0123456789ab`);
-  disc.feed(`10:00:00.000  Add        3   4 local.               _crewstudio._tcp.    Free accelerator (click me)`);
-  await sleep(1500);
-  const v = B.view();
-  ok(v.nearby.length === 1 && v.nearby[0].id === "cs-0123456789ab" && v.nearby[0].host === null, "a nearby Studio is listed by its opaque id only (an answer that is not one is ignored)", JSON.stringify(v.nearby));
-  ok(hits === 0 && !v.peers.length && !v.intros.length, "a spoofed mDNS target is not auto-connected: no connection, no introduction, no trust");
+  const B = await mk("guard"); B.setEnabled(true);
   delete process.env.CREW_LAN_ALLOW_LOOPBACK;
   const port = (trap.address() as any).port; let e1: any = null, e2: any = null;
   try { await B.startIntro("127.0.0.1", port); } catch (e) { e1 = e; } try { await B.startIntro("169.254.169.254", 80); } catch (e) { e2 = e; }
@@ -162,46 +159,45 @@ const mk = (name: string, disc?: Discovery) => { const dir = mkdtempSync(join(tm
   trap.close(); B.close(); }
 // two Lan instances introduced to each other; a chain that does not join freezes its author; a revoked key stays out
 process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
-{ const A = mk("a"), B = mk("b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
-  const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0];
-  A.confirmIntro(ia.id, ib.sas, "B"); B.confirmIntro(ib.id, ia.sas, "A");
-  const t = A.dispatch({ to: B.id.key, title: "t", briefing: "hello" }); await until(() => B.view().items.length === 1, 5000);
+{ const A = await mk("a"), B = await mk("b"); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  ok(A.view().peers[0]?.vouched === true && B.view().peers[0]?.vouched === true && A.view().peers[0]?.certs?.length === 1, "each side vouched for the other with its own admin key and keeps its certificate");
+  const t = await A.dispatch({ to: B.id.key, title: "t", briefing: "hello" }); await until(() => B.view().items.length === 1, 5000);
   ok(B.view().items[0]?.kind === "dispatch", "two in-process Studios exchange a dispatch once introduced");
-  const peerB = { key: B.id.key, host: "127.0.0.1", port: B.wire.port };
-  const seq = 1000, e1 = makeEnvelope(A.id, seq, randomBytes(32).toString("hex"), [B.id.key], { kind: "revoke", thread: t.id, round: 1, target: t.rounds[0].briefing.entry, reason: "x" } as Body);
-  const e2 = makeEnvelope(A.id, seq + 1, randomBytes(32).toString("hex"), [B.id.key], { kind: "revoke", thread: t.id, round: 1, target: t.rounds[0].briefing.entry, reason: "y" } as Body);
-  const r1 = await call(A.id, peerB, "push", { entries: [e1], blobs: [] }), r2 = await call(A.id, peerB, "push", { entries: [e2], blobs: [] });
+  const peerB = peerOf(B);
+  const seq = 1000, e1 = await makeEnvelope(authorOf(A), seq, randomBytes(32).toString("hex"), [recOf(B)], { kind: "revoke", thread: t.id, round: 1, target: t.rounds[0].briefing.entry, reason: "x" } as Body);
+  const e2 = await makeEnvelope(authorOf(A), seq + 1, randomBytes(32).toString("hex"), [recOf(B)], { kind: "revoke", thread: t.id, round: 1, target: t.rounds[0].briefing.entry, reason: "y" } as Body);
+  const r1 = await call(meOf(A), peerB, "push", { entries: [e1], blobs: [] }), r2 = await call(meOf(A), peerB, "push", { entries: [e2], blobs: [] });
   const pa = B.view().peers.find((p: any) => p.key === A.id.key);
   ok(r1.accepted.length === 1 && /fork/.test(r2.refused[0]?.reason ?? "") && /does not join/.test(pa?.frozen?.why ?? ""), "an entry that does not join its author's chain (prev ≠ the entry before it) also freezes the author", JSON.stringify([r1, r2, pa?.frozen?.why]));
   B.removePeer(A.id.key, "revoke");
-  let err = ""; try { await call(A.id, peerB, "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; }
-  ok(/403/.test(err), "a revoked key is refused at once", err);
+  let err = ""; try { await call(meOf(A), peerB, "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; }
+  ok(/recognise/.test(err), "a revoked identity is refused at once (a bare 403: it does not recognise it)", err);
   B.openIntro(1); let again: any = null; try { await A.startIntro("127.0.0.1", B.wire.port); } catch (e) { again = e; }
   ok(!B.view().intros.some((i: any) => i.key === A.id.key) && !B.view().peers.some((p: any) => p.key === A.id.key && p.state === "trusted"), "a revoked key cannot be introduced again", again?.message ?? "");
   A.close(); B.close(); }
 
 // ---------- the short code cannot be ground: every failed introduction shows, three close the window, one at a time ----------
-{ const B = mk("sas"); B.setEnabled(true); B.openIntro(5);
-  const M = generateKeyPair(), host = "127.0.0.1", port = B.wire.port;
+{ const B = await mk("sas"); B.setEnabled(true); B.openIntro(5);
+  const G = (await openKeystore(mkdtempSync(join(tmpdir(), "crew-lan-grinder-")), { create: true, kind: "file" })).ks!, M = staticOf(G), host = "127.0.0.1", port = B.wire.port;
   const req = (p: string, b: Buffer) => new Request(`http://${host}:${port}${p}`, { method: "POST", body: b, headers: { host: `${host}:${port}`, "content-type": "application/octet-stream", "content-length": String(b.length) } });
   const attempt = async () => {
-    const hs = new Handshake("XX", true, M), r1 = await B.wire.handle(req("/lan/v1/xx/1", hs.writeMessage(Buffer.alloc(0))), "10.0.0.9");
+    const hs = new Handshake("XX", true, M), r1 = await B.wire.handle(req("/lan/v2/xx/1", await hs.writeMessage(Buffer.alloc(0))), "10.0.0.9");
     if (r1.status !== 200) return r1.status;
-    const r2 = Buffer.from(await r1.arrayBuffer()), sid = r2.subarray(0, 16); hs.readMessage(Buffer.from(r2.subarray(16)));
-    const m3 = hs.writeMessage(Buffer.from(canonical({ commit: b64u(sha256(Buffer.from("crew-studio/lan/v1 commit\0"), randomBytes(32))), name: "小明", port: 7417 }))), tx = hs.split();
-    await B.wire.handle(req("/lan/v1/xx/3", Buffer.concat([sid, m3])), "10.0.0.9");
+    const r2 = Buffer.from(await r1.arrayBuffer()), sid = r2.subarray(0, 16); await hs.readMessage(Buffer.from(r2.subarray(16)));
+    const m3 = await hs.writeMessage(Buffer.from(canonical({ v: 2, cert: G.cert, storage: "file", commit: b64u(sha256(Buffer.from("crew-studio/lan/v2 commit\0"), randomBytes(32))), name: "小明", port: 7417 }))), tx = hs.split();
+    await B.wire.handle(req("/lan/v2/xx/3", Buffer.concat([sid, m3])), "10.0.0.9");
     // the grinder learned this side's nonce and its code; it aborts with a reveal that does not match its commitment
-    await B.wire.handle(req("/lan/v1/xx/4", Buffer.concat([sid, tx.send.encrypt(Buffer.alloc(0), Buffer.from(canonical({ reveal: b64u(randomBytes(32)) })))])), "10.0.0.9");
+    await B.wire.handle(req("/lan/v2/xx/4", Buffer.concat([sid, tx.send.encrypt(Buffer.alloc(0), Buffer.from(canonical({ reveal: b64u(randomBytes(32)) })))])), "10.0.0.9");
     return 200;
   };
-  const busy = new Handshake("XX", true, M), held = await B.wire.handle(req("/lan/v1/xx/1", busy.writeMessage(Buffer.alloc(0))), "10.0.0.8");
-  const second = await B.wire.handle(req("/lan/v1/xx/1", new Handshake("XX", true, generateKeyPair()).writeMessage(Buffer.alloc(0))), "10.0.0.7");
+  const busy = new Handshake("XX", true, M), held = await B.wire.handle(req("/lan/v2/xx/1", await busy.writeMessage(Buffer.alloc(0))), "10.0.0.8");
+  const second = await B.wire.handle(req("/lan/v2/xx/1", await new Handshake("XX", true, softStatic(generateKeyPair())).writeMessage(Buffer.alloc(0))), "10.0.0.7");
   ok(held.status === 200 && second.status === 429, "one introduction at a time: a second one is refused while the first is in progress", `${held.status} ${second.status}`);
   await sleep(21_000); // the held one expires (it never reached the nonce: no failure)
   const codes: number[] = []; for (let i = 0; i < 5; i++) codes.push(await attempt());
   const v = B.view();
   ok(v.introFailures.length === 3 && v.introOpenUntil === null && codes.slice(3).every((c) => c === 403), "every introduction that got this side's nonce and did not finish shows on this screen, and the third closes the window (the rest are refused)", JSON.stringify([codes, v.introFailures.length, v.introOpenUntil]));
-  B.openIntro(5); const A = mk("sas-a"); A.setEnabled(true);
+  B.openIntro(5); const A = await mk("sas-a"); A.setEnabled(true);
   const ia = await A.startIntro("127.0.0.1", B.wire.port);
   ok(!!ia && B.view().introOpenUntil === null, "a successful introduction closes the window too (one introduction per window)");
   A.close(); B.close(); }
@@ -284,33 +280,35 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   ok(!scanText("f", "# 週報\n\n這週完成：區網協作\nsha256 8a5d12fe277a0c3c9b1e1f4c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2").length && !scanText("f", "export const discount = (p: number) => Math.round(p * 90) / 100;").length, "ordinary text, code and hex hashes pass"); }
 
 // ---------- receiving: transient refusals stay open, a frozen author's entries are not stored, unpair keeps a freeze ----------
-{ const A = mk("rx-a"), B = mk("rx-b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
-  const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0]; A.confirmIntro(ia.id, ib.sas, "B"); B.confirmIntro(ib.id, ia.sas, "A");
-  const peerB = { key: B.id.key, host: "127.0.0.1", port: B.wire.port };
-  const brief = Buffer.from("later"), blob = sealBlob(brief, [B.id.key], A.id);
-  const e = makeEnvelope(A.id, 50, randomBytes(32).toString("hex"), [B.id.key], { kind: "dispatch", thread: randomBytes(12).toString("base64url"), round: 1, title: "late", briefing: { hash: blob.hash, size: brief.length }, acceptance: [], suggested: null } as Body);
-  const r1 = await call(A.id, peerB, "push", { entries: [e], blobs: [] }), r2 = await call(A.id, peerB, "push", { entries: [e], blobs: [blob] });
+{ const A = await mk("rx-a"), B = await mk("rx-b"); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  const peerB = peerOf(B);
+  const brief = Buffer.from("later"), blob = sealBlob(brief, [recOf(B)], recOf(A));
+  const e = await makeEnvelope(authorOf(A), 50, randomBytes(32).toString("hex"), [recOf(B)], { kind: "dispatch", thread: randomBytes(12).toString("base64url"), round: 1, title: "late", briefing: { hash: blob.hash, size: brief.length }, acceptance: [], suggested: null } as Body);
+  const r1 = await call(meOf(A), peerB, "push", { entries: [e], blobs: [] }), r2 = await call(meOf(A), peerB, "push", { entries: [e], blobs: [blob] });
   ok(/missing/.test(r1.refused[0]?.reason ?? "") && r2.accepted.length === 1, "a refusal that can pass later (its content missing) is not kept as the entry's verdict: sent again with its content it is taken in", JSON.stringify([r1, r2]));
-  const nan = makeEnvelope(A.id, 51, randomBytes(32).toString("hex"), [B.id.key], { kind: "done", thread: "thread-0001", round: 1, result: "a".repeat(64) } as Body, "not a date");
-  const r3 = await call(A.id, peerB, "push", { entries: [nan], blobs: [] }).catch((x) => ({ err: x.message }));
+  const nan = await makeEnvelope(authorOf(A), 51, randomBytes(32).toString("hex"), [recOf(B)], { kind: "done", thread: "thread-0001", round: 1, result: "a".repeat(64) } as Body, "not a date");
+  const r3 = await call(meOf(A), peerB, "push", { entries: [nan], blobs: [] }).catch((x) => ({ err: x.message }));
   ok(JSON.stringify(r3).includes("clock") || JSON.stringify(r3).includes("timestamp"), "an entry whose time is not a date is refused", JSON.stringify(r3));
-  const f1 = makeEnvelope(A.id, 60, randomBytes(32).toString("hex"), [B.id.key], { kind: "done", thread: "thread-0001", round: 1, result: "a".repeat(64) } as Body), f2 = makeEnvelope(A.id, 60, randomBytes(32).toString("hex"), [B.id.key], { kind: "done", thread: "thread-0002", round: 1, result: "b".repeat(64) } as Body);
-  await call(A.id, peerB, "push", { entries: [f1], blobs: [] }); await call(A.id, peerB, "push", { entries: [f2], blobs: [] });
+  const f1 = await makeEnvelope(authorOf(A), 60, randomBytes(32).toString("hex"), [recOf(B)], { kind: "done", thread: "thread-0001", round: 1, result: "a".repeat(64) } as Body), f2 = await makeEnvelope(authorOf(A), 60, randomBytes(32).toString("hex"), [recOf(B)], { kind: "done", thread: "thread-0002", round: 1, result: "b".repeat(64) } as Body);
+  await call(meOf(A), peerB, "push", { entries: [f1], blobs: [] }); await call(meOf(A), peerB, "push", { entries: [f2], blobs: [] });
   const count = () => B.store.entryCount(), n0 = count();
-  const after = makeEnvelope(A.id, 70, randomBytes(32).toString("hex"), [B.id.key], { kind: "done", thread: "thread-0003", round: 1, result: "c".repeat(64) } as Body);
-  const r4 = await call(A.id, peerB, "push", { entries: [after], blobs: [] });
+  const after = await makeEnvelope(authorOf(A), 70, randomBytes(32).toString("hex"), [recOf(B)], { kind: "done", thread: "thread-0003", round: 1, result: "c".repeat(64) } as Body);
+  const r4 = await call(meOf(A), peerB, "push", { entries: [after], blobs: [] });
   ok(!!B.peer(A.id.key)?.frozen && /frozen/.test(r4.refused[0]?.reason ?? "") && count() === n0, "after a fork, the frozen author's next entries are refused before anything is stored", JSON.stringify([r4, n0, count()]));
   B.removePeer(A.id.key, "unpair");
   ok(!!B.peer(A.id.key)?.frozen && B.peer(A.id.key)?.state === "unpaired", "unpairing a frozen peer keeps the freeze (introducing it again does not clear it)");
   A.close(); B.close(); }
 
-// ---------- the key file: a broken one is an error, never a new identity ----------
-{ const d1 = mkdtempSync(join(tmpdir(), "crew-lan-id-")); mkdirSync(join(d1, "lan")); writeFileSync(join(d1, "lan", "identity.key"), "{not json");
-  let e1 = ""; try { loadIdentity(d1); } catch (e: any) { e1 = e.message; }
-  const d2 = mkdtempSync(join(tmpdir(), "crew-lan-id-")); mkdirSync(join(d2, "lan")); writeFileSync(join(d2, "lan", "identity.key"), JSON.stringify({ v: 1, store: "keychain" }));
-  let e2 = ""; try { loadIdentity(d2); } catch (e: any) { e2 = e.message; }
-  ok(/cannot be read/.test(e1) && /Keychain/.test(e2) && readFileSync(join(d1, "lan", "identity.key"), "utf8") === "{not json", "an unreadable key file, or one moved to the Keychain, stops Studio loudly instead of minting a new identity", `${e1} | ${e2}`); }
-
+// ---------- an identity that is gone: the relay fails closed until a person replaces it ----------
+{ const A = await mk("lost-a"), B = await mk("lost-b"); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  await A.dispatch({ to: B.id.key, title: "before the loss", briefing: "x" }); const dir = (A as any).o.dataDir, key0 = A.id.key; A.close();
+  for (const f of ["identity.json", "admin.key"]) Bun.spawnSync(["rm", join(dir, "lan", f)]); // the Mac's keys are gone (a restore without them, a wiped keystore)
+  const L = await Lan.open({ dataDir: dir, runner: fakeRunner(), bind: "127.0.0.1", port: 0 });
+  let e = ""; try { await L.dispatch({ to: B.id.key, title: "after", briefing: "x" }); } catch (x: any) { e = String(x?.code ?? x?.message); }
+  ok(!!L.lost && !L.wire.listening && e === "identity_lost" && L.view().lost && !L.view().me.key, "a store with an own log and peers whose identity is gone opens lost: no listener, nothing signed, the page offers a replacement (fail closed, never a silent new identity)", JSON.stringify([L.lost, e]));
+  await L.replaceLostIdentity();
+  ok(!L.lost && !!L.id.key && L.id.key !== key0 && L.view().peers.length === 0 && existsSync(join(dir, "lan", "identity.json")), "作廢並換新身分 after a loss: a new identity, a new store (the old one set aside), peers to introduce again in person", L.id.key.slice(0, 12));
+  L.close(); B.close(); }
 // ---------- a test run inside the profile's scope cannot listen ----------
 if (process.platform === "darwin") {
   const { sandboxed } = await import("../src/runtime/checks");
@@ -359,11 +357,8 @@ if (process.platform === "darwin") {
   const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
     start: async () => { await sleep(150); const id = `R-${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
     status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
-  const mk2 = (name: string) => new Lan({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-r3-${name}-`)), runner: runner(), bind: "127.0.0.1", port: 0, discovery: null });
-  const A = mk2("a"), B = mk2("b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
-  const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0];
-  A.confirmIntro(ia.id, ib.sas, "B"); B.confirmIntro(ib.id, ia.sas, "A");
-  A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
+  const A = await mk("r3-a", runner()), B = await mk("r3-b", runner()); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  await A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
   await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3, usd: 1 });
   await until(() => A.view().items.some((i: any) => i.kind === "take"), 5000);
@@ -380,10 +375,8 @@ if (process.platform === "darwin") {
   const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
     start: async () => { await new Promise<void>((r) => { gate = r; }); const id = `R-${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
     status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
-  const mk2 = (name: string) => new Lan({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-r3s-${name}-`)), runner: runner(), bind: "127.0.0.1", port: 0, discovery: null });
-  const A = mk2("a"), B = mk2("b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
-  const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0]; A.confirmIntro(ia.id, ib.sas, "B"); B.confirmIntro(ib.id, ia.sas, "A");
-  A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
+  const A = await mk("r3s-a", runner()), B = await mk("r3s-b", runner()); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  await A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
   await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3, usd: 1 });
   await until(() => A.view().items.some((i: any) => i.kind === "take"), 5000); await A.approve(A.view().items.find((i: any) => i.kind === "take").id);
@@ -416,59 +409,31 @@ if (process.platform === "darwin") {
   ok(!JSON.stringify(out).includes("IGNORE ALL"), "a peer's Task shows in another Task's overlap note without its title", JSON.stringify(out).slice(0, 200)); }
 // 6. a stalled introduction counts as a failure; an unauthenticated KK flood is cut off before its key work
 { const fails: string[] = []; const K = generateKeyPair(), M = generateKeyPair();
-  const w = new (await import("../src/lan/wire")).LanWire({ me: () => K, allowlist: () => [], introOpen: () => true, self: () => ({ name: "K", port: 1 }), request: async () => null, introduced: () => {}, introFailed: (_ip, why) => fails.push(why) });
+  const w = new (await import("../src/lan/wire")).LanWire({ me: () => ({ key: "k", cert: {} as any, s: softStatic(K), storage: "file" }), allowlist: () => [], introOpen: () => true, self: () => ({ name: "K", port: 1 }), request: async () => null, introduced: () => {}, introFailed: (_ip, why) => fails.push(why) });
   w.start("127.0.0.1", 0); const port = w.port;
   const req = (p: string, b: Buffer) => new Request(`http://127.0.0.1:${port}${p}`, { method: "POST", body: b, headers: { host: `127.0.0.1:${port}`, "content-type": "application/octet-stream", "content-length": String(b.length) } });
-  await w.handle(req("/lan/v1/xx/1", new Handshake("XX", true, M).writeMessage(Buffer.alloc(0))), "10.1.1.1");
-  await sleep(21_000); await w.handle(req("/lan/v1/xx/1", new Handshake("XX", true, M).writeMessage(Buffer.alloc(0))), "10.1.1.2");
+  await w.handle(req("/lan/v2/xx/1", await new Handshake("XX", true, softStatic(M)).writeMessage(Buffer.alloc(0))), "10.1.1.1");
+  await sleep(21_000); await w.handle(req("/lan/v2/xx/1", await new Handshake("XX", true, softStatic(M)).writeMessage(Buffer.alloc(0))), "10.1.1.2");
   ok(fails.some((f) => /stopped before/.test(f)), "an introduction that holds the single slot and stops counts as a failed introduction", JSON.stringify(fails));
-  const codes: number[] = []; for (let i = 0; i < 40; i++) { const m1 = new Handshake("KK", true, M, K.pub).writeMessage(Buffer.from("{}")); codes.push((await w.handle(req("/lan/v1/kk", m1), "10.2.2.2")).status); }
+  const codes: number[] = []; for (let i = 0; i < 40; i++) { const m1 = await new Handshake("KK", true, softStatic(M), K.pub).writeMessage(Buffer.from("{}")); codes.push((await w.handle(req("/lan/v2/kk", m1), "10.2.2.2")).status); }
   ok(codes.slice(-5).every((c) => c === 429), "unauthenticated KK attempts from one address are cut off (before trying every allowlisted key) after a few", JSON.stringify(codes.slice(-8)));
   w.stop(); }
 // 7. rounds only is the taker's choice for any provider (Claude and Studio's default included): the take carries no dollar cap
 { const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }], start: async () => { throw new Error("no"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} });
-  const mk3 = (name: string) => new Lan({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-r3r-${name}-`)), runner: runner(), bind: "127.0.0.1", port: 0, discovery: null });
-  const A = mk3("a"), B = mk3("b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
-  const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0]; A.confirmIntro(ia.id, ib.sas, "B"); B.confirmIntro(ib.id, ia.sas, "A");
-  A.dispatch({ to: B.id.key, title: "t", briefing: "x" }); await until(() => B.view().items.length === 1, 5000);
+  const A = await mk("r3r-a", runner()), B = await mk("r3r-b", runner()); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  await A.dispatch({ to: B.id.key, title: "t", briefing: "x" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
   let e1 = ""; try { await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), roundsOnly: true, rounds: 3, provider: "claude" }); } catch (e: any) { e1 = e.message; }
   ok(!e1 && t.rounds[0].take?.cap.usd === null && t.rounds[0].take?.cap.rounds === 3, "a rounds-only cap may be chosen for Claude, a provider that reports its cost (no dollar cap, three rounds)", e1 || JSON.stringify(t.rounds[0].take?.cap));
   A.close(); B.close(); }
 // 8. records are pruned: answered items and closed threads do not grow without end
 { const { Lan: L } = await import("../src/lan/relay");
-  const x = new L({ dataDir: mkdtempSync(join(tmpdir(), "crew-lan-prune-")), runner: { workflows: () => [], start: async () => { throw new Error(); }, status: () => null, output: async () => { throw new Error(); }, cancel: () => {} } as any, bind: "127.0.0.1", port: 0, discovery: null });
+  const x = await L.open({ dataDir: mkdtempSync(join(tmpdir(), "crew-lan-prune-")), runner: { workflows: () => [], start: async () => { throw new Error(); }, status: () => null, output: async () => { throw new Error(); }, cancel: () => {} } as any, bind: "127.0.0.1", port: 0 });
   const st: any = (x as any).st; for (let i = 0; i < 3000; i++) st.items.push({ id: `i${i}`, entry: "e", kind: "done", from: "k", thread: "t", round: 1, at: new Date().toISOString(), state: "approved", flags: [], note: null });
   for (let i = 0; i < 800; i++) st.threads.push({ id: `t${i}`, owner: "o", peer: "p", title: "", acceptance: [], suggested: null, rounds: [], state: "done", steps: [] });
   x.flushState(); x.close();
   ok(st.items.length <= 1000 && st.threads.length <= 500, "answered items and closed threads are pruned when the state is written", `${st.items.length} ${st.threads.length}`); }
 
-// ---------- the Keychain: never by default, never in a test; its own path only through a stand-in ----------
-{ const spawned: string[][] = [], real = keychainSpawn.run;
-  keychainSpawn.run = (argv: string[]) => { spawned.push(argv); throw new Error("the keychain tool must not run here"); };
-  const saved = { ks: process.env.CREW_KEYSTORE, iso: process.env.CREW_TEST_ENV_ISOLATED };
-  try {
-    delete process.env.CREW_KEYSTORE;
-    const d1 = mkdtempSync(join(tmpdir(), "crew-lan-id-")), id = loadIdentity(d1);
-    ok(id.store === "file" && existsSync(join(d1, "lan", "identity.key")) && !spawned.length && !keychainWanted(d1), "with the default environment the identity is a 0600 file and the keychain tool is never spawned", JSON.stringify(spawned));
-    process.env.CREW_KEYSTORE = "keychain";
-    const d2 = mkdtempSync(join(tmpdir(), "crew-lan-id-")), id2 = loadIdentity(d2);
-    ok(id2.store === "file" && !spawned.length && !keychainWanted(d2), "even with CREW_KEYSTORE=keychain, a test run or a temporary data folder never reaches the Keychain", JSON.stringify(spawned));
-    delete process.env.CREW_TEST_ENV_ISOLATED;
-    ok(!keychainWanted(d2), "a data folder under the temporary directory never reaches the Keychain, test mark or not");
-    delete process.env.CREW_KEYSTORE;
-    ok(!keychainWanted("/var/empty/crew-lan-not-temp") && !spawned.length, "without CREW_KEYSTORE=keychain no data folder reaches the Keychain, even outside a test and outside the temporary directory");
-  } finally { keychainSpawn.run = real; if (saved.ks === undefined) delete process.env.CREW_KEYSTORE; else process.env.CREW_KEYSTORE = saved.ks; if (saved.iso !== undefined) process.env.CREW_TEST_ENV_ISOLATED = saved.iso; } }
-{ // the opt-in path itself, against an in-memory stand-in (no process, nothing on the Mac's Keychain)
-  const db = new Map<string, string>(), calls: { argv: string[]; stdin: string }[] = [], real = keychainSpawn.run;
-  keychainSpawn.run = (argv: string[], o: any) => { const stdin = o?.stdin ? Buffer.from(o.stdin).toString() : ""; calls.push({ argv, stdin });
-    if (argv[1] === "-i") { const m = /-s (\S+) -a (\S+).* -w (\S+)/.exec(stdin); if (m) db.set(`${m[1]}/${m[2]}`, m[3]); return { exitCode: m ? 0 : 2, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }; }
-    const v = db.get(`${argv[argv.indexOf("-s") + 1]}/${argv[argv.indexOf("-a") + 1]}`); return { exitCode: v ? 0 : 44, stdout: Buffer.from(v ? `${v}\n` : ""), stderr: Buffer.alloc(0) }; };
-  try {
-    const data = mkdtempSync(join(tmpdir(), "crew-lan-kc-")), id1 = loadIdentity(data, { keychain: true }), id2 = loadIdentity(data, { keychain: true }), secret = b64u(id1.priv);
-    ok(id1.store === "keychain" && id2.key === id1.key && [...db.keys()].every((k) => k.startsWith("crew-studio-lan-identity/")), "opted in, the identity is kept under the Keychain service crew-studio-lan-identity and read back");
-    const hex = Buffer.from(id1.priv).toString("hex"); ok(!calls.some((c) => c.argv.join(" ").includes(secret) || c.argv.join(" ").includes(hex)) && calls.some((c) => c.stdin.includes(`-w ${hex}`)) && !readFileSync(join(data, "lan", "identity.key"), "utf8").includes(secret) && JSON.parse(readFileSync(join(data, "lan", "identity.key"), "utf8")).store === "keychain", "the private key goes to the keychain tool on stdin, never on its argv; the key file is only a marker");
-  } finally { keychainSpawn.run = real; } }
 // ---------- review round 4 (security review probes): each expects the fixed behaviour ----------
 // R4-1. the protected-path check folds case like JS toLowerCase, but APFS (case-insensitive) also folds U+017F (long s) to "s":
 //       a patch path git keeps distinct lands on the protected file the moment the dispatcher checks the branch out
@@ -511,18 +476,15 @@ if (process.platform === "darwin") {
   const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
     start: async () => { await opened; const id = `R-W${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
     status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
-  const mk2 = (name: string) => new Lan({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-r4-${name}-`)), runner: runner(), bind: "127.0.0.1", port: 0, discovery: null });
-  const A = mk2("a"), B = mk2("b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
-  const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0];
-  A.confirmIntro(ia.id, ib.sas, "B"); B.confirmIntro(ib.id, ia.sas, "A");
-  const th = A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
+  const A = await mk("r4-a", runner()), B = await mk("r4-b", runner()); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  const th = await A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
   await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3, usd: 1 });
   await until(() => A.view().items.some((i: any) => i.kind === "take"), 5000);
   await A.approve(A.view().items.find((i: any) => i.kind === "take").id);
   await until(() => B.view().items.some((i: any) => i.kind === "assign"), 5000);
   const pending = B.approve(B.view().items.find((i: any) => i.kind === "assign").id).catch((e: any) => e);
-  A.withdraw((th as any).id ?? t.id);
+  await A.withdraw((th as any).id ?? t.id);
   await until(() => B.thread(t.id)?.state === "withdrawn", 5000).catch(() => {});
   gate(); await pending;
   ok(B.thread(t.id)?.state === "withdrawn" && starts.length === 1 && cancelled.includes(starts[0]), "work the dispatcher withdrew while its Task was starting is stopped once it has started", JSON.stringify({ state: B.thread(t.id)?.state, starts, cancelled })); }
@@ -532,21 +494,21 @@ if (process.platform === "darwin") {
 { const { Lan: L } = await import("../src/lan/relay");
   const dir = mkdtempSync(join(tmpdir(), "crew-lan-r4-start-")); let found: string | null = "R-77";
   const none: any = { workflows: () => [], start: async () => { throw new Error(); }, status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error(); }, cancel: () => {}, findByItem: (i: string) => i === "item-claim-1" ? found : null };
-  const x = new L({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0, discovery: null });
+  const x = await L.open({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0 });
   const st: any = (x as any).st; const round = (id: string) => ({ n: 1, fence: "f", briefing: { hash: "h", size: 1, entry: "e" }, take: null, assign: null, result: null, run: { id: "(claimed)", state: "starting", result: null, started: new Date().toISOString(), stopped: null, item: id } });
   st.threads.push({ id: "t-start-1", owner: "o", peer: "p", title: "", acceptance: [], suggested: null, state: "open", steps: [], rounds: [round("item-claim-1")] },
     { id: "t-start-2", owner: "o", peer: "p", title: "", acceptance: [], suggested: null, state: "open", steps: [], rounds: [round("item-claim-2")] });
   (x as any).save(); // a crash now: the second Studio below opens the same store without this one closing
-  const y = new L({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0, discovery: null });
+  const y = await L.open({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0 });
   const r1 = y.thread("t-start-1")?.rounds[0].run, r2 = y.thread("t-start-2")?.rounds[0].run;
   ok(r1?.id === "R-77" && r1.found === true, "after a restart a claimed round finds the Task its item started (found after restart)", JSON.stringify(r1));
   ok(r2?.id === "(gone)" && r2.state === "gone", "a claimed round whose Task is not there is gone, never released", JSON.stringify(r2));
   y.close(); x.close(); }
 // R4-8. the unauthenticated-KK limiter: a full table evicts its oldest entry (never all blocks), the window starts at the 8th failure, IPv6 counts per /64
 { const { LanWire } = await import("../src/lan/wire"); const K = generateKeyPair(), M = generateKeyPair();
-  const w = new LanWire({ me: () => K, allowlist: () => [], introOpen: () => false, self: () => ({ name: "K", port: 1 }), request: async () => null, introduced: () => {} });
+  const w = new LanWire({ me: () => ({ key: "k", cert: {} as any, s: softStatic(K), storage: "file" }), allowlist: () => [], introOpen: () => false, self: () => ({ name: "K", port: 1 }), request: async () => null, introduced: () => {} });
   w.start("127.0.0.1", 0); const port = w.port;
-  const kk = (ip: string) => { const b = new Handshake("KK", true, M, K.pub).writeMessage(Buffer.from("{}")); return w.handle(new Request(`http://127.0.0.1:${port}/lan/v1/kk`, { method: "POST", body: b, headers: { host: `127.0.0.1:${port}`, "content-type": "application/octet-stream", "content-length": String(b.length) } }), ip).then((r) => r.status); };
+  const kk = async (ip: string) => { const b = await new Handshake("KK", true, softStatic(M), K.pub).writeMessage(Buffer.from("{}")); return w.handle(new Request(`http://127.0.0.1:${port}/lan/v2/kk`, { method: "POST", body: b, headers: { host: `127.0.0.1:${port}`, "content-type": "application/octet-stream", "content-length": String(b.length) } }), ip).then((r) => r.status); };
   for (let i = 0; i < 8; i++) await kk("10.9.9.9");
   ok(await kk("10.9.9.9") === 429, "after eight unauthenticated KK messages an address is cut off");
   { // the minute starts at the eighth failure, not at the first: seven failures 50 s ago, the eighth now, then 15 s pass

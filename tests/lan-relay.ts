@@ -5,10 +5,12 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // real stack: an unintroduced key, a wrong short code, a browser-origin request, a briefing hash mismatch, a workflow
 // hash mismatch (flagged), a fork (frozen), push (a workflow that pushes cannot take the work), egress beyond the
 // provider, a .github edit at hand-back, a secret in a result, a phone approving, and the spend cap.    bun tests/lan-relay.ts
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { b64u, generateKeyPair, keyPairOf, randomBytes, unb64u, type KeyPair } from "../src/lan/crypto";
+import { b64u, randomBytes } from "../src/lan/crypto";
+import { certHash, openKeystore, staticOf, type Keystore } from "../src/lan/keystore";
 import { makeEnvelope, sealBlob, type Body } from "../src/lan/protocol";
 import { call, introduce as introduceRaw } from "../src/lan/wire";
 import { drive } from "./acceptance/drive";
@@ -22,8 +24,14 @@ const TAILNET = "studio.tail-lanrelay.ts.net";
 const orig = process.env.CREW_TAILNET_NAME; process.env.CREW_TAILNET_NAME = TAILNET;
 const p: Pair = await bootPair();
 if (orig === undefined) delete process.env.CREW_TAILNET_NAME;
-const keyOf = (data: string): KeyPair => keyPairOf(unb64u(JSON.parse(readFileSync(join(data, "lan", "identity.key"), "utf8")).d, 32));
-const peerB = () => ({ key: p.keyB, host: "127.0.0.1", port: p.lanB }), peerA = () => ({ key: p.keyA, host: "127.0.0.1", port: p.lanA });
+// each Studio's own identity, opened from its data folder the way it is kept (a 0600 file in a test run): this process
+// then speaks as that Studio would, to forge what its peer must refuse
+const keysOf = async (data: string) => (await openKeystore(data, { create: false, kind: "file" })).ks!;
+const freshKeys = async () => (await openKeystore(mkdtempSync(join(tmpdir(), "crew-lan-stranger-")), { create: true, kind: "file" })).ks!;
+const me = (k: Keystore) => ({ key: k.key, cert: k.cert, s: staticOf(k), storage: "file" }), rec = (k: Keystore) => ({ id: k.key, dh: k.dhPub });
+const author = (k: Keystore) => ({ key: k.key, certHash: certHash(k.cert), dhPub: k.dhPub, sign: (pp: "entry", m: Uint8Array) => k.sign(pp, m) });
+const kB = await keysOf(p.B.data), kA = await keysOf(p.A.data);
+const peerB = () => ({ key: p.keyB, dh: b64u(kB.dhPub), host: "127.0.0.1", port: p.lanB }), peerA = () => ({ key: p.keyA, dh: b64u(kA.dhPub), host: "127.0.0.1", port: p.lanA });
 const view = async (s: any) => must(s.api("/api/lan"), "view");
 const lines: string[] = [];
 try {
@@ -44,7 +52,7 @@ try {
   ok(runJson.profile?.name === "lan" && runJson.profile?.mark?.rounds === 6 && !("_lan" in (runJson.params ?? {})) && !("_tainted" in (runJson.params ?? {})), "the Task runs under the runtime's lan profile (its spend cap is the profile's mark, never a param)", JSON.stringify([runJson.profile, runJson.params]));
   // encrypted at rest and on the wire: no byte of either relay store (the database and its write-ahead log) holds the text
   const dbBytes = (data: string) => ["relay.db", "relay.db-wal"].map((f) => { try { return readFileSync(join(data, "lan", f)).toString("utf8"); } catch { return ""; } }).join("\n");
-  ok(!/帳號、權限、第一週|密碼管理員/.test(dbBytes(p.B.data) + dbBytes(p.A.data)), "entries and blobs are stored sealed: no byte of either store holds the briefing or the result in clear text");
+  ok(!/上線清單|帳號、權限、第一週|密碼管理員|一頁以內/.test(dbBytes(p.B.data) + dbBytes(p.A.data)), "everything is stored sealed (entries, blobs and the state with its titles and criteria): no byte of either store holds a peer's words in clear text");
   const auditA = await must(p.A.api("/api/lan/audit"), "A's audit"), auditB = await must(p.B.api("/api/lan/audit"), "B's audit"), whats = (x: any) => x.rows.map((r: any) => r.what);
   ok(whats(auditA).includes("dispatch") && whats(auditA).includes("introduce") && whats(auditB).includes("take") && whats(auditB).includes("run") && whats(auditB).includes("handback") && auditA.broken === null && auditB.broken === null,
     "each Studio's audit names the introduction, the dispatch, the take, what started a run and what was sent, and its hash chain holds", JSON.stringify([whats(auditA), whats(auditB), auditA.broken, auditB.broken]));
@@ -69,22 +77,22 @@ try {
     ok(scr.status === 403 && scrW.status === 403 && (await scr.json()).code === "pageOnly", "a script's x-crew-session reads and changes nothing under /api/lan (the page's cookie, same origin)", `${scr.status} ${scrW.status}`); }
 
   // ---------- an unintroduced key ----------
-  { const C = generateKeyPair(); let err = ""; try { await call(C, peerB(), "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; }
-    ok(/403/.test(err), "an unintroduced key is refused by the peer listener (403, nothing answered)", err); }
+  { const C = await freshKeys(); let err = ""; try { await call(me(C), peerB(), "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; }
+    ok(/recognise/.test(err), "an unintroduced identity is refused by the peer listener (a bare 403, nothing answered)", err); }
   // ---------- a wrong short code ----------
   { await must(p.B.api("/api/lan/intro/open", { minutes: 1 }), "B opens");
-    const C = generateKeyPair(); const ic = await introduceRaw(C, "127.0.0.1", p.lanB, { name: "小明", port: 1 });
-    const i = (await view(p.B)).intros.find((x: any) => x.key === b64u(C.pub));
-    { let err = ""; try { await call(C, peerB(), "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; }
-      ok(!!i && /403/.test(err), "a key whose introduction is not confirmed yet is still refused", err); }
+    const C = await freshKeys(); const ic = await introduceRaw(me(C), "127.0.0.1", p.lanB, { name: "小明", port: 1 });
+    const i = (await view(p.B)).intros.find((x: any) => x.key === C.key);
+    { let err = ""; try { await call(me(C), peerB(), "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; }
+      ok(!!i && /recognise/.test(err), "an identity whose introduction is not confirmed yet is still refused", err); }
     const wrong = String((Number(ic.sas) + 1) % 1_000_000).padStart(6, "0");
     const res = await p.B.api(`/api/lan/intro/${i.id}/confirm`, { code: wrong, petname: "小明" });
     const after = await view(p.B);
-    ok(res.status === 409 && res.body.code === "sas" && !after.intros.some((x: any) => x.key === b64u(C.pub)) && !after.peers.some((x: any) => x.key === b64u(C.pub)), "a wrong short code is refused, ends the introduction and allowlists nothing", JSON.stringify(res.body));
-    let err = ""; try { await call(C, peerB(), "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; } ok(/403/.test(err), "after a wrong code the key is still refused");
+    ok(res.status === 409 && res.body.code === "sas" && !after.intros.some((x: any) => x.key === C.key) && !after.peers.some((x: any) => x.key === C.key), "a wrong short code is refused, ends the introduction and allowlists nothing", JSON.stringify(res.body));
+    let err = ""; try { await call(me(C), peerB(), "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; } ok(/recognise/.test(err), "after a wrong code the identity is still refused");
     await must(p.B.api("/api/lan/intro/close", {}), "B closes"); }
   // ---------- a browser-origin request ----------
-  { const res = await fetch(`http://127.0.0.1:${p.lanB}/lan/v1/kk`, { method: "POST", body: new Uint8Array(200), headers: { "content-type": "application/octet-stream", origin: "http://192.168.1.9:8080", "sec-fetch-mode": "cors" } });
+  { const res = await fetch(`http://127.0.0.1:${p.lanB}/lan/v2/kk`, { method: "POST", body: new Uint8Array(200), headers: { "content-type": "application/octet-stream", origin: "http://192.168.1.9:8080", "sec-fetch-mode": "cors" } });
     ok(res.status === 403 && !res.headers.has("access-control-allow-origin"), "a browser-origin request to the LAN listener is refused, with no CORS header");
     const main = await fetch(`http://127.0.0.1:${p.lanB}/api/lan`, { headers: { "x-crew-session": "acceptance-lan-b-session" } });
     ok(main.status === 404, "the LAN listener serves none of Studio's routes, even with the session"); }
@@ -102,26 +110,25 @@ try {
   const finish = async (run: string, choices: string[] = ["approve-draft"]) => { let n = 0; return drive(p.B, run, async (c) => c.node === "accept" ? { choice: choices[Math.min(n++, choices.length - 1)], note: "請把標題改短" } : { stop: "unscripted" }, { timeoutMs: 120_000 }); };
 
   // ---------- a briefing hash mismatch between dispatch and take ----------
-  const kB = keyOf(p.B.data), kA = keyOf(p.A.data);
   { const t = await dispatch("請整理一份會議紀錄。"); await itemOn(p.B, "dispatch", t.id);
-    const bad = makeEnvelope(kB, 700_001, randomBytes(32).toString("hex"), [p.keyA], { kind: "take", thread: t.id, round: 1, briefing: "0".repeat(64), workflow: { id: "documents", version: 1, defHash: "1".repeat(64) }, cap: { usd: 1, rounds: 3 } } as Body);
-    const res = await call(kB, peerA(), "push", { entries: [bad], blobs: [] });
+    const bad = await makeEnvelope(author(kB), 700_001, randomBytes(32).toString("hex"), [rec(kA)], { kind: "take", thread: t.id, round: 1, briefing: "0".repeat(64), workflow: { id: "documents", version: 1, defHash: "1".repeat(64) }, cap: { usd: 1, rounds: 3 } } as Body);
+    const res = await call(me(kB), peerA(), "push", { entries: [bad], blobs: [] });
     ok(res.refused?.[0]?.reason?.includes("briefing hash mismatch") && !(await view(p.A)).items.some((i: any) => i.thread === t.id && i.kind === "take"), "a take naming another briefing than the dispatch is refused (briefing hash mismatch) and raises nothing", JSON.stringify(res));
-    const again = await call(kB, peerA(), "push", { entries: [bad], blobs: [] });
+    const again = await call(me(kB), peerA(), "push", { entries: [bad], blobs: [] });
     ok(again.refused?.[0]?.reason?.includes("briefing hash mismatch"), "sending the refused entry again is refused again, never taken in on a retry"); }
   // ---------- a workflow hash mismatch between take and result ----------
   { const t = await dispatch("請寫一段歡迎詞。"); const d = await itemOn(p.B, "dispatch", t.id);
     await must(p.B.api(`/api/lan/items/${d.id}/approve`, { seen: seenOf(d.prompt), workflow: "documents", provider: "codex" }), "take");
     const k = await itemOn(p.A, "take", t.id); await must(p.A.api(`/api/lan/items/${k.id}/approve`, {}), "assign");
     const th = await must(p.A.api(`/api/lan/threads/${t.id}`), "thread"), rd = th.rounds[0];
-    const plain = Buffer.from(JSON.stringify({ files: [{ path: "doc.md", text: "# 歡迎\n" }] })), blob = sealBlob(plain, [p.keyA], kB);
-    const res0 = makeEnvelope(kB, 700_101, randomBytes(32).toString("hex"), [p.keyA], { kind: "result", thread: t.id, round: 1, take: rd.assign.take, briefing: rd.briefing.hash, output: { hash: blob.hash, size: plain.length, files: [{ path: "doc.md", bytes: 8 }] },
+    const plain = Buffer.from(JSON.stringify({ files: [{ path: "doc.md", text: "# 歡迎\n" }] })), blob = sealBlob(plain, [rec(kA)], rec(kB));
+    const res0 = await makeEnvelope(author(kB), 700_101, randomBytes(32).toString("hex"), [rec(kA)], { kind: "result", thread: t.id, round: 1, take: rd.assign.take, briefing: rd.briefing.hash, output: { hash: blob.hash, size: plain.length, files: [{ path: "doc.md", bytes: 8 }] },
       workflow: { id: "documents", version: 1, defHash: "f".repeat(64) }, run: "R-999", checks: { pass: 3, fail: 0, other: 0, summary: "3/3" } } as Body);
-    const res = await call(kB, peerA(), "push", { entries: [res0], blobs: [blob] });
+    const res = await call(me(kB), peerA(), "push", { entries: [res0], blobs: [blob] });
     const it = await itemOn(p.A, "result", t.id);
     ok(res.accepted?.length === 1 && it.flags.includes("workflow-mismatch"), "a result whose workflow hash differs from its take's is taken in but flagged (workflow-mismatch)", JSON.stringify([res, it.flags]));
-    const rv = makeEnvelope(kB, 700_102, entryHash(res0), [p.keyA], { kind: "revoke", thread: t.id, round: 1, target: entryHash(res0), reason: "withdrawn" } as Body);
-    const rr = await call(kB, peerA(), "push", { entries: [rv], blobs: [] });
+    const rv = await makeEnvelope(author(kB), 700_102, entryHash(res0), [rec(kA)], { kind: "revoke", thread: t.id, round: 1, target: entryHash(res0), reason: "withdrawn" } as Body);
+    const rr = await call(me(kB), peerA(), "push", { entries: [rv], blobs: [] });
     const kept = (() => { const db = new Database(join(p.A.data, "lan", "relay.db"), { readonly: true }); try { return !!db.query("SELECT 1 FROM blobs WHERE hash = ?").get(blob.hash); } finally { db.close(); } })();
     ok(rr.accepted?.length === 1 && !kept, "revoking a result nothing used deletes its content on the dispatcher's side", JSON.stringify(rr)); }
 
@@ -197,10 +204,10 @@ try {
     const pre = await p.B.api(`/api/lan/threads/${x.t.id}/handback/preview`, {}); ok(pre.status === 409, "a run stopped by its cap hands nothing back", String(pre.status)); }
 
   // ---------- a fork freezes the author ----------
-  { const mk = (title: string) => { const brief = Buffer.from(`fork ${title}`), blob = sealBlob(brief, [p.keyB], kA);
-      return { e: makeEnvelope(kA, 800_000, randomBytes(32).toString("hex"), [p.keyB], { kind: "dispatch", thread: randomBytes(12).toString("base64url"), round: 1, title, briefing: { hash: blob.hash, size: brief.length }, acceptance: [], suggested: null } as Body), blob }; };
-    const one = mk("第一個版本"), two = mk("第二個版本");
-    const r1 = await call(kA, peerB(), "push", { entries: [one.e], blobs: [one.blob] }), r2 = await call(kA, peerB(), "push", { entries: [two.e], blobs: [two.blob] });
+  { const mk = async (title: string) => { const brief = Buffer.from(`fork ${title}`), blob = sealBlob(brief, [rec(kB)], rec(kA));
+      return { e: await makeEnvelope(author(kA), 800_000, randomBytes(32).toString("hex"), [rec(kB)], { kind: "dispatch", thread: randomBytes(12).toString("base64url"), round: 1, title, briefing: { hash: blob.hash, size: brief.length }, acceptance: [], suggested: null } as Body), blob }; };
+    const one = await mk("第一個版本"), two = await mk("第二個版本");
+    const r1 = await call(me(kA), peerB(), "push", { entries: [one.e], blobs: [one.blob] }), r2 = await call(me(kA), peerB(), "push", { entries: [two.e], blobs: [two.blob] });
     const v = await view(p.B), pa = v.peers.find((x: any) => x.key === p.keyA);
     ok(r1.accepted?.length === 1 && /fork/.test(r2.refused?.[0]?.reason ?? "") && !!pa?.frozen, "two validly signed entries at one sequence number freeze their author", JSON.stringify([r1, r2, pa?.frozen?.why]));
     ok(pa.frozen.a?.signature === "valid" && pa.frozen.b?.signature === "valid" && /兩筆的簽章都合法/.test(pa.frozen.a?.forkNote ?? "") && !/偽造|forged|簽章不符/.test(JSON.stringify(pa.frozen)), "the inspector says both signatures are valid and never calls one of them the forged one");
@@ -213,7 +220,19 @@ try {
     ok(refused && /frozen/.test(thA.steps[0].waiting ?? "") && !thA.steps[0].refused && waits, "new entries from the frozen author are refused for now: the author's entry waits in its outbox with the reason (it is sent again once a person resolves the freeze)", JSON.stringify(thA.steps[0]));
     await must(p.B.api(`/api/lan/peers/${p.keyA}/resolve`, { action: "unfreeze" }), "unfreeze");
     ok(!(await view(p.B)).peers.find((x: any) => x.key === p.keyA).frozen, "a person can unfreeze the author after checking in person"); }
-} catch (e: any) { ok(false, `the suite ran to its end: ${e?.message ?? e}`); console.log(p.B.output().slice(-3000)); }
+  // ---------- A retires its identity: B freezes the old one, introduces the new one in person, and the work goes on ----------
+  { const old = p.keyA;
+    await must(p.A.api("/api/lan/identity/retire", {}), "A retires its identity (作廢並換新身分)");
+    const pa = await until("B sees A's revocation", async () => (await view(p.B)).peers.find((x: any) => x.key === old && x.state === "retired"));
+    ok(/換了身分/.test(pa.notice?.zh ?? "") && pa.retired?.successor?.certified === true && !(await view(p.B)).peers.some((x: any) => x.key !== old && x.state === "trusted" && x.key === pa.retired.successor.key),
+      "after A retires its identity, B shows that A changed identity, freezes the old one and does not trust the certified successor yet", JSON.stringify(pa.retired));
+    p.keyA = (await view(p.A)).me.key;
+    await introduce(p, () => {}, { replaces: old });
+    const again = await relay(p, () => {});
+    ok(again.a.steps.map((s: any) => s.kind).join(",") === "dispatch,take,assign,result,refine,take,assign,result,done" && (await view(p.B)).peers.find((x: any) => x.key === old)?.state === "revoked",
+      "once B introduced A's new identity in person, the whole relay runs again with it, and the old identity is revoked for good", JSON.stringify(again.a.steps.map((s: any) => s.kind))); }
+} catch (e: any) { ok(false, `the suite ran to its end: ${e?.message ?? e}`); console.log(p.B.output().slice(-3000));
+  for (const [n, s2] of [["A", p.A], ["B", p.B]] as const) { try { const v = await view(s2); console.log(n, "outbox", JSON.stringify(v.outbox).slice(0, 800), "refused", JSON.stringify(v.refused).slice(0, 800), "peers", JSON.stringify(v.peers.map((x: any) => [x.petname, x.state, x.vouched, x.key.slice(0, 8)]))); } catch {} } }
 finally { await p.close(); }
 console.log("\n" + lines.join("\n"));
 end();

@@ -31,17 +31,17 @@ export async function bootPair(o: { examples?: boolean } = {}): Promise<Pair> {
 }
 
 /** The introduction: B opens its window, A introduces itself, each side types the code the other side shows. */
-export async function introduce(p: Pair, log: (s: string) => void = () => {}) {
+export async function introduce(p: Pair, log: (s: string) => void = () => {}, o: { replaces?: string } = {}) {
   await must(p.B.api("/api/lan/intro/open", { minutes: 5 }), "B opens its introduction window");
   const ia = await must(p.A.api("/api/lan/intro/start", { host: "127.0.0.1", port: p.lanB }), "A introduces itself to B");
   const ib = await until("B's side of the introduction", async () => (await must(p.B.api("/api/lan"), "B view")).intros.find((i: any) => i.key === p.keyA));
   log(`引介     A ⇄ B  A 螢幕短碼 ${ia.sas} · B 螢幕短碼 ${ib.sas}${ia.sas === ib.sas ? "（相符）" : "（不符！）"}`);
   await must(p.A.api(`/api/lan/intro/${ia.id}/confirm`, { code: ib.sas, petname: "B 的看板" }), "A confirms the code B shows");
-  await must(p.B.api(`/api/lan/intro/${ib.id}/confirm`, { code: ia.sas, petname: "A 的看板" }), "B confirms the code A shows");
+  await must(p.B.api(`/api/lan/intro/${ib.id}/confirm`, { code: ia.sas, petname: "A 的看板", ...(o.replaces ? { replaces: o.replaces } : {}) }), "B confirms the code A shows");
   await must(p.B.api("/api/lan/intro/close", {}), "B closes its window");
   const fa = (await must(p.A.api("/api/lan"), "A")).me.fingerprint, fb = (await must(p.B.api("/api/lan"), "B")).me.fingerprint;
   log(`         A 指紋 ${fa}`); log(`         B 指紋 ${fb}`);
-  log(`         雙方都在桌面上確認了短碼，對方的完整公鑰已加入允許名單`);
+  log(`         雙方都在桌面上確認了短碼，各自用自己的管理金鑰簽了這次引介，對方的身分已加入允許名單`);
 }
 
 const item = (s: Studio, kind: string, thread: string) => until(`${s.name}'s inbox item ${kind}`, async () => (await must(s.api("/api/lan"), "view")).items.find((i: any) => i.kind === kind && i.thread === thread && i.state === "open"));

@@ -2,7 +2,10 @@
 // synchronous FULL), so what this Studio has signed, what it owes its peers and what it decided are written in one
 // transaction, synced, before anything is sent. A crash can lose a step that was never sent; it can never send an entry
 // whose sequence number a later start would sign again (peers would see a fork), nor forget that it claimed a run.
-//   state      the relay's records (settings, own log head, peers, threads, items, outbox), one JSON row
+//   state      the relay's records (settings, own log head, peers, threads, items, outbox), one JSON row, sealed with
+//              AES-256-GCM under a key derived from the daily key agreement key (src/lan/keystore.ts storageKey): its
+//              titles and criteria are a peer's words. The row `meta` (identity, whether a log or peers exist) is clear,
+//              so a missing identity is noticed before anything can be unsealed
 //   entries    every signed entry this Studio holds (its own and its peers'), sealed as received; `used` keeps the ones
 //              that started a run or were applied when the rest are pruned
 //   blobs      sealed briefings and results; `used` as above
@@ -14,7 +17,7 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { canonical, sha256hex } from "./crypto";
+import { aeadOpen, aeadSeal, canonical, randomBytes, sha256hex } from "./crypto";
 
 export type AuditRow = { n: number; at: string; what: string; data: Record<string, unknown>; prev: string; hash: string };
 export type TaintRow = { sha: string; repo: string; project: string; peer: string; thread: string; round: number; at: string; why: string; cleared: string | null; clearedBy: string | null };
@@ -53,8 +56,27 @@ export class Store {
   }
 
   // ---------- the relay's records ----------
-  getState<T>(): T | null { const r = this.db.query("SELECT v FROM state WHERE k = 'main'").get() as { v: string } | null; return r ? JSON.parse(r.v) as T : null; }
-  putState(v: unknown) { this.db.query("INSERT INTO state (k, v) VALUES ('main', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(JSON.stringify(v)); }
+  private seal: Buffer | null = null;
+  /** the key the state row is sealed with (null: not open yet; nothing is written) */
+  setSeal(key: Buffer | null) { this.seal = key; }
+  /** the sealed state, opened; null when there is none; throws when it does not open (another identity's state) */
+  getState<T>(): T | null {
+    const r = this.db.query("SELECT v FROM state WHERE k = 'main'").get() as { v: string } | null; if (!r) return null;
+    if (!r.v.startsWith("sealed:")) throw new Error("the relay's state is not sealed (an older version's): it is not read");
+    if (!this.seal) throw new Error("the relay's state cannot be opened without this Studio's identity");
+    const b = Buffer.from(r.v.slice(7), "base64"), p = aeadOpen(this.seal, b.subarray(0, 12), b.subarray(12), Buffer.from("crew-studio/lan/v2 state"));
+    if (!p) throw new Error("the relay's state does not open with this Studio's identity");
+    return JSON.parse(p.toString("utf8")) as T;
+  }
+  putState(v: unknown) {
+    if (!this.seal) throw new Error("the relay's state is not written without this Studio's identity");
+    const iv = randomBytes(12), ct = aeadSeal(this.seal, iv, Buffer.from(JSON.stringify(v)), Buffer.from("crew-studio/lan/v2 state"));
+    this.db.query("INSERT INTO state (k, v) VALUES ('main', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run("sealed:" + Buffer.concat([iv, ct]).toString("base64"));
+  }
+  /** what is known without the identity: whose state this is, and whether it holds an own log or peers */
+  getMeta(): { proto: 2; identity: string; log: boolean; peers: number } | null { const r = this.db.query("SELECT v FROM state WHERE k = 'meta'").get() as { v: string } | null; try { return r ? JSON.parse(r.v) : null; } catch { return null; } }
+  putMeta(m: { proto: 2; identity: string; log: boolean; peers: number }) { this.db.query("INSERT INTO state (k, v) VALUES ('meta', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(JSON.stringify(m)); }
+  hasState() { return !!this.db.query("SELECT 1 FROM state WHERE k = 'main'").get(); }
 
   // ---------- entries and blobs ----------
   putEntry(hash: string, author: string, seq: number, e: unknown, thread: string | null = null) {
