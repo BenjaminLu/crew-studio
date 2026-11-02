@@ -43,7 +43,7 @@ export const filmSample: { path: string | null; reason: string | null } = (() =>
 })();
 
 /** examples: seed the example workflows (CREW_EXAMPLE_WORKFLOWS, default on: the startup competition has its own scenario) */
-export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; codexBin?:string; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
+export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; codexBin?:string; beforeStart?: (data:string)=>Promise<void>; env?: Record<string, string> } = {}): Promise<Studio> {
   const root = mkdtempSync(join(tmpdir(), `crew-acceptance-${name}-`)), home = join(root, "home"), data = join(root, "data"), deps = join(root, "deps");
   for (const d of [join(home, ".codex"), data, deps]) mkdirSync(d, { recursive: true });
   if (!ON_CURSOR) {
@@ -80,6 +80,7 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
       CURSOR_API_KEY: CURSOR_KEY, CREW_KEYCHAIN_TOOL: "none", CREW_CHAT_PROVIDER: "cursor" });
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
   }
+  if (o.env) Object.assign(env, o.env); // a suite's own settings (the LAN relay's ports and its file keystore)
   await o.beforeStart?.(data);
   let out = "";
   const app: ChildProcess = spawn("bun", ["src/server.ts"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
