@@ -78,6 +78,9 @@ export class Lan {
     const v = Object.keys(this.st.verdicts); if (v.length > 20_000) for (const k of v.slice(0, v.length - 20_000)) delete this.st.verdicts[k];
     for (const s of Object.values(this.st.authors)) { const k = Object.keys(s).map(Number).sort((a, b) => a - b); if (k.length > 5000) for (const n of k.slice(0, k.length - 5000)) delete s[String(n)]; }
     this.st.introFailures = (this.st.introFailures ?? []).slice(-20);
+    // answered items and closed threads: the newest are kept (open ones always)
+    const settled = this.st.items.filter((i) => i.state !== "open" && i.state !== "frozen"); if (settled.length > 1000) { const drop = new Set(settled.slice(0, settled.length - 1000)); this.st.items = this.st.items.filter((i) => !drop.has(i)); }
+    const closed = this.st.threads.filter((t) => t.state !== "open"); if (closed.length > 500) { const drop = new Set(closed.slice(0, closed.length - 500)); this.st.threads = this.st.threads.filter((t) => !drop.has(t)); }
   }
   private putEntry(e: Envelope) { const h = entryHash(e), f = join(this.dir, "entries", `${h}.json`); if (!existsSync(f)) writeFileSync(f, JSON.stringify(e), { mode: 0o600 }); return h; }
   entry(h: string): Envelope | null { if (!/^[0-9a-f]{64}$/.test(h)) return null; try { return JSON.parse(readFileSync(join(this.dir, "entries", `${h}.json`), "utf8")); } catch { return null; } }
@@ -150,7 +153,7 @@ export class Lan {
    *  items are withdrawn and every Task its work started is stopped. */
   removePeer(key: string, how: "unpair" | "revoke") {
     const p = this.peer(key); if (!p) throw new LanError(404, "no such peer");
-    for (const t of this.st.threads.filter((t) => t.peer === key)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) this.o.runner.cancel(r.run.id, `the peer ${p.petname} was ${how === "revoke" ? "revoked" : "unpaired"}`);
+    for (const t of this.st.threads.filter((t) => t.peer === key)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) if (r.run.id !== "(starting)") this.o.runner.cancel(r.run.id, `the peer ${p.petname} was ${how === "revoke" ? "revoked" : "unpaired"}`);
     for (const i of this.st.items) if (i.from === key && i.state === "open") i.state = "withdrawn";
     this.st.outbox = this.st.outbox.filter((x) => x.to !== key);
     p.state = how === "revoke" ? "revoked" : "unpaired"; // an unpaired peer keeps its record (a freeze survives it); it may be introduced again
@@ -257,7 +260,7 @@ export class Lan {
   private freeze(author: string, seq: number, a: string, b: string, why: string) {
     const p = this.peer(author); if (!p) return;
     if (!p.frozen) p.frozen = { at: now(), seq, entries: [a, b], why };
-    for (const t of this.st.threads.filter((t) => t.peer === author || t.owner === author)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) this.o.runner.cancel(r.run.id, `the peer ${p.petname} is frozen (a fork in its log)`);
+    for (const t of this.st.threads.filter((t) => t.peer === author || t.owner === author)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) if (r.run.id !== "(starting)") this.o.runner.cancel(r.run.id, `the peer ${p.petname} is frozen (a fork in its log)`);
     for (const i of this.st.items) if (i.from === author && i.state === "open") i.state = "frozen";
     this.save(); this.o.log?.(`LAN peer ${p.petname} frozen: ${why} (seq ${seq})`);
   }
@@ -312,7 +315,7 @@ export class Lan {
     if (b.kind === "revoke") { const tb = this.body(b.target); if (tb?.kind === "dispatch") { t.state = "withdrawn"; this.dropBlob(tb.briefing.hash); }
       if (tb?.kind === "refine") this.dropBlob(tb.briefing.hash);
       if (tb?.kind === "result") { this.dropBlob(tb.output.hash); for (const rr of t.rounds) if (rr.result?.entry === b.target) rr.result = null; }
-      for (const rr of t.rounds) if (rr.run && !["succeeded", "failed", "cancelled"].includes(rr.run.state)) this.o.runner.cancel(rr.run.id, "the dispatcher withdrew the work");
+      for (const rr of t.rounds) if (rr.run && !["succeeded", "failed", "cancelled"].includes(rr.run.state)) if (rr.run.id !== "(starting)") this.o.runner.cancel(rr.run.id, "the dispatcher withdrew the work");
       for (const i of this.st.items) if (i.thread === t.id && i.state === "open") i.state = "withdrawn"; }
     t.steps.push(step);
     if (!mine) this.st.items.push({ id: newId(), entry: h, kind: b.kind, from: e.a, thread: t.id, round: b.round, at: now(), state: "open", flags, note: null });
@@ -349,6 +352,8 @@ export class Lan {
       // read to its end: the approval names the hash of the exact text it was given (the page sends it only once the person scrolled to the end)
       if (o.seen !== this.seenHash(t, r)) throw new LanError(409, "read the whole briefing and the prompt first: this approval does not name the text this Studio would run", "unread");
       const rounds = Number(o.rounds ?? 6), usd = o.roundsOnly ? null : Number(o.usd ?? 2);
+      // rounds only is for a provider that reports no cost (Codex, Cursor); one that reports it keeps its dollar cap
+      if (o.roundsOnly && !(o.provider === "codex" || o.provider === "cursor")) throw new LanError(400, "rounds only is for a provider that reports no cost (Codex or Cursor): name it, or keep a dollar cap", "rounds-only");
       if ((usd !== null && !(usd >= 0 && usd <= 1000)) || !Number.isSafeInteger(rounds) || rounds < 1 || rounds > 50) throw new LanError(400, "a spend cap is 0 to 1000 dollars (or rounds only) and 1 to 50 agent rounds");
       const project = w.needsProject ? String(o.project ?? "") : null; if (w.needsProject && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(project!)) throw new LanError(400, "choose one of this Studio's projects for this code workflow", "project_required");
       const provider = o.provider && /^(codex|claude|cursor|stub)$/.test(o.provider) ? o.provider : null;
@@ -358,11 +363,15 @@ export class Lan {
       if (r !== this.cur(t) || r.assign) throw new LanError(409, "this round already has its taker");
       this.append([i.from], { kind: "assign", thread: t.id, round: r.n, take: i.entry, taker: i.from });
     } else if (i.kind === "assign") {
-      if (r.run) throw new LanError(409, "this round already ran");
-      const text = this.prompt(t, r);
+      if (r.run) throw new LanError(409, "this round already ran or is starting");
+      // claimed before the first await: a second approval (a double click, another tab) finds it and starts nothing
+      r.run = { id: "(starting)", state: "starting", result: null, started: now(), stopped: null };
+      const text = (() => { try { return this.prompt(t, r); } catch (e) { r.run = null; throw e; } })();
       const started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN: ${t.title}`.slice(0, 120), item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` })
-        .catch((e: any) => { throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); });
+        .catch((e: any) => { r.run = null; throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); });
       r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null };
+      // the peer was revoked, unpaired or frozen while the Task was starting: it is stopped at once
+      if (!this.trusted(i.from) || this.peer(i.from)?.frozen) { this.o.runner.cancel(started.run, "the peer was revoked or frozen while its work was starting"); r.run.state = "cancelled"; this.save(); throw new LanError(409, "the peer was revoked or frozen while its work was starting: the Task was stopped"); }
       this.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow });
     } else if (i.kind === "result") r.result!.accepted = true;
     i.state = "approved"; this.save();

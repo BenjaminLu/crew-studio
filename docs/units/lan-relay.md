@@ -55,7 +55,8 @@ Demo: `bun scripts/lan-pair-demo.ts`.
 
 An attacker could still grind: learn the responder's nonce, see the code it gives, abort, try again. So the responder
 takes one introduction at a time; every introduction that got its nonce and did not reveal a matching one (a wrong
-reveal, an abort, a timeout after 20 s, messages out of order) is shown on its screen as a failed introduction; the third
+reveal, an abort, a timeout after 20 s, messages out of order, and one that stalls before its commitment while it holds
+the only slot) is shown on its screen as a failed introduction; the third
 failure closes the window, and a successful introduction closes it too (one introduction per window). An attacker gets
 at most three tries, all visible, each with odds 10⁻⁶.
 
@@ -77,7 +78,8 @@ drops what was waiting to be sent to it.
   this Studio's key). XX runs only while the introduction window is open.
 - A KK message is accepted once (its ephemeral key is remembered for ten minutes) and only within five minutes of this
   Mac's clock (a time that is not a date is refused); the replay cache is kept across restarts. Requests are
-  rate-limited per source address (the rate table is bounded), at most 32 are in flight, one introduction at a time.
+  rate-limited per source address (the rate table is bounded), at most 32 are in flight, one introduction at a time, and an address that keeps sending KK messages no
+  allowlisted key made is cut off for a minute before Studio tries its keys again.
 - The client side dials only an IPv4 literal on one of this Mac's own private subnets: never a name, loopback (outside
   the demo), this Mac's own address, the network's default gateway, link-local, multicast, a metadata endpoint, the
   tailnet range or the internet; no redirects.
@@ -156,12 +158,19 @@ Task with the taint and no readable `_lan` is held to a zero cap. Enforced, what
   `.gitattributes`, `.gitmodules`, install settings, `.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.cursor/`,
   `.vscode/`, `.devcontainer/`, `.envrc`, `Makefile`, `conftest.py`, `build.rs`, `setup.py`, Dockerfiles and similar).
 - **Egress to the provider only**: every round (agent turns, coordinator turns, judges) gets no host from `egress.allow`.
-- **No test listeners**: `run_tests`, `run_command` and the checks that run the project's tests run without the test
-  run's loopback bind and inbound rules (`sandboxScope` in `src/runtime/checks.ts`), so a test that opens a listener
-  fails; a check that wants the network does not run; no skill script runs.
-- **Spend cap**: before every paid round the rounds this Task ran (and those already admitted) and the dollars it spent
-  are compared with the item's cap; at the cap the round is refused and the Task stops ("spend cap: …"). A provider that
-  reports no cost makes the dollars unknown, which stops the next paid round unless the taker chose a rounds-only cap.
+- **Nothing listens**: every step of the Task runs in a no-binding scope (`sandboxScope` in `src/runtime/checks.ts`):
+  its agent rounds, its installs and its test runs (`run_tests`, `run_command`, the checks that run the project's tests)
+  get no inbound and no bind, so nothing in them can serve this Mac's LAN address; a check that wants the network does
+  not run; no skill script runs; no dependency install runs and no install script (policies `install` and
+  `install_scripts` are off for it).
+- **Spend cap**: every paid round (agent turns, coordinators, judges) is recorded on the Task itself
+  (`ctx.lanRounds`, saved with it) when it is admitted, and its dollars when it ends; before the next one, the rounds
+  and dollars are compared with the item's cap, so neither concurrency nor a restart reopens it. A provider that reports
+  no cost makes the dollars unknown, which stops the next paid round unless the taker chose a rounds-only cap, which is
+  offered only for providers that report no cost (Codex, Cursor).
+- **One Task per assignment**: approving an assignment claims the round before the Task starts, so a second approval
+  starts nothing; if the peer is revoked or frozen while the Task starts, it is stopped at once.
+- **Other Tasks never see its title**: another Task's overlap note names it by its id only.
 - **Firstmate never sees it**: an agent's question or an escalation from a tainted Task is the captain's card, never
   Firstmate's; Firstmate's status lines show a peer's Task without its title or card titles; Studio's event log keeps no
   text of it. A failure card never repeats it as a New task (its marks would be left behind): it is taken again from the
@@ -173,7 +182,7 @@ Task with the taint and no readable `_lan` is held to a zero cap. Enforced, what
 
 Nothing is published by itself. When the Task has succeeded, the taker previews exactly what goes back and presses
 交回: a deliver workflow's files, or a code workflow's one patch (`changes.patch`, everything its worktree changed
-against its base, new files included). Every file is read without following a link: a symbolic link, a hard link or
+against its base, new files included; every changed path is checked, and more than 240 refuse the hand-back). Every file is read without following a link: a symbolic link, a hard link or
 anything but a regular file is refused, and its real path must stay inside the Task's folder. The send is refused when
 the output touches a protected path (above) or adds package scripts or hook keys, and blocked while the scan finds a
 credential, a key, an encoded or split secret, Studio's own key format, a long random string or a name on the
@@ -184,10 +193,13 @@ the dispatcher only. Its checks summary is the taker's own report.
 
 ## Applying a code result
 
-The dispatcher applies a code result's patch to one of its own registered projects (`src/lan/apply.ts`): every path the
-patch names is checked again (protected paths, links, submodules, paths outside the project), `git apply --check` runs
-first, the patch lands on a new branch `lan-untrusted/<thread>-r<n>` in a worktree under Studio's data, and Studio's git
-runs no hook. Nothing is merged, built, tested or pushed: the branch is reviewed like any untrusted change.
+The dispatcher applies a code result's patch to one of its own registered projects (`src/lan/apply.ts`). Git names the
+paths (`git apply --numstat -z` and `--summary`), never a regex, and every one is checked, renames and copies
+included: nothing outside the project, no protected path. A binary hunk, a new file with any mode but 100644 (an
+executable, a link, a submodule) or a mode change refuses the whole patch. It is applied without a checkout: into a
+temporary index (`apply --cached`), committed with `commit-tree`, branched as `lan-untrusted/<thread>-r<n>` with
+`update-ref`, so no clean or smudge filter of the repository and no hook runs. Nothing is merged, built, tested or
+pushed: the branch is reviewed like any untrusted change.
 
 ## Audit
 

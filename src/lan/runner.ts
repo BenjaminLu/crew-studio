@@ -85,7 +85,9 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       if (wt && base && existsSync(wt)) {
         const tracked = git(wt, ["diff", "--name-only", "-z", "--no-renames", base]).out.split("\0").filter(Boolean);
         const untracked = git(wt, ["ls-files", "--others", "--exclude-standard", "-z"]).out.split("\0").filter(Boolean);
-        for (const n of [...new Set([...tracked, ...untracked])].slice(0, LIMITS.files * 4)) {
+        const all = [...new Set([...tracked, ...untracked])];
+        if (all.length > LIMITS.files * 4) hits.add(`${all.length} changed files (more than ${LIMITS.files * 4} are not handed back)`);
+        for (const n of all) {
           changed.add(n); const got = readInside(wt, n), before = git(wt, ["show", `${base}:${n}`]);
           if ("refused" in got) { hits.add(`${n} (${got.refused})`); continue; }
           const after = "bytes" in got ? utf8(got.bytes) : null;

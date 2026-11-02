@@ -57,19 +57,20 @@ export function nodeNotRun(node: any, manifest?: (ref: string) => { test_run?: b
   return (node.checks ?? []).map((c: any) => String(c?.use ?? "")).filter((ref: string) => !!manifest?.(ref)?.network);
 }
 
-/** What a LAN-originated Task has spent on this Mac: its rounds (agent turns, coordinators, judges), their dollars, and
- *  whether any round's dollars are unknown (its provider reported no cost). */
-export function spent(engine: any, run: any): { usd: number; rounds: number; unknown: boolean } {
-  const seen = new Map<string, number | null>();
-  const cost = (j: any) => { const u = j?.cost?.usd; return typeof u === "number" && Number.isFinite(u) ? u : null; };
-  for (const rn of Object.values<any>(run.nodes ?? {})) for (const j of rn?.data?.jobs ?? []) seen.set(String(j.id), cost(j));
-  for (const j of engine.deps?.agents?.jobs?.values?.() ?? []) if (j.ref === run.id && j.status !== "running") seen.set(String(j.id), cost(j)); // a running one is held as a reservation
-  return { usd: [...seen.values()].reduce<number>((a, b) => a + (b ?? 0), 0), rounds: seen.size, unknown: [...seen.values()].some((v) => v === null) };
+/** One paid round of a LAN-originated Task, kept on the run itself (run.ctx.lanRounds, saved with the run): recorded
+ *  when the round is admitted, its dollars when it ends (null: the provider reported none, or it has not ended). */
+export type LanRound = { n: number; at: string; job: string | null; usd: number | null; ended: boolean };
+const cost = (j: any) => { const u = j?.cost?.usd; return typeof u === "number" && Number.isFinite(u) ? u : null; };
+/** What a LAN-originated Task has spent on this Mac: every paid round it was admitted to (agent turns, coordinators,
+ *  judges), from its own record, which survives a restart; their dollars; whether any ended round's dollars are unknown. */
+export function spent(_engine: any, run: any): { usd: number; rounds: number; unknown: boolean } {
+  const rs: LanRound[] = Array.isArray(run?.ctx?.lanRounds) ? run.ctx.lanRounds : [];
+  return { usd: rs.reduce((a, r) => a + (r.usd ?? 0), 0), rounds: rs.length, unknown: rs.some((r) => r.ended && r.usd === null) };
 }
-const reserved = new Map<string, number>(); // rounds admitted but not yet counted, per run: the cap holds under concurrency
+const persist = (engine: any, run: any, why: string) => { try { engine.commit?.(run, why); } catch {} };
 export function capRefusal(engine: any, run: any, mark: LanMark): string | null {
-  const s = spent(engine, run), held = reserved.get(run.id) ?? 0;
-  if (s.rounds + held >= mark.rounds) return `spend cap: this received item allows ${mark.rounds} agent round(s) and ${s.rounds + held} ran or are running; Studio stopped before the next one`;
+  const s = spent(engine, run);
+  if (s.rounds >= mark.rounds) return `spend cap: this received item allows ${mark.rounds} agent round(s) and ${s.rounds} ran or are running; Studio stopped before the next one`;
   if (mark.usd !== null && s.unknown) return `spend cap: a round's provider reported no cost, so what this item spent is unknown and its $${mark.usd.toFixed(2)} cap cannot hold; Studio stopped before the next paid round (take it with a rounds-only cap to go on)`;
   if (mark.usd !== null && s.usd >= mark.usd && (s.usd > 0 || mark.usd === 0)) return `spend cap: this received item allows $${mark.usd.toFixed(2)} and $${s.usd.toFixed(2)} was spent; Studio stopped before the next round`;
   return null;
@@ -90,6 +91,8 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
     if (!lanOf(r)) return policy(r, path, dflt);
     if (path === "egress.allow") return [];
     if (path === "branch_prefix") return "lan-untrusted/";
+    // no dependency install (nothing the repository points at) and no install scripts
+    if (path === "install" || path === "install_scripts") return false;
     return policy(r, path, dflt);
   };
   // every paid round starts here: the spend cap (reserved before admission), provider egress only, no skill scripts,
@@ -108,11 +111,12 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
         return sandboxScope.run({ noLocalBinding: true }, () => t.run(a));
       } };
     };
-    reserved.set(r.id, (reserved.get(r.id) ?? 0) + 1);
-    const release = () => { const n = (reserved.get(r.id) ?? 1) - 1; if (n > 0) reserved.set(r.id, n); else reserved.delete(r.id); };
-    let p: Promise<any>;
-    try { p = run({ ...opts, tools: (opts.tools ?? []).filter((t: any) => !LAN_DENIED_TOOLS.has(t.name)).map(guard), sandbox: { ...opts.sandbox, allow: [] } }); } catch (e) { release(); throw e; }
-    return Promise.resolve(p).finally(release);
+    // admitted: recorded on the run before the round starts (a concurrent round sees it), its dollars when it ends
+    const rounds: LanRound[] = (r.ctx ??= {}).lanRounds ??= [], me: LanRound = { n: rounds.length + 1, at: new Date().toISOString(), job: null, usd: null, ended: false };
+    rounds.push(me); persist(engine, r, "LAN round admitted");
+    const settle = (j: any) => { me.job = j?.id ? String(j.id) : null; me.usd = cost(j); me.ended = true; persist(engine, r, "LAN round counted"); return j; };
+    return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => run({ ...opts, tools: (opts.tools ?? []).filter((t: any) => !LAN_DENIED_TOOLS.has(t.name)).map(guard), sandbox: { ...opts.sandbox, allow: [] } })))
+      .then(settle, (e: any) => { me.ended = true; persist(engine, r, "LAN round ended"); throw e; });
   };
   // checks: never one that wants the network; one that runs the project's tests runs without local binding
   const exec = engine.exec.bind(engine);
@@ -121,6 +125,11 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
     if (man?.network) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `not run: ${man.ref} wants the network, which a LAN-originated Task may not` };
     return sandboxScope.run({ noLocalBinding: true }, () => exec(x, man, ...rest));
   };
+  // every step of a peer's Task runs in the no-binding scope: its agent rounds' and its installs' sandboxes drop inbound
+  for (const [kind, h] of Object.entries<any>(engine.kinds ?? {})) for (const fn of ["start", "answer"]) {
+    if (typeof h?.[fn] !== "function") continue; const orig = h[fn].bind(h);
+    h[fn] = (x: any, ...rest: any[]) => lanOf(x?.run) ? sandboxScope.run({ noLocalBinding: true }, () => orig(x, ...rest)) : orig(x, ...rest); void kind;
+  }
   // the prompt's network line says what the round really gets
   const skeleton = engine.briefSkeleton.bind(engine);
   engine.briefSkeleton = (x: any, mode?: string) => { const t = skeleton(x, mode); return lanOf(x.run) ? `${t}\nNETWORK: this Task came from a peer's Studio; only your provider's API is reachable, a test cannot open a listener, no skill script runs, and CI, hook and settings files cannot be written.` : t; };

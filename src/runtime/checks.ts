@@ -380,7 +380,10 @@ ${o.localBinding ? LOCAL_BINDING_RULES + "\n" + closedPortRules(ports) : ""}
  */
 export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; reads: string[]; proxyPort: number; toolPort: number; dataDir?: string | null; protect?: string[];
   /** folders the round reads and executes but never writes (a skill's round copy, its prepared env, Studio's runtimes and tools), even inside Studio's data */
-  readOnly?: string[] }) {
+  readOnly?: string[];
+  /** no inbound and no bind at all (work from a peer: src/lan/profile.ts); the default is the caller's sandboxScope */
+  noInbound?: boolean }) {
+  const noInbound = o.noInbound ?? sandboxScope.getStore()?.noLocalBinding === true;
   // Studio's data folder is closed to the round, its file metadata included, except what the runtime materialized for it
   // (its worktree, its tmp, its throwaway home); a protected root (firstmate's checkout) is closed entirely; the user's
   // secret folders are denied last, the login keychain among them
@@ -412,7 +415,7 @@ ${SYSCTL_READ}
 (allow file-write* ${sub(writes)} (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper") (regex #"^/dev/fd/") (regex #"^/dev/tty"))
 (deny network*)
 (allow network-outbound (remote tcp ${q(`localhost:${o.proxyPort}`)}) (remote tcp ${q(`localhost:${o.toolPort}`)}))
-(allow network-inbound (local tcp "localhost:*"))
+${noInbound ? "" : `(allow network-inbound (local tcp "localhost:*"))`}
 (allow mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc") (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.trustd.agent"))
 (deny appleevent-send)
 ${data ? `(deny file-read* file-read-metadata file-write* (subpath ${q(data)}))
