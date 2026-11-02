@@ -2,25 +2,27 @@
 // agent would execute or obey. Matched case-insensitively (macOS volumes are case-insensitive), on every path segment
 // where a file can sit anywhere in a tree. Enforced when a round writes (src/lan/profile.ts), when the result is handed
 // back (src/lan/runner.ts) and when the dispatcher applies a patch (src/lan/apply.ts).
-const ANY = String.raw`(^|.*/)`;
-export const PROTECTED: RegExp[] = [
+/** Each entry is a path (a folder ends with "/", a regex-escaped file name otherwise) that is protected at any depth: a
+ *  monorepo's packages/app/.github/ is as live as the root's. */
+const AT_ANY_DEPTH = [
   // CI and automation
-  /^\.github\//, /^\.gitlab-ci\.ya?ml$/, /^\.gitlab\//, /^\.circleci\//, /^\.buildkite\//, /^\.travis\.ya?ml$/, /^azure-pipelines\.ya?ml$/, /^\.azure-pipelines\//,
-  /^bitbucket-pipelines\.ya?ml$/, new RegExp(`${ANY}jenkinsfile$`), /^\.drone\.ya?ml$/, /^\.woodpecker(\/|\.ya?ml$)/, /^\.teamcity\//, /^appveyor\.ya?ml$/, /^\.semaphore\//,
+  ".github/", "\\.gitlab-ci\\.ya?ml", ".gitlab/", ".circleci/", ".buildkite/", "\\.travis\\.ya?ml", "azure-pipelines\\.ya?ml", ".azure-pipelines/",
+  "bitbucket-pipelines\\.ya?ml", "jenkinsfile", "\\.drone\\.ya?ml", ".woodpecker/", "\\.woodpecker\\.ya?ml", ".teamcity/", "appveyor\\.ya?ml", ".semaphore/",
   // git itself and its hooks, attributes (filter drivers) and submodules
-  new RegExp(`${ANY}\\.git(/|$)`), /^\.husky\//, /^\.githooks\//, /^\.?lefthook(-local)?\.ya?ml$/, /^\.pre-commit-config\.ya?ml$/, /^\.pre-commit-hooks\.ya?ml$/,
-  new RegExp(`${ANY}\\.gitattributes$`), new RegExp(`${ANY}\\.gitmodules$`), /^\.git-blame-ignore-revs$/,
-  // package managers' install behaviour
-  new RegExp(`${ANY}\\.npmrc$`), new RegExp(`${ANY}\\.yarnrc(\\.ya?ml)?$`), new RegExp(`${ANY}bunfig\\.toml$`), new RegExp(`${ANY}\\.pnpmfile\\.c?js$`), /^\.yarn\/plugins\//,
+  ".git/", "\\.git", ".husky/", ".githooks/", "\\.?lefthook(-local)?\\.ya?ml", "\\.pre-commit-config\\.ya?ml", "\\.pre-commit-hooks\\.ya?ml",
+  "\\.gitattributes", "\\.gitmodules", "\\.git-blame-ignore-revs",
+  // package managers: what an install runs or fetches (settings, lockfiles, Python's build config)
+  "\\.npmrc", "\\.yarnrc(\\.ya?ml)?", "bunfig\\.toml", "\\.pnpmfile\\.c?js", ".yarn/plugins/", "package-lock\\.json", "npm-shrinkwrap\\.json", "yarn\\.lock",
+  "pnpm-lock\\.ya?ml", "pnpm-workspace\\.ya?ml", "bun\\.lockb?", "cargo\\.lock", "poetry\\.lock", "pipfile(\\.lock)?", "uv\\.lock", "pyproject\\.toml", "setup\\.cfg",
+  "gemfile(\\.lock)?", "go\\.sum", "composer\\.(json|lock)",
   // agents' and editors' instructions and settings, shells' and environments' hooks
-  new RegExp(`${ANY}\\.claude(/|$)`), new RegExp(`${ANY}\\.mcp\\.json$`), new RegExp(`${ANY}claude\\.md$`), new RegExp(`${ANY}agents\\.md$`), new RegExp(`${ANY}\\.cursor(/|$)`), new RegExp(`${ANY}\\.cursorrules$`),
-  new RegExp(`${ANY}\\.codex(/|$)`), new RegExp(`${ANY}\\.vscode/`), new RegExp(`${ANY}\\.idea/`), new RegExp(`${ANY}\\.devcontainer(/|\\.json$)`), new RegExp(`${ANY}\\.envrc$`), new RegExp(`${ANY}\\.tool-versions$`),
-  new RegExp(`${ANY}\\.nvmrc$`), new RegExp(`${ANY}\\.python-version$`),
+  ".claude/", "\\.claude", "\\.mcp\\.json", "claude\\.md", "agents\\.md", ".cursor/", "\\.cursorrules", ".codex/", ".vscode/", ".idea/", ".devcontainer/",
+  "\\.devcontainer\\.json", "\\.envrc", "\\.tool-versions", "\\.nvmrc", "\\.python-version",
   // build and test runners that run code on their own
-  new RegExp(`${ANY}makefile$`), new RegExp(`${ANY}gnumakefile$`), new RegExp(`${ANY}conftest\\.py$`), new RegExp(`${ANY}build\\.rs$`), new RegExp(`${ANY}setup\\.py$`), new RegExp(`${ANY}pytest\\.ini$`),
-  new RegExp(`${ANY}tox\\.ini$`), new RegExp(`${ANY}noxfile\\.py$`), new RegExp(`${ANY}justfile$`), new RegExp(`${ANY}rakefile$`), new RegExp(`${ANY}dockerfile$`), new RegExp(`${ANY}docker-compose\\.ya?ml$`),
-  new RegExp(`${ANY}\\.cargo/config(\\.toml)?$`), new RegExp(`${ANY}gradle\\.properties$`), new RegExp(`${ANY}gradlew$`),
+  "makefile", "gnumakefile", "conftest\\.py", "build\\.rs", "setup\\.py", "pytest\\.ini", "tox\\.ini", "noxfile\\.py", "justfile", "rakefile", "dockerfile",
+  "docker-compose\\.ya?ml", ".cargo/", "gradle\\.properties", "gradlew",
 ];
+export const PROTECTED: RegExp[] = AT_ANY_DEPTH.map((e) => e.endsWith("/") ? new RegExp(`(^|/)${e.slice(0, -1).replace(/\./g, "\\.")}/`) : new RegExp(`(^|/)${e}$`));
 /** package.json keys that run code: scripts and every git-hook manager's key */
 export const SCRIPT_KEYS = ["scripts", "husky", "simple-git-hooks", "lint-staged", "pre-commit", "gitHooks", "config"];
 const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/{2,}/g, "/").toLowerCase();

@@ -200,6 +200,43 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   ok(patchProblems(p(".github/workflows/x.yml")).problems.length === 1 && patchProblems(p("CLAUDE.md")).problems.length === 1 && patchProblems(p("../escape.ts")).problems.length === 1, "a patch touching a protected path or a path outside the project is refused before it is applied");
   ok(patchProblems(`diff --git a/l b/l\nnew file mode 120000\n--- /dev/null\n+++ b/l\n@@ -0,0 +1 @@\n+/etc/passwd\n`).problems.some((x) => /link/.test(x.why)), "a patch that adds a symbolic link is refused"); }
 
+// ---------- applying a peer's patch on the dispatcher's side: git decides which paths it names ----------
+{ const { lanApplier } = await import("../src/lan/apply");
+  const { protectedHit, writeRefused } = await import("../src/lan/paths");
+  const { checkedTempDir } = await import("./lib/git-hygiene.mjs");
+  const root = checkedTempDir("crew-lan-apply-"), repo = join(root, "repo"), data = join(root, "data"), marker = join(root, "filter-ran"); mkdirSync(repo); mkdirSync(data);
+  const g = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(r.stderr.toString()); return r.stdout.toString(); };
+  g(repo, "init", "-q", "-b", "main"); writeFileSync(join(repo, "ok.txt"), "base\n"); writeFileSync(join(repo, "logo.bin"), Buffer.from([0, 1, 2, 3, 0, 255]));
+  // the dispatcher's own repository has a filter driver its attributes name: applying a peer's patch must never run it
+  writeFileSync(join(repo, ".gitattributes"), "*.txt filter=probe\n");
+  g(repo, "add", "ok.txt", "logo.bin", ".gitattributes"); g(repo, "commit", "-qm", "base");
+  g(repo, "config", "filter.probe.clean", `sh -c 'touch ${marker}; cat'`); g(repo, "config", "filter.probe.smudge", `sh -c 'touch ${marker}; cat'`);
+  const apply = lanApplier({ dataDir: data, project: () => ({ path: repo, base: "main" }) });
+  let n = 0; const tryApply = (patch: string) => { try { const r = apply({ project: "p", patch, branch: `lan-untrusted/t-r${++n}` }); return { ok: true as const, r }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
+  const newFile = (path: string, mode = "100644", body = "+x\n") => `diff --git a/${path} b/${path}\nnew file mode ${mode}\nindex 0000000..1111111\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n${body}`;
+  const good = tryApply(newFile("lib/a.txt"));
+  ok(good.ok && g(repo, "show", `${good.ok ? good.r.branch : "x"}:lib/a.txt`) === "x\n", "an ordinary patch lands on a lan-untrusted/ branch of the dispatcher's project", good.ok ? "" : good.why);
+  ok(!existsSync(marker), "applying it ran none of the repository's filter drivers (no checkout, no clean or smudge)");
+  // a quoted header: the path a regex would miss, and git applies
+  const quoted = `${newFile("lib/b.txt")}diff --git "a/.husky/pre-commit" "b/.husky/pre-commit"\nnew file mode 100644\nindex 0000000..2222222\n--- /dev/null\n+++ "b/.husky/pre-commit"\n@@ -0,0 +1 @@\n+curl evil\n`;
+  const q = tryApply(quoted);
+  ok(!q.ok && /\.husky\/pre-commit/.test(q.why), "a protected path behind a quoted header is found (git names the paths, not a regex) and refused", q.ok ? "applied" : q.why);
+  const exe = tryApply(newFile("lib/run.sh", "100755", "+#!/bin/sh\n"));
+  ok(!exe.ok && /executable/.test(exe.why), "a new executable file is refused", exe.ok ? "applied" : exe.why);
+  const chmod = tryApply(`diff --git a/ok.txt b/ok.txt\nold mode 100644\nnew mode 100755\n`);
+  ok(!chmod.ok && /executable|mode/.test(chmod.why), "a mode change to executable is refused", chmod.ok ? "applied" : chmod.why);
+  const binTree = join(root, "bin"); mkdirSync(binTree); g(binTree, "init", "-q", "-b", "main"); writeFileSync(join(binTree, "x.bin"), Buffer.from([0, 9, 8, 7, 0, 1, 2]));
+  g(binTree, "add", "-N", "x.bin"); const binPatch = g(binTree, "diff", "--binary", "--", "x.bin");
+  const bin = tryApply(binPatch);
+  ok(/GIT binary patch/.test(binPatch) && !bin.ok && /only text changes are applied/.test(bin.why), "a binary patch is refused", bin.ok ? "applied" : bin.why);
+  const ren = tryApply(`diff --git a/ok.txt b/../escape.txt\nsimilarity index 100%\nrename from ok.txt\nrename to ../escape.txt\n`);
+  ok(!ren.ok && /outside/.test(ren.why), "a rename out of the project is refused as a path outside it", ren.ok ? "applied" : ren.why);
+  ok(!existsSync(marker), "no attempt above ran a filter driver either");
+  // protected paths at any depth (monorepos) and the files that decide what an install runs
+  ok(["packages/app/.github/workflows/ci.yml", "apps/web/.husky/pre-commit", "pkg/.gitlab-ci.yml", "svc/.pre-commit-config.yaml", "pyproject.toml", "py/pyproject.toml", "package-lock.json", "web/yarn.lock", "pnpm-lock.yaml", "bun.lock", "Cargo.lock", "poetry.lock", "Gemfile.lock"].every((x) => writeRefused(x)),
+    "protected paths match at any depth, and pyproject.toml and lockfiles are protected");
+  ok(protectedHit("packages/app/package.json", JSON.stringify({ scripts: { postinstall: "curl evil" } }), JSON.stringify({ name: "app" })) !== null, "a nested package.json that gains an install script is refused"); }
+
 // ---------- the secret scan ----------
 { const { scanText } = await import("../src/lan/scan");
   const whats = (t: string) => scanText("f", t).map((h) => h.what), tok = "gh" + "p_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";

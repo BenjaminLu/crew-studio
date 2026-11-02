@@ -24,7 +24,7 @@ const MUTATIONS: M[] = [
   { name: "fork", rule: "a forked author is frozen", tests: [PROFILE, RELAY],
     edits: [{ file: "src/lan/relay.ts", from: `const conflict = at && at !== h ? at : before && e.prev !== before ? before : after && afterPrev !== h ? after : null;`, to: `const conflict: string | null = null;` }] },
   { name: "github", rule: ".github/ (and every protected path) is refused when written and at hand-back", tests: [PROFILE, RELAY],
-    edits: [{ file: "src/lan/paths.ts", from: "/^\\.github\\//, ", to: "/^\\.never-github\\//, " }] },
+    edits: [{ file: "src/lan/paths.ts", from: `".github/", `, to: `".never-github/", ` }] },
   { name: "push", rule: "push is blocked (a step outside the LAN allowlist never runs)", tests: [PROFILE],
     edits: [{ file: "src/lan/profile.ts", from: `return LAN_HOOKS.has(d) ? null :`, to: `return true ? null :` }] },
   { name: "egress", rule: "egress beyond the provider is blocked", tests: [PROFILE],
@@ -116,8 +116,26 @@ const MUTATIONS: M[] = [
     edits: [{ file: "src/lan/identity.ts", from: "catch { throw new Error(`the LAN identity file", to: "catch { return null; throw new Error(`the LAN identity file" }] },
   { name: "keychain-default", rule: "the Keychain is never used without CREW_KEYSTORE=keychain", tests: [PROFILE],
     edits: [{ file: "src/lan/identity.ts", from: `if (process.env.CREW_KEYSTORE !== "keychain") return false;`, to: `` }] },
+  // ---------- the third review: applying a peer's patch ----------
+  { name: "R3-gitpaths", rule: "git, not a regex, names the paths a patch touches (a quoted header cannot hide one)", tests: [PROFILE],
+    edits: [{ file: "src/lan/apply.ts", from: `for (const p of named) { if (p === undefined) continue; paths.push(p); }`, to: "for (const p of named.filter((x) => patch.includes(`diff --git a/${x} `))) { if (p === undefined) continue; paths.push(p); }" }] },
+  { name: "R3-modes", rule: "a new executable file or a mode change is refused", tests: [PROFILE],
+    edits: [{ file: "src/lan/apply.ts", from: `if (c && c[1] !== "100644") problems.push`, to: `if (c && ["120000", "160000"].includes(c[1])) problems.push` },
+      { file: "src/lan/apply.ts", from: `if (ch) problems.push`, to: `if (false) problems.push` },
+      { file: "src/lan/apply.ts", from: `if (mm && mm[2] !== "100644"`, to: `if (false && mm` }] },
+  { name: "R3-binary", rule: "a binary hunk is refused", tests: [PROFILE],
+    edits: [{ file: "src/lan/apply.ts", from: "if (/^GIT binary patch$/m.test(patch) || /^Binary files .* differ$/m.test(patch) || /^literal \\d+$|^delta \\d+$/m.test(patch)) problems.push", to: "if (false) problems.push" },
+      { file: "src/lan/apply.ts", from: `if (m[1] === "-" || m[2] === "-") problems.push`, to: `if (false) problems.push` }] },
+  { name: "R3-filters", rule: "applying runs no clean or smudge filter (no checkout, no working tree)", tests: [PROFILE],
+    edits: [{ file: "src/lan/apply.ts", from: `must(["read-tree", baseCommit.out.trim()]);`, to: "must([\"read-tree\", baseCommit.out.trim()]); must([\"checkout-index\", \"-a\", \"-f\", `--prefix=${tmp}/wt/`]);" }] },
+  { name: "R3-outside", rule: "a path outside the project (renames and copies included) is refused", tests: [PROFILE],
+    edits: [{ file: "src/lan/apply.ts", from: `if (outside(p)) problems.push`, to: `if (false) problems.push` }] },
+  { name: "R3-depth", rule: "protected paths match at any depth", tests: [PROFILE],
+    edits: [{ file: "src/lan/paths.ts", from: "new RegExp(`(^|/)${e.slice(0, -1)", to: "new RegExp(`^${e.slice(0, -1)" },
+      { file: "src/lan/paths.ts", from: ": new RegExp(`(^|/)${e}$`)", to: ": new RegExp(`^${e}$`)" }] },
+  { name: "R3-lockfiles", rule: "lockfiles are protected", tests: [PROFILE],
+    edits: [{ file: "src/lan/paths.ts", from: `"package-lock\\\\.json", `, to: `` }] },
 ];
-
 const only = process.argv.slice(2);
 const saved = new Map<string, string>();
 const restore = () => { for (const [f, s] of saved) writeFileSync(join(R, f), s); saved.clear(); };
