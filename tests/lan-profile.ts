@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { installLanProfile, workflowRefusals } from "../src/lan/profile";
 import { Lan, type LanRunner } from "../src/lan/relay";
 import { Discovery } from "../src/lan/mdns";
-import { loadIdentity } from "../src/lan/identity";
+import { keychainSpawn, keychainWanted, loadIdentity } from "../src/lan/identity";
 import { b64u, randomBytes } from "../src/lan/crypto";
 import { makeEnvelope, type Body } from "../src/lan/protocol";
 import { call } from "../src/lan/wire";
@@ -64,7 +64,6 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
 H.stop();
 
 // ---------- the relay, in process ----------
-process.env.CREW_LAN_KEYSTORE = "file";
 const fakeRunner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
   start: async () => { throw new Error("not in this suite"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} });
 const mk = (name: string, disc?: Discovery) => { const dir = mkdtempSync(join(tmpdir(), `crew-lan-${name}-`)); return new Lan({ dataDir: dir, runner: fakeRunner(), bind: "127.0.0.1", port: 0, discovery: disc ?? null }); };
@@ -102,23 +101,28 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   ok(!B.view().intros.some((i: any) => i.key === A.id.key) && !B.view().peers.some((p: any) => p.key === A.id.key && p.state === "trusted"), "a revoked key cannot be introduced again", again?.message ?? "");
   A.close(); B.close(); }
 
-// ---------- the Keychain path, through a stand-in `security` ----------
-if (process.platform === "darwin") {
-  const dir = mkdtempSync(join(tmpdir(), "crew-lan-kc-")), store = join(dir, "store.json"), log = join(dir, "argv.log"), tool = join(dir, "security");
-  writeFileSync(tool, `#!/usr/bin/env node
-const fs=require("fs");const store=${JSON.stringify(store)},log=${JSON.stringify(log)};fs.appendFileSync(log,JSON.stringify(process.argv.slice(2))+"\\n");
-const db=fs.existsSync(store)?JSON.parse(fs.readFileSync(store,"utf8")):{};
-const a=process.argv.slice(2);
-if(a[0]==="-i"){let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=/-s (\\S+) -a (\\S+).* -w (\\S+)/.exec(s);if(!m)process.exit(2);db[m[1]+"/"+m[2]]=m[3];fs.writeFileSync(store,JSON.stringify(db));});}
-else if(a[0]==="find-generic-password"){const k=a[a.indexOf("-s")+1]+"/"+a[a.indexOf("-a")+1];if(db[k]){process.stdout.write(db[k]+"\\n");}else process.exit(44);}
-else process.exit(1);
-`); chmodSync(tool, 0o755);
-  delete process.env.CREW_LAN_KEYSTORE; process.env.CREW_KEYCHAIN_TOOL = tool;
-  const data = join(dir, "data"); mkdirSync(data);
-  const id1 = loadIdentity(data), id2 = loadIdentity(data);
-  const secret = b64u(id1.priv), argv = readFileSync(log, "utf8");
-  ok(id1.store === "keychain" && id2.store === "keychain" && id1.key === id2.key, "the identity is kept in the Keychain and read back from it", `${id1.store} ${id2.store}`);
-  ok(!argv.includes(secret) && !existsSync(join(data, "lan", "identity.key")), "the private key never appears on the keychain tool's argv, and no key file is written");
-  delete process.env.CREW_KEYCHAIN_TOOL; process.env.CREW_LAN_KEYSTORE = "file";
-} else ok(true, "the Keychain path is macOS only (skipped on this platform)");
+// ---------- the Keychain: never by default, never in a test; its own path only through a stand-in ----------
+{ const spawned: string[][] = [], real = keychainSpawn.run;
+  keychainSpawn.run = (argv: string[]) => { spawned.push(argv); throw new Error("the keychain tool must not run here"); };
+  const saved = { ks: process.env.CREW_KEYSTORE, iso: process.env.CREW_TEST_ENV_ISOLATED };
+  try {
+    delete process.env.CREW_KEYSTORE;
+    const d1 = mkdtempSync(join(tmpdir(), "crew-lan-id-")), id = loadIdentity(d1);
+    ok(id.store === "file" && existsSync(join(d1, "lan", "identity.key")) && !spawned.length && !keychainWanted(d1), "with the default environment the identity is a 0600 file and the keychain tool is never spawned", JSON.stringify(spawned));
+    process.env.CREW_KEYSTORE = "keychain";
+    const d2 = mkdtempSync(join(tmpdir(), "crew-lan-id-")), id2 = loadIdentity(d2);
+    ok(id2.store === "file" && !spawned.length && !keychainWanted(d2), "even with CREW_KEYSTORE=keychain, a test run or a temporary data folder never reaches the Keychain", JSON.stringify(spawned));
+    delete process.env.CREW_TEST_ENV_ISOLATED;
+    ok(!keychainWanted(d2), "a data folder under the temporary directory never reaches the Keychain, test mark or not");
+  } finally { keychainSpawn.run = real; if (saved.ks === undefined) delete process.env.CREW_KEYSTORE; else process.env.CREW_KEYSTORE = saved.ks; if (saved.iso !== undefined) process.env.CREW_TEST_ENV_ISOLATED = saved.iso; } }
+{ // the opt-in path itself, against an in-memory stand-in (no process, nothing on the Mac's Keychain)
+  const db = new Map<string, string>(), calls: { argv: string[]; stdin: string }[] = [], real = keychainSpawn.run;
+  keychainSpawn.run = (argv: string[], o: any) => { const stdin = o?.stdin ? Buffer.from(o.stdin).toString() : ""; calls.push({ argv, stdin });
+    if (argv[1] === "-i") { const m = /-s (\S+) -a (\S+).* -w (\S+)/.exec(stdin); if (m) db.set(`${m[1]}/${m[2]}`, m[3]); return { exitCode: m ? 0 : 2, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }; }
+    const v = db.get(`${argv[argv.indexOf("-s") + 1]}/${argv[argv.indexOf("-a") + 1]}`); return { exitCode: v ? 0 : 44, stdout: Buffer.from(v ? `${v}\n` : ""), stderr: Buffer.alloc(0) }; };
+  try {
+    const data = mkdtempSync(join(tmpdir(), "crew-lan-kc-")), id1 = loadIdentity(data, { keychain: true }), id2 = loadIdentity(data, { keychain: true }), secret = b64u(id1.priv);
+    ok(id1.store === "keychain" && id2.key === id1.key && [...db.keys()].every((k) => k.startsWith("crew-studio-lan-identity/")), "opted in, the identity is kept under the Keychain service crew-studio-lan-identity and read back");
+    ok(!calls.some((c) => c.argv.join(" ").includes(secret)) && calls.some((c) => c.stdin.includes(secret)) && !existsSync(join(data, "lan", "identity.key")), "the private key goes to the keychain tool on stdin, never on its argv");
+  } finally { keychainSpawn.run = real; } }
 end();

@@ -20,7 +20,7 @@ export const must = async (r: Promise<{ status: number; body: any }>, what: stri
 /** Two Studios, each with its own temporary data folder, the OS sandbox on, its peer listener on a loopback port of its own. */
 export async function bootPair(): Promise<Pair> {
   const [lanA, lanB] = [await freePort() as number, await freePort() as number];
-  const lan = (port: number) => ({ CREW_LAN_KEYSTORE: "file", CREW_LAN_BIND: "127.0.0.1", CREW_LAN_PEER_PORT: String(port), CREW_LAN_ALLOW_LOOPBACK: "1", CREW_LAN_MDNS: "0" });
+  const lan = (port: number) => ({ CREW_LAN_BIND: "127.0.0.1", CREW_LAN_PEER_PORT: String(port), CREW_LAN_ALLOW_LOOPBACK: "1", CREW_LAN_MDNS: "0" });
   const [A, B] = await Promise.all([bootStudio("lan-a", { env: lan(lanA), examples: false }), bootStudio("lan-b", { env: lan(lanB), examples: false })]);
   for (const [s, n] of [[A, "Studio A"], [B, "Studio B"]] as const) await must(s.api("/api/lan/settings", { enabled: true, name: n }), `turn ${n}'s listener on`);
   const keyA = (await must(A.api("/api/lan"), "A view")).me.key, keyB = (await must(B.api("/api/lan"), "B view")).me.key;

@@ -21,10 +21,11 @@ Demo: `bun scripts/lan-pair-demo.ts`.
 
 ## Identity
 
-- One P-256 key pair per Studio (the curve the Keychain and the Secure Enclave hold). The private scalar is kept in the
-  macOS Keychain (a generic-password item per data folder, written through `security -i` on stdin, so it is never on an
-  argv a same-uid process could read); without a Keychain, or with `CREW_LAN_KEYSTORE=file` (tests, the demo), in a 0600
-  file `lan/identity.key` under Studio's data folder, which every round's sandbox denies.
+- One P-256 key pair per Studio (the curve the Keychain and the Secure Enclave hold). By default the private scalar is in
+  a 0600 file `lan/identity.key` under Studio's data folder, which every round's sandbox denies. The macOS Keychain is
+  opt-in (`CREW_KEYSTORE=keychain`; service `crew-studio-lan-identity`, one account per data folder), never used for a
+  test run or a data folder under the temporary directory, and written through `security -i` on stdin so the key is
+  never on an argv a same-uid process could read. No test, demo or script touches the login Keychain.
 - The identity is the full public key. Every decision (allowlist, freeze, revocation, who may take a round) is keyed by it.
 - The fingerprint people compare is 30 decimal digits in six groups of five (about 99.7 bits) from SHA-256 of the key.
 - Display names are the captain's own petnames. What a peer calls itself is shown only as "自稱 …", cleaned (NFKC, no
