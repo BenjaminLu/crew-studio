@@ -1,0 +1,54 @@
+// Studio's own routes for board-to-board work (docs/units/lan-relay.md), on the main port only, behind Studio's session and
+// write guard like every /api route. Every one of them, reads included, is for this Mac's desktop: a paired phone is
+// refused (it cannot see a peer's content, approve an item, introduce a key or hand a result back). The peer listener
+// itself (src/lan/wire.ts) has nothing to do with these routes.
+import { Lan, LanError } from "./relay";
+
+const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+const KEY = "[A-Za-z0-9_-]{87}", ID = "[A-Za-z0-9_-]{8,64}";
+
+export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
+  const p = url.pathname; if (p !== "/api/lan" && !p.startsWith("/api/lan/")) return null;
+  if (who.kind !== "desktop") return json({ error: "board-to-board work is on the Mac only / 區網協作只能在這台 Mac 上操作", code: "desktopOnly" }, 403);
+  if (!lan) return json({ error: "board-to-board work is not available in this Studio", code: "off" }, 404);
+  let b: any = {}; if (writing) { try { b = await req.json(); } catch { return json({ error: "json only" }, 400); } if (!b || typeof b !== "object") b = {}; }
+  const m = (re: string) => new RegExp(`^/api/lan/${re}$`).exec(p);
+  try {
+    if (!writing) {
+      if (p === "/api/lan") return json(lan.view());
+      if (p === "/api/lan/workflows") return json({ workflows: lan.workflows() });
+      let x = m(`items/(${ID})`); if (x) { const i = lan.itemById(x[1]); return i ? json(i) : json({ error: "no such item" }, 404); }
+      x = m("entries/([0-9a-f]{64})"); if (x) return json(lan.inspect(x[1]));
+      x = m(`threads/(${ID})`); if (x) { const t = lan.thread(x[1]); return t ? json(lan.threadView(t)) : json({ error: "no such thread" }, 404); }
+      return json({ error: "not found" }, 404);
+    }
+    if (req.method !== "POST") return json({ error: "POST" }, 405);
+    if (p === "/api/lan/settings") { if (typeof b.name === "string") lan.rename(b.name); if (typeof b.enabled === "boolean") lan.setEnabled(b.enabled); return json(lan.view()); }
+    if (p === "/api/lan/intro/open") return json(lan.openIntro(Number(b.minutes) || 5));
+    if (p === "/api/lan/intro/close") return json(lan.closeIntro());
+    if (p === "/api/lan/intro/start") return json(await lan.startIntro(String(b.host ?? ""), Number(b.port)));
+    if (p === "/api/lan/sync") { await lan.flush(); return json(lan.view()); }
+    if (p === "/api/lan/dispatch") return json(lan.dispatch({ to: String(b.to ?? ""), title: b.title, briefing: b.briefing, acceptance: b.acceptance, workflow: b.workflow ? String(b.workflow) : null }));
+    let x = m(`intro/(${ID})/(confirm|cancel)`);
+    if (x) return json(x[2] === "confirm" ? lan.confirmIntro(x[1], b.code, b.petname) : lan.cancelIntro(x[1]));
+    x = m(`peers/(${KEY})/(rename|unpair|revoke|resolve|address)`);
+    if (x) { const k = x[1];
+      if (x[2] === "rename") return json(lan.renamePeer(k, b.petname));
+      if (x[2] === "address") return json(lan.setPeerAddress(k, String(b.host ?? ""), Number(b.port)));
+      if (x[2] === "resolve") { if (b.action !== "revoke" && b.action !== "unfreeze") return json({ error: "action is revoke or unfreeze" }, 400); return json(lan.resolveFork(k, b.action)); }
+      return json(lan.removePeer(k, x[2] as "unpair" | "revoke")); }
+    x = m(`items/(${ID})/(approve|reject)`);
+    if (x) return json(x[2] === "approve" ? await lan.approve(x[1], { workflow: b.workflow ? String(b.workflow) : undefined, usd: b.usd === undefined ? undefined : Number(b.usd), rounds: b.rounds === undefined ? undefined : Number(b.rounds), provider: b.provider ? String(b.provider) : null, staffingConfirm: b.staffingConfirm ? String(b.staffingConfirm) : null }) : lan.reject(x[1], b.note));
+    x = m(`threads/(${ID})/(handback/preview|handback|refine|done|withdraw)`);
+    if (x) { const id = x[1], edits = Array.isArray(b.edits) ? b.edits.slice(0, 60).map((e: any) => ({ path: String(e?.path ?? ""), text: e?.text === null ? null : String(e?.text ?? "") })) : undefined;
+      if (x[2] === "handback/preview") return json(await lan.handbackPreview(id, edits));
+      if (x[2] === "handback") return json(await lan.handback(id, { confirm: String(b.confirm ?? ""), edits }));
+      if (x[2] === "refine") return json(lan.refine(id, { briefing: b.briefing, note: b.note }));
+      if (x[2] === "done") return json(lan.done(id));
+      return json(lan.withdraw(id, b.reason)); }
+    return json({ error: "not found" }, 404);
+  } catch (e: any) {
+    if (e instanceof LanError) return json({ error: e.message, code: e.code }, e.status);
+    return json({ error: String(e?.message ?? e).slice(0, 500), code: "lan" }, 500);
+  }
+}

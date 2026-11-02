@@ -97,6 +97,11 @@ import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-r
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
 import { createTranscripts } from "./transcripts";
 import { createTasksApi, taskAlias } from "./tasks-api";
+import { Lan } from "./lan/relay";
+import { lanRoutes } from "./lan/routes";
+import { lanRunner } from "./lan/runner";
+import { installLanProfile } from "./lan/profile";
+import { Discovery } from "./lan/mdns";
 import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
 import { createSkillRoutes } from "./skill-routes";
@@ -516,6 +521,19 @@ gh.start();
 process.once("exit",()=>{gh.stop();githubPoller.stop();});
 const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }), projectOf: (r) => runtime.engine.projectRow(r),
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
+// board-to-board work (docs/units/lan-relay.md): the restricted profile on every Task a peer's work started, and this
+// Studio's relay; its peer listener is a separate server that is off until the captain turns it on (CREW_LAN=0: no relay at all)
+installLanProfile(runtime.engine);
+let lan: Lan | null = null;
+if (process.env.CREW_LAN !== "0") {
+  try {
+    lan = new Lan({ dataDir: DATA, send, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
+      runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def) }),
+      privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } },
+      discovery: new Discovery({ enabled: process.env.CREW_LAN_MDNS !== "0" }) });
+    process.on("exit", () => { try { lan?.close(); } catch {} });
+  } catch (e: any) { console.warn(`crew-studio: board-to-board work is unavailable: ${e?.message ?? e}`); }
+}
 const compareApi = createCompare({ dataDir: DATA, get: (id) => runtime.engine.get(id), current: (wf) => runtime.engine.defs.get(wf), phoneRaw: () => transcripts.settings().phoneRaw });
 // rounds of an earlier Studio left their throwaway homes and tmp behind (it stopped mid-round): no job is live at start, so they go
 try { const rd = join(DATA, "rounds"); if (existsSync(rd)) for (const d of readdirSync(rd)) for (const x of ["home", "tmp"]) { const p = join(rd, d, x); if (existsSync(p)) rmSync(p, { recursive: true, force: true }); }
@@ -603,7 +621,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // the one guard in front of every mutating route: same site, a Studio session (or a paired phone), JSON
     if (writing && !EXEMPT(p)) { const g = guardWrite(req, url, SESSION, who.kind === "phone"); if (g) return json({ error: g.error, code: g.code }, g.status); }
     if (who.kind === "phone" && writing) {
-      if (DESKTOP_ONLY.has(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (DESKTOP_ONLY.has(p) || p === "/api/lan" || p.startsWith("/api/lan/")) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (PHONE_DRIVE.has(p) && !remote.allowDrive) return json({ error: "this phone may read and interrupt only; allow phone driving on the Mac first", code: "noDrive" }, 403);
     }
     if(p==='/api/models'&&!writing){
@@ -643,6 +661,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if((p==='/api/claude/account/login'||p==='/api/claude/account/cancel')&&writing){if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);if(p.endsWith('/cancel'))return json(await claudeLogin.cancel());try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await terminalRoutes(terminals, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rt) return rt; }
+    { const rl = await lanRoutes(lan, req, url, who as any, writing); if (rl) return rl; }
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
     { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }

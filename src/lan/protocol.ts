@@ -97,12 +97,12 @@ export function defHash(def: any): string {
 }
 
 /**
- * Text a person (or a prompt) may see from a peer: NFKC, no control characters except newline and tab, and every bidi
+ * Text a person (or a prompt) may see from a peer: NFC (a name is NFKC too: cleanName), no control characters except newline and tab, and every bidi
  * override and zero-width character replaced by a visible marker, so what the approver reads is what the agent gets.
  */
 export const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿؜᠎]/g;
 export function cleanText(t: unknown, max: number): string {
-  return String(t ?? "").normalize("NFKC").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "").replace(INVISIBLE, (c) => `⟦U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟧`).slice(0, max);
+  return String(t ?? "").normalize("NFC").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "").replace(INVISIBLE, (c) => `⟦U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟧`).slice(0, max);
 }
 /** A name the peer says it has: one line, cleaned, short. Shown only as "自稱", never as who it is. */
-export const cleanName = (t: unknown) => cleanText(t, 60).replace(/\s+/g, " ").trim();
+export const cleanName = (t: unknown) => cleanText(String(t ?? "").normalize("NFKC"), 60).replace(/\s+/g, " ").trim();
