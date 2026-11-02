@@ -169,7 +169,15 @@ const mkWav = (bytes: number) => wav([Buffer.alloc(bytes - 44)], 24000);
   ok(after1 === false && (sig2 as AbortSignal | null)?.aborted === true, "when every request sharing it has given up, the synthesis is stopped", JSON.stringify({ after1, after2: (sig2 as AbortSignal | null)?.aborted }));
   // that stopped job (its synthesis still winding down) is never joined: a replay right after gets a fresh one
   const replay = await err(() => Promise.race([roomClip(dir, "第五點", { lang: "zh", mode: "switch", store, speaker: async () => ({ bytes: mkWav(200), model: "k", voice: "zf_xiaobei" }) }), Bun.sleep(2000).then(() => { throw new Error("still waiting"); })]));
-  ok(replay === null && existsSync(join(dir, clipName("第五點", { lang: "zh", mode: "switch", voices: DEFAULT_VOICE }))), "a replay after every request gave up makes the clip anew instead of joining the stopped job", replay?.message); }
+  ok(replay === null && existsSync(join(dir, clipName("第五點", { lang: "zh", mode: "switch", voices: DEFAULT_VOICE }))), "a replay after every request gave up makes the clip anew instead of joining the stopped job", replay?.message);
+  // a room started over while another tab still waits for an old clip: the restarted room's request is its own job
+  let gen = 0, releaseOld!: () => void; const oldHeld = new Promise<void>((r) => (releaseOld = r));
+  const oldJob = roomClip(dir, "第六點", { lang: "zh", mode: "switch", store, generation: 0, alive: () => gen === 0, speaker: async () => { await oldHeld; return { bytes: mkWav(200), model: "k", voice: "zf_xiaobei" }; } });
+  await Bun.sleep(20); gen = 1;
+  const fresh = roomClip(dir, "第六點", { lang: "zh", mode: "switch", store, generation: 1, alive: () => gen === 1, speaker: async () => ({ bytes: mkWav(200), model: "k", voice: "zf_xiaobei" }) });
+  const freshOut = await err(() => Promise.race([fresh, Bun.sleep(2000).then(() => { throw new Error("still waiting"); })])); releaseOld(); const oldOut = await err(() => oldJob);
+  ok(freshOut === null && oldOut?.code === "reset", "after a reset the room's request for a point never joins the old room's job: it gets its clip, the old one is refused", JSON.stringify({ fresh: freshOut?.code ?? freshOut?.message ?? null, old: oldOut?.code }));
+  ok(/roomClip\(k\.dir, t, \{[^}]*generation: born, alive: \(\) => \(resetGen\.get\(k\.id\) \?\? 0\) === born/.test(readFileSync(join(root, "src/domain/review-room.ts"), "utf8")), "the room passes its reset generation to the shared job"); }
 { const store = new ClipStore(join(tmp, "clips-b.json"), { room: 1000, total: 1500 }), r1 = join(tmp, "lru-1-images"), r2 = join(tmp, "lru-2-images");
   const make = (dir: string, t: string) => roomClip(dir, t, { lang: "en", mode: "switch", store, speaker: async () => ({ bytes: mkWav(400), model: "k", voice: "af_heart" }) });
   const a = await make(r1, "a"); await Bun.sleep(5); const b = await make(r1, "b"); await Bun.sleep(5); readClip(r1, a.name, store); await Bun.sleep(5);
@@ -273,7 +281,7 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
     // a slow network: half of model.onnx, then nothing more
     if (mode === "stall" && p === "model.onnx") return new Response(new ReadableStream({ start(c) { c.enqueue(b.subarray(0, 100_000)); }, pull() { return new Promise(() => {}); } }));
     return new Response(mode === "tamper" && p === "voices.bin" ? Buffer.from("VOICEX") : b); } });
-  const fetchModel = async (models: string) => { const p = Bun.spawn(["node", join(tools, "fetch-model.cjs"), "--models", models], { env: { PATH: process.env.PATH!, CREW_VOICE_MODEL_BASE: `http://127.0.0.1:${srv.port}`, CREW_VOICE_FETCH_STALL_MS: "400" }, stdout: "pipe", stderr: "pipe" });
+  const fetchModel = async (models: string, stallMs = 10_000) => { const p = Bun.spawn(["node", join(tools, "fetch-model.cjs"), "--models", models], { env: { PATH: process.env.PATH!, CREW_VOICE_MODEL_BASE: `http://127.0.0.1:${srv.port}`, CREW_VOICE_FETCH_STALL_MS: String(stallMs) }, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); return { exitCode, stdout, stderr }; };
   const leftovers = (d: string) => { const out: string[] = []; const walk = (x: string) => { for (const n of (existsSync(x) ? readdirSync(x) : [])) { const f = join(x, n); if (statSync(f).isDirectory()) walk(f); else if (n.endsWith(".download")) out.push(n); } }; walk(d); return out; };
   const models = join(tmp, "dl-models"), r1 = await fetchModel(models), dest = join(models, "kokoro-multi-lang-v1_0");
@@ -286,20 +294,20 @@ const snapshot = (dir: string) => { const out: string[] = []; const walk = (d: s
   mode = "tamper"; const res = join(tmp, "dl-resume"); await fetchModel(res); mode = "good"; served.length = 0; const r2 = await fetchModel(res);
   ok(r2.exitCode === 0 && served.length < sp.files.length && served.includes("voices.bin") && /kept from an earlier try/.test(r2.stdout) && (await verifyModel(join(res, "kokoro-multi-lang-v1_0"), { spec: sp, memo: false })).ok, "a second press resumes: verified files are kept, the failed one fetched again", JSON.stringify({ served, out: r2.stdout.slice(-200) }));
   // a transfer cut short keeps its bytes; the next press hashes them and asks only for the rest (HTTP Range), then verifies
-  mode = "stall"; const slow = join(tmp, "dl-slow"), cut = await fetchModel(slow), part = join(slow, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
+  mode = "stall"; const slow = join(tmp, "dl-slow"), cut = await fetchModel(slow, 400), part = join(slow, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
   const kept = existsSync(part) ? statSync(part).size : -1;
   ok(cut.exitCode === 1 && /stalled/.test(cut.stderr) && kept === 100_000, "a stalled transfer stops the press and keeps the bytes it got in .download", JSON.stringify({ err: cut.stderr.slice(-160), kept }));
   mode = "good"; ranges.length = 0; const on = await fetchModel(slow);
   ok(on.exitCode === 0 && JSON.stringify(ranges) === JSON.stringify(["model.onnx:100000"]) && /resumed model\.onnx from byte 100000/.test(on.stdout) && (await verifyModel(join(slow, "kokoro-multi-lang-v1_0"), { spec: sp, memo: false })).ok,
     "the next press resumes model.onnx from byte 100000 with a Range request and the whole file verifies", JSON.stringify({ ranges, out: on.stdout.slice(-200), err: on.stderr }));
   // a Range answer shorter than asked: what came is kept, and the press after resumes from there
-  mode = "stall"; const shortDir = join(tmp, "dl-short"); await fetchModel(shortDir); mode = "short"; const sh1 = await fetchModel(shortDir), sp1 = join(shortDir, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
+  mode = "stall"; const shortDir = join(tmp, "dl-short"); await fetchModel(shortDir, 400); mode = "short"; const sh1 = await fetchModel(shortDir), sp1 = join(shortDir, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
   const keptShort = existsSync(sp1) ? statSync(sp1).size : -1;
   ok(sh1.exitCode === 1 && /ended at 150000 of 200000/.test(sh1.stderr) && keptShort === 150_000, "a Range answer that ends short keeps its bytes instead of erasing the progress", JSON.stringify({ err: sh1.stderr.slice(-160), keptShort }));
   mode = "good"; ranges.length = 0; const sh2 = await fetchModel(shortDir);
   ok(sh2.exitCode === 0 && JSON.stringify(ranges) === JSON.stringify(["model.onnx:150000"]) && (await verifyModel(join(shortDir, "kokoro-multi-lang-v1_0"), { spec: sp, memo: false })).ok, "and the next press resumes from byte 150000 and verifies", JSON.stringify({ ranges, err: sh2.stderr }));
   // kept bytes that are not the file's: the whole file then fails its pin, and only then is .download deleted
-  mode = "stall"; const bad = join(tmp, "dl-badpart"); await fetchModel(bad); const bp = join(bad, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
+  mode = "stall"; const bad = join(tmp, "dl-badpart"); await fetchModel(bad, 400); const bp = join(bad, "kokoro-multi-lang-v1_0.partial", "model.onnx.download");
   writeFileSync(bp, Buffer.alloc(100_000, 9)); mode = "good"; const wrongPart = await fetchModel(bad);
   ok(wrongPart.exitCode === 1 && /does not match the pin/.test(wrongPart.stderr) && !existsSync(bp), "resumed bytes that do not hash to the pin are thrown away with the attempt", wrongPart.stderr);
   const again = await fetchModel(bad); ok(again.exitCode === 0, "and the press after that fetches the file whole", again.stderr);
