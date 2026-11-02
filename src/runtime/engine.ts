@@ -1476,6 +1476,11 @@ export class Engine {
   /** A domain adds what else its node reads (a coffee film adds its input digest). */
   failureInputExtra: (r: Run, node: WNode | null) => InputSnapshot = () => ({});
   /** An agent's question goes to Firstmate first (server.ts wakes it): true when it was sent. Firstmate answers or escalates through answerFromFirstmate. */
+  /** A Task drawn from untrusted text (params._tainted: issue text, a peer's Studio) never sends a question, an escalation or
+   *  its text to Firstmate: Firstmate is a privileged agent, and that text could steer it. Its questions are the captain's cards. */
+  firstmateBarred(r: Run): boolean { return !!r.params?._tainted; }
+  /** Guards a domain adds against repeating a Task as a new one or a fresh proposal (a reason, or null). */
+  followUpGuards: Record<string, (r: Run) => string | null> = {};
   askFirstmate: ((r: Run, node: WNode, question: string, visit: number, o?: { escalation?: { options: { id: string; label: string; note?: boolean; select?: string[] }[] } }) => boolean) | null = null;
   /** Tell Firstmate something Studio did for it (a held proposal raised again): the full text goes to its turn, the summary to the captain's chat. */
   notifyFirstmate: ((text: string, summary: { en: string; zh: string }) => boolean) | null = null;
@@ -1577,7 +1582,7 @@ export class Engine {
     // an agent's question: Firstmate answers it; only an escalation (with Firstmate's reason) reaches the captain
     if (f.code === "ask.escalated" && node && !f.escalation?.reason) {
       if (this.toFirstmate(r, node, f)) return null;
-      f = { ...f, escalation: { by: "firstmate", reason: "Firstmate is not running, so it could not answer this question." } };
+      f = { ...f, escalation: { by: "firstmate", reason: this.firstmateBarred(r) ? "This Task's text is untrusted (issue text or a peer's Studio), so its question comes to you, never to Firstmate." : "Firstmate is not running, so it could not answer this question." } };
     }
     if (f.class === "transient" && node) { const attempt = (r.nodes[node.id].data.failureRetries ?? 0) + 1; f = { ...f, retry: { attempt, backoffMs: this.failureBackoff(attempt) } }; }
     r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20);
@@ -1594,6 +1599,7 @@ export class Engine {
   }
   /** Send an agent's question to Firstmate: true when it was sent (the question then waits on the run, no card). */
   private toFirstmate(r: Run, node: WNode, f: Failure): boolean {
+    if (this.firstmateBarred(r)) return false; // untrusted text never reaches Firstmate: the question is the captain's card
     let sent = false; try { sent = !!this.askFirstmate?.(r, node, f.message, r.nodes[node.id].visits); } catch { sent = false; }
     if (!sent) return false;
     r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20); r.failureCard = null; r.ctx.firstmateQuestion = { node: node.id, visit: r.nodes[node.id].visits, question: f.message, at: now() };
@@ -1612,7 +1618,7 @@ export class Engine {
   resumeFirstmateQuestions() {
     for (const r of this.runs.values()) {
       const q = r.ctx.firstmateQuestion; if (!q || r.failureCard || r.archived || r.parked || this.gone.has(r.id) || !["waiting", "failed", "paused"].includes(r.status)) continue;
-      const node = r.def.nodes.find((n) => n.id === q.node); if (!node) continue;
+      const node = r.def.nodes.find((n) => n.id === q.node); if (!node || this.firstmateBarred(r)) continue;
       this.watchFirstmate(r); // the bounded wait holds whether or not Firstmate can take the question now
       const key = `${r.id}@${q.at}`; if (this.firstmateSent.has(key)) continue;
       const held = q.card ? r.nodes[node.id].data.firstmateCard : null; const options = held ? this.firstmateOptions(r, node, held.body.options ?? node.card?.options ?? [], held.allowed ?? null) : null;
@@ -1676,6 +1682,7 @@ export class Engine {
       writeFileSync(file, homeless(JSON.stringify(report, null, 1)));
       const ans = this.cards.answer(c.id, a); this.recordFailure(r, c, "report", { file: `failures/${r.id}-${c.id}.json` }); this.emit(r, "failure_reported", `${f.code}: diagnostics kept in failures/${r.id}-${c.id}.json`, { card: c.id }); return ans;
     }
+    if (a.choice === ACT.newTask || a.choice === ACT.repropose) for (const g of Object.values(this.followUpGuards)) { const why = g(r); if (why) refuse({ en: `Refused: ${why}`, "zh-TW": `已拒絕：${why}` }); }
     if (a.choice === ACT.newTask) {
       const reach = this.newTaskReach(r);
       if (!reach.newTaskAllowed) refuse({ en: "New task refused: this workflow is internal or retired. Ask Firstmate to prepare the work again.", "zh-TW": "已拒絕開始新任務：此流程為內部或已退役流程。請 Firstmate 重新準備這項工作。" });
@@ -1723,6 +1730,7 @@ export class Engine {
   /** Firstmate answered an agent's question (studio_answer_agent_question), or escalated it to the captain with its reason. */
   answerFromFirstmate(runId: string, nodeId: string, o: { answer?: string | null; escalate?: string | null; visit?: number; choice?: string | null; recommendation?: string | null }): any {
     const r = this.must(runId); const q = r.ctx.firstmateQuestion; const node = r.def.nodes.find((n) => n.id === nodeId);
+    if (this.firstmateBarred(r)) throw new Error("this Task's text is untrusted: its questions are the captain's, never Firstmate's");
     if (!node || !q || q.node !== nodeId) throw new Error("no question from this step waits for Firstmate");
     if (q.card) return this.decideEscalation(r, node, o);
     if (o.choice) throw new Error("this is an agent's question: answer it or escalate it; choice is for an escalation card");
@@ -1766,6 +1774,7 @@ export class Engine {
     const options = b.options ?? x.node.card?.options ?? [];
     const open = this.firstmateOptions(x.run, x.node, options, allowed);
     const question = escalationQuestion(x.node.label, b, options, open);
+    if (this.firstmateBarred(x.run)) return { en: "This Task's text is untrusted (it came from issue text or a peer's Studio), so its decision comes straight to you, never to Firstmate.", zh: "這個任務的內容來自不受信任的來源（issue 文字或同事的 Studio），所以直接交給你決定，不會交給 Firstmate。" };
     x.rn.data.firstmateCard = { visit: x.visit, kind, body: b, allowed };
     let sent = false; try { sent = !!this.askFirstmate?.(x.run, x.node, question, x.visit, { escalation: { options: open.map((o) => ({ id: o.id, label: o.label, ...(o.note ? { note: true } : {}), ...(o.select?.length ? { select: o.select.map((s) => s.value) } : {}) })) } }); } catch { sent = false; }
     if (!sent) { delete x.rn.data.firstmateCard; return { en: "Firstmate is not running, so this comes straight to you.", zh: "Firstmate 目前沒有在執行，所以直接交給你決定。" }; }

@@ -20,13 +20,16 @@ export function routingNote(text: string, workflowOf: (kind: string) => string |
 
 const STATUS_SHOWN = 8;
 const quoted = (t: unknown) => JSON.stringify(String(t ?? "").replace(/\s+/g, " ").slice(0, 48));
+/** A Task a peer's Studio sent (src/lan): its title and its cards' titles are that peer's words, never shown to Firstmate. */
+const fromPeer = (r: any) => r?.params?._tainted === "lan" || !!r?.params?._lan;
+const titleOf = (r: any) => (fromPeer(r) ? '"(work from a peer\'s Studio: its text is withheld)"' : quoted(r.title));
 /** One line: what waits for the captain and what runs, now. Never empty: "nothing waits for you" is a status too. */
 export function liveStatus(engine: Engine): string {
   const open = engine.cards.list({ open: true }).filter((c) => { const r = engine.get(c.run); return !!r && !r.archived; });
-  const waiting = open.slice(0, STATUS_SHOWN).map((c) => { const r = engine.get(c.run)!; return `${r.id} ${r.workflow} ${quoted(r.title)} (${c.kind} card ${c.id}: ${quoted(c.title.en)})`; });
+  const waiting = open.slice(0, STATUS_SHOWN).map((c) => { const r = engine.get(c.run)!; return `${r.id} ${r.workflow} ${titleOf(r)} (${c.kind} card ${c.id}${fromPeer(r) ? "" : `: ${quoted(c.title.en)}`})`; });
   const busy = new Set(open.map((c) => c.run));
   const running = engine.list().filter((r) => !r.archived && !busy.has(r.id) && ["queued", "running", "waiting", "paused"].includes(r.status));
-  const runs = running.slice(0, STATUS_SHOWN).map((r) => `${r.id} ${r.workflow} ${quoted(r.title)} ${r.status}`);
+  const runs = running.slice(0, STATUS_SHOWN).map((r) => `${r.id} ${r.workflow} ${titleOf(r)} ${r.status}`);
   const more = (n: number) => (n > STATUS_SHOWN ? `, and ${n - STATUS_SHOWN} more` : "");
   return `[Studio note: live status at this message: ${waiting.length ? `waiting for the captain: ${waiting.join("; ")}${more(open.length)}` : "nothing waits for the captain"}. ${runs.length ? `Running: ${runs.join("; ")}${more(running.length)}` : "Nothing is running"}. Any status you tell the captain comes from this line or from studio_work_status read in this turn, never from earlier turns.]`;
 }
