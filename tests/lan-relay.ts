@@ -53,6 +53,8 @@ try {
   { await must(p.B.api("/api/lan/intro/open", { minutes: 1 }), "B opens");
     const C = generateKeyPair(); const ic = await introduceRaw(C, "127.0.0.1", p.lanB, { name: "小明", port: 1 });
     const i = (await view(p.B)).intros.find((x: any) => x.key === b64u(C.pub));
+    { let err = ""; try { await call(C, peerB(), "push", { entries: [], blobs: [] }); } catch (e: any) { err = e.message; }
+      ok(!!i && /403/.test(err), "a key whose introduction is not confirmed yet is still refused", err); }
     const wrong = String((Number(ic.sas) + 1) % 1_000_000).padStart(6, "0");
     const res = await p.B.api(`/api/lan/intro/${i.id}/confirm`, { code: wrong, petname: "小明" });
     const after = await view(p.B);
