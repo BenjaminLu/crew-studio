@@ -11,7 +11,9 @@ export type NEvent =
   | { type: "toolStart"; id: string; name: string; args: unknown }
   | { type: "toolEnd"; id: string; rows: number | null; error: string | null; result: string }
   | { type: "message"; text: string }
-  | { type: "turnEnd"; status: TurnStatus; code?: string; message?: string; usage?: Usage };
+  | { type: "turnEnd"; status: TurnStatus; code?: string; message?: string; usage?: Usage }
+  /** what part of a turn used so far (a provider that reports per inner turn): it adds to the job's counts */
+  | { type: "usage"; usage: Usage };
 /** What a turn cost, as the provider reports it (null where it does not say). */
 export type Usage = { usd: number | null; inTokens: number | null; outTokens: number | null };
 

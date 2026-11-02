@@ -33,6 +33,9 @@ export type AgentJob = {
 };
 const now = () => new Date().toISOString();
 
+/** two usage reports of one job, added (a count one of them does not give stays as the other gives it) */
+const addUsage = (a: Cost | null, u: any): Cost => { const sum = (x: number | null | undefined, y: unknown) => typeof y === "number" ? (x ?? 0) + y : (x ?? null);
+  return { usd: sum(a?.usd, u?.usd), inTokens: sum(a?.inTokens, u?.inTokens), outTokens: sum(a?.outTokens, u?.outTokens) }; };
 export class Agents {
   jobs = new Map<string, AgentJob>();
   readonly queue = new NativeQueue();
@@ -188,8 +191,9 @@ export class Agents {
           else if (e.type === "message") { last = e.text; open = ""; }
           else if (e.type === "toolStart") { last = ""; open = ""; }
           else if (e.type === "toolEnd" && e.error) this.log(job, "result", `error: ${e.error}`);
+          else if (e.type === "usage") job.cost = addUsage(job.cost, (e as any).usage);
           else if (e.type === "turnEnd") {
-            const u = (e as any).usage; if (u) job.cost = { usd: u.usd ?? null, inTokens: u.inTokens ?? null, outTokens: u.outTokens ?? null };
+            const u = (e as any).usage; if (u) job.cost = addUsage(job.cost, u); // every report adds to the job's counts, never replaces them
             if (why === "cancelled") { job.status = "cancelled"; job.error = "cancelled"; }
             else if (why === "timeout") { job.status = "failed"; job.error = `no result within ${Math.round(timeoutMs / 1000)} s`; }
             else if (e.status !== "ok") { job.status = "failed"; job.error = e.message ?? e.code ?? "the agent run failed"; if ((e as any).code) job.errorCode = String((e as any).code); } // the provider's own code keeps the failure's class (runtime/failures.ts)
