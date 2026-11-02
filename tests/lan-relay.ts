@@ -4,7 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The whole relay (the same flow as `bun scripts/lan-pair-demo.ts`), then one refusal per CSO blocker that needs the
 // real stack: an unintroduced key, a wrong short code, a browser-origin request, a briefing hash mismatch, a workflow
 // hash mismatch (flagged), a fork (frozen), push (a workflow that pushes cannot take the work), egress beyond the
-// provider, a .github edit at hand-back, a secret in a result, a phone approving, and the spend cap.    bun tests/lan-relay.ts
+// provider, a .github edit at hand-back, a secret in a result, a phone approving, and the rounds cap.    bun tests/lan-relay.ts
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -119,7 +119,7 @@ try {
 
   // ---------- a briefing hash mismatch between dispatch and take ----------
   { const t = await dispatch("請整理一份會議紀錄。"); await itemOn(p.B, "dispatch", t.id);
-    const bad = await makeEnvelope(author(kB), 700_001, randomBytes(32).toString("hex"), [rec(kA)], { kind: "take", thread: t.id, round: 1, briefing: "0".repeat(64), workflow: { id: "documents", version: 1, defHash: "1".repeat(64) }, cap: { usd: 1, rounds: 3 } } as Body);
+    const bad = await makeEnvelope(author(kB), 700_001, randomBytes(32).toString("hex"), [rec(kA)], { kind: "take", thread: t.id, round: 1, briefing: "0".repeat(64), workflow: { id: "documents", version: 1, defHash: "1".repeat(64) }, cap: { rounds: 3 } } as Body);
     const res = await call(me(kB), peerA(), "push", { entries: [bad], blobs: [] });
     ok(res.refused?.[0]?.reason?.includes("briefing hash mismatch") && !(await view(p.A)).items.some((i: any) => i.thread === t.id && i.kind === "take"), "a take naming another briefing than the dispatch is refused (briefing hash mismatch) and raises nothing", JSON.stringify(res));
     const again = await call(me(kB), peerA(), "push", { entries: [bad], blobs: [] });
@@ -197,18 +197,13 @@ try {
     const none = await p.B.api(`/api/lan/items/${d.id}/approve`, { workflow: "documents", provider: "codex", roundsOnly: true });
     const wrong = await p.B.api(`/api/lan/items/${d.id}/approve`, { seen: seenOf(d.prompt + " "), workflow: "documents", provider: "codex", roundsOnly: true });
     ok(none.status === 409 && none.body.code === "unread" && wrong.status === 409, "an approval that does not name the hash of the exact prompt shown is refused (the page sends it only once read to the end)", JSON.stringify([none.body, wrong.status])); }
-  // ---------- a provider that reports no cost cannot run past a dollar cap ----------
-  { const x = await toRun("請寫草稿，我會要求修改。", { usd: 1, rounds: 6 });
-    await finish(x.run, ["changes"]);
-    const steps = (await must(p.B.api(`/api/wruns/${x.run}`), "run")).steps ?? [];
-    ok(steps.some((s: any) => /reported no cost/.test(String(s.error ?? ""))), "codex reports no cost: with a dollar cap the second paid round is refused (the taker chooses rounds-only explicitly)", JSON.stringify(steps.map((s: any) => `${s.node}:${s.state}`))); }
-  // ---------- the spend cap ----------
-  { const x = await toRun("請寫草稿，我會要求修改。", { usd: 1, rounds: 1 });
+  // ---------- the rounds cap ----------
+  { const x = await toRun("請寫草稿，我會要求修改。", { rounds: 1 });
     const dv = await finish(x.run, ["changes"]);
     const st = await until("the capped run's state", async () => { const v = (await must(p.B.api(`/api/lan/threads/${x.t.id}`), "thread")).rounds[0].run; return v.state !== "running" ? v : null; });
     const steps = (await must(p.B.api(`/api/wruns/${x.run}`), "run")).steps ?? [];
     const draftVisits = steps.filter((s: any) => s.node === "draft").length;
-    ok(steps.some((s: any) => /spend cap/.test(String(s.error ?? ""))) && draftVisits === 2 && steps.filter((s: any) => s.node === "draft" && s.state !== "error").length === 1, "the spend cap stops the run before the round past it (1 agent round allowed: the second draft never runs)", JSON.stringify([st, dv.view?.status, steps.map((s: any) => `${s.node}:${s.state}`).join(" ")]));
+    ok(steps.some((s: any) => /rounds cap/.test(String(s.error ?? ""))) && draftVisits === 2 && steps.filter((s: any) => s.node === "draft" && s.state !== "error").length === 1, "the rounds cap stops the run before the round past it (1 agent round allowed: the second draft never runs)", JSON.stringify([st, dv.view?.status, steps.map((s: any) => `${s.node}:${s.state}`).join(" ")]));
     const pre = await p.B.api(`/api/lan/threads/${x.t.id}/handback/preview`, {}); ok(pre.status === 409, "a run stopped by its cap hands nothing back", String(pre.status)); }
 
   // ---------- a fork freezes the author ----------

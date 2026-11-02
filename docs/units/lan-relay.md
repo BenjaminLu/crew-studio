@@ -207,8 +207,7 @@ phone, even one allowed to drive Firstmate. (Not a boundary against a local proc
   and the exact prompt the agent will get; a long one must be scrolled to its end before it can be approved, and the
   approval must name the SHA-256 of that exact prompt (the page computes it only once the person has read to the end;
   the server refuses any other). Approving means taking it with one of this Studio's own workflows (only those the
-  profile allows can be picked), a spend cap (dollars and agent rounds, or rounds only: no dollar limit, every paid
-  round counted, for any provider), a provider and, for a code workflow, one of this Studio's registered projects. The suggested workflow is only a
+  profile allows can be picked), a rounds cap (agent rounds: every round counted, on any provider), a provider and, for a code workflow, one of this Studio's registered projects. The suggested workflow is only a
   suggestion; nothing is fetched.
 - **take**: the dispatcher assigns it (an `assign` entry naming the taker's key).
 - **assign**: the taker starts the run.
@@ -251,31 +250,38 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   refusal). New task and Re-propose from a peer's Task's failure card are refused (it is taken again from the inbox);
   New task from an issue-text Task keeps the issue profile and its mark. A queue, poller or timer first made inside a
   step runs detached from it (`engine.detached`), so its later work carries no Task.
-- **Spend cap**: every paid round (agent turns, coordinators, judges) is recorded on the Task itself
-  (`ctx.lanRounds`, saved with it) when it is admitted, and its dollars when it ends; before the next one, the rounds
-  and dollars are compared with the item's cap, so neither concurrency nor a restart reopens it. A provider that reports
-  no cost makes the dollars unknown, which stops the next paid round under a dollar cap. The taker may instead choose a
-  rounds-only cap, for any provider: then there is no dollar bound, and every paid round of the Task (any provider,
-  judges and staffed nodes included) counts toward the rounds cap. A round admitted before a restart and never settled
-  counts as unknown dollars. Whatever its cap, every paid round of a peer's Task is at most 15 minutes and 60 tool calls,
-  and a round that reports more than 2,000,000 tokens ends the Task's paid rounds. Dollars are shown on the thread as
-  they are reported.
-- **Daily ceilings**: over every peer's Task on this Mac (rounds-only ones included), Studio-wide and on by default
-  ($20 and 60 rounds a day; editable on the Peers page, and kept in the spend ledger, so they hold while the relay is
-  starting, off or without its identity), per local day (they reset at this Mac's midnight). They are
-  counted in the spend ledger (`src/lan/ledger.ts`, `lan/spend.db`, its own store, open at every start whatever the relay
-  does), never summed over the Tasks Studio still lists, so a Task archived or purged keeps today's spend. A round counts
-  when it is admitted, its dollars reserved at the estimate for its provider and model (what that provider's rounds
-  reported here on average; the figure for a round of unknown cost, $1 by default, when none did); when it ends its
-  reported dollars replace the reservation, and a round whose provider reported none keeps it. A round past either
-  ceiling is refused before it starts; a ledger that cannot be read, was deleted or was restored from an older copy (its
-  sentinel, `lan/spend.created`, keeps the most rounds it ever counted) refuses every paid round. A rounds-only take says
-  so: no dollar limit, the estimated dollars per round and what that comes to (an estimate, not a limit), and the daily
-  ceiling that still applies.
+- **What is counted: the subscription's quota, never dollars.** Local providers run on subscriptions: a CLI's dollar
+  figure is notional and Codex and Cursor report none, so no limit is in dollars and no dollar figure is shown (one
+  would be shown only for a provider billed per API key, and none is today). No page shows a percentage of a quota
+  either (it is not known).
+- **Rounds cap**: the only per-Task cap. Every round (agent turns, coordinators, judges) is recorded on the Task itself
+  (`ctx.lanRounds`, saved with it) when it is admitted, and the tokens and agent-minutes it used when it ends; before
+  the next one, the rounds are compared with the item's cap, so neither concurrency nor a restart reopens it (a round
+  admitted before a restart and never settled still counts). Every round of a peer's Task is at most 15 minutes and 60
+  tool calls, and a round that reports more than 2,000,000 tokens ends the Task's rounds. The thread shows the rounds,
+  tokens and agent-minutes a Task used. A job's token counts add up over every usage report of the job.
+- **Daily ceilings**: over every peer's Task on this Mac, Studio-wide and on by default (60 rounds, 300 agent-minutes
+  and 30,000,000 tokens a day; editable on the Peers page, the minute and token ones may be turned off), per local day
+  (they reset at this Mac's midnight). Tokens are in and out as each CLI reports them (Claude's include its cache
+  tokens); agent-minutes are the rounds' wall clock. They are counted in the spend ledger (`src/lan/ledger.ts`,
+  `lan/spend.db`, its own store, open at every start whatever the relay does), never summed over the Tasks Studio still
+  lists, so a Task archived or purged keeps today's use; the ceilings themselves are kept there too, so they hold while
+  the relay is starting, off or without its identity. A round counts when it is admitted, reserving 15 agent-minutes and
+  its provider and model's average tokens here (300,000 when there is no record yet); when it ends, its wall clock and
+  reported tokens replace the reservation, and a round whose provider reported no tokens keeps its token reservation (as
+  does one never settled). A round past any ceiling is refused before it starts; a ledger that cannot be read, was
+  deleted or was restored from an older copy (its sentinel, `lan/spend.created`, keeps the most rounds it ever counted)
+  refuses every round. The take dialog states the rounds cap, the per-round bounds, the daily ceilings and, when there
+  is a record, about how many tokens a round of that provider uses here.
+- **Subscription limit**: a round whose provider reports its quota or rate limit (Claude's `quotaExhausted`; Codex's
+  and Cursor's rate- or usage-limit errors, read by the failure classes `env.quota` and `transient.rate-limit`) stops
+  that Task at once, with no retry and no queue, and pauses peer work on that provider: no take, no auto-start and no
+  round of any peer's Task runs on it until the captain resumes it on the Peers page. The pause is kept in the spend
+  ledger and audited (`provider-paused`, `provider-resumed`).
 - **Auto-start, opt-in**: at the take the taker may tick "start as soon as they assign it, with this exact cap"
   (unticked by default). It lasts 30 minutes after the take. When the assignment arrives every check is made again (the
-  peer still introduced, not frozen or revoked; the round current; the prompt the one the taker read; the item's cap
-  and the daily ceilings holding), and only then the Task starts; the thread says it started by itself and offers a stop
+  peer still introduced, not frozen or revoked; the round current; the prompt the one the taker read; the item's cap,
+  the daily ceilings and the provider not paused holding), and only then the Task starts; the thread says it started by itself and offers a stop
   button; the start and every skip are audited. Without it, the start click shows the prompt's hash, the cap and the
   project, and starts nothing else. Every running Task has a one-click stop.
 - **One Task per assignment**: approving an assignment claims the round before the Task starts, so a second approval

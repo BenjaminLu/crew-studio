@@ -36,13 +36,13 @@ export type PeerRec = { key: string; fp: string; petname: string; claimed: strin
   moved?: { from: string; at: string } | null };
 export type IntroRec = { id: string; key: string; fp: string; sas: string; claimed: string; host: string; port: number; role: "initiator" | "responder"; at: string; expires: number; cert: Cert; storage: string | null };
 export type ItemRec = { id: string; entry: string; kind: Body["kind"]; from: string; thread: string; round: number; at: string; state: "open" | "approved" | "rejected" | "withdrawn" | "frozen"; flags: string[]; note: string | null; seq?: number };
-export type RoundRec = { n: number; fence: string; briefing: { hash: string; size: number; entry: string }; take: null | { entry: string; by: string; workflow: WorkflowRef; cap: { usd: number | null; rounds: number }; provider: string | null; staffing: string | null; project: string | null;
+export type RoundRec = { n: number; fence: string; briefing: { hash: string; size: number; entry: string }; take: null | { entry: string; by: string; workflow: WorkflowRef; cap: { rounds: number }; provider: string | null; staffing: string | null; project: string | null;
     /** the taker's opt-in at the take: start as soon as assigned, with this exact cap, until `until`, for the prompt it read */
     auto?: { until: number; seen: string; at: string } | null };
   assign: null | { entry: string; take: string; taker: string };
   /** the run this round started. Its claim (`claimed`, the assignment item) is written, synced, before the Task starts; a
    *  restart finds the Task by that item (`found`), or marks it gone: a claim is never released by a restart */
-  run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean; auto?: boolean; spent?: { usd: number; rounds: number } | null };
+  run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean; auto?: boolean; spent?: { rounds: number; tokens: number; minutes: number } | null };
   result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number; base?: string | null } };
 export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null; waiting?: string | null };
 export type ThreadRec = { id: string; owner: string; peer: string; title: string; acceptance: string[]; suggested: WorkflowRef | null; rounds: RoundRec[];
@@ -53,8 +53,16 @@ export type ThreadRec = { id: string; owner: string; peer: string; title: string
 type Outbox = { to: string; entry: string; blobs: string[]; tries: number; last: string | null; error: string | null; next?: number; retry?: boolean; thread?: string };
 /** an identity operation waiting for a peer: this Studio's revocation of its old identity (sent with that identity's keys) */
 type IdOut = { to: string; host: string; port: number; dh: string; op: "retire"; body: unknown; from: string; tries: number; next?: number; error: string | null };
-type Ceilings = { dailyUsd: number | null; dailyRounds: number; unknownRoundUsd: number };
-const DEFAULT_CEILINGS: Ceilings = { dailyUsd: 20, dailyRounds: 60, unknownRoundUsd: 1 };
+import { DEFAULT_CEILINGS, LAN_ROUND, pausedRefusal, type Ceilings } from "./profile";
+const LAN_ROUND_TOKENS = LAN_ROUND.tokens;
+/** the ceilings this version keeps (rounds, agent-minutes, tokens); a dollar figure an older set holds is dropped */
+const pickCeilings = (x: any): Ceilings => {
+  const c = { ...DEFAULT_CEILINGS }; if (!x || typeof x !== "object") return c;
+  if (Number.isSafeInteger(x.dailyRounds)) c.dailyRounds = x.dailyRounds;
+  for (const k of ["dailyMinutes", "dailyTokens"] as const) if (x[k] === null || Number.isSafeInteger(x[k])) c[k] = x[k];
+  if (Number.isSafeInteger(x.unknownRoundTokens)) c.unknownRoundTokens = x.unknownRoundTokens;
+  return c;
+};
 /** an auto-start opt-in lasts this long after the take */
 export const AUTO_START_MS = 30 * 60_000;
 type State = { v: 2; settings: { enabled: boolean; name: string; ceilings?: Ceilings }; logs: Record<string, { seq: number; head: string | null }>; peers: PeerRec[]; intros: IntroRec[]; introUntil: number | null; threads: ThreadRec[]; items: ItemRec[];
@@ -65,8 +73,8 @@ type State = { v: 2; settings: { enabled: boolean; name: string; ceilings?: Ceil
 /** What a Task that runs work from a peer needs from Studio (src/lan/runner.ts implements it over the runtime). */
 export type LanRunner = {
   workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; mayStop?: string[]; output?: "text" | "patch" | null; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
-  start(o: { workflow: string; text: string; title: string; item: string; cap: { usd: number | null; rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
-  status(run: string): { state: string; result: string | null; spent: { usd: number; rounds: number }; stopped: string | null; ready?: boolean } | null;
+  start(o: { workflow: string; text: string; title: string; item: string; cap: { rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
+  status(run: string): { state: string; result: string | null; spent: { rounds: number; tokens: number; minutes: number }; stopped: string | null; ready?: boolean } | null;
   /** the Task a received assignment started (by the item id in its LAN mark), after a restart: its id, or null */
   findByItem?(item: string): string | null;
   output(run: string): Promise<{ files: { path: string; text: string | null; bytes: number }[]; changed: string[]; protectedHits: string[]; checks: { pass: number; fail: number; other: number; summary: string }; workflow: WorkflowRef; kind?: "files" | "patch"; base?: string | null }>;
@@ -174,7 +182,7 @@ export class Lan {
   /** a restart: claimed rounds found or gone, retired identities reopened to finish their revocation, the cache warmed */
   private async afterOpen() {
     // ceilings set before they were kept in the ledger move there
-    if (this.o.spend && this.st.settings.ceilings) { try { if (!this.o.spend.ceilings()) this.o.spend.setCeilings({ ...DEFAULT_CEILINGS, ...this.st.settings.ceilings }); } catch {} }
+    if (this.o.spend && this.st.settings.ceilings) { try { if (!this.o.spend.ceilings()) this.o.spend.setCeilings(pickCeilings(this.st.settings.ceilings)); } catch {} }
     for (const t of this.st.threads) for (const r of t.rounds) if (r.run?.id === "(claimed)") {
       const id = r.run.item ? this.o.runner.findByItem?.(r.run.item) ?? null : null;
       r.run = id ? { ...r.run, id, state: "running", found: true } : { ...r.run, id: "(gone)", state: "gone", stopped: now() };
@@ -262,14 +270,18 @@ export class Lan {
   /** the captain's daily ceilings: kept in the spend ledger (always open, whatever the relay does); the relay's own copy
    *  only when there is no ledger (tests) or until it is moved there */
   ceilings(): Ceilings {
-    if (this.o.spend) { try { const c = this.o.spend.ceilings(); if (c) return { ...DEFAULT_CEILINGS, ...c }; } catch {} }
-    return { ...DEFAULT_CEILINGS, ...(this.st.settings.ceilings ?? {}) };
+    if (this.o.spend) { try { const c = this.o.spend.ceilings(); if (c) return pickCeilings(c); } catch {} }
+    return pickCeilings(this.st.settings.ceilings);
   }
-  setCeilings(o: { dailyUsd?: unknown; dailyRounds?: unknown; unknownRoundUsd?: unknown }) {
+  setCeilings(o: { dailyRounds?: unknown; dailyMinutes?: unknown; dailyTokens?: unknown; unknownRoundTokens?: unknown; dailyUsd?: unknown; unknownRoundUsd?: unknown }) {
+    // no dollars: local providers run on subscriptions (a CLI's dollar figure is notional, and Codex and Cursor report none)
+    if (o.dailyUsd !== undefined || o.unknownRoundUsd !== undefined) throw new LanError(400, "there is no dollar ceiling: the daily ceilings are rounds, agent-minutes and tokens");
     const c = this.ceilings();
-    if (o.dailyUsd !== undefined) { const v = o.dailyUsd === null ? null : Number(o.dailyUsd); if (v !== null && !(v >= 0 && v <= 10_000)) throw new LanError(400, "a daily dollar ceiling is 0 to 10000 (or off)"); c.dailyUsd = v; }
+    const opt = (v: unknown, max: number, what: string) => { if (v === null) return null; const n = Number(v); if (!Number.isSafeInteger(n) || n < 1 || n > max) throw new LanError(400, `${what} is 1 to ${max} (or off)`); return n; };
+    if (o.dailyMinutes !== undefined) c.dailyMinutes = opt(o.dailyMinutes, 24 * 60, "a daily agent-minute ceiling");
+    if (o.dailyTokens !== undefined) c.dailyTokens = opt(o.dailyTokens, 2_000_000_000, "a daily token ceiling");
+    if (o.unknownRoundTokens !== undefined) { const v = Number(o.unknownRoundTokens); if (!Number.isSafeInteger(v) || v < 0 || v > LAN_ROUND_TOKENS) throw new LanError(400, `a round that reports no tokens counts at 0 to ${LAN_ROUND_TOKENS} tokens`); c.unknownRoundTokens = v; }
     if (o.dailyRounds !== undefined) { const v = Number(o.dailyRounds); if (!Number.isSafeInteger(v) || v < 1 || v > 1000) throw new LanError(400, "a daily round ceiling is 1 to 1000"); c.dailyRounds = v; }
-    if (o.unknownRoundUsd !== undefined) { const v = Number(o.unknownRoundUsd); if (!(v >= 0 && v <= 100)) throw new LanError(400, "an unknown round counts at 0 to 100 dollars"); c.unknownRoundUsd = v; }
     this.o.spend?.setCeilings(c); // first in the ledger: a write that fails changes nothing
     this.step(() => { this.st.settings.ceilings = c; this.store.audit("ceilings", c as any); }); return this.view();
   }
@@ -732,7 +744,7 @@ export class Lan {
     return this.threadView(this.thread(thread)!);
   }
   /** Approve one received item. What it means depends on its kind (see the unit spec): take with a workflow, assign, start, accept. */
-  async approve(id: string, o: { workflow?: string; usd?: number | null; roundsOnly?: boolean; rounds?: number; provider?: string | null; staffingConfirm?: string | null; project?: string | null; seen?: string | null; autoStart?: boolean; by?: string } = {}) {
+  async approve(id: string, o: { workflow?: string; roundsOnly?: boolean; rounds?: number; provider?: string | null; staffingConfirm?: string | null; project?: string | null; seen?: string | null; autoStart?: boolean; by?: string } = {}) {
     this.live();
     const i = this.item(id), t = this.thread(i.thread); if (!t) throw new LanError(404, "no such thread");
     if (this.peer(i.from)?.frozen) throw new LanError(409, "this peer is frozen (a fork in its log): resolve it first");
@@ -749,17 +761,19 @@ export class Lan {
         if (w.staffing && o.staffingConfirm !== w.staffing.hash) throw new LanError(409, "confirm who works on each node of this workflow", "staffing_confirmation_required");
         // read to its end: the approval names the hash of the exact text it was given (the page sends it only once the person scrolled to the end)
         if (o.seen !== this.seenHash(t, r)) throw new LanError(409, "read the whole briefing and the prompt first: this approval does not name the text this Studio would run", "unread");
-        const rounds = Number(o.rounds ?? 6), usd = o.roundsOnly ? null : Number(o.usd ?? 2);
-        // rounds only is the taker's own choice, for any provider: then every paid round of the Task counts toward the rounds cap
-        if ((usd !== null && !(usd >= 0 && usd <= 1000)) || !Number.isSafeInteger(rounds) || rounds < 1 || rounds > 50) throw new LanError(400, "a spend cap is 0 to 1000 dollars (or rounds only) and 1 to 50 agent rounds");
+        // the cap is the Task's rounds (every paid round of it, any provider, judges included); never dollars
+        const rounds = Number(o.rounds ?? 6);
+        if (!Number.isSafeInteger(rounds) || rounds < 1 || rounds > 50) throw new LanError(400, "a rounds cap is 1 to 50 agent rounds");
         const project = w.needsProject ? String(o.project ?? "") : null; if (w.needsProject && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(project!)) throw new LanError(400, "choose one of this Studio's projects for this code workflow", "project_required");
         // code work on the dispatcher's base: the project must hold that history and that commit
         if (w.needsProject && t.base) { const why = this.o.baseProblem?.(project!, t.base) ?? null; if (why) throw new LanError(409, `project ${project} cannot take this code work: ${why}`, "base"); }
         const provider = o.provider && /^(codex|claude|cursor|stub)$/.test(o.provider) ? o.provider : null;
+        // a provider that reported its subscription limit on a peer's round takes no peer work until the captain resumes it
+        { const why = pausedRefusal(this.o.spend ?? null, provider); if (why) throw new LanError(409, why.replace(/^paused: /, ""), "paused"); }
         if (r.take) throw new LanError(409, "this round is already taken");
         // the approval and the signed take land in one transaction: a restart never shows the item open again
-        await this.append([t.owner], { kind: "take", thread: t.id, round: r.n, briefing: r.briefing.hash, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds } }, [],
-          ["take", { thread: t.id, round: r.n, item: i.id, from: i.from, seen: o.seen, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds }, provider, project, autoStart: o.autoStart === true }],
+        await this.append([t.owner], { kind: "take", thread: t.id, round: r.n, briefing: r.briefing.hash, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { rounds } }, [],
+          ["take", { thread: t.id, round: r.n, item: i.id, from: i.from, seen: o.seen, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { rounds }, provider, project, autoStart: o.autoStart === true }],
           () => { i.state = "approved"; r.take!.provider = provider; r.take!.staffing = w.staffing?.hash ?? null; r.take!.project = project;
             // opt-in, unticked by default: start as soon as the dispatcher assigns it, with this exact cap, for 30 minutes
             r.take!.auto = o.autoStart === true ? { until: Date.now() + AUTO_START_MS, seen: String(o.seen), at: now() } : null; });
@@ -801,10 +815,18 @@ export class Lan {
     const why = !i || i.state !== "open" || i.kind !== "assign" ? "the assignment is not open" : !t || !r || !a ? "no opt-in" : Date.now() > a.until ? "the opt-in expired (30 minutes after the take)"
       : !this.trusted(i.from) || this.peer(i.from)?.frozen ? "the peer is no longer introduced, or is frozen" : t.state !== "open" || r !== this.cur(t) ? "the round is no longer current"
       : r.run ? "the round already started" : (() => { try { return this.seenHash(t, r) !== a.seen ? "the prompt is not the one the taker read" : null; } catch { return "the briefing is not here"; } })()
-      ?? this.o.dailyRefusal?.(this.ceilings()) ?? null;
+      ?? pausedRefusal(this.o.spend ?? null, r.take?.provider ?? null) ?? this.o.dailyRefusal?.(this.ceilings()) ?? null;
     if (why) { if (i && r) this.step(() => { this.store.audit("auto-start-skipped", { item: itemId, thread: t?.id ?? null, why }); if (r.take) r.take.auto = null; }); return why; }
     try { await this.approve(itemId, { by: "auto-start" }); this.step(() => { this.store.audit("auto-start", { item: itemId, thread: t!.id, round: r!.n, seen: a!.seen }); }); this.o.log?.(`LAN: started ${t!.id} round ${r!.n} by itself (the taker opted in at the take)`); return null; }
     catch (e: any) { this.step(() => { this.store.audit("auto-start-skipped", { item: itemId, thread: t!.id, why: String(e?.message ?? e).slice(0, 200) }); }); return String(e?.message ?? e); }
+  }
+  /** a provider reported its subscription limit on a peer's round (src/lan/profile.ts): the pause is audited here */
+  noteLimit(run: string, provider: string, why: string) { try { this.step(() => { this.store.audit("provider-paused", { provider, run, why: String(why).slice(0, 300) }); }); } catch {} }
+  /** the captain resumes peer work on a provider its subscription limit paused (audited) */
+  resumeProvider(provider: unknown) {
+    const p = String(provider ?? ""); if (!this.o.spend) throw new LanError(501, "no spend ledger on this Studio");
+    if (!this.o.spend.resume(p)) throw new LanError(404, `${p.slice(0, 32)} is not paused`);
+    this.step(() => { this.store.audit("provider-resumed", { provider: p, by: "captain (desktop)" }); }); return this.view();
   }
   /** one click: stop the Task this round started (the taker's side) */
   stopRun(threadId: string) {
@@ -967,7 +989,7 @@ export class Lan {
       const s = this.o.runner.status(r.run.id);
       // a Task Studio no longer has (deleted, or lost): gone; its claim stays, so it is never started again from this round
       if (!s) { r.run.state = "gone"; r.run.stopped = now(); changed = true; continue; }
-      if (s.state !== r.run.state || s.stopped !== r.run.stopped || s.spent?.usd !== r.run.spent?.usd || s.spent?.rounds !== r.run.spent?.rounds) { r.run.state = s.state; r.run.result = s.result; r.run.stopped = s.stopped; r.run.spent = s.spent ?? null; changed = true; }
+      if (s.state !== r.run.state || s.stopped !== r.run.stopped || JSON.stringify(s.spent ?? null) !== JSON.stringify(r.run.spent ?? null)) { r.run.state = s.state; r.run.result = s.result; r.run.stopped = s.stopped; r.run.spent = s.spent ?? null; changed = true; }
     }
     if (changed) this.save();
   }
@@ -1037,7 +1059,7 @@ export class Lan {
         // the file keystore: any program of this user can read the identity (shown plainly)
         warning: ks?.kind === "file" ? { en: "This Mac's identity can be read by local programs (no Touch ID protection)", zh: "這台的身分可被本機程式讀取（沒有 Touch ID 保護）" } : null, fallback: this.fallback },
       lost: this.lost, retired: this.st.retired.map((r) => ({ key: r.key, at: r.at, pending: this.st.idOut.filter((x) => x.from === r.key).map((x) => ({ to: this.who(x.to), tries: x.tries, error: x.error })) })),
-      ceilings: this.ceilings(), estimates: (() => { try { return this.o.estimates?.(this.ceilings()) ?? {}; } catch { return {}; } })(), enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
+      ceilings: this.ceilings(), paused: (() => { try { return this.o.spend?.paused() ?? []; } catch { return []; } })(), estimates: (() => { try { return this.o.estimates?.(this.ceilings()) ?? {}; } catch { return {}; } })(), enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
       introOpenUntil: this.st.introUntil && this.st.introUntil > Date.now() ? new Date(this.st.introUntil).toISOString() : null,
       introFailures: (this.st.introFailures ?? []).filter((f) => Date.parse(f.at) >= (this.st.introOpenedAt ?? 0) - 3600_000).slice(-5),
       intros: this.st.intros.filter(live).map((i) => ({ ...i, similar: similar(i.claimed, i.key), successorOf: successorOf(i.key) })),

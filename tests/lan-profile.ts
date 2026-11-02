@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Board-to-board work, in process (docs/units/lan-relay.md): the restricted profile on the runtime engine, each rule
 // against a control without it (a LAN-marked Task cannot reach a pushing hook, gets no egress beyond its provider and no
-// run_tests / run_command / skill_run, runs no test-run check, stops at its dollar cap), and the relay between two Lan
+// run_tests / run_command / skill_run, runs no test-run check, stops at its rounds cap), and the relay between two Lan
 // instances, protocol 2 (the peer address guard, a chain that does not join freezes its author, a revoked identity stays
 // out, an identity that is gone fails closed).                                                    bun tests/lan-profile.ts
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
@@ -52,7 +52,7 @@ const exec0 = E.execPlain.bind(E); E.execPlain = (x: any, man: any, ...rest: any
 const asked: string[] = []; E.askFirstmate = (r: any) => { asked.push(r.id); return true; };
 installLanProfile(E);
 // the runtime's own start option (never a param): what src/lan/runner.ts passes
-const lanP = (usd: number | null = 5, rounds = 9) => ({ name: "lan", mark: { item: "test-item", usd, rounds } });
+const lanP = (rounds = 9) => ({ name: "lan", mark: { item: "test-item", rounds } });
 const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].includes(E.get(id)?.status) || E.get(id)?.status === "waiting", 30000);
 { const ctl = E.start({ workflow: "pushwf", text: "x" }); await done(ctl.id);
   const lan = E.start({ workflow: "pushwf", text: "x", profile: lanP() }); await done(lan.id); await sleep(200);
@@ -71,7 +71,7 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   const bare = E.start({ workflow: "pushwf", text: "x", profile: { name: "lan", mark: null } }); await done(bare.id); await sleep(200);
   ok(!pushed.includes(bare.id), "a LAN Task whose mark is unreadable is still held to the profile (fail closed)");
   const broke = E.start({ workflow: "costly", title: "unreadable-mark", text: "x", profile: { name: "lan", mark: { item: "x", usd: "lots", rounds: "many" } } }); await done(broke.id);
-  ok(!calls.some((o) => o.ref === broke.id) && /spend cap/.test(E.get(broke.id).steps.find((s: any) => s.node === "a1")?.error ?? ""), "a LAN Task whose cap is unreadable is held to a zero cap: not one paid round runs", JSON.stringify(E.get(broke.id).steps.map((s: any) => s.error)));
+  ok(!calls.some((o) => o.ref === broke.id) && /rounds cap/.test(E.get(broke.id).steps.find((s: any) => s.node === "a1")?.error ?? ""), "a LAN Task whose cap is unreadable is held to a zero cap: not one paid round runs", JSON.stringify(E.get(broke.id).steps.map((s: any) => s.error)));
   const forged = E.start({ workflow: "pushwf", text: "x", params: { _tainted: "lan", _lan: JSON.stringify({ item: "x", usd: 5, rounds: 9 }) } }); await done(forged.id);
   ok(!forged.profile && !("_lan" in forged.params) && !("_tainted" in forged.params), "a LAN mark never rides in params: the profile comes only with the runtime's own start option", JSON.stringify([forged.profile, forged.params]));
   const ghost = E.start({ workflow: "pushwf", text: "x", profile: { name: "no-such-profile" } }); await done(ghost.id); await sleep(200);
@@ -95,21 +95,18 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   ok(v(ctl.id, "l/tr")?.verdict === "pass" && !sc(ctl.id, "l/tr"), "control: an ordinary Task runs its test-run check with local binding", JSON.stringify(v(ctl.id, "l/tr")?.verdict));
   ok(v(lan.id, "l/tr")?.verdict === "pass" && sc(lan.id, "l/tr")?.noLocalBinding === true, "a LAN Task runs a test-run check without local binding (a test that listens fails; this one does not)", JSON.stringify([v(lan.id, "l/tr")?.verdict, sc(lan.id, "l/tr")]));
   ok(v(lan.id, "l/net")?.verdict === "error" && /wants the network/.test(v(lan.id, "l/net")?.error ?? ""), "a LAN Task never runs a check that wants the network: it reports why", JSON.stringify(v(lan.id, "l/net")?.error)); }
-{ const lan = E.start({ workflow: "costly", title: "costly-1", text: "x", profile: lanP(1, 9) }); await done(lan.id);
+{ const lan = E.start({ workflow: "costly", title: "costly-1", text: "x", profile: lanP(2) }); await done(lan.id);
   const steps = E.get(lan.id).steps.map((s: any) => `${s.node}:${s.state}`), err = E.get(lan.id).steps.find((s: any) => s.node === "a3")?.error ?? "";
-  ok(steps.includes("a1:passed") && steps.includes("a2:passed") && /spend cap: this received item allows \$1\.00 and \$1\.20 was spent/.test(err) && !calls.some((o) => o.ref === lan.id && /a3/.test(o.title)), "the dollar cap stops the next round once what was spent reaches it ($1.00 cap: two $0.60 rounds ran, the third never started)", JSON.stringify([steps, err]));
+  ok(steps.includes("a1:passed") && steps.includes("a2:passed") && /rounds cap: this received item allows 2 agent round/.test(err) && !calls.some((o) => o.ref === lan.id && /a3/.test(o.title)), "the rounds cap stops the next round once it is reached (2 rounds: the third never started)", JSON.stringify([steps, err]));
   const ctl = E.start({ workflow: "costly", title: "costly-2", text: "x" }); await done(ctl.id);
   ok(E.get(ctl.id).status === "succeeded", "control: without the LAN mark all three rounds run");
-  const unk = E.start({ workflow: "costly", title: "nocost-1", text: "x", profile: lanP(5, 9) }); await done(unk.id);
-  const e2 = E.get(unk.id).steps.find((s: any) => s.node === "a2")?.error ?? "";
-  ok(/reported no cost/.test(e2) && !calls.some((o) => o.ref === unk.id && /a2/.test(o.title)), "a round whose provider reports no cost makes the dollars unknown: the next paid round is refused", e2);
-  const ro = E.start({ workflow: "costly", title: "nocost-2", text: "x", profile: lanP(null, 9) }); await done(ro.id);
-  ok(E.get(ro.id).status === "succeeded", "with a rounds-only cap the taker chose, unknown costs do not stop it (the rounds cap still holds)");
+  const unk = E.start({ workflow: "costly", title: "nocost-1", text: "x", profile: lanP(9) }); await done(unk.id);
+  ok(E.get(unk.id).status === "succeeded", "a provider that reports no dollars stops nothing: there is no dollar cap (the rounds cap holds)");
   // concurrency: rounds are reserved before they are admitted
-  const cc = E.start({ workflow: "pushwf", title: "concurrent", text: "x", profile: lanP(5, 1) }); await done(cc.id); // no round ran yet: one may start
+  const cc = E.start({ workflow: "pushwf", title: "concurrent", text: "x", profile: lanP(1) }); await done(cc.id); // no round ran yet: one may start
   const x1p = E.deps.agents.run({ ref: cc.id, title: "fake-round", tools: [], sandbox: { writes: [] } }).then(() => "ran", (e: any) => String(e?.message ?? e)), x2p = E.deps.agents.run({ ref: cc.id, title: "fake-round", tools: [], sandbox: { writes: [] } }).then(() => "ran", (e: any) => String(e?.message ?? e));
   const [x1, x2] = await Promise.all([x1p, x2p]);
-  ok(!/spend cap/.test(x1) && /spend cap/.test(x2), "two rounds started at once on a 1-round cap: the first is admitted and reserved, the second is refused before it starts", `${x1} | ${x2}`); }
+  ok(!/rounds cap/.test(x1) && /rounds cap/.test(x2), "two rounds started at once on a 1-round cap: the first is admitted and reserved, the second is refused before it starts", `${x1} | ${x2}`); }
 // a Task from a peer is never repeated as a new Task (it would drop its marks) and never asks Firstmate
 { const lan = E.start({ workflow: "fails", text: "x", profile: lanP() }); await until(() => !!E.get(lan.id)?.failureCard, 15000);
   const card = E.get(lan.id).failureCard; let err = ""; try { await E.answer(card, { choice: "new-task", by: "captain" }); } catch (e: any) { err = e.message ?? String(e); }
@@ -120,7 +117,7 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   ok(ok2, "control: an ordinary Task's New task still works"); }
 // a round of a LAN Task started outside any of its steps (a code-queue rebuild, a review-room turn on its branch) is still
 // the profile's: no local binding (no listener), provider egress only
-{ const lan = E.start({ workflow: "pushwf", title: "rebuild", text: "x", profile: lanP(5, 9) }); await done(lan.id);
+{ const lan = E.start({ workflow: "pushwf", title: "rebuild", text: "x", profile: lanP(9) }); await done(lan.id);
   const keep = E.rawRound; let seen: any = "not run";
   E.rawRound = async (o: any) => { seen = { scope: sandboxScope.getStore() ?? null, allow: o.sandbox?.allow ?? null }; return { id: "J-probe", status: "done", cost: { usd: 0 } }; };
   try { await E.deps.agents.run({ ref: lan.id, title: "code queue rebuild", tools: [], sandbox: { writes: [], allow: ["example.test"] }, provider: { id: "codex", model: "m" } }); } catch (e: any) { seen = String(e?.message ?? e); }
@@ -141,7 +138,7 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   const lanRun = E.start({ workflow: "pushwf", title: "parent", text: "x", profile: lanP() }); await done(lanRun.id);
   const before = E.list().length, bare: any = startIn(lanRun.id, { workflow: "pushwf", text: "child" }), other: any = startIn(lanRun.id, { workflow: "pushwf", text: "child", params: { _tainted: "issue-text" } });
   ok(/^profile: /.test(bare.err ?? "") && /^profile: /.test(other.err ?? "") && E.list().length === before, "engine.start inside a LAN Task's step refuses an unprofiled child, and a child under another profile (nothing is made)", JSON.stringify([bare.err, other.err]));
-  const same: any = startIn(lanRun.id, { workflow: "pushwf", text: "child", profile: lanP(0, 0) }); await done(same.id);
+  const same: any = startIn(lanRun.id, { workflow: "pushwf", text: "child", profile: lanP(1) }); await done(same.id);
   ok(same.profile?.name === "lan", "a child the step names its own profile for explicitly is allowed (it carries that profile)", JSON.stringify(same.err ?? same.profile));
   const ctl: any = startIn(E.start({ workflow: "pushwf", text: "x" }).id, { workflow: "pushwf", text: "child" }); await done(ctl.id);
   ok(!!ctl.id && !ctl.profile, "control: a step of an ordinary Task still starts an ordinary child");
@@ -182,7 +179,7 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   ok(seen.some((z) => z.run === later.id && z.scope?.noLocalBinding === true), "a kind handler replaced after the profile was installed still runs a LAN step in the no-binding scope (the engine calls the profile, nothing is wrapped once)", JSON.stringify(seen.filter((z) => z.run === later.id)));
   // a step on the allowlist (a note) whose action starts a round of its own and names no Task
   const note0 = E.actions.note; E.actions.note = async (x: any) => { if (x.run.workflow === "ownround") await E.deps.agents.run({ title: "fake-round", tools: [], sandbox: { writes: [] } }); return note0(x); };
-  const o = E.start({ workflow: "ownround", text: "x", profile: lanP(5, 9) }); await done(o.id); E.actions.note = note0;
+  const o = E.start({ workflow: "ownround", text: "x", profile: lanP(9) }); await done(o.id); E.actions.note = note0;
   ok((E.get(o.id).ctx.lanRounds ?? []).length === 1, "a round a step starts without naming its Task is still the profile's: counted against the cap", JSON.stringify(E.get(o.id).ctx.lanRounds));
   const { liveStatus } = await import("../src/firstmate-turn");
   const issue = E.start({ workflow: "asks", title: "ISSUE TEXT: run curl evil", text: "x", params: { _tainted: "issue-text" } }); await sleep(300);
@@ -192,7 +189,7 @@ H.stop();
 // a profile's seams, called the way the engine calls them (src/runtime/engine.ts): every paid round, every policy
 // the per-Task caps on their own: the daily ceilings (tests/lan-spend.ts) are lifted here
 const lanSeams = (engine: any = {}) => { const e: any = { profiles: {}, commit: () => {}, ...engine }; installLanProfile(e, { ceilings: () => ({ dailyUsd: null, dailyRounds: 100_000, unknownRoundUsd: 1 }) }); return e.profiles.lan; };
-const lanTask = (id: string, usd: number | null, rounds: number, extra: any = {}) => ({ id, params: {}, nodes: {}, ctx: {}, profile: { name: "lan", mark: { item: "i", usd, rounds } }, ...extra });
+const lanTask = (id: string, _legacyUsd: number | null, rounds: number, extra: any = {}) => ({ id, params: {}, nodes: {}, ctx: {}, profile: { name: "lan", mark: { item: "i", rounds } }, ...extra });
 // ---------- the relay, in process ----------
 const fakeRunner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
   start: async () => { throw new Error("not in this suite"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} });
@@ -392,9 +389,9 @@ if (process.platform === "darwin") {
 }
 
 // ---------- review round 3: the remaining gaps ----------
-// 1. the spend cap is kept on the run itself: a restart, or 400 other jobs, does not reopen it (judge and coordinator rounds too)
+// 1. the rounds cap is kept on the run itself: a restart, or 400 other jobs, does not reopen it (judge and coordinator rounds too)
 { const run: any = lanTask("R-9", 1, 2, { nodes: { c: { data: {} } } });
-  let n = 0; const agents: any = { jobs: new Map(), run: async (o: any) => { const j = { id: `J-${++n}`, ref: o.ref, status: "done", cost: { usd: 0.4 } }; agents.jobs.set(j.id, j); return j; } };
+  let n = 0; const agents: any = { jobs: new Map(), run: async (o: any) => { const j = { id: `J-${++n}`, ref: o.ref, status: "done", cost: { usd: null, inTokens: 20, outTokens: 10 } }; agents.jobs.set(j.id, j); return j; } };
   const P = lanSeams();
   const judge = () => P.wrapRound(run, { ref: run.id, kind: "judge:x", sandbox: { writes: [] }, tools: [] }, agents.run);
   await judge(); await judge();
@@ -403,16 +400,16 @@ if (process.platform === "darwin") {
   agents.jobs.clear(); // a restart of Studio, or 400 other jobs evicting these two
   let after: any = null; try { await judge(); } catch (e) { after = e; }
   ok(!!after, "the 2-round cap still holds after the job map forgets the judge rounds already spent (they are kept on the run)", after ? "" : "a third paid round was admitted");
-  ok(Array.isArray(run.ctx.lanRounds) && run.ctx.lanRounds.length === 2 && run.ctx.lanRounds.every((x: any) => x.usd === 0.4), "every paid round of a peer's Task is recorded on the run, with its dollars", JSON.stringify(run.ctx.lanRounds)); }
+  ok(Array.isArray(run.ctx.lanRounds) && run.ctx.lanRounds.length === 2 && run.ctx.lanRounds.every((x: any) => x.tokens === 30 && !("usd" in x)), "every paid round of a peer's Task is recorded on the run, with its tokens (never dollars)", JSON.stringify(run.ctx.lanRounds)); }
 // 2. one assignment starts one Task, and revoking stops it
 { const starts: string[] = [], cancelled: string[] = [];
   const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
     start: async () => { await sleep(150); const id = `R-${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
-    status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
+    status: () => ({ state: "running", result: null, spent: { rounds: 0, tokens: 0, minutes: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
   const A = await mk("r3-a", runner()), B = await mk("r3-b", runner()); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
   await A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
-  await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3, usd: 1 });
+  await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3 });
   await until(() => A.view().items.some((i: any) => i.kind === "take"), 5000);
   await A.approve(A.view().items.find((i: any) => i.kind === "take").id);
   await until(() => B.view().items.some((i: any) => i.kind === "assign"), 5000);
@@ -426,11 +423,11 @@ if (process.platform === "darwin") {
 { const starts: string[] = [], cancelled: string[] = []; let gate: (() => void) | null = null;
   const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
     start: async () => { await new Promise<void>((r) => { gate = r; }); const id = `R-${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
-    status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
+    status: () => ({ state: "running", result: null, spent: { rounds: 0, tokens: 0, minutes: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
   const A = await mk("r3s-a", runner()), B = await mk("r3s-b", runner()); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
   await A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
-  await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3, usd: 1 });
+  await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3 });
   await until(() => A.view().items.some((i: any) => i.kind === "take"), 5000); await A.approve(A.view().items.find((i: any) => i.kind === "take").id);
   await until(() => B.view().items.some((i: any) => i.kind === "assign"), 5000);
   const pending = B.approve(B.view().items.find((i: any) => i.kind === "assign").id).catch((e) => e);
@@ -476,7 +473,7 @@ if (process.platform === "darwin") {
   await A.dispatch({ to: B.id.key, title: "t", briefing: "x" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
   let e1 = ""; try { await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), roundsOnly: true, rounds: 3, provider: "claude" }); } catch (e: any) { e1 = e.message; }
-  ok(!e1 && t.rounds[0].take?.cap.usd === null && t.rounds[0].take?.cap.rounds === 3, "a rounds-only cap may be chosen for Claude, a provider that reports its cost (no dollar cap, three rounds)", e1 || JSON.stringify(t.rounds[0].take?.cap));
+  ok(!e1 && JSON.stringify(t.rounds[0].take?.cap) === JSON.stringify({ rounds: 3 }), "the cap is rounds only, for any provider, Claude included (no dollar cap anywhere in the take)", e1 || JSON.stringify(t.rounds[0].take?.cap));
   A.close(); B.close(); }
 // 8. records are pruned: answered items and closed threads do not grow without end
 { const { Lan: L } = await import("../src/lan/relay");
@@ -516,22 +513,22 @@ if (process.platform === "darwin") {
   const P = lanSeams();
   let admitted = 0; for (let i = 0; i < 8; i++) { try { await P.wrapRound(run, { ref: run.id, kind: i % 2 ? "judge:x" : "agent", provider: i % 3 ? "claude" : { id: "codex" }, sandbox: { writes: [] }, tools: [] }, agents.run); admitted++; } catch {} }
   ok(admitted === 5 && run.ctx.lanRounds.length === 5, "under a rounds-only cap of 5, five paid rounds of any provider (Claude judges and nodes, Codex) are admitted and the rest refused; every one is counted", `${admitted} admitted, ${run.ctx.lanRounds?.length} recorded`); }
-// R4-5. a round still open when Studio stopped is never settled: after the restart its dollars are neither counted nor unknown
+// R4-5. a round still open when Studio stopped is never settled: after the restart it still counts toward the rounds cap
 { const { capRefusal } = await import("../src/lan/profile");
-  const run: any = { id: "R-42", params: {}, ctx: { lanRounds: [{ n: 1, at: new Date().toISOString(), job: null, usd: null, ended: false }] } };
-  const why = capRefusal({}, run, { item: "i", usd: 1, rounds: 5 });
-  ok(why !== null, "after a restart, a round admitted before it and never settled makes the dollars unknown (the $ cap cannot hold)", "admitted: the interrupted round's dollars count as $0"); }
+  const run: any = { id: "R-42", params: {}, ctx: { lanRounds: [{ n: 1, at: new Date().toISOString(), job: null, ended: false }] } };
+  const why = capRefusal({}, run, { item: "i", rounds: 1 });
+  ok(why !== null, "after a restart, a round admitted before it and never settled still counts toward the rounds cap", "admitted: the interrupted round was not counted"); }
 
 // R4-6. the dispatcher withdraws while the assigned Task is starting: the cancel skips "(starting)", and the check after the
 //       start looks only at revoke and freeze, so the withdrawn work runs on
 { const starts: string[] = [], cancelled: string[] = []; let gate: () => void = () => {}; const opened = new Promise<void>((res) => { gate = res; });
   const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
     start: async () => { await opened; const id = `R-W${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
-    status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
+    status: () => ({ state: "running", result: null, spent: { rounds: 0, tokens: 0, minutes: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
   const A = await mk("r4-a", runner()), B = await mk("r4-b", runner()); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
   const th = await A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
-  await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3, usd: 1 });
+  await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3 });
   await until(() => A.view().items.some((i: any) => i.kind === "take"), 5000);
   await A.approve(A.view().items.find((i: any) => i.kind === "take").id);
   await until(() => B.view().items.some((i: any) => i.kind === "assign"), 5000);
@@ -545,7 +542,7 @@ if (process.platform === "darwin") {
 //       the item that started it ("found after restart"), or is gone: the claim stays, and the round never starts again
 { const { Lan: L } = await import("../src/lan/relay");
   const dir = mkdtempSync(join(tmpdir(), "crew-lan-r4-start-")); let found: string | null = "R-77";
-  const none: any = { workflows: () => [], start: async () => { throw new Error(); }, status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error(); }, cancel: () => {}, findByItem: (i: string) => i === "item-claim-1" ? found : null };
+  const none: any = { workflows: () => [], start: async () => { throw new Error(); }, status: () => ({ state: "running", result: null, spent: { rounds: 0, tokens: 0, minutes: 0 }, stopped: null }), output: async () => { throw new Error(); }, cancel: () => {}, findByItem: (i: string) => i === "item-claim-1" ? found : null };
   const x = await L.open({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0 });
   const st: any = (x as any).st; const round = (id: string) => ({ n: 1, fence: "f", briefing: { hash: "h", size: 1, entry: "e" }, take: null, assign: null, result: null, run: { id: "(claimed)", state: "starting", result: null, started: new Date().toISOString(), stopped: null, item: id } });
   st.threads.push({ id: "t-start-1", owner: "o", peer: "p", title: "", acceptance: [], suggested: null, state: "open", steps: [], rounds: [round("item-claim-1")] },

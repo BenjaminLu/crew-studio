@@ -13,14 +13,16 @@
 //     that run the project's tests) run without the loopback bind and inbound rules, so a test that opens a listener fails;
 //     a check that wants the network does not run;
 //   - no round writes a protected path (src/lan/paths.ts: CI, hooks, agent and editor settings, runners' config);
-//   - the spend cap (agent rounds and dollars, counted on this Mac, reserved before a round is admitted; a round whose
-//     provider reports no cost makes the dollars unknown, which stops the next paid round unless the taker chose a
-//     rounds-only cap);
+//   - the cap is the subscription's quota, never dollars (local providers run on subscriptions): the Task's rounds,
+//     counted on this Mac and reserved before a round is admitted; every round at most 15 minutes and 60 tool calls;
+//     the Studio-wide daily ceilings over rounds, agent-minutes and tokens (src/lan/ledger.ts); a provider that reports
+//     its subscription limit stops the Task at once and pauses peer work on that provider until the captain resumes it;
 //   - its branch is named lan-untrusted/…; Firstmate never gets its questions, title or text; Studio's event log keeps no
 //     text of it.
 // The hand-back gate (src/lan/runner.ts) refuses an output that touched a protected path, a link, or holds a secret.
 import { localDay, SpendLedger } from "./ledger";
 import { ProfileRefusal } from "../runtime/engine";
+import { codeOf } from "../runtime/failures";
 import { sandboxScope } from "../runtime/checks";
 import { writeRefused } from "./paths";
 
@@ -33,14 +35,15 @@ export const LAN_MODES = new Set(["deliver", "spec", "plan", "plan-accept", "bui
  *  if one is reached anyway it is refused (the runtime check), never run. */
 export const LAN_UNREACHED = { hooks: new Set(["git.merge", "branch.adopt"]), modes: new Set(["design-review", "design-gap"]) };
 export const LAN_DENIED_TOOLS = new Set(["skill_run"]);
-export type LanMark = { item: string; usd: number | null; rounds: number };
+/** a peer's Task's mark: the received item and its rounds cap (a dollar figure an older mark names is ignored) */
+export type LanMark = { item: string; rounds: number };
 /** The LAN mark of a Task under the "lan" profile, or null. A LAN Task whose mark is not readable is held to a zero cap. */
 export const lanOf = (run: any): LanMark | null => {
   if (run?.profile?.name !== "lan") return null;
   const m = run.profile.mark;
-  try { const rounds = Number(m?.rounds), usd = m?.usd === null ? null : Number(m?.usd);
-    if (!Number.isSafeInteger(rounds) || rounds < 1 || (usd !== null && !(usd >= 0))) throw new Error("bad cap");
-    return { item: String(m.item), usd, rounds }; } catch { return { item: "?", usd: 0, rounds: 0 }; }
+  try { const rounds = Number(m?.rounds);
+    if (!Number.isSafeInteger(rounds) || rounds < 1) throw new Error("bad cap");
+    return { item: String(m.item), rounds }; } catch { return { item: "?", rounds: 0 }; }
 };
 export const peerTask = (run: any) => !!lanOf(run);
 
@@ -83,52 +86,70 @@ export function nodeNotRun(node: any, manifest?: (ref: string) => { test_run?: b
   return (node.checks ?? []).map((c: any) => String(c?.use ?? "")).filter((ref: string) => !!manifest?.(ref)?.network);
 }
 
-/** One paid round of a LAN-originated Task, kept on the run itself (run.ctx.lanRounds, saved with the run): recorded
- *  when the round is admitted, its dollars when it ends (null: the provider reported none, or it has not ended). */
-export type LanRound = { n: number; at: string; job: string | null; usd: number | null; ended: boolean; tokens?: number | null;
-  /** the local day it counts on, and the dollars reserved for it there while it ran (src/lan/ledger.ts) */
-  day?: string; reserved?: number };
-/** every paid round of a peer's Task, whatever its cap: at most 15 minutes, at most 60 tool calls; a round that reports
- *  more tokens than this ends the Task's paid rounds (a token count is known only when the round ends) */
+/** One round of a LAN-originated Task, kept on the run itself (run.ctx.lanRounds, saved with the run): recorded when
+ *  the round is admitted, what it used when it ends (tokens null: the provider reported none). */
+export type LanRound = { n: number; at: string; job: string | null; ended: boolean; tokens?: number | null; minutes?: number | null;
+  /** the local day it counts on, and what was reserved for it there while it ran (src/lan/ledger.ts) */
+  day?: string; reservedTokens?: number; reservedMinutes?: number };
+/** every round of a peer's Task, whatever its cap: at most 15 minutes and 60 tool calls; a round that reports more tokens
+ *  than this ends the Task's rounds (a token count is known only when the round ends) */
 export const LAN_ROUND = { timeoutMs: 15 * 60_000, maxTools: 60, tokens: 2_000_000 };
-/** the Studio-wide daily ceilings over every peer's Task (settings on the Peers page; on by default) */
-export type Ceilings = { dailyUsd: number | null; dailyRounds: number; unknownRoundUsd: number };
-export const DEFAULT_CEILINGS: Ceilings = { dailyUsd: 20, dailyRounds: 60, unknownRoundUsd: 1 };
-/** why the next paid round of any peer's Task would pass a daily ceiling, from the spend ledger (src/lan/ledger.ts: rounds
- *  admitted today, dollars reported, and running or unknown-cost rounds at their estimate), or null. A ledger that cannot
+/** the Studio-wide daily ceilings over every peer's Task (settings on the Peers page, kept in the spend ledger; on by
+ *  default): rounds, agent-minutes (rounds' wall clock) and tokens (in and out, as each CLI reports them); a round whose
+ *  provider reports no tokens counts at that provider and model's average here, else `unknownRoundTokens`. Null turns
+ *  the minute or token ceiling off. No dollars: local providers run on subscriptions. */
+export type Ceilings = { dailyRounds: number; dailyMinutes: number | null; dailyTokens: number | null; unknownRoundTokens: number };
+export const DEFAULT_CEILINGS: Ceilings = { dailyRounds: 60, dailyMinutes: 300, dailyTokens: 30_000_000, unknownRoundTokens: 300_000 };
+/** the minutes a running round is reserved at (its wall-clock ceiling) */
+const ROUND_MINUTES = LAN_ROUND.timeoutMs / 60_000;
+const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
+/** why the next round of any peer's Task would pass a daily ceiling, from the spend ledger (src/lan/ledger.ts: rounds
+ *  admitted today, agent-minutes and tokens used, running rounds at what they reserved), or null. A ledger that cannot
  *  be read is a refusal. */
 export function dailyRefusal(ledger: SpendLedger | null, c: Ceilings): string | null {
-  if (!ledger) return "daily ceiling: Studio has no record of what work from peers spent today; no paid round of a peer's Task runs without one";
-  let d; try { d = ledger.get(localDay()); } catch (e: any) { return `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}; no paid round of a peer's Task runs until it can be read`; }
+  if (!ledger) return "daily ceiling: Studio has no record of what work from peers used today; no round of a peer's Task runs without one";
+  let d; try { d = ledger.get(localDay()); } catch (e: any) { return `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}; no round of a peer's Task runs until it can be read`; }
   if (d.rounds >= c.dailyRounds) return `daily ceiling: work from peers ran ${d.rounds} paid round(s) on this Mac today, the ceiling is ${c.dailyRounds}; Studio stopped before the next one (Peers page: daily ceilings)`;
-  if (c.dailyUsd !== null && d.usd >= c.dailyUsd) return `daily ceiling: work from peers spent $${d.usd.toFixed(2)} today${d.unknown ? `, ${d.unknown} round(s) of it at the estimate (their provider reported no cost)` : ""}, the ceiling is $${c.dailyUsd.toFixed(2)}; Studio stopped before the next round (Peers page: daily ceilings)`;
+  if (c.dailyMinutes !== null && d.minutes >= c.dailyMinutes) return `daily ceiling: work from peers used ${Math.round(d.minutes)} agent-minutes on this Mac today (running rounds counted at 15), the ceiling is ${c.dailyMinutes}; Studio stopped before the next round (Peers page: daily ceilings)`;
+  if (c.dailyTokens !== null && d.tokens >= c.dailyTokens) return `daily ceiling: work from peers used ${fmt(d.tokens)} tokens on this Mac today${d.unknown ? `, ${d.unknown} round(s) of them at their provider's average (it reported none)` : ""}, the ceiling is ${fmt(c.dailyTokens)}; Studio stopped before the next round (Peers page: daily ceilings)`;
   return null;
 }
-const cost = (j: any) => { const u = j?.cost?.usd; return typeof u === "number" && Number.isFinite(u) ? u : null; };
-const tokensOf = (j: any) => { const a = Number(j?.cost?.inTokens ?? 0), b = Number(j?.cost?.outTokens ?? 0); return Number.isFinite(a + b) && a + b > 0 ? a + b : null; };
-/** What a LAN-originated Task has spent on this Mac: every paid round it was admitted to (agent turns, coordinators,
- *  judges), from its own record, which survives a restart; their dollars; whether any ended round's dollars are unknown. */
-export function spent(_engine: any, run: any): { usd: number; rounds: number; unknown: boolean } {
-  const rs: LanRound[] = Array.isArray(run?.ctx?.lanRounds) ? run.ctx.lanRounds : [];
-  // a round admitted by an earlier Studio process and never settled (it stopped mid-round): its dollars are unknown
-  return { usd: rs.reduce((a, r) => a + (r.usd ?? 0), 0), rounds: rs.length, unknown: rs.some((r) => r.usd === null && (r.ended || !live.has(r))) };
+/** why a provider takes no peer work now (its subscription limit paused it), or null; a ledger that cannot be read refuses */
+export function pausedRefusal(ledger: SpendLedger | null, provider: string | null): string | null {
+  if (!ledger || !provider) return null;
+  try { const p = ledger.paused().find((x) => x.provider === provider); return p ? `paused: ${provider} reported its subscription limit on a peer's round (${p.why.slice(0, 160)}, ${p.at}); peer work on ${provider} waits until you resume it on the Peers page` : null; }
+  catch (e: any) { return `paused: ${String(e?.message ?? e).slice(0, 300)}`; }
 }
-/** rounds this process admitted and has not settled yet */
-const live = new WeakSet<object>();
+const tokensOf = (j: any) => { const a = j?.cost?.inTokens, b = j?.cost?.outTokens; if (typeof a !== "number" && typeof b !== "number") return null; const n = Number(a ?? 0) + Number(b ?? 0); return Number.isFinite(n) && n >= 0 ? n : null; };
+/** a round that ended because its provider's subscription limit (quota or rate limit) was reached: the provider's own code
+ *  (Claude's quotaExhausted), or the words of its error (Codex and Cursor report these as a CLI error) */
+export function subscriptionLimit(j: any): string | null {
+  if (!j || j.status === "done") return null;
+  const text = String(j.error ?? ""), code = String(j.errorCode ?? "");
+  if (code === "quotaExhausted") return text || "the provider reported its usage limit";
+  const c = codeOf(text); return c === "env.quota" || c === "transient.rate-limit" ? text : null;
+}
+const providerOf = (opts: any): string | null => typeof opts?.provider === "string" ? opts.provider : opts?.provider?.id ? String(opts.provider.id) : null;
+/** What a LAN-originated Task has used on this Mac: every round it was admitted to (agent turns, coordinators, judges),
+ *  from its own record, which survives a restart; the tokens and agent-minutes they reported. */
+export function spent(_engine: any, run: any): { rounds: number; tokens: number; minutes: number } {
+  const rs: LanRound[] = Array.isArray(run?.ctx?.lanRounds) ? run.ctx.lanRounds : [];
+  return { rounds: rs.length, tokens: rs.reduce((a, r) => a + (r.tokens ?? 0), 0), minutes: Math.round(rs.reduce((a, r) => a + (r.minutes ?? 0), 0) * 10) / 10 };
+}
 const persist = (engine: any, run: any, why: string) => { try { engine.commit?.(run, why); } catch {} };
 export function capRefusal(engine: any, run: any, mark: LanMark): string | null {
   const s = spent(engine, run);
-  if (s.rounds >= mark.rounds) return `spend cap: this received item allows ${mark.rounds} agent round(s) and ${s.rounds} ran or are running; Studio stopped before the next one`;
+  if (s.rounds >= mark.rounds) return `rounds cap: this received item allows ${mark.rounds} agent round(s) and ${s.rounds} ran or are running; Studio stopped before the next one`;
   const big = (Array.isArray(run?.ctx?.lanRounds) ? run.ctx.lanRounds : []).find((r: LanRound) => (r.tokens ?? 0) > LAN_ROUND.tokens);
-  if (big) return `spend cap: round ${big.n} used ${big.tokens} tokens, over the per-round ceiling of ${LAN_ROUND.tokens}; Studio stopped before the next round`;
-  if (mark.usd !== null && s.unknown) return `spend cap: a round's provider reported no cost, so what this item spent is unknown and its $${mark.usd.toFixed(2)} cap cannot hold; Studio stopped before the next paid round (take it with a rounds-only cap to go on)`;
-  if (mark.usd !== null && s.usd >= mark.usd && (s.usd > 0 || mark.usd === 0)) return `spend cap: this received item allows $${mark.usd.toFixed(2)} and $${s.usd.toFixed(2)} was spent; Studio stopped before the next round`;
+  if (big) return `rounds cap: round ${big.n} used ${big.tokens} tokens, over the per-round ceiling of ${LAN_ROUND.tokens}; Studio stopped before the next round`;
   return null;
 }
 
 const NETWORK_LINE = "NETWORK: this Task came from a peer's Studio; only your provider's API is reachable, a test cannot open a listener, no skill script runs, and CI, hook and settings files cannot be written.";
 /** The "lan" profile, installed into the engine (it owns the seams; this only fills them). */
-export function installLanProfile(engine: any, o: { onStop?: (run: any, why: string) => void; ceilings?: () => Ceilings; ledger?: () => SpendLedger | null } = {}) {
+export function installLanProfile(engine: any, o: { onStop?: (run: any, why: string) => void; ceilings?: () => Ceilings; ledger?: () => SpendLedger | null;
+  /** a provider reported its subscription limit on a peer's round: it is paused in the ledger; this is told (to audit it) */
+  onLimit?: (run: any, provider: string, why: string) => void } = {}) {
   const stop = (r: any, why: string) => { o.onStop?.(r, why); return why; };
   // an engine without Studio's data folder (tests) keeps its ledger in memory
   let mem: SpendLedger | null = null; const ledger = () => o.ledger ? o.ledger() : (mem ??= new SpendLedger(":memory:"));
@@ -145,21 +166,34 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
     // scripts, no local binding; recorded on the Task itself before it starts, its dollars when it ends
     wrapRound: (r: any, opts: any, next: (o: any) => Promise<any>) => {
       const mark = lanOf(r)!;
-      const c = ceilings(), L = ledger();
-      const over = capRefusal(engine, r, mark) ?? dailyRefusal(L, c); // every paid round, whatever its provider, counts
+      const c = ceilings(), L = ledger(), provider = providerOf(opts);
+      const over = capRefusal(engine, r, mark) ?? pausedRefusal(L, provider) ?? dailyRefusal(L, c); // every round, whatever its provider, counts
       if (over) return Promise.reject(new ProfileRefusal(stop(r, over)));
       if (!opts.sandbox) return Promise.reject(new ProfileRefusal("a LAN-originated round runs only in the round sandbox"));
-      // the ledger counts it before it starts, its dollars reserved at the estimate for its provider and model
-      const pm = opts.provider?.id ? `${opts.provider.id}/${opts.provider.model ?? ""}` : null, day = localDay();
-      let reserved: number; try { reserved = L!.estimate(pm, c.unknownRoundUsd); L!.admit(day, reserved); } catch (e: any) { return Promise.reject(new ProfileRefusal(stop(r, `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}`))); }
-      const rounds: LanRound[] = (r.ctx ??= {}).lanRounds ??= [], me: LanRound = { n: rounds.length + 1, at: new Date().toISOString(), job: null, usd: null, ended: false, day, reserved };
-      rounds.push(me); live.add(me); persist(engine, r, "LAN round admitted");
-      const book = (usd: number | null) => { try { L!.settle(day, reserved, usd, usd === null ? null : pm); } catch {} }; // a ledger that fails here keeps the reservation
-      const settle = (j: any) => { me.job = j?.id ? String(j.id) : null; me.usd = cost(j); me.tokens = tokensOf(j); me.ended = true; book(me.usd); persist(engine, r, "LAN round counted"); return j; };
+      // the ledger counts it before it starts: its tokens reserved at its provider and model's average, its minutes at 15
+      const pm = provider ? `${provider}/${opts.provider?.model ?? ""}` : null, day = localDay();
+      let reservedTokens: number; try { reservedTokens = L!.estimate(pm, c.unknownRoundTokens); L!.admit(day, reservedTokens, ROUND_MINUTES); } catch (e: any) { return Promise.reject(new ProfileRefusal(stop(r, `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}`))); }
+      const rounds: LanRound[] = (r.ctx ??= {}).lanRounds ??= [], me: LanRound = { n: rounds.length + 1, at: new Date().toISOString(), job: null, ended: false, tokens: null, minutes: null, day, reservedTokens, reservedMinutes: ROUND_MINUTES };
+      rounds.push(me); persist(engine, r, "LAN round admitted");
+      const t0 = Date.now();
+      const book = (tokens: number | null) => { me.minutes = (Date.now() - t0) / 60_000; try { L!.settle(day, { tokens: reservedTokens, minutes: ROUND_MINUTES }, { tokens, minutes: me.minutes }, tokens === null ? null : pm); } catch {} }; // a ledger that fails here keeps the reservation
+      const settle = (j: any) => {
+        me.job = j?.id ? String(j.id) : null; me.tokens = tokensOf(j); me.ended = true; book(me.tokens); persist(engine, r, "LAN round counted");
+        // the subscription limit: the Task stops at once (no retry, no queue), and peer work on this provider pauses
+        const limit = subscriptionLimit(j);
+        if (limit && provider) {
+          try { L!.pause(provider, limit, r.id); } catch {}
+          try { o.onLimit?.(r, provider, limit); } catch {}
+          const why = stop(r, `subscription limit: ${provider} reported it on this round (${limit.slice(0, 200)}); the Task stops, and peer work on ${provider} is paused until you resume it on the Peers page`);
+          queueMicrotask(() => { try { engine.cancel?.(r.id, "studio", why); } catch {} });
+          throw new ProfileRefusal(why);
+        }
+        return j;
+      };
       // the per-round ceilings: wall clock and tool calls, whatever the mode asked for
       const timeoutMs = Math.min(Number(opts.timeoutMs) || LAN_ROUND.timeoutMs, LAN_ROUND.timeoutMs), maxTools = Math.min(Number(opts.maxTools) || LAN_ROUND.maxTools, LAN_ROUND.maxTools);
       return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => next({ ...opts, timeoutMs, maxTools, tools: (opts.tools ?? []).filter((t: any) => !LAN_DENIED_TOOLS.has(t.name)), sandbox: { ...opts.sandbox, allow: [] } })))
-        .then(settle, (e: any) => { me.ended = true; book(null); persist(engine, r, "LAN round ended"); throw e; });
+        .then(settle, (e: any) => { if (!me.ended) { me.ended = true; book(null); persist(engine, r, "LAN round ended"); } throw e; });
     },
     // every tool: no write to a protected path, and it runs without local binding
     wrapTool: (_r: any, t: any) => {

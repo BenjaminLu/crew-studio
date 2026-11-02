@@ -856,7 +856,7 @@ export function createRuntime(d: RuntimeDeps) {
    * and no coffee-kit crew; an own workflow's staffing is confirmed with the take (staffingConfirm, its plan's hash).
    */
   const lanStaffing = (def: any) => { if (!ownWorkflow(def)) return null; const s = ownStaffingPlan(def, defs.ownCrew); return s.plan.length ? { hash: s.hash, plan: s.plan, missing: s.missing } : null; };
-  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; usd: number | null; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => {
+  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => {
     const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
     const def = defs.get(o.workflow);
     if (!def || !defs.selectable(o.workflow) || defs.held(o.workflow)) throw refuse("workflow_unavailable", "This workflow is not available for a new Task");

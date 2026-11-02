@@ -529,7 +529,8 @@ const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) =
 // what work from peers spent per local day (src/lan/ledger.ts): its own store, open whatever the relay does
 const lanLedger = openSpendLedger(DATA);
 if (lanLedger.broken) console.warn(`crew-studio: ${lanLedger.broken}: no paid round of a peer's Task runs until it can be read`);
-installLanProfile(runtime.engine, { ledger: () => lanLedger }); // the captain's ceilings are read from the ledger, relay open or not
+// the captain's ceilings are read from the ledger, relay open or not; a provider's subscription limit is audited by the relay
+installLanProfile(runtime.engine, { ledger: () => lanLedger, onLimit: (r, provider, why) => { try { lan?.noteLimit(r.id, provider, why); } catch {} } });
 // the taint list (commits applied from a peer's work) is open from here on, whatever the relay does: CREW_LAN=0, an identity
 // lost, a relay that does not open. A list that cannot be read refuses every trusted start and publish (src/lan/taint.ts)
 const lanTaint = openTaintList(DATA);
@@ -541,7 +542,8 @@ if (process.env.CREW_LAN !== "0") { lanOpening = true; void (async () => {
   try {
     lan = await Lan.open({ dataDir: DATA, send, taint: lanTaint, spend: lanLedger,
       repos: () => { try { return (runtime.projects.list() as any[]).filter((p) => p?.path && p.enabled !== false).map((p) => String(p.path)); } catch { return []; } }, dailyRefusal: (c) => lanDailyRefusal(lanLedger, c),
-      estimates: () => { const out: Record<string, number> = {}; for (const id of choices.filter((x) => x !== "stub")) { try { const v = lanLedger.estimate(id, NaN); if (Number.isFinite(v)) out[id] = v; } catch {} } return out; }, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
+      // the tokens a round of each provider uses here, on average (for the providers with a record)
+      estimates: () => { const out: Record<string, number> = {}; for (const id of choices.filter((x) => x !== "stub")) { try { const v = lanLedger.estimate(id, NaN); if (Number.isFinite(v)) out[id] = Math.round(v); } catch {} } return out; }, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
       runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), needsProject: (def) => runtime.lanNeedsProject(def) }),
       apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
       baseOf: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? lanBaseOf(p.path, p.base || "main") : null; },

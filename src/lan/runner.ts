@@ -36,7 +36,7 @@ export type RunnerDeps = {
   /** the artifact store the deliver steps version their output in (m3.store) */
   artifacts: { version(id: string, n: number): any; filesDir(id: string, n: number): string } | null;
   /** start a Task through the runtime's own start path; throws a refusal */
-  start: (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; usd: number | null; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => Promise<any>;
+  start: (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => Promise<any>;
   /** an own workflow's staffing plan (its hash is confirmed with the take), or null */
   staffing?: (def: any) => { hash: string; plan: unknown[]; missing: unknown[] } | null;
   /** whether a workflow needs a registered project (a code workflow) */
@@ -81,7 +81,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       if (why.length) throw Object.assign(new Error(why.join("; ")), { code: "profile" });
       // the profile is the runtime's own start option, never a param (src/runtime/engine.ts start)
       const params: Record<string, string> = {}; if (o.provider) params.provider = o.provider;
-      const run = await d.start({ workflow: o.workflow, text: o.text, title: o.title, params, profile: { name: "lan", mark: { item: o.item, usd: o.cap.usd, rounds: o.cap.rounds } }, by: o.by, staffingConfirm: o.staffingConfirm ?? null, project: o.project ?? null, base: o.base ?? null });
+      const run = await d.start({ workflow: o.workflow, text: o.text, title: o.title, params, profile: { name: "lan", mark: { item: o.item, rounds: o.cap.rounds } }, by: o.by, staffingConfirm: o.staffingConfirm ?? null, project: o.project ?? null, base: o.base ?? null });
       return { run: run.id, workflow: ref(run.def) };
     },
     status(id) {
@@ -89,7 +89,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       // a step the profile refused carries code "profile" (the engine sets it from the refusal, never from its message)
       const stopped = r.steps?.filter((s: any) => s.state === "error" && s.code === "profile").map((s: any) => String(s.error)).at(-1) ?? null;
       const s = spent(d.engine, r);
-      return { state: r.status, result: r.result ?? null, spent: { usd: s.usd, rounds: s.rounds }, stopped, ready: r.status === "succeeded" || !!r.ctx?.taintedReady };
+      return { state: r.status, result: r.result ?? null, spent: { rounds: s.rounds, tokens: s.tokens, minutes: s.minutes }, stopped, ready: r.status === "succeeded" || !!r.ctx?.taintedReady };
     },
     async output(id) {
       const r = d.engine.get(id); if (!r) throw new Error("no such Task");

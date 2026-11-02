@@ -34,7 +34,9 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     }
     if (req.method !== "POST") return json({ error: "POST" }, 405);
     if (p === "/api/lan/settings") { if (typeof b.name === "string") lan.rename(b.name); if (typeof b.enabled === "boolean") lan.setEnabled(b.enabled);
-      if (b.ceilings && typeof b.ceilings === "object") lan.setCeilings({ dailyUsd: b.ceilings.dailyUsd, dailyRounds: b.ceilings.dailyRounds, unknownRoundUsd: b.ceilings.unknownRoundUsd }); return json(lan.view()); }
+      if (b.ceilings && typeof b.ceilings === "object") lan.setCeilings({ dailyRounds: b.ceilings.dailyRounds, dailyMinutes: b.ceilings.dailyMinutes, dailyTokens: b.ceilings.dailyTokens, unknownRoundTokens: b.ceilings.unknownRoundTokens, dailyUsd: b.ceilings.dailyUsd, unknownRoundUsd: b.ceilings.unknownRoundUsd }); return json(lan.view()); }
+    // a provider its subscription limit paused: the captain resumes peer work on it (audited)
+    if (p === "/api/lan/providers/resume") return json(lan.resumeProvider(b.provider));
     if (p === "/api/lan/intro/open") return json(lan.openIntro(Number(b.minutes) || 5));
     if (p === "/api/lan/intro/close") return json(lan.closeIntro());
     if (p === "/api/lan/intro/start") return json(await lan.startIntro(String(b.host ?? ""), Number(b.port)));
@@ -55,7 +57,7 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
       if (x[2] === "resolve") { if (b.action !== "revoke" && b.action !== "unfreeze") return json({ error: "action is revoke or unfreeze" }, 400); return json(lan.resolveFork(k, b.action)); }
       return json(lan.removePeer(k, x[2] as "unpair" | "revoke")); }
     x = m(`items/(${ID})/(approve|reject)`);
-    if (x) return json(x[2] === "approve" ? await lan.approve(x[1], { workflow: b.workflow ? String(b.workflow) : undefined, usd: b.usd === undefined ? undefined : Number(b.usd), rounds: b.rounds === undefined ? undefined : Number(b.rounds), provider: b.provider ? String(b.provider) : null, staffingConfirm: b.staffingConfirm ? String(b.staffingConfirm) : null, project: b.project ? String(b.project) : null, seen: b.seen ? String(b.seen) : null, roundsOnly: b.roundsOnly === true, autoStart: b.autoStart === true }) : lan.reject(x[1], b.note));
+    if (x) return json(x[2] === "approve" ? await lan.approve(x[1], { workflow: b.workflow ? String(b.workflow) : undefined, rounds: b.rounds === undefined ? undefined : Number(b.rounds), provider: b.provider ? String(b.provider) : null, staffingConfirm: b.staffingConfirm ? String(b.staffingConfirm) : null, project: b.project ? String(b.project) : null, seen: b.seen ? String(b.seen) : null, roundsOnly: b.roundsOnly === true, autoStart: b.autoStart === true }) : lan.reject(x[1], b.note));
     x = m(`threads/(${ID})/apply`); if (x) return json(lan.applyResult(x[1], { project: b.project, round: b.round, seen: b.seen }));
     x = m(`threads/(${ID})/stop`); if (x) return json(lan.stopRun(x[1]));
     x = m(`threads/(${ID})/(handback/preview|handback|refine|done|withdraw)`);
