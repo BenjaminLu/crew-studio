@@ -184,7 +184,7 @@ function track(t) {
   const steps = t.steps.map((s) => h("li", {},
     h("button", { class: `lan-step${s.refused ? " bad" : ""}`, "data-lan-step": s.kind, onclick: () => inspect(s.entry) },
       h("span", { class: "vbadge", "data-kind": s.kind }, `r${s.round} ${kindName(s.kind)}`), who(s.who), when(s.at),
-      s.refused ? h("span", { class: "badge bad", title: s.refused }, T("refused", "被拒")) : s.who.me && s.delivered === false ? h("span", { class: "badge" }, T("not delivered yet", "尚未送達")) : null)));
+      s.refused ? h("span", { class: "badge bad", title: s.refused }, T("refused", "被拒")) : s.waiting ? h("span", { class: "badge", "data-lan-waiting": s.entry, title: s.waiting }, T(`waiting: ${s.waiting}`, `等待中：${s.waiting}`)) : s.who.me && s.delivered === false ? h("span", { class: "badge" }, T("not delivered yet", "尚未送達")) : null)));
   // the run between an assignment and its result: the taker's own Task (on the taker's board), or the run its result names
   const out = [];
   t.steps.forEach((s, n) => { out.push(steps[n]); const r = t.rounds.find((x) => x.n === s.round);
@@ -205,7 +205,8 @@ function threadCard(t) {
         h("div", { class: "kv" }, T("Who holds it", "誰拿著"), t.now.holder ? who(t.now.holder) : h("b", {}, "—")),
         h("div", { class: "kv" }, T("What's next", "下一步"), h("b", {}, T(t.now.next.en, t.now.next.zh)))),
       track(t),
-      run ? h("p", { class: "faint" }, T("Task ", "Task "), h("a", { class: "mono", href: `#/run/${encodeURIComponent(run.id)}` }, run.id), ` · ${run.state}${run.stopped ? ` · ${run.stopped}` : ""}`) : null,
+      run && run.state === "gone" ? h("p", { class: "lan-warn", "data-lan-gone": t.id }, icon("alert", "ic sm"), T("This round's Task is gone (Studio stopped while it started, or the Task was removed). It is never started again from this round: the dispatcher refines, and you take the new round.", "這一輪的 Task 不見了（Studio 在開工時停止，或 Task 被移除）。這一輪不會再開工：請派工者再調整一輪，你再接。")) :
+      run ? h("p", { class: "faint" }, T("Task ", "Task "), h("a", { class: "mono", href: `#/run/${encodeURIComponent(run.id)}` }, run.id), ` · ${run.state}${run.stopped ? ` · ${run.stopped}` : ""}`, run.found ? h("span", { class: "badge", "data-lan-found": t.id }, T("found after restart", "重新啟動後找回")) : null) : null,
       // the taker: preview the exact bytes, then 交回
       mine && run?.state === "succeeded" && !r.result ? h("div", { class: "lan-handback", "data-lan-handback": t.id },
         h("button", { class: "btn", "data-lan-preview": t.id, onclick: () => act(T("Preview", "預覽"), async () => { LN.preview[t.id] = await postJ(`/api/lan/threads/${t.id}/handback/preview`, { edits: LN.edits[t.id] }); }) }, T("Preview what goes back", "預覽要交回的內容")),

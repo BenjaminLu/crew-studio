@@ -36,8 +36,6 @@ export type WireDeps = {
   /** an introduction got this side's nonce and did not reveal a matching one (a wrong reveal, an abort, a timeout): it
    *  could have been an attempt to match a short code; the captain sees it, and three close the window */
   introFailed?: (ip: string, why: string) => void;
-  /** the KK replay cache, kept across restarts (ephemeral key → when it was seen) */
-  replay?: { load(): Record<string, number>; save(m: Record<string, number>): void };
   /** a refusal, for the Studio log and the tests (never the payload) */
   refused?: (why: string, ip: string) => void;
 };
@@ -53,7 +51,9 @@ export class LanWire {
   private xx = new Map<string, { hs: Handshake; at: number; ip: string; stage: 2 | 3; tx?: { send: CipherState; recv: CipherState }; commit?: Buffer; nonce?: Buffer; claimed?: string; port?: number }>();
   private rate = new Map<string, { at: number; n: number }>();
   host = ""; port = 0;
-  constructor(private readonly d: WireDeps) { try { for (const [k, v] of Object.entries(d.replay?.load() ?? {})) if (Date.now() - Number(v) < REPLAY_MS) this.seenE.set(k, Number(v)); } catch {} }
+  /** The KK replay cache is memory only: every operation is idempotent (a pushed entry keeps its verdict, a replayed one
+   *  below its author's low-water mark is never applied again), so a replay after a restart changes nothing. */
+  constructor(private readonly d: WireDeps) {}
   get listening() { return !!this.server; }
   start(bind: string, port: number) {
     if (this.server) return;
@@ -122,7 +122,7 @@ export class LanWire {
     const e = b64u(hs.re!), now = Date.now();
     for (const [k, at] of this.seenE) if (now - at > REPLAY_MS) this.seenE.delete(k);
     if (this.seenE.has(e)) return this.refuse("replayed message", ip);
-    this.seenE.set(e, now); try { this.d.replay?.save(Object.fromEntries(this.seenE)); } catch {}
+    if (this.seenE.size >= 100_000) this.seenE.delete(this.seenE.keys().next().value!); this.seenE.set(e, now);
     const ts = Date.parse(String(req?.ts));
     if (!req || req.v !== 1 || typeof req.op !== "string" || !Number.isFinite(ts) || Math.abs(ts - now) > SKEW_MS) return this.refuse("stale or malformed request", ip);
     let reply: unknown; try { reply = { ok: true, body: await this.d.request(from, req.op, req.body, ip) }; } catch (x: any) { reply = { ok: false, error: String(x?.message ?? x).slice(0, 300) }; }

@@ -7,6 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // provider, a .github edit at hand-back, a secret in a result, a phone approving, and the spend cap.    bun tests/lan-relay.ts
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { b64u, generateKeyPair, keyPairOf, randomBytes, unb64u, type KeyPair } from "../src/lan/crypto";
 import { makeEnvelope, sealBlob, type Body } from "../src/lan/protocol";
 import { call, introduce as introduceRaw } from "../src/lan/wire";
@@ -41,11 +42,12 @@ try {
   ok(/NETWORK: this Task came from a peer's Studio; only your provider's API is reachable/.test(prompt), "the agent's brief states the LAN profile's network");
   const runJson = JSON.parse(readFileSync(join(p.B.data, "runs", r.runs[0], "run.json"), "utf8"));
   ok(runJson.params?._tainted === "lan" && JSON.parse(runJson.params?._lan ?? "{}").rounds === 6, "the Task carries Studio's LAN marks (_tainted: sandbox only, local only; _lan: its spend cap)");
-  // encrypted at rest and on the wire: no entry or blob file holds the briefing's text
-  const files = (d: string) => readdirSync(d).map((f) => readFileSync(join(d, f), "utf8")).join("\n");
-  ok(!/上線清單|資安/.test(files(join(p.B.data, "lan", "entries")) + files(join(p.B.data, "lan", "blobs")) + files(join(p.A.data, "lan", "entries")) + files(join(p.A.data, "lan", "blobs"))), "entries and blobs are stored sealed: no file holds the briefing or the result in clear text");
-  const auditA = readFileSync(join(p.A.data, "lan", "audit.jsonl"), "utf8"), auditB = readFileSync(join(p.B.data, "lan", "audit.jsonl"), "utf8");
-  ok(/"what":"dispatch"/.test(auditA) && /"what":"run"/.test(auditB) && /"what":"handback"/.test(auditB), "each Studio's audit log names what started a run and what was sent");
+  // encrypted at rest and on the wire: no byte of either relay store (the database and its write-ahead log) holds the text
+  const dbBytes = (data: string) => ["relay.db", "relay.db-wal"].map((f) => { try { return readFileSync(join(data, "lan", f)).toString("utf8"); } catch { return ""; } }).join("\n");
+  ok(!/帳號、權限、第一週|密碼管理員/.test(dbBytes(p.B.data) + dbBytes(p.A.data)), "entries and blobs are stored sealed: no byte of either store holds the briefing or the result in clear text");
+  const auditA = await must(p.A.api("/api/lan/audit"), "A's audit"), auditB = await must(p.B.api("/api/lan/audit"), "B's audit"), whats = (x: any) => x.rows.map((r: any) => r.what);
+  ok(whats(auditA).includes("dispatch") && whats(auditA).includes("introduce") && whats(auditB).includes("take") && whats(auditB).includes("run") && whats(auditB).includes("handback") && auditA.broken === null && auditB.broken === null,
+    "each Studio's audit names the introduction, the dispatch, the take, what started a run and what was sent, and its hash chain holds", JSON.stringify([whats(auditA), whats(auditB), auditA.broken, auditB.broken]));
 
   // ---------- a code workflow, end to end: B's code-firstmate in its worktree, a patch back, A applies it ----------
   { const c = await codeRelay(p, (l) => lines.push(l));
@@ -120,7 +122,8 @@ try {
     ok(res.accepted?.length === 1 && it.flags.includes("workflow-mismatch"), "a result whose workflow hash differs from its take's is taken in but flagged (workflow-mismatch)", JSON.stringify([res, it.flags]));
     const rv = makeEnvelope(kB, 700_102, entryHash(res0), [p.keyA], { kind: "revoke", thread: t.id, round: 1, target: entryHash(res0), reason: "withdrawn" } as Body);
     const rr = await call(kB, peerA(), "push", { entries: [rv], blobs: [] });
-    ok(rr.accepted?.length === 1 && !existsSync(join(p.A.data, "lan", "blobs", `${blob.hash}.json`)), "revoking a result deletes its content on the dispatcher's side", JSON.stringify(rr)); }
+    const kept = (() => { const db = new Database(join(p.A.data, "lan", "relay.db"), { readonly: true }); try { return !!db.query("SELECT 1 FROM blobs WHERE hash = ?").get(blob.hash); } finally { db.close(); } })();
+    ok(rr.accepted?.length === 1 && !kept, "revoking a result nothing used deletes its content on the dispatcher's side", JSON.stringify(rr)); }
 
   // ---------- push: a workflow whose steps push, merge or write a remote cannot take the work; code-firstmate can (local only) ----------
   { const wf = (await must(p.B.api("/api/lan/workflows"), "wf")).workflows; const code = wf.find((w: any) => w.id === "code-firstmate"), remote = wf.find((w: any) => w.id === "file-organization");
@@ -206,7 +209,8 @@ try {
     ok(it.state === "frozen" && res.status === 409, "the frozen author's items cannot be approved", `${it.state} ${res.status}`);
     const t = await p.A.api("/api/lan/dispatch", { to: p.keyB, title: "凍結中", briefing: "x", workflow: "documents" }); await p.A.api("/api/lan/sync", {});
     const refused = (await view(p.B)).refused.some((x: any) => /frozen/.test(x.reason)); const thA = await must(p.A.api(`/api/lan/threads/${t.body.id}`), "A thread");
-    ok(refused && thA.steps[0].refused && /frozen/.test(thA.steps[0].refused), "new entries from the frozen author are refused, and the author sees why", JSON.stringify(thA.steps[0]));
+    const waits = (await view(p.A)).outbox.some((x: any) => x.entry === thA.steps[0].entry && /frozen/.test(x.error ?? ""));
+    ok(refused && /frozen/.test(thA.steps[0].waiting ?? "") && !thA.steps[0].refused && waits, "new entries from the frozen author are refused for now: the author's entry waits in its outbox with the reason (it is sent again once a person resolves the freeze)", JSON.stringify(thA.steps[0]));
     await must(p.B.api(`/api/lan/peers/${p.keyA}/resolve`, { action: "unfreeze" }), "unfreeze");
     ok(!(await view(p.B)).peers.find((x: any) => x.key === p.keyA).frozen, "a person can unfreeze the author after checking in person"); }
 } catch (e: any) { ok(false, `the suite ran to its end: ${e?.message ?? e}`); console.log(p.B.output().slice(-3000)); }

@@ -3,7 +3,7 @@
 // Nothing here starts, accepts or publishes by itself: every received item waits for a person on the desktop, a run
 // starts only when the taker approves the dispatcher's assignment, and a result leaves only when the taker presses
 // 交回 after reading the exact bytes and passing the secret scan and the protected-path gate.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { b64u, canonical, fingerprint, randomBytes, sha256hex, unb64u } from "./crypto";
@@ -11,25 +11,31 @@ import { loadIdentity, type Identity } from "./identity";
 import { LIMITS, cleanName, cleanText, entryHash, envelopeProblem, makeEnvelope, openBlob, readBody, sealBlob, verifyEnvelope, INVISIBLE, type Blob, type Body, type Envelope, type WorkflowRef } from "./protocol";
 import { LanWire, call, introduce, peerTargetProblem, type IntroResult } from "./wire";
 import { scanText, type Hit } from "./scan";
+import { Store } from "./store";
 import { lanIp } from "../remote/lan";
 
 export type PeerRec = { key: string; fp: string; petname: string; claimed: string; host: string; port: number; introducedAt: string; state: "trusted" | "revoked" | "unpaired"; frozen: null | { at: string; seq: number; entries: [string, string]; why: string }; lastContact: string | null };
 export type IntroRec = { id: string; key: string; fp: string; sas: string; claimed: string; host: string; port: number; role: "initiator" | "responder"; at: string; expires: number };
 export type ItemRec = { id: string; entry: string; kind: Body["kind"]; from: string; thread: string; round: number; at: string; state: "open" | "approved" | "rejected" | "withdrawn" | "frozen"; flags: string[]; note: string | null };
 export type RoundRec = { n: number; fence: string; briefing: { hash: string; size: number; entry: string }; take: null | { entry: string; by: string; workflow: WorkflowRef; cap: { usd: number | null; rounds: number }; provider: string | null; staffing: string | null; project: string | null };
-  assign: null | { entry: string; take: string; taker: string }; run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null };
+  assign: null | { entry: string; take: string; taker: string };
+  /** the run this round started. Its claim (`claimed`, the assignment item) is written, synced, before the Task starts; a
+   *  restart finds the Task by that item (`found`), or marks it gone: a claim is never released by a restart */
+  run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean };
   result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean } };
-export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null };
+export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null; waiting?: string | null };
 export type ThreadRec = { id: string; owner: string; peer: string; title: string; acceptance: string[]; suggested: WorkflowRef | null; rounds: RoundRec[]; state: "open" | "done" | "withdrawn"; steps: Step[] };
-type Outbox = { to: string; entry: string; blobs: string[]; tries: number; last: string | null; error: string | null };
-type State = { v: 1; settings: { enabled: boolean; name: string }; seq: number; head: string | null; peers: PeerRec[]; intros: IntroRec[]; introUntil: number | null; threads: ThreadRec[]; items: ItemRec[];
-  authors: Record<string, Record<string, string>>; verdicts: Record<string, string>; replay: Record<string, number>; introFailures: { at: string; ip: string; why: string }[]; introOpenedAt?: number; outbox: Outbox[]; refused: { at: string; from: string; reason: string; entry: string | null }[]; daily: Record<string, { day: string; n: number }> };
+type Outbox = { to: string; entry: string; blobs: string[]; tries: number; last: string | null; error: string | null; next?: number; retry?: boolean };
+type State = { v: 2; settings: { enabled: boolean; name: string }; seq: number; head: string | null; peers: PeerRec[]; intros: IntroRec[]; introUntil: number | null; threads: ThreadRec[]; items: ItemRec[];
+  introFailures: { at: string; ip: string; why: string }[]; introOpenedAt?: number; outbox: Outbox[]; refused: { at: string; from: string; reason: string; entry: string | null }[]; daily: Record<string, { day: string; n: number }> };
 
 /** What a Task that runs work from a peer needs from Studio (src/lan/runner.ts implements it over the runtime). */
 export type LanRunner = {
   workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
   start(o: { workflow: string; text: string; title: string; item: string; cap: { usd: number | null; rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
   status(run: string): { state: string; result: string | null; spent: { usd: number; rounds: number }; stopped: string | null; ready?: boolean } | null;
+  /** the Task a received assignment started (by the item id in its LAN mark), after a restart: its id, or null */
+  findByItem?(item: string): string | null;
   output(run: string): Promise<{ files: { path: string; text: string | null; bytes: number }[]; changed: string[]; protectedHits: string[]; checks: { pass: number; fail: number; other: number; summary: string }; workflow: WorkflowRef; kind?: "files" | "patch" }>;
   cancel(run: string, why: string): void;
 };
@@ -46,50 +52,68 @@ const newFence = () => randomBytes(6).toString("hex");
 const short = (k: string) => fingerprint(unb64u(k, 65)).split(" ").slice(0, 2).join(" ");
 
 export class Lan {
-  readonly dir: string; readonly id: Identity; private st: State; readonly wire: LanWire;
+  readonly dir: string; readonly id: Identity; private st: State; readonly wire: LanWire; readonly store: Store;
   private timers: any[] = [];
   constructor(private readonly o: LanOpts) {
-    this.dir = join(o.dataDir, "lan"); for (const d of ["entries", "blobs"]) mkdirSync(join(this.dir, d), { recursive: true, mode: 0o700 });
+    this.dir = join(o.dataDir, "lan"); mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     this.id = loadIdentity(o.dataDir);
+    this.store = new Store(join(this.dir, "relay.db"));
     this.st = this.load();
     this.wire = new LanWire({ me: () => this.id, allowlist: () => this.st.peers.filter((p) => p.state === "trusted").map((p) => p.key), introOpen: () => !!this.st.introUntil && Date.now() < this.st.introUntil,
       self: () => ({ name: this.st.settings.name, port: this.wire.port }), request: (from, op, body, ip) => this.request(from, op, body, ip),
       introduced: (r) => this.addIntro(r, "responder"), introFailed: (ip, why) => this.introFailure(ip, why),
-      replay: { load: () => this.st.replay ?? {}, save: (m) => { this.st.replay = m; this.save(); } },
       refused: (why, ip) => this.o.log?.(`LAN listener refused a request from ${ip || "?"}: ${why.replace(/[^\x20-\x7e]/g, "?").slice(0, 120)}`) });
     if (this.st.settings.enabled) { try { this.listen(); } catch (e: any) { this.o.log?.(`LAN listener did not start: ${e?.message ?? e}`); } }
     this.timers.push(setInterval(() => { void this.flush(); }, 5000), setInterval(() => this.watchRuns(), 1500));
     for (const t of this.timers) t.unref?.();
   }
-  close() { for (const t of this.timers) clearInterval(t); this.wire.stop(); this.o.discovery?.stop(); this.flushState(); }
+  private closed = false;
+  close() { if (this.closed) return; for (const t of this.timers) clearInterval(t); this.wire.stop(); this.o.discovery?.stop(); try { this.flushState(); } finally { this.closed = true; this.store.close(); } }
 
   // ---------- storage ----------
   private load(): State {
-    const f = join(this.dir, "state.json");
-    const fresh: State = { v: 1, settings: { enabled: false, name: cleanName(hostname().replace(/\.local$/, "")) || "Studio" }, seq: 0, head: null, peers: [], intros: [], introUntil: null, threads: [], items: [], authors: {}, verdicts: {}, replay: {}, introFailures: [], outbox: [], refused: [], daily: {} };
-    let st: State; try { st = { ...fresh, ...JSON.parse(readFileSync(f, "utf8")) }; } catch { return fresh; }
-    for (const t of st.threads ?? []) for (const r of t.rounds ?? []) if (r.run?.id === "(starting)") r.run = null; // a crash mid-start: the take may be approved again
+    const fresh: State = { v: 2, settings: { enabled: false, name: cleanName(hostname().replace(/\.local$/, "")) || "Studio" }, seq: 0, head: null, peers: [], intros: [], introUntil: null, threads: [], items: [], introFailures: [], outbox: [], refused: [], daily: {} };
+    if (existsSync(join(this.dir, "state.json"))) this.o.log?.("LAN relay: the version 1 state file (lan/state.json) is not read by this version; peers are introduced again");
+    const st: State = { ...fresh, ...(this.store.getState<State>() ?? {}) };
+    // a claimed run whose Task this Studio cannot find after a restart: found by the item that started it, or gone; the
+    // claim stays either way (a new start needs a fresh take and assignment)
+    for (const t of st.threads) for (const r of t.rounds) if (r.run?.id === "(claimed)") {
+      const id = r.run.item ? this.o.runner.findByItem?.(r.run.item) ?? null : null;
+      r.run = id ? { ...r.run, id, state: "running", found: true } : { ...r.run, id: "(gone)", state: "gone", stopped: now() };
+    }
     return st;
   }
-  /** State is written at most every 150 ms (and on close), not once per request; the page is told at once. */
-  private saveT: any = null;
-  private save() { this.o.send?.("lan", { changed: Date.now() }); if (!this.saveT) { this.saveT = setTimeout(() => this.flushState(), 150); this.saveT.unref?.(); } }
-  flushState() { if (this.saveT) { clearTimeout(this.saveT); this.saveT = null; } this.trim(); const f = join(this.dir, "state.json"), t = `${f}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`; writeFileSync(t, JSON.stringify(this.st, (k, v) => (k === "run" && v?.id === "(starting)" ? null : v)), { mode: 0o600 }); renameSync(t, f); } // a start in progress is never written
+  /** Every change is written at once, in one synced transaction (src/lan/store.ts); the page is told. */
+  private save() { if (this.closed) return; this.store.tx(() => this.store.putState(this.st)); this.o.send?.("lan", { changed: Date.now() }); }
+  /** one step: its writes (entries, blobs, audit rows, taint records, the state) land together or not at all */
+  private stepDepth = 0;
+  private step<T>(fn: () => T): T {
+    if (this.closed) throw new LanError(503, "this Studio's relay is closed");
+    if (this.stepDepth) return fn(); // inside another step: one transaction, one rollback
+    // a step that fails (a write refused, the audit unwritable) leaves nothing behind, on disk or in memory
+    const snap = structuredClone(this.st); this.stepDepth++;
+    try { const v = this.store.tx(() => { const x = fn(); this.store.putState(this.st); return x; }); this.o.send?.("lan", { changed: Date.now() }); return v; }
+    catch (e) { this.st = snap; throw e; }
+    finally { this.stepDepth--; }
+  }
+  flushState() { this.store.tx(() => { this.trim(); this.store.putState(this.st); }); }
   /** bounded records: decided entries, each author's sequence numbers, refusals, failed introductions */
   private trim() {
-    const v = Object.keys(this.st.verdicts); if (v.length > 20_000) for (const k of v.slice(0, v.length - 20_000)) delete this.st.verdicts[k];
-    for (const s of Object.values(this.st.authors)) { const k = Object.keys(s).map(Number).sort((a, b) => a - b); if (k.length > 5000) for (const n of k.slice(0, k.length - 5000)) delete s[String(n)]; }
+    this.store.trimVerdicts(20_000);
+    const evidence = new Set(this.st.peers.flatMap((p) => p.frozen?.entries ?? []));
+    for (const a of this.store.authors()) this.store.trimChain(a, 5000, evidence);
     this.st.introFailures = (this.st.introFailures ?? []).slice(-20);
-    // answered items and closed threads: the newest are kept (open ones always)
+    // answered items and closed threads: the newest are kept (open ones always); a pruned thread takes its entries and
+    // blobs with it, except what started a run or was applied, and except fork evidence
     const settled = this.st.items.filter((i) => i.state !== "open" && i.state !== "frozen"); if (settled.length > 1000) { const drop = new Set(settled.slice(0, settled.length - 1000)); this.st.items = this.st.items.filter((i) => !drop.has(i)); }
-    const closed = this.st.threads.filter((t) => t.state !== "open"); if (closed.length > 500) { const drop = new Set(closed.slice(0, closed.length - 500)); this.st.threads = this.st.threads.filter((t) => !drop.has(t)); }
+    const closed = this.st.threads.filter((t) => t.state !== "open"); if (closed.length > 500) { const drop = new Set(closed.slice(0, closed.length - 500)); for (const t of drop) this.store.pruneThread(t.id, [...evidence]); this.st.threads = this.st.threads.filter((t) => !drop.has(t)); }
   }
-  private putEntry(e: Envelope) { const h = entryHash(e), f = join(this.dir, "entries", `${h}.json`); if (!existsSync(f)) writeFileSync(f, JSON.stringify(e), { mode: 0o600 }); return h; }
-  entry(h: string): Envelope | null { if (!/^[0-9a-f]{64}$/.test(h)) return null; try { return JSON.parse(readFileSync(join(this.dir, "entries", `${h}.json`), "utf8")); } catch { return null; } }
-  private putBlob(b: Blob) { const f = join(this.dir, "blobs", `${b.hash}.json`); if (!existsSync(f)) writeFileSync(f, JSON.stringify(b), { mode: 0o600 }); }
-  private blob(h: string): Blob | null { if (!/^[0-9a-f]{64}$/.test(h)) return null; try { return JSON.parse(readFileSync(join(this.dir, "blobs", `${h}.json`), "utf8")); } catch { return null; } }
+  private putEntry(e: Envelope, thread: string | null = null) { const h = entryHash(e); this.store.putEntry(h, e.a, e.seq, e, thread); return h; }
+  entry(h: string): Envelope | null { return this.store.entry<Envelope>(h); }
+  private putBlob(b: Blob, o: { thread?: string | null; peer?: string | null; bytes: number }) { this.store.putBlob(b.hash, b, o); }
+  private blob(h: string): Blob | null { return this.store.blob<Blob>(h); }
   private blobText(h: string): string | null { const b = this.blob(h); const p = b ? openBlob(b, this.id) : null; return p ? p.toString("utf8") : null; }
-  private dropBlob(h: string) { rmSync(join(this.dir, "blobs", `${h}.json`), { force: true }); }
+  private dropBlob(h: string) { this.store.dropBlob(h); }
   body(h: string): Body | null { const e = this.entry(h); if (!e) return null; const r = readBody(e, this.id); return "body" in r ? r.body : null; }
 
   // ---------- listener, discovery, settings ----------
@@ -142,8 +166,9 @@ export class Lan {
     if (this.st.peers.some((p) => p.key !== i.key && p.state === "trusted" && p.petname.toLowerCase() === name.toLowerCase())) throw new LanError(409, `you already call another peer ${name}; choose a different name`, "petname");
     const prev = this.st.peers.find((p) => p.key === i.key);
     const rec: PeerRec = { key: i.key, fp: i.fp, petname: name, claimed: i.claimed, host: i.host, port: i.port, introducedAt: now(), state: "trusted", frozen: prev?.frozen ?? null, lastContact: null };
-    this.st.peers = [...this.st.peers.filter((p) => p.key !== i.key), rec]; this.st.intros = this.st.intros.filter((x) => x.id !== id);
-    this.save(); this.o.log?.(`LAN peer ${name} (${i.fp.slice(0, 11)}) introduced and allowlisted`);
+    this.step(() => { this.st.peers = [...this.st.peers.filter((p) => p.key !== i.key), rec]; this.st.intros = this.st.intros.filter((x) => x.id !== id);
+      this.store.audit("introduce", { key: i.key, fingerprint: i.fp, petname: name, role: i.role, host: i.host, port: i.port }); });
+    this.o.log?.(`LAN peer ${name} (${i.fp.slice(0, 11)}) introduced and allowlisted`);
     return rec;
   }
   cancelIntro(id: string) { this.st.intros = this.st.intros.filter((x) => x.id !== id); this.save(); return this.view(); }
@@ -155,11 +180,12 @@ export class Lan {
    *  items are withdrawn and every Task its work started is stopped. */
   removePeer(key: string, how: "unpair" | "revoke") {
     const p = this.peer(key); if (!p) throw new LanError(404, "no such peer");
-    for (const t of this.st.threads.filter((t) => t.peer === key)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) if (r.run.id !== "(starting)") this.o.runner.cancel(r.run.id, `the peer ${p.petname} was ${how === "revoke" ? "revoked" : "unpaired"}`);
-    for (const i of this.st.items) if (i.from === key && i.state === "open") i.state = "withdrawn";
-    this.st.outbox = this.st.outbox.filter((x) => x.to !== key);
-    p.state = how === "revoke" ? "revoked" : "unpaired"; // an unpaired peer keeps its record (a freeze survives it); it may be introduced again
-    this.save(); this.o.log?.(`LAN peer ${p.petname} ${how === "revoke" ? "revoked" : "unpaired"}`);
+    this.step(() => { this.store.audit(how, { key, fingerprint: p.fp, petname: p.petname });
+      for (const i of this.st.items) if (i.from === key && i.state === "open") i.state = "withdrawn";
+      this.st.outbox = this.st.outbox.filter((x) => x.to !== key);
+      p.state = how === "revoke" ? "revoked" : "unpaired"; }); // an unpaired peer keeps its record (a freeze survives it); it may be introduced again
+    for (const t of this.st.threads.filter((t) => t.peer === key)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled", "gone"].includes(r.run.state)) if (!r.run.id.startsWith("(")) this.o.runner.cancel(r.run.id, `the peer ${p.petname} was ${how === "revoke" ? "revoked" : "unpaired"}`);
+    this.o.log?.(`LAN peer ${p.petname} ${how === "revoke" ? "revoked" : "unpaired"}`);
     return this.view();
   }
   /** A frozen author stays frozen until a person decides: revoke the key, or (after checking in person) unfreeze it. Neither
@@ -167,37 +193,62 @@ export class Lan {
   resolveFork(key: string, action: "revoke" | "unfreeze") {
     const p = this.peer(key); if (!p?.frozen) throw new LanError(404, "this peer is not frozen");
     if (action === "revoke") return this.removePeer(key, "revoke");
-    p.frozen = null; this.save(); this.o.log?.(`LAN peer ${p.petname} unfrozen after an in-person check`); return this.view();
+    this.step(() => { this.store.audit("unfreeze", { key, fingerprint: p.fp, petname: p.petname, entries: p.frozen!.entries }); p.frozen = null; }); this.o.log?.(`LAN peer ${p.petname} unfrozen after an in-person check`); return this.view();
   }
 
   // ---------- my own log ----------
-  private append(to: string[], body: Body, blobs: Blob[] = []): string {
-    const e = makeEnvelope(this.id, this.st.seq + 1, this.st.head, to, body);
-    const h = this.putEntry(e); for (const b of blobs) this.putBlob(b);
-    this.st.seq = e.seq; this.st.head = h; (this.st.authors[this.id.key] ??= {})[String(e.seq)] = h;
-    this.apply(e, body, h, true);
-    for (const k of to) this.st.outbox.push({ to: k, entry: h, blobs: blobs.map((b) => b.hash), tries: 0, last: null, error: null });
-    this.save(); void this.flush(); return h;
+  /** Sign the next entry of this Studio's own log. Its sequence number, the new head, the entry, its blobs, the outbox
+   *  rows, its audit row and the thread it changes are written in one synced transaction before anything is sent. */
+  private append(to: string[], body: Body, blobs: { blob: Blob; bytes: number }[] = [], audit?: [string, Record<string, unknown>], then?: () => void): string {
+    const h = this.step(() => {
+      const e = makeEnvelope(this.id, this.st.seq + 1, this.st.head, to, body);
+      const h = this.putEntry(e, body.thread); for (const b of blobs) this.putBlob(b.blob, { thread: body.thread, peer: null, bytes: b.bytes });
+      this.st.seq = e.seq; this.st.head = h; this.store.setChain(e.a, e.seq, h);
+      this.apply(e, body, h, true);
+      for (const k of to) this.st.outbox.push({ to: k, entry: h, blobs: blobs.map((b) => b.blob.hash), tries: 0, last: null, error: null });
+      if (audit) this.store.audit(audit[0], { ...audit[1], entry: h, seq: e.seq });
+      then?.();
+      return h;
+    });
+    void this.flush(); return h;
   }
   /** Send what is waiting for each reachable peer (the outbox); a refusal stays on the thread with the peer's reason. */
+  /** One flush per peer at a time, in the order the entries were signed. A refusal the peer marks retryable (its daily
+   *  limit, a clock, content or a thread not there yet) keeps the entry in the outbox, waiting with backoff and its reason
+   *  shown; a permanent refusal stays on the thread with the peer's reason. */
+  private flushing = new Map<string, Promise<void>>();
   async flush() {
     const byPeer = new Map<string, Outbox[]>(); for (const x of this.st.outbox) { if (!byPeer.has(x.to)) byPeer.set(x.to, []); byPeer.get(x.to)!.push(x); }
-    for (const [key, list] of byPeer) {
-      const p = this.trusted(key); if (!p) continue;
+    await Promise.all([...byPeer].map(([key, list]) => this.flushPeer(key, list)));
+  }
+  private flushPeer(key: string, list: Outbox[]): Promise<void> {
+    const inFlight = this.flushing.get(key); if (inFlight) return inFlight; // one flush per peer at a time; a caller waits for it
+    const run = this.flushOne(key, list).finally(() => this.flushing.delete(key)); this.flushing.set(key, run); return run;
+  }
+  private async flushOne(key: string, list: Outbox[]) {
+    const p = this.trusted(key); if (!p || this.closed) return;
+    if ((list[0]?.next ?? 0) > Date.now()) return; // the oldest waits: later entries wait behind it (they may depend on it)
+    {
       const batch = list.slice(0, LIMITS.push), entries = batch.map((x) => this.entry(x.entry)).filter(Boolean) as Envelope[];
       const blobs = [...new Set(batch.flatMap((x) => x.blobs))].map((h) => this.blob(h)).filter(Boolean) as Blob[];
       try {
         const r = await call(this.id, p, "push", { entries, blobs });
-        p.lastContact = now();
-        const refused = new Map<string, string>((r?.refused ?? []).map((x: any) => [String(x.entry), String(x.reason).slice(0, 300)]));
-        for (const x of batch) { const why = refused.get(x.entry) ?? null; this.mark(x.entry, key, why); }
-        this.st.outbox = this.st.outbox.filter((x) => !batch.includes(x));
-      } catch (e: any) { for (const x of batch) { x.tries++; x.last = now(); x.error = String(e?.message ?? e).slice(0, 200); } }
+        if (this.closed) return;
+        const refused = new Map<string, { reason: string; retry: boolean }>((r?.refused ?? []).map((x: any) => [String(x.entry), { reason: String(x.reason).slice(0, 300), retry: x.retry === true }]));
+        this.step(() => {
+          p.lastContact = now();
+          for (const x of batch) {
+            const why = refused.get(x.entry) ?? null;
+            if (why?.retry) { x.tries++; x.last = now(); x.error = why.reason; x.retry = true; x.next = Date.now() + Math.min(600_000, 5000 * 2 ** Math.min(x.tries, 7)); this.waiting(x.entry, why.reason); continue; }
+            this.mark(x.entry, key, why?.reason ?? null); this.st.outbox = this.st.outbox.filter((y) => y !== x);
+          }
+        });
+      } catch (e: any) { if (this.closed) return; this.step(() => { for (const x of batch) { x.tries++; x.last = now(); x.error = String(e?.message ?? e).slice(0, 200); x.retry = false; x.next = Date.now() + Math.min(600_000, 5000 * 2 ** Math.min(x.tries, 7)); } }); }
     }
-    this.save();
   }
+  private waiting(entry: string, why: string) { for (const t of this.st.threads) for (const s of t.steps) if (s.entry === entry) s.waiting = why; }
   private mark(entry: string, to: string, refused: string | null) {
-    for (const t of this.st.threads) for (const s of t.steps) if (s.entry === entry) { s.delivered = !refused; s.refused = refused; }
+    for (const t of this.st.threads) for (const s of t.steps) if (s.entry === entry) { s.delivered = !refused; s.refused = refused; s.waiting = null; }
     if (refused) this.o.log?.(`LAN peer ${this.peer(to)?.petname ?? "?"} refused entry ${entry.slice(0, 12)}: ${refused}`);
   }
 
@@ -209,26 +260,28 @@ export class Lan {
     if (op !== "push") throw new Error("unknown operation");
     const entries = Array.isArray(body?.entries) ? body.entries.slice(0, LIMITS.push) : [], blobs = new Map<string, Blob>();
     for (const b of Array.isArray(body?.blobs) ? body.blobs.slice(0, LIMITS.push * 2) : []) if (b && /^[0-9a-f]{64}$/.test(String(b.hash))) blobs.set(b.hash, b);
-    const accepted: string[] = [], refused: { entry: string; reason: string }[] = [];
-    for (const e of entries) { let h = "?"; try { h = entryHash(e); } catch {}
-      const why = this.receive(from, e, blobs); if (why) { refused.push({ entry: h, reason: why }); this.st.refused = [...this.st.refused, { at: now(), from, reason: why, entry: h === "?" ? null : h }].slice(-50); } else accepted.push(h); }
-    this.save();
+    const accepted: string[] = [], refused: { entry: string; reason: string; retry: boolean }[] = [];
+    // one transaction for the whole push: every verdict, chain position, stored entry and blob, and the threads they change
+    this.step(() => { for (const e of entries) { let h = "?"; try { h = entryHash(e); } catch {}
+      const d = this.receive(from, e, blobs); if (d.why) { refused.push({ entry: h, reason: d.why, retry: !!d.transient }); this.st.refused = [...this.st.refused, { at: now(), from, reason: d.why, entry: h === "?" ? null : h }].slice(-50); } else accepted.push(h); } });
     return { accepted, refused };
   }
-  /** One received entry: null when it was taken in, else the reason it was refused. */
-  receive(from: string, e: any, blobs: Map<string, Blob>): string | null {
-    const shape = envelopeProblem(e); if (shape) return shape;
-    if (e.a !== from) return "an entry is accepted only from its own author's channel";
-    if (!e.to.includes(this.id.key)) return "this Studio is not a recipient";
-    if (!verifyEnvelope(e)) return "the signature does not verify";
+  /** One received entry: why it was refused (and whether it may pass later), or why: null when it was taken in. */
+  receive(from: string, e: any, blobs: Map<string, Blob>): { why: string | null; transient?: boolean } {
+    const shape = envelopeProblem(e); if (shape) return { why: shape };
+    if (e.a !== from) return { why: "an entry is accepted only from its own author's channel" };
+    if (!e.to.includes(this.id.key)) return { why: "this Studio is not a recipient" };
+    if (!verifyEnvelope(e)) return { why: "the signature does not verify" };
     const h = entryHash(e);
     // an entry already decided keeps its verdict: sending it again neither applies it twice nor turns a refusal into an acceptance
-    const prior = this.st.verdicts[h]; if (prior !== undefined) return prior === "ok" ? null : prior;
+    const prior = this.store.verdict(h); if (prior !== null) return { why: prior === "ok" ? null : prior };
+    // at or below the author's low-water mark: decided long ago and trimmed; never applied again
+    if (e.seq <= this.store.lowWater(from)) return { why: "an entry older than this Studio keeps (already decided)" };
     const d = this.decide(from, e, h, blobs);
     // a refusal that can pass later (a frozen author, a daily limit, a clock, missing content, an entry before its thread)
     // is never kept as the entry's verdict; only an acceptance or a permanent refusal is
-    if (!d.transient) this.st.verdicts[h] = d.why ?? "ok";
-    return d.why;
+    if (!d.transient) this.store.setVerdict(h, d.why ?? "ok");
+    return d;
   }
   private decide(from: string, e: Envelope, h: string, blobs: Map<string, Blob>): { why: string | null; transient?: boolean } {
     const later = (why: string) => ({ why, transient: true });
@@ -238,14 +291,13 @@ export class Lan {
     const q = (this.st.daily[from] ??= { day: day(), n: 0 }); if (q.day !== day()) { q.day = day(); q.n = 0; } if (q.n >= LIMITS.perDay) return later("this author's daily entry limit is reached");
     const ts = Date.parse(e.ts); if (!Number.isFinite(ts) || Math.abs(ts - Date.now()) > LIMITS.skewMs) return later("the entry's clock is more than a day away from this Mac's");
     q.n++;
-    const seqs = (this.st.authors[from] ??= {});
     // a fork: two different validly signed entries at one seq, or a chain that does not join its neighbours
-    const at = seqs[String(e.seq)], before = seqs[String(e.seq - 1)], after = seqs[String(e.seq + 1)];
+    const at = this.store.chainAt(from, e.seq), before = this.store.chainAt(from, e.seq - 1), after = this.store.chainAt(from, e.seq + 1);
     const afterPrev = after ? this.entry(after)?.prev : undefined;
     const conflict = at && at !== h ? at : before && e.prev !== before ? before : after && afterPrev !== h ? after : null;
     if (conflict) { this.putEntry(e); this.freeze(from, e.seq, conflict, h, at && at !== h ? "two different entries carry the same sequence number" : "an entry does not join the author's chain"); return { why: "fork: this author is frozen until a person resolves it" }; }
     // a validly signed entry holds its place in the author's chain whatever happens to it next (forks are found by it)
-    seqs[String(e.seq)] = h; this.putEntry(e);
+    this.store.setChain(from, e.seq, h); this.putEntry(e);
     const r = readBody(e, this.id); if ("problem" in r) return { why: r.problem };
     const b = r.body;
     // the content an entry names travels with it; it must open for this Studio and hash to the named value
@@ -255,14 +307,15 @@ export class Lan {
       if (!plain || plain.length !== need.size) return later("the content this entry names is missing or does not match its hash");
       if (b.kind !== "result" && plain.toString("utf8").length > LIMITS.briefing) return { why: "the briefing is too long" }; }
     const why = this.check(from, b, h); if (why) return why === "no such thread on this Studio" ? later(why) : { why };
-    if (blob) this.putBlob(blob);
+    if (blob) this.putBlob(blob, { thread: b.thread, peer: from, bytes: need!.size });
+    this.putEntry(e, b.thread);
     this.apply(e, b, h, false);
     return { why: null };
   }
   private freeze(author: string, seq: number, a: string, b: string, why: string) {
     const p = this.peer(author); if (!p) return;
-    if (!p.frozen) p.frozen = { at: now(), seq, entries: [a, b], why };
-    for (const t of this.st.threads.filter((t) => t.peer === author || t.owner === author)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) if (r.run.id !== "(starting)") this.o.runner.cancel(r.run.id, `the peer ${p.petname} is frozen (a fork in its log)`);
+    if (!p.frozen) { p.frozen = { at: now(), seq, entries: [a, b], why }; this.store.audit("freeze", { key: author, fingerprint: p.fp, seq, entries: [a, b], why }); }
+    for (const t of this.st.threads.filter((t) => t.peer === author || t.owner === author)) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) if (!r.run.id.startsWith("(")) this.o.runner.cancel(r.run.id, `the peer ${p.petname} is frozen (a fork in its log)`);
     for (const i of this.st.items) if (i.from === author && i.state === "open") i.state = "frozen";
     this.save(); this.o.log?.(`LAN peer ${p.petname} frozen: ${why} (seq ${seq})`);
   }
@@ -317,7 +370,7 @@ export class Lan {
     if (b.kind === "revoke") { const tb = this.body(b.target); if (tb?.kind === "dispatch") { t.state = "withdrawn"; this.dropBlob(tb.briefing.hash); }
       if (tb?.kind === "refine") this.dropBlob(tb.briefing.hash);
       if (tb?.kind === "result") { this.dropBlob(tb.output.hash); for (const rr of t.rounds) if (rr.result?.entry === b.target) rr.result = null; }
-      for (const rr of t.rounds) if (rr.run && !["succeeded", "failed", "cancelled"].includes(rr.run.state)) if (rr.run.id !== "(starting)") this.o.runner.cancel(rr.run.id, "the dispatcher withdrew the work");
+      for (const rr of t.rounds) if (rr.run && !["succeeded", "failed", "cancelled"].includes(rr.run.state)) if (!rr.run.id.startsWith("(")) this.o.runner.cancel(rr.run.id, "the dispatcher withdrew the work");
       for (const i of this.st.items) if (i.thread === t.id && i.state === "open") i.state = "withdrawn"; }
     t.steps.push(step);
     if (!mine) this.st.items.push({ id: newId(), entry: h, kind: b.kind, from: e.a, thread: t.id, round: b.round, at: now(), state: "open", flags, note: null });
@@ -335,8 +388,8 @@ export class Lan {
     let suggested: WorkflowRef | null = null;
     if (o.workflow) { const w = this.o.runner.workflows().find((x) => x.id === o.workflow); if (!w) throw new LanError(400, "no such workflow on this Studio"); suggested = { id: w.id, version: w.version, defHash: w.defHash }; }
     const plain = Buffer.from(text, "utf8"), blob = sealBlob(plain, [p.key], this.id), thread = newId();
-    this.audit("dispatch", { thread, to: p.key, briefing: blob.hash, bytes: plain.length });
-    this.append([p.key], { kind: "dispatch", thread, round: 1, title, briefing: { hash: blob.hash, size: plain.length }, acceptance, suggested }, [blob]);
+    this.append([p.key], { kind: "dispatch", thread, round: 1, title, briefing: { hash: blob.hash, size: plain.length }, acceptance, suggested }, [{ blob, bytes: plain.length }],
+      ["dispatch", { thread, to: p.key, briefing: blob.hash, bytes: plain.length }]);
     return this.threadView(this.thread(thread)!);
   }
   /** Approve one received item. What it means depends on its kind (see the unit spec): take with a workflow, assign, start, accept. */
@@ -358,24 +411,38 @@ export class Lan {
       if ((usd !== null && !(usd >= 0 && usd <= 1000)) || !Number.isSafeInteger(rounds) || rounds < 1 || rounds > 50) throw new LanError(400, "a spend cap is 0 to 1000 dollars (or rounds only) and 1 to 50 agent rounds");
       const project = w.needsProject ? String(o.project ?? "") : null; if (w.needsProject && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(project!)) throw new LanError(400, "choose one of this Studio's projects for this code workflow", "project_required");
       const provider = o.provider && /^(codex|claude|cursor|stub)$/.test(o.provider) ? o.provider : null;
-      this.append([t.owner], { kind: "take", thread: t.id, round: r.n, briefing: r.briefing.hash, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds } });
-      r.take!.provider = provider; r.take!.staffing = w.staffing?.hash ?? null; r.take!.project = project;
+      if (r.take) throw new LanError(409, "this round is already taken");
+      // the approval and the signed take land in one transaction: a restart never shows the item open again
+      i.state = "approved";
+      try {
+        this.append([t.owner], { kind: "take", thread: t.id, round: r.n, briefing: r.briefing.hash, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds } }, [],
+          ["take", { thread: t.id, round: r.n, item: i.id, from: i.from, seen: o.seen, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds }, provider, project }],
+          () => { r.take!.provider = provider; r.take!.staffing = w.staffing?.hash ?? null; r.take!.project = project; });
+      } catch (e) { i.state = "open"; throw e; }
+      return this.threadView(t);
     } else if (i.kind === "take") {
       if (r !== this.cur(t) || r.assign) throw new LanError(409, "this round already has its taker");
-      this.append([i.from], { kind: "assign", thread: t.id, round: r.n, take: i.entry, taker: i.from });
+      i.state = "approved";
+      try { this.append([i.from], { kind: "assign", thread: t.id, round: r.n, take: i.entry, taker: i.from }, [], ["assign", { thread: t.id, round: r.n, item: i.id, taker: i.from }]); }
+      catch (e) { i.state = "open"; throw e; }
+      return this.threadView(t);
     } else if (i.kind === "assign") {
-      if (r.run) throw new LanError(409, "this round already ran or is starting");
-      // claimed before the first await: a second approval (a double click, another tab) finds it and starts nothing
-      r.run = { id: "(starting)", state: "starting", result: null, started: now(), stopped: null };
-      const text = (() => { try { return this.prompt(t, r); } catch (e) { r.run = null; throw e; } })();
-      const started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN: ${t.title}`.slice(0, 120), item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` })
-        .catch((e: any) => { r.run = null; throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); });
-      r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null };
-      // the peer was revoked, unpaired or frozen while the Task was starting: it is stopped at once
-      if (!this.trusted(i.from) || this.peer(i.from)?.frozen || t.state !== "open") { this.o.runner.cancel(started.run, "the peer was revoked or frozen, or the work withdrawn, while it was starting"); r.run.state = "cancelled"; this.save(); throw new LanError(409, "the peer was revoked or frozen, or the work withdrawn, while it was starting: the Task was stopped"); }
-      this.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow });
-    } else if (i.kind === "result") r.result!.accepted = true;
-    i.state = "approved"; this.save();
+      if (r.run) throw new LanError(409, r.run.state === "gone" ? "this round's Task is gone (Studio stopped while it started): it needs a fresh take and assignment" : "this round already ran or is starting");
+      const text = this.prompt(t, r);
+      // the claim is written, synced, before the Task starts: a second approval (a double click, another tab, a restart)
+      // finds it and starts nothing; the item that started it is how a restart finds the Task again
+      this.step(() => { r.run = { id: "(claimed)", state: "starting", result: null, started: now(), stopped: null, item: i.id }; i.state = "approved";
+        this.store.markUsed([r.briefing.hash, r.briefing.entry, i.entry, ...(r.take ? [r.take.entry] : [])]); });
+      let started: { run: string; workflow: WorkflowRef };
+      try { started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN ${t.id}`, item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` }); }
+      catch (e: any) { this.step(() => { r.run = null; i.state = "open"; }); throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); }
+      this.step(() => { r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null, item: i.id };
+        this.store.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow }); });
+      // the peer was revoked, unpaired or frozen, or the work withdrawn, while the Task was starting: it is stopped at once
+      if (!this.trusted(i.from) || this.peer(i.from)?.frozen || t.state !== "open") { this.o.runner.cancel(started.run, "the peer was revoked or frozen, or the work withdrawn, while it was starting"); this.step(() => { r.run!.state = "cancelled"; }); throw new LanError(409, "the peer was revoked or frozen, or the work withdrawn, while it was starting: the Task was stopped"); }
+      return this.threadView(t);
+    } else if (i.kind === "result") { this.step(() => { r.result!.accepted = true; i.state = "approved"; this.store.audit("accept", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, output: r.result!.output.hash }); }); return this.threadView(t); }
+    this.step(() => { i.state = "approved"; });
     return this.threadView(t);
   }
   /** What an approval of a dispatch or a refinement must name: the hash of the briefing and the exact prompt shown. */
@@ -423,9 +490,9 @@ export class Lan {
     if (x.plain.length > LIMITS.blob) throw new LanError(413, "the output is larger than a result may be (256 KB)");
     if (o.confirm !== x.hash) throw new LanError(409, "the output changed since the preview: preview it again", "stale");
     const blob = sealBlob(x.plain, [t.owner], this.id);
-    this.audit("handback", { thread: t.id, round: x.r.n, run: x.r.run!.id, to: t.owner, output: blob.hash, bytes: x.plain.length });
     this.append([t.owner], { kind: "result", thread: t.id, round: x.r.n, take: x.r.assign!.take, briefing: x.r.briefing.hash, output: { hash: blob.hash, size: x.plain.length, files: x.files.slice(0, LIMITS.files).map((f) => ({ path: f.path.slice(0, LIMITS.path), bytes: Buffer.byteLength(f.text) })) },
-      workflow: x.out.workflow, run: x.r.run!.id, checks: { ...x.out.checks, summary: x.out.checks.summary.slice(0, LIMITS.note) } }, [blob]);
+      workflow: x.out.workflow, run: x.r.run!.id, checks: { ...x.out.checks, summary: x.out.checks.summary.slice(0, LIMITS.note) } }, [{ blob, bytes: x.plain.length }],
+      ["handback", { thread: t.id, round: x.r.n, run: x.r.run!.id, to: t.owner, output: blob.hash, bytes: x.plain.length }]);
     return this.threadView(t);
   }
   refine(threadId: string, o: { briefing: unknown; note?: unknown }) {
@@ -434,14 +501,14 @@ export class Lan {
     if (t.rounds.length >= LIMITS.rounds) throw new LanError(409, "this thread has reached its round limit");
     const text = String(o.briefing ?? "").normalize("NFC").trim(); if (!text || text.length > LIMITS.briefing) throw new LanError(400, `a briefing is 1 to ${LIMITS.briefing} characters`);
     const plain = Buffer.from(text, "utf8"), blob = sealBlob(plain, [t.peer], this.id);
-    this.audit("refine", { thread: t.id, round: r.n + 1, briefing: blob.hash });
-    this.append([t.peer], { kind: "refine", thread: t.id, round: r.n + 1, briefing: { hash: blob.hash, size: plain.length }, note: cleanText(o.note ?? "", LIMITS.note) }, [blob]);
+    this.append([t.peer], { kind: "refine", thread: t.id, round: r.n + 1, briefing: { hash: blob.hash, size: plain.length }, note: cleanText(o.note ?? "", LIMITS.note) }, [{ blob, bytes: plain.length }],
+      ["refine", { thread: t.id, round: r.n + 1, briefing: blob.hash }]);
     return this.threadView(t);
   }
   done(threadId: string) {
     const t = this.thread(threadId); if (!t || t.owner !== this.id.key) throw new LanError(404, "only the dispatcher closes its own thread");
     const r = this.cur(t); if (t.state !== "open" || !r.result) throw new LanError(409, "a thread is done after a result");
-    this.append([t.peer], { kind: "done", thread: t.id, round: r.n, result: r.result.entry });
+    this.append([t.peer], { kind: "done", thread: t.id, round: r.n, result: r.result.entry }, [], ["done", { thread: t.id, round: r.n, result: r.result.entry }]);
     return this.threadView(t);
   }
   /** The dispatcher applies a code result (its changes.patch) to one of its own registered projects, on a new branch
@@ -456,21 +523,25 @@ export class Lan {
     let files: { path: string; text: string }[] = []; try { files = JSON.parse(text).files; } catch {}
     const patch = files.find((f) => f.path === "changes.patch")?.text; if (!patch) throw new LanError(409, "this result carries no patch (it is not from a code workflow)");
     const project = String(o.project ?? ""); if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(project)) throw new LanError(400, "choose one of this Studio's projects");
-    try { const done = this.o.apply({ project, patch, branch: `lan-untrusted/${t.id.toLowerCase().replace(/[^a-z0-9-]/g, "-")}-r${r.n}` }); this.audit("apply", { thread: t.id, round: r.n, project, branch: done.branch, files: done.files.length }); return done; }
+    try { const done = this.o.apply({ project, patch, branch: `lan-untrusted/${t.id.toLowerCase().replace(/[^a-z0-9-]/g, "-")}-r${r.n}` });
+      this.step(() => { this.store.markUsed([r.result!.output.hash, r.result!.entry]); this.store.audit("apply", { thread: t.id, round: r.n, project, branch: done.branch, files: done.files.length }); }); return done; }
     catch (e: any) { throw new LanError(409, `the patch was not applied: ${String(e?.message ?? e).slice(0, 400)}`, "apply"); }
   }
   withdraw(threadId: string, reason?: unknown) {
     const t = this.thread(threadId); if (!t || t.owner !== this.id.key || t.state !== "open") throw new LanError(404, "only the dispatcher withdraws its own open thread");
-    this.append([t.peer], { kind: "revoke", thread: t.id, round: this.cur(t).n, target: t.rounds[0].briefing.entry, reason: cleanText(reason ?? "", LIMITS.reason) });
+    this.append([t.peer], { kind: "revoke", thread: t.id, round: this.cur(t).n, target: t.rounds[0].briefing.entry, reason: cleanText(reason ?? "", LIMITS.reason) }, [], ["withdraw", { thread: t.id }]);
     return this.threadView(t);
   }
-  private audit(what: string, data: Record<string, unknown>) { try { writeFileSync(join(this.dir, "audit.jsonl"), JSON.stringify({ at: now(), what, ...data }) + "\n", { flag: "a", mode: 0o600 }); } catch {} }
+  /** the audit trail (newest last) and whether its hash chain holds */
+  auditView(limit = 200) { return { rows: this.store.auditRows(limit), broken: this.store.auditBreak() }; }
 
   // ---------- runs ----------
   private watchRuns() {
     let changed = false;
-    for (const t of this.st.threads) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled"].includes(r.run.state)) {
-      const s = this.o.runner.status(r.run.id); if (!s) continue;
+    for (const t of this.st.threads) for (const r of t.rounds) if (r.run && !["succeeded", "failed", "cancelled", "gone"].includes(r.run.state) && !r.run.id.startsWith("(")) {
+      const s = this.o.runner.status(r.run.id);
+      // a Task Studio no longer has (deleted, or lost): gone; its claim stays, so it is never started again from this round
+      if (!s) { r.run.state = "gone"; r.run.stopped = now(); changed = true; continue; }
       if (s.state !== r.run.state || s.stopped !== r.run.stopped) { r.run.state = s.state; r.run.result = s.result; r.run.stopped = s.stopped; changed = true; }
     }
     if (changed) this.save();

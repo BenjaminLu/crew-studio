@@ -22,6 +22,7 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     if (!writing) {
       if (p === "/api/lan") return json(lan.view());
       if (p === "/api/lan/workflows") return json({ workflows: lan.workflows() });
+      if (p === "/api/lan/audit") return json(lan.auditView(Number(url.searchParams.get("limit")) || 200));
       let x = m(`items/(${ID})`); if (x) { const i = lan.itemById(x[1]); return i ? json(i) : json({ error: "no such item" }, 404); }
       x = m("entries/([0-9a-f]{64})"); if (x) return json(lan.inspect(x[1]));
       x = m(`threads/(${ID})`); if (x) { const t = lan.thread(x[1]); return t ? json(lan.threadView(t)) : json({ error: "no such thread" }, 404); }

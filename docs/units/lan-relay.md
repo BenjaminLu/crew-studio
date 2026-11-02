@@ -77,7 +77,9 @@ drops what was waiting to be sent to it.
   responder that cannot decrypt it with any of them answers 403 and nothing else (an unintroduced key does not even learn
   this Studio's key). XX runs only while the introduction window is open.
 - A KK message is accepted once (its ephemeral key is remembered for ten minutes) and only within five minutes of this
-  Mac's clock (a time that is not a date is refused); the replay cache is kept across restarts. Requests are
+  Mac's clock (a time that is not a date is refused). The replay cache is memory only: every operation is idempotent (a
+  pushed entry keeps its verdict, and one at or below its author's low-water mark is never applied again), so a replay
+  after a restart changes nothing. Requests are
   rate-limited per source address (the rate table is bounded), at most 32 are in flight, one introduction at a time, and an address that keeps sending KK messages no
   allowlisted key made is cut off for a minute from its eighth failure before Studio tries its keys again (an IPv6
   address counts with the rest of its /64; a full table drops its oldest entries, never a cut-off it holds).
@@ -115,8 +117,18 @@ hash and size), and the thread: a take or a result naming another briefing than 
 mismatch"); a result whose workflow or definition hash differs from its take's is taken in and flagged
 `workflow-mismatch`. A refusal that can pass later (a frozen author, a daily limit, a clock, content not there yet, an
 entry before its thread) is not kept as the entry's verdict; any other is, and the same entry sent again gets the same
-answer. Decided entries and each author's sequence numbers are bounded, and the state file is written at most every
-150 ms. Revoking an entry deletes the content it named (a dispatch's or a refinement's briefing, a result's output).
+answer, and the sender keeps a retryable one in its outbox (in signing order, with backoff; the page says what it waits
+for) while a permanent refusal stays on the thread with the reason. Decided entries and each author's sequence numbers
+are bounded: entries trimmed below an author's low-water mark are never applied again, and fork evidence is never
+trimmed. Revoking an entry deletes the content it named (a dispatch's or a refinement's briefing, a result's output)
+unless that content started a run or was applied: that is kept, sealed.
+
+Everything is kept in one SQLite store (`lan/relay.db`, WAL, synchronous FULL, `src/lan/store.ts`): the own log's
+sequence number and head, the entry, its blobs, the outbox rows, the audit row and the thread it changes are written in
+one synced transaction before anything is sent, so a crash never makes this Studio sign a second entry at a sequence
+number a peer already holds. Approving an assignment writes the round's claim the same way before the Task starts; after
+a restart the round finds its Task by the item that started it ("found after restart"), or shows it gone; the claim is
+never released, so a new start needs a fresh take and assignment. A step whose writes fail leaves nothing behind.
 
 ## Receiving and approving
 
@@ -130,8 +142,8 @@ phone, even one allowed to drive Firstmate. (Not a boundary against a local proc
   and the exact prompt the agent will get; a long one must be scrolled to its end before it can be approved, and the
   approval must name the SHA-256 of that exact prompt (the page computes it only once the person has read to the end;
   the server refuses any other). Approving means taking it with one of this Studio's own workflows (only those the
-  profile allows can be picked), a spend cap (dollars and agent rounds, or rounds only when the provider reports no
-  cost), a provider and, for a code workflow, one of this Studio's registered projects. The suggested workflow is only a
+  profile allows can be picked), a spend cap (dollars and agent rounds, or rounds only: no dollar limit, every paid
+  round counted, for any provider), a provider and, for a code workflow, one of this Studio's registered projects. The suggested workflow is only a
   suggestion; nothing is fetched.
 - **take**: the dispatcher assigns it (an `assign` entry naming the taker's key).
 - **assign**: the taker starts the run.
@@ -214,8 +226,11 @@ pushed: the branch is read and diffed like any untrusted change, and Studio neve
 
 ## Audit
 
-`lan/audit.jsonl` records what was dispatched, which entry (full key, hash) started which run with which workflow, and
-what was sent back (hash and size). Entries and blobs are stored sealed.
+The audit is a table of the store, hash-chained (each row names the hash of the one before; a rotation keeps the chain
+from the last moved row) and written in the same transaction as the step it records: a step whose audit row cannot be
+written does not happen. It records introductions (fingerprint), unpair, revoke, unfreeze and freezes, dispatches, takes
+(the prompt hash read, the workflow, the cap, the provider, the project), assignments, what started which run, result
+accepts, hand-backs and applies. The page reads it at `/api/lan/audit` with whether its chain holds.
 
 ## Not done in v1
 

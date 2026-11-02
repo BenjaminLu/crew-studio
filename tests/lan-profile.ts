@@ -264,7 +264,7 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   ok(JSON.stringify(r3).includes("clock") || JSON.stringify(r3).includes("timestamp"), "an entry whose time is not a date is refused", JSON.stringify(r3));
   const f1 = makeEnvelope(A.id, 60, randomBytes(32).toString("hex"), [B.id.key], { kind: "done", thread: "thread-0001", round: 1, result: "a".repeat(64) } as Body), f2 = makeEnvelope(A.id, 60, randomBytes(32).toString("hex"), [B.id.key], { kind: "done", thread: "thread-0002", round: 1, result: "b".repeat(64) } as Body);
   await call(A.id, peerB, "push", { entries: [f1], blobs: [] }); await call(A.id, peerB, "push", { entries: [f2], blobs: [] });
-  const count = () => readdirSync(join(B.dir, "entries")).length, n0 = count();
+  const count = () => B.store.entryCount(), n0 = count();
   const after = makeEnvelope(A.id, 70, randomBytes(32).toString("hex"), [B.id.key], { kind: "done", thread: "thread-0003", round: 1, result: "c".repeat(64) } as Body);
   const r4 = await call(A.id, peerB, "push", { entries: [after], blobs: [] });
   ok(!!B.peer(A.id.key)?.frozen && /frozen/.test(r4.refused[0]?.reason ?? "") && count() === n0, "after a fork, the frozen author's next entries are refused before anything is stored", JSON.stringify([r4, n0, count()]));
@@ -499,17 +499,21 @@ if (process.platform === "darwin") {
   gate(); await pending;
   ok(B.thread(t.id)?.state === "withdrawn" && starts.length === 1 && cancelled.includes(starts[0]), "work the dispatcher withdrew while its Task was starting is stopped once it has started", JSON.stringify({ state: B.thread(t.id)?.state, starts, cancelled })); }
 
-// R4-7. the "(starting)" marker of an assignment is never written to the state file, and a stale one is cleared on load
+// R4-7 / A-M1. an assignment's claim is written, synced, before its Task starts; after a restart the round finds its Task by
+//       the item that started it ("found after restart"), or is gone: the claim stays, and the round never starts again
 { const { Lan: L } = await import("../src/lan/relay");
-  const dir = mkdtempSync(join(tmpdir(), "crew-lan-r4-start-")); const none: any = { workflows: () => [], start: async () => { throw new Error(); }, status: () => null, output: async () => { throw new Error(); }, cancel: () => {} };
+  const dir = mkdtempSync(join(tmpdir(), "crew-lan-r4-start-")); let found: string | null = "R-77";
+  const none: any = { workflows: () => [], start: async () => { throw new Error(); }, status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error(); }, cancel: () => {}, findByItem: (i: string) => i === "item-claim-1" ? found : null };
   const x = new L({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0, discovery: null });
-  const st: any = (x as any).st; st.threads.push({ id: "t-start-1", owner: "o", peer: "p", title: "", acceptance: [], suggested: null, state: "open", steps: [], rounds: [{ n: 1, fence: "f", briefing: { hash: "h", size: 1, entry: "e" }, take: null, assign: null, result: null, run: { id: "(starting)", state: "starting", result: null, started: new Date().toISOString(), stopped: null } }] });
-  x.flushState(); x.close();
-  ok(!readFileSync(join(dir, "lan", "state.json"), "utf8").includes("(starting)"), "the marker of an assignment being started is never written to the state file");
-  const raw = JSON.parse(readFileSync(join(dir, "lan", "state.json"), "utf8")); raw.threads[0].rounds[0].run = { id: "(starting)", state: "starting", result: null, started: "x", stopped: null };
-  writeFileSync(join(dir, "lan", "state.json"), JSON.stringify(raw));
+  const st: any = (x as any).st; const round = (id: string) => ({ n: 1, fence: "f", briefing: { hash: "h", size: 1, entry: "e" }, take: null, assign: null, result: null, run: { id: "(claimed)", state: "starting", result: null, started: new Date().toISOString(), stopped: null, item: id } });
+  st.threads.push({ id: "t-start-1", owner: "o", peer: "p", title: "", acceptance: [], suggested: null, state: "open", steps: [], rounds: [round("item-claim-1")] },
+    { id: "t-start-2", owner: "o", peer: "p", title: "", acceptance: [], suggested: null, state: "open", steps: [], rounds: [round("item-claim-2")] });
+  (x as any).save(); // a crash now: the second Studio below opens the same store without this one closing
   const y = new L({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0, discovery: null });
-  ok(y.thread("t-start-1")?.rounds[0].run === null, "a stale starting marker (a crash mid-start) is cleared when the state is loaded"); y.close(); }
+  const r1 = y.thread("t-start-1")?.rounds[0].run, r2 = y.thread("t-start-2")?.rounds[0].run;
+  ok(r1?.id === "R-77" && r1.found === true, "after a restart a claimed round finds the Task its item started (found after restart)", JSON.stringify(r1));
+  ok(r2?.id === "(gone)" && r2.state === "gone", "a claimed round whose Task is not there is gone, never released", JSON.stringify(r2));
+  y.close(); x.close(); }
 // R4-8. the unauthenticated-KK limiter: a full table evicts its oldest entry (never all blocks), the window starts at the 8th failure, IPv6 counts per /64
 { const { LanWire } = await import("../src/lan/wire"); const K = generateKeyPair(), M = generateKeyPair();
   const w = new LanWire({ me: () => K, allowlist: () => [], introOpen: () => false, self: () => ({ name: "K", port: 1 }), request: async () => null, introduced: () => {} });

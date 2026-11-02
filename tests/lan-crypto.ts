@@ -78,21 +78,22 @@ const peerB = { key: b64u(B.pub), host: "127.0.0.1", port: wireB.port };
 { ok(sas(Buffer.alloc(32, 1), Buffer.alloc(32, 2), Buffer.alloc(32, 3)) !== sas(Buffer.alloc(32, 1), Buffer.alloc(32, 2), Buffer.alloc(32, 4)), "the short code depends on both nonces"); }
 wireB.stop();
 // a request time that is not a date is refused (Math.abs(NaN) would pass a plain comparison)
-{ let store: Record<string, number> = {}; const gate = { open: null as null | (() => void) }, held: Promise<void>[] = [];
+{ const gate = { open: null as null | (() => void) }, held: Promise<void>[] = [];
   const w = new LanWire({ me: () => B, allowlist: () => [b64u(A.pub)], introOpen: () => false, self: () => ({ name: "B", port: 1 }), introduced: () => {},
-    request: async (_f, op) => { if (op === "hold") await new Promise<void>((r) => { gate.open = r; held.push(Promise.resolve()); }); return { ok: true }; },
-    replay: { load: () => store, save: (m) => { store = { ...m }; } } });
+    request: async (_f, op) => { if (op === "hold") await new Promise<void>((r) => { gate.open = r; held.push(Promise.resolve()); }); return { ok: true }; } });
   w.start("127.0.0.1", 0); const peer = { key: b64u(B.pub), host: "127.0.0.1", port: w.port };
   const hs = new Handshake("KK", true, A, B.pub), m1 = hs.writeMessage(Buffer.from(JSON.stringify({ v: 1, op: "ping", ts: "not a date", body: {} })));
   const r = await fetch(`http://127.0.0.1:${w.port}/lan/v1/kk`, { method: "POST", body: m1, headers: { "content-type": "application/octet-stream" } });
   ok(r.status === 403, "a request whose time is not a date is refused", String(r.status));
-  // the replay cache survives a restart of the listener
+  // the replay cache is memory only (every operation is idempotent: tests/lan-store.ts sends each one twice): within a
+  // listener's life a replay is refused; after a restart it reaches the relay, which changes nothing for it
   const hs2 = new Handshake("KK", true, A, B.pub), m2 = hs2.writeMessage(Buffer.from(JSON.stringify({ v: 1, op: "ping", ts: new Date().toISOString(), body: {} })));
   const post = (port: number) => fetch(`http://127.0.0.1:${port}/lan/v1/kk`, { method: "POST", body: m2, headers: { "content-type": "application/octet-stream" } });
   const first = await post(w.port); w.stop();
-  const w2 = new LanWire({ me: () => B, allowlist: () => [b64u(A.pub)], introOpen: () => false, self: () => ({ name: "B", port: 1 }), introduced: () => {}, request: async () => ({ ok: true }), replay: { load: () => store, save: (m) => { store = { ...m }; } } });
+  const w2 = new LanWire({ me: () => B, allowlist: () => [b64u(A.pub)], introOpen: () => false, self: () => ({ name: "B", port: 1 }), introduced: () => {}, request: async () => ({ ok: true }) });
   w2.start("127.0.0.1", 0); const again = await post(w2.port);
-  ok(first.status === 200 && again.status === 403, "a message replayed after the listener restarted is still refused (the replay cache is kept)", `${first.status} ${again.status}`);
+  const twice = await post(w2.port);
+  ok(first.status === 200 && again.status === 200 && twice.status === 403, "the replay cache is memory only: after a restart a replay reaches the (idempotent) relay once; a second one is refused", `${first.status} ${again.status} ${twice.status}`);
   // at most 32 requests in flight; the rest are refused at once
   const w3 = new LanWire({ me: () => B, allowlist: () => [b64u(A.pub)], introOpen: () => false, self: () => ({ name: "B", port: 1 }), introduced: () => {},
     request: async (_f, op) => { if (op === "hold") await new Promise<void>((res) => { const prev = gate.open; gate.open = () => { prev?.(); res(); }; }); return { ok: true }; } });

@@ -110,6 +110,10 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       const pass = ledger.filter((e: any) => e.verdict === "pass").length, fail = ledger.filter((e: any) => e.verdict === "fail").length, other = ledger.length - pass - fail;
       return { files: files.slice(0, LIMITS.files), changed: [...changed], protectedHits: [...hits], checks: { pass, fail, other, summary: `${pass}/${ledger.length} checks pass on the taker's Studio (the taker's own report: run them again before relying on it)` }, workflow: ref(r.def), kind: wt ? "patch" : "files" };
     },
+    findByItem(item) {
+      for (const r of d.engine.list?.() ?? []) { try { const m = JSON.parse(String(r.params?._lan ?? "null")); if (m?.item === item) return String(r.id); } catch {} }
+      return null;
+    },
     cancel(id, why) { try { d.engine.cancel?.(id, "studio (LAN)", why); } catch {} },
   };
 }
