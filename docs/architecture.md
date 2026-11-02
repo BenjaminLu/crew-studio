@@ -17,7 +17,7 @@ Status: binding. A change to this document goes through the same adversarial rev
 ## 2. Layers
 
 ```
-UI                            backbone: Board (home: every task in flight, the decisions waiting, answered in place) · Firstmate · Terminals (agent CLIs in real terminals, full window) · Inbox (decisions only) · Crew · Tasks (live graph; review loops open as Rounds) · Workflows (editor, checks, gates) · Library · Settings (gear: Doctor, keys, roadmap). Labs, behind a flag: improve · retro · packs · docs · file org · skins · changes · phone pairing
+UI                            backbone: Board (home: every task in flight, the decisions waiting, answered in place) · Firstmate · Terminals (agent CLIs in real terminals, full window) · Inbox (decisions only) · Peers (board-to-board work, units/lan-relay.md) · Crew · Tasks (live graph; review loops open as Rounds) · Workflows (editor, checks, gates) · Library · Settings (gear: Doctor, keys, roadmap). Labs, behind a flag: improve · retro · packs · docs · file org · skins · changes · phone pairing
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 API + SSE                     one HTTP server; every mutation is an event; SSE streams events and snapshots
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -222,6 +222,11 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
       is 401;
     - LAN board: a paired phone's device token (pairing needs the code shown on the Mac), Origin and JSON on writes;
     - tools-only listener: each round's own tool token, `/api/tools` only;
+    - peer listener (board-to-board work, docs/units/lan-relay.md): a separate server and port, off until turned on, four
+      fixed routes carrying Noise messages (KK with an introduced key, XX only while the introduction window is open); its
+      own Host only, no browser headers, no CORS, size and rate limits; work it brings in runs as a `_lan` + `_tainted`
+      Task under the restricted profile (allowlisted local steps, provider egress only, no test runs, a spend cap) and its
+      result leaves only on the person's 交回 after the protected-path and secret gates;
     - egress proxy: each round's own credential (407 without), its host list, and the resolved-address guard ported from
       sandbox-runtime (`src/egress-guard.ts`): an allowed name that resolves to loopback, this host's own addresses,
       link-local, multicast, a cloud metadata endpoint, a private range (RFC 1918 / ULA) or the carrier-grade-NAT /

@@ -42,7 +42,7 @@ export async function introduce(p: Pair, log: (s: string) => void = () => {}) {
 }
 
 const item = (s: Studio, kind: string, thread: string) => until(`${s.name}'s inbox item ${kind}`, async () => (await must(s.api("/api/lan"), "view")).items.find((i: any) => i.kind === kind && i.thread === thread && i.state === "open"));
-const at = (iso: string) => iso.replace("T", " ").slice(0, 19);
+const at = (iso: string) => new Date(iso).toLocaleString("sv-SE"); // this Mac's local time, YYYY-MM-DD HH:MM:SS
 /** B's run: answer the documents workflow's acceptance card as B's captain, until it ends. */
 async function runOnB(p: Pair, run: string) {
   const d = await drive(p.B, run, async (c) => c.node === "accept" ? { choice: "approve-draft", note: "B 看過草稿，核准" } : { stop: "unscripted" }, { timeoutMs: 120_000 });
