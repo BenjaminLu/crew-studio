@@ -1,3 +1,4 @@
+import { taintRefusal } from "../lan/taint";
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {GitHubPoller,readAuthority,grantReadScope} from '../github-poller';
 // Local review remains the default. GitHub publication requires a trusted,
@@ -524,6 +525,8 @@ export class GitHubPrAdapter implements PrAdapter {
    * project config, remotes, hooks, credential helpers, URL rewrites or project proxy settings.
    * GitHub credentials exist only in the subprocess environment. */
   private async push(o: OpenRequest, expected: string | null, signal?: AbortSignal, assertOwner?: () => void) {
+    // Studio never publishes a commit that holds work from a peer's Studio (src/lan/taint.ts) until a person reviewed it
+    { const why = taintRefusal(o.repo, o.head, "Push"); if (why) throw new Error(why); }
     const dir = mkdtempSync(join(tmpdir(), "studio-gh-push-")); let retainClient = false;
     try {
       localMust(dir, ["init", "--bare", "-q", "."]);

@@ -10,6 +10,7 @@ import { installCodePublish } from "./code-publish";
 import { withoutGitHubLinks, withoutSessionLinks } from "./pull-template";
 import {GitHubPoller} from '../github-poller';
 import { lanUntrusted } from "../lan/apply";
+import { taintRefusal } from "../lan/taint";
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
 // done, scope, door, explain), the door, a plan round for one-way changes, build
@@ -646,6 +647,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (!git(repo, ["rev-parse", "--verify", `${base}^{commit}`]).ok) throw new Error(`no branch ${base} in ${repo}`);
     if (!git(repo, ["cat-file", "-e", `${commit}^{commit}`]).ok) throw new Error(`commit ${commit.slice(0, 12)} is not in ${p.name || pid}`);
     if (lanUntrusted(repo, commit, typeof a?.branch === "string" ? a.branch : null)) throw new Error(`commit ${commit.slice(0, 12)} is work from a peer's Studio (a lan-untrusted/ branch): Studio does not adopt it for review`);
+    { const why = taintRefusal(repo, commit, "From existing branch"); if (why) throw new Error(why); }
     const ahead = Number(must(repo, ["rev-list", "--count", `${base}..${commit}`])) || 0;
     if (!ahead) throw new Error(`commit ${commit.slice(0, 12)} has nothing beyond ${base}: there is nothing to review`);
     const prefix = String(x.policy("branch_prefix") ?? "crew/"), key = { project: pid, task: x.run.id };
@@ -671,6 +673,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (!existsSync(join(repo, ".git"))) throw new Error(`${repo} is not a local git repository`);
     const base = x.run.params.base || "main";
     if (!git(repo, ["rev-parse", "--verify", `${base}^{commit}`]).ok) throw new Error(`no branch ${base} in ${repo}`);
+    // a trusted Task never starts from a commit that holds work from a peer (the base Firstmate or a person set included);
+    // a Task under a profile is untrusted already
+    if (!x.run.profile) { const why = taintRefusal(repo, base, "This Task's base"); if (why) throw new Error(why); }
     const prefix = String(x.policy("branch_prefix") ?? "crew/");
     const key = { project: pid || "local", task: x.run.id };
     const rec = W.ensure({ ...key, repo, base, branchPrefix: prefix, run: x.run.id });
@@ -1106,6 +1111,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   });
   engine.actions["git.merge"] = async (x) => {
     if (tainted(x)) throw new Error("a Task drawn from issue text is never merged: it stops on its local branch");
+    // a branch that holds a commit applied from a peer's work (an agent merged it in) is never merged by Studio
+    if (x.ctx.repo && x.ctx.worktree && existsSync(x.ctx.worktree)) { const why = taintRefusal(x.ctx.repo, head(x.ctx.worktree), "Merge"); if (why) throw new Error(why); }
     if (x.ctx.pr?.adapter === "github") {
       // merged on GitHub while the merge card was open (observed, never answered for the captain): the Task ends as merged
       if (x.ctx.mergeDetected) return detectedMerge(x);

@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 type M = { name: string; rule: string; edits: { file: string; from: string; to: string }[]; tests: string[] };
 const R = join(import.meta.dir, "..");
-const KEYS = "bun tests/lan-keys.ts", IDENTITY = "bun tests/lan-identity.ts", STORE = "bun tests/lan-store.ts", WORKFLOWS = "bun tests/lan-workflows.ts", RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
+const CODE = "bun tests/lan-code.ts", BOARD = "bun tests/board-start.ts", KEYS = "bun tests/lan-keys.ts", IDENTITY = "bun tests/lan-identity.ts", STORE = "bun tests/lan-store.ts", WORKFLOWS = "bun tests/lan-workflows.ts", RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
 const MUTATIONS: M[] = [
   // ---------- the first review's rules ----------
   { name: "unintroduced", rule: "an unintroduced key is refused", tests: [RELAY],
@@ -198,6 +198,28 @@ const MUTATIONS: M[] = [
     edits: [{ file: "src/lan/relay.ts", from: `    old.state = "revoked"; old.replacedBy = by.key;`, to: `    old.replacedBy = by.key;` }] },
   { name: "K-admin-intro", rule: "an introduction is signed by this Studio's admin key (a cancelled prompt adds nobody)", tests: [IDENTITY],
     edits: [{ file: "src/lan/relay.ts", from: `try { vouch = b64u(await ks.admin("introduce", [i.key, ch, at])); if (old) replace = b64u(await ks.admin("replace", [old.key, i.key, at])); }`, to: `try { vouch = b64u(Buffer.alloc(64)); if (old) replace = ""; }` }] },
+  // ---------- taint, apply, base ----------
+  { name: "T-ancestry", rule: "a commit is tainted when a recorded commit is its ancestor (not only by branch name)", tests: [BOARD],
+    edits: [{ file: "src/lan/taint.ts", from: `    if (a.ok) return { sha: t.sha, peer: t.peer, thread: t.thread, why: t.why };`, to: `` }] },
+  { name: "T-prepare", rule: "a trusted Task never starts from a tainted base", tests: [BOARD],
+    edits: [{ file: "src/domain/code.ts", from: `if (!x.run.profile) { const why = taintRefusal(repo, base, "This Task's base"); if (why) throw new Error(why); }`, to: `` }] },
+  { name: "T-review", rule: "Send for review refuses a tainted commit", tests: [BOARD],
+    edits: [{ file: "src/runtime/index.ts", from: `{ const why = taintRefusal(p.path, o.commit, "Send for review"); if (why) throw Object.assign(new Error(why), { code: "lan_untrusted" }); }`, to: `` }] },
+  { name: "T-cleared", rule: "a commit marked reviewed no longer refuses", tests: [BOARD],
+    edits: [{ file: "src/lan/taint.ts", from: `rows = rowsOf().filter((t) => !t.cleared && real(t.repo) === r);`, to: `rows = rowsOf().filter((t) => real(t.repo) === r);` }] },
+  { name: "T-record", rule: "an applied commit joins the taint list", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `if (done.commit && done.repo) this.store.addTaint(`, to: `if (false) this.store.addTaint(` }] },
+  { name: "A-accepted", rule: "a result is applied only after it was accepted (C-M2)", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `if (!r.result.accepted) throw new LanError(409, "accept the result first (after reading it)", "accept");`, to: `` }] },
+  { name: "A-seen", rule: "an apply names the hash of the exact patch shown (C-M2)", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `if (o.seen !== sha256hex(patch)) throw new LanError(409, "read the whole patch first: this apply does not name the patch shown", "unread");`, to: `` }] },
+  { name: "A-peer", rule: "a frozen or removed peer's result is not applied (C-M2)", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `if (!p || p.frozen) throw new LanError(409, "this peer is frozen or gone: its result is not applied", "peer");`, to: `` }] },
+  { name: "B-base-take", rule: "a project without the dispatcher's history cannot take code work (A-M4)", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `if (w.needsProject && t.base) { const why = this.o.baseProblem?.(project!, t.base) ?? null; if (why) throw`, to: `if (false) { const why = null; if (why) throw` }] },
+  { name: "B-base-apply", rule: "a result applies onto the base it names, never another (A-M4)", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `if (!base || (t.base && base !== t.base.sha)) throw new LanError(`, to: `if (false) throw new LanError(` },
+      { file: "src/lan/apply.ts", from: `const repo = p.path, base = parent;`, to: `const repo = p.path, base = p.base || "main";` }] },
   { name: "S-crash", rule: "the own log, outbox and thread are on disk before anything is sent (A-M1)", tests: [STORE],
     edits: [{ file: "src/lan/relay.ts", from: "try { const v = this.store.tx(() => { const x = fn(); this.store.putState(this.st); this.putMeta(); return x; });", to: "try { const v = this.store.tx(() => { const x = fn(); return x; });" }] },
   { name: "S-rollback", rule: "a step that fails leaves nothing behind in memory either (fail closed)", tests: [STORE],

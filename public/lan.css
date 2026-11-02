@@ -51,3 +51,4 @@
 .lan-card .kv{overflow-wrap:normal}
 .lan-card .kv b,.lan-card .kv .lan-fp{overflow-wrap:anywhere;text-align:right;min-width:0}
 .lan-run{cursor:default}
+.lan-patch{max-height:280px;overflow:auto;white-space:pre;font:12px/1.45 var(--mono,ui-monospace,monospace);background:var(--surface-2,var(--bg));border:1px solid var(--border);border-radius:8px;padding:8px}

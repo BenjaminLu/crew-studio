@@ -13,6 +13,7 @@ import { LIMITS, cleanName, cleanText, entryHash, envelopeProblem, makeEnvelope,
 import { LanWire, call, introduce, peerTargetProblem, CallError, type IntroResult, type Me } from "./wire";
 import { scanText, type Hit } from "./scan";
 import { Store } from "./store";
+import { addTaintSource } from "./taint";
 import { lanIp } from "../remote/lan";
 
 export type PeerRec = { key: string; fp: string; petname: string; claimed: string; host: string; port: number; introducedAt: string;
@@ -38,9 +39,11 @@ export type RoundRec = { n: number; fence: string; briefing: { hash: string; siz
   /** the run this round started. Its claim (`claimed`, the assignment item) is written, synced, before the Task starts; a
    *  restart finds the Task by that item (`found`), or marks it gone: a claim is never released by a restart */
   run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean };
-  result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number } };
+  result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number; base?: string | null } };
 export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null; waiting?: string | null };
 export type ThreadRec = { id: string; owner: string; peer: string; title: string; acceptance: string[]; suggested: WorkflowRef | null; rounds: RoundRec[];
+  /** code work: the dispatcher's project history (its root commit) and the commit the work is based on */
+  base?: { root: string; sha: string } | null;
   /** closed: its peer's identity was replaced or revoked (threads are never moved to a new identity) */
   state: "open" | "done" | "withdrawn" | "closed"; closedWhy?: string; steps: Step[] };
 type Outbox = { to: string; entry: string; blobs: string[]; tries: number; last: string | null; error: string | null; next?: number; retry?: boolean };
@@ -54,16 +57,18 @@ type State = { v: 2; settings: { enabled: boolean; name: string }; logs: Record<
 /** What a Task that runs work from a peer needs from Studio (src/lan/runner.ts implements it over the runtime). */
 export type LanRunner = {
   workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
-  start(o: { workflow: string; text: string; title: string; item: string; cap: { usd: number | null; rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
+  start(o: { workflow: string; text: string; title: string; item: string; cap: { usd: number | null; rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
   status(run: string): { state: string; result: string | null; spent: { usd: number; rounds: number }; stopped: string | null; ready?: boolean } | null;
   /** the Task a received assignment started (by the item id in its LAN mark), after a restart: its id, or null */
   findByItem?(item: string): string | null;
-  output(run: string): Promise<{ files: { path: string; text: string | null; bytes: number }[]; changed: string[]; protectedHits: string[]; checks: { pass: number; fail: number; other: number; summary: string }; workflow: WorkflowRef; kind?: "files" | "patch" }>;
+  output(run: string): Promise<{ files: { path: string; text: string | null; bytes: number }[]; changed: string[]; protectedHits: string[]; checks: { pass: number; fail: number; other: number; summary: string }; workflow: WorkflowRef; kind?: "files" | "patch"; base?: string | null }>;
   cancel(run: string, why: string): void;
 };
 export type LanOpts = { dataDir: string; runner: LanRunner;
   /** the dispatcher's side of a code result: apply its patch to a registered project on a branch of its own (src/lan/apply.ts) */
-  apply?: (o: { project: string; patch: string; branch: string }) => { branch: string; path: string; files: string[]; commit?: string; repo?: string };
+  apply?: (o: { project: string; patch: string; branch: string; base: string }) => { branch: string; path: string; files: string[]; commit?: string; repo?: string };
+  /** code work: a project's base (its root commit and the commit its base branch is at), and why a project cannot take a base */
+  baseOf?: (project: string) => { root: string; sha: string } | null; baseProblem?: (project: string, base: { root: string; sha: string }) => string | null;
   send?: (type: string, data: unknown) => void; log?: (summary: string, data?: unknown) => void; bind?: string; port?: number; privacyDenylist?: () => string[];
   /** a keystore kind to ask for (tests); CREW_LAN_KEYSTORE otherwise */
   keystore?: KeystoreKind };
@@ -126,6 +131,7 @@ export class Lan {
     try { st = meta && meta.identity === ks.key ? { ...fresh(), ...(store.getState<State>() ?? {}) } : fresh(); }
     catch (e: any) { ks.close(); return lostWith(String(e?.message ?? e)); }
     const lan = new Lan(o, store, ks, null, st, opened.fallback ?? null);
+    lan.untaint = addTaintSource(() => { try { return store.taints(); } catch { return []; } });
     await lan.afterOpen();
     return lan;
   }
@@ -145,7 +151,8 @@ export class Lan {
     for (const h of hs) { const b = await this.loadBody(h); if (!b) continue; const need = b.kind === "dispatch" || b.kind === "refine" ? b.briefing.hash : b.kind === "result" ? b.output.hash : null; if (need) await this.loadText(need); }
     this.o.send?.("lan", { changed: Date.now() });
   }
-  close() { if (this.closed) return; for (const t of this.timers) clearInterval(t); this.wire.stop(); try { if (!this.lost) this.flushState(); } finally { this.closed = true; this.store.close(); this.ks?.close(); for (const k of this.retiredKs.values()) k.close(); } }
+  untaint: () => void = () => {};
+  close() { if (this.closed) return; this.untaint(); for (const t of this.timers) clearInterval(t); this.wire.stop(); try { if (!this.lost) this.flushState(); } finally { this.closed = true; this.store.close(); this.ks?.close(); for (const k of this.retiredKs.values()) k.close(); } }
 
   // ---------- who this Studio is ----------
   get id(): { key: string; fingerprint: string; store: KeystoreKind | "lost" } { return this.ks ? { key: this.ks.key, fingerprint: this.ks.fingerprint, store: this.ks.kind } : { key: "", fingerprint: "", store: "lost" }; }
@@ -608,7 +615,7 @@ export class Lan {
     let t = this.thread(b.thread);
     const step: Step = { entry: h, kind: b.kind, author: e.a, round: b.round, ts: e.ts, at: now(), delivered: mine ? false : null, refused: null };
     if (b.kind === "dispatch") {
-      t = { id: b.thread, owner: e.a, peer: mine ? e.to[0] : e.a, title: cleanText(b.title, LIMITS.title), acceptance: b.acceptance.map((c) => cleanText(c, LIMITS.criterion)), suggested: b.suggested, state: "open", steps: [],
+      t = { id: b.thread, owner: e.a, peer: mine ? e.to[0] : e.a, title: cleanText(b.title, LIMITS.title), acceptance: b.acceptance.map((c) => cleanText(c, LIMITS.criterion)), suggested: b.suggested, base: b.base ?? null, state: "open", steps: [],
         rounds: [{ n: 1, fence: newFence(), briefing: { ...b.briefing, entry: h }, take: null, assign: null, run: null, result: null }] };
       this.st.threads.push(t);
     }
@@ -619,7 +626,9 @@ export class Lan {
     if (b.kind === "result") {
       // a result is the taker's own word: its workflow is compared with the one its take named, and a difference is flagged
       if (r.take && (b.workflow.defHash !== r.take.workflow.defHash || b.workflow.id !== r.take.workflow.id)) flags.push("workflow-mismatch");
-      r.result = { entry: h, take: b.take, workflow: b.workflow, output: b.output, run: b.run, checks: b.checks, flags, accepted: mine, seq: e.seq };
+      // a code result is the taker's patch over the base it names: it must be the base this thread dispatched
+      if (t.base && b.base !== t.base.sha) flags.push("base-mismatch");
+      r.result = { entry: h, take: b.take, workflow: b.workflow, output: b.output, run: b.run, checks: b.checks, flags, accepted: mine, seq: e.seq, base: b.base ?? null };
     }
     if (b.kind === "refine") t.rounds.push({ n: b.round, fence: newFence(), briefing: { ...b.briefing, entry: h }, take: null, assign: null, run: null, result: null });
     if (b.kind === "done") t.state = "done";
@@ -636,7 +645,7 @@ export class Lan {
   private busy = new Set<string>();
   private item(id: string) { const i = this.st.items.find((x) => x.id === id); if (!i) throw new LanError(404, "no such item"); if (i.state !== "open") throw new LanError(409, `this item is already ${i.state}`); if (this.busy.has(id)) throw new LanError(409, "this item is being approved"); return i; }
   /** Dispatch work to an introduced peer: the briefing and acceptance criteria are sealed to that peer and this Studio. */
-  async dispatch(o: { to: string; title: unknown; briefing: unknown; acceptance?: unknown; workflow?: string | null }) {
+  async dispatch(o: { to: string; title: unknown; briefing: unknown; acceptance?: unknown; workflow?: string | null; project?: string | null }) {
     this.live();
     const p = this.trusted(o.to); if (!p) throw new LanError(404, "dispatch only to an introduced peer"); if (p.frozen) throw new LanError(409, "this peer is frozen");
     const title = cleanName(o.title).slice(0, LIMITS.title), text = String(o.briefing ?? "").normalize("NFC").trim();
@@ -645,9 +654,13 @@ export class Lan {
     if (acceptance.join("\n").length > 1500) throw new LanError(400, "acceptance criteria are at most 1500 characters together");
     let suggested: WorkflowRef | null = null;
     if (o.workflow) { const w = this.o.runner.workflows().find((x) => x.id === o.workflow); if (!w) throw new LanError(400, "no such workflow on this Studio"); suggested = { id: w.id, version: w.version, defHash: w.defHash }; }
+    // code work names the dispatcher's project history and base commit: the taker's worktree starts there, and the patch
+    // that comes back applies there (never onto whatever the base branch is later)
+    let base: { root: string; sha: string } | null = null;
+    if (o.project) { if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(String(o.project))) throw new LanError(400, "choose one of this Studio's projects"); base = this.o.baseOf?.(String(o.project)) ?? null; if (!base) throw new LanError(409, `project ${o.project} has no base commit to dispatch code work on`, "base"); }
     const plain = Buffer.from(text, "utf8"), blob = sealBlob(plain, [this.recipient(p.key)], { id: this.live().key, dh: this.live().dhPub }), thread = newId();
-    await this.append([p.key], { kind: "dispatch", thread, round: 1, title, briefing: { hash: blob.hash, size: plain.length }, acceptance, suggested }, [{ blob, bytes: plain.length, plain: text }],
-      ["dispatch", { thread, to: p.key, briefing: blob.hash, bytes: plain.length }]);
+    await this.append([p.key], { kind: "dispatch", thread, round: 1, title, briefing: { hash: blob.hash, size: plain.length }, acceptance, suggested, ...(base ? { base } : {}) }, [{ blob, bytes: plain.length, plain: text }],
+      ["dispatch", { thread, to: p.key, briefing: blob.hash, bytes: plain.length, base }]);
     return this.threadView(this.thread(thread)!);
   }
   /** Approve one received item. What it means depends on its kind (see the unit spec): take with a workflow, assign, start, accept. */
@@ -672,6 +685,8 @@ export class Lan {
         // rounds only is the taker's own choice, for any provider: then every paid round of the Task counts toward the rounds cap
         if ((usd !== null && !(usd >= 0 && usd <= 1000)) || !Number.isSafeInteger(rounds) || rounds < 1 || rounds > 50) throw new LanError(400, "a spend cap is 0 to 1000 dollars (or rounds only) and 1 to 50 agent rounds");
         const project = w.needsProject ? String(o.project ?? "") : null; if (w.needsProject && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(project!)) throw new LanError(400, "choose one of this Studio's projects for this code workflow", "project_required");
+        // code work on the dispatcher's base: the project must hold that history and that commit
+        if (w.needsProject && t.base) { const why = this.o.baseProblem?.(project!, t.base) ?? null; if (why) throw new LanError(409, `project ${project} cannot take this code work: ${why}`, "base"); }
         const provider = o.provider && /^(codex|claude|cursor|stub)$/.test(o.provider) ? o.provider : null;
         if (r.take) throw new LanError(409, "this round is already taken");
         // the approval and the signed take land in one transaction: a restart never shows the item open again
@@ -691,7 +706,7 @@ export class Lan {
         this.step(() => { r.run = { id: "(claimed)", state: "starting", result: null, started: now(), stopped: null, item: i.id }; i.state = "approved";
           this.store.markUsed([r.briefing.hash, r.briefing.entry, i.entry, ...(r.take ? [r.take.entry] : [])]); });
         let started: { run: string; workflow: WorkflowRef };
-        try { started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN ${t.id}`, item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` }); }
+        try { started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN ${t.id}`, item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, base: t.base?.sha ?? null, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` }); }
         catch (e: any) { this.step(() => { r.run = null; i.state = "open"; }); throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); }
         this.step(() => { r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null, item: i.id };
           this.store.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow }); });
@@ -749,7 +764,7 @@ export class Lan {
     if (o.confirm !== x.hash) throw new LanError(409, "the output changed since the preview: preview it again", "stale");
     const blob = sealBlob(x.plain, [this.recipient(t.owner)], { id: this.live().key, dh: this.live().dhPub });
     await this.append([t.owner], { kind: "result", thread: t.id, round: x.r.n, take: x.r.assign!.take, briefing: x.r.briefing.hash, output: { hash: blob.hash, size: x.plain.length, files: x.files.slice(0, LIMITS.files).map((f) => ({ path: f.path.slice(0, LIMITS.path), bytes: Buffer.byteLength(f.text) })) },
-      workflow: x.out.workflow, run: x.r.run!.id, checks: { ...x.out.checks, summary: x.out.checks.summary.slice(0, LIMITS.note) } }, [{ blob, bytes: x.plain.length, plain: x.plain.toString("utf8") }],
+      workflow: x.out.workflow, run: x.r.run!.id, checks: { ...x.out.checks, summary: x.out.checks.summary.slice(0, LIMITS.note) }, ...(x.out.kind === "patch" && x.out.base ? { base: x.out.base } : {}) }, [{ blob, bytes: x.plain.length, plain: x.plain.toString("utf8") }],
       ["handback", { thread: t.id, round: x.r.n, run: x.r.run!.id, to: t.owner, output: blob.hash, bytes: x.plain.length }]);
     return this.threadView(t);
   }
@@ -774,18 +789,37 @@ export class Lan {
   /** The dispatcher applies a code result (its changes.patch) to one of its own registered projects, on a new branch
    *  lan-untrusted/<thread>-r<n> in a worktree of Studio's (src/lan/apply.ts): paths checked again, no hook runs, nothing
    *  is merged, built or tested here. */
-  applyResult(threadId: string, o: { project: unknown; round?: unknown }) {
+  applyResult(threadId: string, o: { project: unknown; round?: unknown; seen?: unknown }) {
     const t = this.thread(threadId); if (!t || t.owner !== this.live().key) throw new LanError(404, "only the dispatcher applies a result of its own thread");
     const r = o.round === undefined ? [...t.rounds].reverse().find((x) => x.result) : t.rounds.find((x) => x.n === Number(o.round));
     if (!r?.result) throw new LanError(409, "this round has no result");
+    // the peer still stands (introduced, not frozen; a revoked identity's result only from before its cut-off)
+    const p = this.peer(t.peer);
+    if (!p || p.frozen) throw new LanError(409, "this peer is frozen or gone: its result is not applied", "peer");
+    if (p.state !== "trusted" && !(p.state === "retired" && (r.result.seq ?? Infinity) <= (p.retired?.lastSeq ?? -1))) throw new LanError(409, p.state === "retired" ? "this result came after its author revoked its identity: it is not applied" : "this peer is no longer introduced: its result is not applied", "peer");
+    if (!r.result.accepted) throw new LanError(409, "accept the result first (after reading it)", "accept");
     if (!this.o.apply) throw new LanError(501, "applying a patch is not available on this Studio");
     const text = this.blobText(r.result.output.hash); if (text === null) throw new LanError(410, "the result is not on this Studio any more");
     let files: { path: string; text: string }[] = []; try { files = JSON.parse(text).files; } catch {}
     const patch = files.find((f) => f.path === "changes.patch")?.text; if (!patch) throw new LanError(409, "this result carries no patch (it is not from a code workflow)");
+    // the person read the exact patch: the apply names the hash of its bytes
+    if (o.seen !== sha256hex(patch)) throw new LanError(409, "read the whole patch first: this apply does not name the patch shown", "unread");
+    const base = r.result.base ?? null;
+    if (!base || (t.base && base !== t.base.sha)) throw new LanError(409, t.base ? `the result is based on ${String(base ?? "nothing").slice(0, 12)}, not on the commit this thread dispatched (${t.base.sha.slice(0, 12)}): it is not applied` : "the result names no base commit this Studio dispatched: it is not applied", "base");
     const project = String(o.project ?? ""); if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(project)) throw new LanError(400, "choose one of this Studio's projects");
-    try { const done = this.o.apply({ project, patch, branch: `lan-untrusted/${t.id.toLowerCase().replace(/[^a-z0-9-]/g, "-")}-r${r.n}` });
-      this.step(() => { this.store.markUsed([r.result!.output.hash, r.result!.entry]); this.store.audit("apply", { thread: t.id, round: r.n, project, branch: done.branch, files: done.files.length, commit: done.commit ?? null }); }); return done; }
+    try { const done = this.o.apply({ project, patch, branch: `lan-untrusted/${t.id.toLowerCase().replace(/[^a-z0-9-]/g, "-")}-r${r.n}`, base });
+      // the commit joins the taint list: nothing trusted starts from it or publishes it until a person marks it reviewed
+      this.step(() => { this.store.markUsed([r.result!.output.hash, r.result!.entry]);
+        if (done.commit && done.repo) this.store.addTaint({ sha: done.commit, repo: done.repo, project, peer: t.peer, thread: t.id, round: r.n, at: now(), why: `applied from ${p.petname}'s Studio, thread ${t.id} round ${r.n}` });
+        this.store.audit("apply", { thread: t.id, round: r.n, project, branch: done.branch, files: done.files.length, commit: done.commit ?? null, base, seen: o.seen }); }); return done; }
     catch (e: any) { throw new LanError(409, `the patch was not applied: ${String(e?.message ?? e).slice(0, 400)}`, "apply"); }
+  }
+  /** "I reviewed commit X": a person clears one commit from the taint list (audited); its descendants are clear of it too */
+  clearTaint(sha: unknown, repo: unknown) {
+    const s = String(sha ?? ""), rp = String(repo ?? ""); if (!/^[0-9a-f]{40}$/.test(s)) throw new LanError(400, "name the commit");
+    const row = this.store.taints().find((t) => t.sha === s && t.repo === rp && !t.cleared); if (!row) throw new LanError(404, "no such commit from a peer");
+    this.step(() => { this.store.clearTaint(s, rp, "captain (desktop)"); this.store.audit("taint-cleared", { sha: s, repo: rp, project: row.project, peer: row.peer, thread: row.thread }); });
+    return this.view();
   }
   async withdraw(threadId: string, reason?: unknown) {
     const t = this.thread(threadId); if (!t || t.owner !== this.live().key || t.state !== "open") throw new LanError(404, "only the dispatcher withdraws its own open thread");
@@ -826,8 +860,14 @@ export class Lan {
     else if (r.take) { where = tx(`Round ${n}: taken`, `第 ${n} 輪已有人接`); holder = t.owner; next = tx("The dispatcher assigns it", "派工者核准並指派（assign）"); }
     else { where = n === 1 ? tx("Dispatched", "已派工") : tx(`Round ${n}: refined`, `第 ${n} 輪已調整`); holder = taker; next = tx("The taker reads all of it and takes it with a workflow of their own", "接手者看完整內容後，選自己的流程接下（take）"); }
     return { id: t.id, title: t.title, role: t.owner === me ? "dispatcher" : "taker", owner: this.who(t.owner), peer: this.who(t.peer), state: t.state, acceptance: t.acceptance, suggested: t.suggested,
-      now: { where, holder: holder ? this.who(holder) : null, mine: mineToDo(holder), next },
-      rounds: t.rounds, steps: t.steps.map((s) => ({ ...s, who: this.who(s.author) })) };
+      now: { where, holder: holder ? this.who(holder) : null, mine: mineToDo(holder), next }, base: t.base ?? null,
+      // the dispatcher's own code results carry the patch itself: the page shows it, and an apply names the hash of it
+      rounds: t.owner === me ? t.rounds.map((x) => x.result ? { ...x, result: { ...x.result, patch: this.patchOf(x.result.output.hash) } } : x) : t.rounds,
+      steps: t.steps.map((s) => ({ ...s, who: this.who(s.author) })) };
+  }
+  private patchOf(hash: string): string | null {
+    const text = this.blobText(hash); if (text === null) return null;
+    try { const f = (JSON.parse(text).files as { path: string; text: string }[]).find((x) => x.path === "changes.patch"); return f ? String(f.text) : null; } catch { return null; }
   }
   itemView(i: ItemRec) {
     const t = this.thread(i.thread)!, b = this.body(i.entry), r = t?.rounds.find((x) => x.n === i.round);
@@ -872,6 +912,7 @@ export class Lan {
       threads: this.st.threads.map((t) => this.threadView(t)).reverse(),
       items: this.st.items.filter((i) => i.state === "open" || i.state === "frozen").map((i) => this.itemView(i)).reverse(),
       outbox: this.st.outbox.map((x) => ({ to: this.who(x.to), entry: x.entry, tries: x.tries, error: x.error })),
+      taints: this.store.taints().filter((t) => !t.cleared).map((t) => ({ ...t, peer: this.who(t.peer) })),
       refused: this.st.refused.slice(-10).reverse().map((r) => ({ ...r, from: this.who(r.from) })) };
   }
   private inspectSafe(h: string) { try { return this.inspect(h); } catch { return null; } }

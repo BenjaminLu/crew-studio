@@ -3,7 +3,8 @@ import {WorkflowPackages,snapshotPackage,packageSha} from '../workflow-package';
 import {workflowDefinitionExport} from '../workflow-definition-export';
 import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
-import {lanUntrusted} from '../lan/apply';
+import {lanUntrusted,baseProblem,pinBase} from '../lan/apply';
+import {taintRefusal} from '../lan/taint';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
 import { refusesRulesPatch } from "../operating-rules";
@@ -835,6 +836,7 @@ export function createRuntime(d: RuntimeDeps) {
     const refuse = (x: StartRefusal) => Object.assign(new Error(String(x.body.error)), { code: x.body.code, staffing: x.body.staffing });
     // work a peer's Studio sent (docs/units/lan-relay.md): read and diffed by people, never reviewed and merged as trusted work
     if (lanUntrusted(p.path, o.commit, o.branch)) throw Object.assign(new Error(`${o.branch ?? o.commit.slice(0, 12)} holds work from a peer's Studio (a lan-untrusted/ branch): Studio does not send it for review; read its diff, and commit what you keep yourself`), { code: "lan_untrusted" });
+    { const why = taintRefusal(p.path, o.commit, "Send for review"); if (why) throw Object.assign(new Error(why), { code: "lan_untrusted" }); }
     if (boardStaffed(def)) {
       const g = await staffedStartGuard(def, p.id, { why: `Send for review of ${o.branch ?? o.commit.slice(0, 12)} on ${p.id}` });
       if (!g.ok) throw refuse(g);
@@ -854,7 +856,7 @@ export function createRuntime(d: RuntimeDeps) {
    * and no coffee-kit crew; an own workflow's staffing is confirmed with the take (staffingConfirm, its plan's hash).
    */
   const lanStaffing = (def: any) => { if (!ownWorkflow(def)) return null; const s = ownStaffingPlan(def, defs.ownCrew); return s.plan.length ? { hash: s.hash, plan: s.plan, missing: s.missing } : null; };
-  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; usd: number | null; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null }) => {
+  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; usd: number | null; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => {
     const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
     const def = defs.get(o.workflow);
     if (!def || !defs.selectable(o.workflow) || defs.held(o.workflow)) throw refuse("workflow_unavailable", "This workflow is not available for a new Task");
@@ -865,6 +867,9 @@ export function createRuntime(d: RuntimeDeps) {
       const pid = String(o.project ?? ""); if (!pid || !projects.get(pid)?.path) throw refuse("project_required", "Choose one of this Studio's registered projects for this code workflow");
       const g = await staffedStartGuard(def, pid, { why: `work from a peer on ${pid}` }); if (!g.ok) throw refuse(String(g.body.code ?? "staffing_not_ready"), String(g.body.error));
       staffed = { project: pid, ...g.params }; autoVerified = g.autoVerified;
+      // code work on the dispatcher's base: a branch pinned at that commit in this project, so the worktree starts there
+      // and stays there (a build round's rebase onto it changes nothing), and the patch that goes back applies there
+      if (o.base) { if (!/^[0-9a-f]{40}$/.test(o.base)) throw refuse("base", "a bad base commit"); const why = baseProblem(projects.get(pid)!.path!, { root: o.base, sha: o.base }); if (why && !/root/.test(why)) throw refuse("base", `project ${pid} ${why}`); staffed.base = pinBase(projects.get(pid)!.path!, o.base); }
     }
     const missing = Object.entries(def.params ?? {}).filter(([, spec]: any) => spec.required && !String(spec.default ?? "").trim()).map(([k]) => k);
     if (missing.length) throw refuse("param_required", `This workflow needs inputs work from a peer cannot give: ${missing.join(", ")}`);

@@ -7,6 +7,7 @@
 import { freePort } from "../boot.mjs";
 import { bootStudio, type Studio } from "../acceptance/studio";
 import { drive } from "../acceptance/drive";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 /** What the page sends with an approval of a dispatch or a refinement: the hash of the exact prompt it showed. */
 export const seenOf = (prompt: string) => createHash("sha256").update(`lan-seen\0${prompt ?? ""}`).digest("hex");
@@ -29,6 +30,15 @@ export async function bootPair(o: { examples?: boolean } = {}): Promise<Pair> {
   const keyA = (await must(A.api("/api/lan"), "A view")).me.key, keyB = (await must(B.api("/api/lan"), "B view")).me.key;
   return { A, B, lanA, lanB, keyA, keyB, close: async () => { await Promise.all([A.close(), B.close()]); } };
 }
+
+/** Code work is based on a commit of the dispatcher's project: B's copy of the project must hold it (two clones of one
+ *  project do; the test's two sandbox repositories are made apart, so B fetches A's history first). */
+export function shareBase(p: Pair) {
+  const a = join(p.A.data, "demo-repo"), b = join(p.B.data, "demo-repo");
+  const r = Bun.spawnSync(["git", "-C", b, "fetch", "-q", "--no-tags", a, "+refs/heads/main:refs/remotes/peer-a/main"], { stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) throw new Error(`B could not fetch A's sandbox history: ${r.stderr.toString().slice(0, 300)}`);
+}
+export const patchHash = (patch: string) => createHash("sha256").update(patch).digest("hex");
 
 /** The introduction: B opens its window, A introduces itself, each side types the code the other side shows. */
 export async function introduce(p: Pair, log: (s: string) => void = () => {}, o: { replaces?: string } = {}) {
@@ -134,7 +144,8 @@ export async function codeRelay(p: Pair, log: (s: string) => void = () => {}) {
   await STEPS["staffing-code"]({ s: p.B, vars: { project: "sandbox" }, firstmate: async () => [] } as any);
   const step = (who: string, what: string) => log(`  ${who.padEnd(6)} ${what}`);
   const briefing = "請在 lib/ 加一個打九折的函式，並附上測試。\nSTUB_FILE lib/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\ntest('ten percent off', async () => { expect(await Bun.file(new URL('../lib/discount.ts', import.meta.url)).exists()).toBe(true); const { discount } = await import('../lib/discount'); expect(discount(100)).toBe(90); });\\n";
-  const t = await must(p.A.api("/api/lan/dispatch", { to: p.keyB, title: "九折函式", briefing, acceptance: ["附測試"], workflow: "code-firstmate" }), "A dispatches code work");
+  shareBase(p);
+  const t = await must(p.A.api("/api/lan/dispatch", { to: p.keyB, title: "九折函式", briefing, acceptance: ["附測試"], workflow: "code-firstmate", project: "sandbox" }), "A dispatches code work on its sandbox project");
   step("A → B", `dispatch  thread ${t.id} · 建議流程 code-firstmate@v${t.suggested.version}`);
   const d = await item(p.B, "dispatch", t.id);
   await must(p.B.api(`/api/lan/items/${d.id}/approve`, { seen: seenOf(d.prompt), workflow: "code-firstmate", project: "sandbox", provider: "codex", roundsOnly: true, rounds: 40 }), "B takes with code-firstmate");
@@ -151,7 +162,8 @@ export async function codeRelay(p: Pair, log: (s: string) => void = () => {}) {
   await must(p.B.api(`/api/lan/threads/${t.id}/handback`, { confirm: pre.hash }), "B hands the patch back");
   step("B → A", `result    交回 changes.patch ${pre.bytes} bytes`);
   const r = await item(p.A, "result", t.id); await must(p.A.api(`/api/lan/items/${r.id}/approve`, {}), "A accepts");
-  const applied = await must(p.A.api(`/api/lan/threads/${t.id}/apply`, { project: "sandbox" }), "A applies the patch");
+  const th = await must(p.A.api(`/api/lan/threads/${t.id}`), "A's thread"), patch = th.rounds.at(-1).result.patch as string;
+  const applied = await must(p.A.api(`/api/lan/threads/${t.id}/apply`, { project: "sandbox", seen: patchHash(patch) }), "A applies the patch it read");
   step("A", `apply     套用到 A 的 sandbox 專案分支 ${applied.branch}（${applied.files.join(", ")}）`);
   await must(p.A.api(`/api/lan/threads/${t.id}/done`, {}), "A marks it done");
   step("A → B", "done      結案");

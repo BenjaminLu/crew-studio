@@ -39,7 +39,9 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     if (p === "/api/lan/identity/retire") return json(await lan.retireIdentity({ kind: KINDS.includes(String(b.kind)) ? b.kind : undefined }));
     if (p === "/api/lan/identity/replace-lost") return json(await lan.replaceLostIdentity({ kind: KINDS.includes(String(b.kind)) ? b.kind : undefined }));
     if (p === "/api/lan/identity/drop-retired") return json(lan.dropRetirement(String(b.key ?? "")));
-    if (p === "/api/lan/dispatch") return json(await lan.dispatch({ to: String(b.to ?? ""), title: b.title, briefing: b.briefing, acceptance: b.acceptance, workflow: b.workflow ? String(b.workflow) : null }));
+    if (p === "/api/lan/dispatch") return json(await lan.dispatch({ to: String(b.to ?? ""), title: b.title, briefing: b.briefing, acceptance: b.acceptance, workflow: b.workflow ? String(b.workflow) : null, project: b.project ? String(b.project) : null }));
+    // "I reviewed commit X": a commit applied from a peer's work leaves the taint list
+    if (p === "/api/lan/taint/clear") return json(lan.clearTaint(b.sha, b.repo));
     let x = m(`intro/(${ID})/(confirm|cancel)`);
     if (x) return json(x[2] === "confirm" ? await lan.confirmIntro(x[1], b.code, b.petname, { replaces: typeof b.replaces === "string" && new RegExp(`^${KEY}$`).test(b.replaces) ? b.replaces : null, keepName: b.keepName === true }) : lan.cancelIntro(x[1]));
     x = m(`peers/(${KEY})/(rename|unpair|revoke|resolve|address)`);
@@ -50,7 +52,7 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
       return json(lan.removePeer(k, x[2] as "unpair" | "revoke")); }
     x = m(`items/(${ID})/(approve|reject)`);
     if (x) return json(x[2] === "approve" ? await lan.approve(x[1], { workflow: b.workflow ? String(b.workflow) : undefined, usd: b.usd === undefined ? undefined : Number(b.usd), rounds: b.rounds === undefined ? undefined : Number(b.rounds), provider: b.provider ? String(b.provider) : null, staffingConfirm: b.staffingConfirm ? String(b.staffingConfirm) : null, project: b.project ? String(b.project) : null, seen: b.seen ? String(b.seen) : null, roundsOnly: b.roundsOnly === true }) : lan.reject(x[1], b.note));
-    x = m(`threads/(${ID})/apply`); if (x) return json(lan.applyResult(x[1], { project: b.project, round: b.round }));
+    x = m(`threads/(${ID})/apply`); if (x) return json(lan.applyResult(x[1], { project: b.project, round: b.round, seen: b.seen }));
     x = m(`threads/(${ID})/(handback/preview|handback|refine|done|withdraw)`);
     if (x) { const id = x[1], edits = Array.isArray(b.edits) ? b.edits.slice(0, 60).map((e: any) => ({ path: String(e?.path ?? ""), text: e?.text === null ? null : String(e?.text ?? "") })) : undefined;
       if (x[2] === "handback/preview") return json(await lan.handbackPreview(id, edits));

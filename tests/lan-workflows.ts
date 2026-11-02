@@ -12,7 +12,7 @@ import { loadScenario, scenarioFiles } from "../scripts/acceptance/scenarios";
 import { stubRuns, stubDecision, type StubRun } from "./acceptance/stub";
 import { STEPS, type Ctx } from "./acceptance/steps";
 import { drive } from "./acceptance/drive";
-import { bootPair, introduce, must, seenOf, until, type Pair } from "./lan/flow";
+import { bootPair, introduce, must, patchHash, seenOf, shareBase, until, type Pair } from "./lan/flow";
 import type { Studio } from "./acceptance/studio";
 
 let pass = 0, fail = 0;
@@ -61,12 +61,14 @@ async function relayOne(p: Pair, w: any, r: StubRun, h: Ctx): Promise<string> {
     const res = await item(p.A, "result", t); await must(p.A.api(`/api/lan/items/${res.id}/approve`, {}), `A accepts round ${n}`);
     return { run, files: res.files.map((f: any) => f.path) };
   };
-  const t = await must(p.A.api("/api/lan/dispatch", { to: p.keyB, title: `${w.id} across two boards`, briefing: brief(1), acceptance: ["done when it is done"], workflow: w.id }), `A dispatches ${w.id}`);
+  if (code) shareBase(p);
+  const t = await must(p.A.api("/api/lan/dispatch", { to: p.keyB, title: `${w.id} across two boards`, briefing: brief(1), acceptance: ["done when it is done"], workflow: w.id, ...(code ? { project: "sandbox" } : {}) }), `A dispatches ${w.id}`);
   const r1 = await roundOn(t.id, 1, await item(p.B, "dispatch", t.id));
   await must(p.A.api(`/api/lan/threads/${t.id}/refine`, { briefing: brief(2), note: "round 2" }), "A refines");
   const r2 = await roundOn(t.id, 2, await item(p.B, "refine", t.id));
   let applied = "";
-  if (code) { const x = await must(p.A.api(`/api/lan/threads/${t.id}/apply`, { project: "sandbox" }), "A applies the patch"); applied = ` · applied on A as ${x.branch}`; }
+  if (code) { const th = await must(p.A.api(`/api/lan/threads/${t.id}`), "A's thread"), patch = th.rounds.at(-1).result.patch as string;
+    const x = await must(p.A.api(`/api/lan/threads/${t.id}/apply`, { project: "sandbox", seen: patchHash(patch) }), "A applies the patch it read"); applied = ` · applied on A as ${x.branch} (based on ${th.base?.sha?.slice(0, 12)})`; }
   await must(p.A.api(`/api/lan/threads/${t.id}/done`, {}), "A marks it done");
   const dn = await item(p.B, "done", t.id); await must(p.B.api(`/api/lan/items/${dn.id}/approve`, {}), "B acknowledges done");
   const ta = await must(p.A.api(`/api/lan/threads/${t.id}`), "A's thread");

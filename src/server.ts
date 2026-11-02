@@ -100,7 +100,7 @@ import { createTasksApi, taskAlias } from "./tasks-api";
 import { Lan } from "./lan/relay";
 import { lanRoutes } from "./lan/routes";
 import { lanRunner } from "./lan/runner";
-import { lanApplier } from "./lan/apply";
+import { lanApplier, baseOf as lanBaseOf, baseProblem as lanBaseProblem } from "./lan/apply";
 import { installLanProfile } from "./lan/profile";
 import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
@@ -531,6 +531,8 @@ if (process.env.CREW_LAN !== "0") {
     lan = await Lan.open({ dataDir: DATA, send, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
       runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), needsProject: (def) => runtime.lanNeedsProject(def) }),
       apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
+      baseOf: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? lanBaseOf(p.path, p.base || "main") : null; },
+      baseProblem: (id, base) => { const p = runtime.projects.get(id) as any; return p?.path ? lanBaseProblem(p.path, base) : `no registered project ${id}`; },
       privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } } });
     process.on("exit", () => { try { lan?.close(); } catch {} });
   } catch (e: any) { console.warn(`crew-studio: board-to-board work is unavailable: ${e?.message ?? e}`); }

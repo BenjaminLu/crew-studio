@@ -49,6 +49,7 @@ try {
   ok(/<untrusted-lan-briefing-[0-9a-f]{12}>[\s\S]*上線清單[\s\S]*<\/untrusted-lan-briefing-[0-9a-f]{12}>/.test(prompt), "the agent got the briefing fenced as untrusted data, under a nonce of B's own");
   ok(/NETWORK: this Task came from a peer's Studio; only your provider's API is reachable/.test(prompt), "the agent's brief states the LAN profile's network");
   const runJson = JSON.parse(readFileSync(join(p.B.data, "runs", r.runs[0], "run.json"), "utf8"));
+  ok(runJson.title === `LAN ${r.thread}` && !/上線清單/.test(runJson.title), "the Task's title is LAN and the thread id: the peer's title stays on the LAN screen and inside the fence", runJson.title);
   ok(runJson.profile?.name === "lan" && runJson.profile?.mark?.rounds === 6 && !("_lan" in (runJson.params ?? {})) && !("_tainted" in (runJson.params ?? {})), "the Task runs under the runtime's lan profile (its spend cap is the profile's mark, never a param)", JSON.stringify([runJson.profile, runJson.params]));
   // encrypted at rest and on the wire: no byte of either relay store (the database and its write-ahead log) holds the text
   const dbBytes = (data: string) => ["relay.db", "relay.db-wal"].map((f) => { try { return readFileSync(join(data, "lan", f)).toString("utf8"); } catch { return ""; } }).join("\n");

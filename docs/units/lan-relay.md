@@ -270,17 +270,36 @@ honest mistakes, not a wall: an agent told to leak something can encode it past 
 person reading the bytes is the gate. The send must carry the hash of the bytes the person saw. The result is sealed to
 the dispatcher only. Its checks summary is the taker's own report.
 
+## Code work: its base
+
+Code work names a project at dispatch: the dispatch carries that project's history (its root commit) and the commit its
+base branch is at. The taker takes it only on a project that holds both (two clones of one project do); the Task's
+worktree starts at that commit, on a branch `lan-base/<sha>` pinned there, so a build round's rebase changes nothing;
+the result names that commit as its base, and the dispatcher applies it there (never onto whatever its base branch is
+later, and never onto another base: a result naming another commit is refused).
+
 ## Applying a code result
 
-The dispatcher applies a code result's patch to one of its own registered projects (`src/lan/apply.ts`). Git names the
+The dispatcher applies a code result's patch to one of its own registered projects (`src/lan/apply.ts`) only when the
+peer is still introduced and not frozen (a revoked identity's result only from before its cut-off), the result was
+accepted, and the apply names the SHA-256 of the exact patch the page showed (read to its end). Git names the
 paths (`git apply --numstat -z` and `--summary`), never a regex, and every one is checked: nothing outside the
 project, no protected path, nothing but printable ASCII. A binary hunk, a copy or a rename (it carries its source's
 mode), a new file with any mode but 100644 (an executable, a link, a submodule), a mode change, or an edit to a path
 that is not a plain 100644 file in the base (`ls-tree`: a symbolic link keeps its mode when its target changes) refuses
 the whole patch. It is applied without a checkout: into a
-temporary index (`apply --cached`), committed with `commit-tree`, branched as `lan-untrusted/<thread>-r<n>` with
-`update-ref`, so no clean or smudge filter of the repository and no hook runs. Nothing is merged, built, tested or
-pushed: the branch is read and diffed like any untrusted change, and Studio never sends it for review (above).
+temporary index (`apply --cached`), committed with `commit-tree` onto the base the result names, branched as
+`lan-untrusted/<thread>-r<n>` with `update-ref`, so no clean or smudge filter of the repository and no hook runs.
+Nothing is merged, built, tested or pushed: the branch is read and diffed like any untrusted change.
+
+The commit joins Studio's **taint list** (`src/lan/taint.ts`, kept in the store with its peer and thread, audited). A
+commit is tainted when any recorded commit is its ancestor (`git merge-base --is-ancestor`), whatever its branch is
+called, so one commit on top of it under another name is still the peer's work. Studio starts no trusted Task from a
+tainted commit (repo.prepare checks the Task's base, a base Firstmate set included), sends none for review (Send for
+review, From existing branch), merges none and publishes none (every Studio push and pull request). The Peers page lists
+them, says not to check a `lan-untrusted/` branch out in a terminal or ask Firstmate to review it, and clears one only
+when a person says "I reviewed commit X" (audited). A commit from a peer that was later removed or replaced stays on
+the list, marked so.
 
 ## Audit
 

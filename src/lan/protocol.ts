@@ -15,15 +15,15 @@ export type Author = { key: string; certHash: string; dhPub: Buffer; sign(purpos
 export type Reader = { id: string; dh: StaticKey };
 export type WorkflowRef = { id: string; version: number; defHash: string };
 export type Body =
-  | { kind: "dispatch"; thread: string; round: 1; title: string; briefing: { hash: string; size: number }; acceptance: string[]; suggested: WorkflowRef | null }
+  | { kind: "dispatch"; thread: string; round: 1; title: string; briefing: { hash: string; size: number }; acceptance: string[]; suggested: WorkflowRef | null; base?: { root: string; sha: string } | null }
   | { kind: "take"; thread: string; round: number; briefing: string; workflow: WorkflowRef; cap: { usd: number | null; rounds: number } }
   | { kind: "assign"; thread: string; round: number; take: string; taker: string }
-  | { kind: "result"; thread: string; round: number; take: string; briefing: string; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; workflow: WorkflowRef; run: string; checks: { pass: number; fail: number; other: number; summary: string } }
+  | { kind: "result"; thread: string; round: number; take: string; briefing: string; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; workflow: WorkflowRef; run: string; checks: { pass: number; fail: number; other: number; summary: string }; base?: string | null }
   | { kind: "refine"; thread: string; round: number; briefing: { hash: string; size: number }; note: string }
   | { kind: "done"; thread: string; round: number; result: string }
   | { kind: "revoke"; thread: string; round: number; target: string; reason: string };
 
-const HEX64 = /^[0-9a-f]{64}$/, ID = /^[A-Za-z0-9_-]{8,64}$/, WF = /^[a-z0-9][a-z0-9-]{0,63}$/, RUN = /^R-\d{1,9}$/;
+const SHA1 = /^[0-9a-f]{40}$/, HEX64 = /^[0-9a-f]{64}$/, ID = /^[A-Za-z0-9_-]{8,64}$/, WF = /^[a-z0-9][a-z0-9-]{0,63}$/, RUN = /^R-\d{1,9}$/;
 const str = (v: unknown, max: number, min = 0) => typeof v === "string" && v.length >= min && v.length <= max;
 const int = (v: unknown, lo: number, hi: number) => Number.isSafeInteger(v) && (v as number) >= lo && (v as number) <= hi;
 const keyOk = (v: unknown) => { try { checkPub(unb64u(v, 65)); return true; } catch { return false; } };
@@ -39,12 +39,12 @@ export function bodyProblem(b: any): string | null {
   if (!int(b.round, 1, LIMITS.rounds)) return "bad round";
   const k = ["kind", "thread", "round"];
   switch (b.kind as Kind) {
-    case "dispatch": return only(b, [...k, "title", "briefing", "acceptance", "suggested"]) && b.round === 1 && str(b.title, LIMITS.title, 1) && briefRef(b.briefing)
+    case "dispatch": return only(b, [...k, "title", "briefing", "acceptance", "suggested", "base"]) && b.round === 1 && (b.base === undefined || b.base === null || (plainObj(b.base) && only(b.base, ["root", "sha"]) && SHA1.test(String(b.base.root)) && SHA1.test(String(b.base.sha)))) && str(b.title, LIMITS.title, 1) && briefRef(b.briefing)
       && Array.isArray(b.acceptance) && b.acceptance.length <= LIMITS.acceptance && b.acceptance.every((c: unknown) => str(c, LIMITS.criterion, 1)) && (b.suggested === null || wfRef(b.suggested)) ? null : "malformed dispatch";
     case "take": return only(b, [...k, "briefing", "workflow", "cap"]) && HEX64.test(String(b.briefing)) && wfRef(b.workflow) && plainObj(b.cap) && only(b.cap, ["usd", "rounds"])
       && (b.cap.usd === null || (typeof b.cap.usd === "number" && b.cap.usd >= 0 && b.cap.usd <= 1000)) && int(b.cap.rounds, 1, 50) ? null : "malformed take";
     case "assign": return only(b, [...k, "take", "taker"]) && HEX64.test(String(b.take)) && keyOk(b.taker) ? null : "malformed assign";
-    case "result": return only(b, [...k, "take", "briefing", "output", "workflow", "run", "checks"]) && HEX64.test(String(b.take)) && HEX64.test(String(b.briefing))
+    case "result": return only(b, [...k, "take", "briefing", "output", "workflow", "run", "checks", "base"]) && (b.base === undefined || b.base === null || SHA1.test(String(b.base))) && HEX64.test(String(b.take)) && HEX64.test(String(b.briefing))
       && plainObj(b.output) && only(b.output, ["hash", "size", "files"]) && HEX64.test(String(b.output.hash)) && int(b.output.size, 1, LIMITS.blob)
       && Array.isArray(b.output.files) && b.output.files.length <= LIMITS.files && b.output.files.every((f: any) => plainObj(f) && only(f, ["path", "bytes"]) && str(f.path, LIMITS.path, 1) && int(f.bytes, 0, LIMITS.blob))
       && wfRef(b.workflow) && RUN.test(String(b.run)) && plainObj(b.checks) && only(b.checks, ["pass", "fail", "other", "summary"]) && int(b.checks.pass, 0, 1e4) && int(b.checks.fail, 0, 1e4) && int(b.checks.other, 0, 1e4) && str(b.checks.summary, LIMITS.note) ? null : "malformed result";

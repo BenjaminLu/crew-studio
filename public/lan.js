@@ -7,7 +7,7 @@
 // Everything a peer wrote is drawn as text nodes (kit.js h()): never as HTML, never as SVG, never in a frame of this
 // origin. The approver sees the full briefing and the exact prompt the agent will get. Loaded before backbone.js.
 (() => {
-const LN = { applyTo: {}, projects: null, v: null, wf: null, err: null, sel: null, item: null, form: { title: "", briefing: "", acceptance: "", workflow: "", to: "" }, intro: { host: "", port: "" }, codes: {}, names: {}, replaces: {}, take: {}, refine: {}, preview: {}, edits: {}, busy: false, insp: null, scrolled: {} };
+const LN = { applyTo: {}, projects: null, v: null, wf: null, err: null, sel: null, item: null, form: { title: "", briefing: "", acceptance: "", workflow: "", to: "", project: "" }, intro: { host: "", port: "" }, codes: {}, names: {}, replaces: {}, take: {}, refine: {}, preview: {}, edits: {}, busy: false, insp: null, scrolled: {} };
 window.crewLan = LN;
 const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
@@ -119,6 +119,17 @@ function peers(v) {
         h("button", { class: "btn danger", "data-lan-revoke": p.key, onclick: () => { if (confirm(T("Remove this colleague for good (a lost or stolen Mac)? Its open items and Tasks stop and it can never be introduced again.", "永久移除這個同事（Mac 遺失或被偷）？它的待處理項目與 Task 會停止，之後也不能再引介。"))) act("", () => postJ(`/api/lan/peers/${p.key}/revoke`)); } }, T("Remove this colleague", "移除這個同事"))) : null))
       : h("p", { class: "faint" }, T("No one yet. Introduce a colleague in person to start.", "還沒有。先當面引介一位同事。"))));
 }
+/** commits this Studio applied from a peer's work: nothing trusted starts from them or publishes them until reviewed */
+function taints(v) {
+  const list = v.taints || []; if (!list.length) return null;
+  return h("section", { class: "card lan-card", "data-lan-taints": "" },
+    h("div", { class: "card-h" }, icon("alert"), h("b", {}, T("Commits from peers, not reviewed", "來自同事、尚未審查的 commit")), h("span", { class: "badge human" }, String(list.length))),
+    h("div", { class: "lan-body" },
+      h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T("Studio starts no trusted Task from these commits or anything built on them, sends none for review, merges or pushes none. Do not check a lan-untrusted/ branch out in a terminal, and do not ask Firstmate to review it: read the diff yourself.", "Studio 不會從這些 commit（或建立在它們之上的任何 commit）開始受信任的 Task、送審、合併或推送。不要在終端機 checkout lan-untrusted/ 分支，也不要請 Firstmate 審查：請自己讀 diff。")),
+      list.map((t) => h("div", { class: "lan-row", "data-lan-taint": t.sha },
+        h("b", { class: "mono" }, t.sha.slice(0, 12)), h("span", { class: "faint" }, `${t.project} · ${t.peer.name} · ${t.why}`),
+        h("button", { class: "btn", "data-lan-taint-clear": t.sha, onclick: () => { if (confirm(T(`You read commit ${t.sha.slice(0, 12)} yourself and keep it? It leaves this list (audited).`, `你親自讀過 commit ${t.sha.slice(0, 12)} 並要保留它？它會離開這個清單（會記入稽核）。`))) act("", () => postJ("/api/lan/taint/clear", { sha: t.sha, repo: t.repo })); } }, T(`I reviewed commit ${t.sha.slice(0, 7)}`, `我審查過 commit ${t.sha.slice(0, 7)}`))))));
+}
 function dispatchForm(v) {
   const peersOk = (v.peers || []).filter((p) => p.state === "trusted" && !p.frozen);
   if (!LN.form.to && peersOk[0]) LN.form.to = peersOk[0].key;
@@ -129,6 +140,7 @@ function dispatchForm(v) {
     peersOk.length ? h("div", { class: "lan-body" }, field(T("To", "給"), sel), field(T("Title", "標題"), inp(LN.form, "title", { id: "lanTitle", maxlength: "120" })),
       field(T("Briefing (sealed to them; they see all of it)", "Briefing（只加密給對方；對方會看到全文）"), inp(LN.form, "briefing", { id: "lanBrief", rows: 5, maxlength: "5000" })),
       field(T("Acceptance criteria, one per line", "驗收條件，一行一條"), inp(LN.form, "acceptance", { id: "lanAcc", rows: 2 })), field(T("Suggested workflow (they choose their own)", "建議流程（對方用自己的流程）"), wfs),
+      field(T("Code work on your project (they work from its current commit; the patch applies there)", "程式工作的專案（對方從它目前的 commit 開始；patch 只會套用在那裡）"), h("select", { id: "lanProject", onchange: (e) => { LN.form.project = e.target.value; } }, h("option", { value: "" }, T("Not code work", "不是程式工作")), (LN.projects || []).map((p) => h("option", { value: p.id, selected: p.id === LN.form.project }, p.name || p.id)))),
       h("button", { class: "btn primary", "data-lan-send": "", onclick: () => act(T("Dispatch", "派工"), async () => { const t = await postJ("/api/lan/dispatch", { ...LN.form, acceptance: LN.form.acceptance.split("\n") }); LN.form.title = LN.form.briefing = LN.form.acceptance = ""; location.hash = `#/lan/${t.id}`; }) }, T("Dispatch", "派工")))
       : h("p", { class: "faint lan-body" }, T("Introduce a peer first.", "請先引介一位同事。")));
 }
@@ -202,8 +214,13 @@ function applyPatch(t, r) {
   return h("div", { class: "lan-apply", "data-lan-apply": t.id },
     h("p", { class: "faint" }, T("A code result is a patch. Applying it makes a branch lan-untrusted/… in one of your projects; nothing is merged, built or tested. Review it like any untrusted change.", "程式結果是一份 patch。套用後會在你的專案裡開一條 lan-untrusted/… 分支；不會合併、建置或跑測試。請當作不受信任的變更來審查。")),
     h("div", { class: "lan-row" }, h("select", { "data-lan-apply-project": t.id, onchange: (e) => { a.project = e.target.value; } }, h("option", { value: "" }, T("Choose a project", "選擇專案")), (LN.projects || []).map((p) => h("option", { value: p.id, selected: p.id === a.project }, p.name || p.id))),
-      h("button", { class: "btn", "data-lan-apply-send": t.id, onclick: () => act(T("Apply", "套用"), async () => { const d = await postJ(`/api/lan/threads/${t.id}/apply`, { project: a.project, round: r.n }); toast(T(`Applied on ${d.branch}`, `已套用到 ${d.branch}`)); }) }, T("Apply the patch", "套用 patch"))));
+      h("button", { class: "btn", "data-lan-apply-send": t.id, "data-lan-approve": `patch-${t.id}-${r.n}`, ...(r.result.accepted ? {} : { "data-blocked": "1" }), disabled: !LN.scrolled[`patch-${t.id}-${r.n}`] || !r.result.accepted, onclick: () => act(T("Apply", "套用"), async () => { const d = await postJ(`/api/lan/threads/${t.id}/apply`, { project: a.project, round: r.n, seen: await sha256Hex(r.result.patch ?? "") }); toast(T(`Applied on ${d.branch}`, `已套用到 ${d.branch}`)); }) }, T("Apply the patch", "套用 patch"))),
+    // the exact patch, read to its end before it can be applied (the apply names the hash of these bytes)
+    r.result.patch !== null && r.result.patch !== undefined ? scrollGate(`patch-${t.id}-${r.n}`, h("pre", { class: "lan-patch", "data-lan-patch": t.id }, r.result.patch)) : null,
+    !r.result.accepted ? h("p", { class: "faint" }, T("Accept the result in the inbox first.", "請先在收件匣接受這個結果。")) : null,
+    t.base ? h("p", { class: "faint" }, T(`Based on your commit ${t.base.sha.slice(0, 12)}: it applies there, never onto another base.`, `基於你的 commit ${t.base.sha.slice(0, 12)}：只套用在那裡，不會套到別的基底。`)) : null);
 }
+async function sha256Hex(text) { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 
 // ---------- threads and the relay track ----------
 function track(t) {
@@ -273,7 +290,7 @@ function viewLan(arg) {
   return h("div", { class: "page lan-page", "data-lan": "" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Peers", "區網同事")), h("p", {}, T("Work with colleagues' Studios on this network: introduced in person, encrypted to each of them, nothing starts or leaves without you.", "和同一個網路上同事的 Studio 協作：當面引介、只加密給對方，沒有你核准什麼都不會開始、也不會送出。")))),
     LN.err ? h("p", { class: "lan-warn" }, LN.err) : null,
-    h("div", { class: "lan-top" }, myAddress(v), introductions(v), peers(v)),
+    h("div", { class: "lan-top" }, myAddress(v), introductions(v), peers(v)), taints(v),
     h("div", { class: "lan-col" }, inbox(v), focus ? threadCard(focus) : null, ...threads.filter((t) => t !== focus).map(threadCard), dispatchForm(v)));
 }
 routes.lan = viewLan;

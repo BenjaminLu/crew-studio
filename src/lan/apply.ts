@@ -72,15 +72,37 @@ export function baseModeProblems(repo: string, base: string, patch: string, path
   return out;
 }
 
+/** the dispatcher's base for code work: the project's root commit and the commit its base branch is at */
+export function baseOf(repo: string, branch: string): { root: string; sha: string } | null {
+  const sha = run(repo, ["rev-parse", "--verify", `${branch}^{commit}`]); if (!sha.ok) return null;
+  const roots = run(repo, ["rev-list", "--max-parents=0", sha.out.trim()]); if (!roots.ok) return null;
+  const root = roots.out.trim().split("\n").sort()[0]; return /^[0-9a-f]{40}$/.test(root) ? { root, sha: sha.out.trim() } : null;
+}
+/** why a project cannot take code work on this base (it lacks the root or the commit), or null */
+export function baseProblem(repo: string, base: { root: string; sha: string }): string | null {
+  if (!run(repo, ["cat-file", "-e", `${base.root}^{commit}`]).ok) return `it does not share the dispatcher's history (root ${base.root.slice(0, 12)})`;
+  if (!run(repo, ["cat-file", "-e", `${base.sha}^{commit}`]).ok) return `it does not hold the dispatcher's base commit ${base.sha.slice(0, 12)} (fetch it first)`;
+  return null;
+}
+/** a branch pinned at the dispatcher's base in the taker's project, so the Task's worktree starts there and stays there */
+export function pinBase(repo: string, sha: string): string {
+  const name = `lan-base/${sha.slice(0, 12)}`;
+  if (!run(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]).ok) { const r = run(repo, ["update-ref", `refs/heads/${name}`, sha, ""]); if (!r.ok) throw new Error(`the base ${sha.slice(0, 12)} could not be pinned: ${r.err.slice(0, 200)}`); }
+  return name;
+}
+
 export function lanApplier(o: { dataDir: string; project: (id: string) => { path: string; base?: string } | null }) {
-  return ({ project, patch, branch }: { project: string; patch: string; branch: string }) => {
+  return ({ project, patch, branch, base: parent }: { project: string; patch: string; branch: string; base: string }) => {
     const p = o.project(project); if (!p?.path || !run(p.path, ["rev-parse", "--git-dir"]).ok) throw new Error(`no registered project ${project} with a git repository`);
     if (!/^lan-untrusted\/[a-z0-9-]+-r\d+$/.test(branch)) throw new Error("bad branch name");
-    const repo = p.path, base = p.base || "main";
+    // the result applies to the commit it names (the dispatcher's own base, sent with the dispatch): never to whatever the
+    // project's base branch is now
+    if (!/^[0-9a-f]{40}$/.test(String(parent ?? ""))) throw new Error("the result names no base commit: it is not applied (never onto another base)");
+    const repo = p.path, base = parent;
     const { paths, problems } = patchProblems(patch, repo);
     if (problems.length) throw new Error(`refused: ${problems.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
     if (run(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok) throw new Error(`branch ${branch} already exists in ${project}: this result was applied before`);
-    const baseCommit = run(repo, ["rev-parse", "--verify", `${base}^{commit}`]); if (!baseCommit.ok) throw new Error(`no branch ${base} in ${project}`);
+    const baseCommit = run(repo, ["rev-parse", "--verify", `${base}^{commit}`]); if (!baseCommit.ok) throw new Error(`the base ${base.slice(0, 12)} the result names is not in ${project}: it is not applied (never onto another base)`);
     const modes = baseModeProblems(repo, baseCommit.out.trim(), patch, paths);
     if (modes.length) throw new Error(`refused: ${modes.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
     const tmp = mkdtempSync(join(tmpdir(), "crew-lan-apply-")), env = { GIT_INDEX_FILE: join(tmp, "index") };

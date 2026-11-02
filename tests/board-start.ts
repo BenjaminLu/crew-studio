@@ -122,6 +122,25 @@ try{
   const before=E.list().length,tryIt=async(branch:string)=>{try{await rt.startFromBranch({project:'claude-crew',commit:pc,branch,terminal:'T-board-start',label:'claude',by:'desktop'});return 'started';}catch(e:any){return `${e?.code}: ${e?.message}`;}};
   const byName=await tryIt('lan-untrusted/peer-thread-r1'),byCommit=await tryIt('agent/innocent');
   ok(/^lan_untrusted/.test(byName)&&/^lan_untrusted/.test(byCommit)&&E.list().length===before,'Send for review refuses a lan-untrusted/ branch, by its name or by its commit, and starts nothing',JSON.stringify([byName,byCommit]));}
+ // C-M1: the taint list follows the commit, not the branch: one commit on top of the applied one, under an innocent name,
+ // is still refused for review, and a trusted Task never starts from it (its base, a base Firstmate set included)
+ {const {setTaintSource}=await import('../src/lan/taint');
+  const pc=git(claudeRepo,['rev-parse','lan-untrusted/peer-thread-r1']);
+  git(claudeRepo,['checkout','-q','-b','agent/on-top','lan-untrusted/peer-thread-r1']);writeFileSync(join(claudeRepo,'mine.txt'),'mine\n');git(claudeRepo,['add','mine.txt']);
+  git(claudeRepo,['-c','user.name=Me','-c','user.email=me@example.invalid','commit','-q','-m','my change on top']);const top=git(claudeRepo,['rev-parse','HEAD']);git(claudeRepo,['checkout','-q','main']);
+  let rows=[{sha:pc,repo:claudeRepo,project:'claude-crew',peer:'peer-key',thread:'t1',round:1,at:new Date().toISOString(),why:'applied from a peer',cleared:null as string|null,clearedBy:null}];
+  setTaintSource(()=>rows);
+  const tryIt=async(commit:string,branch:string)=>{try{await rt.startFromBranch({project:'claude-crew',commit,branch,terminal:'T-board-start',label:'claude',by:'desktop'});return 'started';}catch(e:any){return `${e?.code}: ${e?.message}`;}};
+  const onTop=await tryIt(top,'agent/on-top');
+  ok(/^lan_untrusted: .*holds work from a peer/.test(onTop),'a commit on top of one applied from a peer, under an innocent branch name, is refused for review (the taint list follows ancestry)',onTop);
+  // the code pack's prepare step, as a trusted Task's would run it (its base named by Firstmate or a person)
+  const prepX=(profile:any)=>({run:{id:'R-taint-'+Math.random().toString(36).slice(2,8),params:{project:'claude-crew',base:'agent/on-top'},profile},ctx:{},rn:{note:''},policy:()=>'crew/'}) as any;
+  let perr='';try{E.actions['repo.prepare'](prepX(undefined));}catch(e:any){perr=String(e?.message??e);}
+  ok(/holds work from a peer/.test(perr),'a trusted Task whose base holds a commit applied from a peer never starts (repo.prepare refuses it)',perr.slice(0,200));
+  rows=[{...rows[0],cleared:new Date().toISOString(),clearedBy:'captain (desktop)'}];
+  const after=await tryIt(top,'agent/on-top');
+  ok(!/holds work from a peer/.test(after),'once a person marked the commit reviewed, the taint no longer refuses it',after);
+  setTaintSource(null);}
  claudeVerified.clear();verifyPasses=false;
  // Codex whose quota cannot be read now: a hold with that reason, never a failed verification and no backoff
  {const keep=codexQuota;codexQuota='unknown';const calls=verifyCalls.length,o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'}});
