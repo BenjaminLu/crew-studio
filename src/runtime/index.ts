@@ -3,6 +3,7 @@ import {WorkflowPackages,snapshotPackage,packageSha} from '../workflow-package';
 import {workflowDefinitionExport} from '../workflow-definition-export';
 import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
+import {lanUntrusted} from '../lan/apply';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
 import { refusesRulesPatch } from "../operating-rules";
@@ -832,6 +833,8 @@ export function createRuntime(d: RuntimeDeps) {
     if (!/^[0-9a-f]{40,64}$/.test(o.commit)) throw Object.assign(new Error("no commit to review"), { code: "commit" });
     let params: Record<string, string> = { project: p.id, base: p.base }, autoVerified: string[] = [];
     const refuse = (x: StartRefusal) => Object.assign(new Error(String(x.body.error)), { code: x.body.code, staffing: x.body.staffing });
+    // work a peer's Studio sent (docs/units/lan-relay.md): read and diffed by people, never reviewed and merged as trusted work
+    if (lanUntrusted(p.path, o.commit, o.branch)) throw Object.assign(new Error(`${o.branch ?? o.commit.slice(0, 12)} holds work from a peer's Studio (a lan-untrusted/ branch): Studio does not send it for review; read its diff, and commit what you keep yourself`), { code: "lan_untrusted" });
     if (boardStaffed(def)) {
       const g = await staffedStartGuard(def, p.id, { why: `Send for review of ${o.branch ?? o.commit.slice(0, 12)} on ${p.id}` });
       if (!g.ok) throw refuse(g);

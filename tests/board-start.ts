@@ -115,6 +115,13 @@ try{
   if(run?.id)await E.cancel(run.id,'test');
   claudeVerified.clear();verifyPasses=false;let held:any=null;try{await rt.startFromBranch({project:'claude-crew',commit,branch:'agent/send-review',terminal:'T-board-start',label:'claude',by:'desktop'});}catch(e:any){held=e;}
   ok(held?.code==='staffing_not_ready'&&/did not pass/.test(held?.staffing?.reason?.en??held?.message??'')&&!!held?.staffing?.reason?.zh,'a verification that fails refuses Send for review with the same bilingual staffing_not_ready as Start',`${held?.code} ${held?.message}`);}
+ // a branch work from a peer's Studio was applied to (lan-untrusted/…, src/lan/apply.ts) is never sent for review as trusted work:
+ // not by its name, and not by its commit under another name (it would run an unrestricted code-firstmate that may merge)
+ {git(claudeRepo,['checkout','-q','-b','lan-untrusted/peer-thread-r1']);writeFileSync(join(claudeRepo,'peer.txt'),'from a peer\n');git(claudeRepo,['add','peer.txt']);
+  git(claudeRepo,['-c','user.name=Peer','-c','user.email=peer@example.invalid','commit','-q','-m','work from a peer']);const pc=git(claudeRepo,['rev-parse','HEAD']);git(claudeRepo,['checkout','-q','main']);
+  const before=E.list().length,tryIt=async(branch:string)=>{try{await rt.startFromBranch({project:'claude-crew',commit:pc,branch,terminal:'T-board-start',label:'claude',by:'desktop'});return 'started';}catch(e:any){return `${e?.code}: ${e?.message}`;}};
+  const byName=await tryIt('lan-untrusted/peer-thread-r1'),byCommit=await tryIt('agent/innocent');
+  ok(/^lan_untrusted/.test(byName)&&/^lan_untrusted/.test(byCommit)&&E.list().length===before,'Send for review refuses a lan-untrusted/ branch, by its name or by its commit, and starts nothing',JSON.stringify([byName,byCommit]));}
  claudeVerified.clear();verifyPasses=false;
  // Codex whose quota cannot be read now: a hold with that reason, never a failed verification and no backoff
  {const keep=codexQuota;codexQuota='unknown';const calls=verifyCalls.length,o=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture')?.staffing,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'}});

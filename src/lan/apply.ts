@@ -21,6 +21,13 @@ function run(cwd: string, args: string[], o: { input?: string; env?: Record<stri
   const r = Bun.spawnSync(gitArgv([...SAFE, ...args]), { cwd, stdin: o.input !== undefined ? new TextEncoder().encode(o.input) : "ignore", stdout: "pipe", stderr: "pipe", env: gitEnv(o.env ?? {}) });
   return { ok: r.success, out: r.stdout.toString(), err: r.stderr.toString().trim() };
 }
+/** Work from a peer: a branch named lan-untrusted/…, or a commit one of those branches holds (under any other name). It is
+ *  read and diffed by people; Studio never sends it for review as trusted work (that run may merge). */
+export function lanUntrusted(repo: string, commit: string, branch: string | null): boolean {
+  if (branch && /^(refs\/heads\/)?lan-untrusted\//i.test(branch)) return true;
+  const r = run(repo, ["branch", "--list", "--contains", commit, "--format=%(refname:short)", "lan-untrusted/*"]);
+  return !r.ok || r.out.trim().length > 0; // git could not answer: refused
+}
 const outside = (p: string) => p.startsWith("/") || p.split("/").includes("..") || p.includes("\\") || /^[A-Za-z]:/.test(p) || p.split("/").includes(".git");
 
 /** The paths git says this patch touches, and every reason any part of it may not be applied (empty: it may). */
@@ -53,6 +60,18 @@ export function patchProblems(patch: string, cwd = tmpdir()): { paths: string[];
   return { paths: [...new Set(paths)], problems };
 }
 
+/** Every path the patch touches must be absent from the base or a plain 100644 file there (a symbolic link keeps its mode
+ *  when only its target changes, an executable keeps its bit); copies and renames are refused (they carry the source's mode). */
+export function baseModeProblems(repo: string, base: string, patch: string, paths: string[]): PatchRefusal[] {
+  const out: PatchRefusal[] = [];
+  if (/^(copy|rename) (from|to) /m.test(patch) || /^similarity index /m.test(patch)) out.push({ path: "(patch)", why: "a copy or rename (only edits and new plain files are applied)" });
+  for (const p of paths) {
+    const r = run(repo, ["ls-tree", "-z", base, "--", p]); const m = /^(\d{6}) /.exec(r.out);
+    if (m && m[1] !== "100644") out.push({ path: p, why: m[1] === "120000" ? "a symbolic link in the base (its target cannot change)" : m[1] === "100755" ? "an executable in the base" : m[1] === "160000" ? "a submodule in the base" : `mode ${m[1]} in the base` });
+  }
+  return out;
+}
+
 export function lanApplier(o: { dataDir: string; project: (id: string) => { path: string; base?: string } | null }) {
   return ({ project, patch, branch }: { project: string; patch: string; branch: string }) => {
     const p = o.project(project); if (!p?.path || !run(p.path, ["rev-parse", "--git-dir"]).ok) throw new Error(`no registered project ${project} with a git repository`);
@@ -62,6 +81,8 @@ export function lanApplier(o: { dataDir: string; project: (id: string) => { path
     if (problems.length) throw new Error(`refused: ${problems.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
     if (run(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok) throw new Error(`branch ${branch} already exists in ${project}: this result was applied before`);
     const baseCommit = run(repo, ["rev-parse", "--verify", `${base}^{commit}`]); if (!baseCommit.ok) throw new Error(`no branch ${base} in ${project}`);
+    const modes = baseModeProblems(repo, baseCommit.out.trim(), patch, paths);
+    if (modes.length) throw new Error(`refused: ${modes.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
     const tmp = mkdtempSync(join(tmpdir(), "crew-lan-apply-")), env = { GIT_INDEX_FILE: join(tmp, "index") };
     try {
       const must = (args: string[], input?: string) => { const r = run(repo, args, { input, env }); if (!r.ok) throw new Error(`git ${args[0]}: ${r.err.slice(0, 300)}`); return r.out.trim(); };

@@ -79,7 +79,8 @@ drops what was waiting to be sent to it.
 - A KK message is accepted once (its ephemeral key is remembered for ten minutes) and only within five minutes of this
   Mac's clock (a time that is not a date is refused); the replay cache is kept across restarts. Requests are
   rate-limited per source address (the rate table is bounded), at most 32 are in flight, one introduction at a time, and an address that keeps sending KK messages no
-  allowlisted key made is cut off for a minute before Studio tries its keys again.
+  allowlisted key made is cut off for a minute from its eighth failure before Studio tries its keys again (an IPv6
+  address counts with the rest of its /64; a full table drops its oldest entries, never a cut-off it holds).
 - The client side dials only an IPv4 literal on one of this Mac's own private subnets: never a name, loopback (outside
   the demo), this Mac's own address, the network's default gateway, link-local, multicast, a metadata endpoint, the
   tailnet range or the internet; no redirects.
@@ -153,8 +154,10 @@ Task with the taint and no readable `_lan` is held to a zero cap. Enforced, what
   Never `git.merge`, `github.*`, issue or file moves, registrations, crew or staffing changes, the designer's rounds. A
   workflow may contain a merge or a designer step a tainted Task never reaches; if it is reached anyway it is refused.
 - **Fresh folder**: a deliver step writes in its own new round folder; a code step in the Task's own worktree, on a
-  branch named `lan-untrusted/…`.
-- **Writes**: no round writes a protected path (`src/lan/paths.ts`, case-insensitive: CI, `.git/`, hooks,
+  branch named `lan-untrusted/…`. Such a branch is never sent for review as trusted work: Send for review and the
+  code pack's From existing branch refuse it (`lan_untrusted`), by its name and by its commit under any other name.
+- **Writes**: no round writes a protected path, nor any path with a character outside printable ASCII (a file system
+  folds some onto protected names: APFS folds `ſ` to `s`) (`src/lan/paths.ts`, case-insensitive: CI, `.git/`, hooks,
   `.gitattributes`, `.gitmodules`, install settings, `.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.cursor/`,
   `.vscode/`, `.devcontainer/`, `.envrc`, `Makefile`, `conftest.py`, `build.rs`, `setup.py`, Dockerfiles and similar).
 - **Egress to the provider only**: every round (agent turns, coordinator turns, judges) gets no host from `egress.allow`.
@@ -166,10 +169,13 @@ Task with the taint and no readable `_lan` is held to a zero cap. Enforced, what
 - **Spend cap**: every paid round (agent turns, coordinators, judges) is recorded on the Task itself
   (`ctx.lanRounds`, saved with it) when it is admitted, and its dollars when it ends; before the next one, the rounds
   and dollars are compared with the item's cap, so neither concurrency nor a restart reopens it. A provider that reports
-  no cost makes the dollars unknown, which stops the next paid round unless the taker chose a rounds-only cap, which is
-  offered only for providers that report no cost (Codex, Cursor).
+  no cost makes the dollars unknown, which stops the next paid round under a dollar cap. The taker may instead choose a
+  rounds-only cap, for any provider: then there is no dollar bound, and every paid round of the Task (any provider,
+  judges and staffed nodes included) counts toward the rounds cap. A round admitted before a restart and never settled
+  counts as unknown dollars.
 - **One Task per assignment**: approving an assignment claims the round before the Task starts, so a second approval
-  starts nothing; if the peer is revoked or frozen while the Task starts, it is stopped at once.
+  starts nothing; if the peer is revoked or frozen, or the work withdrawn, while the Task starts, it is stopped at once.
+  The claim is never written to disk; after a crash mid-start it is cleared and the take may be approved again.
 - **Other Tasks never see its title**: another Task's overlap note names it by its id only.
 - **Firstmate never sees it**: an agent's question or an escalation from a tainted Task is the captain's card, never
   Firstmate's; Firstmate's status lines show a peer's Task without its title or card titles; Studio's event log keeps no
@@ -194,12 +200,14 @@ the dispatcher only. Its checks summary is the taker's own report.
 ## Applying a code result
 
 The dispatcher applies a code result's patch to one of its own registered projects (`src/lan/apply.ts`). Git names the
-paths (`git apply --numstat -z` and `--summary`), never a regex, and every one is checked, renames and copies
-included: nothing outside the project, no protected path. A binary hunk, a new file with any mode but 100644 (an
-executable, a link, a submodule) or a mode change refuses the whole patch. It is applied without a checkout: into a
+paths (`git apply --numstat -z` and `--summary`), never a regex, and every one is checked: nothing outside the
+project, no protected path, nothing but printable ASCII. A binary hunk, a copy or a rename (it carries its source's
+mode), a new file with any mode but 100644 (an executable, a link, a submodule), a mode change, or an edit to a path
+that is not a plain 100644 file in the base (`ls-tree`: a symbolic link keeps its mode when its target changes) refuses
+the whole patch. It is applied without a checkout: into a
 temporary index (`apply --cached`), committed with `commit-tree`, branched as `lan-untrusted/<thread>-r<n>` with
 `update-ref`, so no clean or smudge filter of the repository and no hook runs. Nothing is merged, built, tested or
-pushed: the branch is reviewed like any untrusted change.
+pushed: the branch is read and diffed like any untrusted change, and Studio never sends it for review (above).
 
 ## Audit
 

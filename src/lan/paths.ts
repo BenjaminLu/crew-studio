@@ -26,9 +26,13 @@ export const PROTECTED: RegExp[] = AT_ANY_DEPTH.map((e) => e.endsWith("/") ? new
 /** package.json keys that run code: scripts and every git-hook manager's key */
 export const SCRIPT_KEYS = ["scripts", "husky", "simple-git-hooks", "lint-staged", "pre-commit", "gitHooks", "config"];
 const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/{2,}/g, "/").toLowerCase();
+/** A path from a peer is printable ASCII or it is refused: a file system folds other characters onto names Studio checks
+ *  (APFS folds U+017F, the long s, to "s", so .huſky/pre-commit lands on .husky/pre-commit), and no fold table is complete. */
+export const foreignName = (p: string) => /[^\x20-\x7e]/.test(p);
 /** The reason a changed path is refused (it, plus why), or null. package.json counts when its script or hook keys differ
  *  from the base (with no base: when it has any). A file whose bytes are unknown (deleted, binary) counts by its path alone. */
 export function protectedHit(path: string, after: string | null, before: string | null): string | null {
+  if (foreignName(path)) return `${path} (a name with characters outside printable ASCII)`;
   const p = norm(path);
   if (PROTECTED.some((re) => re.test(p))) return path;
   if (/(^|\/)package\.json$/.test(p)) {
@@ -39,4 +43,4 @@ export function protectedHit(path: string, after: string | null, before: string 
   return null;
 }
 /** A path a round may not write at all (the write-time gate): protected, or any package.json (its keys are checked at hand-back). */
-export const writeRefused = (path: string) => { const p = norm(path); return PROTECTED.some((re) => re.test(p)); };
+export const writeRefused = (path: string) => { if (foreignName(path)) return true; const p = norm(path); return PROTECTED.some((re) => re.test(p)); };

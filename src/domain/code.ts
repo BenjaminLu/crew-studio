@@ -9,6 +9,7 @@ import { installCodeDesign } from "./code-design";
 import { installCodePublish } from "./code-publish";
 import { withoutGitHubLinks, withoutSessionLinks } from "./pull-template";
 import {GitHubPoller} from '../github-poller';
+import { lanUntrusted } from "../lan/apply";
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
 // done, scope, door, explain), the door, a plan round for one-way changes, build
@@ -643,6 +644,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const base = x.run.params.base || p.base || "main";
     if (!git(repo, ["rev-parse", "--verify", `${base}^{commit}`]).ok) throw new Error(`no branch ${base} in ${repo}`);
     if (!git(repo, ["cat-file", "-e", `${commit}^{commit}`]).ok) throw new Error(`commit ${commit.slice(0, 12)} is not in ${p.name || pid}`);
+    if (lanUntrusted(repo, commit, typeof a?.branch === "string" ? a.branch : null)) throw new Error(`commit ${commit.slice(0, 12)} is work from a peer's Studio (a lan-untrusted/ branch): Studio does not adopt it for review`);
     const ahead = Number(must(repo, ["rev-list", "--count", `${base}..${commit}`])) || 0;
     if (!ahead) throw new Error(`commit ${commit.slice(0, 12)} has nothing beyond ${base}: there is nothing to review`);
     const prefix = String(x.policy("branch_prefix") ?? "crew/"), key = { project: pid, task: x.run.id };

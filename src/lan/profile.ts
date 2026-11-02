@@ -65,8 +65,11 @@ const cost = (j: any) => { const u = j?.cost?.usd; return typeof u === "number" 
  *  judges), from its own record, which survives a restart; their dollars; whether any ended round's dollars are unknown. */
 export function spent(_engine: any, run: any): { usd: number; rounds: number; unknown: boolean } {
   const rs: LanRound[] = Array.isArray(run?.ctx?.lanRounds) ? run.ctx.lanRounds : [];
-  return { usd: rs.reduce((a, r) => a + (r.usd ?? 0), 0), rounds: rs.length, unknown: rs.some((r) => r.ended && r.usd === null) };
+  // a round admitted by an earlier Studio process and never settled (it stopped mid-round): its dollars are unknown
+  return { usd: rs.reduce((a, r) => a + (r.usd ?? 0), 0), rounds: rs.length, unknown: rs.some((r) => r.usd === null && (r.ended || !live.has(r))) };
 }
+/** rounds this process admitted and has not settled yet */
+const live = new WeakSet<object>();
 const persist = (engine: any, run: any, why: string) => { try { engine.commit?.(run, why); } catch {} };
 export function capRefusal(engine: any, run: any, mark: LanMark): string | null {
   const s = spent(engine, run);
@@ -101,7 +104,7 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
   agents.run = (opts: any) => {
     const r = opts?.ref ? engine.get?.(opts.ref) : null, mark = r ? lanOf(r) : null;
     if (!r || !mark) return run(opts);
-    const over = capRefusal(engine, r, mark);
+    const over = capRefusal(engine, r, mark); // every paid round, whatever its provider, counts toward the rounds cap
     if (over) { o.onStop?.(r, over); return Promise.reject(new RoundBlocked(over)); }
     if (!opts.sandbox) return Promise.reject(new RoundBlocked("a LAN-originated round runs only in the round sandbox"));
     const guard = (t: any) => {
@@ -113,7 +116,7 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
     };
     // admitted: recorded on the run before the round starts (a concurrent round sees it), its dollars when it ends
     const rounds: LanRound[] = (r.ctx ??= {}).lanRounds ??= [], me: LanRound = { n: rounds.length + 1, at: new Date().toISOString(), job: null, usd: null, ended: false };
-    rounds.push(me); persist(engine, r, "LAN round admitted");
+    rounds.push(me); live.add(me); persist(engine, r, "LAN round admitted");
     const settle = (j: any) => { me.job = j?.id ? String(j.id) : null; me.usd = cost(j); me.ended = true; persist(engine, r, "LAN round counted"); return j; };
     return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => run({ ...opts, tools: (opts.tools ?? []).filter((t: any) => !LAN_DENIED_TOOLS.has(t.name)).map(guard), sandbox: { ...opts.sandbox, allow: [] } })))
       .then(settle, (e: any) => { me.ended = true; persist(engine, r, "LAN round ended"); throw e; });

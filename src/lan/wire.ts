@@ -91,18 +91,34 @@ export class LanWire {
       return await this.intro(p, body, ip);
     } catch (e: any) { return this.refuse(`handshake failed: ${String(e?.message ?? e).slice(0, 80)}`, ip); }
   }
-  private kkFails = new Map<string, { at: number; n: number }>();
+  private kkFails = new Map<string, { at: number; n: number; blocked?: number }>();
+  /** the limiter's key: an IPv4 address, or an IPv6 address's /64 (a host may own all of it) */
+  private kkKey(ip: string) {
+    const a = ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, ""); if (!a.includes(":")) return a;
+    const [h, t] = a.split("::"), head = h ? h.split(":") : [], tail = t !== undefined ? (t ? t.split(":") : []) : [];
+    const groups = t === undefined ? head : [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill("0"), ...tail];
+    return groups.slice(0, 4).map((g) => parseInt(g || "0", 16).toString(16)).join(":") + "::/64";
+  }
   private async kk(m1: Buffer, ip: string): Promise<Response> {
     // an address that keeps sending messages no allowlisted key made is cut off before the key work (one DH per key)
-    const now0 = Date.now(), f = this.kkFails.get(ip);
-    if (f && now0 - f.at < 60_000 && f.n >= 8) return this.refuse("too many unauthenticated messages", ip, 429);
+    const now0 = Date.now(), key = this.kkKey(ip), f = this.kkFails.get(key);
+    if (f?.blocked && now0 - f.blocked < 60_000) return this.refuse("too many unauthenticated messages", ip, 429);
     const me = this.d.me(); let hs: Handshake | null = null, from = "", req: any = null;
     // which allowlisted key made this message: only the holder of one of them can produce a payload that decrypts
     for (const k of this.d.allowlist()) {
       const t = new Handshake("KK", false, me, unb64u(k, 65));
       try { req = parse(t.readMessage(m1)); hs = t; from = k; break; } catch {}
     }
-    if (!hs) { const g = this.kkFails.get(ip); if (!g || now0 - g.at >= 60_000) { if (this.kkFails.size >= RATE.addresses) this.kkFails.clear(); this.kkFails.set(ip, { at: now0, n: 1 }); } else g.n++; return this.refuse("not an introduced key", ip); }
+    if (!hs) {
+      let g = this.kkFails.get(key);
+      if (!g || (now0 - g.at >= 60_000 && !(g.blocked && now0 - g.blocked < 60_000))) {
+        // a full table drops its oldest entries that hold no block (never a block it holds)
+        if (this.kkFails.size >= RATE.addresses) for (const [k, v] of this.kkFails) { if (!(v.blocked && now0 - v.blocked < 60_000)) this.kkFails.delete(k); if (this.kkFails.size < RATE.addresses) break; }
+        this.kkFails.delete(key); g = { at: now0, n: 0 }; this.kkFails.set(key, g);
+      }
+      if (++g.n >= 8 && !g.blocked) g.blocked = now0; // the minute starts at the eighth failure
+      return this.refuse("not an introduced key", ip);
+    }
     const e = b64u(hs.re!), now = Date.now();
     for (const [k, at] of this.seenE) if (now - at > REPLAY_MS) this.seenE.delete(k);
     if (this.seenE.has(e)) return this.refuse("replayed message", ip);

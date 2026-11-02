@@ -67,12 +67,14 @@ export class Lan {
   private load(): State {
     const f = join(this.dir, "state.json");
     const fresh: State = { v: 1, settings: { enabled: false, name: cleanName(hostname().replace(/\.local$/, "")) || "Studio" }, seq: 0, head: null, peers: [], intros: [], introUntil: null, threads: [], items: [], authors: {}, verdicts: {}, replay: {}, introFailures: [], outbox: [], refused: [], daily: {} };
-    try { return { ...fresh, ...JSON.parse(readFileSync(f, "utf8")) }; } catch { return fresh; }
+    let st: State; try { st = { ...fresh, ...JSON.parse(readFileSync(f, "utf8")) }; } catch { return fresh; }
+    for (const t of st.threads ?? []) for (const r of t.rounds ?? []) if (r.run?.id === "(starting)") r.run = null; // a crash mid-start: the take may be approved again
+    return st;
   }
   /** State is written at most every 150 ms (and on close), not once per request; the page is told at once. */
   private saveT: any = null;
   private save() { this.o.send?.("lan", { changed: Date.now() }); if (!this.saveT) { this.saveT = setTimeout(() => this.flushState(), 150); this.saveT.unref?.(); } }
-  flushState() { if (this.saveT) { clearTimeout(this.saveT); this.saveT = null; } this.trim(); const f = join(this.dir, "state.json"), t = `${f}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`; writeFileSync(t, JSON.stringify(this.st), { mode: 0o600 }); renameSync(t, f); }
+  flushState() { if (this.saveT) { clearTimeout(this.saveT); this.saveT = null; } this.trim(); const f = join(this.dir, "state.json"), t = `${f}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`; writeFileSync(t, JSON.stringify(this.st, (k, v) => (k === "run" && v?.id === "(starting)" ? null : v)), { mode: 0o600 }); renameSync(t, f); } // a start in progress is never written
   /** bounded records: decided entries, each author's sequence numbers, refusals, failed introductions */
   private trim() {
     const v = Object.keys(this.st.verdicts); if (v.length > 20_000) for (const k of v.slice(0, v.length - 20_000)) delete this.st.verdicts[k];
@@ -352,8 +354,7 @@ export class Lan {
       // read to its end: the approval names the hash of the exact text it was given (the page sends it only once the person scrolled to the end)
       if (o.seen !== this.seenHash(t, r)) throw new LanError(409, "read the whole briefing and the prompt first: this approval does not name the text this Studio would run", "unread");
       const rounds = Number(o.rounds ?? 6), usd = o.roundsOnly ? null : Number(o.usd ?? 2);
-      // rounds only is for a provider that reports no cost (Codex, Cursor); one that reports it keeps its dollar cap
-      if (o.roundsOnly && !(o.provider === "codex" || o.provider === "cursor")) throw new LanError(400, "rounds only is for a provider that reports no cost (Codex or Cursor): name it, or keep a dollar cap", "rounds-only");
+      // rounds only is the taker's own choice, for any provider: then every paid round of the Task counts toward the rounds cap
       if ((usd !== null && !(usd >= 0 && usd <= 1000)) || !Number.isSafeInteger(rounds) || rounds < 1 || rounds > 50) throw new LanError(400, "a spend cap is 0 to 1000 dollars (or rounds only) and 1 to 50 agent rounds");
       const project = w.needsProject ? String(o.project ?? "") : null; if (w.needsProject && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(project!)) throw new LanError(400, "choose one of this Studio's projects for this code workflow", "project_required");
       const provider = o.provider && /^(codex|claude|cursor|stub)$/.test(o.provider) ? o.provider : null;
@@ -371,7 +372,7 @@ export class Lan {
         .catch((e: any) => { r.run = null; throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); });
       r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null };
       // the peer was revoked, unpaired or frozen while the Task was starting: it is stopped at once
-      if (!this.trusted(i.from) || this.peer(i.from)?.frozen) { this.o.runner.cancel(started.run, "the peer was revoked or frozen while its work was starting"); r.run.state = "cancelled"; this.save(); throw new LanError(409, "the peer was revoked or frozen while its work was starting: the Task was stopped"); }
+      if (!this.trusted(i.from) || this.peer(i.from)?.frozen || t.state !== "open") { this.o.runner.cancel(started.run, "the peer was revoked or frozen, or the work withdrawn, while it was starting"); r.run.state = "cancelled"; this.save(); throw new LanError(409, "the peer was revoked or frozen, or the work withdrawn, while it was starting: the Task was stopped"); }
       this.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow });
     } else if (i.kind === "result") r.result!.accepted = true;
     i.state = "approved"; this.save();
