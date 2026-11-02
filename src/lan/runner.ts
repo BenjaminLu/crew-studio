@@ -36,7 +36,7 @@ export type RunnerDeps = {
   /** the artifact store the deliver steps version their output in (m3.store) */
   artifacts: { version(id: string, n: number): any; filesDir(id: string, n: number): string } | null;
   /** start a Task through the runtime's own start path; throws a refusal */
-  start: (o: { workflow: string; text: string; title: string; params: Record<string, string>; by: string; staffingConfirm?: string | null; project?: string | null }) => Promise<any>;
+  start: (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; usd: number | null; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null }) => Promise<any>;
   /** an own workflow's staffing plan (its hash is confirmed with the take), or null */
   staffing?: (def: any) => { hash: string; plan: unknown[]; missing: unknown[] } | null;
   /** whether a workflow needs a registered project (a code workflow) */
@@ -61,14 +61,15 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       const def = d.defs.get(o.workflow); if (!def) throw Object.assign(new Error("no such workflow"), { code: "workflow_unavailable" });
       const off = d.defs.unavailable?.(def.id) ?? null, why = [...(off ? [`${def.id} is ${off}`] : []), ...workflowRefusals(def)];
       if (why.length) throw Object.assign(new Error(why.join("; ")), { code: "profile" });
-      const params: Record<string, string> = { _lan: JSON.stringify({ item: o.item, usd: o.cap.usd, rounds: o.cap.rounds }), _tainted: "lan" };
-      if (o.provider) params.provider = o.provider;
-      const run = await d.start({ workflow: o.workflow, text: o.text, title: o.title, params, by: o.by, staffingConfirm: o.staffingConfirm ?? null, project: o.project ?? null });
+      // the profile is the runtime's own start option, never a param (src/runtime/engine.ts start)
+      const params: Record<string, string> = {}; if (o.provider) params.provider = o.provider;
+      const run = await d.start({ workflow: o.workflow, text: o.text, title: o.title, params, profile: { name: "lan", mark: { item: o.item, usd: o.cap.usd, rounds: o.cap.rounds } }, by: o.by, staffingConfirm: o.staffingConfirm ?? null, project: o.project ?? null });
       return { run: run.id, workflow: ref(run.def) };
     },
     status(id) {
       const r = d.engine.get(id); if (!r) return null;
-      const stopped = r.steps?.filter((s: any) => s.state === "error" && /spend cap|not allowed on work from a peer|not on the LAN profile|only in the round sandbox/.test(String(s.error ?? ""))).map((s: any) => String(s.error)).at(-1) ?? null;
+      // a step the profile refused carries code "profile" (the engine sets it from the refusal, never from its message)
+      const stopped = r.steps?.filter((s: any) => s.state === "error" && s.code === "profile").map((s: any) => String(s.error)).at(-1) ?? null;
       const s = spent(d.engine, r);
       return { state: r.status, result: r.result ?? null, spent: { usd: s.usd, rounds: s.rounds }, stopped, ready: r.status === "succeeded" || !!r.ctx?.taintedReady };
     },
@@ -111,7 +112,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       return { files: files.slice(0, LIMITS.files), changed: [...changed], protectedHits: [...hits], checks: { pass, fail, other, summary: `${pass}/${ledger.length} checks pass on the taker's Studio (the taker's own report: run them again before relying on it)` }, workflow: ref(r.def), kind: wt ? "patch" : "files" };
     },
     findByItem(item) {
-      for (const r of d.engine.list?.() ?? []) { try { const m = JSON.parse(String(r.params?._lan ?? "null")); if (m?.item === item) return String(r.id); } catch {} }
+      for (const r of d.engine.list?.() ?? []) if (r.profile?.name === "lan" && (r.profile.mark as any)?.item === item) return String(r.id);
       return null;
     },
     cancel(id, why) { try { d.engine.cancel?.(id, "studio (LAN)", why); } catch {} },

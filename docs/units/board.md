@@ -540,7 +540,9 @@ so their agreeing on a function does not make their words safe for a worker that
 the repro to the captain. The issue's body never goes in.
 
 The Task is **tainted**: Studio marks it (`_tainted`, a parameter no model can set: `proposeTainted` in
-`src/firstmate.ts`; a held proposal proposed again and a new Task from its failure card keep it). A tainted Task never
+`src/firstmate.ts`; a held proposal proposed again and a new Task from its failure card keep it), and the runtime starts
+it under the built-in `issue` profile (docs/architecture.md, Profiles): its text is withheld from Firstmate and from
+other Tasks' briefs. A tainted Task never
 touches GitHub: its review-request adapter is the local one whatever the project's grant (`selectedAdapter` in
 `src/domain/code.ts`), so nothing is pushed, no pull request is opened and nothing on GitHub is read for it. Reviewed and
 past CI, it does not reach the merge card: it ends at Remote readiness, ready on its local branch (`taintedReady`: the

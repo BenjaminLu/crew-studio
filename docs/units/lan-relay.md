@@ -155,8 +155,10 @@ phone, even one allowed to drive Firstmate. (Not a boundary against a local proc
 
 `startLan` starts the taker's workflow through the same staffing and start path as the board's Run: a code workflow
 (code-firstmate) runs on one of the taker's registered projects with its approved crew; an own workflow's staffing is
-confirmed with the take. The Task carries Studio's marks `_lan` (the item and its spend cap) and `_tainted: "lan"`; a
-Task with the taint and no readable `_lan` is held to a zero cap. Enforced, whatever the briefing says:
+confirmed with the take. The Task runs under the runtime's profile `lan` (`run.profile`, set only by the runtime as a
+start option, never from params; its mark is the item and its spend cap; docs/architecture.md, Profiles). The engine
+calls the profile for every step, round, tool, check and policy of the Task, whatever its kind; a seam it does not fill
+refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced, whatever the briefing says:
 
 - **Sandbox only** (`taintRefusal`): never in local unrestricted mode, never under a sandbox-off grant; a round without a
   sandbox is refused.

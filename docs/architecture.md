@@ -224,8 +224,8 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     - tools-only listener: each round's own tool token, `/api/tools` only;
     - peer listener (board-to-board work, docs/units/lan-relay.md): a separate server and port, off until turned on, four
       fixed routes carrying Noise messages (KK with an introduced key, XX only while the introduction window is open); its
-      own Host only, no browser headers, no CORS, size and rate limits; work it brings in runs as a `_lan` + `_tainted`
-      Task under the restricted profile (allowlisted local steps, provider egress only, test runs that cannot listen, no writes
+      own Host only, no browser headers, no CORS, size and rate limits; work it brings in runs as a Task under the
+      restricted profile `lan` (see Profiles below: allowlisted local steps, provider egress only, test runs that cannot listen, no writes
       to CI, hook or settings paths, a spend cap, never shown to Firstmate) and its
       result leaves only on the person's 交回 after the protected-path and secret gates;
     - egress proxy: each round's own credential (407 without), its host list, and the resolved-address guard ported from
@@ -376,3 +376,18 @@ verified as bounded PNGs, then published to the shared MediaLibrary before succe
 turn completion. Interrupted/failed turns, stale items and unsafe saved paths cannot
 publish. Managed drafts grant no approval; direct audio/video and historical output
 backfill are outside this host contract.
+
+## Profiles
+
+A Task drawn from untrusted text runs under a restricted profile (`run.profile = { name, mark }`, `Profile` in
+`src/runtime/engine.ts`). Only the runtime sets it, as an option of `engine.start`; no route, tool or model can, and a
+LAN mark in params is dropped. The engine owns the seams and calls the profile at fixed points for every step of every
+kind (a kind or card mode a domain registers later included): `admit` before each step, `wrapStep` around its start and
+its answer, `policy` for every policy the Task resolves, `wrapRound` for every paid round it starts (found by the Task the
+round names, or by the step it runs in), `wrapTool` for each tool of those rounds, `wrapExec` for every check, `brief`,
+`followUp` (New task, repropose) and `redact`. A Task whose profile is not installed runs nothing and is withheld (default
+deny); a refusal is recorded on the step with `code: "profile"`, never recognized by its message. `engine.redacted(run)`
+is the one check that keeps a profiled Task's text from Firstmate (its questions are the captain's cards), from Studio's
+log and from other Tasks' briefs. Every profiled Task runs in the OS sandbox only (`taintRefusal`). Two profiles exist:
+`issue` (built in: work from issue text, Studio's own `_tainted` mark from `proposeTainted`; every step runs, nothing
+reaches GitHub) and `lan` (`src/lan/profile.ts`: work from a peer's Studio, docs/units/lan-relay.md).

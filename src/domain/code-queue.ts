@@ -134,8 +134,8 @@ export function reservationLife(r: Run): "held" | "retained" | "released" {
  * build concurrently and each build round rebases onto the current base.
  * Unknown identity is reported as such; only an authenticated prefix narrows it.
  */
-/** A Task's title as another Task's brief may show it: a peer's Task (src/lan) is named by its id only (its title is the peer's words). */
-const shownTitle = (r: Run) => (r.params?._tainted === "lan" || r.params?._lan ? "work from a peer's Studio, its title withheld" : r.title);
+/** A Task's title as another Task's brief may show it: a redacted Task (a peer's work, issue text) is named by its id only. */
+const shownTitle = (engine: Engine, r: Run) => (engine.redacted(r) ? "a Task whose title is withheld (untrusted text)" : r.title);
 export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
   const repo = engine.queueRepo(run.ctx.repo), project = engine.queueProject(run);
   const blockers: ScopeBlocker[] = [];
@@ -157,7 +157,7 @@ export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
           const status = git(other.ctx.worktree, ["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"]);
           pristine = head.ok && status.ok && !status.out && head.out === other.ctx.baseCommit && head.out === other.ctx.head;
         } catch {}
-        if (!pristine) blockers.push({ run: other.id, title: shownTitle(other), scope: [], identityUnavailable: true, ...retained });
+        if (!pristine) blockers.push({ run: other.id, title: shownTitle(engine, other), scope: [], identityUnavailable: true, ...retained });
       }
       continue;
     }
@@ -168,11 +168,11 @@ export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
       if (first && (first.repo !== repo || first.project !== project)) continue;
       // An authenticated prefix bounds unknown authority to its held paths.
       // Preserve those paths rather than trusting a later mutable cache.
-      blockers.push({ run: other.id, title: shownTitle(other), scope: first?.scope ?? [], identityUnavailable: true, ...retained });
+      blockers.push({ run: other.id, title: shownTitle(engine, other), scope: first?.scope ?? [], identityUnavailable: true, ...retained });
       continue;
     }
     if (held.repo !== repo || held.project !== project || engine.verifiedMerge(other)) continue;
-    blockers.push({ run: other.id, title: shownTitle(other), scope: reservedScope(held), ...retained });
+    blockers.push({ run: other.id, title: shownTitle(engine, other), scope: reservedScope(held), ...retained });
   }
   return blockers;
 }

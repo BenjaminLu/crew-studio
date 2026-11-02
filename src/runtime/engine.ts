@@ -18,6 +18,7 @@
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { allocate } from "../ids";
 import type { AgentJob, AgentTool, Agents } from "../agent";
 import type { Provider } from "../providers";
@@ -56,6 +57,8 @@ export type NodeRun = {
 };
 export type Step = { seq: number; node: string; kind: string; visit: number; state: "running" | "waiting" | "passed" | "failed" | "error" | "interrupted" | "skipped" | "superseded" | "swapped";
   outcome: string | null; startedAt: string; endedAt: string | null; error: string | null; job: string | null; provider: string | null; model: string | null; note: string | null; handoff?: string | null;
+  /** "profile": the step was refused by the Task's restricted profile (its error says why) */
+  code?: string;
   /** the reasoning effort the step's agent ran at (null: the provider's own default) */
   effort?: string | null; checks?: { check: string; verdict: string; seq: number }[];
   /** the enabled skills an agent step loaded, as name@vN in order (unit agent-skills) */
@@ -74,6 +77,9 @@ export type Run = {
   nodes: Record<string, NodeRun>; queue: string[]; steps: Step[]; ctx: Record<string, any>; classifier: any; events: number; recovered: number;
   /** the captain's reason when the run was cancelled */
   cancelReason?: string | null;
+  /** the restricted profile this Task runs under (docs/architecture.md, Profiles): set only by the runtime when it starts
+   *  (start({ profile })), never from params; the engine calls it at fixed points for every step of every kind */
+  profile?: RunProfile | null;
   continuation?:{token:string;previousCard:string;node:string;visit:number};
   /** the typed failure that ended the run (src/runtime/failures.ts), its card, and every earlier one */
   failure?: Failure | null; failureCard?: string | null; failures?: Failure[];
@@ -95,6 +101,41 @@ export type X = {
   skillUse?(): { text: string; roleSkill: RoleSkillUse | null; skills: string[] };
 };
 export type KindHandler = { start(x: X): Promise<Result>; answer?(x: X, card: SCard): Promise<Result> };
+/** A Task's restricted profile, by name, with the mark the runtime gave it (a LAN item and its spend cap; an issue's source). */
+export type RunProfile = { name: string; mark?: unknown };
+/**
+ * A restricted profile (docs/architecture.md, Profiles). The engine, not the profile, owns the seams: it calls these for
+ * every step of a profiled Task whatever its kind (a kind registered later included), for every paid round it starts,
+ * for every tool of those rounds, every check, every policy it resolves, its brief, its log and its follow-ups. A Task
+ * whose profile is not installed, or a seam a profile does not fill, is refused (default deny), with code "profile".
+ */
+export type Profile = {
+  /** before every step, whatever its kind: the reason it may not run, or null */
+  admit(x: X): string | null;
+  /** a step's start or answer runs inside this */
+  wrapStep<T>(x: X, fn: () => Promise<T>): Promise<T>;
+  /** a policy as this Task resolves it (base: what it resolves to without the profile) */
+  policy(r: Run, path: string, base: any): any;
+  /** every paid round of the Task: agent turns, coordinators, judges */
+  wrapRound(r: Run, opts: any, next: (opts: any) => Promise<any>): Promise<any>;
+  /** every tool such a round is given */
+  wrapTool(r: Run, tool: any): any;
+  /** every check the Task runs */
+  wrapExec(x: X, man: any, next: () => Promise<any>): Promise<any>;
+  /** its text never reaches Firstmate, Studio's log or another Task (its title is withheld there) */
+  redact(r: Run): boolean;
+  /** why it may not be repeated as a new Task or a fresh proposal, or null */
+  followUp(r: Run): string | null;
+  /** its brief as the round sees it */
+  brief(x: X, text: string): string;
+};
+/** A refusal by a Task's profile: the step stops, and its record says so (code "profile"), never by a matching message. */
+export class ProfileRefusal extends RoundBlocked { readonly code = "profile"; }
+/** The built-in profile of work drawn from untrusted issue text (src/firstmate.ts proposeTainted): every step runs, in
+ *  the OS sandbox only (taintRefusal); its text never reaches Firstmate. */
+const legacyLanMark = (v: unknown) => { try { return JSON.parse(String(v)); } catch { return null; } };
+const ISSUE_PROFILE: Profile = { admit: () => null, wrapStep: (_x, fn) => fn(), policy: (_r, _p, base) => base, wrapRound: (_r, o, next) => next(o), wrapTool: (_r, t) => t,
+  wrapExec: (_x, _m, next) => next(), redact: () => true, followUp: () => null, brief: (_x, t) => t };
 export type AgentMode = {
   /** Apply an already authorized role choice synchronously, before capability verification or work preparation. */
   preparePick?(x: X): void;
@@ -333,6 +374,18 @@ export class Engine {
     defs.known ??= (ref) => !!this.registry.get(ref);
     this.cards.onChange = (c) => deps.send("scard", { id: c.id, run: c.run, status: c.status });
     deps.agents.admission = (o: any, key: string) => this.jobAdmission(o, key);
+    // every paid round of a profiled Task goes through its profile, whoever starts it (a mode, a judge, a domain's own
+    // round): found by the Task it names, or by the step it runs in
+    { const agents = deps.agents; this.rawRound = agents.run.bind(agents);
+      agents.run = ((opts: any) => {
+        const id = opts?.ref ?? this.runScope.getStore() ?? null, r = id ? this.runs.get(String(id)) : null, pf = this.profileOf(r);
+        if (pf === null) return this.rawRound(opts);
+        if (pf === "missing") return Promise.reject(this.profileMissing(r!));
+        return pf.wrapRound(r!, { ...opts, tools: (opts?.tools ?? []).map((t: any) => pf.wrapTool(r!, t)) }, (o) => this.rawRound(o));
+      }) as any; }
+    // Studio's log (read by the retro and improve tools) keeps no text of a redacted Task: its type and id only
+    { const log = deps.log, emit = log.emit.bind(log);
+      log.emit = ((e: any) => { const r = e?.task ? this.runs.get(String(e.task)) : null; return emit(r && this.redacted(r) ? { ...e, summary: `${e.type} (a Task whose text is withheld: ${r.profile?.name})`, data: {} } : e); }) as any; }
     this.builtinKinds();
     installRefine(this); // the loop kind
     defs.runners ??= () => new Set(Object.keys(this.kinds));
@@ -470,6 +523,8 @@ export class Engine {
       if (log.torn || log.unterminated) try { repairTail(join(this.rdir(d), "events.jsonl"), log); if (log.torn) repaired = `event log: dropped a torn tail of ${log.torn.lines} line${log.torn.lines > 1 ? "s" : ""} (${log.torn.bytes} bytes) that a crash left unfinished`; }
         catch (e: any) { try { this.seal(d, { ...log, corrupt: { line: 0, text: `the torn tail could not be cut: ${String(e?.message ?? e).slice(0, 80)}` } }); } catch {} continue; }
       const r = fold(log.rows); if (!r) continue;
+      // a Task written before profiles: Studio's own marks become its profile (a LAN one held to its mark, or to nothing)
+      if (!r.profile && (r.params?._lan || r.params?._tainted)) r.profile = r.params._lan || r.params._tainted === "lan" ? { name: "lan", mark: legacyLanMark(r.params._lan) } : { name: "issue", mark: { source: String(r.params._tainted) } };
       this.runs.set(r.id, r); this.committed.set(r.id, clone(r));
       if (log.skipped?.length) this.deps.log.emit({ type: "run_log_skipped", workflow: r.workflow, task: r.id, summary: `${r.id}: event log: skipped ${log.skipped.length} unreadable line${log.skipped.length > 1 ? "s" : ""} (line ${log.skipped.map((x) => x.line).join(", ")}) written before the crash-safe format, as Studio always did`, data: { lines: log.skipped.map((x) => x.line) } });
       if (repaired) this.emit(r, "log", repaired, { torn: log.torn });
@@ -553,7 +608,7 @@ export class Engine {
   }
 
   // ---------- starting ----------
-  start(o: { workflow: string; version?: number; title?: string; text?: string; params?: Record<string, string>; by?: string; classifier?: any }): Run {
+  start(o: { workflow: string; version?: number; title?: string; text?: string; params?: Record<string, string>; by?: string; classifier?: any; profile?: RunProfile | null }): Run {
     const def = this.defs.get(o.workflow, o.version); if (!def) throw new Error(`no workflow ${o.workflow}${o.version ? ` v${o.version}` : ""}`);
     if(this.defs.trashed(def.id))throw new Error("Restore this workflow from Trash before starting a new Task");
     const errs = validate(def, this.defs.known, this.defs.runners?.(), this.defs.skillInfo ?? undefined).filter((p) => p.level === "error"); if (errs.length) throw new Error(`${def.id} v${def.version} is not runnable: ${errs[0].text}`);
@@ -564,10 +619,15 @@ export class Engine {
     for (const [k, p] of Object.entries(def.params ?? {})) if (p.default != null) params[k] = String(p.default);
     // a parameter is at most 4000 characters, or the larger bound its definition declares (max, up to 64 KB)
     const paramCap = (k: string) => Math.min(65536, Math.max(4000, Number((def.params as any)?.[k]?.max) || 0));
-    for (const [k, v] of Object.entries(o.params ?? {})) if (v != null && String(v) !== "") params[k] = String(v).slice(0, paramCap(k));
+    // a profile comes only with the runtime's own start option; a LAN mark never rides in params. Studio's own issue mark
+    // (`_tainted`, which no route or tool can set: they drop "_" params) starts the built-in issue profile.
+    const given = { ...(o.params ?? {}) }; delete given._lan; if (given._tainted === "lan") delete given._tainted;
+    const profile: RunProfile | null = o.profile ? { name: String(o.profile.name), mark: o.profile.mark ?? null } : given._tainted ? { name: "issue", mark: { source: String(given._tainted) } } : null;
+    if (profile?.name === "issue" && !given._tainted) given._tainted = "issue-text";
+    for (const [k, v] of Object.entries(given)) if (v != null && String(v) !== "") params[k] = String(v).slice(0, paramCap(k));
     const text = String(o.text ?? "").slice(0, 8000);
     const r: Run = { id, workflow: def.id, version: def.version, def, title: (o.title ? clampTitle(o.title) : deriveTitle(text)) || clampTitle(def.name), text, params, by: o.by ?? "captain",
-      status: "queued", result: null, createdAt: now(), updatedAt: now(), endedAt: null, error: null, nodes: {}, queue: [], steps: [], ctx: { nativeQueueVersion: 1 }, classifier: o.classifier ?? null, events: 0, recovered: 0 };
+      status: "queued", result: null, createdAt: now(), updatedAt: now(), endedAt: null, error: null, nodes: {}, queue: [], steps: [], ctx: { nativeQueueVersion: 1 }, classifier: o.classifier ?? null, events: 0, recovered: 0, ...(profile ? { profile } : {}) };
     for (const nd of def.nodes) r.nodes[nd.id] = { state: "pending", visits: 0, extra: 0, attempt: 0, outcome: null, cause: null, error: null, startedAt: null, endedAt: null, inbox: [], agent: null, swap: null, job: null, card: null, waiting: null, data: {}, note: null };
     this.runs.set(id, r);
     this.append(r, { type: "run_created", run: clone(r) });
@@ -764,7 +824,10 @@ export class Engine {
     if (path === "auth" || path.startsWith("auth.")) return undefined;
     const v = this.policies.get(path, { project: r.ctx.project ?? r.params.project ?? null, workflow: r.def.policies ?? null }).value ?? dflt;
     const add = Number(r.ctx.policyAdds?.[path] ?? 0); // a run override set by a card adds to what resolved, never replaces it
-    return add && typeof v === "number" ? v + add : v;
+    const base = add && typeof v === "number" ? v + add : v;
+    const pf = this.profileOf(r); if (pf === null) return base;
+    if (pf === "missing") throw this.profileMissing(r);
+    return pf.policy(r, path, base);
   }
 
   private async runNode(r: Run, id: string) {
@@ -790,8 +853,11 @@ export class Engine {
       const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
       if (!h) throw new FailureError("internal.bug", `no runner for node kind ${node.kind}`);
       for (const guard of Object.values(this.beforeStart)) { res = await guard(x); if (res) break; }
+      const pf = this.profileOf(r);
+      if (pf === "missing") throw this.profileMissing(r);
+      if (pf && !endOnly(x)) { const why = pf.admit(x); if (why) throw new ProfileRefusal(why); }
       if (!res) {
-        try { res = await h.start(x); }
+        try { res = await this.runScope.run(r.id, () => pf ? pf.wrapStep(x, () => h.start(x)) : h.start(x)); }
         catch (e) {
           // Nested coordinator turns belong to the loop but need the same
           // formal readiness recovery as a top-level agent turn.
@@ -799,7 +865,7 @@ export class Engine {
           res = await this.queueCapability(x, e.message, e);
         }
       }
-      res = await this.afterChecks(x, step, res);
+      res = await this.runScope.run(r.id, () => this.afterChecks(x, step, res));
     } catch (e: any) { err = homeless(redactText(String(e?.message ?? e))).slice(0, 1200); blocked = e?.outcome === "blocked"; thrown = e; } // credentials and the home folder go before any cut; a RoundBlocked is never retried
     finally { this.live.delete(key); }
     this.finish(r, node, rn, step, res, err, blocked, thrown);
@@ -827,7 +893,7 @@ export class Engine {
     // a result that arrives after the run ended is refused: the node was already stopped
     if (TERMINAL.includes(r.status)) { if (step.state === "running" || step.state === "waiting") { step.state = "skipped"; step.endedAt = now(); step.note = `late result refused (the run is ${r.status})`; } if (rn.state === "running") { rn.state = "skipped"; rn.cause = `the run is ${r.status}`; } this.commit(r, "late result refused"); return; }
     if (err) {
-      step.state = "error"; step.error = err; step.endedAt = now();
+      step.state = "error"; step.error = err; step.endedAt = now(); if ((thrown as any)?.code === "profile") step.code = "profile";
       // classified at the source when it threw a typed failure; otherwise by its words (no rule: internal, with diagnostics)
       rn.data.failure = fromError(thrown ?? err, { source: node.kind === "agent" ? "agent" : node.kind === "check" ? "check" : "engine", run: r.id, node: node.id, visit: rn.visits, inputs: this.failureInputs(r, node), log: rn.job ? { k: "job", job: rn.job, run: r.id, node: node.id, round: String(rn.visits) } : null });
       // blocked: the step cannot start safely (its reason says why); a retry would hit the same wall
@@ -1082,6 +1148,13 @@ export class Engine {
   }
   /** Execute one check: native, exit-code adapter, executable, or a model judge. */
   async exec(x: X, man: CheckManifest, ref: CheckRef, input: CheckInput, cdir: string, signal?: AbortSignal): Promise<CheckOutput> {
+    // a profiled Task's every check goes through its profile
+    const pf = this.profileOf(x?.run);
+    if (pf === "missing") return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: this.profileMissing(x.run).message };
+    if (pf) return this.runScope.run(x.run.id, () => pf.wrapExec(x, man, () => this.execPlain(x, man, ref, input, cdir, signal)));
+    return this.execPlain(x, man, ref, input, cdir, signal);
+  }
+  private async execPlain(x: X, man: CheckManifest, ref: CheckRef, input: CheckInput, cdir: string, signal?: AbortSignal): Promise<CheckOutput> {
     const E = (error: string): CheckOutput => ({ verdict: "error", score: null, findings: [], evidence: [], proves: [], error });
     try {
       if (man.kind === "judged") return await this.judge(x, man, ref, input);
@@ -1415,11 +1488,13 @@ export class Engine {
     rn.waiting = null; this.commit(r, `card ${c.id} answered: ${c.answer!.choice}`);
     const x = this.x(r, node, rn);
     const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
-    let res: Result | null = null, err: string | null = null;
+    let res: Result | null = null, err: string | null = null, thrown: unknown = null;
     const key = `${r.id}/${node.id}`; this.live.add(key);
-    const taint = c.options.find((o) => o.id === c.answer!.choice)?.hold ? null : this.taintRefusal(r); let blockedAnswer = false;
-    try { if (taint) { blockedAnswer = true; throw new RoundBlocked(taint); } res = node.kind === "loop" && rn.data.nativeQueueCapability ? await this.kinds.agent.answer!(x, c) : h.answer ? await h.answer(x, c) : { outcome: c.answer!.choice, note: c.answer!.note }; } catch (e: any) { err = String(e?.message ?? e); } finally { this.live.delete(key); }
-    this.finish(r, node, rn, step ?? { seq: r.steps.length + 1, node: node.id, kind: node.kind, visit: rn.visits, state: "waiting", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: null, model: null, note: null }, res, err, blockedAnswer);
+    const holds = !!c.options.find((o) => o.id === c.answer!.choice)?.hold, pf = this.profileOf(r);
+    const taint = holds ? null : this.taintRefusal(r) ?? (pf === "missing" ? this.profileMissing(r).message : pf && !endOnly(x) ? pf.admit(x) : null); let blockedAnswer = false;
+    const within = <T,>(fn: () => Promise<T>) => this.runScope.run(r.id, () => pf && pf !== "missing" ? pf.wrapStep(x, fn) : fn());
+    try { if (taint) { blockedAnswer = true; throw pf ? new ProfileRefusal(taint) : new RoundBlocked(taint); } res = await within(async () => node.kind === "loop" && rn.data.nativeQueueCapability ? await this.kinds.agent.answer!(x, c) : h.answer ? await h.answer(x, c) : { outcome: c.answer!.choice, note: c.answer!.note }); } catch (e: any) { err = String(e?.message ?? e); thrown = e; } finally { this.live.delete(key); }
+    this.finish(r, node, rn, step ?? { seq: r.steps.length + 1, node: node.id, kind: node.kind, visit: rn.visits, state: "waiting", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: null, model: null, note: null }, res, err, blockedAnswer, thrown);
   }
   private must(id: string) { const r = this.runs.get(id); if (!r) throw new Error("no such run"); return r; }
 
@@ -1478,9 +1553,21 @@ export class Engine {
   /** An agent's question goes to Firstmate first (server.ts wakes it): true when it was sent. Firstmate answers or escalates through answerFromFirstmate. */
   /** A Task drawn from untrusted text (params._tainted: issue text, a peer's Studio) never sends a question, an escalation or
    *  its text to Firstmate: Firstmate is a privileged agent, and that text could steer it. Its questions are the captain's cards. */
-  firstmateBarred(r: Run): boolean { return !!r.params?._tainted; }
+  firstmateBarred(r: Run): boolean { return this.redacted(r); }
   /** Guards a domain adds against repeating a Task as a new one or a fresh proposal (a reason, or null). */
   followUpGuards: Record<string, (r: Run) => string | null> = {};
+  /** the restricted profiles installed, by name (the issue profile is built in; src/lan/profile.ts adds "lan") */
+  profiles: Record<string, Profile> = { issue: ISSUE_PROFILE };
+  /** the round runner below the profile seam (what a profile's wrapRound calls on) */
+  rawRound: (opts: any) => Promise<any> = () => Promise.reject(new Error("no round runner"));
+  /** the Task whose step is running, for a round started without naming it */
+  private readonly runScope = new AsyncLocalStorage<string>();
+  /** A profiled Task's profile; null for an ordinary Task; "missing" when its profile is not installed (default deny). */
+  profileOf(r: Run | null | undefined): Profile | "missing" | null { if (!r?.profile) return null; return this.profiles[r.profile.name] ?? "missing"; }
+  /** Whether a Task's text is withheld from Firstmate, Studio's log and other Tasks: the one check (a profile says, and a
+   *  Task whose profile is not installed is withheld) */
+  redacted(r: Run | null | undefined): boolean { const pf = this.profileOf(r); return pf === null ? false : pf === "missing" ? true : !!pf.redact(r!); }
+  private profileMissing(r: Run) { return new ProfileRefusal(`this Task runs under the ${r.profile?.name} profile, which this Studio does not have installed: nothing of it runs`); }
   askFirstmate: ((r: Run, node: WNode, question: string, visit: number, o?: { escalation?: { options: { id: string; label: string; note?: boolean; select?: string[] }[] } }) => boolean) | null = null;
   /** Tell Firstmate something Studio did for it (a held proposal raised again): the full text goes to its turn, the summary to the captain's chat. */
   notifyFirstmate: ((text: string, summary: { en: string; zh: string }) => boolean) | null = null;
@@ -1682,7 +1769,11 @@ export class Engine {
       writeFileSync(file, homeless(JSON.stringify(report, null, 1)));
       const ans = this.cards.answer(c.id, a); this.recordFailure(r, c, "report", { file: `failures/${r.id}-${c.id}.json` }); this.emit(r, "failure_reported", `${f.code}: diagnostics kept in failures/${r.id}-${c.id}.json`, { card: c.id }); return ans;
     }
-    if (a.choice === ACT.newTask || a.choice === ACT.repropose) for (const g of Object.values(this.followUpGuards)) { const why = g(r); if (why) refuse({ en: `Refused: ${why}`, "zh-TW": `已拒絕：${why}` }); }
+    if (a.choice === ACT.newTask || a.choice === ACT.repropose) {
+      const pf = this.profileOf(r), own = pf === "missing" ? this.profileMissing(r).message : pf ? pf.followUp(r) : null;
+      if (own) refuse({ en: `Refused: ${own}`, "zh-TW": `已拒絕：${own}` });
+      for (const g of Object.values(this.followUpGuards)) { const why = g(r); if (why) refuse({ en: `Refused: ${why}`, "zh-TW": `已拒絕：${why}` }); }
+    }
     if (a.choice === ACT.newTask) {
       const reach = this.newTaskReach(r);
       if (!reach.newTaskAllowed) refuse({ en: "New task refused: this workflow is internal or retired. Ask Firstmate to prepare the work again.", "zh-TW": "已拒絕開始新任務：此流程為內部或已退役流程。請 Firstmate 重新準備這項工作。" });
@@ -1690,7 +1781,7 @@ export class Engine {
       // so does the taint: a Task drawn from untrusted issue text repeats as one
       const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing" || k === "_tainted"));
       // the new task runs the current release of the workflow (a run pinned to a replaced version keeps its old routes); the captain starts it, Firstmate is not involved
-      let next: Run; try { next = this.start({ workflow: r.workflow, version: reach.newerVersion ? undefined : r.version, title: r.title, text: r.text, params, by: a.by }); }
+      let next: Run; try { next = this.start({ workflow: r.workflow, version: reach.newerVersion ? undefined : r.version, title: r.title, text: r.text, params, by: a.by, profile: r.profile ?? null }); }
       catch (e: any) { refuse({ en: `New task refused: ${e?.message ?? e}`, "zh-TW": `已拒絕開始新任務：${e?.message ?? e}` }); throw e; }
       // the link goes both ways: the old task names its follower, the new one names the task it repeats
       next.ctx.follows = r.id; this.commit(next, `follows ${r.id}`); this.emit(next, "follows", `the same request as ${r.id}, started from its failure card`, { task: r.id, card: c.id });
@@ -2020,11 +2111,12 @@ export class Engine {
    * (beforeStart), for each agent turn (roundSandbox), for each check (runCheck: node, edge, card and domain checks), and for
    * each card answer that carries it on (answer, carryAnswer; holding it is always allowed). The reason, or null. */
   taintRefusal(r: Run): string | null {
-    if (!r.params?._tainted) return null;
+    if (!r.profile) return null; // every profiled Task (issue text, a peer's Studio) runs in the OS sandbox only
+    const from = r.profile.name === "lan" ? "a peer's Studio" : "untrusted issue text";
     let unrestricted = true; try { unrestricted = localUnrestricted(); } catch {}
-    if (unrestricted) return "this Task comes from untrusted issue text and runs only in the OS sandbox, but Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED): restart Studio without it";
+    if (unrestricted) return `this Task comes from ${from} and runs only in the OS sandbox, but Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED): restart Studio without it`;
     const off = this.grants.open("sandbox-off", r.ctx?.project ?? r.params?.project ?? null);
-    return off ? `this Task comes from untrusted issue text and runs only in the OS sandbox, but the captain's sandbox-off grant ${off.id} is open: end it first` : null;
+    return off ? `this Task comes from ${from} and runs only in the OS sandbox, but the captain's sandbox-off grant ${off.id} is open: end it first` : null;
   }
   /** The one place a round's working folder is made: <data>/work/<area>/<run>/<node>-<visit>-<attempt>[-label] (fresh unless kept). */
   roundDir(x: X, area: string, o: { prefix?: string; label?: string; fresh?: boolean } = {}) {
@@ -2051,7 +2143,8 @@ export class Engine {
     const text = composeSkeleton({ def: x.run.def, node: x.node, visit: x.visit, modeName, tools: mode.tools(x).map((t) => t.name), maxTools: maxTools ?? 60,
       timeoutS: Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900)) || null, egress: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String).filter(Boolean),
       facts: mode.skeleton?.(x) ?? null, dataDir: this.deps.dataDir });
-    this.skeletons.set(x, { key, text }); return text;
+    const pf = this.profileOf(x.run); const shown = pf && pf !== "missing" ? pf.brief(x, text) : text;
+    this.skeletons.set(x, { key, text: shown }); return shown;
   }
   /** An agent node: one turn of its mode on the picked provider; a swap stops it, writes a hand-off, and starts the new agent from it. */
   async runAgent(x: X, modeName = x.node.mode): Promise<string> {

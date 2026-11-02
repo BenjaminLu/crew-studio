@@ -217,12 +217,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if(option&&!option.hold&&evidenceFor(card)?.blocked)throw new Error("Merge evidence is unavailable or stale; rerun verification and request a fresh card");
   };
   engine.beforeNodeChecks ??= {}; engine.cardPrepared ??= {}; engine.beforeStart ??= {}; engine.externalHandlers ??= {}; engine.externalValidators ??= {};
-  // a tainted Task: drawn from untrusted issue text (params._tainted, Studio's own mark: src/firstmate.ts proposeTainted). It
+  // a tainted Task: one with a restricted profile (run.profile, set only by the runtime: issue text from src/firstmate.ts
+  // proposeTainted, or a peer's Studio from src/lan). It
   // never touches GitHub: its adapter is the local one whatever the project's grant (selectedAdapter), so nothing is pushed,
   // opened or read there, and it stops on its local branch instead of the merge card (taintedReady). Its commit messages
   // name no issue and @mention no one (withoutGitHubLinks), its review runs in run mode, and it runs only in the OS
   // sandbox (src/runtime/engine.ts taintRefusal)
-  const tainted = (x: X) => !!x.run.params?._tainted;
+  const tainted = (x: X) => !!x.run.profile;
   const refs = (x: X, t: string) => (tainted(x) ? withoutGitHubLinks(t) : t);
   engine.cardPrepared["code-evidence-offer"]=(x,card)=>{
     if(card.kind!=="merge"||!card.detail?.codeEvidenceOffer)return;

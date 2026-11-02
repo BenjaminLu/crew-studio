@@ -5,6 +5,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // nothing starts. The list comes from the bundled workflows (workflows/v2 and packs/, what the runtime seeds), so a new
 // workflow is in this table the day it ships. The captain cards on B are answered from the workflow's own offline
 // acceptance scenario (tests/acceptance/<id>.yaml). Prints the table.               bun tests/lan-workflows.ts
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { bundledList, bundledText, parseYaml } from "../src/bundled";
 import { loadScenario, scenarioFiles } from "../scripts/acceptance/scenarios";
 import { stubRuns, stubDecision, type StubRun } from "./acceptance/stub";
@@ -50,7 +52,8 @@ async function relayOne(p: Pair, w: any, r: StubRun, h: Ctx): Promise<string> {
     const run = v.rounds[n - 1].run.id;
     const d = await drive(p.B, run, decide, { timeoutMs: Math.max(240_000, r.timeout_s * 1000) });
     if (d.problems.length || d.view?.status !== "succeeded") throw new Error(`round ${n}: B's Task ${run} ended ${d.view?.status}: ${d.problems.join("; ")} ${JSON.stringify((d.view?.steps ?? []).filter((s: any) => s.error).map((s: any) => `${s.node}: ${String(s.error).slice(0, 200)}`))}`);
-    if (!d.view.params?._tainted || !d.view.params?._lan) throw new Error(`round ${n}: B's Task ${run} does not carry the LAN marks (it did not run under the restricted profile)`);
+    const rj = JSON.parse(readFileSync(join(p.B.data, "runs", run, "run.json"), "utf8"));
+    if (rj.profile?.name !== "lan" || !rj.profile?.mark?.item) throw new Error(`round ${n}: B's Task ${run} does not carry the LAN marks (it did not run under the restricted profile)`);
     const pre = await must(p.B.api(`/api/lan/threads/${t}/handback/preview`, {}), `B previews round ${n}`);
     if (!pre.ok) throw new Error(`round ${n}: the hand-back gate stopped it: ${JSON.stringify({ secrets: pre.secrets, protected: pre.protectedPaths, tooLarge: pre.tooLarge })}`);
     if (!pre.files.length) throw new Error(`round ${n}: B's Task ${run} has nothing to hand back`);

@@ -854,7 +854,7 @@ export function createRuntime(d: RuntimeDeps) {
    * and no coffee-kit crew; an own workflow's staffing is confirmed with the take (staffingConfirm, its plan's hash).
    */
   const lanStaffing = (def: any) => { if (!ownWorkflow(def)) return null; const s = ownStaffingPlan(def, defs.ownCrew); return s.plan.length ? { hash: s.hash, plan: s.plan, missing: s.missing } : null; };
-  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; by: string; staffingConfirm?: string | null; project?: string | null }) => {
+  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; usd: number | null; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null }) => {
     const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
     const def = defs.get(o.workflow);
     if (!def || !defs.selectable(o.workflow) || defs.held(o.workflow)) throw refuse("workflow_unavailable", "This workflow is not available for a new Task");
@@ -868,11 +868,11 @@ export function createRuntime(d: RuntimeDeps) {
     }
     const missing = Object.entries(def.params ?? {}).filter(([, spec]: any) => spec.required && !String(spec.default ?? "").trim()).map(([k]) => k);
     if (missing.length) throw refuse("param_required", `This workflow needs inputs work from a peer cannot give: ${missing.join(", ")}`);
-    if (!o.params._lan || o.params._tainted !== "lan") throw refuse("internal", "a LAN start carries Studio's LAN marks");
+    if (o.profile?.name !== "lan" || !o.profile.mark?.item) throw refuse("internal", "a LAN start carries the runtime's LAN profile");
     const params: Record<string, string> = { ...o.params, ...staffed };
     const s = lanStaffing(def);
     if (s) { if (s.missing.length) throw refuse("staffing_incomplete", "Choose a provider and model for every agent node of this workflow first"); if (o.staffingConfirm !== s.hash) throw refuse("staffing_confirmation_required", "Confirm who works on each node of this workflow with the take"); params._ownStaffing = s.hash; }
-    const started = staffedStartRun(def, () => ownClaude.start({ workflow: def.id, title: o.title, text: o.text, params, by: o.by }), autoVerified);
+    const started = staffedStartRun(def, () => ownClaude.start({ workflow: def.id, title: o.title, text: o.text, params, by: o.by, profile: o.profile }), autoVerified);
     if (!started.ok) throw refuse(String(started.body.code ?? "start"), String(started.body.error));
     return started.run;
   };
