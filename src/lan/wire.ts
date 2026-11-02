@@ -17,7 +17,7 @@ import { b64u, canonical, randomBytes, sas, sha256, sha256hex, eq, unb64u, type 
 import { Handshake, CipherState } from "./noise";
 
 export const MAX_BODY = 1024 * 1024;
-const SKEW_MS = 5 * 60_000, REPLAY_MS = 10 * 60_000, XX_TTL_MS = 60_000, MAX_XX = 16, RATE = { perMin: 240 };
+const SKEW_MS = 5 * 60_000, REPLAY_MS = 10 * 60_000, XX_TTL_MS = 20_000, RATE = { perMin: 240, addresses: 4096 }, MAX_IN_FLIGHT = 32;
 const BROWSER_HEADERS = ["origin", "referer", "cookie", "authorization"];
 export type Peer = { key: string; host: string; port: number };
 export type IntroResult = { key: string; sas: string; claimed: string; host: string; port: number };
@@ -33,6 +33,11 @@ export type WireDeps = {
   request: (from: string, op: string, body: unknown, ip: string) => Promise<unknown>;
   /** an introduction finished on this side (the responder); the captain still has to confirm the code */
   introduced: (r: IntroResult) => void;
+  /** an introduction got this side's nonce and did not reveal a matching one (a wrong reveal, an abort, a timeout): it
+   *  could have been an attempt to match a short code; the captain sees it, and three close the window */
+  introFailed?: (ip: string, why: string) => void;
+  /** the KK replay cache, kept across restarts (ephemeral key → when it was seen) */
+  replay?: { load(): Record<string, number>; save(m: Record<string, number>): void };
   /** a refusal, for the Studio log and the tests (never the payload) */
   refused?: (why: string, ip: string) => void;
 };
@@ -44,11 +49,11 @@ const parse = (b: Buffer) => JSON.parse(b.toString("utf8"));
 
 export class LanWire {
   private server: ReturnType<typeof Bun.serve> | null = null;
-  private seenE = new Map<string, number>();
+  private seenE = new Map<string, number>(); private inFlight = 0;
   private xx = new Map<string, { hs: Handshake; at: number; ip: string; stage: 2 | 3; tx?: { send: CipherState; recv: CipherState }; commit?: Buffer; nonce?: Buffer; claimed?: string; port?: number }>();
   private rate = new Map<string, { at: number; n: number }>();
   host = ""; port = 0;
-  constructor(private readonly d: WireDeps) {}
+  constructor(private readonly d: WireDeps) { try { for (const [k, v] of Object.entries(d.replay?.load() ?? {})) if (Date.now() - Number(v) < REPLAY_MS) this.seenE.set(k, Number(v)); } catch {} }
   get listening() { return !!this.server; }
   start(bind: string, port: number) {
     if (this.server) return;
@@ -59,9 +64,18 @@ export class LanWire {
   stop() { this.server?.stop(true); this.server = null; this.xx.clear(); }
   /** The Host this listener answers to: its own address literal and port, nothing else (DNS rebinding sends another name). */
   private hostOk(h: string | null) { const want = isIP(this.host) === 6 ? `[${this.host}]:${this.port}` : `${this.host}:${this.port}`; return (h ?? "").toLowerCase() === want; }
-  private limited(ip: string) { const now = Date.now(), r = this.rate.get(ip); if (!r || now - r.at > 60_000) { this.rate.set(ip, { at: now, n: 1 }); return false; } return ++r.n > RATE.perMin; }
+  private limited(ip: string) {
+    const now = Date.now(), r = this.rate.get(ip);
+    if (!r || now - r.at > 60_000) { if (this.rate.size >= RATE.addresses) { for (const [k, v] of this.rate) if (now - v.at > 60_000) this.rate.delete(k); if (this.rate.size >= RATE.addresses) return true; } this.rate.set(ip, { at: now, n: 1 }); return false; }
+    return ++r.n > RATE.perMin;
+  }
   private refuse(why: string, ip: string, status = 403) { this.d.refused?.(why, ip); return no(status); }
   async handle(req: Request, ip: string): Promise<Response> {
+    if (this.inFlight >= MAX_IN_FLIGHT) return this.refuse("too many requests in flight", ip, 503);
+    this.inFlight++;
+    try { return await this.handleOne(req, ip); } finally { this.inFlight--; }
+  }
+  private async handleOne(req: Request, ip: string): Promise<Response> {
     const url = new URL(req.url), p = url.pathname;
     if (this.limited(ip)) return this.refuse("rate limit", ip, 429);
     if (req.method !== "POST" || !["/lan/v1/kk", "/lan/v1/xx/1", "/lan/v1/xx/3", "/lan/v1/xx/4"].includes(p) || url.search) return this.refuse("unknown route", ip, 404);
@@ -88,17 +102,18 @@ export class LanWire {
     const e = b64u(hs.re!), now = Date.now();
     for (const [k, at] of this.seenE) if (now - at > REPLAY_MS) this.seenE.delete(k);
     if (this.seenE.has(e)) return this.refuse("replayed message", ip);
-    this.seenE.set(e, now);
-    if (!req || req.v !== 1 || typeof req.op !== "string" || Math.abs(Date.parse(String(req.ts)) - now) > SKEW_MS) return this.refuse("stale or malformed request", ip);
+    this.seenE.set(e, now); try { this.d.replay?.save(Object.fromEntries(this.seenE)); } catch {}
+    const ts = Date.parse(String(req?.ts));
+    if (!req || req.v !== 1 || typeof req.op !== "string" || !Number.isFinite(ts) || Math.abs(ts - now) > SKEW_MS) return this.refuse("stale or malformed request", ip);
     let reply: unknown; try { reply = { ok: true, body: await this.d.request(from, req.op, req.body, ip) }; } catch (x: any) { reply = { ok: false, error: String(x?.message ?? x).slice(0, 300) }; }
     return bin(hs.writeMessage(json(reply)));
   }
   private async intro(p: string, body: Buffer, ip: string): Promise<Response> {
     const now = Date.now();
-    for (const [k, s] of this.xx) if (now - s.at > XX_TTL_MS) this.xx.delete(k);
+    for (const [k, s] of this.xx) if (now - s.at > XX_TTL_MS) { this.xx.delete(k); if (s.stage === 3) this.d.introFailed?.(s.ip, "it stopped after receiving this Studio's nonce"); }
     if (p === "/lan/v1/xx/1") {
       if (!this.d.introOpen()) return this.refuse("introductions are closed on this Studio", ip);
-      if (this.xx.size >= MAX_XX) return this.refuse("too many introductions in flight", ip, 429);
+      if (this.xx.size >= 1) return this.refuse("another introduction is in progress", ip, 429); // one at a time
       const hs = new Handshake("XX", false, this.d.me()); hs.readMessage(body);
       const sid = randomBytes(16), m2 = hs.writeMessage(json({ v: 1 }));
       this.xx.set(sid.toString("hex"), { hs, at: now, ip, stage: 2 });
@@ -119,11 +134,14 @@ export class LanWire {
     }
     if (p === "/lan/v1/xx/4" && s.stage === 3) {
       this.xx.delete(sid);
-      const pay = parse(s.tx!.recv.decrypt(Buffer.alloc(0), rest)), reveal = unb64u(pay?.reveal, 32);
-      if (!eq(sha256(Buffer.from("crew-studio/lan/v1 commit\0"), reveal), s.commit!)) return this.refuse("the introducer's commitment does not match", ip);
+      let reveal: Buffer;
+      try { const pay = parse(s.tx!.recv.decrypt(Buffer.alloc(0), rest)); reveal = unb64u(pay?.reveal, 32); }
+      catch { this.d.introFailed?.(ip, "its reveal could not be read"); return this.refuse("unreadable reveal", ip); }
+      if (!eq(sha256(Buffer.from("crew-studio/lan/v1 commit\0"), reveal), s.commit!)) { this.d.introFailed?.(ip, "its revealed nonce does not match its commitment"); return this.refuse("the introducer's commitment does not match", ip); }
       this.d.introduced({ key: b64u(s.hs.rs!), sas: sas(s.hs.hash, reveal, s.nonce!), claimed: s.claimed ?? "", host: ip.replace(/^::ffff:/, ""), port: s.port! });
       return bin(s.tx!.send.encrypt(Buffer.alloc(0), json({ ok: true })));
     }
+    if (s.stage === 3) { this.xx.delete(sid); this.d.introFailed?.(ip, "it sent its messages out of order"); }
     return this.refuse("out of order", ip, 400);
   }
 }
@@ -134,6 +152,15 @@ function subnets(): [number, number][] {
   const out: [number, number][] = [];
   for (const list of Object.values(networkInterfaces())) for (const n of list ?? []) if (n.family === "IPv4" && !n.internal) out.push([v4(n.address), v4(n.netmask)]);
   return out;
+}
+/** This Mac's default gateways (route -n get default on macOS, ip route on Linux), read once a minute. */
+let gw: { at: number; list: string[] } | null = null;
+export function gateways(): string[] {
+  if (gw && Date.now() - gw.at < 60_000) return gw.list;
+  const list: string[] = [];
+  try { const r = Bun.spawnSync(process.platform === "darwin" ? ["/sbin/route", "-n", "get", "default"] : ["ip", "-4", "route", "show", "default"], { stdout: "pipe", stderr: "ignore", timeout: 3000 });
+    const t = r.stdout.toString(); for (const m of t.matchAll(/(?:gateway:\s*|via\s+)(\d+\.\d+\.\d+\.\d+)/g)) list.push(m[1]); } catch {}
+  gw = { at: Date.now(), list }; return list;
 }
 const v4 = (a: string) => a.split(".").reduce((n, o) => ((n << 8) | Number(o)) >>> 0, 0);
 /**
@@ -151,6 +178,7 @@ export function peerTargetProblem(host: string, port: number): string | null {
   if (why && why !== "a private-network address") return `refused: ${why}`;
   if (!why) return "refused: not a private-network address";
   const a = v4(host); if (!subnets().some(([net, mask]) => (a & mask) === (net & mask))) return "refused: not on a network this Mac is on";
+  if (gateways().includes(host)) return "refused: the network's gateway (a router, never a Studio)";
   return null;
 }
 const post = async (p: Peer, path: string, body: Buffer) => {

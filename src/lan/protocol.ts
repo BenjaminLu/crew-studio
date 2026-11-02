@@ -12,7 +12,7 @@ export type Envelope = { v: 1; a: string; seq: number; prev: string | null; ts: 
 export type WorkflowRef = { id: string; version: number; defHash: string };
 export type Body =
   | { kind: "dispatch"; thread: string; round: 1; title: string; briefing: { hash: string; size: number }; acceptance: string[]; suggested: WorkflowRef | null }
-  | { kind: "take"; thread: string; round: number; briefing: string; workflow: WorkflowRef; cap: { usd: number; rounds: number } }
+  | { kind: "take"; thread: string; round: number; briefing: string; workflow: WorkflowRef; cap: { usd: number | null; rounds: number } }
   | { kind: "assign"; thread: string; round: number; take: string; taker: string }
   | { kind: "result"; thread: string; round: number; take: string; briefing: string; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; workflow: WorkflowRef; run: string; checks: { pass: number; fail: number; other: number; summary: string } }
   | { kind: "refine"; thread: string; round: number; briefing: { hash: string; size: number }; note: string }
@@ -38,7 +38,7 @@ export function bodyProblem(b: any): string | null {
     case "dispatch": return only(b, [...k, "title", "briefing", "acceptance", "suggested"]) && b.round === 1 && str(b.title, LIMITS.title, 1) && briefRef(b.briefing)
       && Array.isArray(b.acceptance) && b.acceptance.length <= LIMITS.acceptance && b.acceptance.every((c: unknown) => str(c, LIMITS.criterion, 1)) && (b.suggested === null || wfRef(b.suggested)) ? null : "malformed dispatch";
     case "take": return only(b, [...k, "briefing", "workflow", "cap"]) && HEX64.test(String(b.briefing)) && wfRef(b.workflow) && plainObj(b.cap) && only(b.cap, ["usd", "rounds"])
-      && typeof b.cap.usd === "number" && b.cap.usd >= 0 && b.cap.usd <= 1000 && int(b.cap.rounds, 1, 50) ? null : "malformed take";
+      && (b.cap.usd === null || (typeof b.cap.usd === "number" && b.cap.usd >= 0 && b.cap.usd <= 1000)) && int(b.cap.rounds, 1, 50) ? null : "malformed take";
     case "assign": return only(b, [...k, "take", "taker"]) && HEX64.test(String(b.take)) && keyOk(b.taker) ? null : "malformed assign";
     case "result": return only(b, [...k, "take", "briefing", "output", "workflow", "run", "checks"]) && HEX64.test(String(b.take)) && HEX64.test(String(b.briefing))
       && plainObj(b.output) && only(b.output, ["hash", "size", "files"]) && HEX64.test(String(b.output.hash)) && int(b.output.size, 1, LIMITS.blob)

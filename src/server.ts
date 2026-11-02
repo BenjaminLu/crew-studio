@@ -100,6 +100,7 @@ import { createTasksApi, taskAlias } from "./tasks-api";
 import { Lan } from "./lan/relay";
 import { lanRoutes } from "./lan/routes";
 import { lanRunner } from "./lan/runner";
+import { lanApplier } from "./lan/apply";
 import { installLanProfile } from "./lan/profile";
 import { Discovery } from "./lan/mdns";
 import { createCompare } from "./compare";
@@ -507,6 +508,7 @@ nativeEngineForPolicy = runtime.engine;
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit, o) => {
   if (main.view().state === "detached") return false;
+  if (r.params?._tainted) return false; // untrusted text (issue text, a peer's Studio) never reaches Firstmate: the captain's card
   // an escalation (step-back, no progress, round budget, scope blocked …): Firstmate decides within the spec or escalates with its diagnosis
   if (o?.escalation) { main.enqueue("wake", `Escalation in Task ${r.id}, step ${node.id} (${node.label}).\n${question}\nDecide with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, choice:"<option id>", answer:"<your reason, or the picked value>"}, or escalate {task:"${r.id}", node:"${node.id}", visit:${visit}, escalate:"<what is stuck and why, in plain words>", recommendation:"<what the captain should pick>"}. / Task ${r.id} 卡住了：能在 spec 內決定就自己決定；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長，並寫清楚卡在哪、為什麼、建議怎麼選。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native", undefined, undefined, escalationShown(r, node.label, question)); return true; }
   main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nRead the step's operating manual section first (studio_manual section ${manualFor(r.workflow, node.role ?? node.args?.coordinator)}). Answer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native", undefined, undefined, questionShown(r, node.label));
@@ -528,7 +530,8 @@ let lan: Lan | null = null;
 if (process.env.CREW_LAN !== "0") {
   try {
     lan = new Lan({ dataDir: DATA, send, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
-      runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def) }),
+      runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), needsProject: (def) => runtime.lanNeedsProject(def) }),
+      apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
       privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } },
       discovery: new Discovery({ enabled: process.env.CREW_LAN_MDNS !== "0" }) });
     process.on("exit", () => { try { lan?.close(); } catch {} });
@@ -661,7 +664,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if((p==='/api/claude/account/login'||p==='/api/claude/account/cancel')&&writing){if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);if(p.endsWith('/cancel'))return json(await claudeLogin.cancel());try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await terminalRoutes(terminals, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rt) return rt; }
-    { const rl = await lanRoutes(lan, req, url, who as any, writing); if (rl) return rl; }
+    { const rl = await lanRoutes(lan, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rl) return rl; }
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
     { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }

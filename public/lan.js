@@ -6,7 +6,7 @@
 // Everything a peer wrote is drawn as text nodes (kit.js h()): never as HTML, never as SVG, never in a frame of this
 // origin. The approver sees the full briefing and the exact prompt the agent will get. Loaded before backbone.js.
 (() => {
-const LN = { v: null, wf: null, err: null, sel: null, item: null, form: { title: "", briefing: "", acceptance: "", workflow: "", to: "" }, intro: { host: "", port: "" }, codes: {}, names: {}, take: {}, refine: {}, preview: {}, edits: {}, busy: false, insp: null, scrolled: {} };
+const LN = { applyTo: {}, projects: null, v: null, wf: null, err: null, sel: null, item: null, form: { title: "", briefing: "", acceptance: "", workflow: "", to: "" }, intro: { host: "", port: "" }, codes: {}, names: {}, take: {}, refine: {}, preview: {}, edits: {}, busy: false, insp: null, scrolled: {} };
 window.crewLan = LN;
 const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
@@ -15,6 +15,7 @@ const typing = () => { const a = document.activeElement; return !!a && a.closest
 async function load() {
   try { LN.v = await getJ("/api/lan"); LN.err = null; } catch (e) { LN.err = String(e.message || e); }
   if (onPage() && !LN.wf) { try { LN.wf = (await getJ("/api/lan/workflows")).workflows; } catch {} }
+  if (onPage() && !LN.projects) { try { const p = await getJ("/api/projects"); LN.projects = (Array.isArray(p) ? p : p.projects || []).filter((x) => x.enabled !== false && x.path); } catch { LN.projects = []; } }
   badgeNav(); if (onPage() && !typing()) render();
 }
 const act = async (what, f) => { if (LN.busy) return; LN.busy = true; try { const r = await f(); await load(); return r; } catch (e) { toast(`${what}：${e.message || e}`); } finally { LN.busy = false; if (onPage() && !typing()) render(); } };
@@ -62,6 +63,7 @@ function introductions(v) {
         : h("button", { class: "btn", "data-lan-intro-open": "", disabled: !v.listening, onclick: () => act("", () => postJ("/api/lan/intro/open", { minutes: 5 })) }, T("Open for 5 minutes", "開放引介 5 分鐘"))),
       h("div", { class: "lan-grid2" }, field(T("Their address (IP)", "對方位址（IP）"), inp(LN.intro, "host", { id: "lanIntroHost", placeholder: "192.168.1.23" })), field(T("Port", "埠"), inp(LN.intro, "port", { id: "lanIntroPort", placeholder: "7417", inputmode: "numeric" }))),
       h("button", { class: "btn primary", "data-lan-intro-start": "", disabled: !v.listening, onclick: () => act(T("Introduction", "引介"), () => postJ("/api/lan/intro/start", { host: LN.intro.host.trim(), port: Number(LN.intro.port) })) }, T("Introduce", "引介")),
+      (v.introFailures || []).length ? h("div", { class: "lan-warn", role: "alert", "data-lan-intro-failures": "" }, icon("alert", "ic sm"), T(`${v.introFailures.length} introduction(s) failed (${v.introFailures.map((f) => `${f.ip}: ${f.why}`).join("; ")}). Someone may be trying to match your short code; three close the window.`, `有 ${v.introFailures.length} 次引介失敗（${v.introFailures.map((f) => `${f.ip}：${f.why}`).join("；")}）。可能有人在試著配出你的短碼；失敗三次會關閉引介。`)) : null,
       ...(v.intros || []).map((i) => h("div", { class: "lan-intro", "data-lan-intro": i.id },
         h("div", { class: "lan-sas", "aria-label": T(`This screen's code ${i.sas}`, `這個螢幕的短碼 ${i.sas}`) }, h("span", { class: "faint" }, T("This screen shows", "這個螢幕顯示")), h("b", { class: "num" }, `${i.sas.slice(0, 3)} ${i.sas.slice(3)}`)),
         h("div", { class: "kv" }, T("They call themselves", "自稱"), h("b", {}, i.claimed || "—")),
@@ -128,9 +130,9 @@ function itemDetail(i) {
   const frozen = i.state === "frozen";
   const head = h("div", { class: "lan-row" }, h("b", {}, kindName(i.kind)), h("span", {}, i.title), who(i.from), when(i.at), h("button", { class: "btn ghost", "data-lan-inspect": i.entry, onclick: () => inspect(i.entry) }, T("Inspect entry", "檢視條目")));
   const reject = h("button", { class: "btn ghost", "data-lan-reject": i.id, onclick: () => act(T("Reject", "拒絕"), () => postJ(`/api/lan/items/${i.id}/reject`, {})) }, T("Reject", "拒絕"));
-  const approve = (label, body, extra = {}) => h("button", { class: "btn primary", "data-lan-approve": i.id, disabled: frozen || !LN.scrolled[i.id], ...extra, onclick: () => act(label, () => postJ(`/api/lan/items/${i.id}/approve`, body())) }, label);
+  const approve = (label, body, extra = {}) => h("button", { class: "btn primary", "data-lan-approve": i.id, disabled: frozen || !LN.scrolled[i.id], ...extra, onclick: () => act(label, async () => postJ(`/api/lan/items/${i.id}/approve`, await body())) }, label);
   if (i.kind === "dispatch" || i.kind === "refine") {
-    const t = LN.take[i.id] ||= { workflow: (LN.wf || []).find((w) => w.eligible && w.id === i.suggested?.id)?.id || (LN.wf || []).find((w) => w.eligible)?.id || "", usd: "2", rounds: "6", provider: "", staffing: false };
+    const t = LN.take[i.id] ||= { workflow: (LN.wf || []).find((w) => w.eligible && w.id === i.suggested?.id)?.id || (LN.wf || []).find((w) => w.eligible)?.id || "", usd: "2", rounds: "6", provider: "", staffing: false, project: "", roundsOnly: false };
     const w = (LN.wf || []).find((x) => x.id === t.workflow);
     const box = scrollGate(i.id, h("div", { class: "lan-content", tabindex: "0", "data-lan-content": i.id, "aria-label": T("The full briefing", "完整的 briefing") },
       i.invisible ? h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T("This briefing hides characters (zero-width, bidi or control): they are shown as ⟦U+…⟧.", "這份 briefing 裡有隱藏字元（零寬、bidi 或控制字元），以 ⟦U+…⟧ 標出。")) : null,
@@ -148,9 +150,11 @@ function itemDetail(i) {
       field(T("Provider", "供應商"), h("select", { "data-lan-provider": i.id, onchange: (e) => { t.provider = e.target.value; } }, [["", T("Studio's default", "Studio 預設")], ["codex", "Codex"], ["claude", "Claude"], ["cursor", "Cursor"]].map(([v, l]) => h("option", { value: v, selected: v === t.provider }, l)))),
       w && !w.eligible ? h("p", { class: "lan-warn" }, w.why.join(" · ")) : null,
       w?.notRun?.length ? h("p", { class: "faint" }, T(`These checks will not run on work from a peer: ${w.notRun.join(", ")}`, `這些檢查不會在同事的工作上執行：${w.notRun.join("、")}`)) : null,
+      w?.needsProject ? field(T("Project (a code workflow works in its own worktree of it)", "專案（程式流程在它自己的 worktree 裡工作）"), h("select", { "data-lan-project": i.id, onchange: (e) => { t.project = e.target.value; } }, h("option", { value: "" }, T("Choose a project", "選擇專案")), (LN.projects || []).map((p) => h("option", { value: p.id, selected: p.id === t.project }, p.name || p.id)))) : null,
+      h("label", { class: "lan-row" }, h("input", { type: "checkbox", "data-lan-rounds-only": i.id, checked: t.roundsOnly, onchange: (e) => { t.roundsOnly = e.target.checked; } }), T("Rounds only: the provider reports no cost, so no dollar cap can hold (the rounds cap still does)", "只限輪數：供應商不回報花費，金額上限無法生效（輪數上限仍有效）")),
       w?.staffing ? h("label", { class: "lan-row" }, h("input", { type: "checkbox", checked: t.staffing, onchange: (e) => { t.staffing = e.target.checked; } }), T("I confirm who works on each node of this workflow", "我確認這個流程每個節點的人員配置")) : null,
       h("p", { class: "faint" }, T("Runs in a fresh folder under the restricted profile: the OS sandbox, its provider only on the network, no push, no pull request, no tests that listen, no CI or hook edits.", "在新的資料夾、受限 profile 下執行：OS sandbox、網路只到 provider、不能 push 或開 PR、不跑會開監聽的測試、不能改 CI 或 hooks。")),
-      h("div", { class: "lan-row" }, approve(T("Take with this workflow", "用這個流程接下"), () => ({ workflow: t.workflow, usd: Number(t.usd), rounds: Number(t.rounds), provider: t.provider || null, staffingConfirm: t.staffing ? w?.staffing?.hash : null })), reject));
+      h("div", { class: "lan-row" }, approve(T("Take with this workflow", "用這個流程接下"), async () => ({ workflow: t.workflow, usd: Number(t.usd), roundsOnly: !!t.roundsOnly, rounds: Number(t.rounds), provider: t.provider || null, project: t.project || null, staffingConfirm: t.staffing ? w?.staffing?.hash : null, seen: await seenOf(i.prompt) })), reject));
   }
   LN.scrolled[i.id] ??= true;
   if (i.kind === "take") return h("div", { class: "lan-detail" }, head, h("p", {}, T(`${i.from.name} wants to take round ${i.round} with their ${i.workflow.id} v${i.workflow.version} (${i.workflow.defHash.slice(0, 12)}), capped at $${i.cap.usd} and ${i.cap.rounds} rounds.`, `${i.from.name} 要用他自己的 ${i.workflow.id} v${i.workflow.version}（${i.workflow.defHash.slice(0, 12)}）接第 ${i.round} 輪，上限 $${i.cap.usd}、${i.cap.rounds} 輪。`)),
@@ -163,6 +167,16 @@ function itemDetail(i) {
     (i.files || []).map((f) => h("div", { class: "lan-file" }, h("div", { class: "mono lbl" }, f.path), pre(f.text, { "data-lan-file": f.path }))),
     h("div", { class: "lan-row" }, approve(T("Accept the result", "收下結果"), () => ({})), reject));
   return h("div", { class: "lan-detail" }, head, h("div", { class: "lan-row" }, approve(T("Noted", "知道了"), () => ({}))));
+}
+/** What an approval of a dispatch or a refinement names: the hash of the exact prompt this page showed (the server checks it). */
+async function seenOf(prompt) { const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`lan-seen\0${prompt ?? ""}`)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
+/** A code result on the dispatcher's side: apply its patch to one of this Studio's projects, on a branch of its own. */
+function applyPatch(t, r) {
+  const a = (LN.applyTo[t.id] ||= { project: "" });
+  return h("div", { class: "lan-apply", "data-lan-apply": t.id },
+    h("p", { class: "faint" }, T("A code result is a patch. Applying it makes a branch lan-untrusted/… in one of your projects; nothing is merged, built or tested. Review it like any untrusted change.", "程式結果是一份 patch。套用後會在你的專案裡開一條 lan-untrusted/… 分支；不會合併、建置或跑測試。請當作不受信任的變更來審查。")),
+    h("div", { class: "lan-row" }, h("select", { "data-lan-apply-project": t.id, onchange: (e) => { a.project = e.target.value; } }, h("option", { value: "" }, T("Choose a project", "選擇專案")), (LN.projects || []).map((p) => h("option", { value: p.id, selected: p.id === a.project }, p.name || p.id))),
+      h("button", { class: "btn", "data-lan-apply-send": t.id, onclick: () => act(T("Apply", "套用"), async () => { const d = await postJ(`/api/lan/threads/${t.id}/apply`, { project: a.project, round: r.n }); toast(T(`Applied on ${d.branch}`, `已套用到 ${d.branch}`)); }) }, T("Apply the patch", "套用 patch"))));
 }
 
 // ---------- threads and the relay track ----------
@@ -196,12 +210,14 @@ function threadCard(t) {
       mine && run?.state === "succeeded" && !r.result ? h("div", { class: "lan-handback", "data-lan-handback": t.id },
         h("button", { class: "btn", "data-lan-preview": t.id, onclick: () => act(T("Preview", "預覽"), async () => { LN.preview[t.id] = await postJ(`/api/lan/threads/${t.id}/handback/preview`, { edits: LN.edits[t.id] }); }) }, T("Preview what goes back", "預覽要交回的內容")),
         pv ? h("div", {}, h("p", { class: "faint" }, T(`${pv.files.length} file(s), ${pv.bytes} bytes, sealed to ${t.owner.name} only.`, `${pv.files.length} 個檔案、${pv.bytes} bytes，只加密給 ${t.owner.name}。`)),
+          h("p", { class: "faint", "data-lan-scan-note": "" }, T("The secret scan catches honest mistakes, not a determined agent: anything can be encoded past a scanner. Read what goes back.", "secret 掃描抓得到不小心的錯，擋不住刻意的 agent：任何內容都能編碼繞過掃描器。請親自讀過要交回的內容。")),
           pv.protectedPaths.length ? h("p", { class: "lan-warn", "data-lan-protected": "" }, icon("alert", "ic sm"), T(`Refused: it changes ${pv.protectedPaths.join(", ")} (CI, git hooks or package scripts).`, `拒絕：它改了 ${pv.protectedPaths.join("、")}（CI、git hooks 或 package scripts）。`)) : null,
           pv.secrets.length ? h("p", { class: "lan-warn", "data-lan-secrets": "" }, icon("alert", "ic sm"), T(`Blocked: ${pv.secrets.length} secret or private hit(s): ${pv.secrets.map((s) => `${s.path}:${s.line}`).join(", ")}. Edit them out below and preview again.`, `擋下：${pv.secrets.length} 處 secret 或私人資訊：${pv.secrets.map((s) => `${s.path}:${s.line}`).join("、")}。請在下面刪掉後再預覽。`)) : null,
           pv.files.map((f) => { const e = ((LN.edits[t.id] ||= []).find((x) => x.path === f.path)); const box = { v: e ? e.text : f.text };
             return h("div", { class: "lan-file" }, h("div", { class: "mono lbl" }, f.path), h("textarea", { class: "lan-edit", rows: 6, "data-lan-edit": f.path, oninput: (ev) => { const list = (LN.edits[t.id] ||= []); const x = list.find((y) => y.path === f.path); if (x) x.text = ev.target.value; else list.push({ path: f.path, text: ev.target.value }); } }, box.v)); }),
           h("button", { class: "btn primary", "data-lan-handback-send": t.id, disabled: !pv.ok, onclick: () => act(T("Hand back", "交回"), async () => { await postJ(`/api/lan/threads/${t.id}/handback`, { confirm: pv.hash, edits: LN.edits[t.id] }); delete LN.preview[t.id]; delete LN.edits[t.id]; }) }, T("Hand back (交回)", "交回"))) : null) : null,
       // the dispatcher: refine or close once a result is in
+      !mine && r.result && r.result.output.files.some((f) => f.path === "changes.patch") ? applyPatch(t, r) : null,
       !mine && r.result && t.state === "open" ? h("div", { class: "lan-refine", "data-lan-refine": t.id },
         field(T("Refine: a new briefing for the next round", "再調整：下一輪的 briefing"), inp(LN.refine[t.id] ||= { text: "" }, "text", { rows: 3, "data-lan-refine-text": t.id })),
         h("div", { class: "lan-row" }, h("button", { class: "btn", "data-lan-refine-send": t.id, onclick: () => act(T("Refine", "再調整"), async () => { await postJ(`/api/lan/threads/${t.id}/refine`, { briefing: LN.refine[t.id].text }); LN.refine[t.id].text = ""; }) }, T("Send refinement", "送出調整")),

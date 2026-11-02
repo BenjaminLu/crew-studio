@@ -1,15 +1,20 @@
 // Studio's own routes for board-to-board work (docs/units/lan-relay.md), on the main port only, behind Studio's session and
-// write guard like every /api route. Every one of them, reads included, is for this Mac's desktop: a paired phone is
-// refused (it cannot see a peer's content, approve an item, introduce a key or hand a result back). The peer listener
-// itself (src/lan/wire.ts) has nothing to do with these routes.
+// write guard like every /api route. Every one of them, reads included, is for Studio's own page on this Mac, as the web
+// terminals are: its session cookie, a browser that says the request is same-origin (Sec-Fetch-Site), and on a write an
+// Origin equal to Studio's own. A script's x-crew-session is not enough, and a paired phone is refused (it cannot see a
+// peer's content, approve an item, introduce a key or hand a result back). Not a boundary against a local process of this
+// user (it can read data/session-token); it keeps scripts and other sites off. The peer listener (src/lan/wire.ts) has
+// nothing to do with these routes.
 import { Lan, LanError } from "./relay";
 
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const KEY = "[A-Za-z0-9_-]{87}", ID = "[A-Za-z0-9_-]{8,64}";
 
-export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
+export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean, pageCookie: boolean): Promise<Response | null> {
   const p = url.pathname; if (p !== "/api/lan" && !p.startsWith("/api/lan/")) return null;
   if (who.kind !== "desktop") return json({ error: "board-to-board work is on the Mac only / 區網協作只能在這台 Mac 上操作", code: "desktopOnly" }, 403);
+  if (!pageCookie || req.headers.get("sec-fetch-site") !== "same-origin" || (writing && req.headers.get("origin") !== url.origin))
+    return json({ error: "board-to-board work answers only Studio's own page on this Mac (its session cookie, same origin); a script's x-crew-session is not enough / 區網協作只接受這台 Mac 上 Studio 自己的頁面", code: "pageOnly" }, 403);
   if (!lan) return json({ error: "board-to-board work is not available in this Studio", code: "off" }, 404);
   let b: any = {}; if (writing) { try { b = await req.json(); } catch { return json({ error: "json only" }, 400); } if (!b || typeof b !== "object") b = {}; }
   const m = (re: string) => new RegExp(`^/api/lan/${re}$`).exec(p);
@@ -38,7 +43,8 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
       if (x[2] === "resolve") { if (b.action !== "revoke" && b.action !== "unfreeze") return json({ error: "action is revoke or unfreeze" }, 400); return json(lan.resolveFork(k, b.action)); }
       return json(lan.removePeer(k, x[2] as "unpair" | "revoke")); }
     x = m(`items/(${ID})/(approve|reject)`);
-    if (x) return json(x[2] === "approve" ? await lan.approve(x[1], { workflow: b.workflow ? String(b.workflow) : undefined, usd: b.usd === undefined ? undefined : Number(b.usd), rounds: b.rounds === undefined ? undefined : Number(b.rounds), provider: b.provider ? String(b.provider) : null, staffingConfirm: b.staffingConfirm ? String(b.staffingConfirm) : null }) : lan.reject(x[1], b.note));
+    if (x) return json(x[2] === "approve" ? await lan.approve(x[1], { workflow: b.workflow ? String(b.workflow) : undefined, usd: b.usd === undefined ? undefined : Number(b.usd), rounds: b.rounds === undefined ? undefined : Number(b.rounds), provider: b.provider ? String(b.provider) : null, staffingConfirm: b.staffingConfirm ? String(b.staffingConfirm) : null, project: b.project ? String(b.project) : null, seen: b.seen ? String(b.seen) : null, roundsOnly: b.roundsOnly === true }) : lan.reject(x[1], b.note));
+    x = m(`threads/(${ID})/apply`); if (x) return json(lan.applyResult(x[1], { project: b.project, round: b.round }));
     x = m(`threads/(${ID})/(handback/preview|handback|refine|done|withdraw)`);
     if (x) { const id = x[1], edits = Array.isArray(b.edits) ? b.edits.slice(0, 60).map((e: any) => ({ path: String(e?.path ?? ""), text: e?.text === null ? null : String(e?.text ?? "") })) : undefined;
       if (x[2] === "handback/preview") return json(await lan.handbackPreview(id, edits));
