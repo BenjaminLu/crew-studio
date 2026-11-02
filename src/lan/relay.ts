@@ -348,7 +348,7 @@ export class Lan {
     if (i.kind === "dispatch" || i.kind === "refine") {
       if (t.state !== "open" || r !== this.cur(t)) throw new LanError(409, "this round is no longer current");
       const w = this.o.runner.workflows().find((x) => x.id === o.workflow);
-      if (!w) throw new LanError(400, "choose one of this Studio's workflows");
+      if (!w) throw new LanError(400, o.workflow ? `${String(o.workflow).slice(0, 64)} is not installed on this Studio: choose one of its workflows` : "choose one of this Studio's workflows");
       if (!w.eligible) throw new LanError(409, `this workflow cannot run work from a peer: ${w.why.join("; ")}`, "profile");
       if (w.staffing && o.staffingConfirm !== w.staffing.hash) throw new LanError(409, "confirm who works on each node of this workflow", "staffing_confirmation_required");
       // read to its end: the approval names the hash of the exact text it was given (the page sends it only once the person scrolled to the end)

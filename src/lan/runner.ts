@@ -48,14 +48,19 @@ export function lanRunner(d: RunnerDeps): LanRunner {
   const ref = (def: any): WorkflowRef => ({ id: def.id, version: Number(def.version), defHash: defHash(def) });
   return {
     workflows() {
-      return (d.defs.catalog?.() ?? []).map((w: any) => d.defs.get(w.id)).filter(Boolean).filter((def: any) => !d.defs.held?.(def.id)).map((def: any) => {
-        const why = workflowRefusals(def), notRun = (def.nodes ?? []).flatMap((n: any) => nodeNotRun(n, manifest));
+      // every installed workflow, each with the reasons it cannot take work from a peer (internal, retired and held ones too),
+      // so a take names its reason instead of "no such workflow"
+      const ids = [...new Set<string>((d.defs.list?.() ?? d.defs.catalog?.() ?? []).map((w: any) => String(w.id)))];
+      return ids.map((id) => d.defs.get(id)).filter(Boolean).filter((def: any) => !d.defs.trashed?.(def.id)).map((def: any) => {
+        const off = d.defs.unavailable?.(def.id) ?? (d.defs.held?.(def.id) ? "held" : null);
+        const why = [...(off ? [`${def.id} is ${off}`] : []), ...workflowRefusals(def)], notRun = (def.nodes ?? []).flatMap((n: any) => nodeNotRun(n, manifest));
         return { id: def.id, version: Number(def.version), name: d.defs.displayName?.(def.id) ?? def.name ?? def.id, defHash: defHash(def), eligible: !why.length, why, notRun, staffing: d.staffing?.(def) ?? null, needsProject: !!d.needsProject?.(def) };
       });
     },
     async start(o) {
       const def = d.defs.get(o.workflow); if (!def) throw Object.assign(new Error("no such workflow"), { code: "workflow_unavailable" });
-      const why = workflowRefusals(def); if (why.length) throw Object.assign(new Error(why.join("; ")), { code: "profile" });
+      const off = d.defs.unavailable?.(def.id) ?? null, why = [...(off ? [`${def.id} is ${off}`] : []), ...workflowRefusals(def)];
+      if (why.length) throw Object.assign(new Error(why.join("; ")), { code: "profile" });
       const params: Record<string, string> = { _lan: JSON.stringify({ item: o.item, usd: o.cap.usd, rounds: o.cap.rounds }), _tainted: "lan" };
       if (o.provider) params.provider = o.provider;
       const run = await d.start({ workflow: o.workflow, text: o.text, title: o.title, params, by: o.by, staffingConfirm: o.staffingConfirm ?? null, project: o.project ?? null });

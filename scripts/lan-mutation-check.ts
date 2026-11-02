@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 type M = { name: string; rule: string; edits: { file: string; from: string; to: string }[]; tests: string[] };
 const R = join(import.meta.dir, "..");
-const RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
+const WORKFLOWS = "bun tests/lan-workflows.ts", RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
 const MUTATIONS: M[] = [
   // ---------- the first review's rules ----------
   { name: "unintroduced", rule: "an unintroduced key is refused", tests: [RELAY],
@@ -159,6 +159,8 @@ const MUTATIONS: M[] = [
     edits: [{ file: "src/lan/wire.ts", from: `if (f?.blocked && now0 - f.blocked < 60_000) return`, to: `if (false) return` }] },
   { name: "R3-prune", rule: "answered items and closed threads are pruned", tests: [PROFILE],
     edits: [{ file: "src/lan/relay.ts", from: `if (settled.length > 1000)`, to: `if (false)` }, { file: "src/lan/relay.ts", from: `if (closed.length > 500)`, to: `if (false)` }] },
+  { name: "R4-wf-internal", rule: "an internal, retired or held workflow is never offered to take a peer's work", tests: [WORKFLOWS],
+    edits: [{ file: "src/lan/runner.ts", from: "const why = [...(off ? [`${def.id} is ${off}`] : []), ...workflowRefusals(def)], notRun", to: "const why = [...workflowRefusals(def)], notRun" }] },
   { name: "R4-ascii", rule: "a peer's path with a character outside printable ASCII is refused (APFS folds some onto protected names)", tests: [PROFILE],
     edits: [{ file: "src/lan/paths.ts", from: "export const foreignName = (p: string) => /[^\\x20-\\x7e]/.test(p);", to: "export const foreignName = (p: string) => false;" }] },
   { name: "R4-basemode", rule: "an edit to a path that is not a plain 100644 file in the base (a symbolic link) is refused", tests: [PROFILE],

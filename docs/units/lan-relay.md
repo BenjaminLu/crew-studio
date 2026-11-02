@@ -176,6 +176,9 @@ Task with the taint and no readable `_lan` is held to a zero cap. Enforced, what
 - **One Task per assignment**: approving an assignment claims the round before the Task starts, so a second approval
   starts nothing; if the peer is revoked or frozen, or the work withdrawn, while the Task starts, it is stopped at once.
   The claim is never written to disk; after a crash mid-start it is cleared and the take may be approved again.
+- **Every workflow is classified**: the taker's Studio lists every installed workflow; one it does not offer (internal,
+  retired, held, or a step off the profile) names its reason, and a take with it is refused with that reason
+  (`tests/lan-workflows.ts` relays every offered one end to end across two Studios and refuses every other one).
 - **Other Tasks never see its title**: another Task's overlap note names it by its id only.
 - **Firstmate never sees it**: an agent's question or an escalation from a tainted Task is the captain's card, never
   Firstmate's; Firstmate's status lines show a peer's Task without its title or card titles; Studio's event log keeps no

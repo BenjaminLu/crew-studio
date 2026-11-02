@@ -21,10 +21,10 @@ export async function until<T>(what: string, f: () => Promise<T | null | undefin
 export const must = async (r: Promise<{ status: number; body: any }>, what: string) => { const x = await r; if (x.status !== 200) throw new Error(`${what}: HTTP ${x.status} ${JSON.stringify(x.body).slice(0, 400)}`); return x.body; };
 
 /** Two Studios, each with its own temporary data folder, the OS sandbox on, its peer listener on a loopback port of its own. */
-export async function bootPair(): Promise<Pair> {
+export async function bootPair(o: { examples?: boolean } = {}): Promise<Pair> {
   const [lanA, lanB] = [await freePort() as number, await freePort() as number];
   const lan = (port: number) => ({ CREW_LAN_BIND: "127.0.0.1", CREW_LAN_PEER_PORT: String(port), CREW_LAN_ALLOW_LOOPBACK: "1", CREW_LAN_MDNS: "0" });
-  const [A, B] = await Promise.all([bootStudio("lan-a", { env: lan(lanA), examples: false }), bootStudio("lan-b", { env: lan(lanB), examples: false })]);
+  const [A, B] = await Promise.all([bootStudio("lan-a", { env: lan(lanA), examples: o.examples ?? false }), bootStudio("lan-b", { env: lan(lanB), examples: o.examples ?? false })]);
   for (const [s, n] of [[A, "Studio A"], [B, "Studio B"]] as const) await must(s.api("/api/lan/settings", { enabled: true, name: n }), `turn ${n}'s listener on`);
   const keyA = (await must(A.api("/api/lan"), "A view")).me.key, keyB = (await must(B.api("/api/lan"), "B view")).me.key;
   return { A, B, lanA, lanB, keyA, keyB, close: async () => { await Promise.all([A.close(), B.close()]); } };
