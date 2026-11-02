@@ -17,6 +17,10 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync,
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
+/** A caller's narrowing of every sandboxed process it starts (async-scoped): noLocalBinding runs a test run without its
+ *  loopback bind and inbound rules (work from a peer: src/lan/profile.ts), so a test that opens a listener fails. */
+export const sandboxScope = new AsyncLocalStorage<{ noLocalBinding?: boolean }>();
 import { bundledBytes, bundledList, bundledText, parseYaml } from "../bundled";
 import { withLock } from "../ids";
 import { appendLines, endCleanly } from "./durable-log";
@@ -458,6 +462,8 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
   /** a test run's sandbox, as the self-probe checked it: what it enforces and what it does not */
   sandbox?: { enforced: string; notEnforced: string } }> {
   const t0 = Date.now();
+  // a scope that forbids local binding (work from a peer) keeps a test run's loopback closed: no bind, no inbound
+  const localBinding = !!o.testRun && sandboxScope.getStore()?.noLocalBinding !== true;
   const unrestricted = localUnrestricted();           // CREW_LOCAL_UNRESTRICTED: no OS sandbox at all, on any platform
   const seatbelt = !unrestricted && seatbeltAvailable();
   const bwrap = !unrestricted && !seatbelt && !!o.testRun && !o.network && bwrapAvailable();
@@ -472,10 +478,10 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
     let ports: number[] = [];
     try {
       ports = o.testRun ? inspectListeningPorts() : [];
-      writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun, blockedPorts: ports }));
+      writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding, blockedPorts: ports }));
     } catch (e) { return { code: null, stdout:"", stderr:"", timedOut:false, ms:Date.now()-t0, refused:`test sandbox listener inspection failed: ${String(e)}` }; }
     // a test run is checked first: the profile must hold what Studio claims for it, or the run is refused with the reason
-    if (o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p), ports); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
+    if (o.testRun && localBinding) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p), ports); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
     full = ["/usr/bin/sandbox-exec", "-f", prof, ...argv];
   } else if (bwrap) {
     // Linux has no Seatbelt: a test run without network runs under bwrap (v1's layout: private pid/net namespaces, read-only reads)

@@ -851,21 +851,28 @@ export function createRuntime(d: RuntimeDeps) {
    * and no coffee-kit crew; an own workflow's staffing is confirmed with the take (staffingConfirm, its plan's hash).
    */
   const lanStaffing = (def: any) => { if (!ownWorkflow(def)) return null; const s = ownStaffingPlan(def, defs.ownCrew); return s.plan.length ? { hash: s.hash, plan: s.plan, missing: s.missing } : null; };
-  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; by: string; staffingConfirm?: string | null }) => {
+  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; by: string; staffingConfirm?: string | null; project?: string | null }) => {
     const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
     const def = defs.get(o.workflow);
     if (!def || !defs.selectable(o.workflow) || defs.held(o.workflow)) throw refuse("workflow_unavailable", "This workflow is not available for a new Task");
-    if (boardStaffed(def) || def.kind === "coffee-kit") throw refuse("staffing_required", "This workflow starts only with a project's approved crew; work from a peer runs only in a workflow that starts without one (v1)");
+    if (def.kind === "coffee-kit") throw refuse("staffing_required", "The coffee kit does not take work from a peer");
+    let staffed: Record<string, string> = {}, autoVerified: string[] = [];
+    // a code workflow: one of this Studio's registered projects, its approved crew, the same guard as the board's Run
+    if (boardStaffed(def)) {
+      const pid = String(o.project ?? ""); if (!pid || !projects.get(pid)?.path) throw refuse("project_required", "Choose one of this Studio's registered projects for this code workflow");
+      const g = await staffedStartGuard(def, pid, { why: `work from a peer on ${pid}` }); if (!g.ok) throw refuse(String(g.body.code ?? "staffing_not_ready"), String(g.body.error));
+      staffed = { project: pid, ...g.params }; autoVerified = g.autoVerified;
+    }
     const missing = Object.entries(def.params ?? {}).filter(([, spec]: any) => spec.required && !String(spec.default ?? "").trim()).map(([k]) => k);
     if (missing.length) throw refuse("param_required", `This workflow needs inputs work from a peer cannot give: ${missing.join(", ")}`);
     if (!o.params._lan || o.params._tainted !== "lan") throw refuse("internal", "a LAN start carries Studio's LAN marks");
-    const params: Record<string, string> = { ...o.params };
+    const params: Record<string, string> = { ...o.params, ...staffed };
     const s = lanStaffing(def);
     if (s) { if (s.missing.length) throw refuse("staffing_incomplete", "Choose a provider and model for every agent node of this workflow first"); if (o.staffingConfirm !== s.hash) throw refuse("staffing_confirmation_required", "Confirm who works on each node of this workflow with the take"); params._ownStaffing = s.hash; }
-    const started = staffedStartRun(def, () => ownClaude.start({ workflow: def.id, title: o.title, text: o.text, params, by: o.by }), []);
+    const started = staffedStartRun(def, () => ownClaude.start({ workflow: def.id, title: o.title, text: o.text, params, by: o.by }), autoVerified);
     if (!started.ok) throw refuse(String(started.body.code ?? "start"), String(started.body.error));
     return started.run;
   };
-  return { handle, engine, defs, projects, firstmate, startFromBranch, startLan, lanStaffing, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, startFromBranch, startLan, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };
