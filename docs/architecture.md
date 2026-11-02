@@ -225,7 +225,8 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     - peer listener (board-to-board work, docs/units/lan-relay.md): a separate server and port, off until turned on, four
       fixed routes carrying Noise messages (KK with an introduced key, XX only while the introduction window is open); its
       own Host only, no browser headers, no CORS, size and rate limits; work it brings in runs as a `_lan` + `_tainted`
-      Task under the restricted profile (allowlisted local steps, provider egress only, no test runs, a spend cap) and its
+      Task under the restricted profile (allowlisted local steps, provider egress only, test runs that cannot listen, no writes
+      to CI, hook or settings paths, a spend cap, never shown to Firstmate) and its
       result leaves only on the person's 交回 after the protected-path and secret gates;
     - egress proxy: each round's own credential (407 without), its host list, and the resolved-address guard ported from
       sandbox-runtime (`src/egress-guard.ts`): an allowed name that resolves to loopback, this host's own addresses,

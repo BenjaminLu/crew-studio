@@ -17,7 +17,7 @@ for (const k of ["CREW_DATA", "CREW_PORT", "CREW_LOCAL_UNRESTRICTED", "CREW_LOCA
   const bin = mkdtempSync(join(tmpdir(), "crew-lan-demo-bin-"));
   for (const n of ["claude", "codex", "cursor-agent", "agent"]) { writeFileSync(join(bin, n), "#!/bin/sh\necho 'the LAN demo never runs a real vendor CLI' >&2\nexit 97\n"); chmodSync(join(bin, n), 0o755); }
   process.env.PATH = `${bin}:${process.env.PATH ?? ""}`; }
-const { bootPair, introduce, relay } = await import("../tests/lan/flow");
+const { bootPair, codeRelay, introduce, relay } = await import("../tests/lan/flow");
 
 const out = (s: string) => console.log(s);
 out("兩台 Studio：各自的暫存資料夾、各自的主埠與 LAN 埠、OS sandbox 開啟、stub provider");
@@ -33,6 +33,10 @@ try {
   const r = await relay(p, out);
   out("");
   out(`完成：thread ${r.thread}，B 跑了 ${r.runs.join(" 與 ")}，A 已結案。`);
+  out("");
+  out("程式流程（B 用自己的 code-firstmate，在自己的 worktree；交回一份 patch，A 套用到自己的專案分支）：");
+  const c = await codeRelay(p, out);
+  out(`完成：thread ${c.thread}，B 的 ${c.run} 停在本機 lan-untrusted/ 分支（沒有 push、PR、merge），A 的分支 ${c.applied.branch}。`);
   if (process.env.LAN_DEMO_KEEP) {
     for (const s of [p.A, p.B]) out(`  ${s.name}: ${s.base}/session?t=${encodeURIComponent(`acceptance-${s.name}-session`)}#/lan`);
     out("兩台都還在跑；Ctrl-C 結束。"); await new Promise(() => {});

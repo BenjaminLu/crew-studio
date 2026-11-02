@@ -53,8 +53,15 @@ Demo: `bun scripts/lan-pair-demo.ts`.
    this Studio's allowlist; a mismatch ends the introduction (start again). Only after both sides confirm can they
    exchange anything.
 
-Unpair removes a peer (it may be introduced again); revoke marks its key for good (never introduced again). Either one
-withdraws its open items, stops every Task its work started, and drops what was waiting to be sent to it.
+An attacker could still grind: learn the responder's nonce, see the code it gives, abort, try again. So the responder
+takes one introduction at a time; every introduction that got its nonce and did not reveal a matching one (a wrong
+reveal, an abort, a timeout after 20 s, messages out of order) is shown on its screen as a failed introduction; the third
+failure closes the window, and a successful introduction closes it too (one introduction per window). An attacker gets
+at most three tries, all visible, each with odds 10⁻⁶.
+
+Unpair takes a peer off the allowlist and keeps its record (a freeze survives; it may be introduced again); revoke marks
+its key for good (never introduced again). Either one withdraws its open items, stops every Task its work started, and
+drops what was waiting to be sent to it.
 
 ## Transport
 
@@ -69,10 +76,11 @@ withdraws its open items, stops every Task its work started, and drops what was 
   responder that cannot decrypt it with any of them answers 403 and nothing else (an unintroduced key does not even learn
   this Studio's key). XX runs only while the introduction window is open.
 - A KK message is accepted once (its ephemeral key is remembered for ten minutes) and only within five minutes of this
-  Mac's clock. Requests are rate-limited per source address; introductions in flight are capped.
+  Mac's clock (a time that is not a date is refused); the replay cache is kept across restarts. Requests are
+  rate-limited per source address (the rate table is bounded), at most 32 are in flight, one introduction at a time.
 - The client side dials only an IPv4 literal on one of this Mac's own private subnets: never a name, loopback (outside
-  the demo), this Mac's own address, link-local, multicast, a metadata endpoint, the tailnet range or the internet; no
-  redirects. Not done: refusing the gateway's own address.
+  the demo), this Mac's own address, the network's default gateway, link-local, multicast, a metadata endpoint, the
+  tailnet range or the internet; no redirects.
 
 ## Entries
 
@@ -97,58 +105,89 @@ signature; a decision already made stands (a refused entry sent again is refused
 different validly signed entries at one `seq`, or an entry whose `prev` does not match the entry this Studio holds before
 it (or the one after it), freeze the author: both entries are kept as evidence, its items are frozen, its Tasks stop, and
 everything it sends is refused until a person decides (revoke the key, or unfreeze after checking in person). The page
-says both signatures are valid; it never calls one of them the forged one. Then: a daily limit per author, the claimed
-time within a day of this Mac's clock, the body by kind, the blob it names (present, opening for this Studio, the named
+says both signatures are valid; it never calls one of them the forged one. A frozen author, an author past its daily
+limit and an entry whose claimed time is not within a day of this Mac's clock are refused before anything is stored.
+Then: the body by kind, the blob it names (present, opening for this Studio, the named
 hash and size), and the thread: a take or a result naming another briefing than the round's is refused ("briefing hash
 mismatch"); a result whose workflow or definition hash differs from its take's is taken in and flagged
-`workflow-mismatch`.
+`workflow-mismatch`. A refusal that can pass later (a frozen author, a daily limit, a clock, content not there yet, an
+entry before its thread) is not kept as the entry's verdict; any other is, and the same entry sent again gets the same
+answer. Decided entries and each author's sequence numbers are bounded, and the state file is written at most every
+150 ms. Revoking an entry deletes the content it named (a dispatch's or a refinement's briefing, a result's output).
 
 ## Receiving and approving
 
-Every received entry becomes an inbox item; nothing happens until a person approves it on this Mac. All `/api/lan` routes,
-reads included, are desktop only: a paired phone is refused even when it may drive Firstmate.
+Every received entry becomes an inbox item; nothing happens until a person approves it on this Mac. Every `/api/lan`
+route, reads included, answers only Studio's own page, as the web terminals do: its session cookie, `Sec-Fetch-Site:
+same-origin`, and on a write an `Origin` equal to Studio's own. A script's `x-crew-session` is refused, and so is a paired
+phone, even one allowed to drive Firstmate. (Not a boundary against a local process of this user: it can read
+`data/session-token`. It keeps scripts and other sites off.)
 
 - **dispatch / refine**: the page shows the full briefing (invisible characters marked ⟦U+…⟧), the acceptance criteria
-  and the exact prompt the agent will get; a long one must be scrolled to its end before it can be approved. Approving
-  means taking it with one of this Studio's own workflows (only those the profile allows can be picked), a spend cap
-  (dollars and agent rounds) and a provider. The suggested workflow is only a suggestion; nothing is fetched.
+  and the exact prompt the agent will get; a long one must be scrolled to its end before it can be approved, and the
+  approval must name the SHA-256 of that exact prompt (the page computes it only once the person has read to the end;
+  the server refuses any other). Approving means taking it with one of this Studio's own workflows (only those the
+  profile allows can be picked), a spend cap (dollars and agent rounds, or rounds only when the provider reports no
+  cost), a provider and, for a code workflow, one of this Studio's registered projects. The suggested workflow is only a
+  suggestion; nothing is fetched.
 - **take**: the dispatcher assigns it (an `assign` entry naming the taker's key).
 - **assign**: the taker starts the run.
-- **result**: the dispatcher reads the files (text only) and accepts it; then refines or marks it done.
+- **result**: the dispatcher reads the files (text only) and accepts it; then refines or marks it done; a code result's
+  patch can be applied (below).
 - Content from a peer is drawn only as text nodes: never as HTML, never as SVG, never in a frame of Studio's origin.
 
 ## Running work from a peer
 
-`startLan` starts the taker's workflow through the same staffing and start path as the board's Run (v1: a workflow that
-needs no project crew approval; an own workflow's staffing is confirmed with the take). The Task carries Studio's marks
-`_lan` (the item and its spend cap) and `_tainted: "lan"`. Enforced, whatever the briefing says:
+`startLan` starts the taker's workflow through the same staffing and start path as the board's Run: a code workflow
+(code-firstmate) runs on one of the taker's registered projects with its approved crew; an own workflow's staffing is
+confirmed with the take. The Task carries Studio's marks `_lan` (the item and its spend cap) and `_tainted: "lan"`; a
+Task with the taint and no readable `_lan` is held to a zero cap. Enforced, whatever the briefing says:
 
-- **Sandbox only** (`taintRefusal`): never in local unrestricted mode, never under a sandbox-off grant.
+- **Sandbox only** (`taintRefusal`): never in local unrestricted mode, never under a sandbox-off grant; a round without a
+  sandbox is refused.
 - **Allowlisted steps** (`src/lan/profile.ts`): hooks that only work locally (`note`, `set`, `intent.capture`,
-  `repo.prepare`, `repo.cleanup`, `deliver.*`, `doc.export`, `library.publish`, `hello.web`); never `pr.open`,
-  `git.merge`, `remote.*`, `github.*`, issue or file moves, registrations, crew or staffing changes. Agent modes that
-  write only their own folder or worktree. The take dialog applies the same list, so a workflow that pushes cannot be
-  picked; the code pack's tainted path keeps any code Task on its local branch.
-- **Fresh folder**: a deliver step writes in its own new round folder; a code step in the Task's own worktree.
+  `repo.prepare`, `repo.cleanup`, `deliver.*`, `doc.export`, `library.publish`, `hello.web`, and the code pack's
+  `pr.open` and `remote.ready`, which for a tainted Task are local: a local review request, "ready on the local branch").
+  Never `git.merge`, `github.*`, issue or file moves, registrations, crew or staffing changes, the designer's rounds. A
+  workflow may contain a merge or a designer step a tainted Task never reaches; if it is reached anyway it is refused.
+- **Fresh folder**: a deliver step writes in its own new round folder; a code step in the Task's own worktree, on a
+  branch named `lan-untrusted/…`.
+- **Writes**: no round writes a protected path (`src/lan/paths.ts`, case-insensitive: CI, `.git/`, hooks,
+  `.gitattributes`, `.gitmodules`, install settings, `.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.cursor/`,
+  `.vscode/`, `.devcontainer/`, `.envrc`, `Makefile`, `conftest.py`, `build.rs`, `setup.py`, Dockerfiles and similar).
 - **Egress to the provider only**: every round (agent turns, coordinator turns, judges) gets no host from `egress.allow`.
-- **No test listeners**: no round gets `run_tests`, `run_command` or `skill_run`; a check that runs the project's tests
-  or wants the network reports "not run" with its reason.
-- **Spend cap**: before every paid round, the rounds and dollars this Task already spent on this Mac are compared with
-  the item's cap; at the cap the round is refused and the Task stops ("spend cap: …").
-- **The briefing is fenced**: `<untrusted-lan-briefing-<nonce>>` with a nonce of this Studio's own, angle brackets in
-  the text turned into ‹ ›, as the review room fences page text. A fence lowers the odds; it is not a boundary. The
-  profile is the boundary.
+- **No test listeners**: `run_tests`, `run_command` and the checks that run the project's tests run without the test
+  run's loopback bind and inbound rules (`sandboxScope` in `src/runtime/checks.ts`), so a test that opens a listener
+  fails; a check that wants the network does not run; no skill script runs.
+- **Spend cap**: before every paid round the rounds this Task ran (and those already admitted) and the dollars it spent
+  are compared with the item's cap; at the cap the round is refused and the Task stops ("spend cap: …"). A provider that
+  reports no cost makes the dollars unknown, which stops the next paid round unless the taker chose a rounds-only cap.
+- **Firstmate never sees it**: an agent's question or an escalation from a tainted Task is the captain's card, never
+  Firstmate's; Firstmate's status lines show a peer's Task without its title or card titles; Studio's event log keeps no
+  text of it. A failure card never repeats it as a New task (its marks would be left behind): it is taken again from the
+  inbox.
+- **The briefing is fenced**: `<untrusted-lan-briefing-<nonce>>` with a nonce of this Studio's own (never sent), and a
+  fence-shaped tag in the text defused. A fence lowers the odds; it is not a boundary. The profile is the boundary.
 
 ## Handing a result back
 
-Nothing is published by itself. When the Task has succeeded, the taker previews exactly what goes back (the files the
-Task wrote, as text, editable) and presses 交回. The send is refused when the output changes CI configuration
-(`.github/`, GitLab, CircleCI, Buildkite, Travis, Azure, Bitbucket, Jenkins, Drone, Woodpecker), git hooks (`.husky/`,
-`.githooks/`, `.git/`, lefthook, pre-commit), package scripts or hook keys in a `package.json`, or install settings
-(`.npmrc`, `.yarnrc`, `bunfig.toml`); and blocked while any line holds a credential (Studio's one redactor:
-`src/secure.ts`) or a name on the `privacy.denylist` policy, until the person removes it and previews again. The send
-must carry the hash of the bytes the person saw. The result is sealed to the dispatcher only. Its checks summary is the
-taker's own report; the dispatcher reruns checks before relying on it.
+Nothing is published by itself. When the Task has succeeded, the taker previews exactly what goes back and presses
+交回: a deliver workflow's files, or a code workflow's one patch (`changes.patch`, everything its worktree changed
+against its base, new files included). Every file is read without following a link: a symbolic link, a hard link or
+anything but a regular file is refused, and its real path must stay inside the Task's folder. The send is refused when
+the output touches a protected path (above) or adds package scripts or hook keys, and blocked while the scan finds a
+credential, a key, an encoded or split secret, Studio's own key format, a long random string or a name on the
+`privacy.denylist` policy (`src/lan/scan.ts`), until the person removes it and previews again. The scan is a net for
+honest mistakes, not a wall: an agent told to leak something can encode it past any scanner, and the page says so; the
+person reading the bytes is the gate. The send must carry the hash of the bytes the person saw. The result is sealed to
+the dispatcher only. Its checks summary is the taker's own report.
+
+## Applying a code result
+
+The dispatcher applies a code result's patch to one of its own registered projects (`src/lan/apply.ts`): every path the
+patch names is checked again (protected paths, links, submodules, paths outside the project), `git apply --check` runs
+first, the patch lands on a new branch `lan-untrusted/<thread>-r<n>` in a worktree under Studio's data, and Studio's git
+runs no hook. Nothing is merged, built, tested or pushed: the branch is reviewed like any untrusted change.
 
 ## Audit
 
@@ -157,9 +196,11 @@ what was sent back (hash and size). Entries and blobs are stored sealed.
 
 ## Not done in v1
 
-- Code workflows that need a project's approved crew (code-firstmate) cannot take work from a peer yet.
-- The Secure Enclave (a non-exportable key) and pre-rotation (KERI style) are not used: the Keychain item is exportable
-  by this user's processes.
-- Network pinning (subnet, gateway, SSID) and refusing the gateway's address.
+- The Secure Enclave (a non-exportable key) and pre-rotation (KERI style) are not used; the Keychain is opt-in
+  (`CREW_KEYSTORE=keychain`) and its item is readable by this user's processes.
+- Network pinning (subnet, gateway MAC, SSID).
 - Deniable MACs for conversational entries: every entry is signed.
 - Relaying entries between peers (each author's entries reach only its recipients directly).
+- On Linux a test run uses bwrap's private network namespace; the restricted profile's no-local-binding scope is
+  enforced by the macOS profile.
+

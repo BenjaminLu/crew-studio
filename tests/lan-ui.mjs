@@ -8,6 +8,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   (who signed, which briefing, which workflow@version); and a page cannot reach the peer listener.
 //   LAN_UI_SHOTS=<dir>  also write screenshots there
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { dirname, join } from "node:path";
@@ -21,7 +22,9 @@ const shot = async (page, n) => { if (shots) await page.screenshot({ path: join(
 
 const fx = spawn("bun", [join(here, "lan/ui-fixture.ts")], { cwd: root, stdio: ["pipe", "pipe", "inherit"] });
 const info = await new Promise((res, rej) => { const rl = createInterface({ input: fx.stdout }); rl.on("line", (l) => { try { const j = JSON.parse(l); if (j.A) res(j); } catch {} }); fx.on("exit", (c) => rej(new Error(`fixture exited ${c}`))); });
-const api = (s, path, body) => fetch(s.base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": s.token }, body: body === undefined ? undefined : JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+// /api/lan answers only Studio's own page: the harness sends what the page's browser would (its cookie, same origin)
+const pageHeaders = (s, writing) => ({ "content-type": "application/json", cookie: `crew_session_${createHash("sha256").update(s.token).digest("hex")}=${s.token}`, "sec-fetch-site": "same-origin", ...(writing ? { origin: s.base } : {}) });
+const api = (s, path, body) => fetch(s.base + path, { method: body === undefined ? "GET" : "POST", headers: path.startsWith("/api/lan") ? pageHeaders(s, body !== undefined) : { "content-type": "application/json", "x-crew-session": s.token }, body: body === undefined ? undefined : JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
 const until = async (f, ms = 20000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { const v = await f(); if (v) return v; } catch {} await new Promise((r) => setTimeout(r, 120)); } return null; };
 const browser = await chromium.launch();
 const open = async (s) => { const ctx = await browser.newContext({ viewport: { width: 1360, height: 1000 } }); const page = await ctx.newPage();
@@ -48,7 +51,9 @@ try {
   await pb.locator("[data-lan-code]").fill(String((Number(sasB) + 7) % 1000000).padStart(6, "0")); await pb.locator("[data-lan-petname]").fill("A");
   await pb.locator("[data-lan-confirm]").click();
   ok(!!await until(async () => (await pb.locator("[data-lan-intro]").count()) === 0) && !(await api(B, "/api/lan")).body.peers.length, "a wrong code typed on B is refused and nothing is allowlisted");
-  // again, right this time
+  // the window closed with that introduction (one per window): B opens it again, and this time the codes are typed right
+  ok(await pb.locator("[data-lan-intro-open]").count() === 1, "B's introduction window closed after one introduction");
+  await pb.locator("[data-lan-intro-open]").click(); await pb.locator("[data-lan-intros] .badge.human").waitFor();
   await pa.locator("[data-lan-intro-start]").click(); await pa.locator("[data-lan-intro]").waitFor({ timeout: 15000 });
   await pb.reload(); await pb.locator("[data-lan-intro]").waitFor({ timeout: 15000 });
   const s2a = (await pa.locator(".lan-sas b").innerText()).replace(/\D/g, ""), s2b = (await pb.locator(".lan-sas b").innerText()).replace(/\D/g, "");
@@ -67,7 +72,7 @@ try {
   ok(pwned === undefined && !/<img|<script|<svg|<iframe/i.test(html.replace(/&lt;/g, "")) && text.includes("<img src=x onerror") && text.includes("<svg onload"), "received HTML and SVG are shown as text and never run (no element made, no script ran)", `${pwned} ${html.slice(0, 160)}`);
   ok((await pb.locator("[data-lan-item]").first().innerText()).includes("<b>粗體標題</b>") && (await pb.locator(".lan-content li").innerText()).includes("<i>不是斜體</i>"), "a title and acceptance criteria are text too");
   const promptText = await pb.locator("[data-lan-prompt]").innerText();
-  ok(/<untrusted-lan-briefing-[0-9a-f]{12}>/.test(promptText) && promptText.includes("‹img src=x") && promptText.includes("最後一行"), "the approver sees the exact prompt the agent will get, fenced, to its last line");
+  ok(/<untrusted-lan-briefing-[0-9a-f]{12}>/.test(promptText) && promptText.includes("<img src=x") && promptText.includes("最後一行"), "the approver sees the exact prompt the agent will get, fenced, to its last line");
   const btn = pb.locator(`[data-lan-approve]`);
   ok(await btn.isDisabled(), "a long briefing cannot be approved before it is read to its end");
   await content.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); });
@@ -82,7 +87,7 @@ try {
   const th = await until(async () => (await api(A, "/api/lan")).body.threads.find((t) => t.title === "週報"));
   ok(!!th, "the dispatch form sends a thread");
   await pb.reload(); await pb.locator("[data-lan-take-wf]").waitFor({ timeout: 15000 });
-  ok(await pb.locator('[data-lan-take-wf] option[value="code-firstmate"]').isDisabled(), "a workflow that pushes is offered but cannot be picked");
+  ok(await pb.locator('[data-lan-take-wf] option[value="file-organization"]').isDisabled(), "a workflow outside the LAN profile (it moves your files) is offered but cannot be picked");
   await pb.selectOption("[data-lan-take-wf]", "documents"); await pb.selectOption("[data-lan-provider]", "codex");
   await pb.locator("[data-lan-content]").evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); }); // read to its end
   await pb.locator("[data-lan-approve]").click();

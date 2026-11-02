@@ -7,7 +7,7 @@ import { b64u, fingerprint, generateKeyPair, open, sas, seal, sign, verify } fro
 import { Handshake } from "../src/lan/noise";
 import { entryHash, envelopeProblem, makeEnvelope, readBody, verifyEnvelope, cleanText } from "../src/lan/protocol";
 import { LanWire, call, introduce, peerTargetProblem } from "../src/lan/wire";
-import { suite } from "./rt-harness";
+import { sleep, suite } from "./rt-harness";
 const { ok, end } = suite("lan-crypto");
 
 const A = generateKeyPair(), B = generateKeyPair(), C = generateKeyPair();
@@ -77,4 +77,36 @@ const peerB = { key: b64u(B.pub), host: "127.0.0.1", port: wireB.port };
   ok(introduced[0].port === 5555 && introduced[0].claimed === "C's Mac", "the responder records the introducer's callback port and its self-described name"); }
 { ok(sas(Buffer.alloc(32, 1), Buffer.alloc(32, 2), Buffer.alloc(32, 3)) !== sas(Buffer.alloc(32, 1), Buffer.alloc(32, 2), Buffer.alloc(32, 4)), "the short code depends on both nonces"); }
 wireB.stop();
+// a request time that is not a date is refused (Math.abs(NaN) would pass a plain comparison)
+{ let store: Record<string, number> = {}; const gate = { open: null as null | (() => void) }, held: Promise<void>[] = [];
+  const w = new LanWire({ me: () => B, allowlist: () => [b64u(A.pub)], introOpen: () => false, self: () => ({ name: "B", port: 1 }), introduced: () => {},
+    request: async (_f, op) => { if (op === "hold") await new Promise<void>((r) => { gate.open = r; held.push(Promise.resolve()); }); return { ok: true }; },
+    replay: { load: () => store, save: (m) => { store = { ...m }; } } });
+  w.start("127.0.0.1", 0); const peer = { key: b64u(B.pub), host: "127.0.0.1", port: w.port };
+  const hs = new Handshake("KK", true, A, B.pub), m1 = hs.writeMessage(Buffer.from(JSON.stringify({ v: 1, op: "ping", ts: "not a date", body: {} })));
+  const r = await fetch(`http://127.0.0.1:${w.port}/lan/v1/kk`, { method: "POST", body: m1, headers: { "content-type": "application/octet-stream" } });
+  ok(r.status === 403, "a request whose time is not a date is refused", String(r.status));
+  // the replay cache survives a restart of the listener
+  const hs2 = new Handshake("KK", true, A, B.pub), m2 = hs2.writeMessage(Buffer.from(JSON.stringify({ v: 1, op: "ping", ts: new Date().toISOString(), body: {} })));
+  const post = (port: number) => fetch(`http://127.0.0.1:${port}/lan/v1/kk`, { method: "POST", body: m2, headers: { "content-type": "application/octet-stream" } });
+  const first = await post(w.port); w.stop();
+  const w2 = new LanWire({ me: () => B, allowlist: () => [b64u(A.pub)], introOpen: () => false, self: () => ({ name: "B", port: 1 }), introduced: () => {}, request: async () => ({ ok: true }), replay: { load: () => store, save: (m) => { store = { ...m }; } } });
+  w2.start("127.0.0.1", 0); const again = await post(w2.port);
+  ok(first.status === 200 && again.status === 403, "a message replayed after the listener restarted is still refused (the replay cache is kept)", `${first.status} ${again.status}`);
+  // at most 32 requests in flight; the rest are refused at once
+  const w3 = new LanWire({ me: () => B, allowlist: () => [b64u(A.pub)], introOpen: () => false, self: () => ({ name: "B", port: 1 }), introduced: () => {},
+    request: async (_f, op) => { if (op === "hold") await new Promise<void>((res) => { const prev = gate.open; gate.open = () => { prev?.(); res(); }; }); return { ok: true }; } });
+  w3.start("127.0.0.1", 0); const p3 = { key: b64u(B.pub), host: "127.0.0.1", port: w3.port };
+  const many = Array.from({ length: 40 }, () => call(A, p3, "hold", {}).then(() => "ok", (e) => String(e.message)));
+  await sleep(1500); gate.open?.(); const res = await Promise.all(many);
+  ok(res.filter((x) => /503/.test(x)).length === 8 && res.filter((x) => x === "ok").length === 32, "at most 32 requests are in flight at once; the rest are refused (503)", JSON.stringify(res.reduce((m: any, x) => { m[x] = (m[x] ?? 0) + 1; return m; }, {})));
+  // a bounded rate table: thousands of source addresses do not grow it without end
+  const req = () => new Request(`http://127.0.0.1:${w3.port}/x`, { method: "POST" });
+  let last = 0; for (let i = 0; i < 4097; i++) last = (await w3.handle(req(), `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`)).status;
+  ok(last === 429, "the per-address rate table is bounded: past 4096 fresh addresses a new one is refused", String(last));
+  w2.stop(); w3.stop(); void peer; void held; }
+{ const { gateways } = await import("../src/lan/wire"); const gw = gateways()[0];
+  if (gw) { const saved = process.env.CREW_LAN_ALLOW_LOOPBACK; delete process.env.CREW_LAN_ALLOW_LOOPBACK; const why = peerTargetProblem(gw, 7417); if (saved !== undefined) process.env.CREW_LAN_ALLOW_LOOPBACK = saved;
+    ok(/gateway/.test(why ?? ""), "the network's gateway is never a peer", String(why)); }
+  else ok(true, "no default gateway on this machine: the gateway refusal is not exercised here"); }
 end();

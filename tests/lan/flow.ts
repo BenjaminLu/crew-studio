@@ -7,6 +7,9 @@
 import { freePort } from "../boot.mjs";
 import { bootStudio, type Studio } from "../acceptance/studio";
 import { drive } from "../acceptance/drive";
+import { createHash } from "node:crypto";
+/** What the page sends with an approval of a dispatch or a refinement: the hash of the exact prompt it showed. */
+export const seenOf = (prompt: string) => createHash("sha256").update(`lan-seen\0${prompt ?? ""}`).digest("hex");
 
 export type Pair = { A: Studio; B: Studio; lanA: number; lanB: number; keyA: string; keyB: string; close: () => Promise<void> };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -70,8 +73,8 @@ export async function relay(p: Pair, log: (s: string) => void = () => {}) {
   // 2. B takes with its own workflow
   const d1 = await item(p.B, "dispatch", t.id);
   step("B", `收件匣   dispatch 來自 ${d1.from.name}（${d1.from.short}）· 看到完整 briefing ${d1.briefing.length} 字與 agent 會拿到的 prompt`);
-  await must(p.B.api(`/api/lan/items/${d1.id}/approve`, { workflow: "documents", provider: "codex", usd: 1, rounds: 6 }), "B takes with documents");
-  step("B → A", `take      用 B 自己的 documents@v${wf.version} (${wf.defHash.slice(0, 12)}) · 上限 $1.00 / 6 輪`);
+  await must(p.B.api(`/api/lan/items/${d1.id}/approve`, { seen: seenOf(d1.prompt), workflow: "documents", provider: "codex", roundsOnly: true, rounds: 6 }), "B takes with documents");
+  step("B → A", `take      用 B 自己的 documents@v${wf.version} (${wf.defHash.slice(0, 12)}) · 上限 6 輪（codex 不回報花費：只限輪數）`);
   // 3. A assigns
   const k1 = await item(p.A, "take", t.id);
   await must(p.A.api(`/api/lan/items/${k1.id}/approve`, {}), "A assigns");
@@ -80,7 +83,7 @@ export async function relay(p: Pair, log: (s: string) => void = () => {}) {
   const a1 = await item(p.B, "assign", t.id);
   const v1 = await must(p.B.api(`/api/lan/items/${a1.id}/approve`, {}), "B starts the run");
   const run1 = v1.rounds[0].run.id;
-  step("B", `run       ${run1} 在 B 上開跑（受限 profile：OS sandbox、只連 provider、不能 push/PR、不跑測試）`);
+  step("B", `run       ${run1} 在 B 上開跑（受限 profile：OS sandbox、只連 provider、不能 push/PR/merge、測試不能開監聽、不能寫 CI/hooks/設定檔）`);
   const view1 = await runOnB(p, run1);
   step("B", `run       ${run1} 跑完：${view1.status}${view1.result ? ` / ${view1.result}` : ""}`);
   // 5. B hands back
@@ -93,7 +96,7 @@ export async function relay(p: Pair, log: (s: string) => void = () => {}) {
   await must(p.A.api(`/api/lan/threads/${t.id}/refine`, { briefing: "加一節資安：密碼管理員與兩步驟驗證。\nSTUB_FILE notes.md :: 第 2 輪：加上資安一節（密碼管理員、兩步驟驗證）", note: "第二輪" }), "A refines");
   step("A → B", "refine    第 2 輪 briefing：加一節資安");
   const f2 = await item(p.B, "refine", t.id);
-  await must(p.B.api(`/api/lan/items/${f2.id}/approve`, { workflow: "documents", provider: "codex", usd: 1, rounds: 6 }), "B takes round 2");
+  await must(p.B.api(`/api/lan/items/${f2.id}/approve`, { seen: seenOf(f2.prompt), workflow: "documents", provider: "codex", roundsOnly: true, rounds: 6 }), "B takes round 2");
   step("B → A", `take      第 2 輪，仍用 B 的 documents@v${wf.version}`);
   const k2 = await item(p.A, "take", t.id);
   await must(p.A.api(`/api/lan/items/${k2.id}/approve`, {}), "A assigns round 2");
@@ -121,4 +124,37 @@ export async function relay(p: Pair, log: (s: string) => void = () => {}) {
   log("交接軌跡（A 的看板，依序）：");
   for (const s of ta.steps) log(`  ${at(s.at)}  r${s.round}  ${s.kind.padEnd(8)} ${s.who.name.padEnd(6)} ${s.who.fp.slice(0, 11)}  ${s.entry.slice(0, 12)}${s.delivered === false ? "  (未送達)" : ""}`);
   return { thread: t.id, runs: [run1, run2], a: ta, b: tb, notes, results: [r1, r2] };
+}
+
+/** A code workflow across the two Studios: B takes it with its own code-firstmate on its registered project (approved
+ *  crew), the Task runs in its own worktree on a lan-untrusted/ branch and ends ready on that local branch (no push, no
+ *  pull request, no merge), B hands back one patch, and A applies it to its own project on a branch of its own. */
+export async function codeRelay(p: Pair, log: (s: string) => void = () => {}) {
+  const { STEPS } = await import("../acceptance/steps");
+  await STEPS["staffing-code"]({ s: p.B, vars: { project: "sandbox" }, firstmate: async () => [] } as any);
+  const step = (who: string, what: string) => log(`  ${who.padEnd(6)} ${what}`);
+  const briefing = "請在 lib/ 加一個打九折的函式，並附上測試。\nSTUB_FILE lib/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\ntest('ten percent off', async () => { expect(await Bun.file(new URL('../lib/discount.ts', import.meta.url)).exists()).toBe(true); const { discount } = await import('../lib/discount'); expect(discount(100)).toBe(90); });\\n";
+  const t = await must(p.A.api("/api/lan/dispatch", { to: p.keyB, title: "九折函式", briefing, acceptance: ["附測試"], workflow: "code-firstmate" }), "A dispatches code work");
+  step("A → B", `dispatch  thread ${t.id} · 建議流程 code-firstmate@v${t.suggested.version}`);
+  const d = await item(p.B, "dispatch", t.id);
+  await must(p.B.api(`/api/lan/items/${d.id}/approve`, { seen: seenOf(d.prompt), workflow: "code-firstmate", project: "sandbox", provider: "codex", roundsOnly: true, rounds: 40 }), "B takes with code-firstmate");
+  step("B → A", "take      用 B 自己的 code-firstmate，在 B 的 sandbox 專案（已核准 crew）");
+  const k = await item(p.A, "take", t.id); await must(p.A.api(`/api/lan/items/${k.id}/approve`, {}), "A assigns");
+  step("A → B", "assign");
+  const a = await item(p.B, "assign", t.id); const v = await must(p.B.api(`/api/lan/items/${a.id}/approve`, {}), "B starts");
+  const run = v.rounds[0].run.id;
+  const dv = await drive(p.B, run, async (c) => c.node === "dispatch" ? { choice: "dispatch" } : { stop: "unscripted" }, { timeoutMs: 240_000 });
+  if (dv.problems.length || dv.view.status !== "succeeded") throw new Error(`B's code Task ${run} ended ${dv.view?.status}: ${dv.problems.join("; ")} ${JSON.stringify((dv.view?.steps ?? []).map((s: any) => `${s.node}:${s.state}${s.error ? `(${String(s.error).slice(0, 160)})` : ""}`))}`);
+  step("B", `run       ${run}：${dv.view.result}（在 lan-untrusted/ 分支上就緒，沒有 push、PR、merge）`);
+  const pre = await must(p.B.api(`/api/lan/threads/${t.id}/handback/preview`, {}), "B previews the patch");
+  if (!pre.ok) throw new Error(`the hand-back gate stopped the code result: ${JSON.stringify({ secrets: pre.secrets, protected: pre.protectedPaths })}`);
+  await must(p.B.api(`/api/lan/threads/${t.id}/handback`, { confirm: pre.hash }), "B hands the patch back");
+  step("B → A", `result    交回 changes.patch ${pre.bytes} bytes`);
+  const r = await item(p.A, "result", t.id); await must(p.A.api(`/api/lan/items/${r.id}/approve`, {}), "A accepts");
+  const applied = await must(p.A.api(`/api/lan/threads/${t.id}/apply`, { project: "sandbox" }), "A applies the patch");
+  step("A", `apply     套用到 A 的 sandbox 專案分支 ${applied.branch}（${applied.files.join(", ")}）`);
+  await must(p.A.api(`/api/lan/threads/${t.id}/done`, {}), "A marks it done");
+  step("A → B", "done      結案");
+  const dn = await item(p.B, "done", t.id); await must(p.B.api(`/api/lan/items/${dn.id}/approve`, {}), "B acknowledges");
+  return { thread: t.id, run, view: dv.view, patch: pre.files.find((f: any) => f.path === "changes.patch")?.text ?? "", applied };
 }
