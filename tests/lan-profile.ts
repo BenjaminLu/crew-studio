@@ -403,7 +403,7 @@ if (process.platform === "darwin") {
   const run = lanTask("R-3", 1, 1, { ctx: { worktree: wt, baseCommit: base }, def: { id: "w", version: 1, nodes: [] } });
   const o = await lanRunner({ engine: { get: () => run, ledger: () => [] }, defs: {}, artifacts: null, start: async () => ({}) } as any).output("R-3");
   const patch = o.files.find((f) => f.path === "changes.patch")?.text ?? "";
-  ok(!patch.includes(".github/workflows/x.yml") || o.protectedHits.some((h) => h.includes(".github")), "a protected file in the patch is flagged however many files changed", JSON.stringify({ inPatch: patch.includes(".github/workflows/x.yml"), hits: o.protectedHits.slice(0, 3) })); }
+  ok(o.protectedHits.some((h) => /changed files \(more than 240/.test(h)) && (!patch.includes(".github/workflows/x.yml") || o.protectedHits.length > 0), "too many changed files refuse the hand-back at once, before any file is read (a protected file among them can never slip through)", JSON.stringify({ inPatch: patch.includes(".github/workflows/x.yml"), hits: o.protectedHits.slice(0, 3) })); }
 // 4. a peer's Task installs nothing the repository points at, and runs no install scripts
 { const P = lanSeams(), project = (path: string) => path === "install" ? ["npm", "ci"] : path === "install_scripts" ? true : null;
   ok(P.policy(lanTask("L", 1, 1), "install", project("install")) === false && P.policy(lanTask("L", 1, 1), "install_scripts", project("install_scripts")) === false, "a peer's Task gets no dependency install and no install scripts, whatever the project's policy says");

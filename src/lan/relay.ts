@@ -4,7 +4,7 @@
 // revocation it sent). Nothing here starts, accepts or publishes by itself: every received item waits for a person on
 // the desktop, a run starts only when the taker approves the dispatcher's assignment, and a result leaves only when the
 // taker presses 交回 after reading the exact bytes and passing the secret scan and the protected-path gate.
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { b64u, canonical, fingerprint, randomBytes, sha256hex, unb64u, type Recipient } from "./crypto";
@@ -48,7 +48,7 @@ export type ThreadRec = { id: string; owner: string; peer: string; title: string
   base?: { root: string; sha: string } | null;
   /** closed: its peer's identity was replaced or revoked (threads are never moved to a new identity) */
   state: "open" | "done" | "withdrawn" | "closed"; closedWhy?: string; steps: Step[] };
-type Outbox = { to: string; entry: string; blobs: string[]; tries: number; last: string | null; error: string | null; next?: number; retry?: boolean };
+type Outbox = { to: string; entry: string; blobs: string[]; tries: number; last: string | null; error: string | null; next?: number; retry?: boolean; thread?: string };
 /** an identity operation waiting for a peer: this Studio's revocation of its old identity (sent with that identity's keys) */
 type IdOut = { to: string; host: string; port: number; dh: string; op: "retire"; body: unknown; from: string; tries: number; next?: number; error: string | null };
 type Ceilings = { dailyUsd: number | null; dailyRounds: number; unknownRoundUsd: number };
@@ -195,6 +195,8 @@ export class Lan {
   /** bounded records: decided entries, each author's sequence numbers, refusals, failed introductions */
   private trim() {
     this.store.trimVerdicts(20_000);
+    try { this.store.rotateAudit(50_000, (rows) => writeFileSync(join(this.dir, `audit-${Date.now()}.jsonl`), rows.map((x) => JSON.stringify(x)).join("\n") + "\n", { mode: 0o600, flag: "wx" })); }
+    catch (e: any) { this.o.log?.(`LAN audit rotation did not run: ${e?.message ?? e}`); }
     const evidence = new Set(this.st.peers.flatMap((p) => p.frozen?.entries ?? []));
     for (const a of this.store.authors()) this.store.trimChain(a, 5000, evidence);
     this.st.introFailures = (this.st.introFailures ?? []).slice(-20);
@@ -428,7 +430,7 @@ export class Lan {
         l.seq = e.seq; l.head = h; this.store.setChain(e.a, e.seq, h);
         this.bodies.set(h, body); for (const b of blobs) if (b.plain !== undefined) this.texts.set(b.blob.hash, b.plain);
         this.apply(e, body, h, true);
-        for (const k of to) this.st.outbox.push({ to: k, entry: h, blobs: blobs.map((b) => b.blob.hash), tries: 0, last: null, error: null });
+        for (const k of to) this.st.outbox.push({ to: k, entry: h, blobs: blobs.map((b) => b.blob.hash), tries: 0, last: null, error: null, thread: body.thread });
         if (audit) this.store.audit(audit[0], { ...audit[1], entry: h, seq: e.seq });
         then?.();
         return h;
@@ -454,22 +456,26 @@ export class Lan {
   }
   private async flushOne(key: string, list: Outbox[]) {
     const p = this.trusted(key); if (!p || this.closed) return;
-    if ((list[0]?.next ?? 0) > Date.now()) return; // the oldest waits: later entries wait behind it (they may depend on it)
-    const batch = list.slice(0, LIMITS.push), entries = batch.map((x) => this.entry(x.entry)).filter(Boolean) as Envelope[];
+    // in signing order, but per thread: an entry that waits (with backoff) holds back the later entries of its own thread
+    // (they may depend on it), never another thread's (that would deadlock: the other thread's progress frees the room)
+    const held = new Set<string>(), due: Outbox[] = [];
+    for (const x of list) { const k = x.thread ?? "?"; if (held.has(k)) continue; if ((x.next ?? 0) > Date.now()) { held.add(k); continue; } due.push(x); }
+    if (!due.length) return;
+    const batch = due.slice(0, LIMITS.push), entries = batch.map((x) => this.entry(x.entry)).filter(Boolean) as Envelope[];
     const blobs = [...new Set(batch.flatMap((x) => x.blobs))].map((h) => this.blob(h)).filter(Boolean) as Blob[];
     try {
       const r = await call(this.me(), { key: p.key, dh: this.certOf(p).dh, host: p.host, port: p.port }, "push", { entries, blobs }, { port: this.wire.port });
       if (this.closed) return;
       const refused = new Map<string, { reason: string; retry: boolean }>((r?.refused ?? []).map((x: any) => [String(x.entry), { reason: String(x.reason).slice(0, 300), retry: x.retry === true }]));
       this.step(() => {
-        p.lastContact = now();
+        p.lastContact = now(); (p as any).unreachableSince = null;
         for (const x of batch) {
           const why = refused.get(x.entry) ?? null;
           if (why?.retry) { x.tries++; x.last = now(); x.error = why.reason; x.retry = true; x.next = Date.now() + Math.min(600_000, 5000 * 2 ** Math.min(x.tries, 7)); this.waiting(x.entry, why.reason); continue; }
           this.mark(x.entry, key, why?.reason ?? null); this.st.outbox = this.st.outbox.filter((y) => y !== x);
         }
       });
-    } catch (e: any) { if (this.closed) return; this.step(() => { for (const x of batch) { x.tries++; x.last = now(); x.error = e instanceof CallError && e.code === "unknown" ? "the peer does not recognise this Studio (it may have removed or replaced it)" : String(e?.message ?? e).slice(0, 200); x.retry = false; x.next = Date.now() + Math.min(600_000, 5000 * 2 ** Math.min(x.tries, 7)); } }); }
+    } catch (e: any) { if (this.closed) return; this.step(() => { (p as any).unreachableSince ??= now(); for (const x of batch) { x.tries++; x.last = now(); x.error = e instanceof CallError && e.code === "unknown" ? "the peer does not recognise this Studio (it may have removed or replaced it)" : String(e?.message ?? e).slice(0, 200); x.retry = false; x.next = Date.now() + Math.min(600_000, 5000 * 2 ** Math.min(x.tries, 7)); } }); }
   }
   private waiting(entry: string, why: string) { for (const t of this.st.threads) for (const s of t.steps) if (s.entry === entry) s.waiting = why; }
   private mark(entry: string, to: string, refused: string | null) {
@@ -561,7 +567,9 @@ export class Lan {
       if (!opened.plain || opened.plain.length !== opened.need.size) return later("the content this entry names is missing or does not match its hash");
       if (b.kind !== "result" && opened.plain.toString("utf8").length > LIMITS.briefing) return { why: "the briefing is too long" };
     }
-    const why = this.check(from, b, h); if (why) return why === "no such thread on this Studio" ? later(why) : { why };
+    const why = this.check(from, b, h); if (why) return why === "no such thread on this Studio" || /open dispatches here already/.test(why) ? later(why) : { why };
+    // what one peer's content takes on this disk is bounded (pruned threads free it)
+    if (opened.need && !this.store.hasBlob(opened.need.hash) && this.store.peerBytes(from) + opened.need.size > LIMITS.peerQuota) return later(`this peer's content on this Mac reached its quota (${LIMITS.peerQuota / 1024 / 1024} MB)`);
     if (opened.blob && opened.need) { this.putBlob(opened.blob, { thread: b.thread, peer: from, bytes: opened.need.size }); this.texts.set(opened.need.hash, opened.plain!.toString("utf8")); }
     this.putEntry(e, b.thread); this.bodies.set(h, b);
     this.apply(e, b, h, false);
@@ -604,7 +612,9 @@ export class Lan {
   /** Whether a received body fits the thread as this Studio knows it: the reason it does not, or null. */
   private check(from: string, b: Body, h: string): string | null {
     const t = this.thread(b.thread), me = this.live().key;
-    if (b.kind === "dispatch") { if (t) return "this thread already exists"; return null; }
+    if (b.kind === "dispatch") { if (t) return "this thread already exists";
+      if (this.st.threads.filter((x) => x.owner === from && x.state === "open").length >= LIMITS.openPerPeer) return `this peer has ${LIMITS.openPerPeer} open dispatches here already`;
+      return null; }
     if (!t) return "no such thread on this Studio";
     if (t.state !== "open" && b.kind !== "revoke") return `the thread is ${t.state}`;
     const r = this.cur(t);
@@ -721,6 +731,8 @@ export class Lan {
         return this.threadView(t);
       } else if (i.kind === "assign") {
         if (r.run) throw new LanError(409, r.run.state === "gone" ? "this round's Task is gone (Studio stopped while it started): it needs a fresh take and assignment" : "this round already ran or is starting");
+        const running = this.st.threads.flatMap((x) => x.rounds).filter((x) => x.run && !ENDED.includes(x.run.state)).length;
+        if (running >= LIMITS.concurrentTasks) throw new LanError(409, `${running} Tasks from peers are running on this Mac (at most ${LIMITS.concurrentTasks} at once): start this one when one ends`, "busy");
         const text = this.prompt(t, r);
         // the claim is written, synced, before the Task starts: a second approval (a double click, another tab, a restart)
         // finds it and starts nothing; the item that started it is how a restart finds the Task again
@@ -790,14 +802,20 @@ export class Lan {
     const plain = Buffer.from(canonical({ files }), "utf8");
     // a hit blocks the send (src/lan/scan.ts): credentials, keys, encoded or split secrets, long random strings, the privacy denylist
     const deny = this.o.privacyDenylist?.() ?? [], hits: Hit[] = files.flatMap((f) => scanText(f.path, f.text, deny));
-    return { r, out, files, plain, hash: sha256hex(plain), hits, protectedHits: out.protectedHits, skipped: out.files.filter((f) => f.text === null).map((f) => f.path) };
+    // what the hand-back adds, per file (a patch's added and removed lines; a file's lines), and in all
+    const stats = files.map((f) => { if (f.path !== "changes.patch") return { path: f.path, added: f.text.split("\n").length, removed: 0, addedBytes: Buffer.byteLength(f.text) };
+      let added = 0, removed = 0, bytes = 0; for (const l of f.text.split("\n")) { if (l.startsWith("+") && !l.startsWith("+++")) { added++; bytes += Buffer.byteLength(l) - 1; } else if (l.startsWith("-") && !l.startsWith("---")) removed++; }
+      return { path: f.path, added, removed, addedBytes: bytes }; });
+    const addedBytes = stats.reduce((a, x) => a + x.addedBytes, 0);
+    return { r, out, files, plain, hash: sha256hex(plain), hits, protectedHits: out.protectedHits, skipped: out.files.filter((f) => f.text === null).map((f) => f.path), stats, addedBytes, copies: (out as any).copies ?? [] };
   }
   async handbackPreview(threadId: string, edits?: { path: string; text: string | null }[]) {
     const t = this.thread(threadId); if (!t) throw new LanError(404, "no such thread");
     const x = await this.outputFor(t, edits);
     // a file a hand-back cannot carry (binary, unreadable) is a refusal, not a silent drop: what the peer gets is what was made
     return { thread: t.id, round: x.r.n, run: x.r.run!.id, hash: x.hash, bytes: x.plain.length, files: x.files, skipped: x.skipped, secrets: x.hits, protectedPaths: x.protectedHits, checks: x.out.checks, workflow: x.out.workflow,
-      ok: !x.hits.length && !x.protectedHits.length && !x.skipped.length && x.plain.length <= LIMITS.blob, tooLarge: x.plain.length > LIMITS.blob, binary: x.skipped };
+      stats: x.stats, addedBytes: x.addedBytes, tooMuchAdded: x.addedBytes > LIMITS.addedBytes, copies: x.copies,
+      ok: !x.hits.length && !x.protectedHits.length && !x.skipped.length && x.plain.length <= LIMITS.blob && x.addedBytes <= LIMITS.addedBytes, tooLarge: x.plain.length > LIMITS.blob, binary: x.skipped };
   }
   /** 交回: sign and send the result, only for the exact bytes the person saw (confirm = their hash) and only when no gate hit. */
   async handback(threadId: string, o: { confirm: string; edits?: { path: string; text: string | null }[] }) {
@@ -806,6 +824,7 @@ export class Lan {
     if (x.protectedHits.length) throw new LanError(409, `refused: the output changes ${x.protectedHits.join(", ")}: work from a peer may not change CI configuration, git hooks or package scripts`, "protected");
     if (x.hits.length) throw new LanError(409, `refused: the output holds ${x.hits.length} secret or private hit(s) (${x.hits.slice(0, 3).map((h) => `${h.path}:${h.line} ${h.what}`).join("; ")}); remove them and preview again`, "secret");
     if (x.plain.length > LIMITS.blob) throw new LanError(413, "the output is larger than a result may be (256 KB)");
+    if (x.addedBytes > LIMITS.addedBytes) throw new LanError(413, `refused: the output adds ${x.addedBytes} bytes, more than a round may hand back (${LIMITS.addedBytes / 1024} KB)`, "added");
     if (x.skipped.length) throw new LanError(409, `refused: the output holds ${x.skipped.join(", ")}, which a hand-back cannot carry (only text goes back); nothing is sent`, "binary");
     if (o.confirm !== x.hash) throw new LanError(409, "the output changed since the preview: preview it again", "stale");
     const blob = sealBlob(x.plain, [this.recipient(t.owner)], { id: this.live().key, dh: this.live().dhPub });
@@ -955,7 +974,7 @@ export class Lan {
       introOpenUntil: this.st.introUntil && this.st.introUntil > Date.now() ? new Date(this.st.introUntil).toISOString() : null,
       introFailures: (this.st.introFailures ?? []).filter((f) => Date.parse(f.at) >= (this.st.introOpenedAt ?? 0) - 3600_000).slice(-5),
       intros: this.st.intros.filter(live).map((i) => ({ ...i, similar: similar(i.claimed, i.key), successorOf: successorOf(i.key) })),
-      peers: this.st.peers.map((p) => ({ ...p, vouched: this.vouched(p), frozen: p.frozen ? { ...p.frozen, a: this.inspectSafe(p.frozen.entries[0]), b: this.inspectSafe(p.frozen.entries[1]) } : null,
+      peers: this.st.peers.map((p) => ({ ...p, vouched: this.vouched(p), unreachableSince: (p as any).unreachableSince ?? null, frozen: p.frozen ? { ...p.frozen, a: this.inspectSafe(p.frozen.entries[0]), b: this.inspectSafe(p.frozen.entries[1]) } : null,
         notice: p.state === "retired" ? { en: `${p.petname} changed identity: introduce it again`, zh: `${p.petname} 換了身分，需要重新引介` } : p.moved ? { en: `${p.petname} now answers at ${p.host}:${p.port} (was ${p.moved.from})`, zh: `${p.petname} 改從 ${p.host}:${p.port} 連線（原本 ${p.moved.from}）` } : null })),
       threads: this.st.threads.map((t) => this.threadView(t)).reverse(),
       items: this.st.items.filter((i) => i.state === "open" || i.state === "frozen").map((i) => this.itemView(i)).reverse(),

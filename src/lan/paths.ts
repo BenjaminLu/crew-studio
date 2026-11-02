@@ -21,6 +21,8 @@ const AT_ANY_DEPTH = [
   // build and test runners that run code on their own
   "makefile", "gnumakefile", "conftest\\.py", "build\\.rs", "setup\\.py", "pytest\\.ini", "tox\\.ini", "noxfile\\.py", "justfile", "rakefile", "dockerfile",
   "docker-compose\\.ya?ml", ".cargo/", "gradle\\.properties", "gradlew",
+  // configuration a tool loads as code (vite, webpack, jest, vitest, eslint, babel, mocha, karma, playwright …)
+  "[^/]*\\.config\\.(js|cjs|mjs|ts|cts|mts)", "\\.eslintrc\\.(js|cjs)", "\\.babelrc\\.(js|cjs)", "\\.mocharc\\.[a-z]+", "karma\\.conf\\.js",
 ];
 export const PROTECTED: RegExp[] = AT_ANY_DEPTH.map((e) => e.endsWith("/") ? new RegExp(`(^|/)${e.slice(0, -1).replace(/\./g, "\\.")}/`) : new RegExp(`(^|/)${e}$`));
 /** package.json keys that run code: scripts and every git-hook manager's key */

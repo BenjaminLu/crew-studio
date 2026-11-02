@@ -229,7 +229,8 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
 - **Writes**: no round writes a protected path, nor any path with a character outside printable ASCII (a file system
   folds some onto protected names: APFS folds `ſ` to `s`) (`src/lan/paths.ts`, case-insensitive: CI, `.git/`, hooks,
   `.gitattributes`, `.gitmodules`, install settings, `.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.cursor/`,
-  `.vscode/`, `.devcontainer/`, `.envrc`, `Makefile`, `conftest.py`, `build.rs`, `setup.py`, Dockerfiles and similar).
+  `.vscode/`, `.devcontainer/`, `.envrc`, `Makefile`, `conftest.py`, `build.rs`, `setup.py`, Dockerfiles, a tool's
+  `*.config.js` and similar).
 - **Egress to the provider only**: every round (agent turns, coordinator turns, judges) gets no host from `egress.allow`.
 - **Nothing listens**: every step of the Task runs in a no-binding scope (`sandboxScope` in `src/runtime/checks.ts`):
   its agent rounds, its installs and its test runs (`run_tests`, `run_command`, the checks that run the project's tests)
@@ -279,7 +280,10 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
 
 Nothing is published by itself. When the Task has succeeded, the taker previews exactly what goes back and presses
 交回: a deliver workflow's files, or a code workflow's one patch (`changes.patch`, everything its worktree changed
-against its base, new files included; every changed path is checked, and more than 240 refuse the hand-back). Every file is read without following a link: a symbolic link, a hard link or
+against its base, new files included; every changed path is checked, and more than 240 refuse the hand-back at once,
+before any file is read). The preview counts what each file adds and removes; more than 128 KB of added text blocks the
+send, and a patch whose added lines copy a file of the taker's project it did not change (12 lines or more in a row)
+is flagged at the top, naming the files. Every file is read without following a link: a symbolic link, a hard link or
 anything but a regular file is refused, and its real path must stay inside the Task's folder. The send is refused when
 the output touches a protected path (above) or adds package scripts or hook keys, and blocked while the scan finds a
 credential, a key, an encoded or split secret, Studio's own key format, a long random string or a name on the
@@ -287,6 +291,19 @@ credential, a key, an encoded or split secret, Studio's own key format, a long r
 honest mistakes, not a wall: an agent told to leak something can encode it past any scanner, and the page says so; the
 person reading the bytes is the gate. The send must carry the hash of the bytes the person saw. The result is sealed to
 the dispatcher only. Its checks summary is the taker's own report.
+
+## Limits
+
+- A peer has at most five open dispatches on this Mac; a sixth waits (a retryable refusal) until one closes.
+- At most three Tasks from peers run at once on a Mac; the next start is refused until one ends.
+- A peer's content on this disk (its sealed briefings and results) has a quota of 64 MB; past it, its entries wait.
+- An entry that waits holds back only the later entries of its own thread (they may depend on it), never another
+  thread's. A peer that cannot be reached shows since when.
+- Sealed sizes are rounded up to 1 KiB.
+- The audit rotates past 50,000 rows to a 0600 file of its own (`lan/audit-*.jsonl`), written before the rows leave
+  the table; the chain goes on from the last moved row.
+- Protected paths include configuration a tool loads as code: `*.config.{js,cjs,mjs,ts,cts,mts}` (vite, webpack, jest,
+  vitest, playwright …), `.eslintrc.js`, `.babelrc.js`, `.mocharc.*`, `karma.conf.js`.
 
 ## Code work: its base
 

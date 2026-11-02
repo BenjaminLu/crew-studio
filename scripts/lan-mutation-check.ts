@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 type M = { name: string; rule: string; edits: { file: string; from: string; to: string }[]; tests: string[] };
 const R = join(import.meta.dir, "..");
-const SPEND = "bun tests/lan-spend.ts", CODE = "bun tests/lan-code.ts", BOARD = "bun tests/board-start.ts", KEYS = "bun tests/lan-keys.ts", IDENTITY = "bun tests/lan-identity.ts", STORE = "bun tests/lan-store.ts", WORKFLOWS = "bun tests/lan-workflows.ts", RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
+const LIMITS_T = "bun tests/lan-limits.ts", SPEND = "bun tests/lan-spend.ts", CODE = "bun tests/lan-code.ts", BOARD = "bun tests/board-start.ts", KEYS = "bun tests/lan-keys.ts", IDENTITY = "bun tests/lan-identity.ts", STORE = "bun tests/lan-store.ts", WORKFLOWS = "bun tests/lan-workflows.ts", RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
 const MUTATIONS: M[] = [
   // ---------- the first review's rules ----------
   { name: "unintroduced", rule: "an unintroduced key is refused", tests: [RELAY],
@@ -143,8 +143,8 @@ const MUTATIONS: M[] = [
   { name: "R3-assign-revoked", rule: "a Task that finishes starting after its peer was revoked is stopped", tests: [PROFILE],
     edits: [{ file: "src/lan/relay.ts", from: `if (!this.trusted(i.from) || this.peer(i.from)?.frozen || t.state !== "open") { this.o.runner.cancel(started.run,`, to: `if (t.state !== "open") { this.o.runner.cancel(started.run,` }] },
   { name: "R3-patch-all", rule: "the hand-back checks every changed path", tests: [PROFILE],
-    edits: [{ file: "src/lan/runner.ts", from: `        for (const n of all) {`, to: `        for (const n of all.slice(0, 240)) {` },
-      { file: "src/lan/runner.ts", from: "if (all.length > LIMITS.files * 4) hits.add(", to: "if (false) hits.add(" }] },
+    edits: [{ file: "src/lan/runner.ts", from: "if (all.length > LIMITS.files * 4) hits.add(", to: "if (false) hits.add(" },
+      { file: "src/lan/runner.ts", from: "        else for (const n of all) {", to: "        else for (const n of all.slice(0, 240)) {" }] },
   { name: "R3-overlap", rule: "a peer's Task title never reaches another Task's overlap note", tests: [PROFILE],
     edits: [{ file: "src/domain/code-queue.ts", from: `const shownTitle = (engine: Engine, r: Run) => (engine.redacted(r) ?`, to: `const shownTitle = (engine: Engine, r: Run) => (false ?` }] },
   { name: "R3-stall", rule: "a stalled introduction counts as a failure", tests: [PROFILE],
@@ -220,6 +220,27 @@ const MUTATIONS: M[] = [
   { name: "B-base-apply", rule: "a result applies onto the base it names, never another (A-M4)", tests: [CODE],
     edits: [{ file: "src/lan/relay.ts", from: `if (!base || (t.base && base !== t.base.sha)) throw new LanError(`, to: `if (false) throw new LanError(` },
       { file: "src/lan/apply.ts", from: `const repo = p.path, base = parent;`, to: `const repo = p.path, base = p.base || "main";` }] },
+  // ---------- limits ----------
+  { name: "L-config", rule: "configuration a tool loads as code is protected (C-S5)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/paths.ts", from: `  "[^/]*\\\\.config\\\\.(js|cjs|mjs|ts|cts|mts)", "\\\\.eslintrc\\\\.(js|cjs)", "\\\\.babelrc\\\\.(js|cjs)", "\\\\.mocharc\\\\.[a-z]+", "karma\\\\.conf\\\\.js",`, to: `` }] },
+  { name: "L-open", rule: "a peer has at most five open dispatches here (C-S6)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/relay.ts", from: "if (this.st.threads.filter((x) => x.owner === from && x.state === \"open\").length >= LIMITS.openPerPeer) return", to: "if (false) return" }] },
+  { name: "L-concurrent", rule: "at most three peers' Tasks run at once (C-S6)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/relay.ts", from: "if (running >= LIMITS.concurrentTasks) throw", to: "if (false) throw" }] },
+  { name: "L-quota", rule: "a peer's content on this disk has a quota (C-S6)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/relay.ts", from: "&& this.store.peerBytes(from) + opened.need.size > LIMITS.peerQuota) return", to: "&& false) return" }] },
+  { name: "L-rotate", rule: "the audit rotates to a file and keeps its chain (C-S7)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/store.ts", from: "sink?.(old); // filed before they leave the table: a failed write moves nothing", to: "" }] },
+  { name: "L-pad", rule: "sealed sizes are rounded to 1 KiB", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/crypto.ts", from: "const padded = Buffer.concat([body, Buffer.alloc((1024 - (body.length % 1024)) % 1024)]);", to: "const padded = body;" }] },
+  { name: "L-copies", rule: "a hand-back copying the taker's own files is flagged (C-S2)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/runner.ts", from: "if (windows.has(lines.slice(i, i + W).join(\"\\n\"))) { out.push(n); break; }", to: "if (false) { out.push(n); break; }" }] },
+  { name: "L-added", rule: "too much added text blocks the hand-back (C-S2)", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: "if (x.addedBytes > LIMITS.addedBytes) throw new LanError(413,", to: "if (false) throw new LanError(413," }] },
+  { name: "L-unreachable", rule: "a peer that cannot be reached says since when (A-S4)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/relay.ts", from: "(p as any).unreachableSince ??= now();", to: "" }] },
+  { name: "L-thread-order", rule: "a waiting entry holds back only its own thread (no deadlock)", tests: [LIMITS_T],
+    edits: [{ file: "src/lan/relay.ts", from: "for (const x of list) { const k = x.thread ?? \"?\"; if (held.has(k)) continue;", to: "for (const x of list) { const k = \"?\"; if (held.has(k)) continue;" }] },
   // ---------- spend ----------
   { name: "$-round-time", rule: "a peer's round gets at most 15 minutes and 60 tool calls (S7)", tests: [SPEND],
     edits: [{ file: "src/lan/profile.ts", from: "return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => next({ ...opts, timeoutMs, maxTools,", to: "return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => next({ ...opts," }] },

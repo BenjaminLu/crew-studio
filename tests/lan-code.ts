@@ -84,6 +84,10 @@ A.close(); B.close();
   await until(() => T.view().items.some((i: any) => i.kind === "assign")); await T.approve(T.view().items.find((i: any) => i.kind === "assign")!.id);
   const pre = await T.handbackPreview(th.id); let e = ""; try { await T.handback(th.id, { confirm: pre.hash }); } catch (x: any) { e = `${x.code}: ${x.message}`; }
   ok(!pre.ok && pre.binary.includes("chart.png") && /^binary:/.test(e), "a binary file in the output is a refusal at the hand-back (shown in the preview), never dropped silently", JSON.stringify([pre.ok, pre.binary, e]));
+  // the preview counts what goes back per file, and too much added text blocks the send (C-S2)
+  out.files = [{ path: "report.md", text: "line\n".repeat(30_000), bytes: 150_000 }];
+  const big = await T.handbackPreview(th.id); let e2 = ""; try { await T.handback(th.id, { confirm: big.hash }); } catch (x: any) { e2 = `${x.code}: ${x.message}`; }
+  ok(big.stats?.[0]?.path === "report.md" && big.stats[0].added === 30_001 && big.tooMuchAdded && !big.ok && /^added:/.test(e2), "the preview counts what each file adds, and more added text than a round may hand back blocks the send", JSON.stringify([big.stats, big.addedBytes, e2]));
   D.close(); T.close(); }
 console.log(`\nlan-code: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

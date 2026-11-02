@@ -100,7 +100,7 @@ try {
       const x = await p.B.api(`/api/lan/items/${d.id}/approve`, { seen: seenOf(d.prompt), workflow: id, provider: "codex", roundsOnly: true, rounds: 6 });
       const after = (await must(p.B.api("/api/wruns"), "B's runs")).runs.length, inst = (await p.B.api(`/api/wf/${id}`)).status;
       ok(x.status === 400 && /not installed/.test(String(x.body?.error)) && after === before && inst !== 200, `${id}: not installed on B, refused at the take with that reason, nothing started`, `${x.status} ${JSON.stringify(x.body).slice(0, 300)} (GET /api/wf/${id}: ${inst})`);
-      await must(p.B.api(`/api/lan/items/${d.id}/reject`, { note: "not here" }), "B declines");
+      await must(p.B.api(`/api/lan/items/${d.id}/reject`, { note: "not here" }), "B declines"); await must(p.A.api(`/api/lan/threads/${t.id}/withdraw`, { reason: "refused at the take" }), "A withdraws it"); await p.A.api("/api/lan/sync", {});
       rows.push({ id, verdict: "refuses", why: String(x.body?.error ?? "") }); continue;
     }
     if (!w.eligible) {
@@ -110,7 +110,7 @@ try {
       const x = await p.B.api(`/api/lan/items/${d.id}/approve`, { seen: seenOf(d.prompt), workflow: id, provider: "codex", roundsOnly: true, rounds: 6 });
       const after = (await must(p.B.api("/api/wruns"), "B's runs")).runs.length, why = String(x.body?.error ?? "");
       ok(x.status === 409 && x.body?.code === "profile" && why.includes(w.why[0]) && after === before, `${id}: refused at the take with its reason, nothing started`, `${x.status} ${JSON.stringify(x.body).slice(0, 300)}`);
-      await must(p.B.api(`/api/lan/items/${d.id}/reject`, { note: "cannot run here" }), "B declines");
+      await must(p.B.api(`/api/lan/items/${d.id}/reject`, { note: "cannot run here" }), "B declines"); await must(p.A.api(`/api/lan/threads/${t.id}/withdraw`, { reason: "refused at the take" }), "A withdraws it"); await p.A.api("/api/lan/sync", {});
       rows.push({ id, verdict: "refuses", why: w.why.join("; ") });
       continue;
     }

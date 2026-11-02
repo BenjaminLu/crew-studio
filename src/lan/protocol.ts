@@ -6,7 +6,7 @@
 // entry that names its hash; nothing is fetched by hash afterwards, so there is no blob endpoint to ask "do you have X".
 import { b64u, canonical, checkPub, open, seal, sha256hex, unb64u, verify, type Box, type Recipient, type StaticKey } from "./crypto";
 
-export const LIMITS = { envelope: 64 * 1024, blob: 256 * 1024, recipients: 8, title: 120, briefing: 6000, acceptance: 10, criterion: 300, files: 60, path: 240, note: 1000, reason: 300, push: 16, perDay: 500, rounds: 20, skewMs: 24 * 3600_000 };
+export const LIMITS = { openPerPeer: 5, concurrentTasks: 3, peerQuota: 64 * 1024 * 1024, addedBytes: 128 * 1024, envelope: 64 * 1024, blob: 256 * 1024, recipients: 8, title: 120, briefing: 6000, acceptance: 10, criterion: 300, files: 60, path: 240, note: 1000, reason: 300, push: 16, perDay: 500, rounds: 20, skewMs: 24 * 3600_000 };
 export const KINDS = ["dispatch", "take", "assign", "result", "refine", "done", "revoke"] as const;
 export type Kind = typeof KINDS[number];
 export type Envelope = { v: 2; a: string; c: string; seq: number; prev: string | null; ts: string; to: string[]; box: Box; sig: string };

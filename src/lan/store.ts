@@ -161,9 +161,10 @@ export class Store {
   }
   /** rotation: rows beyond the newest `keep` are moved to the returned list (the caller files them); the chain goes on
    *  from the last moved row's hash */
-  rotateAudit(keep: number): AuditRow[] {
+  rotateAudit(keep: number, sink?: (rows: AuditRow[]) => void): AuditRow[] {
     const total = (this.db.query("SELECT COUNT(*) AS n FROM audit").get() as { n: number }).n; if (total <= keep) return [];
     const old = (this.db.query("SELECT * FROM audit ORDER BY n LIMIT ?").all(total - keep) as any[]).map((r) => ({ n: r.n, at: r.at, what: r.what, data: JSON.parse(r.data), prev: r.prev, hash: r.hash }));
+    sink?.(old); // filed before they leave the table: a failed write moves nothing
     this.tx(() => { this.db.query("DELETE FROM audit WHERE n <= ?").run(old.at(-1)!.n); this.db.query("INSERT INTO state (k, v) VALUES ('audit-anchor', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(JSON.stringify(old.at(-1)!.hash)); });
     return old;
   }

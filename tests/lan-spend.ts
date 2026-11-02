@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { capRefusal, dailyRefusal, installLanProfile, LAN_ROUND, DEFAULT_CEILINGS } from "../src/lan/profile";
 import { Lan, type LanRunner } from "../src/lan/relay";
+import { LIMITS } from "../src/lan/protocol";
 
 process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
 let pass = 0, fail = 0;
@@ -42,6 +43,9 @@ const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version:
   start: async () => { const id = `R-${starts.length + 1}`; starts.push(id); return { run: id, workflow: { id: "documents", version: 1, defHash: "a".repeat(64) } }; },
   status: (id) => ({ state: cancelled.includes(id) ? "cancelled" : "running", result: null, spent: { usd: 0.25, rounds: 1 }, stopped: null }), output: async () => { throw new Error("no"); }, cancel: (id) => { cancelled.push(id); } });
 let daily: string | null = null;
+// this suite opens many threads and starts many Tasks between two Studios: the open-dispatch and concurrency bounds
+// (tests/lan-limits.ts) are lifted here
+(LIMITS as any).openPerPeer = 100; (LIMITS as any).concurrentTasks = 100;
 const mk = (n: string) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-spend-${n}-`)), runner: runner(), bind: "127.0.0.1", port: 0, dailyRefusal: () => daily });
 const A = await mk("a"), B = await mk("b"); A.setEnabled(true); B.setEnabled(true);
 { B.openIntro(1); const ia = await A.startIntro("127.0.0.1", B.wire.port); const ib = B.view().intros[0]; await A.confirmIntro(ia.id, ib.sas, "B"); await B.confirmIntro(ib.id, ia.sas, "A"); }

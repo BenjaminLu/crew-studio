@@ -43,6 +43,23 @@ export type RunnerDeps = {
   needsProject?: (def: any) => boolean;
 };
 
+/** Files of the base the patch's added lines copy (12 or more lines in a row the same, files it did not touch): a flag at
+ *  the top of the preview, so the person sees when a hand-back carries the taker's own code out (C-S2). Bounded. */
+export function copiesOf(wt: string, base: string, patch: string, touched: Set<string>): string[] {
+  const W = 12, added: string[] = [];
+  for (const l of patch.split("\n")) if (l.startsWith("+") && !l.startsWith("+++")) added.push(l.slice(1).trim()); else if (!l.startsWith("@@")) added.push("\0");
+  const windows = new Set<string>(); for (let i = 0; i + W <= added.length; i++) { const w = added.slice(i, i + W); if (w.includes("\0") || w.every((x) => !x)) continue; windows.add(w.join("\n")); }
+  if (!windows.size) return [];
+  const out: string[] = [], list = git(wt, ["ls-tree", "-r", "-z", "--name-only", base]).out.split("\0").filter(Boolean).filter((n) => !touched.has(n)).slice(0, 2000);
+  let read = 0;
+  for (const n of list) {
+    if (read > 5_000_000 || out.length >= 20) break;
+    const b = git(wt, ["cat-file", "-p", `${base}:${n}`]); if (!b.ok || b.out.length > 200_000) continue; read += b.out.length;
+    const lines = b.out.split("\n").map((x) => x.trim());
+    for (let i = 0; i + W <= lines.length; i++) if (windows.has(lines.slice(i, i + W).join("\n"))) { out.push(n); break; }
+  }
+  return out;
+}
 export function lanRunner(d: RunnerDeps): LanRunner {
   const manifest = (ref: string) => { try { return d.engine.registry?.get?.(ref) ?? null; } catch { return null; } };
   const ref = (def: any): WorkflowRef => ({ id: def.id, version: Number(def.version), defHash: defHash(def) });
@@ -77,7 +94,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
     async output(id) {
       const r = d.engine.get(id); if (!r) throw new Error("no such Task");
       if (!lanOf(r)) throw new Error("this Task was not started from a peer's work");
-      const files: { path: string; text: string | null; bytes: number }[] = [], changed = new Set<string>(), hits = new Set<string>();
+      const files: { path: string; text: string | null; bytes: number }[] = [], changed = new Set<string>(), hits = new Set<string>(), copies: string[] = [];
       // a deliver step's versions: every file the round wrote, each read inside its version's folder without following a link
       for (const v of Object.values<any>(r.ctx?.deliver ?? {})) {
         const ver = d.artifacts?.version(v.id, v.n); if (!ver) continue; const root = d.artifacts!.filesDir(v.id, v.n);
@@ -93,8 +110,9 @@ export function lanRunner(d: RunnerDeps): LanRunner {
         const tracked = git(wt, ["diff", "--name-only", "-z", "--no-renames", base]).out.split("\0").filter(Boolean);
         const untracked = git(wt, ["ls-files", "--others", "--exclude-standard", "-z"]).out.split("\0").filter(Boolean);
         const all = [...new Set([...tracked, ...untracked])];
+        // too many changed files: refused at once, before reading any of them (the send is blocked either way)
         if (all.length > LIMITS.files * 4) hits.add(`${all.length} changed files (more than ${LIMITS.files * 4} are not handed back)`);
-        for (const n of all) {
+        else for (const n of all) {
           changed.add(n); const got = readInside(wt, n), before = git(wt, ["show", `${base}:${n}`]);
           if ("refused" in got) { hits.add(`${n} (${got.refused})`); continue; }
           const after = "bytes" in got ? utf8(got.bytes) : null;
@@ -105,12 +123,13 @@ export function lanRunner(d: RunnerDeps): LanRunner {
         for (const n of untracked) { const got = readInside(wt, n); if (!("bytes" in got)) continue;
           const p = git(wt, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--binary", "--no-index", "--", "/dev/null", n]); parts.push(p.out); }
         const patch = parts.filter(Boolean).join("\n") + "\n";
+        copies.push(...copiesOf(wt, base, patch, new Set(all)));
         if (Buffer.byteLength(patch) > LIMITS.blob) hits.add("changes.patch (larger than a result may be)");
         files.push({ path: "changes.patch", text: patch.trim() ? patch : null, bytes: Buffer.byteLength(patch) });
       }
       const ledger = (d.engine.ledger?.(id) ?? []).filter((e: any) => e.check && e.kind !== "record" && !String(e.check).startsWith("runtime/"));
       const pass = ledger.filter((e: any) => e.verdict === "pass").length, fail = ledger.filter((e: any) => e.verdict === "fail").length, other = ledger.length - pass - fail;
-      return { files: files.slice(0, LIMITS.files), changed: [...changed], protectedHits: [...hits], checks: { pass, fail, other, summary: `${pass}/${ledger.length} checks pass on the taker's Studio (the taker's own report: run them again before relying on it)` }, workflow: ref(r.def), kind: wt ? "patch" : "files", base: wt && base ? String(base) : null };
+      return { files: files.slice(0, LIMITS.files), changed: [...changed], protectedHits: [...hits], checks: { pass, fail, other, summary: `${pass}/${ledger.length} checks pass on the taker's Studio (the taker's own report: run them again before relying on it)` }, workflow: ref(r.def), kind: wt ? "patch" : "files", base: wt && base ? String(base) : null, copies } as any;
     },
     findByItem(item) {
       for (const r of d.engine.list?.() ?? []) if (r.profile?.name === "lan" && (r.profile.mark as any)?.item === item) return String(r.id);

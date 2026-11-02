@@ -99,7 +99,9 @@ try {
     ok(main.status === 404, "the LAN listener serves none of Studio's routes, even with the session"); }
 
   // a fresh thread for the next checks
-  const dispatch = async (briefing: string, acceptance: string[] = []) => must(p.A.api("/api/lan/dispatch", { to: p.keyB, title: "檢查", briefing, acceptance, workflow: "documents" }), "dispatch");
+  // each check's thread is withdrawn before the next is dispatched: a peer has at most five open dispatches on a Mac
+  const tidy = async () => { for (const t of (await view(p.A)).threads.filter((x: any) => x.role === "dispatcher" && x.state === "open")) await p.A.api(`/api/lan/threads/${t.id}/withdraw`, { reason: "check done" }); await p.A.api("/api/lan/sync", {}); };
+  const dispatch = async (briefing: string, acceptance: string[] = []) => (await tidy(), must(p.A.api("/api/lan/dispatch", { to: p.keyB, title: "檢查", briefing, acceptance, workflow: "documents" }), "dispatch"));
   const itemOn = (s: any, kind: string, thread: string) => until(`${kind} on ${s.name}`, async () => (await view(s)).items.find((i: any) => i.kind === kind && i.thread === thread && i.state === "open"));
   const toRun = async (briefing: string, cap: any = { roundsOnly: true, rounds: 6 }) => {
     const t = await dispatch(briefing); const d = await itemOn(p.B, "dispatch", t.id);
@@ -215,7 +217,7 @@ try {
     const it = v.items.find((i: any) => i.title === "第一個版本");
     const res = await p.B.api(`/api/lan/items/${it.id}/approve`, { seen: seenOf(it.prompt), workflow: "documents" });
     ok(it.state === "frozen" && res.status === 409, "the frozen author's items cannot be approved", `${it.state} ${res.status}`);
-    const t = await p.A.api("/api/lan/dispatch", { to: p.keyB, title: "凍結中", briefing: "x", workflow: "documents" }); await p.A.api("/api/lan/sync", {});
+    await tidy(); const t = await p.A.api("/api/lan/dispatch", { to: p.keyB, title: "凍結中", briefing: "x", workflow: "documents" }); await p.A.api("/api/lan/sync", {});
     const refused = (await view(p.B)).refused.some((x: any) => /frozen/.test(x.reason)); const thA = await must(p.A.api(`/api/lan/threads/${t.body.id}`), "A thread");
     const waits = (await view(p.A)).outbox.some((x: any) => x.entry === thA.steps[0].entry && /frozen/.test(x.error ?? ""));
     ok(refused && /frozen/.test(thA.steps[0].waiting ?? "") && !thA.steps[0].refused && waits, "new entries from the frozen author are refused for now: the author's entry waits in its outbox with the reason (it is sent again once a person resolves the freeze)", JSON.stringify(thA.steps[0]));

@@ -73,7 +73,10 @@ export function seal(plain: Uint8Array, recipients: Recipient[], purpose: string
     const kek = derive(dh(e.priv, r.dh), Buffer.concat([e.pub, r.dh, Buffer.from(r.id)]), `wrap\0${purpose}`), wiv = randomBytes(12);
     return { to: r.id, k: b64u(r.dh), iv: b64u(wiv), w: b64u(aeadSeal(kek, wiv, cek, ad)) };
   });
-  return { alg: "p256-hkdf-aesgcm-2", epk: b64u(e.pub), iv: b64u(iv), ct: b64u(aeadSeal(cek, iv, plain, ad)), keys };
+  // the size an observer of the sealed bytes learns is rounded up to 1 KiB: the length, then the bytes, then zeros
+  const len = Buffer.alloc(4); len.writeUInt32BE(plain.length); const body = Buffer.concat([len, Buffer.from(plain)]);
+  const padded = Buffer.concat([body, Buffer.alloc((1024 - (body.length % 1024)) % 1024)]);
+  return { alg: "p256-hkdf-aesgcm-2", epk: b64u(e.pub), iv: b64u(iv), ct: b64u(aeadSeal(cek, iv, padded, ad)), keys };
 }
 /** The plaintext, or null when this identity's key is not a recipient or anything fails to verify. */
 export async function open(box: any, me: { id: string; dh: StaticKey }, purpose: string): Promise<Buffer | null> {
@@ -83,7 +86,8 @@ export async function open(box: any, me: { id: string; dh: StaticKey }, purpose:
     const epk = checkPub(unb64u(box.epk, 65)), ad = Buffer.from(`${DOMAIN}\0box\0${purpose}`);
     const kek = derive(await me.dh.dh(epk), Buffer.concat([epk, me.dh.pub, Buffer.from(me.id)]), `wrap\0${purpose}`);
     const cek = aeadOpen(kek, unb64u(mine.iv, 12), unb64u(mine.w), ad); if (!cek) return null;
-    return aeadOpen(cek, unb64u(box.iv, 12), unb64u(box.ct), ad);
+    const p = aeadOpen(cek, unb64u(box.iv, 12), unb64u(box.ct), ad); if (!p || p.length < 4) return null;
+    const n = p.readUInt32BE(0); if (n > p.length - 4) return null; return Buffer.from(p.subarray(4, 4 + n));
   } catch { return null; }
 }
 
