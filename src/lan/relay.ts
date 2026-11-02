@@ -421,17 +421,19 @@ export class Lan {
   threadView(t: ThreadRec) {
     const me = this.id.key, r = this.cur(t), mineToDo = (k: string) => k === me;
     // where the work is now, who holds it, and what comes next, read from the last step of the current round
-    let where = "", holder = "", next = "";
-    const taker = t.owner === me ? t.peer : me;
-    if (t.state === "done") { where = "已完成"; holder = "—"; next = "沒有下一步"; }
-    else if (t.state === "withdrawn") { where = "派工者已撤回"; holder = "—"; next = "沒有下一步"; }
-    else if (r.result) { where = `第 ${r.n} 輪結果已交回`; holder = t.owner; next = "派工者看結果：再調整（refine）或結案（done）"; }
-    else if (r.run) { where = r.run.state === "succeeded" ? `第 ${r.n} 輪 Task ${r.run.id} 跑完` : `第 ${r.n} 輪 Task ${r.run.id}：${r.run.state}`; holder = taker; next = r.run.state === "succeeded" ? "接手者看過要交回的內容，按「交回」" : r.run.state === "running" || r.run.state === "waiting" ? "等 Task 跑完" : "Task 沒跑完：接手者決定"; }
-    else if (r.assign) { where = `第 ${r.n} 輪已指派`; holder = taker; next = "接手者核准開工（在受限 profile 下跑自己的流程）"; }
-    else if (r.take) { where = `第 ${r.n} 輪已有人接`; holder = t.owner; next = "派工者核准並指派（assign）"; }
-    else { where = r.n === 1 ? "已派工" : `第 ${r.n} 輪已調整`; holder = taker; next = "接手者看完整內容後，選自己的流程接下（take）"; }
+    const tx = (en: string, zh: string) => ({ en, zh });
+    let where = tx("", ""), holder = "", next = tx("", "");
+    const taker = t.owner === me ? t.peer : me, n = r.n, run = r.run;
+    if (t.state === "done") { where = tx("Done", "已完成"); next = tx("Nothing: the thread is closed", "沒有下一步"); }
+    else if (t.state === "withdrawn") { where = tx("Withdrawn by the dispatcher", "派工者已撤回"); next = tx("Nothing", "沒有下一步"); }
+    else if (r.result) { where = tx(`Round ${n}: result handed back`, `第 ${n} 輪結果已交回`); holder = t.owner; next = tx("The dispatcher reads it, then refines or marks it done", "派工者看結果：再調整（refine）或結案（done）"); }
+    else if (run) { where = run.state === "succeeded" ? tx(`Round ${n}: Task ${run.id} finished`, `第 ${n} 輪 Task ${run.id} 跑完`) : tx(`Round ${n}: Task ${run.id} ${run.state}`, `第 ${n} 輪 Task ${run.id}：${run.state}`); holder = taker;
+      next = run.state === "succeeded" ? tx("The taker reads what goes back and presses 交回", "接手者看過要交回的內容，按「交回」") : run.state === "running" || run.state === "waiting" ? tx("Wait for the Task to finish", "等 Task 跑完") : tx("The Task did not finish: the taker decides", "Task 沒跑完：接手者決定"); }
+    else if (r.assign) { where = tx(`Round ${n}: assigned`, `第 ${n} 輪已指派`); holder = taker; next = tx("The taker starts it on the restricted profile", "接手者核准開工（在受限 profile 下跑自己的流程）"); }
+    else if (r.take) { where = tx(`Round ${n}: taken`, `第 ${n} 輪已有人接`); holder = t.owner; next = tx("The dispatcher assigns it", "派工者核准並指派（assign）"); }
+    else { where = n === 1 ? tx("Dispatched", "已派工") : tx(`Round ${n}: refined`, `第 ${n} 輪已調整`); holder = taker; next = tx("The taker reads all of it and takes it with a workflow of their own", "接手者看完整內容後，選自己的流程接下（take）"); }
     return { id: t.id, title: t.title, role: t.owner === me ? "dispatcher" : "taker", owner: this.who(t.owner), peer: this.who(t.peer), state: t.state, acceptance: t.acceptance, suggested: t.suggested,
-      now: { where, holder: holder === "—" ? null : this.who(holder), mine: mineToDo(holder), next },
+      now: { where, holder: holder ? this.who(holder) : null, mine: mineToDo(holder), next },
       rounds: t.rounds, steps: t.steps.map((s) => ({ ...s, who: this.who(s.author) })) };
   }
   itemView(i: ItemRec) {

@@ -116,7 +116,7 @@ export async function relay(p: Pair, log: (s: string) => void = () => {}) {
   const dn = await item(p.B, "done", t.id);
   await must(p.B.api(`/api/lan/items/${dn.id}/approve`, {}), "B acknowledges done");
   const ta = await must(p.A.api(`/api/lan/threads/${t.id}`), "A's thread"), tb = await must(p.B.api(`/api/lan/threads/${t.id}`), "B's thread");
-  step("A,B", `thread    A 看到：${ta.now.where}；B 看到：${tb.now.where}`);
+  step("A,B", `thread    A 看到：${ta.now.where.zh}；B 看到：${tb.now.where.zh}`);
   log("");
   log("交接軌跡（A 的看板，依序）：");
   for (const s of ta.steps) log(`  ${at(s.at)}  r${s.round}  ${s.kind.padEnd(8)} ${s.who.name.padEnd(6)} ${s.who.fp.slice(0, 11)}  ${s.entry.slice(0, 12)}${s.delivered === false ? "  (未送達)" : ""}`);

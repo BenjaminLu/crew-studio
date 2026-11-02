@@ -1,0 +1,53 @@
+/* Board-to-board work (public/lan.js): Studio's own cards, badges and fields; only the layout and the relay track are new. */
+.lan-page{min-width:0}
+.lan-top{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px;align-items:start}
+.lan-col{display:grid;gap:16px;min-width:0}
+.lan-card{min-width:0;overflow-wrap:anywhere}
+.lan-card .lan-body{display:grid;gap:10px;padding:12px 16px}
+.lan-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lan-grid2{display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:8px}
+.lan-grid3{display:grid;grid-template-columns:minmax(0,1fr) 110px 110px;gap:8px}
+@media (max-width:560px){.lan-grid2,.lan-grid3{grid-template-columns:minmax(0,1fr)}}
+.lan-fp{font-size:12px;letter-spacing:.04em;word-spacing:.2em;color:var(--text)}
+.lan-note{font-size:12px;margin:0}
+.lan-who{display:inline-flex;gap:4px;align-items:baseline;white-space:nowrap}
+.lan-warn{display:flex;gap:6px;align-items:flex-start;margin:0;padding:8px 10px;border-radius:8px;background:var(--warn-soft);color:var(--warn);font-size:13px}
+.lan-pre{margin:0;padding:10px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border);white-space:pre-wrap;word-break:break-word;font-family:var(--f-mono);font-size:12px;line-height:1.55;max-height:320px;overflow:auto}
+.lan-content{display:grid;gap:8px;max-height:460px;overflow:auto;padding-right:4px}
+.lan-content .lan-pre{max-height:none;overflow:visible}
+.lan-content .lbl,.lan-file .lbl{font-size:12px;color:var(--text-2);font-weight:500}
+.lan-content ul{margin:0;padding-left:18px}
+.lan-intro{display:grid;gap:8px;padding:12px;border:1px dashed var(--human);border-radius:10px;background:var(--human-soft)}
+.lan-sas{display:flex;align-items:baseline;gap:10px}
+.lan-sas b{font-size:28px;letter-spacing:.12em;color:var(--text)}
+.lan-peer{display:grid;gap:6px;padding:10px 0;border-top:1px solid var(--border)}
+.lan-peer:first-child{border-top:0;padding-top:0}
+.lan-frozen{display:grid;gap:8px;padding:10px;border-radius:8px;background:var(--bad-soft);color:var(--text)}
+.lan-frozen p{margin:0}
+.lan-fork{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.lan-nearby{border-top:1px solid var(--border)}
+.lan-ib{display:flex;flex-wrap:wrap;min-height:220px}
+.lan-ib-list{display:grid;align-content:start;flex:1 1 220px;max-width:100%;border-right:1px solid var(--border)}
+.lan-ib-detail{flex:999 1 360px;min-width:0}
+.lan-ib-row{display:grid;gap:3px;text-align:left;padding:10px 12px;border:0;border-bottom:1px solid var(--border);background:none;color:var(--text);font:inherit;cursor:pointer}
+.lan-ib-row.on,.lan-ib-row:hover{background:var(--surface-2)}
+.lan-ib-t{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lan-ib-detail{padding:12px 16px;min-width:0}
+.lan-detail{display:grid;gap:10px}
+.lan-detail p{margin:0}
+.lan-now{display:grid;gap:4px;padding:10px;border-radius:8px;background:var(--surface-2)}
+.lan-track{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none;counter-reset:hop}
+.lan-track li{display:flex;align-items:center;gap:6px}
+.lan-track li+li::before{content:"→";color:var(--text-3)}
+.lan-step{display:grid;gap:2px;text-align:left;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;font-size:12px;cursor:pointer}
+.lan-step:hover{border-color:var(--accent)}
+.lan-step.bad{border-color:var(--bad)}
+.lan-file{display:grid;gap:4px}
+.lan-edit{width:100%;font-family:var(--f-mono);font-size:12px;line-height:1.5;border:1px solid var(--border-strong);border-radius:6px;padding:8px;background:var(--surface);color:var(--text)}
+.lan-handback,.lan-refine{display:grid;gap:8px;padding-top:6px;border-top:1px solid var(--border)}
+.lan-insp{display:grid;gap:6px;max-width:720px}
+.lan-insp .kv b{word-break:break-all;text-align:right}
+.lan-modal{max-width:760px}
+.lan-card .kv{overflow-wrap:normal}
+.lan-card .kv b,.lan-card .kv .lan-fp{overflow-wrap:anywhere;text-align:right;min-width:0}
+.lan-run{cursor:default}
