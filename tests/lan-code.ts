@@ -71,5 +71,19 @@ await A.approve(it.id);
 { const th = (A as any).thread(t.id), r = th.rounds[0]; r.result.base = "f".repeat(40);
   const x: any = tryApply({ seen: sha256hex(patch) }); ok(/^base:/.test(x.err ?? ""), "a result based on another commit than the one this thread dispatched is not applied (never onto another base)", x.err); r.result.base = base0; }
 A.close(); B.close();
+
+// a hand-back cannot carry a binary file: the preview says so and the send is refused (never a silent drop)
+{ const out = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }, { path: "chart.png", text: null, bytes: 2048 }], changed: ["report.md", "chart.png"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" as const };
+  const run = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Docs", defHash: "d".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
+    start: async () => ({ run: "R-9", workflow: { id: "documents", version: 1, defHash: "d".repeat(64) } }), status: () => ({ state: "succeeded", result: "done", spent: { usd: 0, rounds: 1 }, stopped: null }), output: async () => out, cancel: () => {} });
+  const mk2 = (n: string, r: LanRunner) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-bin-${n}-`)), runner: r, bind: "127.0.0.1", port: 0 });
+  const D = await mk2("d", run()), T = await mk2("t", run()); D.setEnabled(true); T.setEnabled(true); await pairUp(D, T);
+  const th = await D.dispatch({ to: T.id.key, title: "a report", briefing: "x" }); await D.flush(); await until(() => T.view().items.length === 1);
+  const d = T.view().items[0], tt = T.thread(d.thread)!; await T.approve(d.id, { workflow: "documents", seen: T.seenHash(tt, tt.rounds[0]), roundsOnly: true, rounds: 3 }); await T.flush();
+  await until(() => D.view().items.some((i: any) => i.kind === "take")); await D.approve(D.view().items.find((i: any) => i.kind === "take")!.id); await D.flush();
+  await until(() => T.view().items.some((i: any) => i.kind === "assign")); await T.approve(T.view().items.find((i: any) => i.kind === "assign")!.id);
+  const pre = await T.handbackPreview(th.id); let e = ""; try { await T.handback(th.id, { confirm: pre.hash }); } catch (x: any) { e = `${x.code}: ${x.message}`; }
+  ok(!pre.ok && pre.binary.includes("chart.png") && /^binary:/.test(e), "a binary file in the output is a refusal at the hand-back (shown in the preview), never dropped silently", JSON.stringify([pre.ok, pre.binary, e]));
+  D.close(); T.close(); }
 console.log(`\nlan-code: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

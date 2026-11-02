@@ -25,12 +25,12 @@ for (const [id, extra] of [["tr", "test_run: true\n"], ["net", "network: true\n"
   writeFileSync(join(checkRoot, "l", "checks", id, "check.yaml"), readFileSync(join(import.meta.dir, "fixture/checks/t/checks/ok/check.yaml"), "utf8").replace("id: ok", `id: ${id}`) + extra);
   copyFileSync(join(import.meta.dir, "fixture/checks/t/checks/ok/run"), join(checkRoot, "l", "checks", id, "run")); chmodSync(join(checkRoot, "l", "checks", id, "run"), 0o755); }
 const H = await harness([
-  Y({ id: "lanwf", name: "lanwf", roles: [{ id: "w", label: "W", skill: "x" }], policies: { egress: { allow: ["registry.example.test"] } }, nodes: [
+  Y({ id: "lanwf", name: "lanwf", lan: { output: "text" }, roles: [{ id: "w", label: "W", skill: "x" }], policies: { egress: { allow: ["registry.example.test"] } }, nodes: [
     { id: "s", kind: "hook", label: "S", do: "set", args: { key: "s", value: 1 }, x: 0, y: 0 },
     { id: "a", kind: "agent", label: "A", role: "w", mode: "test", x: 1, y: 0 },
     { id: "c", kind: "check", label: "C", checks: [{ use: "l/tr" }, { use: "l/net" }], x: 2, y: 0 },
     { id: "e", kind: "hook", label: "E", x: 3, y: 0 }], edges: [["s", "a"], ["a", "c"], ["c", "e", "ok"], ["c", "e", "fail"], ["c", "e", "error"]] }),
-  Y({ id: "pushwf", name: "pushwf", roles: [], nodes: [{ id: "s", kind: "hook", label: "S", do: "set", args: { key: "s", value: 1 }, x: 0, y: 0 }, { id: "push", kind: "hook", label: "Push", do: "push-sim", x: 1, y: 0 }, { id: "e", kind: "hook", label: "E", x: 2, y: 0 }], edges: [["s", "push"], ["push", "e"]] }),
+  Y({ id: "pushwf", name: "pushwf", lan: { output: "text" }, roles: [], nodes: [{ id: "s", kind: "hook", label: "S", do: "set", args: { key: "s", value: 1 }, x: 0, y: 0 }, { id: "push", kind: "hook", label: "Push", do: "push-sim", x: 1, y: 0 }, { id: "e", kind: "hook", label: "E", x: 2, y: 0 }], edges: [["s", "push"], ["push", "e"]] }),
   Y({ id: "costly", name: "costly", roles: [{ id: "w", label: "W", skill: "x" }], nodes: ["a1", "a2", "a3"].map((id, i) => ({ id, kind: "agent", label: id, role: "w", mode: "test", x: i, y: 0 })).concat([{ id: "e", kind: "hook", label: "E", x: 3, y: 0 } as any]), edges: [["a1", "a2"], ["a2", "a3"], ["a3", "e"]] }),
   Y({ id: "fails", name: "fails", roles: [], nodes: [{ id: "s", kind: "hook", label: "S", do: "boom", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["s", "e"]] }),
   Y({ id: "asks", name: "asks", roles: [{ id: "w", label: "W", skill: "x" }], nodes: [{ id: "a", kind: "agent", label: "A", role: "w", mode: "test", args: { outcome: "ask" }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["a", "e"]] }),
@@ -58,6 +58,14 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   ok(pushed.includes(ctl.id), "control: an ordinary Task reaches its pushing hook");
   ok(!pushed.includes(lan.id) && /not allowed on work from a peer/.test(err), "push is blocked: a LAN-originated Task stops before a hook that pushes, opens a pull request or merges", err.slice(0, 200));
   ok(workflowRefusals(E.defs.get("pushwf")).length === 1 && workflowRefusals(E.defs.get("lanwf")).length === 0, "the take dialog's static check names the same step");
+  { // eligibility is data and platform too: an undeclared output, a declared refusal, a machine that cannot enforce the profile, the renderer
+    const { nodeRefusal } = await import("../src/lan/profile");
+    const bare = { ...E.defs.get("lanwf"), lan: undefined }, refused = { ...E.defs.get("lanwf"), lan: { refuse: "makes binary output" } };
+    ok(workflowRefusals(bare).some((y) => /does not declare what it would hand back/.test(y)) && workflowRefusals(refused).some((y) => /makes binary output/.test(y)), "a workflow that declares no LAN output, or declares a refusal, takes no work from a peer (with that reason)");
+    const plat = Object.getOwnPropertyDescriptor(process, "platform")!; Object.defineProperty(process, "platform", { value: "linux" });
+    const onLinux = workflowRefusals(E.defs.get("lanwf")); Object.defineProperty(process, "platform", plat);
+    ok(onLinux.some((y) => /enforced only on macOS/.test(y)), "a machine that cannot enforce the profile's no-binding scope takes no work from a peer at all", JSON.stringify(onLinux));
+    ok(!!nodeRefusal({ id: "r", kind: "hook", do: "deliver.render", label: "Render" }), "the renderer (a browser over the agent's page) is not on the profile"); }
   const bare = E.start({ workflow: "pushwf", text: "x", profile: { name: "lan", mark: null } }); await done(bare.id); await sleep(200);
   ok(!pushed.includes(bare.id), "a LAN Task whose mark is unreadable is still held to the profile (fail closed)");
   const broke = E.start({ workflow: "costly", title: "unreadable-mark", text: "x", profile: { name: "lan", mark: { item: "x", usd: "lots", rounds: "many" } } }); await done(broke.id);

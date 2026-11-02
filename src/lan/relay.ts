@@ -34,11 +34,13 @@ export type PeerRec = { key: string; fp: string; petname: string; claimed: strin
   moved?: { from: string; at: string } | null };
 export type IntroRec = { id: string; key: string; fp: string; sas: string; claimed: string; host: string; port: number; role: "initiator" | "responder"; at: string; expires: number; cert: Cert; storage: string | null };
 export type ItemRec = { id: string; entry: string; kind: Body["kind"]; from: string; thread: string; round: number; at: string; state: "open" | "approved" | "rejected" | "withdrawn" | "frozen"; flags: string[]; note: string | null; seq?: number };
-export type RoundRec = { n: number; fence: string; briefing: { hash: string; size: number; entry: string }; take: null | { entry: string; by: string; workflow: WorkflowRef; cap: { usd: number | null; rounds: number }; provider: string | null; staffing: string | null; project: string | null };
+export type RoundRec = { n: number; fence: string; briefing: { hash: string; size: number; entry: string }; take: null | { entry: string; by: string; workflow: WorkflowRef; cap: { usd: number | null; rounds: number }; provider: string | null; staffing: string | null; project: string | null;
+    /** the taker's opt-in at the take: start as soon as assigned, with this exact cap, until `until`, for the prompt it read */
+    auto?: { until: number; seen: string; at: string } | null };
   assign: null | { entry: string; take: string; taker: string };
   /** the run this round started. Its claim (`claimed`, the assignment item) is written, synced, before the Task starts; a
    *  restart finds the Task by that item (`found`), or marks it gone: a claim is never released by a restart */
-  run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean };
+  run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean; auto?: boolean; spent?: { usd: number; rounds: number } | null };
   result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number; base?: string | null } };
 export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null; waiting?: string | null };
 export type ThreadRec = { id: string; owner: string; peer: string; title: string; acceptance: string[]; suggested: WorkflowRef | null; rounds: RoundRec[];
@@ -49,14 +51,18 @@ export type ThreadRec = { id: string; owner: string; peer: string; title: string
 type Outbox = { to: string; entry: string; blobs: string[]; tries: number; last: string | null; error: string | null; next?: number; retry?: boolean };
 /** an identity operation waiting for a peer: this Studio's revocation of its old identity (sent with that identity's keys) */
 type IdOut = { to: string; host: string; port: number; dh: string; op: "retire"; body: unknown; from: string; tries: number; next?: number; error: string | null };
-type State = { v: 2; settings: { enabled: boolean; name: string }; logs: Record<string, { seq: number; head: string | null }>; peers: PeerRec[]; intros: IntroRec[]; introUntil: number | null; threads: ThreadRec[]; items: ItemRec[];
+type Ceilings = { dailyUsd: number | null; dailyRounds: number; unknownRoundUsd: number };
+const DEFAULT_CEILINGS: Ceilings = { dailyUsd: 20, dailyRounds: 60, unknownRoundUsd: 1 };
+/** an auto-start opt-in lasts this long after the take */
+export const AUTO_START_MS = 30 * 60_000;
+type State = { v: 2; settings: { enabled: boolean; name: string; ceilings?: Ceilings }; logs: Record<string, { seq: number; head: string | null }>; peers: PeerRec[]; intros: IntroRec[]; introUntil: number | null; threads: ThreadRec[]; items: ItemRec[];
   introFailures: { at: string; ip: string; why: string }[]; introOpenedAt?: number; outbox: Outbox[]; idOut: IdOut[]; refused: { at: string; from: string; reason: string; entry: string | null }[]; daily: Record<string, { day: string; n: number }>;
   /** identities this Studio retired, kept until their revocation reached every peer */
   retired: { key: string; home: string; at: string }[] };
 
 /** What a Task that runs work from a peer needs from Studio (src/lan/runner.ts implements it over the runtime). */
 export type LanRunner = {
-  workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
+  workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; mayStop?: string[]; output?: "text" | "patch" | null; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
   start(o: { workflow: string; text: string; title: string; item: string; cap: { usd: number | null; rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
   status(run: string): { state: string; result: string | null; spent: { usd: number; rounds: number }; stopped: string | null; ready?: boolean } | null;
   /** the Task a received assignment started (by the item id in its LAN mark), after a restart: its id, or null */
@@ -71,7 +77,9 @@ export type LanOpts = { dataDir: string; runner: LanRunner;
   baseOf?: (project: string) => { root: string; sha: string } | null; baseProblem?: (project: string, base: { root: string; sha: string }) => string | null;
   send?: (type: string, data: unknown) => void; log?: (summary: string, data?: unknown) => void; bind?: string; port?: number; privacyDenylist?: () => string[];
   /** a keystore kind to ask for (tests); CREW_LAN_KEYSTORE otherwise */
-  keystore?: KeystoreKind };
+  keystore?: KeystoreKind;
+  /** why the next paid round of any peer's Task would pass a daily ceiling (src/lan/profile.ts dailyRefusal), or null */
+  dailyRefusal?: (c: Ceilings) => string | null };
 
 export class LanError extends Error { constructor(readonly status: number, message: string, readonly code = "lan") { super(message); } }
 const now = () => new Date().toISOString();
@@ -219,6 +227,15 @@ export class Lan {
     this.st.settings.enabled = on; this.save(); return this.view();
   }
   rename(name: unknown) { const n = cleanName(name); if (!n) throw new LanError(400, "a device name is 1 to 60 characters"); this.st.settings.name = n; this.save(); return this.view(); }
+  /** the Studio-wide daily ceilings over every peer's Task (on by default; the dollar one counts unknown-cost rounds at the estimate) */
+  ceilings(): Ceilings { return { ...DEFAULT_CEILINGS, ...(this.st.settings.ceilings ?? {}) }; }
+  setCeilings(o: { dailyUsd?: unknown; dailyRounds?: unknown; unknownRoundUsd?: unknown }) {
+    const c = this.ceilings();
+    if (o.dailyUsd !== undefined) { const v = o.dailyUsd === null ? null : Number(o.dailyUsd); if (v !== null && !(v >= 0 && v <= 10_000)) throw new LanError(400, "a daily dollar ceiling is 0 to 10000 (or off)"); c.dailyUsd = v; }
+    if (o.dailyRounds !== undefined) { const v = Number(o.dailyRounds); if (!Number.isSafeInteger(v) || v < 1 || v > 1000) throw new LanError(400, "a daily round ceiling is 1 to 1000"); c.dailyRounds = v; }
+    if (o.unknownRoundUsd !== undefined) { const v = Number(o.unknownRoundUsd); if (!(v >= 0 && v <= 100)) throw new LanError(400, "an unknown round counts at 0 to 100 dollars"); c.unknownRoundUsd = v; }
+    this.step(() => { this.st.settings.ceilings = c; this.store.audit("ceilings", c as any); }); return this.view();
+  }
 
   // ---------- introductions ----------
   openIntro(minutes = 5) { this.live(); this.st.introOpenedAt = Date.now(); this.st.introUntil = Date.now() + Math.min(15, Math.max(1, minutes)) * 60_000; this.save(); return this.view(); }
@@ -638,7 +655,9 @@ export class Lan {
       for (const rr of t.rounds) if (rr.run && !ENDED.includes(rr.run.state) && !rr.run.id.startsWith("(")) this.o.runner.cancel(rr.run.id, "the dispatcher withdrew the work");
       for (const i of this.st.items) if (i.thread === t.id && i.state === "open") i.state = "withdrawn"; }
     t.steps.push(step);
-    if (!mine) this.st.items.push({ id: newId(), entry: h, kind: b.kind, from: e.a, thread: t.id, round: b.round, at: now(), state: "open", flags, note: null, seq: e.seq });
+    if (!mine) { const item = { id: newId(), entry: h, kind: b.kind, from: e.a, thread: t.id, round: b.round, at: now(), state: "open" as const, flags, note: null, seq: e.seq }; this.st.items.push(item);
+      // the taker opted in at the take: once this step is written, start it (with every check made again)
+      if (b.kind === "assign" && r.take?.auto) setTimeout(() => { void this.autoStart(item.id); }, 0); }
   }
 
   // ---------- what a person does (every one of these is a desktop-only route) ----------
@@ -664,7 +683,7 @@ export class Lan {
     return this.threadView(this.thread(thread)!);
   }
   /** Approve one received item. What it means depends on its kind (see the unit spec): take with a workflow, assign, start, accept. */
-  async approve(id: string, o: { workflow?: string; usd?: number | null; roundsOnly?: boolean; rounds?: number; provider?: string | null; staffingConfirm?: string | null; project?: string | null; seen?: string | null } = {}) {
+  async approve(id: string, o: { workflow?: string; usd?: number | null; roundsOnly?: boolean; rounds?: number; provider?: string | null; staffingConfirm?: string | null; project?: string | null; seen?: string | null; autoStart?: boolean; by?: string } = {}) {
     this.live();
     const i = this.item(id), t = this.thread(i.thread); if (!t) throw new LanError(404, "no such thread");
     if (this.peer(i.from)?.frozen) throw new LanError(409, "this peer is frozen (a fork in its log): resolve it first");
@@ -691,8 +710,10 @@ export class Lan {
         if (r.take) throw new LanError(409, "this round is already taken");
         // the approval and the signed take land in one transaction: a restart never shows the item open again
         await this.append([t.owner], { kind: "take", thread: t.id, round: r.n, briefing: r.briefing.hash, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds } }, [],
-          ["take", { thread: t.id, round: r.n, item: i.id, from: i.from, seen: o.seen, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds }, provider, project }],
-          () => { i.state = "approved"; r.take!.provider = provider; r.take!.staffing = w.staffing?.hash ?? null; r.take!.project = project; });
+          ["take", { thread: t.id, round: r.n, item: i.id, from: i.from, seen: o.seen, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { usd, rounds }, provider, project, autoStart: o.autoStart === true }],
+          () => { i.state = "approved"; r.take!.provider = provider; r.take!.staffing = w.staffing?.hash ?? null; r.take!.project = project;
+            // opt-in, unticked by default: start as soon as the dispatcher assigns it, with this exact cap, for 30 minutes
+            r.take!.auto = o.autoStart === true ? { until: Date.now() + AUTO_START_MS, seen: String(o.seen), at: now() } : null; });
         return this.threadView(t);
       } else if (i.kind === "take") {
         if (r !== this.cur(t) || r.assign) throw new LanError(409, "this round already has its taker");
@@ -708,8 +729,8 @@ export class Lan {
         let started: { run: string; workflow: WorkflowRef };
         try { started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN ${t.id}`, item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, base: t.base?.sha ?? null, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` }); }
         catch (e: any) { this.step(() => { r.run = null; i.state = "open"; }); throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); }
-        this.step(() => { r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null, item: i.id };
-          this.store.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow }); });
+        this.step(() => { r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null, item: i.id, auto: o.by === "auto-start" };
+          this.store.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow, by: o.by ?? "captain (desktop)", cap: r.take!.cap, project: r.take!.project ?? null }); });
         // the peer was revoked, unpaired or frozen, or the work withdrawn, while the Task was starting: it is stopped at once
         if (!this.trusted(i.from) || this.peer(i.from)?.frozen || t.state !== "open") { this.o.runner.cancel(started.run, "the peer was revoked or frozen, or the work withdrawn, while it was starting"); this.step(() => { r.run!.state = "cancelled"; }); throw new LanError(409, "the peer was revoked or frozen, or the work withdrawn, while it was starting: the Task was stopped"); }
         return this.threadView(t);
@@ -717,6 +738,29 @@ export class Lan {
       this.step(() => { i.state = "approved"; });
       return this.threadView(t);
     } finally { this.busy.delete(id); }
+  }
+  /**
+   * The taker's opt-in auto-start (only when ticked at the take): when the dispatcher's assignment arrives, every check is
+   * made again (the peer still introduced, not frozen, not revoked; the round still current; the prompt the same one the
+   * taker read; the opt-in not expired; the item's cap and the daily ceilings still holding), then the Task starts as if
+   * the taker pressed start; the page shows that it started by itself, with a stop button. Audited either way.
+   */
+  async autoStart(itemId: string): Promise<string | null> {
+    const i = this.st.items.find((x) => x.id === itemId), t = i ? this.thread(i.thread) : null, r = t?.rounds.find((x) => x.n === i!.round) ?? null, a = r?.take?.auto ?? null;
+    const why = !i || i.state !== "open" || i.kind !== "assign" ? "the assignment is not open" : !t || !r || !a ? "no opt-in" : Date.now() > a.until ? "the opt-in expired (30 minutes after the take)"
+      : !this.trusted(i.from) || this.peer(i.from)?.frozen ? "the peer is no longer introduced, or is frozen" : t.state !== "open" || r !== this.cur(t) ? "the round is no longer current"
+      : r.run ? "the round already started" : (() => { try { return this.seenHash(t, r) !== a.seen ? "the prompt is not the one the taker read" : null; } catch { return "the briefing is not here"; } })()
+      ?? this.o.dailyRefusal?.(this.ceilings()) ?? null;
+    if (why) { if (i && r) this.step(() => { this.store.audit("auto-start-skipped", { item: itemId, thread: t?.id ?? null, why }); if (r.take) r.take.auto = null; }); return why; }
+    try { await this.approve(itemId, { by: "auto-start" }); this.step(() => { this.store.audit("auto-start", { item: itemId, thread: t!.id, round: r!.n, seen: a!.seen }); }); this.o.log?.(`LAN: started ${t!.id} round ${r!.n} by itself (the taker opted in at the take)`); return null; }
+    catch (e: any) { this.step(() => { this.store.audit("auto-start-skipped", { item: itemId, thread: t!.id, why: String(e?.message ?? e).slice(0, 200) }); }); return String(e?.message ?? e); }
+  }
+  /** one click: stop the Task this round started (the taker's side) */
+  stopRun(threadId: string) {
+    const t = this.thread(threadId), r = t ? this.cur(t) : null; if (!t || !r?.run || ENDED.includes(r.run.state) || r.run.id.startsWith("(")) throw new LanError(409, "no running Task in this round");
+    this.o.runner.cancel(r.run.id, "stopped from the Peers page");
+    this.step(() => { r.run!.state = "cancelled"; r.run!.stopped = now(); this.store.audit("stop", { thread: t.id, round: r.n, run: r.run!.id }); });
+    return this.threadView(t);
   }
   /** What an approval of a dispatch or a refinement must name: the hash of the briefing and the exact prompt shown. */
   seenHash(t: ThreadRec, r: RoundRec) { return sha256hex(`lan-seen\0${this.prompt(t, r)}`); }
@@ -751,8 +795,9 @@ export class Lan {
   async handbackPreview(threadId: string, edits?: { path: string; text: string | null }[]) {
     const t = this.thread(threadId); if (!t) throw new LanError(404, "no such thread");
     const x = await this.outputFor(t, edits);
+    // a file a hand-back cannot carry (binary, unreadable) is a refusal, not a silent drop: what the peer gets is what was made
     return { thread: t.id, round: x.r.n, run: x.r.run!.id, hash: x.hash, bytes: x.plain.length, files: x.files, skipped: x.skipped, secrets: x.hits, protectedPaths: x.protectedHits, checks: x.out.checks, workflow: x.out.workflow,
-      ok: !x.hits.length && !x.protectedHits.length && x.plain.length <= LIMITS.blob, tooLarge: x.plain.length > LIMITS.blob };
+      ok: !x.hits.length && !x.protectedHits.length && !x.skipped.length && x.plain.length <= LIMITS.blob, tooLarge: x.plain.length > LIMITS.blob, binary: x.skipped };
   }
   /** 交回: sign and send the result, only for the exact bytes the person saw (confirm = their hash) and only when no gate hit. */
   async handback(threadId: string, o: { confirm: string; edits?: { path: string; text: string | null }[] }) {
@@ -761,6 +806,7 @@ export class Lan {
     if (x.protectedHits.length) throw new LanError(409, `refused: the output changes ${x.protectedHits.join(", ")}: work from a peer may not change CI configuration, git hooks or package scripts`, "protected");
     if (x.hits.length) throw new LanError(409, `refused: the output holds ${x.hits.length} secret or private hit(s) (${x.hits.slice(0, 3).map((h) => `${h.path}:${h.line} ${h.what}`).join("; ")}); remove them and preview again`, "secret");
     if (x.plain.length > LIMITS.blob) throw new LanError(413, "the output is larger than a result may be (256 KB)");
+    if (x.skipped.length) throw new LanError(409, `refused: the output holds ${x.skipped.join(", ")}, which a hand-back cannot carry (only text goes back); nothing is sent`, "binary");
     if (o.confirm !== x.hash) throw new LanError(409, "the output changed since the preview: preview it again", "stale");
     const blob = sealBlob(x.plain, [this.recipient(t.owner)], { id: this.live().key, dh: this.live().dhPub });
     await this.append([t.owner], { kind: "result", thread: t.id, round: x.r.n, take: x.r.assign!.take, briefing: x.r.briefing.hash, output: { hash: blob.hash, size: x.plain.length, files: x.files.slice(0, LIMITS.files).map((f) => ({ path: f.path.slice(0, LIMITS.path), bytes: Buffer.byteLength(f.text) })) },
@@ -837,7 +883,7 @@ export class Lan {
       const s = this.o.runner.status(r.run.id);
       // a Task Studio no longer has (deleted, or lost): gone; its claim stays, so it is never started again from this round
       if (!s) { r.run.state = "gone"; r.run.stopped = now(); changed = true; continue; }
-      if (s.state !== r.run.state || s.stopped !== r.run.stopped) { r.run.state = s.state; r.run.result = s.result; r.run.stopped = s.stopped; changed = true; }
+      if (s.state !== r.run.state || s.stopped !== r.run.stopped || s.spent?.usd !== r.run.spent?.usd || s.spent?.rounds !== r.run.spent?.rounds) { r.run.state = s.state; r.run.result = s.result; r.run.stopped = s.stopped; r.run.spent = s.spent ?? null; changed = true; }
     }
     if (changed) this.save();
   }
@@ -881,6 +927,8 @@ export class Lan {
     if (b.kind === "result") { const text = this.blobText(b.output.hash); let files: { path: string; text: string }[] | null = null; try { files = text ? JSON.parse(text).files.map((f: any) => ({ path: cleanText(f.path, LIMITS.path), text: cleanText(f.text, LIMITS.blob) })) : null; } catch {}
       return { ...base, files, workflow: b.workflow, checks: b.checks, run: b.run, takeWorkflow: r?.take?.workflow ?? null }; }
     if (b.kind === "take") return { ...base, workflow: b.workflow, cap: b.cap };
+    // the start click shows what it starts: the prompt's hash, the cap, the project, the workflow
+    if (b.kind === "assign" && r?.take) return { ...base, promptHash: (() => { try { return this.seenHash(t, r); } catch { return null; } })(), cap: r.take.cap, project: r.take.project, workflow: r.take.workflow, provider: r.take.provider, auto: r.take.auto ?? null };
     return base;
   }
   /** The entry inspector: who signed it, with which certificate, where it sits in the author's log, and what it names. */
@@ -903,7 +951,7 @@ export class Lan {
         // the file keystore: any program of this user can read the identity (shown plainly)
         warning: ks?.kind === "file" ? { en: "This Mac's identity can be read by local programs (no Touch ID protection)", zh: "這台的身分可被本機程式讀取（沒有 Touch ID 保護）" } : null, fallback: this.fallback },
       lost: this.lost, retired: this.st.retired.map((r) => ({ key: r.key, at: r.at, pending: this.st.idOut.filter((x) => x.from === r.key).map((x) => ({ to: this.who(x.to), tries: x.tries, error: x.error })) })),
-      enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
+      ceilings: this.ceilings(), enabled: this.st.settings.enabled, listening: this.wire.listening, host: this.wire.host || null, port: this.wire.port || null,
       introOpenUntil: this.st.introUntil && this.st.introUntil > Date.now() ? new Date(this.st.introUntil).toISOString() : null,
       introFailures: (this.st.introFailures ?? []).filter((f) => Date.parse(f.at) >= (this.st.introOpenedAt ?? 0) - 3600_000).slice(-5),
       intros: this.st.intros.filter(live).map((i) => ({ ...i, similar: similar(i.claimed, i.key), successorOf: successorOf(i.key) })),

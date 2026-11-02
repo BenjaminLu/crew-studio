@@ -101,7 +101,7 @@ import { Lan } from "./lan/relay";
 import { lanRoutes } from "./lan/routes";
 import { lanRunner } from "./lan/runner";
 import { lanApplier, baseOf as lanBaseOf, baseProblem as lanBaseProblem } from "./lan/apply";
-import { installLanProfile } from "./lan/profile";
+import { installLanProfile, DEFAULT_CEILINGS, dailyRefusal as lanDailyRefusal } from "./lan/profile";
 import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
 import { createSkillRoutes } from "./skill-routes";
@@ -524,11 +524,11 @@ const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) =
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
 // board-to-board work (docs/units/lan-relay.md): the restricted profile on every Task a peer's work started, and this
 // Studio's relay; its peer listener is a separate server that is off until the captain turns it on (CREW_LAN=0: no relay at all)
-installLanProfile(runtime.engine);
+installLanProfile(runtime.engine, { ceilings: () => { try { return lan?.ceilings() ?? DEFAULT_CEILINGS; } catch { return DEFAULT_CEILINGS; } } });
 let lan: Lan | null = null;
 if (process.env.CREW_LAN !== "0") {
   try {
-    lan = await Lan.open({ dataDir: DATA, send, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
+    lan = await Lan.open({ dataDir: DATA, send, dailyRefusal: (c) => lanDailyRefusal(runtime.engine, c), log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
       runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), needsProject: (def) => runtime.lanNeedsProject(def) }),
       apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
       baseOf: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? lanBaseOf(p.path, p.base || "main") : null; },

@@ -83,6 +83,12 @@ try {
   await introduce(p);
   const listed = (await must(p.B.api("/api/lan/workflows"), "B's workflows")).workflows as any[];
   ok(listed.length > 0 && listed.every((w) => w.eligible || w.why.length), "B lists every installed workflow, and each one it does not offer names its reason");
+  // classified: every workflow a person can start declares what it would hand back to a peer (lan.output) or why it
+  // takes no work from one (lan.refuse); a new workflow fails here until it does
+  const defOf = new Map(files.filter((f) => f.endsWith(".wf.yaml")).map((f) => parseYaml(bundledText(f) ?? "") as any).filter((d) => d?.id).map((d) => [String(d.id), d]));
+  const unclassified = listed.filter((w) => !w.why.some((y: string) => / is (internal|retired|held|not installed)/.test(y))).map((w) => w.id).filter((id) => defOf.has(id) && !defOf.get(id).lan);
+  ok(!unclassified.length, "every workflow a person can start says what it hands back to a peer or why it takes none (lan.output / lan.refuse)", unclassified.join(", "));
+  for (const id of ["images", "video"]) { const w = listed.find((x) => x.id === id); ok(w && !w.eligible && w.why.some((y: string) => /binary output/.test(y)), `${id} is refused at the take: its output is binary`, JSON.stringify(w?.why)); }
   // B's setup steps (an approved crew for the code workflow) run as the scenario's own; A applies a patch to its own sandbox project
   const hB: Ctx = { s: p.B, vars: {}, firstmate: async () => [] } as any;
   for (const id of bundled) {

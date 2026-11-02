@@ -12,7 +12,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
 import { git } from "../git";
 import { defHash, LIMITS, type WorkflowRef } from "./protocol";
-import { lanOf, nodeNotRun, spent, workflowRefusals } from "./profile";
+import { lanOf, nodeNotRun, spent, workflowRefusals, lanOutput, mayStop } from "./profile";
 import { protectedHit } from "./paths";
 import type { LanRunner } from "./relay";
 
@@ -54,7 +54,8 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       return ids.map((id) => d.defs.get(id)).filter(Boolean).filter((def: any) => !d.defs.trashed?.(def.id)).map((def: any) => {
         const off = d.defs.unavailable?.(def.id) ?? (d.defs.held?.(def.id) ? "held" : null);
         const why = [...(off ? [`${def.id} is ${off}`] : []), ...workflowRefusals(def)], notRun = (def.nodes ?? []).flatMap((n: any) => nodeNotRun(n, manifest));
-        return { id: def.id, version: Number(def.version), name: d.defs.displayName?.(def.id) ?? def.name ?? def.id, defHash: defHash(def), eligible: !why.length, why, notRun, staffing: d.staffing?.(def) ?? null, needsProject: !!d.needsProject?.(def) };
+        const out = lanOutput(def);
+        return { id: def.id, version: Number(def.version), name: d.defs.displayName?.(def.id) ?? def.name ?? def.id, defHash: defHash(def), eligible: !why.length, why, notRun, mayStop: mayStop(def), output: out && "output" in out ? out.output : null, staffing: d.staffing?.(def) ?? null, needsProject: !!d.needsProject?.(def) };
       });
     },
     async start(o) {

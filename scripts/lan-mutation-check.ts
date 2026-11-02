@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 type M = { name: string; rule: string; edits: { file: string; from: string; to: string }[]; tests: string[] };
 const R = join(import.meta.dir, "..");
-const CODE = "bun tests/lan-code.ts", BOARD = "bun tests/board-start.ts", KEYS = "bun tests/lan-keys.ts", IDENTITY = "bun tests/lan-identity.ts", STORE = "bun tests/lan-store.ts", WORKFLOWS = "bun tests/lan-workflows.ts", RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
+const SPEND = "bun tests/lan-spend.ts", CODE = "bun tests/lan-code.ts", BOARD = "bun tests/board-start.ts", KEYS = "bun tests/lan-keys.ts", IDENTITY = "bun tests/lan-identity.ts", STORE = "bun tests/lan-store.ts", WORKFLOWS = "bun tests/lan-workflows.ts", RELAY = "bun tests/lan-relay.ts", PROFILE = "bun tests/lan-profile.ts", CRYPTO = "bun tests/lan-crypto.ts", UI = "node tests/lan-ui.mjs";
 const MUTATIONS: M[] = [
   // ---------- the first review's rules ----------
   { name: "unintroduced", rule: "an unintroduced key is refused", tests: [RELAY],
@@ -220,6 +220,44 @@ const MUTATIONS: M[] = [
   { name: "B-base-apply", rule: "a result applies onto the base it names, never another (A-M4)", tests: [CODE],
     edits: [{ file: "src/lan/relay.ts", from: `if (!base || (t.base && base !== t.base.sha)) throw new LanError(`, to: `if (false) throw new LanError(` },
       { file: "src/lan/apply.ts", from: `const repo = p.path, base = parent;`, to: `const repo = p.path, base = p.base || "main";` }] },
+  // ---------- spend ----------
+  { name: "$-round-time", rule: "a peer's round gets at most 15 minutes and 60 tool calls (S7)", tests: [SPEND],
+    edits: [{ file: "src/lan/profile.ts", from: "return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => next({ ...opts, timeoutMs, maxTools,", to: "return sandboxScope.run({ noLocalBinding: true }, () => Promise.resolve().then(() => next({ ...opts," }] },
+  { name: "$-round-tokens", rule: "a round over the token ceiling ends the Task's paid rounds (S7)", tests: [SPEND],
+    edits: [{ file: "src/lan/profile.ts", from: "if (big) return `spend cap: round", to: "if (false) return `spend cap: round" }] },
+  { name: "$-daily-rounds", rule: "the daily round ceiling counts every peer's Task (S7)", tests: [SPEND],
+    edits: [{ file: "src/lan/profile.ts", from: "if (d.rounds >= c.dailyRounds) return", to: "if (false) return" }] },
+  { name: "$-daily-unknown", rule: "unknown-cost rounds count against the daily dollar ceiling at the estimate (S7)", tests: [SPEND],
+    edits: [{ file: "src/lan/profile.ts", from: "const worst = d.usd + d.unknown * c.unknownRoundUsd;", to: "const worst = d.usd;" }] },
+  { name: "$-daily-wired", rule: "a round past a daily ceiling is refused before it starts (S7)", tests: [SPEND],
+    edits: [{ file: "src/lan/profile.ts", from: "const over = capRefusal(engine, r, mark) ?? dailyRefusal(", to: "const over = capRefusal(engine, r, mark) ?? ((..._: any[]) => null)(" }] },
+  { name: "$-auto-optin", rule: "an assigned round starts by itself only when the taker opted in (auto-start)", tests: [SPEND],
+    edits: [{ file: "src/lan/relay.ts", from: "if (b.kind === \"assign\" && r.take?.auto) setTimeout(", to: "if (b.kind === \"assign\") setTimeout(" },
+      { file: "src/lan/relay.ts", from: ": !t || !r || !a ? \"no opt-in\"", to: ": !t || !r ? \"no opt-in\"" },
+      { file: "src/lan/relay.ts", from: ": Date.now() > a.until ?", to: ": Date.now() > (a?.until ?? Infinity) ?" },
+      { file: "src/lan/relay.ts", from: "return this.seenHash(t, r) !== a.seen ?", to: "return a && this.seenHash(t, r) !== a.seen ?" },
+      { file: "src/lan/relay.ts", from: "this.step(() => { this.store.audit(\"auto-start\", { item: itemId, thread: t!.id, round: r!.n, seen: a!.seen }); });", to: "this.step(() => { this.store.audit(\"auto-start\", { item: itemId, thread: t!.id, round: r!.n, seen: a?.seen ?? null }); });" }] },
+  { name: "$-auto-expiry", rule: "an auto-start opt-in expires 30 minutes after the take", tests: [SPEND],
+    edits: [{ file: "src/lan/relay.ts", from: ": Date.now() > a.until ? \"the opt-in expired (30 minutes after the take)\"", to: ": false ? \"\"" }] },
+  { name: "$-auto-prompt", rule: "auto-start checks the prompt is the one the taker read", tests: [SPEND],
+    edits: [{ file: "src/lan/relay.ts", from: "return this.seenHash(t, r) !== a.seen ? \"the prompt is not the one the taker read\" : null;", to: "return null;" }] },
+  { name: "$-auto-daily", rule: "auto-start checks the daily ceilings", tests: [SPEND],
+    edits: [{ file: "src/lan/relay.ts", from: "      ?? this.o.dailyRefusal?.(this.ceilings()) ?? null;", to: "      ?? null;" }] },
+  { name: "$-auto-peer", rule: "auto-start checks the peer is still introduced and not frozen", tests: [SPEND],
+    edits: [{ file: "src/lan/relay.ts", from: ": !this.trusted(i.from) || this.peer(i.from)?.frozen ? \"the peer is no longer introduced, or is frozen\"", to: ": false ? \"\"" },
+      { file: "src/lan/relay.ts", from: "if (this.peer(i.from)?.frozen) throw new LanError(409, \"this peer is frozen (a fork in its log): resolve it first\");", to: "" }] },
+  // ---------- eligibility ----------
+  { name: "E-declared", rule: "a workflow that declares no LAN output takes no work from a peer (C-M4)", tests: [PROFILE],
+    edits: [{ file: "src/lan/profile.ts", from: "if (!o) out.push(", to: "if (false) out.push(" }] },
+  { name: "E-refuse", rule: "a declared refusal (images, video: binary output) is refused at the take (C-M4)", tests: [PROFILE, WORKFLOWS],
+    edits: [{ file: "src/lan/profile.ts", from: "else if (\"refuse\" in o) out.push(", to: "else if (false) out.push(" }] },
+  { name: "E-platform", rule: "a machine that cannot enforce the profile takes no work from a peer (C-M4)", tests: [PROFILE],
+    edits: [{ file: "src/lan/profile.ts", from: `export const profileEnforced = () => process.platform === "darwin";`, to: `export const profileEnforced = () => true;` }] },
+  { name: "E-render", rule: "the renderer is not on the profile (C-M4)", tests: [PROFILE],
+    edits: [{ file: "src/lan/profile.ts", from: `"deliver.intake", "deliver.round", "doc.export",`, to: `"deliver.intake", "deliver.round", "deliver.render", "doc.export",` }] },
+  { name: "E-binary", rule: "a binary output is a refusal at the hand-back, never dropped silently (C-M4)", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: "if (x.skipped.length) throw new LanError(409,", to: "if (false) throw new LanError(409," },
+      { file: "src/lan/relay.ts", from: "!x.protectedHits.length && !x.skipped.length && x.plain.length", to: "!x.protectedHits.length && x.plain.length" }] },
   { name: "S-crash", rule: "the own log, outbox and thread are on disk before anything is sent (A-M1)", tests: [STORE],
     edits: [{ file: "src/lan/relay.ts", from: "try { const v = this.store.tx(() => { const x = fn(); this.store.putState(this.st); this.putMeta(); return x; });", to: "try { const v = this.store.tx(() => { const x = fn(); return x; });" }] },
   { name: "S-rollback", rule: "a step that fails leaves nothing behind in memory either (fail closed)", tests: [STORE],

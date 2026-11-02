@@ -11,7 +11,7 @@ the CSO review of the LAN boards prototype (its blockers are requirements) and t
 4. Work that came from the LAN runs under a restricted profile Studio enforces (below), and never runs tests that open
    listeners.
 
-v1 has no auto-accept: every received item waits for a person on the desktop. Protocol 2 is the only protocol; nothing
+v1 has no auto-accept: every received item waits for a person on the desktop (the one exception is the taker's own opt-in auto-start of an assignment, below). Protocol 2 is the only protocol; nothing
 of protocol 1 (its single-key identity, its routes, its envelopes) is read or answered.
 
 Code: `src/lan/` (`crypto.ts`, `keystore.ts`, `se-helper.swift`, `noise.ts`, `wire.ts`, `protocol.ts`, `store.ts`,
@@ -219,7 +219,7 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
 - **Sandbox only** (`taintRefusal`): never in local unrestricted mode, never under a sandbox-off grant; a round without a
   sandbox is refused.
 - **Allowlisted steps** (`src/lan/profile.ts`): hooks that only work locally (`note`, `set`, `intent.capture`,
-  `repo.prepare`, `repo.cleanup`, `deliver.*`, `doc.export`, `library.publish`, `hello.web`, and the code pack's
+  `repo.prepare`, `repo.cleanup`, `deliver.intake`, `deliver.round`, `doc.export`, `library.publish`, `hello.web`, and the code pack's
   `pr.open` and `remote.ready`, which for a tainted Task are local: a local review request, "ready on the local branch").
   Never `git.merge`, `github.*`, issue or file moves, registrations, crew or staffing changes, the designer's rounds. A
   workflow may contain a merge or a designer step a tainted Task never reaches; if it is reached anyway it is refused.
@@ -242,13 +242,31 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   no cost makes the dollars unknown, which stops the next paid round under a dollar cap. The taker may instead choose a
   rounds-only cap, for any provider: then there is no dollar bound, and every paid round of the Task (any provider,
   judges and staffed nodes included) counts toward the rounds cap. A round admitted before a restart and never settled
-  counts as unknown dollars.
+  counts as unknown dollars. Whatever its cap, every paid round of a peer's Task is at most 15 minutes and 60 tool calls,
+  and a round that reports more than 2,000,000 tokens ends the Task's paid rounds. Dollars are shown on the thread as
+  they are reported.
+- **Daily ceilings**: over every peer's Task on this Mac (rounds-only ones included), Studio-wide and on by default
+  ($20 and 60 rounds a day; editable on the Peers page): a round of unknown cost counts at an estimate ($1 by default)
+  against the dollar ceiling, and every round against the round ceiling. A round past either is refused before it starts.
+  A rounds-only take says so: no dollar limit, its worst case at the estimate, and the daily ceiling that still applies.
+- **Auto-start, opt-in**: at the take the taker may tick "start as soon as they assign it, with this exact cap"
+  (unticked by default). It lasts 30 minutes after the take. When the assignment arrives every check is made again (the
+  peer still introduced, not frozen or revoked; the round current; the prompt the one the taker read; the item's cap
+  and the daily ceilings holding), and only then the Task starts; the thread says it started by itself and offers a stop
+  button; the start and every skip are audited. Without it, the start click shows the prompt's hash, the cap and the
+  project, and starts nothing else. Every running Task has a one-click stop.
 - **One Task per assignment**: approving an assignment claims the round before the Task starts, so a second approval
   starts nothing; if the peer is revoked or frozen, or the work withdrawn, while the Task starts, it is stopped at once.
   The claim is never written to disk; after a crash mid-start it is cleared and the take may be approved again.
-- **Every workflow is classified**: the taker's Studio lists every installed workflow; one it does not offer (internal,
-  retired, held, or a step off the profile) names its reason, and a take with it is refused with that reason
-  (`tests/lan-workflows.ts` relays every offered one end to end across two Studios and refuses every other one).
+- **Every workflow is classified**: a workflow is eligible only when every step is on the profile, it declares in its
+  definition what it hands back (`lan: { output: "text" | "patch" }`; `lan: { refuse: "<why>" }` says why it takes
+  none), and this machine enforces the profile (macOS; elsewhere this Studio takes no work from a peer at all). Images
+  and video are refused in v1 (binary output; the renderer runs a browser over the agent's page and is not on the
+  profile). The taker's Studio lists every installed workflow; one it does not offer (internal, retired, held, not
+  declared, refused, a step off the profile) names its reason, and a take with it is refused with that reason; steps a
+  LAN Task never reaches on its own are shown at the take as "may stop at …". A file the hand-back cannot carry (binary)
+  refuses the send, shown in the preview. `tests/lan-workflows.ts` relays every eligible bundled workflow end to end
+  across two Studios, refuses every other one, and fails when a workflow a person can start is not classified.
 - **Other Tasks never see its title**: another Task's overlap note names it by its id only.
 - **Firstmate never sees it**: an agent's question or an escalation from a tainted Task is the captain's card, never
   Firstmate's; Firstmate's status lines show a peer's Task without its title or card titles; Studio's event log keeps no
@@ -316,6 +334,6 @@ accepts, hand-backs and applies. The page reads it at `/api/lan/audit` with whet
 - Network pinning (subnet, gateway MAC, SSID).
 - Deniable MACs for conversational entries: every entry is signed.
 - Relaying entries between peers (each author's entries reach only its recipients directly).
-- On Linux a test run uses bwrap's private network namespace; the restricted profile's no-local-binding scope is
-  enforced by the macOS profile.
+- Taking work from a peer anywhere but macOS: the restricted profile's no-local-binding scope is enforced by the macOS
+  profile, so elsewhere the take is refused (dispatching still works).
 
