@@ -69,7 +69,11 @@ const opts = (r: any, provider: any = { id: "codex", model: "m1" }, extra: any =
   // a ledger that cannot be read refuses every round
   const bad = join(mkdtempSync(join(tmpdir(), "crew-lan-ledger-bad-")), "spend.db"); writeFileSync(bad, "damaged\n".repeat(400));
   const { P: P2 } = seams(new SpendLedger(bad)); const re = lanTask("R-e", 9); let e4 = ""; try { await P2.wrapRound(re, opts(re), job()); } catch (x: any) { e4 = String(x?.message); }
-  ok(/cannot be read/.test(e4) && !re.ctx.lanRounds.length, "a spend ledger that cannot be read refuses every round of a peer's Task", e4); }
+  ok(/cannot be read/.test(e4) && !re.ctx.lanRounds.length, "a spend ledger that cannot be read refuses every round of a peer's Task", e4);
+  // the daily check itself fails closed, not only the paused-provider check before it: a round whose provider is not
+  // named (no pause to look up) is refused too
+  const rf = lanTask("R-f", 9); let e7 = ""; try { await P2.wrapRound(rf, opts(rf, null), job()); } catch (x: any) { e7 = String(x?.message); }
+  ok(/daily ceiling: .*cannot be read/.test(e7) && !rf.ctx.lanRounds.length, "a spend ledger that cannot be read refuses a round with no provider named (the daily check fails closed on its own)", e7); }
 
 // 4. the captain's ceilings live in the ledger (they hold with the relay closed); a ledger deleted or restored older is broken
 { const dir = mkdtempSync(join(tmpdir(), "crew-lan-ceil-")), L = new SpendLedger(join(dir, "lan", "spend.db"));
