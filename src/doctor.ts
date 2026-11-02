@@ -14,10 +14,12 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { HYPERFRAMES_VERSION } from "./render/hyperframes";
+import { downloadCommand, downloadNeeds, installCommand, SHERPA_VERSION, type RuntimeState } from "./voice/runtime";
+import type { MacVoice } from "./voice/mac";
 
 export type Status = "ok" | "degraded" | "missing" | "info";
-export type Action = { kind: "install"; item: string } | { kind: "login"; item: string } | { kind: "github" } | { kind: "keys" } | { kind: "phone" } | { kind: "none" };
-export type Item = { id: string; title: string; titleZh?: string; status: Status; availability?: "missing" | "available" | "unusable"; authenticated?: boolean | null; detail: string; detailZh?: string; adds: string; addsZh?: string; fix: string; fixZh?: string; group?: "basic" | "coding" | "optional"; action: Action; version?: string | null };
+export type Action = { kind: "install"; item: string } | { kind: "login"; item: string } | { kind: "github" } | { kind: "keys" } | { kind: "phone" } | { kind: "listen" } | { kind: "none" };
+export type Item = { id: string; title: string; titleZh?: string; status: Status; availability?: "missing" | "available" | "unusable"; authenticated?: boolean | null; detail: string; detailZh?: string; adds: string; addsZh?: string; fix: string; fixZh?: string; group?: "basic" | "coding" | "optional" | "voice"; action: Action; version?: string | null };
 export type Method = { id: string; label: string; argv: string[]; source: string; location: string; needs: string[]; admin: boolean; kind?: "run" | "open"; url?: string };
 
 const which = (bin: string): string | null => {
@@ -72,6 +74,11 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
       { id: "brew", label: "Homebrew (official formula)", argv: ["brew", "install", "node"], source: "https://formulae.brew.sh/formula/node — documented at https://nodejs.org/en/download", location: "Homebrew's prefix", needs: ["brew"], admin: false },
       { id: "download", label: "Official installer", argv: [], kind: "open", url: "https://nodejs.org/en/download", source: "https://nodejs.org/en/download", location: "/usr/local (you install it)", needs: [], admin: true },
     ],
+    // the review room's local voice: Studio's own pinned runtime, and the pinned model only on the captain's click
+    "voice-runtime": [{ id: "npm", label: `sherpa-onnx-node ${SHERPA_VERSION} into ~/.crew-studio/tools/voice (exact versions, no install scripts, no admin rights)`, get argv() { return ["/bin/bash", "-c", installCommand()]; },
+      source: "https://www.npmjs.com/package/sherpa-onnx-node — documented at https://k2-fsa.github.io/sherpa/onnx/ (Apache-2.0)", location: "~/.crew-studio/tools/voice", needs: ["npm"], admin: false }],
+    "voice-tts": [{ id: "download", label: "Kokoro-82M v1.0 (about 401 MB, Apache-2.0) into ~/.crew-studio/models, every file checked against its pinned SHA-256", get argv() { return ["/bin/bash", "-c", downloadCommand()]; },
+      source: "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0 at revision f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b", location: "~/.crew-studio/models/kokoro-multi-lang-v1_0", get needs() { return downloadNeeds(); }, admin: false }],
     renderer: [
       { id: "npm", label: "Playwright + Chromium into ~/.crew-studio/tools (no admin rights)", argv: ["/bin/bash", "-c", "mkdir -p ~/.crew-studio/tools && npm install --prefix ~/.crew-studio/tools playwright@1 && ~/.crew-studio/tools/node_modules/.bin/playwright install chromium"],
         source: "https://www.npmjs.com/package/playwright — documented at https://playwright.dev/docs/browsers", location: "~/.crew-studio/tools and Playwright's browser cache", needs: ["npm"], admin: false },
@@ -130,6 +137,8 @@ export type DoctorInput = {
   render?: { node: string | null; ffmpeg: string | null; ffprobe?: string | null; playwright: string | null };
   /** the pinned HyperFrames film tools (src/render/coffee-film.ts discovery): ready, or why not */
   film?: { ready: boolean; reason?: string | null };
+  /** the review room's local voice (src/voice): the runtime, the model and this Mac's own voices */
+  voice?: { runtime: RuntimeState; model: { ok: boolean; source: "agent-wardrobe" | "studio" | null; state?: string | null; why: string | null }; bytes: number; voices: { zh: string; en: string }; mac: MacVoice[] | null; crashing?: boolean };
   /** the egress proxy agent rounds go through */
   egress?: { running: boolean; port: number; rounds: number };
   /** how claude rounds sign in: the login Studio hands them (v1 option A) */
@@ -225,6 +234,7 @@ export function diagnose(i: DoctorInput): Item[] {
       fix: video ? (i.film && !hf ? `For the coffee film, install the pinned tools: npm install --prefix ~/.crew-studio/tools hyperframes@${HYPERFRAMES_VERSION} node@22.22.0 gsap@3.14.2` : "") : `Install ${lacking.join(", ")} (the rows above).`,
       action: video ? { kind: "none" } : { kind: "install", item: !r.node ? "node" : !r.playwright ? "renderer" : "ffmpeg" } } as any);
   }
+  if (i.voice) items.push(...voiceItems(i.voice));
   const lock = !!which("ps") && !!which("lsof");
   items.push({ id: "lock", title: "ps / lsof (driver lock)", status: lock ? "ok" : "degraded", detail: lock ? "built into the OS" : "missing: Studio cannot tell whether a terminal holds the session",
     adds: "Refusing to attach while a terminal drives the same session.", fix: lock ? "" : "Use a system with ps and lsof.", action: { kind: "none" } });
@@ -286,6 +296,45 @@ export function diagnose(i: DoctorInput): Item[] {
     item.group ??= ["native","assets"].includes(item.id)?"basic":["state","board","github","lan","tailscale","ffmpeg","ffprobe","renderer","film-renderer"].includes(item.id)?"optional":"coding";
   }
   return items;
+}
+
+// --- the review room's local voice: three rows of their own, never blocking anything ---
+const LOCAL = "Runs on this Mac: no text or audio leaves it.", LOCAL_ZH = "在這台 Mac 上執行，文字和聲音都不離開這台 Mac。";
+export function voiceItems(v: NonNullable<DoctorInput["voice"]>): Item[] {
+  const r = v.runtime, m = v.model, out: Item[] = [];
+  const wrong = !r.ok && !!r.version;
+  out.push({ id: "voice-runtime", title: "Local voice runtime (sherpa-onnx)", titleZh: "本機語音執行環境（sherpa-onnx）", group: "voice", status: r.ok ? "ok" : wrong ? "degraded" : "info", version: r.version,
+    availability: r.ok ? "available" : wrong ? "unusable" : "missing",
+    detail: r.ok ? `sherpa-onnx-node ${r.version} (Apache-2.0) in ~/.crew-studio/tools/voice, run by Node in a child process with no network and no file writes. ${LOCAL}` : `${r.why}. sherpa-onnx is Apache-2.0. ${LOCAL}`,
+    detailZh: r.ok ? `sherpa-onnx-node ${r.version}（Apache-2.0）在 ~/.crew-studio/tools/voice，由 Node 在子程序執行，不能連網、不能寫檔。${LOCAL_ZH}` : `${!r.node ? "還沒有 Node.js" : wrong ? `裝的不是 Studio 釘住的版本：${r.why}` : "還沒安裝 sherpa-onnx-node"}。sherpa-onnx 採 Apache-2.0。${LOCAL_ZH}`,
+    adds: "The review room's local neural voice (Kokoro). Studio installs its own pinned copy and never uses another app's.", addsZh: "審查室的本機神經語音（Kokoro）。Studio 安裝自己釘住版本的副本，不用其他 app 的。",
+    fix: r.ok ? "" : !r.node ? "Install Node.js first, then the voice runtime." : `Install sherpa-onnx-node ${SHERPA_VERSION} (one click, no admin rights).`,
+    fixZh: r.ok ? "" : !r.node ? "先安裝 Node.js，再安裝語音執行環境。" : `一鍵安裝 sherpa-onnx-node ${SHERPA_VERSION}（不需要管理員權限）。`,
+    action: r.ok ? { kind: "none" } : { kind: "install", item: !r.node ? "node" : "voice-runtime" } });
+  const mb = Math.round(v.bytes / 1e6), where = m.source === "agent-wardrobe" ? ["from Agent Wardrobe's copy (read only; Studio never writes into it)", "使用 Agent Wardrobe 的副本（唯讀，Studio 不會寫入）"] : ["Studio's own copy in ~/.crew-studio/models", "Studio 自己在 ~/.crew-studio/models 的副本"];
+  const corrupt = !m.ok && m.state === "corrupt", crash = m.ok && !!v.crashing;
+  const CRASH = "The local voice engine keeps crashing: Studio waits before starting it again, and this Mac's voice speaks meanwhile.", CRASH_ZH = "語音引擎一直當掉：Studio 會等一陣子再啟動它，這段時間改用這台 Mac 的聲音。";
+  out.push({ id: "voice-tts", title: "Local neural voice (Kokoro v1.0)", titleZh: "本機神經語音（Kokoro v1.0）", group: "voice", status: crash ? "degraded" : m.ok ? "ok" : corrupt ? "degraded" : "info",
+    availability: crash ? "unusable" : m.ok ? "available" : corrupt ? "unusable" : "missing",
+    detail: crash ? `${CRASH} ${LOCAL}` : m.ok ? `Kokoro-82M v1.0 (Apache-2.0), verified against its pinned SHA-256, ${where[0]}. Voices: ${v.voices.zh} (Chinese), ${v.voices.en} (English).${r.ok ? "" : " Needs the runtime above."} ${LOCAL}`
+      : `${corrupt ? `Refused: ${m.why}.` : "Not found on this Mac."} Download: about ${mb} MB from Hugging Face at a pinned revision, every file checked. Kokoro-82M is Apache-2.0. ${LOCAL}`,
+    detailZh: crash ? `${CRASH_ZH}${LOCAL_ZH}` : m.ok ? `Kokoro-82M v1.0（Apache-2.0），已對照釘住的 SHA-256 驗證，${where[1]}。聲音：${v.voices.zh}（中文）、${v.voices.en}（英文）。${r.ok ? "" : "還需要上面的執行環境。"}${LOCAL_ZH}`
+      : `${corrupt ? `拒用：${m.why}。` : "這台 Mac 上找不到。"}下載約 ${mb} MB，來自 Hugging Face 的釘住版本，每個檔案都會檢查。Kokoro-82M 採 Apache-2.0。${LOCAL_ZH}`,
+    adds: "Each point of the review room spoken by a neural voice, free, with English terms in an English voice.", addsZh: "審查室的每一點都用神經語音朗讀，免費；英文詞用英文聲音唸。",
+    fix: m.ok ? "" : `Download the pinned model (about ${mb} MB) into ~/.crew-studio/models.`, fixZh: m.ok ? "" : `下載釘住版本的模型（約 ${mb} MB）到 ~/.crew-studio/models。`,
+    action: m.ok ? (r.ok ? { kind: "listen" } : { kind: "none" }) : { kind: "install", item: "voice-tts" } });
+  const mac = v.mac, zh = (mac ?? []).filter((x) => /^zh-TW$/i.test(x.lang)), en = (mac ?? []).filter((x) => /^en-/i.test(x.lang));
+  const good = (l: MacVoice[]) => l.some((x) => x.quality >= 2), q = (x: MacVoice) => (x.quality === 3 ? "Premium" : x.quality === 2 ? "Enhanced" : "compact");
+  const list = (l: MacVoice[]) => l.slice(0, 3).map((x) => `${x.name} (${q(x)})`).join(", ") || "none";
+  const both = !!mac && good(zh) && good(en);
+  out.push({ id: "voice-mac", title: "This Mac's voices (zh-TW, English)", titleZh: "這台 Mac 的聲音（繁中、英文）", group: "voice", status: both ? "ok" : "info",
+    detail: mac ? `zh-TW: ${list(zh)}. English: ${list(en)}. Apple's system voices, used through the browser. ${LOCAL}` : `Could not read this Mac's voices. ${LOCAL}`,
+    detailZh: mac ? `繁中：${list(zh)}。英文：${list(en)}。Apple 的系統聲音，透過瀏覽器使用。${LOCAL_ZH}` : `讀不到這台 Mac 的聲音。${LOCAL_ZH}`,
+    adds: "The room's default voice (this Mac's best), and the fallback when the local neural voice is not installed.", addsZh: "審查室的預設聲音（這台 Mac 最好的），也是沒有本機神經語音時的備援。",
+    fix: both || !mac ? "" : "Only compact voices: download a Premium or Enhanced voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices.",
+    fixZh: both || !mac ? "" : "只有精簡版聲音：到「系統設定 → 輔助使用 → 語音內容 → 系統聲音 → 管理聲音」下載 Premium（高品質）或 Enhanced（加強版）聲音。",
+    action: { kind: "none" } });
+  return out;
 }
 
 // --- installer runs: one job at a time, log streamed, cancellable ---

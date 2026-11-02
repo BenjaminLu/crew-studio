@@ -778,6 +778,14 @@ export function createRuntime(d: RuntimeDeps) {
       if (libRoom) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); if (writing) return json({ error: "a saved room is read-only" }, 405);
         try { if (libRoom[3]) return new Response(rr.libraryAsset(libRoom[1], Number(libRoom[2]), libRoom[3]), { headers: { "content-type": libRoom[4] === "png" ? "image/png" : "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); return json(rr.librarySnapshot(libRoom[1], url.searchParams.get("v"))); }
         catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); } }
+      // a point in this Mac's local neural voice: POST {text, lang, mix} makes (or finds) its clip; GET …/voice/<clip>.wav plays it
+      const roomVoice = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})\/voice(?:\/(kvoice-[0-9a-f]{16}\.wav))?$/.exec(p);
+      if (roomVoice) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : e?.code === "no_voice" ? 409 : 400);
+        if (!writing && roomVoice[2]) { try { return new Response(rr.localVoiceAudio(roomVoice[1], roomVoice[2]), { headers: { "content-type": "audio/wav", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
+        if (!writing || roomVoice[2] || req.method !== "POST") return json({ error: "POST /api/review-room/<room>/voice {text, lang, mix}" }, 405);
+        if (who.kind !== "desktop") return json({ error: "The local voice speaks on this Mac", code: "desktopOnly" }, 403);
+        try { return json(await rr.localVoice(roomVoice[1], b?.text, b?.lang, b?.mix, req.signal)); } catch (e: any) { return fail(e); } }
       const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|auto|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);

@@ -20,6 +20,7 @@ function actionButton(it) {
   if (a.kind === "github") return h("button", { class: "btn", "data-gh": "connect", onclick: openGithub }, icon("pr", "ic sm"), S.github?.connected ? T("Change token…", "更換 token…") : T("Connect GitHub…", "連接 GitHub…"));
   if (a.kind === "keys") return h("button", { class: "btn", "data-keys": "open", onclick: openKeys }, icon("tool", "ic sm"), T("API keys…", "API 金鑰…"));
   if (a.kind === "phone") return h("a", { class: "btn", href: "#/remote" }, icon("monitor", "ic sm"), T("Phone page", "手機頁"));
+  if (a.kind === "listen") return h("button", { class: "btn", "data-voice-test": it.id, onclick: (e) => listenVoice(e.currentTarget) }, icon("play", "ic sm"), T("Play a test phrase", "試聽一句"));
   return null;
 }
 
@@ -50,8 +51,8 @@ function viewDoctor() {
     window.crewClaudeAccountPanel?.(),
     window.crewCursorAccountPanel?.(),
     h("div", { class: "faint", style: "font-size:13px" }, bad ? T(`${bad} item(s) need attention.`, `${bad} 項需要處理。`) : T("Listed dependencies are detected. Logins and actual tool execution need separate verification.", "已偵測到列出的依賴；登入與實際工具執行仍需分別驗證。")),
-    ["basic","coding","optional"].map(group=>h("section", { "data-doc-group":group },
-      h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):T("Optional integrations","選用整合")),
+    ["basic","coding","optional","voice"].filter(group=>group!=="voice"||items.some(it=>it.group==="voice")).map(group=>h("section", { "data-doc-group":group },
+      h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):group==="voice"?T("Voice (on this Mac)","語音（在這台 Mac 上）"):T("Optional integrations","選用整合")),
       h("div", { class: "card", style: "padding:0" }, items.filter(it=>(it.group||"coding")===group).map((it) => {
       const cliStatus = { available: ["ok", "Available", "可用"], missing: ["bad", "Not installed", "未安裝"], unusable: ["warn", "Cannot run", "無法執行"] };
       const executableStatus = it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : it.availability === "available" && it.authenticated === false ? ["warn", "Not signed in", "尚未登入"] : cliStatus[it.availability];
@@ -68,6 +69,15 @@ function viewDoctor() {
     })))));
 }
 
+// Doctor's test phrase in the review room's local voice: Studio makes it on this Mac and the page plays it
+async function listenVoice(btn) {
+  btn.disabled = true;
+  try { const r = await fetch("/api/voice/test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang: document.documentElement.lang }) });
+    if (!r.ok) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || `HTTP ${r.status}`); }
+    const url = URL.createObjectURL(await r.blob()), a = new Audio(url); a.onended = () => URL.revokeObjectURL(url); await a.play(); }
+  catch (e) { toast(T(`The local voice could not speak: ${e.message}`, `本機語音無法朗讀：${e.message}`)); }
+  finally { btn.disabled = false; }
+}
 function jobBox(j) {
   const running = j.state === "running";
   const cls = j.state === "done" ? "ok" : j.state === "running" ? "run" : "bad";

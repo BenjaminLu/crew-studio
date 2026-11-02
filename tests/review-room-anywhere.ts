@@ -206,7 +206,7 @@ const TOOLRES: [string, any][] = [];
     script.push([["say", "The function rounds [diff:src/percent.ts]."]]);
     await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash, images: true }, "captain");
     for (let i = 0; i < 300 && (room.view(t.id) as any).running != null; i++) await new Promise((r) => setTimeout(r, 20));
-    mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "voice-t1-0123456789ab.mp3"), "x");
+    mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "voice-t1-0123456789ab.mp3"), "x"); writeFileSync(join(dir, "kvoice-0123456789abcdef.wav"), "local voice clip");
     const before: any = room.view(t.id), pending = before.board.find((b: any) => b.turn === 0)?.status;
     const realCite = room.cite; let inCite = false, relCite!: () => void; const gCite = new Promise<void>((r) => (relCite = r));
     (room as any).cite = async (...args: any[]) => { inCite = true; await gCite; return (realCite as any).apply(room, args); };
@@ -217,6 +217,7 @@ const TOOLRES: [string, any][] = [];
     const kept = existsSync(arch) ? readdirSync(arch).filter((n) => n.startsWith(`${t.id}-`)) : [], a0 = kept[0] ? join(arch, kept[0]) : "", old = a0 ? JSON.parse(readFileSync(join(a0, "room.json"), "utf8")) : null;
     ok(imgCalls.length === 1 && pending === "pending" && inCite && !!saved.ok?.artifact && JSON.stringify(out.moved) === JSON.stringify(["room", "images"]) && kept.length === 1 && old?.turns.length === before.turns.length && existsSync(join(a0, "images", "voice-t1-0123456789ab.mp3")) && !existsSync(f) && !existsSync(dir),
       "starting over moves the room's file and its pictures' folder into an archive folder beside it (never deleted); a Library save mid-flight finishes into the Library and a picture still being drawn, both holding the old room, write nothing back", JSON.stringify({ pending, inCite, saved, moved: out.moved, kept, file: existsSync(f), dir: existsSync(dir) }));
+    ok(!!a0 && existsSync(join(a0, "images", "voice-t1-0123456789ab.mp3")) && !existsSync(join(a0, "images", "kvoice-0123456789abcdef.wav")), "the local voice's clips are deleted on starting over, never archived");
     const fresh: any = room.view(t.id, true), rec = E.trusted(t.id).entries.filter((e: any) => e.record === "review-room-reset");
     ok(fresh.turns.length === 0 && !fresh.board.some((b: any) => b.turn >= 0) && !fresh.translations?.["zh-TW"] && fresh.images === false && rec.length === 1 && JSON.stringify(rec[0].data.moved) === JSON.stringify(["room", "images"]) && !JSON.stringify(rec[0].data).includes("Still reading"),
       "the next view is a fresh room (no answers, board, translations or pictures; opening it makes no paid picture); the ledger records review-room-reset with no content", JSON.stringify({ turns: fresh.turns.length, board: fresh.board.length, rec: rec.map((e: any) => e.data) }));
