@@ -159,6 +159,7 @@ try{
   {const d=checkedTempDir('board-start-taint-lost-');seed(d);const st=new Store(join(d,'lan','relay.db'));st.putMeta({proto:2,identity:'gone',log:true,peers:1});st.close();
    const list=openTaintList(d),lan=await Lan.open({dataDir:d,keystore:'file',runner,taint:list} as any);
    const r1=await tryIt(top,'agent/on-top');
+   ok(/identity .*lost|replace it/i.test(String((lan.view() as any).taintClear?.en??'')),'with the identity lost, the Peers page says why a commit cannot be marked reviewed',JSON.stringify((lan.view() as any).taintClear));
    ok(!!lan.lost&&/^lan_untrusted: .*holds work from a peer/.test(r1),'with this Studio\'s LAN identity lost, Send for review of a tainted commit is still refused',JSON.stringify([lan.lost,r1]));
    await lan.replaceLostIdentity({kind:'file'});const r2=await tryIt(top,'agent/on-top');
    ok(/^lan_untrusted: .*holds work from a peer/.test(r2),'after a replace sets the relay\'s store aside, Send for review of a tainted commit is still refused',r2);

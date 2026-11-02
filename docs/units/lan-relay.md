@@ -249,7 +249,8 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
 - **From a Task to a Task**: a Task started inside a step of a profiled Task (a tool, a staffing source, a review-room
   host, a fresh proposal from a failure card) carries that profile, named explicitly, or it is not made (a profile
   refusal). New task and Re-propose from a peer's Task's failure card are refused (it is taken again from the inbox);
-  New task from an issue-text Task keeps the issue profile and its mark.
+  New task from an issue-text Task keeps the issue profile and its mark. A queue, poller or timer first made inside a
+  step runs detached from it (`engine.detached`), so its later work carries no Task.
 - **Spend cap**: every paid round (agent turns, coordinators, judges) is recorded on the Task itself
   (`ctx.lanRounds`, saved with it) when it is admitted, and its dollars when it ends; before the next one, the rounds
   and dollars are compared with the item's cap, so neither concurrency nor a restart reopens it. A provider that reports
@@ -260,13 +261,15 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   and a round that reports more than 2,000,000 tokens ends the Task's paid rounds. Dollars are shown on the thread as
   they are reported.
 - **Daily ceilings**: over every peer's Task on this Mac (rounds-only ones included), Studio-wide and on by default
-  ($20 and 60 rounds a day; editable on the Peers page), per local day (they reset at this Mac's midnight). They are
+  ($20 and 60 rounds a day; editable on the Peers page, and kept in the spend ledger, so they hold while the relay is
+  starting, off or without its identity), per local day (they reset at this Mac's midnight). They are
   counted in the spend ledger (`src/lan/ledger.ts`, `lan/spend.db`, its own store, open at every start whatever the relay
   does), never summed over the Tasks Studio still lists, so a Task archived or purged keeps today's spend. A round counts
   when it is admitted, its dollars reserved at the estimate for its provider and model (what that provider's rounds
   reported here on average; the figure for a round of unknown cost, $1 by default, when none did); when it ends its
   reported dollars replace the reservation, and a round whose provider reported none keeps it. A round past either
-  ceiling is refused before it starts; a ledger that cannot be read refuses every paid round. A rounds-only take says
+  ceiling is refused before it starts; a ledger that cannot be read, was deleted or was restored from an older copy (its
+  sentinel, `lan/spend.created`, keeps the most rounds it ever counted) refuses every paid round. A rounds-only take says
   so: no dollar limit, the estimated dollars per round and what that comes to (an estimate, not a limit), and the daily
   ceiling that still applies.
 - **Auto-start, opt-in**: at the take the taker may tick "start as soon as they assign it, with this exact cap"
@@ -355,12 +358,18 @@ does not open) and never set aside with the relay's store. A commit is tainted w
 ancestor (`git merge-base --is-ancestor`) in any repository that holds the recorded commit, wherever the row was
 recorded (a moved folder, a second clone, a fetch into another clone), whatever its branch is called, so one commit on
 top of it under another name is still the peer's work. A list that cannot be read refuses every check, in every
-repository, with the reason. Studio starts no trusted Task from a tainted commit (repo.prepare checks the Task's base, a
+repository, with the reason, and so does a list that was deleted or restored from an older copy: its sentinel
+(`lan/taint.created`, src/lan/sentinel.ts) says Studio made it and the most rows it ever held, so a missing list is
+never made again empty and one with fewer rows is broken. Outside a test run, a check with no list open refuses too.
+The project carries the taint as well: before the branch is made the commit is marked in it
+(`refs/crew/lan-taint/<sha>`), every check reads those marks with the list's rows, and a commit marked only there (the
+list lost it) is listed on the Peers page and cleared the same way. Studio starts no trusted Task from a tainted commit (repo.prepare checks the Task's base, a
 base Firstmate set included), sends none for review (Send for review, From existing branch), merges none and publishes
 none (every Studio push and pull request). The Peers page lists them, says not to check a `lan-untrusted/` branch out in
 a terminal or ask Firstmate to review it, and clears one only when a person says "I reviewed commit X": an admin
 signature (Touch ID on a Secure Enclave identity, its prompt naming the commit), kept in the audit row; the commit is
-then clear in every repository. A commit from a peer that was later removed or replaced stays on the list, marked so.
+then clear in every repository, its marks deleted. Marking one reviewed needs the relay and the identity: while the
+relay is off or starting, or the identity is lost, the page says so and the commits stay on the list. A commit from a peer that was later removed or replaced stays on the list, marked so.
 
 ## Audit
 

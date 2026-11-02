@@ -244,7 +244,9 @@ try {
 finally { await p.close(); }
 // a Studio started with CREW_LAN=0 (no relay at all) still opens its taint list at start, and says when it cannot read it
 { const s = await bootStudio("lan-off", { examples: false, env: { CREW_LAN: "0" }, beforeStart: async (data) => { mkdirSync(join(data, "lan"), { recursive: true }); writeFileSync(join(data, "lan", "taint.db"), "damaged\n".repeat(500)); } });
-  try { ok(/taint\.db\) cannot be read: .*trusted starts and publishes are refused/.test(s.output()) && (await s.api("/api/lan")).status !== 200, "a Studio with CREW_LAN=0 opens its taint list at start all the same (a damaged one is reported and refuses)", s.output().slice(-600)); }
+  try { const off = await s.api("/api/lan");
+    ok(/marked reviewed/.test(JSON.stringify(off.body)), "with the relay off, the Peers page says commits from peers stay on the taint list and cannot be marked reviewed", JSON.stringify(off.body));
+    ok(/taint\.db\) cannot be read: .*trusted starts and publishes are refused/.test(s.output()) && off.status !== 200, "a Studio with CREW_LAN=0 opens its taint list at start all the same (a damaged one is reported and refuses)", s.output().slice(-600)); }
   finally { await s.close(); } }
 console.log("\n" + lines.join("\n"));
 end();

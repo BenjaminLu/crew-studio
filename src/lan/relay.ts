@@ -13,8 +13,10 @@ import { LIMITS, cleanName, cleanText, entryHash, envelopeProblem, makeEnvelope,
 import { LanWire, call, introduce, peerTargetProblem, CallError, type IntroResult, type Me } from "./wire";
 import { scanText, type Hit } from "./scan";
 import { Store } from "./store";
-import { TaintStore } from "./taint";
+import { TaintStore, clearTaintRef, markTaintRef, taintRefs } from "./taint";
 import { lanIp } from "../remote/lan";
+import type { SpendLedger } from "./ledger";
+import type { TaintRow } from "./taint";
 
 export type PeerRec = { key: string; fp: string; petname: string; claimed: string; host: string; port: number; introducedAt: string;
   /** trusted: introduced; unpaired: forgotten (may be introduced again); revoked: never again; retired: it revoked its own identity */
@@ -86,7 +88,11 @@ export type LanOpts = { dataDir: string; runner: LanRunner;
    *  the take dialog's per-round estimate */
   estimates?: (c: Ceilings) => Record<string, number>;
   /** the taint list Studio opened at its start (src/lan/taint.ts openTaintList); the relay opens its data folder's own when none is given (tests) */
-  taint?: TaintStore };
+  taint?: TaintStore;
+  /** the registered projects' folders (commits marked there as work from a peer are listed and cleared) */
+  repos?: () => string[];
+  /** the spend ledger Studio opened at its start: the captain's daily ceilings are kept there (src/lan/ledger.ts) */
+  spend?: SpendLedger };
 
 export class LanError extends Error { constructor(readonly status: number, message: string, readonly code = "lan") { super(message); } }
 const now = () => new Date().toISOString();
@@ -167,6 +173,8 @@ export class Lan {
   }
   /** a restart: claimed rounds found or gone, retired identities reopened to finish their revocation, the cache warmed */
   private async afterOpen() {
+    // ceilings set before they were kept in the ledger move there
+    if (this.o.spend && this.st.settings.ceilings) { try { if (!this.o.spend.ceilings()) this.o.spend.setCeilings({ ...DEFAULT_CEILINGS, ...this.st.settings.ceilings }); } catch {} }
     for (const t of this.st.threads) for (const r of t.rounds) if (r.run?.id === "(claimed)") {
       const id = r.run.item ? this.o.runner.findByItem?.(r.run.item) ?? null : null;
       r.run = id ? { ...r.run, id, state: "running", found: true } : { ...r.run, id: "(gone)", state: "gone", stopped: now() };
@@ -251,12 +259,18 @@ export class Lan {
   }
   rename(name: unknown) { const n = cleanName(name); if (!n) throw new LanError(400, "a device name is 1 to 60 characters"); this.st.settings.name = n; this.save(); return this.view(); }
   /** the Studio-wide daily ceilings over every peer's Task (on by default; the dollar one counts unknown-cost rounds at the estimate) */
-  ceilings(): Ceilings { return { ...DEFAULT_CEILINGS, ...(this.st.settings.ceilings ?? {}) }; }
+  /** the captain's daily ceilings: kept in the spend ledger (always open, whatever the relay does); the relay's own copy
+   *  only when there is no ledger (tests) or until it is moved there */
+  ceilings(): Ceilings {
+    if (this.o.spend) { try { const c = this.o.spend.ceilings(); if (c) return { ...DEFAULT_CEILINGS, ...c }; } catch {} }
+    return { ...DEFAULT_CEILINGS, ...(this.st.settings.ceilings ?? {}) };
+  }
   setCeilings(o: { dailyUsd?: unknown; dailyRounds?: unknown; unknownRoundUsd?: unknown }) {
     const c = this.ceilings();
     if (o.dailyUsd !== undefined) { const v = o.dailyUsd === null ? null : Number(o.dailyUsd); if (v !== null && !(v >= 0 && v <= 10_000)) throw new LanError(400, "a daily dollar ceiling is 0 to 10000 (or off)"); c.dailyUsd = v; }
     if (o.dailyRounds !== undefined) { const v = Number(o.dailyRounds); if (!Number.isSafeInteger(v) || v < 1 || v > 1000) throw new LanError(400, "a daily round ceiling is 1 to 1000"); c.dailyRounds = v; }
     if (o.unknownRoundUsd !== undefined) { const v = Number(o.unknownRoundUsd); if (!(v >= 0 && v <= 100)) throw new LanError(400, "an unknown round counts at 0 to 100 dollars"); c.unknownRoundUsd = v; }
+    this.o.spend?.setCeilings(c); // first in the ledger: a write that fails changes nothing
     this.step(() => { this.st.settings.ceilings = c; this.store.audit("ceilings", c as any); }); return this.view();
   }
 
@@ -904,6 +918,7 @@ export class Lan {
       // after it keeps the row (an unused commit on the list is harmless, an untainted branch is not)
       const done = this.o.apply({ project, patch, branch, base, record: (commit, repo) => {
         this.taint.add({ sha: commit, repo, project, peer: t.peer, thread: t.id, round: r.n, at: now(), why: `applied from ${p.petname}'s Studio, thread ${t.id} round ${r.n}` });
+        markTaintRef(repo, commit); // the project carries it too (it outlives the list)
         this.step(() => { this.store.audit("apply-pending", { thread: t.id, round: r.n, project, branch, commit, base, seen: o.seen }); });
         recorded = commit; } });
       if (!recorded || done.commit !== recorded) throw new Error("the applier reported no commit recorded on the taint list: nothing is applied without its taint row");
@@ -914,18 +929,26 @@ export class Lan {
   /** the reason on a peer's rows (a label only: a list that cannot be written keeps its rows, still tainted) */
   private retagTaint(peer: string, why: string) { try { this.taint.retag(peer, why); } catch (e: any) { this.o.log?.(`LAN taint list: ${e?.message ?? e}`); } }
   private taintView() {
-    try { return { taints: this.taint.rows().filter((t) => !t.cleared).map((t) => ({ ...t, peer: this.who(t.peer) })), taintProblem: null as string | null }; }
-    catch (e: any) { return { taints: [], taintProblem: String(e?.message ?? e) }; }
+    // why a commit cannot be marked reviewed here now (shown on the page beside the list)
+    const taintClear = this.lost || !this.ks ? { en: `This Studio's LAN identity is lost: replace it (作廢並換新身分) before marking a commit reviewed (the mark is signed with the identity)`, zh: "這台的區網身分已遺失：要先作廢並換新身分，才能把 commit 標為已審查（標記需用身分簽章）" } : null;
+    let rows: TaintRow[] = [], taintProblem: string | null = null;
+    try { rows = this.taint.rows().filter((t) => !t.cleared); } catch (e: any) { taintProblem = String(e?.message ?? e); }
+    // commits marked only in a project (the list lost them): shown, and cleared the same way
+    for (const rp of this.o.repos?.() ?? []) for (const m of taintRefs(rp) ?? []) if (!rows.some((t) => t.sha === m)) rows.push({ sha: m, repo: rp, project: "?", peer: "", thread: "", round: 0, at: "", why: "marked in the project only (refs/crew/lan-taint): the list does not hold it", cleared: null, clearedBy: null });
+    return { taints: rows.map((t) => ({ ...t, peer: t.peer ? this.who(t.peer) : { key: "", name: "?", fp: "" } })), taintProblem, taintClear };
   }
   /** "I reviewed commit X": a person clears one commit from the taint list (audited), in every repository that holds it;
    *  its descendants are clear of it too */
   async clearTaint(sha: unknown) {
     const s = String(sha ?? ""); if (!/^[0-9a-f]{40}$/.test(s)) throw new LanError(400, "name the commit");
-    const rows = this.taint.rows().filter((t) => t.sha === s && !t.cleared); if (!rows.length) throw new LanError(404, "no such commit from a peer");
+    const rows = this.taint.rows().filter((t) => t.sha === s && !t.cleared);
+    const marked = [...new Set([...rows.map((x) => x.repo), ...(this.o.repos?.() ?? [])])].filter((rp) => (taintRefs(rp) ?? []).includes(s));
+    if (!rows.length && !marked.length) throw new LanError(404, "no such commit from a peer");
     // the admin key signs it (Touch ID on a Secure Enclave identity): the prompt names the commit
     const at = now(), sig = b64u(await this.live().admin("reviewed", [s, at]));
-    this.step(() => { this.store.audit("taint-cleared", { sha: s, at, sig, repos: rows.map((x) => x.repo), project: rows[0].project, peer: rows[0].peer, thread: rows[0].thread }); });
-    this.taint.clear(s, "captain (desktop)");
+    this.step(() => { this.store.audit("taint-cleared", { sha: s, at, sig, repos: [...new Set([...rows.map((x) => x.repo), ...marked])], project: rows[0]?.project ?? null, peer: rows[0]?.peer ?? null, thread: rows[0]?.thread ?? null }); });
+    if (rows.length) this.taint.clear(s, "captain (desktop)");
+    for (const rp of marked) clearTaintRef(rp, s);
     return this.view();
   }
   async withdraw(threadId: string, reason?: unknown) {

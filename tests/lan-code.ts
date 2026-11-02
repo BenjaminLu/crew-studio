@@ -105,7 +105,15 @@ A.close(); B.close();
 { const { openTaintList, setTaintSource } = await import("../src/lan/taint") as any; setTaintSource(null);
   const list = openTaintList(dirA);
   ok(!!applied && !!taintOf(repoA, applied), "with the relay closed, the taint list opened on its own still holds the applied commit", String(applied));
+  // the project itself carries the taint too (refs/crew/lan-taint/<sha>, written before the branch): with no list at all
+  // (taint.db and its sentinel gone with the lan folder) the commit and what is built on it are still tainted there
+  const refOf = (repo: string) => Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet", `refs/crew/lan-taint/${applied}`], { cwd: repo, stdout: "pipe" }).stdout.toString().trim();
   list.close(); setTaintSource(null);
+  ok(refOf(repoA) === applied && !!taintOf(repoA, applied!), "with no taint list open at all, the commit is still tainted in its project by its ref (refs/crew/lan-taint)", refOf(repoA));
+  // outside a test run, no taint list open is a refusal (fail closed), never "nothing tainted"
+  { const iso = process.env.CREW_TEST_ENV_ISOLATED; delete process.env.CREW_TEST_ENV_ISOLATED; const { taintRefusal } = await import("../src/lan/taint");
+    const r = taintRefusal(stranger, "HEAD", "Push"); process.env.CREW_TEST_ENV_ISOLATED = iso;
+    ok(/no list of commits applied from peers is open/.test(r ?? ""), "outside a test run, a check with no taint list open refuses (fail closed)", String(r)); }
   // "I reviewed commit X" is an admin signature (purpose "reviewed", over the commit and the time), kept in the audit row;
   // the commit is then clear in every repository that holds it
   const A2 = await Lan.open({ dataDir: dirA, runner: runner(), bind: "127.0.0.1", port: 0 });
@@ -113,8 +121,23 @@ A.close(); B.close();
   const row = A2.auditView().rows.reverse().find((r: any) => r.what === "taint-cleared") as any;
   const { verifyAdmin } = await import("../src/lan/keystore"), { unb64u } = await import("../src/lan/crypto");
   ok(!!row && verifyAdmin((A2 as any).ks.identity, "reviewed", [applied!, row.data.at], unb64u(row.data.sig, 64)), "clearing a commit is signed with the admin key (purpose reviewed), and the audit row keeps the signature", JSON.stringify(row?.data));
-  ok(!taintOf(repoA, applied!) && !taintOf(repoB, "from-a"), "a commit cleared by its SHA is clear in every repository that holds it");
+  ok(!taintOf(repoA, applied!) && !taintOf(repoB, "from-a") && !refOf(repoA), "a commit cleared by its SHA is clear in every repository that holds it, its ref deleted too", refOf(repoA));
   A2.close(); }
+
+// a taint list that was deleted, or restored from an older copy, is not "nothing tainted": its sentinel
+// (lan/taint.created, with the most rows the list ever held) says it was there, so it is broken and refuses everywhere
+{ const { TaintStore } = await import("../src/lan/taint") as any, { rmSync, copyFileSync, existsSync: ex } = await import("node:fs");
+  const d = mkdtempSync(join(tmpdir(), "crew-lan-taint-hw-")), f = join(d, "lan", "taint.db");
+  const row = (sha: string) => ({ sha, repo: repoA, project: "proj", peer: "p", thread: "t", round: 1, at: new Date().toISOString(), why: "test" });
+  const s1 = new TaintStore(f); ok(!s1.broken && ex(join(d, "lan", "taint.created")), "a new taint list is made with its sentinel", String(s1.broken)); s1.add(row("a".repeat(40))); s1.close();
+  copyFileSync(f, join(d, "old.db"));
+  const s2 = new TaintStore(f); s2.add(row("b".repeat(40))); s2.close();
+  for (const x of ["", "-wal", "-shm"]) rmSync(f + x, { force: true }); copyFileSync(join(d, "old.db"), f);
+  const older = new TaintStore(f); ok(/fewer|older/.test(String(older.broken)), "a taint list restored from an older copy (fewer rows than it held) is broken: every check refuses", String(older.broken)); older.close();
+  for (const x of ["", "-wal", "-shm"]) rmSync(f + x, { force: true });
+  const gone = new TaintStore(f); ok(/missing/.test(String(gone.broken)) && !ex(f), "a taint list that was deleted is not made again empty: it is broken, every check refuses", String(gone.broken)); gone.close();
+  const d2 = mkdtempSync(join(tmpdir(), "crew-lan-taint-up-")); { const s = new TaintStore(join(d2, "lan", "taint.db")); s.add(row("c".repeat(40))); s.close(); } rmSync(join(d2, "lan", "taint.created"));
+  const up = new TaintStore(join(d2, "lan", "taint.db")); ok(!up.broken && ex(join(d2, "lan", "taint.created")), "a list made before the sentinel existed is kept, and gets its sentinel", String(up.broken)); up.close(); }
 
 // a hand-back cannot carry a binary file: the preview says so and the send is refused (never a silent drop)
 { const out = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }, { path: "chart.png", text: null, bytes: 2048 }], changed: ["report.md", "chart.png"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" as const };

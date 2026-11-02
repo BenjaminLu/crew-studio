@@ -134,5 +134,9 @@ wireB.stop();
   if (gw) { const saved = process.env.CREW_LAN_ALLOW_LOOPBACK; delete process.env.CREW_LAN_ALLOW_LOOPBACK; const why = peerTargetProblem(gw, 7417); if (saved !== undefined) process.env.CREW_LAN_ALLOW_LOOPBACK = saved;
     ok(/gateway/.test(why ?? ""), "the network's gateway is never a peer", String(why)); }
   else ok(true, "no default gateway on this machine: the gateway refusal is not exercised here"); }
+// a private key is always 32 bytes: one with a leading zero byte (about 1 in 256) is kept padded, never shortened (the file
+// keystore reads back exactly 32 bytes)
+{ let short = 0; for (let i = 0; i < 3000; i++) if (generateKeyPair().priv.length !== 32) short++;
+  ok(short === 0, "every private key generated is 32 bytes (a leading zero byte is kept)", `${short} of 3000 were shorter`); }
 void canonical; void unb64u;
 end();

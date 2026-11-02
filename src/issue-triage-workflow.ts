@@ -110,7 +110,7 @@ export function installIssueTriage(engine:Engine,projects:Projects,store:IssueTr
   // a step that runs again (a restart mid-step, Retry on its failure card) already holds its slot: it never waits for itself
   if(x.ctx.fixSlot===true&&!x.ctx.fixDone)return;
   x.rn.note='Waiting for an investigation slot';x.save();
-  await new Promise<void>(go=>{slotQueue.set(x.run.id,go);slotTimer??=setInterval(admitSlots,1000);queueMicrotask(admitSlots);});
+  await new Promise<void>(go=>{slotQueue.set(x.run.id,go);slotTimer??=engine.detached(()=>setInterval(admitSlots,1000));queueMicrotask(admitSlots);});
   guard(x);x.rn.note=null;x.save();}
  /** the click, as the run's own ledger recorded it at its first step */
  const clicked=(x:X,f:{by:string;at:string})=>{const t=engine.trusted(x.run.id);return t.ok&&t.entries.some((e:any)=>e.record==='issue-fix-click'&&e.actor===f.by&&e.data?.at===f.at);};

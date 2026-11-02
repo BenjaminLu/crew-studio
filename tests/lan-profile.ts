@@ -126,6 +126,14 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   try { await E.deps.agents.run({ ref: lan.id, title: "code queue rebuild", tools: [], sandbox: { writes: [], allow: ["example.test"] }, provider: { id: "codex", model: "m" } }); } catch (e: any) { seen = String(e?.message ?? e); }
   E.rawRound = keep;
   ok(seen?.scope?.noLocalBinding === true && Array.isArray(seen.allow) && !seen.allow.length, "a LAN Task's round started outside its steps (a code-queue rebuild) runs with no local binding and no extra egress", JSON.stringify(seen)); }
+// a queue or poller first made inside a LAN Task's step runs detached from it (engine.detached): its later work does not
+// carry the Task's id (a later start is neither refused nor attributed to that Task)
+{ const lan = E.start({ workflow: "pushwf", title: "poller parent", text: "x", profile: lanP() }); await done(lan.id);
+  const scope = (E as any).runScope; let seen: any = "not run";
+  scope.run(lan.id, () => E.detached(() => setTimeout(() => { try { const c = E.start({ workflow: "pushwf", text: "from a poller" }); seen = { scope: scope.getStore() ?? null, profile: c.profile ?? null }; } catch (e: any) { seen = String(e?.message ?? e); } }, 10)));
+  await until(() => seen !== "not run", 5000);
+  ok(seen?.scope === null && seen?.profile === null, "a poller made inside a LAN Task's step does not carry the Task's id: its later start is an ordinary one", JSON.stringify(seen));
+ }
 // every path that makes a Task from another Task keeps its profile or refuses (item 23): New task and Re-propose from a
 // failure card (the tasks API answers the same card), and any engine.start made inside a profiled Task's step (a tool, a
 // staffing source, a review-room host, a follow-up): an unprofiled child, or one under another profile, is a profile refusal

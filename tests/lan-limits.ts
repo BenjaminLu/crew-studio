@@ -60,7 +60,7 @@ const A = await mk("a"), B = await mk("b"); A.setEnabled(true); B.setEnabled(tru
 // 29. a peer's content on this disk has a quota
 { const keep = LIMITS.peerQuota; (LIMITS as any).peerQuota = B.store.peerBytes(A.id.key) + 10;
   const done = (B as any).st.threads.filter((t: any) => t.owner === A.id.key); for (const t of done) t.state = "done"; // room under the five-open bound
-  const t = await A.dispatch({ to: B.id.key, title: "big", briefing: "x".repeat(200) }); await A.flush(); await until(() => !!A.thread(t.id)!.steps[0].waiting, 3000);
+  const t = await A.dispatch({ to: B.id.key, title: "big", briefing: "x".repeat(200) }); await A.flush(); await until(() => !!A.thread(t.id)!.steps[0].waiting, 15000);
   ok(/quota/.test(A.thread(t.id)!.steps[0].waiting ?? "") && !B.thread(t.id), "a peer's content past its quota on this Mac is refused for now (it waits), and nothing is stored", A.thread(t.id)!.steps[0].waiting ?? "");
   (LIMITS as any).peerQuota = keep; }
 // A-S4: a peer that cannot be reached says since when

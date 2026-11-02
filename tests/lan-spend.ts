@@ -59,6 +59,23 @@ const lanTask = (id: string, usd: number | null, rounds: number, lanRounds: any[
   const re = lanTask("R-e", null, 9); let e4 = ""; try { await e2.profiles.lan.wrapRound(re, { ref: re.id, sandbox: { writes: [] }, tools: [] }, async () => ({ id: "J", status: "done" })); } catch (x: any) { e4 = String(x?.message); }
   ok(/cannot be read/.test(e4) && !re.ctx.lanRounds.length, "a spend ledger that cannot be read refuses every paid round of a peer's Task", e4); }
 
+// 3b. the captain's daily ceilings live in the spend ledger, read whether or not the relay is open; a ledger that was
+//     deleted or restored from an older copy is broken (its sentinel says what it held), never a fresh day
+{ const { SpendLedger } = await import("../src/lan/ledger"), { rmSync, copyFileSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "crew-lan-ceil-")), L = new SpendLedger(join(dir, "lan", "spend.db"));
+  const none: any = { workflows: () => [], start: async () => { throw new Error("no"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} };
+  const lan = await Lan.open({ dataDir: dir, runner: none, bind: "127.0.0.1", port: 0, spend: L } as any); lan.setCeilings({ dailyUsd: 5 }); lan.close();
+  const e: any = { profiles: {}, commit: () => {}, list: () => [] }; installLanProfile(e, { ledger: () => L }); // no relay: its ceilings come from the ledger
+  const r = lanTask("R-ceil", null, 9); L.admit((await import("../src/lan/ledger")).localDay(), 5);
+  let err = ""; try { await e.profiles.lan.wrapRound(r, { ref: r.id, sandbox: { writes: [] }, tools: [] }, async () => ({ id: "J", status: "done", cost: { usd: 0 } })); } catch (x: any) { err = String(x?.message); }
+  ok(/daily ceiling: .*\$5\.00/.test(err), "a captain's $5 daily ceiling holds with the relay closed (it lives in the spend ledger, not the relay's sealed state)", err);
+  L.close(); const f = join(dir, "lan", "spend.db"); copyFileSync(f, join(dir, "old.db"));
+  { const L2 = new SpendLedger(f); L2.admit("2026-01-01", 1); L2.close(); }
+  for (const x of ["", "-wal", "-shm"]) rmSync(f + x, { force: true }); copyFileSync(join(dir, "old.db"), f);
+  ok(/fewer|older/.test(String(new SpendLedger(f).broken)), "a spend ledger restored from an older copy is broken (no paid round runs), never a lower day");
+  for (const x of ["", "-wal", "-shm"]) rmSync(f + x, { force: true });
+  ok(/missing/.test(String(new SpendLedger(f).broken)), "a spend ledger that was deleted is not made again empty: it is broken"); }
+
 // 4. the opt-in auto-start: only when ticked at the take, and only if every check still holds when the assignment arrives
 const starts: string[] = [], cancelled: string[] = [];
 const runner = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Documents", defHash: "a".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],

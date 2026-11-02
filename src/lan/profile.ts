@@ -132,7 +132,8 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
   const stop = (r: any, why: string) => { o.onStop?.(r, why); return why; };
   // an engine without Studio's data folder (tests) keeps its ledger in memory
   let mem: SpendLedger | null = null; const ledger = () => o.ledger ? o.ledger() : (mem ??= new SpendLedger(":memory:"));
-  const ceilings = () => { try { return o.ceilings?.() ?? DEFAULT_CEILINGS; } catch { return DEFAULT_CEILINGS; } };
+  // the captain's ceilings: from the ledger (always open, whatever the relay does), the defaults when none were set
+  const ceilings = (): Ceilings => { try { if (o.ceilings) return o.ceilings(); const c = ledger()?.ceilings(); return c ? { ...DEFAULT_CEILINGS, ...c } : DEFAULT_CEILINGS; } catch { return DEFAULT_CEILINGS; } };
   engine.profiles.lan = {
     // every step, whatever its kind: hooks and agent modes on the allowlist, plain cards, checks; nothing else
     admit: (x: any) => { const why = nodeRefusal(x.node); return why ? stop(x.run, why) : null; },

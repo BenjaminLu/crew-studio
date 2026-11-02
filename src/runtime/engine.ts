@@ -1566,6 +1566,9 @@ export class Engine {
   rawRound: (opts: any) => Promise<any> = () => Promise.reject(new Error("no round runner"));
   /** the Task whose step is running, for a round started without naming it */
   private readonly runScope = new AsyncLocalStorage<string>();
+  /** Run `fn` outside any Task's scope: a queue, poller or timer first made inside a step must not carry that step's Task
+   *  (its later work would be refused by a profile, or attributed to the Task). */
+  detached<T>(fn: () => T): T { return this.runScope.exit(fn); }
   /** A profiled Task's profile; null for an ordinary Task; "missing" when its profile is not installed (default deny). */
   profileOf(r: Run | null | undefined): Profile | "missing" | null { if (!r?.profile) return null; return this.profiles[r.profile.name] ?? "missing"; }
   /** Whether a Task's text is withheld from Firstmate, Studio's log and other Tasks: the one check (a profile says, and a

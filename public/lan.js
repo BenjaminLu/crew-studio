@@ -139,7 +139,7 @@ function taints(v) {
       h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T("Studio starts no trusted Task from these commits or anything built on them, sends none for review, merges or pushes none. Do not check a lan-untrusted/ branch out in a terminal, and do not ask Firstmate to review it: read the diff yourself.", "Studio 不會從這些 commit（或建立在它們之上的任何 commit）開始受信任的 Task、送審、合併或推送。不要在終端機 checkout lan-untrusted/ 分支，也不要請 Firstmate 審查：請自己讀 diff。")),
       list.map((t) => h("div", { class: "lan-row", "data-lan-taint": t.sha },
         h("b", { class: "mono" }, t.sha.slice(0, 12)), h("span", { class: "faint" }, `${t.project} · ${t.peer.name} · ${t.why}`),
-        h("button", { class: "btn", "data-lan-taint-clear": t.sha, onclick: () => { if (confirm(T(`You read commit ${t.sha.slice(0, 12)} yourself and keep it? It leaves this list (audited).`, `你親自讀過 commit ${t.sha.slice(0, 12)} 並要保留它？它會離開這個清單（會記入稽核）。`))) act("", () => postJ("/api/lan/taint/clear", { sha: t.sha })); } }, T(`I reviewed commit ${t.sha.slice(0, 7)}`, `我審查過 commit ${t.sha.slice(0, 7)}`))))));
+        v.taintClear ? h("span", { class: "lan-warn", "data-lan-taint-clear-why": t.sha }, T(v.taintClear.en, v.taintClear.zh)) : h("button", { class: "btn", "data-lan-taint-clear": t.sha, onclick: () => { if (confirm(T(`You read commit ${t.sha.slice(0, 12)} yourself and keep it? It leaves this list (audited).`, `你親自讀過 commit ${t.sha.slice(0, 12)} 並要保留它？它會離開這個清單（會記入稽核）。`))) act("", () => postJ("/api/lan/taint/clear", { sha: t.sha })); } }, T(`I reviewed commit ${t.sha.slice(0, 7)}`, `我審查過 commit ${t.sha.slice(0, 7)}`))))));
 }
 function dispatchForm(v) {
   const peersOk = (v.peers || []).filter((p) => p.state === "trusted" && !p.frozen);

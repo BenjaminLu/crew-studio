@@ -28,7 +28,9 @@ export function checkPub(pub: Uint8Array): Buffer {
   return b;
 }
 const jwkPub = (pub: Buffer) => ({ kty: "EC", crv: "P-256", x: b64u(pub.subarray(1, 33)), y: b64u(pub.subarray(33, 65)) });
-export function generateKeyPair(): KeyPair { const e = createECDH("prime256v1"); e.generateKeys(); return { pub: e.getPublicKey(), priv: e.getPrivateKey() }; }
+/** a P-256 private scalar as 32 bytes: node gives one with a leading zero byte shorter (about 1 in 256) */
+const priv32 = (b: Buffer) => b.length === 32 ? b : Buffer.concat([Buffer.alloc(32 - b.length), b]);
+export function generateKeyPair(): KeyPair { const e = createECDH("prime256v1"); e.generateKeys(); return { pub: e.getPublicKey(), priv: priv32(e.getPrivateKey()) }; }
 /** The key pair of a stored private scalar (its public half is derived, never trusted from storage). */
 export function keyPairOf(priv: Uint8Array): KeyPair { const e = createECDH("prime256v1"); e.setPrivateKey(Buffer.from(priv)); return { pub: e.getPublicKey(), priv: Buffer.from(priv) }; }
 /** ECDH on P-256: the x coordinate (32 bytes). A peer key off the curve throws. */
