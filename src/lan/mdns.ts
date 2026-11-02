@@ -12,7 +12,7 @@ const SERVICE = "_crewstudio._tcp";
 
 /** One `dns-sd -B` line: an instance added or removed, or null. */
 export function parseBrowse(line: string): { op: "add" | "rmv"; id: string } | null {
-  const m = /^\s*\S+\s+\S+\s+(Add|Rmv)\s+\S+\s+\S+\s+\S+\s+_crewstudio\._tcp\.\s+(\S.*)$/.exec(line);
+  const m = /^\s*\S+\s+(Add|Rmv)\s+\S+\s+\S+\s+\S+\s+_crewstudio\._tcp\.\s+(\S.*)$/.exec(line); // time, A/R, flags, if, domain, type, name
   if (!m) return null; const id = m[2].trim();
   return /^cs-[0-9a-f]{12}$/.test(id) ? { op: m[1] === "Add" ? "add" : "rmv", id } : null;
 }
