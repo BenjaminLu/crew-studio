@@ -247,6 +247,56 @@ A.close(); B.close();
   ok(s2?.continuePatch === edited && !/dropped/.test(String(s2?.continuePatch)) && !("continueAt" in (s2 ?? {})), "the next round starts from the patch as handed back (the captain's removed hunk stays removed)", JSON.stringify({ continuePatch: s2?.continuePatch?.slice(0, 80), keys: Object.keys(s2 ?? {}) }));
   D.close(); T.close(); }
 
+// every action that checks, waits and then writes acts once when it is asked twice at the same moment (two tabs, a
+// double click): the second is refused and nothing is signed or recorded twice
+{ const out: any = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }], changed: ["report.md"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" };
+  const run = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Docs", defHash: "d".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
+    start: async () => ({ run: "R-51", workflow: { id: "documents", version: 1, defHash: "d".repeat(64) } }), status: () => ({ state: "succeeded", result: "done", spent: { rounds: 1, tokens: 0, minutes: 0 }, stopped: null }), output: async () => out, cancel: () => {} });
+  const mk6 = (n: string) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-twice2-${n}-`)), runner: run(), bind: "127.0.0.1", port: 0 });
+  const D = await mk6("d"), T = await mk6("t"); D.setEnabled(true); T.setEnabled(true); await pairUp(D, T);
+  const both = async (f: () => Promise<any>) => (await Promise.allSettled([f(), f()])).map((x) => x.status);
+  const once = (st: string[]) => st.filter((x) => x === "fulfilled").length === 1 && st.filter((x) => x === "rejected").length === 1;
+  const th = await D.dispatch({ to: T.id.key, title: "twice", briefing: "the same action, twice" }); await D.flush(); await until(() => T.view().items.length === 1);
+  const d = T.view().items[0], tt = T.thread(d.thread)!;
+  const takes = await both(() => T.approve(d.id, { workflow: "documents", seen: T.seenHash(tt, tt.rounds[0]), rounds: 3 }));
+  ok(once(takes) && (T as any).st.outbox.filter((x: any) => x.thread === th.id).length === 1, "two approvals of one dispatch at the same moment: one take is signed, the other is refused", JSON.stringify([takes, (T as any).st.outbox.length]));
+  await T.flush(); await until(() => D.view().items.some((i: any) => i.kind === "take")); await D.approve(D.view().items.find((i: any) => i.kind === "take")!.id); await D.flush();
+  await until(() => T.view().items.some((i: any) => i.kind === "assign"));
+  const aid = T.view().items.find((i: any) => i.kind === "assign")!.id, starts = await both(() => T.approve(aid));
+  ok(once(starts), "two approvals of one assignment at the same moment: one Task starts", JSON.stringify(starts));
+  const pre = await T.handbackPreview(th.id), hands = await both(() => T.handback(th.id, { confirm: pre.hash }));
+  ok(once(hands) && (T as any).st.outbox.filter((x: any) => x.thread === th.id).length === 1, "two hand-backs at the same moment: one result is signed", JSON.stringify(hands));
+  await T.flush(); await until(() => D.view().items.some((i: any) => i.kind === "result")); await D.approve(D.view().items.find((i: any) => i.kind === "result")!.id);
+  const refines = await both(() => D.refine(th.id, { briefing: "shorter, please" }));
+  ok(once(refines) && D.thread(th.id)!.rounds.length === 2, "two refinements at the same moment: one round is added", JSON.stringify([refines, D.thread(th.id)!.rounds.length]));
+  const withdraws = await both(() => D.withdraw(th.id, "enough"));
+  ok(once(withdraws), "two withdrawals at the same moment: one is signed", JSON.stringify(withdraws));
+  const th2 = await D.dispatch({ to: T.id.key, title: "done twice", briefing: "for done" }); await D.flush(); await until(() => T.view().items.some((i: any) => i.thread === th2.id));
+  { const d2 = T.view().items.find((i: any) => i.thread === th2.id)!, t2 = T.thread(th2.id)!; await T.approve(d2.id, { workflow: "documents", seen: T.seenHash(t2, t2.rounds[0]), rounds: 3 }); await T.flush();
+    await until(() => D.view().items.some((i: any) => i.kind === "take" && i.thread === th2.id)); await D.approve(D.view().items.find((i: any) => i.kind === "take" && i.thread === th2.id)!.id); await D.flush();
+    await until(() => T.view().items.some((i: any) => i.kind === "assign" && i.thread === th2.id)); await T.approve(T.view().items.find((i: any) => i.kind === "assign" && i.thread === th2.id)!.id);
+    const p2 = await T.handbackPreview(th2.id); await T.handback(th2.id, { confirm: p2.hash }); await T.flush();
+    await until(() => D.view().items.some((i: any) => i.kind === "result" && i.thread === th2.id)); await D.approve(D.view().items.find((i: any) => i.kind === "result" && i.thread === th2.id)!.id); }
+  const dones = await both(() => D.done(th2.id));
+  ok(once(dones), "two dones at the same moment: one is signed", JSON.stringify(dones));
+  // a thread a received done closed waits for "noted": maintenance keeps it while its inbox item is open
+  await D.flush(); await until(() => T.view().items.some((i: any) => i.kind === "done" && i.thread === th2.id));
+  const tst: any = (T as any).st; for (let i = 0; i < 520; i++) tst.threads.push({ id: `old${i}`, owner: D.id.key, peer: T.id.key, title: "", acceptance: [], suggested: null, rounds: [], state: "done", steps: [] });
+  for (const r of T.thread(th2.id)!.rounds) if (r.run) r.run.state = "succeeded"; // its Task ended (the poll would say so)
+  T.flushState(); const keptDone = !!T.thread(th2.id); tst.threads = tst.threads.filter((t: any) => !String(t.id).startsWith("old")); // (the stand-in threads have no rounds to show)
+  let noted = ""; try { await T.approve(T.view().items.find((i: any) => i.kind === "done" && i.thread === th2.id)!.id); } catch (x: any) { noted = String(x?.message ?? x); }
+  ok(keptDone && !noted, "a thread whose inbox item is still open (a received done) is kept by the maintenance, and \"noted\" still works", noted);
+  tst.threads = tst.threads.filter((t: any) => !String(t.id).startsWith("old"));
+  // two "I reviewed commit X" at once: one admin signature, one audit row
+  const sha = "c".repeat(40); (D as any).taint.add({ sha, repo: repoA, project: "proj", peer: T.id.key, thread: th.id, round: 1, at: new Date().toISOString(), why: "test" });
+  const ks = (D as any).ks, admin0 = ks.admin.bind(ks); let signed = 0; ks.admin = async (...a: any[]) => { signed++; await Bun.sleep(20); return admin0(...a); };
+  const clears = await both(() => D.clearTaint(sha)); ks.admin = admin0;
+  ok(once(clears) && signed === 1 && D.auditView().rows.filter((r: any) => r.what === "taint-cleared" && r.data.sha === sha).length === 1, "two \"I reviewed commit X\" at the same moment: one signature (one Touch ID prompt), one audit row", JSON.stringify([clears, signed]));
+  // two retirements at once: one new identity
+  const retires = await both(() => D.retireIdentity());
+  ok(once(retires) && (D as any).st.retired.length === 1, "two retirements at the same moment: one new identity is made", JSON.stringify([retires, (D as any).st.retired.length]));
+  D.close(); T.close(); }
+
 // a hand-back cannot carry a binary file: the preview says so and the send is refused (never a silent drop)
 { const out = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }, { path: "chart.png", text: null, bytes: 2048 }], changed: ["report.md", "chart.png"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" as const };
   const run = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Docs", defHash: "d".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],

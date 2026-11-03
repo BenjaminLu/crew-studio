@@ -404,8 +404,14 @@ relay is off or starting, or the identity is lost, the page says so and the comm
 ## Audit
 
 The relay's maintenance (every 200 steps, and at close) keeps the newest 1,000 answered items and 500 closed threads,
-and never a thread still in use: one with an entry waiting in the outbox, a run not ended, or an accepted code result
-not applied yet. An outbox entry whose content is gone is never reported as delivered.
+and never a thread still in use: one with an entry waiting in the outbox, an inbox item still to answer (open or
+frozen), a run not ended (a claim included), or, on the Studio that dispatched it, an accepted code result not applied
+yet. An outbox entry whose content is gone is never reported as delivered.
+
+Every action that checks, waits and then writes acts once when it is asked twice at the same moment (two tabs, a double
+click): an approval reserves its item before any wait and checks it again after; an entry of the own log has its
+preconditions checked again inside the step that records it (a take, a refinement, a done, a withdrawal, a
+hand-back); marking a commit reviewed, confirming an introduction and changing the identity run one at a time.
 
 The audit is a table of the store, hash-chained (each row names the hash of the one before; a rotation keeps the chain
 from the last moved row) and written in the same transaction as the step it records: a step whose audit row cannot be

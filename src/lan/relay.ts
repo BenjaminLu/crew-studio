@@ -290,6 +290,8 @@ export class Lan {
     // never a thread still in use: one with an entry waiting in the outbox (a withdrawal, a done), a run not ended, or an
     // accepted code result not applied yet
     const inUse = new Set<string>(this.st.outbox.map((x) => x.thread).filter((x): x is string => !!x));
+    // an inbox item still to answer (open, or frozen with its author) names its thread
+    for (const i of this.st.items) if (i.state === "open" || i.state === "frozen") inUse.add(i.thread);
     // (an accepted code result counts only on the Studio that dispatched it: the taker's own hand-back is never "unapplied")
     const me = this.ks?.key ?? null;
     for (const t of this.st.threads) if (t.rounds.some((r) => (r.run && !ENDED.includes(r.run.state)) || (t.owner === me && r.result?.accepted && !r.result.applied && r.result.output.files.some((f) => f.path === "changes.patch")))) inUse.add(t.id);
@@ -373,6 +375,11 @@ export class Lan {
    * at the code, on the desktop) replaces an introduced peer with this identity: the old one is revoked for good.
    */
   async confirmIntro(id: string, code: unknown, petname: unknown, o: { replaces?: string | null; keepName?: boolean } = {}) {
+    // one confirmation per introduction at a time (a second is refused at once: one Touch ID prompt)
+    if (this.busy.has(`intro:${id}`)) throw new LanError(409, "this introduction is being confirmed", "intro"); this.busy.add(`intro:${id}`);
+    try { return await this.confirmIntroNow(id, code, petname, o); } finally { this.busy.delete(`intro:${id}`); }
+  }
+  private async confirmIntroNow(id: string, code: unknown, petname: unknown, o: { replaces?: string | null; keepName?: boolean } = {}) {
     const ks = this.live();
     const i = this.st.intros.find((x) => x.id === id && x.expires > Date.now()); if (!i) throw new LanError(404, "no such introduction (it may have expired: start it again)", "intro");
     const typed = String(code ?? "").replace(/\D/g, "");
@@ -450,7 +457,14 @@ export class Lan {
    * with the short code. Every open thread is closed here (threads are not moved). `kind` chooses the new keystore (an
    * upgrade from files to the Secure Enclave is this same step).
    */
-  async retireIdentity(o: { kind?: KeystoreKind; biometry?: boolean } = {}) {
+  /** an identity operation in progress (retire, replace a lost one): one at a time */
+  private identityBusy = false;
+  private async oneIdentityOp<T>(f: () => Promise<T>): Promise<T> {
+    if (this.identityBusy) throw new LanError(409, "an identity change is already in progress on this Studio", "identity_busy");
+    this.identityBusy = true; try { return await f(); } finally { this.identityBusy = false; }
+  }
+  retireIdentity(o: { kind?: KeystoreKind; biometry?: boolean } = {}) { return this.oneIdentityOp(() => this.retireIdentityNow(o)); }
+  private async retireIdentityNow(o: { kind?: KeystoreKind; biometry?: boolean } = {}) {
     const old = this.live(), at = now(), lastSeq = this.log.seq;
     const home = join(this.dir, `next-${Date.now()}`);
     // opt-in "biometry only": the admin key works only with the fingerprints enrolled now (a change makes it unusable,
@@ -501,7 +515,8 @@ export class Lan {
   }
   /** An identity that is gone (fail closed): set the old store aside and start again with a new identity. Peers cannot
    *  be told (the old keys are gone); each replaces this Studio in person, with the short code. */
-  async replaceLostIdentity(o: { kind?: KeystoreKind } = {}) {
+  replaceLostIdentity(o: { kind?: KeystoreKind } = {}) { return this.oneIdentityOp(() => this.replaceLostIdentityNow(o)); }
+  private async replaceLostIdentityNow(o: { kind?: KeystoreKind } = {}) {
     if (!this.lost) throw new LanError(409, "this Studio's identity is not lost");
     this.wire.stop(); this.store.close();
     const ts = Date.now();
@@ -543,11 +558,15 @@ export class Lan {
   private chain: Promise<unknown> = Promise.resolve();
   /** Sign the next entry of this Studio's own log. Its sequence number, the new head, the entry, its blobs, the outbox
    *  rows, its audit row and the thread it changes are written in one synced transaction before anything is sent. */
-  private append(to: string[], body: Body, blobs: { blob: Blob; bytes: number; plain?: string }[] = [], audit?: [string, Record<string, unknown>], then?: () => void): Promise<string> {
+  /** Sign and record an entry of the own log. `guard` runs inside the step that writes it, after the signature: the
+   *  caller's preconditions checked again there (a second request for the same action, made while the first was signing,
+   *  is refused before anything is recorded; its signature is dropped and the log does not move). */
+  private append(to: string[], body: Body, blobs: { blob: Blob; bytes: number; plain?: string }[] = [], audit?: [string, Record<string, unknown>], then?: () => void, guard?: () => void): Promise<string> {
     const run = this.chain.then(async () => {
       const recips = to.map((k) => this.recipient(k)), log = this.log;
       const e = await makeEnvelope(this.author(), log.seq + 1, log.head, recips, body);
       const h = this.step(() => {
+        guard?.();
         const l = this.log; if (l.seq + 1 !== e.seq || l.head !== e.prev) throw new LanError(409, "this Studio's log moved while an entry was signed: try again");
         const h = this.putEntry(e, body.thread); for (const b of blobs) this.putBlob(b.blob, { thread: body.thread, peer: null, bytes: b.bytes });
         l.seq = e.seq; l.head = h; this.store.setChain(e.a, e.seq, h);
@@ -823,15 +842,18 @@ export class Lan {
   /** Approve one received item. What it means depends on its kind (see the unit spec): take with a workflow, assign, start, accept. */
   async approve(id: string, o: { workflow?: string; roundsOnly?: boolean; rounds?: number; provider?: string | null; staffingConfirm?: string | null; project?: string | null; seen?: string | null; autoStart?: boolean; by?: string } = {}) {
     this.live();
-    const i = this.item(id), t = this.thread(i.thread); if (!t) throw new LanError(404, "no such thread");
+    // the item is reserved before any wait (a second approval from another tab is refused at once), released at the end
+    const i = this.item(id); this.busy.add(id);
+    try {
+    const t = this.thread(i.thread); if (!t) throw new LanError(404, "no such thread");
     if (this.peer(i.from)?.frozen) throw new LanError(409, "this peer is frozen (a fork in its log): resolve it first");
     const r = t.rounds.find((x) => x.n === i.round)!;
     // what the prompt is built from is read now (the decrypted cache may have let it go): never refused for a cache miss
     await this.promptTexts(t, r);
+    // after the wait, the state again: the item still open and still this Studio's
+    if (i.state !== "open" || !this.st.items.includes(i)) throw new LanError(409, `this item is already ${i.state}`);
     // a result from before a peer's revocation may still be accepted here; nothing else is done with a peer no longer introduced
     if (!this.trusted(i.from) && !(i.kind === "result" && this.peer(i.from)?.state === "retired" && (i.seq ?? 0) <= (this.peer(i.from)?.retired?.lastSeq ?? -1))) throw new LanError(409, "this peer is no longer introduced");
-    this.busy.add(id);
-    try {
       if (i.kind === "dispatch" || i.kind === "refine") {
         if (t.state !== "open" || r !== this.cur(t)) throw new LanError(409, "this round is no longer current");
         const w = this.o.runner.workflows().find((x) => x.id === o.workflow);
@@ -855,7 +877,8 @@ export class Lan {
           ["take", { thread: t.id, round: r.n, item: i.id, from: i.from, seen: o.seen, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { rounds }, provider, project, autoStart: o.autoStart === true }],
           () => { i.state = "approved"; r.take!.provider = provider; r.take!.staffing = w.staffing?.hash ?? null; r.take!.project = project;
             // opt-in, unticked by default: start as soon as the dispatcher assigns it, with this exact cap, for 30 minutes
-            r.take!.auto = o.autoStart === true ? { until: Date.now() + AUTO_START_MS, seen: String(o.seen), at: now() } : null; });
+            r.take!.auto = o.autoStart === true ? { until: Date.now() + AUTO_START_MS, seen: String(o.seen), at: now() } : null; },
+          () => { if (i.state !== "open" || r.take || r !== this.cur(t) || t.state !== "open") throw new LanError(409, "this round was taken or changed meanwhile"); });
         return this.threadView(t);
       } else if (i.kind === "take") {
         if (r !== this.cur(t) || r.assign) throw new LanError(409, "this round already has its taker");
@@ -998,7 +1021,8 @@ export class Lan {
     const blob = sealBlob(x.plain, [this.recipient(t.owner)], { id: this.live().key, dh: this.live().dhPub });
     await this.append([t.owner], { kind: "result", thread: t.id, round: x.r.n, take: x.r.assign!.take, briefing: x.r.briefing.hash, output: { hash: blob.hash, size: x.plain.length, files: x.files.slice(0, LIMITS.files).map((f) => ({ path: f.path.slice(0, LIMITS.path), bytes: Buffer.byteLength(f.text) })) },
       workflow: x.out.workflow, run: x.r.run!.id, checks: { ...x.out.checks, summary: x.out.checks.summary.slice(0, LIMITS.note) }, ...(x.out.kind === "patch" && x.out.base ? { base: x.out.base } : {}) }, [{ blob, bytes: x.plain.length, plain: x.plain.toString("utf8") }],
-      ["handback", { thread: t.id, round: x.r.n, run: x.r.run!.id, to: t.owner, output: blob.hash, bytes: x.plain.length }]);
+      ["handback", { thread: t.id, round: x.r.n, run: x.r.run!.id, to: t.owner, output: blob.hash, bytes: x.plain.length }], undefined,
+      () => { if (x.r.result || t.state !== "open" || this.cur(t) !== x.r) throw new LanError(409, "this round was handed back or changed meanwhile"); });
     return this.threadView(t);
   }
   async refine(threadId: string, o: { briefing: unknown; note?: unknown }) {
@@ -1009,14 +1033,16 @@ export class Lan {
     if (!this.trusted(t.peer)) throw new LanError(409, "this peer is no longer introduced");
     const plain = Buffer.from(text, "utf8"), blob = sealBlob(plain, [this.recipient(t.peer)], { id: this.live().key, dh: this.live().dhPub });
     await this.append([t.peer], { kind: "refine", thread: t.id, round: r.n + 1, briefing: { hash: blob.hash, size: plain.length }, note: cleanText(o.note ?? "", LIMITS.note) }, [{ blob, bytes: plain.length, plain: text }],
-      ["refine", { thread: t.id, round: r.n + 1, briefing: blob.hash }]);
+      ["refine", { thread: t.id, round: r.n + 1, briefing: blob.hash }], undefined,
+      () => { if (t.state !== "open" || this.cur(t) !== r) throw new LanError(409, "this thread changed meanwhile (another refinement or an end)"); });
     return this.threadView(t);
   }
   async done(threadId: string) {
     const t = this.thread(threadId); if (!t || t.owner !== this.live().key) throw new LanError(404, "only the dispatcher closes its own thread");
     const r = this.cur(t); if (t.state !== "open" || !r.result) throw new LanError(409, "a thread is done after a result");
     if (!this.trusted(t.peer)) throw new LanError(409, "this peer is no longer introduced");
-    await this.append([t.peer], { kind: "done", thread: t.id, round: r.n, result: r.result.entry }, [], ["done", { thread: t.id, round: r.n, result: r.result.entry }]);
+    await this.append([t.peer], { kind: "done", thread: t.id, round: r.n, result: r.result.entry }, [], ["done", { thread: t.id, round: r.n, result: r.result.entry }], undefined,
+      () => { if (t.state !== "open" || this.cur(t) !== r) throw new LanError(409, "this thread changed meanwhile (it is already done, withdrawn or refined)"); });
     return this.threadView(t);
   }
   /** The dispatcher applies a code result (its changes.patch) to one of its own registered projects, on a new branch
@@ -1073,16 +1099,21 @@ export class Lan {
     const rows = this.taint.rows().filter((t) => t.sha === s && !t.cleared);
     const marked = [...new Set([...rows.map((x) => x.repo), ...(this.o.repos?.() ?? [])])].filter((rp) => (taintRefs(rp) ?? []).includes(s));
     if (!rows.length && !marked.length) throw new LanError(404, "no such commit from a peer");
+    // one at a time per commit (a second request is refused at once: one Touch ID prompt, one audit row)
+    if (this.busy.has(`taint:${s}`)) throw new LanError(409, "this commit is being marked reviewed"); this.busy.add(`taint:${s}`);
+    try {
     // the admin key signs it (Touch ID on a Secure Enclave identity): the prompt names the commit
     const at = now(), sig = b64u(await this.live().admin("reviewed", [s, at]));
     this.step(() => { this.store.audit("taint-cleared", { sha: s, at, sig, repos: [...new Set([...rows.map((x) => x.repo), ...marked])], project: rows[0]?.project ?? null, peer: rows[0]?.peer ?? null, thread: rows[0]?.thread ?? null }); });
     if (rows.length) this.taint.clear(s, "captain (desktop)");
     for (const rp of marked) clearTaintRef(rp, s);
     return this.view();
+    } finally { this.busy.delete(`taint:${s}`); }
   }
   async withdraw(threadId: string, reason?: unknown) {
     const t = this.thread(threadId); if (!t || t.owner !== this.live().key || t.state !== "open") throw new LanError(404, "only the dispatcher withdraws its own open thread");
-    await this.append([t.peer], { kind: "revoke", thread: t.id, round: this.cur(t).n, target: t.rounds[0].briefing.entry, reason: cleanText(reason ?? "", LIMITS.reason) }, [], ["withdraw", { thread: t.id }]);
+    await this.append([t.peer], { kind: "revoke", thread: t.id, round: this.cur(t).n, target: t.rounds[0].briefing.entry, reason: cleanText(reason ?? "", LIMITS.reason) }, [], ["withdraw", { thread: t.id }], undefined,
+      () => { if (t.state !== "open") throw new LanError(409, `this thread is already ${t.state}`); });
     return this.threadView(t);
   }
   /** the audit trail (newest last) and whether its hash chain holds */
