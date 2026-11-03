@@ -290,7 +290,9 @@ export class Lan {
     // never a thread still in use: one with an entry waiting in the outbox (a withdrawal, a done), a run not ended, or an
     // accepted code result not applied yet
     const inUse = new Set<string>(this.st.outbox.map((x) => x.thread).filter((x): x is string => !!x));
-    for (const t of this.st.threads) if (t.rounds.some((r) => (r.run && !ENDED.includes(r.run.state)) || (r.result?.accepted && !r.result.applied && r.result.output.files.some((f) => f.path === "changes.patch")))) inUse.add(t.id);
+    // (an accepted code result counts only on the Studio that dispatched it: the taker's own hand-back is never "unapplied")
+    const me = this.ks?.key ?? null;
+    for (const t of this.st.threads) if (t.rounds.some((r) => (r.run && !ENDED.includes(r.run.state)) || (t.owner === me && r.result?.accepted && !r.result.applied && r.result.output.files.some((f) => f.path === "changes.patch")))) inUse.add(t.id);
     const closed = this.st.threads.filter((t) => t.state !== "open" && !inUse.has(t.id)); if (closed.length > 500) { const drop = new Set(closed.slice(0, closed.length - 500)); for (const t of drop) this.store.pruneThread(t.id, [...evidence]); this.st.threads = this.st.threads.filter((t) => !drop.has(t)); }
   }
   private putEntry(e: Envelope, thread: string | null = null) { const h = entryHash(e); this.store.putEntry(h, e.a, e.seq, e, thread); return h; }
@@ -824,6 +826,8 @@ export class Lan {
     const i = this.item(id), t = this.thread(i.thread); if (!t) throw new LanError(404, "no such thread");
     if (this.peer(i.from)?.frozen) throw new LanError(409, "this peer is frozen (a fork in its log): resolve it first");
     const r = t.rounds.find((x) => x.n === i.round)!;
+    // what the prompt is built from is read now (the decrypted cache may have let it go): never refused for a cache miss
+    await this.promptTexts(t, r);
     // a result from before a peer's revocation may still be accepted here; nothing else is done with a peer no longer introduced
     if (!this.trusted(i.from) && !(i.kind === "result" && this.peer(i.from)?.state === "retired" && (i.seq ?? 0) <= (this.peer(i.from)?.retired?.lastSeq ?? -1))) throw new LanError(409, "this peer is no longer introduced");
     this.busy.add(id);
@@ -862,17 +866,18 @@ export class Lan {
         const running = this.st.threads.flatMap((x) => x.rounds).filter((x) => x.run && !ENDED.includes(x.run.state)).length;
         if (running >= LIMITS.concurrentTasks) throw new LanError(409, `${running} Tasks from peers are running on this Mac (at most ${LIMITS.concurrentTasks} at once): start this one when one ends`, "busy");
         const text = this.prompt(t, r);
-        // the claim is written, synced, before the Task starts: a second approval (a double click, another tab, a restart)
-        // finds it and starts nothing; the item that started it is how a restart finds the Task again
-        this.step(() => { r.run = { id: "(claimed)", state: "starting", result: null, started: now(), stopped: null, item: i.id }; i.state = "approved";
-          this.store.markUsed([r.briefing.hash, r.briefing.entry, i.entry, ...(r.take ? [r.take.entry] : [])]); });
-        let started: { run: string; workflow: WorkflowRef };
         // a code refinement continues from the patch this Studio handed back last round, as it was sent (a hunk the captain
         // removed before the hand-back stays removed); it is committed onto the dispatched base under the patch rules
         const prev = r.n > 1 ? t.rounds.find((x) => x.n === r.n - 1) : null;
         let continuePatch: string | null = null;
         if (t.base && prev?.result) { const sent = this.blobText(prev.result.output.hash); if (sent === null) throw new LanError(410, `round ${prev.n}'s result is not on this Studio any more: this refinement cannot continue from it`, "continue");
           try { continuePatch = (JSON.parse(sent).files ?? []).find((f: any) => f.path === "changes.patch")?.text ?? null; } catch {} }
+        // the claim is written, synced, before the Task starts: a second approval (a double click, another tab, a restart)
+        // finds it and starts nothing; the item that started it is how a restart finds the Task again
+        this.step(() => { r.run = { id: "(claimed)", state: "starting", result: null, started: now(), stopped: null, item: i.id }; i.state = "approved";
+          this.store.markUsed([r.briefing.hash, r.briefing.entry, i.entry, ...(r.take ? [r.take.entry] : [])]); });
+        // from the claim on, every failure before the Task runs goes through the reset below: a claim is never stranded
+        let started: { run: string; workflow: WorkflowRef };
         try { started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN ${t.id}`, item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, base: t.base?.sha ?? null, continuePatch, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` }); }
         catch (e: any) { this.step(() => { r.run = null; i.state = "open"; }); throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); }
         this.step(() => { r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null, item: i.id, auto: o.by === "auto-start" };
@@ -891,7 +896,13 @@ export class Lan {
    * taker read; the opt-in not expired; the item's cap and the daily ceilings still holding), then the Task starts as if
    * the taker pressed start; the page shows that it started by itself, with a stop button. Audited either way.
    */
+  /** the texts a round's prompt is built from (its briefing, the previous round's result), decrypted into the cache */
+  private async promptTexts(t: ThreadRec, r: RoundRec | null | undefined) {
+    if (!r) return; await this.loadText(r.briefing.hash);
+    const prev = r.n > 1 ? t.rounds.find((x) => x.n === r.n - 1) : null; if (prev?.result) await this.loadText(prev.result.output.hash);
+  }
   async autoStart(itemId: string): Promise<string | null> {
+    { const i0 = this.st.items.find((x) => x.id === itemId), t0 = i0 ? this.thread(i0.thread) : null; if (t0 && i0) await this.promptTexts(t0, t0.rounds.find((x) => x.n === i0.round)); }
     const i = this.st.items.find((x) => x.id === itemId), t = i ? this.thread(i.thread) : null, r = t?.rounds.find((x) => x.n === i!.round) ?? null, a = r?.take?.auto ?? null;
     const why = !i || i.state !== "open" || i.kind !== "assign" ? "the assignment is not open" : !t || !r || !a ? "no opt-in" : Date.now() > a.until ? "the opt-in expired (30 minutes after the take)"
       : !this.trusted(i.from) || this.peer(i.from)?.frozen ? "the peer is no longer introduced, or is frozen" : t.state !== "open" || r !== this.cur(t) ? "the round is no longer current"

@@ -193,7 +193,18 @@ A.close(); B.close();
   pt.port = port0; for (const x of st.outbox) x.next = 0; // the peer is back, and the backoff has passed
   await D.flush(); await until(() => T.thread(th.id)?.state === "withdrawn", 5000);
   ok(kept && queued && T.thread(th.id)?.state === "withdrawn", "a thread whose withdrawal still waits to go out is not trimmed, and the withdrawal reaches the peer once it is back", JSON.stringify([kept, queued, T.thread(th.id)?.state]));
-  st.threads = st.threads.filter((t: any) => !String(t.id).startsWith("closed")); D.close(); T.close(); }
+  st.threads = st.threads.filter((t: any) => !String(t.id).startsWith("closed"));
+  // an accepted code result counts as in use only on the Studio that dispatched it (it may still apply it): on the taker,
+  // its own handed-back results never keep a closed thread, and the 500 limit holds
+  const codeThread = (id: string, owner: string, peer: string) => ({ id, owner, peer, title: "", acceptance: [], suggested: null, state: "done", steps: [], base: { root: "r".repeat(40), sha: "s".repeat(40) },
+    rounds: [{ n: 1, fence: "f", briefing: { hash: "h", size: 1, entry: "e" }, take: null, assign: null, run: { id: "R-1", state: "succeeded", result: null, started: "", stopped: null }, result: { entry: "x", take: "t", workflow: { id: "code-firstmate", version: 1, defHash: "c".repeat(64) }, output: { hash: "o", size: 1, files: [{ path: "changes.patch", bytes: 1 }] }, run: "R-1", checks: { pass: 0, fail: 0, other: 0, summary: "" }, flags: [], accepted: true } }] });
+  const tst: any = (T as any).st; for (let i = 0; i < 520; i++) tst.threads.push(codeThread(`took${i}`, D.id.key, T.id.key));
+  T.flushState(); const left = tst.threads.filter((t: any) => String(t.id).startsWith("took")).length;
+  ok(left <= 500, "on the taker, closed code threads whose results it handed back are trimmed to the limit (its own results are never 'unapplied')", String(left));
+  tst.threads = tst.threads.filter((t: any) => !String(t.id).startsWith("took"));
+  st.threads.push(codeThread("mine-unapplied", D.id.key, T.id.key)); for (let i = 0; i < 520; i++) st.threads.push({ id: `closed${i}`, owner: D.id.key, peer: T.id.key, title: "", acceptance: [], suggested: null, rounds: [], state: "done", steps: [] });
+  D.flushState(); ok(!!st.threads.find((t: any) => t.id === "mine-unapplied"), "on the dispatcher, a closed thread with an accepted code result not applied yet is kept");
+  st.threads = st.threads.filter((t: any) => !String(t.id).startsWith("closed") && t.id !== "mine-unapplied"); D.close(); T.close(); }
 
 // a code refinement continues from the patch as it was handed back (edited by the captain), never from the commit the
 // previous Task ended on: a hunk the captain removed does not come back
@@ -224,7 +235,14 @@ A.close(); B.close();
   const pre = await T.handbackPreview(th.id, [{ path: "changes.patch", text: edited }]); await T.handback(th.id, { confirm: pre.hash, edits: [{ path: "changes.patch", text: edited }] }); await T.flush();
   await until(() => D.view().items.some((i: any) => i.kind === "result")); await D.approve(D.view().items.find((i: any) => i.kind === "result")!.id);
   await D.refine(th.id, { briefing: "and one more file" }); await D.flush(); await until(() => T.view().items.some((i: any) => i.kind === "refine"));
-  await round("refine");
+  // the previous result has left the decrypted cache by the time the assignment is approved: it is read again, never a
+  // claim stranded by a refusal after it
+  const roundEvict = async () => { const it = T.view().items.find((i: any) => i.kind === "refine")!, tt = T.thread(th.id)!; await T.approve(it.id, { workflow: "code-firstmate", seen: T.seenHash(tt, T.cur(tt)), project: "bproj", rounds: 3 }); await T.flush();
+    await until(() => D.view().items.some((i: any) => i.kind === "take" && i.round === 2)); await D.approve(D.view().items.find((i: any) => i.kind === "take" && i.round === 2)!.id); await D.flush();
+    await until(() => T.view().items.some((i: any) => i.kind === "assign" && i.round === 2)); (T as any).texts.clear();
+    let e = ""; try { await T.approve(T.view().items.find((i: any) => i.kind === "assign" && i.round === 2)!.id); } catch (x: any) { e = `${x.code}: ${x.message}`; } return e; };
+  const evictErr = await roundEvict();
+  ok(!evictErr && T.thread(th.id)!.rounds[1].run?.id?.startsWith("R-"), "with the previous result out of the cache, the refinement's assignment still starts its Task (read again before the claim)", JSON.stringify([evictErr, T.thread(th.id)!.rounds[1].run]));
   const s2 = starts.at(-1);
   ok(s2?.continuePatch === edited && !/dropped/.test(String(s2?.continuePatch)) && !("continueAt" in (s2 ?? {})), "the next round starts from the patch as handed back (the captain's removed hunk stays removed)", JSON.stringify({ continuePatch: s2?.continuePatch?.slice(0, 80), keys: Object.keys(s2 ?? {}) }));
   D.close(); T.close(); }
