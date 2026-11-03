@@ -24,10 +24,13 @@ export type TaintRow = { sha: string; repo: string; project: string; peer: strin
 export type Tainted = { sha: string; peer: string; thread: string; why: string; unreadable?: boolean };
 type Source = () => TaintRow[];
 const sources = new Set<Source>();
+/** set by the process that serves Studio, before anything runs: from then on, no list open is a refusal (fail closed) */
+let required = false;
+export function requireTaintList() { required = true; }
 /** a list of rows the checks read (a source that throws refuses every check) */
 export function addTaintSource(s: Source): () => void { sources.add(s); return () => { sources.delete(s); }; }
 /** tests: one source in place of every other (null: none) */
-export function setTaintSource(s: Source | null) { sources.clear(); if (s) sources.add(s); }
+export function setTaintSource(s: Source | null) { sources.clear(); if (s) sources.add(s); else required = false; }
 
 /** lan/taint.db: 0600, WAL, synchronous FULL. A file that is there but cannot be opened or read leaves `broken` set and
  *  every read throws (so every check refuses). */
@@ -71,7 +74,7 @@ export class TaintStore {
   close() { this.remove(); this.remove = () => {}; try { this.db?.close(); } catch {} this.db = null; }
 }
 /** Studio's start: the taint list of this data folder, open and read by every check, whatever the relay does */
-export function openTaintList(dataDir: string): TaintStore { return new TaintStore(join(dataDir, "lan", "taint.db")).register(); }
+export function openTaintList(dataDir: string): TaintStore { requireTaintList(); return new TaintStore(join(dataDir, "lan", "taint.db")).register(); }
 
 const rowsOf = () => [...sources].flatMap((s) => s());
 const REF = "refs/crew/lan-taint/";
@@ -93,9 +96,10 @@ export function taintRefs(repo: string): string[] | null {
 /** The recorded commit from a peer this commit is or descends from (in this repository, wherever the row was recorded),
  *  or null. A list that cannot be read, or a commit git cannot resolve while the list has records, is tainted (fail closed). */
 export function taintOf(repo: string, commit: string): Tainted | null {
-  const testRun = !!process.env.CREW_TEST_ENV_ISOLATED;
-  // outside a test run, Studio always opened a list at its start: none open is a refusal, never "nothing tainted"
-  if (!sources.size && !testRun) return { sha: "?", peer: "?", thread: "?", why: "no list of commits applied from peers is open in this process", unreadable: true };
+  const testRun = !required;
+  // Studio's server opened a list at its start and declared it required: none open is a refusal, never "nothing tainted".
+  // A process that never declared it (a script, a test driver) has only the projects' own marks to go by
+  if (!sources.size && required) return { sha: "?", peer: "?", thread: "?", why: "no list of commits applied from peers is open in this process", unreadable: true };
   let rows: TaintRow[];
   try { rows = rowsOf().filter((t) => !t.cleared); }
   catch (e: any) { return { sha: "?", peer: "?", thread: "?", why: String(e?.message ?? e).slice(0, 300), unreadable: true }; }

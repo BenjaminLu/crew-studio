@@ -242,16 +242,16 @@ finally { await p.close(); }
 { const s = await bootStudio("lan-optin", { examples: false });
   try { const lanDir = join(s.data, "lan"), has = (f: string) => existsSync(join(lanDir, f));
     const off = await s.api("/api/lan"); await Bun.sleep(300);
-    ok(off.status === 404 && off.body?.code === "off" && off.body?.canEnable === true && !has("identity.json") && !has("admin.key") && !has("enclave.json") && !has("relay.db") && !existsSync(join(lanDir, "helper")) && has("taint.db") && has("spend.db"),
+    ok(off.status === 200 && off.body?.off === true && off.body?.code === "off" && off.body?.canEnable === true && !has("identity.json") && !has("admin.key") && !has("enclave.json") && !has("relay.db") && !existsSync(join(lanDir, "helper")) && has("taint.db") && has("spend.db"),
       "a new Studio's board-to-board work is off: no identity, no relay store, no helper until the captain turns it on (the taint list and spend ledger are open)", JSON.stringify([off.status, off.body, existsSync(lanDir) ? readdirSync(lanDir) : []]));
     const on = await s.api("/api/lan/enable", {});
-    ok(on.status === 200 && !!on.body?.me?.key && (has("identity.json") || has("enclave.json")) && (await s.api("/api/lan")).status === 200, "turning it on makes this Mac's identity and opens the relay", JSON.stringify([on.status, on.body?.error]));
+    ok(on.status === 200 && !!on.body?.me?.key && (has("identity.json") || has("enclave.json")) && !(await s.api("/api/lan")).body?.off, "turning it on makes this Mac's identity and opens the relay", JSON.stringify([on.status, on.body?.error]));
   } finally { await s.close(); } }
 // a Studio started with CREW_LAN=0 (no relay at all) still opens its taint list at start, and says when it cannot read it
 { const s = await bootStudio("lan-off", { examples: false, env: { CREW_LAN: "0" }, beforeStart: async (data) => { mkdirSync(join(data, "lan"), { recursive: true }); writeFileSync(join(data, "lan", "taint.db"), "damaged\n".repeat(500)); } });
   try { const off = await s.api("/api/lan");
     ok(/marked reviewed/.test(JSON.stringify(off.body)) && off.body?.canEnable === false && (await s.api("/api/lan/enable", {})).status !== 200, "with CREW_LAN=0 the Peers page says commits from peers stay on the taint list and cannot be marked reviewed, and board-to-board work cannot be turned on", JSON.stringify(off.body));
-    ok(/taint\.db\) cannot be read: .*trusted starts and publishes are refused/.test(s.output()) && off.status !== 200, "a Studio with CREW_LAN=0 opens its taint list at start all the same (a damaged one is reported and refuses)", s.output().slice(-600)); }
+    ok(/taint\.db\) cannot be read: .*trusted starts and publishes are refused/.test(s.output()) && off.body?.off === true, "a Studio with CREW_LAN=0 opens its taint list at start all the same (a damaged one is reported and refuses)", s.output().slice(-600)); }
   finally { await s.close(); } }
 console.log("\n" + lines.join("\n"));
 end();

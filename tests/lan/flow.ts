@@ -28,7 +28,7 @@ export async function bootPair(o: { examples?: boolean } = {}): Promise<Pair> {
   const [A, B] = await Promise.all([bootStudio("lan-a", { env: lan(lanA), examples: o.examples ?? false }), bootStudio("lan-b", { env: lan(lanB), examples: o.examples ?? false })]);
   // board-to-board work is off until the captain turns it on (it makes the identity); then it opens in the background
   for (const s of [A, B]) await must(s.api("/api/lan/enable", {}), `turn ${s.name}'s board-to-board work on`);
-  for (const s of [A, B]) await until(`${s.name}'s relay to open`, async () => (await s.api("/api/lan")).status === 200, 120_000);
+  for (const s of [A, B]) await until(`${s.name}'s relay to open`, async () => { const v = await s.api("/api/lan"); return v.status === 200 && !v.body?.off; }, 120_000);
   for (const [s, n] of [[A, "Studio A"], [B, "Studio B"]] as const) await must(s.api("/api/lan/settings", { enabled: true, name: n }), `turn ${n}'s listener on`);
   const keyA = (await must(A.api("/api/lan"), "A view")).me.key, keyB = (await must(B.api("/api/lan"), "B view")).me.key;
   return { A, B, lanA, lanB, keyA, keyB, close: async () => { await Promise.all([A.close(), B.close()]); } };

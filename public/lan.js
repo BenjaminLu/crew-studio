@@ -15,13 +15,15 @@ const onPage = () => S.route?.name === "lan";
 const typing = () => { const a = document.activeElement; return !!a && a.closest?.("[data-lan]") && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
 async function load() {
   if (LN.loading) return; LN.loading = true;
-  try { LN.v = await getJ("/api/lan"); LN.err = null; LN.errCode = null; LN.retries = 0; }
+  try { const j = await getJ("/api/lan");
+    if (j.off) { LN.v = null; LN.err = j.error; LN.errCode = j.code; LN.canEnable = !!j.canEnable; if (j.code === "starting" && (LN.retries = (LN.retries || 0) + 1) <= 90) setTimeout(() => { void load(); }, 2000); }
+    else { LN.v = j; LN.err = null; LN.errCode = null; LN.retries = 0; } }
   catch (e) { LN.err = String(e.message || e); LN.errCode = e.code ?? null; LN.canEnable = !!e.body?.canEnable;
     // starting: the relay opens in the background; asked again a bounded number of times, never in a loop
     if (LN.errCode === "starting" && (LN.retries = (LN.retries || 0) + 1) <= 90) setTimeout(() => { void load(); }, 2000); }
   finally { LN.loading = false; }
-  if (onPage() && !LN.wf) { try { LN.wf = (await getJ("/api/lan/workflows")).workflows; } catch {} }
-  if (onPage() && !LN.projects) { try { const p = await getJ("/api/projects"); LN.projects = (Array.isArray(p) ? p : p.projects || []).filter((x) => x.enabled !== false && x.path); } catch { LN.projects = []; } }
+  if (onPage() && LN.v && !LN.wf) { try { LN.wf = (await getJ("/api/lan/workflows")).workflows; } catch {} }
+  if (onPage() && LN.v && !LN.projects) { try { const p = await getJ("/api/projects"); LN.projects = (Array.isArray(p) ? p : p.projects || []).filter((x) => x.enabled !== false && x.path); } catch { LN.projects = []; } }
   badgeNav(); if (onPage() && !typing()) render();
 }
 const act = async (what, f) => { if (LN.busy) return; LN.busy = true; try { const r = await f(); await load(); return r; } catch (e) { toast(`${what}：${e.message || e}`); } finally { LN.busy = false; if (onPage() && !typing()) render(); } };

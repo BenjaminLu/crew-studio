@@ -1152,11 +1152,13 @@ export class Engine {
   }
   /** Execute one check: native, exit-code adapter, executable, or a model judge. */
   async exec(x: X, man: CheckManifest, ref: CheckRef, input: CheckInput, cdir: string, signal?: AbortSignal): Promise<CheckOutput> {
-    // a profiled Task's every check goes through its profile
-    const pf = this.profileOf(x?.run);
+    // a profiled Task's every check goes through its profile. Called on something that is not a whole Engine (a test's
+    // stand-in without the profile hooks), a profiled run is refused (never let through) and any other runs as before
+    const pf = typeof this.profileOf === "function" ? this.profileOf(x?.run) : x?.run?.profile ? "missing" : null;
+    if (pf === "missing" && typeof this.profileMissing !== "function") return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `profile: Task ${x?.run?.id ?? "?"} runs under a profile this engine cannot apply; its check does not run` };
     if (pf === "missing") return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: this.profileMissing(x.run).message };
     if (pf) return this.runScope.run(x.run.id, () => pf.wrapExec(x, man, () => this.execPlain(x, man, ref, input, cdir, signal)));
-    return this.execPlain(x, man, ref, input, cdir, signal);
+    return (this.execPlain ?? Engine.prototype.execPlain).call(this, x, man, ref, input, cdir, signal);
   }
   private async execPlain(x: X, man: CheckManifest, ref: CheckRef, input: CheckInput, cdir: string, signal?: AbortSignal): Promise<CheckOutput> {
     const E = (error: string): CheckOutput => ({ verdict: "error", score: null, findings: [], evidence: [], proves: [], error });

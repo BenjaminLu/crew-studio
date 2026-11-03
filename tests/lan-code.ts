@@ -120,10 +120,11 @@ A.close(); B.close();
   const refOf = (repo: string) => Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet", `refs/crew/lan-taint/${applied}`], { cwd: repo, stdout: "pipe" }).stdout.toString().trim();
   list.close(); setTaintSource(null);
   ok(refOf(repoA) === applied && !!taintOf(repoA, applied!), "with no taint list open at all, the commit is still tainted in its project by its ref (refs/crew/lan-taint)", refOf(repoA));
-  // outside a test run, no taint list open is a refusal (fail closed), never "nothing tainted"
-  { const iso = process.env.CREW_TEST_ENV_ISOLATED; delete process.env.CREW_TEST_ENV_ISOLATED; const { taintRefusal } = await import("../src/lan/taint");
-    const r = taintRefusal(stranger, "HEAD", "Push"); process.env.CREW_TEST_ENV_ISOLATED = iso;
-    ok(/no list of commits applied from peers is open/.test(r ?? ""), "outside a test run, a check with no taint list open refuses (fail closed)", String(r)); }
+  // in the process that serves Studio (it declared the list required at its start), no list open is a refusal (fail
+  // closed), never "nothing tainted"; a process that never declared it (a script, a test driver) has the marks alone
+  { const { taintRefusal, requireTaintList } = await import("../src/lan/taint") as any;
+    const before = taintRefusal(stranger, "HEAD", "Push"); requireTaintList(); const r = taintRefusal(stranger, "HEAD", "Push"); setTaintSource(null);
+    ok(before === null && /no list of commits applied from peers is open/.test(r ?? ""), "once the taint list is required (Studio's server), a check with no list open refuses (fail closed); before, the projects' marks alone decide", JSON.stringify([before, r])); }
   // "I reviewed commit X" is an admin signature (purpose "reviewed", over the commit and the time), kept in the audit row;
   // the commit is then clear in every repository that holds it
   const A2 = await Lan.open({ dataDir: dirA, runner: runner(), bind: "127.0.0.1", port: 0 });

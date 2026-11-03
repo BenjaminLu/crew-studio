@@ -132,6 +132,11 @@ const done = (id: string) => until(() => ["succeeded", "failed", "cancelled"].in
   await until(() => seen !== "not run", 5000);
   ok(seen?.scope === null && seen?.profile === null, "a poller made inside a LAN Task's step does not carry the Task's id: its later start is an ordinary one", JSON.stringify(seen));
  }
+// a check run by something that is not a whole engine (a test's stand-in without the profile hooks): a profiled Task's
+// check is refused, never run unprofiled
+{ const exec = Object.getPrototypeOf(E).exec; let ran = false;
+  const out = await exec.apply({ execPlain: async () => { ran = true; return { verdict: "pass" }; } }, [{ run: { id: "R-stub", profile: { name: "lan", mark: { item: "i", rounds: 1 } } } }, { kind: "deterministic", ref: "x/y", id: "y" }, { use: "x/y" }, {}, "/tmp"]);
+  ok(out?.verdict === "error" && /profile/.test(String(out?.error)) && !ran, "a check called on a partial engine for a profiled Task is refused, never run without its profile", JSON.stringify(out)); }
 // every path that makes a Task from another Task keeps its profile or refuses (item 23): New task and Re-propose from a
 // failure card (the tasks API answers the same card), and any engine.start made inside a profiled Task's step (a tool, a
 // staffing source, a review-room host, a follow-up): an unprofiled child, or one under another profile, is a profile refusal

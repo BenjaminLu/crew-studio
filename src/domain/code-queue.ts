@@ -135,7 +135,8 @@ export function reservationLife(r: Run): "held" | "retained" | "released" {
  * Unknown identity is reported as such; only an authenticated prefix narrows it.
  */
 /** A Task's title as another Task's brief may show it: a redacted Task (a peer's work, issue text) is named by its id only. */
-const shownTitle = (engine: Engine, r: Run) => (engine.redacted(r) ? "a Task whose title is withheld (untrusted text)" : r.title);
+// (an engine without redacted(), a test's stand-in, withholds the title of any Task with a profile or an untrusted mark)
+const shownTitle = (engine: Engine, r: Run) => ((typeof engine.redacted === "function" ? engine.redacted(r) : !!(r.profile || r.params?._tainted || r.params?._lan)) ? "a Task whose title is withheld (untrusted text)" : r.title);
 export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
   const repo = engine.queueRepo(run.ctx.repo), project = engine.queueProject(run);
   const blockers: ScopeBlocker[] = [];

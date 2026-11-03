@@ -21,8 +21,10 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
   // commits from peers stay on the taint list meanwhile: marking one reviewed needs the relay (its signature and audit)
   const held = "commits from peers stay on the taint list and cannot be marked reviewed until it is open / 來自同事的 commit 仍在不受信任清單上，要等它開啟後才能標為已審查";
   if (!lan && !opening && enable && p === "/api/lan/enable" && writing) { try { const l = await enable(); return json(l.view()); } catch (e: any) { return json({ error: `board-to-board work could not be turned on: ${String(e?.message ?? e).slice(0, 300)}`, code: "enable" }, 409); } }
-  if (!lan && opening) return json({ error: `board-to-board work is starting (a first start builds this Mac's Secure Enclave helper): ${held} / 區網協作啟動中`, code: "starting" }, 503);
-  if (!lan) return json({ error: enable ? `board-to-board work is off on this Studio until you turn it on (it makes this Mac's identity): ${held}` : `board-to-board work is not available in this Studio: ${held}`, code: "off", canEnable: !!enable }, 404);
+  // the page's own view of the relay (every page asks it, for the nav badge): its state, never an error status
+  const offView = (code: "off" | "starting", error: string) => ({ off: true, code, error, canEnable: code === "off" && !!enable });
+  if (!lan && opening) { const v = offView("starting", `board-to-board work is starting (a first start builds this Mac's Secure Enclave helper): ${held} / 區網協作啟動中`); return p === "/api/lan" && !writing ? json(v) : json(v, 503); }
+  if (!lan) { const v = offView("off", enable ? `board-to-board work is off on this Studio until you turn it on (it makes this Mac's identity): ${held}` : `board-to-board work is not available in this Studio: ${held}`); return p === "/api/lan" && !writing ? json(v) : json(v, 404); }
   let b: any = {}; if (writing) { try { b = await req.json(); } catch { return json({ error: "json only" }, 400); } if (!b || typeof b !== "object") b = {}; }
   const m = (re: string) => new RegExp(`^/api/lan/${re}$`).exec(p);
   try {

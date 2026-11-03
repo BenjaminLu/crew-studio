@@ -143,7 +143,7 @@ try {
   ok(errors.length === 0, "no page error, no dialog from a peer's content", errors.join(" | "));
   // board-to-board work off (or failed to start): the page shows why and how to turn it on, and does not ask again in a loop
   { const pc = await open(A); let asked = 0;
-    await pc.route("**/api/lan", (route) => { if (route.request().method() !== "GET") return route.continue(); asked++; return route.fulfill({ status: 404, json: { error: "board-to-board work is off on this Studio until you turn it on", code: "off", canEnable: true } }); });
+    await pc.route("**/api/lan", (route) => { if (route.request().method() !== "GET") return route.continue(); asked++; return route.fulfill({ status: 200, json: { off: true, error: "board-to-board work is off on this Studio until you turn it on", code: "off", canEnable: true } }); });
     await pc.goto(`${A.base}/#/lan`); await pc.reload(); await pc.waitForTimeout(3000);
     const shown = await pc.locator("[data-lan-error]").innerText().catch(() => "");
     ok(/off on this Studio/.test(shown) && await pc.locator("[data-lan-enable]").count() === 1 && asked <= 3, "with board-to-board work off, the Peers page shows the reason and a turn-on button, and asks the API a bounded number of times", JSON.stringify([shown, asked]));
