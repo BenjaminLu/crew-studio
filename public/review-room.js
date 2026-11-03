@@ -902,17 +902,63 @@ const localVoices = () => { try { const want = (CUR.lang || uiLang()).toLowerCas
   const good = mine.filter((v) => !LEGACY.test(baseName(v)) || twEddy(v));
   const rank = (v) => (twEddy(v) ? -1 : voiceRank(v)); // Eddy sits beside Mei-Jia, never ahead of it, however compact Mei-Jia is
   return (good.length ? good : mine).sort((a, b) => rank(b) - rank(a) || exact(b) - exact(a)); } catch { return []; } };
-const voicePref = () => prefs.get("crew.room.voice") || "auto";
+// this Mac's local neural voice (Kokoro, src/voice): offered when Studio says its engine is ready; a room in the Library
+// (lib:…) has no folder to keep clips in. Picked, it speaks each point from a clip Studio makes once and keeps in the room.
+const KV = { stat: null, asked: 0, clips: new Map() };
+/** ask Studio again (fresh: it looks at the model again): when the picker opens and when the page comes back into focus,
+ *  so a model installed or removed in Doctor shows in the room without a reload */
+const kokoroRefresh = (fresh = true) => { if (Date.now() - KV.asked < 1500) return; KV.asked = Date.now();
+  api(`/api/voice/status${fresh ? "?fresh=1" : ""}`).then((s) => { const was = JSON.stringify(KV.stat); KV.stat = s; if (JSON.stringify(s) !== was) rerender(); }).catch(() => {}); };
+const kokoroStat = () => { if (!KV.stat && Date.now() - KV.asked > 30000) kokoroRefresh(false); return KV.stat; };
+addEventListener("focus", () => { if (S.route?.name === "room") kokoroRefresh(); });
+addEventListener("hashchange", () => { if (S.route?.name === "room") kokoroRefresh(); });
+const kokoroReady = (card) => !!kokoroStat()?.ready && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+)$/.test(String(card || S.route?.arg || ""));
+const kokoroVoice = () => (LANG_BASE(CUR.lang) === "en" ? kokoroStat()?.voices?.en : kokoroStat()?.voices?.zh) || "";
+/** mixed Chinese and English: "switch" speaks Latin runs with the English voice (the default), "same" keeps one voice */
+const voiceMix = () => (prefs.get("crew.room.voice.mix") === "same" ? "same" : "switch");
+const rawVoicePref = () => prefs.get("crew.room.voice") || "auto";
+/** the voice in effect: Kokoro only while it is ready (else this Mac's best voice speaks instead of silence) */
+const voicePref = () => { const p = rawVoicePref(); return p === "kokoro" && !kokoroReady() ? "auto" : p; };
 /** the Mac voice to speak with: the one picked, or, when that one is no longer offered (a robotic voice picked before), the best there is */
 const chosenLocal = () => { const p = voicePref(); if (p !== "auto" && !p.startsWith("local:")) return null; const vs = localVoices(); return (p === "auto" ? null : vs.find((v) => v.voiceURI === p.slice(6))) || vs[0] || null; };
 /** speak a point; when the browser refuses (no click yet, a voice gone) the caller's reading-pace timer takes over (fail) */
-function speak(text, done, fail) {
-  const v = chosenLocal(); if (!v) return false;
+function speak(text, done, fail, best = false) {
+  const v = best ? localVoices()[0] : chosenLocal(); if (!v) return false;
   try { const u = new SpeechSynthesisUtterance(text); u.voice = v; u.lang = v.lang; u.onend = done; u.onerror = () => fail(); window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); return true; } catch { return false; }
 }
 // a browser lists its voices late: the picker and the default voice follow when they arrive
 try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
-function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; }
+function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
+/** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while
+ *  one plays). A request playback no longer needs (paused, left, another mix) is cancelled, so Studio stops making it. */
+function kokoroClip(card, text) {
+  const lang = LANG_BASE(CUR.lang), mix = voiceMix(), key = `${card}|${lang}|${mix}|${text}`;
+  if (!KV.clips.has(key)) {
+    const ac = new AbortController(), entry = { ac, settled: false };
+    entry.job = fetch(`/api/review-room/${enc(card)}/voice`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, lang, mix }), signal: ac.signal })
+      .then(async (res) => { let j = {}; try { j = await res.json(); } catch {} if (!res.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${res.status}`), { code: j.code }); return j.src; })
+      .finally(() => { entry.settled = true; });
+    entry.job.catch(() => { if (KV.clips.get(key) === entry) KV.clips.delete(key); });
+    KV.clips.set(key, entry); if (KV.clips.size > 300) KV.clips.delete(KV.clips.keys().next().value);
+  }
+  return KV.clips.get(key).job;
+}
+/** a clip whose address no longer plays (its file was dropped: the room started over, the clips' bounds): asked for again */
+const forgetClip = (card, text) => KV.clips.delete(`${card}|${LANG_BASE(CUR.lang)}|${voiceMix()}|${text}`);
+function dropPendingClips(card) { for (const [key, e] of [...KV.clips]) if (!e.settled && (!card || key.startsWith(`${card}|`))) { e.ac.abort(); KV.clips.delete(key); } }
+/** speak point k with the local voice; the caption is the point's text, shown as it starts. A clip that fails: this Mac's voice, else reading pace */
+async function sayKokoro(card, sc, k, text, next, paced, again = false) {
+  const after = sc.points[k + 1], gen = KV.gen;
+  let src; try { src = await kokoroClip(card, text); } catch (e) { if (RR.playing !== card || KV.gen !== gen) return; if (e.code !== "not_a_point") RR.err.set(card, T(`The local voice could not speak: ${e.message}`, `本機語音無法朗讀：${e.message}`)); return void (speak(text, next, paced, true) || paced()); }
+  if (RR.playing !== card || KV.gen !== gen || !onRoom(card)) return;
+  if (after && !after.q) kokoroClip(card, plain(after.text)).catch(() => {});
+  const a = new Audio(src); KV.clip = a;
+  a.onended = () => { if (KV.clip === a) { KV.clip = null; next(); } };
+  const mac = () => speak(text, next, paced, true) || paced();
+  // the clip is gone (the room started over, the bounds dropped it): ask for it once more, then this Mac's voice
+  a.onerror = () => { if (KV.clip !== a) return; KV.clip = null; forgetClip(card, text); if (!again) sayKokoro(card, sc, k, text, next, paced, true); else mac(); };
+  try { await a.play(); } catch { if (KV.clip === a) { KV.clip = null; mac(); } }
+}
 /** show one more point of the current scene; while playing, the next one follows when its caption has been read (or spoken) */
 function advance(card) {
   if (!onRoom(card)) return stopPlay();
@@ -922,6 +968,8 @@ function advance(card) {
   if (RR.playing !== card || RR.audio) return;
   const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
   const paced = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170)); };
+  // Studio's own welcome scene is not a tutor's point: this Mac's voice reads it
+  if (voicePref() === "kokoro") return void (sc.welcome ? speak(text, next, paced, true) || paced() : sayKokoro(card, sc, k, text, next, paced));
   if (speak(text, next, paced)) return;
   paced();
 }
@@ -960,9 +1008,14 @@ const markMoved = (card) => { if (RR.rooms.get(card)?.running != null) RR.moved.
 const goScene = (card, n) => { markMoved(card); const { scenes } = curScene(card); if (!scenes?.length) return; stopPlay(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
 function voicePicker(r) {
   const vs = localVoices(), vendor = r.offer?.voice, pref = voicePref(), alt = pref.startsWith("local:") ? chosenLocal() : null, cur = alt ? `local:${alt.voiceURI}` : pref;
-  const opts = [...(vs.length ? [["auto", T(`This Mac's best voice (${vs[0].name})`, `這台 Mac 最好的聲音（${vs[0].name}）`)]] : []), ["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
-  return h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"),
+  const kokoro = kokoroReady(r.card.id) ? [["kokoro", T(`Kokoro local neural voice (${kokoroVoice()})`, `Kokoro 本機神經語音（${kokoroVoice()}）`)]] : [];
+  const mix = pref === "kokoro" ? h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Mixed Chinese and English", "中英混合")), h("select", { class: "input", "data-voice-mix": "", "aria-label": T("Mixed Chinese and English", "中英混合"),
+    onchange: (e) => { prefs.set("crew.room.voice.mix", e.target.value === "switch" ? null : e.target.value); stopPlay(); rerender(); } },
+    [["switch", T("English words in an English voice", "英文詞換英文聲音")], ["same", T("One voice for everything", "全部同一個聲音")]].map(([v, l]) => h("option", { value: v, selected: v === voiceMix() }, l)))) : null;
+  const opts = [...(vs.length ? [["auto", T(`This Mac's best voice (${vs[0].name})`, `這台 Mac 最好的聲音（${vs[0].name}）`)]] : []), ...kokoro, ["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
+  const pick = h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"), onfocus: () => kokoroRefresh(), onmousedown: () => kokoroRefresh(),
     onchange: (e) => { prefs.set("crew.room.voice", e.target.value === "auto" ? null : e.target.value); stopPlay(); rerender(); } }, opts.map(([v, l]) => h("option", { value: v, selected: v === cur || (v === "off" && !opts.some(([x]) => x === cur)) }, l))));
+  return mix ? h("span", { class: "rr-voices" }, pick, mix) : pick;
 }
 // ---------- the check on the board: multiple choice, graded by Studio (no model) the moment the captain picks ----------
 const LETTERS = "ABCD";
@@ -1231,6 +1284,7 @@ async function resetRoom(card) {
   if (RR.posting.has(card)) return; RR.posting.add(card); RR.err.delete(card); rerender();
   try { await postJ(`/api/review-room/${enc(card)}/reset`, {});
     stopPlay(); clearTimeout(RR.poll); RR.poll = null;
+    for (const key of [...KV.clips.keys()]) if (key.startsWith(`${card}|`)) KV.clips.delete(key); // its clips were deleted with it
     for (const m of [RR.scene, RR.seen, RR.confirm, RR.draft, RR.cite, RR.err, RR.reveal, RR.ready, RR.rscroll, RR.jump, RR.lang]) m.delete(card);
     for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
     for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);

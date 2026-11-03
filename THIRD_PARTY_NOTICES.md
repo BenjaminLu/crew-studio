@@ -33,3 +33,11 @@
   5.3.1 and `@fontsource/caveat` 5.3.0 into `public/fonts/hand/` (the CJK slices and Latin; no Cyrillic, Greek, Vietnamese
   or Lisu), declared in `public/fonts/hand.css`; Studio serves them itself, nothing is fetched from Google Fonts. The
   license texts are `public/fonts/OFL-LXGW-WenKai-TC.txt` and `public/fonts/OFL-Caveat.txt`.
+- **sherpa-onnx-node 1.13.8** and its platform package (Apache License 2.0, copyright the k2-fsa / Next-gen Kaldi
+  authors; https://github.com/k2-fsa/sherpa-onnx) and **Kokoro-82M v1.0** (Apache License 2.0, copyright hexgrad;
+  https://huggingface.co/hexgrad/Kokoro-82M) as exported for sherpa-onnx (`csukuangfj/kokoro-multi-lang-v1_0` at revision
+  f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b, with its espeak-ng data, jieba dictionary and lexicons): the review room's
+  local neural voice (`src/voice/`). Neither is bundled: Doctor installs the runtime into `~/.crew-studio/tools/voice`
+  and downloads the model into `~/.crew-studio/models` only on the captain's click, every file checked against
+  `src/voice/kokoro-manifest.json`, or Studio reads an identical, verified copy Agent Wardrobe already keeps. Each
+  package carries its own licence text (the model's is its `LICENSE` file).
