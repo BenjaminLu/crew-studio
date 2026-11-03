@@ -117,10 +117,17 @@ try {
   await pb.locator(`[data-lan-handback-send="${th.id}"]`).click();
   await pa.reload(); await pa.locator('[data-lan-file="notes.md"]').waitFor({ timeout: 15000 });
   ok(/這週完成：區網協作/.test(await pa.locator('[data-lan-file="notes.md"]').innerText()), "A's inbox shows the result's files as text");
+  // the accept is still on its way (held here, as a slow Mac would) when the captain presses done: neither click is lost
+  // (the page used to drop any action pressed while another one was in flight, without a word)
+  let release; const held = new Promise((r) => { release = r; });
+  await pa.route("**/api/lan/items/*/approve", async (route) => { await held; await route.continue().catch(() => {}); });
   await pa.locator("[data-lan-approve]").click();
   await pa.locator(`[data-lan-done="${th.id}"]`).waitFor({ timeout: 15000 }); await pa.locator(`[data-lan-done="${th.id}"]`).click();
+  await new Promise((r) => setTimeout(r, 300)); release();
   // ---------- the relay track and the inspector ----------
-  await until(async () => (await api(A, "/api/lan")).body.threads.find((t) => t.id === th.id)?.state === "done");
+  const doneSeen = await until(async () => (await api(A, "/api/lan")).body.threads.find((t) => t.id === th.id)?.state === "done");
+  await pa.unroute("**/api/lan/items/*/approve");
+  ok(!!doneSeen, "done pressed while the accept was still on its way is not lost: it runs after the accept", JSON.stringify((await api(A, "/api/lan")).body.threads.find((t) => t.id === th.id)?.state));
   await pa.goto(`${A.base}/#/lan/${th.id}`); await pa.reload(); const card = pa.locator(`[data-lan-thread="${th.id}"]`); await card.waitFor();
   const kinds = await card.locator("[data-lan-step]").evaluateAll((els) => els.map((e) => e.dataset.lanStep));
   ok(kinds.join(",") === "dispatch,take,assign,result,done" && await card.locator("[data-lan-run]").count() === 1, "the relay track shows every hand-off in order, with the run between the assignment and the result", kinds.join(","));

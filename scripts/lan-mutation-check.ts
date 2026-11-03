@@ -302,6 +302,8 @@ const MUTATIONS: M[] = [
     edits: [{ file: "src/lan/relay.ts", from: ", ...usedOf(this.o.runner.status(x.r.run!.id)?.spent ?? x.r.run?.spent) }", to: " }" }] },
   { name: "G-peer-copy", rule: "a peer's code Task says why it is not published in its own words", tests: [RELAY],
     edits: [{ file: "src/domain/code.ts", from: `x.ctx.endSummary = x.run.profile?.name === "lan"`, to: `x.ctx.endSummary = false` }] },
+  { name: "G-ui-queue", rule: "an action pressed while another is on its way waits for it, never dropped", tests: [UI],
+    edits: [{ file: "public/lan.js", from: "const act = (what, f) => {", to: "const act = (what, f) => { if (LN.busy) return Promise.resolve();" }] },
   { name: "G-trim-in-use", rule: "maintenance never trims a thread with an entry waiting in the outbox", tests: [CODE],
     edits: [{ file: "src/lan/relay.ts", from: `const inUse = new Set<string>(this.st.outbox.map((x) => x.thread).filter((x): x is string => !!x));`, to: `const inUse = new Set<string>();` }] },
   { name: "G-reserve-fits", rule: "a round is admitted only if what it reserves fits under the daily ceilings", tests: [SPEND],

@@ -26,7 +26,13 @@ async function load() {
   if (onPage() && LN.v && !LN.projects) { try { const p = await getJ("/api/projects"); LN.projects = (Array.isArray(p) ? p : p.projects || []).filter((x) => x.enabled !== false && x.path); } catch { LN.projects = []; } }
   badgeNav(); if (onPage() && !typing()) render();
 }
-const act = async (what, f) => { if (LN.busy) return; LN.busy = true; try { const r = await f(); await load(); return r; } catch (e) { toast(`${what}：${e.message || e}`); } finally { LN.busy = false; if (onPage() && !typing()) render(); } };
+// The page's actions run one after another, in the order they were pressed: one pressed while another is on its way waits
+// for it, never dropped without a word (a press repeated by mistake is refused by Studio, and says so)
+let actChain = Promise.resolve();
+const act = (what, f) => {
+  const run = actChain.then(async () => { LN.busy = true; try { const r = await f(); await load(); return r; } catch (e) { toast(`${what}：${e.message || e}`); } finally { LN.busy = false; if (onPage() && !typing()) render(); } });
+  actChain = run.catch(() => {}); return run;
+};
 function badgeNav() {
   const item = document.querySelector('.nav-item[data-view="lan"]'); if (!item) return;
   let b = item.querySelector(".count"); if (!b) { b = h("span", { class: "count attn", "data-lan-count": "" }); item.append(b); }
