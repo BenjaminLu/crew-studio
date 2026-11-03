@@ -894,6 +894,17 @@ export function createRuntime(d: RuntimeDeps) {
     if (!started.ok) throw refuse(String(started.body.code ?? "start"), String(started.body.error));
     return started.run;
   };
-  return { handle, engine, defs, projects, firstmate, startFromBranch, startLan, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  /** why a provider (null: Studio's default) cannot run a peer's round on this Mac now, from the same capability facts
+   *  the board's Start reads (not installed, signed out, out of quota, quota unreadable), or null */
+  const lanProviderProblem = async (provider: string | null): Promise<string | null> => {
+    const id = provider ?? (() => { try { return engine.deps.defaultProvider().provider; } catch { return null; } })(); if (!id || id === "stub") return null;
+    const facts = await staffingFacts().catch(() => staffingCapabilities), cap = facts.find((c) => c.provider === id), r = cap?.reason ? ` (${cap.reason})` : "";
+    if (!cap || cap.support !== "supported") return `${id} is not available on this Mac${r}`;
+    if (cap.auth !== "verified" && (cap as any).login !== "logged-in") return `${id} is not signed in${r}`;
+    if (cap.quota === "exhausted") return `${id} is out of quota${r}`;
+    if (cap.quota !== "available" && id !== "claude") return `${id}'s quota could not be read just now${r}`;
+    return null;
+  };
+  return { handle, engine, defs, projects, firstmate, startFromBranch, startLan, lanProviderProblem, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

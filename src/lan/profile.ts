@@ -61,10 +61,12 @@ export function nodeRefusal(node: any): string | null {
 }
 /** What a workflow hands back to a peer, as it declares it (data in its definition: `lan: { output: "text" | "patch" }`,
  *  or `lan: { refuse: "<why>" }`), or null when it declares nothing (then it takes no work from a peer). */
-export function lanOutput(def: any): { output: "text" | "patch" } | { refuse: string } | null {
+export function lanOutput(def: any): { output: "text" | "patch"; rounds?: number } | { refuse: string } | null {
   const l = def?.lan; if (!l || typeof l !== "object") return null;
   if (typeof l.refuse === "string" && l.refuse.trim()) return { refuse: l.refuse.trim().slice(0, 300) };
-  return l.output === "text" || l.output === "patch" ? { output: l.output } : null;
+  // `rounds`: the rounds cap a take gets by default (what one round of this workflow usually needs, 1 to 50)
+  const rounds = Number.isSafeInteger(l.rounds) && l.rounds >= 1 && l.rounds <= 50 ? l.rounds : undefined;
+  return l.output === "text" || l.output === "patch" ? { output: l.output, ...(rounds ? { rounds } : {}) } : null;
 }
 /** Whether this machine can enforce the profile's no-binding scope (macOS: the round and test sandboxes drop inbound) */
 export const profileEnforced = () => process.platform === "darwin";

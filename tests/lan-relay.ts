@@ -66,6 +66,7 @@ try {
     ok(c.view.status === "succeeded" && String(rj.ctx?.taintedReady?.branch ?? "").startsWith("lan-untrusted/") && ["spec", "build", "ci", "review", "remote-ready"].every((n) => visited.includes(n)) && !visited.includes("merge"),
       "B's code-firstmate runs spec → build → CI → review in its own worktree on a lan-untrusted/ branch and ends ready there, never merged", JSON.stringify([c.view.status, rj.ctx?.taintedReady?.branch, visited]));
     ok(rj.ctx?.pr?.adapter === "local" || !rj.ctx?.pr?.url, "its review request is local only (no pull request on a remote)", JSON.stringify(rj.ctx?.pr ?? null));
+    ok(/peer's Studio/.test(String(rj.ctx?.endSummary)) && !/issue text/.test(String(rj.ctx?.endSummary)), "a peer's code Task says why it is not published in its own words (work from a peer goes back to that peer), not issue text's", String(rj.ctx?.endSummary));
     ok(/lib\/discount\.ts/.test(c.patch) && /test\/discount\.test\.ts/.test(c.patch), "the hand-back is one patch of what the worktree changed");
     const proj = ((await p.A.api("/api/projects")).body as any[]).find((x: any) => x.id === "sandbox");
     const shown = Bun.spawnSync(["git", "-C", proj.path, "show", `${c.applied.branch}:lib/discount.ts`], { stdout: "pipe", stderr: "pipe" }).stdout.toString();

@@ -37,6 +37,9 @@ export type RunnerDeps = {
   artifacts: { version(id: string, n: number): any; filesDir(id: string, n: number): string } | null;
   /** start a Task through the runtime's own start path; throws a refusal */
   start: (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number; diffBase?: string } }; continuePatch?: string | null; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => Promise<any>;
+  /** why this provider (null: Studio's default) cannot run a round on this Mac now (signed out, out of quota, not
+   *  installed), or null */
+  providerProblem?: (provider: string | null) => Promise<string | null> | string | null;
   /** an own workflow's staffing plan (its hash is confirmed with the take), or null */
   staffing?: (def: any) => { hash: string; plan: unknown[]; missing: unknown[] } | null;
   /** whether a workflow needs a registered project (a code workflow) */
@@ -60,6 +63,8 @@ export function copiesOf(wt: string, base: string, patch: string, touched: Set<s
   }
   return out;
 }
+/** the rounds cap a take gets when its workflow declares none */
+export const DEFAULT_ROUNDS = 6;
 export function lanRunner(d: RunnerDeps): LanRunner {
   const manifest = (ref: string) => { try { return d.engine.registry?.get?.(ref) ?? null; } catch { return null; } };
   const ref = (def: any): WorkflowRef => ({ id: def.id, version: Number(def.version), defHash: defHash(def) });
@@ -72,7 +77,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
         const off = d.defs.unavailable?.(def.id) ?? (d.defs.held?.(def.id) ? "held" : null);
         const why = [...(off ? [`${def.id} is ${off}`] : []), ...workflowRefusals(def)], notRun = (def.nodes ?? []).flatMap((n: any) => nodeNotRun(n, manifest));
         const out = lanOutput(def);
-        return { id: def.id, version: Number(def.version), name: d.defs.displayName?.(def.id) ?? def.name ?? def.id, defHash: defHash(def), eligible: !why.length, why, notRun, mayStop: mayStop(def), output: out && "output" in out ? out.output : null, staffing: d.staffing?.(def) ?? null, needsProject: !!d.needsProject?.(def) };
+        return { id: def.id, version: Number(def.version), name: d.defs.displayName?.(def.id) ?? def.name ?? def.id, defHash: defHash(def), eligible: !why.length, why, notRun, mayStop: mayStop(def), output: out && "output" in out ? out.output : null, defaultRounds: out && "output" in out ? out.rounds ?? DEFAULT_ROUNDS : DEFAULT_ROUNDS, staffing: d.staffing?.(def) ?? null, needsProject: !!d.needsProject?.(def) };
       });
     },
     async start(o) {
@@ -97,13 +102,17 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       const r = d.engine.get(id); if (!r) throw new Error("no such Task");
       if (!lanOf(r)) throw new Error("this Task was not started from a peer's work");
       const files: { path: string; text: string | null; bytes: number }[] = [], changed = new Set<string>(), hits = new Set<string>(), copies: string[] = [];
-      // a deliver step's versions: every file the round wrote, each read inside its version's folder without following a link
-      for (const v of Object.values<any>(r.ctx?.deliver ?? {})) {
-        const ver = d.artifacts?.version(v.id, v.n); if (!ver) continue; const root = d.artifacts!.filesDir(v.id, v.n);
+      // a deliver step's versions: every file the round wrote, each read inside its version's folder without following a link.
+      // The version the captain approved (web-prototype's two designs: the one picked) is the hand-back, alone; with none
+      // approved and several made, each goes under its producer's folder, so the dispatcher can tell them apart
+      const approved = r.ctx?.approved && typeof r.ctx.approved.artifact === "string" ? r.ctx.approved : null;
+      const made = Object.entries<any>(r.ctx?.deliver ?? {}), versions = approved ? [["", { id: approved.artifact, n: Number(approved.version), format: made.find(([, v]) => v.id === approved.artifact)?.[1]?.format }]] as [string, any][] : made;
+      for (const [producer, v] of versions) {
+        const ver = d.artifacts?.version(v.id, v.n); if (!ver) continue; const root = d.artifacts!.filesDir(v.id, v.n), under = !approved && versions.length > 1 ? `${producer}/` : "";
         for (const f of ver.files ?? []) { if (v.format === "document" && f.path === "doc.html") continue;
-          changed.add(f.path); const got = readInside(root, f.path);
-          if ("refused" in got) { hits.add(`${f.path} (${got.refused})`); files.push({ path: f.path, text: null, bytes: 0 }); continue; }
-          const b = "bytes" in got ? got.bytes : null; files.push({ path: f.path, text: b ? utf8(b) : null, bytes: b?.length ?? 0 });
+          const shown = `${under}${f.path}`; changed.add(shown); const got = readInside(root, f.path);
+          if ("refused" in got) { hits.add(`${shown} (${got.refused})`); files.push({ path: shown, text: null, bytes: 0 }); continue; }
+          const b = "bytes" in got ? got.bytes : null; files.push({ path: shown, text: b ? utf8(b) : null, bytes: b?.length ?? 0 });
           const hit = protectedHit(f.path, b ? utf8(b) : null, null); if (hit) hits.add(hit); }
       }
       // a code workflow's own worktree: everything it changed against its base, as one patch
@@ -133,6 +142,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       const pass = ledger.filter((e: any) => e.verdict === "pass").length, fail = ledger.filter((e: any) => e.verdict === "fail").length, other = ledger.length - pass - fail;
       return { files: files.slice(0, LIMITS.files), changed: [...changed], protectedHits: [...hits], checks: { pass, fail, other, summary: `${pass}/${ledger.length} checks pass on the taker's Studio (the taker's own report: run them again before relying on it)` }, workflow: ref(r.def), kind: wt ? "patch" : "files", base: wt && base ? String(base) : null, copies } as any;
     },
+    async providerProblem(provider) { try { return (await d.providerProblem?.(provider)) ?? null; } catch (e: any) { return `its readiness could not be read (${String(e?.message ?? e).slice(0, 160)})`; } },
     findByItem(item) {
       for (const r of d.engine.list?.() ?? []) if (r.profile?.name === "lan" && (r.profile.mark as any)?.item === item) return String(r.id);
       return null;

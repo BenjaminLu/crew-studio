@@ -107,6 +107,9 @@ try {
   const declared = (id: string) => (defsOf.get(id) ?? []).some((d) => d.lan && (d.lan.output || d.lan.refuse));
   const unclassified = listed.filter((w) => !w.why.some((y: string) => / is (internal|retired|held|not installed)/.test(y))).map((w) => w.id).filter((id) => !declared(id));
   ok(!unclassified.length, "every workflow a person can start says what it hands back to a peer or why it takes none (lan.output / lan.refuse)", unclassified.join(", "));
+  // each workflow's own default rounds cap: a real code-firstmate round needs 7 agent rounds (spec 3, build 1, review 3)
+  { const cf = listed.find((x) => x.id === "code-firstmate"), docs = listed.find((x) => x.id === "documents"), web = listed.find((x) => x.id === "web-prototype");
+    ok(cf?.defaultRounds === 12 && docs?.defaultRounds === 6 && web?.defaultRounds === 6, "code-firstmate takes 12 rounds by default, documents and web-prototype 6", JSON.stringify([cf?.defaultRounds, docs?.defaultRounds, web?.defaultRounds])); }
   for (const id of ["images", "video"]) { const w = listed.find((x) => x.id === id); ok(w && !w.eligible && w.why.some((y: string) => /binary output/.test(y)), `${id} is refused at the take: its output is binary`, JSON.stringify(w?.why)); }
   // B's setup steps (an approved crew for the code workflow) run as the scenario's own; A applies a patch to its own sandbox project
   const hB: Ctx = { s: p.B, vars: {}, firstmate: async () => [] } as any;

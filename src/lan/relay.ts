@@ -45,6 +45,8 @@ export type RoundRec = { n: number; fence: string; briefing: { hash: string; siz
    *  restart finds the Task by that item (`found`), or marks it gone: a claim is never released by a restart */
   run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean; auto?: boolean; spent?: { rounds: number; tokens: number; minutes: number; usd?: number } | null };
   result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number; base?: string | null;
+    /** what the taker reported its Task used (signed in the result; shown to the dispatcher as the peer's report) */
+    used?: { rounds: number; tokens: number; minutes: number } | null;
     /** the dispatcher applied it (its code result): a thread with an accepted code result not applied yet is kept */
     applied?: boolean } };
 export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null; waiting?: string | null };
@@ -80,7 +82,9 @@ type State = { v: 2; settings: { enabled: boolean; name: string; ceilings?: Ceil
 
 /** What a Task that runs work from a peer needs from Studio (src/lan/runner.ts implements it over the runtime). */
 export type LanRunner = {
-  workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; mayStop?: string[]; output?: "text" | "patch" | null; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
+  /** why this provider (null: Studio's default) cannot run a round on this Mac now, or null */
+  providerProblem?(provider: string | null): Promise<string | null>;
+  workflows(): { defaultRounds?: number; id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; mayStop?: string[]; output?: "text" | "patch" | null; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
   start(o: { /** a code refinement: the patch this Studio handed back last round, as sent (the next Task starts from it) */
     continuePatch?: string | null; workflow: string; text: string; title: string; item: string; cap: { rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
   status(run: string): { state: string; result: string | null; spent: { rounds: number; tokens: number; minutes: number; usd?: number }; stopped: string | null; ready?: boolean } | null;
@@ -140,6 +144,8 @@ function restoreInPlace(live: any, snap: any): any {
 /** a bounded cache of what this Studio decrypted (memory only: the disk keeps every body sealed) */
 class Plain<T> { private m = new Map<string, T>(); constructor(private max = 4000) {} get(k: string) { const v = this.m.get(k); if (v !== undefined) { this.m.delete(k); this.m.set(k, v); } return v; } set(k: string, v: T) { this.m.delete(k); this.m.set(k, v); if (this.m.size > this.max) this.m.delete(this.m.keys().next().value!); } clear() { this.m.clear(); } }
 
+/** what a Task used, as a result reports it (whole rounds and tokens, minutes to a tenth), or nothing */
+const usedOf = (s: any) => s && Number.isFinite(s.rounds) && Number.isFinite(s.tokens) && Number.isFinite(s.minutes) ? { used: { rounds: Math.max(0, Math.round(s.rounds)), tokens: Math.max(0, Math.round(s.tokens)), minutes: Math.max(0, Math.round(s.minutes * 10) / 10) } } : {};
 /** the retirement journal (crash safety of 作廢並換新身分): written before the database step, removed when the key files moved */
 type RetireJournal = { v: 1; old: string; next: string; home: string; keep: string; phase: "start" | "old-moved" };
 const journalFile = (dir: string) => join(dir, "retire.pending.json");
@@ -802,7 +808,7 @@ export class Lan {
       if (r.take && (b.workflow.defHash !== r.take.workflow.defHash || b.workflow.id !== r.take.workflow.id)) flags.push("workflow-mismatch");
       // a code result is the taker's patch over the base it names: it must be the base this thread dispatched
       if (t.base && b.base !== t.base.sha) flags.push("base-mismatch");
-      r.result = { entry: h, take: b.take, workflow: b.workflow, output: b.output, run: b.run, checks: b.checks, flags, accepted: mine, seq: e.seq, base: b.base ?? null };
+      r.result = { entry: h, take: b.take, workflow: b.workflow, output: b.output, run: b.run, checks: b.checks, flags, accepted: mine, seq: e.seq, base: b.base ?? null, used: b.used ?? null };
     }
     if (b.kind === "refine") t.rounds.push({ n: b.round, fence: newFence(), briefing: { ...b.briefing, entry: h }, take: null, assign: null, run: null, result: null });
     if (b.kind === "done") t.state = "done";
@@ -863,7 +869,7 @@ export class Lan {
         // read to its end: the approval names the hash of the exact text it was given (the page sends it only once the person scrolled to the end)
         if (o.seen !== this.seenHash(t, r)) throw new LanError(409, "read the whole briefing and the prompt first: this approval does not name the text this Studio would run", "unread");
         // the cap is the Task's rounds (every paid round of it, any provider, judges included); never dollars
-        const rounds = Number(o.rounds ?? 6);
+        const rounds = Number(o.rounds ?? w.defaultRounds ?? 6);
         if (!Number.isSafeInteger(rounds) || rounds < 1 || rounds > 50) throw new LanError(400, "a rounds cap is 1 to 50 agent rounds");
         const project = w.needsProject ? String(o.project ?? "") : null; if (w.needsProject && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(project!)) throw new LanError(400, "choose one of this Studio's projects for this code workflow", "project_required");
         // code work on the dispatcher's base: the project must hold that history and that commit
@@ -871,6 +877,9 @@ export class Lan {
         const provider = o.provider && /^(codex|claude|cursor|stub)$/.test(o.provider) ? o.provider : null;
         // a provider that reported its subscription limit on a peer's round takes no peer work until the captain resumes it
         { const why = pausedRefusal(this.o.spend ?? null, provider); if (why) throw new LanError(409, why.replace(/^paused: /, ""), "paused"); }
+        // the provider must be usable now (signed in, with quota, installed): refused here, never a run that stops at once
+        { const why = await this.o.runner.providerProblem?.(provider); if (why) throw new LanError(409, `${provider ?? "Studio's default provider"} cannot take this work now: ${why}`, "provider");
+          if (i.state !== "open" || r.take) throw new LanError(409, "this round was taken or changed meanwhile"); }
         if (r.take) throw new LanError(409, "this round is already taken");
         // the approval and the signed take land in one transaction: a restart never shows the item open again
         await this.append([t.owner], { kind: "take", thread: t.id, round: r.n, briefing: r.briefing.hash, workflow: { id: w.id, version: w.version, defHash: w.defHash }, cap: { rounds } }, [],
@@ -1020,7 +1029,7 @@ export class Lan {
     if (o.confirm !== x.hash) throw new LanError(409, "the output changed since the preview: preview it again", "stale");
     const blob = sealBlob(x.plain, [this.recipient(t.owner)], { id: this.live().key, dh: this.live().dhPub });
     await this.append([t.owner], { kind: "result", thread: t.id, round: x.r.n, take: x.r.assign!.take, briefing: x.r.briefing.hash, output: { hash: blob.hash, size: x.plain.length, files: x.files.slice(0, LIMITS.files).map((f) => ({ path: f.path.slice(0, LIMITS.path), bytes: Buffer.byteLength(f.text) })) },
-      workflow: x.out.workflow, run: x.r.run!.id, checks: { ...x.out.checks, summary: x.out.checks.summary.slice(0, LIMITS.note) }, ...(x.out.kind === "patch" && x.out.base ? { base: x.out.base } : {}) }, [{ blob, bytes: x.plain.length, plain: x.plain.toString("utf8") }],
+      workflow: x.out.workflow, run: x.r.run!.id, checks: { ...x.out.checks, summary: x.out.checks.summary.slice(0, LIMITS.note) }, ...(x.out.kind === "patch" && x.out.base ? { base: x.out.base } : {}), ...usedOf(this.o.runner.status(x.r.run!.id)?.spent ?? x.r.run?.spent) }, [{ blob, bytes: x.plain.length, plain: x.plain.toString("utf8") }],
       ["handback", { thread: t.id, round: x.r.n, run: x.r.run!.id, to: t.owner, output: blob.hash, bytes: x.plain.length }], undefined,
       () => { if (x.r.result || t.state !== "open" || this.cur(t) !== x.r) throw new LanError(409, "this round was handed back or changed meanwhile"); });
     return this.threadView(t);
@@ -1169,7 +1178,7 @@ export class Lan {
         prompt: text === null ? null : (() => { try { return this.prompt(t, r); } catch { return null; } })(), acceptance: t.acceptance, suggested: t.suggested, note: b.kind === "refine" ? b.note : null };
     }
     if (b.kind === "result") { const text = this.blobText(b.output.hash); let files: { path: string; text: string }[] | null = null; try { files = text ? JSON.parse(text).files.map((f: any) => ({ path: cleanText(f.path, LIMITS.path), text: cleanText(f.text, LIMITS.blob) })) : null; } catch {}
-      return { ...base, files, workflow: b.workflow, checks: b.checks, run: b.run, takeWorkflow: r?.take?.workflow ?? null }; }
+      return { ...base, files, workflow: b.workflow, checks: b.checks, run: b.run, used: b.used ?? null, takeWorkflow: r?.take?.workflow ?? null }; }
     if (b.kind === "take") return { ...base, workflow: b.workflow, cap: b.cap };
     // the start click shows what it starts: the prompt's hash, the cap, the project, the workflow
     if (b.kind === "assign" && r?.take) return { ...base, promptHash: (() => { try { return this.seenHash(t, r); } catch { return null; } })(), cap: r.take.cap, project: r.take.project, workflow: r.take.workflow, provider: r.take.provider, auto: r.take.auto ?? null };

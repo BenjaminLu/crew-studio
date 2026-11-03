@@ -273,7 +273,10 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   authMethod `api_key`; Codex's account type `apiKey`; src/lan/billing.ts); Cursor's sign-in does not say how it is
   billed, so nothing is shown for it. A subscription shows no dollars. No page shows a percentage of a quota (it is not
   known).
-- **Rounds cap**: the only per-Task cap. Every round (agent turns, coordinators, judges) is recorded on the Task itself
+- **Rounds cap**: the only per-Task cap. Each workflow declares the cap a take gets by default (`lan.rounds`: what
+  one round of its work usually needs; code-firstmate 12, documents and web-prototype 6; at most 50), and the take
+  dialog says it. The provider a take names (or Studio's default) must be usable now, signed in and with quota: a take
+  with one that is not is refused at once, with the reason, never a run that stops at its first round. Every round (agent turns, coordinators, judges) is recorded on the Task itself
   (`ctx.lanRounds`, saved with it) when it is admitted, and the tokens and agent-minutes it used when it ends; before
   the next one, the rounds are compared with the item's cap, so neither concurrency nor a restart reopens it (a round
   admitted before a restart and never settled still counts). Every round of a peer's Task is at most 15 minutes and 60
@@ -329,6 +332,10 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   fence-shaped tag in the text defused. A fence lowers the odds; it is not a boundary. The profile is the boundary.
 
 ## Handing a result back
+
+A result carries what the taker's Task used (rounds, tokens, agent-minutes), signed with it; the dispatcher's thread
+shows it as the peer's own report. A workflow that made several versions (web-prototype's two designs) hands back the
+one the captain approved, alone; with none approved yet, each goes under its own producer's folder.
 
 Nothing is published by itself. When the Task has succeeded, the taker previews exactly what goes back and presses
 交回: a deliver workflow's files, or a code workflow's one patch (`changes.patch`, everything its worktree changed

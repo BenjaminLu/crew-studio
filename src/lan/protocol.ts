@@ -18,7 +18,7 @@ export type Body =
   | { kind: "dispatch"; thread: string; round: 1; title: string; briefing: { hash: string; size: number }; acceptance: string[]; suggested: WorkflowRef | null; base?: { root: string; sha: string } | null }
   | { kind: "take"; thread: string; round: number; briefing: string; workflow: WorkflowRef; cap: { rounds: number } }
   | { kind: "assign"; thread: string; round: number; take: string; taker: string }
-  | { kind: "result"; thread: string; round: number; take: string; briefing: string; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; workflow: WorkflowRef; run: string; checks: { pass: number; fail: number; other: number; summary: string }; base?: string | null }
+  | { kind: "result"; thread: string; round: number; take: string; briefing: string; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; workflow: WorkflowRef; run: string; checks: { pass: number; fail: number; other: number; summary: string }; base?: string | null; used?: { rounds: number; tokens: number; minutes: number } }
   | { kind: "refine"; thread: string; round: number; briefing: { hash: string; size: number }; note: string }
   | { kind: "done"; thread: string; round: number; result: string }
   | { kind: "revoke"; thread: string; round: number; target: string; reason: string };
@@ -44,7 +44,8 @@ export function bodyProblem(b: any): string | null {
     case "take": return only(b, [...k, "briefing", "workflow", "cap"]) && HEX64.test(String(b.briefing)) && wfRef(b.workflow) && plainObj(b.cap) && only(b.cap, ["rounds"])
       && int(b.cap.rounds, 1, 50) ? null : "malformed take";
     case "assign": return only(b, [...k, "take", "taker"]) && HEX64.test(String(b.take)) && keyOk(b.taker) ? null : "malformed assign";
-    case "result": return only(b, [...k, "take", "briefing", "output", "workflow", "run", "checks", "base"]) && (b.base === undefined || b.base === null || SHA1.test(String(b.base))) && HEX64.test(String(b.take)) && HEX64.test(String(b.briefing))
+    case "result": return only(b, [...k, "take", "briefing", "output", "workflow", "run", "checks", "base", "used"]) && (b.base === undefined || b.base === null || SHA1.test(String(b.base)))
+      && (b.used === undefined || (plainObj(b.used) && only(b.used, ["rounds", "tokens", "minutes"]) && int(b.used.rounds, 0, 1e4) && int(b.used.tokens, 0, 1e12) && typeof b.used.minutes === "number" && b.used.minutes >= 0 && b.used.minutes <= 1e6)) && HEX64.test(String(b.take)) && HEX64.test(String(b.briefing))
       && plainObj(b.output) && only(b.output, ["hash", "size", "files"]) && HEX64.test(String(b.output.hash)) && int(b.output.size, 1, LIMITS.blob)
       && Array.isArray(b.output.files) && b.output.files.length <= LIMITS.files && b.output.files.every((f: any) => plainObj(f) && only(f, ["path", "bytes"]) && str(f.path, LIMITS.path, 1) && int(f.bytes, 0, LIMITS.blob))
       && wfRef(b.workflow) && RUN.test(String(b.run)) && plainObj(b.checks) && only(b.checks, ["pass", "fail", "other", "summary"]) && int(b.checks.pass, 0, 1e4) && int(b.checks.fail, 0, 1e4) && int(b.checks.other, 0, 1e4) && str(b.checks.summary, LIMITS.note) ? null : "malformed result";

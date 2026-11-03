@@ -298,6 +298,42 @@ A.close(); B.close();
   ok(once(retires) && (D as any).st.retired.length === 1, "two retirements at the same moment: one new identity is made", JSON.stringify([retires, (D as any).st.retired.length]));
   D.close(); T.close(); }
 
+// what a real-provider run showed (two Studios, real Codex)
+{ const { lanRunner } = await import("../src/lan/runner");
+  // web-prototype: two designs, both index.html. The hand-back carries the design the captain approved, and only it; with
+  // none approved yet, each design is under its own folder (A can tell them apart)
+  const root = mkdtempSync(join(tmpdir(), "crew-lan-designs-")), dir = (id: string) => join(root, id);
+  for (const [id, body] of [["art-a", "<h1>design A</h1>"], ["art-b", "<h1>design B</h1>"]]) { (await import("node:fs")).mkdirSync(dir(id), { recursive: true }); writeFileSync(join(dir(id), "index.html"), body); }
+  const run: any = { id: "R-60", status: "succeeded", profile: { name: "lan", mark: { item: "i", rounds: 6 } }, def: { id: "web-prototype", version: 1, nodes: [] }, ctx: { deliver: { "design-a": { id: "art-a", n: 1, format: "web" }, "design-b": { id: "art-b", n: 1, format: "web" } } } };
+  const runner = lanRunner({ engine: { get: () => run, ledger: () => [], list: () => [run] } as any, defs: {} as any, artifacts: { version: (id: string) => ({ files: [{ path: "index.html" }] }), filesDir: (id: string) => dir(id) } as any, start: async () => { throw new Error("no"); } } as any);
+  const both = await runner.output("R-60");
+  ok(JSON.stringify(both.files.map((f: any) => f.path)) === JSON.stringify(["design-a/index.html", "design-b/index.html"]), "two designs not approved yet go back under their own folders, never as index.html twice", JSON.stringify(both.files.map((f: any) => f.path)));
+  run.ctx.approved = { artifact: "art-a", version: 1, sha256: "x", by: "captain" };
+  const picked = await runner.output("R-60");
+  ok(picked.files.length === 1 && picked.files[0].path === "index.html" && /design A/.test(String(picked.files[0].text)), "once the captain approved one design, only that design is handed back", JSON.stringify(picked.files.map((f: any) => [f.path, f.text])));
+  // the take refuses a provider that cannot be used now, with the reason (it never starts a run that would stop at once)
+  const run2 = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Docs", defHash: "d".repeat(64), eligible: true, why: [], notRun: [], staffing: null, defaultRounds: 9 }],
+    providerProblem: async (p: string | null) => p === "claude" ? "Claude is not signed in on this Mac" : null,
+    start: async () => ({ run: "R-61", workflow: { id: "documents", version: 1, defHash: "d".repeat(64) } }), status: () => ({ state: "succeeded", result: "done", spent: { rounds: 2, tokens: 3000, minutes: 1.5 }, stopped: null }), output: async () => ({ files: [{ path: "a.md", text: "a\n", bytes: 2 }], changed: ["a.md"], protectedHits: [], checks: { pass: 0, fail: 0, other: 0, summary: "" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" }) as any, cancel: () => {} } as any);
+  const mk7 = (n: string) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-real-${n}-`)), runner: run2(), bind: "127.0.0.1", port: 0 });
+  const D = await mk7("d"), T = await mk7("t"); D.setEnabled(true); T.setEnabled(true); await pairUp(D, T);
+  const th = await D.dispatch({ to: T.id.key, title: "notes", briefing: "write notes" }); await D.flush(); await until(() => T.view().items.length === 1);
+  const d = T.view().items[0], tt = T.thread(d.thread)!; let e = "";
+  try { await T.approve(d.id, { workflow: "documents", seen: T.seenHash(tt, tt.rounds[0]), provider: "claude" }); } catch (x: any) { e = `${x.code}: ${x.message}`; }
+  ok(/^provider: .*not signed in/.test(e) && !tt.rounds[0].take, "a take with a provider that cannot be used now is refused at the take, with the reason", e);
+  // the workflow's own default rounds cap when the taker names none
+  await T.approve(d.id, { workflow: "documents", seen: T.seenHash(tt, tt.rounds[0]), provider: "codex" } as any);
+  ok(tt.rounds[0].take?.cap.rounds === 9, "a take with no rounds named gets the workflow's own default cap", JSON.stringify(tt.rounds[0].take?.cap));
+  await T.flush(); await until(() => D.view().items.some((i: any) => i.kind === "take")); await D.approve(D.view().items.find((i: any) => i.kind === "take")!.id); await D.flush();
+  await until(() => T.view().items.some((i: any) => i.kind === "assign")); await T.approve(T.view().items.find((i: any) => i.kind === "assign")!.id);
+  const pre = await T.handbackPreview(th.id); await T.handback(th.id, { confirm: pre.hash }); await T.flush();
+  await until(() => D.view().items.some((i: any) => i.kind === "result"));
+  const used = (D as any).threadView(D.thread(th.id)!).rounds[0].result?.used;
+  ok(used?.rounds === 2 && used?.tokens === 3000 && used?.minutes === 1.5, "the dispatcher sees what the taker reported its Task used (signed in the result, shown as the peer's report)", JSON.stringify(used));
+  D.close(); T.close();
+  const { lanOutput } = await import("../src/lan/profile") as any;
+  ok(lanOutput({ lan: { output: "patch", rounds: 12 } })?.rounds === 12 && lanOutput({ lan: { output: "text" } })?.rounds === undefined && lanOutput({ lan: { output: "text", rounds: 99 } })?.rounds === undefined, "a workflow declares its default rounds cap (1 to 50)"); }
+
 // a hand-back cannot carry a binary file: the preview says so and the send is refused (never a silent drop)
 { const out = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }, { path: "chart.png", text: null, bytes: 2048 }], changed: ["report.md", "chart.png"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" as const };
   const run = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Docs", defHash: "d".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],

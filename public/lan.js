@@ -146,9 +146,11 @@ function estimateNote(i, t) {
         const est = typeof e === "number" ? T(` A ${t.provider} round uses about ${f(e)} tokens here, an estimate from its rounds on this Mac (cache reads not counted).`, ` ${t.provider} 在這台每輪約用 ${f(e)} token（依它在這台的紀錄估計，不含快取讀取）。`) : "";
         // a sign-in billed per token (an API key) says so; a subscription shows no dollars; a sign-in Studio cannot tell shows nothing
         const perToken = (LN.v?.billing || {})[t.provider] === "per-token" ? T(` ${t.provider} is signed in with an API key here, billed per token: each round's reported dollars are shown on the thread.`, ` ${t.provider} 在這台用 API key 登入，按 token 計費：每輪回報的金額會顯示在 thread 上。`) : "";
-        return T(`Capped at ${n} agent rounds of this Task (every round, on any provider, judges included); each round is at most 15 minutes and 60 tool calls, and the daily ceilings over all work from peers still apply (${c.dailyRounds} rounds, ${c.dailyMinutes ?? "no limit on"} agent-minutes, ${c.dailyTokens === null || c.dailyTokens === undefined ? "no limit on" : f(c.dailyTokens)} tokens).${est}${perToken} If the provider reports its subscription limit, the Task stops and peer work on it pauses until you resume it.`,
-          `上限是這個 Task 的 ${n} 輪 agent（每一輪都算，任何供應商，含評審）；每輪最多 15 分鐘、60 次工具呼叫，所有同事工作的每日上限仍然有效（${c.dailyRounds} 輪、${c.dailyMinutes ?? "不限"} agent 分鐘、${c.dailyTokens === null || c.dailyTokens === undefined ? "不限" : f(c.dailyTokens)} token）。${est}${perToken}如果供應商回報訂閱額度用完，Task 會停下，該供應商的同事工作會暫停，直到你恢復。`); })());
+        const wf = (LN.wf || []).find((x) => x.id === t.workflow), usual = wf?.defaultRounds ? T(` ${wf.name} usually needs about ${wf.defaultRounds} agent rounds for one round of work.`, ` ${wf.name} 一輪工作通常需要約 ${wf.defaultRounds} 輪 agent。`) : "";
+        return T(`Capped at ${n} agent rounds of this Task (every round, on any provider, judges included);${usual} Each round is at most 15 minutes and 60 tool calls, and the daily ceilings over all work from peers still apply (${c.dailyRounds} rounds, ${c.dailyMinutes ?? "no limit on"} agent-minutes, ${c.dailyTokens === null || c.dailyTokens === undefined ? "no limit on" : f(c.dailyTokens)} tokens).${est}${perToken} If the provider reports its subscription limit, the Task stops and peer work on it pauses until you resume it.`,
+          `上限是這個 Task 的 ${n} 輪 agent（每一輪都算，任何供應商，含評審）；${usual}每輪最多 15 分鐘、60 次工具呼叫，所有同事工作的每日上限仍然有效（${c.dailyRounds} 輪、${c.dailyMinutes ?? "不限"} agent 分鐘、${c.dailyTokens === null || c.dailyTokens === undefined ? "不限" : f(c.dailyTokens)} token）。${est}${perToken}如果供應商回報訂閱額度用完，Task 會停下，該供應商的同事工作會暫停，直到你恢復。`); })());
 }
+const usedByPeer = (u) => T(`Reported by the peer: its Task used ${u.rounds} round(s), ${Number(u.tokens).toLocaleString("en-US")} tokens, ${u.minutes} agent-minutes (their own report).`, `對方回報：它的 Task 用了 ${u.rounds} 輪、${Number(u.tokens).toLocaleString("en-US")} token、${u.minutes} agent 分鐘（對方自己的回報）。`);
 function paused(v) {
   const list = v.paused || []; if (!list.length) return null;
   return h("section", { class: "card lan-card", "data-lan-paused": "" },
@@ -212,7 +214,9 @@ function itemDetail(i) {
   const reject = h("button", { class: "btn ghost", "data-lan-reject": i.id, onclick: () => act(T("Reject", "拒絕"), () => postJ(`/api/lan/items/${i.id}/reject`, {})) }, T("Reject", "拒絕"));
   const approve = (label, body, extra = {}) => h("button", { class: "btn primary", "data-lan-approve": i.id, disabled: frozen || !LN.scrolled[i.id], ...extra, onclick: () => act(label, async () => postJ(`/api/lan/items/${i.id}/approve`, await body())) }, label);
   if (i.kind === "dispatch" || i.kind === "refine") {
-    const t = LN.take[i.id] ||= { workflow: (LN.wf || []).find((w) => w.eligible && w.id === i.suggested?.id)?.id || (LN.wf || []).find((w) => w.eligible)?.id || "", rounds: "6", provider: "", staffing: false, project: "", autoStart: false };
+    const t = LN.take[i.id] ||= (() => { const wf = (LN.wf || []).find((w) => w.eligible && w.id === i.suggested?.id)?.id || (LN.wf || []).find((w) => w.eligible)?.id || "";
+      // the rounds cap starts at what one round of the chosen workflow usually needs (its own default)
+      return { workflow: wf, rounds: String((LN.wf || []).find((w) => w.id === wf)?.defaultRounds ?? 6), provider: "", staffing: false, project: "", autoStart: false }; })();
     const w = (LN.wf || []).find((x) => x.id === t.workflow);
     const box = scrollGate(i.id, h("div", { class: "lan-content", tabindex: "0", "data-lan-content": i.id, "aria-label": T("The full briefing", "完整的 briefing") },
       i.invisible ? h("p", { class: "lan-warn" }, icon("alert", "ic sm"), T("This briefing hides characters (zero-width, bidi or control): they are shown as ⟦U+…⟧.", "這份 briefing 裡有隱藏字元（零寬、bidi 或控制字元），以 ⟦U+…⟧ 標出。")) : null,
@@ -225,7 +229,7 @@ function itemDetail(i) {
       i.suggested ? h("p", { class: "faint" }, T(`They suggest ${i.suggested.id} v${i.suggested.version} (${i.suggested.defHash.slice(0, 12)}); you run your own.`, `對方建議 ${i.suggested.id} v${i.suggested.version}（${i.suggested.defHash.slice(0, 12)}）；實際跑的是你自己的流程。`)) : null,
       box,
       h("div", { class: "lan-grid3" },
-        field(T("Take with my workflow", "用我的流程接下"), h("select", { "data-lan-take-wf": i.id, onchange: (e) => { t.workflow = e.target.value; render(); } }, (LN.wf || []).map((x) => h("option", { value: x.id, disabled: !x.eligible, selected: x.id === t.workflow }, `${x.name} v${x.version}${x.eligible ? "" : ` — ${T("not on the LAN profile", "不符合受限 profile")}`}`)))),
+        field(T("Take with my workflow", "用我的流程接下"), h("select", { "data-lan-take-wf": i.id, onchange: (e) => { t.workflow = e.target.value; const w2 = (LN.wf || []).find((x) => x.id === t.workflow); if (w2?.defaultRounds) t.rounds = String(w2.defaultRounds); render(); } }, (LN.wf || []).map((x) => h("option", { value: x.id, disabled: !x.eligible, selected: x.id === t.workflow }, `${x.name} v${x.version}${x.eligible ? "" : ` — ${T("not on the LAN profile", "不符合受限 profile")}`}`)))),
         field(T("Agent rounds (the cap)", "agent 輪數（上限）"), inp(t, "rounds", { "data-lan-rounds": i.id, inputmode: "numeric" }))),
       field(T("Provider", "供應商"), h("select", { "data-lan-provider": i.id, onchange: (e) => { t.provider = e.target.value; document.querySelector(`[data-lan-estimate="${CSS.escape(i.id)}"]`)?.replaceWith(estimateNote(i, t)); } }, [["", T("Studio's default", "Studio 預設")], ["codex", "Codex"], ["claude", "Claude"], ["cursor", "Cursor"]].map(([v, l]) => h("option", { value: v, selected: v === t.provider }, l)))),
       w && !w.eligible ? h("p", { class: "lan-warn" }, w.why.join(" · ")) : null,
@@ -254,6 +258,7 @@ function itemDetail(i) {
   if (i.kind === "result") return h("div", { class: "lan-detail" }, head,
     i.flags?.includes("workflow-mismatch") ? h("p", { class: "lan-warn", "data-lan-flag": "workflow-mismatch" }, icon("alert", "ic sm"), T(`The result names ${i.workflow.id} (${i.workflow.defHash.slice(0, 12)}), not the workflow its take named (${i.takeWorkflow?.defHash?.slice(0, 12) ?? "?"}).`, `結果宣稱用的流程是 ${i.workflow.id}（${i.workflow.defHash.slice(0, 12)}），和接下時說的（${i.takeWorkflow?.defHash?.slice(0, 12) ?? "?"}）不同。`)) : null,
     h("p", { class: "faint" }, T(`Their checks: ${i.checks.summary}. This is their own report; run your checks before relying on it.`, `對方的檢查：${i.checks.summary}。這是對方自己的報告，採用前請在你這邊重跑檢查。`)),
+    i.used ? h("p", { class: "faint", "data-lan-peer-used": i.id }, usedByPeer(i.used)) : null,
     (i.files || []).map((f) => h("div", { class: "lan-file" }, h("div", { class: "mono lbl" }, f.path), pre(f.text, { "data-lan-file": f.path }))),
     h("div", { class: "lan-row" }, approve(T("Accept the result", "收下結果"), () => ({})), reject));
   return h("div", { class: "lan-detail" }, head, h("div", { class: "lan-row" }, approve(T("Noted", "知道了"), () => ({}))));
@@ -300,6 +305,8 @@ function threadCard(t) {
         h("div", { class: "kv" }, T("Who holds it", "誰拿著"), t.now.holder ? who(t.now.holder) : h("b", {}, "—")),
         h("div", { class: "kv" }, T("What's next", "下一步"), h("b", {}, T(t.now.next.en, t.now.next.zh)))),
       track(t),
+      // the dispatcher's side: what the taker reported its Task used (signed in its result; the peer's own report)
+      (() => { const u = (t.rounds || []).filter((r) => r.result?.used).at(-1)?.result?.used; return t.role === "dispatcher" && u ? h("p", { class: "faint", "data-lan-peer-used": t.id }, usedByPeer(u)) : null; })(),
       run && run.state === "gone" ? h("p", { class: "lan-warn", "data-lan-gone": t.id }, icon("alert", "ic sm"), T("This round's Task is gone (Studio stopped while it started, or the Task was removed). It is never started again from this round: the dispatcher refines, and you take the new round.", "這一輪的 Task 不見了（Studio 在開工時停止，或 Task 被移除）。這一輪不會再開工：請派工者再調整一輪，你再接。")) :
       run ? h("p", { class: "faint" }, T("Task ", "Task "), h("a", { class: "mono", href: `#/run/${encodeURIComponent(run.id)}` }, run.id), ` · ${run.state}${run.stopped ? ` · ${run.stopped}` : ""}`, run.spent ? ` · ${T(`used ${run.spent.rounds} round(s), ${Number(run.spent.tokens ?? 0).toLocaleString("en-US")} tokens, ${run.spent.minutes ?? 0} agent-minutes${typeof run.spent.usd === "number" ? `, $${run.spent.usd.toFixed(2)} reported (billed per token)` : ""}`, `已用 ${run.spent.rounds} 輪、${Number(run.spent.tokens ?? 0).toLocaleString("en-US")} token、${run.spent.minutes ?? 0} agent 分鐘${typeof run.spent.usd === "number" ? `、回報 $${run.spent.usd.toFixed(2)}（按 token 計費）` : ""}`)}` : "", run.found ? h("span", { class: "badge", "data-lan-found": t.id }, T("found after restart", "重新啟動後找回")) : null) : null,
       run?.auto ? h("p", { class: "lan-warn", "data-lan-auto-started": t.id }, icon("alert", "ic sm"), T("Started by itself when it was assigned (you opted in at the take).", "對方指派後自動開工（你在接下時選了自動開工）。")) : null,

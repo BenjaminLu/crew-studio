@@ -918,7 +918,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const taintedReady = (x: X): string => {
     const wt = shellOk(x), h = head(wt), ready = { branch: x.ctx.branch, head: h, base: x.ctx.base, baseCommit: x.ctx.baseCommit ?? null, at: new Date().toISOString() };
     x.ctx.taintedReady = ready; engine.record(x, "tainted-ready", { head: h, data: { version: 1, ...ready } } as any);
-    x.ctx.endSummary = `ready on branch ${x.ctx.branch} at ${h.slice(0, 8)}, not published: work drawn from issue text never goes to GitHub`;
+    x.ctx.endSummary = x.run.profile?.name === "lan"
+      ? `ready on branch ${x.ctx.branch} at ${h.slice(0, 8)}, not published: work from a peer's Studio never goes to GitHub; its patch is handed back to that peer`
+      : `ready on branch ${x.ctx.branch} at ${h.slice(0, 8)}, not published: work drawn from issue text never goes to GitHub`;
     x.rn.note = x.ctx.endSummary; x.save(); return "close";
   };
   engine.actions["remote.ready"] = (x) => (tainted(x) ? taintedReady(x) : remoteReady(x));

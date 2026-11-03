@@ -96,7 +96,7 @@ try {
   await pb.selectOption("[data-lan-provider]", "codex");
   { const note = await pb.locator("[data-lan-estimate]").innerText(); ok(!/billed per token/.test(note), "picking a subscription provider takes the per-token note away again", note); }
   const est = await pb.locator("[data-lan-estimate]").innerText();
-  ok(/Capped at \d+ agent rounds|上限是這個 Task 的 \d+ 輪/.test(est) && /tokens|token/.test(est) && !/\$|dollar|金額|worst|最壞|%/i.test(est) && await pb.locator("[data-lan-usd], [data-lan-rounds-only]").count() === 0, "the take dialog caps by rounds only and states the daily rounds, agent-minutes and tokens: no dollars, no percentage of a quota", est);
+  ok(/Capped at \d+ agent rounds|上限是這個 Task 的 \d+ 輪/.test(est) && /usually needs about 6 agent rounds|通常需要約 6 輪/.test(est) && /tokens|token/.test(est) && !/\$|dollar|金額|worst|最壞|%/i.test(est) && await pb.locator("[data-lan-usd], [data-lan-rounds-only]").count() === 0, "the take dialog caps by rounds only and states the daily rounds, agent-minutes and tokens: no dollars, no percentage of a quota", est);
   await pb.locator("[data-lan-content]").evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); }); // read to its end
   await pb.locator("[data-lan-approve]").click();
   await pa.reload(); await pa.locator('[data-lan-item]').first().waitFor({ timeout: 15000 });
