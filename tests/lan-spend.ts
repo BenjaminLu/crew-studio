@@ -75,6 +75,16 @@ const opts = (r: any, provider: any = { id: "codex", model: "m1" }, extra: any =
   const rf = lanTask("R-f", 9); let e7 = ""; try { await P2.wrapRound(rf, opts(rf, null), job()); } catch (x: any) { e7 = String(x?.message); }
   ok(/daily ceiling: .*cannot be read/.test(e7) && !rf.ctx.lanRounds.length, "a spend ledger that cannot be read refuses a round with no provider named (the daily check fails closed on its own)", e7); }
 
+// 3b. a round is admitted only if what it reserves still fits: 299 of 300 agent-minutes leaves no room for a 15-minute
+//     round, and a token reservation that would cross the token ceiling is refused the same way
+{ const L = ledgerAt(); const { P } = seams(L, () => ({ ...DEFAULT_CEILINGS, dailyMinutes: 300, dailyTokens: 1_000_000 }));
+  L.admit(localDay(), 0, 299); L.settle(localDay(), { tokens: 0, minutes: 299 }, { tokens: 0, minutes: 299 }, null);
+  const r = lanTask("R-res", 9); let e = ""; try { await P.wrapRound(r, opts(r), job()); } catch (x: any) { e = String(x?.message); }
+  ok(/agent-minutes/.test(e) && !r.ctx.lanRounds.length, "with 299 of 300 agent-minutes used, a round that reserves 15 more is refused before it starts", e);
+  const L2 = ledgerAt(); const { P: P2 } = seams(L2, () => ({ ...DEFAULT_CEILINGS, dailyTokens: 1_000_000, unknownRoundTokens: 300_000 }));
+  L2.admit(localDay(), 800_000, 0); const r2 = lanTask("R-res2", 9); let e2 = ""; try { await P2.wrapRound(r2, opts(r2, { id: "nobody", model: "x" }), job()); } catch (x: any) { e2 = String(x?.message); }
+  ok(/tokens/.test(e2) && !r2.ctx.lanRounds.length, "a round whose token reservation would cross the token ceiling is refused before it starts", e2); }
+
 // 4. the captain's ceilings live in the ledger (they hold with the relay closed); a ledger deleted or restored older is broken
 { const dir = mkdtempSync(join(tmpdir(), "crew-lan-ceil-")), L = new SpendLedger(join(dir, "lan", "spend.db"));
   const none: any = { workflows: () => [], start: async () => { throw new Error("no"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} };

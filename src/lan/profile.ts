@@ -37,14 +37,16 @@ export const LAN_MODES = new Set(["deliver", "spec", "plan", "plan-accept", "bui
 export const LAN_UNREACHED = { hooks: new Set(["git.merge", "branch.adopt"]), modes: new Set(["design-review", "design-gap"]) };
 export const LAN_DENIED_TOOLS = new Set(["skill_run"]);
 /** a peer's Task's mark: the received item and its rounds cap (a dollar figure an older mark names is ignored) */
-export type LanMark = { item: string; rounds: number };
+export type LanMark = { item: string; rounds: number;
+  /** code work that continues from an earlier round: the dispatched base its patch is made against */
+  diffBase?: string };
 /** The LAN mark of a Task under the "lan" profile, or null. A LAN Task whose mark is not readable is held to a zero cap. */
 export const lanOf = (run: any): LanMark | null => {
   if (run?.profile?.name !== "lan") return null;
   const m = run.profile.mark;
   try { const rounds = Number(m?.rounds);
     if (!Number.isSafeInteger(rounds) || rounds < 1) throw new Error("bad cap");
-    return { item: String(m.item), rounds }; } catch { return { item: "?", rounds: 0 }; }
+    return { item: String(m.item), rounds, ...(typeof m.diffBase === "string" && /^[0-9a-f]{40}$/.test(m.diffBase) ? { diffBase: m.diffBase } : {}) }; } catch { return { item: "?", rounds: 0 }; }
 };
 export const peerTask = (run: any) => !!lanOf(run);
 
@@ -111,12 +113,13 @@ const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
 /** why the next round of any peer's Task would pass a daily ceiling, from the spend ledger (src/lan/ledger.ts: rounds
  *  admitted today, agent-minutes and tokens used, running rounds at what they reserved), or null. A ledger that cannot
  *  be read is a refusal. */
-export function dailyRefusal(ledger: SpendLedger | null, c: Ceilings): string | null {
+export function dailyRefusal(ledger: SpendLedger | null, c: Ceilings, next: { tokens: number; minutes: number } = { tokens: 0, minutes: 0 }): string | null {
   if (!ledger) return "daily ceiling: Studio has no record of what work from peers used today; no round of a peer's Task runs without one";
   let d; try { d = ledger.get(localDay()); } catch (e: any) { return `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}; no round of a peer's Task runs until it can be read`; }
   if (d.rounds >= c.dailyRounds) return `daily ceiling: work from peers ran ${d.rounds} paid round(s) on this Mac today, the ceiling is ${c.dailyRounds}; Studio stopped before the next one (Peers page: daily ceilings)`;
-  if (c.dailyMinutes !== null && d.minutes >= c.dailyMinutes) return `daily ceiling: work from peers used ${Math.round(d.minutes)} agent-minutes on this Mac today (running rounds counted at 15), the ceiling is ${c.dailyMinutes}; Studio stopped before the next round (Peers page: daily ceilings)`;
-  if (c.dailyTokens !== null && d.tokens >= c.dailyTokens) return `daily ceiling: work from peers used ${fmt(d.tokens)} tokens on this Mac today${d.unknown ? `, ${d.unknown} round(s) of them at their provider's average (it reported none)` : ""}, the ceiling is ${fmt(c.dailyTokens)}; Studio stopped before the next round (Peers page: daily ceilings)`;
+  // a round is admitted only if what it reserves still fits under the ceiling
+  if (c.dailyMinutes !== null && (d.minutes >= c.dailyMinutes || d.minutes + next.minutes > c.dailyMinutes)) return `daily ceiling: work from peers used ${Math.round(d.minutes)} agent-minutes on this Mac today (running rounds counted at 15), the ceiling is ${c.dailyMinutes}; Studio stopped before the next round (Peers page: daily ceilings)`;
+  if (c.dailyTokens !== null && (d.tokens >= c.dailyTokens || d.tokens + next.tokens > c.dailyTokens)) return `daily ceiling: work from peers used ${fmt(d.tokens)} tokens on this Mac today${d.unknown ? `, ${d.unknown} round(s) of them at their provider's average (it reported none)` : ""}, the ceiling is ${fmt(c.dailyTokens)}; Studio stopped before the next round (Peers page: daily ceilings)`;
   return null;
 }
 /** why a provider takes no peer work now (its subscription limit paused it), or null; a ledger that cannot be read refuses */
@@ -188,12 +191,14 @@ export function installLanProfile(engine: any, o: { onStop?: (run: any, why: str
       const mark = lanOf(r)!;
       // the provider the round runs on: the one it names, else Studio's default (the one a pause must name)
       const c = ceilings(), L = ledger(), provider = providerOf(opts) ?? (() => { try { const d = engine.deps?.defaultProvider?.(); return d?.provider ? String(d.provider) : null; } catch { return null; } })();
-      const over = capRefusal(engine, r, mark) ?? pausedRefusal(L, provider) ?? dailyRefusal(L, c); // every round, whatever its provider, counts
+      // what it would reserve: its provider and model's average tokens here, 15 agent-minutes
+      const pm = provider ? `${provider}/${opts.provider?.model ?? ""}` : null, day = localDay();
+      let reservedTokens = c.unknownRoundTokens; try { if (L) reservedTokens = L.estimate(pm, c.unknownRoundTokens); } catch {}
+      const over = capRefusal(engine, r, mark) ?? pausedRefusal(L, provider) ?? dailyRefusal(L, c, { tokens: reservedTokens, minutes: ROUND_MINUTES }); // every round, whatever its provider, counts
       if (over) return Promise.reject(new ProfileRefusal(stop(r, over)));
       if (!opts.sandbox) return Promise.reject(new ProfileRefusal("a LAN-originated round runs only in the round sandbox"));
-      // the ledger counts it before it starts: its tokens reserved at its provider and model's average, its minutes at 15
-      const pm = provider ? `${provider}/${opts.provider?.model ?? ""}` : null, day = localDay();
-      let reservedTokens: number; try { reservedTokens = L!.estimate(pm, c.unknownRoundTokens); L!.admit(day, reservedTokens, ROUND_MINUTES); } catch (e: any) { return Promise.reject(new ProfileRefusal(stop(r, `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}`))); }
+      // the ledger counts it before it starts, with what it reserves
+      try { L!.admit(day, reservedTokens, ROUND_MINUTES); } catch (e: any) { return Promise.reject(new ProfileRefusal(stop(r, `daily ceiling: ${String(e?.message ?? e).slice(0, 300)}`))); }
       const rounds: LanRound[] = (r.ctx ??= {}).lanRounds ??= [], me: LanRound = { n: rounds.length + 1, at: new Date().toISOString(), job: null, ended: false, tokens: null, minutes: null, day, reservedTokens, reservedMinutes: ROUND_MINUTES };
       rounds.push(me); persist(engine, r, "LAN round admitted");
       const t0 = Date.now();

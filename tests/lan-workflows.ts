@@ -80,6 +80,9 @@ async function relayOne(p: Pair, w: any, r: StubRun, h: Ctx): Promise<string> {
   const r2 = await roundOn(t.id, 2, await item(p.B, "refine", t.id));
   let applied = "";
   if (code) { const th = await must(p.A.api(`/api/lan/threads/${t.id}`), "A's thread"), patch = th.rounds.at(-1).result.patch as string;
+    // a refinement continues from the round before it: round 2's patch is the whole change against the dispatched base,
+    // round 1's files included (it applies onto the base on its own)
+    if (!/lib\/discount\.ts/.test(patch) || !/lib\/cents\.ts/.test(patch)) throw new Error(`round 2's patch does not carry round 1's work: ${patch.split("\n").filter((l) => l.startsWith("diff --git")).join(" | ")}`);
     const x = await must(p.A.api(`/api/lan/threads/${t.id}/apply`, { project: "sandbox", seen: patchHash(patch) }), "A applies the patch it read"); applied = ` · applied on A as ${x.branch} (based on ${th.base?.sha?.slice(0, 12)})`; }
   await must(p.A.api(`/api/lan/threads/${t.id}/done`, {}), "A marks it done");
   const dn = await item(p.B, "done", t.id); await must(p.B.api(`/api/lan/items/${dn.id}/approve`, {}), "B acknowledges done");

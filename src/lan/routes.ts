@@ -11,15 +11,18 @@ const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { sta
 const KEY = "[A-Za-z0-9_-]{87}", ID = "[A-Za-z0-9_-]{8,64}";
 const KINDS = ["file", "enclave"];
 
-export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean, pageCookie: boolean, opening = false): Promise<Response | null> {
+export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { kind: string }, writing: boolean, pageCookie: boolean, opening = false,
+  /** the captain turns board-to-board work on (it makes this Mac's identity); absent: it cannot be turned on (CREW_LAN=0) */
+  enable?: () => Promise<Lan>): Promise<Response | null> {
   const p = url.pathname; if (p !== "/api/lan" && !p.startsWith("/api/lan/")) return null;
   if (who.kind !== "desktop") return json({ error: "board-to-board work is on the Mac only / 區網協作只能在這台 Mac 上操作", code: "desktopOnly" }, 403);
   if (!pageCookie || req.headers.get("sec-fetch-site") !== "same-origin" || (writing && req.headers.get("origin") !== url.origin))
     return json({ error: "board-to-board work answers only Studio's own page on this Mac (its session cookie, same origin); a script's x-crew-session is not enough / 區網協作只接受這台 Mac 上 Studio 自己的頁面", code: "pageOnly" }, 403);
   // commits from peers stay on the taint list meanwhile: marking one reviewed needs the relay (its signature and audit)
   const held = "commits from peers stay on the taint list and cannot be marked reviewed until it is open / 來自同事的 commit 仍在不受信任清單上，要等它開啟後才能標為已審查";
+  if (!lan && !opening && enable && p === "/api/lan/enable" && writing) { try { const l = await enable(); return json(l.view()); } catch (e: any) { return json({ error: `board-to-board work could not be turned on: ${String(e?.message ?? e).slice(0, 300)}`, code: "enable" }, 409); } }
   if (!lan && opening) return json({ error: `board-to-board work is starting (a first start builds this Mac's Secure Enclave helper): ${held} / 區網協作啟動中`, code: "starting" }, 503);
-  if (!lan) return json({ error: `board-to-board work is not available in this Studio: ${held}`, code: "off" }, 404);
+  if (!lan) return json({ error: enable ? `board-to-board work is off on this Studio until you turn it on (it makes this Mac's identity): ${held}` : `board-to-board work is not available in this Studio: ${held}`, code: "off", canEnable: !!enable }, 404);
   let b: any = {}; if (writing) { try { b = await req.json(); } catch { return json({ error: "json only" }, 400); } if (!b || typeof b !== "object") b = {}; }
   const m = (re: string) => new RegExp(`^/api/lan/${re}$`).exec(p);
   try {

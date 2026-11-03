@@ -105,5 +105,18 @@ async function pairUp(A: Lan, B: Lan, o: { replaces?: string } = {}) { B.openInt
   A.close(); B.close(); }
 
 void makeEnvelope; void certHash; void (null as unknown as Body);
+// retiring an identity survives a crash at any point: before the database step it rolls back (the old identity stays,
+// the half-made one is removed); after it, the next start finishes moving the key files (the new identity, its
+// revocation queued). Never an identity loss.
+for (const at of ["journal", "committed", "old-moved"] as const) {
+  const A = await mk(`crash-${at}`), B = await mk(`crash-${at}-b`); A.setEnabled(true); B.setEnabled(true); await pairUp(A, B);
+  const dir = (A as any).o.dataDir, old = A.id.key; (A as any).crashAt = (p: string) => { if (p === at) throw new Error(`crash at ${p}`); };
+  let e = ""; try { await A.retireIdentity(); } catch (x: any) { e = String(x?.message ?? x); }
+  (A as any).crashAt = null; A.close(); B.close();
+  const again = await Lan.open({ dataDir: dir, runner: runner(), bind: "127.0.0.1", port: 0 }), st2: any = (again as any).st;
+  const rolled = at === "journal", key = again.id.key;
+  ok(/crash at/.test(e) && !again.lost && (rolled ? key === old && !st2.retired.length : key !== old && st2.retired.some((r: any) => r.key === old) && st2.idOut.some((x: any) => x.from === old)) && !existsSync(join(dir, "lan", "retire.pending.json")),
+    `a crash ${rolled ? "before the retirement is committed rolls it back (the old identity stays)" : `after it is committed (${at}) is finished at the next start (the new identity, its revocation queued)`}: never an identity loss`, JSON.stringify([e, again.lost, key === old, st2.retired.length, st2.idOut.length]));
+  again.close(); }
 console.log(`\nlan-identity: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

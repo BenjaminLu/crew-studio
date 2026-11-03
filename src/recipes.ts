@@ -264,6 +264,8 @@ export class Lane {
     const again = this.check(repo, c);
     if (again.some((x) => x.ok === false)) { c.checks = again; c.ok = false; c.state = "fallback"; this.save(c); throw new Error("a check no longer passes; the card fell back to the normal path"); }
     const ci = c.checks.find((x) => x.id === "ci");
+    // work from a peer's Studio is never merged or pushed, on any path (GitHub, the checked-out base, update-ref)
+    { const tw = taintRefusal(repo.path, c.commit!, "Merge"); if (tw) throw new Error(tw); }
     if (repo.github) {
       if (ci?.ok === null && ci.detail.startsWith("running")) throw new Error("CI is still running");
       if (!c.pr) throw new Error("open the PR first");
@@ -276,7 +278,6 @@ export class Lane {
       const head = git(repo.path, ["symbolic-ref", "--short", "-q", "HEAD"]).out;
       if (head === c.base) {
         if (git(repo.path, ["status", "--porcelain"]).out) throw new Error(`${repo.path} has uncommitted changes on ${c.base}; commit or stash them first`);
-        { const tw = taintRefusal(repo.path, c.commit!, "Merge"); if (tw) throw new Error(tw); }
         must(repo.path, ["merge", "--ff-only", "-q", c.commit!]);
       } else {
         if (git(repo.path, ["worktree", "list", "--porcelain"]).out.split("\n").includes(`branch refs/heads/${c.base}`)) throw new Error(`${c.base} is checked out in another worktree`);

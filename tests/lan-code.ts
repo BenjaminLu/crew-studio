@@ -5,6 +5,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // and not frozen, naming the hash of the exact patch it read; and every commit applied joins the taint list.
 //                                                                                                  bun tests/lan-code.ts
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { checkedTempDir } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonical, sha256hex } from "../src/lan/crypto";
@@ -19,7 +20,7 @@ let pass = 0, fail = 0;
 const ok = (c: unknown, what: string, detail = "") => { if (c) { pass++; console.log(`  ok    ${what}`); } else { fail++; console.log(`  FAIL  ${what}${detail ? `\n        ${detail}` : ""}`); } };
 const until = async (f: () => boolean, ms = 8000) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > ms) return false; await Bun.sleep(25); } return true; };
 const g = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(r.stderr.toString()); return r.stdout.toString().trim(); };
-const repoA = mkdtempSync(join(tmpdir(), "crew-lan-code-a-")), repoB = mkdtempSync(join(tmpdir(), "crew-lan-code-b-")), stranger = mkdtempSync(join(tmpdir(), "crew-lan-code-x-"));
+const repoA = checkedTempDir("crew-lan-code-a-"), repoB = checkedTempDir("crew-lan-code-b-"), stranger = checkedTempDir("crew-lan-code-x-");
 for (const r of [repoA, stranger]) { g(r, "init", "-q", "-b", "main"); writeFileSync(join(r, "README.md"), `${r === repoA ? "project" : "another"}\n`); g(r, "add", "README.md"); g(r, "commit", "-qm", "base"); }
 g(repoB, "init", "-q", "-b", "main"); g(repoB, "fetch", "-q", repoA, "+refs/heads/main:refs/remotes/a/main"); // B's clone of the same project
 const base0 = g(repoA, "rev-parse", "main");
@@ -81,7 +82,7 @@ const hasBranch = () => Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet"
   ok(x.branch && g(repoA, "rev-parse", `${x.commit}^`) === base0 && g(repoA, "show", `${x.commit}:new.txt`) === "from the peer", "a good result applies onto the base it names (the commit dispatched), on its own branch", JSON.stringify(x));
   ok(A.view().taints.some((r: any) => r.sha === x.commit && r.peer.key === B.id.key) && !!taintOf(repoA, x.commit), "the applied commit joins the taint list, with its peer and thread");
   // the taint list follows the commit, not the folder: a second clone, a fetch into another clone, a moved folder
-  { const c2 = mkdtempSync(join(tmpdir(), "crew-lan-code-clone-")); g(c2, "clone", "-q", "--no-local", repoA, "."); g(c2, "fetch", "-q", "origin", `+refs/heads/${x.branch}:refs/heads/elsewhere`);
+  { const c2 = checkedTempDir("crew-lan-code-clone-"); g(c2, "clone", "-q", "--no-local", repoA, "."); g(c2, "fetch", "-q", "origin", `+refs/heads/${x.branch}:refs/heads/elsewhere`);
     g(repoB, "fetch", "-q", repoA, `+refs/heads/${x.branch}:refs/heads/from-a`);
     const moved = repoA + "-moved"; Bun.spawnSync(["mv", repoA, moved]);
     const hits = [taintOf(c2, "elsewhere"), taintOf(repoB, "from-a"), taintOf(moved, x.commit)];
@@ -93,6 +94,15 @@ const hasBranch = () => Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet"
 // a result based on another commit than the one dispatched is not applied
 { const th = (A as any).thread(t.id), r = th.rounds[0]; r.result.base = "f".repeat(40);
   const x: any = tryApply({ seen: sha256hex(patch) }); ok(/^base:/.test(x.err ?? ""), "a result based on another commit than the one this thread dispatched is not applied (never onto another base)", x.err); r.result.base = base0; }
+// a code result is applied only onto a base this Studio dispatched: a thread that named none takes no result's own base
+{ const th = (A as any).thread(t.id), keep = th.base; th.base = null;
+  const x: any = tryApply({ seen: sha256hex(patch) }); th.base = keep;
+  ok(/^base:/.test(x.err ?? ""), "a result for a thread that dispatched no base is not applied onto the base the peer names", x.err); }
+// a pinned base branch that was moved is refused, never trusted
+{ const { pinBase } = await import("../src/lan/apply"); const name = pinBase(repoA, base0);
+  g(repoA, "update-ref", `refs/heads/${name}`, g(repoA, "rev-parse", "main")); let e = ""; try { pinBase(repoA, base0); } catch (x: any) { e = String(x?.message ?? x); }
+  ok(/moved|points at/.test(e), "a lan-base/ branch that no longer points at the dispatched commit is refused (never a silent other base)", e);
+  g(repoA, "update-ref", `refs/heads/${name}`, base0); }
 // a step that fails is rolled back in place: a reference taken before it sees the state as it was, and is still the one
 // the relay holds (never an orphaned copy)
 { const th = (A as any).thread(t.id), title0 = th.title, n0 = th.rounds.length, threads0 = (A as any).st.threads.length;
@@ -138,6 +148,36 @@ A.close(); B.close();
   const gone = new TaintStore(f); ok(/missing/.test(String(gone.broken)) && !ex(f), "a taint list that was deleted is not made again empty: it is broken, every check refuses", String(gone.broken)); gone.close();
   const d2 = mkdtempSync(join(tmpdir(), "crew-lan-taint-up-")); { const s = new TaintStore(join(d2, "lan", "taint.db")); s.add(row("c".repeat(40))); s.close(); } rmSync(join(d2, "lan", "taint.created"));
   const up = new TaintStore(join(d2, "lan", "taint.db")); ok(!up.broken && ex(join(d2, "lan", "taint.created")), "a list made before the sentinel existed is kept, and gets its sentinel", String(up.broken)); up.close(); }
+
+// the same take pushed twice at the same moment is taken in once (its verdict is checked again inside the transaction)
+{ const C = await mk("twice-c"), D = await mk("twice-d"); C.setEnabled(true); D.setEnabled(true); await pairUp(C, D);
+  const t2 = await C.dispatch({ to: D.id.key, title: "twice", briefing: "the same take, twice" }); await C.flush(); await until(() => D.view().items.some((i: any) => i.thread === t2.id));
+  const d2 = D.view().items.find((i: any) => i.thread === t2.id)!, th2 = D.thread(t2.id)!;
+  await D.approve(d2.id, { workflow: "code-firstmate", seen: D.seenHash(th2, th2.rounds[0]), project: "bproj", rounds: 3 });
+  const ob = (D as any).st.outbox.find((x: any) => x.thread === t2.id), env = (D as any).entry(ob.entry), blobs = ob.blobs.map((h: string) => (D as any).blob(h));
+  const res = await Promise.all([0, 1].map(() => (C as any).request(D.id.key, "push", { entries: [env], blobs }, "127.0.0.1", null)));
+  const takes = C.view().items.filter((i: any) => i.thread === t2.id && i.kind === "take"), steps = C.thread(t2.id)?.steps.filter((x: any) => x.kind === "take").length ?? 0;
+  ok(takes.length === 1 && steps === 1, "a take pushed twice at the same moment raises one inbox item and one step", JSON.stringify([takes.length, steps, res]));
+  (D as any).st.outbox = (D as any).st.outbox.filter((x: any) => x.thread !== t2.id); C.close(); D.close(); }
+
+// a refinement carries over what the taker handed back last round: its prompt shows that result to revise (bound into
+// the hash the taker approves), so a document revision has its draft
+{ const out: any = { files: [{ path: "report.md", text: "# report v1\nthe first draft\n", bytes: 28 }], changed: ["report.md"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" };
+  const run = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Docs", defHash: "d".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
+    start: async () => ({ run: "R-31", workflow: { id: "documents", version: 1, defHash: "d".repeat(64) } }), status: () => ({ state: "succeeded", result: "done", spent: { rounds: 1, tokens: 0, minutes: 0 }, stopped: null }), output: async () => out, cancel: () => {} });
+  const mk3 = (n: string) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-refine-${n}-`)), runner: run(), bind: "127.0.0.1", port: 0 });
+  const D = await mk3("d"), T = await mk3("t"); D.setEnabled(true); T.setEnabled(true); await pairUp(D, T);
+  const th = await D.dispatch({ to: T.id.key, title: "a report", briefing: "write the report" }); await D.flush(); await until(() => T.view().items.length === 1);
+  const d = T.view().items[0], tt = T.thread(d.thread)!; await T.approve(d.id, { workflow: "documents", seen: T.seenHash(tt, tt.rounds[0]), rounds: 3 }); await T.flush();
+  await until(() => D.view().items.some((i: any) => i.kind === "take")); await D.approve(D.view().items.find((i: any) => i.kind === "take")!.id); await D.flush();
+  await until(() => T.view().items.some((i: any) => i.kind === "assign")); await T.approve(T.view().items.find((i: any) => i.kind === "assign")!.id);
+  const pre = await T.handbackPreview(th.id); await T.handback(th.id, { confirm: pre.hash }); await T.flush();
+  await until(() => D.view().items.some((i: any) => i.kind === "result")); await D.approve(D.view().items.find((i: any) => i.kind === "result")!.id);
+  await D.refine(th.id, { briefing: "make it shorter" }); await D.flush();
+  await until(() => T.view().items.some((i: any) => i.kind === "refine"));
+  const rf = T.view().items.find((i: any) => i.kind === "refine")!, t2 = T.thread(th.id)!, prompt = (T as any).prompt(t2, t2.rounds[1]);
+  ok(/the first draft/.test(prompt) && /previous round/i.test(prompt) && rf.prompt === prompt, "a refinement's prompt carries the taker's own previous result to revise, and is what the taker approves", prompt.slice(-400));
+  D.close(); T.close(); }
 
 // a hand-back cannot carry a binary file: the preview says so and the send is refused (never a silent drop)
 { const out = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }, { path: "chart.png", text: null, bytes: 2048 }], changed: ["report.md", "chart.png"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" as const };

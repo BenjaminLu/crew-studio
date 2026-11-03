@@ -5,6 +5,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // its chain, sealed sizes are rounded, the preview counts what goes back (and blocks too much), flags copies of the
 // taker's own files, and a peer that cannot be reached says since when.                       bun tests/lan-limits.ts
 import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { checkedTempDir } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonical, seal } from "../src/lan/crypto";
@@ -30,7 +31,7 @@ ok(!protectedHit("src/config.ts", "x", null) && !protectedHit("docs/vite.md", "x
   ok(a === b && c > b, "sealed sizes are rounded up to 1 KiB (a one-byte and a 900-byte body look the same)", `${a} ${b} ${c}`); }
 
 // copies of the taker's own files in what goes back
-{ const wt = mkdtempSync(join(tmpdir(), "crew-lan-copy-")); g(wt, "init", "-q", "-b", "main");
+{ const wt = checkedTempDir("crew-lan-copy-"); g(wt, "init", "-q", "-b", "main");
   const secret = Array.from({ length: 30 }, (_, i) => `const internal${i} = "the taker's own code line ${i}";`).join("\n") + "\n";
   writeFileSync(join(wt, "internal.ts"), secret); writeFileSync(join(wt, "README.md"), "x\n"); g(wt, "add", "."); g(wt, "commit", "-qm", "base"); const base = g(wt, "rev-parse", "HEAD");
   const patch = `diff --git a/out.ts b/out.ts\nnew file mode 100644\n--- /dev/null\n+++ b/out.ts\n@@ -0,0 +1,30 @@\n${secret.split("\n").filter(Boolean).map((l) => "+" + l).join("\n")}\n`;

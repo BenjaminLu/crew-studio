@@ -9,12 +9,17 @@
 (() => {
 const LN = { applyTo: {}, projects: null, v: null, wf: null, err: null, sel: null, item: null, form: { title: "", briefing: "", acceptance: "", workflow: "", to: "", project: "" }, intro: { host: "", port: "" }, codes: {}, names: {}, replaces: {}, keepName: {}, take: {}, refine: {}, preview: {}, edits: {}, busy: false, insp: null, scrolled: {} };
 window.crewLan = LN;
-const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
+const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code ?? null, body: j }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const onPage = () => S.route?.name === "lan";
 const typing = () => { const a = document.activeElement; return !!a && a.closest?.("[data-lan]") && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
 async function load() {
-  try { LN.v = await getJ("/api/lan"); LN.err = null; } catch (e) { LN.err = String(e.message || e); if (/區網協作啟動中/.test(LN.err)) setTimeout(() => { void load(); }, 2000); } // starting: the relay opens in the background
+  if (LN.loading) return; LN.loading = true;
+  try { LN.v = await getJ("/api/lan"); LN.err = null; LN.errCode = null; LN.retries = 0; }
+  catch (e) { LN.err = String(e.message || e); LN.errCode = e.code ?? null; LN.canEnable = !!e.body?.canEnable;
+    // starting: the relay opens in the background; asked again a bounded number of times, never in a loop
+    if (LN.errCode === "starting" && (LN.retries = (LN.retries || 0) + 1) <= 90) setTimeout(() => { void load(); }, 2000); }
+  finally { LN.loading = false; }
   if (onPage() && !LN.wf) { try { LN.wf = (await getJ("/api/lan/workflows")).workflows; } catch {} }
   if (onPage() && !LN.projects) { try { const p = await getJ("/api/projects"); LN.projects = (Array.isArray(p) ? p : p.projects || []).filter((x) => x.enabled !== false && x.path); } catch { LN.projects = []; } }
   badgeNav(); if (onPage() && !typing()) render();
@@ -132,6 +137,16 @@ function peers(v) {
 }
 /** commits this Studio applied from a peer's work: nothing trusted starts from them or publishes them until reviewed */
 // providers paused by their subscription limit: no peer work on them until the captain resumes it
+// the take dialog's cap, ceilings, estimate and billing note: its own element, redrawn when the provider changes (a focused
+// select keeps the page from re-rendering, so the note must not wait for it)
+function estimateNote(i, t) {
+  return h("p", { class: "lan-warn", "data-lan-estimate": i.id }, icon("alert", "ic sm"), (() => { const c = LN.v?.ceilings || {}, n = Number(t.rounds) || 6, e = (LN.v?.estimates || {})[t.provider], f = (x) => Number(x).toLocaleString("en-US");
+        const est = typeof e === "number" ? T(` A ${t.provider} round uses about ${f(e)} tokens here, an estimate from its rounds on this Mac (cache reads not counted).`, ` ${t.provider} 在這台每輪約用 ${f(e)} token（依它在這台的紀錄估計，不含快取讀取）。`) : "";
+        // a sign-in billed per token (an API key) says so; a subscription shows no dollars; a sign-in Studio cannot tell shows nothing
+        const perToken = (LN.v?.billing || {})[t.provider] === "per-token" ? T(` ${t.provider} is signed in with an API key here, billed per token: each round's reported dollars are shown on the thread.`, ` ${t.provider} 在這台用 API key 登入，按 token 計費：每輪回報的金額會顯示在 thread 上。`) : "";
+        return T(`Capped at ${n} agent rounds of this Task (every round, on any provider, judges included); each round is at most 15 minutes and 60 tool calls, and the daily ceilings over all work from peers still apply (${c.dailyRounds} rounds, ${c.dailyMinutes ?? "no limit on"} agent-minutes, ${c.dailyTokens === null || c.dailyTokens === undefined ? "no limit on" : f(c.dailyTokens)} tokens).${est}${perToken} If the provider reports its subscription limit, the Task stops and peer work on it pauses until you resume it.`,
+          `上限是這個 Task 的 ${n} 輪 agent（每一輪都算，任何供應商，含評審）；每輪最多 15 分鐘、60 次工具呼叫，所有同事工作的每日上限仍然有效（${c.dailyRounds} 輪、${c.dailyMinutes ?? "不限"} agent 分鐘、${c.dailyTokens === null || c.dailyTokens === undefined ? "不限" : f(c.dailyTokens)} token）。${est}${perToken}如果供應商回報訂閱額度用完，Task 會停下，該供應商的同事工作會暫停，直到你恢復。`); })());
+}
 function paused(v) {
   const list = v.paused || []; if (!list.length) return null;
   return h("section", { class: "card lan-card", "data-lan-paused": "" },
@@ -210,19 +225,14 @@ function itemDetail(i) {
       h("div", { class: "lan-grid3" },
         field(T("Take with my workflow", "用我的流程接下"), h("select", { "data-lan-take-wf": i.id, onchange: (e) => { t.workflow = e.target.value; render(); } }, (LN.wf || []).map((x) => h("option", { value: x.id, disabled: !x.eligible, selected: x.id === t.workflow }, `${x.name} v${x.version}${x.eligible ? "" : ` — ${T("not on the LAN profile", "不符合受限 profile")}`}`)))),
         field(T("Agent rounds (the cap)", "agent 輪數（上限）"), inp(t, "rounds", { "data-lan-rounds": i.id, inputmode: "numeric" }))),
-      field(T("Provider", "供應商"), h("select", { "data-lan-provider": i.id, onchange: (e) => { t.provider = e.target.value; } }, [["", T("Studio's default", "Studio 預設")], ["codex", "Codex"], ["claude", "Claude"], ["cursor", "Cursor"]].map(([v, l]) => h("option", { value: v, selected: v === t.provider }, l)))),
+      field(T("Provider", "供應商"), h("select", { "data-lan-provider": i.id, onchange: (e) => { t.provider = e.target.value; document.querySelector(`[data-lan-estimate="${CSS.escape(i.id)}"]`)?.replaceWith(estimateNote(i, t)); } }, [["", T("Studio's default", "Studio 預設")], ["codex", "Codex"], ["claude", "Claude"], ["cursor", "Cursor"]].map(([v, l]) => h("option", { value: v, selected: v === t.provider }, l)))),
       w && !w.eligible ? h("p", { class: "lan-warn" }, w.why.join(" · ")) : null,
       w?.notRun?.length ? h("p", { class: "faint" }, T(`These checks will not run on work from a peer: ${w.notRun.join(", ")}`, `這些檢查不會在同事的工作上執行：${w.notRun.join("、")}`)) : null,
       w?.mayStop?.length ? h("p", { class: "faint", "data-lan-may-stop": i.id }, T(`It may stop at ${w.mayStop.join(", ")}: a Task from a peer never runs those steps.`, `它可能停在 ${w.mayStop.join("、")}：同事的工作不會執行這些步驟。`)) : null,
       w?.output ? h("p", { class: "faint" }, w.output === "patch" ? T("It hands back one patch of what its worktree changed.", "它交回一份 patch（worktree 的變更）。") : T("It hands back the text files it made.", "它交回它產生的文字檔。")) : null,
       w?.needsProject ? field(T("Project (a code workflow works in its own worktree of it)", "專案（程式流程在它自己的 worktree 裡工作）"), h("select", { "data-lan-project": i.id, onchange: (e) => { t.project = e.target.value; } }, h("option", { value: "" }, T("Choose a project", "選擇專案")), (LN.projects || []).map((p) => h("option", { value: p.id, selected: p.id === t.project }, p.name || p.id)))) : null,
       // the cap is the Task's rounds: local providers run on subscriptions, so dollars are not what runs out (and are not shown)
-      h("p", { class: "lan-warn", "data-lan-estimate": i.id }, icon("alert", "ic sm"), (() => { const c = LN.v?.ceilings || {}, n = Number(t.rounds) || 6, e = (LN.v?.estimates || {})[t.provider], f = (x) => Number(x).toLocaleString("en-US");
-        const est = typeof e === "number" ? T(` A ${t.provider} round uses about ${f(e)} tokens here, an estimate from its rounds on this Mac (cache reads not counted).`, ` ${t.provider} 在這台每輪約用 ${f(e)} token（依它在這台的紀錄估計，不含快取讀取）。`) : "";
-        // a sign-in billed per token (an API key) says so; a subscription shows no dollars; a sign-in Studio cannot tell shows nothing
-        const perToken = (LN.v?.billing || {})[t.provider] === "per-token" ? T(` ${t.provider} is signed in with an API key here, billed per token: each round's reported dollars are shown on the thread.`, ` ${t.provider} 在這台用 API key 登入，按 token 計費：每輪回報的金額會顯示在 thread 上。`) : "";
-        return T(`Capped at ${n} agent rounds of this Task (every round, on any provider, judges included); each round is at most 15 minutes and 60 tool calls, and the daily ceilings over all work from peers still apply (${c.dailyRounds} rounds, ${c.dailyMinutes ?? "no limit on"} agent-minutes, ${c.dailyTokens === null || c.dailyTokens === undefined ? "no limit on" : f(c.dailyTokens)} tokens).${est}${perToken} If the provider reports its subscription limit, the Task stops and peer work on it pauses until you resume it.`,
-          `上限是這個 Task 的 ${n} 輪 agent（每一輪都算，任何供應商，含評審）；每輪最多 15 分鐘、60 次工具呼叫，所有同事工作的每日上限仍然有效（${c.dailyRounds} 輪、${c.dailyMinutes ?? "不限"} agent 分鐘、${c.dailyTokens === null || c.dailyTokens === undefined ? "不限" : f(c.dailyTokens)} token）。${est}${perToken}如果供應商回報訂閱額度用完，Task 會停下，該供應商的同事工作會暫停，直到你恢復。`); })()),
+      estimateNote(i, t),
       h("p", { class: "faint" }, T(`The agent reads all of ${t.project || "its folder"}; anything it reads may be in the hand-back.`, `agent 會讀 ${t.project || "它的資料夾"} 的全部內容；它讀到的任何東西都可能出現在交回的內容裡。`)),
       h("label", { class: "lan-row" }, h("input", { type: "checkbox", "data-lan-auto-start": i.id, checked: t.autoStart, onchange: (e) => { t.autoStart = e.target.checked; } }), T("Start as soon as they assign it, with this exact cap (for 30 minutes; every check is made again then, and you get a notice and a stop button)", "對方一指派就開工，用這個上限（30 分鐘內有效；開工時會重新檢查，並通知你、附停止按鈕）")),
       w?.staffing ? h("label", { class: "lan-row" }, h("input", { type: "checkbox", checked: t.staffing, onchange: (e) => { t.staffing = e.target.checked; } }), T("I confirm who works on each node of this workflow", "我確認這個流程每個節點的人員配置")) : null,
@@ -330,7 +340,14 @@ async function inspect(hash) {
 }
 function viewLan(arg) {
   const v = LN.v;
-  if (!v) { load(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:180px" })); }
+  if (!v) {
+    // the error state, with its reason (off, starting, unavailable), and the way to turn board-to-board work on
+    if (LN.err) return h("div", { class: "page lan-page", "data-lan": "", "data-lan-off": LN.errCode || "" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Peers", "區網同事")))),
+      h("p", { class: "lan-warn", "data-lan-error": "" }, icon("alert", "ic sm"), LN.err),
+      LN.errCode === "off" && LN.canEnable ? h("button", { class: "btn primary", "data-lan-enable": "", onclick: () => act(T("Turn on", "開啟"), () => postJ("/api/lan/enable", {})) }, T("Turn on board-to-board work (makes this Mac's identity)", "開啟區網協作（建立這台的身分）")) : null);
+    if (!LN.loading) void load();
+    return h("div", { class: "page" }, h("div", { class: "skel", style: "height:180px" }));
+  }
   if (!LN.wf) getJ("/api/lan/workflows").then((j) => { LN.wf = j.workflows; if (onPage() && !typing()) render(); }).catch(() => {});
   const threads = v.threads || [], focus = arg ? threads.find((t) => t.id === arg) : null;
   return h("div", { class: "page lan-page", "data-lan": "" },

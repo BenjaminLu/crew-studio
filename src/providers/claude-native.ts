@@ -5,7 +5,7 @@ import {join,dirname} from 'node:path';import{tmpdir,homedir}from'node:os';
 import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,CLAUDE_OAUTH_SHAPE,CLAUDE_API_KEY_SHAPE,type Login}from'./login';
 import{claudeProvider}from'./claude';import{claudeSettings}from'./needs';
 import type{ProviderCapability}from'./policy';
-import { claudeBilling, noteBilling } from '../lan/billing';
+import { claudeBilling as claudeAuthBilling, noteBilling } from '../lan/billing';
 export type ClaudePair={model:string;effort:string|null};
 /** The models Studio can choose for Claude: read from the installed CLI, or (only when that is impossible) a fixed list marked unverified with the reason. */
 export type ClaudeModelInventory={source:'cli'|'unverified-fallback';models:{id:string;efforts:string[];label:string|null}[];at:number;version:string|null;reason?:string};
@@ -73,7 +73,7 @@ export class ClaudeNative{
    const context={executable:binary,configDirectory:typeof j.configDirectory==='string'&&j.configDirectory.length<=1000?j.configDirectory:null,version:null};
    if(j.loggedIn===false&&j.authMethod==='none'&&code===1){if(this.denial?.code!=='quotaExhausted')this.invalidate('notLoggedIn');return this.base(p,{auth:'missing',loginState:'not-logged-in',context,reason:'This CLI/config context reports no login; this does not describe unrelated existing Claude sessions',refusal:this.denial?.code==='quotaExhausted'?'exhausted':'missing-login'});}
    if(code!==0||j.loggedIn!==true||!['claude.ai','oauth_token','api_key'].includes(j.authMethod)||j.apiProvider!=='firstParty')return this.base(p,{context,reason:'Claude account/provider metadata is unsupported'});
-   noteBilling('claude',claudeBilling(j.authMethod)); // an API key is billed per token, a claude.ai or OAuth login is a subscription (src/lan/billing.ts)
+   noteBilling('claude',claudeAuthBilling(j.authMethod)); // an API key is billed per token, a claude.ai or OAuth login is a subscription (src/lan/billing.ts)
    if(this.denial?.code==='quotaExhausted')return this.base(p,{auth:this.authDenied?'unverified':'verified',loginState:'logged-in',context,refusal:'exhausted',reason:'Claude is signed in but quota is exhausted; wait for reset, not login'});
    if(this.authDenied)return this.base(p,{loginState:'logged-in',context,reason:'This CLI stores a login, but runtime authentication was refused; selected-context authentication is unverified'});
    const cached=this.admitted.get(pairKey(p));

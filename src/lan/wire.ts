@@ -57,7 +57,7 @@ const parse = (b: Buffer) => JSON.parse(b.toString("utf8"));
 export class LanWire {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private seenE = new Map<string, number>(); private inFlight = 0;
-  private xx = new Map<string, { hs: Handshake; at: number; ip: string; stage: 2 | 3; tx?: { send: CipherState; recv: CipherState }; commit?: Buffer; nonce?: Buffer; claimed?: string; port?: number; cert?: Cert; storage?: string | null }>();
+  private xx = new Map<string, { hs: Handshake | null; at: number; ip: string; stage: 1 | 2 | 3; tx?: { send: CipherState; recv: CipherState }; commit?: Buffer; nonce?: Buffer; claimed?: string; port?: number; cert?: Cert; storage?: string | null }>();
   /** each introduced peer's ss, remembered (memory only): the same for every message with it */
   private ssCache = new Map<string, Buffer>();
   private rate = new Map<string, { at: number; n: number }>();
@@ -150,16 +150,20 @@ export class LanWire {
     if (p === "/lan/v2/xx/1") {
       if (!this.d.introOpen()) return this.refuse("introductions are closed on this Studio", ip);
       if (this.xx.size >= 1) return this.refuse("another introduction is in progress", ip, 429); // one at a time
-      const me = this.d.me(), hs = new Handshake("XX", false, me.s); await hs.readMessage(body);
-      // the responder's certificate rides in message 2, encrypted and hashed: the short code covers it
-      const sid = randomBytes(16), m2 = await hs.writeMessage(json({ v: 2, cert: me.cert, storage: me.storage }));
-      this.xx.set(sid.toString("hex"), { hs, at: now, ip, stage: 2 });
-      return bin(Buffer.concat([sid, m2]));
+      // the slot is taken before any await: two introductions arriving together never both pass the check above
+      const sid = randomBytes(16), key = sid.toString("hex"); this.xx.set(key, { hs: null, at: now, ip, stage: 1 });
+      try {
+        const me = this.d.me(), hs = new Handshake("XX", false, me.s); await hs.readMessage(body);
+        // the responder's certificate rides in message 2, encrypted and hashed: the short code covers it
+        const m2 = await hs.writeMessage(json({ v: 2, cert: me.cert, storage: me.storage }));
+        const s = this.xx.get(key); if (!s) return this.refuse("no such introduction", ip); Object.assign(s, { hs, stage: 2 });
+        return bin(Buffer.concat([sid, m2]));
+      } catch (e) { this.xx.delete(key); throw e; }
     }
     if (body.length < 17) return this.refuse("short message", ip, 400);
     const sid = body.subarray(0, 16).toString("hex"), s = this.xx.get(sid), rest = Buffer.from(body.subarray(16));
     if (!s || s.ip !== ip || !this.d.introOpen()) return this.refuse("no such introduction", ip);
-    if (p === "/lan/v2/xx/3" && s.stage === 2) {
+    if (p === "/lan/v2/xx/3" && s.stage === 2 && s.hs) {
       const pay = parse(await s.hs.readMessage(rest)); s.tx = s.hs.split();
       const me = this.d.me(), cert = pay?.cert;
       if (pay?.v !== 2 || !certFor(cert, s.hs.rs!)) { this.xx.delete(sid); return this.refuse("the introducer's certificate does not bind its key", ip); }
@@ -224,9 +228,17 @@ const post = async (p: Peer, path: string, body: Buffer) => {
   const r = await fetch(`http://${p.host}:${p.port}${path}`, { method: "POST", body, redirect: "manual", signal: AbortSignal.timeout(15_000), headers: { "content-type": "application/octet-stream" } });
   if (r.status !== 200) throw new Error(`peer answered ${r.status}`);
   const len = Number(r.headers.get("content-length") ?? 0); if (len > MAX_BODY) throw new Error("peer answer too large");
-  const b = Buffer.from(await r.arrayBuffer()); if (b.length > MAX_BODY) throw new Error("peer answer too large");
-  return b;
+  return readCapped(r, MAX_BODY);
 };
+/** a response body read with a running byte limit: past `max` the stream is cancelled and the read refused (a reply with
+ *  no Content-Length is never read whole first) */
+export async function readCapped(r: Response, max: number): Promise<Buffer> {
+  if (!r.body) return Buffer.alloc(0);
+  const reader = r.body.getReader(), parts: Uint8Array[] = []; let n = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break;
+    n += value.byteLength; if (n > max) { try { await reader.cancel(); } catch {} throw new Error("peer answer too large"); } parts.push(value); }
+  return Buffer.concat(parts);
+}
 /** a certificate that binds this Noise static key to an identity (its admin key signed it), or null */
 function certFor(c: any, rs: Uint8Array): c is Cert { try { return !!c && verifyCert(c, unb64u(c.id, 65)) && c.dh === b64u(rs); } catch { return false; } }
 /** One request to an introduced peer over a fresh KK handshake; the reply's body, or a thrown CallError with the peer's code. */

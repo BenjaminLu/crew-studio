@@ -86,9 +86,15 @@ try {
   await pa.selectOption("#lanWf", "documents"); await pa.locator("[data-lan-send]").click();
   const th = await until(async () => (await api(A, "/api/lan")).body.threads.find((t) => t.title === "週報"));
   ok(!!th, "the dispatch form sends a thread");
+  // the view as if Claude were signed in with an API key here (billed per token): the take dialog says so as soon as the
+  // provider is picked, even while the select keeps focus (the page does not re-render then)
   await pb.reload(); await pb.locator("[data-lan-take-wf]").waitFor({ timeout: 15000 });
   ok(await pb.locator('[data-lan-take-wf] option[value="file-organization"]').isDisabled(), "a workflow outside the LAN profile (it moves your files) is offered but cannot be picked");
-  await pb.selectOption("[data-lan-take-wf]", "documents"); await pb.selectOption("[data-lan-provider]", "codex");
+  await pb.evaluate(() => { window.crewLan.v.billing = { ...(window.crewLan.v.billing || {}), claude: "per-token" }; });
+  await pb.selectOption("[data-lan-take-wf]", "documents"); await pb.locator("[data-lan-provider]").focus(); await pb.selectOption("[data-lan-provider]", "claude");
+  { const note = await pb.locator("[data-lan-estimate]").innerText(); ok(/billed per token/.test(note), "picking a provider signed in with an API key shows \"billed per token\" at once, before the take", note); }
+  await pb.selectOption("[data-lan-provider]", "codex");
+  { const note = await pb.locator("[data-lan-estimate]").innerText(); ok(!/billed per token/.test(note), "picking a subscription provider takes the per-token note away again", note); }
   const est = await pb.locator("[data-lan-estimate]").innerText();
   ok(/Capped at \d+ agent rounds|上限是這個 Task 的 \d+ 輪/.test(est) && /tokens|token/.test(est) && !/\$|dollar|金額|worst|最壞|%/i.test(est) && await pb.locator("[data-lan-usd], [data-lan-rounds-only]").count() === 0, "the take dialog caps by rounds only and states the daily rounds, agent-minutes and tokens: no dollars, no percentage of a quota", est);
   await pb.locator("[data-lan-content]").evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); }); // read to its end
@@ -135,6 +141,13 @@ try {
   ok(/^blocked/.test(r), "a page's fetch to the peer listener is blocked (no CORS: the preflight fails)", r);
   ok(r2 === "sent" || /^blocked/.test(r2), "a no-cors request gets no readable answer", r2);
   ok(errors.length === 0, "no page error, no dialog from a peer's content", errors.join(" | "));
+  // board-to-board work off (or failed to start): the page shows why and how to turn it on, and does not ask again in a loop
+  { const pc = await open(A); let asked = 0;
+    await pc.route("**/api/lan", (route) => { if (route.request().method() !== "GET") return route.continue(); asked++; return route.fulfill({ status: 404, json: { error: "board-to-board work is off on this Studio until you turn it on", code: "off", canEnable: true } }); });
+    await pc.goto(`${A.base}/#/lan`); await pc.reload(); await pc.waitForTimeout(3000);
+    const shown = await pc.locator("[data-lan-error]").innerText().catch(() => "");
+    ok(/off on this Studio/.test(shown) && await pc.locator("[data-lan-enable]").count() === 1 && asked <= 3, "with board-to-board work off, the Peers page shows the reason and a turn-on button, and asks the API a bounded number of times", JSON.stringify([shown, asked]));
+    await pc.context().close(); }
 } catch (e) { ok(false, `the suite ran to its end: ${e?.stack ?? e}`); }
 finally { await browser.close(); fx.stdin.end(); await new Promise((r) => { fx.on("exit", r); setTimeout(r, 15000); }); }
 console.log(`\nlan-ui: ${pass} passed, ${fail} failed`);

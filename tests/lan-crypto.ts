@@ -138,5 +138,11 @@ wireB.stop();
 // keystore reads back exactly 32 bytes)
 { let short = 0; for (let i = 0; i < 3000; i++) if (generateKeyPair().priv.length !== 32) short++;
   ok(short === 0, "every private key generated is 32 bytes (a leading zero byte is kept)", `${short} of 3000 were shorter`); }
+// a peer's reply is read with a running byte limit: one with no Content-Length that streams on is cut off at the limit
+{ const { readCapped, MAX_BODY } = await import("../src/lan/wire") as any; let pulled = 0;
+  const stream = new ReadableStream({ pull(c) { pulled += 256 * 1024; c.enqueue(new Uint8Array(256 * 1024)); } });
+  let e = ""; try { await readCapped(new Response(stream), MAX_BODY); } catch (x: any) { e = String(x?.message ?? x); }
+  ok(/too large/.test(e) && pulled <= MAX_BODY + 2 * 256 * 1024, "a reply that streams past the limit is refused once it passes it, never read whole", JSON.stringify([e, pulled]));
+  const small = await readCapped(new Response(new Uint8Array(10)), MAX_BODY); ok(small.length === 10, "a reply within the limit is read whole"); }
 void canonical; void unb64u;
 end();

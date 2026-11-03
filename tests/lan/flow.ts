@@ -26,7 +26,8 @@ export async function bootPair(o: { examples?: boolean } = {}): Promise<Pair> {
   const [lanA, lanB] = [await freePort() as number, await freePort() as number];
   const lan = (port: number) => ({ CREW_LAN_BIND: "127.0.0.1", CREW_LAN_PEER_PORT: String(port), CREW_LAN_ALLOW_LOOPBACK: "1", CREW_LAN_MDNS: "0" });
   const [A, B] = await Promise.all([bootStudio("lan-a", { env: lan(lanA), examples: o.examples ?? false }), bootStudio("lan-b", { env: lan(lanB), examples: o.examples ?? false })]);
-  // the relay opens in the background after Studio starts (src/server.ts): wait for it
+  // board-to-board work is off until the captain turns it on (it makes the identity); then it opens in the background
+  for (const s of [A, B]) await must(s.api("/api/lan/enable", {}), `turn ${s.name}'s board-to-board work on`);
   for (const s of [A, B]) await until(`${s.name}'s relay to open`, async () => (await s.api("/api/lan")).status === 200, 120_000);
   for (const [s, n] of [[A, "Studio A"], [B, "Studio B"]] as const) await must(s.api("/api/lan/settings", { enabled: true, name: n }), `turn ${n}'s listener on`);
   const keyA = (await must(A.api("/api/lan"), "A view")).me.key, keyB = (await must(B.api("/api/lan"), "B view")).me.key;

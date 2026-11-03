@@ -84,10 +84,15 @@ export function baseProblem(repo: string, base: { root: string; sha: string }): 
   if (!run(repo, ["cat-file", "-e", `${base.sha}^{commit}`]).ok) return `it does not hold the dispatcher's base commit ${base.sha.slice(0, 12)} (fetch it first)`;
   return null;
 }
+/** whether `head` is a commit of this project that builds on `base` (where a code refinement may continue) */
+export function buildsOn(repo: string, base: string, head: string): boolean { return run(repo, ["cat-file", "-e", `${head}^{commit}`]).ok && run(repo, ["merge-base", "--is-ancestor", base, head]).ok; }
 /** a branch pinned at the dispatcher's base in the taker's project, so the Task's worktree starts there and stays there */
 export function pinBase(repo: string, sha: string): string {
   const name = `lan-base/${sha.slice(0, 12)}`;
-  if (!run(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]).ok) { const r = run(repo, ["update-ref", `refs/heads/${name}`, sha, ""]); if (!r.ok) throw new Error(`the base ${sha.slice(0, 12)} could not be pinned: ${r.err.slice(0, 200)}`); }
+  const have = run(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}^{commit}`]);
+  if (!have.ok) { const r = run(repo, ["update-ref", `refs/heads/${name}`, sha, ""]); if (!r.ok) throw new Error(`the base ${sha.slice(0, 12)} could not be pinned: ${r.err.slice(0, 200)}`); }
+  // an existing pin must still point at the full commit asked for: one that was moved is refused, never trusted
+  else if (have.out.trim() !== sha) throw new Error(`the branch ${name} was moved: it points at ${have.out.trim().slice(0, 12)}, not at the dispatched base ${sha.slice(0, 12)}; delete it or move it back`);
   return name;
 }
 

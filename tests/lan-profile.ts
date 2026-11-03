@@ -17,6 +17,7 @@ import { Handshake } from "../src/lan/noise";
 import { makeEnvelope, sealBlob, type Body } from "../src/lan/protocol";
 import { call } from "../src/lan/wire";
 import { harness, sleep, suite, until, Y } from "./rt-harness";
+import { checkedTempDir as checkedRepoDir } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 const { ok, end } = suite("lan-profile");
 
 // ---------- the restricted profile on the engine ----------
@@ -225,6 +226,25 @@ process.env.CREW_LAN_ALLOW_LOOPBACK = "1";
   ok(!B.view().intros.some((i: any) => i.key === A.id.key) && !B.view().peers.some((p: any) => p.key === A.id.key && p.state === "trusted"), "a revoked key cannot be introduced again", again?.message ?? "");
   A.close(); B.close(); }
 
+// two introductions that arrive at the same moment: the one slot is taken before any await, so only one gets this side's
+// message (a burst cannot collect more responder nonces than the guess limit allows)
+{ const C = await mk("sas-race"); C.setEnabled(true); C.openIntro(5); const host = "127.0.0.1", port = C.wire.port;
+  const req = (p: string, b: Buffer) => new Request(`http://${host}:${port}${p}`, { method: "POST", body: b, headers: { host: `${host}:${port}`, "content-type": "application/octet-stream", "content-length": String(b.length) } });
+  const qs: Request[] = []; for (let i = 0; i < 4; i++) qs.push(req("/lan/v2/xx/1", await new Handshake("XX", true, softStatic(generateKeyPair())).writeMessage(Buffer.alloc(0))));
+  const codes = (await Promise.all(qs.map((q, i) => C.wire.handle(q, `10.0.3.${i + 1}`)))).map((r) => r.status);
+  ok(codes.filter((c) => c === 200).length === 1 && codes.filter((c) => c === 429).length === 3, "four introductions at the same moment: exactly one is answered, the others are refused (one slot, taken before any await)", JSON.stringify(codes));
+  C.close(); }
+// a peer revoked while its introduction waits for Touch ID is never made trusted again by that introduction
+{ const A = await mk("rv-a"), B = await mk("rv-b"); A.setEnabled(true); B.setEnabled(true);
+  B.openIntro(1); const ia = await A.startIntro("127.0.0.1", B.wire.port), ib = B.view().intros[0];
+  await A.confirmIntro(ia.id, ib.sas, "B"); await B.confirmIntro(ib.id, ia.sas, "A");
+  B.openIntro(1); const ia2 = await A.startIntro("127.0.0.1", B.wire.port), ib2 = B.view().intros.find((x: any) => x.key === A.id.key)!;
+  const ks = (B as any).ks, admin0 = ks.admin.bind(ks); let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+  ks.admin = async (...a: any[]) => { await gate; return admin0(...a); };
+  const pending = B.confirmIntro(ib2.id, ia2.sas, "A again").then(() => "trusted", (e: any) => String(e?.message ?? e));
+  await sleep(20); B.removePeer(A.id.key, "revoke"); release(); const out = await pending; ks.admin = admin0;
+  ok(B.peer(A.id.key)?.state === "revoked" && out !== "trusted", "a peer revoked while its introduction waited for Touch ID stays revoked (the introduction is refused at its final write)", JSON.stringify([out, B.peer(A.id.key)?.state]));
+  A.close(); B.close(); }
 // ---------- the short code cannot be ground: every failed introduction shows, three close the window, one at a time ----------
 { const B = await mk("sas"); B.setEnabled(true); B.openIntro(5);
   const G = (await openKeystore(mkdtempSync(join(tmpdir(), "crew-lan-grinder-")), { create: true, kind: "file" })).ks!, M = staticOf(G), host = "127.0.0.1", port = B.wire.port;
@@ -436,7 +456,7 @@ if (process.platform === "darwin") {
   A.close(); B.close(); }
 // 3. the hand-back checks every changed path, however many
 { const { lanRunner } = await import("../src/lan/runner");
-  const wt = mkdtempSync(join(tmpdir(), "crew-lan-r3-wt-"));
+  const wt = checkedRepoDir("crew-lan-r3-wt-");
   const g = (...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", ...a], { cwd: wt, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(r.stderr.toString()); return r.stdout.toString().trim(); };
   g("init", "-q", "-b", "main"); for (let i = 0; i < 241; i++) writeFileSync(join(wt, `f${String(i).padStart(3, "0")}.md`), "a\n"); g("add", "."); g("commit", "-qm", "base"); const base = g("rev-parse", "HEAD");
   for (let i = 0; i < 241; i++) writeFileSync(join(wt, `f${String(i).padStart(3, "0")}.md`), "b\n");
@@ -480,15 +500,16 @@ if (process.platform === "darwin") {
   const x = await L.open({ dataDir: mkdtempSync(join(tmpdir(), "crew-lan-prune-")), runner: { workflows: () => [], start: async () => { throw new Error(); }, status: () => null, output: async () => { throw new Error(); }, cancel: () => {} } as any, bind: "127.0.0.1", port: 0 });
   const st: any = (x as any).st; for (let i = 0; i < 3000; i++) st.items.push({ id: `i${i}`, entry: "e", kind: "done", from: "k", thread: "t", round: 1, at: new Date().toISOString(), state: "approved", flags: [], note: null });
   for (let i = 0; i < 800; i++) st.threads.push({ id: `t${i}`, owner: "o", peer: "p", title: "", acceptance: [], suggested: null, rounds: [], state: "done", steps: [] });
-  x.flushState(); x.close();
-  ok(st.items.length <= 1000 && st.threads.length <= 500, "answered items and closed threads are pruned when the state is written", `${st.items.length} ${st.threads.length}`); }
+  for (let i = 0; i < 200; i++) (x as any).step(() => {}); // a running Studio's writes: its maintenance runs every so many steps, not only at close
+  ok(st.items.length <= 1000 && st.threads.length <= 500, "answered items and closed threads are pruned while Studio runs (every so many writes), not only when it closes", `${st.items.length} ${st.threads.length}`);
+  x.close(); }
 
 // ---------- review round 4 (security review probes): each expects the fixed behaviour ----------
 // R4-1. the protected-path check folds case like JS toLowerCase, but APFS (case-insensitive) also folds U+017F (long s) to "s":
 //       a patch path git keeps distinct lands on the protected file the moment the dispatcher checks the branch out
 { const { lanApplier } = await import("../src/lan/apply");
   const { writeRefused } = await import("../src/lan/paths");
-  const root = mkdtempSync(join(tmpdir(), "crew-lan-r4-")), repo = join(root, "repo"); mkdirSync(repo);
+  const root = checkedRepoDir("crew-lan-r4-"), repo = join(root, "repo"); mkdirSync(repo);
   const g = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(r.stderr.toString()); return r.stdout.toString(); };
   g(repo, "init", "-q", "-b", "main"); mkdirSync(join(repo, ".husky")); writeFileSync(join(repo, ".husky/pre-commit"), "npm test\n"); writeFileSync(join(repo, "AGENTS.md"), "rules\n");
   writeFileSync(join(repo, "run.sh"), "#!/bin/sh\necho hi\n"); chmodSync(join(repo, "run.sh"), 0o755); writeFileSync(join(repo, "README.md"), "r\n"); symlinkSync("README.md", join(repo, "docs-link"));

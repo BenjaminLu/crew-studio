@@ -36,7 +36,7 @@ export type RunnerDeps = {
   /** the artifact store the deliver steps version their output in (m3.store) */
   artifacts: { version(id: string, n: number): any; filesDir(id: string, n: number): string } | null;
   /** start a Task through the runtime's own start path; throws a refusal */
-  start: (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number } }; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => Promise<any>;
+  start: (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number; diffBase?: string } }; continueAt?: string | null; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => Promise<any>;
   /** an own workflow's staffing plan (its hash is confirmed with the take), or null */
   staffing?: (def: any) => { hash: string; plan: unknown[]; missing: unknown[] } | null;
   /** whether a workflow needs a registered project (a code workflow) */
@@ -81,7 +81,9 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       if (why.length) throw Object.assign(new Error(why.join("; ")), { code: "profile" });
       // the profile is the runtime's own start option, never a param (src/runtime/engine.ts start)
       const params: Record<string, string> = {}; if (o.provider) params.provider = o.provider;
-      const run = await d.start({ workflow: o.workflow, text: o.text, title: o.title, params, profile: { name: "lan", mark: { item: o.item, rounds: o.cap.rounds } }, by: o.by, staffingConfirm: o.staffingConfirm ?? null, project: o.project ?? null, base: o.base ?? null });
+      // a refinement of code work starts at the commit the round before it ended on; its patch is still against the
+      // dispatched base (the mark carries it), so it applies there on its own
+      const run = await d.start({ workflow: o.workflow, text: o.text, title: o.title, params, profile: { name: "lan", mark: { item: o.item, rounds: o.cap.rounds, ...(o.base && o.continueAt ? { diffBase: o.base } : {}) } }, by: o.by, staffingConfirm: o.staffingConfirm ?? null, project: o.project ?? null, base: o.base ?? null, continueAt: o.continueAt ?? null });
       return { run: run.id, workflow: ref(run.def) };
     },
     status(id) {
@@ -105,7 +107,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
           const hit = protectedHit(f.path, b ? utf8(b) : null, null); if (hit) hits.add(hit); }
       }
       // a code workflow's own worktree: everything it changed against its base, as one patch
-      const wt = r.ctx?.worktree, base = r.ctx?.baseCommit;
+      const wt = r.ctx?.worktree, base = lanOf(r)?.diffBase ?? r.ctx?.baseCommit;
       if (wt && base && existsSync(wt)) {
         const tracked = git(wt, ["diff", "--name-only", "-z", "--no-renames", base]).out.split("\0").filter(Boolean);
         const untracked = git(wt, ["ls-files", "--others", "--exclude-standard", "-z"]).out.split("\0").filter(Boolean);
@@ -131,6 +133,7 @@ export function lanRunner(d: RunnerDeps): LanRunner {
       const pass = ledger.filter((e: any) => e.verdict === "pass").length, fail = ledger.filter((e: any) => e.verdict === "fail").length, other = ledger.length - pass - fail;
       return { files: files.slice(0, LIMITS.files), changed: [...changed], protectedHits: [...hits], checks: { pass, fail, other, summary: `${pass}/${ledger.length} checks pass on the taker's Studio (the taker's own report: run them again before relying on it)` }, workflow: ref(r.def), kind: wt ? "patch" : "files", base: wt && base ? String(base) : null, copies } as any;
     },
+    headOf(id) { const r = d.engine.get(id); const h = r?.ctx?.taintedReady?.head ?? r?.ctx?.head ?? null; return typeof h === "string" && /^[0-9a-f]{40}$/.test(h) ? h : null; },
     findByItem(item) {
       for (const r of d.engine.list?.() ?? []) if (r.profile?.name === "lan" && (r.profile.mark as any)?.item === item) return String(r.id);
       return null;

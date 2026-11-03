@@ -24,6 +24,10 @@ Tests: `tests/lan-crypto.ts`, `tests/lan-keys.ts`, `tests/lan-identity.ts`, `tes
 
 ## Identity
 
+- **Off until the captain turns it on.** A Studio makes no identity, builds no Secure Enclave helper and asks for no
+  Touch ID until the captain turns board-to-board work on from the Peers page (`POST /api/lan/enable`). From then on the
+  relay opens at every start, in the background. `CREW_LAN=0` keeps it off for good. The taint list and the spend
+  ledger are open from the start either way.
 - A Studio's identity is its **admin key**, a P-256 signing key: its public key is what peers allowlist, and its
   fingerprint (30 decimal digits in six groups of five, about 99.7 bits, from SHA-256 of the key) is what people compare.
   Every decision (allowlist, freeze, revocation, who may take a round) is keyed by it.
@@ -81,7 +85,10 @@ Tests: `tests/lan-crypto.ts`, `tests/lan-keys.ts`, `tests/lan-identity.ts`, `tes
   for and the successor, and the new admin key signs the successor. The revocation is queued for every introduced peer
   and sent with the old identity's own keys (kept until it reached them all, then overwritten and removed); this Studio
   speaks as the new identity at once, its open threads close (threads are never moved) and every peer is introduced
-  again with the short code.
+  again with the short code. It survives a crash at any point: a journal (`lan/retire.pending.json`, synced) is written
+  first; the database step, committed under the new identity, comes next; the key files move last. A start that finds
+  the journal finishes the moves when the database names the new identity, and rolls back (the old identity stays, the
+  half-made one is removed) when it still names the old one.
 - **A peer that retired**: its revocation is accepted only when the identity's own admin key signed it. Nothing after its
   last vouched entry is accepted; items and Tasks from entries after that are frozen and stopped; commits applied from it
   are marked; its threads close; the page says "X 換了身分，需要重新引介". The successor is never trusted from this: its
@@ -217,6 +224,12 @@ phone, even one allowed to drive Firstmate. (Not a boundary against a local proc
 
 ## Running work from a peer
 
+A **refinement** carries over the round before it. For code work its Task continues from that round's work on the
+taker's project (the worktree starts at the commit that round's Task ended on, when it is there and builds on the
+dispatched base), and its hand-back is the whole change against the dispatched base, so it applies there on its own.
+For other work its prompt shows the result the taker handed back last round, to revise (cut at 3,000 characters, and
+saying so); the prompt is what the taker approves, so the hash covers it.
+
 `startLan` starts the taker's workflow through the same staffing and start path as the board's Run: a code workflow
 (code-firstmate) runs on one of the taker's registered projects with its approved crew; an own workflow's staffing is
 confirmed with the take. The Task runs under the runtime's profile `lan` (`run.profile`, set only by the runtime as a
@@ -275,7 +288,7 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   the relay is starting, off or without its identity. A round counts when it is admitted, reserving 15 agent-minutes and
   its provider and model's average tokens here (300,000 when there is no record yet); when it ends, its wall clock and
   reported tokens replace the reservation, and a round whose provider reported no tokens keeps its token reservation (as
-  does one never settled). A round past any ceiling is refused before it starts; a ledger that cannot be read, was
+  does one never settled). A round is admitted only if what it reserves still fits under every ceiling; a ledger that cannot be read, was
   deleted or was restored from an older copy (its sentinel, `lan/spend.created`, keeps the most rounds it ever counted)
   refuses every round. The take dialog states the rounds cap, the per-round bounds, the daily ceilings and, when there
   is a record, about how many tokens a round of that provider uses here.
