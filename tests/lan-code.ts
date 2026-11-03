@@ -125,6 +125,10 @@ A.close(); B.close();
   { const { taintRefusal, requireTaintList } = await import("../src/lan/taint") as any;
     const before = taintRefusal(stranger, "HEAD", "Push"); requireTaintList(); const r = taintRefusal(stranger, "HEAD", "Push"); setTaintSource(null);
     ok(before === null && /no list of commits applied from peers is open/.test(r ?? ""), "once the taint list is required (Studio's server), a check with no list open refuses (fail closed); before, the projects' marks alone decide", JSON.stringify([before, r])); }
+  // opening the list at start (what Studio's server does) is what declares it required: closed later, checks still refuse
+  { const { taintRefusal, openTaintList: open2 } = await import("../src/lan/taint") as any; setTaintSource(null);
+    const l = open2(mkdtempSync(join(tmpdir(), "crew-lan-req-"))); l.close(); const r2 = taintRefusal(stranger, "HEAD", "Push"); setTaintSource(null);
+    ok(/no list of commits applied from peers is open/.test(r2 ?? ""), "opening the taint list at start declares it required: with it closed, a check refuses", String(r2)); }
   // "I reviewed commit X" is an admin signature (purpose "reviewed", over the commit and the time), kept in the audit row;
   // the commit is then clear in every repository that holds it
   const A2 = await Lan.open({ dataDir: dirA, runner: runner(), bind: "127.0.0.1", port: 0 });
