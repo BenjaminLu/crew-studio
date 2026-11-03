@@ -224,9 +224,12 @@ phone, even one allowed to drive Firstmate. (Not a boundary against a local proc
 
 ## Running work from a peer
 
-A **refinement** carries over the round before it. For code work its Task continues from that round's work on the
-taker's project (the worktree starts at the commit that round's Task ended on, when it is there and builds on the
-dispatched base), and its hand-back is the whole change against the dispatched base, so it applies there on its own.
+A **refinement** carries over the round before it. For code work its Task continues from the patch the taker handed
+back for that round, as it was sent (a hunk the captain removed before the hand-back stays removed): the patch is
+committed onto the dispatched base in the taker's project under the same rules a peer's result is applied under (the
+paths named by the version control tool and checked, no protected path, plain files only, no checkout, no hook), the
+worktree starts there, and the hand-back is the whole change against the dispatched base, so it applies there on its
+own. A patch that cannot be committed so refuses the start, with the reason.
 For other work its prompt shows the result the taker handed back last round, to revise (cut at 3,000 characters, and
 saying so); the prompt is what the taker approves, so the hash covers it.
 
@@ -399,6 +402,10 @@ then clear in every repository, its marks deleted. Marking one reviewed needs th
 relay is off or starting, or the identity is lost, the page says so and the commits stay on the list. A commit from a peer that was later removed or replaced stays on the list, marked so.
 
 ## Audit
+
+The relay's maintenance (every 200 steps, and at close) keeps the newest 1,000 answered items and 500 closed threads,
+and never a thread still in use: one with an entry waiting in the outbox, a run not ended, or an accepted code result
+not applied yet. An outbox entry whose content is gone is never reported as delivered.
 
 The audit is a table of the store, hash-chained (each row names the hash of the one before; a rotation keeps the chain
 from the last moved row) and written in the same transaction as the step it records: a step whose audit row cannot be

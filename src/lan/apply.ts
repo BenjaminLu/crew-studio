@@ -84,8 +84,6 @@ export function baseProblem(repo: string, base: { root: string; sha: string }): 
   if (!run(repo, ["cat-file", "-e", `${base.sha}^{commit}`]).ok) return `it does not hold the dispatcher's base commit ${base.sha.slice(0, 12)} (fetch it first)`;
   return null;
 }
-/** whether `head` is a commit of this project that builds on `base` (where a code refinement may continue) */
-export function buildsOn(repo: string, base: string, head: string): boolean { return run(repo, ["cat-file", "-e", `${head}^{commit}`]).ok && run(repo, ["merge-base", "--is-ancestor", base, head]).ok; }
 /** a branch pinned at the dispatcher's base in the taker's project, so the Task's worktree starts there and stays there */
 export function pinBase(repo: string, sha: string): string {
   const name = `lan-base/${sha.slice(0, 12)}`;
@@ -96,6 +94,29 @@ export function pinBase(repo: string, sha: string): string {
   return name;
 }
 
+/** A patch committed onto a base commit, without a checkout or a working tree, under every rule a result from a peer is
+ *  applied under (paths named by git and checked, no protected path, plain 100644 files only, no binary hunk, package.json
+ *  scripts and hooks against the base; no filter or hook runs). Returns the commit; refuses with the reasons. */
+export function commitPatch(repo: string, base: string, patch: string, message = "Work from a peer's Studio: not reviewed yet"): { commit: string; paths: string[] } {
+  if (!/^[0-9a-f]{40}$/.test(String(base ?? ""))) throw new Error("no base commit");
+  const { paths, problems } = patchProblems(patch, repo);
+  if (problems.length) throw new Error(`refused: ${problems.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
+  const baseCommit = run(repo, ["rev-parse", "--verify", `${base}^{commit}`]); if (!baseCommit.ok) throw new Error(`the base ${base.slice(0, 12)} is not in this project (never onto another base)`);
+  const modes = baseModeProblems(repo, baseCommit.out.trim(), patch, paths);
+  if (modes.length) throw new Error(`refused: ${modes.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
+  const tmp = mkdtempSync(join(tmpdir(), "crew-lan-apply-")), env = { GIT_INDEX_FILE: join(tmp, "index") };
+  try {
+    const must = (args: string[], input?: string) => { const r = run(repo, args, { input, env }); if (!r.ok) throw new Error(`git ${args[0]}: ${r.err.slice(0, 300)}`); return r.out.trim(); };
+    must(["read-tree", baseCommit.out.trim()]);
+    must(["apply", "--cached", "--check", "--whitespace=nowarn", "-"], patch);
+    // package.json: its script and hook keys against the base, read as blobs (no checkout)
+    const blob = (rev: string, x: string) => { const r = run(repo, ["cat-file", "blob", `${rev}:${x}`], { env }); return r.ok ? r.out : null; };
+    must(["apply", "--cached", "--whitespace=nowarn", "-"], patch);
+    const tree = must(["write-tree"]);
+    for (const x of paths.filter((y) => /(^|\/)package\.json$/i.test(y))) { const hit = protectedHit(x, blob(tree, x), blob(baseCommit.out.trim(), x)); if (hit) throw new Error(`refused: ${hit}`); }
+    return { commit: must(["commit-tree", tree, "-p", baseCommit.out.trim(), "-m", message]), paths };
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+}
 export function lanApplier(o: { dataDir: string; project: (id: string) => { path: string; base?: string } | null }) {
   return ({ project, patch, branch, base: parent, record }: { project: string; patch: string; branch: string; base: string; record: (commit: string, repo: string) => void }) => {
     const p = o.project(project); if (!p?.path || !run(p.path, ["rev-parse", "--git-dir"]).ok) throw new Error(`no registered project ${project} with a git repository`);
@@ -103,28 +124,13 @@ export function lanApplier(o: { dataDir: string; project: (id: string) => { path
     // the result applies to the commit it names (the dispatcher's own base, sent with the dispatch): never to whatever the
     // project's base branch is now
     if (!/^[0-9a-f]{40}$/.test(String(parent ?? ""))) throw new Error("the result names no base commit: it is not applied (never onto another base)");
-    const repo = p.path, base = parent;
-    const { paths, problems } = patchProblems(patch, repo);
-    if (problems.length) throw new Error(`refused: ${problems.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
+    const repo = p.path;
     if (run(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok) throw new Error(`branch ${branch} already exists in ${project}: this result was applied before`);
-    const baseCommit = run(repo, ["rev-parse", "--verify", `${base}^{commit}`]); if (!baseCommit.ok) throw new Error(`the base ${base.slice(0, 12)} the result names is not in ${project}: it is not applied (never onto another base)`);
-    const modes = baseModeProblems(repo, baseCommit.out.trim(), patch, paths);
-    if (modes.length) throw new Error(`refused: ${modes.slice(0, 5).map((x) => `${x.path} (${x.why})`).join(", ")}`);
-    const tmp = mkdtempSync(join(tmpdir(), "crew-lan-apply-")), env = { GIT_INDEX_FILE: join(tmp, "index") };
-    try {
-      const must = (args: string[], input?: string) => { const r = run(repo, args, { input, env }); if (!r.ok) throw new Error(`git ${args[0]}: ${r.err.slice(0, 300)}`); return r.out.trim(); };
-      must(["read-tree", baseCommit.out.trim()]);
-      must(["apply", "--cached", "--check", "--whitespace=nowarn", "-"], patch);
-      // package.json: its script and hook keys against the base, read as blobs (no checkout)
-      const blob = (rev: string, x: string) => { const r = run(repo, ["cat-file", "blob", `${rev}:${x}`], { env }); return r.ok ? r.out : null; };
-      must(["apply", "--cached", "--whitespace=nowarn", "-"], patch);
-      const tree = must(["write-tree"]);
-      for (const x of paths.filter((y) => /(^|\/)package\.json$/i.test(y))) { const hit = protectedHit(x, blob(tree, x), blob(baseCommit.out.trim(), x)); if (hit) throw new Error(`refused: ${hit}`); }
-      const commit = must(["commit-tree", tree, "-p", baseCommit.out.trim(), "-m", `Work from a peer's Studio (${branch}): not reviewed yet`]);
-      // on the taint list (its row and the audit row written) before any branch names the commit
-      record(commit, repo);
-      must(["update-ref", `refs/heads/${branch}`, commit, ""]); // "" as the old value: the branch must not exist yet
-      return { branch, path: repo, files: paths, commit, repo };
-    } finally { rmSync(tmp, { recursive: true, force: true }); }
+    if (!run(repo, ["rev-parse", "--verify", `${parent}^{commit}`]).ok) throw new Error(`the base ${parent.slice(0, 12)} the result names is not in ${project}: it is not applied (never onto another base)`);
+    const { commit, paths } = commitPatch(repo, parent, patch, `Work from a peer's Studio (${branch}): not reviewed yet`);
+    // on the taint list (its row and the audit row written) before any branch names the commit
+    record(commit, repo);
+    const r = run(repo, ["update-ref", `refs/heads/${branch}`, commit, ""]); if (!r.ok) throw new Error(`git update-ref: ${r.err.slice(0, 300)}`); // "" as the old value: the branch must not exist yet
+    return { branch, path: repo, files: paths, commit, repo };
   };
 }

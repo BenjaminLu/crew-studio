@@ -3,7 +3,7 @@ import {WorkflowPackages,snapshotPackage,packageSha} from '../workflow-package';
 import {workflowDefinitionExport} from '../workflow-definition-export';
 import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
-import {lanUntrusted,baseProblem,pinBase,buildsOn as lanBuildsOn} from '../lan/apply';
+import {lanUntrusted,baseProblem,pinBase,commitPatch as lanCommitPatch} from '../lan/apply';
 import {taintRefusal} from '../lan/taint';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
@@ -864,7 +864,7 @@ export function createRuntime(d: RuntimeDeps) {
    * and no coffee-kit crew; an own workflow's staffing is confirmed with the take (staffingConfirm, its plan's hash).
    */
   const lanStaffing = (def: any) => { if (!ownWorkflow(def)) return null; const s = ownStaffingPlan(def, defs.ownCrew); return s.plan.length ? { hash: s.hash, plan: s.plan, missing: s.missing } : null; };
-  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number; diffBase?: string } }; continueAt?: string | null; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => {
+  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number; diffBase?: string } }; continuePatch?: string | null; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => {
     const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
     const def = defs.get(o.workflow);
     if (!def || !defs.selectable(o.workflow) || defs.held(o.workflow)) throw refuse("workflow_unavailable", "This workflow is not available for a new Task");
@@ -878,9 +878,11 @@ export function createRuntime(d: RuntimeDeps) {
       // code work on the dispatcher's base: a branch pinned at that commit in this project, so the worktree starts there
       // and stays there (a build round's rebase onto it changes nothing), and the patch that goes back applies there
       if (o.base) { if (!/^[0-9a-f]{40}$/.test(o.base)) throw refuse("base", "a bad base commit"); const why = baseProblem(projects.get(pid)!.path!, { root: o.base, sha: o.base }); if (why && !/root/.test(why)) throw refuse("base", `project ${pid} ${why}`); staffed.base = pinBase(projects.get(pid)!.path!, o.base);
-        // a refinement continues at the commit the round before it ended on, when that commit is here and builds on the base
-        if (o.continueAt && /^[0-9a-f]{40}$/.test(o.continueAt)) { const repo = projects.get(pid)!.path!;
-          if (lanBuildsOn(repo, o.base, o.continueAt)) staffed.base = pinBase(repo, o.continueAt); } }
+        // a refinement continues from the patch handed back last round, as sent: committed onto the dispatched base under the
+        // same rules a peer's result is applied under (no checkout, no hook, no protected path), the worktree starting there
+        if (o.continuePatch) { const repo = projects.get(pid)!.path!; let made: string;
+          try { made = lanCommitPatch(repo, o.base, o.continuePatch, "The previous round as handed back to the dispatcher").commit; } catch (e: any) { throw refuse("continue", `this refinement cannot continue from the patch handed back last round: ${String(e?.message ?? e).slice(0, 300)}`); }
+          staffed.base = pinBase(repo, made); } }
     }
     const missing = Object.entries(def.params ?? {}).filter(([, spec]: any) => spec.required && !String(spec.default ?? "").trim()).map(([k]) => k);
     if (missing.length) throw refuse("param_required", `This workflow needs inputs work from a peer cannot give: ${missing.join(", ")}`);

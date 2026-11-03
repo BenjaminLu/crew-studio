@@ -44,7 +44,9 @@ export type RoundRec = { n: number; fence: string; briefing: { hash: string; siz
   /** the run this round started. Its claim (`claimed`, the assignment item) is written, synced, before the Task starts; a
    *  restart finds the Task by that item (`found`), or marks it gone: a claim is never released by a restart */
   run: null | { id: string; state: string; result: string | null; started: string; stopped: string | null; item?: string; found?: boolean; auto?: boolean; spent?: { rounds: number; tokens: number; minutes: number; usd?: number } | null };
-  result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number; base?: string | null } };
+  result: null | { entry: string; take: string; workflow: WorkflowRef; output: { hash: string; size: number; files: { path: string; bytes: number }[] }; run: string; checks: { pass: number; fail: number; other: number; summary: string }; flags: string[]; accepted: boolean; seq?: number; base?: string | null;
+    /** the dispatcher applied it (its code result): a thread with an accepted code result not applied yet is kept */
+    applied?: boolean } };
 export type Step = { entry: string; kind: Body["kind"]; author: string; round: number; ts: string; at: string; delivered: boolean | null; refused: string | null; waiting?: string | null };
 export type ThreadRec = { id: string; owner: string; peer: string; title: string; acceptance: string[]; suggested: WorkflowRef | null; rounds: RoundRec[];
   /** code work: the dispatcher's project history (its root commit) and the commit the work is based on */
@@ -79,9 +81,8 @@ type State = { v: 2; settings: { enabled: boolean; name: string; ceilings?: Ceil
 /** What a Task that runs work from a peer needs from Studio (src/lan/runner.ts implements it over the runtime). */
 export type LanRunner = {
   workflows(): { id: string; version: number; name: string; defHash: string; eligible: boolean; why: string[]; notRun: string[]; mayStop?: string[]; output?: "text" | "patch" | null; staffing: { hash: string; plan: unknown[]; missing: unknown[] } | null; needsProject?: boolean }[];
-  /** the commit a code Task ended on (where a refinement continues), or null */
-  headOf?(run: string): string | null;
-  start(o: { continueAt?: string | null; workflow: string; text: string; title: string; item: string; cap: { rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
+  start(o: { /** a code refinement: the patch this Studio handed back last round, as sent (the next Task starts from it) */
+    continuePatch?: string | null; workflow: string; text: string; title: string; item: string; cap: { rounds: number }; provider: string | null; staffingConfirm?: string | null; project?: string | null; base?: string | null; by: string }): Promise<{ run: string; workflow: WorkflowRef }>;
   status(run: string): { state: string; result: string | null; spent: { rounds: number; tokens: number; minutes: number; usd?: number }; stopped: string | null; ready?: boolean } | null;
   /** the Task a received assignment started (by the item id in its LAN mark), after a restart: its id, or null */
   findByItem?(item: string): string | null;
@@ -286,7 +287,11 @@ export class Lan {
     // answered items and closed threads: the newest are kept (open ones always); a pruned thread takes its entries and
     // blobs with it, except what started a run or was applied, and except fork evidence
     const settled = this.st.items.filter((i) => i.state !== "open" && i.state !== "frozen"); if (settled.length > 1000) { const drop = new Set(settled.slice(0, settled.length - 1000)); this.st.items = this.st.items.filter((i) => !drop.has(i)); }
-    const closed = this.st.threads.filter((t) => t.state !== "open"); if (closed.length > 500) { const drop = new Set(closed.slice(0, closed.length - 500)); for (const t of drop) this.store.pruneThread(t.id, [...evidence]); this.st.threads = this.st.threads.filter((t) => !drop.has(t)); }
+    // never a thread still in use: one with an entry waiting in the outbox (a withdrawal, a done), a run not ended, or an
+    // accepted code result not applied yet
+    const inUse = new Set<string>(this.st.outbox.map((x) => x.thread).filter((x): x is string => !!x));
+    for (const t of this.st.threads) if (t.rounds.some((r) => (r.run && !ENDED.includes(r.run.state)) || (r.result?.accepted && !r.result.applied && r.result.output.files.some((f) => f.path === "changes.patch")))) inUse.add(t.id);
+    const closed = this.st.threads.filter((t) => t.state !== "open" && !inUse.has(t.id)); if (closed.length > 500) { const drop = new Set(closed.slice(0, closed.length - 500)); for (const t of drop) this.store.pruneThread(t.id, [...evidence]); this.st.threads = this.st.threads.filter((t) => !drop.has(t)); }
   }
   private putEntry(e: Envelope, thread: string | null = null) { const h = entryHash(e); this.store.putEntry(h, e.a, e.seq, e, thread); return h; }
   entry(h: string): Envelope | null { return this.store.entry<Envelope>(h); }
@@ -577,7 +582,10 @@ export class Lan {
     const held = new Set<string>(), due: Outbox[] = [];
     for (const x of list) { const k = x.thread ?? "?"; if (held.has(k)) continue; if ((x.next ?? 0) > Date.now()) { held.add(k); continue; } due.push(x); }
     if (!due.length) return;
-    const batch = due.slice(0, LIMITS.push), entries = batch.map((x) => this.entry(x.entry)).filter(Boolean) as Envelope[];
+    // an entry that is not here any more is never reported as delivered: its row stays, with the reason
+    const gone = due.filter((x) => !this.entry(x.entry)); if (gone.length) this.step(() => { for (const x of gone) { x.error = "the entry is not on this Studio any more"; x.next = Date.now() + 600_000; } });
+    const batch = due.filter((x) => !gone.includes(x)).slice(0, LIMITS.push), entries = batch.map((x) => this.entry(x.entry)).filter(Boolean) as Envelope[];
+    if (!batch.length) return;
     const blobs = [...new Set(batch.flatMap((x) => x.blobs))].map((h) => this.blob(h)).filter(Boolean) as Blob[];
     try {
       const r = await call(this.me(), { key: p.key, dh: this.certOf(p).dh, host: p.host, port: p.port }, "push", { entries, blobs }, { port: this.wire.port });
@@ -859,9 +867,13 @@ export class Lan {
         this.step(() => { r.run = { id: "(claimed)", state: "starting", result: null, started: now(), stopped: null, item: i.id }; i.state = "approved";
           this.store.markUsed([r.briefing.hash, r.briefing.entry, i.entry, ...(r.take ? [r.take.entry] : [])]); });
         let started: { run: string; workflow: WorkflowRef };
-        // a code refinement continues from the commit the previous round's Task ended on (in this project)
-        const prev = r.n > 1 ? t.rounds.find((x) => x.n === r.n - 1) : null, continueAt = t.base && prev?.result && prev.run?.id ? this.o.runner.headOf?.(prev.run.id) ?? null : null;
-        try { started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN ${t.id}`, item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, base: t.base?.sha ?? null, continueAt, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` }); }
+        // a code refinement continues from the patch this Studio handed back last round, as it was sent (a hunk the captain
+        // removed before the hand-back stays removed); it is committed onto the dispatched base under the patch rules
+        const prev = r.n > 1 ? t.rounds.find((x) => x.n === r.n - 1) : null;
+        let continuePatch: string | null = null;
+        if (t.base && prev?.result) { const sent = this.blobText(prev.result.output.hash); if (sent === null) throw new LanError(410, `round ${prev.n}'s result is not on this Studio any more: this refinement cannot continue from it`, "continue");
+          try { continuePatch = (JSON.parse(sent).files ?? []).find((f: any) => f.path === "changes.patch")?.text ?? null; } catch {} }
+        try { started = await this.o.runner.start({ workflow: r.take!.workflow.id, text, title: `LAN ${t.id}`, item: i.id, cap: r.take!.cap, provider: r.take!.provider, staffingConfirm: r.take!.staffing, project: r.take!.project ?? null, base: t.base?.sha ?? null, continuePatch, by: `peer work from ${this.peer(i.from)?.petname ?? "?"}` }); }
         catch (e: any) { this.step(() => { r.run = null; i.state = "open"; }); throw new LanError(409, `the Task did not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "start"); }
         this.step(() => { r.run = { id: started.run, state: "running", result: null, started: now(), stopped: null, item: i.id, auto: o.by === "auto-start" };
           this.store.audit("run", { thread: t.id, round: r.n, item: i.id, entry: i.entry, from: i.from, run: started.run, briefing: r.briefing.hash, workflow: started.workflow, by: o.by ?? "captain (desktop)", cap: r.take!.cap, project: r.take!.project ?? null }); });
@@ -925,7 +937,7 @@ export class Lan {
    *  of the prompt, so the hash the taker approves covers it. */
   private carriedOver(t: ThreadRec, r: RoundRec, fence: string, glyph: (s: string) => string): string[] {
     const prev = r.n > 1 ? t.rounds.find((x) => x.n === r.n - 1) : null; if (!prev?.result) return [];
-    if (t.base) return [`This round refines round ${prev.n}: it continues from your work of that round on this project (the worktree starts at the commit it ended on), and what you hand back is the whole change against the dispatched base, round ${prev.n}'s work included.`];
+    if (t.base) return [`This round refines round ${prev.n}: it continues from the patch you handed back for that round, as you sent it (the worktree starts with it applied to the dispatched base), and what you hand back is the whole change against the dispatched base, round ${prev.n}'s work included.`];
     const text = this.blobText(prev.result.output.hash); if (text === null) return [`This round refines round ${prev.n}; its result is not on this Studio any more.`];
     let files: { path: string; text: string | null }[] = []; try { files = JSON.parse(text).files ?? []; } catch {}
     let left = CARRY_CHARS, cut = false; const parts: string[] = [];
@@ -1028,7 +1040,7 @@ export class Lan {
         this.step(() => { this.store.audit("apply-pending", { thread: t.id, round: r.n, project, branch, commit, base, seen: o.seen }); });
         recorded = commit; } });
       if (!recorded || done.commit !== recorded) throw new Error("the applier reported no commit recorded on the taint list: nothing is applied without its taint row");
-      this.step(() => { this.store.markUsed([r.result!.output.hash, r.result!.entry]);
+      this.step(() => { this.store.markUsed([r.result!.output.hash, r.result!.entry]); r.result!.applied = true;
         this.store.audit("apply", { thread: t.id, round: r.n, project, branch: done.branch, files: done.files.length, commit: done.commit, base, seen: o.seen }); }); return done; }
     catch (e: any) { throw new LanError(409, `the patch was not applied: ${String(e?.message ?? e).slice(0, 400)}`, "apply"); }
   }

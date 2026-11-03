@@ -219,9 +219,9 @@ const MUTATIONS: M[] = [
   { name: "T-by-commit", rule: "a row counts in every repository that holds its commit (a moved folder, a second clone, a fetch)", tests: [CODE, BOARD],
     edits: [{ file: "src/lan/taint.ts", from: "try { rows = rowsOf().filter((t) => !t.cleared); }", to: "try { rows = rowsOf().filter((t) => !t.cleared && t.repo === repo); }" }] },
   { name: "T-before-branch", rule: "the commit is recorded (row and apply-pending audit) after commit-tree and before update-ref", tests: [CODE],
-    edits: [{ file: "src/lan/apply.ts", from: `      record(commit, repo);
-      must(["update-ref", \`refs/heads/\${branch}\`, commit, ""]);`, to: `      must(["update-ref", \`refs/heads/\${branch}\`, commit, ""]);
-      record(commit, repo);` }] },
+    edits: [{ file: "src/lan/apply.ts", from: `    record(commit, repo);
+    const r = run(repo, ["update-ref", \`refs/heads/\${branch}\`, commit, ""]); if (!r.ok) throw new Error(\`git update-ref: \${r.err.slice(0, 300)}\`);`, to: `    const r = run(repo, ["update-ref", \`refs/heads/\${branch}\`, commit, ""]); if (!r.ok) throw new Error(\`git update-ref: \${r.err.slice(0, 300)}\`);
+    record(commit, repo);` }] },
   { name: "T-no-commit", rule: "an applier that names no recorded commit is an error, never an untainted apply", tests: [CODE],
     edits: [{ file: "src/lan/relay.ts", from: "if (!recorded || done.commit !== recorded) throw new Error(", to: "if (false) throw new Error(" }] },
   { name: "T-reviewed-signed", rule: "\"I reviewed commit X\" is an admin signature (purpose reviewed) kept in the audit", tests: [CODE],
@@ -270,7 +270,11 @@ const MUTATIONS: M[] = [
   { name: "G-carry-text", rule: "a refinement's prompt carries the taker's previous result", tests: [CODE],
     edits: [{ file: "src/lan/relay.ts", from: "      ...this.carriedOver(t, r, fence, glyph),", to: "" }] },
   { name: "G-carry-code", rule: "a code refinement continues from the previous round, its patch against the dispatched base", tests: [WORKFLOWS],
-    edits: [{ file: "src/lan/runner.ts", from: "...(o.base && o.continueAt ? { diffBase: o.base } : {})", to: "" }] },
+    edits: [{ file: "src/lan/runner.ts", from: "...(o.base && o.continuePatch ? { diffBase: o.base } : {})", to: "" }] },
+  { name: "G-continue-sent", rule: "a code refinement continues from the patch as handed back, never the previous Task's commit", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `try { continuePatch = (JSON.parse(sent).files ?? []).find((f: any) => f.path === "changes.patch")?.text ?? null; } catch {}`, to: `void sent;` }] },
+  { name: "G-trim-in-use", rule: "maintenance never trims a thread with an entry waiting in the outbox", tests: [CODE],
+    edits: [{ file: "src/lan/relay.ts", from: `const inUse = new Set<string>(this.st.outbox.map((x) => x.thread).filter((x): x is string => !!x));`, to: `const inUse = new Set<string>();` }] },
   { name: "G-reserve-fits", rule: "a round is admitted only if what it reserves fits under the daily ceilings", tests: [SPEND],
     edits: [{ file: "src/lan/profile.ts", from: "|| d.minutes + next.minutes > c.dailyMinutes", to: "" },
       { file: "src/lan/profile.ts", from: "|| d.tokens + next.tokens > c.dailyTokens", to: "" }] },
@@ -315,7 +319,7 @@ const MUTATIONS: M[] = [
     edits: [{ file: "src/lan/relay.ts", from: `if (w.needsProject && t.base) { const why = this.o.baseProblem?.(project!, t.base) ?? null; if (why) throw`, to: `if (false) { const why = null; if (why) throw` }] },
   { name: "B-base-apply", rule: "a result applies onto the base it names, never another (A-M4)", tests: [CODE],
     edits: [{ file: "src/lan/relay.ts", from: `if (!base || !t.base || base !== t.base.sha) throw new LanError(`, to: `if (false) throw new LanError(` },
-      { file: "src/lan/apply.ts", from: `const repo = p.path, base = parent;`, to: `const repo = p.path, base = p.base || "main";` }] },
+      { file: "src/lan/apply.ts", from: `const { commit, paths } = commitPatch(repo, parent, patch,`, to: `const { commit, paths } = commitPatch(repo, run(repo, ["rev-parse", p.base || "main"]).out.trim(), patch,` }] },
   // ---------- limits ----------
   { name: "L-config", rule: "configuration a tool loads as code is protected (C-S5)", tests: [LIMITS_T],
     edits: [{ file: "src/lan/paths.ts", from: `  "[^/]*\\\\.config\\\\.(js|cjs|mjs|ts|cts|mts)", "\\\\.eslintrc\\\\.(js|cjs)", "\\\\.babelrc\\\\.(js|cjs)", "\\\\.mocharc\\\\.[a-z]+", "karma\\\\.conf\\\\.js",`, to: `` }] },

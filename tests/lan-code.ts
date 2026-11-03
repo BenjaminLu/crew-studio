@@ -179,6 +179,56 @@ A.close(); B.close();
   ok(/the first draft/.test(prompt) && /previous round/i.test(prompt) && rf.prompt === prompt, "a refinement's prompt carries the taker's own previous result to revise, and is what the taker approves", prompt.slice(-400));
   D.close(); T.close(); }
 
+// maintenance never trims what still has to go out: a withdrawal queued for an unreachable peer, behind 500 newer closed
+// threads, is still delivered after the maintenance ran
+{ const run0 = (): LanRunner => ({ workflows: () => [], start: async () => { throw new Error("no"); }, status: () => null, output: async () => { throw new Error("no"); }, cancel: () => {} });
+  const mk4 = (n: string) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-trim-${n}-`)), runner: run0(), bind: "127.0.0.1", port: 0 });
+  const D = await mk4("d"), T = await mk4("t"); D.setEnabled(true); T.setEnabled(true); await pairUp(D, T);
+  const th = await D.dispatch({ to: T.id.key, title: "old", briefing: "an old dispatch" }); await D.flush(); await until(() => !!T.thread(th.id));
+  const pt = (D as any).peer(T.id.key), port0 = pt.port; pt.port = 9; // the peer is away: the withdrawal waits in the outbox
+  await D.withdraw(th.id, "no longer needed"); await D.flush();
+  const st: any = (D as any).st; for (let i = 0; i < 520; i++) st.threads.push({ id: `closed${i}`, owner: D.id.key, peer: T.id.key, title: "", acceptance: [], suggested: null, rounds: [], state: "done", steps: [] });
+  D.flushState(); // the maintenance (it also runs every 200 steps while Studio runs)
+  const kept = !!(D as any).thread(th.id), queued = st.outbox.some((x: any) => x.thread === th.id);
+  pt.port = port0; for (const x of st.outbox) x.next = 0; // the peer is back, and the backoff has passed
+  await D.flush(); await until(() => T.thread(th.id)?.state === "withdrawn", 5000);
+  ok(kept && queued && T.thread(th.id)?.state === "withdrawn", "a thread whose withdrawal still waits to go out is not trimmed, and the withdrawal reaches the peer once it is back", JSON.stringify([kept, queued, T.thread(th.id)?.state]));
+  st.threads = st.threads.filter((t: any) => !String(t.id).startsWith("closed")); D.close(); T.close(); }
+
+// a code refinement continues from the patch as it was handed back (edited by the captain), never from the commit the
+// previous Task ended on: a hunk the captain removed does not come back
+{ const { commitPatch } = await import("../src/lan/apply") as any;
+  const pr = checkedTempDir("crew-lan-continue-"); g(pr, "init", "-q", "-b", "main"); writeFileSync(join(pr, "README.md"), "x\n"); g(pr, "add", "README.md"); g(pr, "commit", "-qm", "base"); const b0 = g(pr, "rev-parse", "HEAD");
+  const kept1 = `diff --git a/kept.txt b/kept.txt\nnew file mode 100644\n--- /dev/null\n+++ b/kept.txt\n@@ -0,0 +1 @@\n+kept\n`;
+  const { commit: c } = commitPatch(pr, b0, kept1);
+  ok(g(pr, "rev-parse", `${c}^`) === b0 && g(pr, "show", `${c}:kept.txt`) === "kept" && Bun.spawnSync(["git", "cat-file", "-e", `${c}:dropped.txt`], { cwd: pr }).exitCode !== 0, "the handed-back patch is committed onto the dispatched base (no checkout), and only what it holds is there");
+  let refused = ""; try { commitPatch(pr, b0, `diff --git a/.github/workflows/x.yml b/.github/workflows/x.yml\nnew file mode 100644\n--- /dev/null\n+++ b/.github/workflows/x.yml\n@@ -0,0 +1 @@\n+on: push\n`); } catch (e: any) { refused = String(e?.message ?? e); }
+  ok(/protected/.test(refused), "it keeps the patch rules: a protected path is refused", refused);
+  // the relay passes the sent bytes (edited) to the next round's start, never the previous Task's commit
+  const orig = `${kept1}diff --git a/dropped.txt b/dropped.txt\nnew file mode 100644\n--- /dev/null\n+++ b/dropped.txt\n@@ -0,0 +1 @@\n+dropped\n`;
+  const starts: any[] = [];
+  const out = { files: [{ path: "changes.patch", text: orig, bytes: orig.length }], changed: ["kept.txt", "dropped.txt"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "code-firstmate", version: 1, defHash: "c".repeat(64) }, kind: "patch", base: base0 };
+  const run2 = (): LanRunner => ({ workflows: () => [{ id: "code-firstmate", version: 1, name: "Code", defHash: "c".repeat(64), eligible: true, why: [], notRun: [], staffing: null, needsProject: true }],
+    start: async (o: any) => { starts.push(o); return { run: `R-${40 + starts.length}`, workflow: { id: "code-firstmate", version: 1, defHash: "c".repeat(64) } }; }, status: () => ({ state: "succeeded", result: "done", spent: { rounds: 1, tokens: 0, minutes: 0 }, stopped: null }), output: async () => out as any, cancel: () => {} });
+  const mk5 = (n: string) => Lan.open({ dataDir: mkdtempSync(join(tmpdir(), `crew-lan-cont-${n}-`)), runner: run2(), bind: "127.0.0.1", port: 0,
+    baseOf: (id) => projects[id] ? baseOf(projects[id], "main") : null, baseProblem: (id, b) => projects[id] ? baseProblem(projects[id], b) : "no such project" });
+  const D = await mk5("d"), T = await mk5("t"); D.setEnabled(true); T.setEnabled(true); await pairUp(D, T);
+  g(repoB, "fetch", "-q", repoA, "+refs/heads/main:refs/remotes/a/main"); // the taker's clone holds the dispatcher's base now
+  const th = await D.dispatch({ to: T.id.key, title: "code", briefing: "add files", project: "proj" }); await D.flush(); await until(() => T.view().items.length === 1);
+  out.base = th.base!.sha;
+  const round = async (kind: string) => { const it = T.view().items.find((i: any) => i.kind === kind)!, tt = T.thread(th.id)!; await T.approve(it.id, { workflow: "code-firstmate", seen: T.seenHash(tt, T.cur(tt)), project: "bproj", rounds: 3 }); await T.flush();
+    await until(() => D.view().items.some((i: any) => i.kind === "take")); await D.approve(D.view().items.find((i: any) => i.kind === "take")!.id); await D.flush();
+    await until(() => T.view().items.some((i: any) => i.kind === "assign")); await T.approve(T.view().items.find((i: any) => i.kind === "assign")!.id); };
+  await round("dispatch");
+  const edited = kept1; // the captain removed the dropped.txt hunk before handing it back
+  const pre = await T.handbackPreview(th.id, [{ path: "changes.patch", text: edited }]); await T.handback(th.id, { confirm: pre.hash, edits: [{ path: "changes.patch", text: edited }] }); await T.flush();
+  await until(() => D.view().items.some((i: any) => i.kind === "result")); await D.approve(D.view().items.find((i: any) => i.kind === "result")!.id);
+  await D.refine(th.id, { briefing: "and one more file" }); await D.flush(); await until(() => T.view().items.some((i: any) => i.kind === "refine"));
+  await round("refine");
+  const s2 = starts.at(-1);
+  ok(s2?.continuePatch === edited && !/dropped/.test(String(s2?.continuePatch)) && !("continueAt" in (s2 ?? {})), "the next round starts from the patch as handed back (the captain's removed hunk stays removed)", JSON.stringify({ continuePatch: s2?.continuePatch?.slice(0, 80), keys: Object.keys(s2 ?? {}) }));
+  D.close(); T.close(); }
+
 // a hand-back cannot carry a binary file: the preview says so and the send is refused (never a silent drop)
 { const out = { files: [{ path: "report.md", text: "# report\n", bytes: 9 }, { path: "chart.png", text: null, bytes: 2048 }], changed: ["report.md", "chart.png"], protectedHits: [], checks: { pass: 1, fail: 0, other: 0, summary: "1/1" }, workflow: { id: "documents", version: 1, defHash: "d".repeat(64) }, kind: "files" as const };
   const run = (): LanRunner => ({ workflows: () => [{ id: "documents", version: 1, name: "Docs", defHash: "d".repeat(64), eligible: true, why: [], notRun: [], staffing: null }],
