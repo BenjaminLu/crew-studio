@@ -122,8 +122,8 @@ try {
     const bar = p.locator(".wt-pane.focus .wt-pbar b").first(), box = await bar.boundingBox(), label = (await bar.innerText()).trim();
     // the list reloaded in the middle of the drag (a "terminals" event, as a terminal's state or its branch summary arrives: on
     // the CI runner one lands within these few steps), and once more after the drag, while its selection is there
-    const reloaded = () => p.waitForResponse((r) => new URL(r.url()).pathname === "/api/terminals", { timeout: 5000 }).then(() => p.waitForTimeout(100)).catch(() => {});
-    const reload = async () => { const w = reloaded(); await p.evaluate(() => window.dispatchEvent(new Event("focus"))); await w; };
+    // each reload must really happen: a list read that never comes fails the test instead of passing it unexercised
+    const reload = async () => { const w = p.waitForResponse((r) => new URL(r.url()).pathname === "/api/terminals", { timeout: 5000 }); await p.evaluate(() => window.dispatchEvent(new Event("focus"))); await w; await p.waitForTimeout(100); };
     await p.mouse.move(box.x + 1, box.y + box.height / 2); await p.mouse.down(); await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
     await reload(); await p.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 3 });
     const sel = await p.evaluate(() => String(window.getSelection())); await p.mouse.up();

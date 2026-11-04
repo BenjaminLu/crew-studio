@@ -279,7 +279,7 @@ try {
   try { await browser?.close(); } catch {}
   // Studio writes each terminal's record as it stops them: the folder is removed once it has exited (a fixed wait raced it
   // on the CI runner: ENOTEMPTY on data/terminals)
-  const exited = app && app.exitCode === null && app.signalCode === null ? new Promise((r) => { app.once("exit", r); setTimeout(r, 15000); }) : null;
+  const exited = app && app.exitCode === null && app.signalCode === null ? new Promise((r) => { const t = setTimeout(r, 15000); app.once("exit", () => { clearTimeout(t); r(); }); }) : null;
   try { app?.kill("SIGTERM"); } catch {}
   await exited; rmSync(tmp, { recursive: true, force: true });
 }
