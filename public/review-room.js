@@ -861,10 +861,6 @@ const sceneState = (card, scenes) => { let i = RR.scene.get(card);
   if (i == null || i >= scenes.length) { i = scenes.length - 1; const last = scenes[i]; if (last?.chapter && last.t?.action === "teach") i = scenes.findIndex((x) => x.turn === last.turn); }
   return Math.max(0, i); };
 const revealOf = (card, sc) => Math.min(sc.points.length, RR.reveal.get(`${card}/${sc.key}`) ?? sc.points.length);
-/** points a page shows: never more, so the points column never grows past the board; the next ones are the next page,
- *  reached like any other point (a page advances like a beat) */
-const PER = 4;
-const pageOf = (k) => (k > 0 ? Math.floor((k - 1) / PER) : 0);
 /** the visual a scene shows after k points: the last board item a shown point cites, else the scene's first */
 function visualAt(r, sc, k) {
   let v = sc.visuals[0] || null;
