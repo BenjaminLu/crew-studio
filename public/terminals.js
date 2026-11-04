@@ -537,7 +537,10 @@ function patchPage() {
   const tabs = document.querySelector(".wt-tabs"); if (tabs) tabs.replaceChildren(...tabEls());
   for (const k of [...sec.children]) if (k !== stage) k.remove();
   for (const k of detailHead(t)) if (k) sec.insertBefore(k, stage);
-  for (const el of stage.querySelectorAll(".wt-pane[data-pane]")) { const pn = panesOf(tab.root).find((x) => x.id === el.dataset.pane), tt = termOf(pn), bar = el.querySelector(":scope > .wt-pbar"); if (tt && bar) bar.replaceWith(paneBar(tt, pn)); }
+  // a bar is replaced only when it shows something new: one drawn again unchanged would drop a selection of its text (the
+  // captain dragging across the label as the list reloads)
+  for (const el of stage.querySelectorAll(".wt-pane[data-pane]")) { const pn = panesOf(tab.root).find((x) => x.id === el.dataset.pane), tt = termOf(pn), bar = el.querySelector(":scope > .wt-pbar");
+    if (tt && bar) { const nb = paneBar(tt, pn); if (!bar.isEqualNode(nb)) bar.replaceWith(nb); } }
 }
 // Send for review (docs/units/branch-intake.md): a finished terminal whose checkout is a branch with commits beyond base
 // goes to code-firstmate's "From existing branch": spec card, scope, checks at base and head, review, fixes, merge card
