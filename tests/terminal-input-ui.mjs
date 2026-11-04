@@ -120,9 +120,16 @@ try {
   // the bar's text can still be selected by dragging: the press is not cancelled
   {
     const bar = p.locator(".wt-pane.focus .wt-pbar b").first(), box = await bar.boundingBox(), label = (await bar.innerText()).trim();
-    await p.mouse.move(box.x + 1, box.y + box.height / 2); await p.mouse.down(); await p.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 6 });
+    // the list reloaded in the middle of the drag (a "terminals" event, as a terminal's state or its branch summary arrives: on
+    // the CI runner one lands within these few steps), and once more after the drag, while its selection is there
+    const reloaded = () => p.waitForResponse((r) => new URL(r.url()).pathname === "/api/terminals", { timeout: 5000 }).then(() => p.waitForTimeout(100)).catch(() => {});
+    const reload = async () => { const w = reloaded(); await p.evaluate(() => window.dispatchEvent(new Event("focus"))); await w; };
+    await p.mouse.move(box.x + 1, box.y + box.height / 2); await p.mouse.down(); await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
+    await reload(); await p.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 3 });
     const sel = await p.evaluate(() => String(window.getSelection())); await p.mouse.up();
-    ok(sel.length > 0 && label.includes(sel.trim().slice(0, 3)), "dragging across the pane's bar selects its text", JSON.stringify({ sel, label }));
+    ok(sel.length > 0 && label.includes(sel.trim().slice(0, 3)), "dragging across the pane's bar selects its text, also when the list reloads during the drag", JSON.stringify({ sel, label }));
+    await reload(); const kept = await p.evaluate(() => String(window.getSelection()));
+    ok(kept === sel, "and the selection stays when the list reloads after it", JSON.stringify({ kept, sel }));
   }
   // a click on the bar gives the keys to the terminal only with the first button and no text selected
   {
