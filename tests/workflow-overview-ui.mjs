@@ -89,6 +89,9 @@ const p=live[0].p,mutate=async(path,body)=>p.evaluate(async({path,body})=>{const
 const cueClearance=async(page,tag)=>{const result=await page.evaluate(()=>{const cue=document.querySelector('.rt-cue'),fab=document.querySelector('#chatFab');if(!cue||!fab)return {clear:false};const a=cue.getBoundingClientRect(),b=fab.getBoundingClientRect();return {clear:a.bottom<=b.top-8||a.right<=b.left-8||a.left>=b.right+8,fits:a.left>=0&&a.right<=innerWidth&&a.top>=0&&a.bottom<=innerHeight&&b.left>=0&&b.right<=innerWidth&&b.top>=0&&b.bottom<=innerHeight,rects:{cue:a.toJSON(),fab:b.toJSON()}};});ok(result.clear&&result.fits,`live cue and whole Firstmate FAB clear viewport ${tag}`,JSON.stringify(result));};
 // The fixture's 'code-firstmate' id is staffing-guarded (src/domain/staffing.ts): a new Task there needs a signed captain staffing approval.
 // The notice only needs a real native Task with a captain card, so it is created on the unguarded single-card 'cue-notice' fixture workflow.
+// Pause the page's installed clock a moment ahead of its own time. The page clock runs on while the target is read and
+// sent, so on a slow runner that moment can already be past ("Cannot fast-forward to the past"): read it again and retry.
+const pauseSoon=async page=>{for(let i=0;;i++){const at=await page.evaluate(()=>Date.now()+100);try{return await page.clock.pauseAt(at);}catch(e){if(i>=4||!/fast-forward to the past/.test(String(e?.message)))throw e;}}};
 const pollUI=async(test,label)=>{const end=Date.now()+10000;while(Date.now()<end){if(await test())return;await new Promise(r=>setTimeout(r,40));}throw new Error(label);};
 const noticeBound=(page,id)=>page.locator(`[data-new-card-show][href="#/inbox/${id}"]`).count().then(n=>n===1);
 const nativeNotice=async(v,label)=>{
@@ -109,7 +112,7 @@ const captures=async(state)=>{if(!captureStates.has(state))return;for(const sour
  await row(page,a.id).locator('.tb-title').click();const v={...source,p:page};try{
  await nativeNotice(v,`Notice ${state} ${v.tag}`);
  // Freeze only screenshot/layout inspection: CI capture time must not consume the real 30-second cue lifetime.
- await v.p.clock.pauseAt(await v.p.evaluate(()=>Date.now()+100));
+ await pauseSoon(v.p);
  try {
  await fullCapture(v.p,join(shots,`${v.tag}-live-${state}.png`));await v.p.evaluate(()=>document.querySelector('#tasks')?.scrollIntoView({block:'start'}));await cueClearance(v.p,`${state}-middle-${v.tag}`);await v.p.screenshot({path:join(shots,`${v.tag}-live-${state}-middle.png`)});
  if(v.width<=390){await v.p.evaluate(()=>{const m=document.querySelector('#main');m.scrollTop=m.scrollHeight;});await cueClearance(v.p,`${state}-end-${v.tag}`);await v.p.screenshot({path:join(shots,`${v.tag}-live-${state}-end.png`)});}
@@ -138,7 +141,7 @@ ok(observed.newCards.length===2&&observed.showHref==='#/inbox','multiple real fr
 // Separate real-runtime expiry control; other live pages are closed so broadcasts cannot reset this timer.
 {const ctx=await browser.newContext({viewport:{width:1440,height:900}}),q=await ctx.newPage();await q.clock.install();
  const initial=q.waitForResponse(r=>r.url().includes('/api/scards?open=1'));await q.goto(base+'/#/board');await(await initial).finished();await q.evaluate(()=>document.readyState);
- await q.clock.pauseAt(await q.evaluate(()=>Date.now()+100));
+ await pauseSoon(q);
  // Observe the actual expiry timer's clock origin, not the later polling time.
  await q.evaluate(()=>{const original=setTimeout;window.fixtureCueDeadline=null;window.setTimeout=(fn,ms,...args)=>{if(typeof fn==='function'&&fn.name==='dropCue'&&ms===30000)window.fixtureCueDeadline=Date.now()+ms;return original(fn,ms,...args);};});
  const r=await q.evaluate(async()=>{const response=await fetch('/api/tasks',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({workflow:'cue-notice',version:1,text:'Cue expiry control',title:'Cue expiry control'})});return {status:response.status,data:await response.json()};});if(r.status!==200)throw new Error('Expiry fixture creation failed');

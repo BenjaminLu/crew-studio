@@ -61,6 +61,9 @@ try {
   browser = withSession(await chromium.launch({ headless: true }), base, TOKEN);
   const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
+  // the restarted Studio's session cookie, set by a plain request: a page at the session link lands on the app, whose own load
+  // would see the restart first (in this context's shared localStorage) and leave nothing to say to the window under test
+  const signIn = async () => { const r = await ctx.request.get(`${base}/session?t=${encodeURIComponent(TOKEN)}`, { maxRedirects: 0 }); if (r.status() !== 303) throw new Error(`the session link was refused (${r.status()})`); };
   const page = async () => { const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(String(e))); return p; };
   const rowsOf = (p, id) => p.locator(`.wt-pane[data-term-pane="${id}"] .xterm-rows`).innerText().catch(() => "");
   const tabsOf = (p) => p.locator(".wt-tabs [data-term-tab]").count();
@@ -184,7 +187,7 @@ try {
   app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
   ok(await until(async () => !alive(pid1), 5000), "Studio stopping ends the shell (a restart cannot keep a PTY)");
   app = await boot();
-  { const s = await ctx.newPage(); await s.goto(`${base}/session?t=${encodeURIComponent(TOKEN)}`); await s.close(); }
+  await signIn();
   p = await page(); await p.goto(base + "/#/terminals"); await p.waitForFunction(() => window.crewTerminals?.list !== null);
   const toast = await until(async () => { const t = await p.locator(".toast, [role=status]").allInnerTexts(); return t.find((x) => /ended when Studio restarted/i.test(x)); }, 6000);
   ok(!!toast, "the next page says once that the sessions ended when Studio restarted", String(toast));
@@ -207,7 +210,7 @@ try {
   for (const [n, q] of [["first", p], ["second", p2]]) await q.evaluate((n) => { new MutationObserver((ms) => { for (const m of ms) for (const el of m.addedNodes) if (el.classList?.contains("toast")) window[`__toast_${n}`](el.textContent); }).observe(document.body, { childList: true }); }, n);
   app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
   app = await boot();
-  { const s = await ctx.newPage(); await s.goto(`${base}/session?t=${encodeURIComponent(TOKEN)}`); await s.close(); }
+  await signIn();
   // neither window is reloaded: each sees the new run on its own stream and cleans its own tabs
   for (const [n, q] of [["first", p], ["second", p2]]) {
     ok(await until(async () => !(await panes(q)).includes(died) && !(await q.locator(`.wt-pane[data-term-pane="${died}"]`).count()), 15000), `the ${n} window drops the tab of the command the restart ended, without a reload`, JSON.stringify(await panes(q)));
@@ -231,7 +234,7 @@ try {
   await p.close();
   app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
   app = await boot();
-  { const s = await ctx.newPage(); await s.goto(`${base}/session?t=${encodeURIComponent(TOKEN)}`); await s.close(); }
+  await signIn();
   p = await page(); await p.goto(`${base}/#/terminals/${encodeURIComponent(gone)}`); await p.waitForFunction(() => window.crewTerminals?.list !== null);
   ok(await until(async () => (await p.locator(".toast").allInnerTexts()).some((x) => /ended when Studio restarted/.test(x)), 6000), "opened again at the ended command's address: the toast says the restart ended it");
   await p.waitForTimeout(800);
@@ -250,7 +253,7 @@ try {
   await p.close(); await new Promise((r) => setTimeout(r, 3500)); // it finishes with no window open
   app.kill("SIGTERM"); await new Promise((r) => app.once("exit", r));
   app = await boot();
-  { const s = await ctx.newPage(); await s.goto(`${base}/session?t=${encodeURIComponent(TOKEN)}`); await s.close(); }
+  await signIn();
   const seenToasts = []; p = await page(); await p.exposeFunction("__toastSeen", (t) => seenToasts.push(t));
   await p.addInitScript(() => { addEventListener("DOMContentLoaded", () => new MutationObserver((ms) => { for (const m of ms) for (const el of m.addedNodes) if (el.classList?.contains("toast")) window.__toastSeen(el.textContent); }).observe(document.body, { childList: true })); });
   await p.goto(`${base}/#/terminals`); await p.waitForFunction(() => window.crewTerminals?.list !== null); await p.waitForTimeout(1500);

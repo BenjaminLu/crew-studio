@@ -389,6 +389,10 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"];
   ok(kept?.scenes[0].title === "Rounding to the cent" && kept.claims.length === blocks.length && /^EN /.test(kept.answer) && JSON.stringify(v2.translate.pending.en) === "[]" && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-translate" && e.data.lang === "en" && JSON.stringify(e.data.kept) === "[1]"),
     "confirmed once, the next translation runs without asking again; a valid one is kept per turn and language, and recorded", JSON.stringify(kept));
+  { const { OperatingRules } = await import("../src/operating-rules"); const sec = new OperatingRules(data).section(E.get(r.id)?.params?.project || null);
+    const trJob = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-translate").at(-1)?.data?.job;
+    ok(prompts.at(-1)!.system.includes(sec.text) && !!trJob && E.deps.agents.jobs.get(trJob)?.operatingRules?.hash === sec.hash && E.deps.agents.jobs.get(trJob)?.operatingRules?.project === (E.get(r.id)?.params?.project || null),
+      "the translation's instructions carry the captain's operating rules for the Task's project too, and its job keeps their hash", JSON.stringify({ job: trJob })); }
   ok(JSON.stringify(kept?.figures?.["B1-20"]) === JSON.stringify(["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"]) && !kept?.figures?.["B1-15"] && /figures/.test(prompts.at(-1)!.text) && prompts.at(-1)!.text.includes('"B1-20":["Who calls percent","Cart","percent()","Math","calls","rounds"]') && prompts.at(-1)!.text.includes('"B1-15":["Rounding","percent()","Fractions of a cent kept","Rounded to the cent","Math.round"]'),
     "a translation carries the drawings' words too (asked in order, per drawing): a drawing whose words came back whole is kept, one with a missing word stays as drawn", JSON.stringify(kept?.figures));
   const runs1 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain");
