@@ -31,6 +31,8 @@ export async function lanRoutes(lan: Lan | null, req: Request, url: URL, who: { 
     if (!writing) {
       if (p === "/api/lan") return json(lan.view());
       if (p === "/api/lan/workflows") return json({ workflows: lan.workflows() });
+      // a peer's titles for the Tasks its work started here: only this page draws them (board card, Task page header)
+      if (p === "/api/lan/titles") return json({ titles: lan.runTitles() });
       if (p === "/api/lan/audit") return json(lan.auditView(Number(url.searchParams.get("limit")) || 200));
       let x = m(`items/(${ID})`); if (x) { const i = lan.itemById(x[1]); return i ? json(i) : json({ error: "no such item" }, 404); }
       x = m("entries/([0-9a-f]{64})"); if (x) return json(lan.inspect(x[1]));

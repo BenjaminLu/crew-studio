@@ -12,6 +12,25 @@ window.crewLan = LN;
 const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code ?? null, body: j }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const onPage = () => S.route?.name === "lan";
+// A peer's title for a Task its work started here (GET /api/lan/titles, from the relay's sealed state, read when the page
+// draws): the board card and the Task page header show it as text, one line, bounded, marked as the peer's words. The Task
+// itself keeps a neutral label (LAN <thread>), so Firstmate, other Tasks and the event log never get it.
+const TITLE_MAX = 120, LAN_LABEL = /^LAN [A-Za-z0-9_-]{8,64}$/;
+const flat = (s, n) => { const c = [...String(s ?? "").replace(/\s+/g, " ").trim()]; return c.length > n ? c.slice(0, n - 1).join("") + "…" : c.join(""); };
+const PT = { map: new Map(), sig: "", at: 0, loading: false };
+async function loadTitles() {
+  if (PT.loading) return; PT.loading = true; PT.at = Date.now();
+  try { const j = await getJ("/api/lan/titles"), m = new Map();
+    for (const x of Array.isArray(j.titles) ? j.titles : []) if (x && typeof x.run === "string") m.set(x.run, { from: flat(x.from?.name, 60) || "?", title: flat(x.title, TITLE_MAX) });
+    const sig = JSON.stringify([...m]); if (sig !== PT.sig) { PT.map = m; PT.sig = sig; if (S.route?.name === "board") soft(); else if (S.route?.name === "run") render(); } }
+  catch {} finally { PT.loading = false; }
+}
+/** what the page shows as a Task's title: a peer's Task its dispatcher's title, marked as theirs; any other its own title */
+LN.shownTitle = (id, title) => {
+  const x = PT.map.get(id); if (!x && LAN_LABEL.test(String(title ?? "")) && Date.now() - PT.at > 3000) void loadTitles();
+  return x ? T(`From ${x.from}: ${x.title}`, `來自 ${x.from}：${x.title}`) : title;
+};
+LN.titlesSig = () => PT.sig;
 const typing = () => { const a = document.activeElement; return !!a && a.closest?.("[data-lan]") && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
 async function load() {
   if (LN.loading) return; LN.loading = true;
@@ -303,8 +322,9 @@ function threadCard(t) {
   const r = t.rounds[t.rounds.length - 1], mine = t.role === "taker", run = r.run;
   const pv = LN.preview[t.id];
   return h("section", { class: "card lan-card", "data-lan-thread": t.id },
-    h("div", { class: "card-h" }, icon("loop"), h("b", {}, t.title), h("span", { class: `badge ${t.state === "done" ? "ok" : t.now.mine ? "human" : "run"}` }, t.state === "done" ? T("Done", "已完成") : t.now.mine ? T("Your turn", "輪到你") : T("With them", "在對方那裡")),
-      h("span", { class: "faint" }, mine ? T(`from ${t.owner.name}`, `來自 ${t.owner.name}`) : T(`to ${t.peer.name}`, `給 ${t.peer.name}`))),
+    // the taker reads the dispatcher's title as theirs (text, one line, bounded); the dispatcher reads its own words
+    h("div", { class: "card-h" }, icon("loop"), h("b", { "data-lan-thread-title": t.id }, mine ? T(`From ${flat(t.owner.name, 60)}: ${flat(t.title, TITLE_MAX)}`, `來自 ${flat(t.owner.name, 60)}：${flat(t.title, TITLE_MAX)}`) : t.title), h("span", { class: `badge ${t.state === "done" ? "ok" : t.now.mine ? "human" : "run"}` }, t.state === "done" ? T("Done", "已完成") : t.now.mine ? T("Your turn", "輪到你") : T("With them", "在對方那裡")),
+      mine ? null : h("span", { class: "faint" }, T(`to ${t.peer.name}`, `給 ${t.peer.name}`))),
     h("div", { class: "lan-body" },
       h("div", { class: "lan-now", "data-lan-now": t.id },
         h("div", { class: "kv" }, T("Where it is now", "現在在哪"), h("b", {}, T(t.now.where.en, t.now.where.zh))),
