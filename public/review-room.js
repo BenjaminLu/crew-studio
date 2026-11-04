@@ -1414,6 +1414,8 @@ function exitFs(focus = true) {
 // the browser's own exit (its Esc, its menu) comes back to the room; any change of size re-fits the camera
 document.addEventListener("fullscreenchange", () => {
   if (FS.card != null && !document.fullscreenElement) return exitFs();
+  // granted after the captain left full screen (or the room) while the request was pending: undone at once
+  if (FS.card == null && document.fullscreenElement && document.fullscreenElement === fsView()) { try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch {} return; }
   const card = FS.card ?? FS.last; if (card != null && onRoom(card)) { render(); fsRefit(card); }
 });
 let fsResized = 0; addEventListener("resize", () => { if (FS.card == null && performance.now() - FS.at > 1500) return; clearTimeout(fsResized); fsResized = setTimeout(() => { const card = FS.card ?? FS.last; if (card != null && onRoom(card)) fsRefit(card); }, 160); });

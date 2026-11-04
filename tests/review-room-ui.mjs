@@ -602,6 +602,11 @@ try {
     const onBoard = await p.evaluate(() => ({ board: !!document.querySelector("[data-board-vp]"), scene: document.querySelector("[data-stage]")?.dataset.scene, step: !!document.querySelector("[data-report-step]"), visual: !!document.querySelector("[data-visual]") }));
     ok(onBoard.board && onBoard.scene === "t3-2" && !onBoard.step && !onBoard.visual, "a chapter in the rail opens the lesson board at that chapter; there is no stepping through it on the stage", JSON.stringify(onBoard));
     await p.click('[data-other-scene="t1"]'); await p.waitForSelector("[data-visual]", { timeout: 3000 }).catch(() => {});
+    // in full screen an answer's scene shows no chapters' rail: the board takes the whole width
+    await p.click("[data-fs-toggle]"); await p.waitForTimeout(300);
+    const fsToc = await p.evaluate(() => { const t = document.querySelector("[data-toc]"), b = document.querySelector(".rr-board").getBoundingClientRect(); return { on: document.body.classList.contains("rr-fs"), toc: !!t && getComputedStyle(t).display !== "none" && t.getClientRects().length > 0, left: Math.round(b.left), width: Math.round(b.width), win: innerWidth }; });
+    await p.keyboard.press("Escape"); await p.waitForTimeout(300);
+    ok(fsToc.on && !fsToc.toc && fsToc.left <= 20 && fsToc.width >= fsToc.win - 40 && await p.evaluate(() => !document.body.classList.contains("rr-fs")), "in full screen an answer's scene in a room with a lesson hides the chapters' rail: the board takes the whole width", JSON.stringify(fsToc));
     const lay = await p.evaluate(() => { const v = document.querySelector("[data-visual]").getBoundingClientRect(), t = document.querySelector("[data-toc]").getBoundingClientRect(); return { focus: document.body.dataset.focus ?? null, scroll: document.documentElement.scrollHeight - innerHeight, apart: t.right <= v.left + 1, inView: v.bottom <= innerHeight, railShown: t.width > 100 && t.height > 100 }; });
     ok(lay.focus === "room" && lay.railShown && lay.scroll <= 0 && lay.apart && lay.inView, "the rail sits beside the board: the page still never scrolls and the picture stays in view", JSON.stringify(lay));
     await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(200);

@@ -570,8 +570,12 @@ body.rr-fs #view { position: fixed; inset: 0; z-index: 70; background: var(--bg)
 body.rr-fs .rr-room { display: block; height: 100%; max-width: none; margin: 0; padding: 0; }
 body.rr-fs .rr-room > :not(.rr-stage, .rr-zoom, .rr-cite-panel) { display: none !important; }
 body.rr-fs .rr-room > .rr-stage { height: 100%; box-sizing: border-box; padding: 10px 14px; }
+body.rr-fs .rr-stage.with-toc { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+body.rr-fs .rr-stage.with-toc > .rr-toc { display: none; }
+body.rr-fs .rr-stage.with-toc > :not(.rr-toc) { grid-column: 1; }
 @media (max-width: 760px) {
   .rr-playbar .rr-fs-btn { width: 36px; height: 36px; padding: 0; justify-content: center; border-radius: 10px; }
   .rr-fs-btn span { display: none; }
   body.rr-fs .rr-room > .rr-stage { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+  body.rr-fs .rr-stage.with-toc { grid-template-rows: minmax(0, 1fr) 44px; }
 }

@@ -449,7 +449,8 @@ try {
   { // the Fullscreen API, stubbed (headless Chromium's own answers vary): a request is recorded and granted, or refused
     const fsStub = ([refuse]) => { window.__fsReq = []; let el = null;
       Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => el });
-      Element.prototype.requestFullscreen = function () { window.__fsReq.push(this.id || this.className); if (refuse) return Promise.reject(new TypeError("Permissions check failed"));
+      Element.prototype.requestFullscreen = function () { window.__fsReq.push(this.id || this.className); if (refuse === "late") return new Promise((res) => { window.__grant = () => { el = this; document.dispatchEvent(new Event("fullscreenchange")); res(); }; });
+        if (refuse) return Promise.reject(new TypeError("Permissions check failed"));
         el = this; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
       document.exitFullscreen = () => { el = null; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
       window.__browserExit = () => document.exitFullscreen(); };
@@ -516,6 +517,12 @@ try {
       ok(f.on && f.fsEl === null && f.req.length === 1 && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && !said.length, "a refused Fullscreen API keeps the full-viewport layout, only the board, and says nothing", JSON.stringify({ f, said }));
       await p.keyboard.press("Escape"); await settle(p, 300);
       ok(!(await fsView(p)).on, "Esc leaves the full-viewport layout");
+      await ctx.close(); }
+    // a request still pending when the captain leaves: granted later, the browser leaves full screen at once
+    { const { ctx, p } = await open(1440, "en"); await p.addInitScript(fsStub, ["late"]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      await p.click("[data-fs-toggle]"); await settle(p, 200); await p.click("[data-fs-toggle]"); await settle(p, 200);
+      await p.evaluate(() => window.__grant()); await settle(p, 300); const f = await fsView(p);
+      ok(!f.on && f.fsEl === null && f.rail && f.head, "a full-screen request granted after the captain left full screen is undone at once: the normal room, no browser full screen", JSON.stringify(f));
       await ctx.close(); }
     // a phone: the CSS path only; the board fills the screen and Next still shows
     { const { ctx, p } = await open(390, "en"); await p.addInitScript(fsStub, [false]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);

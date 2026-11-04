@@ -804,8 +804,8 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
 41. Full screen shows only the board (Full screen on the board, or f outside a field): the Fullscreen API on `#view`, the
     stable container the board is drawn in (a redraw replaces the board itself, which would drop out of full screen), and
     `body.rr-fs`, a full-viewport layout that holds while the request is pending or when it is refused (said nowhere). The
-    sidebar, Firstmate, the header, the prompt bar, the transcript, the lesson board's chapters' rail and questions panel
-    are hidden; the board's pins, popover, Next, zoom, toasts and the citation panel stay, and on an answer's scene its
+    sidebar, Firstmate, the header, the prompt bar, the transcript, the chapters' rail (the lesson board's and an answer's)
+    and the questions panel are hidden; a request granted after leaving is undone at once; the board's pins, popover, Next, zoom, toasts and the citation panel stay, and on an answer's scene its
     caption and play bar (scenes, points, playback, the voice). The camera re-fits: a locked one aims again, one moved by
     hand keeps the middle of the board. Esc (after what is open over the board), the browser's own exit and Exit full
     screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
