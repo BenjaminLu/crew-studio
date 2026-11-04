@@ -135,7 +135,9 @@ try {
     ok(jumps.length === 3 && /This room is only about pull request #7/.test(jumps[0][1]) && /Teach me this change\. → How percent works/.test(jumps[1][1]), "the transcript lists each question and its scene's title", JSON.stringify(jumps));
     await p.click('[data-jump="t1"]'); s = await stage(p);
     ok(s.scene === "t1" && s.pos === "2/3" && s.title === "How percent works" && s.at === "5/5" && s.points === 5 && s.visual === "B1-7" && await p.$eval("[data-transcript]", (e) => e.dataset.open === "false"), "a click in the transcript flies the board to its scene and closes the transcript; the visual is the one the last point cites; every point shown", JSON.stringify(s));
-    await p.keyboard.press("ArrowLeft"); const left = await stage(p); await p.keyboard.press("ArrowRight"); s = await stage(p);
+    // → ← fly the board (a 450ms glide here): the next click waits until the camera has landed
+    const landed = () => p.waitForFunction(() => !window.crewReviewRoom.board.state.tween, null, { timeout: 5000 }).catch(() => {});
+    await p.keyboard.press("ArrowLeft"); await landed(); const left = await stage(p); await p.keyboard.press("ArrowRight"); await landed(); s = await stage(p);
     ok(left.scene === "t0" && left.at === "3/3" && s.scene === "t1" && s.at === "5/5" && s.visual === "B1-7", "← and → walk the board region by region, each scene shown whole", JSON.stringify({ left, s }));
     ok(await p.$eval('[data-claim="inference"]', (e) => /Inference/.test(e.textContent)) && await p.evaluate(() => !window.__pwned && !document.querySelector(".rr-point img")), "an uncited point reads Inference; model text with markup stays text");
     // screenshots: before / after toggle
