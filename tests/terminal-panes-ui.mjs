@@ -20,6 +20,9 @@ import { freePort, waitUp, withSession } from "./boot.mjs";
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, ".."), tmp = mkdtempSync(join(tmpdir(), "crew-terminal-panes-ui-"));
 const home = join(tmp, "home"), proj = join(tmp, "proj"), state = join(tmp, "state"), data = join(tmp, "data"), runtime = join(tmp, "runtime"), bin = join(tmp, "bin");
 for (const d of [home, proj, state, data, bin, join(home, ".codex")]) mkdirSync(d, { recursive: true });
+// the shell (sh -l) gets a short prompt of its own: macOS's /etc/bashrc prompt starts with the host name, which on a CI runner
+// is some 60 characters, and in a pane an eighth of the page wide it wrapped over enough rows to push a command's output out of view
+writeFileSync(join(home, ".profile"), "PS1='\\W$ '\n");
 let pass = 0, fail = 0, browser, app; const errors = [], shots = process.env.TERMINAL_PANES_SHOTS;
 if (shots) mkdirSync(shots, { recursive: true });
 const ok = (v, n, extra = "") => { if (v) { pass++; console.log("ok " + n); } else { fail++; console.log(("FAIL " + n + " " + extra).trimEnd()); } };
@@ -274,8 +277,11 @@ try {
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
   try { await browser?.close(); } catch {}
+  // Studio writes each terminal's record as it stops them: the folder is removed once it has exited (a fixed wait raced it
+  // on the CI runner: ENOTEMPTY on data/terminals)
+  const exited = app && app.exitCode === null && app.signalCode === null ? new Promise((r) => { const t = setTimeout(r, 15000); app.once("exit", () => { clearTimeout(t); r(); }); }) : null;
   try { app?.kill("SIGTERM"); } catch {}
-  await new Promise((r) => setTimeout(r, 300)); rmSync(tmp, { recursive: true, force: true });
+  await exited; rmSync(tmp, { recursive: true, force: true });
 }
 console.log(`terminal-panes-ui: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
