@@ -7,6 +7,7 @@ import { binArgv } from "../host/jsonl";
 import { probeProcess } from "./probe-process";
 import { codexLogin } from "./login";
 import type { ProviderCapability } from "./policy";
+import { codexBilling, noteBilling } from "../lan/billing";
 const unavailable = (reason: string): ProviderCapability => ({ provider: "codex", available: false, auth: "unverified", quota: "unknown", models: [], refusal: "unverified", at: Date.now(), expires: Date.now() + 30_000, reason });
 export async function probeCodex(bin = process.env.CREW_CODEX_BIN ?? "codex", signal?: AbortSignal): Promise<ProviderCapability> {
   const dir = mkdtempSync(join(tmpdir(), "crew-codex-capability-")), cfg = join(dir, ".codex");
@@ -36,6 +37,7 @@ export async function probeCodex(bin = process.env.CREW_CODEX_BIN ?? "codex", si
     phase = "account identity";
     const account = await call("account/read", { refreshToken: false });
     if (!account?.account || !["chatgpt", "apiKey"].includes(account.account.type)) return unavailable("native account identity verification failed");
+    noteBilling("codex", codexBilling(account.account.type)); // apiKey is billed per token, chatgpt is a plan (src/lan/billing.ts)
     phase = "model inventory";
     const models: ProviderCapability["models"] = []; let cursor: string | null = null; const seen = new Set<string>();
     for (let page = 0; page < 10; page++) {

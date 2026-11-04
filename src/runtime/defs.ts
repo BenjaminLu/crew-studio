@@ -339,6 +339,9 @@ export class WorkflowDefs {
   /** Why a kept workflow cannot start a Task yet (the GitHub review template and copies of it), or null. */
   held(id:string):{en:string;zh:string}|null{return this.versions(id).length&&this.previewOnly(id)?HELD_REASON:null;}
   catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
+  /** Why a person cannot start this workflow from the catalog (null: they can). */
+  unavailable(id:string):string|null{const d=this.get(id);if(!d)return "not installed";if(this.trashed(id))return "in the trash";if(INTERNAL_WORKFLOWS.has(id))return "internal: Studio starts it itself (an approval, a setup step or the review room), never a person or a peer";
+    if(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"))return "retired: kept for its old Tasks, not offered for new work";const h=this.held(id);return h?h.en:null;}
   /** Workflows kept in the catalog for editing that the Start form and start routes do not offer. */
   heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!this.trashed(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
   /** An empty folder, or a package-import (imp-*) folder that cannot be read, is left out instead of breaking the whole catalog. */

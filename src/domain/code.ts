@@ -9,6 +9,8 @@ import { installCodeDesign } from "./code-design";
 import { installCodePublish } from "./code-publish";
 import { withoutGitHubLinks, withoutSessionLinks } from "./pull-template";
 import {GitHubPoller} from '../github-poller';
+import { lanUntrusted } from "../lan/apply";
+import { taintRefusal } from "../lan/taint";
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
 // done, scope, door, explain), the door, a plan round for one-way changes, build
@@ -218,12 +220,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if(option&&!option.hold&&evidenceFor(card)?.blocked)throw new Error("Merge evidence is unavailable or stale; rerun verification and request a fresh card");
   };
   engine.beforeNodeChecks ??= {}; engine.cardPrepared ??= {}; engine.beforeStart ??= {}; engine.externalHandlers ??= {}; engine.externalValidators ??= {};
-  // a tainted Task: drawn from untrusted issue text (params._tainted, Studio's own mark: src/firstmate.ts proposeTainted). It
+  // a tainted Task: one with a restricted profile (run.profile, set only by the runtime: issue text from src/firstmate.ts
+  // proposeTainted, or a peer's Studio from src/lan). It
   // never touches GitHub: its adapter is the local one whatever the project's grant (selectedAdapter), so nothing is pushed,
   // opened or read there, and it stops on its local branch instead of the merge card (taintedReady). Its commit messages
   // name no issue and @mention no one (withoutGitHubLinks), its review runs in run mode, and it runs only in the OS
   // sandbox (src/runtime/engine.ts taintRefusal)
-  const tainted = (x: X) => !!x.run.params?._tainted;
+  const tainted = (x: X) => !!x.run.profile;
   const refs = (x: X, t: string) => (tainted(x) ? withoutGitHubLinks(t) : t);
   engine.cardPrepared["code-evidence-offer"]=(x,card)=>{
     if(card.kind!=="merge"||!card.detail?.codeEvidenceOffer)return;
@@ -645,6 +648,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const base = x.run.params.base || p.base || "main";
     if (!git(repo, ["rev-parse", "--verify", `${base}^{commit}`]).ok) throw new Error(`no branch ${base} in ${repo}`);
     if (!git(repo, ["cat-file", "-e", `${commit}^{commit}`]).ok) throw new Error(`commit ${commit.slice(0, 12)} is not in ${p.name || pid}`);
+    if (lanUntrusted(repo, commit, typeof a?.branch === "string" ? a.branch : null)) throw new Error(`commit ${commit.slice(0, 12)} is work from a peer's Studio (a lan-untrusted/ branch): Studio does not adopt it for review`);
+    { const why = taintRefusal(repo, commit, "From existing branch"); if (why) throw new Error(why); }
     const ahead = Number(must(repo, ["rev-list", "--count", `${base}..${commit}`])) || 0;
     if (!ahead) throw new Error(`commit ${commit.slice(0, 12)} has nothing beyond ${base}: there is nothing to review`);
     const prefix = String(x.policy("branch_prefix") ?? "crew/"), key = { project: pid, task: x.run.id };
@@ -670,6 +675,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (!existsSync(join(repo, ".git"))) throw new Error(`${repo} is not a local git repository`);
     const base = x.run.params.base || "main";
     if (!git(repo, ["rev-parse", "--verify", `${base}^{commit}`]).ok) throw new Error(`no branch ${base} in ${repo}`);
+    // a trusted Task never starts from a commit that holds work from a peer (the base Firstmate or a person set included);
+    // a Task under a profile is untrusted already
+    if (!x.run.profile) { const why = taintRefusal(repo, base, "This Task's base"); if (why) throw new Error(why); }
     const prefix = String(x.policy("branch_prefix") ?? "crew/");
     const key = { project: pid || "local", task: x.run.id };
     const rec = W.ensure({ ...key, repo, base, branchPrefix: prefix, run: x.run.id });
@@ -910,7 +918,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const taintedReady = (x: X): string => {
     const wt = shellOk(x), h = head(wt), ready = { branch: x.ctx.branch, head: h, base: x.ctx.base, baseCommit: x.ctx.baseCommit ?? null, at: new Date().toISOString() };
     x.ctx.taintedReady = ready; engine.record(x, "tainted-ready", { head: h, data: { version: 1, ...ready } } as any);
-    x.ctx.endSummary = `ready on branch ${x.ctx.branch} at ${h.slice(0, 8)}, not published: work drawn from issue text never goes to GitHub`;
+    x.ctx.endSummary = x.run.profile?.name === "lan"
+      ? `ready on branch ${x.ctx.branch} at ${h.slice(0, 8)}, not published: work from a peer's Studio never goes to GitHub; its patch is handed back to that peer`
+      : `ready on branch ${x.ctx.branch} at ${h.slice(0, 8)}, not published: work drawn from issue text never goes to GitHub`;
     x.rn.note = x.ctx.endSummary; x.save(); return "close";
   };
   engine.actions["remote.ready"] = (x) => (tainted(x) ? taintedReady(x) : remoteReady(x));
@@ -1105,6 +1115,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   });
   engine.actions["git.merge"] = async (x) => {
     if (tainted(x)) throw new Error("a Task drawn from issue text is never merged: it stops on its local branch");
+    // a branch that holds a commit applied from a peer's work (an agent merged it in) is never merged by Studio
+    if (x.ctx.repo && x.ctx.worktree && existsSync(x.ctx.worktree)) { const why = taintRefusal(x.ctx.repo, head(x.ctx.worktree), "Merge"); if (why) throw new Error(why); }
     if (x.ctx.pr?.adapter === "github") {
       // merged on GitHub while the merge card was open (observed, never answered for the captain): the Task ends as merged
       if (x.ctx.mergeDetected) return detectedMerge(x);

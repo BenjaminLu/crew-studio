@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { freePort, waitUp } from "../boot.mjs";
 import { CURSOR_KEY, ON_CURSOR } from "./provider";
+import { sessionCookieName } from "../../src/csrf";
 
 const REPO = join(import.meta.dir, "../..");
 export const TERMINAL = ["succeeded", "failed", "cancelled"];
@@ -43,7 +44,7 @@ export const filmSample: { path: string | null; reason: string | null } = (() =>
 })();
 
 /** examples: seed the example workflows (CREW_EXAMPLE_WORKFLOWS, default on: the startup competition has its own scenario) */
-export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; codexBin?:string; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
+export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; codexBin?:string; beforeStart?: (data:string)=>Promise<void>; env?: Record<string, string> } = {}): Promise<Studio> {
   const root = mkdtempSync(join(tmpdir(), `crew-acceptance-${name}-`)), home = join(root, "home"), data = join(root, "data"), deps = join(root, "deps");
   for (const d of [join(home, ".codex"), data, deps]) mkdirSync(d, { recursive: true });
   if (!ON_CURSOR) {
@@ -80,13 +81,16 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
       CURSOR_API_KEY: CURSOR_KEY, CREW_KEYCHAIN_TOOL: "none", CREW_CHAT_PROVIDER: "cursor" });
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
   }
+  if (o.env) Object.assign(env, o.env); // a suite's own settings (the LAN relay's ports and its file keystore)
   await o.beforeStart?.(data);
   let out = "";
   const app: ChildProcess = spawn("bun", ["src/server.ts"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
   app.stdout!.on("data", (b) => { if (out.length < 400_000) out += b; }); app.stderr!.on("data", (b) => { if (out.length < 400_000) out += b; });
   await waitUp(base, app);
   const api: Api = async (path, body) => {
-    const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": token }, body: body === undefined ? undefined : JSON.stringify(body) });
+    // /api/lan answers only Studio's own page (src/lan/routes.ts): the harness sends what the page's browser sends
+    const page = path.startsWith("/api/lan"), headers: Record<string, string> = page ? { "content-type": "application/json", cookie: `${sessionCookieName(token)}=${token}`, "sec-fetch-site": "same-origin", ...(body === undefined ? {} : { origin: base }) } : { "content-type": "application/json", "x-crew-session": token };
+    const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const text = await r.text(); let parsed: any; try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 2000) }; }
     return { status: r.status, body: parsed };
   };

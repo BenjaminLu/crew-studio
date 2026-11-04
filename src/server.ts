@@ -100,6 +100,13 @@ import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-r
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
 import { createTranscripts } from "./transcripts";
 import { createTasksApi, taskAlias } from "./tasks-api";
+import { Lan } from "./lan/relay";
+import { lanRoutes } from "./lan/routes";
+import { openTaintList } from "./lan/taint";
+import { openSpendLedger } from "./lan/ledger";
+import { lanRunner } from "./lan/runner";
+import { lanApplier, baseOf as lanBaseOf, baseProblem as lanBaseProblem } from "./lan/apply";
+import { installLanProfile, dailyRefusal as lanDailyRefusal } from "./lan/profile";
 import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
 import { createSkillRoutes } from "./skill-routes";
@@ -319,7 +326,7 @@ const CURSOR_NO_TAKEOVER = "Studio does not take over a Cursor session from a te
 setInterval(() => { try { cursorAccount(true); } catch {} }, 60_000).unref();
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
-const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
+const doctor = () => (doctorCache = diagnose({ lanKeystore: (() => { try { return lan ? lan.keystore() : null; } catch { return null; } })(), state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
   tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), voice: voiceDoctorNow ?? undefined, roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 // the local voice's rows: checked asynchronously (hashing a model never stalls Studio), the last answer shown
@@ -508,6 +515,7 @@ nativeEngineForPolicy = runtime.engine;
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit, o) => {
   if (main.view().state === "detached") return false;
+  if (runtime.engine.redacted(r)) return false; // untrusted text (issue text, a peer's Studio) never reaches Firstmate: the captain's card
   // an escalation (step-back, no progress, round budget, scope blocked …): Firstmate decides within the spec or escalates with its diagnosis
   if (o?.escalation) { main.enqueue("wake", `Escalation in Task ${r.id}, step ${node.id} (${node.label}).\n${question}\nDecide with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, choice:"<option id>", answer:"<your reason, or the picked value>"}, or escalate {task:"${r.id}", node:"${node.id}", visit:${visit}, escalate:"<what is stuck and why, in plain words>", recommendation:"<what the captain should pick>"}. / Task ${r.id} 卡住了：能在 spec 內決定就自己決定；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長，並寫清楚卡在哪、為什麼、建議怎麼選。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native", undefined, undefined, escalationShown(r, node.label, question)); return true; }
   main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nRead the step's operating manual section first (studio_manual section ${manualFor(r.workflow, node.role ?? node.args?.coordinator)}). Answer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native", undefined, undefined, questionShown(r, node.label));
@@ -522,6 +530,38 @@ gh.start();
 process.once("exit",()=>{gh.stop();githubPoller.stop();});
 const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }), projectOf: (r) => runtime.engine.projectRow(r),
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
+// board-to-board work (docs/units/lan-relay.md): the restricted profile on every Task a peer's work started, and this
+// Studio's relay; its peer listener is a separate server that is off until the captain turns it on (CREW_LAN=0: no relay at all)
+// what work from peers spent per local day (src/lan/ledger.ts): its own store, open whatever the relay does
+const lanLedger = openSpendLedger(DATA);
+if (lanLedger.broken) console.warn(`crew-studio: ${lanLedger.broken}: no paid round of a peer's Task runs until it can be read`);
+// the captain's ceilings are read from the ledger, relay open or not; a provider's subscription limit is audited by the relay
+installLanProfile(runtime.engine, { ledger: () => lanLedger, onLimit: (r, provider, why) => { try { lan?.noteLimit(r.id, provider, why); } catch {} } });
+// the taint list (commits applied from a peer's work) is open from here on, whatever the relay does: CREW_LAN=0, an identity
+// lost, a relay that does not open. A list that cannot be read refuses every trusted start and publish (src/lan/taint.ts)
+const lanTaint = openTaintList(DATA);
+if (lanTaint.broken) console.warn(`crew-studio: ${lanTaint.broken}: trusted starts and publishes are refused until it can be read`);
+let lan: Lan | null = null, lanOpening = false, lanOpenP: Promise<Lan> | null = null;
+// Board-to-board work is off until the captain turns it on (Peers page): nothing builds the Secure Enclave helper, makes
+// keys or asks for Touch ID before then. Once this Studio has an identity of its own, the relay opens at every start, in
+// the background (Studio answers meanwhile; the Peers page says it is starting). CREW_LAN=0: never. The taint list and
+// the spend ledger above are open either way.
+const lanAllowed = process.env.CREW_LAN !== "0";
+const openLan = (): Promise<Lan> => lan ? Promise.resolve(lan) : (lanOpenP ??= (async () => { lanOpening = true;
+  try {
+    const opened = await Lan.open({ dataDir: DATA, send, taint: lanTaint, spend: lanLedger,
+      repos: () => { try { return (runtime.projects.list() as any[]).filter((p) => p?.path && p.enabled !== false).map((p) => String(p.path)); } catch { return []; } }, dailyRefusal: (c) => lanDailyRefusal(lanLedger, c),
+      // the tokens a round of each provider uses here, on average (for the providers with a record)
+      estimates: () => { const out: Record<string, number> = {}; for (const id of choices.filter((x) => x !== "stub")) { try { const v = lanLedger.estimate(id, NaN); if (Number.isFinite(v)) out[id] = Math.round(v); } catch {} } return out; }, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
+      runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), providerProblem: (p) => runtime.lanProviderProblem(p), needsProject: (def) => runtime.lanNeedsProject(def) }),
+      apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
+      baseOf: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? lanBaseOf(p.path, p.base || "main") : null; },
+      baseProblem: (id, base) => { const p = runtime.projects.get(id) as any; return p?.path ? lanBaseProblem(p.path, base) : `no registered project ${id}`; },
+      privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } } });
+    lan = opened; process.on("exit", () => { try { lan?.close(); } catch {} }); return opened;
+  } finally { lanOpening = false; lanOpenP = null; }
+})());
+if (lanAllowed && Lan.started(DATA)) void openLan().catch((e: any) => console.warn(`crew-studio: board-to-board work is unavailable: ${e?.message ?? e}`));
 const compareApi = createCompare({ dataDir: DATA, get: (id) => runtime.engine.get(id), current: (wf) => runtime.engine.defs.get(wf), phoneRaw: () => transcripts.settings().phoneRaw });
 // rounds of an earlier Studio left their throwaway homes and tmp behind (it stopped mid-round): no job is live at start, so they go
 try { const rd = join(DATA, "rounds"); if (existsSync(rd)) for (const d of readdirSync(rd)) for (const x of ["home", "tmp"]) { const p = join(rd, d, x); if (existsSync(p)) rmSync(p, { recursive: true, force: true }); }
@@ -609,7 +649,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // the one guard in front of every mutating route: same site, a Studio session (or a paired phone), JSON
     if (writing && !EXEMPT(p)) { const g = guardWrite(req, url, SESSION, who.kind === "phone"); if (g) return json({ error: g.error, code: g.code }, g.status); }
     if (who.kind === "phone" && writing) {
-      if (DESKTOP_ONLY.has(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (DESKTOP_ONLY.has(p) || p === "/api/lan" || p.startsWith("/api/lan/")) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (PHONE_DRIVE.has(p) && !remote.allowDrive) return json({ error: "this phone may read and interrupt only; allow phone driving on the Mac first", code: "noDrive" }, 403);
     }
     if(p==='/api/models'&&!writing){
@@ -649,6 +689,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if((p==='/api/claude/account/login'||p==='/api/claude/account/cancel')&&writing){if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);if(p.endsWith('/cancel'))return json(await claudeLogin.cancel());try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await terminalRoutes(terminals, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rt) return rt; }
+    { const rl = await lanRoutes(lan, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION), lanOpening, lanAllowed ? openLan : undefined); if (rl) return rl; }
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
     { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }

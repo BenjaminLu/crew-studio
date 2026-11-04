@@ -46,6 +46,10 @@ async function* acceptanceScript(text, call, say) {
       const control = button ? `<button id="act" type="button">${button}</button><ul id="rows"><li>First task</li></ul><script>document.getElementById("act").addEventListener("click",()=>{const li=document.createElement("li");li.textContent="New task "+(document.querySelectorAll("#rows li").length+1);document.getElementById("rows").appendChild(li);});</script>` : "";
       yield* call("work_write", { path: "index.html", content: `<!doctype html><html><head><meta charset="utf-8"><title>${intent}</title></head><body><main><h1>${intent}</h1><p>Variant ${variant}</p>${control}</main></body></html>` });
     }
+    // STUB_FILE <path> :: <content> lines in the brief (the LAN relay's briefings): the writer also writes those files
+    // STUB_FILE64 <path> :: <base64>: the same with its content encoded, so the brief itself carries no secret Studio would redact
+    for (const m of text.matchAll(/STUB_FILE64 (\S+) :: ([A-Za-z0-9+\/=]+)$/gm)) { const r = yield* call("work_write", { path: m[1], content: Buffer.from(m[2], "base64").toString("utf8") + "\n" }); if (r?.error) throw new Error(`work_write ${m[1]} refused: ${r.error}`); }
+    for (const m of text.matchAll(/STUB_FILE (\S+) :: (.*)$/gm)) { const r = yield* call("work_write", { path: m[1], content: m[2].replace(/\\n/g, "\n") + "\n" }); if (r?.error) throw new Error(`work_write ${m[1]} refused: ${r.error}`); }
     yield* say(`Delivered ${kind} variant ${variant}.`); return true;
   }
   if (text.startsWith("STARTUP COMPETITION")) {
@@ -122,6 +126,8 @@ async function sandboxProbe(prompt) {
     toolListener: tool ? await tryTcp(tool.hostname, Number(tool.port)) : { ok: false, error: "no CREW_STUDIO_URL" },
     providerViaProxy: host ? await viaProxy(`${host}:443`) : { status: null, error: "no host" },
     otherViaProxy: await viaProxy("example.com:443"),
+    // extra=<host>: a host the Studio's egress.allow policy grants (the LAN relay's restricted profile drops that grant)
+    extraViaProxy: arg("extra") ? await viaProxy(`${arg("extra")}:443`) : null,
     noCredentialViaProxy: await viaProxy(`${host || "example.com"}:443`, false),
     // its own login (what Studio handed the round), and nothing else
     ownLogin: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")) ? "file:$HOME/.codex/auth.json" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : null,

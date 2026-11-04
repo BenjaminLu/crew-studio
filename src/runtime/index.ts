@@ -3,6 +3,8 @@ import {WorkflowPackages,snapshotPackage,packageSha} from '../workflow-package';
 import {workflowDefinitionExport} from '../workflow-definition-export';
 import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
+import {lanUntrusted,baseProblem,pinBase,commitPatch as lanCommitPatch} from '../lan/apply';
+import {taintRefusal} from '../lan/taint';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
 import { refusesRulesPatch } from "../operating-rules";
@@ -840,6 +842,9 @@ export function createRuntime(d: RuntimeDeps) {
     if (!/^[0-9a-f]{40,64}$/.test(o.commit)) throw Object.assign(new Error("no commit to review"), { code: "commit" });
     let params: Record<string, string> = { project: p.id, base: p.base }, autoVerified: string[] = [];
     const refuse = (x: StartRefusal) => Object.assign(new Error(String(x.body.error)), { code: x.body.code, staffing: x.body.staffing });
+    // work a peer's Studio sent (docs/units/lan-relay.md): read and diffed by people, never reviewed and merged as trusted work
+    if (lanUntrusted(p.path, o.commit, o.branch)) throw Object.assign(new Error(`${o.branch ?? o.commit.slice(0, 12)} holds work from a peer's Studio (a lan-untrusted/ branch): Studio does not send it for review; read its diff, and commit what you keep yourself`), { code: "lan_untrusted" });
+    { const why = taintRefusal(p.path, o.commit, "Send for review"); if (why) throw Object.assign(new Error(why), { code: "lan_untrusted" }); }
     if (boardStaffed(def)) {
       const g = await staffedStartGuard(def, p.id, { why: `Send for review of ${o.branch ?? o.commit.slice(0, 12)} on ${p.id}` });
       if (!g.ok) throw refuse(g);
@@ -852,6 +857,54 @@ export function createRuntime(d: RuntimeDeps) {
     if (!started.ok) throw refuse(started);
     return started.run;
   };
-  return { handle, engine, defs, projects, firstmate, startFromBranch, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  /**
+   * Work from an introduced peer's Studio (docs/units/lan-relay.md, src/lan/runner.ts): the taker's own workflow, approved
+   * on the desktop, started on the same path as the board's Run. Studio's marks `_lan` and `_tainted` come only from the
+   * caller in src/lan (never from a request). v1 starts only a workflow that needs no board staffing approval, no project
+   * and no coffee-kit crew; an own workflow's staffing is confirmed with the take (staffingConfirm, its plan's hash).
+   */
+  const lanStaffing = (def: any) => { if (!ownWorkflow(def)) return null; const s = ownStaffingPlan(def, defs.ownCrew); return s.plan.length ? { hash: s.hash, plan: s.plan, missing: s.missing } : null; };
+  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number; diffBase?: string } }; continuePatch?: string | null; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => {
+    const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
+    const def = defs.get(o.workflow);
+    if (!def || !defs.selectable(o.workflow) || defs.held(o.workflow)) throw refuse("workflow_unavailable", "This workflow is not available for a new Task");
+    if (def.kind === "coffee-kit") throw refuse("staffing_required", "The coffee kit does not take work from a peer");
+    let staffed: Record<string, string> = {}, autoVerified: string[] = [];
+    // a code workflow: one of this Studio's registered projects, its approved crew, the same guard as the board's Run
+    if (boardStaffed(def)) {
+      const pid = String(o.project ?? ""); if (!pid || !projects.get(pid)?.path) throw refuse("project_required", "Choose one of this Studio's registered projects for this code workflow");
+      const g = await staffedStartGuard(def, pid, { why: `work from a peer on ${pid}` }); if (!g.ok) throw refuse(String(g.body.code ?? "staffing_not_ready"), String(g.body.error));
+      staffed = { project: pid, ...g.params }; autoVerified = g.autoVerified;
+      // code work on the dispatcher's base: a branch pinned at that commit in this project, so the worktree starts there
+      // and stays there (a build round's rebase onto it changes nothing), and the patch that goes back applies there
+      if (o.base) { if (!/^[0-9a-f]{40}$/.test(o.base)) throw refuse("base", "a bad base commit"); const why = baseProblem(projects.get(pid)!.path!, { root: o.base, sha: o.base }); if (why && !/root/.test(why)) throw refuse("base", `project ${pid} ${why}`); staffed.base = pinBase(projects.get(pid)!.path!, o.base);
+        // a refinement continues from the patch handed back last round, as sent: committed onto the dispatched base under the
+        // same rules a peer's result is applied under (no checkout, no hook, no protected path), the worktree starting there
+        if (o.continuePatch) { const repo = projects.get(pid)!.path!; let made: string;
+          try { made = lanCommitPatch(repo, o.base, o.continuePatch, "The previous round as handed back to the dispatcher").commit; } catch (e: any) { throw refuse("continue", `this refinement cannot continue from the patch handed back last round: ${String(e?.message ?? e).slice(0, 300)}`); }
+          staffed.base = pinBase(repo, made); } }
+    }
+    const missing = Object.entries(def.params ?? {}).filter(([, spec]: any) => spec.required && !String(spec.default ?? "").trim()).map(([k]) => k);
+    if (missing.length) throw refuse("param_required", `This workflow needs inputs work from a peer cannot give: ${missing.join(", ")}`);
+    if (o.profile?.name !== "lan" || !o.profile.mark?.item) throw refuse("internal", "a LAN start carries the runtime's LAN profile");
+    const params: Record<string, string> = { ...o.params, ...staffed };
+    const s = lanStaffing(def);
+    if (s) { if (s.missing.length) throw refuse("staffing_incomplete", "Choose a provider and model for every agent node of this workflow first"); if (o.staffingConfirm !== s.hash) throw refuse("staffing_confirmation_required", "Confirm who works on each node of this workflow with the take"); params._ownStaffing = s.hash; }
+    const started = staffedStartRun(def, () => ownClaude.start({ workflow: def.id, title: o.title, text: o.text, params, by: o.by, profile: o.profile }), autoVerified);
+    if (!started.ok) throw refuse(String(started.body.code ?? "start"), String(started.body.error));
+    return started.run;
+  };
+  /** why a provider (null: Studio's default) cannot run a peer's round on this Mac now, from the same capability facts
+   *  the board's Start reads (not installed, signed out, out of quota, quota unreadable), or null */
+  const lanProviderProblem = async (provider: string | null): Promise<string | null> => {
+    const id = provider ?? (() => { try { return engine.deps.defaultProvider().provider; } catch { return null; } })(); if (!id || id === "stub") return null;
+    const facts = await staffingFacts().catch(() => staffingCapabilities), cap = facts.find((c) => c.provider === id), r = cap?.reason ? ` (${cap.reason})` : "";
+    if (!cap || cap.support !== "supported") return `${id} is not available on this Mac${r}`;
+    if (cap.auth !== "verified" && (cap as any).login !== "logged-in") return `${id} is not signed in${r}`;
+    if (cap.quota === "exhausted") return `${id} is out of quota${r}`;
+    if (cap.quota !== "available" && id !== "claude") return `${id}'s quota could not be read just now${r}`;
+    return null;
+  };
+  return { handle, engine, defs, projects, firstmate, startFromBranch, startLan, lanProviderProblem, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

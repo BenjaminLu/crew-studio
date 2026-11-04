@@ -17,6 +17,10 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync,
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
+/** A caller's narrowing of every sandboxed process it starts (async-scoped): noLocalBinding runs a test run without its
+ *  loopback bind and inbound rules (work from a peer: src/lan/profile.ts), so a test that opens a listener fails. */
+export const sandboxScope = new AsyncLocalStorage<{ noLocalBinding?: boolean }>();
 import { bundledBytes, bundledList, bundledText, parseYaml } from "../bundled";
 import { withLock } from "../ids";
 import { appendLines, endCleanly } from "./durable-log";
@@ -376,7 +380,10 @@ ${o.localBinding ? LOCAL_BINDING_RULES + "\n" + closedPortRules(ports) : ""}
  */
 export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; reads: string[]; proxyPort: number; toolPort: number; dataDir?: string | null; protect?: string[];
   /** folders the round reads and executes but never writes (a skill's round copy, its prepared env, Studio's runtimes and tools), even inside Studio's data */
-  readOnly?: string[] }) {
+  readOnly?: string[];
+  /** no inbound and no bind at all (work from a peer: src/lan/profile.ts); the default is the caller's sandboxScope */
+  noInbound?: boolean }) {
+  const noInbound = o.noInbound ?? sandboxScope.getStore()?.noLocalBinding === true;
   // Studio's data folder is closed to the round, its file metadata included, except what the runtime materialized for it
   // (its worktree, its tmp, its throwaway home); a protected root (firstmate's checkout) is closed entirely; the user's
   // secret folders are denied last, the login keychain among them
@@ -408,7 +415,7 @@ ${SYSCTL_READ}
 (allow file-write* ${sub(writes)} (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper") (regex #"^/dev/fd/") (regex #"^/dev/tty"))
 (deny network*)
 (allow network-outbound (remote tcp ${q(`localhost:${o.proxyPort}`)}) (remote tcp ${q(`localhost:${o.toolPort}`)}))
-(allow network-inbound (local tcp "localhost:*"))
+${noInbound ? "" : `(allow network-inbound (local tcp "localhost:*"))`}
 (allow mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc") (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.trustd.agent"))
 (deny appleevent-send)
 ${data ? `(deny file-read* file-read-metadata file-write* (subpath ${q(data)}))
@@ -458,6 +465,8 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
   /** a test run's sandbox, as the self-probe checked it: what it enforces and what it does not */
   sandbox?: { enforced: string; notEnforced: string } }> {
   const t0 = Date.now();
+  // a scope that forbids local binding (work from a peer) keeps a test run's loopback closed: no bind, no inbound
+  const localBinding = !!o.testRun && sandboxScope.getStore()?.noLocalBinding !== true;
   const unrestricted = localUnrestricted();           // CREW_LOCAL_UNRESTRICTED: no OS sandbox at all, on any platform
   const seatbelt = !unrestricted && seatbeltAvailable();
   const bwrap = !unrestricted && !seatbelt && !!o.testRun && !o.network && bwrapAvailable();
@@ -472,10 +481,10 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
     let ports: number[] = [];
     try {
       ports = o.testRun ? inspectListeningPorts() : [];
-      writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun, blockedPorts: ports }));
+      writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding, blockedPorts: ports }));
     } catch (e) { return { code: null, stdout:"", stderr:"", timedOut:false, ms:Date.now()-t0, refused:`test sandbox listener inspection failed: ${String(e)}` }; }
     // a test run is checked first: the profile must hold what Studio claims for it, or the run is refused with the reason
-    if (o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p), ports); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
+    if (o.testRun && localBinding) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p), ports); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
     full = ["/usr/bin/sandbox-exec", "-f", prof, ...argv];
   } else if (bwrap) {
     // Linux has no Seatbelt: a test run without network runs under bwrap (v1's layout: private pid/net namespaces, read-only reads)

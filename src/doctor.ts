@@ -147,6 +147,8 @@ export type DoctorInput = {
   operatingRules?: { studio: { text: string; unreadable?: string }; projects: { id: string; text: string; unreadable?: string }[] };
   /** the shared git config of Studio's own checkout, every registered project and the built-in sandbox (src/git-config-health.ts) */
   gitConfig?: { checked: { label: string; path: string }[]; problems: import("./git-config-health").GitConfigProblem[] };
+  /** board-to-board work: which keystore holds this Studio's LAN identity (src/lan/keystore.ts), or why it cannot be used */
+  lanKeystore?: { kind: string | null; lost: string | null; fallback: string | null; fingerprint: string | null } | null;
 };
 
 export function diagnose(i: DoctorInput): Item[] {
@@ -196,6 +198,11 @@ export function diagnose(i: DoctorInput): Item[] {
       action: v && auth !== true ? { kind: "login", item: id } : found || v ? { kind: "none" } : { kind: "install", item: id } });
   }
   if(i.codexAccount)items.push({id:"codex-account",title:"Codex account",titleZh:"Codex 帳號",status:i.codexAccount.state==="ready"?"info":"degraded",detail:i.codexAccount.reason,detailZh:i.codexAccount.reasonZh,adds:"Sign in and start new work here; no terminal session selection is required. Account readiness does not verify repository tools.",addsZh:"在這裡登入並開始新工作，不必選擇終端機 session；帳號就緒不代表專案工具已驗證。",fix:"",action:{kind:"login",item:"codex"}});
+  if (i.lanKeystore) { const k = i.lanKeystore;
+    items.push({ id: "lan-keystore", title: "LAN identity keystore", titleZh: "區網協作身分的存放", status: k.lost ? "degraded" : k.kind === "enclave" ? "ok" : "info",
+      detail: k.lost ? `cannot be used: ${k.lost}` : k.kind === "enclave" ? `the Secure Enclave (${k.fingerprint ?? "?"}): its keys cannot be copied off this Mac; introductions and revocations need Touch ID or the password` : k.kind === "file" ? `files in Studio's data folder (${k.fingerprint ?? "?"}): any program of this user can read them${k.fallback ? ` (${k.fallback})` : ""}` : String(k.kind ?? "none yet"),
+      detailZh: k.lost ? `無法使用：${k.lost}` : k.kind === "enclave" ? "這台 Mac 的 Secure Enclave：金鑰無法複製到別台；引介與作廢需 Touch ID 或密碼" : k.kind === "file" ? "Studio 資料夾裡的檔案：這台的身分可被本機程式讀取" : String(k.kind ?? "尚未建立"),
+      adds: "Board-to-board work with introduced colleagues.", fix: k.lost ? "Open Peers and replace the identity (作廢並換新身分)." : k.kind === "file" && process.platform === "darwin" ? "Peers: upgrade to the Secure Enclave." : "", action: { kind: "none" } }); }
   items.push({ id: "keys", title: "API keys for the status chat", status: anyKey ? "ok" : statusChatOk ? "info" : "degraded",
     detail: [i.keys.anthropic ? `Anthropic (${i.keys.anthropic})` : null, i.keys.openai ? `OpenAI (${i.keys.openai})` : null, i.keys.compatBaseUrl ? `endpoint ${i.keys.compatBaseUrl}` : null].filter(Boolean).join(", ") || "none set",
     adds: "The status chat without any CLI: Anthropic API, OpenAI API, or a local OpenAI-compatible server (LM Studio, Ollama).", fix: anyKey ? "" : "Add a key or an endpoint.", action: { kind: "keys" } });

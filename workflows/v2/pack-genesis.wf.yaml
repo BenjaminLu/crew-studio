@@ -2,6 +2,7 @@
   "id": "pack-genesis",
   "name": "Pack genesis",
   "version": 1,
+  "lan": {"refuse": "it writes a workflow pack into this Studio"},
   "description": "Interview, label actual samples, measure checks, refine, run advisory shadow Tasks and publish a pinned native pack.",
   "intent": {
     "keywords": [
