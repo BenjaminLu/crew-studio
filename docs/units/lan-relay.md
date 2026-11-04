@@ -323,6 +323,12 @@ refuses, and a LAN Task whose mark is unreadable is held to a zero cap. Enforced
   LAN Task never reaches on its own are shown at the take as "may stop at …". A file the hand-back cannot carry (binary)
   refuses the send, shown in the preview. `tests/lan-workflows.ts` relays every eligible bundled workflow end to end
   across two Studios, refuses every other one, and fails when a workflow a person can start is not classified.
+- **Its title is the captain's to read, never the Task's**: the Task is stored under a neutral label (`LAN <thread>`),
+  so nothing that reads Task titles (Firstmate, another Task's overlap note, the event log, the Tasks API, an agent's
+  prompt) has the dispatcher's words. The board card, the Task page header and the Peers page take the title from the
+  relay's sealed state when they draw (`GET /api/lan/titles`, Studio's own page only) and show it as text, one line, at
+  most 120 characters, marked as the peer's: "From <petname>: <title>". `tests/lan-ui.mjs` checks each surface with a
+  title holding HTML and an injection string, and that no file on the taker's disk holds it in the clear.
 - **Other Tasks never see its title**: another Task's overlap note names it by its id only.
 - **Firstmate never sees it**: an agent's question or an escalation from a tainted Task is the captain's card, never
   Firstmate's; Firstmate's status lines show a peer's Task without its title or card titles; Studio's event log keeps no

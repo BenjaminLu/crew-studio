@@ -499,6 +499,21 @@ const MUTATIONS: M[] = [
     edits: [{ file: "src/runtime/index.ts", from: "if (lanUntrusted(p.path, o.commit, o.branch)) throw", to: "if (false) throw" }] },
   { name: "R4-untrusted-commit", rule: "a lan-untrusted/ commit under another name is refused", tests: ["bun tests/board-start.ts"],
     edits: [{ file: "src/lan/apply.ts", from: "return !r.ok || r.out.trim().length > 0;", to: "return false;" }] },
+  // ---------- a peer's title on the taker's board ----------
+  { name: "T-title-neutral", rule: "a peer's Task is stored under a neutral label, never the peer's title", tests: [PROFILE, UI],
+    edits: [{ file: "src/lan/relay.ts", from: "text, title: `LAN ${t.id}`, item: i.id,", to: "text, title: t.title, item: i.id," }] },
+  { name: "T-title-taker-only", rule: "the relay gives a run's title only for a peer's work (the taker's side)", tests: [PROFILE],
+    edits: [{ file: "src/lan/relay.ts", from: "return this.st.threads.filter((t) => t.owner !== me).flatMap(", to: "return this.st.threads.flatMap(" }] },
+  { name: "T-title-marker", rule: "the board card and the Task page mark a peer's title as the peer's words", tests: [UI],
+    edits: [{ file: "public/lan.js", from: "return x ? T(`From ${x.from}: ${x.title}`, `來自 ${x.from}：${x.title}`) : title;", to: "return x ? x.title : title;" }] },
+  { name: "T-title-bound", rule: "a peer's title is drawn one line, at a bounded length", tests: [UI],
+    edits: [{ file: "public/lan.js", from: "title: flat(x.title, TITLE_MAX) });", to: "title: String(x.title) });" }] },
+  { name: "T-title-runs-redraw", rule: "the Tasks list redraws when a peer's titles arrive", tests: [UI],
+    edits: [{ file: "public/lan.js", from: `else if (S.route?.name === "run" || S.route?.name === "runs") render();`, to: `else if (S.route?.name === "run") render();` }] },
+  { name: "T-title-fresh", rule: "a title already shown is asked for again (a peer renamed shows its new name)", tests: [UI],
+    edits: [{ file: "public/lan.js", from: "Date.now() - PT.at > (x ? TITLE_FRESH_MS : 3000)) void loadTitles();", to: "!x && Date.now() - PT.at > 3000) void loadTitles();" }] },
+  { name: "T-title-peers-marker", rule: "the Peers page marks the dispatcher's title as theirs on the taker's side", tests: [UI],
+    edits: [{ file: "public/lan.js", from: "h(\"b\", { \"data-lan-thread-title\": t.id }, mine ?", to: "h(\"b\", { \"data-lan-thread-title\": t.id }, false ?" }] },
 ];
 
 const only = process.argv.slice(2);
