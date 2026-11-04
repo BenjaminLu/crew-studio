@@ -525,7 +525,9 @@ if (process.platform === "darwin") {
   ok(started.length === 1 && started[0].title === `LAN ${t.id}` && !JSON.stringify(started[0]).includes("IGNORE ALL"), "a peer's Task starts under a neutral label (LAN <thread>): its title is not in anything the Task carries", JSON.stringify(started.map((o) => o.title)));
   const rt = B.runTitles();
   ok(rt.length === 1 && rt[0].run === "R-91" && rt[0].thread === t.id && rt[0].title === evil && rt[0].from.name === "A" && !("key" in rt[0].from), "the taker's relay gives the title for its run, with the petname of whose words they are", JSON.stringify(rt));
-  ok(A.runTitles().length === 0, "the dispatcher's relay gives no title for a run (its own words, and no Task of its own)", JSON.stringify(A.runTitles()));
+  // the dispatcher's own threads give none, even one whose round names a run (its own words are not a peer's)
+  A.thread(t.id)!.rounds[0].run = { id: "R-92", state: "running", result: null, started: new Date().toISOString(), stopped: null, item: "i" } as any;
+  ok(A.runTitles().length === 0, "the dispatcher's relay gives no title for a run (its own words are not a peer's)", JSON.stringify(A.runTitles()));
   A.close(); B.close(); }
 
 // ---------- review round 4 (security review probes): each expects the fixed behaviour ----------

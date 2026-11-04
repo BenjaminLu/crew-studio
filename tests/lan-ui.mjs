@@ -114,7 +114,7 @@ try {
   ok(!!finished, "B's Task runs to its end", await api(B, `/api/wruns/${run}`).then((x) => JSON.stringify([x.body?.status, x.body?.params?.provider, (x.body?.cards ?? []).filter((c) => c.status === "open").map((c) => [c.node, c.kind, c.title?.en ?? c.title]), (x.body?.steps ?? []).map((s) => `${s.node}:${s.state}`)])));
   // ---------- the dispatcher's title, on the taker's pages ----------
   { const marked = new RegExp(`^(From A 的看板: |來自 A 的看板：)${TITLE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
-    ok((await api(B, `/api/wruns/${run}`)).body.title === `LAN ${th.id}`, "the Task itself keeps a neutral label (LAN <thread>), never the peer's title", (await api(B, `/api/wruns/${run}`)).body.title);
+    { const label = (await api(B, `/api/wruns/${run}`)).body.title; ok(label === `LAN ${th.id}`, "the Task itself keeps a neutral label (LAN <thread>), never the peer's title", JSON.stringify({ label, thread: th.id })); }
     await pb.goto(`${B.base}/#/board`); const cardT = pb.locator(`.tb-title[data-task-title="${run}"]`);
     const onCard = await until(async () => { const t = (await cardT.innerText()).trim(); return marked.test(t) ? t : null; });
     ok(!!onCard && await cardT.locator("img").count() === 0, "the board card shows the dispatcher's title as text, marked as the peer's words", onCard ?? await cardT.innerText().catch(() => "(no card)"));
