@@ -1,7 +1,7 @@
 /* The review room (public/review-room.js). A room is the whole screen (focus mode: the sidebar folds to its rail, Firstmate
-   is a sheet over the room): the header, the stage (the board, its caption, the play bar) and the dock, one viewport tall.
-   Nothing in the room grows the page: the board has a fixed height, the picture scales to it, the points column shows at
-   most four points (the next ones are the next page). The transcript and a citation open over the room. */
+   is a sheet over the room): the header, the board (public/review-board.css: every scene a region on a canvas the camera
+   owns, the play bar floating on it) and the dock, one viewport tall. Nothing in the room grows the page. The transcript
+   and a citation open over the room. */
 
 /* ---------- the room's paper: tokens (light, then dark under the system preference and under the dark theme) ---------- */
 :root {
@@ -50,9 +50,6 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-pill .add { color: var(--ok); } .rr-pill .del { color: var(--bad); }
 .rr-ic { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
-/* the stage: the board, then its caption and its play bar */
-.rr-stage { display: grid; grid-template-rows: minmax(0, 1fr) 52px 40px; gap: 10px; min-height: 0; min-width: 0; }
-.rr-board { min-height: 0; min-width: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 18px; border: 1px solid var(--rr-paper-edge); background-color: var(--rr-paper); background-image: radial-gradient(var(--rr-dot) 1.1px, transparent 1.3px); background-size: 20px 20px; box-shadow: var(--rr-shadow); color: var(--rr-ink); padding: 16px 28px; }
 .rr-stitle { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin: 0 0 8px; }
 .rr-kicker { flex: none; font-size: 12px; color: var(--rr-ink-2); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
 .rr-stitle h2 { margin: 0; font-size: clamp(22px, 2.3vw, 32px); line-height: 1.2; color: var(--rr-marker); min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; isolation: isolate; padding: 0 4px; }
@@ -68,12 +65,11 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-flow-wrap, .rr-chart-wrap { display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; }
 .rr-flow, .rr-chart, .rr-keycard { width: 100%; height: 100%; display: block; }
 .rr-drawing { display: grid; place-items: center; min-height: 0; }
-.rr-empty { display: grid; align-content: center; justify-items: start; gap: 8px; max-width: 640px; }
 .rr-vstrip { display: flex; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
 .rr-vchip { font: 12px var(--f-sans); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; flex: 0 1 auto; }
 .rr-vchip.on { border-color: var(--accent); color: var(--accent-text); }
 
-/* the points: at most four (a page), each at most three lines; the column never grows the page */
+/* a scene's points: the one being read marked, the ones not reached yet dimmed */
 .rr-points { min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
 .rr-pointlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .rr-point { position: relative; padding: 8px 12px 8px 14px; border-left: 3px solid var(--rr-paper-edge); border-radius: 0 10px 10px 0; color: var(--rr-ink-2); font-size: 15.5px; line-height: 1.55; transition: color .25s, background-color .25s, border-color .25s; }
@@ -293,7 +289,6 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
 .rr-ver { border: 1px solid var(--rr-paper-edge); background: var(--rr-paper); color: var(--rr-ink-2); border-radius: 99px; padding: 1px 8px; font-size: 11px; cursor: pointer; text-decoration: none; }
 .rr-ver[aria-pressed="true"], .rr-ver[aria-current="page"] { border-color: var(--rr-marker); color: var(--rr-marker); font-weight: 600; }
 .rr-regen { margin-left: 6px; font-size: 12px; color: var(--rr-marker); }
-.rr-board { position: relative; }
 .rr-regenlist { position: absolute; top: 52px; left: 24px; z-index: 15; display: grid; gap: 6px; padding: 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-2); max-width: min(560px, calc(100% - 48px)); }
 .rr-regenopt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; text-align: left; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 10px; padding: 8px 10px; cursor: pointer; font: inherit; font-size: 13px; }
 .rr-regenopt:disabled { opacity: .55; cursor: default; }
@@ -314,17 +309,6 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
 .rr-progress { font-size: 13px; }
 .rr-progress-said { margin: 4px 0 0; padding: 6px 10px; border-left: 3px solid var(--rr-paper-edge); color: var(--rr-ink-2); font-style: italic; }
 
-/* the lesson's chapters: a rail beside the board (every answer's scenes, the current one marked) */
-.rr-stage.with-toc { grid-template-columns: 188px minmax(0, 1fr); column-gap: 12px; }
-.rr-stage.with-toc > :not(.rr-toc) { grid-column: 2; }
-.rr-toc { grid-row: 1 / -1; grid-column: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 6px 4px; border-right: 1px solid var(--border); }
-.rr-toc-h { margin: 10px 6px 4px; font-size: 11px; font-weight: 600; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rr-toc-i { display: grid; gap: 1px; text-align: left; border: 0; background: none; border-radius: 8px; padding: 6px 8px; cursor: pointer; color: var(--text-2); font: inherit; font-size: 12px; border-left: 3px solid transparent; }
-.rr-toc-i b { font-size: 12px; color: var(--text); font-weight: 600; }
-.rr-toc-i span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rr-toc-i:hover { background: var(--surface-2); }
-.rr-toc-i[aria-current="true"] { background: var(--rr-new-soft); border-left-color: var(--rr-marker); color: var(--text); }
-.rr-toc-run { font-style: normal; color: var(--accent); }
 /* a changed item, before and after (one layout for every item) */
 .rr-itemfig .rr-ib path { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; }
 .rr-itemfig .rr-ib.fix path { stroke: var(--rr-new); fill: var(--rr-new-soft); stroke-width: 2.6; }
@@ -351,28 +335,12 @@ html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cur
 .rr-seq .rr-frame-else { stroke: var(--rr-marker); stroke-dasharray: 5 4; }
 .rr-flow .rr-cite-label { fill: var(--rr-cite-ink); text-decoration: underline; cursor: pointer; }
 
-/* ---------- a phone (390×844): the picture on top, one point card under it (the caption is the card), a read-only dock ---------- */
+/* ---------- a phone (390×844): the header in one line, a read-only dock (the transcript a tap away) ---------- */
 @media (max-width: 760px) {
   .rr-room { grid-template-rows: 44px minmax(0, 1fr) auto; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
   .rr-head { gap: 6px; }
   .rr-back span, .rr-htitle span, .rr-pills .rr-pill:not([data-pr-state]), [data-room-check], [data-room-github], [data-room-save], [data-room-library], .rr-head .rr-back[href^="#/inbox"] { display: none; }
   .rr-htitle b { font-size: 14px; }
-  .rr-stage { grid-template-rows: minmax(0, 1fr) 44px; gap: 8px; }
-  .rr-stage > .rr-caption { display: none; }
-  .rr-board { padding: 10px 12px; border-radius: 14px; }
-  .rr-stitle { flex-wrap: wrap; gap: 2px 10px; margin: 0 0 4px; }
-  .rr-kicker { max-width: 100%; }
-  .rr-stitle h2 { font-size: 22px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .rr-scene { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 8px; }
-  .rr-vstrip, .rr-visual .rr-basis { display: none; }
-  .rr-points { justify-content: flex-start; overflow: visible; }
-  .rr-pointlist { display: block; }
-  .rr-point { display: none; font-size: 15px; }
-  .rr-point.now { display: block; }
-  .rr-point.now .rr-ptext { -webkit-line-clamp: 4; }
-  .rr-cost, .rr-sceneq { display: none; }
-  .rr-scenenav, .rr-voice, .rr-playbar > .x-grow { display: none; }
-  .rr-dots { flex: 1; justify-content: center; }
   .rr-dock { border-radius: 12px; padding: 8px 10px; }
   .rr-dock .rr-quick, .rr-dock .rr-askrow { display: none; }
   .rr-ro-note { display: block; }
@@ -380,21 +348,11 @@ html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cur
   .rr-opt { min-height: 44px; }
   .rr-quiz-q { font-size: 19px; }
   .rr-cta { font-size: 18px; }
-  .rr-stage.with-toc { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) 44px; }
-  .rr-stage.with-toc > :not(.rr-toc) { grid-column: 1; }
-  .rr-toc { grid-row: 1; flex-direction: row; overflow-x: auto; border-right: 0; padding: 0; scrollbar-width: none; }
-  .rr-toc-h { display: none; }
-  .rr-toc-i { flex: none; max-width: 150px; border-left: 0; border-bottom: 3px solid transparent; }
-  .rr-toc-i[aria-current="true"] { border-bottom-color: var(--rr-marker); }
 }
 
 /* ---------- the lesson report (baton's packet, workflows/skills/baton): a teach answer read top to bottom ----------
    Sections are cards on the room's paper: a numbered heading in a display serif, the points as prose or as findings with
    a tone stripe, and Studio's drawing under them in a figure card. The report scrolls inside the room; the page does not. */
-.rr-stage.report { grid-template-rows: minmax(0, 1fr); }
-.rr-toc-ch { margin: 6px 8px 0; font-size: 12px; font-weight: 600; color: var(--text); }
-.rr-toc-i.sub { padding-left: 20px; }
-@media (max-width: 760px) { .rr-toc-ch { display: none; } .rr-toc-i.sub { padding-left: 8px; } }
 .rr-report { --rp-serif: "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", Georgia, serif;
   grid-row: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 18px 40px 6px;
   color: var(--rr-ink); font-family: var(--f-sans); outline: none; }
@@ -464,8 +422,6 @@ html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cur
 .rr-imgopt { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); margin: 6px 0 2px; }
 .rr-imgopt input { margin-top: 3px; }
 @media (max-width: 760px) {
-  .rr-stage.report { grid-template-rows: auto minmax(0, 1fr); }
-  .rr-stage.report > .rr-report { grid-row: 2; padding: 2px 2px 28px; }
   .rp-card { padding: 12px 14px; } .rp-fig { padding: 10px; }
   .rp-head h3 { font-size: 18px; } .rp-prose p.lead { font-size: 15.5px; }
   .rp-cost { margin-left: 0; }
@@ -568,14 +524,9 @@ body.rr-fs .side, body.rr-fs .chat, body.rr-fs #chatFab, body.rr-fs .toast { dis
 body.rr-fs #view { position: fixed; inset: 0; z-index: 70; background: var(--bg); overflow: hidden; }
 #view:fullscreen { background: var(--bg); }
 body.rr-fs .rr-room { display: block; height: 100%; max-width: none; margin: 0; padding: 0; }
-body.rr-fs .rr-room > :not(.rr-stage, .rr-zoom, .rr-cite-panel) { display: none !important; }
-body.rr-fs .rr-room > .rr-stage { height: 100%; box-sizing: border-box; padding: 10px 14px; }
-body.rr-fs .rr-stage.with-toc { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
-body.rr-fs .rr-stage.with-toc > .rr-toc { display: none; }
-body.rr-fs .rr-stage.with-toc > :not(.rr-toc) { grid-column: 1; }
+body.rr-fs .rr-room > :not(.rb-view, .rr-zoom, .rr-cite-panel) { display: none !important; }
+body.rr-fs .rr-room > .rb-view { height: 100%; box-sizing: border-box; padding: 10px 14px; }
 @media (max-width: 760px) {
-  .rr-playbar .rr-fs-btn { width: 36px; height: 36px; padding: 0; justify-content: center; border-radius: 10px; }
   .rr-fs-btn span { display: none; }
-  body.rr-fs .rr-room > .rr-stage { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
-  body.rr-fs .rr-stage.with-toc { grid-template-rows: minmax(0, 1fr) 44px; }
+  body.rr-fs .rr-room > .rb-view { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
 }

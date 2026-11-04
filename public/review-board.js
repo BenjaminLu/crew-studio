@@ -10,7 +10,11 @@
 // the original); the notes panel and the last region list every question. Model text only ever goes into text nodes.
 (() => {
 window.crewReviewBoard = (D) => {
-const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle } = D;
+const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
+  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs } = D;
+/** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
+ *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
+const isLesson = (x) => !!(x?.chapter && x.t?.action === "teach" && x.t.status === "done");
 // the board's own state, per room: the camera, what it is locked on, the regions read, the popover, a question waiting for
 // its confirmation, the thread in focus, the filters, the open sheet (a phone), the last layout
 const B = { cam: new Map(), lock: new Map(), cur: new Map(), visited: new Map(), pop: null, pend: new Map(), focus: new Map(), only: new Set(), before: new Set(), peek: new Set(), sheet: new Map(), ver: new Map(),
@@ -107,11 +111,13 @@ function regionEl(card, r, x, j, nth, ctx) {
   const head = h("div", { class: "rp-head" }, h("span", { class: "rp-num" }, String(j + 1).padStart(2, "0")),
     h("h3", {}, chapterName(ch), ch === "decisions" ? h("span", { class: "rp-of" }, ` · ${T(`Choice ${nth}`, `決定 ${nth}`)}`) : null), h("p", { class: "rp-sub", "data-section-title": "" }, x.title));
   const sent = (p, m) => sentences(card, x, p, m, ch === "watch" ? "risk" : "sentence", ctx);
+  // played (the floating play bar), the points not reached yet are dimmed and the one being read is marked
+  const k = revealOf(card, x), n = x.points.length, at = (m) => (k >= n ? "" : m === k - 1 ? " rb-now" : m >= k ? " rb-later" : "");
   const body = x.skip ? h("p", { class: "rp-skip", "data-skip": ch }, h("span", { class: "rp-skip-k" }, T("Not drawn here", "這一章沒有畫")), " ", ...sent(x.points[0] || { text: "", cites: [] }, 0))
-    : tone ? h("ul", { class: "rp-points", "data-points-chapter": ch }, x.points.map((p, m) => h("li", { class: tone[0] }, h("span", { class: "rp-tag" }, T(...tone[1])), h("div", {}, ...sent(p, m)),
+    : tone ? h("ul", { class: "rp-points", "data-points-chapter": ch }, x.points.map((p, m) => h("li", { class: `${tone[0]}${at(m)}` }, h("span", { class: "rp-tag" }, T(...tone[1])), h("div", {}, ...sent(p, m)),
       // a risk has its own 問 (as the prototype's): it asks about the risk's first sentence
       ch === "watch" ? h("button", { type: "button", class: "rb-askbtn", "data-ask-risk": m, "aria-label": T("Ask about this risk", "問這個風險"), onclick: (e) => { e.stopPropagation(); const a = e.currentTarget.closest("li")?.querySelector("[data-akey]"); if (a) openPop(card, a); } }, T("Ask", "問")) : null)))
-    : h("div", { class: `rp-prose${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: m === 0 && ch === "what" ? "lead" : "" }, ...sent(p, m))));
+    : h("div", { class: `rp-prose${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: `${m === 0 && ch === "what" ? "lead" : ""}${at(m)}` }, ...sent(p, m))));
   // what tidying folded in: a gist of the answers to the questions asked here, marked as such (hidden to see the original)
   const merged = ths.filter((t) => t.merged).sort((a, b) => a.n - b.n);
   const absorbed = merged.length && !B.before.has(card) ? h("div", { class: "rb-absorbed", "data-absorbed": merged.map((t) => t.n).join(",") },
@@ -120,9 +126,9 @@ function regionEl(card, r, x, j, nth, ctx) {
   let fig = null; if (x.pic && !x.skip) { const fk = `${card}/${x.pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${x.pic.id}`) ?? 0}/${W}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
     fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, x.pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: W - 40, h: 620 }); decorate(fig, x, x.pic, ctx); if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); } }
   const gist = plain(x.points[0]?.text || x.title || "");
-  return h("section", { class: `rb-region${seen ? "" : " unvisited"}${ths.length ? " hasq" : ""}${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-report-section": key, "data-chapter": ch, "data-open": open, "data-done": done, id: `rp-${card}-${key}`, "aria-label": `${String(j + 1).padStart(2, "0")} ${chapterName(ch)}` },
+  return h("section", { class: `rb-region${seen ? "" : " unvisited"}${ths.length ? " hasq" : ""}${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-report-section": key, "data-chapter": ch, "data-turn": x.turn, "data-open": open, "data-done": done, id: `rp-${card}-${key}`, "aria-label": `${String(j + 1).padStart(2, "0")} ${chapterName(ch)}` },
     h("div", { class: "rb-rtitle" }, h("b", {}, String(j + 1).padStart(2, "0")), h("span", {}, chapterName(ch)), ths.length ? h("span", { class: "rb-cnt" }, T(`${cards} asked`, `問 ${cards}`), open ? h("i", {}, T(` · ${open} not understood`, ` · 未解 ${open}`)) : null) : null),
-    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: "rp-card" }, head, body, absorbed), fig,
+    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, absorbed), fig,
       // far away: only the chapter's number, its title, one line and its questions
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, String(j + 1).padStart(2, "0")), h("div", { class: "rb-mt" }, chapterName(ch)), h("div", { class: "rb-mg", "data-map-gist": "" }, gist),
         h("div", { class: "rb-mq" }, h("span", { class: "rb-badge q", "data-map-open": open }, T(`${open} not understood`, `未解 ${open}`)), h("span", { class: "rb-badge ok", "data-map-done": done }, T(`${done} understood`, `懂了 ${done}`)))),
@@ -132,7 +138,7 @@ function regionEl(card, r, x, j, nth, ctx) {
 /** the last region: the questions asked on the way */
 function endRegion(card, r, n, ctx) {
   const list = [...ctx.threads].sort((a, b) => a.n - b.n), open = list.filter(confusedOf).length, seen = ctx.visited.has("end");
-  return h("section", { class: `rb-region rb-end${seen ? "" : " unvisited"}${ctx.cur === "end" ? " cur" : ""}`, "data-region": "end", "data-chapter": "end", "aria-label": T("Your questions", "你的問題") },
+  return h("section", { class: `rb-region rb-end${seen ? "" : " unvisited"}${ctx.cur === "end" ? " cur" : ""}`, "data-region": "end", "data-chapter": "end", "data-turn": ctx.lastLesson, "aria-label": T("Your questions", "你的問題") },
     h("div", { class: "rb-rtitle" }, h("b", {}, String(n).padStart(2, "0")), h("span", {}, T("Your questions", "你的問題"))),
     h("div", { class: "rb-rbody", style: `width:${phone() ? 340 : 600}px` },
       h("div", { class: "rp-card" }, h("div", { class: "rp-head" }, h("span", { class: "rp-num" }, String(n).padStart(2, "0")), h("h3", {}, T("Your questions", "你的問題")), h("p", { class: "rp-sub" }, T("What you asked along the way", "你在途中問的"))),
@@ -142,6 +148,17 @@ function endRegion(card, r, n, ctx) {
         h("div", { class: "rb-mq" }, h("span", { class: "rb-badge q" }, T(`${open} not understood`, `未解 ${open}`)), h("span", { class: "rb-badge ok" }, T(`${list.filter((t) => t.state === "resolved" || t.merged).length} understood`, `懂了 ${list.filter((t) => t.state === "resolved" || t.merged).length}`)))),
       seen ? null : h("button", { type: "button", class: "rb-ph", "data-placeholder": "end", onclick: (e) => { e.stopPropagation(); flyTo(card, "end"); } }, h("b", {}, T("Your questions", "你的問題")), h("span", {}, T("Not covered yet", "還沒講到")))),
     h("div", { class: "rb-tlayer" }));
+}
+/** a scene region: the room's own scene card (review-room.js sceneCard: its title, its picture, its points, what the turn is
+ *  doing), on the canvas like a chapter; far away only its number, what it is and its title */
+function sceneRegionEl(card, r, x, j, ctx) {
+  const key = x.key, W = ctx.sceneW(x), num = String(j + 1).padStart(2, "0"), label = sceneLabel(x), st = x.t?.status || "done";
+  return h("section", { class: `rb-region rb-scene${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-scene-region": key, "data-chapter": x.welcome ? "welcome" : x.quiz ? "quiz" : x.chapter || x.t?.action || "scene", "data-turn": x.turn, "data-turn-status": st, id: `rp-${card}-${key}`, "aria-label": `${num} ${label}` },
+    h("div", { class: "rb-rtitle" }, h("b", {}, num), h("span", {}, label)),
+    h("div", { class: "rb-rbody", style: `width:${W}px` }, sceneCard(r, ctx.scenes, j, W),
+      h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, num), h("div", { class: "rb-mt" }, label), h("div", { class: "rb-mg", "data-map-gist": "" }, plain(x.title || "")),
+        h("div", { class: "rb-mq" }, st === "running" ? h("span", { class: "rb-badge q" }, T("being written", "撰寫中")) : st !== "done" ? h("span", { class: "rb-badge q" }, st === "interrupted" ? T("interrupted", "中斷") : T("failed", "失敗")) : h("span", { class: "rb-badge ok" }, T(`${x.points.length} point${x.points.length === 1 ? "" : "s"}`, `${x.points.length} 點`))))),
+    h("div", { class: "rb-tlayer", "data-tlayer": key }));
 }
 /** the notes: every question, its place, how many cards and its state; a click focuses it */
 function notesList(card, list, where) {
@@ -337,17 +354,23 @@ function refit(card) {
 }
 function fitAll(card, glide = true) { if (!B.L.get(card)) return; B.lock.set(card, { all: true }); const to = lockTarget(card); if (to) moveCam(card, to, glide); }
 function zoomAt(card, f, cx, cy, glide = false) { const c = camOf(card), s2 = clamp(c.s * f, 0.1, 2.4), bx = (cx - c.x) / c.s, by = (cy - c.y) / c.s; B.lock.delete(card); moveCam(card, { s: s2, x: cx - bx * s2, y: cy - by * s2 }, glide); }
+/** a lesson's chapter and the questions' region are read once (kept for the room); a scene region is always read */
+const askable = (card, key) => key === "end" || isLesson(B.shown.get(card)?.scenes.find((x) => x.key === key));
 function flyTo(card, key, glide = true) {
-  const r = RR.rooms.get(card); visit(card, r, key); B.cur.set(card, key); B.lock.set(card, { region: key }); B.sheet.delete(card);
+  const r = RR.rooms.get(card); if (askable(card, key)) visit(card, r, key); B.cur.set(card, key); B.lock.set(card, { region: key }); B.sheet.delete(card);
+  // the scene the play bar plays follows the region in view (a new one stops what was playing)
+  const sh = B.shown.get(card), j = sh ? sh.scenes.findIndex((x) => x.key === key) : -1;
+  if (j >= 0 && j !== sh.i) { stopPlay(); markMoved(card); RR.scene.set(card, j); B.lastScene.set(card, key); }
   rerender(); layout(card); const to = regionCam(card, key); if (to) moveCam(card, to, glide);
 }
-function step(card, dir) { const L = B.L.get(card); if (!L) return; const order = L.order, i = order.indexOf(B.cur.get(card)), n = order[i + dir];
+/** → / ←: the next point of a scene being played or stepped through, else the next region (shown whole) */
+function step(card, dir) { if (B.cur.get(card) !== "end" && stepReveal(card, dir)) return; const L = B.L.get(card); if (!L) return; const order = L.order, i = order.indexOf(B.cur.get(card)), n = order[i + dir];
   if (n) flyTo(card, n); else if (dir > 0) fitAll(card); }
 function focusThread(card, n) {
   const r = RR.rooms.get(card), t = (r?.lesson?.threads || []).find((x) => x.n === n); if (!t) return;
-  // a question from another lesson (taught again since): that lesson comes back to the board first
-  const sh = B.shown.get(card), j = sh ? sh.scenes.findIndex((x) => x.key === t.anchor.scene) : -1;
-  if (j >= 0 && sh.scenes[sh.i]?.turn !== sh.scenes[j].turn) { RR.scene.set(card, j); rerender(); }
+  // every lesson is on the board; one regenerated since shows the version the question was asked on
+  const sh = B.shown.get(card), tn = (r.turns || []).find((x) => x.n === t.anchor.turn);
+  if (sh && tn && !sh.scenes.some((x) => x.key === t.anchor.scene)) { RR.ver.set(`${card}/${tn.regenOf ?? tn.n}`, tn.n); rerender(); }
   visit(card, r, t.anchor.scene); if (!B.focus.has(card)) B.focus.set(card, { n, prev: { ...camOf(card) } }); else B.focus.get(card).n = n;
   B.lock.set(card, { focus: n }); B.sheet.delete(card); B.pop = null; rerender(); layout(card);
   const to = focusCam(card, n); if (to) moveCam(card, to);
@@ -408,11 +431,12 @@ function layout(card) {
       groups[n] = { key, ...box }; }
     C[key] = { W, H, w: mx, h: my, reg };
   }
-  // the rows: three chapters a row on a desktop, one on a phone; a row as tall as its tallest region
-  const keys = Object.keys(C), per = ph ? 1 : 3, R = {}; let y = 0;
-  for (let i = 0; i < keys.length; i += per) { let x = 0, rh = 0;
-    for (const key of keys.slice(i, i + per)) { const c = C[key]; R[key] = { x, y, w: c.w, h: c.h, W: c.W, H: c.H }; x += c.w + (ph ? 60 : 150); rh = Math.max(rh, c.h); }
-    y += rh + (ph ? 110 : 170); }
+  // the rows: three regions a row on a desktop, one on a phone, each answer (a turn) starting a row of its own; a row as tall
+  // as its tallest region
+  const keys = Object.keys(C), per = ph ? 1 : 3, R = {}, gapY = ph ? 110 : 170; let y = 0, x = 0, rh = 0, cnt = 0, turn0 = null;
+  for (const key of keys) { const c = C[key], turn = c.reg.dataset.turn ?? turn0;
+    if (cnt && (cnt >= per || turn !== turn0)) { y += rh + gapY; x = 0; rh = 0; cnt = 0; }
+    R[key] = { x, y, w: c.w, h: c.h, W: c.W, H: c.H }; x += c.w + (ph ? 60 : 150); rh = Math.max(rh, c.h); cnt++; turn0 = turn; }
   for (const [n, g] of Object.entries(groups)) { const r = R[g.key]; groups[n] = { key: g.key, x: r.x + g.x0, y: r.y + g.y0, w: g.x1 - g.x0, h: g.y1 - g.y0 }; }
   B.L.set(card, { R, order: keys, groups, q, names });
   // 3. write
@@ -441,7 +465,7 @@ function after(card) {
   const vp = vpOf(card); if (!vp) return; const r = RR.rooms.get(card), plane = vp.querySelector("[data-board-plane]");
   plane.dataset.lod = LOD(camOf(card).s); layout(card);
   const lock = B.lock.get(card);
-  if (!B.cam.has(card)) { const key = B.cur.get(card) || B.L.get(card)?.order[0]; B.cur.set(card, key); visit(card, r, key); const to = regionCam(card, key); if (to) B.cam.set(card, to); B.lock.set(card, { region: key });
+  if (!B.cam.has(card)) { const key = B.cur.get(card) || B.L.get(card)?.order[0]; B.cur.set(card, key); if (askable(card, key)) visit(card, r, key); const to = regionCam(card, key); if (to) B.cam.set(card, to); B.lock.set(card, { region: key });
     if (phone() && !B.sheet.has(card) && !r?.snapshot) B.sheet.set(card, "outline"); if (B.sheet.get(card) === "outline") requestAnimationFrame(() => redraw(card)); }
   else if (lock && !B.drag) { const to = lockTarget(card); if (to) { if (B.tween?.card === card) B.tween.to = to; else B.cam.set(card, to); } }
   applyCam(card); if (plane.dataset.lod !== LOD(camOf(card).s)) applyCam(card);
@@ -469,6 +493,7 @@ function pointerDown(card, e) {
   if (e.button > 0 || e.target.closest("input,select,textarea,.rb-zoom,.rb-tools,.rb-next,.rb-focusbar,.rb-pop")) return;
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); B.moved = false;
   if (ptrs.size === 1) B.drag = { card, x: e.clientX, y: e.clientY, c: { ...camOf(card) }, space: B.space };
+  if (B.space) B.spaceUsed = true;
   if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; B.pinch = { card, d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; B.drag = null; }
 }
 addEventListener("pointermove", (e) => {
@@ -483,7 +508,9 @@ const up = (e) => { ptrs.delete(e.pointerId); if (ptrs.size < 2) B.pinch = null;
 addEventListener("pointerup", up); addEventListener("pointercancel", up);
 // a new window size (a phone's column, a narrower desktop) draws the board again and aims the camera at what it is locked on
 let resized = 0; addEventListener("resize", () => { clearTimeout(resized); resized = setTimeout(() => { if (document.querySelector("[data-board-vp]")) rerender(); }, 120); });
-addEventListener("keyup", (e) => { if (e.key === " ") { B.space = false; document.querySelector("[data-board-vp]")?.classList.remove("grab"); } });
+// Space held and dragged pans; a Space tap (no drag) plays or pauses the scene in view
+addEventListener("keyup", (e) => { if (e.key !== " ") return; const tap = B.space && !B.spaceUsed; B.space = false; B.spaceUsed = false; document.querySelector("[data-board-vp]")?.classList.remove("grab");
+  if (tap && S.route?.name === "room" && S.route.arg && vpOf(S.route.arg)) togglePlay(S.route.arg); });
 function wheel(card, e) {
   e.preventDefault(); const vr = vpOf(card).getBoundingClientRect(), c = camOf(card);
   // a sideways scroll pans; any other wheel (and a trackpad's pinch, which arrives as a ctrl wheel) zooms at the pointer
@@ -505,7 +532,7 @@ function keydown(e, card) {
   if (e.key === "Escape") { if (B.pop) closePop(); else if (B.pend.has(card)) { B.pend.delete(card); rerender(); } else if (B.focus.has(card)) unfocus(card); else if (B.sheet.get(card)) { B.sheet.delete(card); rerender(); } else return false; e.preventDefault(); return true; }
   if (t?.closest?.("input,textarea,select,[contenteditable]")) return false;
   if ((e.key === "Enter" || e.key === " ") && t?.matches?.("[data-akey]")) { e.preventDefault(); openPop(card, t); return true; }
-  if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); B.space = true; vpOf(card)?.classList.add("grab"); return true; }
+  if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); if (!e.repeat && !B.space) { B.space = true; B.spaceUsed = false; } vpOf(card)?.classList.add("grab"); return true; }
   if (t?.closest?.(".rb-pop")) return false;
   if (e.key === "ArrowRight" || e.key === "n" || e.key === "N") { e.preventDefault(); step(card, 1); return true; }
   if (e.key === "ArrowLeft" || e.key === "p" || e.key === "P") { e.preventDefault(); step(card, -1); return true; }
@@ -548,64 +575,82 @@ function popover(card, r) {
       : !desk ? deskNote() : r.offer?.error ? h("p", { class: "rb-popnote" }, r.offer.error) : null,
     h("button", { type: "button", class: "rb-popx", "aria-label": T("Close", "關閉"), onclick: (e) => { e.stopPropagation(); closePop(); } }, "×"));
 }
+/** The board, the room's only view: every scene a region on one canvas (the welcome, each answer, each lesson chapter, a
+ *  check, a turn still being written), a row of its own for each turn; the rail lists them all and flies there; the play
+ *  bar plays the scene in view */
 function view(r, scenes, i) {
   B.shown.set(r.card.id, { scenes, i });
-  const card = r.card.id, sc = scenes[i], t = sc.t, secs = scenes.filter((x) => x.turn === sc.turn && x.chapter), live = r.open && !r.snapshot;
+  const card = r.card.id, sc = scenes[i], t = sc?.t, live = r.open && !r.snapshot, secs = scenes.filter(isLesson), lesson = secs.length > 0;
   const L = r.lesson || { threads: [], visited: [] }, threads = L.threads || [], TN = new Map((r.turns || []).map((x) => [x.n, x]));
-  // a saved room shows every chapter; a live one the chapters read (the first always)
-  const visited = B.visited.get(card) || new Set(); for (const k of L.visited || []) visited.add(k); if (r.snapshot) { for (const x of secs) visited.add(x.key); visited.add("end"); } B.visited.set(card, visited);
-  // where the board stands: the chapter a jump (the rail, the transcript, a finished lesson) asks for, else where it was, else the first
-  const valid = [...secs.map((x) => x.key), "end"], jump = RR.jump?.get(card); if (jump) RR.jump.delete(card);
-  const prevScene = B.lastScene.get(card); B.lastScene.set(card, sc.key);
-  const want = jump || (prevScene != null && prevScene !== sc.key ? sc.key : null);
-  if (!valid.includes(B.cur.get(card))) B.cur.set(card, valid.includes(want) ? want : secs[0]?.key);
-  else if (want && valid.includes(want) && want !== B.cur.get(card)) queueMicrotask(() => flyTo(card, want, false));
-  const ctx = { threads, TN, visited, cur: B.cur.get(card) };
-  let nth = 0; const regions = secs.map((x, j) => regionEl(card, r, x, j, x.chapter === "decisions" ? ++nth : 0, ctx)); regions.push(endRegion(card, r, secs.length + 1, ctx));
-  const order = [...secs.map((x) => x.key), "end"], ci = order.indexOf(B.cur.get(card)), next = order[ci + 1], names = Object.fromEntries(secs.map((x, j) => [x.key, `${String(j + 1).padStart(2, "0")} ${chapterName(x.chapter)}`])); names.end = T("Your questions", "你的問題");
+  // a saved room shows every chapter; a live one the chapters read (the first always); a scene region is always read
+  const visited = B.visited.get(card) || new Set(); for (const k of L.visited || []) visited.add(k); if (r.snapshot) { for (const x of secs) visited.add(x.key); visited.add("end"); }
+  for (const x of scenes) if (!isLesson(x)) visited.add(x.key); B.visited.set(card, visited);
+  // where the board stands: the region a jump (the transcript, a finished answer, the play bar) asks for, else where it was,
+  // else the scene the room is on
+  const order = [...scenes.map((x) => x.key), ...(lesson ? ["end"] : [])], jump = RR.jump?.get(card); if (jump) RR.jump.delete(card);
+  const prevScene = B.lastScene.get(card); B.lastScene.set(card, sc?.key);
+  const want = jump || (prevScene !== sc?.key ? sc?.key : null);
+  if (!order.includes(B.cur.get(card))) B.cur.set(card, order.includes(want) ? want : sc?.key ?? order[0]);
+  else if (want && order.includes(want) && want !== B.cur.get(card)) queueMicrotask(() => flyTo(card, want, false));
+  const notesOpen = lesson && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
+  // a scene region is as wide as the board shows at a readable scale: the board's width, at most 980
+  const avail = isFs() ? innerWidth - 40 : Math.min(innerWidth, 1480) - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - (notesOpen ? 284 : 0) - 32;
+  const sceneW = (x) => (phone() ? 340 : clamp(Math.round(avail), 600, x.quiz ? 760 : 980));
+  const firstOf = (x) => scenes.find((y) => y.turn === x.turn) === x;
+  const ctx = { threads, TN, visited, cur: B.cur.get(card), scenes, sceneW, firstOf, lastLesson: secs.at(-1)?.turn };
+  const regions = scenes.map((x, j) => (isLesson(x) ? regionEl(card, r, x, j, x.chapter === "decisions" ? scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === "decisions").length : 0, ctx) : sceneRegionEl(card, r, x, j, ctx)));
+  if (lesson) regions.push(endRegion(card, r, scenes.length + 1, ctx));
+  const ci = order.indexOf(B.cur.get(card)), next = order[ci + 1], num = (j) => String(j + 1).padStart(2, "0");
+  const names = Object.fromEntries(scenes.map((x, j) => [x.key, `${num(j)} ${isLesson(x) ? chapterName(x.chapter) : sceneLabel(x)}`])); names.end = T("Your questions", "你的問題");
   const lod = LOD(camOf(card).s), focus = B.focus.get(card), merged = threads.some((x) => x.merged), sheet = B.sheet.get(card);
   // the outline counts cards (則) and the questions not understood, as the prototype's
   const counts = (key) => { const ths = threads.filter((x) => x.anchor.scene === key), n = ths.reduce((m, x) => m + x.nodes.length, 0), u = ths.filter(confusedOf).length; return ths.length ? h("span", { class: "rb-ocnt", "data-outline-count": `${n}/${u}` }, String(n), u ? h("b", {}, `/${u}`) : null) : null; };
-  const outline = h("div", { class: "rb-outline", role: "list" }, order.map((key, j) => h("button", { type: "button", role: "listitem", class: `rb-ol${key === ctx.cur ? " on" : ""}${visited.has(key) ? "" : " un"}${secs[j]?.skip ? " skipped" : ""}`, "data-outline": key, "data-toc-scene": key, "aria-current": key === ctx.cur ? "true" : null, onclick: () => flyTo(card, key) },
-    h("span", { class: "rb-onum" }, String(j + 1).padStart(2, "0")), h("span", { class: "rb-olb" }, key === "end" ? names.end : chapterName(secs[j].chapter), key !== "end" ? h("small", {}, secs[j].title) : null), counts(key))));
-  const others = scenes.map((x, j) => [x, j]).filter(([x]) => x.turn !== sc.turn), head = r.head ? String(r.head).slice(0, 8) : "";
+  const item = (key, j, x) => h("button", { type: "button", role: "listitem", class: `rb-ol${key === ctx.cur ? " on" : ""}${visited.has(key) ? "" : " un"}${x?.skip ? " skipped" : ""}`, "data-outline": key, "data-toc-scene": key, "aria-current": key === ctx.cur ? "true" : null, title: x?.title || null, onclick: () => flyTo(card, key) },
+    h("span", { class: "rb-onum" }, num(j)), h("span", { class: "rb-olb" }, !x ? names.end : isLesson(x) ? chapterName(x.chapter) : clip(plain(x.title || ""), 40), x ? h("small", {}, isLesson(x) ? x.title : sceneLabel(x)) : null),
+    x?.t?.status === "running" ? h("i", { class: "rb-orun", "data-outline-running": "" }, "…") : counts(key));
+  // every answer in the room, a group each: the welcome, then each question (its words), a lesson chapter by chapter
+  const groups = []; scenes.forEach((x, j) => { if (groups.at(-1)?.turn !== x.turn) groups.push({ turn: x.turn, x, items: [] }); groups.at(-1).items.push([x, j]); });
+  const outline = h("div", { class: "rb-outline" }, groups.map((g) => h("div", { class: "rb-ogroup", role: "list", "data-outline-group": g.turn ?? 0, "aria-label": g.x.welcome ? T("Welcome", "開場") : clip(plain(g.x.t?.text || g.x.title || ""), 60) },
+    h("p", { class: "rb-oh", "data-outline-turn": g.turn ?? 0 }, g.x.welcome ? T("Welcome", "開場") : clip(plain(g.x.t?.studio || !g.x.t?.text ? g.x.title : g.x.t.text), 44)),
+    g.items.map(([x, j]) => item(x.key, j, x)), lesson && g.turn === ctx.lastLesson ? item("end", scenes.length, null) : null)));
+  const head = r.head ? String(r.head).slice(0, 8) : "";
   const eyebrow = [r.subject?.repository, r.pr?.id ? `PR #${r.pr.id}` : null, r.task?.id || null, head ? `head ${head}` : null].filter(Boolean).join(" · ");
-  const rail = h("nav", { class: `rb-rail${sheet === "outline" ? " open" : ""}`, "data-board-rail": card, "aria-label": T("Chapters and the map", "章節與小地圖") },
+  const rail = h("nav", { class: `rb-rail${sheet === "outline" ? " open" : ""}`, "data-board-rail": card, "aria-label": T("Every answer and the map", "每個回答與小地圖") },
     phone() ? h("button", { type: "button", class: "rb-sheetx", "aria-label": T("Close", "關閉"), onclick: () => { B.sheet.delete(card); rerender(); } }, "×") : null,
-    h("div", { class: "rb-lesson" }, eyebrow ? h("div", { class: "rp-eyebrow rb-eyebrow" }, eyebrow) : null, h("b", {}, T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id)), autoNote(r, t)),
+    h("div", { class: "rb-lesson" }, eyebrow ? h("div", { class: "rp-eyebrow rb-eyebrow" }, eyebrow) : null, h("b", {}, T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id))),
     h("h6", {}, T("Map", "小地圖")), miniSvg(card),
-    h("label", { class: "rb-filter" }, h("input", { type: "checkbox", "data-only-asked": "", checked: B.only.has(card), onchange: (e) => { if (e.target.checked) B.only.add(card); else B.only.delete(card); rerender(); if (e.target.checked) fitAll(card); } }), T("Only the chapters with questions", "只看有問題的")),
-    h("h6", {}, T("Chapters · asked / open", "章節 · 問題／未解")), outline,
-    others.length ? [h("h6", {}, T("Other scenes", "其他場景")), h("div", { class: "rb-others" }, others.map(([x, j]) => h("button", { type: "button", class: "rb-ol other", "data-other-scene": x.key, onclick: () => { RR.scene.set(card, j); rerender(); } }, h("span", { class: "rb-olb" }, clip(x.title, 40)))))] : null);
+    lesson ? h("label", { class: "rb-filter" }, h("input", { type: "checkbox", "data-only-asked": "", checked: B.only.has(card), onchange: (e) => { if (e.target.checked) B.only.add(card); else B.only.delete(card); rerender(); if (e.target.checked) fitAll(card); } }), T("Only the chapters with questions", "只看有問題的")) : null,
+    h("h6", {}, lesson ? T("Answers · chapters · asked / open", "回答 · 章節 · 問題／未解") : T("Answers", "回答")), outline);
   const notes = h("aside", { class: `rb-notes${sheet === "notes" ? " open" : ""}`, "data-board-notes": card, "aria-label": T("Your questions", "你的問題") },
     phone() ? h("button", { type: "button", class: "rb-sheetx", "aria-label": T("Close", "關閉"), onclick: () => { B.sheet.delete(card); rerender(); } }, "×") : null,
     h("h3", {}, T("Your questions", "我的標註")), h("p", { class: "rb-hint" }, T("Click any sentence, a box, line or transition of a drawing, or a row of a transaction or a call, and ask right there. Click a question here to focus it.", "點任何一句話、圖上的框、線或轉換，或交易、呼叫的一列，就在那裡問。點這裡的一則會聚焦到它。")),
     threads.length ? notesList(card, [...threads].sort((a, b) => a.n - b.n), "side") : h("p", { class: "rb-empty" }, T("No question yet.", "還沒有標註。")));
   const tools = h("div", { class: "rb-tools", role: "toolbar", "aria-label": T("The board", "白板") },
-    live ? h("button", { type: "button", class: "rb-btn", "data-board-tidy": "", disabled: B.busy.has(`${card}/tidy`), title: T("Fold the questions you understood back into their chapters", "把懂了的問答併回章節"), onclick: () => tidy(card) }, B.busy.has(`${card}/tidy`) ? T("Tidying…", "整理中…") : T("Tidy the board", "整理白板")) : null,
+    live && lesson ? h("button", { type: "button", class: "rb-btn", "data-board-tidy": "", disabled: B.busy.has(`${card}/tidy`), title: T("Fold the questions you understood back into their chapters", "把懂了的問答併回章節"), onclick: () => tidy(card) }, B.busy.has(`${card}/tidy`) ? T("Tidying…", "整理中…") : T("Tidy the board", "整理白板")) : null,
     merged ? h("span", { class: "rb-seg", role: "group", "aria-label": T("Before or after tidying", "整理前或整理後") }, ["before", "after"].map((v) => h("button", { type: "button", "data-tidy-view": v, "aria-pressed": String((v === "before") === B.before.has(card)), onclick: () => { if (v === "before") B.before.add(card); else B.before.delete(card); rerender(); } }, v === "before" ? T("Before", "整理前") : T("After", "整理後")))) : null,
     live && r.followUps?.on ? h("label", { class: "rb-toolnote rb-agree" }, h("input", { type: "checkbox", "data-followups": "", checked: true, onchange: (e) => { if (!e.target.checked) lessonOp(card, { op: "consent", on: false }); } }), T(" Questions start right away", " 追問直接開始")) : null,
-    !phone() ? h("button", { type: "button", class: "rb-btn ghost", "data-notes-toggle": "", "aria-pressed": String(innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card)), onclick: () => { if (B.notes.has(card)) B.notes.delete(card); else B.notes.add(card); rerender(); } }, T(`Questions ${threads.length}`, `標註 ${threads.length}`)) : null);
+    lesson && !phone() ? h("button", { type: "button", class: "rb-btn ghost", "data-notes-toggle": "", "aria-pressed": String(notesOpen), onclick: () => { if (B.notes.has(card)) B.notes.delete(card); else B.notes.add(card); rerender(); } }, T(`Questions ${threads.length}`, `標註 ${threads.length}`)) : null);
   const vp = h("div", { class: `rb-vp${B.only.has(card) ? " only" : ""}`, "data-board-vp": card, tabindex: "-1", onpointerdown: (e) => pointerDown(card, e), onwheel: (e) => wheel(card, e), onclick: (e) => click(card, r, e), onfocusin: (e) => focusIn(card, e), onscroll: (e) => { e.currentTarget.scrollTop = 0; e.currentTarget.scrollLeft = 0; } },
     h("div", { class: `rb-plane${focus ? " focusing" : ""}${B.before.has(card) ? " before" : ""}`, "data-board-plane": card, "data-lod": lod, "data-focus": focus ? focus.n : null },
       (() => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("class", "rb-links"); s.setAttribute("data-board-links", ""); s.setAttribute("aria-hidden", "true"); return s; })(), regions));
   const curName = names[ctx.cur] || "";
-  const notesOpen = innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card);
-  const el = h("section", { class: `rr-stage board${notesOpen ? "" : " nonotes"}`, "data-stage": card, "data-scene": ctx.cur, "data-view": "board", "data-report": t.n, "aria-label": T("The lesson board", "課程白板") },
+  const el = h("section", { class: `rb-view${notesOpen ? "" : " nonotes"}`, "data-board": card, "data-scene": ctx.cur, "data-view": "board", "data-report": t?.n ?? null, "aria-label": T("The board", "白板") },
     rail,
     h("div", { class: "rb-main" }, vp, tools,
       focus ? h("div", { class: "rb-focusbar", role: "status", "data-focus-bar": focus.n }, h("span", {}, T(`Focused on #${focus.n} · ${clip((threads.find((x) => x.n === focus.n)?.anchor.text) || "", 24)}`, `聚焦 #${focus.n} · ${clip((threads.find((x) => x.n === focus.n)?.anchor.text) || "", 24)}`)), h("button", { type: "button", "data-focus-exit": "", onclick: () => unfocus(card) }, T("Esc to return", "Esc 返回"))) : null,
       B.toast?.card === card ? h("div", { class: `rb-toast${B.toast.bad ? " bad" : ""}`, role: "status", "data-board-toast": "" }, B.toast.text) : null,
-      h("button", { type: "button", class: "rb-next", "data-board-next": next || "", onclick: () => step(card, 1) }, next ? T(`Next: ${names[next]} ▸`, `下一段：${names[next]} ▸`) : T("Back to the whole board", "回到全覽")),
+      readyChip(r, scenes),
+      order.length > 1 ? h("button", { type: "button", class: "rb-next", "data-board-next": next || "", onclick: () => step(card, 1) }, next ? T(`Next: ${names[next]} ▸`, `下一段：${names[next]} ▸`) : T("Back to the whole board", "回到全覽")) : null,
+      playBar(r, scenes, i),
       h("div", { class: "rb-zoom", role: "group", "aria-label": T("Zoom", "縮放") }, h("button", { type: "button", "data-zoom-out": "", "aria-label": T("Zoom out", "縮小"), onclick: () => { const v = vpOf(card); zoomAt(card, 0.8, v.clientWidth / 2, v.clientHeight / 2, true); } }, "−"),
         h("span", { "data-zoom-pct": "", "aria-live": "polite" }, `${Math.round(camOf(card).s * 100)}%`), h("button", { type: "button", "data-zoom-in": "", "aria-label": T("Zoom in", "放大"), onclick: () => { const v = vpOf(card); zoomAt(card, 1.25, v.clientWidth / 2, v.clientHeight / 2, true); } }, "+"),
         h("button", { type: "button", class: "fit", "data-zoom-fit": "", onclick: () => fitAll(card) }, T("Fit all", "全覽")), fsToggle(card))),
-    notesOpen || phone() ? notes : null,
-    phone() ? h("nav", { class: "rb-phonebar", "aria-label": T("The board", "白板") }, h("button", { type: "button", "data-sheet": "outline", "aria-pressed": String(sheet === "outline"), onclick: () => { B.sheet.get(card) === "outline" ? B.sheet.delete(card) : B.sheet.set(card, "outline"); rerender(); } }, T("Chapters", "章節")),
+    notesOpen || (phone() && lesson) ? notes : null,
+    phone() ? h("nav", { class: `rb-phonebar${lesson ? "" : " two"}`, "aria-label": T("The board", "白板") }, h("button", { type: "button", "data-sheet": "outline", "aria-pressed": String(sheet === "outline"), onclick: () => { B.sheet.get(card) === "outline" ? B.sheet.delete(card) : B.sheet.set(card, "outline"); rerender(); } }, T("Answers", "回答")),
       h("button", { type: "button", "data-board-next-phone": next || "", onclick: () => step(card, 1) }, next ? T("Next ▸", "下一段 ▸") : T("All", "全覽")),
-      h("button", { type: "button", "data-sheet": "notes", "aria-pressed": String(sheet === "notes"), onclick: () => { B.sheet.get(card) === "notes" ? B.sheet.delete(card) : B.sheet.set(card, "notes"); rerender(); } }, T("Questions ", "標註 "), h("b", {}, String(threads.length)))) : null,
+      lesson ? h("button", { type: "button", "data-sheet": "notes", "aria-pressed": String(sheet === "notes"), onclick: () => { B.sheet.get(card) === "notes" ? B.sheet.delete(card) : B.sheet.set(card, "notes"); rerender(); } }, T("Questions ", "標註 "), h("b", {}, String(threads.length))) : null) : null,
     sheet ? h("div", { class: "rb-scrim", onclick: () => { B.sheet.delete(card); rerender(); } }) : null,
-    popover(card, r), h("span", { class: "sr", "aria-live": "polite", "data-board-where": "" }, T(`Chapter ${curName}`, `章節 ${curName}`)));
+    popover(card, r), h("span", { class: "sr", "aria-live": "polite", "data-board-where": "" }, T(`Now on ${curName}`, `現在在 ${curName}`)));
   queueMicrotask(() => after(card));
   return el;
 }

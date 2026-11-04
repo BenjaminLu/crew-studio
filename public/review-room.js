@@ -5,7 +5,7 @@
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
 const RR = { imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
-  scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Set(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
+  scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -76,9 +76,9 @@ const boxPath = (x, y, w, h, r) => `M${x + r},${y} H${x + w - r} Q${x + w},${y} 
 const diamondPath = (x, y, w, h) => `M${x + w / 2},${y} L${x + w},${y + h / 2} L${x + w / 2},${y + h} L${x},${y + h / 2} Z`;
 /** the parts of a picture this viewer has seen drawn (a diagram's steps share one set, so a step draws only what it adds) */
 const drawnOf = (card, it) => { const key = `${card}/${it.group ? `${it.turn}:${it.group}` : it.id}`; if (!RR.drawn.has(key)) RR.drawn.set(key, new Set()); return RR.drawn.get(key); };
-/** the picture's box, roughly: the board's left column on a desktop, the top of the board on a phone */
-let BOX = null; // the report's figure box, while a report figure is drawn
-const picBox = () => BOX ? BOX : FS.card != null ? (innerWidth <= 760 ? { narrow: true, w: innerWidth - 40, h: Math.max(260, innerHeight - 150) } : { w: Math.max(400, (innerWidth - 120) * 0.58), h: Math.max(300, innerHeight - 190) }) : innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.dataset.focus === "room" ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
+/** the picture's box: the scene card's picture column (sceneCard) or a lesson figure's region (reportFigure), set while it is drawn */
+let BOX = null;
+const picBox = () => BOX || (innerWidth <= 760 ? { narrow: true, w: innerWidth - 60, h: 1400 } : { w: 540, h: 460 });
 const reduceMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 /** a flowchart's places, left to right (horiz) or top down; node size from its longest label */
 function flowLayout(g, horiz, fs) {
@@ -259,7 +259,7 @@ function citePanel(r) {
     : d.kind === "review" ? [h("p", {}, h("b", {}, d.author), `${d.state ? ` · ${d.state.toLowerCase().replace(/_/g, " ")}` : ""}${d.path ? ` · ${d.path}${d.line ? `:${d.line}` : ""}` : ""}${d.at ? ` · ${String(d.at).slice(0, 10)}` : ""}`),
       h("p", { class: "faint" }, T("A reviewer's own words on GitHub: untrusted text, shown as written.", "審查者在 GitHub 上的原話：不受信任的文字，照原樣顯示。")), h("blockquote", { class: "rr-quote", "data-untrusted": "review" }, d.body || ""),
       d.url && /^https:\/\/github\.com\//.test(d.url) ? h("a", { href: d.url, target: "_blank", rel: "noopener noreferrer", "data-review-link": d.id }, T("Open on GitHub", "在 GitHub 開啟")) : null]
-    // a board item opens on the stage: its scene, that picture (never a scroll of the page)
+    // a board item opens on the board: the camera flies to its scene, that picture shown
     : d.kind === "board" ? h("a", { href: `#rr-${d.item.id}`, onclick: (e) => { e.preventDefault(); showItem(r, d.item.id); } }, T(`Board item ${d.item.id}: ${d.item.title}`, `白板項目 ${d.item.id}：${d.item.title}`)) : null;
   return h("section", { class: "card x-pad rr-cite-panel", "data-cite-panel": c.ref, tabindex: "-1", role: "dialog", "aria-label": T("Citation", "引用") },
     h("div", { class: "rr-item-h" }, h("b", {}, T("Basis", "依據")), h("code", {}, c.ref), h("span", { class: "x-grow" }), h("button", { type: "button", class: "btn ghost", onclick: () => { RR.cite.delete(r.card.id); rerender(); } }, T("Close", "關閉"))), body);
@@ -759,7 +759,7 @@ function langToggle(r) {
     const can = !missing || (r.open && !r.snapshot && !r.offer?.error) || ((r.snapshot || !r.open) && some);
     return h("button", { type: "button", class: "rr-lang", "data-lang-pick": l, "aria-pressed": String(cur === l), disabled: !can || r.running != null, title: missing ? (can ? T("Not translated yet: a small paid round", "還沒翻譯：一次小的付費回合") : T("Not in this language", "沒有這個語言的版本")) : "", onclick: () => switchLang(r, l) }, label); }));
 }
-// ---------- the stage: each answer is one or more scenes, a picture beside the tutor's points, revealed step by step ----------
+// ---------- the scenes: each answer is one or more, a picture beside the tutor's points, played point by point ----------
 const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"], reviews: ["Digest reviews", "整理審查意見"], since: ["What changed since last time", "上次之後改了什麼"], reviewers: ["What reviewers asked", "審查者問了什麼"] };
 /** text cut to n characters at a word, with an ellipsis (one long word is cut where it must) */
 const clip = (s, n) => { s = String(s || "").trim(); if (s.length <= n) return s; const cut = s.slice(0, n), at = cut.lastIndexOf(" "); return `${(at > n / 3 ? cut.slice(0, at) : cut.slice(0, n - 1)).replace(/[\s,.;:–—-]+$/, "")}…`; };
@@ -831,7 +831,7 @@ function scenesOf(r) {
   for (const t of r.turns) if (!t.studio) { const k = rootOf(t); if (!versions.has(k)) versions.set(k, []); versions.get(k).push(t); }
   const shownOf = (root) => { const vs = versions.get(root) || [], pick = RR.ver.get(`${r.card.id}/${root}`); return vs.find((t) => t.n === pick) || vs.at(-1); };
   for (const t0 of r.turns) {
-    // a question asked on the lesson board is answered in its card there, never a scene of the stage
+    // a question asked on a lesson's chapter is answered in its card there, never a scene of its own
     if (t0.hidden || t0.thread) continue;
     if (!t0.studio && shownOf(rootOf(t0)) !== t0) continue;
     const t = { ...localTurn(r, t0, lang), versions: t0.studio ? null : versions.get(rootOf(t0)) };
@@ -856,7 +856,10 @@ function scenesOf(r) {
   }
   return out;
 }
-const sceneState = (card, scenes) => { let i = RR.scene.get(card); if (i == null || i >= scenes.length) i = scenes.length - 1; return Math.max(0, i); };
+/** the scene the room is on: the one picked, else the latest (a lesson's first chapter, which is read from the top) */
+const sceneState = (card, scenes) => { let i = RR.scene.get(card);
+  if (i == null || i >= scenes.length) { i = scenes.length - 1; const last = scenes[i]; if (last?.chapter && last.t?.action === "teach") i = scenes.findIndex((x) => x.turn === last.turn); }
+  return Math.max(0, i); };
 const revealOf = (card, sc) => Math.min(sc.points.length, RR.reveal.get(`${card}/${sc.key}`) ?? sc.points.length);
 /** points a page shows: never more, so the points column never grows past the board; the next ones are the next page,
  *  reached like any other point (a page advances like a beat) */
@@ -877,7 +880,7 @@ function fallbackVisual(r, sc) {
   const top = files.length ? files : [...stat].sort((a, b) => (b.added + b.removed) - (a.added + a.removed)).map((f) => f.path);
   return { id: `${sc.key}-key`, synth: true, turn: sc.turn, type: "keycard", kind: "studio", title: sc.title, files: top.slice(0, 4), basis: null, cites: [] };
 }
-/** show a board item on the stage: its scene, that picture */
+/** show a board item: its scene (the board flies there), that picture */
 function showItem(r, id) {
   const card = r.card.id, scenes = scenesOf(r), i = scenes.findIndex((s) => s.visuals.some((b) => b.id === id)); RR.cite.delete(card);
   if (i >= 0) { stopPlay(); RR.scene.set(card, i); RR.pick.set(`${card}/${scenes[i].key}`, id); }
@@ -1003,7 +1006,7 @@ function stepPoint(card, dir) {
   else if (i > 0) { RR.scene.set(card, i - 1); RR.reveal.set(`${card}/${scenes[i - 1].key}`, scenes[i - 1].points.length); }
   rerender();
 }
-/** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind a chip instead of taking the stage */
+/** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind a chip instead of pulling the board away */
 const markMoved = (card) => { if (RR.rooms.get(card)?.running != null) RR.moved.add(card); };
 const goScene = (card, n) => { markMoved(card); const { scenes } = curScene(card); if (!scenes?.length) return; stopPlay(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
 function voicePicker(r) {
@@ -1062,13 +1065,11 @@ function regenList(r, t) {
       h("span", { class: `rr-pill${m.level === "vendor" ? "" : " warn"}`, "data-regen-level": m.level || "unknown" }, m.level ? T(...lvl[m.level]) : T("independence from the author unknown", "和作者的獨立程度未知")),
       m.held ? h("span", { class: "rr-pill bad", "data-regen-held": "" }, T(`held: ${m.held}`, `暫停：${m.held}`)) : null)));
 }
-/** The stage: the board (the scene's title, its picture on the left, at most four of its points on the right), the caption
- *  and the play bar. One viewport tall with the header and the dock: nothing in it grows the page. */
 // ---------- a finished lesson is the lesson board (public/review-board.js): its chapters are regions of a canvas ----------
 const POINTS_TONE = { watch: ["risk", ["risk", "風險"]], reviewers: ["warn", ["reviewer", "審查"]], roads: ["ok", ["not taken", "沒走"]], questions: ["", ["open", "待解"]] };
 /** a figure in the report: the drawing Studio lays out from the tutor's data, its title and what it rests on */
 function reportFigure(card, r, it, box) {
-  // a lesson's figure reads at its drawn size, left to right where it fits: its region's column, not the stage's box
+  // a lesson's figure reads at its drawn size, left to right where it fits: its region's column
   BOX = box || (innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 });
   const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionView(card, v) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
     : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : v.type === "svg" ? svgFigureView(card, v) : v.type === "calls" ? callsView(card, v) : itemView(card, v, null); } finally { BOX = null; }
@@ -1084,90 +1085,104 @@ function autoNote(r, t) {
     !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
       T(" start by itself on the next paste", " 下次貼上時自動開始")) : null);
 }
-function stageView(r) {
-  const card = r.card.id, scenes = scenesOf(r);
-  if (!scenes.length) return h("section", { class: "rr-stage", "data-stage": card, "aria-label": T("Board", "白板") },
-    h("div", { class: "rr-board" }, h("div", { class: "rr-empty", "data-board-empty": "" },
-      h("h2", { class: "rr-hand" }, T("Board", "白板")), h("p", { class: "faint" }, T("Ask below. Each answer becomes a scene here: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, revealed one at a time.", "在下方提問。每個回答會在這裡變成一個場景：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個出現。")))),
-    h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }), h("div", { class: "rr-playbar" }, h("span", { class: "x-grow" }), fsToggle(card), voicePicker(r)));
-  const i = sceneState(card, scenes), sc = scenes[i], n = sc.points.length,
-    // a check opens on its first question not answered yet
-    k = sc.quiz && !RR.reveal.has(`${card}/${sc.key}`) ? (sc.points.findIndex((p) => !p.q.result) + 1 || n) : revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`);
-  const running = sc.t?.status === "running";
-  const quizQ = sc.quiz ? sc.points[Math.max(0, k - 1)]?.q : null;
+// ---------- the board is the room's only view (public/review-board.js): every scene a region on its canvas ----------
+/** what a scene is, in a few words: its chapter, Studio's welcome, a check, the action asked */
+function sceneLabel(sc) {
+  const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
+  return sc.welcome ? T("Welcome", "開場") : sc.quiz ? T("Check me", "考考我") : sc.chapter ? chapterName(sc.chapter) : sc.t ? T(en, zh) : "";
+}
+/** what a turn is and what it did, over its first scene: the answers to the same question (one per tutor), Regenerate with…,
+ *  how it started (auto-teach), what it cost */
+function sceneHead(r, sc) {
+  const card = r.card.id, t = sc.t; if (!t || sc.studio || sc.quiz) return null;
+  const vers = t.versions?.length > 1 ? h("span", { class: "rr-vers", role: "group", "data-versions": t.regenOf ?? t.n, "aria-label": T("Answers to this question", "這一題的回答") }, t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${t.regenOf ?? t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null;
+  const regen = t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": t.n, "aria-expanded": String(RR.regen.get(card) === t.n), onclick: () => { RR.regen.get(card) === t.n ? RR.regen.delete(card) : RR.regen.set(card, t.n); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null;
+  const cost = t.status === "done" && t.cost?.usd != null ? h("span", { class: "faint rr-cost" }, `$${Number(t.cost.usd).toFixed(2)} · ${t.provider} · ${t.model}`) : null, auto = autoNote(r, t);
+  if (!vers && !regen && !cost && !auto) return null;
+  return h("div", { class: "rb-shead", "data-scene-head": t.n }, vers || regen || cost ? h("div", { class: "rb-shead-row" }, vers, regen, cost) : null, RR.regen.get(card) === t.n ? regenList(r, t) : null, auto);
+}
+/** One scene on the board: its title (the kicker says what it is), its picture (the one the point being read cites; the
+ *  others a chip away), its points (played: the ones not reached yet dimmed), and what the turn is doing: working (its tool
+ *  calls and what it said so far), failed, a check graded on the spot, the welcome's lesson button. */
+function sceneCard(r, scenes, j, W) {
+  const card = r.card.id, sc = scenes[j], n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`);
+  const running = sc.t?.status === "running", narrow = innerWidth <= 760, first = scenes.find((x) => x.turn === sc.turn) === sc;
   const v = sc.quiz ? null : (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, k) || (running ? null : fallbackVisual(r, sc));
   const prev = v?.group ? r.board.filter((b) => b.turn === v.turn && b.group === v.group && (b.step || 0) < (v.step || 0)).sort((a, b) => (a.step || 0) - (b.step || 0)).at(-1) : null;
-  const cur = sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
-  const page = pageOf(k), shown = sc.points.slice(page * PER, Math.max(page * PER, k)), pages = Math.max(1, Math.ceil(n / PER));
   const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
-  const kicker = sc.chapter ? `${chapterName(sc.chapter)} · ${T(...(ACTION_LABEL[sc.t?.action] || ["", ""]))}` : sc.t?.untranslated ? T("Not in this language yet: shown as written", "還沒有這個語言的版本：照原文顯示") : sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · question ${k} of ${n}`, `考考我 · 第 ${k} 題 / ${n}`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
+  const kicker = sc.chapter ? `${chapterName(sc.chapter)} · ${T(en, zh)}` : sc.t?.untranslated ? T("Not in this language yet: shown as written", "還沒有這個語言的版本：照原文顯示") : sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · ${n} question${n === 1 ? "" : "s"}`, `考考我 · ${n} 題`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
   const titleKey = `${card}/${sc.key}`, firstTitle = !RR.titled.has(titleKey); RR.titled.add(titleKey);
   const entering = RR.lastK.get(titleKey) !== k; RR.lastK.set(titleKey, k);
-  const pointView = (c, j) => { const at = page * PER + j, now = at === k - 1;
-    if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}`, "data-claim": "code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
-    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : " done"}${now && entering && !reduceMotion() ? " rr-enter" : ""}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
+  const pointView = (c, at) => { const now = k < n && at === k - 1, later = at >= k;
+    if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}${later ? " later" : ""}`, "data-claim": "code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
+    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : later ? " later" : " done"}${now && entering && !reduceMotion() ? " rr-enter" : ""}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
       c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites)),
       // what someone else wrote (a reviewer, a commit message): their words as plain text, never parsed for citations or markup;
       // the gist (its first line, cut short) on the board, the whole text only when the captain opens it
       c.quote ? quoteView(c, `${card}/${sc.key}/${at}`) : null); };
-  // the dots: one per scene, the current one opened into its points (or its pages, when it has many)
-  const dot = (j, m, on, label) => h("button", { type: "button", class: "rr-dot", "data-dot": `${j}:${m}`, "aria-current": on ? "step" : null, "aria-label": label,
-    onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); if (m) RR.reveal.set(`${card}/${scenes[j].key}`, m); rerender(); } }, h("i"));
-  const dots = scenes.map((x, j) => j !== i ? dot(j, 0, false, T(`Scene ${j + 1}`, `場景 ${j + 1}`))
-    : n <= 12 ? sc.points.map((_, m) => dot(j, m + 1, m + 1 === k, T(`Scene ${j + 1}, point ${m + 1}`, `場景 ${j + 1} 第 ${m + 1} 點`)))
-    : Array.from({ length: pages }, (_, m) => dot(j, Math.min(n, m * PER + 1), m === page, T(`Scene ${j + 1}, page ${m + 1}`, `場景 ${j + 1} 第 ${m + 1} 頁`)))).flat();
-  const toc = scenes.some((x) => x.chapter) ? h("nav", { class: "rr-toc", "data-toc": "", "aria-label": T("Chapters", "章節") },
-    (() => { const out = [], seenTurn = new Set(); scenes.forEach((x, j) => { const tn = x.turn ?? 0;
-      if (!seenTurn.has(tn)) { seenTurn.add(tn); out.push(h("p", { class: "rr-toc-h" }, x.welcome ? T("Welcome", "開場") : x.t ? clip(x.question || x.t.text || T(...(ACTION_LABEL[x.t.action] || [x.t.action, x.t.action])), 40) : "")); }
-      const prev = scenes[j - 1], run = x.chapter && ["change", "decisions", "lifecycle", "calls"].includes(x.chapter), cont = run && prev?.turn === x.turn && prev?.chapter === x.chapter;
-      if (run && !cont) out.push(h("p", { class: "rr-toc-ch", "data-toc-chapter": x.chapter }, chapterName(x.chapter)));
-      if (run) { const nth = scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === x.chapter).length;
-        out.push(h("button", { type: "button", class: "rr-toc-i sub", "data-toc-scene": x.key, "data-toc-item": nth, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
-          h("span", {}, x.chapter === "decisions" ? `${T(`Choice ${nth}`, `決定 ${nth}`)} · ${clip(x.title, 30)}` : clip(x.title, 36)))); return; }
-      out.push(h("button", { type: "button", class: "rr-toc-i", "data-toc-scene": x.key, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
-        x.chapter ? h("b", {}, chapterName(x.chapter)) : null, h("span", {}, clip(x.title, 36)), x.t && x.t.status === "running" ? h("i", { class: "rr-toc-run" }, "…") : null)); }); return out; })()) : null;
-  // a finished lesson is the lesson board (baton's packet), read there only
-  if (sc.t?.action === "teach" && sc.t.status === "done" && sc.chapter) return BOARD.view(r, scenes, i);
-  return h("section", { class: `rr-stage${toc ? " with-toc" : ""}`, "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") }, toc,
-    h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
-      h("div", { class: "rr-stitle" },
-        h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker, pages > 1 && !sc.quiz ? ` · ${page + 1}/${pages}` : "",
-          sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null,
-          sc.t?.versions?.length > 1 && !sc.quiz ? h("span", { class: "rr-vers", role: "group", "data-versions": sc.t.regenOf ?? sc.t.n, "aria-label": T("Answers to this question", "這一題的回答") }, sc.t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === sc.t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${sc.t.regenOf ?? sc.t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null,
-          sc.t && !sc.studio && !sc.quiz && sc.t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": sc.t.n, "aria-expanded": String(RR.regen.has(card)), onclick: () => { RR.regen.has(card) ? RR.regen.delete(card) : RR.regen.add(card); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null),
-        RR.regen.has(card) && sc.t && !sc.studio ? regenList(r, sc.t) : null,
-        h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
-      h("div", { class: "rr-scene" },
-        h("figure", { class: "rr-visual", "data-visual": quizQ ? `quiz-${quizQ.n}` : v?.id || "" },
-          quizQ ? quizView(card, r, quizQ, [`${card}/${sc.key}`, k]) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")),
-          sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
-        h("div", { class: "rr-points" },
-          RR.ready.has(card) ? h("button", { type: "button", class: "rr-chip lead", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.reveal.set(`${card}/${key}`, 0); queueMicrotask(() => play(card, scenes[at])); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示")) : null,
-          sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
-          autoNote(r, sc.t),
-          sc.t && sc.t.status !== "done" ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
-          sc.quiz ? quizSide(r, sc) : h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
-          n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
-          // the welcome scene's one action: the lesson, a paid turn that asks to confirm first
-          sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
-          sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
-            T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
-          sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
-          sc.t?.status === "done" && sc.t.cost?.usd != null ? h("p", { class: "faint rr-cost" }, `$${Number(sc.t.cost.usd).toFixed(2)} · ${sc.t.provider} · ${sc.t.model}`) : null))),
+  // the picture is laid out for the scene's column: the left of the card on a desktop, its whole width on a phone
+  const box = narrow ? { narrow: true, w: W - 30, h: 1400 } : { w: Math.round(W * 0.56) - 30, h: 340 };
+  let pic; BOX = box; try { pic = sc.quiz ? h("div", { class: "rr-quizzes" }, sc.points.map((p) => quizView(card, r, p.q, null))) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")); } finally { BOX = null; }
+  const answers = (r.turns || []).some((t) => !t.studio && !t.hidden && !t.thread);
+  return h("div", { class: `rp-card rb-scard${sc.quiz ? " quiz" : ""}`, "data-scene-card": sc.key },
+    first ? sceneHead(r, sc) : null,
+    h("div", { class: "rr-stitle" },
+      h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker,
+        sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null),
+      h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
+    h("div", { class: "rr-scene" },
+      h("figure", { class: "rr-visual", "data-visual": sc.quiz ? "quiz" : v?.id || "" }, pic,
+        sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
+      h("div", { class: "rr-points" },
+        sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n && first ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
+        sc.t && sc.t.status !== "done" && first ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
+        sc.quiz ? quizSide(r, sc) : n ? h("ol", { class: "rr-pointlist", "data-points": n }, sc.points.map(pointView)) : null,
+        n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
+        // the welcome's one action: the lesson, a paid turn that asks to confirm first; before any answer, what the board is for
+        sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
+        sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
+          T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
+        sc.welcome && !answers ? h("p", { class: "faint rr-boardhint", "data-board-empty": "" }, T("Ask below. Each answer becomes a block on this board: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, played one at a time.", "在下方提問。每個回答會在這塊白板上變成一個區塊：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個播放。")) : null,
+        sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null)));
+}
+/** The play bar, floating on the board: the caption of the point being read, a point back, a dot per point, a point on,
+ *  play / pause, replay, the scene before and after, the voice */
+function playBar(r, scenes, i) {
+  const card = r.card.id, sc = scenes[i]; if (!sc) return null;
+  const n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc), running = sc.t?.status === "running";
+  const cur = sc.quiz ? null : sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
+  // a lesson's chapter is read, not played: until it plays the bar is a small pill (play, replay, the voice) that leaves the
+  // chapter and its question cards clear
+  const playBtn = h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n || sc.quiz, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play"));
+  const replay = h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay"));
+  if (sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" && RR.playing !== card && k >= n)
+    return h("div", { class: "rb-play mini", "data-playbar": card, role: "group", "aria-label": T("Playback", "播放") }, h("div", { class: "rr-playbar" }, playBtn, replay, h("span", { class: "rb-play-l" }, T("Play this chapter", "播放這一章")), voicePicker(r)));
+  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
+  return h("div", { class: "rb-play", "data-playbar": card, role: "group", "aria-label": T("Captions and playback", "字幕與播放") },
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),
     h("div", { class: "rr-playbar" },
-      h("button", { type: "button", class: "rr-ibtn", "data-point-prev": "", disabled: i === 0 && k <= 1, onclick: () => stepPoint(card, -1), "aria-label": T("Previous point", "上一點"), title: T("Previous point (←)", "上一點（←）") }, ic("prev")),
-      h("div", { class: "rr-dots", role: "group", "aria-label": T("Scenes and points", "場景與重點") }, dots),
-      h("button", { type: "button", class: "rr-ibtn", "data-point-next": "", disabled: i === scenes.length - 1 && k >= n, onclick: () => stepPoint(card, 1), "aria-label": T(`Next point (${k}/${n})`, `下一點（${k}/${n}）`), title: T("Next point (→)", "下一點（→）") }, ic("next")),
-      h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n || sc.quiz, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play")),
-      h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay")),
+      h("button", { type: "button", class: "rr-ibtn", "data-point-prev": "", disabled: i === 0 && k <= 1, onclick: () => stepPoint(card, -1), "aria-label": T("Previous point", "上一點"), title: T("Previous point", "上一點") }, ic("prev")),
+      n && !sc.quiz && n <= 24 ? h("div", { class: "rr-dots", role: "group", "aria-label": T("Points", "重點") }, sc.points.map((_, m) => dot(m + 1))) : null,
+      h("button", { type: "button", class: "rr-ibtn", "data-point-next": "", disabled: i === scenes.length - 1 && k >= n, onclick: () => stepPoint(card, 1), "aria-label": T(`Next point (${k}/${n})`, `下一點（${k}/${n}）`), title: T("Next point", "下一點") }, ic("next")),
+      playBtn, replay,
       h("span", { class: "rr-scenenav" },
         h("button", { type: "button", class: "rr-mini", "data-scene-prev": "", disabled: i === 0, onclick: () => goScene(card, i - 1), "aria-label": T("Previous scene", "上一個場景") }, "«"),
         h("span", { class: "faint", "data-scene-pos": `${i + 1}/${scenes.length}` }, T(`Scene ${i + 1} of ${scenes.length}`, `場景 ${i + 1} / ${scenes.length}`)),
         h("button", { type: "button", class: "rr-mini", "data-scene-next": "", disabled: i === scenes.length - 1, onclick: () => goScene(card, i + 1), "aria-label": T("Next scene", "下一個場景") }, "»")),
-      h("span", { class: "x-grow" }),
-      fsToggle(card), voicePicker(r)));
+      voicePicker(r)));
 }
+/** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind this chip on the board */
+function readyChip(r, scenes) {
+  const card = r.card.id; if (!RR.ready.has(card)) return null;
+  return h("button", { type: "button", class: "rr-chip lead rb-ready", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.jump.set(card, key); RR.reveal.set(`${card}/${key}`, 0); queueMicrotask(() => play(card, scenes[at])); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示"));
+}
+/** a point on or back while a scene is being played or stepped through (→ ← on the board); false when the scene is whole */
+function stepReveal(card, dir) {
+  const { sc } = curScene(card); if (!sc || sc.quiz) return false; const k = revealOf(card, sc), n = sc.points.length;
+  if (k >= n || (dir < 0 && k <= 1)) return false;
+  markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + dir); rerender(); return true;
+}
+const boardView = (r) => { const scenes = scenesOf(r); return BOARD.view(r, scenes, sceneState(r.card.id, scenes)); };
 // ---------- the prompt bar: quick actions, a question (typed or spoken), the paid-round confirmation ----------
 const SR = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
 /** push-to-talk, on-device only: the browser must recognise speech locally (processLocally), or the mic stays off */
@@ -1189,8 +1204,8 @@ const askTurn = (card, action, text, again) => { if (action === "ask" && !text) 
   RR.confirm.set(card, prior ? { action, text: text || "", existing: prior.n } : { action, text: text || "" }); rerender(); };
 /** go to a turn's scene (its first) */
 const showTurn = (card, n) => { const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), at = scenes.findIndex((x) => x.t?.n === n); if (at >= 0) { stopPlay(); RR.scene.set(card, at); } rerender(); };
-/** The dock under the stage: the quick actions, the question (typed or spoken), the transcript; the paid round's
- *  confirmation, a turn being sent and errors open above it, over the stage, never pushing it */
+/** The dock under the board: the quick actions, the question (typed or spoken), the transcript; the paid round's
+ *  confirmation, a turn being sent and errors open above it, over the board, never pushing it */
 function promptBar(r) {
   const card = r.card.id, busy = r.running != null || RR.posting.has(card), offer = r.offer, conf = RR.confirm.get(card), err = RR.err.get(card);
   const answers = (r.turns || []).filter((t) => !t.studio && t.status === "done").length;
@@ -1247,7 +1262,7 @@ function drawer(r) {
         h("button", { type: "button", class: "rr-ibtn", "data-transcript-close": "", "aria-label": T("Close", "關閉"), onclick: close }, ic("x"))),
       h("div", { class: "rr-drawer-body" },
         h("h3", {}, T("Scenes", "場景")),
-        // a jump changes the scene on the stage and closes the drawer: nothing scrolls
+        // a jump flies the board to the scene and closes the drawer: nothing scrolls
         h("ol", { class: "rr-turns" }, scenes.map((sc, i) => h("li", { "data-turn": sc.turn, "data-turn-status": sc.t?.status || "opening" }, h("button", { type: "button", class: "rr-jump", "data-jump": sc.key, onclick: () => { stopPlay(); markMoved(card); RR.scene.set(card, i); RR.drawer.delete(card); rerender(); } },
           sc.question ? h("span", { class: "rr-jq" }, sc.question.slice(0, 160)) : null, h("span", { class: "faint" }, ` → ${sc.title}`)),
           // the tutor's whole answer: the board shows it short, the transcript in full (text only)
@@ -1396,11 +1411,12 @@ function fsToggle(card) {
     title: on ? T("Exit full screen (Esc or F)", "離開全螢幕（Esc 或 F）") : T("Full screen: only the board (F)", "全螢幕：只留下白板（F）"), onclick: () => (on ? exitFs() : enterFs(card)) },
     ic(on ? "shrink" : "expand"), h("span", {}, on ? T("Exit full screen", "離開全螢幕") : T("Full screen", "全螢幕")));
 }
-/** the camera re-fitted once the new size is laid out (the lesson board's; an answer's scene is drawn for its box anew) */
+/** the camera re-fitted once the new size is laid out (the scene regions are drawn for the new width anew) */
 const fsRefit = (card) => requestAnimationFrame(() => { if (onRoom(card)) BOARD.refit(card); });
+const isFs = () => FS.card != null;
 const fsFocus = () => requestAnimationFrame(() => document.querySelector("[data-fs-toggle]")?.focus({ preventScroll: true }));
 function enterFs(card) {
-  if (FS.card != null || !onRoom(card) || !document.querySelector("[data-stage]")) return;
+  if (FS.card != null || !onRoom(card) || !document.querySelector("[data-board]")) return;
   BOARD.fitMark(card); FS.card = card; FS.last = card; document.body.classList.add("rr-fs"); render(); fsRefit(card); fsFocus();
   // true full screen where the window can have it; a phone keeps the layout only. A refusal leaves the layout as it is
   const v = fsView();
@@ -1421,8 +1437,8 @@ document.addEventListener("fullscreenchange", () => {
 let fsResized = 0; addEventListener("resize", () => { if (FS.card == null && performance.now() - FS.at > 1500) return; clearTimeout(fsResized); fsResized = setTimeout(() => { const card = FS.card ?? FS.last; if (card != null && onRoom(card)) fsRefit(card); }, 160); });
 // leaving the room leaves full screen
 addEventListener("hashchange", () => { if (FS.card != null && !onRoom(FS.card)) exitFs(false); });
-// the keyboard: ← → a point back or forward, Space play / pause, f full screen, Escape closes what is open over the room (then
-// full screen)
+// the keyboard: the board's own (← → n p a point of a scene being played, else a region; a Space tap plays or pauses, held it
+// pans; + − 0 zoom), f full screen, Escape closes what is open over the room (then full screen)
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
   const card = S.route.arg, t = e.target;
@@ -1430,14 +1446,11 @@ addEventListener("keydown", (e) => {
   if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && BOARD.keydown(e, card)) return;
   if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else if (FS.card === card) { e.preventDefault(); exitFs(); return; } else return; e.preventDefault(); rerender(); return; }
   if (t?.closest?.("input,textarea,select,[contenteditable],[role=dialog]") || RR.zoom) return;
-  if ((e.key === "f" || e.key === "F") && !e.repeat && document.querySelector("[data-fs-toggle]")) { e.preventDefault(); if (FS.card === card) exitFs(); else enterFs(card); return; }
-  if (document.querySelector("[data-board-vp]")) return; // the board's keys are its own
-  if (e.key === "ArrowRight") { e.preventDefault(); stepPoint(card, 1); }
-  else if (e.key === "ArrowLeft") { e.preventDefault(); stepPoint(card, -1); }
-  else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
+  if ((e.key === "f" || e.key === "F") && !e.repeat && document.querySelector("[data-fs-toggle]")) { e.preventDefault(); if (FS.card === card) exitFs(); else enterFs(card); }
 });
-// the lesson board, built with the room's own helpers (public/review-board.js)
-const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle });
+// the board, built with the room's own helpers (public/review-board.js)
+const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
+  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs });
 routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
@@ -1454,23 +1467,23 @@ routes.room = (arg) => {
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
-  // a scene that arrives while the page is open is revealed point by point; scenes already there show whole
+  // a scene that arrives while the page is open is played point by point; scenes already there show whole
   const scenes = scenesOf(r), seen = RR.seen.get(arg);
   if (!seen) RR.seen.set(arg, new Set(scenes.filter((s) => !s.t || s.t.status !== "running").map((s) => s.key)));
-  // an answer of several scenes (a lesson's chapters) arrives at once: the stage goes to its first, the rest wait in order
+  // an answer of several scenes (a lesson's chapters) arrives at once: the board flies to its first, the rest wait in order
   else { const took = new Set(); for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key);
     const tk = sc.turn ?? sc.key; if (took.has(tk)) continue; took.add(tk);
-    // the captain moved elsewhere while it ran: the answer waits behind "the answer is ready", never pulling the stage away
+    // the captain moved elsewhere while it ran: the answer waits behind "the answer is ready", never pulling the board away
     if (RR.moved.has(arg)) { if (!RR.ready.has(arg)) RR.ready.set(arg, sc.key); continue; }
-    // the stage moves to that answer itself (not to whatever scene happens to be last)
+    // the board flies to that answer itself (not to whatever scene happens to be last)
     RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue;
-    // a lesson opens as its report, at its first section: read, not played
+    // a lesson opens at its first chapter: read, not played
     if (sc.chapter && sc.t?.action === "teach") { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
-  // entering a room while a turn runs: the stage shows that turn (its progress, the scenes it made so far)
+  // entering a room while a turn runs: the board shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);
   return h("div", { class: "rr-room", "data-review-room": r.card.id },
-    header(r), stageView(r), promptBar(r), drawer(r), citePanel(r),
+    header(r), boardView(r), promptBar(r), drawer(r), citePanel(r),
     RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } } },
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };

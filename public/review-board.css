@@ -1,10 +1,11 @@
-/* The lesson board (public/review-board.js; docs/units/review-room.md, "The lesson board"): a finished lesson as regions on
-   a canvas the camera owns. The room's own tokens (--rr-*, review-room.css) and the app's (--text, --surface, --border)
-   in light and dark; nothing scrolls natively in the viewport. */
-.rr-stage.board { --rp-serif: "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", Georgia, serif;
-  grid-template-rows: minmax(0, 1fr); grid-template-columns: 196px minmax(0, 1fr) 272px; column-gap: 12px; position: relative; }
-.rr-stage.board.nonotes { grid-template-columns: 196px minmax(0, 1fr); }
-.rr-stage.board > * { grid-row: 1; }
+/* The board (public/review-board.js; docs/units/review-room.md, "The board"), the room's only view: every scene a region on
+   a canvas the camera owns (the welcome, each answer, each lesson chapter, a check, a turn being written), the play bar
+   floating on it. The room's own tokens (--rr-*, review-room.css) and the app's (--text, --surface, --border) in light and
+   dark; nothing scrolls natively in the viewport. */
+.rb-view { --rp-serif: "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", Georgia, serif;
+  display: grid; min-height: 0; min-width: 0; grid-template-rows: minmax(0, 1fr); grid-template-columns: 196px minmax(0, 1fr) 272px; column-gap: 12px; position: relative; }
+.rb-view.nonotes { grid-template-columns: 196px minmax(0, 1fr); }
+.rb-view > * { grid-row: 1; }
 
 /* the rail: the lesson, the map, the filter, the chapters */
 .rb-rail { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 6px 16px 0; border-right: 1px solid var(--border); }
@@ -19,13 +20,15 @@
 .rb-minimap rect.vw { fill: var(--rr-marker); fill-opacity: .08; stroke: var(--rr-marker); stroke-width: 1.5; }
 .rb-minimap circle { fill: var(--rr-marker); } .rb-minimap circle.q { fill: var(--rr-inf-ink); }
 .rb-filter { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); padding: 0 4px; cursor: pointer; }
-.rb-outline, .rb-others { display: grid; gap: 1px; }
+.rb-outline, .rb-ogroup { display: grid; gap: 1px; }
+.rb-outline { gap: 6px; }
+.rb-oh { margin: 4px 8px 0; font-size: 11px; font-weight: 600; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-orun { font-style: normal; font-weight: 700; color: var(--accent); }
 .rb-ol { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 7px; background: none; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; }
 .rb-ol:hover { background: var(--surface-2); }
 .rb-ol.on { color: var(--text); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
 .rb-ol.un .rb-olb { color: var(--text-3); }
 .rb-ol.skipped .rb-olb { text-decoration: line-through; text-decoration-color: var(--border-strong); }
-.rb-ol.other { grid-template-columns: minmax(0, 1fr); font-size: 12px; }
 .rb-onum { font: 600 11px var(--f-mono); color: var(--text-3); }
 .rb-olb { min-width: 0; display: grid; overflow: hidden; }
 .rb-olb, .rb-olb small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -196,26 +199,26 @@ html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"
 .rb-phonebar, .rb-sheetx, .rb-scrim { display: none; }
 
 @media (max-width: 1180px) {
-  .rr-stage.board { grid-template-columns: 180px minmax(0, 1fr); }
-  .rr-stage.board .rb-notes { position: absolute; right: 0; top: 0; bottom: 0; width: 280px; z-index: 30; background: var(--bg, var(--surface)); box-shadow: var(--rr-shadow); }
+  .rb-view, .rb-view.nonotes { grid-template-columns: 180px minmax(0, 1fr); }
+  .rb-view .rb-notes { position: absolute; right: 0; top: 0; bottom: 0; width: 280px; z-index: 30; background: var(--bg, var(--surface)); box-shadow: var(--rr-shadow); }
 }
-/* a phone: the board fills the screen; the chapters and the questions are sheets from the bottom; the popover too */
+/* a phone: the board fills the screen above the read-only dock; the answers and the questions are sheets from the bottom; the
+   popover too */
 @media (max-width: 760px) {
-  .rr-room:has(.rr-stage.board) { grid-template-rows: 44px minmax(0, 1fr); }
-  .rr-room:has(.rr-stage.board) > .rr-dock { display: none; }
-  .rr-stage.board, .rr-stage.board.nonotes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 52px; row-gap: 0; }
-  .rr-stage.board > .rb-main { grid-row: 1; }
+  .rb-view, .rb-view.nonotes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 52px; row-gap: 0; }
+  .rb-view > .rb-main { grid-row: 1; }
   .rb-vp { border-radius: 12px 12px 0 0; }
   .rb-rail, .rb-notes { display: flex; flex-direction: column; position: fixed; left: 0; right: 0; bottom: 0; height: 72vh; z-index: 55; overflow: auto; border: 0; border-top: 1px solid var(--border-strong); border-radius: 16px 16px 0 0;
     background: var(--surface); box-shadow: 0 -10px 30px rgba(0,0,0,.18); padding: 16px 16px 24px; transform: translateY(105%); transition: transform .25s; }
   .rb-rail.open, .rb-notes.open { transform: none; }
   /* the questions' sheet over its scrim (the narrow desktop's absolute overlay does not apply on a phone) */
-  .rr-stage.board .rb-notes { position: fixed; z-index: 55; width: auto; top: auto; right: 0; }
+  .rb-view .rb-notes { position: fixed; z-index: 55; width: auto; top: auto; right: 0; }
   .rb-sheetx { display: block; position: absolute; right: 10px; top: 8px; width: 32px; height: 32px; border: 0; background: none; color: var(--text-3); font-size: 20px; }
   .rb-scrim { display: block; position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.18); }
   .rb-minimap { max-width: 260px; }
   .rb-ol { font-size: 15px; padding: 10px 8px; }
-  .rr-stage.board > .rb-phonebar { display: grid; grid-template-columns: repeat(3, 1fr); grid-row: 2; grid-column: 1; z-index: 40; background: var(--surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 12px 12px; }
+  .rb-view > .rb-phonebar { display: grid; grid-template-columns: repeat(3, 1fr); grid-row: 2; grid-column: 1; z-index: 40; background: var(--surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 12px 12px; }
+  .rb-view > .rb-phonebar.two { grid-template-columns: repeat(2, 1fr); }
   .rb-phonebar button { font: inherit; font-size: 14px; color: var(--text-2); background: none; border: 0; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; }
   .rb-phonebar button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
   .rb-phonebar b { font: 700 11px var(--f-mono); background: var(--rr-marker); color: var(--rr-paper); border-radius: 9px; padding: 1px 6px; }
@@ -251,10 +254,66 @@ html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"
    are the room's chrome and wait outside; the pins, the popover, Next and the zoom stay on the board */
 .rb-zoom .rr-fs-btn span { font: inherit; min-width: 0; color: inherit; text-align: left; }
 .rb-zoom .rr-fs-btn { height: 32px; border: 0; border-left: 1px solid var(--border); border-radius: 0; background: none; font-size: 12.5px; padding: 0 10px; }
-body.rr-fs .rr-room > .rr-stage.board { padding: 0; }
-body.rr-fs .rr-stage.board, body.rr-fs .rr-stage.board.nonotes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); column-gap: 0; }
-body.rr-fs .rr-stage.board > :is(.rb-rail, .rb-notes, .rb-phonebar, .rb-scrim) { display: none !important; }
-body.rr-fs .rr-stage.board > .rb-main { grid-row: 1; grid-column: 1; }
+body.rr-fs .rr-room > .rb-view { padding: 0; }
+body.rr-fs .rb-view, body.rr-fs .rb-view.nonotes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); column-gap: 0; }
+body.rr-fs .rb-view > :is(.rb-rail, .rb-notes, .rb-phonebar, .rb-scrim) { display: none !important; }
+body.rr-fs .rb-view > .rb-main { grid-row: 1; grid-column: 1; }
 body.rr-fs .rb-vp { border: 0; border-radius: 0; }
 body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
-@media (max-width: 760px) { body.rr-fs .rb-next { display: block; bottom: 56px; max-width: 80%; } }
+@media (max-width: 760px) { body.rr-fs .rb-next { display: block; left: 50%; right: auto; transform: translateX(-50%); bottom: 150px; max-width: 80%; } }
+
+/* ---------- a scene region: the room's scene card (review-room.js sceneCard) on the canvas ---------- */
+.rb-scard { display: grid; gap: 12px; padding: 16px 20px; color: var(--rr-ink); user-select: text; -webkit-user-select: text; cursor: auto; }
+.rb-scard .rr-stitle { display: grid; gap: 2px; margin: 0; }
+.rb-scard .rr-kicker { max-width: none; white-space: normal; }
+.rb-scard .rr-stitle h2 { font-size: 30px; white-space: normal; justify-self: start; }
+.rb-scard .rr-scene { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(250px, 1fr); gap: 22px; align-items: start; }
+.rb-scard.quiz .rr-scene { grid-template-columns: minmax(0, 1fr); }
+.rb-scard .rr-visual { display: grid; gap: 6px; min-width: 0; margin: 0; }
+.rb-scard .rr-visual > .rr-item { display: grid; gap: 4px; min-width: 0; }
+.rb-scard .rr-body.pic { display: grid; place-items: center; overflow: visible; }
+.rb-scard .rr-body.pic > *, .rb-scard .rr-flow-wrap, .rb-scard .rr-chart-wrap { width: 100%; height: auto; }
+.rb-scard :is(.rr-flow, .rr-chart, .rr-keycard, .rr-itemfig, .rr-seq) { display: block; width: 100%; height: auto; max-height: 360px !important; }
+.rb-scard .rr-fig { margin: 0; display: grid; place-items: center; height: auto; }
+.rb-scard .rr-fig img { max-width: 100%; max-height: 360px; }
+.rb-scard .rr-shots { display: grid; gap: 6px; height: auto; }
+.rb-scard .rr-vstrip { display: flex; flex-wrap: wrap; gap: 6px; }
+.rb-scard .rr-points { display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow: visible; overflow-wrap: anywhere; justify-content: flex-start; }
+.rb-scard .rr-ptext { display: inline; }
+.rr-point.later, .rb-later { opacity: .3; }
+.rb-now { background: var(--rr-new-soft); box-shadow: inset 3px 0 0 var(--rr-marker); border-radius: 4px; }
+.rr-quizzes { display: grid; gap: 22px; }
+.rb-scard .rr-quiz { height: auto; overflow: visible; }
+.rb-scard .rr-drawing { min-height: 220px; display: grid; place-items: center; border: 2px dashed var(--rr-paper-edge); border-radius: 10px; }
+.rb-scard .rr-boardhint { margin: 4px 0 0; font-size: 13px; }
+.rb-shead { display: grid; gap: 6px; padding-bottom: 8px; border-bottom: 1px dashed var(--rr-paper-edge); margin-bottom: 4px; }
+.rb-shead-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rb-shead .rr-vers { margin-left: 0; }
+.rb-shead .rr-regen { margin-left: 0; }
+.rb-shead .rr-cost { margin-left: auto; }
+.rb-shead .rr-regenlist { position: static; max-width: 100%; box-shadow: none; }
+.rb-region.cur > .rb-rbody > .rb-scard { box-shadow: 0 0 0 2px var(--rr-new-soft), var(--rr-shadow); }
+/* the answer that finished while the captain looked elsewhere, waiting to be shown */
+.rb-ready { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 23; box-shadow: var(--rr-shadow); }
+
+/* ---------- the play bar, floating on the board: the caption, a point back and on, play, replay, the scene, the voice ---------- */
+.rb-play { position: absolute; left: 12px; bottom: 12px; z-index: 20; display: grid; gap: 6px; width: min(660px, calc(100% - 340px)); min-width: 0; box-sizing: border-box; padding: 8px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--rr-shadow); }
+.rb-play .rr-caption { padding: 4px 12px; font-size: 14.5px; border-radius: 9px; }
+.rb-play .rr-playbar { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.rb-play .rr-ibtn { width: 32px; height: 32px; border-radius: 9px; }
+.rb-play .rr-voice select { max-width: 180px; height: 32px; font-size: 12.5px; }
+.rb-play .rr-scenenav { margin-left: auto; }
+.rb-play.mini { width: auto; padding: 5px 6px; }
+.rb-play-l { font-size: 12.5px; color: var(--text-2); white-space: nowrap; padding: 0 4px; }
+.rb-next { left: auto; right: 12px; bottom: 60px; transform: none; max-width: 40%; }
+@media (max-width: 1180px) { .rb-play:not(.mini) { width: calc(100% - 24px); bottom: 56px; } .rb-next { bottom: 172px; } }
+@media (max-width: 760px) {
+  .rb-scard { padding: 12px 14px; }
+  .rb-scard .rr-scene { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .rb-scard .rr-stitle h2 { font-size: 24px; }
+  .rb-play { left: 8px; right: 8px; width: auto; bottom: 48px; padding: 6px; gap: 4px; }
+  .rb-play.mini { right: auto; } .rb-play-l { display: none; }
+  .rb-play .rr-caption { font-size: 13.5px; }
+  .rb-play .rr-scenenav, .rb-play .rr-voice, .rb-play .rr-voices { display: none; }
+  .rb-play .rr-dots { flex: 1; justify-content: center; }
+}

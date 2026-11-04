@@ -104,25 +104,25 @@ try {
       return { regions: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.region), chapters: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.chapter), figures: [...document.querySelectorAll("[data-report-figure]")].map((e) => e.dataset.figureType),
         statemap: document.querySelectorAll("[data-statemap] [data-transition]").length, tx: document.querySelectorAll("[data-tx-panel] [data-tx-table]").length, calls: document.querySelectorAll("[data-calls] [data-call]").length,
         scroll: [vp.scrollTop, vp.scrollLeft], page: document.documentElement.scrollHeight - innerHeight, wide: document.documentElement.scrollWidth - innerWidth, report: !!document.querySelector(".rr-report") }; });
-    ok(JSON.stringify(base0.chapters) === JSON.stringify(["what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "calls", "watch", "questions", "end"]) && JSON.stringify(base0.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence", "calls"])
+    ok(JSON.stringify(base0.chapters) === JSON.stringify(["welcome", "what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "calls", "watch", "questions", "end"]) && JSON.stringify(base0.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence", "calls"])
       && base0.statemap === 4 && base0.tx >= 1 && base0.calls === 2 && !base0.report,
-      "a finished lesson is the board: every chapter a region in its order, with all its drawings (the state map with its transitions and transaction, every call), and a last region for the questions", JSON.stringify(base0));
+      "a finished lesson is on the board: after the room's welcome, every chapter a region in its order, with all its drawings (the state map with its transitions and transaction, every call), and a last region for the questions", JSON.stringify(base0));
     ok(base0.scroll[0] === 0 && base0.scroll[1] === 0 && base0.page <= 0 && base0.wide <= 0, "the viewport never scrolls by itself, nor does the page: the camera owns the view", JSON.stringify(base0));
     // the walkthrough frames each chapter at a readable scale
     const c0 = await cam(p), g0 = await geo(p), what = g0.bodies.find((b) => b.id === "t1");
     ok(c0.s >= 0.85 && what.x >= g0.vp.x && what.r <= g0.vp.r && what.y >= g0.vp.y && what.y < g0.vp.b - 100, "the board opens on the first chapter, framed at a readable scale (0.85 or more at 1440) and in view", JSON.stringify({ c0, what, vp: g0.vp }));
     const steps = [];
-    for (let i = 0; i < 4; i++) { await p.click("[data-board-next]"); await settle(p); const c = await cam(p), g = await geo(p), cur = await p.$eval("[data-stage]", (e) => e.dataset.scene), b = g.bodies.find((x) => x.id === cur);
+    for (let i = 0; i < 4; i++) { await p.click("[data-board-next]"); await settle(p); const c = await cam(p), g = await geo(p), cur = await p.$eval("[data-board]", (e) => e.dataset.scene), b = g.bodies.find((x) => x.id === cur);
       const fs = await p.evaluate((k) => { const el = document.querySelector(`[data-region="${k}"] .rp-card p, [data-region="${k}"] .rp-card li`); return el ? parseFloat(getComputedStyle(el).fontSize) : 0; }, cur);
       steps.push({ cur, s: Math.round(c.s * 100) / 100, fs: Math.round(fs * c.s * 10) / 10, inView: b && b.x >= g.vp.x - 1 && b.x < g.vp.r - 200 && b.y >= g.vp.y && b.y < g.vp.b - 150 }); }
     ok(JSON.stringify(steps.map((x) => x.cur)) === '["t1-2","t1-3","t1-4","t1-5"]' && steps.every((x) => x.s >= 0.85 && x.fs >= 12.5 && x.inView), "“Next” flies to each chapter in order and frames its text at 0.85 or more (12.5px or more on screen), in view", JSON.stringify(steps));
-    await p.keyboard.press("n"); await settle(p); const kn = await p.$eval("[data-stage]", (e) => e.dataset.scene); await p.keyboard.press("p"); await p.keyboard.press("ArrowLeft"); await settle(p); const kp = await p.$eval("[data-stage]", (e) => e.dataset.scene);
-    await p.keyboard.press("ArrowRight"); await settle(p); const ka = await p.$eval("[data-stage]", (e) => e.dataset.scene);
+    await p.keyboard.press("n"); await settle(p); const kn = await p.$eval("[data-board]", (e) => e.dataset.scene); await p.keyboard.press("p"); await p.keyboard.press("ArrowLeft"); await settle(p); const kp = await p.$eval("[data-board]", (e) => e.dataset.scene);
+    await p.keyboard.press("ArrowRight"); await settle(p); const ka = await p.$eval("[data-board]", (e) => e.dataset.scene);
     ok(kn === "t1-6" && kp === "t1-4" && ka === "t1-5", "n and → step a chapter on, p and ← back", JSON.stringify([kn, kp, ka]));
     // the outline flies there; the chapters read are kept for the room
     await p.click('[data-outline="t1-8"]'); await settle(p);
-    const out = await p.evaluate(() => ({ cur: document.querySelector("[data-stage]").dataset.scene, on: document.querySelector('[data-outline="t1-8"]').getAttribute("aria-current"), mm: document.querySelectorAll("[data-minimap] rect.r").length, vw: !!document.querySelector("[data-minimap] rect.vw") }));
-    ok(out.cur === "t1-8" && out.on === "true" && out.mm === 11 && out.vw, "an outline click flies to its chapter, marked current; the minimap shows every region and the camera's view", JSON.stringify(out));
+    const out = await p.evaluate(() => ({ cur: document.querySelector("[data-board]").dataset.scene, on: document.querySelector('[data-outline="t1-8"]').getAttribute("aria-current"), mm: document.querySelectorAll("[data-minimap] rect.r").length, vw: !!document.querySelector("[data-minimap] rect.vw") }));
+    ok(out.cur === "t1-8" && out.on === "true" && out.mm === 12 && out.vw, "an outline click flies to its chapter, marked current; the minimap shows every region (the welcome, the chapters, the questions) and the camera's view", JSON.stringify(out));
     // zoom: the wheel at the pointer, ± and fit all; the levels of detail
     const before = await cam(p), vr = (await geo(p)).vp; await p.mouse.move(vr.x + 300, vr.y + 300); await p.mouse.wheel(0, 500); await settle(p, 120); const wheeled = await cam(p);
     await p.click("[data-zoom-in]"); await settle(p); const plus = await cam(p);
@@ -329,14 +329,15 @@ try {
     ok(kept.card && kept.anchor, "a follow-up three cards down: the camera shows its card and keeps the place asked about in view", JSON.stringify(kept));
     await ctx.close(); }
 
-  // ---------- taught again: a question from the earlier lesson, picked in the notes, brings that lesson back to the board ----------
+  // ---------- taught again: both lessons are on the board; a question from the earlier one, picked in the notes, focuses it there ----------
   { const room = boardRoom("zh-TW"), first = room.turns.find((t) => t.action === "teach"), n = Math.max(...room.turns.map((t) => t.n)) + 1;
     room.turns.push({ ...clone(first), n });
     const { ctx, p } = await open(1440, "zh-TW", { room }); await settle(p, 300);
     const before = await p.evaluate(() => !!document.querySelector('[data-tcard="1:n1"]'));
     await p.click('[data-notes-list="side"] [data-note-thread="1"]', { timeout: 5000 }).catch(() => {}); await settle(p, 600);
     const after = await p.evaluate(() => ({ card: !!document.querySelector('[data-tcard="1:n1"]'), focus: document.querySelector("[data-board-plane]")?.dataset.focus, bar: !!document.querySelector("[data-focus-bar]") }));
-    ok(!before && after.card && after.focus === "1" && after.bar, "taught again, a question from the earlier lesson picked in the notes brings that lesson back and focuses it", JSON.stringify({ before, after }));
+    const both = await p.evaluate((n) => [!!document.querySelector('[data-region="t1"]'), !!document.querySelector(`[data-region="t${n}"]`)], n);
+    ok(before && both.every(Boolean) && after.card && after.focus === "1" && after.bar, "taught again, both lessons are on the board; a question from the earlier one picked in the notes focuses it", JSON.stringify({ before, both, after }));
     await ctx.close(); }
 
   // ---------- the agreement's count: each card it started says so; after ten the room asks once more ----------
@@ -393,7 +394,7 @@ try {
   { const { ctx, p, S } = await open(390, "zh-TW");
     const first = await p.evaluate(() => { const r = document.querySelector("[data-board-rail]"), b = r.getBoundingClientRect(); return { open: r.classList.contains("open"), bottom: Math.round(b.bottom), h: Math.round(b.height), H: innerHeight, items: r.querySelectorAll("[data-outline]").length, wide: document.documentElement.scrollWidth - innerWidth }; });
     await p.screenshot({ path: join(shots, "phone-light-outline.png") });
-    ok(first.open && first.bottom === first.H && first.h > first.H * 0.5 && first.items === 11 && first.wide <= 0, "a phone opens on the outline: a sheet from the bottom listing every chapter", JSON.stringify(first));
+    ok(first.open && first.bottom === first.H && first.h > first.H * 0.5 && first.items === 12 && first.wide <= 0, "a phone opens on the outline: a sheet from the bottom listing every answer and every chapter", JSON.stringify(first));
     await p.click('[data-outline="t1-6"]'); await settle(p, 300);
     const ph = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), b = document.querySelector('[data-region="t1-6"] .rb-rbody').getBoundingClientRect(); return { sheet: document.querySelector("[data-board-rail]").classList.contains("open"), s: window.crewReviewRoom.board.camOf("SC-60").s, left: b.left >= vp.left, right: b.right <= vp.right + 1, fill: b.width / vp.width, top: b.top >= vp.top && b.top < vp.top + 120 }; });
     ok(!ph.sheet && ph.s >= 0.9 && ph.left && ph.right && ph.fill > 0.85 && ph.top, "tapping a chapter closes the sheet and frames it across the phone's width at a readable size", JSON.stringify(ph));
@@ -435,7 +436,7 @@ try {
     await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "zh-TW"); } catch {} Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak: () => {}, cancel: () => {} } }); window.webkitSpeechRecognition = undefined; });
     const live = []; await ctx.route(/\/api\/review-room\/(SC-60|library\/room-sc-60)/, (r) => { const u = r.request().url(); if (/library\/room-sc-60/.test(u)) return r.fulfill({ json: snap }); live.push(`${r.request().method()} ${u}`); r.fulfill({ status: 404, json: { error: "no" } }); });
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`lib: ${e.message}`));
-    await p.goto(`${base}/#/room/lib:room-sc-60`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {}); await p.waitForSelector("[data-board-vp]", { timeout: 5000 }).catch(() => {});
+    await p.goto(`${base}/#/room/lib:room-sc-60`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {}); await p.waitForSelector("[data-board-vp]", { timeout: 5000 }).catch(() => {});
     const ro = await p.evaluate(() => ({ board: !!document.querySelector("[data-board-vp]"), unvisited: document.querySelectorAll("[data-region].unvisited").length, cards: document.querySelectorAll(".rb-card").length, tidy: !!document.querySelector("[data-board-tidy]"), follow: document.querySelectorAll("[data-follow], [data-resolve]").length }));
     await p.evaluate(() => document.querySelector('[data-akey="what/t1/sentence#p0.s0"]').dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 500, clientY: 300 }))); await p.waitForSelector(".rb-pop");
     const pop = await p.evaluate(() => ({ paid: [...document.querySelectorAll('.rb-pop [data-chip]:not([data-chip="code"])')].every((b) => b.disabled), input: !!document.querySelector(".rb-pop [data-pop-input]"), code: !document.querySelector('.rb-pop [data-chip="code"]').disabled }));
@@ -455,7 +456,7 @@ try {
       document.exitFullscreen = () => { el = null; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
       window.__browserExit = () => document.exitFullscreen(); };
     /** what is on screen: only the board (and what it holds), its size against the window's */
-    const fsView = (p) => p.evaluate(() => { const st = document.querySelector("[data-stage]"), vp = document.querySelector("[data-board-vp]"), box = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };
+    const fsView = (p) => p.evaluate(() => { const st = document.querySelector("[data-board]"), vp = document.querySelector("[data-board-vp]"), box = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };
       const vis = (e) => { const s = getComputedStyle(e); if (s.display === "none" || s.visibility === "hidden" || +s.opacity === 0) return false; const b = e.getBoundingClientRect(); return b.width > 2 && b.height > 2 && b.right > 0 && b.bottom > 0 && b.left < innerWidth && b.top < innerHeight; };
       const others = [...document.body.querySelectorAll("*")].filter((e) => !st.contains(e) && !e.contains(st) && vis(e)).map((e) => e.id || e.className?.baseVal || e.className || e.tagName);
       const shown = (q) => { const e = document.querySelector(q); return !!e && vis(e); };

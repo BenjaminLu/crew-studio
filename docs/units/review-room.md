@@ -9,18 +9,29 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   purpose with the sidebar's own toggle is saved and wins), the onboarding journey and the chat button step aside, and
   leaving the room gives the sidebar and Firstmate back as they were.
 - **One viewport tall**: the header (back, the subject, its state as pills: the pull request on GitHub, new commits, the
-  change's line counts, the tutor and its independence), the board, the caption, the play bar and the dock are fixed rows;
-  only the board flexes and nothing in the room grows the page. At 1440×900 the page never scrolls and the picture stays
-  fully in view at every point.
-- **The board is the stage.** Each tutor answer is one or more **scenes**: a handwritten title, a picture on the left that
-  scales to its box (no sideways scroll), and the tutor's points beside it, revealed one at a time with the current point
-  as the **caption** under the board. At most four points show at once: the next ones are the next page, reached like
-  any other point, and a point shows at most three lines. A point that cites a board item (`[board:B1-2]`) brings that
-  item into view, so a diagram builds up as the points reach its steps. The play bar: the previous point, a dot per scene
-  (the current one opened into its points), the next point, play / pause (from where it stands, or from the start when the
-  scene is whole), replay, the scene (« ») and the voice. The keyboard: ← → a point back or forward (past a scene's last
-  point is the next scene), Space play / pause, Escape closes what is open over the room. A scene that arrives while the
-  page is open plays itself; scenes already there show whole.
+  change's line counts, the tutor and its independence), the board and the dock are fixed rows; only the board flexes and
+  nothing in the room grows the page. At 1440×900 the page never scrolls; the board's camera brings what is asked for into
+  view.
+- **The board is the room's only view** (`public/review-board.js`; there is no stage). Every scene is a region of one
+  canvas the camera owns, a row of its own for each turn: the welcome, each answer, each lesson chapter, a check, a turn
+  still being written. An answer's region (`sceneCard`) is a handwritten title under its kicker (what was asked, and the
+  question), a picture on the left laid out for the region's column and the tutor's points beside it; the picture is the
+  one the point being read cites (`[board:B1-2]`), so a diagram builds up as the points reach its steps, and every other
+  picture of the scene is a chip away. Played, the points not reached yet are dimmed and the one being read is marked; a
+  scene that arrives while the page is open plays itself; scenes already there show whole. Over a turn's first region:
+  the answers to the same question (one per tutor), "Regenerate with…", how it started (auto-teach) and what it cost; under
+  its points the questions it asks to answer in the prompt.
+- **The play bar floats on the board** (`playBar`): the caption of the point being read, the previous point, a dot per
+  point, the next point (past a scene's last point is the next scene's first, and the board flies there), play / pause
+  (from where it stands, or from the start when the scene is whole), replay, the scene before and after (« ») and the
+  voice. On a lesson chapter not being played it is a small pill (play, replay, the voice) that leaves the chapter and its
+  question cards clear. The keyboard: → ← (or n p) the next point of a scene being played, else the next region (shown
+  whole); a Space tap plays or pauses, Space held pans; + − 0 zoom; Escape closes what is open over the room.
+- **The rail lists every answer** (a group per turn under its question, the welcome first, a lesson chapter by chapter, a
+  turn being written marked …); a click flies the camera there and the play bar follows. The answer that finishes while
+  the captain looks elsewhere waits behind "The answer is ready — show it" on the board; the chip flies there and plays it.
+- **A turn being written** is on the board at once, a lesson too: the scenes it has made so far, its tool calls and what it
+  said so far, "the tutor is drawing…" where its picture will be; a failed or interrupted turn says so in its region.
 - **Paper, handwriting, motion.** The board is dotted paper (light `#fffcf4` with ink `#1f2a44` and a marker `#1d3f72`;
   dark `#1b1f27`, ink `#ece6d6`, marker `#9cc0ff`; the room's tokens are `--rr-*` in `public/review-room.css`, the inference
   badge at 4.5:1 or more in both themes). Titles and picture labels are handwritten in LXGW WenKai TC (first in a Chinese
@@ -33,15 +44,15 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   picture's step, the point and the caption move together; a point stays max(2.6 s, 170 ms a character), or as long as
   the voice reads it. Studio lays a flowchart out left to right or top down, whichever reads larger in the box. The caption
   is a paper strip.
-- **On a phone** (390×844): the room is still one screen. The picture is on top (Studio lays a flowchart out top down,
-  with a larger font when it has to scale the picture down, so its labels read at 14px or more), one point card under it
-  (the current point; the caption is merged into it), the play bar, and in place of the prompt a read-only note: a phone
-  cannot start a paid turn (the server refuses it anyway). The header keeps back, the subject, the pull request's state
-  and Firstmate.
-- **The welcome scene** (scene 1, Studio's own, free): "This room is only about <the pull request or branch>", the change's
-  line counts by file as a chart, three points (the size of the change and where most of it is, its state: a reviewer's
-  verdict, Studio's review or checks, and how to start), and "Teach me this change" (教我這個 PR), a paid turn that asks to
-  confirm first like any other. The opening illustration, when there is one, is a picture of this scene.
+- **On a phone** (390×844): the room is still one screen: the board (its answers and its questions as sheets from the
+  bottom, its first open on the answers), the play bar on it (the caption, a point back and on, play, replay), and in place
+  of the prompt a read-only note with the transcript a tap away: a phone cannot start a paid turn (the server refuses it
+  anyway). A flowchart is laid out top down, with a larger font when it has to scale the picture down, so its labels read
+  at 14px or more. The header keeps back, the subject, the pull request's state and Firstmate.
+- **The welcome scene** (the board's first region, Studio's own, free): "This room is only about <the pull request or
+  branch>", the change's line counts by file as a chart, three points (the size of the change and where most of it is, its
+  state: a reviewer's verdict, Studio's review or checks, and how to start), and "Teach me this change" (教我這個 PR), a paid
+  turn that asks to confirm first like any other; before any answer, what the board is for. The opening illustration, when there is one, is a picture of this scene.
 - **Never "no picture".** An answer that drew no picture gets one from Studio, free: the line counts of the files it cites
   (git's numbers, `view().diffstat`: `git diff --numstat` base to head, cached per head; a pull request Studio has no
   commits of yet: GitHub's file list), else a key card (the scene's title and the files it is about as sticky notes).
@@ -67,10 +78,10 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   records that it started before anything is paid, so a reload, another device or a restart does not make it again. An
   illustration still pending when Studio stopped reads as interrupted after the restart.
 - Every picture is labelled with its kind; a click enlarges it. A scene's answer lists its pictures as chips to switch to.
-- **The dock** under the stage is one line: How, Why, Teach me, Before merging, Check me, a question field, Hold to talk,
+- **The dock** under the board is one line: How, Why, Teach me, Before merging, Check me, a question field, Hold to talk,
   Ask and the transcript. The paid round's confirmation, a voice question heard and an error open above it, over the
   board, never pushing it; a turn being sent shows in the dock. The **transcript** is a drawer over the room, closed by
-  default: each question with its scene's title (a click shows the scene and closes the drawer, nothing scrolls), the
+  default: each question with its scene's title (a click flies the board to the scene and closes the drawer, nothing scrolls), the
   tutor's full answer, the understanding check and the sources. A citation's basis opens over the room too.
 - **Short on the board, long in the transcript.** The tutor builds an answer as scenes with `scene_show` {title, picture,
   points: [{text, cites}]}: a title of at most 20 CJK characters or 48 Latin ones, a picture (a board item it drew), 2 to 4
@@ -248,9 +259,9 @@ walks Studio's own pages (each is a route). Studio runs in an app window without
 Studio (GitHub, a cited page, anything not Studio's origin) always opens in a new window (`target=_blank`, `noopener`): the
 links Studio draws say so, and a document-level handler opens any other external link the same way, never in place.
 
-**Answers stay in view.** Coming back while a turn runs, the stage shows that turn: the scenes it already made and what it
+**Answers stay in view.** Coming back while a turn runs, the board shows that turn: the scenes it already made and what it
 has said so far and how many tools it used (`progress`, read back from its round record, so it survives a reload, and a
-restart shows what an interrupted turn had said). When it finishes the stage moves to its answer, unless the captain moved
+restart shows what an interrupted turn had said). When it finishes the board flies to its answer, unless the captain moved
 elsewhere meanwhile: then "The answer is ready — show it" waits on the board. Asking a quick action again on a head that
 already has its finished answer (or the same question) first offers "Show the existing explanation" or "Explain again
 (paid)", the latter confirmed as usual. Every finished answer is a scene of its own, reachable from the transcript (its
@@ -274,8 +285,8 @@ citation of their kind. `lesson_check` tells the tutor what is still missing, an
 owes is refused: the turn fails, saying which (the paid round is still recorded). Other answers (a question, how, why,
 a quiz, the merge check) are scenes on the board and may name a chapter in any order, or none.
 
-A finished lesson is the **lesson board** in the room (the default for teach; `public/review-board.js`): each scene a
-region of a canvas, numbered, its chapter and title, its points as prose (what this is) or as findings with a tone stripe
+A finished lesson is on the **board** with the room's other answers (`public/review-board.js`): each chapter a
+region of the canvas, numbered, its chapter and title, its points as prose (what this is) or as findings with a tone stripe
 (reviewers, roads, risks, questions) and Studio's drawing in a figure card under them, its kind and basis beneath it. Every
 drawing is laid out by Studio from the tutor's data (text nodes only, sizes checked; no image model): an architecture as a
 layered flowchart sized for its labels, edges leaving and entering a box spread along its side, every label placed clear of
@@ -283,7 +294,7 @@ boxes, lines and other labels (and masked by the paper), a cycle's way back bowe
 same way bowed apart, a state's way back to itself a loop beside it; a decision as the question over the
 option taken and the ones turned down, dashed, each listed under it with the record that shows it (its citation is the
 decision's own, so the Library resolves it); the state map with every transition numbered, a row per transition that
-shows what it writes. A finished lesson is read on the board only: there is no stepping it through on the stage. A translation
+shows what it writes. A lesson's chapter is read whole; the play bar can still narrate it point by point. A translation
 covers the board's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
 came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The board replays from the Library snapshot, offline.
 
@@ -617,10 +628,13 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     illustrations are on the board …", "an illustration prompt naming a repository file never reaches …", "opening the
     room makes its opening picture …"; review-room-ui "a chart is drawn by Studio …", "a generated illustration is
     labelled …", "the opening picture still being drawn shows a placeholder", "Before shows the base's screenshot".
-12. The stage: scenes paged, points revealed with the visual and caption following them, the transcript drawer closed by
-    default, the prompt bar slim. — review-room-ui "the stage opens on the latest scene …", "the board takes most of the
-    screen …", "the transcript lists each question …", "Play starts the scene again …", "the next point brings the next
-    step …".
+12. The board is the only view: every answer a region, its points played with the visual and caption following them (the
+    caption and playback in a bar floating on the board), the transcript drawer closed by default, the prompt bar slim; the
+    welcome, a check, a turn being written (a lesson too), a failed turn, versions and "Regenerate with…", "the answer is
+    ready", the questions for the prompt, the cost and "not translated yet" all on the board; the rail lists every answer
+    and flies there; full screen for every scene. — review-room-ui "the board opens on the latest scene …", "the board takes
+    most of the screen …", "the transcript lists each question …", "Play starts the scene again …", "the next point brings
+    the next step …"; review-room-board-only-ui (each item, each failing where the stage was).
 13. Voice and voice questions: off by default; on-device voices only; the vendor's voice once per scene, the points
     following it; push to talk on-device only, the transcript shown before it is sent. — review-room-ui "voice is off by
     default …", "with this Mac's voice each point is spoken …", "the vendor's voice is asked for the whole scene once …",
@@ -668,10 +682,10 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     owns its node until it is released"; smoke "even allowed to drive, a phone cannot open a pull request's review room …".
 23. A room is one viewport: focus mode folds the sidebar to its rail and closes Firstmate without saving either, opens
     Firstmate as a sheet over the room and gives both back on leaving; at 1440×900 the page never scrolls and the picture
-    stays fully in view at every point; at most four points show; ← → and Space drive it; an answer with no picture gets
+    stays in view as the play bar walks every point; ← → walk the regions and Space plays; an answer with no picture gets
     Studio's. — review-room-ui "at 1440×900 the page never scrolls …", "in a room the sidebar folds to its 64px rail …",
     "the header's Firstmate opens it as a sheet …", "leaving the room gives the sidebar and Firstmate back …", "a click in
-    the transcript jumps to its scene and closes the transcript …", "← goes back a point …", "Space plays and pauses", "an
+    the transcript flies the board to its scene …", "← and → walk the board region by region …", "Space plays and pauses", "an
     answer with no picture shows Studio's key card …", "an answer that cites files but drew nothing …".
 24. The board stays short: scene_show refuses a title or point over its limit (a CJK character weighing more), a picture
     not on the board and fewer than two points, saying which; a scene within the limits is kept; a table is a board item of
@@ -686,17 +700,18 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     and recorded; the tutor cannot grade it; its prompt carries the picks. — review-room "the old free-text check is
     refused …", "check_ask refuses a question …", "before the captain answers, the page gets the options …", "Studio
     grades the pick …", "grading runs no model …", "once answered, the page shows …", "the tutor cannot grade a
-    multiple-choice question …", "the next turn's prompt carries …"; review-room-ui "the check is a scene of option
-    buttons …", "a pick is sent as {n, choice} …", "a missed question offers …", "the re-explanation asks about that
+    multiple-choice question …", "the next turn's prompt carries …"; review-room-ui "the check is a region of the
+    board …", "a pick is sent as {n, choice} …", "a missed question offers …", "the re-explanation asks about that
     question …", "the check's answer route is real …".
 26. Paper, handwriting and motion: the pen draws only what is new, a step only what it adds, a redraw nothing; reduced
     motion shows the final state; the paper, its caption strip and the dark theme's badge contrast; the handwriting is
     Studio's own woff2 slices; a new room opens on the welcome scene, whose lesson asks to confirm. — review-room-ui "the
     pen draws only what is new …", "the board is paper …", "the handwriting is Studio's own …", "with reduced motion …",
-    "dark: the paper is #1b1f27 …", "a new room opens on Studio's welcome scene …", "the welcome scene's lesson still asks
+    "dark: the paper is #1b1f27 …", "a new room opens on the board at Studio's welcome scene …", "the welcome scene's lesson still asks
     to confirm …".
-27. A phone: the picture on top, one point card under it, a top-down flowchart with labels of 14px or more, the prompt a
-    read-only note, nothing scrolls. — review-room-ui "390×844: the picture on top and one point card under it …".
+27. A phone: the board, its answers a sheet; an answer's picture on top and its points under it, a top-down flowchart with
+    labels of 14px or more, the play bar on the board, the prompt a read-only note, nothing scrolls. — review-room-ui
+    "390×844: the board opens on its answers' sheet …".
 28. The explanation's language switches live: a kept translation at once (简體 through OpenCC), a missing one after one
     confirmation; the translation round has no tool and no code; one that loses a citation or breaks the board's limits is
     not kept; switching back runs nothing; the voice follows the language. — review-room "the room knows which answers are
@@ -750,12 +765,12 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "“The answer is ready — show it” goes to the answer".
 34. A lesson, chapter by chapter: chapters in their order, per-item before → after figures from one layout, a state machine
     with every transition cited and openable, a sequence with its loop; out-of-order chapters, the wrong drawing and uncited
-    risks refused; the chapters rail jumps and marks the current scene; chapters kept in the Library snapshot. — review-room
+    risks refused; the rail lists every answer and flies to a chapter, marked current; chapters kept in the Library snapshot. — review-room
     "the lesson is chapters in their order …", "Studio holds the chapter shape …", "per-item figures, a state machine …",
-    "the lesson's chapters and their figures are kept …"; review-room-ui "the chapters' rail lists every answer's scenes …",
-    "a click jumps to its chapter, marked current …", "every changed item is drawn from the same layout …", "the state
-    machine draws every transition …", "one request in order …", "the rail sits beside the board …", "on a phone the chapters
-    are a strip above the board".
+    "the lesson's chapters and their figures are kept …"; review-room-ui "the rail lists every answer under its question …",
+    "a chapter in the rail flies the board to it …", "every changed item is drawn from the same layout …", "the state
+    machine draws every transition …", "one request in order …", "the rail sits beside the board …", "on a phone the answers
+    are a sheet …".
 35. A lesson as a report (baton's packet): what, talks and change required, lifecycle and sequence shown or left out with a
     verified reason, one drawing a chapter, roads and rejected options only from the record; a lesson missing a chapter is
     refused; generated pictures off by default; drawings' words translated; the report renders every section kind, its
@@ -804,9 +819,9 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
 41. Full screen shows only the board (Full screen on the board, or f outside a field): the Fullscreen API on `#view`, the
     stable container the board is drawn in (a redraw replaces the board itself, which would drop out of full screen), and
     `body.rr-fs`, a full-viewport layout that holds while the request is pending or when it is refused (said nowhere). The
-    sidebar, Firstmate, the header, the prompt bar, the transcript, the chapters' rail (the lesson board's and an answer's)
-    and the questions panel are hidden; a request granted after leaving is undone at once; the board's pins, popover, Next, zoom, toasts and the citation panel stay, and on an answer's scene its
-    caption and play bar (scenes, points, playback, the voice). The camera re-fits: a locked one aims again, one moved by
+    sidebar, Firstmate, the header, the prompt bar, the transcript, the board's rail and the questions panel are hidden; a
+    request granted after leaving is undone at once; the board's pins, popover, Next, zoom, toasts, the citation panel and
+    the play bar (the caption, scenes, points, playback, the voice) stay. The camera re-fits: a locked one aims again, one moved by
     hand keeps the middle of the board. Esc (after what is open over the board), the browser's own exit and Exit full
     screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
     — review-room-board-ui "the board fills the window …", "only the board is visible …", "a refused Fullscreen API …";
