@@ -1088,6 +1088,7 @@ try {
     { const { ctx, p } = await open(1440, "en"); await ctx.addInitScript(fsStub, [false]);
       await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForTimeout(200);
       const n0 = await fsView(p); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f1 = await fsView(p);
+      await p.screenshot({ path: join(shots, "fullscreen-scene.png") }); await p.emulateMedia({ colorScheme: "dark" }); await p.waitForTimeout(100); await p.screenshot({ path: join(shots, "fullscreen-scene-dark.png") }); await p.emulateMedia({ colorScheme: "light" });
       ok(!n0.on && f1.on && f1.fsEl === "view" && near(f1.stage[2], f1.win[0]) && near(f1.stage[3], f1.win[1]) && f1.board > n0.board + 80 && !f1.others.length && f1.playbar,
         "an answer's scene in full screen: only the board, its caption and play bar, filling the window (the header, prompt and transcript hidden)", JSON.stringify({ n0, f1 }));
       await p.click("[data-scene-prev]"); await p.waitForTimeout(150); const f2 = await fsView(p);
