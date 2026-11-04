@@ -283,7 +283,7 @@ boxes, lines and other labels (and masked by the paper), a cycle's way back bowe
 same way bowed apart, a state's way back to itself a loop beside it; a decision as the question over the
 option taken and the ones turned down, dashed, each listed under it with the record that shows it (its citation is the
 decision's own, so the Library resolves it); the state map with every transition numbered, a row per transition that
-shows what it writes. "Step through on the stage" shows the lesson scene by scene, "Back to the board" returns. A translation
+shows what it writes. A finished lesson is read on the board only: there is no stepping it through on the stage. A translation
 covers the board's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
 came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The board replays from the Library snapshot, offline.
 
@@ -801,6 +801,16 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     follow-up too), nothing kept before it; the tutor gets the place; threads, cards, versions and reading state kept; each
     anchor a text locator, the open questions findings; tidy folds with no paid call; reset archives them; the snapshot keeps
     them read-only. — review-room-board (each rule).
+41. Full screen shows only the board (Full screen on the board, or f outside a field): the Fullscreen API on `#view`, the
+    stable container the board is drawn in (a redraw replaces the board itself, which would drop out of full screen), and
+    `body.rr-fs`, a full-viewport layout that holds while the request is pending or when it is refused (said nowhere). The
+    sidebar, Firstmate, the header, the prompt bar, the transcript, the lesson board's chapters' rail and questions panel
+    are hidden; the board's pins, popover, Next, zoom, toasts and the citation panel stay, and on an answer's scene its
+    caption and play bar (scenes, points, playback, the voice). The camera re-fits: a locked one aims again, one moved by
+    hand keeps the middle of the board. Esc (after what is open over the board), the browser's own exit and Exit full
+    screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
+    — review-room-board-ui "the board fills the window …", "only the board is visible …", "a refused Fullscreen API …";
+    review-room-ui "an answer's scene in full screen …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 

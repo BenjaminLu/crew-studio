@@ -10,11 +10,11 @@
 // the original); the notes panel and the last region list every question. Model text only ever goes into text nodes.
 (() => {
 window.crewReviewBoard = (D) => {
-const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl } = D;
+const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle } = D;
 // the board's own state, per room: the camera, what it is locked on, the regions read, the popover, a question waiting for
 // its confirmation, the thread in focus, the filters, the open sheet (a phone), the last layout
 const B = { cam: new Map(), lock: new Map(), cur: new Map(), visited: new Map(), pop: null, pend: new Map(), focus: new Map(), only: new Set(), before: new Set(), peek: new Set(), sheet: new Map(), ver: new Map(),
-  viewer: null, shown: new Map(), code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0 };
+  viewer: null, shown: new Map(), code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0, fit: new Map() };
 const phone = () => innerWidth <= 760;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const LOD = (s) => (s < 0.42 ? "far" : s < 0.7 ? "mid" : "near");
@@ -326,6 +326,15 @@ function bounds(card, keys) { const L = B.L.get(card); let x0 = Infinity, y0 = I
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }; }
 function frameRect(card, b, maxS = 1, pad = 0.92) { const vp = vpOf(card); if (!vp || !isFinite(b.w)) return null; const top = 44, W = vp.clientWidth, H = vp.clientHeight - top, s = Math.min(W * pad / b.w, H * pad / b.h, maxS);
   return { s, x: W / 2 - (b.x + b.w / 2) * s, y: top + H / 2 - (b.y + b.h / 2) * s }; }
+/** full screen (review-room.js FS): the viewport's size before a change of size, then the camera re-fitted to the new one. A
+ *  locked camera aims at its region again (after() already did, on the redraw); one moved by hand keeps the same middle */
+function fitMark(card) { const vp = vpOf(card); if (vp) B.fit.set(card, { W: vp.clientWidth, H: vp.clientHeight }); }
+function refit(card) {
+  const vp = vpOf(card), was = B.fit.get(card); if (!vp) return; const W = vp.clientWidth, H = vp.clientHeight; B.fit.set(card, { W, H });
+  if (!was || (was.W === W && was.H === H)) return;
+  const to = B.lock.get(card) ? lockTarget(card) : null, c = camOf(card); cancelAnimationFrame(B.tween?.raf ?? 0); B.tween = null;
+  B.cam.set(card, to || { ...c, x: c.x + (W - was.W) / 2, y: c.y + (H - was.H) / 2 }); applyCam(card);
+}
 function fitAll(card, glide = true) { if (!B.L.get(card)) return; B.lock.set(card, { all: true }); const to = lockTarget(card); if (to) moveCam(card, to, glide); }
 function zoomAt(card, f, cx, cy, glide = false) { const c = camOf(card), s2 = clamp(c.s * f, 0.1, 2.4), bx = (cx - c.x) / c.s, by = (cy - c.y) / c.s; B.lock.delete(card); moveCam(card, { s: s2, x: cx - bx * s2, y: cy - by * s2 }, glide); }
 function flyTo(card, key, glide = true) {
@@ -576,7 +585,6 @@ function view(r, scenes, i) {
     live ? h("button", { type: "button", class: "rb-btn", "data-board-tidy": "", disabled: B.busy.has(`${card}/tidy`), title: T("Fold the questions you understood back into their chapters", "把懂了的問答併回章節"), onclick: () => tidy(card) }, B.busy.has(`${card}/tidy`) ? T("Tidying…", "整理中…") : T("Tidy the board", "整理白板")) : null,
     merged ? h("span", { class: "rb-seg", role: "group", "aria-label": T("Before or after tidying", "整理前或整理後") }, ["before", "after"].map((v) => h("button", { type: "button", "data-tidy-view": v, "aria-pressed": String((v === "before") === B.before.has(card)), onclick: () => { if (v === "before") B.before.add(card); else B.before.delete(card); rerender(); } }, v === "before" ? T("Before", "整理前") : T("After", "整理後")))) : null,
     live && r.followUps?.on ? h("label", { class: "rb-toolnote rb-agree" }, h("input", { type: "checkbox", "data-followups": "", checked: true, onchange: (e) => { if (!e.target.checked) lessonOp(card, { op: "consent", on: false }); } }), T(" Questions start right away", " 追問直接開始")) : null,
-    h("button", { type: "button", class: "rb-btn ghost", "data-report-step": t.n, onclick: () => { RR.step.add(`${card}/${t.n}`); rerender(); } }, T("Step through on the stage", "在舞台上逐步看")),
     !phone() ? h("button", { type: "button", class: "rb-btn ghost", "data-notes-toggle": "", "aria-pressed": String(innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card)), onclick: () => { if (B.notes.has(card)) B.notes.delete(card); else B.notes.add(card); rerender(); } }, T(`Questions ${threads.length}`, `標註 ${threads.length}`)) : null);
   const vp = h("div", { class: `rb-vp${B.only.has(card) ? " only" : ""}`, "data-board-vp": card, tabindex: "-1", onpointerdown: (e) => pointerDown(card, e), onwheel: (e) => wheel(card, e), onclick: (e) => click(card, r, e), onfocusin: (e) => focusIn(card, e), onscroll: (e) => { e.currentTarget.scrollTop = 0; e.currentTarget.scrollLeft = 0; } },
     h("div", { class: `rb-plane${focus ? " focusing" : ""}${B.before.has(card) ? " before" : ""}`, "data-board-plane": card, "data-lod": lod, "data-focus": focus ? focus.n : null },
@@ -591,7 +599,7 @@ function view(r, scenes, i) {
       h("button", { type: "button", class: "rb-next", "data-board-next": next || "", onclick: () => step(card, 1) }, next ? T(`Next: ${names[next]} ▸`, `下一段：${names[next]} ▸`) : T("Back to the whole board", "回到全覽")),
       h("div", { class: "rb-zoom", role: "group", "aria-label": T("Zoom", "縮放") }, h("button", { type: "button", "data-zoom-out": "", "aria-label": T("Zoom out", "縮小"), onclick: () => { const v = vpOf(card); zoomAt(card, 0.8, v.clientWidth / 2, v.clientHeight / 2, true); } }, "−"),
         h("span", { "data-zoom-pct": "", "aria-live": "polite" }, `${Math.round(camOf(card).s * 100)}%`), h("button", { type: "button", "data-zoom-in": "", "aria-label": T("Zoom in", "放大"), onclick: () => { const v = vpOf(card); zoomAt(card, 1.25, v.clientWidth / 2, v.clientHeight / 2, true); } }, "+"),
-        h("button", { type: "button", class: "fit", "data-zoom-fit": "", onclick: () => fitAll(card) }, T("Fit all", "全覽")))),
+        h("button", { type: "button", class: "fit", "data-zoom-fit": "", onclick: () => fitAll(card) }, T("Fit all", "全覽")), fsToggle(card))),
     notesOpen || phone() ? notes : null,
     phone() ? h("nav", { class: "rb-phonebar", "aria-label": T("The board", "白板") }, h("button", { type: "button", "data-sheet": "outline", "aria-pressed": String(sheet === "outline"), onclick: () => { B.sheet.get(card) === "outline" ? B.sheet.delete(card) : B.sheet.set(card, "outline"); rerender(); } }, T("Chapters", "章節")),
       h("button", { type: "button", "data-board-next-phone": next || "", onclick: () => step(card, 1) }, next ? T("Next ▸", "下一段 ▸") : T("All", "全覽")),
@@ -604,6 +612,6 @@ function view(r, scenes, i) {
 /** forget everything kept for a room (it was started over) */
 function forget(card) { for (const m of [B.cam, B.lock, B.cur, B.visited, B.pend, B.focus, B.sheet, B.L, B.reveal, B.err, B.lod, B.focusKey, B.lastScene]) m.delete(card); for (const s of [B.only, B.before, B.notes]) s.delete(card);
   for (const s of [B.peek]) for (const k of [...s]) if (k.startsWith(`${card}/`)) s.delete(k); for (const m of [B.ver, B.code, B.figs]) for (const k of [...m.keys()]) if (k.startsWith(`${card}/`)) m.delete(k); if (B.pop?.card === card) B.pop = null; }
-return { view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf };
+return { view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit };
 };
 })();

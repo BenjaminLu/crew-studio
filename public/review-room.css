@@ -557,3 +557,21 @@ html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
 .rr-figsvg .rr-pickable { cursor: pointer; } .rr-figsvg .rr-pickable.on { stroke-width: 2.4; }
 .rp-figbody { justify-items: start; } .rp-figbody > .rr-flow-wrap, .rp-figbody > .rp-smap, .rp-figbody > .rr-figsvg { justify-items: center; }
 .rr-paste-offer { font-size: 12.5px; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--fig-amber); background: var(--fig-amber-tint); } .rr-auto-note { font-size: 12.5px; } .rr-auto-note label { display: inline-flex; gap: 4px; align-items: center; }
+
+/* ---------- full screen (review-room.js FS; docs/units/review-room.md 41): only the board, the whole window. #view is what the
+   Fullscreen API holds; body.rr-fs is the same layout while it is pending, when it is refused and on a phone ---------- */
+.rr-fs-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: 12.5px; white-space: nowrap; flex: none; cursor: pointer; }
+.rr-fs-btn:hover { color: var(--text); background: var(--surface-2); }
+.rr-fs-btn:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
+.rr-fs-btn .rr-ic { width: 16px; height: 16px; }
+body.rr-fs .side, body.rr-fs .chat, body.rr-fs #chatFab, body.rr-fs .toast { display: none !important; }
+body.rr-fs #view { position: fixed; inset: 0; z-index: 70; background: var(--bg); overflow: hidden; }
+#view:fullscreen { background: var(--bg); }
+body.rr-fs .rr-room { display: block; height: 100%; max-width: none; margin: 0; padding: 0; }
+body.rr-fs .rr-room > :not(.rr-stage, .rr-zoom, .rr-cite-panel) { display: none !important; }
+body.rr-fs .rr-room > .rr-stage { height: 100%; box-sizing: border-box; padding: 10px 14px; }
+@media (max-width: 760px) {
+  .rr-playbar .rr-fs-btn { width: 36px; height: 36px; padding: 0; justify-content: center; border-radius: 10px; }
+  .rr-fs-btn span { display: none; }
+  body.rr-fs .rr-room > .rr-stage { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+}
