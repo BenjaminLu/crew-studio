@@ -1143,6 +1143,14 @@ export class Lan {
 
   // ---------- views ----------
   private who(k: string) { if (this.ks && k === this.ks.key) return { key: k, name: "我", fp: this.ks.fingerprint, me: true }; const p = this.peer(k); let fp = p?.fp ?? ""; if (!fp) { try { fp = fingerprint(unb64u(k, 65)); } catch { fp = "?"; } } return { key: k, name: p?.petname ?? "（未引介）", fp, me: false, short: short(k) }; }
+  /** A peer's titles for the Tasks its work started here, read from the sealed state when Studio's page draws them (the
+   *  board card, the Task page header). The Task keeps a neutral label (`LAN <thread>`), so nothing that reads Task titles
+   *  (Firstmate, another Task's overlap note, the event log, an agent's prompt) ever has the peer's words. */
+  runTitles() {
+    const me = this.ks?.key ?? "";
+    return this.st.threads.filter((t) => t.owner !== me).flatMap((t) => t.rounds.filter((r) => r.run && !r.run.id.startsWith("("))
+      .map((r) => { const w = this.who(t.owner); return { run: r.run!.id, thread: t.id, from: { name: w.name, fp: w.fp }, title: t.title }; }));
+  }
   threadView(t: ThreadRec) {
     const me = this.ks?.key ?? "", r = this.cur(t), mineToDo = (k: string) => k === me;
     // where the work is now, who holds it, and what comes next, read from the last step of the current round

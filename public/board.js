@@ -206,7 +206,7 @@ function studioView(r, cards, group) {
     : r.status === "paused" ? T("Paused", "已暫停") : r.status === "queued" ? T("Queued", "排隊中")
     : workers0.length ? workers0[0] + (workers0.length > 1 ? ` +${workers0.length - 1}` : "")
     : Object.entries(r.nodes || {}).filter(([, n]) => n?.waiting === "external").map(([k]) => T(`Waiting on ${loc(r.def?.nodes?.find((n) => n.id === k)?.label) || k}`, `等待 ${loc(r.def?.nodes?.find((n) => n.id === k)?.label) || k}`))[0] || T("Between steps", "準備下一步");
-  return { id, kind: "studio", group, title: r.title, workflow: r.workflow, workflowName: wfName(r.workflow, loc(r.def?.name)), project: runProject(r), from: fromProposal(r), tr, round: roundOf(r, m),
+  return { id, kind: "studio", group, title: window.crewLan?.shownTitle?.(id, r.title) ?? r.title, workflow: r.workflow, workflowName: wfName(r.workflow, loc(r.def?.name)), project: runProject(r), from: fromProposal(r), tr, round: roundOf(r, m),
     card: card ? { id: card.id, title: cardTitle(card) } : null, now, state: window.runState({ ...r, merged: !!r.ctx?.merged }), scope: r.ctx?.spec?.scope || [],
     since: r.createdAt, until: r.endedAt || null, href: `#/run/${encodeURIComponent(id)}`, graph: `#/run/${encodeURIComponent(id)}?graph=1`, r };
 }
@@ -402,7 +402,7 @@ window.crewBoard = { items: () => items().map(({ r, t, ...x }) => x), task: (r, 
 // and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;
 // a redraw between a mouse-down and its mouse-up would swallow the captain's click). A redraw keeps the focused row
 // focused and the detail panel's own scroll.
-const boardSig = () => JSON.stringify([lang, ghBar()?.textContent ?? null, BD.tab, BD.sel, BD.focus, BD.mode, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.lastTs, t.failure?.type]),
+const boardSig = () => JSON.stringify([lang, window.crewLan?.titlesSig?.() ?? "", ghBar()?.textContent ?? null, BD.tab, BD.sel, BD.focus, BD.mode, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.lastTs, t.failure?.type]),
   S.pending.map((c) => [c.id, c.ts, c.task]), S.crew.filter((c) => c.alive).map((c) => [c.actor, c.task, c.vendor, c.model]), BD.list, BD.ended, (BD.cards || []).map((c) => [c.id, c.status, c.run]), [...BD.det.values()].map((r) => [r.id, r.status, r.updatedAt, r.nodes, (r.steps || []).length, (r.events || []).length, !!r.def])]);
 { const baseSoft = soft; soft = function () {
     if (S.route?.name !== "board") return baseSoft();
