@@ -90,6 +90,9 @@ async function open(width, lang, mic = "available") {
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
   return { ctx, p, posts, cites, speech, release: () => hold?.() };
 }
+/** a control on the board's canvas pressed as such: what it does is under test, not where the camera left it (on a slower
+ *  machine's layout it can sit under the floating play bar or past the board's edge) */
+const press = (p, sel) => p.$eval(sel, (e) => e.click());
 /** the board's camera has landed (a rail click or → glides it for 450ms; a click or a measure waits for it) */
 const landed = (p) => p.waitForFunction(() => !window.crewReviewRoom?.board?.state?.tween, null, { timeout: 5000 }).catch(() => {});
 const noScroll = (p) => p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
@@ -125,7 +128,7 @@ try {
     let s = await stage(p);
     ok(s.scene === "t2" && s.pos === "3/3" && s.points === 3, "the board opens on the latest scene, whole (scenes already there are not replayed)", JSON.stringify(s));
     ok(!!(await p.$('[data-cite-invalid="commit:deadbeef"]')) && !(await p.$('button[data-cite="commit:deadbeef"]')), "a citation Studio could not verify is plain text: nothing to click");
-    await p.click('[data-cite="source:4"]'); await p.waitForSelector('[data-cite-panel="source:4"]');
+    await press(p, '[data-cite="source:4"]'); await p.waitForSelector('[data-cite-panel="source:4"]');
     ok(!(await p.$('[data-cite-panel] a')) && /javascript:alert\(2\)/.test(await p.textContent('[data-cite-panel] [data-source-text]')), "a source whose address is not http(s) shows as text in the citation panel, never a link");
     await p.click('[data-cite-panel] .btn');
     const layout = await p.evaluate(() => { const st = document.querySelector("[data-board]").getBoundingClientRect(), bar = document.querySelector("[data-chat]").getBoundingClientRect(), d = document.querySelector("[data-transcript]");
@@ -143,27 +146,27 @@ try {
     ok(await p.$eval('[data-claim="inference"]', (e) => /Inference/.test(e.textContent)) && await p.evaluate(() => !window.__pwned && !document.querySelector(".rr-point img")), "an uncited point reads Inference; model text with markup stays text");
     // screenshots: before / after toggle
     ok(await p.$eval(".rb-region.cur [data-visual] [data-shot-side]", (e) => e.dataset.shotSide) === "after" && /screenshot · base and head/.test(await p.textContent('.rb-region.cur [data-visual] [data-kind="screenshot"]')), "the screenshot is labelled with its kind and shows the head first");
-    await p.click('[data-shot-toggle="before"]');
+    await press(p, '[data-shot-toggle="before"]');
     ok(await p.$eval(".rb-region.cur [data-visual] [data-shot-img]", (e) => e.dataset.shotImg + " " + e.getAttribute("src")) === "before /api/wruns/R-050/captures/x/before/index.html.png", "Before shows the base's screenshot");
     // play: points appear one at a time, the visual follows the point, the caption reads it
     await p.click("[data-replay]"); s = await stage(p);
     ok(s.points === 1 && s.visual === "B1-1" && /An amount in cents goes into percent/.test(s.caption) && s.nodes.join() === "A,B", "Play starts the scene again: the first point, its picture (the flow's first step) and its caption", JSON.stringify(s));
     await p.click("[data-play]"); await p.click("[data-point-next]"); s = await stage(p);
     ok(s.points === 2 && s.visual === "B1-2" && s.nodes.join() === "A,B,C*" && /rounded to whole cents/.test(s.caption), "the next point brings the next step of the diagram, the part it adds marked new", JSON.stringify(s));
-    await p.click('[data-claim="cited"] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff");
+    await press(p, '[data-claim="cited"] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff");
     ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && /Math\.round/.test(await p.textContent("[data-cite-panel]")), "a citation opens the diff hunk it rests on", JSON.stringify(cites));
     // the scene's other pictures: the chart from git numbers and the generated illustration, labelled, enlarged on click
     { const chip = await p.$eval('[data-visual-pick="B1-7"]', (e) => [e.textContent, e.title]);
       ok(/ Checkout, before and…$/.test(chip[0]) && chip[1] === "Checkout, before and after", "a long picture title in the strip is cut at a word, with an ellipsis, and reads whole on hover", JSON.stringify(chip)); }
-    await p.click('[data-visual-pick="B1-8"]');
+    await press(p, '[data-visual-pick="B1-8"]');
     ok(await p.$eval(".rb-region.cur [data-visual] [data-chart]", (e) => e.dataset.chart + " " + e.querySelectorAll("rect").length) === "diffstat 4" && /counted by git/.test(await p.textContent(".rb-region.cur [data-visual] [data-kind]")), "a chart is drawn by Studio from git's numbers, labelled so");
-    await p.click('[data-visual-pick="B1-9"]');
+    await press(p, '[data-visual-pick="B1-9"]');
     ok(/illustration · generated/.test(await p.textContent('.rb-region.cur [data-visual] [data-kind="illustration"]')) && /Not evidence/.test(await p.textContent('.rb-region.cur [data-visual] [data-basis="illustration"]')), "a generated illustration is labelled as one and as not evidence");
-    await p.click(".rb-region.cur [data-visual] [data-illustration]"); await p.waitForSelector("[data-zoom] img");
+    await press(p, ".rb-region.cur [data-visual] [data-illustration]"); await p.waitForSelector("[data-zoom] img");
     ok((await p.getAttribute("[data-zoom] img", "src")) === "/api/review-room/SC-50/image/B1-9.png", "a click enlarges the picture");
     await p.click("[data-zoom] button"); ok(!(await p.$("[data-zoom]")), "and Close puts it back");
     await p.click('[data-jump="t0"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]'); });
-    await p.click('[data-visual-pick="B0-1"]');
+    await press(p, '[data-visual-pick="B0-1"]');
     ok(!!(await p.$(".rb-region.cur [data-visual] [data-illustration-pending]")) && /paid generated image, made once/.test(await p.textContent(".rb-region.cur [data-visual] [data-paid-image]")), "the opening picture still being drawn shows a placeholder, labelled as a paid generated image made once");
     // voice: this Mac's best voice by default; on-device voices only, the best first; the vendor's own voice for the whole scene
     await p.click('[data-jump="t1"]').catch(() => {});
@@ -271,7 +274,7 @@ try {
     ok(lens.length >= 3 && lens.every((n) => n <= 62) && maxShown <= 4 && sawTable, "an older long answer is split by sentence into short points (≤ 60 CJK characters), at most four a page; its markdown table becomes a table picture", JSON.stringify({ lens, maxShown, sawTable }));
     ok(await p.evaluate(() => document.querySelector(".rb-region.cur [data-visual] [data-table] th")?.textContent === "金額" && !document.querySelector(".rb-region.cur [data-visual] [data-table] script")), "the table is drawn by Studio as text cells");
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]');
-    await p.click('[data-visual-pick="B0-1"]');
+    await press(p, '[data-visual-pick="B0-1"]');
     const zh = await p.evaluate(() => ({ title: document.querySelector(".rb-region.cur [data-scene-title]")?.textContent, foot: document.querySelector(".rb-region.cur [data-visual] .rr-item-h")?.textContent, stage: document.querySelector("[data-board]").textContent }));
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); const flow = await p.evaluate(() => document.querySelector(".rb-region.cur [data-visual] .rr-item-h")?.textContent || "");
     ok(zh.title === "這間審查室只講 #7 這一個 PR" && /一眼看懂這個改動/.test(zh.foot) && !/This change at a glance|mermaid/.test(zh.stage + flow) && /流程圖/.test(flow), "a Chinese room has no English titles or badges: Studio's titles and every picture's kind read in Chinese", JSON.stringify({ zh, flow }));
@@ -420,7 +423,7 @@ try {
     const wel = await p.evaluate(() => { return { welcome: !!document.querySelector('[data-board]') && /This room is only about/.test(document.querySelector("[data-board]").textContent), skipped: !!document.querySelector("[data-auto-skipped]") }; });
     ok(wel.welcome && !wel.skipped, "a saved room's welcome never shows an auto-teach notice, even from a snapshot that still carries one", JSON.stringify(wel));
     ok(/read-only replay/.test(ro.note || "") && !ro.paid.length && ro.snap === "room-sc-50@2" && JSON.stringify(ro.vers) === JSON.stringify(["1", "2"]) && ro.focus && ro.voice && !ro.vendor, "a saved room opens from the Library in the room itself, read-only: no prompt, no paid control, its versions listed, this Mac's voice still there", JSON.stringify(ro));
-    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]"); await p.click('[data-board] [data-cite="diff:src/percent.ts:L2-3"]');
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]"); await press(p, '[data-board] [data-cite="diff:src/percent.ts:L2-3"]');
     await p.waitForSelector("[data-cite-panel] .rr-diff");
     ok(/Math\.round/.test(await p.textContent("[data-cite-panel]")) && !cites.length && !live.length, "a citation opens from the snapshot itself: nothing asked of the live room or the cache", JSON.stringify({ cites, live }));
     await p.click("[data-cite-panel] .btn");
@@ -495,7 +498,7 @@ try {
     await p.route(/\/api\/review-room\/SC-77\/cite\?/, (r) => { asked.push(new URL(r.request().url()).searchParams.get("ref")); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "+x" } }); });
     await p.goto(`${base}/#/room/SC-77`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
-    const title = await p.getAttribute('[data-board] [data-cite="diff:src/percent.ts:L2-3"]', "title"); await p.click('[data-board] [data-cite="diff:src/percent.ts:L2-3"]');
+    const title = await p.getAttribute('[data-board] [data-cite="diff:src/percent.ts:L2-3"]', "title"); await press(p, '[data-board] [data-cite="diff:src/percent.ts:L2-3"]');
     await p.waitForFunction(() => window.__opened.length > 0, null, { timeout: 3000 }).catch(() => {}); await p.waitForTimeout(150);
     const opened = await p.evaluate(() => window.__opened), want = createHash("sha256").update("src/percent.ts").digest("hex");
     ok(opened.length === 1 && /^https:\/\/github\.com\/fixture\/project\/pull\/77\/files#diff-[0-9a-f]{64}(R\d+-R\d+)?$/.test(opened[0][0]) && opened[0][0].includes(`#diff-${want}`) && opened[0][1] === "_blank" && /noopener/.test(opened[0][2]) && /GitHub/.test(title || ""),
@@ -512,7 +515,7 @@ try {
     await p.route(/\/api\/review-room\/SC-78\/cite\?/, (r) => { asked.push(1); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "+x" } }); });
     await p.goto(`${base}/#/room/SC-78`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
-    await p.click('[data-board] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff", { timeout: 5000 }).catch(() => {});
+    await press(p, '[data-board] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff", { timeout: 5000 }).catch(() => {});
     ok(!(await p.evaluate(() => window.__opened.length)) && asked.length === 1 && !!(await p.$("[data-cite-panel] .rr-diff")), "a pull request address on any other host opens nothing outside Studio: the citation panel as before");
     await ctx.close(); }
 
@@ -1027,7 +1030,7 @@ try {
     ok(kept, "an opened original stays open across a redraw");
     await p.click('.rr-point [data-untrusted-fold="review"] summary');
     ok(!!fold && fold.open === false && fold.shown === 0 && fold.gist.length > 0 && fold.gist.length <= 120, "a reviewer's words show as a one-line gist; the full text stays folded until the captain opens it", JSON.stringify(fold));
-    await p.click('[data-cite="review:c11"]'); await p.waitForSelector('[data-cite-panel="review:c11"] [data-untrusted="review"]');
+    await press(p, '[data-cite="review:c11"]'); await p.waitForSelector('[data-cite-panel="review:c11"] [data-untrusted="review"]');
     ok(/rita/.test(await p.textContent("[data-cite-panel]")) && (await p.getAttribute("[data-review-link]", "href")) === "https://github.com/fixture/project/pull/7#discussion_r11" && await p.evaluate(() => !document.querySelector("[data-cite-panel] img")), "the citation opens the comment, as text, with a link to it on GitHub");
     const shown = await p.evaluate(() => [...document.querySelectorAll(".rb-region.cur .rr-point")].map((e) => { const b = e.getBoundingClientRect(); return [b.height > 0, e.textContent.slice(0, 40)]; }));
     ok(shown.length === 1 && shown[0][0] && /rita · on a\.txt:L2/.test(shown[0][1]), "the scene's point is on the board, visible", JSON.stringify(shown));
