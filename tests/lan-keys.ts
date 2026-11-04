@@ -70,8 +70,11 @@ await contract("soft-enclave");
   const j = JSON.parse(readFileSync(join(d, "lan", "enclave.json"), "utf8")); ks.close();
   const again = (await openKeystore(d, { create: false, kind: "soft-enclave" })).ks!;
   ok(j.admin.presence === "biometry" && again.adminGuard === "biometry" && (await openKeystore(dirOf("pres"), { create: true, kind: "soft-enclave" })).ks!.adminGuard === "presence", "biometry only is an opt-in for the admin key (kept and shown); the default is Touch ID or the password"); again.close(); }
-// the default in a test run is the file keystore (never the Secure Enclave, never the Keychain)
-{ const r = await openKeystore(dirOf("default"), { create: true }); ok(r.ks?.kind === "file", "a test run's default identity is the file keystore", r.ks?.kind); r.ks?.close(); }
+// the default in a test run is the file keystore (never the Secure Enclave, never the Keychain); CREW_LAN_REAL_SE=1 is the
+// one opt-in that makes it the enclave, so it is set aside here
+{ const se = process.env.CREW_LAN_REAL_SE; delete process.env.CREW_LAN_REAL_SE;
+  try { const r = await openKeystore(dirOf("default"), { create: true }); ok(r.ks?.kind === "file", "a test run's default identity is the file keystore", r.ks?.kind); r.ks?.close(); }
+  finally { if (se !== undefined) process.env.CREW_LAN_REAL_SE = se; } }
 // a kind on disk is never silently changed
 { const d = dirOf("kind"); (await openKeystore(d, { create: true, kind: "file" })).ks!.close();
   const r = await openKeystore(d, { create: false, kind: "soft-enclave" }); ok(!r.ks && /file identity/.test(r.why ?? ""), "asking for another keystore never replaces the identity on disk", r.why); }
