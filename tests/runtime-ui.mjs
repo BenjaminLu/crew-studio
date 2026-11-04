@@ -120,12 +120,13 @@ try {
     ok(await p.getAttribute(`[data-node="${added}"]`, "data-checks") === "1", "dragging a check from the palette onto a node attaches it (badge ✓1)");
     await p.focus('[data-node="build"]'); await p.waitForTimeout(150);
     // a real pointer drag (mouse down, move, up; force only skips the visibility wait for a transparent hit path), dropped at the
-    // middle of build→pr-open (a forward curve is symmetric about its box's centre, so that centre lies on it), after asserting that
-    // point hits this edge: no back edge covers it
-    await p.$eval('[data-edge="build→pr-open[ok]"] .rt-hit', (path) => path.scrollIntoView({ block: "center", inline: "center" })); await p.waitForTimeout(300);
-    const eb = await p.locator('[data-edge="build→pr-open[ok]"] .rt-hit').boundingBox(); const drop = { x: eb.x + eb.width / 2, y: eb.y + eb.height / 2 };
+    // middle of ci→review (a forward curve is symmetric about its box's centre, so that centre lies on it), after asserting that
+    // point hits this edge: no back edge covers it. Not build→pr-open: since branch intake that pair has two edges (adopted and
+    // ok), which the layout draws as one, keyed by the first
+    await p.$eval('[data-edge="ci→review[pass]"] .rt-hit', (path) => path.scrollIntoView({ block: "center", inline: "center" })); await p.waitForTimeout(300);
+    const eb = await p.locator('[data-edge="ci→review[pass]"] .rt-hit').boundingBox(); const drop = { x: eb.x + eb.width / 2, y: eb.y + eb.height / 2 };
     drop.hit = await p.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el?.closest("[data-edge]")?.getAttribute("data-edge") ?? el?.getAttribute("class") ?? null; }, [drop.x, drop.y]);
-    ok(drop.hit === "build→pr-open[ok]", "the middle of the forward edge build→pr-open hits that edge (no back edge covers it)", String(drop.hit));
+    ok(drop.hit === "ci→review[pass]", "the middle of the forward edge ci→review hits that edge (no back edge covers it)", String(drop.hit));
     // Hold a real validation response until a keyboard user has focused another node.
     // A background SVG redraw must preserve that focus before the next Enter.
     let releaseValidation, validationArrived;
@@ -135,8 +136,8 @@ try {
       if(!holdValidation)return route.continue();holdValidation=false;
       const response=await route.fetch();validationArrived();await validationGate;await route.fulfill({response});
     });
-    let dragErr = null; await revealEditorControl(p, '[data-pal-check="firstmate/scope"]'); await p.locator('[data-pal-check="firstmate/scope"]').dragTo(p.locator('[data-edge="build→pr-open[ok]"] .rt-hit'), { targetPosition: { x: eb.width / 2, y: eb.height / 2 }, force: true, timeout: 8000 }).catch((e) => { dragErr = String(e.message).split("\n")[0]; }); await p.waitForTimeout(300);
-    ok(await p.locator('[data-edge="build→pr-open[ok]"]').getAttribute("data-edge-checks") === "1", "dragging a check onto an edge attaches it to the edge (a real pointer drag dropped at that point, no synthetic drop)", String(dragErr));
+    let dragErr = null; await revealEditorControl(p, '[data-pal-check="firstmate/scope"]'); await p.locator('[data-pal-check="firstmate/scope"]').dragTo(p.locator('[data-edge="ci→review[pass]"] .rt-hit'), { targetPosition: { x: eb.width / 2, y: eb.height / 2 }, force: true, timeout: 8000 }).catch((e) => { dragErr = String(e.message).split("\n")[0]; }); await p.waitForTimeout(300);
+    ok(await p.locator('[data-edge="ci→review[pass]"]').getAttribute("data-edge-checks") === "1", "dragging a check onto an edge attaches it to the edge (a real pointer drag dropped at that point, no synthetic drop)", String(dragErr));
     // the side panel: a params form from the check's schema, and Try on sample
     await validationSeen;
     await p.focus('[data-node="spec"]');
@@ -152,7 +153,7 @@ try {
     // keep the run harmless: take the checks back off the new node and the edge
     await p.focus(`[data-node="${added}"]`); await p.keyboard.press("Enter"); await p.waitForTimeout(150); await p.evaluate(() => document.querySelectorAll(".rt-panel details").forEach((d) => (d.open = true)));
     await p.locator(".rt-panel [data-check='core/ste-wording'] button", { hasText: "Remove" }).click(); await p.waitForTimeout(150);
-    await p.focus('[data-edge="build→pr-open[ok]"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(150); await p.evaluate(() => document.querySelectorAll(".rt-panel details").forEach((d) => (d.open = true)));
+    await p.focus('[data-edge="ci→review[pass]"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(150); await p.evaluate(() => document.querySelectorAll(".rt-panel details").forEach((d) => (d.open = true)));
     await p.locator(".rt-panel [data-check='firstmate/scope'] button", { hasText: "Remove" }).click(); await p.waitForTimeout(400);
     // save as v2: the diff
     await p.fill("[data-save-note]", "a hand-off step before done"); await p.click("[data-save]"); await p.waitForSelector("[data-diff] b", { timeout: 10000 });
@@ -174,7 +175,8 @@ try {
     // the Studio card is in the Inbox too, beside firstmate's, labelled with run, workflow and node, counted in the sidebar, answerable there
     await p.goto(`${base}/#/inbox`); await p.waitForSelector('[data-inbox-studio] [data-scard] [data-option="dispatch"]', { timeout: 15000 });
     const meta = await p.textContent("[data-inbox-studio] [data-scard-meta]"); const navN = (await p.textContent("#navInbox")).trim();
-    ok(meta.includes(runId) && /code-firstmate/.test(meta) && /dispatch/.test(meta) && navN === "1", "a Studio card shows in the Inbox labelled with its run, workflow and node, and the sidebar Inbox count includes it", JSON.stringify([meta, navN]));
+    // the workflow by its display name: Studio ships code-firstmate renamed to "coding" (src/runtime/workflow-names.ts)
+    ok(meta.includes(runId) && /coding/.test(meta) && /dispatch/.test(meta) && navN === "1", "a Studio card shows in the Inbox labelled with its run, workflow and node, and the sidebar Inbox count includes it", JSON.stringify([meta, navN]));
     for (const scheme of ["light", "dark"]) { const pc = await browser.newContext({ viewport: { width: 390, height: 900 }, colorScheme: scheme }); const pp = await pc.newPage();
       await pp.goto(`${base}/#/inbox`); await pp.waitForSelector("[data-inbox-studio] [data-scard]", { timeout: 15000 }).catch(() => {});
       const sw = await pp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1); await pp.screenshot({ path: join(shots, `runtime-inbox-390-${scheme}.png`) });
