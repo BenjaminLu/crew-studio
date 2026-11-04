@@ -90,9 +90,16 @@ async function open(width, lang, mic = "available") {
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
   return { ctx, p, posts, cites, speech, release: () => hold?.() };
 }
+/** a control on the board's canvas pressed as such: what it does is under test, not where the camera left it (on a slower
+ *  machine's layout it can sit under the floating play bar or past the board's edge) */
+const press = (p, sel) => p.$eval(sel, (e) => e.click());
+/** the board's camera has landed (a rail click or → glides it for 450ms; a click or a measure waits for it) */
+const landed = (p) => p.waitForFunction(() => !window.crewReviewRoom?.board?.state?.tween, null, { timeout: 5000 }).catch(() => {});
 const noScroll = (p) => p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
-const stage = (p) => p.$eval("[data-stage]", (e) => ({ scene: e.dataset.scene, pos: e.querySelector("[data-scene-pos]")?.dataset.scenePos, title: e.querySelector("[data-scene-title]")?.textContent, points: e.querySelectorAll(".rr-point").length, at: e.querySelector("[data-point-pos]")?.dataset.pointPos,
-  visual: e.querySelector("[data-visual]")?.dataset.visual, caption: e.querySelector("[data-caption]")?.textContent, nodes: [...e.querySelectorAll("[data-node]")].map((n) => n.dataset.node + (n.classList.contains("rr-new") ? "*" : "")) }));
+/** where the board stands: the region in view (the scene the room is on) and the play bar floating on the board */
+const stage = (p) => p.$eval("[data-board]", (e) => { const r = e.querySelector(`[data-region="${e.dataset.scene}"]`) || e, bar = e.querySelector("[data-playbar]");
+  return { scene: e.dataset.scene, pos: bar?.querySelector("[data-scene-pos]")?.dataset.scenePos, title: r.querySelector(".rb-region.cur [data-scene-title]")?.textContent, points: r.querySelectorAll(".rr-point:not(.later)").length, at: r.querySelector("[data-point-pos]")?.dataset.pointPos,
+    visual: r.querySelector(".rb-region.cur [data-visual]")?.dataset.visual, caption: bar?.querySelector("[data-caption]")?.textContent, nodes: [...r.querySelectorAll(".rb-region.cur [data-visual] [data-node]")].map((n) => n.dataset.node + (n.classList.contains("rr-new") ? "*" : "")) }; });
 try {
   // ---------- the merge card's entry ----------
   { const { ctx, p } = await open(1440, "en");
@@ -117,14 +124,14 @@ try {
 
   // ---------- the room at 1440: the board is the stage ----------
   { const { ctx, p, posts, cites, speech, release } = await open(1440, "en");
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     let s = await stage(p);
-    ok(s.scene === "t2" && s.pos === "3/3" && s.points === 3, "the stage opens on the latest scene, whole (scenes already there are not replayed)", JSON.stringify(s));
+    ok(s.scene === "t2" && s.pos === "3/3" && s.points === 3, "the board opens on the latest scene, whole (scenes already there are not replayed)", JSON.stringify(s));
     ok(!!(await p.$('[data-cite-invalid="commit:deadbeef"]')) && !(await p.$('button[data-cite="commit:deadbeef"]')), "a citation Studio could not verify is plain text: nothing to click");
-    await p.click('[data-cite="source:4"]'); await p.waitForSelector('[data-cite-panel="source:4"]');
+    await press(p, '[data-cite="source:4"]'); await p.waitForSelector('[data-cite-panel="source:4"]');
     ok(!(await p.$('[data-cite-panel] a')) && /javascript:alert\(2\)/.test(await p.textContent('[data-cite-panel] [data-source-text]')), "a source whose address is not http(s) shows as text in the citation panel, never a link");
     await p.click('[data-cite-panel] .btn');
-    const layout = await p.evaluate(() => { const st = document.querySelector("[data-stage]").getBoundingClientRect(), bar = document.querySelector("[data-chat]").getBoundingClientRect(), d = document.querySelector("[data-transcript]");
+    const layout = await p.evaluate(() => { const st = document.querySelector("[data-board]").getBoundingClientRect(), bar = document.querySelector("[data-chat]").getBoundingClientRect(), d = document.querySelector("[data-transcript]");
       return { stageH: st.height, barH: bar.height, below: bar.top >= st.bottom - 1, drawerOpen: d.dataset.open === "true" }; });
     ok(layout.stageH > layout.barH * 2 && layout.below && layout.drawerOpen === false, "the board takes most of the screen; a slim prompt bar sits under it; the transcript drawer starts closed", JSON.stringify(layout));
     await p.click("[data-transcript-toggle]"); const jumps = await p.$$eval("[data-jump]", (els) => els.map((e) => [e.dataset.jump, e.textContent]));
@@ -132,34 +139,35 @@ try {
     ok(links.js === 0 && JSON.stringify(links.src) === JSON.stringify([["1", true, null], ["2", false, null], ["3", false, "javascript:alert(document.cookie)"], ["4", false, "javascript:alert(2)"]]), "only a fetched http(s) page is a link; a refused or non-http address is plain text, never an anchor", JSON.stringify(links));
     ok(jumps.length === 3 && /This room is only about pull request #7/.test(jumps[0][1]) && /Teach me this change\. → How percent works/.test(jumps[1][1]), "the transcript lists each question and its scene's title", JSON.stringify(jumps));
     await p.click('[data-jump="t1"]'); s = await stage(p);
-    ok(s.scene === "t1" && s.pos === "2/3" && s.title === "How percent works" && s.at === "5/5" && s.points === 1 && s.visual === "B1-7" && await p.$eval("[data-transcript]", (e) => e.dataset.open === "false"), "a click in the transcript jumps to its scene and closes the transcript; the visual is the one the last point cites; past four points the next ones are the next page", JSON.stringify(s));
-    await p.keyboard.press("ArrowLeft"); s = await stage(p);
-    ok(s.at === "4/5" && s.points === 4 && s.visual === "B1-7", "← goes back a point: the first page again, at most four points on it", JSON.stringify(s));
+    ok(s.scene === "t1" && s.pos === "2/3" && s.title === "How percent works" && s.at === "5/5" && s.points === 5 && s.visual === "B1-7" && await p.$eval("[data-transcript]", (e) => e.dataset.open === "false"), "a click in the transcript flies the board to its scene and closes the transcript; the visual is the one the last point cites; every point shown", JSON.stringify(s));
+    // → ← fly the board (a 450ms glide here): the next click waits until the camera has landed
+    await p.keyboard.press("ArrowLeft"); await landed(p); const left = await stage(p); await p.keyboard.press("ArrowRight"); await landed(p); s = await stage(p);
+    ok(left.scene === "t0" && left.at === "3/3" && s.scene === "t1" && s.at === "5/5" && s.visual === "B1-7", "← and → walk the board region by region, each scene shown whole", JSON.stringify({ left, s }));
     ok(await p.$eval('[data-claim="inference"]', (e) => /Inference/.test(e.textContent)) && await p.evaluate(() => !window.__pwned && !document.querySelector(".rr-point img")), "an uncited point reads Inference; model text with markup stays text");
     // screenshots: before / after toggle
-    ok(await p.$eval("[data-visual] [data-shot-side]", (e) => e.dataset.shotSide) === "after" && /screenshot · base and head/.test(await p.textContent('[data-visual] [data-kind="screenshot"]')), "the screenshot is labelled with its kind and shows the head first");
-    await p.click('[data-shot-toggle="before"]');
-    ok(await p.$eval("[data-visual] [data-shot-img]", (e) => e.dataset.shotImg + " " + e.getAttribute("src")) === "before /api/wruns/R-050/captures/x/before/index.html.png", "Before shows the base's screenshot");
+    ok(await p.$eval(".rb-region.cur [data-visual] [data-shot-side]", (e) => e.dataset.shotSide) === "after" && /screenshot · base and head/.test(await p.textContent('.rb-region.cur [data-visual] [data-kind="screenshot"]')), "the screenshot is labelled with its kind and shows the head first");
+    await press(p, '[data-shot-toggle="before"]');
+    ok(await p.$eval(".rb-region.cur [data-visual] [data-shot-img]", (e) => e.dataset.shotImg + " " + e.getAttribute("src")) === "before /api/wruns/R-050/captures/x/before/index.html.png", "Before shows the base's screenshot");
     // play: points appear one at a time, the visual follows the point, the caption reads it
     await p.click("[data-replay]"); s = await stage(p);
     ok(s.points === 1 && s.visual === "B1-1" && /An amount in cents goes into percent/.test(s.caption) && s.nodes.join() === "A,B", "Play starts the scene again: the first point, its picture (the flow's first step) and its caption", JSON.stringify(s));
     await p.click("[data-play]"); await p.click("[data-point-next]"); s = await stage(p);
     ok(s.points === 2 && s.visual === "B1-2" && s.nodes.join() === "A,B,C*" && /rounded to whole cents/.test(s.caption), "the next point brings the next step of the diagram, the part it adds marked new", JSON.stringify(s));
-    await p.click('[data-claim="cited"] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff");
+    await press(p, '[data-claim="cited"] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff");
     ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && /Math\.round/.test(await p.textContent("[data-cite-panel]")), "a citation opens the diff hunk it rests on", JSON.stringify(cites));
     // the scene's other pictures: the chart from git numbers and the generated illustration, labelled, enlarged on click
     { const chip = await p.$eval('[data-visual-pick="B1-7"]', (e) => [e.textContent, e.title]);
       ok(/ Checkout, before and…$/.test(chip[0]) && chip[1] === "Checkout, before and after", "a long picture title in the strip is cut at a word, with an ellipsis, and reads whole on hover", JSON.stringify(chip)); }
-    await p.click('[data-visual-pick="B1-8"]');
-    ok(await p.$eval("[data-visual] [data-chart]", (e) => e.dataset.chart + " " + e.querySelectorAll("rect").length) === "diffstat 4" && /counted by git/.test(await p.textContent("[data-visual] [data-kind]")), "a chart is drawn by Studio from git's numbers, labelled so");
-    await p.click('[data-visual-pick="B1-9"]');
-    ok(/illustration · generated/.test(await p.textContent('[data-visual] [data-kind="illustration"]')) && /Not evidence/.test(await p.textContent('[data-visual] [data-basis="illustration"]')), "a generated illustration is labelled as one and as not evidence");
-    await p.click("[data-visual] [data-illustration]"); await p.waitForSelector("[data-zoom] img");
+    await press(p, '[data-visual-pick="B1-8"]');
+    ok(await p.$eval(".rb-region.cur [data-visual] [data-chart]", (e) => e.dataset.chart + " " + e.querySelectorAll("rect").length) === "diffstat 4" && /counted by git/.test(await p.textContent(".rb-region.cur [data-visual] [data-kind]")), "a chart is drawn by Studio from git's numbers, labelled so");
+    await press(p, '[data-visual-pick="B1-9"]');
+    ok(/illustration · generated/.test(await p.textContent('.rb-region.cur [data-visual] [data-kind="illustration"]')) && /Not evidence/.test(await p.textContent('.rb-region.cur [data-visual] [data-basis="illustration"]')), "a generated illustration is labelled as one and as not evidence");
+    await press(p, ".rb-region.cur [data-visual] [data-illustration]"); await p.waitForSelector("[data-zoom] img");
     ok((await p.getAttribute("[data-zoom] img", "src")) === "/api/review-room/SC-50/image/B1-9.png", "a click enlarges the picture");
     await p.click("[data-zoom] button"); ok(!(await p.$("[data-zoom]")), "and Close puts it back");
     await p.click('[data-jump="t0"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]'); });
-    await p.click('[data-visual-pick="B0-1"]');
-    ok(!!(await p.$("[data-visual] [data-illustration-pending]")) && /paid generated image, made once/.test(await p.textContent("[data-visual] [data-paid-image]")), "the opening picture still being drawn shows a placeholder, labelled as a paid generated image made once");
+    await press(p, '[data-visual-pick="B0-1"]');
+    ok(!!(await p.$(".rb-region.cur [data-visual] [data-illustration-pending]")) && /paid generated image, made once/.test(await p.textContent(".rb-region.cur [data-visual] [data-paid-image]")), "the opening picture still being drawn shows a placeholder, labelled as a paid generated image made once");
     // voice: this Mac's best voice by default; on-device voices only, the best first; the vendor's own voice for the whole scene
     await p.click('[data-jump="t1"]').catch(() => {});
     const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
@@ -215,30 +223,30 @@ try {
     ok(await p.evaluate(() => window.__redraws === 0 && document.querySelector('[data-pr-url="home"]').dataset.mark === "1"), "once the captain leaves a room, its poll and its playback no longer redraw the page on screen", String(await p.evaluate(() => window.__redraws)));
     await ctx.close(); }
 
-  // ---------- one viewport: at 1440×900 the page never scrolls and the picture stays in view at every point ----------
+  // ---------- one viewport: at 1440×900 the page never scrolls; stepping point by point, the board keeps the picture in view ----------
   { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]');
     const seen = []; let bad = null;
     for (let i = 0; i < 30; i++) {
-      const m = await p.evaluate(() => { const v = document.querySelector("[data-visual]").getBoundingClientRect(), main = document.querySelector("#main"), pts = document.querySelector(".rr-points").getBoundingClientRect(), board = document.querySelector(".rr-board").getBoundingClientRect();
-        return { doc: document.documentElement.scrollHeight - innerHeight, main: main.scrollHeight - main.clientHeight, top: Math.round(v.top), bottom: Math.round(v.bottom), left: v.left, right: v.right, w: innerWidth, h: innerHeight, vh: Math.round(v.height), points: document.querySelectorAll("[data-stage] .rr-point").length, ptsIn: pts.bottom <= board.bottom + 1,
-          scene: document.querySelector("[data-stage]").dataset.scene, at: document.querySelector("[data-point-pos]")?.dataset.pointPos ?? null, y: scrollY + main.scrollTop }; });
+      const m = await p.evaluate(() => { const v = document.querySelector(".rb-region.cur [data-visual]").getBoundingClientRect(), main = document.querySelector("#main"), vp = document.querySelector("[data-board-vp]").getBoundingClientRect();
+        return { doc: document.documentElement.scrollHeight - innerHeight, main: main.scrollHeight - main.clientHeight, top: Math.round(v.top), bottom: Math.round(v.bottom), left: Math.round(v.left), right: Math.round(v.right), vp: [Math.round(vp.left), Math.round(vp.top), Math.round(vp.right), Math.round(vp.bottom)], vh: Math.round(v.height),
+          scene: document.querySelector("[data-board]").dataset.scene, at: document.querySelector(".rb-region.cur [data-point-pos]")?.dataset.pointPos ?? null, y: scrollY + main.scrollTop }; });
       seen.push(`${m.scene}:${m.at}`);
-      if (m.doc > 0 || m.main > 0 || m.top < 0 || m.bottom > m.h || m.left < 0 || m.right > m.w || m.vh < 200 || m.points > 4 || !m.ptsIn || m.y) { bad = m; break; }
+      if (m.doc > 0 || m.main > 0 || m.top < m.vp[1] || m.bottom > m.vp[3] || m.left < m.vp[0] || m.right > m.vp[2] || m.vh < 80 || m.y) { bad = m; break; }
       if (await p.$eval("[data-point-next]", (e) => e.disabled)) break;
-      await p.keyboard.press("ArrowRight");
+      await p.click("[data-point-next]"); await p.waitForTimeout(60);
     }
-    ok(!bad && seen.length >= 8 && seen.at(-1) === "t2:3/3" && seen.includes("t1:5/5"), "at 1440×900 the page never scrolls and the picture stays fully in view at every point of every scene (→ walks them all), at most four points shown", JSON.stringify({ bad, seen }));
+    ok(!bad && seen.length >= 8 && seen.at(-1) === "t2:3/3" && seen.includes("t1:5/5") && seen.includes("t1:1/5"), "at 1440×900 the page never scrolls; the play bar's next point walks every point of every scene, the board flying to each scene with its picture in view", JSON.stringify({ bad, seen }));
     await p.keyboard.press(" "); const playing = await p.$eval("[data-play]", (e) => e.getAttribute("aria-pressed"));
     await p.keyboard.press(" "); const paused = await p.$eval("[data-play]", (e) => e.getAttribute("aria-pressed"));
     ok(playing === "true" && paused === "false", "Space plays and pauses", JSON.stringify([playing, paused]));
     // an answer that drew no picture gets Studio's own, free: a key card of the files it is about, never "no picture"
-    let s = await stage(p); const key = await p.evaluate(() => ({ type: document.querySelector("[data-visual] [data-item-type]")?.dataset.itemType, notes: [...document.querySelectorAll("[data-visual] .rr-sticky-name")].map((e) => e.textContent), none: /no picture/i.test(document.querySelector("[data-stage]").textContent) }));
+    let s = await stage(p); const key = await p.evaluate(() => ({ type: document.querySelector(".rb-region.cur [data-visual] [data-item-type]")?.dataset.itemType, notes: [...document.querySelectorAll(".rb-region.cur [data-visual] .rr-sticky-name")].map((e) => e.textContent), none: /no picture/i.test(document.querySelector("[data-board]").textContent) }));
     ok(s.scene === "t2" && s.visual === "t2-key" && key.type === "keycard" && key.notes.includes("percent.ts") && !key.none && !(await p.$(".rr-novisual")), "an answer with no picture shows Studio's key card (its title, the change's files as notes), never “No picture”", JSON.stringify({ s, key }));
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: { ...ROOM, turns: ROOM.turns.map((t) => t.n === 2 ? { ...t, claims: [...t.claims, cl("The test pins it [diff:test/percent.test.ts].", [ok1("diff:test/percent.test.ts")])] } : t) } }));
-    await p.reload(); await p.waitForSelector("[data-stage]", { timeout: 15000 });
-    s = await stage(p); const chart = await p.evaluate(() => ({ chart: document.querySelector("[data-visual] [data-chart]")?.dataset.chart, rows: [...document.querySelectorAll("[data-visual] .rr-chart-l")].map((e) => e.textContent), kind: document.querySelector("[data-visual] [data-kind]")?.textContent }));
+    await p.reload(); await p.waitForSelector("[data-board]", { timeout: 15000 });
+    s = await stage(p); const chart = await p.evaluate(() => ({ chart: document.querySelector(".rb-region.cur [data-visual] [data-chart]")?.dataset.chart, rows: [...document.querySelectorAll(".rb-region.cur [data-visual] .rr-chart-l")].map((e) => e.textContent), kind: document.querySelector(".rb-region.cur [data-visual] [data-kind]")?.textContent }));
     ok(s.visual === "t2-files" && chart.chart === "diffstat" && JSON.stringify(chart.rows) === JSON.stringify(["test/percent.test.ts"]) && /counted by git/.test(chart.kind), "an answer that cites files but drew nothing gets those files' line counts, counted by git", JSON.stringify({ s, chart }));
     await ctx.close(); }
 
@@ -251,37 +259,37 @@ try {
         { text: "| 金額 | 15% |\n|---|---|\n| 1999 | 300 |", kind: "table", basis: null, cites: [] }, cl("表格之後的一點 [inference]。")] }] };
     const { ctx, p } = await open(1440, "zh-TW"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: R2 }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t3"]');
-    let s = await stage(p); const kick = await p.evaluate(() => ({ kicker: document.querySelector(".rr-kicker")?.textContent, badges: document.querySelectorAll('[data-stage] .rr-point [data-basis="inference"]').length, tiers: document.querySelectorAll("[data-stage] .rr-tier").length }));
+    let s = await stage(p); const kick = await p.evaluate(() => ({ kicker: document.querySelector(".rb-region.cur .rr-kicker")?.textContent, badges: document.querySelectorAll('.rb-region.cur .rr-point [data-basis="inference"]').length, tiers: document.querySelectorAll("[data-board] .rr-tier").length }));
     ok(s.title === "四捨五入到整數分" && s.visual === "B1-2" && s.points === 3 && kick.badges === 1 && kick.tiers === 0 && !/提問：|Question/.test(kick.kicker), "a scene the tutor showed: its own short title, its picture, its points; one inference badge, the [inference] tag not shown again; no “Question: …” title", JSON.stringify({ s, kick }));
     await p.click("[data-transcript-toggle]");
     const full = await p.evaluate(() => { const d = document.querySelector('[data-answer="3"]'); return d && d.textContent; });
-    ok(/導師的完整回答/.test(full || "") && /內容只在紀錄裡看得到/.test(full || "") && !/內容只在紀錄裡看得到/.test(await p.textContent("[data-stage]")), "the tutor's full answer is in the transcript, not on the board", full);
+    ok(/導師的完整回答/.test(full || "") && /內容只在紀錄裡看得到/.test(full || "") && !/內容只在紀錄裡看得到/.test(await p.textContent("[data-board]")), "the tutor's full answer is in the transcript, not on the board", full);
     await p.click('[data-jump="t4"]'); await p.click("[data-replay]"); await p.click("[data-play]");
     const lens = []; let sawTable = false, maxShown = 0;
-    for (let i = 0; i < 12; i++) { const m = await p.evaluate(() => ({ cur: document.querySelector('[data-stage] .rr-point[aria-current="true"] .rr-ptext')?.textContent || "", type: document.querySelector("[data-visual] [data-item-type]")?.dataset.itemType, shown: document.querySelectorAll("[data-stage] .rr-point").length, at: document.querySelector("[data-point-pos]")?.dataset.pointPos, scene: document.querySelector("[data-stage]").dataset.scene }));
+    for (let i = 0; i < 12; i++) { const m = await p.evaluate(() => ({ cur: document.querySelector('.rb-region.cur .rr-point[aria-current="true"] .rr-ptext')?.textContent || "", type: document.querySelector(".rb-region.cur [data-visual] [data-item-type]")?.dataset.itemType, shown: document.querySelectorAll(".rb-region.cur .rr-point").length, at: document.querySelector(".rb-region.cur [data-point-pos]")?.dataset.pointPos, scene: document.querySelector("[data-board]").dataset.scene }));
       if (m.scene !== "t4") break; lens.push(m.cur.replace(/\s*(diff|白板)\s[^\s]+/g, "").length); if (m.type === "table") sawTable = true; maxShown = Math.max(maxShown, m.shown);
       if (m.at && m.at.split("/")[0] === m.at.split("/")[1]) break; await p.keyboard.press("ArrowRight"); }
     ok(lens.length >= 3 && lens.every((n) => n <= 62) && maxShown <= 4 && sawTable, "an older long answer is split by sentence into short points (≤ 60 CJK characters), at most four a page; its markdown table becomes a table picture", JSON.stringify({ lens, maxShown, sawTable }));
-    ok(await p.evaluate(() => document.querySelector("[data-visual] [data-table] th")?.textContent === "金額" && !document.querySelector("[data-visual] [data-table] script")), "the table is drawn by Studio as text cells");
+    ok(await p.evaluate(() => document.querySelector(".rb-region.cur [data-visual] [data-table] th")?.textContent === "金額" && !document.querySelector(".rb-region.cur [data-visual] [data-table] script")), "the table is drawn by Studio as text cells");
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]');
-    await p.click('[data-visual-pick="B0-1"]');
-    const zh = await p.evaluate(() => ({ title: document.querySelector("[data-scene-title]")?.textContent, foot: document.querySelector("[data-visual] .rr-item-h")?.textContent, stage: document.querySelector("[data-stage]").textContent }));
-    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); const flow = await p.evaluate(() => document.querySelector("[data-visual] .rr-item-h")?.textContent || "");
+    await press(p, '[data-visual-pick="B0-1"]');
+    const zh = await p.evaluate(() => ({ title: document.querySelector(".rb-region.cur [data-scene-title]")?.textContent, foot: document.querySelector(".rb-region.cur [data-visual] .rr-item-h")?.textContent, stage: document.querySelector("[data-board]").textContent }));
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); const flow = await p.evaluate(() => document.querySelector(".rb-region.cur [data-visual] .rr-item-h")?.textContent || "");
     ok(zh.title === "這間審查室只講 #7 這一個 PR" && /一眼看懂這個改動/.test(zh.foot) && !/This change at a glance|mermaid/.test(zh.stage + flow) && /流程圖/.test(flow), "a Chinese room has no English titles or badges: Studio's titles and every picture's kind read in Chinese", JSON.stringify({ zh, flow }));
     await ctx.close(); }
 
   // ---------- paper, handwriting and motion: only what is new is drawn; reduced motion shows the final picture ----------
   { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const asked = [];
     p.on("request", (q) => asked.push(q.url()));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]");
-    const pen = () => p.evaluate(() => ({ nodes: [...document.querySelectorAll("[data-visual] [data-node]")].map((n) => n.dataset.node + (n.querySelector(".rr-pen") ? "~" : "") + (n.querySelector(".rr-write") ? "w" : "")), edges: [...document.querySelectorAll("[data-visual] [data-edge]")].map((e) => e.dataset.edge + (e.classList.contains("rr-pen") ? "~" : "")) }));
+    const pen = () => p.evaluate(() => ({ nodes: [...document.querySelectorAll(".rb-region.cur [data-visual] [data-node]")].map((n) => n.dataset.node + (n.querySelector(".rr-pen") ? "~" : "") + (n.querySelector(".rr-write") ? "w" : "")), edges: [...document.querySelectorAll(".rb-region.cur [data-visual] [data-edge]")].map((e) => e.dataset.edge + (e.classList.contains("rr-pen") ? "~" : "")) }));
     const s1 = await pen(); await p.click("[data-play]"); await p.click("[data-point-next]"); const s2 = await pen(); await p.evaluate(() => render()); const s3 = await pen();
     ok(JSON.stringify(s1) === JSON.stringify({ nodes: ["A~w", "B~w"], edges: ["A>B~"] }) && JSON.stringify(s2) === JSON.stringify({ nodes: ["A", "B", "C~w"], edges: ["A>B", "B>C~"] }) && JSON.stringify(s3.nodes) === JSON.stringify(["A", "B", "C"]),
       "the pen draws only what is new: the first step's nodes, edges and labels; the next step only the part it adds; a redraw draws nothing again", JSON.stringify({ s1, s2, s3 }));
-    const look = await p.evaluate(() => { const b = getComputedStyle(document.querySelector(".rr-board")), t = getComputedStyle(document.querySelector("[data-scene-title]")), c = getComputedStyle(document.querySelector(".rr-caption")), f = getComputedStyle(document.querySelector("[data-visual] [data-node] text"));
+    const look = await p.evaluate(() => { const b = getComputedStyle(document.querySelector(".rb-vp")), t = getComputedStyle(document.querySelector(".rb-region.cur [data-scene-title]")), c = getComputedStyle(document.querySelector(".rr-caption")), f = getComputedStyle(document.querySelector(".rb-region.cur [data-visual] [data-node] text"));
       return { paper: b.backgroundColor, title: t.fontFamily, label: f.fontFamily, caption: c.backgroundColor, body: getComputedStyle(document.querySelector(".rr-ptext")).fontFamily }; });
     const css = await p.evaluate(async () => { const r = await fetch("/fonts/hand.css"); const t = await r.text(); return { ok: r.ok, faces: (t.match(/@font-face/g) || []).length, ranges: (t.match(/unicode-range:/g) || []).length, google: /googleapis|gstatic/.test(t), files: [...new Set([...t.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]))].length }; });
     const font = await p.evaluate(async () => { const r = await fetch((await (await fetch("/fonts/hand.css")).text()).match(/url\("([^"]+wenkai-latin\.woff2)"\)/)[1]); return [r.ok, r.headers.get("content-type")]; });
@@ -293,14 +301,14 @@ try {
     await ctx.addInitScript(stubs, ["unavailable"]); await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     await ctx.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: ROOM }));
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]");
-    const rm = await p.evaluate(() => ({ moving: document.querySelectorAll("[data-stage] .rr-pen, [data-stage] .rr-write, [data-stage] .rr-grow, [data-stage] .rr-enter, [data-stage] .rr-hl.rr-anim").length, anim: [...document.querySelectorAll("[data-stage] *")].filter((e) => getComputedStyle(e).animationName !== "none").length, nodes: document.querySelectorAll("[data-visual] [data-node]").length }));
+    const rm = await p.evaluate(() => ({ moving: document.querySelectorAll(".rb-region.cur .rr-pen, .rb-region.cur .rr-write, .rb-region.cur .rr-grow, .rb-region.cur .rr-enter, .rb-region.cur .rr-hl.rr-anim").length, anim: [...document.querySelectorAll("[data-board] *")].filter((e) => getComputedStyle(e).animationName !== "none").length, nodes: document.querySelectorAll(".rb-region.cur [data-visual] [data-node]").length }));
     ok(rm.moving === 0 && rm.anim === 0 && rm.nodes === 2, "with reduced motion the picture shows its final state at once: nothing is drawn or written in", JSON.stringify(rm));
     await p.keyboard.press("ArrowRight"); await p.keyboard.press("ArrowRight");
     const dark = await p.evaluate(() => { const lum = (c) => { const v = c.match(/[\d.]+/g).map(Number); const f = (x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(v[0]) + 0.7152 * f(v[1]) + 0.0722 * f(v[2]); };
       const mix = (fg, bg) => { const a = fg.match(/[\d.]+/g).map(Number), b = bg.match(/[\d.]+/g).map(Number), al = a[3] ?? 1; return `rgb(${[0, 1, 2].map((i) => a[i] * al + b[i] * (1 - al)).join(",")})`; };
-      const badge = document.querySelector('[data-stage] [data-basis="inference"]'), li = badge.closest(".rr-point"), board = getComputedStyle(document.querySelector(".rr-board")).backgroundColor;
+      const badge = document.querySelector('.rb-region.cur [data-basis="inference"]'), li = badge.closest(".rr-point"), board = getComputedStyle(document.querySelector(".rb-vp")).backgroundColor;
       const under = mix(getComputedStyle(li).backgroundColor, board), bg = mix(getComputedStyle(badge).backgroundColor, under), fg = getComputedStyle(badge).color, L1 = lum(fg), L2 = lum(bg);
       return { paper: board, ratio: Math.round(((Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05)) * 100) / 100, img: getComputedStyle(document.querySelector(".rr-fig img") || document.body).backgroundColor }; });
     ok(dark.paper === "rgb(27, 31, 39)" && dark.ratio >= 4.5, "dark: the paper is #1b1f27 and the inference badge reads at 4.5:1 or more", JSON.stringify(dark));
@@ -308,9 +316,9 @@ try {
   // ---------- the welcome scene: Studio's own, free, with the lesson one confirmed click away ----------
   { const { ctx, p, posts } = await open(1440, "zh-TW"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: { ...ROOM, turns: [], board: [], check: { questions: [] } } }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
-    const w = await p.evaluate(() => ({ scene: document.querySelector("[data-stage]").dataset.scene, title: document.querySelector("[data-scene-title]")?.textContent, kicker: document.querySelector(".rr-kicker")?.textContent, chart: document.querySelector("[data-visual] [data-chart]")?.dataset.chart, rows: document.querySelectorAll("[data-visual] .rr-chart-l").length, points: document.querySelectorAll("[data-stage] .rr-point").length, cta: document.querySelector("[data-welcome-teach]")?.textContent, empty: !!document.querySelector("[data-board-empty]") }));
-    ok(w.scene === "t0" && w.title === "這間審查室只講 #7 這一個 PR" && /Studio 做的，免費/.test(w.kicker) && w.chart === "diffstat" && w.rows === 2 && w.points === 3 && /教我這個 PR/.test(w.cta) && !w.empty, "a new room opens on Studio's welcome scene: what it is about, its files' line counts, three points and “教我這個 PR”", JSON.stringify(w));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
+    const w = await p.evaluate(() => ({ scene: document.querySelector("[data-board]").dataset.scene, title: document.querySelector(".rb-region.cur [data-scene-title]")?.textContent, kicker: document.querySelector(".rb-region.cur .rr-kicker")?.textContent, chart: document.querySelector(".rb-region.cur [data-visual] [data-chart]")?.dataset.chart, rows: document.querySelectorAll(".rb-region.cur [data-visual] .rr-chart-l").length, points: document.querySelectorAll(".rb-region.cur .rr-point").length, cta: document.querySelector("[data-welcome-teach]")?.textContent, empty: !!document.querySelector("[data-board-empty]") }));
+    ok(w.scene === "t0" && w.title === "這間審查室只講 #7 這一個 PR" && /Studio 做的，免費/.test(w.kicker) && w.chart === "diffstat" && w.rows === 2 && w.points === 3 && /教我這個 PR/.test(w.cta) && w.empty, "a new room opens on the board at Studio's welcome scene: what it is about, its files' line counts, three points, “教我這個 PR” and what the board is for", JSON.stringify(w));
     await p.click("[data-welcome-teach]"); await p.waitForSelector('[data-room-confirm="teach"]');
     ok(!posts.length && /付費/.test(await p.textContent("[data-room-confirm]")), "the welcome scene's lesson still asks to confirm the paid round first");
     await ctx.close(); }
@@ -323,12 +331,12 @@ try {
     await p.route(/\/api\/review-room\/SC-50\/check-answer$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); picks.push(b);
       const qs = R3.check.questions.map((q) => q.n === b.n ? { ...q, choice: b.choice, answer: 0, why: "Math.round rounds 299.85 up to 300", cites: [ok1("diff:src/percent.ts:L2-3")], result: { correct: b.choice === 0, note: "Math.round rounds 299.85 up to 300", turn: 3, choice: b.choice, by: "studio" } } : q);
       r.fulfill({ json: { n: b.n, correct: b.choice === 0, room: { ...R3, check: { questions: qs } } } }); });
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     let s = await stage(p);
-    const before = await p.evaluate(() => ({ opts: [...document.querySelectorAll("[data-visual] [data-quiz-option]")].map((e) => [e.dataset.quizOption, e.disabled, e.textContent]), marks: document.querySelectorAll("[data-visual] .rr-mk").length, q: document.querySelector(".rr-quiz-q")?.textContent, play: document.querySelector("[data-play]").disabled }));
-    ok(s.scene === "t3-quiz" && before.q === MC[0].q && JSON.stringify(before.opts.map((o) => o[0])) === JSON.stringify(["3:0", "3:1", "3:2"]) && before.opts.every((o) => !o[1]) && !before.marks && before.play, "the check is a scene of option buttons, one question at a time; nothing is marked before the captain picks, and playback never runs through it", JSON.stringify({ s, before }));
+    const before = await p.evaluate(() => ({ opts: [...document.querySelectorAll(".rb-region.cur [data-visual] [data-quiz-option]")].map((e) => [e.dataset.quizOption, e.disabled, e.textContent]), marks: document.querySelectorAll(".rb-region.cur [data-visual] .rr-mk").length, q: document.querySelector(".rr-quiz-q")?.textContent, play: document.querySelector("[data-play]").disabled }));
+    ok(s.scene === "t3-quiz" && before.q === MC[0].q && JSON.stringify(before.opts.map((o) => o[0])) === JSON.stringify(["3:0", "3:1", "3:2", "4:0", "4:1"]) && before.opts.every((o) => !o[1]) && !before.marks && before.play, "the check is a region of the board, every question's option buttons; nothing is marked before the captain picks, and playback never runs through it", JSON.stringify({ s, before }));
     await p.click('[data-quiz-option="3:1"]'); await p.waitForSelector("[data-quiz-verdict]");
-    const after = await p.evaluate(() => ({ verdict: document.querySelector("[data-quiz-verdict]")?.dataset.quizVerdict, text: document.querySelector("[data-quiz-verdict]")?.textContent, right: document.querySelector('[data-quiz-option="3:0"]').className, wrong: document.querySelector('[data-quiz-option="3:1"]').className, marks: document.querySelectorAll("[data-visual] .rr-mk").length, disabled: [...document.querySelectorAll("[data-quiz-option]")].every((e) => e.disabled), cite: !!document.querySelector('[data-quiz-verdict] [data-cite="diff:src/percent.ts:L2-3"]') }));
+    const after = await p.evaluate(() => ({ verdict: document.querySelector("[data-quiz-verdict]")?.dataset.quizVerdict, text: document.querySelector("[data-quiz-verdict]")?.textContent, right: document.querySelector('[data-quiz-option="3:0"]').className, wrong: document.querySelector('[data-quiz-option="3:1"]').className, marks: document.querySelectorAll(".rb-region.cur [data-visual] .rr-mk").length, disabled: [...document.querySelectorAll('[data-quiz="3"] [data-quiz-option]')].every((e) => e.disabled) && [...document.querySelectorAll('[data-quiz="4"] [data-quiz-option]')].every((e) => !e.disabled), cite: !!document.querySelector('[data-quiz-verdict] [data-cite="diff:src/percent.ts:L2-3"]') }));
     ok(JSON.stringify(picks) === JSON.stringify([{ n: 3, choice: 1 }]) && after.verdict === "missed" && /299\.85 up to 300/.test(after.text) && /right/.test(after.right) && /wrong/.test(after.wrong) && after.marks === 2 && after.disabled && after.cite && !posts.length, "a pick is sent as {n, choice} and graded by Studio: the right option and the wrong pick are marked, why is shown with its citation; nothing paid ran", JSON.stringify({ picks, after }));
     await p.click("[data-quiz-reteach]"); await p.waitForSelector('[data-room-confirm="ask"]');
     ok(/paid model round/.test(await p.textContent("[data-room-confirm]")) && !posts.length, "a missed question offers “re-explain with the board”, a normal paid turn that asks to confirm first");
@@ -354,7 +362,7 @@ try {
     await p.route(/\/api\/review-room\/SC-50\/translate$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); trs.push(b);
       if (b.confirm !== "tr0123456789abcd") return r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: { ...ROOM.offer, translate: { hash: "tr0123456789abcd", estimate: 0.02, lang: b.lang } } } });
       r.fulfill({ json: { ...R6, running: -2, translating: { lang: b.lang, status: "running" }, translate: { ...R6.translate, confirmed: true } } }); });
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]");
     const before = (await stage(p)).caption; await p.click('[data-lang-pick="zh-TW"]');
     let s6 = await stage(p);
@@ -385,12 +393,12 @@ try {
     await p.route(/\/api\/review-room\/SC-50\/turn$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); turns.push(b);
       if (!b.confirm) return r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: { ...ROOM.offer, provider: b.pick.provider, model: b.pick.model, hash: "re0123456789abcd" } } });
       r.fulfill({ json: { ...R7, running: 4 } }); });
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     let s7 = await stage(p); const vers = await p.$$eval("[data-version-pick]", (els) => els.map((e) => [e.dataset.versionPick, e.getAttribute("aria-pressed"), e.textContent]));
-    ok(s7.scene === "t3" && /said again/.test(await p.textContent("[data-stage] .rr-pointlist")) && JSON.stringify(vers) === JSON.stringify([["2", "false", "codex gpt-6"], ["3", "true", "claude opus-x"]]), "a regenerated answer is kept beside the first: the scene shows the latest, with a switcher naming each model", JSON.stringify({ s7, vers }));
+    ok(s7.scene === "t3" && /said again/.test(await p.textContent(".rb-region.cur .rr-pointlist")) && JSON.stringify(vers) === JSON.stringify([["2", "false", "codex gpt-6"], ["3", "true", "claude opus-x"]]), "a regenerated answer is kept beside the first: the scene shows the latest, with a switcher naming each model", JSON.stringify({ s7, vers }));
     await p.click('[data-version-pick="2"]'); s7 = await stage(p);
-    ok(s7.scene === "t2" && /Halves round up/.test(await p.textContent("[data-stage] .rr-pointlist")), "the switcher shows the first answer again", JSON.stringify(s7));
-    await p.click("[data-regen]"); const list = await p.$$eval("[data-regen-pick]", (els) => els.map((e) => [e.dataset.regenPick, e.disabled, e.textContent]));
+    ok(s7.scene === "t2" && /Halves round up/.test(await p.textContent(".rb-region.cur .rr-pointlist")), "the switcher shows the first answer again", JSON.stringify(s7));
+    await p.click(".rb-region.cur [data-regen]"); const list = await p.$$eval("[data-regen-pick]", (els) => els.map((e) => [e.dataset.regenPick, e.disabled, e.textContent]));
     ok(list.length === 4 && list[0][2].includes("current") && list[2][2].includes("same vendor as the author") && list[3][1] === true && /out of quota/.test(list[3][2]) && list.slice(0, 3).every((x) => !x[1]), "“Regenerate with…” lists this machine's models: the current one marked, the author's vendor said, a held one not pickable", JSON.stringify(list));
     await p.click('[data-regen-pick="claude|opus-x"]'); await p.waitForSelector('[data-room-confirm]');
     ok(turns.length === 1 && turns[0].regenerate === 2 && turns[0].pick.provider === "claude" && !turns[0].confirm && /claude · opus-x/.test(await p.textContent("[data-room-confirm]")), "picking a model asks to confirm a paid round on that model first", JSON.stringify(turns));
@@ -408,14 +416,14 @@ try {
     await p.route(/\/api\/review-room\/library\/room-sc-50(\?v=\d+)?$/, (r) => r.fulfill({ json: SNAP }));
     await p.route(/\/api\/review-room\/library\/room-sc-50\/2\/asset\/B1-9\.png$/, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
     p.on("request", (q) => { if (/\/api\/review-room\/SC-50/.test(q.url())) live.push(q.url()); });
-    await p.goto(`${base}/#/room/lib:room-sc-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/lib:room-sc-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     const ro = await p.evaluate(() => ({ note: document.querySelector("[data-room-readonly]")?.textContent, paid: ["[data-room-action]", "[data-room-text]", "[data-room-send]", "[data-mic]", "[data-welcome-teach]", "[data-regen]", "[data-room-save]", "[data-room-check]", "[data-translate-start]"].filter((q) => document.querySelector(q)),
       snap: document.querySelector("[data-room-snapshot]")?.dataset.roomSnapshot, vers: [...document.querySelectorAll("[data-snapshot-version]")].map((e) => e.dataset.snapshotVersion), focus: document.body.dataset.focus === "room", voice: !!document.querySelector("[data-voice]"), vendor: !!document.querySelector('[data-voice] option[value="vendor"]') }));
     for (let k = 0; k < 30 && await p.$("[data-scene-prev]:not([disabled])"); k++) { await p.click("[data-scene-prev]"); await p.waitForTimeout(30); }
-    const wel = await p.evaluate(() => { return { welcome: !!document.querySelector('[data-stage]') && /This room is only about/.test(document.querySelector("[data-stage]").textContent), skipped: !!document.querySelector("[data-auto-skipped]") }; });
+    const wel = await p.evaluate(() => { return { welcome: !!document.querySelector('[data-board]') && /This room is only about/.test(document.querySelector("[data-board]").textContent), skipped: !!document.querySelector("[data-auto-skipped]") }; });
     ok(wel.welcome && !wel.skipped, "a saved room's welcome never shows an auto-teach notice, even from a snapshot that still carries one", JSON.stringify(wel));
     ok(/read-only replay/.test(ro.note || "") && !ro.paid.length && ro.snap === "room-sc-50@2" && JSON.stringify(ro.vers) === JSON.stringify(["1", "2"]) && ro.focus && ro.voice && !ro.vendor, "a saved room opens from the Library in the room itself, read-only: no prompt, no paid control, its versions listed, this Mac's voice still there", JSON.stringify(ro));
-    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]"); await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]');
+    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]"); await press(p, '[data-board] [data-cite="diff:src/percent.ts:L2-3"]');
     await p.waitForSelector("[data-cite-panel] .rr-diff");
     ok(/Math\.round/.test(await p.textContent("[data-cite-panel]")) && !cites.length && !live.length, "a citation opens from the snapshot itself: nothing asked of the live room or the cache", JSON.stringify({ cites, live }));
     await p.click("[data-cite-panel] .btn");
@@ -445,7 +453,7 @@ try {
     await p.click('.nav-item[data-view="room"]'); await p.waitForSelector("[data-room-link]", { timeout: 15000 });
     const list = await p.$$eval("[data-room-link]", (els) => els.map((e) => [e.dataset.roomLink, e.getAttribute("href")]));
     ok(JSON.stringify(list) === JSON.stringify([["SC-50", "#/room/SC-50"], ["PR-0123456789ab-7", "#/room/PR-0123456789ab-7"]]) && /open/.test(await p.textContent('[data-room-list]')), "the Review room's home lists the rooms on this machine, open ones first, each a link back into it", JSON.stringify(list));
-    await p.click('[data-room-link="SC-50"]'); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.click('[data-room-link="SC-50"]'); await p.waitForSelector("[data-board]", { timeout: 15000 });
     ok(await p.$eval("[data-room-home]", (e) => e.getAttribute("href")).catch(() => null) === "#/room" && /Review room/.test(await p.$eval(".rr-crumb", (e) => e.textContent).catch(() => "")), "the room's header says where you are: Review room › the room, the first a link to the list");
     const inRoom = await p.evaluate(() => ({ focus: document.body.dataset.focus ?? null, crumb: !!document.querySelector("[data-room-home]")?.getClientRects().length }));
     ok(inRoom.focus === "room" && inRoom.crumb, "a loaded room is a focus page (body[data-focus=room]) and its way back to the list stays in view", JSON.stringify(inRoom));
@@ -454,7 +462,7 @@ try {
     ok(fresh, "coming back to the room list reads it again: a room's new answers show", await p.$eval("[data-room-list]", (e) => e.textContent).catch(() => ""));
     await p.goBack(); await p.waitForFunction(() => S.route?.name === "board"); const onBoard = await p.evaluate(() => document.body.dataset.focus ?? null);
     ok(onList === null && onBoard === null, "the browser's back walks Studio's own pages: room → the room list → the board, and focus ends with the room", JSON.stringify({ onList, onBoard }));
-    await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-stage]");
+    await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-board]");
     const ext = await p.evaluate(() => { const a = document.createElement("a"); a.href = "https://example.org/docs"; a.textContent = "x"; document.querySelector("#view").append(a); const before = location.href; a.click(); return { opened: window.__opened, same: location.href === before }; });
     ok(ext.same && ext.opened.length === 1 && ext.opened[0][0] === "https://example.org/docs" && ext.opened[0][1] === "_blank" && /noopener/.test(ext.opened[0][2]), "a link that leaves Studio opens in a new window, never in Studio's own (an app window has no back button)", JSON.stringify(ext));
     const inApp = await p.evaluate(() => { window.__opened = []; const a = document.createElement("a"); a.href = "#/board"; document.querySelector("#view").append(a); a.click(); return window.__opened.length; });
@@ -474,8 +482,8 @@ try {
       turns: [{ n: 1, action: "reviewers", studio: true, title: "What reviewers asked", status: "done", provider: "studio", model: "", text: "", answer: "x", head: H, claims: [cl("30 notes on GitHub from 2 people: 10 reviews, 20 inline comments, 0 comments."), { text: "20 of them are on the current head. Ask “Digest reviews”.", kind: "aside", basis: null, cites: [] }] }], check: { questions: [] } };
     const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.route(/\/api\/review-room\/PR-0123456789ab-8(\?open=1)?$/, (r) => r.fulfill({ json: PRR }));
-    await p.goto(`${base}/#/room/PR-0123456789ab-8`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
-    const st = await p.evaluate(() => ({ stage: document.querySelector("[data-stage]").textContent, points: document.querySelectorAll("[data-stage] .rr-point").length, digest: !!document.querySelector('[data-room-action="reviews"]') }));
+    await p.goto(`${base}/#/room/PR-0123456789ab-8`); await p.waitForSelector("[data-board]", { timeout: 15000 });
+    const st = await p.evaluate(() => ({ stage: document.querySelector("[data-board]").textContent, points: document.querySelectorAll(".rb-region.cur .rr-point").length, digest: !!document.querySelector('[data-room-action="reviews"]') }));
     ok(!/the cache key ignores the port/.test(st.stage) && st.points <= 4 && st.digest, "the board shows Studio's short card of the reviews, none of their words; “Digest reviews” is a quick action", JSON.stringify({ points: st.points, digest: st.digest }));
     await p.click("[data-transcript-toggle]");
     const fold = await p.evaluate(() => { const d = document.querySelector("[data-notes]"); return d && { open: d.open, n: d.querySelectorAll("[data-note]").length, first: d.querySelector("[data-note]")?.dataset.note }; });
@@ -488,9 +496,9 @@ try {
     await p.addInitScript(() => { window.__opened = []; window.open = (...a) => { window.__opened.push(a); return null; }; });
     await p.route(/\/api\/review-room\/SC-77(\?open=1)?$/, (r) => r.fulfill({ json: GH }));
     await p.route(/\/api\/review-room\/SC-77\/cite\?/, (r) => { asked.push(new URL(r.request().url()).searchParams.get("ref")); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "+x" } }); });
-    await p.goto(`${base}/#/room/SC-77`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-77`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
-    const title = await p.getAttribute('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]', "title"); await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]');
+    const title = await p.getAttribute('[data-board] [data-cite="diff:src/percent.ts:L2-3"]', "title"); await press(p, '[data-board] [data-cite="diff:src/percent.ts:L2-3"]');
     await p.waitForFunction(() => window.__opened.length > 0, null, { timeout: 3000 }).catch(() => {}); await p.waitForTimeout(150);
     const opened = await p.evaluate(() => window.__opened), want = createHash("sha256").update("src/percent.ts").digest("hex");
     ok(opened.length === 1 && /^https:\/\/github\.com\/fixture\/project\/pull\/77\/files#diff-[0-9a-f]{64}(R\d+-R\d+)?$/.test(opened[0][0]) && opened[0][0].includes(`#diff-${want}`) && opened[0][1] === "_blank" && /noopener/.test(opened[0][2]) && /GitHub/.test(title || ""),
@@ -505,9 +513,9 @@ try {
     await p.addInitScript(() => { window.__opened = []; window.open = (...a) => { window.__opened.push(a); return null; }; });
     await p.route(/\/api\/review-room\/SC-78(\?open=1)?$/, (r) => r.fulfill({ json: BAD }));
     await p.route(/\/api\/review-room\/SC-78\/cite\?/, (r) => { asked.push(1); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "+x" } }); });
-    await p.goto(`${base}/#/room/SC-78`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-78`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
-    await p.click('[data-stage] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff", { timeout: 5000 }).catch(() => {});
+    await press(p, '[data-board] [data-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel] .rr-diff", { timeout: 5000 }).catch(() => {});
     ok(!(await p.evaluate(() => window.__opened.length)) && asked.length === 1 && !!(await p.$("[data-cite-panel] .rr-diff")), "a pull request address on any other host opens nothing outside Studio: the citation panel as before");
     await ctx.close(); }
 
@@ -517,10 +525,10 @@ try {
     const DONE = { ...RUN, running: null, progress: null, turns: RUN.turns.map((t) => t.n === 3 ? { ...t, status: "done", answer: "y", claims: [cl("The finished explanation [board:B1-1].", [ok1("board:B1-1")])] } : t) };
     const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); let now = RUN;
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     let s1 = await stage(p);
-    ok(s1.scene === "t3" && /Reading the diff and the tests first/.test(await p.textContent("[data-turn-progress]")) && /3 tool calls/.test(await p.textContent("[data-turn-progress]")), "coming back while a turn runs, the stage shows that turn and what it has said so far (not a later Studio scene)", JSON.stringify(s1));
-    now = DONE; const shown = await p.waitForFunction(() => document.querySelector("[data-stage]")?.dataset.scene === "t3" && /finished explanation/.test(document.querySelector("[data-stage] .rr-pointlist")?.textContent || ""), null, { timeout: 15000 }).then(() => true, () => false);
+    ok(s1.scene === "t3" && /Reading the diff and the tests first/.test(await p.textContent("[data-turn-progress]")) && /3 tool calls/.test(await p.textContent("[data-turn-progress]")), "coming back while a turn runs, the board shows that turn and what it has said so far (not a later Studio scene)", JSON.stringify(s1));
+    now = DONE; const shown = await p.waitForFunction(() => document.querySelector("[data-board]")?.dataset.scene === "t3" && /finished explanation/.test(document.querySelector(".rb-region.cur .rr-pointlist")?.textContent || ""), null, { timeout: 15000 }).then(() => true, () => false);
     ok(shown, "when it finishes, the room shows the answer", JSON.stringify(await stage(p)));
     // an explanation for this head is already there: show it, or explain again (paid, still confirmed)
     await p.click('[data-room-action="teach"]'); const offered = await p.waitForSelector("[data-existing-offer]", { timeout: 5000 }).then(() => true, () => false);
@@ -534,11 +542,11 @@ try {
     const DONE = { ...RUN, running: null, progress: null, turns: RUN.turns.map((t) => t.n === 3 ? { ...t, status: "done", answer: "y", claims: [cl("It works like this.")] } : t) };
     const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); let now = RUN;
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.keyboard.press("ArrowLeft"); const away = (await stage(p)).scene;
     now = DONE; const chip = await p.waitForSelector("[data-answer-ready]", { timeout: 15000 }).then(() => true, () => false);
     const s2 = await stage(p);
-    ok(chip && away !== "t3" && s2.scene === away, "the captain looked elsewhere while it ran: the finished answer does not pull the stage away", JSON.stringify({ away, s2 }));
+    ok(chip && away !== "t3" && s2.scene === away, "the captain looked elsewhere while it ran: the finished answer does not pull the board away", JSON.stringify({ away, s2 }));
     await p.click("[data-answer-ready]"); const s3 = await stage(p);
     ok(s3.scene === "t3" && !(await p.$("[data-answer-ready]")), "“The answer is ready — show it” goes to the answer", JSON.stringify(s3));
     await ctx.close(); }
@@ -570,7 +578,7 @@ try {
   { const RQ = { ...ROOM, turns: [...ROOM.turns.map((t) => ({ ...t, head: H })), { n: 3, action: "quiz", text: "Check my understanding: ask me a few questions.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "q", head: H, claims: [cl("A question.")] }] };
     const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RQ }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click('[data-room-action="quiz"]'); const asked = await p.waitForSelector('[data-room-confirm="quiz"]', { timeout: 3000 }).then(() => true, () => false);
     ok(asked && !(await p.$("[data-existing-offer]")) && !posts.length, "asking for a quiz again goes to its confirmation (a new quiz), never “show the existing one”");
     await ctx.close(); }
@@ -590,28 +598,26 @@ try {
     const RL = { ...ROOM, board: [...ROOM.board, ...FIGS], turns: [...ROOM.turns, LESSON] };
     const { ctx, p, cites } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RL }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForSelector("[data-toc]", { timeout: 3000 }).catch(() => {});
-    // a finished lesson is the board, never stepped through on the stage: from an answer's scene the rail lists it chapter by chapter
-    await p.click('[data-other-scene="t1"]').catch(() => {}); await p.waitForSelector("[data-toc]", { timeout: 3000 }).catch(() => {});
-    const toc = await p.evaluate(() => ({ items: [...document.querySelectorAll("[data-toc-scene]")].map((e) => [e.dataset.tocScene, e.querySelector("b")?.textContent ?? "", e.getAttribute("aria-current")]) }));
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
+    // every answer and the lesson's chapters are regions of one board; the rail lists them all, a group per answer
+    const toc = await p.evaluate(() => ({ items: [...document.querySelectorAll("[data-toc-scene]")].map((e) => [e.dataset.tocScene, e.querySelector(".rb-olb")?.firstChild?.textContent ?? "", e.getAttribute("aria-current")]), groups: [...document.querySelectorAll("[data-outline-turn]")].map((e) => e.dataset.outlineTurn), other: !!document.querySelector("[data-other-scene]") }));
     const lesson = toc.items.filter((x) => /^t3/.test(x[0])).map((x) => x[1]);
-    const heads = await p.$$eval("[data-toc-chapter]", (els) => els.map((e) => [e.dataset.tocChapter, e.textContent])), items = await p.$$eval("[data-toc-item]", (els) => els.map((e) => e.textContent));
-    ok(JSON.stringify(lesson) === JSON.stringify(["What this is", "", "", "", "One request, in order", "What to watch"]) && JSON.stringify(heads) === JSON.stringify([["change", "The change itself"], ["lifecycle", "Its life, state by state"]]) && JSON.stringify(items) === JSON.stringify(["Rounding", "Tests", "An invoice"]) && toc.items.some((x) => x[0] === "t1") && toc.items.some((x) => x[0] === "t0"),
-      "the chapters' rail lists every answer's scenes, the lesson chapter by chapter in order, a chapter of several items once with its items under it (every answer reachable from it)", JSON.stringify(toc));
-    await p.click('[data-toc-scene="t3-2"]'); await p.waitForSelector("[data-board-vp]", { timeout: 3000 }).catch(() => {});
-    const onBoard = await p.evaluate(() => ({ board: !!document.querySelector("[data-board-vp]"), scene: document.querySelector("[data-stage]")?.dataset.scene, step: !!document.querySelector("[data-report-step]"), visual: !!document.querySelector("[data-visual]") }));
-    ok(onBoard.board && onBoard.scene === "t3-2" && !onBoard.step && !onBoard.visual, "a chapter in the rail opens the lesson board at that chapter; there is no stepping through it on the stage", JSON.stringify(onBoard));
-    await p.click('[data-other-scene="t1"]'); await p.waitForSelector("[data-visual]", { timeout: 3000 }).catch(() => {});
-    // in full screen an answer's scene shows no chapters' rail: the board takes the whole width
+    ok(JSON.stringify(lesson) === JSON.stringify(["What this is", "The change itself", "The change itself", "Its life, state by state", "One request, in order", "What to watch"]) && JSON.stringify(toc.groups) === '["0","1","2","3"]' && toc.items.some((x) => x[0] === "t1") && toc.items.some((x) => x[0] === "t0") && toc.items.some((x) => x[0] === "end") && !toc.other,
+      "the rail lists every answer under its question and the lesson chapter by chapter in order (every answer reachable from it, no “Other scenes”)", JSON.stringify(toc));
+    await p.click('[data-toc-scene="t3-2"]'); await landed(p);
+    const onBoard = await p.evaluate(() => ({ scene: document.querySelector("[data-board]")?.dataset.scene, cur: document.querySelector('[data-toc-scene="t3-2"]').getAttribute("aria-current"), stage: !!document.querySelector(".rr-stage, [data-stage], [data-report-step]") }));
+    ok(onBoard.scene === "t3-2" && onBoard.cur === "true" && !onBoard.stage, "a chapter in the rail flies the board to it, marked current; there is no stage to step it through", JSON.stringify(onBoard));
+    await p.click('[data-toc-scene="t1"]'); await landed(p);
+    // in full screen an answer's scene shows no rail: the board takes the whole width
     await p.click("[data-fs-toggle]"); await p.waitForTimeout(300);
-    const fsToc = await p.evaluate(() => { const t = document.querySelector("[data-toc]"), b = document.querySelector(".rr-board").getBoundingClientRect(); return { on: document.body.classList.contains("rr-fs"), toc: !!t && getComputedStyle(t).display !== "none" && t.getClientRects().length > 0, left: Math.round(b.left), width: Math.round(b.width), win: innerWidth }; });
+    const fsToc = await p.evaluate(() => { const t = document.querySelector("[data-board-rail]"), b = document.querySelector("[data-board-vp]").getBoundingClientRect(); return { on: document.body.classList.contains("rr-fs"), toc: !!t && getComputedStyle(t).display !== "none" && t.getClientRects().length > 0, left: Math.round(b.left), width: Math.round(b.width), win: innerWidth, bar: !!document.querySelector("[data-playbar]")?.getClientRects().length }; });
     await p.keyboard.press("Escape"); await p.waitForTimeout(300);
-    ok(fsToc.on && !fsToc.toc && fsToc.left <= 20 && fsToc.width >= fsToc.win - 40 && await p.evaluate(() => !document.body.classList.contains("rr-fs")), "in full screen an answer's scene in a room with a lesson hides the chapters' rail: the board takes the whole width", JSON.stringify(fsToc));
-    const lay = await p.evaluate(() => { const v = document.querySelector("[data-visual]").getBoundingClientRect(), t = document.querySelector("[data-toc]").getBoundingClientRect(); return { focus: document.body.dataset.focus ?? null, scroll: document.documentElement.scrollHeight - innerHeight, apart: t.right <= v.left + 1, inView: v.bottom <= innerHeight, railShown: t.width > 100 && t.height > 100 }; });
+    ok(fsToc.on && !fsToc.toc && fsToc.bar && fsToc.left <= 20 && fsToc.width >= fsToc.win - 40 && await p.evaluate(() => !document.body.classList.contains("rr-fs")), "in full screen an answer's scene hides the rail: the board takes the whole width, its play bar on it", JSON.stringify(fsToc));
+    const lay = await p.evaluate(() => { const v = document.querySelector(".rb-region.cur [data-visual]").getBoundingClientRect(), t = document.querySelector("[data-board-rail]").getBoundingClientRect(); return { focus: document.body.dataset.focus ?? null, scroll: document.documentElement.scrollHeight - innerHeight, apart: t.right <= v.left + 1, inView: v.bottom <= innerHeight, railShown: t.width > 100 && t.height > 100 }; });
     ok(lay.focus === "room" && lay.railShown && lay.scroll <= 0 && lay.apart && lay.inView, "the rail sits beside the board: the page still never scrolls and the picture stays in view", JSON.stringify(lay));
-    await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(200);
-    const ph = await p.evaluate(() => { const t = document.querySelector("[data-toc]").getBoundingClientRect(), v = document.querySelector("[data-visual]").getBoundingClientRect(); return { top: t.bottom <= v.top + 1, w: Math.round(t.width), scroll: document.documentElement.scrollWidth - innerWidth }; });
-    ok(ph.top && ph.scroll <= 0, "on a phone the chapters are a strip above the board", JSON.stringify(ph));
+    await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(400);
+    const ph = await p.evaluate(() => ({ sheet: !!document.querySelector("[data-board-rail]"), bar: !!document.querySelector('[data-sheet="outline"]'), scroll: document.documentElement.scrollWidth - innerWidth }));
+    ok(ph.sheet && ph.bar && ph.scroll <= 0, "on a phone the answers are a sheet opened from the board's bar", JSON.stringify(ph));
     await ctx.close(); }
 
   // ---------- the lesson as a report (baton's packet): every section kind, its drawings, its citations, a phone, its languages ----------
@@ -658,17 +664,17 @@ try {
     const RP = { ...ROOM, subject: { kind: "merge", repository: "example/shop" }, head: H, board: [...ROOM.board, ...EN.figs], turns: [...ROOM.turns, EN.turn], translations: { "zh-TW": { "3": TRZ } } };
     const { ctx, p, cites } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const errs = []; p.on("pageerror", (e) => errs.push(e.message));
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RP }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
-    await p.click('[data-toc-scene="t3"]'); await p.waitForSelector("[data-report]", { timeout: 5000 }).catch(() => {});
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
+    await p.click('[data-toc-scene="t3"]'); await landed(p); await p.waitForSelector("[data-report]", { timeout: 5000 }).catch(() => {});
     const rp = await p.evaluate(() => { const r = document.querySelector("[data-report]"); return r && { chapters: [...r.querySelectorAll("[data-report-section]")].map((x) => x.dataset.chapter), figures: [...r.querySelectorAll("[data-report-figure]")].map((x) => x.dataset.figureType),
       points: [...r.querySelectorAll("[data-points-chapter]")].map((x) => [x.dataset.pointsChapter, x.querySelectorAll("li").length]), lead: !!r.querySelector('[data-chapter="what"] .rp-prose p.lead'), title: r.querySelector(".rp-title")?.textContent, eyebrow: r.querySelector(".rp-eyebrow")?.textContent,
-      scroll: document.documentElement.scrollHeight - innerHeight, own: !!r.querySelector("[data-board-vp]") && getComputedStyle(r.querySelector("[data-board-vp]")).overflow === "hidden", cites: r.querySelectorAll("[data-cite]").length, stage: !!document.querySelector("[data-visual]") }; });
+      scroll: document.documentElement.scrollHeight - innerHeight, own: !!r.querySelector("[data-board-vp]") && getComputedStyle(r.querySelector("[data-board-vp]")).overflow === "hidden", cites: r.querySelectorAll("[data-cite]").length, stage: !!document.querySelector(".rb-region.cur [data-visual]") }; });
     ok(rp && JSON.stringify(rp.chapters) === JSON.stringify(["what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "roads", "watch", "questions"])
       && JSON.stringify(rp.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence"]) && JSON.stringify(rp.points) === JSON.stringify([["roads", 2], ["watch", 2], ["questions", 2]]) && rp.lead && !rp.stage,
       "a finished lesson is the lesson board: every section in order, prose for what it is, Studio's drawings (architecture, a decision, each changed item, the state map, the sequence) and the roads, risks and questions as points", JSON.stringify(rp));
     ok(rp && rp.scroll <= 0 && rp.own && /example\/shop/.test(rp.eyebrow) && rp.cites >= 10, "the lesson is a board the camera moves over (the page never scrolls); its eyebrow names the subject; its points keep Studio's citations", JSON.stringify(rp));
     // the rail jumps to a section and marks it; the state map: every transition numbered, each opens its own code and shows what it writes
-    await p.click('[data-toc-scene="t3-6"]'); await p.waitForTimeout(400);
+    await p.click('[data-toc-scene="t3-6"]'); await landed(p);
     // the chapter's title lands right under the board's tools, as the report's section landed at its top
     const jump = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]"), sec = vp.querySelector('[data-report-section="t3-6"]'); return { top: Math.round(sec.querySelector(".rb-rtitle").getBoundingClientRect().top - document.querySelector(".rb-tools").getBoundingClientRect().bottom), cur: document.querySelector('[data-toc-scene="t3-6"]').getAttribute("aria-current"), labels: [...sec.querySelectorAll("[data-elabel]")].map((e) => e.textContent), rows: sec.querySelectorAll("[data-transition]").length }; });
     ok(Math.abs(jump.top) < 40 && jump.cur === "true" && JSON.stringify(jump.labels) === JSON.stringify(["① price", "② pay", "③ cancel", "④ edit", "⑤ pay later", "⑥ reprice"]) && jump.rows === 6,
@@ -690,7 +696,7 @@ try {
     ok(t1.cite === "diff:src/ledger.ts:L5-9" && t1.on === "true" && /invoices\.status/.test(t1.detail || "") && /lifecycle\/t3-6\/transition\/B3-5#transition:1/.test(t1.pop?.[0] || "") && t1.pop?.[1] === true,
       "a transition picked shows what it writes and asks there (show the code ready); its citation opens the code it rests on", JSON.stringify(t1));
     // what talks to what: the change marked on its nodes, inferred said so, a connection opens what shows it
-    await p.click('[data-toc-scene="t3-2"]'); await p.waitForTimeout(300);
+    await p.click('[data-toc-scene="t3-2"]'); await landed(p);
     // the keyboard asks there too: Enter on the connection opens its popover (a drawing's own control never swallows it)
     await p.$eval('[data-edge-cite="diff:src/pricing.ts:L10-14"]', (e) => e.focus()); await p.keyboard.press("Enter"); await p.waitForSelector("[data-board-pop]", { timeout: 3000 }).catch(() => {});
     const kb = await p.evaluate(() => document.querySelector("[data-board-pop]")?.dataset.boardPop ?? null);
@@ -733,7 +739,7 @@ try {
     const SN = { schema: 1, kind: "review-room-snapshot", room: "SC-50", savedAt: "t", reason: "Saved by captain", subject: { kind: "merge", head: H, base: B }, tutors: [], cost: { usd: 0.12 }, view: { ...RP, open: false, offer: null, running: null, tutors: [], translate: null, closed: { en: "Saved", zh: "已存" } }, cites: {}, artifact: "room-sc-50", n: 1, versions: [{ n: 1, at: "t", summary: "Saved by captain" }] };
     const o2 = await open(1440, "en"); await o2.p.setViewportSize({ width: 1440, height: 900 }); const live = [];
     await o2.p.route(/\/api\/review-room\/library\/room-sc-50(\?v=\d+)?$/, (r) => r.fulfill({ json: SN })); o2.p.on("request", (q) => { if (/\/api\/review-room\/SC-50/.test(q.url())) live.push(q.url()); });
-    await o2.p.goto(`${base}/#/room/lib:room-sc-50`); await o2.p.waitForSelector("[data-stage]", { timeout: 15000 }); await o2.p.click('[data-toc-scene="t3"]'); await o2.p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
+    await o2.p.goto(`${base}/#/room/lib:room-sc-50`); await o2.p.waitForSelector("[data-board]", { timeout: 15000 }); await o2.p.click('[data-toc-scene="t3"]'); await o2.p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
     const lib = await o2.p.evaluate(() => ({ secs: document.querySelectorAll("[data-report-section]").length, figs: document.querySelectorAll("[data-report-figure]").length, prompt: !!document.querySelector("[data-room-ask]"), notes: !!document.querySelector("[data-notes]") }));
     ok(lib.secs === 10 && lib.figs === 6 && !live.length && !lib.notes, "a room saved in the Library replays its lesson as the same report, offline (nothing read from the live room), no reviewer notes", JSON.stringify({ lib, live }));
     await o2.ctx.close(); }
@@ -744,7 +750,7 @@ try {
     const RO = { ...ROOM, turns: [...ROOM.turns, { n: 3, action: "teach", text: "Teach me this change.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: H, claims: [cl("x")], scenes: scenesOut }] };
     const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const imgs = [];
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RO })); p.on("request", (q) => { if (/\/images$/.test(q.url())) imgs.push(q.url()); });
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t3-3"]').catch(() => {}); await p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.click('[data-toc-scene="t3-3"]').catch(() => {}); await p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
     const order = await p.$$eval("[data-report-section]", (els) => els.map((e) => e.dataset.chapter));
     ok(JSON.stringify(order) === JSON.stringify(["what", "change", "watch"]), "a lesson whose chapters came out of order reads in the chapters' order", JSON.stringify(order));
     await p.click('[data-room-action="how"]'); await p.waitForSelector("[data-room-confirm]");
@@ -759,14 +765,14 @@ try {
   { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const resets = []; let now = ROOM;
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: now }));
     await p.route(/\/api\/review-room\/SC-50\/reset$/, (r) => { resets.push(r.request().method()); now = { ...ROOM, turns: [], board: [], check: { questions: [] }, translations: {} }; r.fulfill({ json: { reset: true, moved: ["room"], view: now } }); });
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {});
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {});
     await p.click("[data-transcript-toggle]"); await p.click("[data-room-reset]");
     const ask = await p.$eval("[data-reset-confirm-box]", (e) => e.textContent).catch(() => "");
     await p.click("[data-reset-cancel]", { timeout: 3000 }).catch(() => {}); const cancelled = { box: !!(await p.$("[data-reset-confirm-box]")), resets: resets.length };
     ok(/answers, its board, its translations and its generated pictures go/.test(ask) && /archive folder/.test(ask) && /goes if the Task is deleted/.test(ask) && /Library's saved snapshots and the Task's ledger stay/.test(ask) && !cancelled.box && cancelled.resets === 0,
       "starting a room over asks first, saying what goes (answers, board, translations, pictures: archived) and what stays (the Library's snapshots, the ledger); cancel changes nothing", JSON.stringify({ ask, cancelled }));
-    await p.click("[data-room-reset]", { timeout: 3000 }).catch(() => {}); await p.click("[data-reset-confirm]", { timeout: 3000 }).catch(() => {}); await p.waitForFunction(() => document.querySelector("[data-stage]")?.dataset.scene === "t0", null, { timeout: 5000 }).catch(() => {});
-    const after = await p.evaluate(() => ({ scene: document.querySelector("[data-stage]")?.dataset.scene, toc: document.querySelectorAll("[data-toc-scene]").length, box: !!document.querySelector("[data-reset-confirm-box]"), drawer: document.querySelector("[data-transcript]")?.dataset.open }));
+    await p.click("[data-room-reset]", { timeout: 3000 }).catch(() => {}); await p.click("[data-reset-confirm]", { timeout: 3000 }).catch(() => {}); await p.waitForFunction(() => document.querySelector("[data-board]")?.dataset.scene === "t0", null, { timeout: 5000 }).catch(() => {});
+    const after = await p.evaluate(() => ({ scene: document.querySelector("[data-board]")?.dataset.scene, toc: document.querySelectorAll("[data-toc-scene]").length, box: !!document.querySelector("[data-reset-confirm-box]"), drawer: document.querySelector("[data-transcript]")?.dataset.open }));
     ok(JSON.stringify(resets) === '["POST"]' && after.scene === "t0" && !after.box && after.drawer === "false", "confirmed, the room is started over and the page forgets what it kept for it (its drawer closed) and opens it fresh on its welcome scene", JSON.stringify({ resets, after }));
     await ctx.close(); }
 
@@ -854,7 +860,7 @@ try {
     const RF = { ...ROOM, subject: { kind: "pr", repository: "example/lumen-pay" }, autoTeach: { on: true, room: null, global: true, skipped: null }, head: H, board: [...ROOM.board, ...ZP.figs], turns: [...ROOM.turns.map((t) => ({ ...t, lang: "zh-TW" })), ZP.turn] };
     const { ctx, p } = await open(1440, "zh-TW"); await p.setViewportSize({ width: 1440, height: 1000 }); const errs = []; p.on("pageerror", (e) => errs.push(e.message));
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RF }));
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t3"]'); await p.waitForSelector("[data-report]", { timeout: 5000 }).catch(() => {});
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.click('[data-toc-scene="t3"]'); await landed(p); await p.waitForSelector("[data-report]", { timeout: 5000 }).catch(() => {});
     // the gate the page itself can run: every label clear of boxes, lines and other labels; no connector through a box not its end
     const geo = await p.evaluate(() => [...document.querySelectorAll("[data-report] svg.rr-ortho")].map((svg) => {
       const r = (e) => { const b = e.getBBox(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }, over = (a, b, i = 1) => a.x + i < b.x + b.w - i && a.x + a.w - i > b.x + i && a.y + i < b.y + b.h - i && a.y + a.h - i > b.y + i;
@@ -892,7 +898,7 @@ try {
     ok(colours.changed && colours.changed !== colours.plain && colours.added !== colours.plain && colours.added !== colours.changed && colours.back !== colours.edge, "the point stands out by colour: the changed component, the new one and the ways back each in their own", JSON.stringify(colours));
     // a lifecycle per entity; a state picked shows the transaction that brings the entity into it, what it writes outside set apart
     const lifecycles = await p.$$eval('[data-report-section] [data-statemap]', (els) => els.map((e) => e.querySelector(".rp-entity")?.textContent));
-    await p.click('[data-toc-scene="t3-4"]'); await p.waitForTimeout(300); await p.click('[data-statemap] [data-state-pick="authorized"]'); await p.waitForTimeout(300);
+    await p.click('[data-toc-scene="t3-4"]'); await landed(p); await p.click('[data-statemap] [data-state-pick="authorized"]'); await p.waitForTimeout(300);
     const tx = await p.evaluate(() => { const sm = [...document.querySelectorAll("[data-statemap]")].find((e) => e.querySelector('[data-state-pick="authorized"]')), on = sm?.querySelector('[data-transition][aria-current="true"]'), panel = sm?.querySelector("[data-tx-panel]"), chip = sm?.querySelector("[data-elabel].on");
       return on && panel && { row: on.getAttribute("data-transition"), panel: panel.getAttribute("data-tx-panel"), chip: chip?.dataset.edgeN, under: panel.previousElementSibling?.classList.contains("rp-legend"), table: panel.querySelector("[data-tx-table]")?.getAttribute("data-tx-table"), op: panel.querySelector(".rp-op")?.textContent, outside: panel.querySelector("[data-tx-outside]")?.textContent }; });
     ok(lifecycles.length === 2 && /orders\.status/.test(lifecycles[0]) && /authorizations\.state/.test(lifecycles[1]) && tx?.row === "1" && tx.panel === "1" && tx.chip === "1" && tx.under && tx.table === "orders" && tx.op === "UPDATE" && /PSP authorize/.test(tx.outside || ""),
@@ -923,10 +929,10 @@ try {
     const shell = () => p.evaluate(() => ({ focus: document.body.dataset.focus === "room", side: document.body.classList.contains("side-collapsed"), chat: !document.body.classList.contains("chat-closed"), sideW: Math.round(document.querySelector(".side").getBoundingClientRect().width), store: [localStorage.getItem("crew.side"), localStorage.getItem("crew.chatOpen")] }));
     await p.goto(`${base}/#/board`); await p.waitForFunction(() => S.route?.name === "board"); await p.waitForTimeout(300);
     const before = await shell();
-    await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForTimeout(300);
+    await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.waitForTimeout(300);
     const inRoom = await shell();
     ok(before.side === false && before.chat === true && inRoom.focus && inRoom.side && !inRoom.chat && inRoom.sideW <= 64 && JSON.stringify(inRoom.store) === JSON.stringify(["open", "1"]), "in a room the sidebar folds to its 64px rail and Firstmate closes, without changing the saved preferences", JSON.stringify({ before, inRoom }));
-    await p.click("[data-room-firstmate]"); const sheet = await p.evaluate(() => { const c = document.querySelector("#chat").getBoundingClientRect(), st = document.querySelector("[data-stage]").getBoundingClientRect(); return { open: !document.body.classList.contains("chat-closed"), fixed: getComputedStyle(document.querySelector("#chat")).position, stageW: Math.round(st.width) }; });
+    await p.click("[data-room-firstmate]"); const sheet = await p.evaluate(() => { const c = document.querySelector("#chat").getBoundingClientRect(), st = document.querySelector("[data-board]").getBoundingClientRect(); return { open: !document.body.classList.contains("chat-closed"), fixed: getComputedStyle(document.querySelector("#chat")).position, stageW: Math.round(st.width) }; });
     await p.click("#chatClose"); const after = await shell();
     ok(sheet.open && sheet.fixed === "fixed" && sheet.stageW > 1100 && !after.chat && JSON.stringify(after.store) === JSON.stringify(["open", "1"]), "the header's Firstmate opens it as a sheet over the room (the board keeps its width); closing it saves nothing", JSON.stringify({ sheet, after }));
     await p.evaluate(() => { location.hash = "#/board"; }); await p.waitForFunction(() => S.route?.name === "board"); await p.waitForTimeout(200);
@@ -937,10 +943,10 @@ try {
   // ---------- leaving a room mid-flight: a turn being sent, a citation loading, the mic listening, a scene playing ----------
   { const { ctx, p, release } = await open(1440, "en");
     let citeHold = null; await p.route(/\/api\/review-room\/SC-50\/cite\?/, async (r) => { await new Promise((res) => (citeHold = res)); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "@@ -1 +1 @@\n+x" } }); });
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.waitForFunction(() => document.querySelector("[data-mic]")?.disabled === false);
     await p.dispatchEvent("[data-mic]", "pointerdown"); await p.waitForSelector("[data-heard]");
-    await p.click("[data-cite]"); await p.click('[data-room-action="how"]'); await p.click("[data-room-start]"); await p.waitForSelector("[data-room-busy]");
+    await p.click(".rb-region.cur [data-cite]"); await p.click('[data-room-action="how"]'); await p.click("[data-room-start]"); await p.waitForSelector("[data-room-busy]");
     await p.click("[data-play]");
     await p.evaluate(() => { window.__cancels = 0; window.__recStopped = false; location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]'); await p.waitForSelector("[data-room-list]:not([data-room-list-loading])"); await p.waitForTimeout(300);
     const eager = await p.evaluate(() => ({ cancels: window.__cancels, rec: window.__recStopped }));
@@ -953,19 +959,20 @@ try {
 
   // ---------- no on-device recognition: no mic; 390, zh-TW ----------
   { const { ctx, p } = await open(390, "zh-TW", "unavailable");
-    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 });
+    await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.waitForFunction(() => document.querySelector("[data-mic]")?.disabled === true);
     ok(/裝置上的語音辨識/.test(await p.getAttribute("[data-mic]", "title")), "without on-device recognition the mic stays off and says why");
-    ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] header")) && /語音關/.test(await p.textContent("[data-voice]")), "zh-TW: the stage, the transcript and the voice choice read in Chinese");
+    ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] header")) && /語音關/.test(await p.textContent("[data-voice]")), "zh-TW: the board, the transcript and the voice choice read in Chinese");
     ok(await noScroll(p), "no sideways scroll at 390");
-    // a phone: the picture on top (a flowchart laid out top down, its labels at least 14px), one point card under it that is
-    // the caption, a read-only note instead of the prompt
-    await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
-    const ph = await p.evaluate(() => { const vis = (e) => !!e && e.checkVisibility(), v = document.querySelector("[data-visual]").getBoundingClientRect(), pts = [...document.querySelectorAll("[data-stage] .rr-point")].filter(vis), card = pts[0]?.getBoundingClientRect(), main = document.querySelector("#main");
-      const svg = document.querySelector("[data-visual] svg.rr-flow"), label = svg?.querySelector("[data-node] text"), px = label ? parseFloat(getComputedStyle(label).fontSize) * svg.getScreenCTM().a : 0;
-      return { doc: document.documentElement.scrollHeight - innerHeight, main: main.scrollHeight - main.clientHeight, above: !!card && v.bottom <= card.top + 1, inView: v.top >= 0 && (card?.bottom ?? 999) <= innerHeight, shown: pts.length, caption: vis(document.querySelector("[data-caption]")), layout: svg?.dataset.layout, px: Math.round(px * 10) / 10,
+    // a phone: the board opens on its answers' sheet; a tap picks one: its picture on top (a flowchart laid out top down, its
+    // labels at least 14px), its points under it, the play bar's caption on the board, a read-only note instead of the prompt
+    const sheet = await p.evaluate(() => document.querySelector("[data-board-rail]")?.classList.contains("open"));
+    await p.click('[data-outline="t1"]'); await landed(p); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]");
+    const ph = await p.evaluate(() => { const vis = (e) => !!e && e.checkVisibility(), v = document.querySelector(".rb-region.cur [data-visual]").getBoundingClientRect(), pts = [...document.querySelectorAll(".rb-region.cur .rr-point:not(.later)")].filter(vis), card = pts[0]?.getBoundingClientRect(), main = document.querySelector("#main"), vp = document.querySelector("[data-board-vp]").getBoundingClientRect();
+      const svg = document.querySelector(".rb-region.cur [data-visual] svg.rr-flow"), label = svg?.querySelector("[data-node] text"), px = label ? parseFloat(getComputedStyle(label).fontSize) * svg.getScreenCTM().a : 0;
+      return { doc: document.documentElement.scrollHeight - innerHeight, main: main.scrollHeight - main.clientHeight, above: !!card && v.bottom <= card.top + 1, inView: v.top >= vp.top && v.left >= vp.left - 1 && v.right <= vp.right + 1, shown: pts.length, caption: vis(document.querySelector("[data-caption]")), layout: svg?.dataset.layout, px: Math.round(px * 10) / 10,
         note: vis(document.querySelector("[data-room-phone]")), chips: vis(document.querySelector("[data-room-action]")), input: vis(document.querySelector("[data-room-text]")) }; });
-    ok(ph.doc <= 0 && ph.main <= 0 && ph.above && ph.inView && ph.shown === 1 && !ph.caption && ph.layout === "TD" && ph.px >= 14 && ph.note && !ph.chips && !ph.input, "390×844: the picture on top and one point card under it (the caption merged into it), a top-down flowchart with labels of 14px or more, the prompt a read-only note; nothing scrolls", JSON.stringify(ph));
+    ok(sheet && ph.doc <= 0 && ph.main <= 0 && ph.above && ph.inView && ph.shown === 2 && ph.caption && ph.layout === "TD" && ph.px >= 14 && ph.note && !ph.chips && !ph.input, "390×844: the board opens on its answers' sheet; an answer shows its picture on top (a top-down flowchart, labels of 14px or more) and its points under it, the caption on the play bar, the prompt a read-only note", JSON.stringify({ sheet, ph }));
     await p.screenshot({ path: join(shots, "room-390-zh.png") });
     await ctx.close(); }
 
@@ -1014,7 +1021,7 @@ try {
     let s = await stage(p);
     ok(s.scene === "t2" && /What changed since last time/.test(s.title) && s.visual === "B2-1" && !!(await p.$('[data-studio-scene="since"]')), "the scene of what changed since last time is Studio's own, its picture the diff between the two heads", JSON.stringify(s));
     await p.click("[data-scene-prev]"); s = await stage(p);
-    const q = await p.evaluate(() => ({ quote: document.querySelector('[data-untrusted="review"]')?.textContent, imgs: document.querySelectorAll(".rr-quote img, .rr-point img").length, pwned: !!window.__pwned, badge: document.querySelector('[data-basis="reviewer"]')?.textContent, chips: [...document.querySelectorAll(".rr-point [data-cite]")].map((e) => e.dataset.cite) }));
+    const q = await p.evaluate(() => ({ quote: document.querySelector('[data-untrusted="review"]')?.textContent, imgs: document.querySelectorAll(".rr-quote img, .rr-point img").length, pwned: !!window.__pwned, badge: document.querySelector('[data-basis="reviewer"]')?.textContent, chips: [...document.querySelectorAll(".rb-region.cur .rr-point [data-cite]")].map((e) => e.dataset.cite) }));
     ok(/What reviewers asked/.test(s.title) && q.quote?.includes('<img src=x onerror="window.__pwned=1">') && q.quote.includes("[diff:a.txt]") && q.imgs === 0 && !q.pwned && /Reviewer's words/.test(q.badge) && JSON.stringify(q.chips) === JSON.stringify(["review:c11"]),
       "what reviewers asked: each comment is its words as text (markup stays text, a citation-looking text is no link), labelled a reviewer's words, cited to the comment", JSON.stringify(q));
     const fold = await p.evaluate(() => { const d = document.querySelector('.rr-point [data-untrusted-fold="review"]'); return d && { open: d.open, gist: d.querySelector(".rr-gist")?.textContent ?? "", shown: d.querySelector("blockquote")?.checkVisibility() ? 1 : 0 }; });
@@ -1023,14 +1030,14 @@ try {
     ok(kept, "an opened original stays open across a redraw");
     await p.click('.rr-point [data-untrusted-fold="review"] summary');
     ok(!!fold && fold.open === false && fold.shown === 0 && fold.gist.length > 0 && fold.gist.length <= 120, "a reviewer's words show as a one-line gist; the full text stays folded until the captain opens it", JSON.stringify(fold));
-    await p.click('[data-cite="review:c11"]'); await p.waitForSelector('[data-cite-panel="review:c11"] [data-untrusted="review"]');
+    await press(p, '[data-cite="review:c11"]'); await p.waitForSelector('[data-cite-panel="review:c11"] [data-untrusted="review"]');
     ok(/rita/.test(await p.textContent("[data-cite-panel]")) && (await p.getAttribute("[data-review-link]", "href")) === "https://github.com/fixture/project/pull/7#discussion_r11" && await p.evaluate(() => !document.querySelector("[data-cite-panel] img")), "the citation opens the comment, as text, with a link to it on GitHub");
-    const shown = await p.evaluate(() => [...document.querySelectorAll("[data-stage] .rr-point")].map((e) => { const b = e.getBoundingClientRect(); return [b.height > 0, e.textContent.slice(0, 40)]; }));
-    ok(shown.length === 1 && shown[0][0] && /rita · on a\.txt:L2/.test(shown[0][1]), "the scene's point is on the stage, visible", JSON.stringify(shown));
+    const shown = await p.evaluate(() => [...document.querySelectorAll(".rb-region.cur .rr-point")].map((e) => { const b = e.getBoundingClientRect(); return [b.height > 0, e.textContent.slice(0, 40)]; }));
+    ok(shown.length === 1 && shown[0][0] && /rita · on a\.txt:L2/.test(shown[0][1]), "the scene's point is on the board, visible", JSON.stringify(shown));
     ok(await noScroll(p), "no sideways scroll in a pull request's room at 1440");
     await p.screenshot({ path: join(shots, "room-pr-1440.png") });
     await p.click(`[data-room-check="${PRID}"]`); await p.waitForSelector('[data-pr-state="merged"]');
-    ok(checks.length === 1 && /Merged on GitHub/.test(await p.textContent("[data-pr-state]")) && /merged on GitHub: the room stays readable/.test(await p.textContent("[data-room-closed]")) && !(await p.$("[data-room-moved]")) && !!(await p.$("[data-stage]")),
+    ok(checks.length === 1 && /Merged on GitHub/.test(await p.textContent("[data-pr-state]")) && /merged on GitHub: the room stays readable/.test(await p.textContent("[data-room-closed]")) && !(await p.$("[data-room-moved]")) && !!(await p.$("[data-board]")),
       "Check for new commits reads it again: merged on GitHub, the room says so and stays readable, no prompt");
     await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(100);
     ok(await noScroll(p), "no sideways scroll in a pull request's room at 390");
@@ -1084,14 +1091,14 @@ try {
       Element.prototype.requestFullscreen = function () { window.__fsReq.push(this.id || this.className); if (refuse) return Promise.reject(new TypeError("Permissions check failed"));
         el = this; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
       document.exitFullscreen = () => { el = null; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); }; };
-    const fsView = (p) => p.evaluate(() => { const st = document.querySelector("[data-stage]"), b = st.getBoundingClientRect(), bd = st.querySelector(".rr-board").getBoundingClientRect();
+    const fsView = (p) => p.evaluate(() => { const st = document.querySelector("[data-board]"), b = st.getBoundingClientRect(), bd = st.querySelector("[data-board-vp]").getBoundingClientRect();
       const vis = (e) => { const s = getComputedStyle(e); if (s.display === "none" || s.visibility === "hidden" || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight; };
       return { on: document.body.classList.contains("rr-fs"), stage: [b.left, b.top, b.width, b.height].map(Math.round), board: Math.round(bd.height), win: [innerWidth, innerHeight], scene: st.dataset.scene, pos: st.querySelector("[data-scene-pos]")?.dataset.scenePos, req: window.__fsReq, fsEl: document.fullscreenElement?.id ?? null,
         others: [...document.body.querySelectorAll("*")].filter((e) => !st.contains(e) && !e.contains(st) && vis(e)).map((e) => e.id || e.className?.baseVal || e.className || e.tagName).slice(0, 8),
         playbar: vis(st.querySelector(".rr-playbar")), focus: !!document.activeElement?.matches?.("[data-fs-toggle]") }; });
     const near = (a, b, d = 2) => Math.abs(a - b) <= d;
     { const { ctx, p } = await open(1440, "en"); await ctx.addInitScript(fsStub, [false]);
-      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForTimeout(200);
+      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.waitForTimeout(200);
       const n0 = await fsView(p); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f1 = await fsView(p);
       await p.screenshot({ path: join(shots, "fullscreen-scene.png") }); await p.emulateMedia({ colorScheme: "dark" }); await p.waitForTimeout(100); await p.screenshot({ path: join(shots, "fullscreen-scene-dark.png") }); await p.emulateMedia({ colorScheme: "light" });
       ok(!n0.on && f1.on && f1.fsEl === "view" && near(f1.stage[2], f1.win[0]) && near(f1.stage[3], f1.win[1]) && f1.board > n0.board + 80 && !f1.others.length && f1.playbar,
@@ -1106,12 +1113,12 @@ try {
       ok(!typed.on && /f$/.test(typed.v), "f typed in the prompt is text, not the shortcut", JSON.stringify(typed));
       await ctx.close(); }
     { const { ctx, p } = await open(1440, "en"); await ctx.addInitScript(fsStub, [true]);
-      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f = await fsView(p);
+      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f = await fsView(p);
       const said = await p.evaluate(() => [...document.querySelectorAll("[role=alert], .toast")].map((e) => e.textContent));
       ok(f.on && f.fsEl === null && f.req.length === 1 && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && !said.length, "a refused Fullscreen API keeps the full-viewport layout and says nothing", JSON.stringify({ f, said }));
       await ctx.close(); }
     { const { ctx, p } = await open(390, "zh-TW"); await ctx.addInitScript(fsStub, [false]);
-      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f = await fsView(p);
+      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.click("[data-board-rail] .rb-sheetx").catch(() => {}); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f = await fsView(p);
       ok(f.on && !f.req.length && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && await noScroll(p), "a phone gets full screen through the layout only: the board fills the screen, nothing wider", JSON.stringify(f));
       await ctx.close(); } }
 

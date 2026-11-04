@@ -99,7 +99,8 @@ try {
     ok((await caption(p)) === POINTS[1] && (await p.evaluate(() => window.__clips[1].src)).endsWith("kvoice-0000000000000002.wav") && asked.length === 3 && asked[2].text === POINTS[2], "when a clip ends the next point shows and its prefetched clip plays at once; the one after it is asked for", JSON.stringify({ c: await caption(p), asked: asked.map((b) => b.text) }));
     await p.evaluate(() => window.__clips[1].onended()); await p.waitForFunction(() => window.__clips.length === 3);
     ok((await caption(p)) === POINTS[2] && asked.length === 3, "the last point plays its clip; nothing more is asked for", String(asked.length));
-    await p.evaluate(() => window.__clips[2].onended()); await p.waitForTimeout(500);
+    // the scene stops on a 400ms timer and a redraw: waited for, not timed (a loaded CI machine is slower than 500ms)
+    await p.evaluate(() => window.__clips[2].onended()); await p.waitForFunction(() => document.querySelector("[data-play]")?.getAttribute("aria-pressed") === "false", null, { timeout: 5000 }).catch(() => {});
     ok((await p.$eval("[data-play]", (e) => e.getAttribute("aria-pressed"))) === "false", "after the last clip the scene stops");
     // the same voice for everything: a different clip, the setting sent along
     await p.selectOption("[data-voice-mix]", "same"); await p.click("[data-replay]"); await p.waitForFunction(() => window.__clips.length === 4);
