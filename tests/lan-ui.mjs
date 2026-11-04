@@ -123,6 +123,20 @@ try {
     ok(!!onHead && await head.locator("img").count() === 0, "the Task page header shows it as text, marked as the peer's words", onHead ?? await head.innerText().catch(() => "(no header)"));
     await pb.goto(`${B.base}/#/lan/${th.id}`); const onPeers = pb.locator(`[data-lan-thread-title="${th.id}"]`); await onPeers.waitFor({ timeout: 15000 });
     ok(marked.test((await onPeers.innerText()).trim()) && await onPeers.locator("img").count() === 0, "the Peers page shows it as text, marked as the peer's words", await onPeers.innerText());
+    // the Tasks list, opened fresh: its row draws the label, then the title once it arrives (held back here until the page
+    // has done its own loading, so only the titles' answer can redraw the row)
+    await pb.route("**/api/lan/titles", async (route) => { await new Promise((r) => setTimeout(r, 2500)); await route.continue().catch(() => {}); });
+    await pb.goto(`${B.base}/#/runs`); await pb.reload(); const row = pb.locator(`.rt-run [data-task-title="${run}"]`);
+    const onRow = await until(async () => { const t = (await row.innerText()).trim(); return marked.test(t) ? t : null; }, 10000);
+    await pb.unroute("**/api/lan/titles");
+    ok(!!onRow && await row.locator("img").count() === 0, "the Tasks list row (a fresh page) shows it as text, marked as the peer's words", onRow ?? await row.innerText().catch(() => "(no row)"));
+    // a peer renamed: the board already open (its titles fetched) shows the new name, without a reload
+    await pb.goto(`${B.base}/#/board`); await until(async () => marked.test((await cardT.innerText()).trim()));
+    const keyA = (await api(B, "/api/lan")).body.peers.find((x) => x.petname === "A 的看板")?.key;
+    await api(B, `/api/lan/peers/${keyA}/rename`, { petname: "A 新名字" });
+    const renamed = await until(async () => { const t = (await cardT.innerText()).trim(); return /^(From A 新名字: |來自 A 新名字：)週報/.test(t) ? t : null; }, 30000);
+    ok(!!renamed, "a peer renamed shows under its new name on a board already open", renamed ?? await cardT.innerText());
+    await api(B, `/api/lan/peers/${keyA}/rename`, { petname: "A 的看板" });
     await pa.goto(`${A.base}/#/lan/${th.id}`); const own = pa.locator(`[data-lan-thread-title="${th.id}"]`); await own.waitFor({ timeout: 15000 });
     ok((await own.innerText()).trim() === TITLE, "the dispatcher's own Peers page shows its own words unmarked", await own.innerText());
     // a long title (a peer's Studio that does not clean it): the board shows it bounded, as text

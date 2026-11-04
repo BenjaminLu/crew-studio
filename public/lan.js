@@ -15,19 +15,20 @@ const onPage = () => S.route?.name === "lan";
 // A peer's title for a Task its work started here (GET /api/lan/titles, from the relay's sealed state, read when the page
 // draws): the board card and the Task page header show it as text, one line, bounded, marked as the peer's words. The Task
 // itself keeps a neutral label (LAN <thread>), so Firstmate, other Tasks and the event log never get it.
-const TITLE_MAX = 120, LAN_LABEL = /^LAN [A-Za-z0-9_-]{8,64}$/;
+const TITLE_MAX = 120, LAN_LABEL = /^LAN [A-Za-z0-9_-]{8,64}$/, TITLE_FRESH_MS = 10_000;
 const flat = (s, n) => { const c = [...String(s ?? "").replace(/\s+/g, " ").trim()]; return c.length > n ? c.slice(0, n - 1).join("") + "…" : c.join(""); };
 const PT = { map: new Map(), sig: "", at: 0, loading: false };
 async function loadTitles() {
   if (PT.loading) return; PT.loading = true; PT.at = Date.now();
   try { const j = await getJ("/api/lan/titles"), m = new Map();
     for (const x of Array.isArray(j.titles) ? j.titles : []) if (x && typeof x.run === "string") m.set(x.run, { from: flat(x.from?.name, 60) || "?", title: flat(x.title, TITLE_MAX) });
-    const sig = JSON.stringify([...m]); if (sig !== PT.sig) { PT.map = m; PT.sig = sig; if (S.route?.name === "board") soft(); else if (S.route?.name === "run") render(); } }
+    const sig = JSON.stringify([...m]); if (sig !== PT.sig) { PT.map = m; PT.sig = sig; if (S.route?.name === "board") soft(); else if (S.route?.name === "run" || S.route?.name === "runs") render(); } }
   catch {} finally { PT.loading = false; }
 }
-/** what the page shows as a Task's title: a peer's Task its dispatcher's title, marked as theirs; any other its own title */
+/** what the page shows as a Task's title: a peer's Task its dispatcher's title, marked as theirs; any other its own title.
+ *  One not known yet is asked for at once; one shown is asked for again every few seconds (a peer renamed, a new round). */
 LN.shownTitle = (id, title) => {
-  const x = PT.map.get(id); if (!x && LAN_LABEL.test(String(title ?? "")) && Date.now() - PT.at > 3000) void loadTitles();
+  const x = PT.map.get(id); if (LAN_LABEL.test(String(title ?? "")) && Date.now() - PT.at > (x ? TITLE_FRESH_MS : 3000)) void loadTitles();
   return x ? T(`From ${x.from}: ${x.title}`, `來自 ${x.from}：${x.title}`) : title;
 };
 LN.titlesSig = () => PT.sig;
@@ -157,7 +158,7 @@ function peers(v) {
         h("div", { class: "lan-row" }, h("button", { class: "btn danger", "data-lan-fork-revoke": p.key, onclick: () => act("", () => postJ(`/api/lan/peers/${p.key}/resolve`, { action: "revoke" })) }, T("Revoke this key", "撤銷這把金鑰")),
           h("button", { class: "btn", "data-lan-fork-unfreeze": p.key, onclick: () => { if (confirm(T("Unfreeze only after checking with them in person.", "請在當面確認後才解除凍結。"))) act("", () => postJ(`/api/lan/peers/${p.key}/resolve`, { action: "unfreeze" })); } }, T("Checked in person: unfreeze", "已當面確認，解除凍結")))) : null,
       p.state === "trusted" ? h("div", { class: "lan-row" },
-        h("button", { class: "btn ghost", onclick: () => { const n = prompt(T("Your name for this peer", "你替這位同事取的名字"), p.petname); if (n) act("", () => postJ(`/api/lan/peers/${p.key}/rename`, { petname: n })); } }, T("Rename", "改名")),
+        h("button", { class: "btn ghost", onclick: () => { const n = prompt(T("Your name for this peer", "你替這位同事取的名字"), p.petname); if (n) act("", async () => { const r = await postJ(`/api/lan/peers/${p.key}/rename`, { petname: n }); PT.at = 0; void loadTitles(); return r; }); } }, T("Rename", "改名")),
         h("button", { class: "btn ghost", "data-lan-unpair": p.key, onclick: () => { if (confirm(T("Unpair? Its open items are withdrawn and its Tasks stop.", "解除配對？它的待處理項目會撤回，進行中的 Task 會停止。"))) act("", () => postJ(`/api/lan/peers/${p.key}/unpair`)); } }, T("Unpair", "解除配對")),
         h("button", { class: "btn danger", "data-lan-revoke": p.key, onclick: () => { if (confirm(T("Remove this colleague for good (a lost or stolen Mac)? Its open items and Tasks stop and it can never be introduced again.", "永久移除這個同事（Mac 遺失或被偷）？它的待處理項目與 Task 會停止，之後也不能再引介。"))) act("", () => postJ(`/api/lan/peers/${p.key}/revoke`)); } }, T("Remove this colleague", "移除這個同事"))) : null))
       : h("p", { class: "faint" }, T("No one yet. Introduce a colleague in person to start.", "還沒有。先當面引介一位同事。"))));

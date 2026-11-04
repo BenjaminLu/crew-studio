@@ -891,7 +891,7 @@ function viewRuns() {
     pf ? h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${pf}`, `專案：${pf}`)),
       pf === "studio" ? null : h("a", { href: `#/project/${encodeURIComponent(pf)}` }, T("Open the project", "開啟專案")), h("a", { href: "#/runs" }, T("Show all tasks", "顯示全部任務"))) : null,
     RN.list === "loading" || RN.list === null || (pf && !RN.pIds) ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
-      h("span", { class: "mono" }, r.id), h("b", {}, window.crewLan?.shownTitle?.(r.id, r.title) ?? r.title), h("span", { class: "vbadge" }, `${wfName(r.workflow)} v${r.version}`),
+      h("span", { class: "mono" }, r.id), h("b", { "data-task-title": r.id }, window.crewLan?.shownTitle?.(r.id, r.title) ?? r.title), h("span", { class: "vbadge" }, `${wfName(r.workflow)} v${r.version}`),
       // the state and the archived marker read together; the foot says where the run is and holds Unarchive
       h("span", { class: "rt-state" }, window.runStateBadge(r), r.childRun ? h("span", {class:"faint"}, T(`Execution: ${r.childRun}`,`執行任務：${r.childRun}`)) : null, r.archived ? h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存")) : null,
       r.archived ? h("button", { class: "btn rt-unarchive", type: "button", "data-run-unarchive": r.id, onclick: async (e) => { e.preventDefault(); e.stopPropagation();
