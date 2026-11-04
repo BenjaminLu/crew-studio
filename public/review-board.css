@@ -220,7 +220,7 @@ html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"
   .rb-phonebar button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
   .rb-phonebar b { font: 700 11px var(--f-mono); background: var(--rr-marker); color: var(--rr-paper); border-radius: 9px; padding: 1px 6px; }
   .rb-next { display: none; }
-  .rb-tools { left: 8px; top: 8px; } .rb-tools [data-report-step], .rb-toolnote { display: none; }
+  .rb-tools { left: 8px; top: 8px; } .rb-toolnote { display: none; }
   .rb-zoom { right: 8px; bottom: 8px; } .rb-zoom button { min-width: 30px; padding: 0 6px; }
   .rb-card { width: 300px; }
   .rb-pop { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; border-radius: 16px 16px 0 0; padding: 16px 16px calc(20px + env(safe-area-inset-bottom, 0px)); }
@@ -246,3 +246,15 @@ html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"
 .rb-card[data-thread]:not([data-pending]) { cursor: zoom-in; }
 .rb-card[data-thread]:not([data-pending]) :is(button, a, pre, .rb-cbody p) { cursor: auto; }
 .rb-card[data-thread]:not([data-pending]) button { cursor: pointer; }
+
+/* full screen (review-room.css "full screen"): the board alone, edge to edge; its rail, its questions panel and a phone's bar
+   are the room's chrome and wait outside; the pins, the popover, Next and the zoom stay on the board */
+.rb-zoom .rr-fs-btn span { font: inherit; min-width: 0; color: inherit; text-align: left; }
+.rb-zoom .rr-fs-btn { height: 32px; border: 0; border-left: 1px solid var(--border); border-radius: 0; background: none; font-size: 12.5px; padding: 0 10px; }
+body.rr-fs .rr-room > .rr-stage.board { padding: 0; }
+body.rr-fs .rr-stage.board, body.rr-fs .rr-stage.board.nonotes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); column-gap: 0; }
+body.rr-fs .rr-stage.board > :is(.rb-rail, .rb-notes, .rb-phonebar, .rb-scrim) { display: none !important; }
+body.rr-fs .rr-stage.board > .rb-main { grid-row: 1; grid-column: 1; }
+body.rr-fs .rb-vp { border: 0; border-radius: 0; }
+body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
+@media (max-width: 760px) { body.rr-fs .rb-next { display: block; bottom: 56px; max-width: 80%; } }

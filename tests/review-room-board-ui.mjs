@@ -444,6 +444,95 @@ try {
       "a Library snapshot replays the board read-only: every chapter shown, its questions' cards visible, no tidy or follow-up, the popover's paid chips off; show the code opens the saved citation (nothing read from the live room)", JSON.stringify({ ro, pop, live }));
     await ctx.close(); }
 
+  // ---------- full screen: only the board, edge to edge; the camera re-fits; Esc, the exit control and the browser's own exit
+  // come back to the same chapter, the camera where it was; a refused Fullscreen API keeps the full-viewport layout ----------
+  { // the Fullscreen API, stubbed (headless Chromium's own answers vary): a request is recorded and granted, or refused
+    const fsStub = ([refuse]) => { window.__fsReq = []; let el = null;
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => el });
+      Element.prototype.requestFullscreen = function () { window.__fsReq.push(this.id || this.className); if (refuse === "late") return new Promise((res) => { window.__grant = () => { el = this; document.dispatchEvent(new Event("fullscreenchange")); res(); }; });
+        if (refuse) return Promise.reject(new TypeError("Permissions check failed"));
+        el = this; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
+      document.exitFullscreen = () => { el = null; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
+      window.__browserExit = () => document.exitFullscreen(); };
+    /** what is on screen: only the board (and what it holds), its size against the window's */
+    const fsView = (p) => p.evaluate(() => { const st = document.querySelector("[data-stage]"), vp = document.querySelector("[data-board-vp]"), box = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };
+      const vis = (e) => { const s = getComputedStyle(e); if (s.display === "none" || s.visibility === "hidden" || +s.opacity === 0) return false; const b = e.getBoundingClientRect(); return b.width > 2 && b.height > 2 && b.right > 0 && b.bottom > 0 && b.left < innerWidth && b.top < innerHeight; };
+      const others = [...document.body.querySelectorAll("*")].filter((e) => !st.contains(e) && !e.contains(st) && vis(e)).map((e) => e.id || e.className?.baseVal || e.className || e.tagName);
+      const shown = (q) => { const e = document.querySelector(q); return !!e && vis(e); };
+      return { on: document.body.classList.contains("rr-fs"), stage: box(st), vp: box(vp), win: [innerWidth, innerHeight], others: others.slice(0, 8), scene: st.dataset.scene, fsEl: document.fullscreenElement?.id ?? null, req: window.__fsReq,
+        rail: shown("[data-board-rail]"), notes: shown("[data-board-notes]"), head: shown(".rr-head"), toggle: document.querySelector("[data-fs-toggle]")?.textContent ?? null, pressed: document.querySelector("[data-fs-toggle]")?.getAttribute("aria-pressed") ?? null,
+        focus: !!document.activeElement?.matches?.("[data-fs-toggle]"), pins: [...document.querySelectorAll(".rb-pin")].filter(vis).length }; });
+    const near = (a, b, d = 2) => Math.abs(a - b) <= d;
+    for (const dark of [false, true]) {
+      const { ctx, p } = await open(1440, "en", { dark }); await p.addInitScript(fsStub, [false]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      const n0 = await fsView(p), c0 = await cam(p);
+      ok(!n0.on && n0.toggle && n0.pressed === "false" && n0.rail && n0.head, `${dark ? "dark: " : ""}the normal room is as it was (header, chapters' rail) and has a Full screen control on the board`, JSON.stringify(n0));
+      await p.screenshot({ path: join(shots, `fullscreen-before${dark ? "-dark" : ""}.png`) });
+      await p.click("[data-fs-toggle]"); await settle(p, 400);
+      const f1 = await fsView(p), c1 = await cam(p);
+      ok(f1.on && f1.fsEl === "view" && JSON.stringify(f1.req) === '["view"]', `${dark ? "dark: " : ""}the Full screen control asks the browser for true full screen (on the stable container that holds the board)`, JSON.stringify(f1));
+      ok(near(f1.stage[0], 0) && near(f1.stage[1], 0) && near(f1.stage[2], f1.win[0]) && near(f1.stage[3], f1.win[1]) && f1.vp[2] >= f1.win[0] - 24 && f1.vp[3] >= f1.win[1] - 24, `${dark ? "dark: " : ""}the board fills the window edge to edge`, JSON.stringify(f1));
+      ok(!f1.others.length && !f1.rail && !f1.notes && !f1.head, `${dark ? "dark: " : ""}only the board is visible: no sidebar, header, chapters' rail, questions panel or prompt`, JSON.stringify(f1));
+      ok(c1.x !== c0.x && c1.s >= 0.85, `${dark ? "dark: " : ""}the camera re-fits the chapter to the new size`, JSON.stringify([c0, c1]));
+      ok(/Exit full screen/.test(f1.toggle || "") && f1.pressed === "true", `${dark ? "dark: " : ""}a visible Exit full screen control`, JSON.stringify(f1));
+      await p.screenshot({ path: join(shots, `fullscreen-after${dark ? "-dark" : ""}.png`) });
+      if (!dark) {
+        // the board stays usable: pins, Next, the popover
+        ok(f1.pins > 0, "the board's pins show in full screen", JSON.stringify(f1));
+        await p.click("[data-board-next]"); await settle(p, 300); const f2 = await fsView(p);
+        ok(f2.on && f2.scene === "t1-2", "Next moves to the next chapter inside full screen", JSON.stringify(f2));
+        await p.evaluate(() => { const a = document.querySelector("[data-region='t1-2'] [data-akey]"); const b = a.getBoundingClientRect(); a.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + 4, clientY: b.top + 4 })); });
+        await p.waitForSelector(".rb-pop", { timeout: 3000 }).catch(() => {});
+        const pop = await p.evaluate(() => { const e = document.querySelector(".rb-pop"); if (!e) return null; const b = e.getBoundingClientRect(); return { inside: b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight, fs: document.body.classList.contains("rr-fs") }; });
+        ok(pop?.inside && pop.fs, "a place on the board still opens its popover in full screen, inside the screen", JSON.stringify(pop));
+        // Esc closes the popover first, then leaves full screen: the same chapter, the focus back on the control
+        await p.keyboard.press("Escape"); await settle(p, 150); const still = await fsView(p);
+        await p.keyboard.press("Escape"); await settle(p, 400); const x1 = await fsView(p), cx = await cam(p);
+        ok(still.on && !x1.on && x1.fsEl === null && x1.scene === "t1-2" && x1.rail && x1.head && x1.focus && near(x1.vp[2], n0.vp[2]) && cx.s >= 0.85, "Esc closes the popover, then leaves full screen: the normal room, the same chapter, the focus on the control", JSON.stringify({ still, x1, cx }));
+        // the shortcut f; a camera moved by hand comes back where it was
+        await p.locator("[data-board-vp]").focus(); const vr = (await geo(p)).vp; await p.mouse.move(vr.x + 500, vr.y + 400); await p.mouse.down(); await p.mouse.move(vr.x + 420, vr.y + 350, { steps: 4 }); await p.mouse.up(); await settle(p, 100);
+        const m0 = await cam(p); await p.keyboard.press("f"); await settle(p, 400); const f3 = await fsView(p), m1 = await cam(p);
+        ok(f3.on && f3.fsEl === "view", "f enters full screen when the focus is not in a field", JSON.stringify(f3));
+        ok(near(m1.x - m0.x, (f3.vp[2] - n0.vp[2]) / 2, 3) && m1.s === m0.s, "a camera moved by hand keeps the same middle of the board in full screen", JSON.stringify([m0, m1, f3.vp, n0.vp]));
+        // the browser's own exit (its Esc, its menu) comes back too
+        await p.evaluate(() => window.__browserExit()); await settle(p, 400); const x2 = await fsView(p), m2 = await cam(p);
+        ok(!x2.on && x2.rail && near(m2.x, m0.x, 1) && near(m2.y, m0.y, 1) && m2.s === m0.s, "the browser's own exit returns to the normal room, the camera where it was", JSON.stringify([x2, m0, m2]));
+        // the exit control, and f typed into a field is text
+        await p.click("[data-fs-toggle]"); await settle(p, 300); await p.click("[data-fs-toggle]"); await settle(p, 300); const x3 = await fsView(p);
+        ok(!x3.on && x3.focus, "the Exit full screen control returns to the normal room, the focus on the control", JSON.stringify(x3));
+        await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p0.s0"]'); const b = a.getBoundingClientRect(); a.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + 4, clientY: b.top + 4 })); });
+        await p.waitForSelector(".rb-pop [data-pop-input]", { timeout: 3000 }).catch(() => {});
+        if (await p.$(".rb-pop [data-pop-input]")) { await p.focus(".rb-pop [data-pop-input]"); await p.keyboard.type("f"); }
+        const typed = await p.evaluate(() => ({ on: document.body.classList.contains("rr-fs"), v: document.querySelector(".rb-pop [data-pop-input]")?.value ?? null }));
+        ok(!typed.on && typed.v === "f", "f typed into a field is text, not the shortcut", JSON.stringify(typed));
+        // nothing kept: a reload is the normal room
+        await p.keyboard.press("Escape"); await p.keyboard.press("f"); await settle(p, 300); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+        ok(!(await fsView(p)).on, "full screen is per visit: a reload opens the normal room");
+      }
+      await ctx.close(); }
+    // the Fullscreen API refused: the full-viewport layout still, nothing said
+    { const { ctx, p } = await open(1440, "en"); await p.addInitScript(fsStub, [true]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      await p.click("[data-fs-toggle]"); await settle(p, 400); const f = await fsView(p);
+      const said = await p.evaluate(() => [...document.querySelectorAll("[role=alert], .toast, [data-board-toast]")].map((e) => e.textContent));
+      ok(f.on && f.fsEl === null && f.req.length === 1 && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && !said.length, "a refused Fullscreen API keeps the full-viewport layout, only the board, and says nothing", JSON.stringify({ f, said }));
+      await p.keyboard.press("Escape"); await settle(p, 300);
+      ok(!(await fsView(p)).on, "Esc leaves the full-viewport layout");
+      await ctx.close(); }
+    // a request still pending when the captain leaves: granted later, the browser leaves full screen at once
+    { const { ctx, p } = await open(1440, "en"); await p.addInitScript(fsStub, ["late"]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      await p.click("[data-fs-toggle]"); await settle(p, 200); await p.click("[data-fs-toggle]"); await settle(p, 200);
+      await p.evaluate(() => window.__grant()); await settle(p, 300); const f = await fsView(p);
+      ok(!f.on && f.fsEl === null && f.rail && f.head, "a full-screen request granted after the captain left full screen is undone at once: the normal room, no browser full screen", JSON.stringify(f));
+      await ctx.close(); }
+    // a phone: the CSS path only; the board fills the screen and Next still shows
+    { const { ctx, p } = await open(390, "en"); await p.addInitScript(fsStub, [false]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      await p.evaluate(() => { const B = window.crewReviewRoom.board.state; B.sheet.clear(); }); await p.evaluate(() => window.dispatchEvent(new Event("resize"))); await settle(p, 300);
+      await p.click("[data-fs-toggle]"); await settle(p, 400); const f = await fsView(p);
+      const next = await p.evaluate(() => { const e = document.querySelector("[data-board-next]"); return !!e && getComputedStyle(e).display !== "none"; });
+      ok(f.on && !f.req.length && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && next, "a phone gets full screen through the layout only (no Fullscreen API): the board fills the screen, Next still there", JSON.stringify({ f, next }));
+      await p.screenshot({ path: join(shots, "fullscreen-phone.png") });
+      await ctx.close(); } }
+
   // ---------- the real routes: findings and the board's free actions need a room and Studio's session ----------
   { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(`${base}/#/board`);
     const r = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999/findings"), b = await fetch("/api/review-room/SC-999/lesson", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "tidy" }) }), c = await fetch("/api/review-room/SC-999/lesson");

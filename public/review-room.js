@@ -4,7 +4,7 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { imgWant: new Map(), resetAsk: new Set(), step: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+const RR = { imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
   scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Set(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -58,7 +58,7 @@ function parseFlow(code) {
 const SVGNS = "http://www.w3.org/2000/svg";
 const sv = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) e.setAttribute(k, String(v)); for (const c of kids) if (c != null) e.append(c); return e; };
 // the room's own line icons (drawn from fixed paths, nothing parsed)
-const ICO = { prev: "M15 6l-6 6 6 6", next: "M9 6l6 6-6 6", play: "M8 5l11 7-11 7z", pause: "M8 5v14M16 5v14", replay: ["M4 12a8 8 0 1 0 2.4-5.7", "M4 4v4h4"], list: "M4 6h16M4 12h16M4 18h10", msg: "M4 5h16v11H9l-5 4z", x: "M6 6l12 12M18 6L6 18", send: "M5 12h14M13 6l6 6-6 6", back: "M15 6l-6 6 6 6" };
+const ICO = { prev: "M15 6l-6 6 6 6", next: "M9 6l6 6-6 6", play: "M8 5l11 7-11 7z", pause: "M8 5v14M16 5v14", replay: ["M4 12a8 8 0 1 0 2.4-5.7", "M4 4v4h4"], list: "M4 6h16M4 12h16M4 18h10", msg: "M4 5h16v11H9l-5 4z", x: "M6 6l12 12M18 6L6 18", send: "M5 12h14M13 6l6 6-6 6", back: "M15 6l-6 6 6 6", expand: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5", shrink: "M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" };
 const ic = (n) => sv("svg", { viewBox: "0 0 24 24", class: "rr-ic", "aria-hidden": "true" }, ...[].concat(ICO[n]).map((d) => sv("path", { d })));
 /** a label in lines that fit `width` units at font size `fs` (a CJK character a whole em, Latin about half): words stay whole,
  *  CJK breaks anywhere; at most `max` lines, the last cut with an ellipsis */
@@ -78,7 +78,7 @@ const diamondPath = (x, y, w, h) => `M${x + w / 2},${y} L${x + w},${y + h / 2} L
 const drawnOf = (card, it) => { const key = `${card}/${it.group ? `${it.turn}:${it.group}` : it.id}`; if (!RR.drawn.has(key)) RR.drawn.set(key, new Set()); return RR.drawn.get(key); };
 /** the picture's box, roughly: the board's left column on a desktop, the top of the board on a phone */
 let BOX = null; // the report's figure box, while a report figure is drawn
-const picBox = () => BOX ? BOX : innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.dataset.focus === "room" ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
+const picBox = () => BOX ? BOX : FS.card != null ? (innerWidth <= 760 ? { narrow: true, w: innerWidth - 40, h: Math.max(260, innerHeight - 150) } : { w: Math.max(400, (innerWidth - 120) * 0.58), h: Math.max(300, innerHeight - 190) }) : innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.dataset.focus === "room" ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
 const reduceMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 /** a flowchart's places, left to right (horiz) or top down; node size from its longest label */
 function flowLayout(g, horiz, fs) {
@@ -1089,7 +1089,7 @@ function stageView(r) {
   if (!scenes.length) return h("section", { class: "rr-stage", "data-stage": card, "aria-label": T("Board", "白板") },
     h("div", { class: "rr-board" }, h("div", { class: "rr-empty", "data-board-empty": "" },
       h("h2", { class: "rr-hand" }, T("Board", "白板")), h("p", { class: "faint" }, T("Ask below. Each answer becomes a scene here: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, revealed one at a time.", "在下方提問。每個回答會在這裡變成一個場景：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個出現。")))),
-    h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }), h("div", { class: "rr-playbar" }, voicePicker(r)));
+    h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }), h("div", { class: "rr-playbar" }, h("span", { class: "x-grow" }), fsToggle(card), voicePicker(r)));
   const i = sceneState(card, scenes), sc = scenes[i], n = sc.points.length,
     // a check opens on its first question not answered yet
     k = sc.quiz && !RR.reveal.has(`${card}/${sc.key}`) ? (sc.points.findIndex((p) => !p.q.result) + 1 || n) : revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`);
@@ -1126,8 +1126,8 @@ function stageView(r) {
           h("span", {}, x.chapter === "decisions" ? `${T(`Choice ${nth}`, `決定 ${nth}`)} · ${clip(x.title, 30)}` : clip(x.title, 36)))); return; }
       out.push(h("button", { type: "button", class: "rr-toc-i", "data-toc-scene": x.key, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
         x.chapter ? h("b", {}, chapterName(x.chapter)) : null, h("span", {}, clip(x.title, 36)), x.t && x.t.status === "running" ? h("i", { class: "rr-toc-run" }, "…") : null)); }); return out; })()) : null;
-  // a finished lesson reads as a report (baton's packet); the captain may step through it on the board instead
-  if (sc.t?.action === "teach" && sc.t.status === "done" && sc.chapter && !RR.step.has(`${card}/${sc.t.n}`)) return BOARD.view(r, scenes, i);
+  // a finished lesson is the lesson board (baton's packet), read there only
+  if (sc.t?.action === "teach" && sc.t.status === "done" && sc.chapter) return BOARD.view(r, scenes, i);
   return h("section", { class: `rr-stage${toc ? " with-toc" : ""}`, "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") }, toc,
     h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
       h("div", { class: "rr-stitle" },
@@ -1135,7 +1135,6 @@ function stageView(r) {
           sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null,
           sc.t?.versions?.length > 1 && !sc.quiz ? h("span", { class: "rr-vers", role: "group", "data-versions": sc.t.regenOf ?? sc.t.n, "aria-label": T("Answers to this question", "這一題的回答") }, sc.t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === sc.t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${sc.t.regenOf ?? sc.t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null,
           sc.t && !sc.studio && !sc.quiz && sc.t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": sc.t.n, "aria-expanded": String(RR.regen.has(card)), onclick: () => { RR.regen.has(card) ? RR.regen.delete(card) : RR.regen.add(card); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null),
-        sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" ? h("button", { type: "button", class: "rr-mini", "data-report-back": sc.t.n, onclick: () => { RR.step.delete(`${card}/${sc.t.n}`); RR.jump.set(card, sc.key); stopPlay(); rerender(); } }, T("Back to the board", "回到白板")) : null,
         RR.regen.has(card) && sc.t && !sc.studio ? regenList(r, sc.t) : null,
         h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
       h("div", { class: "rr-scene" },
@@ -1167,7 +1166,7 @@ function stageView(r) {
         h("span", { class: "faint", "data-scene-pos": `${i + 1}/${scenes.length}` }, T(`Scene ${i + 1} of ${scenes.length}`, `場景 ${i + 1} / ${scenes.length}`)),
         h("button", { type: "button", class: "rr-mini", "data-scene-next": "", disabled: i === scenes.length - 1, onclick: () => goScene(card, i + 1), "aria-label": T("Next scene", "下一個場景") }, "»")),
       h("span", { class: "x-grow" }),
-      voicePicker(r)));
+      fsToggle(card), voicePicker(r)));
 }
 // ---------- the prompt bar: quick actions, a question (typed or spoken), the paid-round confirmation ----------
 const SR = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -1288,7 +1287,7 @@ async function resetRoom(card) {
     for (const m of [RR.scene, RR.seen, RR.confirm, RR.draft, RR.cite, RR.err, RR.reveal, RR.ready, RR.rscroll, RR.jump, RR.lang]) m.delete(card);
     for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
     for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);
-    for (const set of [RR.step, RR.titled, RR.fold]) for (const key of [...set]) if (key.startsWith(`${card}/`)) set.delete(key);
+    for (const set of [RR.titled, RR.fold]) for (const key of [...set]) if (key.startsWith(`${card}/`)) set.delete(key);
     BOARD.forget(card); RR.rooms.delete(card); RR.scene.set(card, 0); await load(card, true); RR.scene.set(card, 0); }
   catch (e) { RR.err.set(card, e.message); RR.resetAsk.delete(card); }
   finally { RR.posting.delete(card); rerender(); }
@@ -1384,21 +1383,61 @@ function header(r) {
 addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room" && !S.route.arg)) RR.list.fresh = false;
   // back in a room whose turn still runs (the poll stopped when the captain left): read it now, and the poll follows it again
   const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) load(id); });
-// the keyboard: ← → a point back or forward, Space play / pause, Escape closes what is open over the room
+// ---------- full screen: only the board (docs/units/review-room.md 41). The Fullscreen API goes to #view, the stable container
+// the board is drawn in: every redraw replaces the board itself, and an element taken out of the page drops out of full
+// screen. body.rr-fs is the layout (only the board, the whole window) while the request is pending, when it is refused (said
+// nowhere: the layout is the mode) and on a phone, which gets the layout only. Nothing is kept: full screen is per visit ----------
+const FS = { card: null, last: null, at: 0 };
+const fsView = () => document.getElementById("view");
+/** the board's Full screen control; in full screen the same control, pressed, reads Exit full screen */
+function fsToggle(card) {
+  const on = FS.card === card;
+  return h("button", { type: "button", class: `rr-fs-btn${on ? " on" : ""}`, "data-fs-toggle": card, "aria-pressed": String(on), "aria-keyshortcuts": "F",
+    title: on ? T("Exit full screen (Esc or F)", "離開全螢幕（Esc 或 F）") : T("Full screen: only the board (F)", "全螢幕：只留下白板（F）"), onclick: () => (on ? exitFs() : enterFs(card)) },
+    ic(on ? "shrink" : "expand"), h("span", {}, on ? T("Exit full screen", "離開全螢幕") : T("Full screen", "全螢幕")));
+}
+/** the camera re-fitted once the new size is laid out (the lesson board's; an answer's scene is drawn for its box anew) */
+const fsRefit = (card) => requestAnimationFrame(() => { if (onRoom(card)) BOARD.refit(card); });
+const fsFocus = () => requestAnimationFrame(() => document.querySelector("[data-fs-toggle]")?.focus({ preventScroll: true }));
+function enterFs(card) {
+  if (FS.card != null || !onRoom(card) || !document.querySelector("[data-stage]")) return;
+  BOARD.fitMark(card); FS.card = card; FS.last = card; document.body.classList.add("rr-fs"); render(); fsRefit(card); fsFocus();
+  // true full screen where the window can have it; a phone keeps the layout only. A refusal leaves the layout as it is
+  const v = fsView();
+  if (innerWidth > 760 && v?.requestFullscreen && !document.fullscreenElement) try { Promise.resolve(v.requestFullscreen({ navigationUI: "hide" })).catch(() => {}); } catch {}
+}
+function exitFs(focus = true) {
+  const card = FS.card; if (card == null) return; FS.card = null; FS.at = performance.now(); document.body.classList.remove("rr-fs");
+  if (document.fullscreenElement) try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch {}
+  if (onRoom(card)) { render(); fsRefit(card); if (focus) fsFocus(); }
+}
+// the browser's own exit (its Esc, its menu) comes back to the room; any change of size re-fits the camera
+document.addEventListener("fullscreenchange", () => {
+  if (FS.card != null && !document.fullscreenElement) return exitFs();
+  // granted after the captain left full screen (or the room) while the request was pending: undone at once
+  if (FS.card == null && document.fullscreenElement && document.fullscreenElement === fsView()) { try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch {} return; }
+  const card = FS.card ?? FS.last; if (card != null && onRoom(card)) { render(); fsRefit(card); }
+});
+let fsResized = 0; addEventListener("resize", () => { if (FS.card == null && performance.now() - FS.at > 1500) return; clearTimeout(fsResized); fsResized = setTimeout(() => { const card = FS.card ?? FS.last; if (card != null && onRoom(card)) fsRefit(card); }, 160); });
+// leaving the room leaves full screen
+addEventListener("hashchange", () => { if (FS.card != null && !onRoom(FS.card)) exitFs(false); });
+// the keyboard: ← → a point back or forward, Space play / pause, f full screen, Escape closes what is open over the room (then
+// full screen)
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
   const card = S.route.arg, t = e.target;
   // the lesson board's own keys first (a chapter on or back, ask here, zoom, Escape closes what it opened)
   if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && BOARD.keydown(e, card)) return;
-  if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else return; e.preventDefault(); rerender(); return; }
+  if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else if (FS.card === card) { e.preventDefault(); exitFs(); return; } else return; e.preventDefault(); rerender(); return; }
   if (t?.closest?.("input,textarea,select,[contenteditable],[role=dialog]") || RR.zoom) return;
+  if ((e.key === "f" || e.key === "F") && !e.repeat && document.querySelector("[data-fs-toggle]")) { e.preventDefault(); if (FS.card === card) exitFs(); else enterFs(card); return; }
   if (document.querySelector("[data-board-vp]")) return; // the board's keys are its own
   if (e.key === "ArrowRight") { e.preventDefault(); stepPoint(card, 1); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); stepPoint(card, -1); }
   else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
 });
 // the lesson board, built with the room's own helpers (public/review-board.js)
-const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl });
+const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle });
 routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
@@ -1426,7 +1465,7 @@ routes.room = (arg) => {
     // the stage moves to that answer itself (not to whatever scene happens to be last)
     RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue;
     // a lesson opens as its report, at its first section: read, not played
-    if (sc.chapter && sc.t?.action === "teach" && !RR.step.has(`${arg}/${sc.t.n}`)) { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
+    if (sc.chapter && sc.t?.action === "teach") { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
   // entering a room while a turn runs: the stage shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);

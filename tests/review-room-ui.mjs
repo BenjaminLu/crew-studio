@@ -591,32 +591,22 @@ try {
     const { ctx, p, cites } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RL }));
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForSelector("[data-toc]", { timeout: 3000 }).catch(() => {});
-    // a finished lesson reads as a report; "Step through on the board" shows it scene by scene, as before
-    await p.click('[data-toc-scene="t3"]').catch(() => {}); await p.click("[data-report-step]").catch(() => {});
+    // a finished lesson is the board, never stepped through on the stage: from an answer's scene the rail lists it chapter by chapter
+    await p.click('[data-other-scene="t1"]').catch(() => {}); await p.waitForSelector("[data-toc]", { timeout: 3000 }).catch(() => {});
     const toc = await p.evaluate(() => ({ items: [...document.querySelectorAll("[data-toc-scene]")].map((e) => [e.dataset.tocScene, e.querySelector("b")?.textContent ?? "", e.getAttribute("aria-current")]) }));
     const lesson = toc.items.filter((x) => /^t3/.test(x[0])).map((x) => x[1]);
     const heads = await p.$$eval("[data-toc-chapter]", (els) => els.map((e) => [e.dataset.tocChapter, e.textContent])), items = await p.$$eval("[data-toc-item]", (els) => els.map((e) => e.textContent));
     ok(JSON.stringify(lesson) === JSON.stringify(["What this is", "", "", "", "One request, in order", "What to watch"]) && JSON.stringify(heads) === JSON.stringify([["change", "The change itself"], ["lifecycle", "Its life, state by state"]]) && JSON.stringify(items) === JSON.stringify(["Rounding", "Tests", "An invoice"]) && toc.items.some((x) => x[0] === "t1") && toc.items.some((x) => x[0] === "t0"),
       "the chapters' rail lists every answer's scenes, the lesson chapter by chapter in order, a chapter of several items once with its items under it (every answer reachable from it)", JSON.stringify(toc));
-    await p.click('[data-toc-scene="t3-2"]'); let s = await stage(p);
-    const cur = await p.$eval('[data-toc-scene="t3-2"]', (e) => e.getAttribute("aria-current"));
-    const fig = await p.evaluate(() => ({ fig: document.querySelector("[data-visual] [data-item-figure]")?.dataset.itemFigure, rows: [...document.querySelectorAll("[data-visual] .rr-ib-row")].map((e) => e.textContent), boxes: document.querySelectorAll("[data-visual] .rr-ib").length, kicker: document.querySelector(".rr-kicker")?.textContent }));
-    ok(s.scene === "t3-2" && cur === "true" && fig.fig === "B3-1" && fig.boxes === 4 && JSON.stringify(fig.rows) === JSON.stringify(["Before", "After"]) && /The change itself/.test(fig.kicker), "a click jumps to its chapter, marked current; a changed item is its before → after card", JSON.stringify({ s, cur, fig }));
-    await p.click('[data-toc-scene="t3-3"]');
-    const geo = await p.evaluate(() => [...document.querySelectorAll("[data-visual] [data-item-figure] .rr-ib path")].map((e) => e.getAttribute("d")).join("|"));
-    await p.click('[data-toc-scene="t3-2"]');
-    const geo0 = await p.evaluate(() => [...document.querySelectorAll("[data-visual] [data-item-figure] .rr-ib path")].map((e) => e.getAttribute("d")).join("|"));
-    ok(geo && geo === geo0, "every changed item is drawn from the same layout (identical geometry), not free-drawn");
-    await p.click('[data-toc-scene="t3-4"]'); await p.click('[data-transition-cite="diff:src/percent.ts:L2-3"]'); await p.waitForSelector("[data-cite-panel]");
-    ok(cites.at(-1) === "diff:src/percent.ts:L2-3" && await p.$$eval("[data-visual] [data-elabel]", (els) => els.length) === 3, "the state machine draws every transition, and a transition opens the code it rests on", JSON.stringify(cites));
-    await p.click("[data-cite-panel] .btn");
-    // two transitions between the same states: each label opens its own citation
-    const second = await p.$$eval('[data-visual] [data-elabel="priced>paid"]', (els) => els.map((e) => [e.textContent, e.dataset.transitionCite ?? null]));
-    await p.click('[data-transition-cite="diff:test/percent.test.ts"]', { timeout: 3000 }).catch(() => {}); await p.waitForSelector("[data-cite-panel]", { timeout: 3000 }).catch(() => {});
-    ok(JSON.stringify(second) === JSON.stringify([["② pay", null], ["③ pay later", "diff:test/percent.test.ts"]]) && cites.at(-1) === "diff:test/percent.test.ts", "two transitions between the same states each open their own citation", JSON.stringify({ second, cites }));
-    await p.click("[data-cite-panel] .btn"); await p.click('[data-toc-scene="t3-5"]');
-    const sq = await p.evaluate(() => ({ actors: document.querySelectorAll("[data-visual] .rr-actor").length, steps: [...document.querySelectorAll("[data-visual] [data-step]")].map((e) => e.className.baseVal), frame: document.querySelector("[data-visual] [data-frame]")?.textContent }));
-    ok(sq.actors === 3 && sq.steps.length === 4 && /return/.test(sq.steps[2]) && /loop \[each line\]/.test(sq.frame || ""), "one request in order: its actors, calls and returns, and its loop as a frame", JSON.stringify(sq));
+    await p.click('[data-toc-scene="t3-2"]'); await p.waitForSelector("[data-board-vp]", { timeout: 3000 }).catch(() => {});
+    const onBoard = await p.evaluate(() => ({ board: !!document.querySelector("[data-board-vp]"), scene: document.querySelector("[data-stage]")?.dataset.scene, step: !!document.querySelector("[data-report-step]"), visual: !!document.querySelector("[data-visual]") }));
+    ok(onBoard.board && onBoard.scene === "t3-2" && !onBoard.step && !onBoard.visual, "a chapter in the rail opens the lesson board at that chapter; there is no stepping through it on the stage", JSON.stringify(onBoard));
+    await p.click('[data-other-scene="t1"]'); await p.waitForSelector("[data-visual]", { timeout: 3000 }).catch(() => {});
+    // in full screen an answer's scene shows no chapters' rail: the board takes the whole width
+    await p.click("[data-fs-toggle]"); await p.waitForTimeout(300);
+    const fsToc = await p.evaluate(() => { const t = document.querySelector("[data-toc]"), b = document.querySelector(".rr-board").getBoundingClientRect(); return { on: document.body.classList.contains("rr-fs"), toc: !!t && getComputedStyle(t).display !== "none" && t.getClientRects().length > 0, left: Math.round(b.left), width: Math.round(b.width), win: innerWidth }; });
+    await p.keyboard.press("Escape"); await p.waitForTimeout(300);
+    ok(fsToc.on && !fsToc.toc && fsToc.left <= 20 && fsToc.width >= fsToc.win - 40 && await p.evaluate(() => !document.body.classList.contains("rr-fs")), "in full screen an answer's scene in a room with a lesson hides the chapters' rail: the board takes the whole width", JSON.stringify(fsToc));
     const lay = await p.evaluate(() => { const v = document.querySelector("[data-visual]").getBoundingClientRect(), t = document.querySelector("[data-toc]").getBoundingClientRect(); return { focus: document.body.dataset.focus ?? null, scroll: document.documentElement.scrollHeight - innerHeight, apart: t.right <= v.left + 1, inView: v.bottom <= innerHeight, railShown: t.width > 100 && t.height > 100 }; });
     ok(lay.focus === "room" && lay.railShown && lay.scroll <= 0 && lay.apart && lay.inView, "the rail sits beside the board: the page still never scrolls and the picture stays in view", JSON.stringify(lay));
     await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(200);
@@ -723,11 +713,8 @@ try {
     const rej = await p.evaluate(() => [...document.querySelectorAll("[data-rejected-option]")].map((e) => [e.textContent.slice(0, 20), e.querySelector("[data-cite]")?.dataset.cite ?? null]));
     ok(JSON.stringify(rej.map((x) => x[1])) === JSON.stringify(["review:r12"]), "a decision's turned-down option is listed with the record that shows it (its citation opens)", JSON.stringify(rej));
     ok(geo.length === 2 && geo[0] && geo[0] === geo[1] && dec.boxes === 3 && dec.gone === 1, "each changed item is drawn from the same layout; a decision shows the option taken and the one turned down, apart", JSON.stringify({ geo: geo.length, dec }));
-    // step through it on the board, and back to the report
-    await p.click("[data-report-step]"); await p.waitForSelector("[data-visual]", { timeout: 3000 }).catch(() => {});
-    const stepped = await p.evaluate(() => ({ visual: !!document.querySelector("[data-visual]"), report: !!document.querySelector("[data-report]") }));
-    await p.click("[data-report-back]").catch(() => {}); await p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
-    ok(stepped.visual && !stepped.report && !!(await p.$("[data-report]")), "the lesson can still be stepped through on the board, and read as a report again", JSON.stringify(stepped));
+    // a finished lesson is read on the board only: nothing steps it onto the stage
+    ok(!(await p.$("[data-report-step]")) && !(await p.$("[data-report-back]")) && !!(await p.$("[data-report]")), "a finished lesson stays on the board: no step-through-on-the-stage control, no way back to one");
     // its languages: the translation kept for it covers the sections and the drawings' words; 简体 through OpenCC
     await p.click('[data-lang-pick="zh-TW"]'); await p.waitForTimeout(300);
     const zh = await p.evaluate(() => ({ title: document.querySelector('[data-report-section="t3"] [data-section-title]')?.textContent, node: [...document.querySelectorAll("[data-arch] text")].map((t) => t.textContent).join("|"), head: document.querySelector('[data-report-section="t3"] h3')?.textContent }));
@@ -1089,6 +1076,44 @@ try {
       ok(/claude · m-2/.test(moved.line) && /up to two generated pictures/.test(moved.line) && /nothing started/.test(moved.err) && !/PR-x-10/.test(moved.hash), "when what a paste starts changed since the box said it, nothing starts: the box shows the new plan and asks for a second paste", JSON.stringify(moved)); }
     else ok(false, "fixture: the UI server lists a project to show", JSON.stringify(real));
     await ctx.close(); }
+
+  // ---------- full screen on an answer's scene: only the board, its caption and its play bar; scenes still move; Esc and the
+  // exit control come back to the same scene; a refused Fullscreen API keeps the layout ----------
+  { const fsStub = ([refuse]) => { window.__fsReq = []; let el = null;
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => el });
+      Element.prototype.requestFullscreen = function () { window.__fsReq.push(this.id || this.className); if (refuse) return Promise.reject(new TypeError("Permissions check failed"));
+        el = this; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
+      document.exitFullscreen = () => { el = null; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); }; };
+    const fsView = (p) => p.evaluate(() => { const st = document.querySelector("[data-stage]"), b = st.getBoundingClientRect(), bd = st.querySelector(".rr-board").getBoundingClientRect();
+      const vis = (e) => { const s = getComputedStyle(e); if (s.display === "none" || s.visibility === "hidden" || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight; };
+      return { on: document.body.classList.contains("rr-fs"), stage: [b.left, b.top, b.width, b.height].map(Math.round), board: Math.round(bd.height), win: [innerWidth, innerHeight], scene: st.dataset.scene, pos: st.querySelector("[data-scene-pos]")?.dataset.scenePos, req: window.__fsReq, fsEl: document.fullscreenElement?.id ?? null,
+        others: [...document.body.querySelectorAll("*")].filter((e) => !st.contains(e) && !e.contains(st) && vis(e)).map((e) => e.id || e.className?.baseVal || e.className || e.tagName).slice(0, 8),
+        playbar: vis(st.querySelector(".rr-playbar")), focus: !!document.activeElement?.matches?.("[data-fs-toggle]") }; });
+    const near = (a, b, d = 2) => Math.abs(a - b) <= d;
+    { const { ctx, p } = await open(1440, "en"); await ctx.addInitScript(fsStub, [false]);
+      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.waitForTimeout(200);
+      const n0 = await fsView(p); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f1 = await fsView(p);
+      await p.screenshot({ path: join(shots, "fullscreen-scene.png") }); await p.emulateMedia({ colorScheme: "dark" }); await p.waitForTimeout(100); await p.screenshot({ path: join(shots, "fullscreen-scene-dark.png") }); await p.emulateMedia({ colorScheme: "light" });
+      ok(!n0.on && f1.on && f1.fsEl === "view" && near(f1.stage[2], f1.win[0]) && near(f1.stage[3], f1.win[1]) && f1.board > n0.board + 80 && !f1.others.length && f1.playbar,
+        "an answer's scene in full screen: only the board, its caption and play bar, filling the window (the header, prompt and transcript hidden)", JSON.stringify({ n0, f1 }));
+      await p.click("[data-scene-prev]"); await p.waitForTimeout(150); const f2 = await fsView(p);
+      ok(f2.on && f2.pos === "2/3", "scene navigation works inside full screen", JSON.stringify(f2));
+      await p.keyboard.press("Escape"); await p.waitForTimeout(300); const x1 = await fsView(p);
+      ok(!x1.on && x1.fsEl === null && x1.pos === "2/3" && x1.focus && near(x1.board, n0.board, 3), "Esc returns to the normal room on the same scene, the focus on the Full screen control", JSON.stringify(x1));
+      await p.keyboard.press("f"); await p.waitForTimeout(300); const f3 = await fsView(p); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const x2 = await fsView(p);
+      ok(f3.on && !x2.on && x2.pos === "2/3" && x2.focus, "f enters full screen, the Exit full screen control leaves it", JSON.stringify({ f3, x2 }));
+      await p.focus("[data-room-text]"); await p.keyboard.type("f"); const typed = await p.evaluate(() => ({ on: document.body.classList.contains("rr-fs"), v: document.querySelector("[data-room-text]").value }));
+      ok(!typed.on && /f$/.test(typed.v), "f typed in the prompt is text, not the shortcut", JSON.stringify(typed));
+      await ctx.close(); }
+    { const { ctx, p } = await open(1440, "en"); await ctx.addInitScript(fsStub, [true]);
+      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f = await fsView(p);
+      const said = await p.evaluate(() => [...document.querySelectorAll("[role=alert], .toast")].map((e) => e.textContent));
+      ok(f.on && f.fsEl === null && f.req.length === 1 && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && !said.length, "a refused Fullscreen API keeps the full-viewport layout and says nothing", JSON.stringify({ f, said }));
+      await ctx.close(); }
+    { const { ctx, p } = await open(390, "zh-TW"); await ctx.addInitScript(fsStub, [false]);
+      await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click("[data-fs-toggle]"); await p.waitForTimeout(300); const f = await fsView(p);
+      ok(f.on && !f.req.length && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && await noScroll(p), "a phone gets full screen through the layout only: the board fills the screen, nothing wider", JSON.stringify(f));
+      await ctx.close(); } }
 
   // ---------- the real routes: a card that does not exist, a write needs the desktop session ----------
   { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(`${base}/#/board`);
