@@ -172,6 +172,37 @@ try {
     await tap(p, "[data-answer-ready]"); await p.waitForTimeout(300); const went = await board(p);
     ok(chip && stay === "t1" && went.cur === "t4" && went.regions.includes("t4-2") && went.regions.includes("end"), "the answer that finished while the captain looked away waits behind “The answer is ready — show it” on the board; the chip flies to it, now a lesson's chapters", JSON.stringify({ chip, stay, went }));
     await ctx.close(); }
+  // ---------- review: the captain pans away while a turn runs; a lesson chapter played, then "Your questions"; a narrow board ----------
+  { let now = { ...clone(BASE), running: 4, progress: { turn: 4, status: "running", said: "Reading.", tools: 1, at: "t" },
+      turns: [...clone(BASE.turns), { n: 4, action: "why", text: "Why now?", lang: "en", status: "running", provider: "codex", model: "gpt-6", answer: "", head: H }] };
+    const { ctx, p } = await open(1440, () => now);
+    const vr = await p.$eval("[data-board-vp]", (e) => { const b = e.getBoundingClientRect(); return { x: b.left, y: b.top }; });
+    await p.mouse.move(vr.x + 500, vr.y + 120); await p.mouse.down(); await p.mouse.move(vr.x + 300, vr.y + 420, { steps: 5 }); await p.mouse.up(); await p.waitForTimeout(150);
+    const c0 = await cam(p);
+    now = { ...now, running: null, progress: null, turns: now.turns.map((t) => (t.n === 4 ? { ...t, status: "done", answer: "y", claims: [cl("Because now.")] } : t)) };
+    const chip = await p.waitForSelector("[data-board] [data-answer-ready]", { timeout: 15000 }).then(() => true, () => false), c1 = await cam(p);
+    ok(chip && c0 && c1 && Math.abs(c0.x - c1.x) < 1 && Math.abs(c0.y - c1.y) < 1, "the captain dragged the board while a turn ran: the finished answer waits behind its chip, the camera stays where the captain left it", JSON.stringify({ chip, c0, c1 }));
+    await ctx.close(); }
+  { const room = { ...clone(BASE), turns: [...clone(BASE.turns), { n: 4, action: "teach", text: "Teach me this change.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "y", head: H, claims: [cl("x")],
+      scenes: [{ n: 1, chapter: "what", title: "A percent helper", picture: "", points: [cl("It adds percent."), cl("Rounded to the cent."), cl("Halves go up.")] }, { n: 2, chapter: "watch", title: "What to watch", picture: "", points: [cl("Halves round up."), cl("Old rows keep fractions.")] }] }],
+      lesson: { threads: [], visited: ["t4", "t4-2", "end"] } };
+    const { ctx, p } = await open(1440, room);
+    await tap(p, '[data-outline="t4"]'); await p.waitForTimeout(200); await tap(p, "[data-playbar] [data-play]"); const playing = await p.$eval("[data-playbar] [data-play]", (e) => e.getAttribute("aria-pressed")).catch(() => null);
+    await tap(p, '[data-outline="end"]'); await p.waitForTimeout(250);
+    const after = await p.evaluate(() => ({ cur: document.querySelector("[data-board]")?.dataset.scene, bar: !!document.querySelector("[data-playbar]"), playing: document.querySelector("[data-playbar] [data-play]")?.getAttribute("aria-pressed") ?? null }));
+    ok(playing === "true" && after.cur === "end" && !after.bar && after.playing === null, "flying to “Your questions” while a chapter plays stops it; the play bar does not show there", JSON.stringify({ playing, after }));
+    await ctx.close();
+    // a board narrowed by the questions panel at 1280: every control of the play bar stays inside it
+    const { ctx: c2, p: p2 } = await open(1280, room);
+    await tap(p2, '[data-outline="t1"]'); await p2.waitForTimeout(250);
+    const fit = await p2.evaluate(() => { const bar = document.querySelector("[data-playbar]"); if (!bar) return null; const b = bar.getBoundingClientRect(), notes = !!document.querySelector("[data-board-notes]");
+      const els = [...bar.querySelectorAll(".rr-ibtn, .rr-mini, select")], rs = els.map((e) => e.getBoundingClientRect()), name = (e) => (e.dataset.voice != null ? "voice" : Object.keys(e.dataset)[0] || e.className);
+      // each control whole, inside the bar, wide enough to use (the voice list at least 120px), none over another
+      const out = els.filter((e, k) => { const r = rs[k]; return r.right > b.right + 1 || r.left < b.left - 1 || r.bottom > b.bottom + 1 || (e.tagName === "SELECT" && r.width < 120)
+        || rs.some((o, m) => m !== k && r.left < o.right - 1 && r.right > o.left + 1 && r.top < o.bottom - 1 && r.bottom > o.top + 1); }).map(name);
+      return { notes, out, w: Math.round(b.width) }; });
+    ok(fit && fit.notes && !fit.out.length, "at 1280 with the questions panel open, every play bar control fits inside the bar, whole and apart (none cut off or squeezed)", JSON.stringify(fit));
+    await c2.close(); }
   { const room = { ...clone(BASE), turns: [...clone(BASE.turns), { n: 4, action: "why", text: "Why now?", lang: "en", status: "failed", error: "the tutor ended without an answer", provider: "codex", model: "gpt-6", answer: "", head: H }, { n: 5, action: "how", text: "And the tests?", lang: "en", status: "interrupted", provider: "codex", model: "gpt-6", answer: "", head: H }] };
     const { ctx, p } = await open(1440, room);
     const f = await inRegion(p, "t4", "[data-turn-failed]"), i = await inRegion(p, "t5", "[data-turn-failed]");

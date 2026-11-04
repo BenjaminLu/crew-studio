@@ -361,6 +361,8 @@ function flyTo(card, key, glide = true) {
   // the scene the play bar plays follows the region in view (a new one stops what was playing)
   const sh = B.shown.get(card), j = sh ? sh.scenes.findIndex((x) => x.key === key) : -1;
   if (j >= 0 && j !== sh.i) { stopPlay(); markMoved(card); RR.scene.set(card, j); B.lastScene.set(card, key); }
+  // a region with no scene ("Your questions"): what was playing stops there too
+  else if (j < 0 && RR.playing === card) stopPlay();
   rerender(); layout(card); const to = regionCam(card, key); if (to) moveCam(card, to, glide);
 }
 /** → / ←: the next point of a scene being played or stepped through, else the next region (shown whole) */
@@ -501,7 +503,7 @@ addEventListener("pointermove", (e) => {
   if (ptrs.size === 2 && B.pinch) { const card = B.pinch.card, [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, vr = vpOf(card)?.getBoundingClientRect(); if (!vr) return;
     const c = camOf(card); B.cam.set(card, { ...c, x: c.x + mx - B.pinch.mx, y: c.y + my - B.pinch.my }); zoomAt(card, d / B.pinch.d, mx - vr.left, my - vr.top); B.pinch = { card, d, mx, my }; B.moved = true; return; }
   const g = B.drag; if (!g) return; const dx = e.clientX - g.x, dy = e.clientY - g.y;
-  if (!B.moved && (Math.hypot(dx, dy) > 5 || g.space)) { B.moved = Math.hypot(dx, dy) > 5 || g.space; if (B.moved) { vpOf(g.card)?.classList.add("dragging"); if (B.pop) { B.pop = null; rerender(); } } }
+  if (!B.moved && (Math.hypot(dx, dy) > 5 || g.space)) { B.moved = Math.hypot(dx, dy) > 5 || g.space; if (B.moved) { markMoved(g.card); vpOf(g.card)?.classList.add("dragging"); if (B.pop) { B.pop = null; rerender(); } } }
   if (B.moved) { B.lock.delete(g.card); cancelAnimationFrame(B.tween?.raf ?? 0); B.tween = null; B.cam.set(g.card, { ...g.c, x: g.c.x + dx, y: g.c.y + dy }); applyCam(g.card); }
 });
 const up = (e) => { ptrs.delete(e.pointerId); if (ptrs.size < 2) B.pinch = null; if (!ptrs.size) { const g = B.drag; B.drag = null; if (g) vpOf(g.card)?.classList.remove("dragging"); setTimeout(() => (B.moved = false), 0); } };
@@ -512,7 +514,7 @@ let resized = 0; addEventListener("resize", () => { clearTimeout(resized); resiz
 addEventListener("keyup", (e) => { if (e.key !== " ") return; const tap = B.space && !B.spaceUsed; B.space = false; B.spaceUsed = false; document.querySelector("[data-board-vp]")?.classList.remove("grab");
   if (tap && S.route?.name === "room" && S.route.arg && vpOf(S.route.arg)) togglePlay(S.route.arg); });
 function wheel(card, e) {
-  e.preventDefault(); const vr = vpOf(card).getBoundingClientRect(), c = camOf(card);
+  e.preventDefault(); markMoved(card); const vr = vpOf(card).getBoundingClientRect(), c = camOf(card);
   // a sideways scroll pans; any other wheel (and a trackpad's pinch, which arrives as a ctrl wheel) zooms at the pointer
   if (!e.ctrlKey && !e.metaKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) { B.lock.delete(card); B.cam.set(card, { ...c, x: c.x - e.deltaX }); applyCam(card); return; }
   zoomAt(card, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018)), e.clientX - vr.left, e.clientY - vr.top);
@@ -556,7 +558,7 @@ function miniSvg(card) {
   const m = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   for (const [k, v] of Object.entries({ class: "rb-minimap", "data-minimap": card, role: "img", "aria-label": T("The board's map: click to go there", "白板的小地圖：點一下就移過去"), viewBox: "0 0 196 120" })) m.setAttribute(k, v);
   m.addEventListener("click", (e) => { const rc = m.getBoundingClientRect(), sc2 = Number(m.dataset.sc) * (rc.width / 196) || 1, vp = vpOf(card); if (!vp) return;
-    const bx = Number(m.dataset.bx) + (e.clientX - rc.left) / sc2, by = Number(m.dataset.by) + (e.clientY - rc.top) / sc2, c = camOf(card); B.lock.delete(card); moveCam(card, { ...c, x: vp.clientWidth / 2 - bx * c.s, y: vp.clientHeight / 2 - by * c.s }); });
+    const bx = Number(m.dataset.bx) + (e.clientX - rc.left) / sc2, by = Number(m.dataset.by) + (e.clientY - rc.top) / sc2, c = camOf(card); B.lock.delete(card); markMoved(card); moveCam(card, { ...c, x: vp.clientWidth / 2 - bx * c.s, y: vp.clientHeight / 2 - by * c.s }); });
   return m;
 }
 function popover(card, r) {
@@ -641,7 +643,7 @@ function view(r, scenes, i) {
       B.toast?.card === card ? h("div", { class: `rb-toast${B.toast.bad ? " bad" : ""}`, role: "status", "data-board-toast": "" }, B.toast.text) : null,
       readyChip(r, scenes),
       order.length > 1 ? h("button", { type: "button", class: "rb-next", "data-board-next": next || "", onclick: () => step(card, 1) }, next ? T(`Next: ${names[next]} ▸`, `下一段：${names[next]} ▸`) : T("Back to the whole board", "回到全覽")) : null,
-      playBar(r, scenes, i),
+      ctx.cur === "end" ? null : playBar(r, scenes, i),
       h("div", { class: "rb-zoom", role: "group", "aria-label": T("Zoom", "縮放") }, h("button", { type: "button", "data-zoom-out": "", "aria-label": T("Zoom out", "縮小"), onclick: () => { const v = vpOf(card); zoomAt(card, 0.8, v.clientWidth / 2, v.clientHeight / 2, true); } }, "−"),
         h("span", { "data-zoom-pct": "", "aria-live": "polite" }, `${Math.round(camOf(card).s * 100)}%`), h("button", { type: "button", "data-zoom-in": "", "aria-label": T("Zoom in", "放大"), onclick: () => { const v = vpOf(card); zoomAt(card, 1.25, v.clientWidth / 2, v.clientHeight / 2, true); } }, "+"),
         h("button", { type: "button", class: "fit", "data-zoom-fit": "", onclick: () => fitAll(card) }, T("Fit all", "全覽")), fsToggle(card))),
