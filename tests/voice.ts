@@ -7,7 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // quickly; a refused copy not hashed again; Agent Wardrobe's folder never written), the pinned download (https only,
 // size, resume), and Doctor's voice rows. No real model, runtime, outside network or paid model.        bun tests/voice.ts
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync, copyFileSync, rmSync, cpSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync, copyFileSync, rmSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { suite } from "./rt-harness";
@@ -55,7 +55,11 @@ process.env.OPENAI_API_KEY = "sk-test-not-for-the-sidecar";
     "/usr/lib/libSystem.B.dylib", "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation", `${otherHome}/evil lib/libx.dylib`, `${home}/lib/liby.dylib`, "@rpath/libz.dylib", "/opt/homebrew/opt/simdjson/../../../../tmp/libw.dylib"]);
   const subpaths = (p: string) => [...p.matchAll(/\(subpath "([^"]+)"\)/g)].map((m) => m[1]).filter((d) => !["/usr/lib", "/System/Library", "/System/Cryptexes", "/private/var/db/timezone", "/usr/share/icu", "/private/var/db/dyld"].includes(d));
   const bp = sandboxProfile(brew, [], brewLibs);
-  ok(JSON.stringify(subpaths(bp)) === JSON.stringify(["/opt/homebrew/opt/icu4c@77/lib", "/opt/homebrew/opt/libuv/lib"]) && !bp.includes(otherHome) && !bp.includes(`${home}/lib`),
+  // each folder by its real path: on a Mac with that Homebrew formula installed /opt/homebrew/opt/<name> is a link into
+  // the Cellar (the CI runner has libuv), elsewhere the path stays as listed
+  const realOr = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  const brewDirs = ["/opt/homebrew/opt/icu4c@77/lib/libicui18n.77.dylib", "/opt/homebrew/opt/libuv/lib/libuv.1.dylib"].map((l) => dirname(realOr(l))).sort();
+  ok(JSON.stringify(subpaths(bp)) === JSON.stringify(brewDirs) && !bp.includes(otherHome) && !bp.includes(`${home}/lib`),
     "a Homebrew Node's linked libraries' folders are readable, exactly those; a home or temp folder otool lists, the system's own and @rpath are not added", JSON.stringify(subpaths(bp)));
   const np = sandboxProfile(join(nvm, "bin/node"), [], listing(join(nvm, "bin/node"), [join(nvm, "lib/libnode.dylib"), join(home, "other/libq.dylib")]));
   ok(JSON.stringify(subpaths(np)) === JSON.stringify([join(nvm, "lib")]), "a home folder is allowed only inside the Node's own install prefix", JSON.stringify(subpaths(np)));
