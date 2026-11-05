@@ -322,4 +322,18 @@ const before = E.deps.refreshUsable; E.deps.refreshUsable = async () => { E.deps
   const runs0 = runs.length, e = await refused(() => room.start(id, { thread: { n: 1, node: "n1", chip: "why" }, confirm: offer.hash }, "captain"));
   ok(e?.code === "not_found" && runs.length === runs0 && !existsSync(file) && room.findings(id, true).length === 0, "a question whose room was started over while it was admitted is refused: no turn, no card on the fresh room", JSON.stringify([e?.code, e?.message]));
   ok(agreed0 && !(room.view(id) as any).followUps, "starting over clears the room's agreement to start follow-ups", JSON.stringify((room.view(id) as any).followUps)); }
+
+// ---------- a later lesson may show an earlier lesson's drawing (its scene's picture, a step's picture or [board:…]): asked there ----------
+{ script.push([...LESSON]); const t1 = await turn({ action: "teach" });
+  script.push([...LESSON.filter((x) => x[0] !== "board_draw").map((x) => x[0] === "scene_show" && x[1].chapter === "what" ? ["scene_show", { ...x[1], points: [{ text: "It adds percent [diff:src/percent.ts:L2-3] [board:B1-1].", cites: ["diff:src/percent.ts:L2-3", "board:B1-1"] }, x[1].points[1]] }] : x)]);
+  const t2 = await turn({ action: "teach" });
+  ok(t1.status === "done" && t2.status === "done" && t2.n === 2 && !(room.view(id) as any).board.some((b: any) => b.turn === 2), "fixture: a second lesson drawing nothing of its own, its scenes showing the first lesson's drawings", JSON.stringify([t1.status, t2.status, t2.error]));
+  script.push([["say", "Pricing rounds the total [diff:src/percent.ts:L2-3]."]]);
+  const a1 = await turn({ thread: { anchor: { scene: "t2-4", kind: "transition", item: "B1-2", part: "transition:0", text: "Draft → Priced · price" }, chip: "why" }, consent: true });
+  script.push([["say", "It rounds [diff:src/percent.ts:L2-3]."]]);
+  const a2 = await turn({ thread: { anchor: { scene: "t2", kind: "node", item: "B1-1", part: "node:percent", text: "percent()" }, chip: "why" }, consent: true });
+  const e = await refused(() => room.start(id, { thread: { anchor: { scene: "t2", kind: "node", item: "B1-2", part: "node:draft", text: "Draft" }, chip: "why" }, confirm: offer.hash }, "captain"));
+  const th = onDisk().lesson.threads;
+  ok(a1.status === "done" && a2.status === "done" && th.some((t: any) => t.anchor.scene === "t2-4" && t.anchor.item === "B1-2") && th.some((t: any) => t.anchor.scene === "t2" && t.anchor.item === "B1-1") && e?.code === "bad_anchor",
+    "a question on an earlier lesson's drawing shown in a later lesson (the scene's picture, a step's [board:…]) is asked there; a drawing the scene does not show is still refused", JSON.stringify([a1.status, a1.error, a2.status, a2.error, e?.code, e?.message])); }
 end();

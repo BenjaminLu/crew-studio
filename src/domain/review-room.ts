@@ -847,7 +847,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       return { turn: welcome ? 0 : t!.n, scene, chapter: welcome ? "welcome" : sc?.chapter ?? (t!.studio ? "studio" : "answer"), kind, item: null, part, text, start: null, end: null };
     }
     if (!t || t.action !== "teach" || t.status !== "done" || !sc?.chapter) throw refuse("No such place on the lesson board / 白板上沒有這個位置", "bad_anchor");
-    const item = a?.item == null || a.item === "" ? null : String(a.item); if (item && !room.board.some((b) => b.id === item && b.turn === t.n)) throw refuse("No such drawing in this lesson / 這一課沒有這張圖", "bad_anchor");
+    // a drawing of this lesson, or one its scene shows (a later lesson may show an earlier one's: the scene's picture, a step's
+    // own picture or the [board:…] it cites)
+    const item = a?.item == null || a.item === "" ? null : String(a.item), shows = (id: string) => sc.picture === id || (sc.points ?? []).some((p) => p.picture === id || (p.cites ?? []).some((c) => c?.ref === `board:${id}`));
+    if (item && !room.board.some((b) => b.id === item && (b.turn === t.n || shows(item)))) throw refuse("No such drawing in this lesson / 這一課沒有這張圖", "bad_anchor");
     const part = a?.part == null || a.part === "" ? null : String(a.part); if (part && !/^[\w.:>#-]{1,140}$/.test(part)) throw refuse("part is a short key of letters, digits and . : > # - _", "bad_anchor");
     const text = String(a?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300); if (!text) throw refuse("The words of the place asked about are required / 需要被問的那段文字", "bad_anchor");
     const num = (v: any) => Number.isInteger(v) && v >= 0 && v <= 4000 ? Number(v) : null, start = num(a?.start), end = num(a?.end);
