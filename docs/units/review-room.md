@@ -219,6 +219,40 @@ A room has one subject and keeps one identity across that subject's heads:
   bracket turned into a glyph (‹ ›), so nothing in it can open or close a fence, and fenced in the tutor's prompt in fences
   named afresh each turn (`<untrusted-pr-text-<nonce>>`, `<untrusted-review-comments-<nonce>>`), data, never instructions.
 
+- **A directory of any GitHub repository** (`#/room/DIR-<12 hex of the repository>-<12 hex of its ref and path>`), opened by
+  pasting its address on the Review Room's home (`POST /api/review-room/open-dir {url}`, the desktop captain only):
+  `https://github.com/<owner>/<repo>` (its default branch's root) or `…/tree/<branch, tag or commit>/<path>`; no other host,
+  scheme, file (`/blob/`), query or `..` (`bad_url`). Any repository: Studio lists its refs anonymously (a public one), else
+  with the captain's GitHub login (`gh auth token`, only in that git process's environment, never stored, never on a command
+  line or in a message); one neither can read is refused, saying which (`no_access`). The ref is the longest leading part of
+  the path that is a branch or a tag (a branch's name may hold a slash), else a commit's full id; a ref the repository does not
+  have (`bad_ref`) or a file (`not_a_directory`) is refused. The ref is resolved once and the room **pinned at that commit**:
+  its objects are fetched into Studio's own cache (`data/review-room/cache/dir-<hash>.git`, history to depth 200, the cache's
+  size cap and time limit as for a pull request), pasting it again opens it as it was, and every citation opens that commit
+  on GitHub (`…/blob/<commit>/<path>#L10-L24`), so it never moves. The room (`data/review-room/dir/<id>.json`) knows the
+  directory's parts (each folder and file right under it, with how many files) and its README.
+  It looks and behaves as a pull request's room: the same board, cards, rail, play bar, full screen, transcript, language
+  switch, voice, questions on the board (and on words selected), quick actions how, why, teach and the check, regenerate, the
+  tutor picker, arrival and paste starting the analysis, the Library and starting over. What only a pull request has is not
+  there: its state on GitHub, new commits, a diff and its line counts, the merge check and the reviewers' digest. Its header
+  says where it is pinned (`[data-dir-pin]`) and opens that commit on GitHub; its welcome charts its parts by files. The
+  tutor reads the pinned commit only (fs_list, fs_read, fs_search, git_log, git_show, git_blame; `git_diff`, a `diff` or
+  `compare` item and a `diffstat` chart are refused: there is no change); in this room a `[diff:<path>:L…]` citation names a
+  file of the directory at that commit (a file outside it is no citation of it), shown as "code". The prompt carries the
+  directory's listing and README fenced as untrusted (anyone's repository) and asks for its submodules: what each does and
+  how they compose (dependencies, data flow, entry points). **A directory's lesson** has its own chapters (`DIR_CHAPTERS`):
+  what this directory is and each of its parts, one scene a part (both required); how the parts compose (an architecture) and
+  how data flows through them, each shown or left out with `chapter_skip` and a cited reason; where to start reading, a
+  lifecycle when the code moves a state, what to watch and open questions as for a change. A lesson that misses a part it owes
+  is refused, saying which.
+  Its turns run on a **host Task** Studio makes on the first paid turn (or the first arrival or paste with auto-teach on): the
+  internal workflow `review-room-dir-host` (one hook node, no agent, nothing written), with no project and no crew. The tutor
+  is the model the captain picked (the room's or Studio's default), else Studio's Automatic pick (a model this machine runs now
+  and has verified, its default first; a directory has no author, so independence does not apply and is not claimed),
+  confirmed per turn like any. Staffing admits only the tutor seat there, with exactly its pinned instructions, on that member,
+  runnable now: its receipt (`staffing-instructions`, `directory: true`, `config: null`) names it and the job must be it; any
+  other instructions get no receipt. The host Task's page links back to the room.
+
 A branch's or a pull request's turns run on the reviewer seat of the Task that made it (a pull request: the newest Task
 whose recorded pull request is that URL): `tutorPick` on the Task's review node, admitted like the merge card's (native
 selection as the reviewer, the staffing receipt for the tutor seat, one of the Task's jobs). The node is held through an
@@ -866,6 +900,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
     — review-room-board-ui "the board fills the window …", "only the board is visible …", "a refused Fullscreen API …";
     review-room-ui "an answer's scene in full screen …".
+46. A directory of any GitHub repository has a room: its address checked; a public repository read anonymously, another
+    through the captain's gh login, else refused with why; its ref resolved and pinned at that commit (pasting again keeps it);
+    its parts and README known; the same board and every follow-up (questions on the board and on selected words, regenerate,
+    the check, the tutor picker, arrival and paste, the Library, starting over); no diff, merge check or reviewers; its lesson
+    its own chapters; its turns on a host Task with no crew, the tutor seat's receipt naming the confirmed member; citations to
+    GitHub at the pinned commit. — review-room-directory (each rule); review-room-board-only-ui "a directory's room says where
+    it is pinned …", "its welcome is the directory's own …", "its citations read “code” …", "the same board, play bar …", "the
+    home's box takes a GitHub directory's address …".
 42. A room analyses itself on arrival, by any route: a merge card's, a Task's branch and a pull request's room start their
     lesson when the captain enters (the page sends back the plan it was shown), marked auto from arrival on the ledger; once
     per head (a new head again); the Studio-wide setting and the room's own switch (every room's) turn it off; a stale plan

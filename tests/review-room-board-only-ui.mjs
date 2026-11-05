@@ -71,7 +71,8 @@ async function open(width, room, o = {}) {
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: width < 600 ? "phone" : "desktop", device: null } }));
   const S = { posts: [], picks: [], arrives: [], tutors: [] };
-  await ctx.route(/\/api\/review-room\/SC-80(\?open=1)?$/, (r) => r.fulfill({ json: typeof room === "function" ? room() : room }));
+  await ctx.route(new RegExp(`/api/review-room/${o.id || "SC-80"}(\\?open=1)?$`), (r) => r.fulfill({ json: typeof room === "function" ? room() : room }));
+  if (o.routes) await o.routes(ctx, S);
   await ctx.route(/\/api\/review-room\/SC-80\/image\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/wruns\/R-080\/captures\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/review-room\/SC-80\/lesson$/, (r) => r.fulfill({ json: { visited: [] } }));
@@ -86,7 +87,7 @@ async function open(width, room, o = {}) {
     rm.check.questions = rm.check.questions.map((q) => q.n === b.n ? { ...q, choice: b.choice, answer: 0, why: "Math.round rounds 299.85 up", cites: [], result: { correct: b.choice === 0, note: "n", turn: 4, choice: b.choice, by: "studio" } } : q);
     r.fulfill({ json: { n: b.n, correct: b.choice === 0, room: rm } }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e.message}`));
-  await p.goto(`${base}/#/room/SC-80`); await p.waitForSelector("#view .rr-room", { timeout: 15000 }); await p.waitForTimeout(400);
+  await p.goto(`${base}/${o.hash || `#/room/${o.id || "SC-80"}`}`); await p.waitForSelector(o.wait || "#view .rr-room", { timeout: 15000 }); await p.waitForTimeout(400);
   return { ctx, p, S };
 }
 /** where the board stands and what its parts are */
@@ -315,6 +316,43 @@ try {
     await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250); const pop = await p.evaluate(() => ({ q: !!document.querySelector(".rb-pop [data-pop-selection]"), desk: !!document.querySelector(".rb-pop [data-ask-desktop]") }));
     ok(got && !!b && pop.q && pop.desk, "on a phone a selection (its handles, a long press) offers “Ask about this” too; the popover says to ask on the computer", JSON.stringify({ got, b, pop }));
     await c2.close(); }
+  // ---------- a directory of any GitHub repository: the same board, its own header, welcome and citations (to the pinned commit) ----------
+  { const DID = "DIR-0123456789ab-ba9876543210", SHA = "c".repeat(40);
+    const DROOM = { ...clone(BASE), card: { id: DID, run: "R-090", node: "review-room", title: { en: "Directory acme/kit/src @ main", "zh-TW": "目錄 acme/kit/src @ main" }, status: "open" }, task: { id: "R-090", title: "Review room host" }, pr: null, prState: null, diffstat: null, moved: null,
+      subject: { kind: "dir", room: DID, url: "https://github.com/acme/kit/tree/main/src", repository: "acme/kit", ref: "main", path: "src" },
+      dir: { repository: "acme/kit", ref: "main", refKind: "branch", sha: SHA, path: "src", private: false, files: 4, bytes: 400, parts: [{ name: "core", kind: "dir", files: 2, bytes: 200 }, { name: "api", kind: "dir", files: 1, bytes: 100 }, { name: "README.md", kind: "file", files: 1, bytes: 100 }], truncated: false, fetchedAt: "2026-11-05T10:00:00Z", url: "https://github.com/acme/kit/tree/main/src", readme: true },
+      actions: [["how", "How?", "怎麼運作？"], ["why", "Why?", "為什麼？"], ["teach", "Teach me", "教我"], ["quiz", "Quiz", "考我"]].map(([id, en, zh]) => ({ id, en, zh })), head: SHA, base: SHA,
+      offer: { ...OFFER, independence: { level: null, en: "Automatic: Studio picked it from the models this machine runs. A directory has no change and no author, so independence does not apply.", zh: "自動" } },
+      board: [], check: { questions: [] }, turns: [{ n: 1, action: "how", text: "How does this directory work?", lang: "en", status: "done", provider: "codex", model: "gpt-6", cost: { usd: 0.03 }, answer: "x", head: SHA,
+        claims: [cl("The api serves core's sum [diff:src/api/server.ts:L1-3].", [ok1("diff:src/api/server.ts:L1-3")]), cl("core adds [diff:src/core/sum.ts:L2].", [ok1("diff:src/core/sum.ts:L2")])] }] };
+    const { ctx, p } = await open(1440, () => clone(DROOM), { id: DID });
+    const head = await p.evaluate(() => ({ pin: document.querySelector("[data-dir-pin]")?.textContent ?? null, gh: document.querySelector("[data-room-github]")?.getAttribute("href") ?? null, check: !!document.querySelector("[data-room-check]"), diffstat: !!document.querySelector("[data-room-diffstat]"), sub: document.querySelector("[data-room-subject]")?.dataset.roomSubject }));
+    ok(head.sub === "dir" && /Pinned at cccccccc · 4 files/.test(head.pin || "") && head.gh === `https://github.com/acme/kit/tree/${SHA}/src` && !head.check && !head.diffstat,
+      "a directory's room says where it is pinned and opens that commit on GitHub; no “check for new commits”, no line counts of a change", JSON.stringify(head));
+    await tap(p, '[data-outline="t0"]'); await p.waitForTimeout(400);
+    const wel = await p.evaluate(() => { const r = document.querySelector('[data-region="t0"]'); return { title: r?.querySelector("[data-scene-title]")?.textContent ?? null, chart: r?.querySelector("[data-chart]")?.dataset.chart ?? null, teach: r?.querySelector("[data-welcome-teach]")?.textContent ?? null, pts: [...(r?.querySelectorAll(".rr-point") || [])].map((e) => e.textContent) }; });
+    ok(/This room is only about the directory acme\/kit\/src/.test(wel.title || "") && wel.chart === "values" && /Teach me this directory/.test(wel.teach || "") && /holds 4 files in 3 parts; the most in core\/ \(2\)/.test(wel.pts[0] || "") && /pinned at cccccccc/.test(wel.pts[1] || ""),
+      "its welcome is the directory's own: its parts as a chart, where it is pinned, “Teach me this directory”", JSON.stringify(wel));
+    await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(400);
+    const chips = await p.$$eval('[data-region="t1"] [data-cite]', (els) => els.map((e) => [e.dataset.cite, e.textContent]));
+    let popup = null; p.context().once("page", (pg) => { popup = pg.url(); }); const opened = await p.evaluate(() => { const urls = []; const real = window.open; window.open = (u) => { urls.push(u); return null; }; document.querySelector('[data-region="t1"] [data-cite]')?.click(); window.open = real; return urls; });
+    ok(chips.length === 2 && /^code /.test(chips[0][1]) && opened[0] === `https://github.com/acme/kit/blob/${SHA}/src/api/server.ts#L1-L3`, "its citations read “code” and open the file at the pinned commit on GitHub, at those lines", JSON.stringify({ chips, opened }));
+    const quick = await p.$$eval("[data-room-action]", (els) => els.map((e) => e.dataset.roomAction));
+    ok(JSON.stringify(quick) === '["how","why","teach","quiz"]' && !!(await p.$("[data-playbar] [data-play]")) && !!(await p.$("[data-fs-toggle]")) && !!(await p.$("[data-transcript-toggle]")), "the same board, play bar, full screen and transcript; its quick actions without the merge check", JSON.stringify(quick));
+    await p.screenshot({ path: join(shots, "directory-1440.png") });
+    await ctx.close(); }
+  // the home's box takes a directory's address: it says what a paste starts and opens it through open-dir
+  { const asked = [], opens = []; const DID2 = "DIR-0123456789ab-111111111111";
+    const routes = async (ctx) => { await ctx.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: null }, tutors: [] } }));
+      await ctx.route(/\/api\/review-room\/paste-offer\?/, (r) => { asked.push(new URL(r.request().url()).searchParams.get("url")); r.fulfill({ json: { auto: true, images: false, createsHost: true, provider: "codex", model: "gpt-6", effort: null, paid: true, plan: "fp-dir" } }); });
+      await ctx.route(/\/api\/review-room\/open-dir$/, (r) => { opens.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 400, json: { error: "stub: not opened", code: "stub" } }); }); };
+    const { ctx, p } = await open(1440, {}, { hash: "#/room", wait: '[data-pr-box="home"]', routes });
+    await p.fill('[data-pr-url="home"]', "https://github.com/acme/kit/tree/main/src"); await p.waitForSelector('[data-pr-box="home"] [data-paste-offer="on"]', { timeout: 5000 }).catch(() => {});
+    const line = await p.$eval('[data-pr-box="home"] [data-paste-offer]', (e) => ({ text: e.textContent, kind: e.dataset.pasteKind })).catch(() => null);
+    await p.click('[data-pr-open="home"]'); await p.waitForTimeout(400);
+    ok(asked[0] === "https://github.com/acme/kit/tree/main/src" && line?.kind === "dir" && /Pasting reads the directory at that ref \(pinned at its commit\) and starts its lesson by itself: it creates the room's host Task, then runs one paid model round on codex · gpt-6/.test(line?.text || "")
+      && opens[0]?.url === "https://github.com/acme/kit/tree/main/src" && opens[0].auto === true && opens[0].plan === "fp-dir", "the home's box takes a GitHub directory's address: it says what a paste starts, then opens it as a directory (open-dir), on the plan it said", JSON.stringify({ asked, line, opens }));
+    await ctx.close(); }
 } catch (e) { fail++; console.log(`  FAIL  the suite crashed: ${e.stack || e}`); }
 ok(!errors.length, "no page errors", errors.join(" | "));
 await browser.close(); app.kill();

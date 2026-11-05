@@ -179,11 +179,12 @@ function flowSvg(g, prev, seen, box) {
 
 // ---------- citations: a link to what a claim rests on ----------
 const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})\]|\[(inference|inferred|speculative|direct|supported)\]/gi;
-const KIND = { diff: ["diff", "diff"], ledger: ["ledger", "帳本"], commit: ["commit", "commit"], source: ["source", "來源"], board: ["board", "白板"], review: ["reviewer", "審查意見"] };
+const KIND = { code: ["code", "程式碼"], diff: ["diff", "diff"], ledger: ["ledger", "帳本"], commit: ["commit", "commit"], source: ["source", "來源"], board: ["board", "白板"], review: ["reviewer", "審查意見"] };
 // a link only to a page the server fetched and that is http(s): anything else (a refused address, any other scheme) is text
 const webLink = (s) => s && s.ok && typeof s.url === "string" && /^https?:\/\//i.test(s.url) ? s.url : null;
 function citeChip(card, ref, ok) {
-  const [k, v] = [ref.slice(0, ref.indexOf(":")), ref.slice(ref.indexOf(":") + 1)], label = `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`;
+  const dirRoom = RR.rooms.get(card)?.subject?.kind === "dir", [k0, v] = [ref.slice(0, ref.indexOf(":")), ref.slice(ref.indexOf(":") + 1)], k = dirRoom && k0 === "diff" ? "code" : k0;
+  const label = `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`;
   // a citation Studio could not verify opens nothing
   if (ok === false) return h("span", { class: "rr-cite bad", "data-cite-invalid": ref, title: T("Studio could not verify this citation", "Studio 無法驗證這個引用") }, label);
   return h("button", { type: "button", class: `rr-cite${ok === false ? " bad" : ""}`, "data-cite": ref, title: ok === false ? T("Studio could not verify this citation", "Studio 無法驗證這個引用") : onGithub(card, ref) ? T("Open these lines of the pull request on GitHub, in a new window", "在新視窗開啟 GitHub 上這個 PR 的這幾行") : T("Open what this rests on", "開啟依據"), onclick: () => openCite(card, ref) },
@@ -216,6 +217,8 @@ const inferenceBadge = () => h("span", { class: "rr-inference", "data-basis": "i
 /*  A saved room keeps its frozen copy (GitHub's pull request may have moved on). Synchronous, so window.open keeps the click's activation. */
 function githubDiffUrl(r, ref) {
   const m = /^diff:(.+?)(?::L(\d+)(?:-(\d+))?)?$/.exec(ref), pr = r?.pr?.url || (r?.subject?.kind === "pr" ? r.subject.url : null);
+  // a directory room: the file at the pinned commit, those lines (a saved room links to the same commit: it never moves)
+  if (m && r?.subject?.kind === "dir" && r.dir?.sha && /^[\w.-]+\/[\w.-]+$/.test(r.dir.repository || "")) return `https://github.com/${r.dir.repository}/blob/${r.dir.sha}/${m[1].split("/").map(encodeURIComponent).join("/")}${m[2] ? `#L${m[2]}-L${m[3] || m[2]}` : ""}`;
   if (!m || r?.snapshot || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr || "")) return null;
   return `${pr}/files#diff-${sha256hex(m[1])}${m[2] ? `R${m[2]}-R${m[3] || m[2]}` : ""}`;
 }
@@ -769,9 +772,11 @@ const STUDIO_TITLES = { "This change at a glance": "一眼看懂這個改動", "
 const itemTitle = (it) => (STUDIO_TITLES[it?.title] ? T(it.title, STUDIO_TITLES[it.title]) : it?.title || "");
 /** a lesson's chapters, in order (src/domain/review-room.ts CHAPTERS) */
 const CHAPTER = { calls: ["Every call: request, response, transaction", "每個呼叫：request、response、交易"], what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
-const chapterName = (id) => (CHAPTER[id] ? TL(...CHAPTER[id]) : "");
+/** a directory's lesson names some chapters its own way (src/domain/review-room.ts DIR_CHAPTERS) */
+const DIR_CHAPTER = { what: ["What this directory is", "這個目錄是什麼"], modules: ["Its parts, one by one", "它的組成，一個一個看"], talks: ["How the parts compose", "各部分怎麼組在一起"], sequence: ["How data flows through it", "資料怎麼流過它"], entry: ["Where to start reading", "從哪裡開始讀"] };
+const chapterName = (id) => (CUR.kind === "dir" && DIR_CHAPTER[id] ? TL(...DIR_CHAPTER[id]) : CHAPTER[id] ? TL(...CHAPTER[id]) : "");
 /** the chapters' order (src/domain/review-room.ts CHAPTERS): a lesson is shown in it */
-const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "calls", "reviewers", "roads", "watch", "questions"];
+const CHAPTER_ORDER = ["what", "modules", "talks", "decisions", "change", "lifecycle", "sequence", "calls", "reviewers", "roads", "watch", "questions"];
 const TYPE_LABEL = { svg: ["drawn by the tutor, checked by Studio", "導師畫的圖，Studio 檢查過"], calls: ["every call", "每個呼叫"], arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
 const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
 // ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
@@ -802,6 +807,7 @@ function legacyPoints(key, claims) {
 }
 /** what the room is about, in a few words: the pull request's number, the branch, or the merge card's pull request */
 const subjectName = (r) => { const k = r.subject?.kind || "merge";
+  if (k === "dir") { const d = r.dir || {}, where = `${d.repository || r.subject?.repository || ""}${d.path ? `/${d.path}` : ""}`; return { en: `the directory ${where}`, zh: `${where} 這個目錄` }; }
   return k === "pr" ? { en: `pull request #${r.subject?.number ?? ""}`, zh: `#${r.subject?.number ?? ""} 這一個 PR` }
     : k === "branch" ? { en: `branch ${r.card.title?.en?.replace(/^Branch\s+/, "") || r.card.id}`, zh: `${r.card.title?.en?.replace(/^Branch\s+/, "") || r.card.id} 這一個 branch` }
     : r.pr?.id ? { en: `pull request #${r.pr.id}`, zh: `#${r.pr.id} 這一個 PR` } : { en: "this change", zh: "這一個改動" }; };
@@ -809,6 +815,7 @@ const subjectName = (r) => { const k = r.subject?.kind || "merge";
  *  "Teach me this change" (a paid turn, confirmed like any other). The opening illustration, when there is one, is a picture
  *  of this scene too. */
 function welcomeScene(r, opening) {
+  if (r.subject?.kind === "dir") return dirWelcome(r, opening);
   const ds = r.diffstat, name = subjectName(r), files = ds?.files || [], top = [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed))[0];
   const chart = files.length ? { id: "t0-files", synth: true, turn: 0, type: "chart", kind: "chart", mode: "diffstat", from: ds.from === "github" ? "numbers" : "git", title: TL("What changed, by file", "改了哪些檔案"), unit: "lines", rows: [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed)).slice(0, 8).map((f) => ({ label: f.path, added: f.added, removed: f.removed })), basis: "cited", cites: [] } : null;
   const ps = r.prState, verdict = ps?.verdicts?.find((v) => v.state === "CHANGES_REQUESTED") || ps?.verdicts?.find((v) => v.state === "APPROVED");
@@ -822,10 +829,20 @@ function welcomeScene(r, opening) {
     studio("Press “Teach me” to start; every point names its basis, a click opens it.", "按「教我這個 PR」開始；每一點都附依據，點了就打開。")];
   return { key: "t0", turn: 0, welcome: true, studio: true, title: TL(`This room is only about ${name.en}`, `這間審查室只講 ${name.zh}`), question: null, visuals: [chart, ...opening].filter(Boolean), points, questions: [] };
 }
+/** a directory room's welcome (Studio's, free): its parts by how many files each holds, where it is pinned, how to start */
+function dirWelcome(r, opening) {
+  const d = r.dir || { parts: [] }, name = subjectName(r), parts = d.parts || [], top = parts[0];
+  const chart = parts.length ? { id: "t0-parts", synth: true, turn: 0, type: "chart", kind: "chart", mode: "values", from: "numbers", title: TL("Its parts, by files", "它的組成（依檔案數）"), unit: TL("files", "個檔案"), rows: parts.slice(0, 10).map((x) => ({ label: `${x.name}${x.kind === "dir" ? "/" : ""}`, value: x.files })), basis: null, cites: [] } : null;
+  const studio = (en, zh) => ({ text: TL(en, zh), kind: "claim", basis: "studio", cites: [] });
+  const points = [studio(`It holds ${d.files ?? 0} file${d.files === 1 ? "" : "s"} in ${parts.length} part${parts.length === 1 ? "" : "s"}${top ? `; the most in ${top.name}${top.kind === "dir" ? "/" : ""} (${top.files})` : ""}.`, `它有 ${d.files ?? 0} 個檔案、${parts.length} 個部分${top ? `；最多在 ${top.name}${top.kind === "dir" ? "/" : ""}（${top.files} 個）` : ""}。`),
+    studio(`Read at ${d.refKind === "commit" ? "commit" : d.refKind === "tag" ? "tag" : "branch"} ${d.ref || ""}, pinned at ${String(d.sha || "").slice(0, 8)}: every citation opens that commit on GitHub, so it never moves.`, `讀的是 ${d.ref || ""}，固定在 ${String(d.sha || "").slice(0, 8)}：每個引用都打開 GitHub 上的那個 commit，不會變。`),
+    studio("Press “Teach me” for what each part does and how they compose; every point names its basis.", "按「教我這個目錄」看每個部分做什麼、怎麼組在一起；每一點都附依據。")];
+  return { key: "t0", turn: 0, welcome: true, studio: true, title: TL(`This room is only about ${name.en}`, `這間審查室只講 ${name.zh}`), question: null, visuals: [chart, ...opening].filter(Boolean), points, questions: [] };
+}
 /** the room's scenes: the welcome scene (turn 0, with the opening picture), then each turn's: the scenes the tutor showed (scene_show), else its answer
  *  as points; Studio's own scenes (what changed, what reviewers asked) as they are */
 function scenesOf(r) {
-  const out = [], opening = r.board.filter((b) => b.turn === 0), lang = roomLang(r); CUR = { lang };
+  const out = [], opening = r.board.filter((b) => b.turn === 0), lang = roomLang(r); CUR = { lang, kind: r.subject?.kind || "merge" };
   out.push(welcomeScene(r, opening));
   const rootOf = (t) => t.regenOf ?? t.n, versions = new Map();
   for (const t of r.turns) if (!t.studio) { const k = rootOf(t); if (!versions.has(k)) versions.set(k, []); versions.get(k).push(t); }
@@ -911,7 +928,7 @@ const kokoroRefresh = (fresh = true) => { if (Date.now() - KV.asked < 1500) retu
 const kokoroStat = () => { if (!KV.stat && Date.now() - KV.asked > 30000) kokoroRefresh(false); return KV.stat; };
 addEventListener("focus", () => { if (S.route?.name === "room") kokoroRefresh(); });
 addEventListener("hashchange", () => { if (S.route?.name === "room") kokoroRefresh(); });
-const kokoroReady = (card) => !!kokoroStat()?.ready && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+)$/.test(String(card || S.route?.arg || ""));
+const kokoroReady = (card) => !!kokoroStat()?.ready && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/.test(String(card || S.route?.arg || ""));
 const kokoroVoice = () => (LANG_BASE(CUR.lang) === "en" ? kokoroStat()?.voices?.en : kokoroStat()?.voices?.zh) || "";
 /** mixed Chinese and English: "switch" speaks Latin runs with the English voice (the default), "same" keeps one voice */
 const voiceMix = () => (prefs.get("crew.room.voice.mix") === "same" ? "same" : "switch");
@@ -1170,10 +1187,10 @@ function sceneCard(r, scenes, j, W) {
         sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
         // what arriving starts (on this Mac only: a phone reads the room and starts nothing)
         sc.welcome && !r.snapshot && r.arrive && BOARD.state.viewer !== "phone" ? (r.arrive.error ? h("p", { class: "rr-err", "data-arrive": "none" }, T(`Studio cannot start the full analysis by itself: ${r.arrive.error}`, `Studio 無法自動開始完整分析：${r.arrive.error}`))
-          : h("p", { class: "rr-paste-offer", "data-arrive": "on" }, T(`Arriving here starts the full analysis by itself: one paid model round on ${r.arrive.provider} · ${r.arrive.model ?? "default model"}${r.arrive.effort ? ` (${r.arrive.effort})` : ""}${r.arrive.createsHost ? ", after creating this pull request's host Task and its tutor's staffing" : ""}. The tutor only reads the code; turn it off in the transcript drawer.`,
-            `進到這裡就會自動開始完整分析：在 ${r.arrive.provider} · ${r.arrive.model ?? "預設模型"}${r.arrive.effort ? `（${r.arrive.effort}）` : ""} 上付費一回合${r.arrive.createsHost ? "，會先建立承載這個 pull request 的任務和導師的人員配置" : ""}。導師只讀程式碼；可在紀錄抽屜裡關掉。`))) : null,
+          : h("p", { class: "rr-paste-offer", "data-arrive": "on" }, T(`Arriving here starts the full analysis by itself: one paid model round on ${r.arrive.provider} · ${r.arrive.model ?? "default model"}${r.arrive.effort ? ` (${r.arrive.effort})` : ""}${r.arrive.createsHost ? ", after creating this room's host Task" : ""}. The tutor only reads the code; turn it off in the transcript drawer.`,
+            `進到這裡就會自動開始完整分析：在 ${r.arrive.provider} · ${r.arrive.model ?? "預設模型"}${r.arrive.effort ? `（${r.arrive.effort}）` : ""} 上付費一回合${r.arrive.createsHost ? "，會先建立承載這間審查室的任務" : ""}。導師只讀程式碼；可在紀錄抽屜裡關掉。`))) : null,
         sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
-          T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
+          r.subject?.kind === "dir" ? T("Teach me this directory", "教我這個目錄") : T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
         sc.welcome && !answers ? h("p", { class: "faint rr-boardhint", "data-board-empty": "" }, T("Ask below. Each answer becomes a block on this board: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, played one at a time.", "在下方提問。每個回答會在這塊白板上變成一個區塊：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個播放。")) : null,
         sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null)));
 }
@@ -1352,8 +1369,11 @@ const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(
 /** a switch changed: what a paste starts is asked again */
 const dropPasteOffers = () => { PR.offer.clear(); PR.shown.clear(); };
 const PR_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?$/;
+/** a GitHub directory's address: a repository's page, or …/tree/<branch, tag or commit>/<path> */
+const DIR_URL = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+(?:\/tree\/[^?#\s]+)?\/?$/;
+const pastable = (u) => PR_URL.test(u) || DIR_URL.test(u);
 /** what pasting this address would start, asked of Studio once per address (the paste box says it before the paste) */
-const pasteOffer = (url) => { if (!PR_URL.test(url) || PR.offer.has(url)) return PR.offer.get(url); PR.offer.set(url, { loading: true });
+const pasteOffer = (url) => { if (!pastable(url) || PR.offer.has(url)) return PR.offer.get(url); PR.offer.set(url, { loading: true });
   api(`/api/review-room/paste-offer?url=${encodeURIComponent(url)}`).then((o) => PR.offer.set(url, o)).catch((e) => PR.offer.set(url, { error: e.message })).finally(rerenderAny); return PR.offer.get(url); };
 /** the paste box's line about the paste: a paid round on this tutor when auto-teach is on, else nothing runs until asked */
 function pasteLine(url, where) {
@@ -1362,6 +1382,10 @@ function pasteLine(url, where) {
   if (o.auto === false) return h("p", { class: "faint", "data-paste-offer": "off" }, T("Pasting opens the room; nothing runs until you ask (auto-teach is off).", "貼上只會開啟審查室；你開口之前什麼都不跑（自動教學已關）。"));
   if (o.error) return h("p", { class: "faint", "data-paste-offer": "none" }, T(`Pasting opens the room; no lesson starts by itself: ${o.error}`, `貼上會開啟審查室，不會自動開始教學：${o.error}`));
   const who = `${o.provider} · ${o.model ?? T("default model", "預設模型")}${o.effort ? ` (${o.effort})` : ""}`;
+  // a directory: no pull request, its own host Task (no crew: the tutor the box names)
+  if (!PR_URL.test(url)) return h("p", { class: "rr-paste-offer", "data-paste-offer": "on", "data-paste-kind": "dir", "data-paste-images": o.images ? "on" : "off", "data-paste-host": o.createsHost ? "new" : "kept" },
+    T(`Pasting reads the directory at that ref (pinned at its commit) and starts its lesson by itself: ${o.createsHost ? "it creates the room's host Task, then runs " : ""}one paid model round on ${who}; ${o.images ? "the tutor may also ask for up to two generated pictures, each a paid image job" : "no generated pictures"}. The tutor only reads the code, and nothing is sent to GitHub.`,
+      `貼上會讀取這個目錄（固定在它的 commit）並自動開始這一課：${o.createsHost ? "會先建立承載這間審查室的任務，再" : ""}在 ${who} 上付費執行一回合；${o.images ? "導師也可能要求最多兩張生成圖片，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼，也不送任何東西到 GitHub。`));
   return h("p", { class: "rr-paste-offer", "data-paste-offer": "on", "data-paste-images": o.images ? "on" : "off", "data-paste-host": o.createsHost ? "new" : "kept" },
     T(`Pasting starts the lesson by itself: ${o.createsHost ? "it creates this pull request's host Task and its tutor's staffing, then runs " : ""}one paid model round on ${who}; ${o.images ? "the tutor may also ask for up to two generated pictures, each a paid image job" : "no generated pictures"}. The tutor only reads the code, and nothing is sent to GitHub.`,
       `貼上就會自動開始這一課：${o.createsHost ? "會先為這個 pull request 建立承載它的任務和導師的人員配置，再" : ""}在 ${who} 上付費執行一回合；${o.images ? "導師也可能要求最多兩張生成圖片，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼，也不送任何東西到 GitHub。`));
@@ -1372,18 +1396,20 @@ function prBox(where, repository) {
   const go = async () => { const url = (PR.url.get(where) || "").trim(); if (!url || busy) return; PR.busy.add(where); PR.err.delete(where); rerenderAny();
     // the lesson starts by itself only when this box has said so for this very address; before that the paste opens the room only
     const said = PR.shown.get(where), auto = !!(said && said.url === url && said.auto && said.plan);
-    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang(), ...(auto ? { auto: true, plan: said.plan } : {}) }); RR.rooms.set(out.id, out.room);
+    // a pull request's address, or (the home's box) a GitHub directory's
+    try { const out = await postJ(PR_URL.test(url) || repository ? "/api/review-room/open-pr" : "/api/review-room/open-dir", { url, lang: uiLang(), ...(auto ? { auto: true, plan: said.plan } : {}) }); RR.rooms.set(out.id, out.room);
       // the plan changed since the box said it (a new tutor, pictures, a host): nothing started; the box shows the new plan to paste again
       if (out.plan) { PR.offer.set(url, out.plan); PR.err.set(where, T("What a paste starts has changed (above): nothing started. Paste again to start it.", "貼上會開始的內容變了（見上方）：什麼都沒有開始。再貼一次才會開始。")); return; }
       PR.url.delete(where); dropPasteOffers(); location.hash = out.href; }
     catch (e) { PR.err.set(where, e.message); } finally { PR.busy.delete(where); rerenderAny(); } };
   return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
-    h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),
-      h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 300, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>", value: PR.url.get(where) || "",
-        oninput: (e) => { PR.url.set(where, e.target.value); if (PR_URL.test(e.target.value.trim()) && !PR.offer.has(e.target.value.trim())) { pasteOffer(e.target.value.trim()); } }, "aria-label": T("Pull request URL", "Pull request 網址") })),
+    h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request, or learn a directory of any GitHub repository", "審查一個 pull request，或學習任何 GitHub 儲存庫的一個目錄")),
+      h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 800, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>  ·  …/tree/<branch>/<path>", value: PR.url.get(where) || "",
+        oninput: (e) => { PR.url.set(where, e.target.value); const u = e.target.value.trim(); if ((repository ? PR_URL.test(u) : pastable(u)) && !PR.offer.has(u)) { pasteOffer(u); } }, "aria-label": repository ? T("Pull request URL", "Pull request 網址") : T("Pull request or directory URL", "Pull request 或目錄的網址") })),
     pasteLine((PR.url.get(where) || "").trim(), where),
     h("button", { type: "submit", class: "btn primary", "data-pr-open": where, disabled: busy }, busy ? T("Reading it on GitHub…", "正在讀取 GitHub…") : T("Open its review room", "開啟它的審查室")),
-    h("p", { class: "faint" }, T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
+    h("p", { class: "faint" }, repository ? T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")
+      : T("A pull request of a registered project connected to GitHub; or a directory of any GitHub repository (a public one as it is, a private one through your gh login), read at one commit. Studio only reads GitHub and copies the commits into its own folder; nothing is written to GitHub or to your checkout.", "已註冊且連到 GitHub 的專案的 pull request；或任何 GitHub 儲存庫的一個目錄（公開的直接讀，私人的用你的 gh 登入），固定在一個 commit。Studio 只讀 GitHub，並把 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
     err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);
 }
 const rerenderAny = () => { if (S.route?.name === "room" || S.route?.name === "project") render(); };
@@ -1399,6 +1425,7 @@ function header(r) {
   const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
   const sub = kind === "merge" ? T(`${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room never answers the merge card.`, `${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不會回覆合併卡。`)
     : kind === "branch" ? T(`${r.task?.title || r.card.id} · its branch · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room changes nothing about the Task.`, `${r.task?.title || r.card.id} · 它的分支 · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不改變任務的任何事。`)
+    : kind === "dir" ? T(`${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · pinned at ${String(r.dir?.sha || "").slice(0, 8)}. The tutor reads only; nothing is written to GitHub.`, `${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · 固定在 ${String(r.dir?.sha || "").slice(0, 8)}。導師只讀；不寫任何東西到 GitHub。`)
     : T(`${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}. Studio only reads GitHub; the room never comments, reviews or merges.`, `${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}。Studio 只讀 GitHub；審查室不留言、不審查、不合併。`);
   const verdicts = ps?.verdicts?.length ? ps.verdicts.map((v) => `${v.author}: ${v.state === "APPROVED" ? T("approved", "核准") : v.state === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : T("dismissed", "撤銷")}${v.current ? "" : T(" (an older head)", "（較舊的 head）")}`).join(" · ") : null;
   const pill = (attrs, ...kids) => h("span", { ...attrs, class: `rr-pill ${attrs.class || ""}`, title: attrs.title ?? kids.flat().map((k) => typeof k === "string" ? k : k?.textContent || "").join("") }, ...kids);
@@ -1415,6 +1442,8 @@ function header(r) {
       kind === "branch" ? pill({ class: r.reviewed ? "ok" : "", "data-branch-state": r.reviewed ? "reviewed" : "not-reviewed" }, r.reviewed ? T(`Reviewed by Studio at ${String(r.head || "").slice(0, 8)}${r.local ? " · ready on its local branch, not published" : ""}`, `Studio 已在 ${String(r.head || "").slice(0, 8)} 審查通過${r.local ? " · 在本機分支上就緒，不會發布" : ""}`) : T("Studio's review has not passed at this head yet.", "Studio 的審查還沒在這個 head 通過。")) : null,
       mv ? pill({ class: "warn", role: "status", "data-room-moved": mv.commits ?? "rewritten" }, mv.commits != null ? T(`${mv.commits} new commit${mv.commits === 1 ? "" : "s"} since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}). Your next question opens with what changed.`, `你上次看過之後有 ${mv.commits} 個新 commit（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。下一個問題會先看改了什麼。`)
         : T(`The branch was rewritten since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `你上次看過之後分支被改寫了（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)) : null,
+      // a directory: where it is pinned (its citations open that commit, it never moves), and whether it is private
+      kind === "dir" && r.dir ? pill({ "data-dir-pin": r.dir.sha, title: T(`Read at ${r.dir.ref}, pinned at commit ${r.dir.sha}`, `讀的是 ${r.dir.ref}，固定在 commit ${r.dir.sha}`) }, T(`Pinned at ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} files`, `固定在 ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} 個檔案`), r.dir.private ? T(" · private", " · 私人") : "") : null,
       ds ? pill({ "data-room-diffstat": "" }, h("b", { class: "add" }, `+${ds.added}`), " ", h("b", { class: "del" }, `−${ds.removed}`), T(` · ${ds.files} file${ds.files === 1 ? "" : "s"}`, ` · ${ds.files} 個檔案`)) : null,
       // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
       // a room that takes turns: the pill is the tutor picker (this room's pick, Studio's default, or Automatic)
@@ -1422,6 +1451,7 @@ function header(r) {
     RR.tutorMenu === id && r.open && !r.snapshot ? tutorMenu(r) : null,
     kind === "pr" && !r.snapshot ? h("button", { type: "button", class: "rr-back", "data-room-check": id, disabled: PR.checking.has(id) || r.checking || null, onclick: () => checkNow(id) }, PR.checking.has(id) || r.checking ? T("Reading GitHub…", "正在讀取 GitHub…") : T("Check for new commits", "檢查新的 commit")) : null,
     kind === "pr" && /^https:\/\/github\.com\//.test(r.subject?.url || "") ? h("a", { class: "rr-back", href: r.subject.url, target: "_blank", rel: "noopener noreferrer", "data-room-github": "" }, T("Open on GitHub", "在 GitHub 開啟")) : null,
+    kind === "dir" && r.dir?.sha && /^[\w.-]+\/[\w.-]+$/.test(r.dir.repository || "") ? h("a", { class: "rr-back", href: `https://github.com/${r.dir.repository}/tree/${r.dir.sha}${r.dir.path ? `/${r.dir.path.split("/").map(encodeURIComponent).join("/")}` : ""}`, target: "_blank", rel: "noopener noreferrer", "data-room-github": "" }, T("Open on GitHub", "在 GitHub 開啟")) : null,
     // the Library: save the room (any time; an ended room is saved by Studio), or, in a saved room, its versions
     r.snapshot ? h("span", { class: "rr-pill", "data-room-snapshot": `${r.snapshot.artifact}@${r.snapshot.n}`, title: r.snapshot.reason || "" }, T(`Saved ${String(r.snapshot.savedAt || "").slice(0, 16).replace("T", " ")} · read-only`, `存於 ${String(r.snapshot.savedAt || "").slice(0, 16).replace("T", " ")} · 唯讀`)) : null,
     r.snapshot && r.snapshot.versions?.length > 1 ? h("span", { class: "rr-vers", role: "group", "aria-label": T("Saved versions", "存過的版本") }, r.snapshot.versions.map((v) => h("a", { class: "rr-ver", href: `#/room/lib:${r.snapshot.artifact}@${v.n}`, "data-snapshot-version": v.n, "aria-current": v.n === r.snapshot.n ? "page" : null }, `v${v.n}`))) : null,
@@ -1497,7 +1527,7 @@ routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
     const rooms = RR.list.rooms || [];
-    return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 的網址。"),
+    return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL or a GitHub directory's.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 或 GitHub 目錄的網址。"),
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
         RR.list.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : rooms.length ? h("ul", { class: "rr-roomlist" }, rooms.map((x) => h("li", {},
           h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, T(x.title, x.titleZh || x.title))), " ",
