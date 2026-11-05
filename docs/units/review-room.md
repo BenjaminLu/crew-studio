@@ -390,6 +390,20 @@ each entity (the chapter takes several), each transition cited; when the diff wr
 lifecycle is owed (chapter_skip refuses it, lesson_check names the lines). A `calls` item shows every API call: request,
 response, the errors a client sees, the transaction it runs.
 
+**A room analyses itself on arrival.** Entering any room, by any route (a merge card's "Open review room", the Task page's
+link, the room list, a paste), starts its full analysis, the lesson, by itself: no "Teach me" click and no confirmation,
+under the same switches and the same once-per-head rule as a paste. The view says what arriving starts (`arrive`: the plan a
+paste would show, its tutor and paid round, and its fingerprint `plan`; or `error` when it cannot start, shown on the welcome
+scene, nothing run); the desktop page then sends `POST /api/review-room/<room>/arrive {plan, lang}` once per room, head and
+plan (a paired phone never does, and Studio refuses it there). Studio starts the lesson only on that very plan: a plan that
+changed starts nothing and is returned. It is an ordinary paid turn on the room's tutor, marked `auto` with `autoFrom:
+"arrival"` on the turn and its `review-room-turn` ledger entry; the welcome says, before it runs, "Arriving here starts the
+full analysis by itself" with the tutor and the round, and the lesson then says "Started automatically when you opened the
+room" with the room's switch beside it. Once per head: a reload, the room list, the merge card or a second device on the same
+head starts nothing more; a head that moved (a pull request's new commits) is analysed again on the next arrival, after
+Studio's "what changed since last time" scene. A merge card's room and a branch's room are made on arrival when they have no
+file yet; a pull request's room needs its pull request read first.
+
 **A pasted pull request teaches itself.** When the captain pastes a pull request (`POST …/open-pr`) and its room has no
 lesson for the current head (none done or running), the lesson starts by itself: the paste is the consent, so there is no
 click and no confirmation. So the paste box says what a paste starts before it is pasted (`GET …/paste-offer?url=`), from
@@ -406,8 +420,9 @@ paste starts nothing. The Studio-wide setting (`GET/POST /api/review-room/settin
 default on) and the room's own switch (`POST …/auto {on}`, in its drawer) turn it off. When it cannot start (no tutor can
 run, admission refuses) nothing runs, the reason is kept and the welcome scene shows it above the ordinary teach button;
 a Library snapshot never carries that notice. Starting the room over keeps its switch and the heads it already taught by
-itself, so pasting the same head again after a reset starts nothing.
-Merge-card rooms and Task rooms never start by themselves; only a pasted pull request does.
+itself, so pasting the same head again after a reset starts nothing. Every room has the switch (the transcript drawer, and
+beside a lesson that started by itself), a merge card's and a branch's too; the Studio-wide one (the room list) covers both
+arrival and paste.
 
 **Start this room over / 清空重來.** In the transcript drawer, the captain on this Mac can start a room over (`POST
 …/reset`, the same session, origin and desktop gates as the room's other writes; refused with 409 while a turn or a
@@ -826,6 +841,15 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
     — review-room-board-ui "the board fills the window …", "only the board is visible …", "a refused Fullscreen API …";
     review-room-ui "an answer's scene in full screen …".
+42. A room analyses itself on arrival, by any route: a merge card's, a Task's branch and a pull request's room start their
+    lesson when the captain enters (the page sends back the plan it was shown), marked auto from arrival on the ledger; once
+    per head (a new head again); the Studio-wide setting and the room's own switch (every room's) turn it off; a stale plan
+    starts nothing; a phone never sends it; when it cannot start the welcome says why. — review-room-anywhere "the room takes
+    an arrival …", "a merge card's room says, before anything runs …", "an arrival on a plan the room no longer has …",
+    "arriving in a merge card's room starts its full analysis …", "arriving again … starts nothing more", "auto-teach off …",
+    "arriving in a Task's branch room …", "a pull request's head that moved is analysed again …"; review-room-board-only-ui
+    "a room whose analysis starts on arrival says so …", "entering the room sends its arrival once …", "a paired phone never
+    starts a paid analysis by arriving …", "when the analysis cannot start on arrival …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 

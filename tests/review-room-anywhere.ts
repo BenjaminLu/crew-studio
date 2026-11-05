@@ -269,6 +269,38 @@ const TOOLRES: [string, any][] = [];
     ok(off.provider === "codex" && off.model === "c-1" && off.independence?.adaptive === true && off.independence.level === "vendor" && tt.status === "done" && tt.provider === "codex" && tt.independence === "vendor" && trec.data.independence === "vendor"
       && auxes.at(-1)?.member?.provider === "codex" && auxes.at(-1).member.independence === "vendor",
       "a branch room picks its tutor with the adaptive selection (the approved reviewer held, another vendor runnable) and records its independence on the turn, the ledger and the seat's member", JSON.stringify([off, tt?.independence, trec?.data?.independence, auxes.at(-1)?.member])); }
+  // ---- arriving in a room starts its full analysis by itself: a merge card's room and a Task's branch, by any route; once per head ----
+  { const arrive = typeof (room as any).arrive === "function" ? (id: string, plan: unknown) => (room as any).arrive(id, "captain", "en", plan) : null;
+    ok(!!arrive, "the room takes an arrival (POST …/arrive): entering it is what starts its analysis");
+    if (arrive) {
+      const turnsOf = (id: string) => (room.view(id) as any).turns.length, mv: any = room.view(merge.id, true), m0 = turnsOf(merge.id);
+      ok(mv.arrive?.auto === true && mv.arrive.provider === mv.offer.provider && (mv.arrive.model ?? null) === (mv.offer.model ?? null) && typeof mv.arrive.plan === "string" && !("hash" in mv.arrive) && m0 === 0,
+        "a merge card's room says, before anything runs, that arriving starts its full analysis, and on which tutor (the room's own offer)", JSON.stringify({ arrive: mv.arrive, offer: [mv.offer.provider, mv.offer.model] }));
+      const stale: any = await arrive(merge.id, "0000000000000000"); await room.settle(merge.id);
+      ok(turnsOf(merge.id) === m0 && stale.plan?.plan === mv.arrive.plan, "an arrival on a plan the room no longer has (its fingerprint does not match) starts nothing and returns the plan to show", JSON.stringify(stale.plan ?? null));
+      script.push([["say", "The whole change: a percent helper [diff:src/percent.ts]."]]);
+      const got: any = await arrive(merge.id, mv.arrive.plan), mt = (room.view(merge.id) as any).turns.at(-1); await room.settle(merge.id);
+      const mrec = E.trusted(u.id).entries.filter((e: any) => e.record === "review-room-turn" && e.data?.card === merge.id).at(-1) as any;
+      ok(got.room?.running != null && mt?.action === "teach" && mt.auto === true && mt.autoFrom === "arrival" && mrec?.data.auto === true && mrec.data.autoFrom === "arrival" && mrec.data.action === "teach",
+        "arriving in a merge card's room starts its full analysis (the lesson) by itself: no click, no confirmation, marked auto from arrival on the ledger", JSON.stringify({ running: got.room?.running, turn: [mt?.action, mt?.auto, mt?.autoFrom], led: mrec?.data && [mrec.data.auto, mrec.data.autoFrom] }));
+      const m1 = turnsOf(merge.id); await arrive(merge.id, (room.view(merge.id) as any).arrive?.plan); room.view(merge.id, true); await room.settle(merge.id);
+      ok(turnsOf(merge.id) === m1 && (room.view(merge.id) as any).arrive === null, "arriving again (a reload, the room list, the merge card) on the same head starts nothing more", String(turnsOf(merge.id) - m1));
+      // a Task's branch room: the Studio-wide switch off starts nothing, on it starts; the room's own switch off wins
+      room.setSettings({ autoTeach: false }); const bv0: any = room.view(u.id, true), b0 = turnsOf(u.id);
+      ok(bv0.arrive === null, "auto-teach off (the Studio-wide setting): the room says nothing starts on arrival", JSON.stringify(bv0.arrive));
+      await arrive(u.id, "x"); await room.settle(u.id); ok(turnsOf(u.id) === b0, "auto-teach off: arriving in a Task's branch room starts nothing", String(turnsOf(u.id) - b0));
+      room.setSettings({ autoTeach: true }); room.autoTeachFor(u.id, false); await arrive(u.id, (room.view(u.id) as any).arrive?.plan); await room.settle(u.id);
+      ok(turnsOf(u.id) === b0 && (room.view(u.id) as any).arrive === null, "the room's own switch turned off: arriving starts nothing, whatever the Studio-wide setting", String(turnsOf(u.id) - b0));
+      room.autoTeachFor(u.id, true); const bv: any = room.view(u.id, true); script.push([["say", "The branch, whole [diff:src/percent.ts]."]]);
+      await arrive(u.id, bv.arrive?.plan); await room.settle(u.id); const bt = (room.view(u.id) as any).turns.at(-1);
+      ok(bt?.action === "teach" && bt.auto === true && bt.autoFrom === "arrival" && bt.head === uh, "arriving in a Task's branch room (its link on the Task page) starts its full analysis by itself", JSON.stringify([bt?.action, bt?.autoFrom, bt?.head === uh]));
+      // a merge card's room with no file yet keeps its own switch (the drawer's switch works in every room)
+      const sw: any = room.autoTeachFor(merge.id, false); room.autoTeachFor(merge.id, true);
+      ok(sw.autoTeach.room === false && sw.autoTeach.on === false, "every room has its own auto-teach switch, a merge card's room too", JSON.stringify(sw.autoTeach));
+      // from the review: a merge card's room started over keeps its switch and the heads it analysed by itself (no second paid lesson)
+      room.autoTeachFor(merge.id, false); await room.settle(merge.id); room.reset(merge.id, "captain"); const vr: any = room.view(merge.id, true);
+      room.autoTeachFor(merge.id, true); const vr2: any = room.view(merge.id, true);
+      ok(vr.turns.length === 0 && vr.autoTeach.room === false && vr2.arrive === null, "started over, a merge card's room keeps its switch and the heads it already analysed: arriving again on the same head starts nothing", JSON.stringify({ sw: vr.autoTeach, arrive: vr2.arrive })); } }
   globalThis.fetch = realFetch; H.stop();
 }
 
@@ -648,7 +680,18 @@ const TOOLRES: [string, any][] = [];
     // a reset keeps the room's switch: pasted again on the same head, a room whose auto-teach is off starts nothing
     room.autoTeachFor(opened.id, false); await room.settle(opened.id); room.reset(opened.id, "captain"); const vr: any = room.view(opened.id);
     headAs(E6); await paste(); await room.settle(opened.id); const va: any = room.view(opened.id);
-    ok(vr.autoTeach.room === false && vr.turns.length === 0 && va.turns.length === 0 && va.running == null, "started over, the room keeps its auto-teach switch: pasted again on the same head, nothing starts", JSON.stringify({ before: vr.autoTeach, turns: va.turns.length })); }
+    ok(vr.autoTeach.room === false && vr.turns.length === 0 && va.turns.length === 0 && va.running == null, "started over, the room keeps its auto-teach switch: pasted again on the same head, nothing starts", JSON.stringify({ before: vr.autoTeach, turns: va.turns.length }));
+    // ---- arriving (the room list, a link) in a pull request's room whose head moved: its new head is analysed by itself ----
+    const arrive = typeof (room as any).arrive === "function" ? (plan: unknown) => (room as any).arrive(opened.id, "captain", "en", plan) : null;
+    ok(!!arrive, "a pull request's room takes an arrival too, not only a paste");
+    if (arrive) { room.autoTeachFor(opened.id, true);
+      const sameHead: any = room.view(opened.id, true);
+      ok(sameHead.arrive === null, "a head already taught by itself (even before a reset) starts nothing on arrival", JSON.stringify(sameHead.arrive));
+      writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"); must(scratch, [...id, "commit", "-qam", "Add seven"]); const F = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${F}:refs/pull/5/head`]);
+      headAs(F); const vf: any = await room.check(opened.id), nF = turns(); script.push([["say", "A seventh line [diff:a.txt]."]]);
+      await arrive(vf.arrive?.plan); await room.settle(opened.id); const tf = (room.view(opened.id) as any).turns.at(-1);
+      ok(vf.arrive?.plan && tf?.action === "teach" && tf.auto === true && tf.autoFrom === "arrival" && tf.head === F && turns() > nF,
+        "a pull request's head that moved is analysed again when the captain arrives: the new head's lesson starts by itself (after Studio's what-changed scene)", JSON.stringify({ arrive: vf.arrive, t: [tf?.action, tf?.autoFrom, tf?.head === F] })); } }
   sim.stop(); H.stop();
 }
 end();
