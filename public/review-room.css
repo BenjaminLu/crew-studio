@@ -530,3 +530,12 @@ body.rr-fs .rr-room > .rb-view { height: 100%; box-sizing: border-box; padding: 
   .rr-fs-btn span { display: none; }
   body.rr-fs .rr-room > .rb-view { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* the tutor picker: the header's tutor pill opens it; Studio's default on the room list */
+.rr-tutor { cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.rr-tutor:hover { border-color: var(--rr-marker); }
+.rr-tutormenu { position: fixed; top: 64px; right: 24px; left: auto; max-height: calc(100vh - 160px); overflow: auto; width: min(560px, calc(100vw - 32px)); z-index: 40; }
+.rr-tutormenu > p { margin: 0; font-size: 12px; max-width: 60ch; }
+.rr-tutordefault { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.rr-tutordefault select { max-width: 100%; }
+@media (max-width: 760px) { .rr-tutormenu { right: 16px; top: 56px; } }

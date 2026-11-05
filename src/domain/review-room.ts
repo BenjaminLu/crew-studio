@@ -255,7 +255,9 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   /** the lesson board: the captain's questions on it (threads), the regions read, when it was last tidied */
   lesson?: Lesson;
   /** the captain agreed to start this room's board questions without asking each time, for this plan (followPrint) */
-  followUps?: { plan: string; by: string; at: string; used?: number } };
+  followUps?: { plan: string; by: string; at: string; used?: number };
+  /** the tutor the captain picked for this room (over Studio's default, src … settings().tutor); absent: the default */
+  tutor?: { provider: string; model: string; by: string; at: string } };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
 /** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
  *  citations, board items and pictures are the original's */
@@ -467,7 +469,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** the review room's own settings (Studio-wide): autoTeach, a room's full analysis (its lesson) starting by itself when the
    *  captain opens the room, by any route, or pastes its pull request (default on) */
   const settingsFile = () => join(o.dataDir, "review-room-settings.json");
-  const settings = (): { autoTeach: boolean } => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8")); return { autoTeach: j?.autoTeach !== false }; } catch { return { autoTeach: true }; } };
+  /** the review room's Studio-wide tutor (tutor: {provider, model}, picked by the captain; null: Automatic, Studio picks the
+   *  most independent model it can run, as before) */
+  const settings = (): { autoTeach: boolean; tutor: { provider: string; model: string } | null } => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8"));
+    const t = j?.tutor && typeof j.tutor.provider === "string" && typeof j.tutor.model === "string" ? { provider: j.tutor.provider, model: j.tutor.model } : null;
+    return { autoTeach: j?.autoTeach !== false, tutor: t }; } catch { return { autoTeach: true, tutor: null }; } };
   /** rooms started over: their old object (held by a background job: a picture, a voice, a Library save) is never written back */
   const startedOver = new WeakSet<Room>(), resetGen = new Map<string, number>();
   const save = (k: Key, r: Room) => { if (startedOver.has(r)) return; r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
@@ -562,8 +568,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const tutorsOf = (run: any, current: { provider: string; model: string | null } | null) => {
     const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null; if (!usable) return [];
     const group = run && !isHostRun(run) ? makersOf(run, usable) : [];
+    // a model the captain may pick runs now and is verified on this machine; any other is listed with why it cannot be picked
     return usable.map((u) => { const backoff = !!engine.deps.verifyBackoff?.({ provider: u.provider, model: u.model } as AgentPick);
-      return { provider: u.provider, model: u.model, effort: defaultEffort(u), runnable: !!u.runnable && !backoff, held: !u.runnable ? (u.held ?? "it cannot run now") : backoff ? "its verification is being retried" : null,
+      return { provider: u.provider, model: u.model, effort: defaultEffort(u), verified: !!u.verified, runnable: !!u.runnable && !!u.verified && !backoff,
+        held: !u.runnable ? (u.held ?? "it cannot run now") : !u.verified ? "not verified on this machine yet" : backoff ? "its verification is being retried" : null,
         level: group.length ? levelAgainst({ provider: u.provider, model: u.model }, group) : null, current: !!current && current.provider === u.provider && (current.model ?? null) === u.model }; });
   };
   /** the tutor the captain picked for a regeneration: refused unless this machine runs it now */
@@ -574,10 +582,40 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const level = (u.level ?? null) as Level | null;
     // no author Studio knows (a pull request no Task made): how independent the pick is cannot be said, and is not claimed
     if (!level) return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level: null as unknown as Level, adaptive: true, outside: true, label: { en: "Independence from the author unknown: the change's author is outside Studio. Picked by the captain to explain this again.", zh: "和作者的獨立程度未知：改動的作者不在 Studio 裡。船長選來重講這一題。" } };
-    // the author's own model only when nothing else can run, as for the room's own tutor
-    if (level === "same" && list.some((x) => x.runnable && x.level !== "same")) throw refuse(`${provider} ${model} is the author's own model; another model can run now / 這是作者自己的模型；還有別的模型可以用`, "same_as_author");
+    // the author's own model too: how independent it is, is said (the label), never a refusal: the captain picked it
     return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level, adaptive: true, outside: true, label: { en: `${LEVEL_TEXT[level].en}. Picked by the captain to explain this again.`, zh: `${LEVEL_TEXT[level].zh}。船長選來重講這一題。` } };
   };
+  /** the tutor the captain picked: this room's, else Studio's default (settings().tutor), else none (Automatic: seatPick) */
+  const choiceOf = (room: Room | null): { provider: string; model: string; source: "room" | "studio" } | null => {
+    if (room?.tutor) return { provider: room.tutor.provider, model: room.tutor.model, source: "room" }; const d = settings().tutor; return d ? { ...d, source: "studio" } : null; };
+  /** the picked tutor as this machine has it now: refused with why when it is not here, held or not verified (the room then
+   *  asks for another pick; Studio never switches to another tutor by itself). Its independence from the author is said,
+   *  never enforced. The approved reviewer picked is the seat's own member; any other runs as the seat's adaptive member. */
+  const chosenTutor = (run: any | null, node: any | null, c: { provider: string; model: string; source: "room" | "studio" }): Tutor => {
+    const host = run && !isHostRun(run) ? run : null, list = tutorsOf(host, null), u = list.find((x) => x.provider === c.provider && x.model === c.model), who = `${c.provider} ${c.model}`;
+    const whose = c.source === "room" ? { en: "The tutor picked for this room", zh: "這間審查室選的導師" } : { en: "Studio's default tutor", zh: "Studio 預設的導師" };
+    if (!u) throw refuse(`${whose.en} (${who}) is not a model this machine can run now: pick another tutor; Studio does not switch to another one by itself / ${whose.zh}（${who}）不是這台機器現在能跑的模型：請另選一位導師；Studio 不會自己換人`, "tutor_unavailable");
+    if (!u.runnable) throw refuse(`${whose.en} (${who}) cannot run now: ${u.held}. Pick another tutor; Studio does not switch to another one by itself / ${whose.zh}（${who}）現在不能用：${u.held}。請另選一位導師；Studio 不會自己換人`, "tutor_unavailable");
+    let approved: AgentPick | null = null; if (run && node) { try { approved = (engine.deps.approvedPick?.(run, node, TUTOR_ROLE) as AgentPick | null) ?? (isHostRun(run) ? null : engine.x(run, reviewNode(run), run.nodes[reviewNode(run).id]).pick()); } catch {} }
+    const own = !!approved && approved.provider === c.provider && (approved.model ?? null) === c.model, level = (u.level ?? null) as Level | null;
+    const by = c.source === "room" ? { en: " Picked by the captain for this room.", zh: "船長為這間審查室選的。" } : { en: " Studio's default tutor, picked by the captain.", zh: "船長選的 Studio 預設導師。" };
+    const label = level ? { en: `${LEVEL_TEXT[level].en}.${by.en}`, zh: `${LEVEL_TEXT[level].zh}。${by.zh}` } : { en: `Independence from the author unknown: the change's author is outside Studio.${by.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。${by.zh}` };
+    return { pick: own ? approved! : { provider: c.provider, model: c.model, effort: u.effort ?? null } as AgentPick, level: level as Level, adaptive: !own, outside: !own, label };
+  };
+  /** a tutor the captain picks (a room's, or Studio's default): {provider, model} of a model this machine runs now and has verified */
+  const pickable = (want: any, run: any | null): { provider: string; model: string } => {
+    const provider = String(want?.provider ?? ""), model = String(want?.model ?? ""); if (!provider || !model || provider.length > 40 || model.length > 120) throw refuse("A tutor is {provider, model} / 導師是 {provider, model}", "bad_request");
+    const u = tutorsOf(run, null).find((x) => x.provider === provider && x.model === model);
+    if (!u) throw refuse(`${provider} ${model} is not a model this machine can run / 這台機器不能跑 ${provider} ${model}`, "not_usable");
+    if (!u.runnable) throw refuse(`${provider} ${model} cannot be the tutor now: ${u.held} / ${provider} ${model} 現在不能當導師：${u.held}`, u.verified ? "held" : "unverified");
+    return { provider, model }; };
+  /** the room's tutor as the page shows it: every model this machine has (each pickable or why not, how independent it is from
+   *  the author, the current one marked), and whose pick it is (this room's, Studio's default, or Studio's own) */
+  const tutorView = (k: Key, s: S | null, r: Room | null, open: boolean) => { const c = choiceOf(r), d = settings().tutor;
+    let tutors: any[] = []; if (open) { try { const o0: any = offerOf(k); tutors = tutorsOf(s?.run && !isHostRun(s.run) ? s.run : null, "error" in o0 ? null : { provider: o0.provider, model: o0.model }); } catch {} }
+    return { tutors, tutorChoice: { room: r?.tutor ? { provider: r.tutor.provider, model: r.tutor.model } : null, studio: d, source: c?.source ?? "auto" } }; };
+  /** the tutor a turn of this room runs on: the captain's pick (the room's, else Studio's default), else Studio's own (Automatic) */
+  const tutorFor = (k: Key, s: S): Tutor => { const c = choiceOf(load(k)); return c ? chosenTutor(s.run, s.node, c) : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)); };
   /** the seat a turn runs on: the hosting Task's reviewer (tutorPick); on a review-room-host Task, the project's approved crew reviewer */
   const crewTutor = (pick: AgentPick): Tutor => ({ pick, level: null as unknown as Level, adaptive: false, outside: false,
     label: { en: "The project's crew reviewer. The change's author is outside Studio, so its independence is not measured.", zh: "專案船員的審查者。改動的作者不在 Studio 裡，所以不衡量獨立程度。" } });
@@ -601,9 +639,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (want && (!s.run || !s.node)) throw noHost();
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
-      const t = want ? pickedTutor(s.run, want) : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)), p = t.pick, effort = p.effort ?? null;
+      const t = want ? pickedTutor(s.run, want) : tutorFor(k, s), p = t.pick, effort = p.effort ?? null, c = want ? null : choiceOf(load(k));
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
-      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label },
+      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, picked: want ? "regenerate" : c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label },
         hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}) })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
@@ -1179,7 +1217,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const auto = (room?.autoTeach ?? settings().autoTeach) !== false, images = !!room?.images?.on, createsHost = !k.run;
     const o: any = room || k.kind !== "pr" ? offerOf(k) : (() => { try {
       const run = k.run ? engine.get(k.run) : null, node = run?.def.nodes.find((n: any) => n.id === k.node);
-      const p = run && node ? seatPick(run, node).pick : crewPick(project); return { provider: p.provider, model: p.model ?? null, effort: p.effort ?? null, paid: true }; }
+      const c = choiceOf(null), p = c ? chosenTutor(run && node ? run : null, run && node ? node : null, c).pick : run && node ? seatPick(run, node).pick : crewPick(project); return { provider: p.provider, model: p.model ?? null, effort: p.effort ?? null, paid: true }; }
       catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "no_crew" }; } })();
     return "error" in o ? { auto, images, createsHost, error: String(o.error).slice(0, 300), code: o.code ?? null } : { auto, images, createsHost, provider: o.provider, model: o.model ?? null, effort: o.effort ?? null, paid: true, hash: o.hash as string | undefined };
   };
@@ -1467,7 +1505,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** the room's languages for the page: the translations kept, the last translation turn, and what translating would cost */
   const langView = (r: Room | null, open: boolean) => ({ translations: r?.translations ?? {}, translating: r?.translating ?? null, langs: ROOM_LANGS, images: !!r?.images?.on,
     autoTeach: { on: r?.autoTeach ?? settings().autoTeach, room: r?.autoTeach ?? null, global: settings().autoTeach, skipped: (r?.autoTaught ?? []).filter((x) => x.head === (r?.pr?.head ?? r?.head) && x.skipped).map((x) => x.skipped).at(-1) ?? null },
-    tutors: open && r ? (() => { try { const k0 = keyOf(r.card); const s0 = subjectOf(k0); return s0.run && s0.node ? tutorsOf(s0.run, (() => { const o0 = offerOf(k0); return "error" in o0 ? null : { provider: o0.provider, model: o0.model }; })()) : []; } catch { return []; } })() : [],
+    tutors: [],
     library: r?.library && library().get(r.library.artifact) ? { artifact: r.library.artifact, versions: r.library.versions, current: r.library.sig === contentSig(r) } : null,
     translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
   /** a running turn's progress, read back from its round record (written as the tutor works, so it survives a reload or a
@@ -1505,7 +1543,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
-        return { ...langView(r, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
+        return { ...langView(r, c.status === "open"), ...tutorView(k, s0, r0, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
           progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, followUps: followView(r, c.status === "open" ? offerOf(k) : null), summary: this.summary(c),
           arrive: c.status === "open" ? arrivalOf(k, r, s0) : null };
@@ -1519,7 +1557,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         const pr = k.kind === "pr" ? load(k) : null; if (pr?.subject?.url && Date.now() - Date.parse(pr.pr?.attemptedAt ?? pr.pr?.checkedAt ?? "0") > PR_RECHECK_MS) void readPr(pr.subject.url).catch(() => {}); }
       const r0 = load(k), r = r0 ? settled(r0) : null, run = k.run ? engine.get(k.run) : null, open = k.open() && !!s, sub = r?.subject ?? (s ? subjectRecord(k, s, r) : { kind: k.kind, room: k.id });
       const title = k.kind === "branch" ? { en: `Branch ${run?.ctx.branch ?? k.id}`, "zh-TW": `分支 ${run?.ctx.branch ?? k.id}` } : { en: `Pull request #${sub.number}: ${r?.pr?.title ?? ""}`, "zh-TW": `Pull request #${sub.number}：${r?.pr?.title ?? ""}` };
-      return { ...langView(r, open), card: { id: k.id, run: k.run, node: k.node, title, status: open ? "open" : "closed" }, subject: sub, task: run ? { id: run.id, title: run.title ?? run.id } : null,
+      return { ...langView(r, open), ...tutorView(k, s, r0, open), card: { id: k.id, run: k.run, node: k.node, title, status: open ? "open" : "closed" }, subject: sub, task: run ? { id: run.id, title: run.title ?? run.id } : null,
         pr: k.kind === "pr" ? { id: String(sub.number ?? ""), url: sub.url ?? null } : run?.ctx.pr?.adapter === "github" ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null, prState: prState(r), stale: r?.pr?.stale ?? null, checking: refreshing.has(k.id),
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
@@ -1552,7 +1590,20 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     /** what pasting this pull request's address would start (the paste box shows it before the paste): auto-teach on or off,
      *  and the tutor and the paid round it would run on, as the room's offer would name them */
     pasteOffer(url: unknown) { return autoPlan(url); },
-    setSettings(a: { autoTeach?: unknown }) { if (typeof a?.autoTeach !== "boolean") throw refuse("autoTeach is true or false", "bad_request"); writeFileSync(settingsFile(), JSON.stringify({ ...settings(), autoTeach: a.autoTeach })); return settings(); },
+    setSettings(a: { autoTeach?: unknown; tutor?: unknown }) {
+      if (a?.autoTeach === undefined && a?.tutor === undefined) throw refuse("autoTeach is true or false; tutor is {provider, model} or null", "bad_request");
+      if (a.autoTeach !== undefined && typeof a.autoTeach !== "boolean") throw refuse("autoTeach is true or false", "bad_request");
+      const tutor = a.tutor === undefined ? settings().tutor : a.tutor === null ? null : pickable(a.tutor, null);
+      writeFileSync(settingsFile(), JSON.stringify({ ...settings(), ...(a.autoTeach !== undefined ? { autoTeach: a.autoTeach } : {}), tutor })); return settings(); },
+    /** the models the captain may pick as a tutor (the room list's Studio-wide default): this machine's, each runnable or why not */
+    tutorChoices() { return tutorsOf(null, settings().tutor ? { provider: settings().tutor!.provider, model: settings().tutor!.model } : null); },
+    /** this room's tutor, picked by the captain: a model this machine runs now and has verified (else refused, with why); null
+     *  goes back to Studio's default. Its independence from the author is shown, never enforced. */
+    setTutor(id: string, pick: unknown, by: string) { const k = keyOf(id); let s: S | null = null; try { s = subjectOf(k); } catch {}
+      if (!k.open()) throw refuse("This room takes no turn now: its tutor stays as it was / 這間審查室現在不能提問：導師維持原樣", "closed");
+      let room = load(k); if (!room) { if (!s) throw refuse("No such review room", "not_found"); room = fresh(k, s); }
+      if (pick === null) delete room.tutor; else { const p = pickable(pick, s?.run && !isHostRun(s.run) ? s.run : null); room.tutor = { ...p, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() }; }
+      save(k, room); notify(k); return this.view(id); },
     /** this room's own auto-teach switch (any room: on arrival, and on paste for a pull request's) */
     autoTeachFor(id: string, on: unknown) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request"); let room = load(k);
       // a merge card's or a branch's room before its first turn: its file is made now, to keep the switch
@@ -1608,7 +1659,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // a board question starts without asking once the room agreed to this very plan (a new model or effort asks again)
       const agreed = () => !!plan && a.confirm !== offer.hash && agreedTo(load(k), offer);
       if (a.confirm !== offer.hash && !agreed()) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
-      const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : seatPick(s.run, s.node));
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : tutorFor(k, s));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
       // started over (or the question's place gone) while it was admitted: nothing is added to the fresh room
@@ -1652,7 +1703,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const hash = sha(`${offer.hash}:translate`).slice(0, 16), estimate = translateEstimate(room0);
       if (room0!.translateOk?.hash !== hash && a.confirm !== hash) throw refuse(`Translating this room's explanation is a small paid round on ${offer.provider} ${offer.model ?? "(default model)"} (~${estimate ?? "?"}): confirm it once / 翻譯這間房間的解說是一次小的付費回合（約 ${estimate ?? "?"}），請確認一次`, "confirm_required", { offer: { ...offer, translate: { hash, estimate, lang } } });
       try { await engine.deps.refreshUsable?.(); } catch {}
-      const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, seatPick(s.run, s.node));
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, tutorFor(k, s));
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room = load(k); if (!room || !untranslated(room, lang).length) { held?.release(); throw refuse("The room was started over while the translation was being admitted / 審查室在翻譯開始前被清空了", "reset"); }
       room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
@@ -1782,7 +1833,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
       if (!s.run || !s.node) throw noHost();
       // the vendor that answered this scene, as recorded; it must still be the seat's vendor, or nothing is sent anywhere
-      const vendor = SPEECH_VENDORS[t.provider], now = SPEECH_VENDORS[seatPick(s.run, s.node).pick.provider];
+      // the room's tutor now (the captain's pick, else Studio's): a pick that cannot run now speaks to no vendor
+      let nowTutor: Tutor | null = null; try { nowTutor = tutorFor(k, s); } catch {}
+      const vendor = SPEECH_VENDORS[t.provider], now = nowTutor ? SPEECH_VENDORS[nowTutor.pick.provider] : undefined;
       if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
       if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
       const key = `${k.id}/${t.n}`, running = speaking.get(`${key}/${(ROOM_LANGS as readonly string[]).includes(String(lang)) ? String(lang) : ""}`); if (running) return running;
