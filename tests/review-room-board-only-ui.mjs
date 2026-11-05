@@ -397,6 +397,11 @@ try {
     const quick = await p.$$eval("[data-room-action]", (els) => els.map((e) => e.dataset.roomAction));
     ok(JSON.stringify(quick) === '["how","why","teach","quiz"]' && !!(await p.$("[data-playbar] [data-play]")) && !!(await p.$("[data-fs-toggle]")) && !!(await p.$("[data-transcript-toggle]")), "the same board, play bar, full screen and transcript; its quick actions without the merge check", JSON.stringify(quick));
     await p.screenshot({ path: join(shots, "directory-1440.png") });
+    // from the review: a directory's lesson reads in its own order (what, its parts, how they compose and flow, where to start)
+    const order = await p.evaluate((room) => { const sc = (c) => ({ n: 1, title: c, picture: "", chapter: c, points: [{ text: "x", kind: "claim", basis: "inference", cites: [] }, { text: "y", kind: "claim", basis: "inference", cites: [] }] });
+      const r = { ...room, turns: [{ n: 2, action: "teach", text: "Teach me this directory", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: room.head, scenes: ["entry", "lifecycle", "what", "sequence", "modules", "talks"].map(sc) }] };
+      return window.crewReviewRoom.scenesOf(r).filter((x) => x.chapter).map((x) => x.chapter); }, DROOM);
+    ok(JSON.stringify(order) === '["what","modules","talks","sequence","entry","lifecycle"]', "a directory's lesson is shown in its own chapters' order", JSON.stringify(order));
     await ctx.close(); }
   // the home's box takes a directory's address: it says what a paste starts and opens it through open-dir
   { const asked = [], opens = []; const DID2 = "DIR-0123456789ab-111111111111";

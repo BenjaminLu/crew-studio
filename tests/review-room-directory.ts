@@ -38,7 +38,8 @@ const id = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid
 must(tmp, ["init", "-q", "--bare", bare]); must(work, ["init", "-qb", "main"]);
 const put = (path: string, text: string) => { mkdirSync(join(work, path, ".."), { recursive: true }); writeFileSync(join(work, path), text); };
 put("README.md", "# kit\nA small kit.\n"); put("src/README.md", "# src\nThe kit's code: core does the sums, api serves them.\n");
-put("src/core/sum.ts", "export function sum(a: number, b: number) {\n  return a + b;\n}\n"); put("src/core/round.ts", "export const round = (x: number) => Math.round(x);\n");
+put("src/core/sum.ts", "export function sum(a: number, b: number) {\n  return a + b;\n}\n"); put("src/core/round.ts", "export const round = (x: number) => Math.round(x);\nexport function calculateInvoiceReserve(total: number) { return round(total * 0.05); }\n");
+put("src/工具/說明.md", "工具的說明。\n"); // a name git would quote in its listing
 put("src/api/server.ts", "import { sum } from \"../core/sum\";\nexport function handle(q: { a: number; b: number }) {\n  return { total: sum(q.a, q.b) };\n}\n"); put("docs/guide.md", "Read src first.\n");
 must(work, ["add", "-A"]); must(work, [...id, "commit", "-qm", "kit"]); const V1 = must(work, ["rev-parse", "HEAD"]);
 must(work, ["tag", "v1"]); must(work, ["branch", "feature/x"]); must(work, ["push", "-q", bare, "main", "feature/x", "v1"]);
@@ -70,7 +71,7 @@ try {
   const opened: any = await room.openDir("https://github.com/acme/kit/tree/feature/x/src", "captain"), v: any = room.view(opened.id, true);
   ok(opened.id === dirRoomId("acme/kit", "feature/x", "src") && v.subject.kind === "dir" && v.dir.ref === "feature/x" && v.dir.refKind === "branch" && v.dir.path === "src" && v.dir.sha === V1 && v.dir.private === false && tokenAsked === 0,
     "a public repository's directory opens without any login: the branch named in the address (its name may hold a slash) told apart from the path, pinned at its commit", JSON.stringify({ id: opened.id, dir: v.dir }));
-  ok(JSON.stringify(v.dir.parts.map((p: any) => [p.name, p.kind, p.files])) === JSON.stringify([["core", "dir", 2], ["README.md", "file", 1], ["api", "dir", 1]]) && v.dir.files === 4 && v.dir.readme === true,
+  ok(JSON.stringify(v.dir.parts.map((p: any) => [p.name, p.kind, p.files])) === JSON.stringify([["core", "dir", 2], ["README.md", "file", 1], ["api", "dir", 1], ["工具", "dir", 1]]) && v.dir.files === 5 && v.dir.readme === true,
     "the room knows the directory's parts (each folder and file under it, with how many files) and its README", JSON.stringify(v.dir.parts));
   const cache = join(H.data, "review-room", "cache"), caches = readdirSync(cache);
   ok(caches.length === 1 && /^dir-[0-9a-f]{16}\.git$/.test(caches[0]) && must(join(cache, caches[0]), ["rev-parse", "--is-bare-repository"]) === "true" && existsSync(join(H.data, "review-room", "dir", `${opened.id}.json`)),
@@ -96,10 +97,12 @@ try {
   const offer = v.offer; let e: any = await refused(() => room.start(opened.id, { action: "how" }, "captain"));
   ok(offer?.provider === "codex" && offer.model === "c-1" && offer.independence?.level === null && /independence does not apply/.test(offer.independence.en) && e?.code === "confirm_required" && !E.list().some((r: any) => r.def.kind === "review-room-dir-host"),
     "a directory's turn is paid and asks to confirm first; nothing is made before (Automatic: this machine's default model, no author to be independent from)", JSON.stringify([offer, e?.code]));
-  script.push([["fs_read", { path: "src/core/sum.ts" }], ["git_diff", {}], ["board_draw", { items: [{ type: "diff", title: "x", path: "src/core/sum.ts" }, { type: "code", title: "The sum", path: "src/core/sum.ts", start: 1, end: 3 }] }],
+  script.push([["web_search", { query: "calculate invoice reserve rounding" }], ["fs_read", { path: "src/core/sum.ts" }], ["git_diff", {}], ["board_draw", { items: [{ type: "diff", title: "x", path: "src/core/sum.ts" }, { type: "code", title: "The sum", path: "src/core/sum.ts", start: 1, end: 3 }] }],
     ["say", "The api serves core's sum [diff:src/api/server.ts:L1-3]; sum adds [diff:src/core/sum.ts:L2]."]]);
   await room.start(opened.id, { action: "how", confirm: offer.hash }, "captain"); await room.settle(opened.id);
-  const v1: any = room.view(opened.id), t1 = v1.turns.at(-1), hosts = E.list().filter((r: any) => r.def.kind === "review-room-dir-host"), r0 = TOOLRES.slice(-3);
+  const v1: any = room.view(opened.id), t1 = v1.turns.at(-1), hosts = E.list().filter((r: any) => r.def.kind === "review-room-dir-host"), r0 = TOOLRES.slice(-3), web0 = TOOLRES.slice(-4)[0];
+  ok(web0?.[0] === "web_search" && /refused/.test(web0[1]?.error ?? "") && v1.sources.some((x: any) => x.refused), "the web filter knows the directory's own code: a query spelling an identifier of it is refused (there is no diff to learn it from)", JSON.stringify(web0?.[1]));
+  ok(/工具/.test(prompts.at(-1)?.text ?? "") && !/\\345/.test(prompts.at(-1)?.text ?? ""), "a name git would quote (Chinese) is listed as it is, in the parts and in the tutor's listing", JSON.stringify(v.dir.parts.map((p: any) => p.name)));
   ok(t1.status === "done" && t1.claims.every((c: any) => c.basis === "cited") && hosts.length === 1 && v1.task?.id === hosts[0].id && hosts[0].params.room === opened.id,
     "confirmed, the first turn makes the directory's host Task (once) and answers from the pinned commit, every claim cited", JSON.stringify({ t: [t1.status, t1.error], claims: t1.claims?.map((c: any) => c.basis), hosts: hosts.length }));
   ok(/return a \+ b;/.test(r0[0][1]?.text ?? "") && /no diff/.test(r0[1][1]?.error ?? "") && /no diff/.test(r0[2][1]?.errors?.[0] ?? "") && r0[2][1]?.added?.length === 1 && v1.board.some((b: any) => b.type === "code" && b.commit === V1),

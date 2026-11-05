@@ -1204,7 +1204,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const deny = ([] as any[]).concat(engine.policy(run, "privacy.denylist", []) ?? []).map(String);
     try { deny.push(...readFileSync(join(o.dataDir, "privacy-denylist.txt"), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))); } catch {}
     const names = [repo, ...repo.split("/"), String(room?.subject?.project ?? ""), String(run.params?.project ?? run.ctx.project ?? ""), String(run.ctx.repo ?? "").split("/").filter(Boolean).at(-1) ?? ""].filter((n) => n && n !== "studio");
-    return { diff: (await g(wt, ["diff", "--no-color", "-U0", base, head], 4_000_000) ?? "").slice(0, 2_000_000), paths: (await g(wt, ["ls-tree", "-r", "--name-only", "-z", head]) ?? "").split("\0").filter(Boolean).slice(0, 20000), names, denylist: deny.filter(Boolean) };
+    // a directory room has no diff: what may not leave Studio is the directory's own code, its files at the pinned commit
+    let text = s.dir ? "" : (await g(wt, ["diff", "--no-color", "-U0", base, head], 4_000_000) ?? "");
+    if (s.dir) for (const f of s.dir.files.slice(0, 1500)) { if (text.length >= 2_000_000) break; const b = await fileAt(wt, head, f); if (b && !b.includes(0)) text += `\n+++ b/${f}\n` + b.toString("utf8").split("\n").map((l) => `+${l}`).join("\n"); }
+    return { diff: text.slice(0, 2_000_000), paths: (await g(wt, ["ls-tree", "-r", "--name-only", "-z", head]) ?? "").split("\0").filter(Boolean).slice(0, 20000), names, denylist: deny.filter(Boolean) };
   };
   /** a reviewer note as one line of the prompt: fenced by the caller, its text untrusted */
   /** the notes a tutor reads: newest first, bounded, the same words from the same reviewer once, bots' plain comments left out */
@@ -1217,8 +1220,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
    *  repository), what it is asked to teach (each part and how they compose), and the room's history, board and check */
   const promptDir = async (k: Key, room: Room, turn: Turn, s: S) => {
     const fence = randomBytes(6).toString("hex"), d = room.dir!, CH = DIR_CHAPTERS;
-    const listing = (await g(s.wt, ["ls-tree", "-r", "-l", s.head, "--", ...(d.path ? [d.path] : [])], 2_000_000) ?? "").split("\n").filter(Boolean).slice(0, 600)
-      .map((l) => { const m = /^\d+ \w+ [0-9a-f]+\s+(-|\d+)\t(.+)$/.exec(l); return m ? `${glyph(m[2])} (${m[1] === "-" ? "?" : m[1]} bytes)` : null; }).filter(Boolean);
+    const listing = (await g(s.wt, ["ls-tree", "-r", "-l", "-z", s.head, "--", ...(d.path ? [d.path] : [])], 2_000_000) ?? "").split("\0").filter(Boolean).slice(0, 600)
+      .map((l) => { const m = /^\d+ \w+ [0-9a-f]+\s+(-|\d+)\t([\s\S]+)$/.exec(l); return m ? `${glyph(m[2])} (${m[1] === "-" ? "?" : m[1]} bytes)` : null; }).filter(Boolean);
     const past = room.turns.filter((x) => x.n < turn.n), full = past.slice(-6), older = past.slice(0, -6);
     const said = (x: Turn) => x.status === "done" ? x.answer : `(${x.status}${x.error ? `: ${x.error}` : ""})`, who = (x: Turn) => x.studio ? `Studio [${x.action}]: ${x.title ?? ""}` : `Captain [${x.action}]: ${x.text}`;
     return [`REVIEW ROOM for a directory of a GitHub repository (no change to review: the code as it is)`,
@@ -1671,7 +1674,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const at = git(wt, ["rev-parse", "--verify", `refs/crew/dir/${id}^{commit}`]).out; if (!SHA.test(at)) throw refuse("The fetched commit is not one Studio can read", "no_access");
       if (path && git(wt, ["cat-file", "-t", `${at}:${path}`]).out !== "tree") throw refuse(`${glyph(path)} is not a directory at ${at.slice(0, 8)}: paste a directory's address (a file's /blob/ address is not one)`, "not_a_directory");
       // what it holds: its files by part (each folder and file right under it), sizes, and its README if it has one
-      const ls = git(wt, ["ls-tree", "-r", "-l", at, "--", ...(path ? [path] : [])]).out.split("\n").filter(Boolean).map((l) => { const m = /^\d+ \w+ [0-9a-f]+\s+(-|\d+)\t(.+)$/.exec(l); return m ? { path: m[2], bytes: Number(m[1]) || 0 } : null; }).filter(Boolean) as { path: string; bytes: number }[];
+      const ls = git(wt, ["ls-tree", "-r", "-l", "-z", at, "--", ...(path ? [path] : [])]).out.split("\0").filter(Boolean).map((l) => { const m = /^\d+ \w+ [0-9a-f]+\s+(-|\d+)\t([\s\S]+)$/.exec(l); return m ? { path: m[2], bytes: Number(m[1]) || 0 } : null; }).filter(Boolean) as { path: string; bytes: number }[];
       const parts = new Map<string, { name: string; kind: "dir" | "file"; files: number; bytes: number }>();
       for (const f of ls) { const rel = path ? f.path.slice(path.length + 1) : f.path, seg = rel.split("/"), name = seg[0], kind = seg.length > 1 ? "dir" as const : "file" as const;
         const x = parts.get(name) ?? { name: glyph(name).slice(0, 120), kind, files: 0, bytes: 0 }; x.files++; x.bytes += f.bytes; parts.set(name, x); }

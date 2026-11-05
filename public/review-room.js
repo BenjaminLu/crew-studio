@@ -787,7 +787,9 @@ const CHAPTER = { calls: ["Every call: request, response, transaction", "每個�
 const DIR_CHAPTER = { what: ["What this directory is", "這個目錄是什麼"], modules: ["Its parts, one by one", "它的組成，一個一個看"], talks: ["How the parts compose", "各部分怎麼組在一起"], sequence: ["How data flows through it", "資料怎麼流過它"], entry: ["Where to start reading", "從哪裡開始讀"] };
 const chapterName = (id) => (CUR.kind === "dir" && DIR_CHAPTER[id] ? TL(...DIR_CHAPTER[id]) : CHAPTER[id] ? TL(...CHAPTER[id]) : "");
 /** the chapters' order (src/domain/review-room.ts CHAPTERS): a lesson is shown in it */
-const CHAPTER_ORDER = ["what", "modules", "talks", "decisions", "change", "lifecycle", "sequence", "calls", "reviewers", "roads", "watch", "questions"];
+const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "calls", "reviewers", "roads", "watch", "questions"];
+/** a directory's lesson's order (src/domain/review-room.ts DIR_CHAPTERS): what it is, its parts, how they compose and flow, where to start */
+const DIR_CHAPTER_ORDER = ["what", "modules", "talks", "sequence", "entry", "lifecycle", "watch", "questions"];
 const TYPE_LABEL = { svg: ["drawn by the tutor, checked by Studio", "導師畫的圖，Studio 檢查過"], calls: ["every call", "每個呼叫"], arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
 const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
 // ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
@@ -869,7 +871,7 @@ function scenesOf(r) {
     if (t.studio) { const [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action]; out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: TL(en, zh), question: null, visuals: turnBoard, points: claims, questions: [] }); continue; }
     // the tutor's own scenes: each its picture and its few points; the answer itself is in the transcript
     if ((t.status === "done" || t.status === "running") && t.scenes?.length) {
-      const used = new Set(t.scenes.map((s) => s.picture)), rank = (s) => (CHAPTER_ORDER.includes(s.chapter) ? CHAPTER_ORDER.indexOf(s.chapter) : -1);
+      const ORDER = r.subject?.kind === "dir" ? DIR_CHAPTER_ORDER : CHAPTER_ORDER, used = new Set(t.scenes.map((s) => s.picture)), rank = (s) => (ORDER.includes(s.chapter) ? ORDER.indexOf(s.chapter) : -1);
       const ordered = t.action === "teach" ? t.scenes.map((s, m) => [s, m]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]) : t.scenes.map((s, m) => [s, m]);
       ordered.forEach(([s, m], o) => { const pic = r.board.find((b) => b.id === s.picture), last = o === t.scenes.length - 1;
         out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, chapter: s.chapter || null, skip: !!s.skip, pic: pic || null, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
