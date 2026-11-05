@@ -1679,6 +1679,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (k.kind === "pr" && room) save(k, { schema: 1, run: room.run, card: k.id, node: room.node, head: room.head, base: room.base, turns: [], board: [], sources: [], check: { questions: [] },
         subject: room.subject, pr: room.pr, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished,
         ...(room.autoTeach != null ? { autoTeach: room.autoTeach } : {}), ...(room.autoTaught?.length ? { autoTaught: room.autoTaught.map(({ skipped: _s, ...x }) => x) } : {}) });
+      // a merge card's or a branch's room keeps its switch and the heads it already analysed by itself (a reset never pays twice)
+      else if (room && s && (room.autoTeach != null || room.autoTaught?.length)) save(k, { ...fresh(k, s), ...(room.autoTeach != null ? { autoTeach: room.autoTeach } : {}), ...(room.autoTaught?.length ? { autoTaught: room.autoTaught.map(({ skipped: _s, ...x }) => x) } : {}) });
       const run = s?.run ? engine.get(s.run.id) : null, node = run?.def.nodes.find((n: any) => n.id === s!.node?.id);
       const entry = { schema: 1, card: k.id, by: String(by ?? "captain").slice(0, 80), at, moved };
       if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-reset", { head: s!.head, data: entry } as any);
