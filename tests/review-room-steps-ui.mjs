@@ -77,6 +77,10 @@ async function open(width, room, o = {}) {
   const S = { posts: [] };
   await ctx.route(/\/api\/review-room\/SC-81(\?open=1)?$/, (r) => r.fulfill({ json: room }));
   await ctx.route(/\/api\/review-room\/SC-81\/(lesson|turn|arrive)$/, (r) => { S.posts.push(r.request().url()); r.fulfill(/lesson$/.test(r.request().url()) ? { json: { visited: [] } } : { status: 409, json: { error: "confirm", code: "confirm_required", offer: OFFER } }); });
+  // the vendor's voice: a stand-in audio the test moves along by hand (window.__audio)
+  if (o.vendor) { await ctx.addInitScript(() => { try { localStorage.setItem("crew.room.voice", "vendor"); } catch {}
+      window.Audio = function (src) { this.src = src; this.currentTime = 0; this.duration = 0; window.__audio = this; this.play = async () => {}; this.pause = () => {}; }; });
+    await ctx.route(/\/api\/review-room\/SC-81\/speech$/, (r) => r.fulfill({ json: { src: "data:audio/mpeg;base64,AAAA" } })); }
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e.message}`));
   await p.goto(`${base}/#/room/SC-81`); await p.waitForSelector("#view .rr-room", { timeout: 15000 }); await p.waitForTimeout(400);
   return { ctx, p, S };
@@ -159,6 +163,13 @@ try {
     await p.$eval("[data-playbar] [data-play]", (e) => e.click()).catch(() => {}); await p.waitForTimeout(150); const other = await illus(p, "t3"); await p.$eval("[data-playbar] [data-play]", (e) => e.click()).catch(() => {});
     ok(other?.of === "all", "playing one scene changes no other card's step", JSON.stringify(other));
     ok(last?.of === "3" && /Read it on GitHub/.test(last.detail || ""), "the play bar's last dot picks the last step: its picture and detail show", JSON.stringify(last));
+    await ctx.close(); }
+  // ---------- the vendor's voice played from a dot picked before: at its end the illustration is the last step, not that dot's ----------
+  { const { ctx, p } = await open(1440, { ...ROOM(), offer: { ...OFFER, voice: "openai" } }, { vendor: true }); await fly(p, "t1");
+    await p.$eval('[data-playbar] [data-dot$=":1"]', (e) => e.click()).catch(() => {}); await p.waitForTimeout(200); const picked = await illus(p, "t1");
+    await p.$eval("[data-playbar] [data-play]", (e) => e.click()).catch(() => {}); await p.waitForFunction(() => !!window.__audio, null, { timeout: 3000 }).catch(() => {});
+    await p.evaluate(() => { const a = window.__audio; if (!a) return; a.duration = 10; a.currentTime = 10; a.ontimeupdate?.(); }); await p.waitForTimeout(250); const end = await illus(p, "t1");
+    ok(picked?.of === "1" && end?.of === "3" && /Read it on GitHub/.test(end.detail || ""), "the vendor's voice started after a dot was picked: when it reaches the last point the illustration shows the last step, not the dot picked before", JSON.stringify({ picked: picked?.of, end: end?.of }));
     await ctx.close(); }
   // ---------- an older answer: code is never the picture; with no pull request on GitHub its link opens the citation panel ----------
   { const { ctx, p } = await open(1440, ROOM(null)); await fly(p, "t3");

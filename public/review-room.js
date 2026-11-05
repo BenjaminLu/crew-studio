@@ -1076,7 +1076,8 @@ async function playVendor(card, sc) {
 /** play the scene: from where it stands, or from its start when it is already whole (from: 0 replays it) */
 function play(card, sc, from) {
   const k = revealOf(card, sc), start = from ?? (k >= sc.points.length ? 0 : Math.max(0, k - 1));
-  stopPlay(); RR.playing = card; RR.playKey = sc.key; RR.reveal.set(`${card}/${sc.key}`, start);
+  // playing takes over from a step picked before (a dot, a number): the step shown is the one being read, on either voice
+  stopPlay(); RR.playing = card; RR.playKey = sc.key; RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, start);
   const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t && !sc.studio) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
   advance(card);
 }
