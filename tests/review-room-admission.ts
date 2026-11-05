@@ -186,6 +186,9 @@ try {
         e.deps.refreshUsable = async () => { e.deps.refreshUsable = realU; r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); };
         try { await room.translate(card.id, { lang: "zh-TW", confirm: "x" }, "captain"); } catch (x) { refusalT = x; } e.deps.refreshUsable = realU;
         ok(done && refusalT?.code === "confirm_required" && refusalT.offer?.provider === "claude", "a translation's tutor is read after what is usable is refreshed: a pick changed meanwhile asks to confirm again, never runs on the old confirmation", JSON.stringify([refusalT?.code, refusalT?.offer?.provider])); }
+      // from the review: starting the room over keeps the tutor the captain picked for it
+      { r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); await room.settle(card.id); room.reset(card.id, "captain"); const vr: any = room.view(card.id);
+        ok(vr.turns.length === 0 && vr.tutorChoice?.source === "room" && vr.offer?.provider === "claude", "started over, a room keeps the tutor the captain picked for it", JSON.stringify(vr.tutorChoice)); }
       r0.setTutor(card.id, null, "captain"); delete e.deps.usableModels; } }
 } finally { for (const r of e.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await e.cancel(r.id, "cleanup"); h.stop(); rmSync(repo, { recursive: true, force: true }); }
 end();
