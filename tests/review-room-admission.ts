@@ -175,6 +175,17 @@ try {
       r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); const codexTurn = (room.view(card.id) as any).turns.filter((x: any) => x.provider === "codex" && x.status === "done").at(-1);
       let vref: any = null; try { await room.speech(card.id, `t${codexTurn.n}`); } catch (x) { vref = x; }
       ok(vref?.code === "no_voice" && /vendor changed/.test(vref.message), "a scene a codex tutor answered is not narrated by the vendor once the room's tutor is claude: the voice never goes to another vendor", vref?.message);
+      // from the review: a pick whose independence is unknown (an author outside Studio) still gets its receipt, claiming nothing
+      { const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]), { OperatingRules } = await import("../src/operating-rules"), rules = new OperatingRules(h.data).section("p");
+        const texts = ROOM_SKILLS.map((k) => ({ sha256: k.sha256, text: readFileSync(join(import.meta.dir, "..", k.ref), "utf8") })), sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
+        let got = "issued"; try { e.deps.instructionReceipt(x, "reviewer", sys, { id: "claude", model: "x-1", reasoningEffort: null }, { seat: TUTOR_SEAT, texts, rules, member: { provider: "claude", model: "claude-x", effort: null, independence: "unknown", crew: false } }); } catch (err: any) { got = String(err?.message ?? err); }
+        ok(!/malformed/.test(got), "a picked tutor whose independence from the author is unknown is admitted (its receipt claims no independence)", got); }
+      // from the review: a translation runs on the tutor the captain confirmed; a pick changed while it was admitted asks again
+      { r0.setTutor(card.id, null, "captain"); const realU = e.deps.refreshUsable; let refusalT: any = null;
+        const room0: any = room.view(card.id), done = room0.turns.some((t: any) => t.status === "done" && !t.studio);
+        e.deps.refreshUsable = async () => { e.deps.refreshUsable = realU; r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); };
+        try { await room.translate(card.id, { lang: "zh-TW", confirm: "x" }, "captain"); } catch (x) { refusalT = x; } e.deps.refreshUsable = realU;
+        ok(done && refusalT?.code === "confirm_required" && refusalT.offer?.provider === "claude", "a translation's tutor is read after what is usable is refreshed: a pick changed meanwhile asks to confirm again, never runs on the old confirmation", JSON.stringify([refusalT?.code, refusalT?.offer?.provider])); }
       r0.setTutor(card.id, null, "captain"); delete e.deps.usableModels; } }
 } finally { for (const r of e.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await e.cancel(r.id, "cleanup"); h.stop(); rmSync(repo, { recursive: true, force: true }); }
 end();

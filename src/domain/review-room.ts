@@ -1250,7 +1250,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     } catch (e) { held?.release(); throw e; }
     const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
     // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
-    const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level, crew: !tutor.outside } } : {}) };
+    const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level ?? "unknown", crew: !tutor.outside } } : {}) };
     const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
     let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
     return { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor };
@@ -1917,11 +1917,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const room0 = load(k); const todo = room0 ? untranslated(room0, lang) : []; if (!todo.length) return this.view(id);
       if (live.has(k.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
       const s = subjectOf(k); if (!s.run || !s.node) throw noHost();
+      // what is usable is read first: the tutor confirmed is the one admitted (a pick changed meanwhile asks again)
+      try { await engine.deps.refreshUsable?.(); } catch {}
       const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
+      const tutor = tutorFor(k, s); if (tutor.pick.provider !== offer.provider || (tutor.pick.model ?? null) !== (offer.model ?? null)) throw refuse("The room's tutor changed: confirm again / 審查室的導師變了：請再確認一次", "confirm_required", { offer });
       const hash = sha(`${offer.hash}:translate`).slice(0, 16), estimate = translateEstimate(room0);
       if (room0!.translateOk?.hash !== hash && a.confirm !== hash) throw refuse(`Translating this room's explanation is a small paid round on ${offer.provider} ${offer.model ?? "(default model)"} (~${estimate ?? "?"}): confirm it once / 翻譯這間房間的解說是一次小的付費回合（約 ${estimate ?? "?"}），請確認一次`, "confirm_required", { offer: { ...offer, translate: { hash, estimate, lang } } });
-      try { await engine.deps.refreshUsable?.(); } catch {}
-      const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, tutorFor(k, s));
+      const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, tutor);
       if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
       const room = load(k); if (!room || !untranslated(room, lang).length) { held?.release(); throw refuse("The room was started over while the translation was being admitted / 審查室在翻譯開始前被清空了", "reset"); }
       room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);

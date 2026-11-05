@@ -1087,12 +1087,14 @@ function tutorButton(r) {
   const text = o?.error ? T(`Tutor: ${pick ? `${pick.provider} · ${pick.model}` : "none"} — cannot run now`, `導師：${pick ? `${pick.provider} · ${pick.model}` : "無"}：現在不能用`)
     : T(`Tutor: ${o?.provider} · ${o?.model ?? "default model"} — ${o?.independence?.en ?? ""}`, `導師：${o?.provider} · ${o?.model ?? "預設模型"}：${o?.independence?.zh ?? ""}`);
   return h("button", { type: "button", class: `rr-pill rr-tutor${o?.error ? " bad" : o?.independence?.level === "same" ? " warn" : ""}`, "data-tutor-open": id, "data-independence": o?.independence?.level ?? null, "data-tutor-source": src, "aria-expanded": String(RR.tutorMenu === id), "aria-haspopup": "dialog", title: o?.error || text,
-    onclick: () => { RR.tutorMenu = RR.tutorMenu === id ? null : id; rerender(); } }, text);
+    onclick: () => { const open = RR.tutorMenu !== id; RR.tutorMenu = open ? id : null; rerender();
+      // the keyboard follows: into the picker when it opens, back to the tutor's button when it closes
+      requestAnimationFrame(() => document.querySelector(open ? "[data-tutor-menu] [data-tutor-pick]:not([disabled])" : "[data-tutor-open]")?.focus({ preventScroll: true })); } }, text);
 }
 async function pickTutor(id, pick) {
   RR.posting.add(`${id}/tutor`); RR.err.delete(id); rerender();
   try { RR.rooms.set(id, await postJ(`/api/review-room/${enc(id)}/tutor`, { pick })); RR.tutorMenu = null; dropPasteOffers(); } catch (e) { RR.err.set(id, e.message); }
-  finally { RR.posting.delete(`${id}/tutor`); redraw(id); }
+  finally { RR.posting.delete(`${id}/tutor`); redraw(id); if (!RR.tutorMenu) requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); }
 }
 /** the picker: Studio's default (or Automatic), then every model this machine has; one that cannot run or is not verified is
  *  shown disabled with why (never swapped for another by itself); each says how independent it is from the change's author */
@@ -1360,7 +1362,9 @@ async function resetRoom(card) {
 function tutorDefault() {
   const list = RR.list?.tutors || [], cur = RR.list?.settings?.tutor || null, val = cur ? `${cur.provider}|${cur.model}` : "auto";
   return h("label", { class: "rr-imgopt rr-tutordefault" }, h("span", {}, T("Studio's default tutor for every room (a room can pick its own):", "每間審查室的預設導師（房間可以自己選）：")),
-    h("select", { class: "input", "data-tutor-default": "", onchange: async (e) => { const v = e.target.value; try { const st = await postJ("/api/review-room/settings", { tutor: v === "auto" ? null : { provider: v.split("|")[0], model: v.split("|").slice(1).join("|") } }); if (RR.list) RR.list.settings = st; dropPasteOffers(); PR.err.delete("home"); } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } },
+    h("select", { class: "input", "data-tutor-default": "", onchange: async (e) => { const v = e.target.value; try { const st = await postJ("/api/review-room/settings", { tutor: v === "auto" ? null : { provider: v.split("|")[0], model: v.split("|").slice(1).join("|") } }); if (RR.list) RR.list.settings = st; dropPasteOffers(); PR.err.delete("home");
+          // every room kept on this page offered the old default: each is read again when it is next opened
+          for (const [rid, rr] of [...RR.rooms]) if (!rr?.snapshot && rr?.running == null) RR.rooms.delete(rid); } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } },
       h("option", { value: "auto", selected: val === "auto" }, T("Automatic: the most independent model Studio can run", "自動：Studio 能跑、最獨立的模型")),
       list.map((m) => h("option", { value: `${m.provider}|${m.model}`, selected: val === `${m.provider}|${m.model}`, disabled: !m.runnable, "data-tutor-option-held": m.held ? "" : null }, `${m.provider} · ${m.model}${m.held ? T(` (cannot be picked: ${m.held})`, `（不能選：${m.held}）`) : ""}`))));
 }
@@ -1517,8 +1521,9 @@ addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
   const card = S.route.arg, t = e.target;
   // the lesson board's own keys first (a chapter on or back, ask here, zoom, Escape closes what it opened)
-  if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && BOARD.keydown(e, card)) return;
-  if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.tutorMenu === card) RR.tutorMenu = null; else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else if (FS.card === card) { e.preventDefault(); exitFs(); return; } else return; e.preventDefault(); rerender(); return; }
+  // the board's keys are off while the tutor picker is open (its Escape closes the picker, its arrows stay in it)
+  if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && RR.tutorMenu !== card && BOARD.keydown(e, card)) return;
+  if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.tutorMenu === card) { RR.tutorMenu = null; e.preventDefault(); rerender(); requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); return; } else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else if (FS.card === card) { e.preventDefault(); exitFs(); return; } else return; e.preventDefault(); rerender(); return; }
   if (t?.closest?.("input,textarea,select,[contenteditable],[role=dialog]") || RR.zoom) return;
   if ((e.key === "f" || e.key === "F") && !e.repeat && document.querySelector("[data-fs-toggle]")) { e.preventDefault(); if (FS.card === card) exitFs(); else enterFs(card); }
 });
