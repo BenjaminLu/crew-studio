@@ -1140,8 +1140,8 @@ function sceneCard(r, scenes, j, W) {
         sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
         // what arriving starts (on this Mac only: a phone reads the room and starts nothing)
         sc.welcome && !r.snapshot && r.arrive && BOARD.state.viewer !== "phone" ? (r.arrive.error ? h("p", { class: "rr-err", "data-arrive": "none" }, T(`Studio cannot start the full analysis by itself: ${r.arrive.error}`, `Studio 無法自動開始完整分析：${r.arrive.error}`))
-          : h("p", { class: "rr-paste-offer", "data-arrive": "on" }, T(`Arriving here starts the full analysis by itself: one paid model round on ${r.arrive.provider} · ${r.arrive.model ?? "default model"}${r.arrive.effort ? ` (${r.arrive.effort})` : ""}${r.arrive.createsHost ? ", after creating this pull request's host Task and its tutor's staffing" : ""}. The tutor only reads the code; turn it off in the transcript drawer.`,
-            `進到這裡就會自動開始完整分析：在 ${r.arrive.provider} · ${r.arrive.model ?? "預設模型"}${r.arrive.effort ? `（${r.arrive.effort}）` : ""} 上付費一回合${r.arrive.createsHost ? "，會先建立承載這個 pull request 的任務和導師的人員配置" : ""}。導師只讀程式碼；可在紀錄抽屜裡關掉。`))) : null,
+          : h("p", { class: "rr-paste-offer", "data-arrive": "on", "data-arrive-images": r.arrive.images ? "on" : "off" }, T(`Arriving here starts the full analysis by itself: one paid model round on ${r.arrive.provider} · ${r.arrive.model ?? "default model"}${r.arrive.effort ? ` (${r.arrive.effort})` : ""}${r.arrive.createsHost ? ", after creating this pull request's host Task and its tutor's staffing" : ""}; ${r.arrive.images ? "generated pictures are on in this room: the tutor may ask for up to two, and an opening picture is made once, each a paid image job" : "no generated pictures"}. The tutor only reads the code; turn it off in the transcript drawer.`,
+            `進到這裡就會自動開始完整分析：在 ${r.arrive.provider} · ${r.arrive.model ?? "預設模型"}${r.arrive.effort ? `（${r.arrive.effort}）` : ""} 上付費一回合${r.arrive.createsHost ? "，會先建立承載這個 pull request 的任務和導師的人員配置" : ""}；${r.arrive.images ? "這間房間開了生成圖片：導師可能要求最多兩張，另外會產生一次開場圖，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼；可在紀錄抽屜裡關掉。`))) : null,
         sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
           T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
         sc.welcome && !answers ? h("p", { class: "faint rr-boardhint", "data-board-empty": "" }, T("Ask below. Each answer becomes a block on this board: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, played one at a time.", "在下方提問。每個回答會在這塊白板上變成一個區塊：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個播放。")) : null,
@@ -1399,7 +1399,9 @@ function header(r) {
 // list (for a room or any page) is what marks it stale
 addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room" && !S.route.arg)) RR.list.fresh = false;
   // back in a room whose turn still runs (the poll stopped when the captain left): read it now, and the poll follows it again
-  const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) load(id); });
+  // back in any live room (the room list, a link): read it again as an arrival (?open=1), so a head that moved since (a pull
+  // request is read again on GitHub then) is seen, and its analysis starts by itself when auto-teach is on
+  const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && !r.snapshot && !r.error) load(id, r.running == null); });
 // ---------- full screen: only the board (docs/units/review-room.md 41). The Fullscreen API goes to #view, the stable container
 // the board is drawn in: every redraw replaces the board itself, and an element taken out of the page drops out of full
 // screen. body.rr-fs is the layout (only the board, the whole window) while the request is pending, when it is refused (said
@@ -1497,7 +1499,10 @@ function arriveIn(id, r) {
   // only this Mac's captain: who is looking is known once the server said so (GET /api/remote/me; the board redraws then)
   const a = r?.arrive; if (!a?.plan || a.error || r.snapshot || !r.open || r.running != null || !onRoom(id) || BOARD.state.viewer !== "desktop") return;
   const key = `${id}@${r.head}@${a.plan}`; if (RR.arrived.has(key)) return; RR.arrived.add(key);
-  postJ(`/api/review-room/${enc(id)}/arrive`, { lang: uiLang(), plan: a.plan }).then((out) => { if (out?.room?.card) RR.rooms.set(id, out.room); })
+  postJ(`/api/review-room/${enc(id)}/arrive`, { lang: uiLang(), plan: a.plan }).then((out) => { if (out?.room?.card) RR.rooms.set(id, out.room);
+      // what arriving starts changed since the page read it (a new tutor, pictures, a host): nothing started, and nothing is sent
+      // again by itself; the welcome shows the new terms, and the captain starts it with "Teach me" (confirmed as usual)
+      if (out?.plan?.plan) { RR.arrived.add(`${id}@${r.head}@${out.plan.plan}`); RR.err.set(id, T("What arriving starts has changed (on the welcome): nothing started. Press “Teach me” to start it.", "進來時要開始的內容變了（見開場）：什麼都沒開始。按「教我」才會開始。")); } })
     .catch((e) => RR.err.set(id, e.message)).finally(() => { redraw(id); schedule(); });
 }
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
