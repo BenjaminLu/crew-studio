@@ -333,7 +333,11 @@ const TOOLRES: [string, any][] = [];
       ok(bt?.action === "teach" && bt.auto === true && bt.autoFrom === "arrival" && bt.head === uh, "arriving in a Task's branch room (its link on the Task page) starts its full analysis by itself", JSON.stringify([bt?.action, bt?.autoFrom, bt?.head === uh]));
       // a merge card's room with no file yet keeps its own switch (the drawer's switch works in every room)
       const sw: any = room.autoTeachFor(merge.id, false); room.autoTeachFor(merge.id, true);
-      ok(sw.autoTeach.room === false && sw.autoTeach.on === false, "every room has its own auto-teach switch, a merge card's room too", JSON.stringify(sw.autoTeach)); } }
+      ok(sw.autoTeach.room === false && sw.autoTeach.on === false, "every room has its own auto-teach switch, a merge card's room too", JSON.stringify(sw.autoTeach));
+      // from the review: a merge card's room started over keeps its switch and the heads it analysed by itself (no second paid lesson)
+      room.autoTeachFor(merge.id, false); await room.settle(merge.id); room.reset(merge.id, "captain"); const vr: any = room.view(merge.id, true);
+      room.autoTeachFor(merge.id, true); const vr2: any = room.view(merge.id, true);
+      ok(vr.turns.length === 0 && vr.autoTeach.room === false && vr2.arrive === null, "started over, a merge card's room keeps its switch and the heads it already analysed: arriving again on the same head starts nothing", JSON.stringify({ sw: vr.autoTeach, arrive: vr2.arrive })); } }
   globalThis.fetch = realFetch; H.stop();
 }
 
