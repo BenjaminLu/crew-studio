@@ -339,6 +339,17 @@ every answered question that is not 還沒懂 into its chapter as "↳ Folded in
 answer, its citations kept; the 還沒懂 ones stay on the board, and asking again on a folded place opens it again.
 Before / after shows the chapter's original text. "Only the chapters with questions" frames those and dims the rest.
 
+**Asking about any words selected.** Any words on the board can be selected with the mouse (a drag that starts on words;
+a drag that starts on the paper, a box or a line still pans) or, on a touch screen, with the selection's handles: an
+answer's points, a lesson chapter's steps and sentences, a transition's explanation, an answer card's text, the welcome's
+lines, and the play bar's caption (asked about on the scene it reads). A small "Ask about this" (`[data-sel-ask]`) then sits by
+the selection (inside the full-screen board in full screen); it opens the board's ask popover on those words ("Ask about the
+words you selected: …"), with its chips and a question of one's own. The question is a board question like any other: a
+`selection` anchor (`{scene, kind: "selection", part: "sel:<hash>", text}`, the scene any finished one of the room, the
+welcome `t0` too; an answer that is itself a card, a scene not there or no words are refused), confirmed like any paid
+round, its card on that scene's region, the words fenced for the tutor ("what the captain selected …"), kept as a locator and
+read as a finding. A phone's popover says to ask on the computer, as for any board question.
+
 Threads, their cards and versions, understood and folded state and the chapters read are kept in the room (`lesson`); each
 place is stored as a text locator of the shared schema (docs/check-contract.md) whose section is its stable key (chapter /
 scene / board item # the part clicked), and the room's open questions read as findings (`GET /api/review-room/<room>/findings`,
@@ -873,6 +884,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "Studio's default is refused …", "a scene a codex tutor answered is not narrated …"; review-room-board-only-ui "the
     header's tutor opens a picker …", "picking a model sets this room's tutor …", "a picked tutor that cannot run is shown as
     such …".
+45. Any words selected on the board can be asked about: "Ask about this" by the selection (in full screen too, and on a
+    touch screen) opens the board's ask popover on them; the question is a board question anchored to the selected words on
+    any finished scene (an answer, the welcome, a chapter, the caption's scene); a drag on words selects, a drag on paper
+    still pans. — review-room-board "words selected on an answer … are a place …", "the welcome's words and a chapter's words
+    can be asked about too …", "a selection's question reads as a finding …"; review-room-board-only-ui "selecting words of
+    an answer shows “Ask about this” …", "it opens the board's ask popover on those words …", "the question waits for its
+    confirmation …", "words selected in the caption …", "a mouse drag across words selects them …", "a drag on the paper pans
+    the board as before …", "in full screen too …", "on a phone a selection …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 

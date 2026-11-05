@@ -37,7 +37,7 @@ fetch("/api/remote/me").then((x) => x.json()).then((m) => { if (m?.kind === "pho
 const deskNote = () => h("p", { class: "rb-popnote", "data-ask-desktop": "" }, T("Ask on the desktop: a phone reads the room.", "在電腦上問：手機只能閱讀。"));
 /** an anchor's stable key, as Studio keeps it (src/domain/review-room.ts anchorKey) */
 const akey = (chapter, scene, kind, item, part) => `${chapter}/${scene}/${kind}${item ? `/${item}` : ""}${part ? `#${part}` : ""}`;
-const kindLabel = { sentence: ["a sentence", "一句話"], risk: ["a risk", "風險"], node: ["a box of the drawing", "圖上的框"], edge: ["a line of the drawing", "圖上的線"], transition: ["a transition", "狀態轉換"], tx: ["a field the transaction writes", "交易寫入的欄位"], field: ["a field of the call", "呼叫的欄位"], call: ["a call", "呼叫"], row: ["a row", "一列"] };
+const kindLabel = { sentence: ["a sentence", "一句話"], risk: ["a risk", "風險"], node: ["a box of the drawing", "圖上的框"], edge: ["a line of the drawing", "圖上的線"], transition: ["a transition", "狀態轉換"], tx: ["a field the transaction writes", "交易寫入的欄位"], field: ["a field of the call", "呼叫的欄位"], call: ["a call", "呼叫"], row: ["a row", "一列"], selection: ["the words you selected", "你選取的文字"] };
 
 // ---------- a lesson's places: sentences, a drawing's parts, rows ----------
 /** a point's text as sentences, each with where it starts and ends; a citation stays with the sentence it closes */
@@ -158,8 +158,57 @@ function sceneRegionEl(card, r, x, j, ctx) {
     h("div", { class: "rb-rbody", style: `width:${W}px` }, sceneCard(r, ctx.scenes, j, W),
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, num), h("div", { class: "rb-mt" }, label), h("div", { class: "rb-mg", "data-map-gist": "" }, plain(x.title || "")),
         h("div", { class: "rb-mq" }, st === "running" ? h("span", { class: "rb-badge q" }, T("being written", "撰寫中")) : st !== "done" ? h("span", { class: "rb-badge q" }, st === "interrupted" ? T("interrupted", "中斷") : T("failed", "失敗")) : h("span", { class: "rb-badge ok" }, T(`${x.points.length} point${x.points.length === 1 ? "" : "s"}`, `${x.points.length} 點`))))),
-    h("div", { class: "rb-tlayer", "data-tlayer": key }));
+    // the questions asked about words selected on this scene: their cards beside it, as a lesson's
+    h("div", { class: "rb-tlayer", "data-tlayer": key }, ctx.threads.filter((t) => t.anchor.scene === sceneKey(key)).flatMap((t) => threadEls(card, r, t, ctx)), pendingEls(card, r, sceneKey(key), ctx)));
 }
+/** a scene region's place key as Studio keeps it: a check (t3-quiz) is asked about as its turn's scene (t3) */
+const sceneKey = (key) => String(key).replace(/-quiz$/, "");
+// ---------- asking about any words selected on the board (a scene, a chapter, an answer's card, the caption) ----------
+/** a mouse pointer on words (not on paper, a box or a control): a drag there selects the text instead of panning the board */
+function onWords(e) {
+  if (e.pointerType === "touch" || e.button > 0 || B.space || !e.target.closest?.(".rb-rbody, .rb-card") || e.target.closest("button,a,input,select,textarea,summary,svg")) return false;
+  let node = null; try { const p = document.caretPositionFromPoint?.(e.clientX, e.clientY); node = p ? p.offsetNode : document.caretRangeFromPoint?.(e.clientX, e.clientY)?.startContainer; } catch {}
+  if (!node || node.nodeType !== 3 || !node.textContent.trim() || !node.parentElement?.closest(".rb-rbody, .rb-card")) return false;
+  const rg = document.createRange(); rg.selectNodeContents(node);
+  return [...rg.getClientRects()].some((q) => e.clientX >= q.left - 2 && e.clientX <= q.right + 2 && e.clientY >= q.top - 2 && e.clientY <= q.bottom + 2);
+}
+/** a short stable key for the words selected (the anchor's part): where they are is their scene, what they are is this */
+const selKey = (t) => { let x = 5381; for (const ch of t) x = ((x * 33) ^ ch.codePointAt(0)) >>> 0; return `sel:${x.toString(16)}`; };
+/** what the captain selected on the board, as a place to ask about: its scene (the region it is in, or the scene the caption reads),
+ *  its words, the citations next to them, and where on screen it ends; null when it is not text of a scene */
+function selectionPlace(card) {
+  const s = getSelection(); if (!s || s.isCollapsed || !s.rangeCount) return null;
+  const text = s.toString().replace(/\s+/g, " ").trim(); if (text.length < 2) return null;
+  const rg = s.getRangeAt(0), c0 = rg.commonAncestorContainer, el = c0.nodeType === 1 ? c0 : c0.parentElement;
+  if (!el || el.closest(".rb-pop, input, textarea, [contenteditable], .rr-dock, .rr-drawer")) return null;
+  const sh = B.shown.get(card), reg = el.closest(`[data-board-vp="${CSS.escape(card)}"] [data-region]`), cap = el.closest(`[data-playbar="${CSS.escape(card)}"] [data-caption]`);
+  const key = reg ? reg.dataset.region : cap ? sh?.scenes[sh.i]?.key : null; if (!key || key === "end") return null;
+  const x = sh?.scenes.find((y) => y.key === key); if (!x || (x.t && x.t.status !== "done")) return null;
+  const host = el.closest("li, p, .rb-card, .rr-point") || el, refs = [...new Set([...host.querySelectorAll("[data-cite]")].map((b) => b.dataset.cite))].slice(0, 4);
+  const rects = [...rg.getClientRects()].filter((q) => q.width || q.height), last = rects.at(-1) || rg.getBoundingClientRect();
+  const scene = sceneKey(key), clipped = text.slice(0, 300);
+  return { scene, text: clipped, refs, x: last.right, y: last.bottom, key: akey(x.chapter || (x.welcome ? "welcome" : x.studio ? "studio" : "answer"), scene, "selection", null, selKey(clipped)) };
+}
+/** the small "Ask about this" by the selection: outside the board's own drawing (a redraw would drop the selection), in the
+ *  full-screen element when there is one; it opens the board's ask popover on those words */
+const SEL = { el: null, t: 0 };
+function hideSelAsk() { SEL.el?.remove(); SEL.el = null; }
+function showSelAsk(card) {
+  const p = S.route?.name === "room" && S.route.arg === card ? selectionPlace(card) : null; if (!p) return hideSelAsk();
+  const r = RR.rooms.get(card); if (!r) return hideSelAsk();
+  if (!SEL.el) { SEL.el = h("button", { type: "button", class: "rb-selask", "data-sel-ask": "", onpointerdown: (e) => e.preventDefault(), onmousedown: (e) => e.preventDefault(),
+      onclick: (e) => { e.stopPropagation(); const q = SEL.el?._place; hideSelAsk(); if (q) askSelection(card, q); } }, T("Ask about this", "問這裡")); }
+  SEL.el._place = p; SEL.el.dataset.selAsk = p.scene; (document.fullscreenElement || document.body).append(SEL.el);
+  const w = SEL.el.offsetWidth || 120; SEL.el.style.left = `${Math.round(clamp(p.x - w / 2, 8, innerWidth - w - 8))}px`; SEL.el.style.top = `${Math.round(clamp(p.y + 8, 8, innerHeight - 48))}px`;
+}
+/** the selection asked about: the board's ask popover on those words, as a place of its scene (the answer anchored there) */
+function askSelection(card, p) {
+  try { getSelection()?.removeAllRanges(); } catch {}
+  B.pop = { card, key: p.key, anchor: { scene: p.scene, kind: "selection", part: p.key.split("#")[1], text: p.text }, refs: p.refs, x: p.x, y: p.y, text: "", selection: true };
+  B.focusKey.set(card, p.key); rerender(); requestAnimationFrame(() => document.querySelector(".rb-pop [data-pop-input]")?.focus({ preventScroll: true }));
+}
+document.addEventListener("selectionchange", () => { clearTimeout(SEL.t); SEL.t = setTimeout(() => { const card = S.route?.name === "room" ? S.route.arg : null; if (card && vpOf(card)) showSelAsk(card); else hideSelAsk(); }, 120); });
+addEventListener("hashchange", hideSelAsk);
 /** the notes: every question, its place, how many cards and its state; a click focuses it */
 function notesList(card, list, where) {
   const R = B.L.get(card)?.names || {};
@@ -493,6 +542,10 @@ function revealCard(card, which) {
 const ptrs = new Map();
 function pointerDown(card, e) {
   if (e.button > 0 || e.target.closest("input,select,textarea,.rb-zoom,.rb-tools,.rb-next,.rb-focusbar,.rb-pop")) return;
+  // on words, a mouse drag selects them (to ask about them); on paper, a box or a line it pans the board
+  B.words = onWords(e); if (B.words) { B.moved = false; return; }
+  // a press on paper drops a selection of words on this board (its "Ask about this" goes with it)
+  try { const s = getSelection(); if (s && !s.isCollapsed && vpOf(card)?.contains(s.anchorNode)) { s.removeAllRanges(); hideSelAsk(); } } catch {}
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); B.moved = false;
   if (ptrs.size === 1) B.drag = { card, x: e.clientX, y: e.clientY, c: { ...camOf(card) }, space: B.space };
   if (B.space) B.spaceUsed = true;
@@ -521,6 +574,8 @@ function wheel(card, e) {
 }
 function click(card, r, e) {
   if (B.moved) { e.preventDefault(); e.stopPropagation(); return; }
+  // a click that ends a selection of words: "Ask about this" by the selection asks, not the sentence under the pointer
+  if (selectionPlace(card)) { e.stopPropagation(); return; }
   const t = e.target, a = t.closest?.("[data-akey]"), ctl = t.closest?.("button,a,summary,input,select,textarea");
   if (a && (!ctl || ctl === a || ctl.matches?.("[data-akey]")) && !t.closest(".rb-pop")) { openPop(card, a, e.clientX, e.clientY); return; }
   // a card's empty area focuses its whole thread (as the prototype's)
@@ -568,7 +623,7 @@ function popover(card, r) {
     onclick: (e) => { e.stopPropagation(); ask(card, r, { anchor: p.anchor, key: p.key, refs: p.refs, chip: c, rel: c === "example" ? "side" : c === "rephrase" ? "version" : "below" }); } }, T(en, zh));
   const style = phone() ? "" : `left:${Math.round(clamp(p.x - 20, 12, innerWidth - 352))}px;top:${Math.round(p.y + 14)}px`;
   return h("div", { class: "rb-pop", role: "dialog", "aria-modal": "false", "aria-label": T("Ask about this place", "問這裡"), "data-board-pop": p.key, style },
-    h("div", { class: "rb-pq" }, T(`Ask: “${clip(p.anchor.text, 60)}”`, `問：「${clip(p.anchor.text, 60)}」`)),
+    h("div", { class: "rb-pq", ...(p.selection ? { "data-pop-selection": p.anchor.scene } : {}) }, p.selection ? T(`Ask about the words you selected: “${clip(p.anchor.text, 120)}”`, `問你選取的文字：「${clip(p.anchor.text, 120)}」`) : T(`Ask: “${clip(p.anchor.text, 60)}”`, `問：「${clip(p.anchor.text, 60)}」`)),
     h("div", { class: "rb-chips" }, POP.map(chip)),
     paid ? h("form", { class: "rb-popform", onsubmit: (e) => { e.preventDefault(); const q = (B.pop?.text || "").trim(); if (q) ask(card, r, { anchor: p.anchor, key: p.key, chip: "free", q: q.slice(0, 1000) }); } },
       h("input", { "data-pop-input": p.key, maxlength: 1000, value: p.text || "", placeholder: T("Or ask in your own words…", "或直接問…"), "aria-label": T("Your question about this place", "你對這裡的問題"), autocomplete: "off", oninput: (e) => { if (B.pop) B.pop.text = e.target.value; } }),
@@ -632,7 +687,8 @@ function view(r, scenes, i) {
     merged ? h("span", { class: "rb-seg", role: "group", "aria-label": T("Before or after tidying", "整理前或整理後") }, ["before", "after"].map((v) => h("button", { type: "button", "data-tidy-view": v, "aria-pressed": String((v === "before") === B.before.has(card)), onclick: () => { if (v === "before") B.before.add(card); else B.before.delete(card); rerender(); } }, v === "before" ? T("Before", "整理前") : T("After", "整理後")))) : null,
     live && r.followUps?.on ? h("label", { class: "rb-toolnote rb-agree" }, h("input", { type: "checkbox", "data-followups": "", checked: true, onchange: (e) => { if (!e.target.checked) lessonOp(card, { op: "consent", on: false }); } }), T(" Questions start right away", " 追問直接開始")) : null,
     lesson && !phone() ? h("button", { type: "button", class: "rb-btn ghost", "data-notes-toggle": "", "aria-pressed": String(notesOpen), onclick: () => { if (B.notes.has(card)) B.notes.delete(card); else B.notes.add(card); rerender(); } }, T(`Questions ${threads.length}`, `標註 ${threads.length}`)) : null);
-  const vp = h("div", { class: `rb-vp${B.only.has(card) ? " only" : ""}`, "data-board-vp": card, tabindex: "-1", onpointerdown: (e) => pointerDown(card, e), onwheel: (e) => wheel(card, e), onclick: (e) => click(card, r, e), onfocusin: (e) => focusIn(card, e), onscroll: (e) => { e.currentTarget.scrollTop = 0; e.currentTarget.scrollLeft = 0; } },
+  const vp = h("div", { class: `rb-vp${B.only.has(card) ? " only" : ""}`, "data-board-vp": card, tabindex: "-1", onpointerdown: (e) => pointerDown(card, e),
+    onmousedown: (e) => { if (!B.words && e.button === 0 && !e.target.closest("input,select,textarea,button,a,summary,[contenteditable],[data-akey],.rb-pop")) e.preventDefault(); }, onwheel: (e) => wheel(card, e), onclick: (e) => click(card, r, e), onfocusin: (e) => focusIn(card, e), onscroll: (e) => { e.currentTarget.scrollTop = 0; e.currentTarget.scrollLeft = 0; } },
     h("div", { class: `rb-plane${focus ? " focusing" : ""}${B.before.has(card) ? " before" : ""}`, "data-board-plane": card, "data-lod": lod, "data-focus": focus ? focus.n : null },
       (() => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("class", "rb-links"); s.setAttribute("data-board-links", ""); s.setAttribute("aria-hidden", "true"); return s; })(), regions));
   const curName = names[ctx.cur] || "";
