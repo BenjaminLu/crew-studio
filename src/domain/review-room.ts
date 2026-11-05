@@ -1700,8 +1700,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (room) startedOver.add(room); cache.delete(k.file); resetGen.set(k.id, (resetGen.get(k.id) ?? 0) + 1); statMemo.clear(); saving.delete(k.id); refreshing.delete(k.id);
       // a pull request's room is its file: a fresh one now, from the pull request as Studio last read it (its link to the Library kept)
       if (k.kind === "pr" && room) save(k, { schema: 1, run: room.run, card: k.id, node: room.node, head: room.head, base: room.base, turns: [], board: [], sources: [], check: { questions: [] },
-        subject: room.subject, pr: room.pr, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished,
+        subject: room.subject, pr: room.pr, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished, ...(room.tutor ? { tutor: room.tutor } : {}),
         ...(room.autoTeach != null ? { autoTeach: room.autoTeach } : {}), ...(room.autoTaught?.length ? { autoTaught: room.autoTaught.map(({ skipped: _s, ...x }) => x) } : {}) });
+      // the tutor the captain picked for this room stays: starting over is not a change of tutor
+      else if (room?.tutor && s) save(k, { ...fresh(k, s), tutor: room.tutor });
       const run = s?.run ? engine.get(s.run.id) : null, node = run?.def.nodes.find((n: any) => n.id === s!.node?.id);
       const entry = { schema: 1, card: k.id, by: String(by ?? "captain").slice(0, 80), at, moved };
       if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-reset", { head: s!.head, data: entry } as any);
