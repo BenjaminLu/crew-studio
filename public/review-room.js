@@ -309,7 +309,7 @@ function imageView(it) {
 function basisRow(card, it) { return it.basis === "illustration" ? h("div", { class: "rr-basis" }, h("span", { class: "rr-inference", "data-basis": "illustration" }, T("Not evidence", "不是證據"))) : it.basis === "inference" ? h("div", { class: "rr-basis" }, inferenceBadge()) : it.cites?.length ? h("div", { class: "rr-basis" }, it.cites.map((c) => citeChip(card, c.ref, c.ok))) : null; }
 function itemView(card, it, prev) {
   it = figIn(RR.rooms.get(card), it);
-  const head = h("div", { class: "rr-item-h" }, it.kind ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge", "data-type": it.type }, typeLabel(it.type)), h("b", {}, itemTitle(it)), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
+  const head = h("div", { class: "rr-item-h" }, KIND_LABEL[it.kind] ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge", "data-type": it.type }, typeLabel(it.type)), h("b", {}, itemTitle(it)), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
   let body;
   if (it.type === "mermaid") { const g = parseFlow(it.code), p = prev ? parseFlow(prev.code) : null; body = g ? h("div", { class: "rr-flow-wrap", "data-flow": it.id }, flowSvg(g, p, drawnOf(card, it), picBox())) : [h("p", { class: "faint" }, T("Diagram source (Studio draws flowcharts; this kind is shown as text)", "圖表原始碼（Studio 會畫 flowchart；這種圖以文字顯示）")), h("pre", { class: "rr-pre" }, it.code)]; }
   else if (it.type === "diff") body = [it.header ? h("p", { class: "faint" }, it.header) : null, diffPre(it.text)];
@@ -629,6 +629,9 @@ function svgFigureView(card, it) {
   if (svg) { svg.classList.add("rr-figsvg-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number); if (vb[2]) svg.style.maxWidth = `${Math.round(vb[2] * 1.2)}px`; }
   const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, tr = it.transitions || [];
   const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t?.cite?.ok && !quiet && !onBoard()) openCite(card, t.cite.ref); else rerender(); };
+  if (svg) for (const el of [...svg.querySelectorAll("[data-edge]")]) if (/^(path|line|polyline)$/.test(el.localName)) { const hit = el.cloneNode(false);
+    for (const a of ["data-edge", "data-cite", "marker-start", "marker-mid", "marker-end", "id", "stroke-dasharray"]) hit.removeAttribute(a);
+    hit.setAttribute("class", "rr-edge-hit"); hit.setAttribute("data-edge-hit", el.getAttribute("data-edge")); hit.setAttribute("fill", "none"); el.after(hit); }
   if (svg) { for (const el of svg.querySelectorAll("[data-edge]")) { const e = el.getAttribute("data-edge"), k = tr.findIndex((t) => t.edge === e), cite = el.getAttribute("data-cite");
       if (k >= 0) { el.classList.add("rr-pickable"); if (k === sel) el.classList.add("on"); asControl(el, () => pick(k, tr[k])); } else if (cite) { el.classList.add("rr-pickable"); asControl(el, () => { if (!onBoard()) openCite(card, cite); }); } }
     for (const el of svg.querySelectorAll("[data-node]")) { const id = el.getAttribute("data-node"), k = tr.findIndex((t) => t.to === id && t.from !== id); if (k >= 0) { el.classList.add("rr-pickable"); asControl(el, () => pick(k, tr[k], true)); } } }
@@ -904,7 +907,7 @@ function visualAt(r, sc, k) {
 const CODEISH = new Set(["code", "diff", "compare", "snippet"]);
 const isCode = (it) => !!it && CODEISH.has(it.type);
 /** the step a card is on: the point being read while it plays or is stepped through, else the step the captain picked (null: the whole card) */
-const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? null);
+const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? (RR.playing === card && RR.playKey === sc.key && sc.points.length ? sc.points.length - 1 : null));
 /** pick a step: the points up to it shown (as the play bar's dots do), its picture zoomed to what it is about */
 function pickStep(card, sc, m) { markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.explain.delete(card); RR.reveal.set(`${card}/${sc.key}`, m + 1); RR.step.set(`${card}/${sc.key}`, m); rerender(); }
 const stepBtn = (card, sc, m, cur) => h("button", { type: "button", class: `rr-stepn${cur === m ? " on" : ""}`, "data-step-pick": m + 1, "aria-pressed": String(cur === m), "aria-label": T(`Show step ${m + 1}`, `看第 ${m + 1} 步`), onclick: (e) => { e.stopPropagation(); pickStep(card, sc, m); } }, String(m + 1));
@@ -929,7 +932,10 @@ function zoomFocus() {
       const els = step ? q(`[data-step="${step[1]}"]`) : k.includes(">") ? [...q(`[data-edge="${CSS.escape(k)}"]`), ...q(`[data-elabel="${CSS.escape(k)}"]`), ...k.split(">").flatMap((id) => q(`[data-node="${CSS.escape(id)}"]`))] : q(`[data-node="${CSS.escape(k)}"]`);
       els.forEach((el) => all.add(el)); }
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const el of all) { try { const b = el.getBBox(); if (!b.width && !b.height) continue; x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.width); y1 = Math.max(y1, b.y + b.height); } catch {} }
+    const toRoot = (() => { try { return svg.getScreenCTM().inverse(); } catch { return null; } })();
+    for (const el of all) { try { const b = el.getBBox(); if (!b.width && !b.height) continue; const m = toRoot && el.getScreenCTM ? toRoot.multiply(el.getScreenCTM()) : null;
+      for (const [px, py] of [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]]) { const q = m ? new DOMPoint(px, py).matrixTransform(m) : { x: px, y: py };
+        x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); } } catch {} }
     if (!isFinite(x0)) continue;
     // at most about half again as near: the rest of the picture stays in sight around what the step is about
     const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number), pad = 28, w = Math.max(x1 - x0 + pad * 2, 200, (vb[2] || 0) * 0.7), hh = Math.max(y1 - y0 + pad * 2, 120, (vb[3] || 0) * 0.7), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
@@ -944,8 +950,8 @@ function explainFor(it, key, label) {
   return { key, label: lab, does: ex?.does || null, why: ex?.why || tr?.why || null, detail: tr?.detail || null, cites: [...(ex?.cites || []), ...(tr?.cite ? [tr.cite] : [])] };
 }
 /** the explanation of one connector: what this step does, why it is built this way; with nothing recorded, what the drawing has */
-function explainBox(card, it, key, label) {
-  const x = explainFor(it, key, label), name = /^step:(\d+)$/.test(key) ? T(`Step ${key.slice(5)}`, `第 ${key.slice(5)} 步`) : key.replace(">", " → ");
+function explainBox(card, it0, key, label) {
+  const it = figIn(RR.rooms.get(card), it0), x = explainFor(it, key, label), name = /^step:(\d+)$/.test(key) ? T(`Step ${key.slice(5)}`, `第 ${key.slice(5)} 步`) : key.replace(">", " → ");
   return h("div", { class: "rr-explain-body", "data-explain-edge": key },
     h("p", { class: "rr-explain-h" }, h("b", {}, name), x.label ? h("span", { class: "faint" }, ` · ${x.label}`) : null),
     x.does ? h("p", { "data-explain-does": "" }, h("span", { class: "rr-explain-k" }, T("What this step does", "這一步做什麼")), " ", x.does) : null,
@@ -1033,7 +1039,7 @@ function speak(text, done, fail, best = false) {
 }
 // a browser lists its voices late: the picker and the default voice follow when they arrive
 try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
-function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
+function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; RR.playKey = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
 /** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while
  *  one plays). A request playback no longer needs (paused, left, another mix) is cancelled, so Studio stops making it. */
 function kokoroClip(card, text) {
@@ -1091,7 +1097,7 @@ async function playVendor(card, sc) {
 /** play the scene: from where it stands, or from its start when it is already whole (from: 0 replays it) */
 function play(card, sc, from) {
   const k = revealOf(card, sc), start = from ?? (k >= sc.points.length ? 0 : Math.max(0, k - 1));
-  stopPlay(); RR.playing = card; RR.reveal.set(`${card}/${sc.key}`, start);
+  stopPlay(); RR.playing = card; RR.playKey = sc.key; RR.reveal.set(`${card}/${sc.key}`, start);
   const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t && !sc.studio) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
   advance(card);
 }
@@ -1276,7 +1282,7 @@ function sceneCard(r, scenes, j, W) {
     h("div", { class: `rr-scene${sc.quiz ? "" : " rr-steps"}` },
       h("figure", { class: "rr-visual", "data-visual": sc.quiz ? "quiz" : v?.id || "", "data-illustration-of": sc.quiz ? null : cur != null ? cur + 1 : "all", "data-zoom-focus": focus.length ? focus.join(",") : null, onclick: sc.quiz ? null : edgeClick(card, sc, v) }, pic,
         sc.quiz ? null : stepDetail(sc, cur), sc.quiz ? null : explainPop(card, r, sc, v), sc.quiz ? null : codeRefs(card, r, codes),
-        pics.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, pics.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
+        pics.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, pics.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, KIND_LABEL[b.kind] ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
       h("div", { class: "rr-points" },
         sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n && first ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
         sc.t && sc.t.status !== "done" && first ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
@@ -1305,7 +1311,7 @@ function playBar(r, scenes, i) {
   const replay = h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay"));
   if (sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" && RR.playing !== card && k >= n)
     return h("div", { class: "rb-play mini", "data-playbar": card, role: "group", "aria-label": T("Playback", "播放") }, h("div", { class: "rr-playbar" }, playBtn, replay, h("span", { class: "rb-play-l" }, T("Play this chapter", "播放這一章")), voicePicker(r)));
-  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
+  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.step.set(`${card}/${sc.key}`, m - 1); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
   return h("div", { class: "rb-play", "data-playbar": card, role: "group", "aria-label": T("Captions and playback", "字幕與播放") },
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),
     h("div", { class: "rr-playbar" },
