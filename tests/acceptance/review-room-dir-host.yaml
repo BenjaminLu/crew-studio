@@ -1,0 +1,19 @@
+# The review room's directory host Task (internal): made only by the review room, on the captain's first confirmed paid turn (or
+# arrival or paste, auto-teach on) in the room of a GitHub directory (docs/units/review-room.md, "Subjects"; driven end to end
+# by tests/review-room-directory.ts).
+schema: 2
+workflow: review-room-dir-host
+pin: { version: 1, sha256: "13c35c8f0bef288ce8abb6faf66ce563d19e39eba5331e9cdccdce537735cec7" }   # bun scripts/acceptance/pin.ts review-room-dir-host
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: internal
+    covers: "the board's workflow list does not offer it and the start route refuses it: only the review room makes a directory host Task"
+    how: internal
+    board_refusal: { status: 409, error: "internal or retired" }
