@@ -332,8 +332,11 @@ try {
       "the question waits for its confirmation in a card on that answer, then goes as a board question anchored to the selected words", JSON.stringify({ pend, sent: S.posts.at(-1) }));
     // the caption's words too: their scene is the one the play bar reads
     await tap(p, "[data-playbar] [data-replay]"); await p.waitForTimeout(150); await tap(p, "[data-playbar] [data-play]"); await p.waitForTimeout(100);
-    const cap = await selectIn(p, "[data-playbar] [data-caption-text]", "cents"); await p.waitForTimeout(350); const cb = await selBtn(p);
-    ok(cap === "cents" && cb?.scene === "t1", "words selected in the caption are asked about on the scene it reads", JSON.stringify({ cap, cb }));
+    // paused where it is (the voice stub reads fast), then the first word the caption shows
+    await p.evaluate(() => document.querySelector('[data-playbar] [data-play][aria-pressed="true"]')?.click()); await p.waitForTimeout(150);
+    const word = await p.$eval("[data-playbar] [data-caption-text]", (e) => e.textContent.trim().split(/\s+/)[0] || "").catch(() => "");
+    const cap = await selectIn(p, "[data-playbar] [data-caption-text]", word); await p.waitForTimeout(350); const cb = await selBtn(p);
+    ok(!!word && cap === word && cb?.scene === "t1", "words selected in the caption are asked about on the scene it reads", JSON.stringify({ cap, cb }));
     // a drag on words selects them and leaves the camera; a drag on paper pans and selects nothing
     await p.evaluate(() => { getSelection().removeAllRanges(); const b = document.querySelector('[data-playbar] [data-play][aria-pressed="true"]'); if (b) b.click(); }); await p.waitForTimeout(200); await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(700);
     const w = await p.evaluate(() => { const bar = document.querySelector("[data-playbar]")?.getBoundingClientRect().top ?? innerHeight; const el = [...document.querySelectorAll('[data-region="t1"] .rr-ptext')].find((e) => { const r = e.getBoundingClientRect(); const v = document.querySelector("[data-board-vp]").getBoundingClientRect(); return r.height && r.bottom < bar - 10 && r.top > v.top + 10 && r.left > v.left + 10 && r.left < v.right - 120; }); const t = el && document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode(); if (!t) return null; const r = document.createRange(); r.setStart(t, 0); r.setEnd(t, Math.min(12, t.textContent.length)); const q = r.getBoundingClientRect(); return { x: q.left + 2, y: q.top + q.height / 2, x2: q.right - 2 }; });
@@ -348,6 +351,22 @@ try {
     await tap(p, "[data-fs-toggle]"); await p.waitForTimeout(400); await selectIn(p, '[data-region="t1"] .rr-ptext', "whole cents"); await p.waitForTimeout(350);
     const fb = await selBtn(p); await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250); const fpop = !!(await p.$(".rb-pop [data-pop-selection]"));
     ok(!!fb && (fb.inFs || !(await p.evaluate(() => !!document.fullscreenElement))) && fpop, "in full screen too, a selection offers “Ask about this” and opens the popover", JSON.stringify({ fb, fpop }));
+    await ctx.close(); }
+  // from the review: a background redraw (a turn running, its poll) keeps the selection and its control; one character is enough;
+  // a question asked on an answer whose turn also has a check sits once, beside the answer
+  { const quizQ = { n: 2, q: "Which rounds?", turn: 1, at: "t", options: ["round", "floor"] };
+    const room = () => ({ ...clone(BASE), running: 2, turns: BASE.turns.map((t) => (t.n === 2 ? { ...t, status: "running", claims: [], answer: "" } : t)), check: { questions: [...BASE.check.questions, quizQ] },
+      lesson: { threads: [{ n: 1, key: "answer/t1/selection#sel:1", anchor: { turn: 1, scene: "t1", chapter: "answer", kind: "selection", item: null, part: "sel:1", text: "whole cents", start: null, end: null }, locator: {}, nodes: [{ id: "n1", parent: null, rel: "root", chip: "free", q: "Why?", versions: [3], code: null, at: "t" }], state: "open", at: "t", resolvedAt: null, merged: null }], visited: [] } });
+    const { ctx, p } = await open(1440, room); await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(500);
+    const one = await selectIn(p, '[data-region="t1"] .rr-ptext', "w"); await p.waitForTimeout(300); const b1 = await selBtn(p);
+    await p.evaluate(() => getSelection().removeAllRanges()); await p.waitForTimeout(250);
+    await selectIn(p, '[data-region="t1"] .rr-ptext', "whole cents"); await p.waitForTimeout(3600); // the running turn's poll redraws every 2.5 s
+    const kept = await p.evaluate(() => getSelection().toString()), b2 = await selBtn(p);
+    await p.evaluate(() => getSelection().removeAllRanges()); await p.waitForTimeout(400);
+    const cards = await p.$$eval('[data-tcard^="1:"]', (els) => els.map((e) => e.closest("[data-region]")?.dataset.region));
+    ok(one === "w" && !!b1, "a selection of one character offers “Ask about this” too", JSON.stringify({ one, b1 }));
+    ok(kept === "whole cents" && !!b2, "a background redraw while a turn runs waits for the selection: the words stay selected and their “Ask about this” stays", JSON.stringify({ kept, b2 }));
+    ok(JSON.stringify(cards) === '["t1"]', "a question on an answer whose turn also has a check is drawn once, beside the answer", JSON.stringify(cards));
     await ctx.close(); }
   { const { ctx: c2, p } = await open(390, clone(BASE)); await tap(p, "[data-board-rail] .rb-sheetx"); await p.waitForTimeout(300);
     const got = await selectIn(p, ".rb-region.cur .rr-ptext", "whole cents"); await p.waitForTimeout(350); const b = await selBtn(p);

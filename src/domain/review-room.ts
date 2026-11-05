@@ -2090,7 +2090,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         save(k, room); notify(k); return this.view(id); }
       if (op === "tidy") { let merged = 0;
         // every answered question the reader did not say 還沒懂 about (a code card counts as answered)
-        for (const t of L.threads) { if (t.merged || notUnderstood(t) || !t.nodes.some((n) => n.code || n.versions.some((v) => room.turns.find((x) => x.n === v)?.status === "done"))) continue;
+        // a question on words selected outside a lesson (an answer, a check, Studio's scenes, the welcome) has no chapter to fold into: it stays
+        for (const t of L.threads) { if (t.merged || notUnderstood(t) || (t.anchor.kind === "selection" && ["answer", "studio", "welcome"].includes(t.anchor.chapter)) || !t.nodes.some((n) => n.code || n.versions.some((v) => room.turns.find((x) => x.n === v)?.status === "done"))) continue;
           // an answer still being written is not folded in half-way
           if (t.nodes.some((n) => n.versions.some((v) => room.turns.find((x) => x.n === v)?.status === "running"))) continue;
           const g = threadGist(t, room.turns), codes = t.nodes.filter((n) => n.code).map((n) => n.code!);

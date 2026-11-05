@@ -286,7 +286,10 @@ script.push([...LESSON]);
   ok(welcome?.code === "confirm_required" && lessonSel?.code === "confirm_required" && bad.every((e) => e?.code === "bad_anchor"),
     "the welcome's words and a chapter's words can be asked about too (each asks to confirm its paid round); a scene that is not there, an answer that is itself a card, or no words are refused", JSON.stringify([welcome?.code, lessonSel?.code, bad.map((e) => e?.code)]));
   const f = room.findings(id).find((x: any) => x.check === `room-thread:${th?.n}`);
-  ok(f?.locator?.section === th?.key && /invoices are in whole cents/.test(f?.message ?? ""), "a selection's question reads as a finding at its place, like any board question", JSON.stringify(f)); }
+  ok(f?.locator?.section === th?.key && /invoices are in whole cents/.test(f?.message ?? ""), "a selection's question reads as a finding at its place, like any board question", JSON.stringify(f));
+  // from the review: tidying folds questions into a lesson's chapters; one on an answer has no chapter to fold into, and stays
+  await room.lesson(id, { op: "tidy" }); const kept = onDisk().lesson.threads.find((x: any) => x.n === th?.n);
+  ok(kept && !kept.merged, "tidying the board leaves a question asked on an answer's words where it is (no chapter holds it)", JSON.stringify(kept?.merged)); }
 
 // ---------- the board's growth is capped: questions a room, cards a question, versions a card ----------
 { const { LESSON_LIMITS } = await import("../src/domain/review-room");
