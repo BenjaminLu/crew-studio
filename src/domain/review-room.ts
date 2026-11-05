@@ -198,8 +198,9 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   studio?: true; title?: string; from?: string;
   /** a Studio scene kept for the record but not shown (an older room's duplicate reviewers' dump, replaced by one summary) */
   hidden?: true;
-  /** a lesson Studio started by itself when the captain pasted the pull request (the paste is the consent) */
-  auto?: true;
+  /** a lesson Studio started by itself: when the captain pasted the pull request (the paste is the consent), or when they opened
+   *  the room (arriving is the consent, while the room's switch, else the Studio-wide one, is on); autoFrom says which */
+  auto?: true; autoFrom?: "paste" | "arrival";
   /** a regeneration: the turn whose question this one asks again, on a model the captain picked (both answers are kept) */
   regenOf?: number; picked?: { provider: string; model: string | null; effort: string | null };
   /** the board as the tutor built it (scene_show): each scene a picture and two to four short points; the answer itself is the transcript */
@@ -244,7 +245,7 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   finished?: { at: string; reason: string; tried?: boolean; error?: string | null };
   /** bumped on every save: a snapshot older than this is out of date */
   rev?: number;
-  /** auto-teach on paste: this room's own switch (absent: the global setting), and the heads it already started a lesson for
+  /** auto-teach (on arrival and on paste): this room's own switch (absent: the global setting), and the heads it already started a lesson for
    *  (once per head, never again on a reload or a revisit), or why it did not */
   autoTeach?: boolean; autoTaught?: { head: string; at: string; turn?: number; skipped?: string }[];
   /** generated pictures (the opening illustration, the tutor's illustrate tool: paid image jobs) are on: off unless the captain turns them on */
@@ -463,7 +464,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const load = (k: Key): Room | null => { const had = cache.get(k.file); if (had) return had; try { const r: Room = JSON.parse(readFileSync(k.file, "utf8"));
     for (const b of r.board) if (b.type === "image" && b.status === "pending") Object.assign(b, { status: "failed", error: "interrupted: Studio stopped before the picture was ready" });
     try { tidyReviewers(r); } catch {} cache.set(k.file, r); return r; } catch { return null; } };
-  /** the review room's own settings (Studio-wide): autoTeach, a pasted pull request's lesson starting by itself (default on) */
+  /** the review room's own settings (Studio-wide): autoTeach, a room's full analysis (its lesson) starting by itself when the
+   *  captain opens the room, by any route, or pastes its pull request (default on) */
   const settingsFile = () => join(o.dataDir, "review-room-settings.json");
   const settings = (): { autoTeach: boolean } => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8")); return { autoTeach: j?.autoTeach !== false }; } catch { return { autoTeach: true }; } };
   /** rooms started over: their old object (held by a background job: a picture, a voice, a Library save) is never written back */
@@ -1130,7 +1132,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
     turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
-    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, ...(turn.auto ? { auto: true } : {}), card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
+    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, ...(turn.auto ? { auto: true, autoFrom: turn.autoFrom ?? "paste" } : {}), card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }
@@ -1175,7 +1177,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
    *  host Task and its staffing. */
   const planOf = (k: Key, room: Room | null, project: string | null | undefined) => {
     const auto = (room?.autoTeach ?? settings().autoTeach) !== false, images = !!room?.images?.on, createsHost = !k.run;
-    const o: any = room ? offerOf(k) : (() => { try {
+    const o: any = room || k.kind !== "pr" ? offerOf(k) : (() => { try {
       const run = k.run ? engine.get(k.run) : null, node = run?.def.nodes.find((n: any) => n.id === k.node);
       const p = run && node ? seatPick(run, node).pick : crewPick(project); return { provider: p.provider, model: p.model ?? null, effort: p.effort ?? null, paid: true }; }
       catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "no_crew" }; } })();
@@ -1192,23 +1194,41 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     hostInto(kk, room ?? ({ subject: { url: canonical } } as unknown as Room)); // the host as readPr finds it: the Task that published it
     const { hash: _h, ...plan } = planOf(kk, room, project.id ?? project.name); return "error" in plan ? plan : { ...plan, plan: planPrint(plan) };
   };
-  /** A pasted pull request's lesson, started by Studio: the captain's paste is the consent. Only a pull request's room, only when
-   *  auto-teach is on (the room's switch, else the global setting), once per head (recorded before anything starts, so a reload
-   *  or a revisit never starts another), never when a lesson for this head is done or running. Pictures as the room has them. When it cannot
-   *  start (no tutor can run, admission refuses), the reason is kept and the room shows the ordinary teach button with it. */
-  async function autoTeach(api: any, id: string, by: string, lang = "en", shown = ""): Promise<{ changed?: any } | void> {
-    let k: Key; try { k = keyOf(id); } catch { return; } if (k.kind !== "pr") return;
-    const room = load(k); if (!room || !k.open() || live.has(k.id)) return;
-    const head = room.pr?.head ?? room.head; if (!head) return;
-    const plan = planOf(k, room, room.subject?.project); if (!plan.auto) return;
-    // only the plan the paste box showed: changed since (a new tutor, pictures, a host), nothing starts and the box shows the new one
+  /** the head a room's full analysis would start for by itself now (on arrival or on paste), or null: the room takes turns,
+   *  auto-teach is on (its switch, else the Studio-wide setting), no turn runs, this head has no lesson started by itself yet and
+   *  none done or running */
+  const autoHead = (k: Key, room: Room | null, s: S | null): string | null => {
+    if (!k.open() || live.has(k.id) || (room?.autoTeach ?? settings().autoTeach) === false) return null;
+    const head = k.kind === "pr" ? room?.pr?.head ?? room?.head ?? null : s?.head ?? room?.head ?? null; if (!head) return null;
+    if ((room?.autoTaught ?? []).some((x) => x.head === head)) return null;
+    if ((room?.turns ?? []).some((t) => t.action === "teach" && t.head === head && (t.status === "done" || t.status === "running"))) return null;
+    return head;
+  };
+  /** what arriving in this room starts, as the page reads it (and sends its fingerprint back with POST …/arrive): the same plan a
+   *  paste shows, only while the analysis would start by itself; an error when it cannot (shown, nothing runs) */
+  const arrivalOf = (k: Key, room: Room | null, s: S | null) => {
+    if (!autoHead(k, room, s) || (k.kind === "pr" && !room?.pr)) return null;
+    const { hash: _h, ...plan } = planOf(k, room, room?.subject?.project) as any; return "error" in plan ? plan : { ...plan, plan: planPrint(plan) };
+  };
+  /** A room's full analysis (its lesson), started by Studio: the captain's paste of a pull request, or their arrival in any room
+   *  (a merge card's, a Task's branch, a pull request's, by any route: the merge card, a Task link, the room list), is the
+   *  consent. Only when auto-teach is on (the room's switch, else the global setting), once per head (recorded before anything
+   *  starts, so a reload or a revisit never starts another; a head that moved is analysed again), never when a lesson for this
+   *  head is done or running, and only on the plan the page showed (its fingerprint): a plan that changed starts nothing and is
+   *  returned. Pictures as the room has them. When it cannot start (no tutor can run, admission refuses), the reason is kept and
+   *  the room shows the ordinary teach button with it. */
+  async function autoTeach(api: any, id: string, by: string, lang = "en", shown = "", from: "paste" | "arrival" = "paste"): Promise<{ changed?: any } | void> {
+    let k: Key; try { k = keyOf(id); } catch { return; }
+    let s: S | null = null; try { s = subjectOf(k); } catch {}
+    let room = load(k); if (!room && k.kind === "pr") return;
+    const head = autoHead(k, room, s); if (!head) return;
+    const plan = planOf(k, room, room?.subject?.project);
+    // only the plan the page showed: changed since (a new tutor, pictures, a host), nothing starts and the page shows the new one
     if ("error" in plan || shown !== planPrint(plan)) { if ("error" in plan) return; const { hash: _h, ...pub } = plan; return { changed: { ...pub, plan: planPrint(plan) } }; }
-    if ((room.autoTaught ?? []).some((x) => x.head === head)) return;
-    if (room.turns.some((t) => t.action === "teach" && t.head === head && (t.status === "done" || t.status === "running"))) return;
+    if (!room) { if (!s) return; room = fresh(k, s); }
     const mark = { head, at: new Date().toISOString() } as { head: string; at: string; turn?: number; skipped?: string };
     room.autoTaught = [...(room.autoTaught ?? []), mark]; save(k, room);
-    try { if ("error" in plan) throw refuse(plan.error!, plan.code ?? "no_tutor");
-      await api.start(id, { action: "teach", lang, confirm: plan.hash, auto: true }, by);
+    try { await api.start(id, { action: "teach", lang, confirm: plan.hash, auto: true, autoFrom: from }, by);
       const r2 = load(k); const m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.turn = r2.turns.at(-1)?.n; save(k, r2); } }
     catch (e: any) { const r2 = load(k), m = r2?.autoTaught?.find((x) => x.head === head); if (r2 && m) { m.skipped = String(e?.message ?? e).slice(0, 300); save(k, r2); notify(k); } }
   }
@@ -1250,7 +1270,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const tutors = [...new Map(room.turns.filter((t) => !t.studio && t.provider).map((t) => [`${t.provider} ${t.model}`, { provider: t.provider, model: t.model }])).values()];
       const usd = room.turns.reduce((n, t) => n + (typeof t.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof room.translating?.cost?.usd === "number" ? room.translating.cost.usd : 0);
       const savedAt = new Date().toISOString(), snap = { schema: 1, kind: "review-room-snapshot", room: k.id, savedAt, reason, subject: subjectMeta(k, room, view), tutors, cost: { usd: Math.round(usd * 10000) / 10000 },
-        view: { ...view, board, open: false, offer: null, running: null, notes: undefined, autoTeach: undefined, progress: null, turns: (view.turns ?? []).filter((t: any) => !t.hidden), tutors: [], translate: null, checking: false, moved: null, illustrations: [],
+        view: { ...view, board, open: false, offer: null, running: null, notes: undefined, autoTeach: undefined, arrive: null, progress: null, turns: (view.turns ?? []).filter((t: any) => !t.hidden), tutors: [], translate: null, checking: false, moved: null, illustrations: [],
           sources: (view.sources ?? []).map((x: any) => x.ok ? x : { n: x.n, turn: x.turn, kind: x.kind, at: x.at, ok: false, ...(x.refused ? { refused: "refused by Studio's web filter" } : {}), ...(x.error ? { error: "not read" } : {}) }), closed: { en: "Saved in the Library: a read-only replay.", zh: "存在成品庫：唯讀重播。" } }, cites };
       writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
       const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);
@@ -1487,7 +1507,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
         return { ...langView(r, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
-          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, followUps: followView(r, c.status === "open" ? offerOf(k) : null), summary: this.summary(c) };
+          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, followUps: followView(r, c.status === "open" ? offerOf(k) : null), summary: this.summary(c),
+          arrive: c.status === "open" ? arrivalOf(k, r, s0) : null };
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
@@ -1503,7 +1524,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
         notes: [...(r?.pr?.notes ?? [])].reverse().slice(0, 200).map((x) => ({ ...x, bot: isBot(x) })), progress: progressOf(k, r),
-        actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), lesson: r?.lesson ?? null, followUps: followView(r, open ? offerOf(k) : null), summary: null };
+        actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s, r), lesson: r?.lesson ?? null, followUps: followView(r, open ? offerOf(k) : null), summary: null,
+        arrive: open ? arrivalOf(k, r, s) : null };
     },
     /** every review room on this machine (merge cards, branches, pull requests), open ones first, then the most recent */
     list() { const out: any[] = [], push = (id: string, file: string) => { try { const k = keyOf(id), r = load(k); if (!r) return; const st = statSync(file);
@@ -1519,19 +1541,27 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // fail-closed: only an explicit auto with the fingerprint of the plan the box showed starts the lesson
       const r = auto === true ? await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en", typeof plan === "string" ? plan.slice(0, 32) : "") : undefined;
       return { id, href: `#/room/${id}`, room: this.view(id), ...(r?.changed ? { plan: r.changed } : {}) }; },
-    /** Studio-wide settings of the review room (autoTeach: a pasted pull request's lesson starts by itself) */
+    /** The captain arrived in a room (any route: the merge card, a Task's link, the room list, a paste): its full analysis starts
+     *  by itself when auto-teach is on and this head has none, on the plan the page was shown (view().arrive.plan, sent back as
+     *  plan). A plan that changed starts nothing and is returned; anything else that keeps it from starting is kept and shown. */
+    async arrive(id: string, by = "captain", lang?: unknown, plan?: unknown) {
+      const r = await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en", typeof plan === "string" ? plan.slice(0, 32) : "", "arrival");
+      return { room: this.view(id), ...(r?.changed ? { plan: r.changed } : {}) }; },
+    /** Studio-wide settings of the review room (autoTeach: a room's full analysis starts by itself on arrival or on paste) */
     settings() { return settings(); },
     /** what pasting this pull request's address would start (the paste box shows it before the paste): auto-teach on or off,
      *  and the tutor and the paid round it would run on, as the room's offer would name them */
     pasteOffer(url: unknown) { return autoPlan(url); },
     setSettings(a: { autoTeach?: unknown }) { if (typeof a?.autoTeach !== "boolean") throw refuse("autoTeach is true or false", "bad_request"); writeFileSync(settingsFile(), JSON.stringify({ ...settings(), autoTeach: a.autoTeach })); return settings(); },
-    /** this room's own auto-teach switch (a pull request's room) */
-    autoTeachFor(id: string, on: unknown) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request"); const room = load(k); if (!room) throw refuse("No such review room", "not_found");
+    /** this room's own auto-teach switch (any room: on arrival, and on paste for a pull request's) */
+    autoTeachFor(id: string, on: unknown) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request"); let room = load(k);
+      // a merge card's or a branch's room before its first turn: its file is made now, to keep the switch
+      if (!room && k.kind !== "pr") room = fresh(k, subjectOf(k)); if (!room) throw refuse("No such review room", "not_found");
       room.autoTeach = on; save(k, room); notify(k); return this.view(id); },
     /** Check for new commits: a pull request is read again on GitHub; a branch is read from its Task. Never a background loop. */
     async check(id: string) { const k = keyOf(id); if (k.kind === "pr") { const url = load(k)?.subject?.url; if (!url) throw refuse("No such review room", "not_found"); await readPr(url); } return this.view(id); },
     /** One turn: a paid round the captain starts and confirms. Returns the room at once; the round runs on. */
-    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown; auto?: boolean; thread?: unknown; consent?: unknown }, by: string) {
+    async start(id: string, a: { action?: unknown; text?: unknown; lang?: unknown; confirm?: unknown; pick?: unknown; regenerate?: unknown; images?: unknown; auto?: boolean; autoFrom?: "paste" | "arrival"; thread?: unknown; consent?: unknown }, by: string) {
       let k = keyOf(id);
       if (k.kind === "pr") { const r0 = load(k);
         // a paid turn reads the pull request again first when it was read a while ago: merged or closed by now, the turn is refused
@@ -1599,7 +1629,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // the head moved since the captain last looked: Studio's "what changed since last time" scene comes first
       live.set(k.id, -1); try { if (k.kind !== "merge") await catchUp(k, s, room); } catch {} live.delete(k.id);
       room.head = s.head; room.base = s.base; if (k.kind !== "merge" && !(room.heads ?? []).some((h) => h.head === s.head)) room.heads = [...(room.heads ?? []), { head: s.head, base: s.base, at: new Date().toISOString() }];
-      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), ...(a.auto ? { auto: true as const } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
+      const n = room.turns.length + 1, turn: Turn = { n, action, text, lang, by, at: new Date().toISOString(), status: "running", ended: null, job: null, provider: provider.id ?? pick.provider, model: provider.model ?? pick.model ?? "", effort: pick.effort ?? null, ...(tutor.level ? { independence: tutor.level } : {}), ...(a.auto ? { auto: true as const, autoFrom: a.autoFrom === "arrival" ? "arrival" as const : "paste" as const } : {}), answer: "", error: null, cost: null, round: `room-${k.id}-${n}`, head: s.head, ...(base ? { regenOf: base.regenOf ?? base.n, picked: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null } } : {}) };
       // the question's card on the board, made now, with the turn that answers it (nothing before the confirmation)
       if (plan) turn.thread = applyThread(room, plan, n);
       if (plan && auto) turn.follow = room.followUps!.used;

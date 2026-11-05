@@ -4,7 +4,7 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+const RR = { arrived: new Set(), imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
   scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -22,7 +22,7 @@ addEventListener("hashchange", () => { // after app.js's own listener: S.route i
 const enc = encodeURIComponent;
 const page = (title, sub, ...kids) => h("div", { class: "page rr-page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, title), sub ? h("p", {}, sub) : null)), ...kids);
 /** a saved room's snapshot as the room reads it: its own view, read-only (no prompt, no paid action), citations resolved inside */
-const snapRoom = (id, snap) => ({ ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null, tutors: [], translate: null,
+const snapRoom = (id, snap) => ({ ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null, tutors: [], translate: null, arrive: null,
   snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, cites: snap.cites || {}, cost: snap.cost, tutors: snap.tutors, subject: snap.subject } });
 async function load(id, open = false) {
   if (RR.loading.has(id)) return; RR.loading.add(id);
@@ -1074,12 +1074,14 @@ function reportFigure(card, r, it, box) {
   return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
     h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)));
 }
-/** a lesson auto-teach started: said so, with what it ran on, and the room's switch to stop it starting on the next paste */
+/** a lesson auto-teach started (on arrival in the room, or on a paste): said so, with what it ran on, and the room's switch to
+ *  stop it starting by itself next time */
 function autoNote(r, t) {
-  if (!t?.auto) return null; const card = r.card.id;
-  return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n }, T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
-    !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
-      T(" start by itself on the next paste", " 下次貼上時自動開始")) : null);
+  if (!t?.auto) return null; const card = r.card.id, arrival = t.autoFrom === "arrival";
+  return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n, "data-auto-from": arrival ? "arrival" : "paste" }, arrival ? T(`Started automatically when you opened the room: one paid round on ${t.provider} · ${t.model}.`, `打開審查室時自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`)
+    : T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
+    !r.snapshot ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+      T(" start by itself next time (opening the room on a new head, or a paste)", " 下次（在新的 head 打開審查室或貼上時）自動開始")) : null);
 }
 // ---------- the board is the room's only view (public/review-board.js): every scene a region on its canvas ----------
 /** what a scene is, in a few words: its chapter, Studio's welcome, a check, the action asked */
@@ -1136,6 +1138,10 @@ function sceneCard(r, scenes, j, W) {
         n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
         // the welcome's one action: the lesson, a paid turn that asks to confirm first; before any answer, what the board is for
         sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
+        // what arriving starts (on this Mac only: a phone reads the room and starts nothing)
+        sc.welcome && !r.snapshot && r.arrive && BOARD.state.viewer !== "phone" ? (r.arrive.error ? h("p", { class: "rr-err", "data-arrive": "none" }, T(`Studio cannot start the full analysis by itself: ${r.arrive.error}`, `Studio 無法自動開始完整分析：${r.arrive.error}`))
+          : h("p", { class: "rr-paste-offer", "data-arrive": "on" }, T(`Arriving here starts the full analysis by itself: one paid model round on ${r.arrive.provider} · ${r.arrive.model ?? "default model"}${r.arrive.effort ? ` (${r.arrive.effort})` : ""}${r.arrive.createsHost ? ", after creating this pull request's host Task and its tutor's staffing" : ""}. The tutor only reads the code; turn it off in the transcript drawer.`,
+            `進到這裡就會自動開始完整分析：在 ${r.arrive.provider} · ${r.arrive.model ?? "預設模型"}${r.arrive.effort ? `（${r.arrive.effort}）` : ""} 上付費一回合${r.arrive.createsHost ? "，會先建立承載這個 pull request 的任務和導師的人員配置" : ""}。導師只讀程式碼；可在紀錄抽屜裡關掉。`))) : null,
         sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
           T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
         sc.welcome && !answers ? h("p", { class: "faint rr-boardhint", "data-board-empty": "" }, T("Ask below. Each answer becomes a block on this board: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, played one at a time.", "在下方提問。每個回答會在這塊白板上變成一個區塊：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個播放。")) : null,
@@ -1280,8 +1286,8 @@ function drawer(r) {
           s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
           : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")),
         // start the room over: confirmed first; what goes and what stays said plainly; refused while a turn or a translation runs
-        !r.snapshot && r.subject?.kind === "pr" ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
-          h("span", {}, T("Start the lesson by itself when this pull request is pasted again on a new head", "這個 pull request 在新的 head 再次貼上時自動開始教學"))) : null,
+        !r.snapshot ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+          h("span", {}, T("Analyse this room by itself when you open it on a new head (or paste its pull request): one paid round on the room's tutor, once per head", "在新的 head 打開這個審查室（或貼上它的 pull request）時自動完整分析：用房間的導師付費一回合，每個 head 一次"))) : null,
         r.snapshot ? null : h("div", { class: "rr-reset", "data-reset-zone": "" }, h("h3", {}, T("Start over", "清空重來")),
           RR.resetAsk.has(card) ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-reset-confirm-box": "", "aria-label": T("Start this room over", "清空這個審查室重來") },
             h("p", {}, T("Start this room over? Its answers, its board, its translations and its generated pictures go (moved to an archive folder beside the room, not deleted; a Task's room keeps that archive in the Task's own folder, so it goes if the Task is deleted). The Library's saved snapshots and the Task's ledger stay.", "要清空這個審查室重來嗎？它的回答、白板、翻譯和生成圖片都會移走（搬到審查室旁的封存資料夾，不會刪除；任務的審查室會把封存放在任務自己的資料夾裡，任務被刪除時封存也會一起刪除）。成品庫裡存過的快照和任務的帳本都會保留。")),
@@ -1459,7 +1465,7 @@ routes.room = (arg) => {
           h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`)))) : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
       h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null),
         h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); dropPasteOffers(); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),
-          h("span", {}, T("Teach a pasted pull request by itself: pasting it starts the lesson (one paid round on the room's tutor, with the room's pictures setting; the paste box says which before you paste), once per head.", "貼上 pull request 就自動開始教學：貼上即開始這一課（用房間的導師付費一回合，圖片依房間設定；貼上前貼上框會先說明），每個 head 只一次。"))))); }
+          h("span", {}, T("Analyse a room by itself when you arrive: opening any review room (from a merge card, a Task, this list) or pasting a pull request starts its full analysis (one paid round on the room's tutor, with the room's pictures setting; the room and the paste box say which), once per head.", "一進審查室就自動完整分析：從合併卡、任務或這個清單打開任何審查室，或貼上 pull request，都會開始完整分析（用房間的導師付費一回合，圖片依房間設定；審查室和貼上框會先說明），每個 head 只一次。"))))); }
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
@@ -1478,11 +1484,22 @@ routes.room = (arg) => {
   // entering a room while a turn runs: the board shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);
+  queueMicrotask(() => arriveIn(arg, r));
   return h("div", { class: "rr-room", "data-review-room": r.card.id },
     header(r), boardView(r), promptBar(r), drawer(r), citePanel(r),
     RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } } },
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
+/** Arriving in a room (any route: a merge card, a Task's link, the room list, a paste) starts its full analysis by itself when
+ *  auto-teach is on and this head has none: the room says so on its welcome, and the page sends back the plan it was shown
+ *  (POST …/arrive {plan}); Studio starts it only on that very plan. Once per room, head and plan on this page; a phone never. */
+function arriveIn(id, r) {
+  // only this Mac's captain: who is looking is known once the server said so (GET /api/remote/me; the board redraws then)
+  const a = r?.arrive; if (!a?.plan || a.error || r.snapshot || !r.open || r.running != null || !onRoom(id) || BOARD.state.viewer !== "desktop") return;
+  const key = `${id}@${r.head}@${a.plan}`; if (RR.arrived.has(key)) return; RR.arrived.add(key);
+  postJ(`/api/review-room/${enc(id)}/arrive`, { lang: uiLang(), plan: a.plan }).then((out) => { if (out?.room?.card) RR.rooms.set(id, out.room); })
+    .catch((e) => RR.err.set(id, e.message)).finally(() => { redraw(id); schedule(); });
+}
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
 window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, board: BOARD };
 })();

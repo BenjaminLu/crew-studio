@@ -70,11 +70,13 @@ async function open(width, room, o = {}) {
   await ctx.addInitScript(stubs);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: width < 600 ? "phone" : "desktop", device: null } }));
-  const S = { posts: [], picks: [] };
+  const S = { posts: [], picks: [], arrives: [] };
   await ctx.route(/\/api\/review-room\/SC-80(\?open=1)?$/, (r) => r.fulfill({ json: typeof room === "function" ? room() : room }));
   await ctx.route(/\/api\/review-room\/SC-80\/image\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/wruns\/R-080\/captures\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/review-room\/SC-80\/lesson$/, (r) => r.fulfill({ json: { visited: [] } }));
+  // arriving in the room: what the page sends back (the plan it was shown), answered a moment later with the room, its analysis started
+  await ctx.route(/\/api\/review-room\/SC-80\/arrive$/, (r) => { S.arrives.push(JSON.parse(r.request().postData() || "{}")); const rm = clone(typeof room === "function" ? room() : room); rm.arrive = null; setTimeout(() => r.fulfill({ json: { room: rm } }).catch(() => {}), o.arriveMs ?? 50); });
   await ctx.route(/\/api\/review-room\/SC-80\/turn$/, (r) => { S.posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: OFFER } }); });
   await ctx.route(/\/api\/review-room\/SC-80\/check-answer$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); S.picks.push(b); const rm = clone(typeof room === "function" ? room() : room);
     rm.check.questions = rm.check.questions.map((q) => q.n === b.n ? { ...q, choice: b.choice, answer: 0, why: "Math.round rounds 299.85 up", cites: [], result: { correct: b.choice === 0, note: "n", turn: 4, choice: b.choice, by: "studio" } } : q);
@@ -101,6 +103,25 @@ try {
     ok(!!(await p.$('[data-room-confirm="teach"]')) && !S.posts.length, "its lesson button asks to confirm the paid round first");
     await p.screenshot({ path: join(shots, "welcome-1440.png") });
     await ctx.close(); }
+
+  // ---------- arriving in a room starts its full analysis by itself: the welcome says so, the page sends back the plan it was shown ----------
+  { const ARR = { auto: true, provider: "codex", model: "gpt-6", effort: "high", paid: true, images: false, createsHost: false, plan: "fp-arrive-1" };
+    const fresh = () => ({ ...clone(BASE), turns: [], board: [BASE.board[0]], check: { questions: [] }, autoTeach: { on: true }, arrive: ARR });
+    const { ctx, p, S } = await open(1440, fresh, { arriveMs: 1500 });
+    await p.waitForFunction(() => !!document.querySelector('[data-region="t0"] [data-arrive]'), null, { timeout: 3000 }).catch(() => {});
+    const line = await inRegion(p, "t0", "[data-arrive]");
+    for (let i = 0; i < 40 && !S.arrives.length; i++) await p.waitForTimeout(50);
+    ok(/Arriving here starts the full analysis by itself: one paid model round on codex · gpt-6 \(high\)/.test(line?.[0] || ""), "a room whose analysis starts on arrival says so on its welcome, with the tutor and the paid round", JSON.stringify(line));
+    ok(S.arrives.length === 1 && S.arrives[0].plan === "fp-arrive-1" && !S.posts.length, "entering the room sends its arrival once, with the plan it was shown: no click, no confirmation", JSON.stringify({ arrives: S.arrives, posts: S.posts.length }));
+    await p.waitForTimeout(1700); await p.evaluate(() => render()); await p.waitForTimeout(150);
+    ok(S.arrives.length === 1, "redrawn, the same room on the same head sends no second arrival", String(S.arrives.length));
+    await p.screenshot({ path: join(shots, "arrival-1440.png") });
+    await ctx.close(); }
+  { const { ctx, p, S } = await open(390, () => ({ ...clone(BASE), turns: [], board: [BASE.board[0]], check: { questions: [] }, arrive: { auto: true, provider: "codex", model: "gpt-6", effort: null, paid: true, plan: "fp-arrive-2" } }));
+    await p.waitForTimeout(700); ok(!S.arrives.length, "a paired phone never starts a paid analysis by arriving (it only reads the room)", String(S.arrives.length)); await ctx.close(); }
+  { const { ctx, p, S } = await open(1440, () => ({ ...clone(BASE), turns: [], board: [BASE.board[0]], check: { questions: [] }, arrive: { auto: true, error: "No tutor can run on this Mac now", code: "no_tutor" } }));
+    await p.waitForTimeout(500); const why = await inRegion(p, "t0", '[data-arrive="none"]');
+    ok(!S.arrives.length && /Studio cannot start the full analysis by itself: No tutor can run/.test(why?.[0] || ""), "when the analysis cannot start on arrival, nothing is sent and the welcome says why", JSON.stringify({ why, arrives: S.arrives.length })); await ctx.close(); }
 
   // ---------- an answer's scene: its pictures and points, played one at a time from the floating bar ----------
   { const { ctx, p } = await open(1440, clone(BASE));
