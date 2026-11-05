@@ -175,6 +175,17 @@ try {
   ok(pt?.auto === true && pt.autoFrom === "paste" && pt.action === "teach", "pasting a directory (the box said so) starts its lesson by itself, as a pull request's paste does", JSON.stringify([pt?.action, pt?.autoFrom]));
   room.setSettings({ autoTeach: false });
 
+  // ---------- the web filter reads the pinned commit once, in a bounded read, not file by file before every answer ----------
+  { for (let i = 0; i < 80; i++) put(`many/f${i}.ts`, `export const value${i}Reserve = ${i};\n`);
+    must(work, ["add", "-A"]); must(work, [...id, "commit", "-qm", "many"]); must(work, ["push", "-q", bare, "HEAD:refs/heads/many"]);
+    const mr: any = await room.openDir("https://github.com/acme/kit/tree/many/many", "captain"), mo = (room.view(mr.id, true) as any).offer;
+    const spawn0 = Bun.spawn, reads: string[][] = []; (Bun as any).spawn = (argv: any, o: any) => { if (Array.isArray(argv) && argv.some((a) => /^(show|grep|cat-file)$/.test(String(a)))) reads.push(argv.map(String)); return (spawn0 as any)(argv, o); };
+    try { script.push([["say", "Eighty values [diff:many/f0.ts]."]]); await room.start(mr.id, { action: "how", confirm: mo.hash }, "captain"); await room.settle(mr.id); const first = reads.length;
+      script.push([["say", "Still eighty [diff:many/f1.ts]."]]); await room.start(mr.id, { action: "why", confirm: mo.hash }, "captain"); await room.settle(mr.id); const second = reads.length - first;
+      const done = (room.view(mr.id) as any).turns.filter((t: any) => t.status === "done").length;
+      ok(done === 2 && first <= 4 && second <= 2, "a directory room's web filter reads the pinned commit's text in a few git processes, once: not one per file, and not again before the next answer", JSON.stringify({ done, first, second, sample: reads.slice(0, 3) })); }
+    finally { (Bun as any).spawn = spawn0; } }
+
   // ---------- the Library, the list, starting over ----------
   const saved: any = await room.saveToLibrary(opened.id, "captain"), snap: any = room.librarySnapshot(saved.artifact);
   ok(/^room-dir-[0-9a-f]{12}-[0-9a-f]{12}$/.test(saved.artifact) && snap.view.subject.kind === "dir" && snap.view.dir.sha === V1 && Object.keys(snap.cites).some((c) => c.startsWith("diff:src/")), "a directory's room is saved to the Library like any room (its citations resolved inside)", JSON.stringify({ a: saved.artifact, cites: Object.keys(snap.cites).slice(0, 3) }));

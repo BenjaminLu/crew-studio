@@ -36,7 +36,7 @@ import type { GitHubPrAdapter } from "../adapters/github";
 import type { Projects } from "../doors";
 import { bundledText } from "../bundled";
 import { git, gitArgv, gitEnv, must } from "../git";
-import { helper, normPath } from "../review-read";
+import { helper, helperHead, normPath } from "../review-read";
 import { localUnrestricted } from "../local-execution";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { DOCS_HOSTS, docsHosts, ILLUSTRATION_CONCEPTS, ILLUSTRATION_LAYOUTS, WEB_CALLS_PER_TURN, illustrationPrompt, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebBackend, type WebContext } from "../review-web";
@@ -1206,6 +1206,19 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     return all.filter((t) => t.name !== "illustrate" || (!!room.images?.on && !turn.thread));
   }
 
+  /** A directory room's web filter text: the text files of the repository at its pinned commit (the directory's own first,
+   *  then the rest), read by git grep in at most two processes and up to the filter's bound (binary files skipped); complete
+   *  says it held all of it. Read once per pinned commit: the commit never moves. */
+  const dirFilters = new Map<string, { text: string; complete: boolean }>();
+  const dirFilterText = async (wt: string, head: string, path: string) => {
+    const key = `${wt}\0${head}\0${path}\0${WEB_FILTER_BYTES()}`, hit = dirFilters.get(key); if (hit) return hit;
+    const grep = (max: number, spec: string[]) => helperHead(gitArgv(["grep", "-I", "-h", "--no-color", "-e", "", head, "--", ...spec]), { cwd: wt, env: gitEnv(), maxBytes: max, okCodes: [0, 1], timeoutMs: 60_000 });
+    let text = "", complete = true; const cap = WEB_FILTER_BYTES();
+    const own = await grep(cap, path ? [`:(literal)${path}`] : ["."]); if (!own) complete = false; else { text = own.out.toString("utf8"); if (own.cut) complete = false; }
+    if (complete && path) { const left = cap - Buffer.byteLength(text); const rest = left > 0 ? await grep(left, [".", `:(exclude,literal)${path}`]) : null;
+      if (!rest) complete = false; else { text += "\n" + rest.out.toString("utf8"); if (rest.cut) complete = false; } }
+    const out = { text, complete }; if (dirFilters.size > 50) dirFilters.clear(); dirFilters.set(key, out); return out;
+  };
   /** What may not leave Studio for this room: the change, its paths and its names (src/review-web.ts). */
   const webContext = async (s: S, room: Room | null): Promise<WebContext> => {
     const { run, wt, head, base } = s; const repo = String(room?.subject?.repository ?? run.ctx.pr?.repository ?? run.ctx.remote?.repository ?? "");
@@ -1216,8 +1229,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     // a directory room has no diff: what may not leave Studio is the code the tutor can read, the repository at the pinned
     // commit (the directory's own files first, then the rest), as far as the filter holds; complete says it held all of it
     let text = s.dir ? "" : (await g(wt, ["diff", "--no-color", "-U0", base, head], 4_000_000) ?? ""), complete = true;
-    if (s.dir) { const own = new Set(s.dir.files), order = [...s.dir.files, ...paths.filter((f) => !own.has(f))];
-      for (const f of order) { if (text.length >= WEB_FILTER_BYTES()) { complete = false; break; } const b = await fileAt(wt, head, f); if (b && !b.includes(0)) text += `\n+++ b/${f}\n` + b.toString("utf8").split("\n").map((l) => `+${l}`).join("\n"); } }
+    if (s.dir) ({ text, complete } = await dirFilterText(wt, head, String(room?.dir?.path ?? "")));
     return { diff: text.slice(0, WEB_FILTER_BYTES()), paths: paths.slice(0, 20000), names, denylist: deny.filter(Boolean), ...(s.dir ? { complete } : {}) } as WebContext;
   };
   /** a reviewer note as one line of the prompt: fenced by the caller, its text untrusted */
