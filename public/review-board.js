@@ -11,7 +11,8 @@
 (() => {
 window.crewReviewBoard = (D) => {
 const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
-  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs } = D;
+  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual } = D;
 /** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
  *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
 const isLesson = (x) => !!(x?.chapter && x.t?.action === "teach" && x.t.status === "done");
@@ -88,6 +89,9 @@ function decorate(fig, x, it, ctx) {
     else place(el, x, "edge", it.id, `edge:${e}`, el.textContent || e, its); }
   if (it.type === "svg") for (const el of fig.querySelectorAll("svg [data-edge]")) { const e = el.getAttribute("data-edge"), k = svgEdge(e);
     place(el, x, k >= 0 ? "transition" : "edge", it.id, k >= 0 ? `transition:${k}` : `edge:${e}`, k >= 0 ? `${e.replace(">", " → ")}${it.transitions[k].label ? ` · ${it.transitions[k].label}` : ""}` : e.replace(">", " → "), k >= 0 ? trRefs(k) : its); }
+  for (const el of fig.querySelectorAll("svg [data-edge-hit]")) { const e = el.getAttribute("data-edge-hit"), n = el.getAttribute("data-edge-n"); if (/^step:/.test(e)) continue;
+    if (it.type === "states" && n != null) place(el, x, "transition", it.id, `transition:${n}`, trText(Number(n)), trRefs(Number(n)));
+    else place(el, x, "edge", it.id, `edge:${e}`, e.replace(">", " → "), its); }
   for (const el of fig.querySelectorAll("svg [data-node]")) { const id = el.getAttribute("data-node"); place(el, x, "node", it.id, `node:${id}`, (el.textContent || "").replace(/\s+/g, " ").trim() || id, its); }
   for (const el of fig.querySelectorAll("[data-transition]")) { const i = Number(el.getAttribute("data-transition")); place(el, x, "transition", it.id, `transition:${i}`, trText(i), trRefs(i)); }
   const sel = fig.querySelector("[data-tx-panel]")?.getAttribute("data-tx-panel");
@@ -104,7 +108,12 @@ function decorate(fig, x, it, ctx) {
 
 // ---------- the board's parts ----------
 /** a region's width on the canvas: a text chapter reads in a column, a drawing gets more room; a phone one narrow column */
-const widthOf = (x) => (phone() ? 340 : x.pic && !x.skip ? (["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 760 : 660) : 540);
+/** a chapter is illustrated when it has a drawing, or a step names a picture of its own; a text chapter with neither (what it
+ *  is, the risks, the roads, the questions) stays one column of numbered steps, as wide as it reads */
+const illustrated = (x) => !x.skip && (!!x.pic || x.points.some((p) => p.picture));
+const widthOf = (x) => (phone() ? 340 : !illustrated(x) ? 540 : x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 840 : 780);
+/** a chapter's steps column on a desktop: a drawing gets the wider illustration */
+const stepsW = (x) => (x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 300 : 440);
 function regionEl(card, r, x, j, nth, ctx) {
   const key = x.key, ch = x.chapter, tone = POINTS_TONE[ch], seen = ctx.visited.has(key), ths = ctx.threads.filter((t) => t.anchor.scene === key);
   const open = ths.filter(confusedOf).length, done = ths.filter((t) => t.state === "resolved" || t.merged).length, cards = ths.reduce((n, t) => n + t.nodes.length, 0), W = widthOf(x);
@@ -112,23 +121,31 @@ function regionEl(card, r, x, j, nth, ctx) {
     h("h3", {}, chapterName(ch), ch === "decisions" ? h("span", { class: "rp-of" }, ` · ${T(`Choice ${nth}`, `決定 ${nth}`)}`) : null), h("p", { class: "rp-sub", "data-section-title": "" }, x.title));
   const sent = (p, m) => sentences(card, x, p, m, ch === "watch" ? "risk" : "sentence", ctx);
   // played (the floating play bar), the points not reached yet are dimmed and the one being read is marked
-  const k = revealOf(card, x), n = x.points.length, at = (m) => (k >= n ? "" : m === k - 1 ? " rb-now" : m >= k ? " rb-later" : "");
+  const k = revealOf(card, x), n = x.points.length, cur = x.skip ? null : stepOf(card, x, k), at = (m) => (k >= n ? (m === cur ? " rb-picked" : "") : m === k - 1 ? " rb-now" : m >= k ? " rb-later" : "");
+  const num = (m) => (x.skip ? null : stepBtn(card, x, m, cur));
   const body = x.skip ? h("p", { class: "rp-skip", "data-skip": ch }, h("span", { class: "rp-skip-k" }, T("Not drawn here", "這一章沒有畫")), " ", ...sent(x.points[0] || { text: "", cites: [] }, 0))
-    : tone ? h("ul", { class: "rp-points", "data-points-chapter": ch }, x.points.map((p, m) => h("li", { class: `${tone[0]}${at(m)}` }, h("span", { class: "rp-tag" }, T(...tone[1])), h("div", {}, ...sent(p, m)),
+    : tone ? h("ul", { class: "rp-points rb-stepped", "data-points-chapter": ch }, x.points.map((p, m) => h("li", { class: `${tone[0]}${at(m)}` }, num(m), h("span", { class: "rp-tag" }, T(...tone[1])), h("div", {}, ...sent(p, m)),
       // a risk has its own 問 (as the prototype's): it asks about the risk's first sentence
       ch === "watch" ? h("button", { type: "button", class: "rb-askbtn", "data-ask-risk": m, "aria-label": T("Ask about this risk", "問這個風險"), onclick: (e) => { e.stopPropagation(); const a = e.currentTarget.closest("li")?.querySelector("[data-akey]"); if (a) openPop(card, a); } }, T("Ask", "問")) : null)))
-    : h("div", { class: `rp-prose${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: `${m === 0 && ch === "what" ? "lead" : ""}${at(m)}` }, ...sent(p, m))));
+    : h("div", { class: `rp-prose rb-stepped${ch === "what" ? " lead" : ""}` }, x.points.map((p, m) => h("p", { class: `${m === 0 && ch === "what" ? "lead" : ""}${at(m)}` }, num(m), ...sent(p, m))));
   // what tidying folded in: a gist of the answers to the questions asked here, marked as such (hidden to see the original)
   const merged = ths.filter((t) => t.merged).sort((a, b) => a.n - b.n);
   const absorbed = merged.length && !B.before.has(card) ? h("div", { class: "rb-absorbed", "data-absorbed": merged.map((t) => t.n).join(",") },
     h("div", { class: "rb-abs-tag" }, T(`↳ Folded in from your questions ${merged.map((t) => `#${t.n}`).join(", ")}`, `↳ 併入你問的 ${merged.map((t) => `#${t.n}`).join("、")}`)),
     merged.map((t) => h("p", { "data-absorbed-thread": t.n }, h("ins", { class: "rb-abs" }, inline(card, t.merged.gist, t.merged.cites))))) : null;
-  let fig = null; if (x.pic && !x.skip) { const fk = `${card}/${x.pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${x.pic.id}`) ?? 0}/${W}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
-    fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, x.pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: W - 40, h: 620 }); decorate(fig, x, x.pic, ctx); if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); } }
+  // the illustration: the step's own picture, else the chapter's drawing, zoomed to the step's focus; never code (cited, a link
+  // away); a chapter with no drawing gets Studio's own picture of what it cites
+  const byId = (id) => (id ? r.board.find((b) => b.id === id) : null), own = cur != null ? byId(x.points[cur]?.picture) : null;
+  const pic0 = !illustrated(x) ? null : own || x.pic || byId(x.points.find((p) => p.picture)?.picture);
+  const codes = isCode(pic0) ? [pic0] : [], pic = !pic0 ? null : isCode(pic0) ? fallbackVisual(r, x) : pic0, focus = cur != null && pic === pic0 ? focusOf(x.points[cur]) : [], SW = stepsW(x);
+  let fig = null; if (pic) { const fk = `${card}/${pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${pic.id}`) ?? 0}/${W}/${focus.join(",")}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
+    fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: W - SW - 64, h: 620 }); if (!pic.synth) decorate(fig, x, pic, ctx); else fig.setAttribute("data-figure-studio", "");  if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); }
+    if (focus.length) { fig.setAttribute("data-zoom-focus", focus.join(",")); queueMicrotask(zoomFocus); } else fig.removeAttribute("data-zoom-focus"); }
+  const illus = fig ? h("div", { class: "rb-illus", "data-illustration-of": cur != null ? cur + 1 : "all" }, fig, stepDetail(x, cur), codeRefs(card, r, codes)) : null;
   const gist = plain(x.points[0]?.text || x.title || "");
   return h("section", { class: `rb-region${seen ? "" : " unvisited"}${ths.length ? " hasq" : ""}${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-report-section": key, "data-chapter": ch, "data-turn": x.turn, "data-open": open, "data-done": done, id: `rp-${card}-${key}`, "aria-label": `${String(j + 1).padStart(2, "0")} ${chapterName(ch)}` },
     h("div", { class: "rb-rtitle" }, h("b", {}, String(j + 1).padStart(2, "0")), h("span", {}, chapterName(ch)), ths.length ? h("span", { class: "rb-cnt" }, T(`${cards} asked`, `問 ${cards}`), open ? h("i", {}, T(` · ${open} not understood`, ` · 未解 ${open}`)) : null) : null),
-    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, absorbed), fig,
+    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, absorbed), illus),
       // far away: only the chapter's number, its title, one line and its questions
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, String(j + 1).padStart(2, "0")), h("div", { class: "rb-mt" }, chapterName(ch)), h("div", { class: "rb-mg", "data-map-gist": "" }, gist),
         h("div", { class: "rb-mq" }, h("span", { class: "rb-badge q", "data-map-open": open }, T(`${open} not understood`, `未解 ${open}`)), h("span", { class: "rb-badge ok", "data-map-done": done }, T(`${done} understood`, `懂了 ${done}`)))),
@@ -561,6 +578,12 @@ function miniSvg(card) {
     const bx = Number(m.dataset.bx) + (e.clientX - rc.left) / sc2, by = Number(m.dataset.by) + (e.clientY - rc.top) / sc2, c = camOf(card); B.lock.delete(card); markMoved(card); moveCam(card, { ...c, x: vp.clientWidth / 2 - bx * c.s, y: vp.clientHeight / 2 - by * c.s }); });
   return m;
 }
+/** a connector of a drawing picked (an edge, a transition, a sequence's step): what that step does and why it is built this way, over the chips */
+function popExplain(card, r, p) {
+  const a = p.anchor; if (!a?.item || !/^(edge|transition)$/.test(a.kind)) return null; const it = (r.board || []).find((b) => b.id === a.item); if (!it) return null;
+  const part = String(a.part || ""), tr = /^transition:(\d+)$/.exec(part), key = tr ? (() => { const t = (it.transitions || [])[Number(tr[1])]; return t ? t.edge || `${t.from}>${t.to}` : null; })() : /^edge:/.test(part) ? part.slice(5) : /^step:/.test(part) ? part : null;
+  return key ? h("div", { class: "rb-explain", "data-explain": key }, explainBox(card, it, key, null)) : null;
+}
 function popover(card, r) {
   const p = B.pop; if (!p || p.card !== card) return null; const live = r.open && !r.snapshot, desk = !phoneSession(), paid = live && !r.offer?.error && desk;
   const chip = ([c, en, zh]) => h("button", { type: "button", class: `rb-chip${c === "code" ? " free" : c === "rephrase" ? " c-q" : ""}`, "data-chip": c, disabled: c === "code" ? !p.refs.length : !paid,
@@ -569,6 +592,7 @@ function popover(card, r) {
   const style = phone() ? "" : `left:${Math.round(clamp(p.x - 20, 12, innerWidth - 352))}px;top:${Math.round(p.y + 14)}px`;
   return h("div", { class: "rb-pop", role: "dialog", "aria-modal": "false", "aria-label": T("Ask about this place", "問這裡"), "data-board-pop": p.key, style },
     h("div", { class: "rb-pq" }, T(`Ask: “${clip(p.anchor.text, 60)}”`, `問：「${clip(p.anchor.text, 60)}」`)),
+    popExplain(card, r, p),
     h("div", { class: "rb-chips" }, POP.map(chip)),
     paid ? h("form", { class: "rb-popform", onsubmit: (e) => { e.preventDefault(); const q = (B.pop?.text || "").trim(); if (q) ask(card, r, { anchor: p.anchor, key: p.key, chip: "free", q: q.slice(0, 1000) }); } },
       h("input", { "data-pop-input": p.key, maxlength: 1000, value: p.text || "", placeholder: T("Or ask in your own words…", "或直接問…"), "aria-label": T("Your question about this place", "你對這裡的問題"), autocomplete: "off", oninput: (e) => { if (B.pop) B.pop.text = e.target.value; } }),

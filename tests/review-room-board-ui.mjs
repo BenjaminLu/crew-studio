@@ -97,11 +97,14 @@ const geo = (p) => p.evaluate(() => { const r = (e) => { const b = e.getBounding
     bodies: [...document.querySelectorAll("[data-region] > .rb-rbody")].map((e) => ({ id: e.parentElement.dataset.region, ...r(e) })), regions: [...document.querySelectorAll("[data-region]")].map((e) => ({ id: e.dataset.region, ...r(e) })) }; });
 const hit = (a, b, g = 0) => a.x < b.r + g && a.r + g > b.x && a.y < b.b + g && a.b + g > b.y;
 
+/** a tap on a place of a chapter on a phone: there the chapter's illustration is on top and its steps under it, so the
+ *  sentence may sit below the fold; the tap is dispatched where it is (the board opens the popover from the click's place) */
+const tapPlace = (p, sel) => p.$eval(sel, (e) => { const r = e.getBoundingClientRect(); e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: Math.min(r.left + 10, innerWidth - 10), clientY: Math.min(r.top + 6, innerHeight - 10) })); });
 try {
   // ---------- 1440: the board, the camera, the walkthrough ----------
   { const { ctx, p, S } = await open(1440, "zh-TW");
     const base0 = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]"); vp.scrollTop = 400; vp.scrollLeft = 300; vp.dispatchEvent(new Event("scroll"));
-      return { regions: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.region), chapters: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.chapter), figures: [...document.querySelectorAll("[data-report-figure]")].map((e) => e.dataset.figureType),
+      return { regions: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.region), chapters: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.chapter), figures: [...document.querySelectorAll("[data-report-figure]:not([data-figure-studio])")].map((e) => e.dataset.figureType),
         statemap: document.querySelectorAll("[data-statemap] [data-transition]").length, tx: document.querySelectorAll("[data-tx-panel] [data-tx-table]").length, calls: document.querySelectorAll("[data-calls] [data-call]").length,
         scroll: [vp.scrollTop, vp.scrollLeft], page: document.documentElement.scrollHeight - innerHeight, wide: document.documentElement.scrollWidth - innerWidth, report: !!document.querySelector(".rr-report") }; });
     ok(JSON.stringify(base0.chapters) === JSON.stringify(["welcome", "what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "calls", "watch", "questions", "end"]) && JSON.stringify(base0.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence", "calls"])
@@ -175,7 +178,8 @@ try {
     await p.keyboard.press("Escape"); await p.click('[data-outline="t1"]'); await settle(p);
     await p.screenshot({ path: join(shots, "desktop-light-chapter.png") });
     // the popover: inside the screen, its chips and the free question
-    const s1 = await p.$('[data-akey="what/t1/sentence#p1.s0"]'); const b1 = await s1.boundingBox(); await p.mouse.click(b1.x + b1.width - 4, b1.y + b1.height - 3); await p.waitForSelector(".rb-pop");
+    // the sentence's end: its last line's last text (a sentence wraps in the steps column beside the illustration)
+    const [b0, b1] = await p.$eval('[data-akey="what/t1/sentence#p1.s0"]', (e) => { const rs = [...e.getClientRects()].filter((r) => r.width > 8); return [rs[0], rs.at(-1)].map((r) => ({ x: r.left, y: r.top, width: r.width, height: r.height })); }); await p.mouse.click(b1.x + b1.width - 4, b1.y + b1.height - 3); await p.waitForSelector(".rb-pop");
     // the first chip takes the focus on the next frame: wait for it (a loaded machine paints late)
     await p.waitForFunction(() => document.activeElement?.closest?.(".rb-pop"), null, { timeout: 3000 }).catch(() => {});
     const pop = await p.evaluate(() => { const r = document.querySelector(".rb-pop").getBoundingClientRect(); return { inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, chips: [...document.querySelectorAll(".rb-pop [data-chip]")].map((b) => b.textContent), input: !!document.querySelector(".rb-pop [data-pop-input]"), modal: !!document.querySelector("[data-room-confirm]"), focus: document.activeElement?.dataset?.chip ?? null }; });
@@ -187,7 +191,7 @@ try {
     await p.keyboard.press("Escape"); await settle(p, 80);
     ok(!(await p.$(".rb-pop")) && await p.evaluate(() => document.activeElement?.dataset?.akey === "what/t1/sentence#p0.s0"), "Escape closes the popover and gives the focus back to the place");
     // asking: the question waits in its card for the confirmation, inline; nothing is sent before it
-    await p.mouse.click(b1.x + 8, b1.y + 6); await p.waitForSelector(".rb-pop"); await p.click('.rb-pop [data-chip="deeper"]'); await p.waitForSelector("[data-pending]", { timeout: 5000 }).catch(() => {});
+    await p.mouse.click(b0.x + 8, b0.y + 6); await p.waitForSelector(".rb-pop"); await p.click('.rb-pop [data-chip="deeper"]'); await p.waitForSelector("[data-pending]", { timeout: 5000 }).catch(() => {});
     const pend = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), c = document.querySelector("[data-pending]")?.getBoundingClientRect() ?? { left: -1 }; return { text: document.querySelector("[data-board-confirm]")?.textContent, consent: document.querySelector("[data-board-consent]")?.checked, label: document.querySelector(".rb-consent")?.textContent, right: c.left > a.right, modal: !!document.querySelector("[data-room-confirm], [role=dialog][aria-modal=true]"), pop: !!document.querySelector(".rb-pop") }; });
     ok(S.turns.length === 0 && /付費一回合：codex · gpt-6（high），不產生圖片/.test(pend.text) && pend.consent === true && /之後追問直接開始（這個房間）/.test(pend.label || "") && pend.right && !pend.modal && !pend.pop, "the room's first paid question shows its plan once in the new card beside its place (model, effort, paid, no picture), “之後追問直接開始（這個房間）” pre-checked; nothing is sent yet", JSON.stringify(pend));
     await p.click("[data-board-start]"); await p.waitForSelector("[data-thinking]", { timeout: 15000 }).catch(() => {});
@@ -399,7 +403,8 @@ try {
     const ph = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), b = document.querySelector('[data-region="t1-6"] .rb-rbody').getBoundingClientRect(); return { sheet: document.querySelector("[data-board-rail]").classList.contains("open"), s: window.crewReviewRoom.board.camOf("SC-60").s, left: b.left >= vp.left, right: b.right <= vp.right + 1, fill: b.width / vp.width, top: b.top >= vp.top && b.top < vp.top + 120 }; });
     ok(!ph.sheet && ph.s >= 0.9 && ph.left && ph.right && ph.fill > 0.85 && ph.top, "tapping a chapter closes the sheet and frames it across the phone's width at a readable size", JSON.stringify(ph));
     await p.screenshot({ path: join(shots, "phone-light-chapter.png") });
-    const a = await p.$('[data-region="t1-6"] [data-akind="sentence"]'); const ab = await a.boundingBox(); await p.mouse.click(ab.x + 10, ab.y + 6); await p.waitForSelector(".rb-pop");
+    // on a phone the chapter's illustration is on top and its steps under it: the sentence may sit below the fold, so it is tapped where it is
+    await tapPlace(p, '[data-region="t1-6"] [data-akind="sentence"]'); await p.waitForSelector(".rb-pop");
     const sheet = await p.evaluate(() => { const r = document.querySelector(".rb-pop").getBoundingClientRect(); return { left: r.left, right: Math.round(r.right), bottom: Math.round(r.bottom), W: innerWidth, H: innerHeight, chips: document.querySelectorAll(".rb-pop [data-chip]").length, chipH: document.querySelector(".rb-pop [data-chip]").getBoundingClientRect().height }; });
     await p.screenshot({ path: join(shots, "phone-light-popover.png") });
     ok(sheet.left === 0 && sheet.right === sheet.W && sheet.bottom === sheet.H && sheet.chips === 5 && sheet.chipH >= 32, "on a phone the popover is a bottom sheet across the screen, its chips big enough to tap", JSON.stringify(sheet));
@@ -407,7 +412,7 @@ try {
     ok(off.paid.length === 4 && off.paid.every(Boolean) && /在電腦上問/.test(off.desk || "") && off.code && !off.input && S.turns.length === 0, "a phone's paid chips are off, saying 在電腦上問 (a phone cannot start a paid round); show the code stays", JSON.stringify(off));
     // show the code on a phone: free, read through the citation viewer (a phone writes nothing to the room)
     await p.keyboard.press("Escape"); await settle(p, 150);
-    const rk = await p.$('[data-region="t1-6"] [data-akind="sentence"][data-arefs]:not([data-arefs=""])'); const rb = await rk.boundingBox(); await p.mouse.click(rb.x + 10, rb.y + 6); await p.waitForSelector(".rb-pop");
+    await tapPlace(p, '[data-region="t1-6"] [data-akind="sentence"][data-arefs]:not([data-arefs=""])'); await p.waitForSelector(".rb-pop");
     const cites0 = S.cites.length; await p.click('.rb-pop [data-chip="code"]'); await until(() => S.cites.length > cites0, 5000); await settle(p, 300);
     ok(S.cites.length > cites0 && !S.lessons.some((x) => x.op === "code"), "on a phone 看程式碼 opens the citation viewer and writes nothing to the room", JSON.stringify({ cites: S.cites.slice(cites0), ops: S.lessons.map((x) => x.op) }));
     await p.keyboard.press("Escape"); await settle(p, 150);
@@ -422,7 +427,7 @@ try {
     await ctx.close(); }
   // a narrow window on this Mac is not a phone: the server says who is looking
   { const { ctx, p } = await open(390, "zh-TW", { viewer: "desktop" }); if (await p.$("[data-board-rail].open")) { await p.click('[data-outline="t1-6"]'); await settle(p, 300); }
-    const a = await p.$('[data-region="t1-6"] [data-akind="sentence"]'); const ab = await a.boundingBox(); await p.mouse.click(ab.x + 10, ab.y + 6); await p.waitForSelector(".rb-pop", { timeout: 5000 }).catch(() => {});
+    await tapPlace(p, '[data-region="t1-6"] [data-akind="sentence"]'); await p.waitForSelector(".rb-pop", { timeout: 5000 }).catch(() => {});
     const on = await p.evaluate(() => ({ paid: [...document.querySelectorAll('.rb-pop [data-chip]:not([data-chip="code"])')].map((b) => b.disabled), desk: !!document.querySelector("[data-ask-desktop]") }));
     ok(on.paid.length === 4 && on.paid.every((d) => !d) && !on.desk, "a narrow window on the Mac is not a phone: its paid chips stay on", JSON.stringify(on));
     await ctx.close(); }

@@ -159,6 +159,43 @@ export function boardLength(text: unknown, limit: { cjk: number; latin: number }
   const cjk = (t.match(CJK) ?? []).length; return cjk * (limit.latin / limit.cjk) + ([...t].length - cjk);
 }
 export const fitsBoard = (text: unknown, limit: { cjk: number; latin: number }) => boardLength(text, limit) <= limit.latin;
+/** a card is numbered steps beside an illustration: each step (a scene's point) may name the picture it shows (`picture`, a
+ *  board item), the part of it to zoom to (`focus`: node ids, edges "from>to", a sequence's "step:n") and a short `detail`
+ *  shown under the illustration; a drawing's connectors may each carry an explanation (`explain`: what this step does and why
+ *  it is built this way), shown when the captain clicks the connector */
+export const STEP_LIMITS = { detail: { cjk: 80, latin: 160 }, focus: 8 } as const;
+export const EXPLAIN_LIMITS = { does: { cjk: 60, latin: 120 }, why: { cjk: 80, latin: 160 }, max: 20 } as const;
+const STEP_KEY = /^[\w.:>#-]{1,80}$/;
+/** what is wrong with a scene's steps' picture, focus and detail (empty: they fit); has: a board item id exists */
+export function stepErrors(points: any[], has: (id: string) => boolean): string[] {
+  const errors: string[] = [];
+  points.slice(0, 8).forEach((p: any, i: number) => {
+    if (p?.picture != null && p.picture !== "" && (typeof p.picture !== "string" || !has(p.picture))) errors.push(`point ${i + 1}: picture is a board item id you drew (board_draw, figure_svg, chart_draw, …)`);
+    if (p?.focus != null && (!Array.isArray(p.focus) || p.focus.length > STEP_LIMITS.focus || p.focus.some((f: any) => typeof f !== "string" || !STEP_KEY.test(f)))) errors.push(`point ${i + 1}: focus is a list of at most ${STEP_LIMITS.focus} keys of the picture: node ids, edges "from>to" or a sequence's "step:n"`);
+    if (p?.detail != null) { const d = String(p.detail).replace(/\s+/g, " ").trim();
+      if (/\n/.test(String(p.detail).trim())) errors.push(`point ${i + 1}: detail is one or two sentences, no line breaks`);
+      else if (d && !fitsBoard(d, STEP_LIMITS.detail)) errors.push(`point ${i + 1}: detail is too long (at most ${STEP_LIMITS.detail.cjk} CJK characters or ${STEP_LIMITS.detail.latin} Latin)`); } });
+  return errors;
+}
+/** a translated scene's step details, kept only when every one came back (an empty one stays empty), each within the board's
+ *  limit; null: keep the original's */
+export function keepDetails(want: string[], got: unknown): string[] | null {
+  if (!want.some(Boolean) || !Array.isArray(got) || got.length !== want.length) return null;
+  return got.every((v: any, j: number) => typeof v === "string" && (!want[j] ? !v.trim() : !!v.trim() && fitsBoard(v, STEP_LIMITS.detail))) ? got.map((v: string) => v.replace(/\s+/g, " ").trim()) : null;
+}
+/** what is wrong with a drawing's explanations: each {edge, does, why?, cites?} names a connector the drawing has (keys:
+ *  null when Studio does not know them, a mermaid's), does is required, both short; at most EXPLAIN_LIMITS.max */
+export function explainErrors(list: unknown, keys: string[] | null): string[] {
+  if (list == null) return []; if (!Array.isArray(list)) return ["explain is a list of {edge, does, why?, cites?}"];
+  const errors: string[] = []; if (list.length > EXPLAIN_LIMITS.max) errors.push(`explain: at most ${EXPLAIN_LIMITS.max} connectors`);
+  list.slice(0, EXPLAIN_LIMITS.max + 4).forEach((x: any, i: number) => { const edge = String(x?.edge ?? "").trim(), does = String(x?.does ?? "").replace(/\s+/g, " ").trim(), why = String(x?.why ?? "").replace(/\s+/g, " ").trim();
+    if (!STEP_KEY.test(edge) || (keys && !keys.includes(edge))) errors.push(`explain ${i + 1}: edge ${edge ? `"${edge.slice(0, 40)}" is not a connector of this drawing` : "is required"}${keys ? ` (one of: ${keys.slice(0, 12).join(", ")})` : ""}`);
+    if (!does) errors.push(`explain ${i + 1}: does is required: what this step does`);
+    else if (!fitsBoard(does, EXPLAIN_LIMITS.does)) errors.push(`explain ${i + 1}: does is too long (at most ${EXPLAIN_LIMITS.does.cjk} CJK or ${EXPLAIN_LIMITS.does.latin} Latin)`);
+    if (why && !fitsBoard(why, EXPLAIN_LIMITS.why)) errors.push(`explain ${i + 1}: why is too long (at most ${EXPLAIN_LIMITS.why.cjk} CJK or ${EXPLAIN_LIMITS.why.latin} Latin)`);
+    if (x?.cites !== undefined && (!Array.isArray(x.cites) || x.cites.length > 4)) errors.push(`explain ${i + 1}: cites is a list of at most 4 citations`); });
+  return errors;
+}
 /** what is wrong with a scene's title and points, as the tutor reads it (empty: it fits the board) */
 export function sceneErrors(title: string, points: any[], min: number = SCENE_LIMITS.points.min): string[] {
   const errors: string[] = [];
@@ -258,7 +295,7 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
 /** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
  *  citations, board items and pictures are the original's */
-export type Translation = { scenes: { title: string; points: string[] }[]; claims: string[]; answer: string; provider: string; model: string; at: string;
+export type Translation = { scenes: { title: string; points: string[]; details?: string[] }[]; claims: string[]; answer: string; provider: string; model: string; at: string;
   /** the turn's figures' words (labels, before / after, a decision's options), per board item, in figureTexts' order */
   figures?: Record<string, string[]> };
 /** a figure's words, in a fixed order (what a translation replaces; ids, code names and actors stay as they are) */
@@ -271,8 +308,12 @@ export function figureTexts(it: any): string[] {
     case "sequence": return (it.steps ?? []).flatMap((x: any) => [x.label, x.frameLabel ?? ""]);
     default: return null;
   } })();
+  // what was added later goes after the words older translations hold (a figure without them keeps its length): each
+  // transition's why (only where there is one), then each connector's explanation, what it does and why
+  const extra = [...(it?.type === "states" || it?.type === "svg" ? (it.transitions ?? []).filter((t: any) => t?.why).map((t: any) => t.why) : []),
+    ...(Array.isArray(it?.explain) ? it.explain.flatMap((e: any) => [e?.does ?? "", e?.why ?? ""]) : [])];
   // the figure's title first, then its own words
-  return own ? [it.title ?? "", ...own] : [];
+  return own ? [it.title ?? "", ...own, ...extra] : extra.length ? [it.title ?? "", ...extra] : [];
 }
 /** the languages the explanation is made in (zh-CN is the zh-TW text through OpenCC on the page, nothing paid) */
 export const ROOM_LANGS = ["en", "zh-TW"] as const;
@@ -360,6 +401,8 @@ export const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})
 export type Cite = { ref: string; ok: boolean };
 /** basis "reviewer": a GitHub reviewer's own words (quote, untrusted text shown as text), cited to the comment */
 export type Claim = { text: string; kind: "claim" | "heading" | "code" | "table" | "aside"; basis: "cited" | "inference" | "reviewer" | null; cites: Cite[]; quote?: string;
+  /** a scene's step: the picture it shows, the part of it to zoom to, a short detail under the illustration (scene_show) */
+  picture?: string; focus?: string[]; detail?: string;
   /** a Studio-made line in Chinese (its own strings; the quote, someone else's words, is never translated) */
   zh?: string };
 /** The tutor's answer as blocks (paragraphs, list items, headings, code), each claim with its citations checked by ok. */
@@ -761,9 +804,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const type = String(a?.type ?? ""), title = String(a?.title ?? "").replace(/\s+/g, " ").slice(0, 120), id = `B${turn.n}-${++drawn}`;
       const group = typeof a?.group === "string" && /^[\w-]{1,40}$/.test(a.group) ? a.group : undefined, step = Number.isInteger(a?.step) && a.step >= 1 && a.step <= 12 ? a.step : undefined;
       const at = { id, turn: turn.n, title, ...(group ? { group } : {}), ...(step ? { step } : {}) };
+      // each connector's explanation (what this step does, why it is built this way), its citations checked; keys: the drawing's connectors
+      const explained = async (keys: string[] | null) => { const errs = explainErrors(a?.explain, keys); if (errs.length) throw new Error(`item ${i + 1}: ${errs.join("; ")}`); if (!Array.isArray(a?.explain) || !a.explain.length) return {};
+        const ok = await citeCheck(room, s), one = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim();
+        return { explain: a.explain.map((x: any) => ({ edge: one(x.edge), does: one(x.does), ...(one(x.why) ? { why: one(x.why) } : {}), cites: citesOf(x.cites, ok) })) }; };
       // a picture or a note says what it rests on (cites); without a valid one it reads as an inference
       const said = async () => { const cites = citesOf(a?.cites, await citeCheck(room, s)); return { cites, basis: cites.some((c) => c.ok) ? "cited" : "inference" }; };
-      if (type === "mermaid") { const code = String(a?.code ?? ""); if (!code.trim() || code.length > 4000) throw new Error(`item ${i + 1}: mermaid code is 1 to 4000 characters`); return { ...at, type, code, ...(await said()) }; }
+      if (type === "mermaid") { const code = String(a?.code ?? ""); if (!code.trim() || code.length > 4000) throw new Error(`item ${i + 1}: mermaid code is 1 to 4000 characters`); return { ...at, type, code, ...(await said()), ...(await explained(null)) }; }
       if (type === "note") { const text = String(a?.text ?? ""); if (!text.trim() || text.length > 2000) throw new Error(`item ${i + 1}: a note is 1 to 2000 characters`); return { ...at, type, text, ...(await said()) }; }
       // one changed item (a commit group, a subsystem, a fix): before and after, drawn by Studio from one layout for every item
       if (type === "item") { const one = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim(), name = one(a?.name), before = one(a?.before), after = one(a?.after), mechanism = one(a?.mechanism);
@@ -774,7 +821,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // a lifecycle: its states and every transition, each transition citing the code that makes it
       if (type === "states") { const states = (Array.isArray(a?.states) ? a.states : []).map((x: any) => ({ id: String(x?.id ?? "").trim(), label: String(x?.label ?? x?.id ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), ...(x?.mark === "new" || x?.mark === "changed" ? { mark: x.mark } : {}) }));
         const ids = new Set(states.map((x: any) => x.id)), ok = await citeCheck(room, s);
-        const transitions = (Array.isArray(a?.transitions) ? a.transitions : []).map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), label: String(x?.label ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), detail: String(x?.detail ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null, tx: txOf(x?.tx) }));
+        const transitions = (Array.isArray(a?.transitions) ? a.transitions : []).map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), label: String(x?.label ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), detail: String(x?.detail ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null, tx: txOf(x?.tx),
+          ...(String(x?.why ?? "").trim() ? { why: String(x.why).replace(/\s+/g, " ").trim() } : {}) }));
+        const badWhy = transitions.findIndex((x: any) => x.why && !fitsBoard(x.why, EXPLAIN_LIMITS.why)); if (badWhy >= 0) throw new Error(`item ${i + 1}: transition ${badWhy + 1}: why is too long (at most ${EXPLAIN_LIMITS.why.cjk} CJK or ${EXPLAIN_LIMITS.why.latin} Latin)`);
         const badTx = transitions.findIndex((x: any) => x.tx && "error" in x.tx); if (badTx >= 0) throw new Error(`item ${i + 1}: transition ${badTx + 1}: ${(transitions[badTx].tx as any).error}`);
         if (states.length < 2 || states.length > FIGURE_LIMITS.states || states.some((x: any) => !/^[\w-]{1,30}$/.test(x.id)) || ids.size !== states.length) throw new Error(`item ${i + 1}: states is 2 to ${FIGURE_LIMITS.states} {id, label}, each id letters, digits, - or _`);
         if (!transitions.length || transitions.length > FIGURE_LIMITS.transitions || transitions.some((x: any) => !ids.has(x.from) || !ids.has(x.to))) throw new Error(`item ${i + 1}: transitions is 1 to ${FIGURE_LIMITS.transitions} {from, to, label, cite}, between the states listed`);
@@ -783,14 +832,14 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         const sid = (id: string) => `s_${id}`, lab = (t: string) => t.replace(/-->|---|--x|==>/g, " ").replace(/[\[\]|;(){}&]/g, " ").replace(/\s+/g, " ").trim();
         const code = ["flowchart LR", ...states.map((x: any) => `  ${sid(x.id)}[${lab(x.label) || x.id}]`), ...transitions.map((x: any) => `  ${sid(x.from)} -->${lab(x.label) ? `|${lab(x.label)}|` : ""} ${sid(x.to)}`)].join("\n");
         const cites = transitions.map((x: any) => x.cite).filter(Boolean);
-        return { ...at, type, entity: String(a?.entity ?? "").replace(/\s+/g, " ").trim().slice(0, 40), states, transitions, code, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" }; }
+        return { ...at, type, entity: String(a?.entity ?? "").replace(/\s+/g, " ").trim().slice(0, 40), states, transitions, code, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference", ...(await explained(transitions.map((x: any) => `${x.from}>${x.to}`))) }; }
       // one request, in order: who calls whom, returns and async, loops, alternatives and options kept
       if (type === "sequence") { const actors = (Array.isArray(a?.actors) ? a.actors : []).map((x: any) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, 24)).filter(Boolean);
         const steps = (Array.isArray(a?.steps) ? a.steps : []).map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), label: String(x?.label ?? "").replace(/\s+/g, " ").trim().slice(0, FIGURE_LIMITS.label), kind: ["call", "return", "async"].includes(x?.kind) ? x.kind : "call",
           ...(["loop", "alt", "else", "opt"].includes(x?.frame) ? { frame: x.frame, frameLabel: String(x?.frameLabel ?? "").replace(/\s+/g, " ").trim().slice(0, 30) } : {}) }));
         if (actors.length < 2 || actors.length > FIGURE_LIMITS.actors || new Set(actors).size !== actors.length) throw new Error(`item ${i + 1}: actors is 2 to ${FIGURE_LIMITS.actors} different names`);
         if (!steps.length || steps.length > FIGURE_LIMITS.steps || steps.some((x: any) => !actors.includes(x.from) || !actors.includes(x.to) || !x.label)) throw new Error(`item ${i + 1}: steps is 1 to ${FIGURE_LIMITS.steps} {from, to, label, kind?, frame?, frameLabel?} between the actors listed`);
-        return { ...at, type, actors, steps, ...(await said()) }; }
+        return { ...at, type, actors, steps, ...(await said()), ...(await explained(steps.map((_: any, j: number) => `step:${j + 1}`))) }; }
       // what talks to what: components and their connections, drawn by Studio; inferred unless a connection cites what shows it
       if (type === "arch") { const ok = await citeCheck(room, s), one = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim();
         const nodes = (Array.isArray(a?.nodes) ? a.nodes : []).map((x: any) => ({ id: String(x?.id ?? "").trim(), label: one(x?.label ?? x?.id), kind: ["service", "store", "external", "queue", "actor"].includes(x?.kind) ? x.kind : "service", mark: ["new", "changed", "removed"].includes(x?.mark) ? x.mark : null }));
@@ -800,7 +849,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         if (!edges.length || edges.length > FIGURE_LIMITS.edges || edges.some((x: any) => !ids.has(x.from) || !ids.has(x.to) || x.from === x.to)) throw new Error(`item ${i + 1}: edges is 1 to ${FIGURE_LIMITS.edges} {from, to, label?, cite?} between the nodes listed`);
         const cites = [...citesOf(a?.cites, ok), ...edges.map((x: any) => x.cite).filter(Boolean)], shown = cites.some((c: Cite) => c.ok && /^(source|ledger):/.test(c.ref));
         // an architecture is the tutor's reading of the code unless a design document (a source) or the record shows it
-        return { ...at, type, nodes, edges, cites, inferred: !shown, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" }; }
+        return { ...at, type, nodes, edges, cites, inferred: !shown, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference", ...(await explained(edges.map((x: any) => `${x.from}>${x.to}`))) }; }
       // a decision the change makes: the question, the option taken and why; the options it turned down only as the record shows them
       if (type === "decision") { const ok = await citeCheck(room, s), one = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim();
         const question = one(a?.question), chosen = one(a?.chosen), because = one(a?.because);
@@ -867,18 +916,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       { name: "git_blame", description: "Who last changed each line of a range of a file at the head (at most 120 lines): commit, author, date.", schema: { type: "object", properties: { path: { type: "string" }, start: { type: "number" }, end: { type: "number" } }, required: ["path", "start"] },
         run: async (a) => { const p = pathArg(a?.path), s0 = Math.max(1, Number(a?.start) || 1), e0 = Math.min(s0 + 119, Math.max(s0, Number(a?.end) || s0 + 40));
           const t = await g(wt, ["blame", "--date=short", "-L", `${s0},${e0}`, head, "--", p], 400_000); return t === null ? { error: `cannot blame ${p} lines ${s0}-${e0} at the head` } : { path: p, text: t.slice(0, 20000) }; } },
-      { name: "board_draw", description: "Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); table {rows: [[header cells], [cells], ...]} (2 to 8 rows of at most 5 cells of at most 60 characters, shown as text); item {name, before, after, mechanism?, cites} (one changed item: a commit group, a subsystem or a fix, before and after; Studio draws every item with the same layout); states {entity, states: [{id, label, mark?: new|changed (a state this change adds or changes)}], transitions: [{from, to, label, detail?, cite, tx?}]} (one entity's lifecycle, every transition citing the code that makes it; tx its database transaction: {tables: [{table, op, guard?, fields: [{k, was?, now}]}], outside?: [{what, kind?}]}); calls {calls: [{name, method?, request: [{k, v}], response: [{k, v}], errors?: [{code, when}], tx?, cite}]} (every API call: request, response, the transaction it runs); arch {nodes: [{id, label, kind: service|store|external|queue|actor, mark?: new|changed|removed}], edges: [{from, to, label?, cite?}], cites} (what talks to what, laid out by Studio; inferred unless a design document or the record shows it); decision {question, chosen, because, rejected?: [{option, why, cite}], cites} (one decision the change makes; a rejected option only with a commit, review note or source showing it); sequence {actors: [names], steps: [{from, to, label, kind: call|return|async, frame?: loop|alt|else|opt, frameLabel?}], cites} (one request in order, its loops and alternatives kept); note {text}. Studio fills every excerpt from the real commits and draws every figure.",
+      { name: "board_draw", description: `Add items to the board the captain sees (at most 8 a call). Each item: {type, title, group?, step?} and: mermaid {code} (flowchart LR/TD renders as a picture; a build-up is one group with steps 1, 2, 3, each redrawing the last and adding one part); diff {path, from?, to?} (that file's hunks, optionally only those meeting head lines from-to); code {path, start, end, highlight?: [line numbers]} (head lines); compare {path, start, end, baseStart?, baseEnd?} (the same range at the base and the head); table {rows: [[header cells], [cells], ...]} (2 to 8 rows of at most 5 cells of at most 60 characters, shown as text); item {name, before, after, mechanism?, cites} (one changed item: a commit group, a subsystem or a fix, before and after; Studio draws every item with the same layout); states {entity, states: [{id, label, mark?: new|changed (a state this change adds or changes)}], transitions: [{from, to, label, detail?, cite, tx?}]} (one entity's lifecycle, every transition citing the code that makes it; tx its database transaction: {tables: [{table, op, guard?, fields: [{k, was?, now}]}], outside?: [{what, kind?}]}); calls {calls: [{name, method?, request: [{k, v}], response: [{k, v}], errors?: [{code, when}], tx?, cite}]} (every API call: request, response, the transaction it runs); arch {nodes: [{id, label, kind: service|store|external|queue|actor, mark?: new|changed|removed}], edges: [{from, to, label?, cite?}], cites} (what talks to what, laid out by Studio; inferred unless a design document or the record shows it); decision {question, chosen, because, rejected?: [{option, why, cite}], cites} (one decision the change makes; a rejected option only with a commit, review note or source showing it); sequence {actors: [names], steps: [{from, to, label, kind: call|return|async, frame?: loop|alt|else|opt, frameLabel?}], cites} (one request in order, its loops and alternatives kept); note {text}. A drawing with connectors (mermaid, states, arch, sequence) may add explain: [{edge, does, why?, cites?}] (at most ${EXPLAIN_LIMITS.max}): for each connector (edge "from>to"; a sequence's step "step:n"), what that step does (at most ${EXPLAIN_LIMITS.does.latin} Latin or ${EXPLAIN_LIMITS.does.cjk} CJK characters) and why it is built this way (at most ${EXPLAIN_LIMITS.why.latin} / ${EXPLAIN_LIMITS.why.cjk}); the captain clicks a connector to read it. A states transition may add why. Studio fills every excerpt from the real commits and draws every figure.`,
         schema: { type: "object", properties: { items: { type: "array", maxItems: 8, items: { type: "object" } } }, required: ["items"] },
         run: async (a) => { const list = Array.isArray(a?.items) ? a.items.slice(0, 8) : []; if (!list.length) return { error: "items is a list of 1 to 8 board items" };
           if (room.board.filter((b) => b.turn === turn.n).length + list.length > 40) return { error: "at most 40 board items a turn" };
           const added: string[] = [], errors: string[] = [];
           for (let i = 0; i < list.length; i++) { try { const it = await item(list[i], i); room.board.push(it); added.push(it.id); } catch (e: any) { errors.push(String(e?.message ?? e)); } }
           save(k, room); return { added, errors }; } },
-      { name: "scene_show", description: `Show one scene on the board, the way the captain reads an answer: when teaching the change, its chapter (in order: ${CHAPTERS.map((c) => c.id).join(", ")}; a chapter with nothing to show is left out; other answers may name one or leave it out), a short title, one picture (a board item id you drew: board_draw, chart_draw, screenshots_show or illustrate) and ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points, each one sentence with the citations it rests on (none: it is an inference). Limits: the title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones; a point at most ${SCENE_LIMITS.point.cjk} CJK or ${SCENE_LIMITS.point.latin} Latin (citations not counted). Over a limit the scene is refused, saying which part: shorten it and call again. A longer explanation goes in your final answer (the transcript). At most ${SCENE_LIMITS.scenes} scenes a turn.`,
-        schema: { type: "object", properties: { chapter: { type: "string", enum: CHAPTERS.map((c) => c.id) }, title: { type: "string" }, picture: { type: "string" }, points: { type: "array", minItems: SCENE_LIMITS.points.min, maxItems: SCENE_LIMITS.points.max, items: { type: "object", properties: { text: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["text"] } } }, required: ["title", "picture", "points"] },
+      { name: "scene_show", description: `Show one scene on the board, the way the captain reads an answer: when teaching the change, its chapter (in order: ${CHAPTERS.map((c) => c.id).join(", ")}; a chapter with nothing to show is left out; other answers may name one or leave it out), a short title, one picture (a board item id you drew: board_draw, chart_draw, screenshots_show or illustrate) and ${SCENE_LIMITS.points.min} to ${SCENE_LIMITS.points.max} short points, each one sentence with the citations it rests on (none: it is an inference). Limits: the title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones; a point at most ${SCENE_LIMITS.point.cjk} CJK or ${SCENE_LIMITS.point.latin} Latin (citations not counted). Over a limit the scene is refused, saying which part: shorten it and call again. A longer explanation goes in your final answer (the transcript). At most ${SCENE_LIMITS.scenes} scenes a turn. The board shows the points as numbered steps beside an illustration: a step may name its own picture (picture: a board item id; else the last [board:…] it cites, else the scene's), the part of it to zoom to (focus: at most ${STEP_LIMITS.focus} node ids, edges "from>to" or a sequence's "step:n") and a detail shown under the illustration (one or two sentences, at most ${STEP_LIMITS.detail.cjk} CJK or ${STEP_LIMITS.detail.latin} Latin). The illustration is a diagram or picture, never code: cite the code instead.`,
+        schema: { type: "object", properties: { chapter: { type: "string", enum: CHAPTERS.map((c) => c.id) }, title: { type: "string" }, picture: { type: "string" }, points: { type: "array", minItems: SCENE_LIMITS.points.min, maxItems: SCENE_LIMITS.points.max, items: { type: "object", properties: { text: { type: "string" }, cites: { type: "array", items: { type: "string" } }, picture: { type: "string" }, focus: { type: "array", maxItems: STEP_LIMITS.focus, items: { type: "string" } }, detail: { type: "string" } }, required: ["text"] } } }, required: ["title", "picture", "points"] },
         run: async (a) => {
           const title = String(a?.title ?? "").replace(/\s+/g, " ").trim(), picture = String(a?.picture ?? "").trim(), points = Array.isArray(a?.points) ? a.points : [];
-          const errors = sceneErrors(title, points), at = CHAPTERS.findIndex((c) => c.id === a?.chapter), ch: any = CHAPTERS[at], pic = room.board.find((b) => b.id === picture);
+          const errors = [...sceneErrors(title, points), ...stepErrors(points, (id) => room.board.some((b) => b.id === id))], at = CHAPTERS.findIndex((c) => c.id === a?.chapter), ch: any = CHAPTERS[at], pic = room.board.find((b) => b.id === picture);
           // a lesson (teach) is chapters in order; any other answer may name a chapter, in any order, or none
           const teach = turn.action === "teach";
           if (at < 0 && (teach || a?.chapter)) errors.push(`chapter is one of ${CHAPTERS.map((c) => c.id).join(", ")}, in that order`);
@@ -900,7 +949,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           if (errors.length) return { error: errors.join("; ") };
           const ok = await citeCheck(room, s);
           const claims: Claim[] = points.map((p: any) => { const cites = citesOf(p.cites, ok), text = String(p.text).replace(/\s+/g, " ").trim();
-            return { text, kind: "claim", basis: !/\[(inference|inferred|speculative)\]/i.test(text) && cites.some((c) => c.ok) ? "cited" : "inference", cites }; });
+            const pic = typeof p.picture === "string" && p.picture ? { picture: p.picture } : {}, focus = Array.isArray(p.focus) && p.focus.length ? { focus: p.focus.map(String) } : {}, detail = String(p.detail ?? "").replace(/\s+/g, " ").trim();
+            return { text, kind: "claim", basis: !/\[(inference|inferred|speculative)\]/i.test(text) && cites.some((c) => c.ok) ? "cited" : "inference", cites, ...pic, ...focus, ...(detail ? { detail } : {}) }; });
           if (ch?.cited && claims.some((c) => c.basis !== "cited")) return { error: "a risk is listed only with a citation Studio can verify: fix the citation or leave the point out" };
           if (ch?.record && claims.some((c) => !c.cites.some((x) => x.ok && /^(commit|review|ledger|source):/.test(x.ref)))) return { error: "a road not taken is listed only with a commit, review note or source Studio can verify: fix the citation or leave it out" };
           const n = (turn.scenes?.length ?? 0) + 1; turn.scenes = [...(turn.scenes ?? []), { n, title, picture, points: claims, ...(ch ? { chapter: ch.id } : {}) }]; save(k, room);
@@ -926,9 +976,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         schema: { type: "object", properties: {} },
         run: async () => { if (turn.action !== "teach") return { error: "lesson_check is for a lesson (teach) only" }; const gaps = lessonGaps(turn.scenes), w = stateWrites(await g(wt, ["diff", "--no-color", "-U0", base, head], 4_000_000) ?? "");
           return { ok: !gaps.length, missing: gaps, ...(w.length ? { stateWrites: w, note: "the diff writes a state column: one lifecycle (statemap) for each entity it moves" } : {}) }; } },
-      { name: "figure_svg", description: `Draw a figure yourself, the way workflows/skills/diagram-design says (its type references, connector rules, 4px grid, budgets) inside baton's embedding contract: one <svg viewBox> of svg g rect path line polyline polygon circle ellipse text tspan marker defs title desc; colours ONLY as var(--fig-<token>) (${["paper", "card", "ink", "muted", "soft", "rule", "accent", "accent-tint", "ok", "ok-tint", "amber", "amber-tint", "seal", "seal-tint", "link"].join(", ")}); fonts only var(--fig-sans|mono|serif); data-node on every box a reader may pick, data-edge="from>to" on every connector, data-en, data-hant and data-hans on every text (the visible text one of them), data-cite on a connector that opens code. Studio drops anything else and refuses a figure whose labels overlap, sit on a line or leave the viewBox, whose connector runs through a box that is not one of its ends, or whose Chinese text is under 12px: redraw it. kind: state (a lifecycle: with entity and transitions [{edge: "from>to", label, cite, tx}] for every data-edge), sequence, architecture, flow, decision, item. At most 8 tries a turn.`,
+      { name: "figure_svg", description: `Draw a figure yourself, the way workflows/skills/diagram-design says (its type references, connector rules, 4px grid, budgets) inside baton's embedding contract: one <svg viewBox> of svg g rect path line polyline polygon circle ellipse text tspan marker defs title desc; colours ONLY as var(--fig-<token>) (${["paper", "card", "ink", "muted", "soft", "rule", "accent", "accent-tint", "ok", "ok-tint", "amber", "amber-tint", "seal", "seal-tint", "link"].join(", ")}); fonts only var(--fig-sans|mono|serif); data-node on every box a reader may pick, data-edge="from>to" on every connector, data-en, data-hant and data-hans on every text (the visible text one of them), data-cite on a connector that opens code. Studio drops anything else and refuses a figure whose labels overlap, sit on a line or leave the viewBox, whose connector runs through a box that is not one of its ends, or whose Chinese text is under 12px: redraw it. kind: state (a lifecycle: with entity and transitions [{edge: "from>to", label, cite, tx, why?}] for every data-edge), sequence, architecture, flow, decision, item. explain?: [{edge: "from>to" (a data-edge), does, why?, cites?}] says, for each connector, what that step does and why it is built this way (the captain clicks a connector to read it). At most 8 tries a turn.`,
         schema: { type: "object", properties: { kind: { type: "string", enum: ["state", "sequence", "architecture", "flow", "decision", "item"] }, title: { type: "string" }, svg: { type: "string" }, entity: { type: "string" }, cites: { type: "array", items: { type: "string" } },
-          transitions: { type: "array", items: { type: "object", properties: { edge: { type: "string" }, label: { type: "string" }, cite: { type: "string" }, detail: { type: "string" }, tx: { type: "object" } }, required: ["edge"] } } }, required: ["kind", "title", "svg"] },
+          transitions: { type: "array", items: { type: "object", properties: { edge: { type: "string" }, label: { type: "string" }, cite: { type: "string" }, detail: { type: "string" }, why: { type: "string" }, tx: { type: "object" } }, required: ["edge"] } },
+          explain: { type: "array", maxItems: EXPLAIN_LIMITS.max, items: { type: "object", properties: { edge: { type: "string" }, does: { type: "string" }, why: { type: "string" }, cites: { type: "array", items: { type: "string" } } }, required: ["edge", "does"] } } }, required: ["kind", "title", "svg"] },
         run: async (a) => {
           if (++figTries > 8) return { error: "at most 8 figure_svg tries a turn: draw with board_draw instead" };
           const kind = String(a?.kind ?? ""); if (!["state", "sequence", "architecture", "flow", "decision", "item"].includes(kind)) return { error: "kind is state, sequence, architecture, flow, decision or item" };
@@ -936,7 +987,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           const gate = figureGate(r.tree); if (gate.length) return { error: `Studio refused the figure (redraw it): ${gate.join("; ")}`, stripped: r.stripped };
           const ok = await citeCheck(room, s), one = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
           const transitions = (Array.isArray(a?.transitions) ? a.transitions : []).slice(0, 24).map((x: any) => { const edge = one(x?.edge, 130), [from, to] = edge.replace(/#\d+$/, "").split(">");
-            return { edge, from, to, label: one(x?.label, FIGURE_LIMITS.label), detail: one(x?.detail, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null, tx: txOf(x?.tx) }; });
+            return { edge, from, to, label: one(x?.label, FIGURE_LIMITS.label), detail: one(x?.detail, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null, tx: txOf(x?.tx), ...(one(x?.why, 400) ? { why: one(x.why, 400) } : {}) }; });
+          const badWhy = transitions.findIndex((x: any) => x.why && !fitsBoard(x.why, EXPLAIN_LIMITS.why)); if (badWhy >= 0) return { error: `transition ${badWhy + 1}: why is too long (at most ${EXPLAIN_LIMITS.why.cjk} CJK or ${EXPLAIN_LIMITS.why.latin} Latin)` };
+          const exErr = explainErrors(a?.explain, [...new Set(r.edges)]); if (exErr.length) return { error: exErr.join("; ") };
+          const explain = Array.isArray(a?.explain) ? a.explain.map((x: any) => ({ edge: one(x.edge, 80), does: one(x.does, 400), ...(one(x.why, 400) ? { why: one(x.why, 400) } : {}), cites: citesOf(x.cites, ok) })) : [];
           const badTx = transitions.findIndex((x: any) => x.tx && "error" in x.tx); if (badTx >= 0) return { error: `transition ${badTx + 1}: ${(transitions[badTx].tx as any).error}` };
           if (kind === "state") { const drawn = new Set(r.edges), listed = new Set(transitions.map((x: any) => x.edge)), missing = [...drawn].filter((e) => !listed.has(e)), extra = [...listed].filter((e) => !drawn.has(e));
             if (!r.nodes.length || !drawn.size) return { error: "a state figure has data-node on every state and data-edge on every transition" };
@@ -946,7 +1000,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
             for (const ch of n.c) if (typeof ch !== "string") walkCite(ch); };
           walkCite(r.tree);
           const cites = [...citesOf(a?.cites, ok), ...transitions.map((x: any) => x.cite).filter(Boolean), ...linked.slice(0, 24)];
-          const it: Item = { id: `B${turn.n}-${++drawn}`, turn: turn.n, type: "svg", kind, title: one(a?.title, 120) || "Figure", tree: r.tree, nodes: r.nodes, edges: r.edges, entity: one(a?.entity, 40), transitions, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference" };
+          const it: Item = { id: `B${turn.n}-${++drawn}`, turn: turn.n, type: "svg", kind, title: one(a?.title, 120) || "Figure", tree: r.tree, nodes: r.nodes, edges: r.edges, entity: one(a?.entity, 40), transitions, cites, basis: cites.some((c: Cite) => c.ok) ? "cited" : "inference", ...(explain.length ? { explain } : {}) };
           room.board.push(it); save(k, room); return { added: [it.id], stripped: r.stripped }; } },
       { name: "screenshots_show", description: "Put the app's real screenshots on the board: each changed page at the base and at the head, as Studio's sandboxed renderer shot them for this head (the Task's own capture check, the app's fixture build, no live data). The captain toggles before / after. Only when the change touches the app's pages.",
         schema: { type: "object", properties: { title: { type: "string" } } },
@@ -1067,6 +1121,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       ...full.flatMap((x) => [who(x).slice(0, 1500), `${x.studio ? "Scene" : "Tutor"}: ${said(x).slice(0, 1500)}`]), ...(past.length ? [] : ["(this is the first turn)"]), "",
       ...(turn.action === "teach" ? [`A LESSON (baton's packet, workflows/skills/baton): chapters ${CHAPTERS.map((c) => c.id).join(" → ")} (shown in that order whatever order you make them in). Always show what and change (one item drawing a change, at least one); show talks (an arch drawing), lifecycle and sequence, or leave each out with chapter_skip and a cited reason; one drawing a chapter except change and decisions; roads only as the record shows them. Call lesson_check before your final answer: Studio refuses a lesson that misses one.`, ""] : []),
       ...(turn.thread ? await threadLines(room, turn, s, fence) : []),
+      "STEPS AND ILLUSTRATIONS: the board shows each scene as numbered steps (its points) on the left and an illustration on the right. Give each step what it shows: picture (a board item), focus (the nodes or edges of it this step is about) and a short detail. The illustration is a diagram or a picture, never code (cite code instead). In every drawing with connectors, add explain for each connector: what that step does and why it was designed this way (the captain clicks a connector to read it).", "",
       room.images?.on && !turn.thread ? "Generated pictures are ON in this room (illustrate, at most two a turn, paid)." : "Generated pictures are OFF in this room: draw with board_draw (Studio lays every drawing out); there is no illustrate tool.", "",
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
@@ -1136,7 +1191,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   }
   /** the turns whose explanation is not in this language yet: what to translate (text only) */
   const untranslated = (room: Room, lang: string) => room.turns.filter((t) => t.status === "done" && !t.studio && t.lang !== lang && !room.translations?.[lang]?.[String(t.n)]);
-  const translateUnits = (turns: Turn[], room?: Room) => turns.map((t) => ({ n: t.n, scenes: (t.scenes ?? []).map((sc) => ({ title: sc.title, points: sc.points.map((p) => p.text) })),
+  const translateUnits = (turns: Turn[], room?: Room) => turns.map((t) => ({ n: t.n, scenes: (t.scenes ?? []).map((sc) => ({ title: sc.title, points: sc.points.map((p) => p.text), ...(sc.points.some((p) => p.detail) ? { details: sc.points.map((p) => p.detail ?? "") } : {}) })),
     claims: (t.claims ?? []).filter((c) => ["claim", "aside", "heading"].includes(c.kind)).map((c) => c.text), answer: t.answer,
     ...(room ? { figures: Object.fromEntries(room.board.filter((b) => b.turn === t.n && figureTexts(b).length).map((b) => [b.id, figureTexts(b)])) } : {}) }));
   /** roughly what a translation costs: a fifth of a turn of this room, at least a cent (shown with ~) */
@@ -1145,7 +1200,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const units = translateUnits(turns, room), round = `room-${k.id}-tr-${lang}-${Date.now().toString(36)}`;
     const text = ["TRANSLATION ONLY. Do not read code, do not call any tool, do not explain anything new.",
       `Translate the review room's explanation below into ${LANGS[lang] ?? lang}. Keep every citation token exactly as written ([diff:…], [ledger:…], [commit:…], [source:…], [board:…], [review:…], [inference]) and in the same sentence; keep code, paths, names and numbers as they are. Keep each scene title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones and each point at most ${SCENE_LIMITS.point.cjk} CJK characters or ${SCENE_LIMITS.point.latin} Latin ones.`,
-      "Reply with JSON only, the same shape and the same number of items: {\"turns\": [{\"n\": <n>, \"scenes\": [{\"title\": \"…\", \"points\": [\"…\"]}], \"claims\": [\"…\"], \"answer\": \"…\", \"figures\": {\"<item id>\": [\"…\"]}}]}. figures: each drawing's words in the same order and number (an empty one stays empty), each about as short as the original.",
+      "Reply with JSON only, the same shape and the same number of items: {\"turns\": [{\"n\": <n>, \"scenes\": [{\"title\": \"…\", \"points\": [\"…\"], \"details\": [\"…\"] (only where the scene has details: one per point, an empty one stays empty)}], \"claims\": [\"…\"], \"answer\": \"…\", \"figures\": {\"<item id>\": [\"…\"]}}]}. figures: each drawing's words in the same order and number (an empty one stays empty), each about as short as the original.",
       "", JSON.stringify({ turns: units })].join("\n");
     let job: any = null, dropped: number[] = [], error: string | null = null;
     try {
@@ -1164,7 +1219,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         for (const b of room.board.filter((b) => b.turn === t.n)) { const want = figureTexts(b), got = x.figures?.[b.id];
           if (want.length && Array.isArray(got) && got.length === want.length && got.every((v: any, j: number) => typeof v === "string" && (!want[j] ? !v.trim() : !!v.trim() && boardLength(v, { cjk: 1, latin: 2 }) <= Math.max(8, boardLength(want[j], { cjk: 1, latin: 2 }) * 1.6 + 4))))
             figures[b.id] = got.map((v: string) => v.replace(/\s+/g, " ").trim()); }
-        room.translations[lang][String(t.n)] = { scenes: x.scenes.map((y: any) => ({ title: String(y.title).replace(/\s+/g, " ").trim(), points: y.points.map((p: any) => String(p).replace(/\s+/g, " ").trim()) })), claims: x.claims.map(String), answer: String(x.answer), figures, provider: provider.id ?? "", model: provider.model ?? "", at: new Date().toISOString() }; }
+        room.translations[lang][String(t.n)] = { scenes: x.scenes.map((y: any, m: number) => { const details = keepDetails((t.scenes?.[m]?.points ?? []).map((p) => p.detail ?? ""), y.details);
+            return { ...(details ? { details } : {}), title: String(y.title).replace(/\s+/g, " ").trim(), points: y.points.map((p: any) => String(p).replace(/\s+/g, " ").trim()), ...details }; }), claims: x.claims.map(String), answer: String(x.answer), figures, provider: provider.id ?? "", model: provider.model ?? "", at: new Date().toISOString() }; }
     } catch (e: any) { error = String(e?.message ?? e).slice(0, 300); }
     room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost: job?.cost ?? null }; save(k, room);
     engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost: job?.cost ?? null, status: room.translating.status } } as any);

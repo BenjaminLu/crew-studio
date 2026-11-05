@@ -188,7 +188,44 @@ const TOOLRES: [string, any][] = [];
     ok(inv?.entity === "invoices.state" && inv.states[0].mark === "changed" && !("mark" in inv.states[1]) && inv.transitions[0].tx.outside[0].kind === "cache" && /transition 1: tx:/.test(bd?.errors?.[0] ?? "") && callIt?.calls[0].tx.tables[0].table === "orders" && callIt.calls[0].errors[0].code === "400" && /calls is 1 to 6/.test(bd?.errors?.[1] ?? ""),
       "a lifecycle names its entity, the states this change adds or changes, and each transition's transaction (tables, guard, fields was → now, writes outside); every call has its request, response, errors and transaction; a malformed one is refused", JSON.stringify(bd?.errors));
     ok(sh[0]?.scene && sh[1]?.scene && /every transition cites the code that makes it/.test(sh[2]?.error ?? "") && sh[3]?.scene && tf.scenes.filter((x: any) => x.chapter === "lifecycle").length === 2,
-      "a lesson may show one lifecycle for each entity; a lifecycle with a transition that cites nothing is refused; every call has a chapter of its own", JSON.stringify(sh.map((x: any) => x.error ?? x.scene))); }
+      "a lesson may show one lifecycle for each entity; a lifecycle with a transition that cites nothing is refused; every call has a chapter of its own", JSON.stringify(sh.map((x: any) => x.error ?? x.scene)));
+  // ---- steps and illustrations: a scene's points are numbered steps, each with the picture it shows, the part to zoom to and a
+  //      detail; every connector of a drawing may say what that step does and why it is built this way ----
+  { const nS = (room.view(t.id) as any).turns.length + 1, rS = TOOLRES.length, M = await import("../src/domain/review-room");
+    const ex = (edge: string, does = "Hands the amount over", why = "One place rounds, so every caller agrees") => ({ edge, does, why, cites: ["diff:src/percent.ts"] });
+    script.push([
+      ["board_draw", { items: [
+        { type: "mermaid", title: "The flow", code: "flowchart LR\n  A[amount] --> B[percent]\n  B --> C[cents]", explain: [ex("A>B"), ex("B>C", "Rounds to whole cents")], cites: ["diff:src/percent.ts"] },
+        { type: "arch", title: "Who calls it", nodes: [{ id: "cart", label: "Cart", kind: "actor" }, { id: "pct", label: "percent()", kind: "service", mark: "new" }], edges: [{ from: "cart", to: "pct", label: "calls", cite: "diff:src/percent.ts" }], explain: [ex("cart>pct")] },
+        { type: "arch", title: "Wrong edge", nodes: [{ id: "cart", label: "Cart", kind: "actor" }, { id: "pct", label: "percent()", kind: "service" }], edges: [{ from: "cart", to: "pct" }], explain: [ex("pct>cart"), { edge: "cart>pct", does: "" }] },
+        { type: "sequence", title: "One price", actors: ["Cart", "percent"], steps: [{ from: "Cart", to: "percent", label: "percent(1999, 15)" }, { from: "percent", to: "Cart", label: "300", kind: "return" }], explain: [ex("step:2", "Returns whole cents")] },
+        { type: "states", title: "Too long a why", states: [{ id: "a", label: "A" }, { id: "b", label: "B" }], transitions: [{ from: "a", to: "b", label: "go", cite: "diff:src/percent.ts", why: "w".repeat(170) }] },
+        { type: "states", title: "Paying", states: [{ id: "open", label: "Open" }, { id: "paid", label: "Paid" }], transitions: [{ from: "open", to: "paid", label: "pay", cite: "diff:src/percent.ts", why: "Paid once: the guard stops a second pay" }] }] }],
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", why: "Priced before it is shown" }], explain: [ex("draft>paid")] }],
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", why: "Priced before it is shown" }], explain: [ex("draft>priced", "Prices the order")] }],
+      ["scene_show", { title: "Bad steps", picture: `B${nS}-1`, points: [{ text: "One [diff:src/percent.ts].", cites: ["diff:src/percent.ts"], picture: "B99-9" }, { text: "Two.", focus: "A", detail: "d".repeat(170) }] }],
+      ["scene_show", { title: "How a price is made", picture: `B${nS}-1`, points: [{ text: "The amount goes in [diff:src/percent.ts].", cites: ["diff:src/percent.ts"], focus: ["A", "A>B"], detail: "The cart passes cents, never a float." },
+        { text: "It is rounded to whole cents.", picture: `B${nS}-4`, focus: ["step:2"], detail: "Math.round, half up." }, { text: "The cart shows it." }] }],
+      ["say", "Steps [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const rr = TOOLRES.slice(rS), get = (n: string) => rr.filter(([x]) => x === n).map(([, j]) => j), bd = get("board_draw")[0], fs = get("figure_svg"), sh = get("scene_show");
+    const vS: any = room.view(t.id), it = (k: number) => vS.board.find((b: any) => b.id === `B${nS}-${k}`), ts = vS.turns.at(-1);
+    ok(JSON.stringify(bd?.added) === JSON.stringify([`B${nS}-1`, `B${nS}-2`, `B${nS}-4`, `B${nS}-6`]) && /edge "pct>cart" is not a connector of this drawing \(one of: cart>pct\)/.test(bd?.errors?.[0] ?? "") && /does is required/.test(bd?.errors?.[0] ?? "") && /transition 1: why is too long/.test(bd?.errors?.[1] ?? ""),
+      "a drawing's connectors may carry what that step does and why: an edge the drawing does not have, a missing does or a why over the limit is refused, saying which", JSON.stringify(bd));
+    ok(it(1)?.explain?.length === 2 && it(1).explain[1].does === "Rounds to whole cents" && it(1).explain[0].cites[0].ok && it(2)?.explain?.[0]?.edge === "cart>pct" && it(4)?.explain?.[0]?.edge === "step:2" && it(6)?.transitions?.[0]?.why === "Paid once: the guard stops a second pay",
+      "the explanations are kept on the drawing (a mermaid flow, an architecture, a sequence's step), a transition's why on the transition, each citation checked", JSON.stringify([it(1)?.explain, it(2)?.explain, it(4)?.explain, it(6)?.transitions]));
+    ok(/edge "draft>paid" is not a connector of this drawing/.test(fs[0]?.error ?? "") && fs[1]?.added?.length === 1 && it(7)?.explain?.[0]?.does === "Prices the order" && it(7).transitions[0].why === "Priced before it is shown",
+      "a figure the tutor draws carries its connectors' explanations and its transitions' why, checked against its own data-edge", JSON.stringify(fs));
+    const good = ts.scenes?.find((x: any) => x.title === "How a price is made");
+    ok(/point 1: picture is a board item id/.test(sh[0]?.error ?? "") && /point 2: focus is a list/.test(sh[0]?.error ?? "") && /point 2: detail is too long/.test(sh[0]?.error ?? "") && good
+      && JSON.stringify(good.points[0].focus) === '["A","A>B"]' && good.points[0].detail === "The cart passes cents, never a float." && good.points[1].picture === `B${nS}-4` && !("picture" in good.points[2]) && !("detail" in good.points[2]),
+      "a scene's steps each keep the picture they show, the part to zoom to and a short detail; a picture not on the board, a focus not a list or a detail over the limit is refused", JSON.stringify({ err: sh[0]?.error, pts: good?.points }));
+    ok(/STEPS AND ILLUSTRATIONS/.test(prompts.at(-1)?.text ?? "") && /never code/.test(prompts.at(-1)?.text ?? ""), "the tutor is told each scene is numbered steps beside an illustration, never code, and to explain every connector");
+    const ft = M.figureTexts(it(6)), ft0 = M.figureTexts({ ...it(6), transitions: it(6).transitions.map(({ why: _w, ...x }: any) => x) }), fm = M.figureTexts(it(1));
+    ok(ft.length === ft0.length + 1 && ft.at(-1) === "Paid once: the guard stops a second pay" && JSON.stringify(ft.slice(0, ft0.length)) === JSON.stringify(ft0) && JSON.stringify(fm) === JSON.stringify(["The flow", "Hands the amount over", "One place rounds, so every caller agrees", "Rounds to whole cents", "One place rounds, so every caller agrees"]),
+      "a translation carries the new words after the ones an older translation holds: a drawing without them keeps its length", JSON.stringify({ ft, fm }));
+    ok(typeof M.keepDetails === "function" && JSON.stringify(M.keepDetails(["a", ""], ["甲", ""])) === '["甲",""]' && M.keepDetails(["a", ""], ["甲"]) === null && M.keepDetails(["", ""], undefined) === null && M.keepDetails(["a"], ["金".repeat(90)]) === null,
+      "a translated scene keeps its steps' details only when every one came back within the board's limit; otherwise the original shows", "keepDetails"); } }
   // ---- start the room over: refused while a turn or a translation runs; archived, never deleted; nothing writes the old room back ----
   { const rd = join(E.rdir(t.id), "review-room"), f = join(rd, `${t.id}.json`), dir = join(rd, `${t.id}-images`), arch = join(rd, ".archive");
     let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:src/percent.ts]."]]);
