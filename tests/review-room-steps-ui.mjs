@@ -47,6 +47,7 @@ const ROOM = (url = "https://github.com/fixture/project/pull/7") => ({ card: { i
       explain: [ex("cart>pct", "The cart asks for a line's price", "The cart never rounds: one rule, in one place")] },
     { id: "B2-2", turn: 2, type: "states", title: "An invoice", entity: "invoices.state", states: [{ id: "draft", label: "Draft" }, { id: "priced", label: "Priced", mark: "new" }, { id: "paid", label: "Paid" }],
       transitions: [{ from: "draft", to: "priced", label: "price", detail: "sets total", cite: ok1("diff:src/percent.ts"), why: "Priced once, before it is shown" }, { from: "priced", to: "paid", label: "pay", cite: ok1("diff:src/percent.ts") }], cites: [ok1("diff:src/percent.ts")], basis: "cited" },
+    { id: "B4-1", turn: 4, type: "svg", kind: "flow", title: "Two boxes", tree: {"t":"svg","a":{"viewBox":"0 0 400 120"},"c":[{"t":"rect","a":{"x":"10","y":"40","width":"80","height":"40","data-node":"x","fill":"var(--fig-card)","stroke":"var(--fig-ink)"},"c":[]},{"t":"path","a":{"d":"M90,60 H210","data-edge":"x>y","stroke":"var(--fig-muted)","fill":"none"},"c":[]},{"t":"g","a":{"transform":"translate(200,0)"},"c":[{"t":"rect","a":{"x":"10","y":"40","width":"80","height":"40","data-node":"y","fill":"var(--fig-card)","stroke":"var(--fig-ink)"},"c":[]}]}]}, nodes: ["x", "y"], edges: ["x>y"], transitions: [], cites: [], basis: "inference", explain: [ex("x>y", "Passes the order on", "Y owns the rounding")] },
     { id: "B3-1", turn: 3, type: "code", title: "Rounding", path: "src/percent.ts", commit: H, start: 2, end: 2, total: 5, lines: ["  return Math.round((amount * pct) / 100);"], highlight: [2], basis: "cited", cites: [] }],
   turns: [
     { n: 1, action: "how", text: "How does this change work?", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "x", head: H, claims: [cl("x")],
@@ -56,8 +57,10 @@ const ROOM = (url = "https://github.com/fixture/project/pull/7") => ({ card: { i
         cl("The function is three lines [diff:src/percent.ts:L1-3].", [ok1("diff:src/percent.ts:L1-3")], { picture: "B1-3", detail: "Read it on GitHub." })] }] },
     { n: 2, action: "teach", text: "Teach me this change.", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "y", head: H, claims: [cl("y")],
       scenes: [{ n: 1, chapter: "what", title: "A percent helper", picture: "", points: [cl("It adds percent [diff:src/percent.ts].", [ok1("diff:src/percent.ts")], { detail: "One new function." }), cl("It rounds to the cent.")] },
-        { n: 2, chapter: "talks", title: "Who calls it", picture: "B2-1", points: [cl("The cart calls it [diff:src/percent.ts].", [ok1("diff:src/percent.ts")], { focus: ["cart>pct"], detail: "Each line of the cart, once." }), cl("The ledger keeps the result.", [], { focus: ["led"] })] },
+        { n: 2, chapter: "talks", title: "Who calls it", picture: "B2-1", points: [cl("The cart calls it [diff:src/percent.ts].", [ok1("diff:src/percent.ts")], { focus: ["cart>pct"], detail: "Each line of the cart, once." }), cl("The ledger keeps the result, as an invoice [board:B2-2].", [ok1("board:B2-2")], { focus: ["led"] })] },
         { n: 3, chapter: "lifecycle", title: "An invoice", picture: "B2-2", points: [cl("Pricing moves draft to priced [diff:src/percent.ts].", [ok1("diff:src/percent.ts")], { focus: ["draft>priced"] }), cl("Paying ends it [diff:src/percent.ts].", [ok1("diff:src/percent.ts")])] }] },
+    { n: 4, action: "why", text: "Why two boxes?", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "w", head: H, claims: [cl("w")],
+      scenes: [{ n: 1, title: "Two boxes", picture: "B4-1", points: [cl("X hands over [diff:src/percent.ts].", [ok1("diff:src/percent.ts")]), cl("Y rounds.", [], { focus: ["y"] })] }] },
     { n: 3, action: "ask", text: "Where is the rounding?", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: H, claims: [cl("It is one line [board:B3-1].", [ok1("board:B3-1")]), cl("Nothing else rounds [diff:src/percent.ts].", [ok1("diff:src/percent.ts")])] }],
   tutors: [], sources: [], notes: [], lesson: { threads: [], visited: ["t2", "t2-2", "t2-3", "end"] }, check: { questions: [] },
   diffstat: { files: [{ path: "src/percent.ts", added: 4, removed: 0 }, { path: "test/percent.test.ts", added: 3, removed: 1 }], total: { files: 2, added: 7, removed: 1 }, from: "git" } });
@@ -134,10 +137,24 @@ try {
     await p.keyboard.press("Escape"); await p.waitForTimeout(150);
     await tap(p, '[data-region="t2-2"] [data-step-pick="1"]'); await p.waitForTimeout(250); const ls = await illus(p, "t2-2");
     ok(ls?.of === "1" && ls.focus === "cart>pct" && ls.zoomed && /Each line of the cart/.test(ls.detail || ""), "a lesson's step picked zooms its chapter's drawing to that step, its detail under it", JSON.stringify(ls));
+    await tap(p, '[data-region="t2-2"] [data-step-pick="2"]'); await p.waitForTimeout(250); const cited = await illus(p, "t2-2");
+    ok(cited?.of === "2" && cited.type === "states", "a lesson's step that cites another drawing shows that drawing", JSON.stringify(cited));
     await fly(p, "t2-3"); const why = await p.evaluate(() => document.querySelector('[data-region="t2-3"] [data-transition-why]')?.textContent || null);
     ok(/Priced once, before it is shown/.test(why || ""), "a lifecycle's transition says why it is built that way beside what it writes", JSON.stringify(why));
     await fly(p, "t2"); const txt = await p.evaluate(() => { const r = document.querySelector('[data-region="t2"]'); return r && { illus: !!r.querySelector(".rb-illus"), solo: !!r.querySelector(".rb-split.solo"), nums: r.querySelectorAll("[data-step-pick]").length }; });
     ok(txt && !txt.illus && txt.solo && txt.nums === 2, "a text chapter with no drawing and no step picture stays one column of numbered steps", JSON.stringify(txt));
+    await ctx.close(); }
+  // ---------- a tutor's own figure: its connectors are wide click targets too; a zoom finds a part inside a moved group;
+  //            the play bar's last dot picks the last step ----------
+  { const { ctx, p } = await open(1440, ROOM()); await fly(p, "t4");
+    const hit = await p.evaluate(() => !!document.querySelector('[data-region="t4"] [data-visual] [data-edge-hit="x>y"]'));
+    await click(p, '[data-region="t4"] [data-visual] [data-edge-hit="x>y"]'); await p.waitForTimeout(200);
+    const e4 = await p.evaluate(() => document.querySelector('[data-region="t4"] [data-explain="x>y"] [data-explain-does]')?.textContent || null);
+    ok(hit && /Passes the order on/.test(e4 || ""), "a connector of a figure the tutor drew has a wide click target and opens its explanation", JSON.stringify({ hit, e4 }));
+    await p.keyboard.press("Escape"); await tap(p, '[data-region="t4"] [data-step-pick="2"]'); await p.waitForTimeout(250); const z = await illus(p, "t4"), vb = (z?.vb || "").split(/[ ,]+/).map(Number);
+    ok(z?.zoomed && vb[0] > 100 && z.focused.includes("y"), "a step's zoom finds its part inside a group moved by a transform", JSON.stringify(z));
+    await fly(p, "t1"); await p.$eval('[data-playbar] [data-dot$=":3"]', (e) => e.click()).catch(() => {}); await p.waitForTimeout(250); const last = await illus(p, "t1");
+    ok(last?.of === "3" && /Read it on GitHub/.test(last.detail || ""), "the play bar's last dot picks the last step: its picture and detail show", JSON.stringify(last));
     await ctx.close(); }
   // ---------- an older answer: code is never the picture; with no pull request on GitHub its link opens the citation panel ----------
   { const { ctx, p } = await open(1440, ROOM(null)); await fly(p, "t3");

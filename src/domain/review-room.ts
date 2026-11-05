@@ -165,7 +165,8 @@ export const fitsBoard = (text: unknown, limit: { cjk: number; latin: number }) 
  *  it is built this way), shown when the captain clicks the connector */
 export const STEP_LIMITS = { detail: { cjk: 80, latin: 160 }, focus: 8 } as const;
 export const EXPLAIN_LIMITS = { does: { cjk: 60, latin: 120 }, why: { cjk: 80, latin: 160 }, max: 20 } as const;
-const STEP_KEY = /^[\w.:>#-]{1,80}$/;
+/** a key of a picture's part: a node id, a step, or an edge (two endpoints of up to 60 characters and a "#n" suffix, as figure_svg keeps them) */
+const STEP_KEY = /^[\w.:>#-]{1,130}$/;
 /** what is wrong with a scene's steps' picture, focus and detail (empty: they fit); has: a board item id exists */
 export function stepErrors(points: any[], has: (id: string) => boolean): string[] {
   const errors: string[] = [];
@@ -990,7 +991,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
             return { edge, from, to, label: one(x?.label, FIGURE_LIMITS.label), detail: one(x?.detail, FIGURE_LIMITS.detail), cite: citesOf(x?.cite ? [x.cite] : [], ok)[0] ?? null, tx: txOf(x?.tx), ...(one(x?.why, 400) ? { why: one(x.why, 400) } : {}) }; });
           const badWhy = transitions.findIndex((x: any) => x.why && !fitsBoard(x.why, EXPLAIN_LIMITS.why)); if (badWhy >= 0) return { error: `transition ${badWhy + 1}: why is too long (at most ${EXPLAIN_LIMITS.why.cjk} CJK or ${EXPLAIN_LIMITS.why.latin} Latin)` };
           const exErr = explainErrors(a?.explain, [...new Set(r.edges)]); if (exErr.length) return { error: exErr.join("; ") };
-          const explain = Array.isArray(a?.explain) ? a.explain.map((x: any) => ({ edge: one(x.edge, 80), does: one(x.does, 400), ...(one(x.why, 400) ? { why: one(x.why, 400) } : {}), cites: citesOf(x.cites, ok) })) : [];
+          const explain = Array.isArray(a?.explain) ? a.explain.map((x: any) => ({ edge: one(x.edge, 130), does: one(x.does, 400), ...(one(x.why, 400) ? { why: one(x.why, 400) } : {}), cites: citesOf(x.cites, ok) })) : [];
           const badTx = transitions.findIndex((x: any) => x.tx && "error" in x.tx); if (badTx >= 0) return { error: `transition ${badTx + 1}: ${(transitions[badTx].tx as any).error}` };
           if (kind === "state") { const drawn = new Set(r.edges), listed = new Set(transitions.map((x: any) => x.edge)), missing = [...drawn].filter((e) => !listed.has(e)), extra = [...listed].filter((e) => !drawn.has(e));
             if (!r.nodes.length || !drawn.size) return { error: "a state figure has data-node on every state and data-edge on every transition" };

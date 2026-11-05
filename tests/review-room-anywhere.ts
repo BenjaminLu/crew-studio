@@ -225,7 +225,9 @@ const TOOLRES: [string, any][] = [];
     ok(ft.length === ft0.length + 1 && ft.at(-1) === "Paid once: the guard stops a second pay" && JSON.stringify(ft.slice(0, ft0.length)) === JSON.stringify(ft0) && JSON.stringify(fm) === JSON.stringify(["The flow", "Hands the amount over", "One place rounds, so every caller agrees", "Rounds to whole cents", "One place rounds, so every caller agrees"]),
       "a translation carries the new words after the ones an older translation holds: a drawing without them keeps its length", JSON.stringify({ ft, fm }));
     ok(typeof M.keepDetails === "function" && JSON.stringify(M.keepDetails(["a", ""], ["甲", ""])) === '["甲",""]' && M.keepDetails(["a", ""], ["甲"]) === null && M.keepDetails(["", ""], undefined) === null && M.keepDetails(["a"], ["金".repeat(90)]) === null,
-      "a translated scene keeps its steps' details only when every one came back within the board's limit; otherwise the original shows", "keepDetails"); } }
+      "a translated scene keeps its steps' details only when every one came back within the board's limit; otherwise the original shows", "keepDetails");
+    const long = `${"a".repeat(45)}>${"b".repeat(45)}#2`;
+    ok(!M.explainErrors([{ edge: long, does: "d" }], [long]).length && !M.stepErrors([{ focus: [long] }], () => true).length, "an edge between two long node ids (as figure_svg keeps it) can be explained and focused", JSON.stringify(M.explainErrors([{ edge: long, does: "d" }], [long]))); } }
   // ---- start the room over: refused while a turn or a translation runs; archived, never deleted; nothing writes the old room back ----
   { const rd = join(E.rdir(t.id), "review-room"), f = join(rd, `${t.id}.json`), dir = join(rd, `${t.id}-images`), arch = join(rd, ".archive");
     let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:src/percent.ts]."]]);

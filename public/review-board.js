@@ -90,6 +90,7 @@ function decorate(fig, x, it, ctx) {
   if (it.type === "svg") for (const el of fig.querySelectorAll("svg [data-edge]")) { const e = el.getAttribute("data-edge"), k = svgEdge(e);
     place(el, x, k >= 0 ? "transition" : "edge", it.id, k >= 0 ? `transition:${k}` : `edge:${e}`, k >= 0 ? `${e.replace(">", " → ")}${it.transitions[k].label ? ` · ${it.transitions[k].label}` : ""}` : e.replace(">", " → "), k >= 0 ? trRefs(k) : its); }
   for (const el of fig.querySelectorAll("svg [data-edge-hit]")) { const e = el.getAttribute("data-edge-hit"), n = el.getAttribute("data-edge-n"); if (/^step:/.test(e)) continue;
+    if (it.type === "svg") { const k = svgEdge(e); place(el, x, k >= 0 ? "transition" : "edge", it.id, k >= 0 ? `transition:${k}` : `edge:${e}`, e.replace(">", " → "), k >= 0 ? trRefs(k) : its); continue; }
     if (it.type === "states" && n != null) place(el, x, "transition", it.id, `transition:${n}`, trText(Number(n)), trRefs(Number(n)));
     else place(el, x, "edge", it.id, `edge:${e}`, e.replace(">", " → "), its); }
   for (const el of fig.querySelectorAll("svg [data-node]")) { const id = el.getAttribute("data-node"); place(el, x, "node", it.id, `node:${id}`, (el.textContent || "").replace(/\s+/g, " ").trim() || id, its); }
@@ -110,7 +111,8 @@ function decorate(fig, x, it, ctx) {
 /** a region's width on the canvas: a text chapter reads in a column, a drawing gets more room; a phone one narrow column */
 /** a chapter is illustrated when it has a drawing, or a step names a picture of its own; a text chapter with neither (what it
  *  is, the risks, the roads, the questions) stays one column of numbered steps, as wide as it reads */
-const illustrated = (x) => !x.skip && (!!x.pic || x.points.some((p) => p.picture));
+const boardCite = (p) => [...(p?.cites || [])].reverse().find((c) => c?.ref?.startsWith("board:"))?.ref.slice(6) || null;
+const illustrated = (x) => !x.skip && (!!x.pic || x.points.some((p) => p.picture || boardCite(p)));
 const widthOf = (x) => (phone() ? 340 : !illustrated(x) ? 540 : x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 840 : 780);
 /** a chapter's steps column on a desktop: a drawing gets the wider illustration */
 const stepsW = (x) => (x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 300 : 440);
@@ -135,8 +137,8 @@ function regionEl(card, r, x, j, nth, ctx) {
     merged.map((t) => h("p", { "data-absorbed-thread": t.n }, h("ins", { class: "rb-abs" }, inline(card, t.merged.gist, t.merged.cites))))) : null;
   // the illustration: the step's own picture, else the chapter's drawing, zoomed to the step's focus; never code (cited, a link
   // away); a chapter with no drawing gets Studio's own picture of what it cites
-  const byId = (id) => (id ? r.board.find((b) => b.id === id) : null), own = cur != null ? byId(x.points[cur]?.picture) : null;
-  const pic0 = !illustrated(x) ? null : own || x.pic || byId(x.points.find((p) => p.picture)?.picture);
+  const byId = (id) => (id ? r.board.find((b) => b.id === id) : null), stepPic = (p) => byId(p?.picture) || byId(boardCite(p)), own = cur != null ? stepPic(x.points[cur]) : null;
+  const pic0 = !illustrated(x) ? null : own || x.pic || x.points.map(stepPic).find(Boolean) || null;
   const codes = isCode(pic0) ? [pic0] : [], pic = !pic0 ? null : isCode(pic0) ? fallbackVisual(r, x) : pic0, focus = cur != null && pic === pic0 ? focusOf(x.points[cur]) : [], SW = stepsW(x);
   let fig = null; if (pic) { const fk = `${card}/${pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${pic.id}`) ?? 0}/${W}/${focus.join(",")}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
     fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: W - SW - 64, h: 620 }); if (!pic.synth) decorate(fig, x, pic, ctx); else fig.setAttribute("data-figure-studio", "");  if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); }
