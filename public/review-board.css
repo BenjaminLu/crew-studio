@@ -325,3 +325,28 @@ body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
 .rb-rbody svg, .rb-rbody button { user-select: none; -webkit-user-select: none; }
 .rb-selask { position: fixed; z-index: 2147483000; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--rr-marker); background: var(--rr-marker); color: var(--rr-paper, #fff); font: inherit; font-size: 13px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.18); cursor: pointer; }
 .rb-selask:focus-visible { outline: 2px solid var(--rr-ink); outline-offset: 2px; }
+
+/* a card is its numbered steps on the left and its illustration on the right (docs/units/review-room.md, "Steps and
+   illustrations"); on a phone the illustration on top, the steps under it */
+.rb-split { display: grid; grid-template-columns: minmax(0, var(--steps, 380px)) minmax(0, 1fr); gap: 24px; align-items: start; }
+.rb-split.solo { grid-template-columns: minmax(0, 1fr); }
+.rb-split > .rp-card { min-width: 0; }
+/* the camera may frame a chapter at 0.88: its subtitle stays 12.5px or more on screen */
+.rb-split > .rp-card .rp-sub { font-size: 14.5px; }
+.rb-region.cur .rb-split > .rp-card { box-shadow: 0 0 0 2px var(--rr-new-soft), var(--rr-shadow); }
+.rb-illus { display: grid; gap: 8px; min-width: 0; position: sticky; top: 0; }
+.rb-illus .rp-fig { margin: 0; max-width: 100%; overflow: hidden; }
+.rb-illus .rp-figbody svg { max-width: 100% !important; min-width: 0 !important; }
+.rb-stepped > li, .rb-stepped > p { position: relative; padding-left: 34px !important; }
+.rb-stepped .rr-stepn { position: absolute; left: 6px; top: 8px; }
+.rp-prose.rb-stepped > p .rr-stepn { top: 2px; left: 0; }
+.rb-stepped > .rb-picked { box-shadow: inset 3px 0 0 var(--rr-marker); background: var(--rr-new-soft); }
+.rb-scard .rr-scene.rr-steps { grid-template-columns: minmax(250px, 1fr) minmax(0, 1.45fr); }
+.rb-scard .rr-scene.rr-steps > .rr-points { order: -1; }
+.rb-explain { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 13px; line-height: 1.5; }
+@media (max-width: 760px) {
+  .rb-split { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .rb-split > .rb-illus { order: -1; position: static; }
+  .rb-scard .rr-scene.rr-steps { grid-template-columns: minmax(0, 1fr); }
+  .rb-scard .rr-scene.rr-steps > .rr-points { order: 0; }
+}

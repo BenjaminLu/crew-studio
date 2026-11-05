@@ -4,7 +4,7 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { tutorMenu: null, arrived: new Set(), imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+const RR = { tutorMenu: null, step: new Map(), explain: new Map(), arrived: new Set(), imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
   scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -159,7 +159,7 @@ function flowSvg(g, prev, seen, box) {
     const head = sv("path", { d: `M${x2 - 11 * Math.cos(ang - 0.5)},${y2 - 11 * Math.sin(ang - 0.5)} L${x2},${y2} L${x2 - 11 * Math.cos(ang + 0.5)},${y2 - 11 * Math.sin(ang + 0.5)}`, pathLength: 1, class: `rr-ahead${cls}` });
     if (e.dashed) { if (anim && !seen.has(key)) { line.classList.add("rr-fade"); line.style.setProperty("--dl", `${t.toFixed(2)}s`); } } else pen(line, key, 0.35);
     if (anim && !seen.has(key)) { const t0 = t; t += 0.33; pen(head, key, 0.12); t = t0; }
-    svg.append(line, head);
+    svg.append(line, head, sv("path", { d, class: "rr-edge-hit", "data-edge-hit": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null }));
     if (e.label) todo.push({ e, key, pt, cands, dl: t + 0.25 });
     if (anim && !seen.has(key)) { fresh.push(key); t += 0.18; } });
   const hit = (r) => [...boxes, ...placed].some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) || dots.some(([px, py]) => px > r.x && px < r.x + r.w && py > r.y && py < r.y + r.h);
@@ -263,6 +263,9 @@ function citePanel(r) {
       h("p", { class: "faint" }, T("A reviewer's own words on GitHub: untrusted text, shown as written.", "審查者在 GitHub 上的原話：不受信任的文字，照原樣顯示。")), h("blockquote", { class: "rr-quote", "data-untrusted": "review" }, d.body || ""),
       d.url && /^https:\/\/github\.com\//.test(d.url) ? h("a", { href: d.url, target: "_blank", rel: "noopener noreferrer", "data-review-link": d.id }, T("Open on GitHub", "在 GitHub 開啟")) : null]
     // a board item opens on the board: the camera flies to its scene, that picture shown
+    : d.kind === "board" && isCode(d.item) ? [h("div", { class: "rr-item-h" }, h("b", {}, itemTitle(d.item)), d.item.path ? h("code", {}, `${d.item.path}${d.item.start ? `:${d.item.start}-${d.item.end}` : ""}`) : null, d.item.commit ? h("span", { class: "faint" }, ` @ ${String(d.item.commit).slice(0, 8)}`) : null),
+      d.item.type === "diff" ? h("div", {}, d.item.header ? h("p", { class: "faint" }, d.item.header) : null, diffPre(d.item.text)) : d.item.type === "code" ? linesPre(d.item, d.item.highlight || [])
+      : d.item.type === "compare" ? h("div", { class: "rr-compare" }, h("div", {}, h("b", {}, T("Before (base)", "之前（base）")), linesPre(d.item.before)), h("div", {}, h("b", {}, T("After (head)", "之後（head）")), linesPre(d.item.after))) : h("pre", { class: "rr-pre" }, d.item.text || "")]
     : d.kind === "board" ? h("a", { href: `#rr-${d.item.id}`, onclick: (e) => { e.preventDefault(); showItem(r, d.item.id); } }, T(`Board item ${d.item.id}: ${d.item.title}`, `白板項目 ${d.item.id}：${d.item.title}`)) : null;
   return h("section", { class: "card x-pad rr-cite-panel", "data-cite-panel": c.ref, tabindex: "-1", role: "dialog", "aria-label": T("Citation", "引用") },
     h("div", { class: "rr-item-h" }, h("b", {}, T("Basis", "依據")), h("code", {}, c.ref), h("span", { class: "x-grow" }), h("button", { type: "button", class: "btn ghost", onclick: () => { RR.cite.delete(r.card.id); rerender(); } }, T("Close", "關閉"))), body);
@@ -504,7 +507,8 @@ function curveSvg(nodes, edges, placed, opt = {}) {
   const kindOf = (i) => (edges[i].from === edges[i].to ? "loop" : back.has(i) ? "back" : "next");
   for (const d of drawn) { const e = edges[d.i], P = d.P, kind = kindOf(d.i), cl = `${kind}${e.cls ? ` ${e.cls}` : ""}`; d.pts.forEach(([x, y]) => grow(x, y));
     const [ex, ey] = P[3], ang = Math.atan2(ey - P[2][1], ex - P[2][0]);
-    svg.append(sv("path", { d: `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)} C${P[1].map((v) => v.toFixed(1))} ${P[2].map((v) => v.toFixed(1))} ${P[3].map((v) => v.toFixed(1))}`, class: `rr-edge ${cl}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i, fill: "none" }),
+    const dd = `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)} C${P[1].map((v) => v.toFixed(1))} ${P[2].map((v) => v.toFixed(1))} ${P[3].map((v) => v.toFixed(1))}`;
+    svg.append(sv("path", { d: dd, class: `rr-edge ${cl}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i, fill: "none" }), sv("path", { d: dd, class: "rr-edge-hit", "data-edge-hit": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i }),
       sv("path", { d: `M${ex - 10 * Math.cos(ang - 0.42)},${ey - 10 * Math.sin(ang - 0.42)} L${ex},${ey} L${ex - 10 * Math.cos(ang + 0.42)},${ey - 10 * Math.sin(ang + 0.42)} Z`, class: `rr-ahead ${cl}` })); }
   for (const n of nodes) { const b = box.get(n.id), grp = sv("g", { class: `rr-node${n.cls ? ` ${n.cls}` : ""}`, "data-node": n.id, "data-box": `${b.x},${b.y},${b.w},${b.h}` }), e = 9;
     grow(b.x, b.y); grow(b.x + b.w, b.y + b.h);
@@ -559,7 +563,7 @@ function transitionRows(card, it, sel, pick, lab) {
   return h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
     h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
     h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
-      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
+      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.why ? h("p", { class: "rp-td rp-tw", "data-transition-why": i }, h("span", { class: "rr-explain-k" }, T("Why this way", "為什麼這樣設計")), " ", t.why) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
 }
 /** the lifecycle in the report: the map, and every transition as a numbered row (what it writes, the code it rests on) */
 function statemapView(card, it) {
@@ -655,13 +659,18 @@ function figWords(it) { const own = (() => { switch (it?.type) {
   case "decision": return [it.question, it.chosen, it.because, ...(it.rejected || []).flatMap((x) => [x.option, x.why])];
   case "states": return it.states?.length ? [...it.states.map((x) => x.label), ...(it.transitions || []).flatMap((t) => [t.label || "", t.detail || ""])] : null;
   case "sequence": return (it.steps || []).flatMap((x) => [x.label, x.frameLabel || ""]);
-  default: return null; } })(); return own ? [it.title || "", ...own] : []; }
+  default: return null; } })();
+  // what was added later goes after the words an older translation holds (src/domain/review-room.ts figureTexts)
+  const extra = [...(it?.type === "states" || it?.type === "svg" ? (it.transitions || []).filter((t) => t?.why).map((t) => t.why) : []), ...(it?.explain || []).flatMap((e) => [e.does || "", e.why || ""])];
+  return own ? [it.title || "", ...own, ...extra] : extra.length ? [it.title || "", ...extra] : []; }
 function withWords(it, w) { let i = 0; const n = () => String(w[i++] ?? ""), c = JSON.parse(JSON.stringify(it)); c.title = n();
   if (c.type === "arch") { c.nodes.forEach((x) => (x.label = n())); c.edges.forEach((x) => (x.label = n())); }
   else if (c.type === "item") { c.name = n(); c.before = n(); c.after = n(); c.mechanism = n(); }
   else if (c.type === "decision") { c.question = n(); c.chosen = n(); c.because = n(); (c.rejected || []).forEach((x) => { x.option = n(); x.why = n(); }); }
   else if (c.type === "states") { c.states.forEach((x) => (x.label = n())); (c.transitions || []).forEach((t) => { t.label = n(); t.detail = n(); }); }
   else if (c.type === "sequence") c.steps.forEach((x) => { x.label = n(); x.frameLabel = n(); });
+  if (c.type === "states" || c.type === "svg") (c.transitions || []).forEach((t) => { if (t.why) t.why = n(); });
+  (c.explain || []).forEach((e) => { e.does = n(); const w = n(); if (e.why) e.why = w; });
   return c; }
 /** a figure in the room's language: as drawn when its turn was in it (zh-CN through OpenCC), else the words kept for it */
 function figIn(r, it) {
@@ -695,7 +704,7 @@ function sequenceView(it, seen) {
     const line = sv("path", { d, pathLength: 1, class: "rr-step-line" }), head = sv("path", { d: self ? `M${ex + 10},${y + 2} L${ex},${y + 8} L${ex + 10},${y + 14}` : `M${ex - 10 * dir},${y - 6} L${ex},${y} L${ex - 10 * dir},${y + 6}${st.kind === "async" ? "" : " Z"}`, class: "rr-step-head" });
     if (anim) { line.classList.add("rr-pen"); line.style.setProperty("--dl", `${(i * 0.18).toFixed(2)}s`); }
     const t = sv("text", { x: self ? x1 + 44 : (x1 + x2) / 2, y: y - 7, "text-anchor": self ? "start" : "middle", class: "rr-step-l" }); t.textContent = `${i + 1}. ${clip(st.label, 34)}`;
-    g.append(line, head, t); svg.append(g); });
+    g.append(line, head, t, sv("path", { d, class: "rr-edge-hit", "data-edge-hit": `step:${i + 1}` })); svg.append(g); });
   return svg;
 }
 /** Studio's own picture when an answer drew none: the scene's title and the files it cites, as sticky notes (text nodes only) */
@@ -732,9 +741,9 @@ function turnIn(r, t, lang) {
 function localTurn(r, t, lang) {
   if (t.studio || t.status !== "done") return t;
   const w = turnIn(r, t, lang); if (!w) return { ...t, untranslated: true };
-  if (w.own) return lang === t.lang ? t : { ...t, answer: w.answer, scenes: t.scenes?.map((sc) => ({ ...sc, title: w.conv(sc.title), points: sc.points.map((p) => ({ ...p, text: w.conv(p.text) })) })), claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(c.text) } : c) };
+  if (w.own) return lang === t.lang ? t : { ...t, answer: w.answer, scenes: t.scenes?.map((sc) => ({ ...sc, title: w.conv(sc.title), points: sc.points.map((p) => ({ ...p, text: w.conv(p.text), ...(p.detail ? { detail: w.conv(p.detail) } : {}) })) })), claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(c.text) } : c) };
   let i = 0;
-  return { ...t, answer: w.answer, scenes: t.scenes?.map((sc, m) => ({ ...sc, title: w.conv(w.scenes[m]?.title ?? sc.title), points: sc.points.map((p, j) => ({ ...p, text: w.conv(w.scenes[m]?.points[j] ?? p.text) })) })),
+  return { ...t, answer: w.answer, scenes: t.scenes?.map((sc, m) => ({ ...sc, title: w.conv(w.scenes[m]?.title ?? sc.title), points: sc.points.map((p, j) => ({ ...p, text: w.conv(w.scenes[m]?.points[j] ?? p.text), ...(p.detail ? { detail: w.conv(w.scenes[m]?.details?.[j] || p.detail) } : {}) })) })),
     claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(w.claims[i++] ?? c.text) } : c) };
 }
 /** Studio's own scene lines in the room's language (a reviewer's words, the quote, stay as written) */
@@ -881,8 +890,84 @@ const revealOf = (card, sc) => Math.min(sc.points.length, RR.reveal.get(`${card}
 /** the visual a scene shows after k points: the last board item a shown point cites, else the scene's first */
 function visualAt(r, sc, k) {
   let v = sc.visuals[0] || null;
-  for (const p of sc.points.slice(0, k)) { if (p.visual) v = p.visual; for (const c of p.cites || []) if (c.ref.startsWith("board:")) { const b = r.board.find((x) => x.id === c.ref.slice(6)); if (b) v = b; } }
+  for (const p of sc.points.slice(0, k)) { if (p.visual) v = p.visual; for (const c of p.cites || []) if (c.ref.startsWith("board:")) { const b = r.board.find((x) => x.id === c.ref.slice(6)); if (b) v = b; }
+    // a step names the picture it shows (scene_show's picture on a point)
+    if (p.picture) { const b = r.board.find((x) => x.id === p.picture); if (b) v = b; } }
   return v;
+}
+// ---------- a card is numbered steps beside an illustration (docs/units/review-room.md, "Steps and illustrations") ----------
+/** code is never drawn in the illustration: it is cited, a link away (GitHub for a pull request on GitHub, else the citation panel) */
+const CODEISH = new Set(["code", "diff", "compare", "snippet"]);
+const isCode = (it) => !!it && CODEISH.has(it.type);
+/** the step a card is on: the point being read while it plays or is stepped through, else the step the captain picked (null: the whole card) */
+const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? null);
+/** pick a step: the points up to it shown (as the play bar's dots do), its picture zoomed to what it is about */
+function pickStep(card, sc, m) { markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.explain.delete(card); RR.reveal.set(`${card}/${sc.key}`, m + 1); RR.step.set(`${card}/${sc.key}`, m); rerender(); }
+const stepBtn = (card, sc, m, cur) => h("button", { type: "button", class: `rr-stepn${cur === m ? " on" : ""}`, "data-step-pick": m + 1, "aria-pressed": String(cur === m), "aria-label": T(`Show step ${m + 1}`, `看第 ${m + 1} 步`), onclick: (e) => { e.stopPropagation(); pickStep(card, sc, m); } }, String(m + 1));
+/** the focus keys of a step, with an edge's two ends: what the illustration zooms to */
+const focusOf = (p) => (Array.isArray(p?.focus) ? p.focus.filter((f) => typeof f === "string" && f).slice(0, 8) : []);
+/** a step's detail, under the illustration */
+const stepDetail = (sc, cur) => { const d = cur != null ? sc.points[cur]?.detail : null; return d ? h("p", { class: "rr-stepdetail", "data-step-detail": cur + 1 }, h("b", {}, T(`Step ${cur + 1}`, `第 ${cur + 1} 步`)), " ", plain(d)) : null; };
+/** the code a card rests on, as links: a pull request on GitHub opens there at those lines, anything else in the citation panel */
+function codeRefs(card, r, items) {
+  if (!items.length) return null;
+  return h("div", { class: "rr-coderefs", "data-code-refs": items.length }, h("span", { class: "rr-coderefs-k" }, T("Code this rests on", "依據的程式碼")),
+    items.map((it) => { const ref = it.path && it.type !== "snippet" ? `diff:${it.path}${it.start ? `:L${it.start}-${it.end || it.start}` : ""}` : null, gh = ref ? githubDiffUrl(r, ref) : null;
+      return h("button", { type: "button", class: "rr-cite rr-coderef", "data-code-ref": ref || `board:${it.id}`, "data-code-link": gh ? "github" : "panel", title: gh ? T("Open these lines on GitHub, in a new window", "在新視窗開啟 GitHub 上的這幾行") : T("Open the code", "打開程式碼"),
+        onclick: (e) => { e.stopPropagation(); if (gh) { window.open(gh, "_blank", "noopener,noreferrer"); return; } RR.cite.set(card, { ref: `board:${it.id}`, data: { kind: "board", item: it } }); rerender(); } },
+        `${it.path || itemTitle(it) || typeLabel(it.type)}${it.start ? `:${it.start}-${it.end}` : ""}${gh ? " ↗" : ""}`); })); }
+/** zoom every illustration with a focus to it: the padded box of its focused parts (an edge with its two ends), the rest dimmed */
+function zoomFocus() {
+  for (const fig of document.querySelectorAll("[data-zoom-focus]")) {
+    const want = fig.getAttribute("data-zoom-focus") || "", svg = fig.querySelector("svg.rr-flow, svg.rr-seq, svg.rr-figsvg-svg") || fig.querySelector("svg"); if (!svg || !want || svg.dataset.zoomed === want) continue;
+    const keys = want.split(",").filter(Boolean), q = (s) => [...svg.querySelectorAll(s)], all = new Set();
+    for (const k of keys) { const step = /^step:(\d+)$/.exec(k);
+      const els = step ? q(`[data-step="${step[1]}"]`) : k.includes(">") ? [...q(`[data-edge="${CSS.escape(k)}"]`), ...q(`[data-elabel="${CSS.escape(k)}"]`), ...k.split(">").flatMap((id) => q(`[data-node="${CSS.escape(id)}"]`))] : q(`[data-node="${CSS.escape(k)}"]`);
+      els.forEach((el) => all.add(el)); }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const el of all) { try { const b = el.getBBox(); if (!b.width && !b.height) continue; x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.width); y1 = Math.max(y1, b.y + b.height); } catch {} }
+    if (!isFinite(x0)) continue;
+    // at most about half again as near: the rest of the picture stays in sight around what the step is about
+    const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number), pad = 28, w = Math.max(x1 - x0 + pad * 2, 200, (vb[2] || 0) * 0.7), hh = Math.max(y1 - y0 + pad * 2, 120, (vb[3] || 0) * 0.7), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (vb.length === 4 && w >= vb[2] * 0.92 && hh >= vb[3] * 0.92) { svg.dataset.zoomed = want; } // it is the whole picture already
+    else svg.setAttribute("viewBox", `${(cx - w / 2).toFixed(1)} ${(cy - hh / 2).toFixed(1)} ${w.toFixed(1)} ${hh.toFixed(1)}`);
+    svg.dataset.zoomed = want; svg.classList.add("rr-zoomed"); for (const el of all) el.classList.add("rr-focus"); }
+}
+/** what a connector's step does and why (the tutor's explain, a transition's detail and why), and the words the drawing gives it */
+function explainFor(it, key, label) {
+  const ex = (it?.explain || []).find((e) => e.edge === key) || null, tr = (it?.transitions || []).find((t) => (t.edge || `${t.from}>${t.to}`) === key) || null;
+  const lab = label || tr?.label || (it?.type === "arch" ? (it.edges || []).find((e) => `${e.from}>${e.to}` === key)?.label : null) || (/^step:\d+$/.test(key) ? it?.steps?.[Number(key.slice(5)) - 1]?.label : null) || "";
+  return { key, label: lab, does: ex?.does || null, why: ex?.why || tr?.why || null, detail: tr?.detail || null, cites: [...(ex?.cites || []), ...(tr?.cite ? [tr.cite] : [])] };
+}
+/** the explanation of one connector: what this step does, why it is built this way; with nothing recorded, what the drawing has */
+function explainBox(card, it, key, label) {
+  const x = explainFor(it, key, label), name = /^step:(\d+)$/.test(key) ? T(`Step ${key.slice(5)}`, `第 ${key.slice(5)} 步`) : key.replace(">", " → ");
+  return h("div", { class: "rr-explain-body", "data-explain-edge": key },
+    h("p", { class: "rr-explain-h" }, h("b", {}, name), x.label ? h("span", { class: "faint" }, ` · ${x.label}`) : null),
+    x.does ? h("p", { "data-explain-does": "" }, h("span", { class: "rr-explain-k" }, T("What this step does", "這一步做什麼")), " ", x.does) : null,
+    x.why ? h("p", { "data-explain-why": "" }, h("span", { class: "rr-explain-k" }, T("Why this way", "為什麼這樣設計")), " ", x.why) : null,
+    x.detail ? h("p", { "data-explain-detail": "" }, h("span", { class: "rr-explain-k" }, T("What it writes", "它寫入什麼")), " ", x.detail) : null,
+    !x.does && !x.why ? h("p", { class: "faint", "data-explain-none": "" }, T("No explanation was recorded for this step: ask about it.", "這一步沒有記錄說明：可以問。")) : null,
+    x.cites.length ? h("div", { class: "rr-basis" }, x.cites.map((c) => citeChip(card, c.ref, c.ok))) : null);
+}
+/** a connector clicked on an answer's illustration: its explanation over the picture; "Ask about this" only fills the question (free) */
+function explainPop(card, r, sc, it) {
+  const ex = RR.explain.get(card); if (!ex || ex.scene !== sc.key || ex.item !== it?.id) return null;
+  const close = () => { RR.explain.delete(card); rerender(); };
+  return h("div", { class: "rr-explain", role: "dialog", "aria-label": T("Why this step", "這一步的說明"), "data-explain": ex.key, onclick: (e) => e.stopPropagation(), onpointerdown: (e) => e.stopPropagation() },
+    h("button", { type: "button", class: "rr-explain-x", "aria-label": T("Close", "關閉"), onclick: close }, "×"),
+    explainBox(card, it, ex.key, ex.label),
+    r.open && !r.snapshot ? h("button", { type: "button", class: "rb-btn", "data-explain-ask": "", title: T("Fills the question below; nothing is sent until you ask", "填進下方的問題；你按送出之前什麼都不會送出"),
+      onclick: () => { const name = /^step:/.test(ex.key) ? T(`step ${ex.key.slice(5)}`, `第 ${ex.key.slice(5)} 步`) : ex.key.replace(">", " → "); RR.draft.set(card, T(`Why does ${name}${ex.label ? ` (${ex.label})` : ""} work this way?`, `${name}${ex.label ? `（${ex.label}）` : ""} 為什麼這樣做？`)); RR.explain.delete(card); rerender();
+        requestAnimationFrame(() => document.querySelector(`[data-room-text="${CSS.escape(card)}"]`)?.focus()); } }, T("Ask about this", "問這一步")) : null);
+}
+/** a click on an answer's illustration: a connector (its line, its label, a sequence's step, a drawn figure's edge) opens its explanation */
+function edgeClick(card, sc, it) {
+  return (e) => { if (BOARD.state.moved) return; const t = e.target.closest?.("[data-edge-hit], [data-elabel], svg [data-edge], [data-step]"); if (!t || !it) return;
+    const key = t.getAttribute("data-edge-hit") || t.getAttribute("data-elabel") || t.getAttribute("data-edge") || `step:${t.getAttribute("data-step")}`;
+    const n = t.getAttribute("data-edge-n"), tr = it.type === "states" && n != null ? (it.transitions || [])[Number(n)] : null;
+    const label = (t.closest("svg")?.querySelector(`[data-elabel="${CSS.escape(key)}"]`)?.textContent || "").replace(/^[①-⑳]\s*/, "").trim();
+    e.stopPropagation(); RR.explain.set(card, { scene: sc.key, item: it.id, key: tr ? `${tr.from}>${tr.to}` : key, label: tr?.label || label }); rerender(); };
 }
 const citedFiles = (sc) => { const out = []; for (const p of sc.points) for (const c of p.cites || []) if (c.ref.startsWith("diff:")) { const f = c.ref.slice(5).replace(/:L\d+(?:-\d+)?$/, ""); if (f && !out.includes(f)) out.push(f); } return out; };
 /** An answer that drew no picture still gets one, free, from Studio: the cited files' line counts (git's numbers), else a key
@@ -944,7 +1029,7 @@ function speak(text, done, fail, best = false) {
 }
 // a browser lists its voices late: the picker and the default voice follow when they arrive
 try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
-function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
+function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
 /** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while
  *  one plays). A request playback no longer needs (paused, left, another mix) is cancelled, so Studio stops making it. */
 function kokoroClip(card, text) {
@@ -980,7 +1065,7 @@ function advance(card) {
   if (!onRoom(card)) return stopPlay();
   const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), sc = scenes[sceneState(card, scenes)]; if (!sc) return;
   const k = revealOf(card, sc); if (k >= sc.points.length || sc.quiz) { stopPlay(); rerender(); return; }
-  RR.pick.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
+  RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
   if (RR.playing !== card || RR.audio) return;
   const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
   const paced = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170)); };
@@ -1013,7 +1098,7 @@ function stepPoint(card, dir) {
   markMoved(card);
   const { scenes, i, sc } = curScene(card); if (!sc) return; stopPlay();
   const k = revealOf(card, sc), n = sc.points.length;
-  RR.pick.delete(`${card}/${sc.key}`);
+  RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`);
   if (dir > 0) { if (k < n) RR.reveal.set(`${card}/${sc.key}`, k + 1); else if (i < scenes.length - 1) { RR.scene.set(card, i + 1); RR.reveal.set(`${card}/${scenes[i + 1].key}`, Math.min(1, scenes[i + 1].points.length)); } }
   else if (k > 1) RR.reveal.set(`${card}/${sc.key}`, k - 1);
   else if (i > 0) { RR.scene.set(card, i - 1); RR.reveal.set(`${card}/${scenes[i - 1].key}`, scenes[i - 1].points.length); }
@@ -1154,16 +1239,22 @@ function sceneHead(r, sc) {
 function sceneCard(r, scenes, j, W) {
   const card = r.card.id, sc = scenes[j], n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`);
   const running = sc.t?.status === "running", narrow = innerWidth <= 760, first = scenes.find((x) => x.turn === sc.turn) === sc;
-  const v = sc.quiz ? null : (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, k) || (running ? null : fallbackVisual(r, sc));
+  // the step it is on (played, stepped through, or picked) sets the illustration: that step's picture, zoomed to its focus
+  const cur = sc.quiz ? null : stepOf(card, sc, k), v0 = sc.quiz ? null : (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, cur != null ? cur + 1 : k) || (running ? null : fallbackVisual(r, sc));
+  // code is never the illustration: Studio's own picture of the files instead, the code a link away
+  const pics = sc.visuals.filter((b) => !isCode(b)), codes = sc.quiz ? [] : [...new Set([...sc.visuals.filter(isCode), ...(isCode(v0) ? [v0] : [])])];
+  // the whole card shows its first picture that is not code; a step whose picture is code shows Studio's picture of the files
+  const v = isCode(v0) ? (cur == null && pics[0]) || fallbackVisual(r, sc) : v0;
+  const focus = cur != null && v === v0 ? focusOf(sc.points[cur]) : [];
   const prev = v?.group ? r.board.filter((b) => b.turn === v.turn && b.group === v.group && (b.step || 0) < (v.step || 0)).sort((a, b) => (a.step || 0) - (b.step || 0)).at(-1) : null;
   const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
   const kicker = sc.chapter ? `${chapterName(sc.chapter)} · ${T(en, zh)}` : sc.t?.untranslated ? T("Not in this language yet: shown as written", "還沒有這個語言的版本：照原文顯示") : sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · ${n} question${n === 1 ? "" : "s"}`, `考考我 · ${n} 題`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
   const titleKey = `${card}/${sc.key}`, firstTitle = !RR.titled.has(titleKey); RR.titled.add(titleKey);
   const entering = RR.lastK.get(titleKey) !== k; RR.lastK.set(titleKey, k);
   const pointView = (c, at) => { const now = k < n && at === k - 1, later = at >= k;
-    if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}${later ? " later" : ""}`, "data-claim": "code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
-    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : later ? " later" : " done"}${now && entering && !reduceMotion() ? " rr-enter" : ""}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
-      c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites)),
+    if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}${later ? " later" : ""}`, "data-claim": "code" }, stepBtn(card, sc, at, cur), h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
+    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : later ? " later" : " done"}${cur === at ? " picked" : ""}${now && entering && !reduceMotion() ? " rr-enter" : ""}`, "data-claim": c.basis || c.kind, "data-step": at + 1, "aria-current": now ? "true" : null },
+      stepBtn(card, sc, at, cur), c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites)),
       // what someone else wrote (a reviewer, a commit message): their words as plain text, never parsed for citations or markup;
       // the gist (its first line, cut short) on the board, the whole text only when the captain opens it
       c.quote ? quoteView(c, `${card}/${sc.key}/${at}`) : null); };
@@ -1171,15 +1262,17 @@ function sceneCard(r, scenes, j, W) {
   const box = narrow ? { narrow: true, w: W - 30, h: 1400 } : { w: Math.round(W * 0.56) - 30, h: 340 };
   let pic; BOX = box; try { pic = sc.quiz ? h("div", { class: "rr-quizzes" }, sc.points.map((p) => quizView(card, r, p.q, null))) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")); } finally { BOX = null; }
   const answers = (r.turns || []).some((t) => !t.studio && !t.hidden && !t.thread);
+  if (focus.length) queueMicrotask(zoomFocus);
   return h("div", { class: `rp-card rb-scard${sc.quiz ? " quiz" : ""}`, "data-scene-card": sc.key },
     first ? sceneHead(r, sc) : null,
     h("div", { class: "rr-stitle" },
       h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker,
         sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null),
       h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
-    h("div", { class: "rr-scene" },
-      h("figure", { class: "rr-visual", "data-visual": sc.quiz ? "quiz" : v?.id || "" }, pic,
-        sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
+    h("div", { class: `rr-scene${sc.quiz ? "" : " rr-steps"}` },
+      h("figure", { class: "rr-visual", "data-visual": sc.quiz ? "quiz" : v?.id || "", "data-illustration-of": sc.quiz ? null : cur != null ? cur + 1 : "all", "data-zoom-focus": focus.length ? focus.join(",") : null, onclick: sc.quiz ? null : edgeClick(card, sc, v) }, pic,
+        sc.quiz ? null : stepDetail(sc, cur), sc.quiz ? null : explainPop(card, r, sc, v), sc.quiz ? null : codeRefs(card, r, codes),
+        pics.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, pics.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
       h("div", { class: "rr-points" },
         sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n && first ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
         sc.t && sc.t.status !== "done" && first ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
@@ -1208,7 +1301,7 @@ function playBar(r, scenes, i) {
   const replay = h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay"));
   if (sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" && RR.playing !== card && k >= n)
     return h("div", { class: "rb-play mini", "data-playbar": card, role: "group", "aria-label": T("Playback", "播放") }, h("div", { class: "rr-playbar" }, playBtn, replay, h("span", { class: "rb-play-l" }, T("Play this chapter", "播放這一章")), voicePicker(r)));
-  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
+  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
   return h("div", { class: "rb-play", "data-playbar": card, role: "group", "aria-label": T("Captions and playback", "字幕與播放") },
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),
     h("div", { class: "rr-playbar" },
@@ -1231,7 +1324,7 @@ function readyChip(r, scenes) {
 function stepReveal(card, dir) {
   const { sc } = curScene(card); if (!sc || sc.quiz) return false; const k = revealOf(card, sc), n = sc.points.length;
   if (k >= n || (dir < 0 && k <= 1)) return false;
-  markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + dir); rerender(); return true;
+  markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + dir); rerender(); return true;
 }
 const boardView = (r) => { const scenes = scenesOf(r); return BOARD.view(r, scenes, sceneState(r.card.id, scenes)); };
 // ---------- the prompt bar: quick actions, a question (typed or spoken), the paid-round confirmation ----------
@@ -1522,14 +1615,15 @@ addEventListener("keydown", (e) => {
   const card = S.route.arg, t = e.target;
   // the lesson board's own keys first (a chapter on or back, ask here, zoom, Escape closes what it opened)
   // the board's keys are off while the tutor picker is open (its Escape closes the picker, its arrows stay in it)
-  if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && RR.tutorMenu !== card && BOARD.keydown(e, card)) return;
-  if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.tutorMenu === card) { RR.tutorMenu = null; e.preventDefault(); rerender(); requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); return; } else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else if (FS.card === card) { e.preventDefault(); exitFs(); return; } else return; e.preventDefault(); rerender(); return; }
+  if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && RR.tutorMenu !== card && !(e.key === "Escape" && RR.explain.has(card)) && BOARD.keydown(e, card)) return;
+  if (e.key === "Escape") { if (RR.explain.has(card)) RR.explain.delete(card); else if (RR.zoom) RR.zoom = null; else if (RR.tutorMenu === card) { RR.tutorMenu = null; e.preventDefault(); rerender(); requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); return; } else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else if (FS.card === card) { e.preventDefault(); exitFs(); return; } else return; e.preventDefault(); rerender(); return; }
   if (t?.closest?.("input,textarea,select,[contenteditable],[role=dialog]") || RR.zoom) return;
   if ((e.key === "f" || e.key === "F") && !e.repeat && document.querySelector("[data-fs-toggle]")) { e.preventDefault(); if (FS.card === card) exitFs(); else enterFs(card); }
 });
 // the board, built with the room's own helpers (public/review-board.js)
 const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
-  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs });
+  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual });
 routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }

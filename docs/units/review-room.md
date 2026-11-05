@@ -15,12 +15,41 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
 - **The board is the room's only view** (`public/review-board.js`; there is no stage). Every scene is a region of one
   canvas the camera owns, a row of its own for each turn: the welcome, each answer, each lesson chapter, a check, a turn
   still being written. An answer's region (`sceneCard`) is a handwritten title under its kicker (what was asked, and the
-  question), a picture on the left laid out for the region's column and the tutor's points beside it; the picture is the
+  question), the tutor's points as numbered steps on the left and an illustration beside them on the right (see "Steps and
+  illustrations" below); the picture is the
   one the point being read cites (`[board:B1-2]`), so a diagram builds up as the points reach its steps, and every other
   picture of the scene is a chip away. Played, the points not reached yet are dimmed and the one being read is marked; a
   scene that arrives while the page is open plays itself; scenes already there show whole. Over a turn's first region:
   the answers to the same question (one per tutor), "Regenerate with…", how it started (auto-teach) and what it cost; under
   its points the questions it asks to answer in the prompt.
+- **Steps and illustrations.** Every card on the board, an answer's scene and a lesson's chapter alike, in every kind of room,
+  is its numbered steps (its points) on the left and an illustration on the right; on a phone the illustration is on top and
+  the steps under it. A step's number (`data-step-pick`) picks it, as the play bar's dots do: the points up to it shown, and
+  the illustration shows that step (`data-illustration-of`): the step's own picture (scene_show's `picture` on a point), else
+  the last board item it cites, else the scene's picture, zoomed to what the step is about (`focus`: node ids, edges
+  `from>to`, a sequence's `step:n`; the picture's viewBox set to the padded box of those parts, at most about half again as
+  near, the rest dimmed; `data-zoom-focus`), with the step's `detail` under it (`data-step-detail`). With no step picked the
+  card shows its first picture whole. The illustration is never code: a code, diff, compare or snippet item is not drawn
+  there; Studio's own picture of the files the card cites shows instead, and the code is listed under it as links ("Code this
+  rests on", `data-code-ref`): a pull request on GitHub opens its files at those lines in a new window, anything else opens
+  in the citation panel (which shows the excerpt). A lesson's text chapter (what it is, the risks, the roads, the
+  questions) with no drawing and no step picture stays one column of numbered steps, 540 wide, as it was; when one of its
+  steps names a picture it gets the illustration too. Lesson regions are 840 wide with a drawing (steps 300) and 780 for a
+  text chapter with pictures (steps 440), 340 on a phone, so a chapter reads at
+  the camera's 0.88 at 1440 with the questions panel open. **A transition explains itself**: every connector of a drawing
+  Studio draws (a flowchart, a lifecycle, an architecture, a sequence's step, a tutor's figure's `data-edge`) has a wide
+  invisible line (`data-edge-hit`) and is clickable; a click opens what that step does and why it was built this way (the
+  tutor's `explain` entry for it, a transition's `detail` and `why`), with what it rests on; with nothing recorded it says so
+  and shows what the drawing has. On a lesson the explanation tops the board's ask popover (its chips stay: asking is still
+  a paid turn); on an answer it is a small card over the picture (`data-explain`) whose "Ask about this" only fills the
+  question field (nothing sent, nothing paid). The tutor gives these: scene_show points take `picture`, `focus` (at most 8)
+  and `detail` (one or two sentences, at most 80 CJK or 160 Latin characters, `STEP_LIMITS`); board_draw's mermaid, states,
+  arch and sequence items and figure_svg take `explain: [{edge, does, why?, cites?}]` (at most 20; does at most 60 CJK or 120
+  Latin, why at most 80 / 160, `EXPLAIN_LIMITS`; an edge the drawing does not have is refused, a mermaid's is not checked),
+  and a states or figure transition takes `why`. Its prompt says so ("STEPS AND ILLUSTRATIONS"); the pinned skills are
+  unchanged. A translation carries a scene's details (kept only when every one came back within the limit) and a drawing's
+  explanations and transitions' why after the words an older translation holds, so a drawing without them keeps its length.
+  An older room with none of these fields shows its steps numbered, its pictures as before but never code.
 - **The play bar floats on the board** (`playBar`): the caption of the point being read, the previous point, a dot per
   point, the next point (past a scene's last point is the next scene's first, and the board flies there), play / pause
   (from where it stands, or from the start when the scene is whole), replay, the scene before and after (« ») and the
@@ -692,7 +721,7 @@ and page do not exist):
 
 Tests: `tests/review-web.ts`, `tests/review-room-admission.ts` (a staffed Task: the tutor seat's receipt and native admission, the adaptive tutor on one vendor, two vendors and one model, a member that is not usable, verification before the turn), `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub
 tutor, a stubbed web backend), `tests/review-room-ui.mjs` (1440 en and 390 zh-TW; the room and the Library review each on its own route, `tests/route-names.ts` keeps route names apart; screenshots in `tests/out/review-room`
-or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull request subjects. `bun run test:review-room` runs all six.
+or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull request subjects; `tests/review-room-steps-ui.mjs` the steps and illustrations. `bun run test:review-room` runs them all.
 
 11. Pictures: screenshots come only from Studio's captures of this head (before / after toggle); a diffstat chart is
     counted by git; an uncited chart is an inference; illustrations are made in the background (the turn does not wait),
@@ -900,6 +929,17 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
     — review-room-board-ui "the board fills the window …", "only the board is visible …", "a refused Fullscreen API …";
     review-room-ui "an answer's scene in full screen …".
+43. Steps and illustrations: every card is its numbered steps on the left and its illustration on the right (on a phone the
+    illustration on top); a step picked shows its picture zoomed to its focus, its detail under it; the illustration is
+    never code, the code a link (GitHub at those lines for a pull request on GitHub, the citation panel otherwise); a
+    connector clicked says what that step does and why, on a lesson above the ask chips; the tutor's scene_show and
+    board_draw carry the steps' pictures, focus and details and the connectors' explanations, checked; translations keep
+    older words in place; an older room still renders. — review-room-anywhere "a drawing's connectors may carry what that
+    step does and why …", "the explanations are kept on the drawing …", "a figure the tutor draws carries its connectors'
+    explanations …", "a scene's steps each keep the picture they show …", "the tutor is told each scene is numbered steps …",
+    "a translation carries the new words after the ones …", "a translated scene keeps its steps' details only when …";
+    review-room-steps-ui (each rule); review-room-board-only-ui "a rail entry flies the board to that answer …", "on the board
+    the answer shows its chart …".
 46. A directory of any GitHub repository has a room: its address checked; a public repository read anonymously, another
     through the captain's gh login, else refused with why; its ref resolved and pinned at that commit (pasting again keeps it);
     its parts and README known; the same board and every follow-up (questions on the board and on selected words, regenerate,
