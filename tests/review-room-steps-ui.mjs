@@ -138,7 +138,8 @@ try {
     await tap(p, '[data-region="t2-2"] [data-step-pick="1"]'); await p.waitForTimeout(250); const ls = await illus(p, "t2-2");
     ok(ls?.of === "1" && ls.focus === "cart>pct" && ls.zoomed && /Each line of the cart/.test(ls.detail || ""), "a lesson's step picked zooms its chapter's drawing to that step, its detail under it", JSON.stringify(ls));
     await tap(p, '[data-region="t2-2"] [data-step-pick="2"]'); await p.waitForTimeout(250); const cited = await illus(p, "t2-2");
-    ok(cited?.of === "2" && cited.type === "states", "a lesson's step that cites another drawing shows that drawing", JSON.stringify(cited));
+    const keeps = await p.evaluate(() => !!document.querySelector('[data-region="t2-3"] [data-report-figure="B2-2"]'));
+    ok(cited?.of === "2" && cited.type === "states" && keeps, "a lesson's step that cites another chapter's drawing shows it, and that chapter keeps its own", JSON.stringify({ cited, keeps }));
     await fly(p, "t2-3"); const why = await p.evaluate(() => document.querySelector('[data-region="t2-3"] [data-transition-why]')?.textContent || null);
     ok(/Priced once, before it is shown/.test(why || ""), "a lifecycle's transition says why it is built that way beside what it writes", JSON.stringify(why));
     await fly(p, "t2"); const txt = await p.evaluate(() => { const r = document.querySelector('[data-region="t2"]'); return r && { illus: !!r.querySelector(".rb-illus"), solo: !!r.querySelector(".rb-split.solo"), nums: r.querySelectorAll("[data-step-pick]").length }; });
@@ -154,6 +155,9 @@ try {
     await p.keyboard.press("Escape"); await tap(p, '[data-region="t4"] [data-step-pick="2"]'); await p.waitForTimeout(250); const z = await illus(p, "t4"), vb = (z?.vb || "").split(/[ ,]+/).map(Number);
     ok(z?.zoomed && vb[0] > 100 && z.focused.includes("y"), "a step's zoom finds its part inside a group moved by a transform", JSON.stringify(z));
     await fly(p, "t1"); await p.$eval('[data-playbar] [data-dot$=":3"]', (e) => e.click()).catch(() => {}); await p.waitForTimeout(250); const last = await illus(p, "t1");
+    // playing one scene leaves the others whole
+    await p.$eval("[data-playbar] [data-play]", (e) => e.click()).catch(() => {}); await p.waitForTimeout(150); const other = await illus(p, "t3"); await p.$eval("[data-playbar] [data-play]", (e) => e.click()).catch(() => {});
+    ok(other?.of === "all", "playing one scene changes no other card's step", JSON.stringify(other));
     ok(last?.of === "3" && /Read it on GitHub/.test(last.detail || ""), "the play bar's last dot picks the last step: its picture and detail show", JSON.stringify(last));
     await ctx.close(); }
   // ---------- an older answer: code is never the picture; with no pull request on GitHub its link opens the citation panel ----------

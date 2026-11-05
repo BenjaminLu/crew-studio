@@ -140,7 +140,8 @@ function regionEl(card, r, x, j, nth, ctx) {
   const byId = (id) => (id ? r.board.find((b) => b.id === id) : null), stepPic = (p) => byId(p?.picture) || byId(boardCite(p)), own = cur != null ? stepPic(x.points[cur]) : null;
   const pic0 = !illustrated(x) ? null : own || x.pic || x.points.map(stepPic).find(Boolean) || null;
   const codes = isCode(pic0) ? [pic0] : [], pic = !pic0 ? null : isCode(pic0) ? fallbackVisual(r, x) : pic0, focus = cur != null && pic === pic0 ? focusOf(x.points[cur]) : [], SW = stepsW(x);
-  let fig = null; if (pic) { const fk = `${card}/${pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${pic.id}`) ?? 0}/${W}/${focus.join(",")}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
+  // one figure per chapter: a step may cite another chapter's drawing, and a figure's question places name its own chapter
+  let fig = null; if (pic) { const fk = `${card}/${x.key}/${pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${pic.id}`) ?? 0}/${W}/${focus.join(",")}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
     fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: W - SW - 64, h: 620 }); if (!pic.synth) decorate(fig, x, pic, ctx); else fig.setAttribute("data-figure-studio", "");  if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); }
     if (focus.length) { fig.setAttribute("data-zoom-focus", focus.join(",")); queueMicrotask(zoomFocus); } else fig.removeAttribute("data-zoom-focus"); }
   const illus = fig ? h("div", { class: "rb-illus", "data-illustration-of": cur != null ? cur + 1 : "all" }, fig, stepDetail(x, cur), codeRefs(card, r, codes)) : null;

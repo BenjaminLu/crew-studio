@@ -886,7 +886,7 @@ function visualAt(r, sc, k) {
 const CODEISH = new Set(["code", "diff", "compare", "snippet"]);
 const isCode = (it) => !!it && CODEISH.has(it.type);
 /** the step a card is on: the point being read while it plays or is stepped through, else the step the captain picked (null: the whole card) */
-const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? (RR.playing === card && sc.points.length ? sc.points.length - 1 : null));
+const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? (RR.playing === card && RR.playKey === sc.key && sc.points.length ? sc.points.length - 1 : null));
 /** pick a step: the points up to it shown (as the play bar's dots do), its picture zoomed to what it is about */
 function pickStep(card, sc, m) { markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.explain.delete(card); RR.reveal.set(`${card}/${sc.key}`, m + 1); RR.step.set(`${card}/${sc.key}`, m); rerender(); }
 const stepBtn = (card, sc, m, cur) => h("button", { type: "button", class: `rr-stepn${cur === m ? " on" : ""}`, "data-step-pick": m + 1, "aria-pressed": String(cur === m), "aria-label": T(`Show step ${m + 1}`, `看第 ${m + 1} 步`), onclick: (e) => { e.stopPropagation(); pickStep(card, sc, m); } }, String(m + 1));
@@ -1018,7 +1018,7 @@ function speak(text, done, fail, best = false) {
 }
 // a browser lists its voices late: the picker and the default voice follow when they arrive
 try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
-function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
+function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; RR.playKey = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
 /** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while
  *  one plays). A request playback no longer needs (paused, left, another mix) is cancelled, so Studio stops making it. */
 function kokoroClip(card, text) {
@@ -1076,7 +1076,7 @@ async function playVendor(card, sc) {
 /** play the scene: from where it stands, or from its start when it is already whole (from: 0 replays it) */
 function play(card, sc, from) {
   const k = revealOf(card, sc), start = from ?? (k >= sc.points.length ? 0 : Math.max(0, k - 1));
-  stopPlay(); RR.playing = card; RR.reveal.set(`${card}/${sc.key}`, start);
+  stopPlay(); RR.playing = card; RR.playKey = sc.key; RR.reveal.set(`${card}/${sc.key}`, start);
   const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t && !sc.studio) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
   advance(card);
 }
