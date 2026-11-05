@@ -260,9 +260,10 @@ const TOOLRES: [string, any][] = [];
       "the next view is a fresh room (no answers, board, translations or pictures; opening it makes no paid picture); the ledger records review-room-reset with no content", JSON.stringify({ turns: fresh.turns.length, board: fresh.board.length, rec: rec.map((e: any) => e.data) }));
     // a translation admitted while the room is started over: refused, nothing written, the seat released (the next turn runs)
     script.push([["say", "Rounds to the cent [diff:src/percent.ts]."]]); await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    // the confirmation's hash first (a translation reads what is usable before it checks it), then only the confirmed call is held
+    const need2 = await refused(() => room.translate(t.id, { lang: "zh-TW" }, "captain"));
     const realUsable = (E.deps as any).refreshUsable; let relU!: () => void; const gU = new Promise<void>((r) => (relU = r)); let inU = false;
     (E.deps as any).refreshUsable = async () => { inU = true; await gU; };
-    const need2 = await refused(() => room.translate(t.id, { lang: "zh-TW" }, "captain"));
     const tr = room.translate(t.id, { lang: "zh-TW", confirm: need2?.offer?.translate?.hash }, "captain").then(() => null, (e: any) => e);
     for (let i = 0; i < 300 && !inU; i++) await new Promise((r) => setTimeout(r, 10));
     const out2: any = room.reset(t.id, "captain"); relU(); const trErr: any = await tr; (E.deps as any).refreshUsable = realUsable;
