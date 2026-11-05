@@ -184,6 +184,13 @@ try {
       script.push([["say", "Still eighty [diff:many/f1.ts]."]]); await room.start(mr.id, { action: "why", confirm: mo.hash }, "captain"); await room.settle(mr.id); const second = reads.length - first;
       const done = (room.view(mr.id) as any).turns.filter((t: any) => t.status === "done").length;
       ok(done === 2 && first <= 4 && second <= 2, "a directory room's web filter reads the pinned commit's text in a few git processes, once: not one per file, and not again before the next answer", JSON.stringify({ done, first, second, sample: reads.slice(0, 3) })); }
+    finally { (Bun as any).spawn = spawn0; }
+    // a read that failed is not kept: that answer's filter is incomplete, the next answer reads again
+    const fr: any = await room.openDir("https://github.com/acme/kit/tree/many/src", "captain"), fo = (room.view(fr.id, true) as any).offer, greps: number[] = [];
+    let fail = true; (Bun as any).spawn = (argv: any, o: any) => { if (Array.isArray(argv) && argv.includes("grep")) { greps.push(1); if (fail) { fail = false; return (spawn0 as any)(["sh", "-c", "exit 128"], o); } } return (spawn0 as any)(argv, o); };
+    try { script.push([["say", "The kit [diff:src/core/sum.ts]."]]); await room.start(fr.id, { action: "how", confirm: fo.hash }, "captain"); await room.settle(fr.id); const g1 = greps.length;
+      script.push([["say", "Again [diff:src/core/sum.ts]."]]); await room.start(fr.id, { action: "why", confirm: fo.hash }, "captain"); await room.settle(fr.id); const g2 = greps.length - g1;
+      ok(g1 >= 1 && g2 >= 1, "a filter read that failed is not kept for the commit: the next answer reads it again", JSON.stringify({ g1, g2 })); }
     finally { (Bun as any).spawn = spawn0; } }
 
   // ---------- the Library, the list, starting over ----------

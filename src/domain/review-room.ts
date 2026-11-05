@@ -1213,11 +1213,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const dirFilterText = async (wt: string, head: string, path: string) => {
     const key = `${wt}\0${head}\0${path}\0${WEB_FILTER_BYTES()}`, hit = dirFilters.get(key); if (hit) return hit;
     const grep = (max: number, spec: string[]) => helperHead(gitArgv(["grep", "-I", "-h", "--no-color", "-e", "", head, "--", ...spec]), { cwd: wt, env: gitEnv(), maxBytes: max, okCodes: [0, 1], timeoutMs: 60_000 });
-    let text = "", complete = true; const cap = WEB_FILTER_BYTES();
-    const own = await grep(cap, path ? [`:(literal)${path}`] : ["."]); if (!own) complete = false; else { text = own.out.toString("utf8"); if (own.cut) complete = false; }
+    let text = "", complete = true, failed = false; const cap = WEB_FILTER_BYTES();
+    const own = await grep(cap, path ? [`:(literal)${path}`] : ["."]); if (!own) complete = !(failed = true); else { text = own.out.toString("utf8"); if (own.cut) complete = false; }
     if (complete && path) { const left = cap - Buffer.byteLength(text); const rest = left > 0 ? await grep(left, [".", `:(exclude,literal)${path}`]) : null;
-      if (!rest) complete = false; else { text += "\n" + rest.out.toString("utf8"); if (rest.cut) complete = false; } }
-    const out = { text, complete }; if (dirFilters.size > 50) dirFilters.clear(); dirFilters.set(key, out); return out;
+      if (left > 0 && !rest) failed = true; if (!rest) complete = false; else { text += "\n" + rest.out.toString("utf8"); if (rest.cut) complete = false; } }
+    // a read that failed (a timeout, git refusing) is this answer's only: the next one reads again
+    const out = { text, complete }; if (!failed) { if (dirFilters.size > 50) dirFilters.clear(); dirFilters.set(key, out); } return out;
   };
   /** What may not leave Studio for this room: the change, its paths and its names (src/review-web.ts). */
   const webContext = async (s: S, room: Room | null): Promise<WebContext> => {
