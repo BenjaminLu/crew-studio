@@ -40,7 +40,7 @@ const put = (path: string, text: string) => { mkdirSync(join(work, path, ".."), 
 put("README.md", "# kit\nA small kit.\n"); put("src/README.md", "# src\nThe kit's code: core does the sums, api serves them.\n");
 put("src/core/sum.ts", "export function sum(a: number, b: number) {\n  return a + b;\n}\n"); put("src/core/round.ts", "export const round = (x: number) => Math.round(x);\nexport function calculateInvoiceReserve(total: number) { return round(total * 0.05); }\n");
 put("src/工具/說明.md", "工具的說明。\n"); // a name git would quote in its listing
-put("src/api/server.ts", "import { sum } from \"../core/sum\";\nexport function handle(q: { a: number; b: number }) {\n  return { total: sum(q.a, q.b) };\n}\n"); put("docs/guide.md", "Read src first.\n");
+put("src/api/server.ts", "import { sum } from \"../core/sum\";\nexport function handle(q: { a: number; b: number }) {\n  return { total: sum(q.a, q.b) };\n}\n"); put("docs/guide.md", "Read src first.\nexport function migrateLedgerSnapshots() {}\n");
 must(work, ["add", "-A"]); must(work, [...id, "commit", "-qm", "kit"]); const V1 = must(work, ["rev-parse", "HEAD"]);
 must(work, ["tag", "v1"]); must(work, ["branch", "feature/x"]); must(work, ["push", "-q", bare, "main", "feature/x", "v1"]);
 const H = await harness([bundledText("workflows/v2/review-room-dir-host.wf.yaml")!]), E = H.engine;
@@ -97,10 +97,11 @@ try {
   const offer = v.offer; let e: any = await refused(() => room.start(opened.id, { action: "how" }, "captain"));
   ok(offer?.provider === "codex" && offer.model === "c-1" && offer.independence?.level === null && /independence does not apply/.test(offer.independence.en) && e?.code === "confirm_required" && !E.list().some((r: any) => r.def.kind === "review-room-dir-host"),
     "a directory's turn is paid and asks to confirm first; nothing is made before (Automatic: this machine's default model, no author to be independent from)", JSON.stringify([offer, e?.code]));
-  script.push([["web_search", { query: "calculate invoice reserve rounding" }], ["fs_read", { path: "src/core/sum.ts" }], ["git_diff", {}], ["board_draw", { items: [{ type: "diff", title: "x", path: "src/core/sum.ts" }, { type: "code", title: "The sum", path: "src/core/sum.ts", start: 1, end: 3 }] }],
+  script.push([["web_search", { query: "calculate invoice reserve rounding" }], ["web_search", { query: "migrate ledger snapshots tips" }], ["fs_read", { path: "src/core/sum.ts" }], ["git_diff", {}], ["board_draw", { items: [{ type: "diff", title: "x", path: "src/core/sum.ts" }, { type: "code", title: "The sum", path: "src/core/sum.ts", start: 1, end: 3 }] }],
     ["say", "The api serves core's sum [diff:src/api/server.ts:L1-3]; sum adds [diff:src/core/sum.ts:L2]."]]);
   await room.start(opened.id, { action: "how", confirm: offer.hash }, "captain"); await room.settle(opened.id);
-  const v1: any = room.view(opened.id), t1 = v1.turns.at(-1), hosts = E.list().filter((r: any) => r.def.kind === "review-room-dir-host"), r0 = TOOLRES.slice(-3), web0 = TOOLRES.slice(-4)[0];
+  const v1: any = room.view(opened.id), t1 = v1.turns.at(-1), hosts = E.list().filter((r: any) => r.def.kind === "review-room-dir-host"), r0 = TOOLRES.slice(-3), web0 = TOOLRES.slice(-5)[0], web1 = TOOLRES.slice(-4)[0];
+  ok(web1?.[0] === "web_search" && /refused/.test(web1[1]?.error ?? ""), "it knows the rest of the repository too (the tutor can read it): an identifier of a file outside the directory is refused", JSON.stringify(web1?.[1]));
   ok(web0?.[0] === "web_search" && /refused/.test(web0[1]?.error ?? "") && v1.sources.some((x: any) => x.refused), "the web filter knows the directory's own code: a query spelling an identifier of it is refused (there is no diff to learn it from)", JSON.stringify(web0?.[1]));
   ok(/工具/.test(prompts.at(-1)?.text ?? "") && !/\\345/.test(prompts.at(-1)?.text ?? ""), "a name git would quote (Chinese) is listed as it is, in the parts and in the tutor's listing", JSON.stringify(v.dir.parts.map((p: any) => p.name)));
   ok(t1.status === "done" && t1.claims.every((c: any) => c.basis === "cited") && hosts.length === 1 && v1.task?.id === hosts[0].id && hosts[0].params.room === opened.id,
