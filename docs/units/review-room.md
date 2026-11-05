@@ -116,7 +116,7 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   it is from the change's author (another vendor; "same vendor as the author"; the author's own model; "unknown" when the
   author is outside Studio, a pull request no Task made, and never claimed as another vendor), the current tutor
   marked. A held model (out of quota, its quota unreadable, its verification being retried) is listed with the reason and
-  cannot be picked; the author's own model only when nothing else can run, as for the room's own tutor. A pick is a paid
+  cannot be picked, nor one not verified on this machine yet; the author's own model can (its label says so). A pick is a paid
   turn on that model (`POST …/turn {regenerate: n, pick: {provider, model}, confirm}`; a pick is refused on anything but a
   regeneration, `bad_pick`): its own offer and confirmation hash,
   then the same admission as any turn (the staffing receipt names the picked member, `adaptive`), and the same question
@@ -472,6 +472,20 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
   it as "Tutor: … — Different vendor from the author" (or "Same vendor as the author, different model", or the same-model
   text, with why, and "Not in this project's crew" when it is not), and each turn records it: on the turn, its
   `review-room-turn` ledger entry and the room's stats (`review-room-stats.json`, with the tutor's provider and model).
+- **Picked by the captain.** The tutor is not hard-wired to a vendor: the header's tutor pill opens a picker (`[data-tutor-open]`)
+  listing Studio's default and every model this machine has (`view().tutors`: codex, claude, cursor, …), each with how
+  independent it is from the change's author, shown as information and never enforced (the author's own model can be picked;
+  the label says so). A model not verified on this machine, held (out of quota, quota unreadable, stale facts) or in its
+  verification backoff is listed disabled with the reason. The room's pick (`POST /api/review-room/<room>/tutor {pick:
+  {provider, model} | null}`, desktop captain; null goes back to the default) wins over Studio's default (`POST
+  /api/review-room/settings {tutor}`, the room list's select; null is Automatic, the selection below); both are checked when
+  set. Every turn of the room runs on it: the analysis on arrival and on paste, free questions, quick actions, board questions,
+  translations; a regeneration runs on the model picked for it. A picked tutor that cannot run now is never swapped for
+  another: the offer is an error (`tutor_unavailable`) saying which and why, no turn starts, and the captain picks again. The
+  offer says whose pick it is (`picked`: room, studio, auto or regenerate) and the label says "Picked by the captain …". The
+  approved reviewer picked runs as the seat's own member; any other model runs as the seat's adaptive member, its receipt
+  naming it. The vendor's voice goes only to the vendor of the tutor that answered a scene, and only while the room's tutor
+  is still that vendor.
 - **Verified by Studio.** Before the paid turn, Studio reads what this machine has again (the offer may change: a changed
   offer is answered with the current one) and verifies the chosen member itself when it is signed in but not verified yet
   (`engine.deps.ensurePick`: one bounded request per model, kept for its window), recorded on the Task's ledger
@@ -826,10 +840,19 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
     — review-room-board-ui "the board fills the window …", "only the board is visible …", "a refused Fullscreen API …";
     review-room-ui "an answer's scene in full screen …".
+44. The captain picks the tutor: a Studio-wide default and a per-room choice, used by every turn of the room; every model of
+    this machine listed, one not verified or held disabled with why; the independence shown, never enforced; a pick that cannot
+    run is never swapped for another vendor; the receipt names the picked member; the vendor's voice only to the answering
+    tutor's vendor. — review-room-admission "the room has a tutor picker …", "the picker lists every model …", "a model not
+    verified, held or not on this machine cannot be picked …", "the room's own pick is its tutor …", "a turn runs on the picked
+    tutor …", "a room without its own pick runs on Studio's default …", "a picked tutor that cannot run is never swapped …",
+    "Studio's default is refused …", "a scene a codex tutor answered is not narrated …"; review-room-board-only-ui "the
+    header's tutor opens a picker …", "picking a model sets this room's tutor …", "a picked tutor that cannot run is shown as
+    such …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 
-Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request; a per-room model switch (Studio picks the tutor); a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
+Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request; a server-side vendor web search (the backend is Studio's own, so every query is filtered and logged the
 same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
 render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice
 questions are recognised on this device only); illustrations made when the merge card is created (they start when the
