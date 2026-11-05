@@ -14,7 +14,9 @@ const rerender = () => { if (S.route?.name === "room") render(); };
 // room's page (redraw): never the page the captain moved on to, where a redraw would replace the button being pressed
 // and swallow the click. Leaving a room stops its playback and its mic at once.
 const onRoom = (id) => S.route?.name === "room" && S.route.arg === id;
-const redraw = (id) => { if (onRoom(id)) render(); };
+// a background redraw (a poll, a live update) waits while the captain holds words selected on the board: it would drop the
+// selection and its "Ask about this"; it runs once the selection goes (public/review-board.js selHeld)
+const redraw = (id) => { if (!onRoom(id)) return; if (BOARD?.selHeld?.()) { RR.heldRedraw = true; return; } render(); };
 addEventListener("hashchange", () => { // after app.js's own listener: S.route is already the new page
   if (RR.playing && !onRoom(RR.playing)) stopPlay();
   if (RR.rec && !onRoom(RR.recCard)) try { RR.rec.stop(); } catch {}

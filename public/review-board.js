@@ -159,7 +159,7 @@ function sceneRegionEl(card, r, x, j, ctx) {
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, num), h("div", { class: "rb-mt" }, label), h("div", { class: "rb-mg", "data-map-gist": "" }, plain(x.title || "")),
         h("div", { class: "rb-mq" }, st === "running" ? h("span", { class: "rb-badge q" }, T("being written", "撰寫中")) : st !== "done" ? h("span", { class: "rb-badge q" }, st === "interrupted" ? T("interrupted", "中斷") : T("failed", "失敗")) : h("span", { class: "rb-badge ok" }, T(`${x.points.length} point${x.points.length === 1 ? "" : "s"}`, `${x.points.length} 點`))))),
     // the questions asked about words selected on this scene: their cards beside it, as a lesson's
-    h("div", { class: "rb-tlayer", "data-tlayer": key }, ctx.threads.filter((t) => t.anchor.scene === sceneKey(key)).flatMap((t) => threadEls(card, r, t, ctx)), pendingEls(card, r, sceneKey(key), ctx)));
+    h("div", { class: "rb-tlayer", "data-tlayer": key }, ...(key !== sceneKey(key) ? [] : [ctx.threads.filter((t) => t.anchor.scene === key).flatMap((t) => threadEls(card, r, t, ctx)), pendingEls(card, r, key, ctx)])));
 }
 /** a scene region's place key as Studio keeps it: a check (t3-quiz) is asked about as its turn's scene (t3) */
 const sceneKey = (key) => String(key).replace(/-quiz$/, "");
@@ -178,7 +178,7 @@ const selKey = (t) => { let x = 5381; for (const ch of t) x = ((x * 33) ^ ch.cod
  *  its words, the citations next to them, and where on screen it ends; null when it is not text of a scene */
 function selectionPlace(card) {
   const s = getSelection(); if (!s || s.isCollapsed || !s.rangeCount) return null;
-  const text = s.toString().replace(/\s+/g, " ").trim(); if (text.length < 2) return null;
+  const text = s.toString().replace(/\s+/g, " ").trim(); if (!text) return null;
   const rg = s.getRangeAt(0), c0 = rg.commonAncestorContainer, el = c0.nodeType === 1 ? c0 : c0.parentElement;
   if (!el || el.closest(".rb-pop, input, textarea, [contenteditable], .rr-dock, .rr-drawer")) return null;
   const sh = B.shown.get(card), reg = el.closest(`[data-board-vp="${CSS.escape(card)}"] [data-region]`), cap = el.closest(`[data-playbar="${CSS.escape(card)}"] [data-caption]`);
@@ -192,7 +192,7 @@ function selectionPlace(card) {
 /** the small "Ask about this" by the selection: outside the board's own drawing (a redraw would drop the selection), in the
  *  full-screen element when there is one; it opens the board's ask popover on those words */
 const SEL = { el: null, t: 0 };
-function hideSelAsk() { SEL.el?.remove(); SEL.el = null; }
+function hideSelAsk() { SEL.el?.remove(); SEL.el = null; if (RR.heldRedraw) { RR.heldRedraw = false; rerender(); } }
 function showSelAsk(card) {
   const p = S.route?.name === "room" && S.route.arg === card ? selectionPlace(card) : null; if (!p) return hideSelAsk();
   const r = RR.rooms.get(card); if (!r) return hideSelAsk();
@@ -715,6 +715,6 @@ function view(r, scenes, i) {
 /** forget everything kept for a room (it was started over) */
 function forget(card) { for (const m of [B.cam, B.lock, B.cur, B.visited, B.pend, B.focus, B.sheet, B.L, B.reveal, B.err, B.lod, B.focusKey, B.lastScene]) m.delete(card); for (const s of [B.only, B.before, B.notes]) s.delete(card);
   for (const s of [B.peek]) for (const k of [...s]) if (k.startsWith(`${card}/`)) s.delete(k); for (const m of [B.ver, B.code, B.figs]) for (const k of [...m.keys()]) if (k.startsWith(`${card}/`)) m.delete(k); if (B.pop?.card === card) B.pop = null; }
-return { view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit };
+return { selHeld: () => !!SEL.el, view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit };
 };
 })();
