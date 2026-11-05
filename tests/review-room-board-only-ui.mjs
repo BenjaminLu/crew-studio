@@ -86,6 +86,7 @@ async function open(width, room, o = {}) {
   await ctx.route(/\/api\/review-room\/SC-80\/check-answer$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); S.picks.push(b); const rm = clone(typeof room === "function" ? room() : room);
     rm.check.questions = rm.check.questions.map((q) => q.n === b.n ? { ...q, choice: b.choice, answer: 0, why: "Math.round rounds 299.85 up", cites: [], result: { correct: b.choice === 0, note: "n", turn: 4, choice: b.choice, by: "studio" } } : q);
     r.fulfill({ json: { n: b.n, correct: b.choice === 0, room: rm } }); });
+  if (o.routes) await o.routes(ctx, S); // registered last: they answer before the defaults above
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e.message}`));
   await p.goto(`${base}/${o.hash || `#/room/${o.id || "SC-80"}`}`); await p.waitForSelector(o.wait || "#view .rr-room", { timeout: 15000 }); await p.waitForTimeout(400);
   return { ctx, p, S };
@@ -121,6 +122,21 @@ try {
     await p.waitForTimeout(1700); await p.evaluate(() => render()); await p.waitForTimeout(150);
     ok(S.arrives.length === 1, "redrawn, the same room on the same head sends no second arrival", String(S.arrives.length));
     await p.screenshot({ path: join(shots, "arrival-1440.png") });
+    await ctx.close(); }
+  // the terms changed under the page: nothing started, and nothing is sent again by itself; a room with pictures on says so
+  { const ARR = { auto: true, provider: "codex", model: "gpt-6", effort: "high", paid: true, images: true, createsHost: false, plan: "fp-old" };
+    let head = "h1"; const now = () => ({ ...clone(BASE), head, turns: [], board: [BASE.board[0]], check: { questions: [] }, autoTeach: { on: true }, arrive: { ...ARR, plan: head === "h1" ? "fp-old" : "fp-h2" } });
+    const { ctx, p, S } = await open(1440, now, { routes: async (c, S2) => { await c.route(/\/api\/review-room\/SC-80\/arrive$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); S2.arrives.push(b);
+      const rm = now(); if (b.plan === "fp-old") { rm.arrive = { ...ARR, plan: "fp-new" }; return r.fulfill({ json: { room: rm, plan: { ...ARR, plan: "fp-new" } } }); } rm.arrive = null; r.fulfill({ json: { room: rm } }); }); } });
+    for (let i = 0; i < 30 && !S.arrives.length; i++) await p.waitForTimeout(50);
+    const pics = await inRegion(p, "t0", '[data-arrive="on"]'); await p.waitForTimeout(800); await p.evaluate(() => render()); await p.waitForTimeout(300);
+    const err = await p.$eval("[data-room-error]", (e) => e.textContent).catch(() => null);
+    ok(/generated pictures are on in this room: the tutor may ask for up to two, and an opening picture is made once, each a paid image job/.test(pics?.[0] || ""), "the arrival line names the room's paid pictures too, when they are on", JSON.stringify(pics));
+    ok(S.arrives.length === 1 && /What arriving starts has changed/.test(err || ""), "when what arriving starts changed under the page, nothing starts and nothing is sent again by itself; the room says so", JSON.stringify({ arrives: S.arrives.map((x) => x.plan), err }));
+    // the captain comes back later from the room list: the room is read again, and its new head is analysed by itself
+    head = "h2"; await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForTimeout(400); await p.evaluate(() => { location.hash = "#/room/SC-80"; });
+    for (let i = 0; i < 40 && S.arrives.length < 2; i++) await p.waitForTimeout(50);
+    ok(S.arrives.length === 2 && S.arrives[1].plan === "fp-h2", "coming back to the room (the room list, a link) reads it again: a head that moved meanwhile is analysed by itself", JSON.stringify(S.arrives.map((x) => x.plan)));
     await ctx.close(); }
   { const { ctx, p, S } = await open(390, () => ({ ...clone(BASE), turns: [], board: [BASE.board[0]], check: { questions: [] }, arrive: { auto: true, provider: "codex", model: "gpt-6", effort: null, paid: true, plan: "fp-arrive-2" } }));
     await p.waitForTimeout(700); ok(!S.arrives.length, "a paired phone never starts a paid analysis by arriving (it only reads the room)", String(S.arrives.length)); await ctx.close(); }
