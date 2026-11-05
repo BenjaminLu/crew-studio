@@ -70,20 +70,25 @@ async function open(width, room, o = {}) {
   await ctx.addInitScript(stubs);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: width < 600 ? "phone" : "desktop", device: null } }));
-  const S = { posts: [], picks: [], arrives: [] };
-  await ctx.route(/\/api\/review-room\/SC-80(\?open=1)?$/, (r) => r.fulfill({ json: typeof room === "function" ? room() : room }));
+  const S = { posts: [], picks: [], arrives: [], tutors: [] };
+  await ctx.route(new RegExp(`/api/review-room/${o.id || "SC-80"}(\\?open=1)?$`), (r) => r.fulfill({ json: typeof room === "function" ? room() : room }));
+  if (o.routes) await o.routes(ctx, S);
   await ctx.route(/\/api\/review-room\/SC-80\/image\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/wruns\/R-080\/captures\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/review-room\/SC-80\/lesson$/, (r) => r.fulfill({ json: { visited: [] } }));
   // arriving in the room: what the page sends back (the plan it was shown), answered a moment later with the room, its analysis started
   await ctx.route(/\/api\/review-room\/SC-80\/arrive$/, (r) => { S.arrives.push(JSON.parse(r.request().postData() || "{}")); const rm = clone(typeof room === "function" ? room() : room); rm.arrive = null; setTimeout(() => r.fulfill({ json: { room: rm } }).catch(() => {}), o.arriveMs ?? 50); });
+  // the room's tutor picked: answered with the room, its offer on that tutor
+  await ctx.route(/\/api\/review-room\/SC-80\/tutor$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); S.tutors.push(b); const rm = clone(typeof room === "function" ? room() : room);
+    if (b.pick) { rm.tutorChoice = { room: b.pick, studio: null, source: "room" }; rm.offer = { ...rm.offer, provider: b.pick.provider, model: b.pick.model, picked: "room", independence: { level: "vendor", en: "Different vendor from the author. Picked by the captain for this room.", zh: "和作者不同供應商。船長為這間審查室選的。" } }; }
+    r.fulfill({ json: rm }); });
   await ctx.route(/\/api\/review-room\/SC-80\/turn$/, (r) => { S.posts.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: OFFER } }); });
   await ctx.route(/\/api\/review-room\/SC-80\/check-answer$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); S.picks.push(b); const rm = clone(typeof room === "function" ? room() : room);
     rm.check.questions = rm.check.questions.map((q) => q.n === b.n ? { ...q, choice: b.choice, answer: 0, why: "Math.round rounds 299.85 up", cites: [], result: { correct: b.choice === 0, note: "n", turn: 4, choice: b.choice, by: "studio" } } : q);
     r.fulfill({ json: { n: b.n, correct: b.choice === 0, room: rm } }); });
   if (o.routes) await o.routes(ctx, S); // registered last: they answer before the defaults above
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e.message}`));
-  await p.goto(`${base}/#/room/SC-80`); await p.waitForSelector("#view .rr-room", { timeout: 15000 }); await p.waitForTimeout(400);
+  await p.goto(`${base}/${o.hash || `#/room/${o.id || "SC-80"}`}`); await p.waitForSelector(o.wait || "#view .rr-room", { timeout: 15000 }); await p.waitForTimeout(400);
   return { ctx, p, S };
 }
 /** where the board stands and what its parts are */
@@ -138,6 +143,46 @@ try {
   { const { ctx, p, S } = await open(1440, () => ({ ...clone(BASE), turns: [], board: [BASE.board[0]], check: { questions: [] }, arrive: { auto: true, error: "No tutor can run on this Mac now", code: "no_tutor" } }));
     await p.waitForTimeout(500); const why = await inRegion(p, "t0", '[data-arrive="none"]');
     ok(!S.arrives.length && /Studio cannot start the full analysis by itself: No tutor can run/.test(why?.[0] || ""), "when the analysis cannot start on arrival, nothing is sent and the welcome says why", JSON.stringify({ why, arrives: S.arrives.length })); await ctx.close(); }
+  // ---------- the tutor picker: the header's tutor opens it; a model that cannot run or is not verified is disabled with why ----------
+  { const TUT = [{ provider: "codex", model: "gpt-6", effort: "high", verified: true, runnable: true, held: null, level: "same", current: true }, { provider: "claude", model: "opus-x", effort: null, verified: true, runnable: true, held: null, level: "vendor", current: false },
+      { provider: "claude", model: "sonnet-new", effort: null, verified: false, runnable: false, held: "not verified on this machine yet", level: "vendor", current: false }, { provider: "cursor", model: "composer", effort: null, verified: true, runnable: false, held: "cursor is out of quota", level: "vendor", current: false }];
+    const { ctx, p, S } = await open(1440, () => ({ ...clone(BASE), tutors: TUT, tutorChoice: { room: null, studio: null, source: "auto" } }));
+    const pill = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, level: e.dataset.independence, src: e.dataset.tutorSource })).catch(() => null);
+    await tap(p, "[data-tutor-open]"); await p.waitForSelector("[data-tutor-menu]", { timeout: 3000 }).catch(() => {});
+    const menu = await p.$$eval("[data-tutor-menu] [data-tutor-pick]", (els) => els.map((e) => [e.dataset.tutorPick, e.disabled, e.querySelector("[data-tutor-level]")?.dataset.tutorLevel ?? null, e.querySelector("[data-tutor-held]")?.textContent ?? null])).catch(() => []);
+    ok(/Tutor: codex · gpt-6/.test(pill?.text || "") && pill.src === "auto" && menu.length === 5 && menu[0][0] === "default" && JSON.stringify(menu.slice(1).map((m) => [m[0], m[1], m[2]])) === JSON.stringify([["codex|gpt-6", false, "same"], ["claude|opus-x", false, "vendor"], ["claude|sonnet-new", true, "vendor"], ["cursor|composer", true, "vendor"]])
+      && /not verified/.test(menu[3][3] || "") && /out of quota/.test(menu[4][3] || ""), "the header's tutor opens a picker: Studio's default, then every model, the author's own pickable with its independence said, one not verified or out of quota disabled with why", JSON.stringify({ pill, menu }));
+    await p.screenshot({ path: join(shots, "tutor-picker-1440.png") });
+    // from the review: the keyboard goes into the picker, Escape closes it (not the board) and gives the focus back
+    const inMenu = await p.evaluate(() => !!document.activeElement?.closest("[data-tutor-menu]"));
+    await p.keyboard.press("Escape"); await p.waitForTimeout(200);
+    const back = await p.evaluate(() => ({ open: !!document.querySelector("[data-tutor-menu]"), focus: document.activeElement?.hasAttribute("data-tutor-open") }));
+    ok(inMenu && !back.open && back.focus, "the picker takes the keyboard when it opens; Escape closes it and the focus returns to the tutor", JSON.stringify({ inMenu, back }));
+    await tap(p, "[data-tutor-open]"); await p.waitForSelector("[data-tutor-menu]", { timeout: 3000 }).catch(() => {});
+    await tap(p, '[data-tutor-pick="claude|opus-x"]'); await p.waitForTimeout(300);
+    const after = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, src: e.dataset.tutorSource })).catch(() => null);
+    ok(JSON.stringify(S.tutors) === '[{"pick":{"provider":"claude","model":"opus-x"}}]' && /Tutor: claude · opus-x/.test(after?.text || "") && after.src === "room" && !(await p.$("[data-tutor-menu]")) && !S.posts.length,
+      "picking a model sets this room's tutor (nothing paid runs) and the header names it", JSON.stringify({ sent: S.tutors, after }));
+    await ctx.close(); }
+  // from the review: changing Studio's default on the room list makes the rooms kept on the page read again (their offer changed)
+  { let reads = 0, dflt = null; const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    await ctx.addInitScript(([l]) => { try { localStorage.setItem("crew.lang", l); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); }, ["en"]); await ctx.addInitScript(stubs);
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()); await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: "desktop", device: null } }));
+    await ctx.route(/\/api\/review-room\/SC-80(\?open=1)?$/, (r) => { reads++; r.fulfill({ json: { ...clone(BASE), offer: { ...OFFER, provider: dflt ? "claude" : "codex", model: dflt ? "opus-x" : "gpt-6" } } }); });
+    await ctx.route(/\/api\/review-room\/SC-80\/lesson$/, (r) => r.fulfill({ json: { visited: [] } }));
+    await ctx.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: dflt }, tutors: [{ provider: "codex", model: "gpt-6", runnable: true, held: null }, { provider: "claude", model: "opus-x", runnable: true, held: null }] } }));
+    await ctx.route(/\/api\/review-room\/settings$/, (r) => { dflt = JSON.parse(r.request().postData() || "{}").tutor; r.fulfill({ json: { autoTeach: true, tutor: dflt } }); });
+    const p = await ctx.newPage(); await p.goto(`${base}/#/room/SC-80`); await p.waitForSelector("[data-tutor-open]", { timeout: 15000 });
+    await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-tutor-default]", { timeout: 5000 }).catch(() => {});
+    await p.selectOption("[data-tutor-default]", "claude|opus-x").catch(() => {}); await p.waitForTimeout(300);
+    await p.evaluate(() => { location.hash = "#/room/SC-80"; }); await p.waitForTimeout(600);
+    const pill = await p.$eval("[data-tutor-open]", (e) => e.textContent).catch(() => null);
+    ok(dflt?.provider === "claude" && /Tutor: claude · opus-x/.test(pill || ""), "after Studio's default changes, a room kept on the page is read again and names the new tutor", JSON.stringify({ dflt, pill, reads }));
+    await ctx.close(); }
+  { const { ctx, p } = await open(1440, () => ({ ...clone(BASE), tutors: [], tutorChoice: { room: null, studio: { provider: "claude", model: "opus-x" }, source: "studio" }, offer: { error: "Studio's default tutor (claude opus-x) cannot run now: claude is out of quota. Pick another tutor; Studio does not switch to another one by itself", code: "tutor_unavailable" } }));
+    const pill = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, bad: e.classList.contains("bad") })).catch(() => null), dock = await p.$eval("[data-room-unavailable]", (e) => e.textContent).catch(() => null);
+    ok(/claude · opus-x — cannot run now/.test(pill?.text || "") && pill.bad && /does not switch to another one by itself/.test(dock || ""), "a picked tutor that cannot run is shown as such, never swapped: the header says it, the dock says why", JSON.stringify({ pill, dock }));
+    await ctx.close(); }
 
   // ---------- an answer's scene: its pictures and points, played one at a time from the floating bar ----------
   { const { ctx, p } = await open(1440, clone(BASE));
@@ -145,13 +190,14 @@ try {
     ok(b.board && !b.stage && JSON.stringify(b.regions) === '["t0","t1","t3"]' && b.cur === "t3", "every answer is a region of the board, a row per turn; the room opens on the latest", JSON.stringify(b));
     await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(300);
     const kinds = await p.evaluate(() => { const r = document.querySelector('[data-region="t1"]'); return { visual: r?.querySelector("[data-visual]")?.dataset.visual, picks: [...(r?.querySelectorAll("[data-visual-pick]") || [])].map((e) => e.dataset.visualPick), points: r?.querySelectorAll(".rr-point").length, cur: document.querySelector('[data-board]')?.dataset.scene ?? null }; });
-    ok(kinds.cur === "t1" && kinds.visual === "B1-7" && JSON.stringify(kinds.picks) === '["B1-1","B1-2","B1-3","B1-4","B1-7","B1-8","B1-9"]' && kinds.points === 5, "a rail entry flies the board to that answer: its picture (the one its last point cites), every other picture a chip away, all its points", JSON.stringify(kinds));
-    await tap(p, '[data-region="t1"] [data-visual-pick="B1-3"]'); const code = await inRegion(p, "t1", "[data-visual] .rr-code [data-line]");
-    await tap(p, '[data-region="t1"] [data-visual-pick="B1-4"]'); const diff = await inRegion(p, "t1", "[data-visual] .rr-diff .add");
+    ok(kinds.cur === "t1" && kinds.visual === "B1-7" && JSON.stringify(kinds.picks) === '["B1-1","B1-2","B1-7","B1-8","B1-9"]' && kinds.points === 5, "a rail entry flies the board to that answer: its picture (the one its last point cites), every other picture (never code) a chip away, all its points", JSON.stringify(kinds));
+    // the code and the diff are never the picture (the owner's step cards): they are links under it, opening the citation panel
+    await p.$eval('[data-region="t1"] [data-code-ref="diff:src/percent.ts:L1-3"]', (e) => e.click()).catch(() => {}); const code = await p.$$eval("[data-cite-panel] .rr-code [data-line]", (e) => e.map((x) => x.textContent)).catch(() => null);
+    await p.$eval('[data-cite-panel] button', (e) => e.click()).catch(() => {}); await p.$eval('[data-region="t1"] [data-code-ref="board:B1-4"]', (e) => e.click()).catch(() => {}); const diff = await p.$$eval("[data-cite-panel] .rr-diff .add", (e) => e.map((x) => x.textContent)).catch(() => null); await p.$eval('[data-cite-panel] button', (e) => e.click()).catch(() => {});
     await tap(p, '[data-region="t1"] [data-visual-pick="B1-8"]'); const chart = await p.$eval('[data-region="t1"] [data-visual] [data-chart]', (e) => e.dataset.chart).catch(() => null);
     await tap(p, '[data-region="t1"] [data-visual-pick="B1-9"]'); const img = await p.$eval('[data-region="t1"] [data-visual] [data-illustration]', (e) => e.getAttribute("src")).catch(() => null);
     await tap(p, '[data-region="t1"] [data-visual-pick="B1-7"]'); await tap(p, '[data-region="t1"] [data-shot-toggle="before"]'); const shot = await p.$eval('[data-region="t1"] [data-visual] [data-shot-img]', (e) => e.dataset.shotImg).catch(() => null);
-    ok(code?.length === 3 && diff?.length === 3 && chart === "diffstat" && /B1-9\.png$/.test(img || "") && shot === "before", "on the board the answer shows its code, its diff, its chart, its generated picture and its screenshots before and after", JSON.stringify({ code: code?.length, diff: diff?.length, chart, img, shot }));
+    ok(code?.length === 3 && diff?.length === 3 && chart === "diffstat" && /B1-9\.png$/.test(img || "") && shot === "before", "on the board the answer shows its chart, its generated picture and its screenshots; its code and its diff are links under the picture (the citation panel)", JSON.stringify({ code: code?.length, diff: diff?.length, chart, img, shot }));
     // played from the floating bar: the points not reached yet are dimmed, the picture follows the point, the caption reads it
     const bar = await p.evaluate(() => { const b = document.querySelector('[data-board] [data-playbar]'); return b && { play: !!b.querySelector("[data-play]"), replay: !!b.querySelector("[data-replay]"), voice: !!b.querySelector("[data-voice]"), caption: !!b.querySelector("[data-caption]"), next: !!b.querySelector("[data-point-next]"), scene: b.querySelector("[data-scene-pos]")?.dataset.scenePos }; });
     ok(bar && bar.play && bar.replay && bar.voice && bar.caption && bar.next && bar.scene === "2/3", "the captions, playback (a point back and on, play, replay, the scene) and the voice picker float on the board", JSON.stringify(bar));
@@ -263,6 +309,111 @@ try {
     await tap(p, "[data-playbar] [data-scene-next]"); await p.waitForTimeout(250); const nx = await board(p);
     await p.keyboard.press("Escape"); await p.waitForTimeout(250); const out = await p.evaluate(() => document.body.classList.contains("rr-fs"));
     ok(f.on && f.w >= f.W - 2 && f.h >= f.H - 2 && f.bar && !f.rail && f.cur === "t1" && nx.cur === "t3" && !out, "full screen works on an answer's scene: only the board, its play bar on it, scene navigation inside, Esc returns", JSON.stringify({ f, nx, out }));
+    await ctx.close(); }
+
+  // ---------- select any words on the board and ask about them: "Ask about this" by the selection opens the board's ask popover ----------
+  /** select `words` inside the first element matching `sel` (a real range, as the mouse or a long press makes) */
+  const selectIn = (p, sel, words) => p.evaluate(([s, w]) => { for (const el of document.querySelectorAll(s)) { const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n;
+    while ((n = walk.nextNode())) { const i = n.textContent.indexOf(w); if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + w.length); const s0 = getSelection(); s0.removeAllRanges(); s0.addRange(r); return s0.toString(); } } } return null; }, [sel, words]);
+  const selBtn = (p) => p.evaluate(() => { const b = document.querySelector("[data-sel-ask]"); if (!b || !b.getClientRects().length) return null; const r = b.getBoundingClientRect(); return { text: b.textContent, scene: b.dataset.selAsk, x: r.left, y: r.top, inFs: !!document.fullscreenElement?.contains(b) }; });
+  { const { ctx, p, S } = await open(1440, clone(BASE)); await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(600);
+    const got = await selectIn(p, '[data-region="t1"] .rr-ptext', "rounded to whole cents"); await p.waitForTimeout(350);
+    const b = await selBtn(p), selRect = await p.evaluate(() => { const r = getSelection().rangeCount ? getSelection().getRangeAt(0).getBoundingClientRect() : null; return r && { right: r.right, bottom: r.bottom }; });
+    ok(got === "rounded to whole cents" && b && /Ask about this/.test(b.text) && b.scene === "t1" && selRect && Math.abs(b.y - selRect.bottom) < 40, "selecting words of an answer shows “Ask about this” right by the selection", JSON.stringify({ got, b, selRect }));
+    await p.screenshot({ path: join(shots, "select-ask-1440.png") });
+    await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250);
+    const pop = await p.evaluate(() => ({ q: document.querySelector(".rb-pop [data-pop-selection]")?.textContent ?? null, scene: document.querySelector(".rb-pop [data-pop-selection]")?.dataset.popSelection ?? null, input: !!document.querySelector(".rb-pop [data-pop-input]") }));
+    ok(/Ask about the words you selected: “rounded to whole cents”/.test(pop.q || "") && pop.scene === "t1" && pop.input, "it opens the board's ask popover on those words, quoted, with the chips and a question of one's own", JSON.stringify(pop));
+    await p.fill(".rb-pop [data-pop-input]", "Why whole cents?"); await p.press(".rb-pop [data-pop-input]", "Enter"); await p.waitForTimeout(250);
+    const pend = await p.evaluate(() => ({ inRegion: !!document.querySelector('[data-region="t1"] [data-pending]'), q: document.querySelector('[data-region="t1"] [data-pending] .rb-cq')?.textContent ?? null }));
+    await tap(p, '[data-region="t1"] [data-board-start]'); await p.waitForTimeout(300);
+    const sent = S.posts.at(-1)?.thread;
+    ok(pend.inRegion && /Why whole cents\?/.test(pend.q || "") && sent?.anchor?.kind === "selection" && sent.anchor.scene === "t1" && sent.anchor.text === "rounded to whole cents" && /^sel:[0-9a-f]+$/.test(sent.anchor.part || "") && sent.chip === "free" && sent.q === "Why whole cents?" && !!S.posts.at(-1)?.confirm,
+      "the question waits for its confirmation in a card on that answer, then goes as a board question anchored to the selected words", JSON.stringify({ pend, sent: S.posts.at(-1) }));
+    // the caption's words too: their scene is the one the play bar reads
+    await tap(p, "[data-playbar] [data-replay]"); await p.waitForTimeout(150); await tap(p, "[data-playbar] [data-play]"); await p.waitForTimeout(100);
+    // paused where it is (the voice stub reads fast), then the first word the caption shows
+    await p.evaluate(() => document.querySelector('[data-playbar] [data-play][aria-pressed="true"]')?.click()); await p.waitForTimeout(150);
+    const word = await p.$eval("[data-playbar] [data-caption-text]", (e) => e.textContent.trim().split(/\s+/)[0] || "").catch(() => "");
+    const cap = await selectIn(p, "[data-playbar] [data-caption-text]", word); await p.waitForTimeout(350); const cb = await selBtn(p);
+    ok(!!word && cap === word && cb?.scene === "t1", "words selected in the caption are asked about on the scene it reads", JSON.stringify({ cap, cb }));
+    // a drag on words selects them and leaves the camera; a drag on paper pans and selects nothing
+    await p.evaluate(() => { getSelection().removeAllRanges(); const b = document.querySelector('[data-playbar] [data-play][aria-pressed="true"]'); if (b) b.click(); }); await p.waitForTimeout(200); await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(700);
+    const w = await p.evaluate(() => { const bar = document.querySelector("[data-playbar]")?.getBoundingClientRect().top ?? innerHeight; const el = [...document.querySelectorAll('[data-region="t1"] .rr-ptext')].find((e) => { const r = e.getBoundingClientRect(); const v = document.querySelector("[data-board-vp]").getBoundingClientRect(); return r.height && r.bottom < bar - 10 && r.top > v.top + 10 && r.left > v.left + 10 && r.left < v.right - 120; }); const t = el && document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode(); if (!t) return null; const r = document.createRange(); r.setStart(t, 0); r.setEnd(t, Math.min(12, t.textContent.length)); const q = r.getBoundingClientRect(); return { x: q.left + 2, y: q.top + q.height / 2, x2: q.right - 2 }; });
+    const c0 = await cam(p); if (w) { await p.mouse.move(w.x, w.y); await p.mouse.down(); await p.mouse.move(w.x2, w.y, { steps: 6 }); await p.mouse.up(); } await p.waitForTimeout(350);
+    const c1 = await cam(p), selected = await p.evaluate(() => getSelection().toString().trim()), b2 = await selBtn(p);
+    ok(!!w && selected.length >= 3 && !!b2 && c0 && c1 && Math.abs(c0.x - c1.x) < 1 && Math.abs(c0.y - c1.y) < 1, "a mouse drag across words selects them (the board does not pan)", JSON.stringify({ w, selected, c0, c1 }));
+    const vp = await p.evaluate(() => { const r = document.querySelector("[data-board-vp]").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height - 160 }; });
+    await p.mouse.move(vp.x, vp.y); await p.mouse.down(); await p.mouse.move(vp.x + 120, vp.y + 40, { steps: 8 }); await p.mouse.up(); await p.waitForTimeout(350);
+    const c2 = await cam(p), sel2 = await p.evaluate(() => getSelection().toString().trim()), b3 = await selBtn(p);
+    ok(c2 && Math.abs(c2.x - c1.x - 120) < 2 && !sel2 && !b3, "a drag on the paper pans the board as before: nothing is selected, no “Ask about this”", JSON.stringify({ c1, c2, sel2, b3 }));
+    // full screen: the control is shown inside the full-screen board
+    await tap(p, "[data-fs-toggle]"); await p.waitForTimeout(400); await selectIn(p, '[data-region="t1"] .rr-ptext', "whole cents"); await p.waitForTimeout(350);
+    const fb = await selBtn(p); await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250); const fpop = !!(await p.$(".rb-pop [data-pop-selection]"));
+    ok(!!fb && (fb.inFs || !(await p.evaluate(() => !!document.fullscreenElement))) && fpop, "in full screen too, a selection offers “Ask about this” and opens the popover", JSON.stringify({ fb, fpop }));
+    await ctx.close(); }
+  // from the review: a background redraw (a turn running, its poll) keeps the selection and its control; one character is enough;
+  // a question asked on an answer whose turn also has a check sits once, beside the answer
+  { const quizQ = { n: 2, q: "Which rounds?", turn: 1, at: "t", options: ["round", "floor"] };
+    const room = () => ({ ...clone(BASE), running: 2, turns: BASE.turns.map((t) => (t.n === 2 ? { ...t, status: "running", claims: [], answer: "" } : t)), check: { questions: [...BASE.check.questions, quizQ] },
+      lesson: { threads: [{ n: 1, key: "answer/t1/selection#sel:1", anchor: { turn: 1, scene: "t1", chapter: "answer", kind: "selection", item: null, part: "sel:1", text: "whole cents", start: null, end: null }, locator: {}, nodes: [{ id: "n1", parent: null, rel: "root", chip: "free", q: "Why?", versions: [3], code: null, at: "t" }], state: "open", at: "t", resolvedAt: null, merged: null }], visited: [] } });
+    const { ctx, p } = await open(1440, room); await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(500);
+    const one = await selectIn(p, '[data-region="t1"] .rr-ptext', "w"); await p.waitForTimeout(300); const b1 = await selBtn(p);
+    await p.evaluate(() => getSelection().removeAllRanges()); await p.waitForTimeout(250);
+    await selectIn(p, '[data-region="t1"] .rr-ptext', "whole cents"); await p.waitForTimeout(3600); // the running turn's poll redraws every 2.5 s
+    const kept = await p.evaluate(() => getSelection().toString()), b2 = await selBtn(p);
+    await p.evaluate(() => getSelection().removeAllRanges()); await p.waitForTimeout(400);
+    const cards = await p.$$eval('[data-tcard^="1:"]', (els) => els.map((e) => e.closest("[data-region]")?.dataset.region));
+    ok(one === "w" && !!b1, "a selection of one character offers “Ask about this” too", JSON.stringify({ one, b1 }));
+    ok(kept === "whole cents" && !!b2, "a background redraw while a turn runs waits for the selection: the words stay selected and their “Ask about this” stays", JSON.stringify({ kept, b2 }));
+    ok(JSON.stringify(cards) === '["t1"]', "a question on an answer whose turn also has a check is drawn once, beside the answer", JSON.stringify(cards));
+    await ctx.close(); }
+  { const { ctx: c2, p } = await open(390, clone(BASE)); await tap(p, "[data-board-rail] .rb-sheetx"); await p.waitForTimeout(300);
+    const got = await selectIn(p, ".rb-region.cur .rr-ptext", "whole cents"); await p.waitForTimeout(350); const b = await selBtn(p);
+    await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250); const pop = await p.evaluate(() => ({ q: !!document.querySelector(".rb-pop [data-pop-selection]"), desk: !!document.querySelector(".rb-pop [data-ask-desktop]") }));
+    ok(got && !!b && pop.q && pop.desk, "on a phone a selection (its handles, a long press) offers “Ask about this” too; the popover says to ask on the computer", JSON.stringify({ got, b, pop }));
+    await c2.close(); }
+  // ---------- a directory of any GitHub repository: the same board, its own header, welcome and citations (to the pinned commit) ----------
+  { const DID = "DIR-0123456789ab-ba9876543210", SHA = "c".repeat(40);
+    const DROOM = { ...clone(BASE), card: { id: DID, run: "R-090", node: "review-room", title: { en: "Directory acme/kit/src @ main", "zh-TW": "目錄 acme/kit/src @ main" }, status: "open" }, task: { id: "R-090", title: "Review room host" }, pr: null, prState: null, diffstat: null, moved: null,
+      subject: { kind: "dir", room: DID, url: "https://github.com/acme/kit/tree/main/src", repository: "acme/kit", ref: "main", path: "src" },
+      dir: { repository: "acme/kit", ref: "main", refKind: "branch", sha: SHA, path: "src", private: false, files: 4, bytes: 400, parts: [{ name: "core", kind: "dir", files: 2, bytes: 200 }, { name: "api", kind: "dir", files: 1, bytes: 100 }, { name: "README.md", kind: "file", files: 1, bytes: 100 }], truncated: false, fetchedAt: "2026-11-05T10:00:00Z", url: "https://github.com/acme/kit/tree/main/src", readme: true },
+      actions: [["how", "How?", "怎麼運作？"], ["why", "Why?", "為什麼？"], ["teach", "Teach me", "教我"], ["quiz", "Quiz", "考我"]].map(([id, en, zh]) => ({ id, en, zh })), head: SHA, base: SHA,
+      offer: { ...OFFER, independence: { level: null, en: "Automatic: Studio picked it from the models this machine runs. A directory has no change and no author, so independence does not apply.", zh: "自動" } },
+      board: [], check: { questions: [] }, turns: [{ n: 1, action: "how", text: "How does this directory work?", lang: "en", status: "done", provider: "codex", model: "gpt-6", cost: { usd: 0.03 }, answer: "x", head: SHA,
+        claims: [cl("The api serves core's sum [diff:src/api/server.ts:L1-3].", [ok1("diff:src/api/server.ts:L1-3")]), cl("core adds [diff:src/core/sum.ts:L2].", [ok1("diff:src/core/sum.ts:L2")])] }] };
+    const { ctx, p } = await open(1440, () => clone(DROOM), { id: DID });
+    const head = await p.evaluate(() => ({ pin: document.querySelector("[data-dir-pin]")?.textContent ?? null, gh: document.querySelector("[data-room-github]")?.getAttribute("href") ?? null, check: !!document.querySelector("[data-room-check]"), diffstat: !!document.querySelector("[data-room-diffstat]"), sub: document.querySelector("[data-room-subject]")?.dataset.roomSubject }));
+    ok(head.sub === "dir" && /Pinned at cccccccc · 4 files/.test(head.pin || "") && head.gh === `https://github.com/acme/kit/tree/${SHA}/src` && !head.check && !head.diffstat,
+      "a directory's room says where it is pinned and opens that commit on GitHub; no “check for new commits”, no line counts of a change", JSON.stringify(head));
+    await tap(p, '[data-outline="t0"]'); await p.waitForTimeout(400);
+    const wel = await p.evaluate(() => { const r = document.querySelector('[data-region="t0"]'); return { title: r?.querySelector("[data-scene-title]")?.textContent ?? null, chart: r?.querySelector("[data-chart]")?.dataset.chart ?? null, teach: r?.querySelector("[data-welcome-teach]")?.textContent ?? null, pts: [...(r?.querySelectorAll(".rr-point") || [])].map((e) => e.textContent) }; });
+    ok(/This room is only about the directory acme\/kit\/src/.test(wel.title || "") && wel.chart === "values" && /Teach me this directory/.test(wel.teach || "") && /holds 4 files in 3 parts; the most in core\/ \(2\)/.test(wel.pts[0] || "") && /pinned at cccccccc/.test(wel.pts[1] || ""),
+      "its welcome is the directory's own: its parts as a chart, where it is pinned, “Teach me this directory”", JSON.stringify(wel));
+    await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(400);
+    const chips = await p.$$eval('[data-region="t1"] [data-cite]', (els) => els.map((e) => [e.dataset.cite, e.textContent]));
+    let popup = null; p.context().once("page", (pg) => { popup = pg.url(); }); const opened = await p.evaluate(() => { const urls = []; const real = window.open; window.open = (u) => { urls.push(u); return null; }; document.querySelector('[data-region="t1"] [data-cite]')?.click(); window.open = real; return urls; });
+    ok(chips.length === 2 && /^code /.test(chips[0][1]) && opened[0] === `https://github.com/acme/kit/blob/${SHA}/src/api/server.ts#L1-L3`, "its citations read “code” and open the file at the pinned commit on GitHub, at those lines", JSON.stringify({ chips, opened }));
+    const quick = await p.$$eval("[data-room-action]", (els) => els.map((e) => e.dataset.roomAction));
+    ok(JSON.stringify(quick) === '["how","why","teach","quiz"]' && !!(await p.$("[data-playbar] [data-play]")) && !!(await p.$("[data-fs-toggle]")) && !!(await p.$("[data-transcript-toggle]")), "the same board, play bar, full screen and transcript; its quick actions without the merge check", JSON.stringify(quick));
+    await p.screenshot({ path: join(shots, "directory-1440.png") });
+    // from the review: a directory's lesson reads in its own order (what, its parts, how they compose and flow, where to start)
+    const order = await p.evaluate((room) => { const sc = (c) => ({ n: 1, title: c, picture: "", chapter: c, points: [{ text: "x", kind: "claim", basis: "inference", cites: [] }, { text: "y", kind: "claim", basis: "inference", cites: [] }] });
+      const r = { ...room, turns: [{ n: 2, action: "teach", text: "Teach me this directory", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: room.head, scenes: ["entry", "lifecycle", "what", "sequence", "modules", "talks"].map(sc) }] };
+      return window.crewReviewRoom.scenesOf(r).filter((x) => x.chapter).map((x) => x.chapter); }, DROOM);
+    ok(JSON.stringify(order) === '["what","modules","talks","sequence","entry","lifecycle"]', "a directory's lesson is shown in its own chapters' order", JSON.stringify(order));
+    await ctx.close(); }
+  // the home's box takes a directory's address: it says what a paste starts and opens it through open-dir
+  { const asked = [], opens = []; const DID2 = "DIR-0123456789ab-111111111111";
+    const routes = async (ctx) => { await ctx.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: null }, tutors: [] } }));
+      await ctx.route(/\/api\/review-room\/paste-offer\?/, (r) => { asked.push(new URL(r.request().url()).searchParams.get("url")); r.fulfill({ json: { auto: true, images: false, createsHost: true, provider: "codex", model: "gpt-6", effort: null, paid: true, plan: "fp-dir" } }); });
+      await ctx.route(/\/api\/review-room\/open-dir$/, (r) => { opens.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 400, json: { error: "stub: not opened", code: "stub" } }); }); };
+    const { ctx, p } = await open(1440, {}, { hash: "#/room", wait: '[data-pr-box="home"]', routes });
+    await p.fill('[data-pr-url="home"]', "https://github.com/acme/kit/tree/main/src"); await p.waitForSelector('[data-pr-box="home"] [data-paste-offer="on"]', { timeout: 5000 }).catch(() => {});
+    const line = await p.$eval('[data-pr-box="home"] [data-paste-offer]', (e) => ({ text: e.textContent, kind: e.dataset.pasteKind })).catch(() => null);
+    await p.click('[data-pr-open="home"]'); await p.waitForTimeout(400);
+    ok(asked[0] === "https://github.com/acme/kit/tree/main/src" && line?.kind === "dir" && /Pasting reads the directory at that ref \(pinned at its commit\) and starts its lesson by itself: it creates the room's host Task, then runs one paid model round on codex · gpt-6/.test(line?.text || "")
+      && opens[0]?.url === "https://github.com/acme/kit/tree/main/src" && opens[0].auto === true && opens[0].plan === "fp-dir", "the home's box takes a GitHub directory's address: it says what a paste starts, then opens it as a directory (open-dir), on the plan it said", JSON.stringify({ asked, line, opens }));
     await ctx.close(); }
 } catch (e) { fail++; console.log(`  FAIL  the suite crashed: ${e.stack || e}`); }
 ok(!errors.length, "no page errors", errors.join(" | "));

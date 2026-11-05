@@ -666,7 +666,7 @@ try {
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: RP }));
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.click('[data-toc-scene="t3"]'); await landed(p); await p.waitForSelector("[data-report]", { timeout: 5000 }).catch(() => {});
-    const rp = await p.evaluate(() => { const r = document.querySelector("[data-report]"); return r && { chapters: [...r.querySelectorAll("[data-report-section]")].map((x) => x.dataset.chapter), figures: [...r.querySelectorAll("[data-report-figure]")].map((x) => x.dataset.figureType),
+    const rp = await p.evaluate(() => { const r = document.querySelector("[data-report]"); return r && { chapters: [...r.querySelectorAll("[data-report-section]")].map((x) => x.dataset.chapter), figures: [...r.querySelectorAll("[data-report-figure]:not([data-figure-studio])")].map((x) => x.dataset.figureType), studio: r.querySelectorAll("[data-report-figure][data-figure-studio]").length,
       points: [...r.querySelectorAll("[data-points-chapter]")].map((x) => [x.dataset.pointsChapter, x.querySelectorAll("li").length]), lead: !!r.querySelector('[data-chapter="what"] .rp-prose p.lead'), title: r.querySelector(".rp-title")?.textContent, eyebrow: r.querySelector(".rp-eyebrow")?.textContent,
       scroll: document.documentElement.scrollHeight - innerHeight, own: !!r.querySelector("[data-board-vp]") && getComputedStyle(r.querySelector("[data-board-vp]")).overflow === "hidden", cites: r.querySelectorAll("[data-cite]").length, stage: !!document.querySelector(".rb-region.cur [data-visual]") }; });
     ok(rp && JSON.stringify(rp.chapters) === JSON.stringify(["what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "roads", "watch", "questions"])
@@ -740,7 +740,7 @@ try {
     const o2 = await open(1440, "en"); await o2.p.setViewportSize({ width: 1440, height: 900 }); const live = [];
     await o2.p.route(/\/api\/review-room\/library\/room-sc-50(\?v=\d+)?$/, (r) => r.fulfill({ json: SN })); o2.p.on("request", (q) => { if (/\/api\/review-room\/SC-50/.test(q.url())) live.push(q.url()); });
     await o2.p.goto(`${base}/#/room/lib:room-sc-50`); await o2.p.waitForSelector("[data-board]", { timeout: 15000 }); await o2.p.click('[data-toc-scene="t3"]'); await o2.p.waitForSelector("[data-report]", { timeout: 3000 }).catch(() => {});
-    const lib = await o2.p.evaluate(() => ({ secs: document.querySelectorAll("[data-report-section]").length, figs: document.querySelectorAll("[data-report-figure]").length, prompt: !!document.querySelector("[data-room-ask]"), notes: !!document.querySelector("[data-notes]") }));
+    const lib = await o2.p.evaluate(() => ({ secs: document.querySelectorAll("[data-report-section]").length, figs: document.querySelectorAll("[data-report-figure]:not([data-figure-studio])").length, prompt: !!document.querySelector("[data-room-ask]"), notes: !!document.querySelector("[data-notes]") }));
     ok(lib.secs === 10 && lib.figs === 6 && !live.length && !lib.notes, "a room saved in the Library replays its lesson as the same report, offline (nothing read from the live room), no reviewer notes", JSON.stringify({ lib, live }));
     await o2.ctx.close(); }
 
@@ -1019,7 +1019,9 @@ try {
       "the room shows the pull request's state on GitHub: open, approved at this head by whom, from a fork");
     ok(/2 new commits since you last looked/.test(await p.textContent("[data-room-moved]")) && !!(await p.$('[data-room-github]')) && (await p.getAttribute("[data-room-github]", "href")) === "https://github.com/fixture/project/pull/7", "it says how many commits came since the captain last looked, with a link to GitHub");
     let s = await stage(p);
-    ok(s.scene === "t2" && /What changed since last time/.test(s.title) && s.visual === "B2-1" && !!(await p.$('[data-studio-scene="since"]')), "the scene of what changed since last time is Studio's own, its picture the diff between the two heads", JSON.stringify(s));
+    const sinceRef = await p.$eval('.rb-region.cur [data-code-ref="board:B2-1"]', (e) => e.dataset.codeLink).catch(() => null);
+    // the diff between the two heads is code: never the picture (the owner's step cards), a link under Studio's picture of the files
+    ok(s.scene === "t2" && /What changed since last time/.test(s.title) && s.visual !== "B2-1" && sinceRef === "panel" && !!(await p.$('[data-studio-scene="since"]')), "the scene of what changed since last time is Studio's own, the diff between the two heads a link under its picture", JSON.stringify({ s, sinceRef }));
     await p.click("[data-scene-prev]"); s = await stage(p);
     const q = await p.evaluate(() => ({ quote: document.querySelector('[data-untrusted="review"]')?.textContent, imgs: document.querySelectorAll(".rr-quote img, .rr-point img").length, pwned: !!window.__pwned, badge: document.querySelector('[data-basis="reviewer"]')?.textContent, chips: [...document.querySelectorAll(".rb-region.cur .rr-point [data-cite]")].map((e) => e.dataset.cite) }));
     ok(/What reviewers asked/.test(s.title) && q.quote?.includes('<img src=x onerror="window.__pwned=1">') && q.quote.includes("[diff:a.txt]") && q.imgs === 0 && !q.pwned && /Reviewer's words/.test(q.badge) && JSON.stringify(q.chips) === JSON.stringify(["review:c11"]),
