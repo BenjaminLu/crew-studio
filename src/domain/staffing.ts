@@ -373,7 +373,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  // independence from the author and confirmed by the captain per turn. Without provider facts only the approved member is admitted.
  // The receipt names the member actually used, its independence level and the approved member it stands in for.
  const auxMember=(aux:any,approved:any)=>{const m=aux?.member;if(!m)return null;const seat=engine.deps.auxiliarySeats?.[aux?.seat];if(!seat?.adaptive)throw new Error('This auxiliary seat runs only on its role\'s approved member');
-  if(typeof m.provider!=='string'||typeof m.model!=='string'||!m.model||!(m.effort===null||typeof m.effort==='string')||!['vendor','model','same'].includes(m.independence))throw new Error('Adaptive seat member is malformed');
+  if(typeof m.provider!=='string'||typeof m.model!=='string'||!m.model||!(m.effort===null||typeof m.effort==='string')||!['vendor','model','same','unknown'].includes(m.independence))throw new Error('Adaptive seat member is malformed');
   const usable=engine.deps.usableModels?.() as {provider:string;model:string;runnable?:boolean}[]|null|undefined;
   if(usable?!usable.some(u=>u.provider===m.provider&&u.model===m.model&&u.runnable!==false):!(m.provider===approved?.provider&&m.model===approved?.model))throw new Error('Adaptive seat member is not usable on this machine now');
   return{provider:m.provider as string,model:m.model as string,effort:m.effort as string|null,independence:m.independence as string,crew:m.crew!==false};};

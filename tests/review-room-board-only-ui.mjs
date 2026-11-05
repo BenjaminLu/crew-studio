@@ -116,10 +116,31 @@ try {
     ok(/Tutor: codex · gpt-6/.test(pill?.text || "") && pill.src === "auto" && menu.length === 5 && menu[0][0] === "default" && JSON.stringify(menu.slice(1).map((m) => [m[0], m[1], m[2]])) === JSON.stringify([["codex|gpt-6", false, "same"], ["claude|opus-x", false, "vendor"], ["claude|sonnet-new", true, "vendor"], ["cursor|composer", true, "vendor"]])
       && /not verified/.test(menu[3][3] || "") && /out of quota/.test(menu[4][3] || ""), "the header's tutor opens a picker: Studio's default, then every model, the author's own pickable with its independence said, one not verified or out of quota disabled with why", JSON.stringify({ pill, menu }));
     await p.screenshot({ path: join(shots, "tutor-picker-1440.png") });
+    // from the review: the keyboard goes into the picker, Escape closes it (not the board) and gives the focus back
+    const inMenu = await p.evaluate(() => !!document.activeElement?.closest("[data-tutor-menu]"));
+    await p.keyboard.press("Escape"); await p.waitForTimeout(200);
+    const back = await p.evaluate(() => ({ open: !!document.querySelector("[data-tutor-menu]"), focus: document.activeElement?.hasAttribute("data-tutor-open") }));
+    ok(inMenu && !back.open && back.focus, "the picker takes the keyboard when it opens; Escape closes it and the focus returns to the tutor", JSON.stringify({ inMenu, back }));
+    await tap(p, "[data-tutor-open]"); await p.waitForSelector("[data-tutor-menu]", { timeout: 3000 }).catch(() => {});
     await tap(p, '[data-tutor-pick="claude|opus-x"]'); await p.waitForTimeout(300);
     const after = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, src: e.dataset.tutorSource })).catch(() => null);
     ok(JSON.stringify(S.tutors) === '[{"pick":{"provider":"claude","model":"opus-x"}}]' && /Tutor: claude · opus-x/.test(after?.text || "") && after.src === "room" && !(await p.$("[data-tutor-menu]")) && !S.posts.length,
       "picking a model sets this room's tutor (nothing paid runs) and the header names it", JSON.stringify({ sent: S.tutors, after }));
+    await ctx.close(); }
+  // from the review: changing Studio's default on the room list makes the rooms kept on the page read again (their offer changed)
+  { let reads = 0, dflt = null; const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    await ctx.addInitScript(([l]) => { try { localStorage.setItem("crew.lang", l); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); }, ["en"]); await ctx.addInitScript(stubs);
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()); await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: "desktop", device: null } }));
+    await ctx.route(/\/api\/review-room\/SC-80(\?open=1)?$/, (r) => { reads++; r.fulfill({ json: { ...clone(BASE), offer: { ...OFFER, provider: dflt ? "claude" : "codex", model: dflt ? "opus-x" : "gpt-6" } } }); });
+    await ctx.route(/\/api\/review-room\/SC-80\/lesson$/, (r) => r.fulfill({ json: { visited: [] } }));
+    await ctx.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: dflt }, tutors: [{ provider: "codex", model: "gpt-6", runnable: true, held: null }, { provider: "claude", model: "opus-x", runnable: true, held: null }] } }));
+    await ctx.route(/\/api\/review-room\/settings$/, (r) => { dflt = JSON.parse(r.request().postData() || "{}").tutor; r.fulfill({ json: { autoTeach: true, tutor: dflt } }); });
+    const p = await ctx.newPage(); await p.goto(`${base}/#/room/SC-80`); await p.waitForSelector("[data-tutor-open]", { timeout: 15000 });
+    await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-tutor-default]", { timeout: 5000 }).catch(() => {});
+    await p.selectOption("[data-tutor-default]", "claude|opus-x").catch(() => {}); await p.waitForTimeout(300);
+    await p.evaluate(() => { location.hash = "#/room/SC-80"; }); await p.waitForTimeout(600);
+    const pill = await p.$eval("[data-tutor-open]", (e) => e.textContent).catch(() => null);
+    ok(dflt?.provider === "claude" && /Tutor: claude · opus-x/.test(pill || ""), "after Studio's default changes, a room kept on the page is read again and names the new tutor", JSON.stringify({ dflt, pill, reads }));
     await ctx.close(); }
   { const { ctx, p } = await open(1440, () => ({ ...clone(BASE), tutors: [], tutorChoice: { room: null, studio: { provider: "claude", model: "opus-x" }, source: "studio" }, offer: { error: "Studio's default tutor (claude opus-x) cannot run now: claude is out of quota. Pick another tutor; Studio does not switch to another one by itself", code: "tutor_unavailable" } }));
     const pill = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, bad: e.classList.contains("bad") })).catch(() => null), dock = await p.$eval("[data-room-unavailable]", (e) => e.textContent).catch(() => null);
