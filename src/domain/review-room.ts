@@ -297,7 +297,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // ---------- the lesson board: a finished lesson as regions on a canvas, and the captain's questions on it ----------
 /** what a reader can click on the board and ask about */
-export const ANCHOR_KINDS = ["sentence", "risk", "node", "edge", "transition", "tx", "field", "call", "row"] as const;
+export const ANCHOR_KINDS = ["sentence", "risk", "node", "edge", "transition", "tx", "field", "call", "row", "selection"] as const;
 export type AnchorKind = typeof ANCHOR_KINDS[number];
 /** a question's chips: the turn each one asks (an ask, how or why turn, the room's own machinery) and where its answer goes
  *  on the board (below its card, beside it, or a new version of the same card); code is free (no turn: the cite viewer) */
@@ -676,10 +676,19 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** a place on the board, checked: a scene of a finished lesson in this room (its chapter Studio's, not the page's), a board
    *  item of that lesson, a short key for the part clicked, the words it showed */
   const anchorOf = (room: Room, a: any): Anchor => {
-    const scene = String(a?.scene ?? ""), m = /^t([1-9]\d{0,3})(?:-([1-9]\d?))?$/.exec(scene);
-    const t = m ? room.turns.find((x) => x.n === Number(m[1])) : undefined, sc = m ? t?.scenes?.[m[2] ? Number(m[2]) - 1 : 0] : undefined;
-    if (!t || t.action !== "teach" || t.status !== "done" || !sc?.chapter) throw refuse("No such place on the lesson board / 白板上沒有這個位置", "bad_anchor");
+    const scene = String(a?.scene ?? ""), m = /^t(0|[1-9]\d{0,3})(?:-([1-9]\d?))?$/.exec(scene);
     const kind = String(a?.kind ?? "") as AnchorKind; if (!(ANCHOR_KINDS as readonly string[]).includes(kind)) throw refuse(`kind is one of ${ANCHOR_KINDS.join(", ")}`, "bad_anchor");
+    const t = m && m[1] !== "0" ? room.turns.find((x) => x.n === Number(m[1])) : undefined, sc = m ? t?.scenes?.[m[2] ? Number(m[2]) - 1 : 0] : undefined;
+    // text the captain selected may be on any finished scene of the board: an answer, a check, Studio's own scenes, the welcome
+    // (t0), as well as a lesson's chapter; every other place is a lesson's part
+    if (kind === "selection") {
+      const welcome = m?.[1] === "0" && !m[2], ok = welcome || (!!t && t.status === "done" && !t.hidden && !t.thread && (!m![2] || !!sc));
+      if (!ok) throw refuse("No such place on the board / 白板上沒有這個位置", "bad_anchor");
+      const text = String(a?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300); if (!text) throw refuse("The words selected are required / 需要選取的文字", "bad_anchor");
+      const part = a?.part == null || a.part === "" ? null : String(a.part); if (part && !/^[\w.:>#-]{1,140}$/.test(part)) throw refuse("part is a short key of letters, digits and . : > # - _", "bad_anchor");
+      return { turn: welcome ? 0 : t!.n, scene, chapter: welcome ? "welcome" : sc?.chapter ?? (t!.studio ? "studio" : "answer"), kind, item: null, part, text, start: null, end: null };
+    }
+    if (!t || t.action !== "teach" || t.status !== "done" || !sc?.chapter) throw refuse("No such place on the lesson board / 白板上沒有這個位置", "bad_anchor");
     const item = a?.item == null || a.item === "" ? null : String(a.item); if (item && !room.board.some((b) => b.id === item && b.turn === t.n)) throw refuse("No such drawing in this lesson / 這一課沒有這張圖", "bad_anchor");
     const part = a?.part == null || a.part === "" ? null : String(a.part); if (part && !/^[\w.:>#-]{1,140}$/.test(part)) throw refuse("part is a short key of letters, digits and . : > # - _", "bad_anchor");
     const text = String(a?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300); if (!text) throw refuse("The words of the place asked about are required / 需要被問的那段文字", "bad_anchor");
@@ -745,7 +754,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const said = th.nodes.flatMap((n) => n.versions.filter((v) => v !== turn.n).map((v) => `card ${n.id} (${n.rel}, ${n.chip}) answered in turn ${v}`));
     return ["THE PLACE ON THE LESSON BOARD THE CAPTAIN ASKS ABOUT (they clicked it in the lesson; your answer is a card beside it: keep it short, cite what it rests on, no new lesson)",
       `Chapter: ${a.chapter} (${CHAPTERS.find((c) => c.id === a.chapter)?.en ?? a.chapter}); scene “${glyph(sc?.title ?? "")}” of the lesson (turn ${a.turn})`,
-      `What was clicked: a ${a.kind}${a.part ? ` (${a.part})` : ""}${it ? ` of board item ${it.id} (${it.type}: ${glyph(it.title)})` : ""}. Its words, as the page showed them:`,
+      a.kind === "selection" ? `What the captain selected with the mouse on this scene (${a.chapter === "welcome" ? "Studio's welcome" : a.chapter === "answer" ? "an answer" : a.chapter}): the words below, as the page showed them; answer about exactly these words:`
+        : `What was clicked: a ${a.kind}${a.part ? ` (${a.part})` : ""}${it ? ` of board item ${it.id} (${it.type}: ${glyph(it.title)})` : ""}. Its words, as the page showed them:`,
       `<untrusted-anchor-${fence}>`, glyph(a.text), `</untrusted-anchor-${fence}>`,
       `The citations under it: ${refs.join(" ") || "(none)"}`, ...(code.length ? ["Their code:", ...code] : []),
       ...(said.length ? [`This question's thread so far: ${said.join("; ")}`] : []), ask[chip] ?? ask.free, ""];

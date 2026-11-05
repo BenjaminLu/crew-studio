@@ -319,3 +319,9 @@ body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
   .rb-play .rr-scenenav, .rb-play .rr-voice, .rb-play .rr-voices { display: none; }
   .rb-play .rr-dots { flex: 1; justify-content: center; }
 }
+
+/* words on the board can be selected with the mouse (a drag on paper still pans); "Ask about this" sits by the selection */
+.rb-rbody { user-select: text; -webkit-user-select: text; }
+.rb-rbody svg, .rb-rbody button { user-select: none; -webkit-user-select: none; }
+.rb-selask { position: fixed; z-index: 2147483000; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--rr-marker); background: var(--rr-marker); color: var(--rr-paper, #fff); font: inherit; font-size: 13px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.18); cursor: pointer; }
+.rb-selask:focus-visible { outline: 2px solid var(--rr-ink); outline-offset: 2px; }

@@ -227,6 +227,50 @@ try {
     await p.keyboard.press("Escape"); await p.waitForTimeout(250); const out = await p.evaluate(() => document.body.classList.contains("rr-fs"));
     ok(f.on && f.w >= f.W - 2 && f.h >= f.H - 2 && f.bar && !f.rail && f.cur === "t1" && nx.cur === "t3" && !out, "full screen works on an answer's scene: only the board, its play bar on it, scene navigation inside, Esc returns", JSON.stringify({ f, nx, out }));
     await ctx.close(); }
+
+  // ---------- select any words on the board and ask about them: "Ask about this" by the selection opens the board's ask popover ----------
+  /** select `words` inside the first element matching `sel` (a real range, as the mouse or a long press makes) */
+  const selectIn = (p, sel, words) => p.evaluate(([s, w]) => { for (const el of document.querySelectorAll(s)) { const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n;
+    while ((n = walk.nextNode())) { const i = n.textContent.indexOf(w); if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + w.length); const s0 = getSelection(); s0.removeAllRanges(); s0.addRange(r); return s0.toString(); } } } return null; }, [sel, words]);
+  const selBtn = (p) => p.evaluate(() => { const b = document.querySelector("[data-sel-ask]"); if (!b || !b.getClientRects().length) return null; const r = b.getBoundingClientRect(); return { text: b.textContent, scene: b.dataset.selAsk, x: r.left, y: r.top, inFs: !!document.fullscreenElement?.contains(b) }; });
+  { const { ctx, p, S } = await open(1440, clone(BASE)); await tap(p, '[data-outline="t1"]'); await p.waitForTimeout(600);
+    const got = await selectIn(p, '[data-region="t1"] .rr-ptext', "rounded to whole cents"); await p.waitForTimeout(350);
+    const b = await selBtn(p), selRect = await p.evaluate(() => { const r = getSelection().rangeCount ? getSelection().getRangeAt(0).getBoundingClientRect() : null; return r && { right: r.right, bottom: r.bottom }; });
+    ok(got === "rounded to whole cents" && b && /Ask about this/.test(b.text) && b.scene === "t1" && selRect && Math.abs(b.y - selRect.bottom) < 40, "selecting words of an answer shows “Ask about this” right by the selection", JSON.stringify({ got, b, selRect }));
+    await p.screenshot({ path: join(shots, "select-ask-1440.png") });
+    await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250);
+    const pop = await p.evaluate(() => ({ q: document.querySelector(".rb-pop [data-pop-selection]")?.textContent ?? null, scene: document.querySelector(".rb-pop [data-pop-selection]")?.dataset.popSelection ?? null, input: !!document.querySelector(".rb-pop [data-pop-input]") }));
+    ok(/Ask about the words you selected: “rounded to whole cents”/.test(pop.q || "") && pop.scene === "t1" && pop.input, "it opens the board's ask popover on those words, quoted, with the chips and a question of one's own", JSON.stringify(pop));
+    await p.fill(".rb-pop [data-pop-input]", "Why whole cents?"); await p.press(".rb-pop [data-pop-input]", "Enter"); await p.waitForTimeout(250);
+    const pend = await p.evaluate(() => ({ inRegion: !!document.querySelector('[data-region="t1"] [data-pending]'), q: document.querySelector('[data-region="t1"] [data-pending] .rb-cq')?.textContent ?? null }));
+    await tap(p, '[data-region="t1"] [data-board-start]'); await p.waitForTimeout(300);
+    const sent = S.posts.at(-1)?.thread;
+    ok(pend.inRegion && /Why whole cents\?/.test(pend.q || "") && sent?.anchor?.kind === "selection" && sent.anchor.scene === "t1" && sent.anchor.text === "rounded to whole cents" && /^sel:[0-9a-f]+$/.test(sent.anchor.part || "") && sent.chip === "free" && sent.q === "Why whole cents?" && !!S.posts.at(-1)?.confirm,
+      "the question waits for its confirmation in a card on that answer, then goes as a board question anchored to the selected words", JSON.stringify({ pend, sent: S.posts.at(-1) }));
+    // the caption's words too: their scene is the one the play bar reads
+    await tap(p, "[data-playbar] [data-replay]"); await p.waitForTimeout(150); await tap(p, "[data-playbar] [data-play]"); await p.waitForTimeout(100);
+    const cap = await selectIn(p, "[data-playbar] [data-caption-text]", "cents"); await p.waitForTimeout(350); const cb = await selBtn(p);
+    ok(cap === "cents" && cb?.scene === "t1", "words selected in the caption are asked about on the scene it reads", JSON.stringify({ cap, cb }));
+    // a drag on words selects them and leaves the camera; a drag on paper pans and selects nothing
+    await p.evaluate(() => { getSelection().removeAllRanges(); const b = document.querySelector('[data-playbar] [data-play][aria-pressed="true"]'); if (b) b.click(); }); await p.waitForTimeout(200);
+    const w = await p.evaluate(() => { const bar = document.querySelector("[data-playbar]")?.getBoundingClientRect().top ?? innerHeight; const el = [...document.querySelectorAll('[data-region="t1"] .rr-ptext')].find((e) => { const r = e.getBoundingClientRect(); return r.height && r.bottom < bar - 10 && r.top > 0; }); const t = el && document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode(); if (!t) return null; const r = document.createRange(); r.setStart(t, 0); r.setEnd(t, Math.min(12, t.textContent.length)); const q = r.getBoundingClientRect(); return { x: q.left + 2, y: q.top + q.height / 2, x2: q.right - 2 }; });
+    const c0 = await cam(p); if (w) { await p.mouse.move(w.x, w.y); await p.mouse.down(); await p.mouse.move(w.x2, w.y, { steps: 6 }); await p.mouse.up(); } await p.waitForTimeout(350);
+    const c1 = await cam(p), selected = await p.evaluate(() => getSelection().toString().trim()), b2 = await selBtn(p);
+    ok(!!w && selected.length >= 3 && !!b2 && c0 && c1 && Math.abs(c0.x - c1.x) < 1 && Math.abs(c0.y - c1.y) < 1, "a mouse drag across words selects them (the board does not pan)", JSON.stringify({ w, selected, c0, c1 }));
+    const vp = await p.evaluate(() => { const r = document.querySelector("[data-board-vp]").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height - 160 }; });
+    await p.mouse.move(vp.x, vp.y); await p.mouse.down(); await p.mouse.move(vp.x + 120, vp.y + 40, { steps: 8 }); await p.mouse.up(); await p.waitForTimeout(350);
+    const c2 = await cam(p), sel2 = await p.evaluate(() => getSelection().toString().trim()), b3 = await selBtn(p);
+    ok(c2 && Math.abs(c2.x - c1.x - 120) < 2 && !sel2 && !b3, "a drag on the paper pans the board as before: nothing is selected, no “Ask about this”", JSON.stringify({ c1, c2, sel2, b3 }));
+    // full screen: the control is shown inside the full-screen board
+    await tap(p, "[data-fs-toggle]"); await p.waitForTimeout(400); await selectIn(p, '[data-region="t1"] .rr-ptext', "whole cents"); await p.waitForTimeout(350);
+    const fb = await selBtn(p); await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250); const fpop = !!(await p.$(".rb-pop [data-pop-selection]"));
+    ok(!!fb && (fb.inFs || !(await p.evaluate(() => !!document.fullscreenElement))) && fpop, "in full screen too, a selection offers “Ask about this” and opens the popover", JSON.stringify({ fb, fpop }));
+    await ctx.close(); }
+  { const { ctx: c2, p } = await open(390, clone(BASE)); await tap(p, "[data-board-rail] .rb-sheetx"); await p.waitForTimeout(300);
+    const got = await selectIn(p, ".rb-region.cur .rr-ptext", "whole cents"); await p.waitForTimeout(350); const b = await selBtn(p);
+    await tap(p, "[data-sel-ask]"); await p.waitForTimeout(250); const pop = await p.evaluate(() => ({ q: !!document.querySelector(".rb-pop [data-pop-selection]"), desk: !!document.querySelector(".rb-pop [data-ask-desktop]") }));
+    ok(got && !!b && pop.q && pop.desk, "on a phone a selection (its handles, a long press) offers “Ask about this” too; the popover says to ask on the computer", JSON.stringify({ got, b, pop }));
+    await c2.close(); }
 } catch (e) { fail++; console.log(`  FAIL  the suite crashed: ${e.stack || e}`); }
 ok(!errors.length, "no page errors", errors.join(" | "));
 await browser.close(); app.kill();
