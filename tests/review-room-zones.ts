@@ -2,8 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // The room list's zones (docs/units/review-room.md, "Coming back"): every room in 等我看, 審查中, 已結論 or 封存, under its
 // repository; archiving is the captain's hand alone, never a merge, and it survives a restart and starting over; nothing is
-// cut from the list; opening the list reads open pull requests again, bounded, so one that ended on GitHub moves. Rooms are
-// fixture files, GitHub is a stub adapter, no provider runs.        bun tests/review-room-zones.ts
+// cut from the list, and listing reads nothing on GitHub. Rooms are fixture files, GitHub is a stub adapter, the one turn a stub.        bun tests/review-room-zones.ts
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, suite, until, Y } from "./rt-harness";
@@ -60,6 +59,8 @@ ok(zone(merged) === "concluded", "a merged pull request is concluded, not archiv
 ok(zone(closed) === "concluded", "a closed pull request is concluded even with no turn (no `finished` was recorded for it)", zone(closed));
 ok(zone(inTurn) === "waiting", "a turn left running by a Studio that stopped is not in progress: it waits for the captain", zone(inTurn));
 const reopened = pr(9, { turns: [turn(1)], read: "2026-11-01T11:00:00.000Z", finished: { at: "2026-11-01T11:00:00.000Z", reason: "The pull request was closed" } });
+const stalePr = pr(10, { turns: [turn(1)], read: "2026-11-01T11:00:00.000Z" }, { stale: { head: "f".repeat(40), error: "fetch failed", at: recent() } });
+ok(zone(stalePr) === "waiting", "GitHub shows newer commits Studio could not fetch: they wait for the captain all the same", zone(stalePr));
 ok(zone(reopened) === "reviewing", "a pull request reopened on GitHub leaves 已結論: its state decides, not the old `finished` mark", zone(reopened));
 
 // ---------- reading a room is what clears 等我看 ----------
@@ -96,7 +97,27 @@ room = install(); ok(zone(archivedPr) === "archived" && JSON.parse(readFileSync(
   ok(before.arrive?.plan, "fixture: an open room with auto-teach on would start its analysis on arrival", JSON.stringify(before.arrive));
   room.archive(c2, true, "captain"); const seen: any = room.view(c2, true); ok(seen.arrive === null, "an archived room offers no automatic analysis on arrival", JSON.stringify(seen.arrive));
   await room.arrive(c2, "captain", "en", before.arrive.plan); ok(!JSON.parse(readFileSync(join(E.rdir(h2.id), "review-room", `${c2}.json`), "utf8")).autoTaught, "arriving in an archived room, even on the plan it showed before, starts nothing");
-  await E.cancel(h2.id, "cleanup"); }
+  // a running turn: in review even with the merge card open, through the real room
+  { let release = () => {}; const held = new Promise<void>((r) => { release = r; }), baseProvider = E.deps.provider;
+    E.deps.provider = (pid?: string, model?: string) => pid === "tutor" ? ({ id: pid, model: model ?? "", sandboxFree: true, start() { return { interrupt() {}, async *send() { await held; yield { type: "delta", text: "Answer." } as any; yield { type: "turnEnd", status: "ok", usage: { usd: 0, inTokens: 1, outTokens: 1 } } as any; } }; } }) as any : baseProvider(pid, model);
+    room.archive(c2, false, "captain"); ok(zone(c2) === "waiting", "fixture: a merge room with its card open waits for the captain", zone(c2));
+    await room.start(c2, { action: "ask", text: "Why?", lang: "en", confirm: (room.view(c2) as any).offer.hash }, "captain"); ok(zone(c2) === "reviewing", "a turn running on the room puts it in review, whatever else holds", zone(c2));
+    release(); await room.settle(c2, 15000); ok(zone(c2) === "waiting", "the turn ended, the open card waits for the captain again", zone(c2)); E.deps.provider = baseProvider;
+    const file = () => JSON.parse(readFileSync(join(E.rdir(h2.id), "review-room", `${c2}.json`), "utf8")); ok(!file().read, "fixture: the answer is not read yet"); room.view(c2, true); ok(!!file().read, "opening a merge card's room reads its answer"); }
+  // start-over keeps the mark on a merge card's room, and when its subject is gone
+  { room.archive(c2, true, "captain"); room.reset(c2, "captain"); ok(zone(c2) === "archived", "starting over an archived merge card's room keeps it archived", zone(c2));
+    const ctx = E.get(h2.id)!.ctx, was = { worktree: ctx.worktree, repo: ctx.repo }; Object.assign(ctx, { worktree: join(tmp, "gone"), repo: join(tmp, "gone") }); room.reset(c2, "captain"); Object.assign(ctx, was);
+    ok(zone(c2) === "archived", "and when its repository is gone: the room stays listed in 封存", zone(c2)); room.archive(c2, false, "captain"); }
+  // a Task's branch whose review has not passed opens no room, by archiving either
+  { const e: any = (() => { try { room.archive(h2.id, true, "captain"); return null; } catch (x) { return x; } })(); ok(e?.code === "not_reviewed", "archiving does not open a room Studio has not let open", e?.message); }
+  // a Task's branch: in review while the Task runs, concluded once it ended
+  const branch = join(E.rdir(h2.id), "review-room", `${h2.id}.json`); writeFileSync(branch, JSON.stringify({ ...base(h2.id), run: h2.id, node: "review", turns: [turn(1)], read: "2026-11-01T11:00:00.000Z" })); room = install();
+  ok(zone(h2.id) === "reviewing", "a Task's branch, read, while its Task runs: in review", zone(h2.id));
+  ok(room.list().find((x: any) => x.id === h2.id)?.repository === REPO, "a branch's room is listed under its Task's repository");
+  { const ctx = E.get(h2.id)!.ctx, was = ctx.pr; ctx.pr = null; ok(room.list().find((x: any) => x.id === h2.id)?.repository === REPO, "with no pull request, its project's repository says"); ctx.pr = was; }
+  { const ctx = E.get(h2.id)!.ctx; ctx.head = BASE; ok(zone(h2.id) === "waiting", "the branch moved past its last answer: it waits for the captain", zone(h2.id)); ctx.head = HEAD; }
+  await E.cancel(h2.id, "cleanup"); await until(() => ["succeeded", "failed", "cancelled"].includes(E.get(h2.id)!.status), 20000);
+  ok(zone(h2.id) === "concluded", "its Task ended: concluded", zone(h2.id)); }
 const rs: any = room.reset(archivedPr, "captain"); ok(rs.reset && rs.view.turns.length === 0 && rs.view.archived === true && zone(archivedPr) === "archived", "starting an archived room over keeps it archived; start-over is not restore", JSON.stringify({ a: rs.view.archived }));
 const back: any = room.archive(archivedPr, false, "captain"); ok(back.zone === "waiting" && zone(archivedPr) === "waiting", "restored, a room goes to the zone it belongs in now", back.zone);
 
@@ -104,16 +125,14 @@ const back: any = room.archive(archivedPr, false, "captain"); ok(back.zone === "
 { const m = E.get(host.id)!; await until(() => ["succeeded", "failed", "cancelled"].includes(E.get(host.id)!.status), 20000);
   E.archive(m.id, true, "captain"); ok(zone(card.id) === "concluded" && room.list().some((x: any) => x.id === card.id), "archiving a Task leaves its room where it is: the two archives are separate", zone(card.id)); E.archive(m.id, false, "captain"); }
 
-// ---------- opening the list reads open pull requests again ----------
-const stale = "2026-01-01T00:00:00.000Z", swept = [31, 32, 33, 34, 35, 36, 37].map((n, i) => pr(n, { turns: [turn(1)], read: "2026-11-01T11:00:00.000Z" }, { attemptedAt: `2026-01-0${i + 1}T00:00:00.000Z`, checkedAt: stale }));
-const skipArchived = pr(38, { archived: { by: "captain", at: stale } }, { attemptedAt: stale, checkedAt: stale }); room = install(); remote.set(31, { state: "closed", merged: true }); remote.set(38, { state: "closed", merged: true }); reads.length = 0;
-ok(zone(swept[0]) === "reviewing", "fixture: Studio still believes pull request 31 is open");
-room.sweep(room.list()); await until(() => reads.length >= 5 && !!room.settle, 5000); await room.settle("none", 5000);
-ok(JSON.stringify([...reads].sort()) === "[31,32,33,34,35]", "a visit reads the five read longest ago, no more, never an archived room or one read recently", JSON.stringify(reads));
-const m31: any = room.list().find((x: any) => x.id === swept[0]);
-ok(m31.zone === "concluded" && !JSON.parse(readFileSync(join(prDir, `${swept[0]}.json`), "utf8")).archived, "a pull request merged on GitHub moves to 已結論 by itself, and is not archived", JSON.stringify(m31));
+// ---------- the list reads only what Studio holds: GitHub is read when the captain enters or checks a room ----------
+const stale = "2026-01-01T00:00:00.000Z", lagging = pr(31, { turns: [turn(1)], read: "2026-11-01T11:00:00.000Z" }, { attemptedAt: stale, checkedAt: stale }); room = install(); remote.set(31, { state: "closed", merged: true }); reads.length = 0;
+room.list(); ok(!reads.length && zone(lagging) === "reviewing", "listing reads nothing on GitHub: a pull request merged there stays where it was", JSON.stringify(reads));
+room.view(lagging, true); await until(() => reads.length > 0, 5000); await room.settle("none", 5000);
+const m31: any = room.list().find((x: any) => x.id === lagging);
+ok(m31.zone === "concluded" && !JSON.parse(readFileSync(join(prDir, `${lagging}.json`), "utf8")).archived, "entering the room reads it: merged, it moves to 已結論, and is not archived", JSON.stringify(m31));
 ok(m31.updatedAt === turn(1).ended, "a room's time on the list is its last answer's: a re-read of GitHub is not news", m31.updatedAt);
-reads.length = 0; room.sweep(room.list()); await until(() => reads.length >= 2, 5000); await room.settle("none", 5000); ok(JSON.stringify([...reads].sort()) === "[36,37]", "the next visit reaches the rest; what was just read waits", JSON.stringify(reads));
+const skipArchived = pr(38, { archived: { by: "captain", at: stale } }, { attemptedAt: stale, checkedAt: stale }); room = install(); remote.set(38, { state: "closed", merged: true }); room.view(skipArchived, true); await until(() => reads.includes(38), 5000); await room.settle("none", 5000);
 ok(zone(skipArchived) === "archived", "an archived room stays archived whatever GitHub says");
 
 // ---------- the route: a POST by the captain on this Mac ----------
@@ -126,7 +145,8 @@ ok(zone(skipArchived) === "archived", "an archived room stays archived whatever 
   ok((await call("POST", path, {}, phone, true)).status === 403, "a phone does not archive");
   const on = await call("POST", path, {}, desk, true), listed = await call("GET", "/api/review-room", null, desk, false);
   ok(on.status === 200 && on.body.zone === "archived" && listed.body.rooms.find((x: any) => x.id === rid)?.zone === "archived", "the captain archives through the route, and the list says so", JSON.stringify([on.status, on.body.zone]));
-  const off = await call("POST", path, { archived: false }, desk, true); ok(off.status === 200 && off.body.zone === "reviewing", "{archived: false} restores it", JSON.stringify(off.body.zone)); }
+  const off = await call("POST", path, { archived: false }, desk, true); ok(off.status === 200 && off.body.zone === "reviewing", "{archived: false} restores it", JSON.stringify(off.body.zone));
+  ok((await call("POST", path, { archived: "false" }, desk, true)).status === 400 && zone(rid) !== "archived", "archived is a boolean: anything else is refused, never archived"); }
 
 // ---------- nothing is cut from the list ----------
 { const many = Array.from({ length: 70 }, (_, i) => pr(100 + i, { archived: { by: "captain", at: stale } })); room = install(); const ids = new Set(room.list().map((x: any) => x.id));

@@ -457,6 +457,11 @@ try {
     ok(await p.$eval("[data-room-home]", (e) => e.getAttribute("href")).catch(() => null) === "#/room" && /Review room/.test(await p.$eval(".rr-crumb", (e) => e.textContent).catch(() => "")), "the room's header says where you are: Review room › the room, the first a link to the list");
     const inRoom = await p.evaluate(() => ({ focus: document.body.dataset.focus ?? null, crumb: !!document.querySelector("[data-room-home]")?.getClientRects().length }));
     ok(inRoom.focus === "room" && inRoom.crumb, "a loaded room is a focus page (body[data-focus=room]) and its way back to the list stays in view", JSON.stringify(inRoom));
+    // restoring is not arriving: the view it returns would start an analysis the captain was never shown; nothing starts by itself
+    { const arrives = []; let next = { archived: true, zone: "archived", view: { ...ROOM, archived: true, arrive: null } }; await p.route(/\/api\/review-room\/SC-50\/arrive$/, (r) => { arrives.push(1); r.fulfill({ json: {} }); }); await p.route(/\/api\/review-room\/SC-50\/archive$/, (r) => r.fulfill({ json: next }));
+      await p.click('[data-room-archive="SC-50"]'); await p.waitForSelector("[data-room-archived]"); next = { archived: false, zone: "waiting", view: { ...ROOM, archived: false, arrive: { plan: "plan-1", auto: true, provider: "codex", model: "gpt-6", paid: true } } };
+      await p.click('[data-room-restore="SC-50"]'); await p.waitForSelector('[data-room-archive="SC-50"]'); await p.waitForTimeout(400);
+      ok(!arrives.length, "restoring in a room's header starts no paid analysis", JSON.stringify(arrives)); await p.unroute(/\/api\/review-room\/SC-50\/arrive$/); await p.unroute(/\/api\/review-room\/SC-50\/archive$/); }
     sc50Turns = 3; await p.goBack(); await p.waitForFunction(() => S.route?.name === "room" && !S.route.arg); const onList = await p.evaluate(() => document.body.dataset.focus ?? null);
     const fresh = await p.waitForFunction(() => /3 answers/.test(document.querySelector("[data-room-list]")?.textContent || ""), null, { timeout: 5000 }).then(() => true, () => false);
     ok(fresh, "coming back to the room list reads it again: a room's new answers show", await p.$eval("[data-room-list]", (e) => e.textContent).catch(() => ""));

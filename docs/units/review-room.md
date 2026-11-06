@@ -331,9 +331,10 @@ folded). The list is in four zones (`roomZone`), each grouped by repository:
   over's `.archive` folder. An archived room keeps working, but arriving in it starts nothing by itself.
 
 A new signal (a deployment) is one more fact in `ZoneFacts` and one more rule in `ZONE_RULES`. The search box covers every
-zone (the server lists every room, with no cap) and opens 封存, which is otherwise folded. Zones read what Studio holds; so a
-pull request that ended on GitHub moves, opening the list on this Mac re-reads the open pull requests read longest ago (GET
-only, five a visit, each at most once in five minutes, one at a time, never archived rooms), and the list redraws as they land. The room's header shows where you are ("Review room › the room", the first a link to the list). The browser's back
+zone (the server lists every room, with no cap) and opens 封存, which is otherwise folded. Zones show the state Studio last read: a
+pull request that ended on GitHub moves when the captain next enters its room or checks it, so the list can lag GitHub. The zones
+redraw on the live stream, the search box left alone. Restoring in a room's header is not an arrival: nothing paid starts by
+itself. The room's header shows where you are ("Review room › the room", the first a link to the list). The browser's back
 walks Studio's own pages (each is a route). Studio runs in an app window without a back button, so a link that leaves
 Studio (GitHub, a cited page, anything not Studio's origin) always opens in a new window (`target=_blank`, `noopener`): the
 links Studio draws say so, and a document-level handler opens any other external link the same way, never in place.

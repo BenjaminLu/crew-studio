@@ -39,8 +39,10 @@ async function load(id, open = false) {
 
 function schedule() { clearTimeout(RR.poll); RR.poll = null; const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) RR.poll = setTimeout(() => { RR.poll = null; load(id); }, 2500); }
 window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card);
-  // on the room list: a room changed (a turn ended, a pull request read again): the list is read again, once for a burst
+  // on the room list: a room changed (a turn ended, an archive): the list is read again, once for a burst
   if (RR.list && onList()) { clearTimeout(RR.listPoll); RR.listPoll = setTimeout(() => { if (onList()) readList(); }, 800); } });
+// back on a room whose answer came while the window was hidden: now it is read
+document.addEventListener("visibilitychange", () => { const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (!document.hidden && r && !r.snapshot && !r.error && r.running == null) load(id, true); });
 
 // ---------- the board's flowcharts: Studio draws mermaid's flowchart subset itself (no library, no markup) ----------
 function parseFlow(code) {
@@ -1643,15 +1645,19 @@ const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, 
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
   stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual });
 const onList = () => S.route?.name === "room" && !S.route.arg;
-function readList() { if (!RR.list) return; RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], fresh: true }; if (onList()) render(); }).catch(() => {}); }
+/** the list read again. Only the zones are drawn again when they are there: the search box stays the same element, a composition in it unbroken */
+function readList() { if (!RR.list) return; RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], fresh: true }; if (!onList()) return;
+  const zones = document.querySelector("[data-room-zones]"); if (!zones || !RR.list.rooms.length) return render(); zones.replaceWith(zonesView(RR.list.rooms)); document.querySelector("[data-room-list]")?.setAttribute("data-room-list", RR.list.rooms.length); }).catch(() => {}); }
 /** the room list's zones, in order (src/domain/review-room.ts ROOM_ZONES decides which one a room is in) */
 const ZONES = [["waiting", "Waiting for me", "等我看"], ["reviewing", "In review", "審查中"], ["concluded", "Concluded", "已結論"], ["archived", "Archived", "封存"]];
 /** a row's archive or restore button: the captain, on this Mac (a phone reads the list) */
 function archiveBtn(x) { if (BOARD.state.viewer === "phone" || window.crewRemote?.token?.()) return null; const off = x.zone === "archived";
   return h("button", { type: "button", class: "rr-back rr-rowact", [off ? "data-room-restore" : "data-room-archive"]: x.id, disabled: RR.posting.has(`${x.id}/archive`), onclick: () => setArchived(x.id, !off) }, off ? T("Restore", "還原") : T("Archive", "封存")); }
 async function setArchived(id, on) { RR.posting.add(`${id}/archive`); rerender();
-  try { const out = await postJ(`/api/review-room/${enc(id)}/archive`, { archived: on }); if (out?.view?.card) RR.rooms.set(id, out.view);
-    if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; RR.list.fresh = false; } }
+  try { const out = await postJ(`/api/review-room/${enc(id)}/archive`, { archived: on });
+    // restoring is not arriving: the captain was never shown this plan, so nothing paid starts by itself ("Teach me" still does)
+    if (out?.view?.arrive?.plan) RR.arrived.add(`${id}@${out.view.head}@${out.view.arrive.plan}`); if (out?.view?.card) RR.rooms.set(id, out.view);
+    if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; readList(); } }
   catch (e) { if (onRoom(id)) RR.err.set(id, e.message); else if (RR.list) RR.list.err = e.message; }
   finally { RR.posting.delete(`${id}/archive`); rerender(); } }
 const roomRow = (x) => h("li", { "data-room-row": x.id },
@@ -1680,7 +1686,7 @@ routes.room = (arg) => {
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
         RR.list.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : rooms.length ? [
           h("input", { class: "input rr-roomsearch", type: "search", "data-room-search": "", value: RR.listQ || "", placeholder: T("Search every zone: title, repository, room", "搜尋所有區：標題、儲存庫、審查室"), "aria-label": T("Search the review rooms", "搜尋審查室"),
-            oninput: (e) => { RR.listQ = e.target.value; document.querySelector("[data-room-zones]")?.replaceWith(zonesView(rooms)); } }),
+            oninput: (e) => { RR.listQ = e.target.value; document.querySelector("[data-room-zones]")?.replaceWith(zonesView(RR.list.rooms)); } }),
           RR.list.err ? h("p", { class: "rr-err", role: "alert", "data-room-list-err": "" }, RR.list.err) : null, zonesView(rooms)] : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
       h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null), tutorDefault(),
         h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); dropPasteOffers(); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),

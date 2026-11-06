@@ -761,8 +761,7 @@ export function createRuntime(d: RuntimeDeps) {
       // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
       // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
       // the Review Room's home: every room on this machine, open ones first (read on any authenticated page)
-      // (the captain opening it on this Mac also starts a bounded re-read of open pull requests: rr.sweep)
-      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom, rooms = rr ? rr.list() : []; if (rr && who.kind === "desktop") rr.sweep(rooms); return json({ rooms, settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [] }); }
+      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [] }); }
       // the review room's Studio-wide settings (auto-teach on paste): read anywhere, changed by the captain on this Mac
       if (p === "/api/review-room/settings") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing) return json(rr.settings());
@@ -826,7 +825,7 @@ export function createRuntime(d: RuntimeDeps) {
         // the room's tutor, picked by the captain ({pick: {provider, model}}; null: Studio's default)
         if (room[2] === "tutor") { try { return json(rr.setTutor(room[1], b?.pick ?? null, by)); } catch (e: any) { return fail(e); } }
         // archive a room or restore it ({archived: false}): the room list's 封存, kept in the room; nothing about the room is lost
-        if (room[2] === "archive") { try { return json(rr.archive(room[1], b?.archived !== false, by)); } catch (e: any) { return fail(e); } }
+        if (room[2] === "archive") { try { return json(rr.archive(room[1], b?.archived ?? true, by)); } catch (e: any) { return fail(e); } }
         // start the room over: archived, never deleted; refused while a turn or a translation runs
         if (room[2] === "reset") { try { return json(rr.reset(room[1], by)); } catch (e: any) { return fail(e); } }
         if (room[2] === "images") { try { return json(rr.images(room[1], b?.on, by)); } catch (e: any) { return fail(e); } }

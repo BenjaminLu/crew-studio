@@ -69,6 +69,25 @@ try {
     await search(p, "no such room"); ok(!!await p.$("[data-room-nomatch]") && !(await p.$$("[data-room-row]")).length, "no match says so");
     await search(p, ""); ok((await p.$$("[data-room-zone]")).length === 4 && !await shows(p, archived), "cleared, the four zones are back and 封存 folds again", JSON.stringify(await p.evaluate(() => [...document.querySelectorAll("[data-room-zone]")].map((e) => [e.dataset.roomZone, e.tagName, e.open]))));
 
+    // ---- the list follows the live stream: a room changed elsewhere moves without a reload ----
+    const post = (id, archived) => p.evaluate(([i, a]) => fetch(`/api/review-room/${i}/archive`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ archived: a }) }).then((r) => r.status), [id, archived]);
+    await p.$eval("[data-room-search]", (e) => { e.__same = true; }); await post(merged, true);
+    ok(await p.waitForFunction((id) => document.querySelector(`[data-room-row="${id}"]`)?.closest("[data-room-zone]")?.dataset.roomZone === "archived", merged, { timeout: 5000 }).then(() => true, () => false), "a live review-room event reads the list again: the room moves by itself");
+    ok(await p.$eval("[data-room-search]", (e) => !!e.__same), "a redraw from the live stream leaves the search box alone: a composition in it is not broken");
+    await post(merged, false); await p.waitForFunction((id) => document.querySelector(`[data-room-row="${id}"]`)?.closest("[data-room-zone]")?.dataset.roomZone === "concluded", merged);
+
+    // ---- an answer that ends with the captain on the room is read; one that ends with the window hidden is not ----
+    { let running = 1; const asked = []; const watch = async (r) => { const res = await r.fetch(), j = await res.json(); asked.push(r.request().url()); await r.fulfill({ json: { ...j, running } }); }, url = new RegExp(`/api/review-room/${reviewing}(\\?open=1)?$`);
+      await p.route(url, watch); await p.click(`[data-room-link="${reviewing}"]`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.waitForTimeout(300);
+      asked.length = 0; await p.evaluate(() => Object.defineProperty(document, "hidden", { configurable: true, get: () => true })); running = null; await p.waitForTimeout(3200);
+      ok(asked.length && !asked.some((u) => u.endsWith("?open=1")), "a turn that ends while the window is hidden is not marked read", JSON.stringify(asked));
+      await p.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); });
+      ok(await (async () => { for (let i = 0; i < 40 && !asked.some((u) => u.endsWith("?open=1")); i++) await p.waitForTimeout(100); return asked.some((u) => u.endsWith("?open=1")); })(), "coming back to the window reads the answer that came meanwhile", JSON.stringify(asked));
+      running = 1; await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-room-zones]"); await p.click(`[data-room-link="${reviewing}"]`); await p.waitForSelector("[data-board]"); await p.waitForTimeout(300);
+      asked.length = 0; running = null;
+      ok(await (async () => { for (let i = 0; i < 40 && !asked.some((u) => u.endsWith("?open=1")); i++) await p.waitForTimeout(100); return asked.some((u) => u.endsWith("?open=1")); })(), "a turn that ends with the captain on the room reads it as an arrival (?open=1), so it does not wait for them on the list", JSON.stringify(asked));
+      await p.unroute(url, watch); await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-room-zones]"); }
+
     // ---- the room's own header ----
     await p.click(`[data-room-link="${waiting}"]`); await p.waitForSelector(`[data-room-archive="${waiting}"]`, { timeout: 15000 });
     await p.click(`[data-room-archive="${waiting}"]`); await p.waitForSelector("[data-room-archived]"); await p.waitForSelector(`[data-room-restore="${waiting}"]`);
