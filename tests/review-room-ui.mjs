@@ -446,7 +446,7 @@ try {
   { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.addInitScript(() => { window.__opened = []; window.open = (u, t, f) => { window.__opened.push([u, t, f]); return null; }; });
     let sc50Turns = 2;
-    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [{ id: "SC-50", kind: "merge", title: "Merge: Add percent", titleZh: "合併：新增 percent", open: true, running: false, turns: sc50Turns, repository: null, updatedAt: "2026-10-28T10:00:00Z" }, { id: "PR-0123456789ab-7", kind: "pr", title: "Pull request #7: Shout", open: false, running: false, turns: 1, repository: "fixture/project", updatedAt: "2026-10-28T12:00:00Z" }] } }));
+    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [{ id: "SC-50", kind: "merge", title: "Merge: Add percent", titleZh: "合併：新增 percent", open: true, running: false, turns: sc50Turns, repository: null, zone: "waiting", updatedAt: "2026-10-28T10:00:00Z" }, { id: "PR-0123456789ab-7", kind: "pr", title: "Pull request #7: Shout", open: false, running: false, turns: 1, repository: "fixture/project", zone: "concluded", updatedAt: "2026-10-28T12:00:00Z" }] } }));
     await p.goto(`${base}/#/board`); await p.waitForFunction(() => S.route?.name === "board");
     const navItem = await p.evaluate(() => { const b = document.querySelector('.nav-item[data-view="room"]'); return b && { inLabs: !!b.closest(".nav-labs"), hidden: b.hidden, text: b.textContent }; });
     ok(navItem && !navItem.inLabs && !navItem.hidden && /Review room/.test(navItem.text), "the sidebar has a Review room item of its own (on the rail too when it is folded)", JSON.stringify(navItem));

@@ -761,7 +761,8 @@ export function createRuntime(d: RuntimeDeps) {
       // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
       // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
       // the Review Room's home: every room on this machine, open ones first (read on any authenticated page)
-      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [] }); }
+      // (the captain opening it on this Mac also starts a bounded re-read of open pull requests: rr.sweep)
+      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom, rooms = rr ? rr.list() : []; if (rr && who.kind === "desktop") rr.sweep(rooms); return json({ rooms, settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [] }); }
       // the review room's Studio-wide settings (auto-teach on paste): read anywhere, changed by the captain on this Mac
       if (p === "/api/review-room/settings") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing) return json(rr.settings());
@@ -796,17 +797,17 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing || roomVoice[2] || req.method !== "POST") return json({ error: "POST /api/review-room/<room>/voice {text, lang, mix}" }, 405);
         if (who.kind !== "desktop") return json({ error: "The local voice speaks on this Mac", code: "desktopOnly" }, 403);
         try { return json(await rr.localVoice(roomVoice[1], b?.text, b?.lang, b?.mix, req.signal)); } catch (e: any) { return fail(e); } }
-      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|auto|arrive|tutor|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         if (!writing && room[2] === "audio") { try { return new Response(rr.audio(room[1], room[3] ?? ""), { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
-        if (!writing && (room[2] === "reset" || room[2] === "lesson" || room[2] === "arrive" || room[2] === "tutor")) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405);
+        if (!writing && (room[2] === "reset" || room[2] === "archive" || room[2] === "lesson" || room[2] === "arrive" || room[2] === "tutor")) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405);
         // the room's open questions on its lesson board, as findings of the shared locator schema (?all=1: every one)
         if (!writing && room[2] === "findings") { try { return json(rr.findings(room[1], url.searchParams.get("all") === "1")); } catch (e: any) { return fail(e); } }
         if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
-        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "auto" && room[2] !== "arrive" && room[2] !== "tutor" && room[2] !== "lesson") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
+        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "archive" && room[2] !== "auto" && room[2] !== "arrive" && room[2] !== "tutor" && room[2] !== "lesson") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
         // Check for new commits reads GitHub: at most once every few seconds per room, whatever the page sends
         if (room[2] === "check") { const last = roomChecks.get(room[1]) ?? 0; if (Date.now() - last < 5000) return json({ error: "Checked a moment ago; try again in a few seconds / 剛剛才檢查過，請稍候再試", code: "rate_limited" }, 429);
@@ -824,6 +825,8 @@ export function createRuntime(d: RuntimeDeps) {
         if (room[2] === "arrive") { try { return json(await rr.arrive(room[1], by, b?.lang, b?.plan)); } catch (e: any) { return fail(e); } }
         // the room's tutor, picked by the captain ({pick: {provider, model}}; null: Studio's default)
         if (room[2] === "tutor") { try { return json(rr.setTutor(room[1], b?.pick ?? null, by)); } catch (e: any) { return fail(e); } }
+        // archive a room or restore it ({archived: false}): the room list's 封存, kept in the room; nothing about the room is lost
+        if (room[2] === "archive") { try { return json(rr.archive(room[1], b?.archived !== false, by)); } catch (e: any) { return fail(e); } }
         // start the room over: archived, never deleted; refused while a turn or a translation runs
         if (room[2] === "reset") { try { return json(rr.reset(room[1], by)); } catch (e: any) { return fail(e); } }
         if (room[2] === "images") { try { return json(rr.images(room[1], b?.on, by)); } catch (e: any) { return fail(e); } }

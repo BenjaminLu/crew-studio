@@ -317,7 +317,23 @@ The "what changed since last time" scene names a reviewer's inline comment whose
 
 **Coming back.** Every room is listed on the Review room's home (`#/room`, `GET /api/review-room`: open rooms first, then
 the most recent; a link back into each), which the sidebar's own **Review room** item opens (on the rail too when it is
-folded). The room's header shows where you are ("Review room › the room", the first a link to the list). The browser's back
+folded). The list is in four zones (`roomZone`), each grouped by repository:
+
+- **等我看**: the next move is the captain's: a merge card still open, a change with no answer at its current head, an answer
+  not opened yet, or a last turn that failed.
+- **審查中**: a turn is running, or the captain has read the answer at this head and the pull request is still open.
+- **已結論**: the merge card is answered, the pull request is merged or closed, the Task ended, or a directory's pinned commit
+  is analysed and read (a directory has no result of its own).
+- **封存**: the captain archived it (`POST /api/review-room/<room>/archive {archived}`, on the row and in the room's header;
+  `{archived: false}` restores it to the zone it belongs in). Only by hand: a merge never archives a room, because merged is not
+  deployed. It is `room.archived`, in the room's own file, so it survives a restart, a redeploy and starting over; it is
+  not a Task's archive (a pull request's room may have no Task, and a Task's archive is refused until it ends) and not starting
+  over's `.archive` folder. An archived room keeps working, but arriving in it starts nothing by itself.
+
+A new signal (a deployment) is one more fact in `ZoneFacts` and one more rule in `ZONE_RULES`. The search box covers every
+zone (the server lists every room, with no cap) and opens 封存, which is otherwise folded. Zones read what Studio holds; so a
+pull request that ended on GitHub moves, opening the list on this Mac re-reads the open pull requests read longest ago (GET
+only, five a visit, each at most once in five minutes, one at a time, never archived rooms), and the list redraws as they land. The room's header shows where you are ("Review room › the room", the first a link to the list). The browser's back
 walks Studio's own pages (each is a route). Studio runs in an app window without a back button, so a link that leaves
 Studio (GitHub, a cited page, anything not Studio's origin) always opens in a new window (`target=_blank`, `noopener`): the
 links Studio draws say so, and a document-level handler opens any other external link the same way, never in place.

@@ -330,8 +330,21 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   /** the captain agreed to start this room's board questions without asking each time, for this plan (followPrint) */
   followUps?: { plan: string; by: string; at: string; used?: number };
   /** the tutor the captain picked for this room (over Studio's default, src … settings().tutor); absent: the default */
-  tutor?: { provider: string; model: string; by: string; at: string } };
+  tutor?: { provider: string; model: string; by: string; at: string };
+  /** the captain put this room in 封存 (only ever by hand: a merge does not); start-over keeps it, restoring clears it. Not a Task's
+   *  archive (a room may have no Task yet, and shares one with other rooms) and not start-over's .archive folder */
+  archived?: { by: string; at: string };
+  /** when the captain last opened the room with an answer there: a later answer waits for them (zoneFacts) */
+  read?: string };
 export type ReviewRoom = ReturnType<typeof installReviewRoom>;
+/** the room list's zones, in the order they show */
+export const ROOM_ZONES = ["waiting", "reviewing", "concluded", "archived"] as const;
+export type RoomZone = (typeof ROOM_ZONES)[number];
+/** what a room's zone is decided from. A later signal (a deployment, say) is one more fact here and one more rule below */
+export type ZoneFacts = { archived: boolean; running: boolean; concluded: boolean; waiting: boolean };
+/** the first rule that holds names the zone */
+const ZONE_RULES: [RoomZone, (f: ZoneFacts) => boolean][] = [["archived", (f) => f.archived], ["reviewing", (f) => f.running], ["concluded", (f) => f.concluded], ["waiting", (f) => f.waiting], ["reviewing", () => true]];
+export const roomZone = (f: ZoneFacts): RoomZone => ZONE_RULES.find(([, holds]) => holds(f))![0];
 /** one turn's explanation in another language: its scenes (title, points) and its answer's blocks, in the same order; the
  *  citations, board items and pictures are the original's */
 export type Translation = { scenes: { title: string; points: string[]; details?: string[] }[]; claims: string[]; answer: string; provider: string; model: string; at: string;
@@ -492,7 +505,7 @@ export const prRoomId = (repository: string, n: number) => `PR-${sha(repository.
 /** the pull request reads a check makes at most (pages of 100 per list) and how big its cached objects may grow */
 /** how much code the web filter reads to know what may not leave Studio (a directory room: the repository's files) */
 const WEB_FILTER_BYTES = () => Number(process.env.CREW_REVIEW_WEB_FILTER_BYTES) > 0 ? Number(process.env.CREW_REVIEW_WEB_FILTER_BYTES) : 2_000_000;
-const PR_PAGES = 3, PR_CACHE_BYTES = () => (Number(process.env.CREW_REVIEW_PR_CACHE_MB) > 0 ? Number(process.env.CREW_REVIEW_PR_CACHE_MB) : 1024) * 1024 ** 2, PR_FETCH_MS = 120_000, PR_RECHECK_MS = 60_000,
+const PR_PAGES = 3, PR_CACHE_BYTES = () => (Number(process.env.CREW_REVIEW_PR_CACHE_MB) > 0 ? Number(process.env.CREW_REVIEW_PR_CACHE_MB) : 1024) * 1024 ** 2, PR_FETCH_MS = 120_000, PR_RECHECK_MS = 60_000, SWEEP_MS = 5 * 60_000, SWEEP_ROOMS = 5,
   /** a paid turn on a pull request read longer ago than this reads it again first (a merged or closed one then refuses the turn) */
   PR_FRESH_MS = () => (process.env.CREW_REVIEW_PR_FRESH_MS !== undefined && Number(process.env.CREW_REVIEW_PR_FRESH_MS) >= 0 ? Number(process.env.CREW_REVIEW_PR_FRESH_MS) : 5 * 60_000);
 /** untrusted text (a pull request's, a reviewer's): cleaned like issue text, with nothing that could close its fence */
@@ -1443,7 +1456,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** what arriving in this room starts, as the page reads it (and sends its fingerprint back with POST …/arrive): the same plan a
    *  paste shows, only while the analysis would start by itself; an error when it cannot (shown, nothing runs) */
   const arrivalOf = (k: Key, room: Room | null, s: S | null) => {
-    if (!autoHead(k, room, s) || (k.kind === "pr" && !room?.pr) || (k.kind === "dir" && !room?.dir)) return null;
+    // an archived room opened to look something up starts nothing by itself
+    if (room?.archived || !autoHead(k, room, s) || (k.kind === "pr" && !room?.pr) || (k.kind === "dir" && !room?.dir)) return null;
     const { hash: _h, ...plan } = planOf(k, room, room?.subject?.project) as any; return "error" in plan ? plan : { ...plan, plan: planPrint(plan) };
   };
   /** A room's full analysis (its lesson), started by Studio: the captain's paste of a pull request, or their arrival in any room
@@ -1457,6 +1471,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     let k: Key; try { k = keyOf(id); } catch { return; }
     let s: S | null = null; try { s = subjectOf(k); } catch {}
     let room = load(k); if (!room && (k.kind === "pr" || k.kind === "dir")) return;
+    if (room?.archived && from === "arrival") return;
     const head = autoHead(k, room, s); if (!head) return;
     const plan = planOf(k, room, room?.subject?.project);
     // only the plan the page showed: changed since (a new tutor, pictures, a host), nothing starts and the page shows the new one
@@ -1596,7 +1611,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
 
   // ---------- a pull request by its URL: read on GitHub (GET only), its head's objects fetched into Studio's own cache ----------
   const connected = (repository: string) => { for (const p of o.projects?.list() ?? []) { const gr: any = (p as any).github; if (gr?.repository && String(gr.repository).toLowerCase() === repository.toLowerCase() && (p as any).enabled !== false) return p; } return null; };
-  const refreshing = new Map<string, Promise<any>>();
+  const refreshing = new Map<string, Promise<any>>(), swept = new Map<string, number>(); let sweeping = false;
   /** Read the pull request again and keep what GitHub shows now: its text, state, files, reviews and comments, and its head's
    *  commits. Bounded (a few pages a list, a fetch with a time limit and a size cap); only on the captain's action. */
   async function readPr(url: string): Promise<string> {
@@ -1730,6 +1745,22 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const statsFile = join(o.dataDir, "review-room-stats.json");
   let statsMemo: Record<string, any> | null = null;
   const stats = (): Record<string, any> => { if (statsMemo) return statsMemo; try { statsMemo = JSON.parse(readFileSync(statsFile, "utf8")); } catch { statsMemo = {}; } return statsMemo!; };
+  /** the room's latest answer, while the captain has not opened the room since it came */
+  const unread = (r: Room) => { const at = r.turns.filter((t) => !t.studio && t.status === "done").at(-1)?.ended; return at && !(r.read && r.read >= at) ? at : null; };
+  /** what the room list knows of a room, from what Studio holds (no read of GitHub or git). A pull request's end is its state, not
+   *  `finished`: that is only recorded for a room with turns, and a pull request can be reopened. A directory has no result of its
+   *  own: it is concluded once its pinned commit is analysed and read. */
+  const zoneFacts = (k: Key, r: Room): ZoneFacts => {
+    const run = k.run ? engine.get(k.run) : null, turns = r.turns.filter((t) => !t.studio), last = turns.at(-1);
+    const head = k.kind === "pr" ? r.pr?.head ?? r.head : k.kind === "dir" ? r.dir?.sha ?? r.head : run?.ctx.taintedReady?.head ?? run?.ctx.head ?? r.head;
+    const waiting = k.kind === "merge" ? k.open() : !turns.some((t) => t.status === "done" && t.head === head) || !!unread(r) || (!!last && last.status !== "done");
+    const concluded = k.kind === "merge" ? !k.open() : k.kind === "pr" ? !!r.pr && r.pr.state !== "open" : k.kind === "dir" ? !waiting : !run || ["succeeded", "failed", "cancelled"].includes(run.status);
+    return { archived: !!r.archived, running: live.has(k.id), concluded, waiting };
+  };
+  /** the repository a room is listed under: a merge card's and a branch's rooms keep none of their own, their Task's pull request or project says */
+  const repositoryOf = (k: Key, r: Room): string | null => { if (r.subject?.repository) return r.subject.repository; const run = k.run ? engine.get(k.run) : null; if (!run) return null;
+    const pr = parsePrUrl(String(run.ctx.pr?.url ?? "")); if (pr) return pr.repository; const id = engine.projectOf(run), p: any = o.projects?.list().find((x: any) => x.id === id);
+    return p?.github?.repository ?? p?.name ?? null; };
   const checkOf = (r: Room | null) => { const q = r?.check.questions ?? []; return { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length }; };
   const stat = (k: Key, patch: Record<string, any>) => { try { const all = stats(), run = k.run ? engine.get(k.run) : null, prev = all[k.stat] ?? {}, room = k.kind === "pr" ? load(k) : null;
     all[k.stat] = { card: k.id, ...(k.kind === "merge" ? {} : { kind: k.kind }), project: run?.params?.project ?? run?.ctx.project ?? room?.subject?.project ?? null,
@@ -1737,6 +1768,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       head: k.kind === "pr" ? room?.pr?.head ?? null : k.kind === "branch" ? run?.ctx.taintedReady?.head ?? run?.ctx.head ?? null : run?.ctx.pr?.head ?? run?.ctx.head ?? null,
       openedAt: null, turns: 0, check: { asked: 0, graded: 0, correct: 0 }, ...prev, ...patch, updatedAt: new Date().toISOString() };
     statsMemo = all; mkdirSync(o.dataDir, { recursive: true }); writeFileSync(statsFile + ".tmp", JSON.stringify(all, null, 1)); renameSync(statsFile + ".tmp", statsFile); } catch {} };
+  const markRead = (k: Key) => { const r = load(k); if (r && unread(r)) { r.read = new Date().toISOString(); save(k, r); } };
   const notify = (k: Key, turn?: number) => { try { if (k.card) engine.deps.send("scard", { id: k.id, run: k.run, status: engine.cards.get(k.id)?.status }); engine.deps.send("review-room", { card: k.id, run: k.run, turn: turn ?? null }); } catch {} };
 
   /** one scene's narration by its vendor: generated once, then served from the room's folder */
@@ -1820,19 +1852,19 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     view(id: string, opened = false) {
       const k = keyOf(id);
       if (k.kind === "merge") { const c = k.card!;
-        if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); }
+        if (opened) { if (!stats()[c.run]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); markRead(k); }
         const run = engine.get(c.run), r0 = load(k), r = r0 ? settled(r0) : null;
         let s0: S | null = null; try { s0 = subjectOf(k); } catch {}
         return { ...langView(r, c.status === "open"), ...tutorView(k, s0, r0, c.status === "open"), card: { id: c.id, run: c.run, node: c.node, title: c.title, status: c.status }, subject: { kind: "merge", room: c.id }, task: { id: c.run, title: run?.title ?? c.run }, pr: run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
           head: r?.head ?? run?.ctx.pr?.head ?? run?.ctx.head ?? null, base: r?.base ?? run?.ctx.baseCommit ?? null, open: c.status === "open", closed: c.status === "open" ? null : closedText(k, r), running: live.get(c.id) ?? null, offer: c.status === "open" ? offerOf(k) : null,
-          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, followUps: followView(r, c.status === "open" ? offerOf(k) : null), summary: this.summary(c),
+          progress: progressOf(k, r), actions: Object.entries(ROOM_ACTIONS).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: diffstatOf(s0, r), lesson: r?.lesson ?? null, followUps: followView(r, c.status === "open" ? offerOf(k) : null), summary: this.summary(c), archived: !!r?.archived,
           arrive: c.status === "open" ? arrivalOf(k, r, s0) : null };
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
       let s: S | null = null; try { s = subjectOf(k); } catch (e) { if (k.kind !== "pr" && k.kind !== "dir") throw e; }
       if (k.kind === "branch" && opened && !load(k)) save(k, fresh(k, s!));
-      if (opened) { if (!stats()[k.stat]?.openedAt) stat(k, { openedAt: new Date().toISOString() });
+      if (opened) { if (!stats()[k.stat]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); markRead(k);
         // re-entering a pull request's room reads it again on GitHub (in the background, at most once a minute)
         const pr = k.kind === "pr" ? load(k) : null; if (pr?.subject?.url && Date.now() - Date.parse(pr.pr?.attemptedAt ?? pr.pr?.checkedAt ?? "0") > PR_RECHECK_MS) void readPr(pr.subject.url).catch(() => {}); }
       const r0 = load(k), r = r0 ? settled(r0) : null, run = k.run ? engine.get(k.run) : null, open = k.open() && !!s, sub = r?.subject ?? (s ? subjectRecord(k, s, r) : { kind: k.kind, room: k.id });
@@ -1842,19 +1874,30 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: live.get(k.id) ?? null, offer: open ? offerOf(k) : null,
         notes: [...(r?.pr?.notes ?? [])].reverse().slice(0, 200).map((x) => ({ ...x, bot: isBot(x) })), progress: progressOf(k, r),
-        actions: Object.entries(actionsOf(k)).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: k.kind === "dir" ? null : diffstatOf(s, r), lesson: r?.lesson ?? null, followUps: followView(r, open ? offerOf(k) : null), summary: null,
+        actions: Object.entries(actionsOf(k)).filter(([id, v]) => v && (id !== "reviews" || !!r?.pr?.notes?.length)).map(([id, v]) => ({ id, ...v })), turns: r?.turns ?? [], board: r?.board ?? [], sources: r?.sources ?? [], illustrations: r?.illustrations ?? [], check: checkView(r?.check), diffstat: k.kind === "dir" ? null : diffstatOf(s, r), lesson: r?.lesson ?? null, followUps: followView(r, open ? offerOf(k) : null), summary: null, archived: !!r?.archived,
         // a directory room: the directory, pinned at its commit (no pull request, diff, check for new commits or moved head)
         dir: k.kind === "dir" && r?.dir ? { repository: r.dir.repository, ref: r.dir.ref, refKind: r.dir.refKind, sha: r.dir.sha, path: r.dir.path, private: r.dir.private, files: r.dir.files, bytes: r.dir.bytes, parts: r.dir.parts, truncated: r.dir.truncated, fetchedAt: r.dir.fetchedAt, url: r.subject?.url ?? null, readme: !!r.dir.readme } : null,
         arrive: open ? arrivalOf(k, r, s) : null };
     },
-    /** every review room on this machine (merge cards, branches, pull requests), open ones first, then the most recent */
+    /** every review room on this machine (merge cards, branches, pull requests), each with its zone, open ones first, then the most
+     *  recent: all of them, since the page searches this list. A room's time is its last answer's: a re-read of GitHub is not news */
     list() { const out: any[] = [], push = (id: string, file: string) => { try { const k = keyOf(id), r = load(k); if (!r) return; const st = statSync(file);
         const title = k.kind === "merge" ? (k.card?.title?.en ?? id) : k.kind === "branch" ? `Branch ${engine.get(k.run!)?.ctx.branch ?? id}` : k.kind === "dir" ? dirTitle(r).en : `Pull request #${r.subject?.number ?? ""}: ${r.pr?.title ?? ""}`;
-        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : title, open: k.open(), running: live.has(id), turns: r.turns.filter((t) => t.status === "done" && !t.studio).length, repository: r.subject?.repository ?? null, updatedAt: st.mtime.toISOString() }); } catch {} };
+        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : title, open: k.open(), running: live.has(id), turns: r.turns.filter((t) => t.status === "done" && !t.studio).length, repository: repositoryOf(k, r), zone: roomZone(zoneFacts(k, r)), updatedAt: r.turns.filter((t) => !t.studio).at(-1)?.ended ?? st.mtime.toISOString() }); } catch {} };
       try { for (const f of readdirSync(prDir)) if (/^PR-[0-9a-f]{12}-\d+\.json$/.test(f)) push(f.slice(0, -5), join(prDir, f)); } catch {}
       try { for (const f of readdirSync(dirDir)) if (/^DIR-[0-9a-f]{12}-[0-9a-f]{12}\.json$/.test(f)) push(f.slice(0, -5), join(dirDir, f)); } catch {}
       for (const run of engine.list()) { const d = join(engine.rdir(run.id), "review-room"); if (!existsSync(d)) continue; try { for (const f of readdirSync(d)) if (/^(SC-\d+|R-\d+)\.json$/.test(f)) push(f.slice(0, -5), join(d, f)); } catch {} }
-      return out.sort((a, b) => Number(b.open) - Number(a.open) || b.updatedAt.localeCompare(a.updatedAt)).slice(0, 60); },
+      return out.sort((a, b) => Number(b.open) - Number(a.open) || b.updatedAt.localeCompare(a.updatedAt)); },
+    /** The captain opened the list: the open pull requests read longest ago are read again in the background, one at a time and a few
+     *  per visit, so one merged or closed on GitHub moves to its zone without anyone entering its room. Archived rooms are left alone. */
+    sweep(rooms: { id: string; kind: string; open: boolean; zone: string }[]) { if (sweeping) return; const now = Date.now(), lastRead = (id: string) => Math.max(swept.get(id) ?? 0, Date.parse(load(keyOf(id))?.pr?.attemptedAt ?? "0") || 0);
+      const due = rooms.filter((x) => x.kind === "pr" && x.open && x.zone !== "archived" && now - lastRead(x.id) > SWEEP_MS).sort((a, b) => lastRead(a.id) - lastRead(b.id)).slice(0, SWEEP_ROOMS); if (!due.length) return;
+      sweeping = true; void (async () => { for (const x of due) { swept.set(x.id, Date.now()); try { await readPr(String(load(keyOf(x.id))?.subject?.url ?? "")); } catch {} } })().finally(() => { sweeping = false; }); },
+    /** Archive a room or restore it (the captain, on this Mac): it moves between 封存 and its own zone, and nothing else about it
+     *  changes. A room with no file yet (a merge card's, before any turn) gets one, or the list could not show it. */
+    archive(id: string, on: boolean, by: string) { const k = keyOf(id); let room = load(k); if (!room) { if (!on) return { archived: false, zone: null, view: this.view(id) }; room = fresh(k, subjectOf(k)); }
+      if (on) room.archived = { by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() }; else delete room.archived;
+      save(k, room); notify(k); return { archived: on, zone: roomZone(zoneFacts(k, room)), view: this.view(id) }; },
     /** Paste a pull request's URL: Studio reads it (GET) and its head's commits (into its own cache), and opens its room. */
     /** a pasted pull request: its room, and its lesson started by itself only when the paste box said so (auto: true, plan: the
      *  fingerprint of what it showed) and the plan is still that one; otherwise the room only, with the new plan when it changed */
@@ -2032,10 +2075,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (room) startedOver.add(room); cache.delete(k.file); resetGen.set(k.id, (resetGen.get(k.id) ?? 0) + 1); statMemo.clear(); saving.delete(k.id); refreshing.delete(k.id);
       // a pull request's room is its file: a fresh one now, from the pull request as Studio last read it (its link to the Library kept)
       if ((k.kind === "pr" || k.kind === "dir") && room) save(k, { schema: 1, run: room.run, card: k.id, node: room.node, head: room.head, base: room.base, turns: [], board: [], sources: [], check: { questions: [] },
-        subject: room.subject, pr: room.pr, dir: room.dir, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished, ...(room.tutor ? { tutor: room.tutor } : {}),
+        subject: room.subject, pr: room.pr, dir: room.dir, heads: room.heads, seen: room.seen, host: room.host, library: room.library, finished: room.finished, ...(room.tutor ? { tutor: room.tutor } : {}), ...(room.archived ? { archived: room.archived } : {}),
         ...(room.autoTeach != null ? { autoTeach: room.autoTeach } : {}), ...(room.autoTaught?.length ? { autoTaught: room.autoTaught.map(({ skipped: _s, ...x }) => x) } : {}) });
       // a merge card's or a branch's room keeps its switch, the heads it already analysed by itself (a reset never pays twice) and its tutor
-      else if (room && s && (room.autoTeach != null || room.autoTaught?.length || room.tutor)) save(k, { ...fresh(k, s), ...(room.tutor ? { tutor: room.tutor } : {}), ...(room.autoTeach != null ? { autoTeach: room.autoTeach } : {}), ...(room.autoTaught?.length ? { autoTaught: room.autoTaught.map(({ skipped: _s, ...x }) => x) } : {}) });
+      else if (room && s && (room.autoTeach != null || room.autoTaught?.length || room.tutor || room.archived)) save(k, { ...fresh(k, s), ...(room.tutor ? { tutor: room.tutor } : {}), ...(room.archived ? { archived: room.archived } : {}), ...(room.autoTeach != null ? { autoTeach: room.autoTeach } : {}), ...(room.autoTaught?.length ? { autoTaught: room.autoTaught.map(({ skipped: _s, ...x }) => x) } : {}) });
       const run = s?.run ? engine.get(s.run.id) : null, node = run?.def.nodes.find((n: any) => n.id === s!.node?.id);
       const entry = { schema: 1, card: k.id, by: String(by ?? "captain").slice(0, 80), at, moved };
       if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-reset", { head: s!.head, data: entry } as any);
