@@ -446,7 +446,7 @@ try {
   { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.addInitScript(() => { window.__opened = []; window.open = (u, t, f) => { window.__opened.push([u, t, f]); return null; }; });
     let sc50Turns = 2;
-    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [{ id: "SC-50", kind: "merge", title: "Merge: Add percent", titleZh: "合併：新增 percent", open: true, running: false, turns: sc50Turns, repository: null, updatedAt: "2026-10-28T10:00:00Z" }, { id: "PR-0123456789ab-7", kind: "pr", title: "Pull request #7: Shout", open: false, running: false, turns: 1, repository: "fixture/project", updatedAt: "2026-10-28T12:00:00Z" }] } }));
+    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [{ id: "SC-50", kind: "merge", title: "Merge: Add percent", titleZh: "合併：新增 percent", open: true, running: false, turns: sc50Turns, repository: null, zone: "waiting", updatedAt: "2026-10-28T10:00:00Z" }, { id: "PR-0123456789ab-7", kind: "pr", title: "Pull request #7: Shout", open: false, running: false, turns: 1, repository: "fixture/project", zone: "concluded", updatedAt: "2026-10-28T12:00:00Z" }] } }));
     await p.goto(`${base}/#/board`); await p.waitForFunction(() => S.route?.name === "board");
     const navItem = await p.evaluate(() => { const b = document.querySelector('.nav-item[data-view="room"]'); return b && { inLabs: !!b.closest(".nav-labs"), hidden: b.hidden, text: b.textContent }; });
     ok(navItem && !navItem.inLabs && !navItem.hidden && /Review room/.test(navItem.text), "the sidebar has a Review room item of its own (on the rail too when it is folded)", JSON.stringify(navItem));
@@ -457,6 +457,14 @@ try {
     ok(await p.$eval("[data-room-home]", (e) => e.getAttribute("href")).catch(() => null) === "#/room" && /Review room/.test(await p.$eval(".rr-crumb", (e) => e.textContent).catch(() => "")), "the room's header says where you are: Review room › the room, the first a link to the list");
     const inRoom = await p.evaluate(() => ({ focus: document.body.dataset.focus ?? null, crumb: !!document.querySelector("[data-room-home]")?.getClientRects().length }));
     ok(inRoom.focus === "room" && inRoom.crumb, "a loaded room is a focus page (body[data-focus=room]) and its way back to the list stays in view", JSON.stringify(inRoom));
+    // restoring is not arriving: the view it returns would start an analysis the captain was never shown; nothing starts by itself
+    { const arrives = []; let next = { archived: true, zone: "archived", view: { ...ROOM, archived: true, arrive: null } }; await p.route(/\/api\/review-room\/SC-50\/arrive$/, (r) => { arrives.push(1); r.fulfill({ json: {} }); }); await p.route(/\/api\/review-room\/SC-50\/archive$/, (r) => r.fulfill({ json: next }));
+      await p.click('[data-room-archive="SC-50"]'); await p.waitForSelector("[data-room-archived]"); next = { archived: false, zone: "waiting", view: { ...ROOM, archived: false, arrive: { plan: "plan-1", auto: true, provider: "codex", model: "gpt-6", paid: true } } };
+      // the room's own live read lands before the answer to the restore: that view's plan starts nothing either
+      let release = () => {}; const held = new Promise((r) => { release = r; }), planned = /\/api\/review-room\/SC-50(\?open=1)?$/; await p.unroute(/\/api\/review-room\/SC-50\/archive$/);
+      await p.route(/\/api\/review-room\/SC-50\/archive$/, async (r) => { await held; await r.fulfill({ json: next }); }); await p.route(planned, (r) => r.fulfill({ json: next.view }));
+      await p.click('[data-room-restore="SC-50"]'); await p.waitForTimeout(100); await p.evaluate(() => dispatchEvent(new Event("hashchange"))); await p.waitForTimeout(300); release(); await p.waitForSelector('[data-room-archive="SC-50"]'); await p.waitForTimeout(400);
+      ok(!arrives.length, "restoring in a room's header starts no paid analysis", JSON.stringify(arrives)); await p.unroute(planned); await p.unroute(/\/api\/review-room\/SC-50\/arrive$/); await p.unroute(/\/api\/review-room\/SC-50\/archive$/); }
     sc50Turns = 3; await p.goBack(); await p.waitForFunction(() => S.route?.name === "room" && !S.route.arg); const onList = await p.evaluate(() => document.body.dataset.focus ?? null);
     const fresh = await p.waitForFunction(() => /3 answers/.test(document.querySelector("[data-room-list]")?.textContent || ""), null, { timeout: 5000 }).then(() => true, () => false);
     ok(fresh, "coming back to the room list reads it again: a room's new answers show", await p.$eval("[data-room-list]", (e) => e.textContent).catch(() => ""));
