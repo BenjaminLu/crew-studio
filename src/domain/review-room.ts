@@ -1768,7 +1768,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       head: k.kind === "pr" ? room?.pr?.head ?? null : k.kind === "branch" ? run?.ctx.taintedReady?.head ?? run?.ctx.head ?? null : run?.ctx.pr?.head ?? run?.ctx.head ?? null,
       openedAt: null, turns: 0, check: { asked: 0, graded: 0, correct: 0 }, ...prev, ...patch, updatedAt: new Date().toISOString() };
     statsMemo = all; mkdirSync(o.dataDir, { recursive: true }); writeFileSync(statsFile + ".tmp", JSON.stringify(all, null, 1)); renameSync(statsFile + ".tmp", statsFile); } catch {} };
-  const markRead = (k: Key) => { const r = load(k); if (r && unread(r)) { r.read = new Date().toISOString(); save(k, r); } };
+  const markRead = (k: Key) => { const r = load(k); if (r && unread(r)) { r.read = new Date().toISOString(); save(k, r); notify(k); } };
   const notify = (k: Key, turn?: number) => { try { if (k.card) engine.deps.send("scard", { id: k.id, run: k.run, status: engine.cards.get(k.id)?.status }); engine.deps.send("review-room", { card: k.id, run: k.run, turn: turn ?? null }); } catch {} };
 
   /** one scene's narration by its vendor: generated once, then served from the room's folder */
@@ -1883,7 +1883,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
      *  recent: all of them, since the page searches this list. A room's time is its last answer's: a re-read or an archive is not news */
     list() { const out: any[] = [], push = (id: string, file: string) => { try { const k = keyOf(id), r = load(k); if (!r) return; const st = statSync(file);
         const title = k.kind === "merge" ? (k.card?.title?.en ?? id) : k.kind === "branch" ? `Branch ${engine.get(k.run!)?.ctx.branch ?? id}` : k.kind === "dir" ? dirTitle(r).en : `Pull request #${r.subject?.number ?? ""}: ${r.pr?.title ?? ""}`;
-        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : title, open: k.open(), running: live.has(id), turns: r.turns.filter((t) => t.status === "done" && !t.studio).length, repository: repositoryOf(k, r), zone: roomZone(zoneFacts(k, r)), updatedAt: r.turns.filter((t) => !t.studio).at(-1)?.ended ?? st.mtime.toISOString() }); } catch {} };
+        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : title, open: k.open(), running: live.has(id), turns: r.turns.filter((t) => t.status === "done" && !t.studio).length, repository: repositoryOf(k, r), zone: roomZone(zoneFacts(k, r)), updatedAt: r.turns.filter((t) => !t.studio && t.ended).at(-1)?.ended ?? st.mtime.toISOString() }); } catch {} };
       try { for (const f of readdirSync(prDir)) if (/^PR-[0-9a-f]{12}-\d+\.json$/.test(f)) push(f.slice(0, -5), join(prDir, f)); } catch {}
       try { for (const f of readdirSync(dirDir)) if (/^DIR-[0-9a-f]{12}-[0-9a-f]{12}\.json$/.test(f)) push(f.slice(0, -5), join(dirDir, f)); } catch {}
       for (const run of engine.list()) { const d = join(engine.rdir(run.id), "review-room"); if (!existsSync(d)) continue; try { for (const f of readdirSync(d)) if (/^(SC-\d+|R-\d+)\.json$/.test(f)) push(f.slice(0, -5), join(d, f)); } catch {} }

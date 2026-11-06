@@ -61,12 +61,15 @@ ok(zone(closed) === "concluded", "a closed pull request is concluded even with n
 ok(zone(inTurn) === "waiting", "a turn left running by a Studio that stopped is not in progress: it waits for the captain", zone(inTurn));
 const reopened = pr(9, { turns: [turn(1)], read: "2026-11-01T11:00:00.000Z", finished: { at: "2026-11-01T11:00:00.000Z", reason: "The pull request was closed" } });
 const stalePr = pr(10, { turns: [turn(1)], read: "2026-11-01T11:00:00.000Z" }, { stale: { head: "f".repeat(40), error: "fetch failed", at: recent() } });
+ok(room.list().find((x: any) => x.id === inTurn)?.updatedAt === turn(1).ended, "a turn with no end yet leaves a room's time at its last answer");
 ok(zone(stalePr) === "waiting", "GitHub shows newer commits Studio could not fetch: they wait for the captain all the same", zone(stalePr));
 ok(zone(reopened) === "reviewing", "a pull request reopened on GitHub leaves 已結論: its state decides, not the old `finished` mark", zone(reopened));
 
 // ---------- reading a room is what clears 等我看 ----------
 room.view(answered); ok(zone(answered) === "waiting", "a read that is not the captain opening the page changes nothing");
-room.view(answered, true); ok(zone(answered) === "reviewing", "the captain opening the room reads its answer", zone(answered));
+{ const said: string[] = [], send = E.deps.send; E.deps.send = (t: string, d: any) => { if (t === "review-room") said.push(d.card); return (send as any)(t, d); }; room.view(answered, true); room.view(answered, true); E.deps.send = send;
+  ok(zone(answered) === "reviewing", "the captain opening the room reads its answer", zone(answered));
+  ok(JSON.stringify(said) === JSON.stringify([answered]), "reading it tells a list open in another window, once", JSON.stringify(said)); }
 { const stored = JSON.parse(readFileSync(join(prDir, `${answered}.json`), "utf8")); stored.turns.push(turn(2, { ended: new Date(Date.now() + 60_000).toISOString() })); writeFileSync(join(prDir, `${answered}.json`), JSON.stringify(stored)); room = install();
   ok(zone(answered) === "waiting", "a newer answer waits for the captain again, and the read mark outlives a restart", zone(answered)); }
 
