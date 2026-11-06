@@ -26,6 +26,7 @@ const page = (title, sub, ...kids) => h("div", { class: "page rr-page" }, h("div
 /** a saved room's snapshot as the room reads it: its own view, read-only (no prompt, no paid action), citations resolved inside */
 const snapRoom = (id, snap) => ({ ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null, tutors: [], translate: null, arrive: null,
   snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, cites: snap.cites || {}, cost: snap.cost, tutors: snap.tutors, subject: snap.subject } });
+const readLater = new Set();
 async function load(id, open = false) {
   if (RR.loading.has(id)) return; RR.loading.add(id); const was = RR.rooms.get(id)?.running;
   try { const lib = /^lib:(room-[a-z0-9-]+)(?:@(\d+))?$/.exec(id);
@@ -33,7 +34,7 @@ async function load(id, open = false) {
   catch (e) { if (!RR.rooms.has(id)) RR.rooms.set(id, { error: e.message }); else RR.err.set(id, e.message); }
   finally { RR.loading.delete(id); redraw(id); schedule();
     // an answer that arrives with the captain on the room is read: it does not wait for them on the room list
-    if (was != null && RR.rooms.get(id)?.running == null && onRoom(id) && !document.hidden) load(id, true); }
+    if (was != null && RR.rooms.get(id)?.running == null && onRoom(id)) { if (document.hidden) readLater.add(id); else load(id, true); } }
 }
 // while a turn runs, the page follows it (the live stream says when it ends; a slow poll covers a missed event)
 
@@ -41,8 +42,8 @@ function schedule() { clearTimeout(RR.poll); RR.poll = null; const id = S.route?
 window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card);
   // on the room list: a room changed (a turn ended, an archive): the list is read again, once for a burst
   if (RR.list && onList()) { clearTimeout(RR.listPoll); RR.listPoll = setTimeout(() => { if (onList()) readList(); }, 800); } });
-// back on a room whose answer came while the window was hidden: now it is read
-document.addEventListener("visibilitychange", () => { const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (!document.hidden && r && !r.snapshot && !r.error && r.running == null) load(id, true); });
+// back on a room whose answer came while the window was hidden: now it is read. Only then: reading as an arrival re-reads GitHub
+document.addEventListener("visibilitychange", () => { const id = S.route?.name === "room" ? S.route.arg : null; if (!document.hidden && id && readLater.delete(id)) load(id, true); });
 
 // ---------- the board's flowcharts: Studio draws mermaid's flowchart subset itself (no library, no markup) ----------
 function parseFlow(code) {
@@ -1655,9 +1656,9 @@ function archiveBtn(x) { if (BOARD.state.viewer === "phone" || window.crewRemote
   return h("button", { type: "button", class: "rr-back rr-rowact", [off ? "data-room-restore" : "data-room-archive"]: x.id, disabled: RR.posting.has(`${x.id}/archive`), onclick: () => setArchived(x.id, !off) }, off ? T("Restore", "還原") : T("Archive", "封存")); }
 async function setArchived(id, on) { RR.posting.add(`${id}/archive`); rerender();
   try { const out = await postJ(`/api/review-room/${enc(id)}/archive`, { archived: on });
-    // restoring is not arriving: the captain was never shown this plan, so nothing paid starts by itself ("Teach me" still does)
-    if (out?.view?.arrive?.plan) RR.arrived.add(`${id}@${out.view.head}@${out.view.arrive.plan}`); if (out?.view?.card) RR.rooms.set(id, out.view);
-    if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; readList(); } }
+    // restoring in the room is not arriving: the captain was never shown this plan, so nothing paid starts by itself ("Teach me" still does)
+    if (onRoom(id) && out?.view?.arrive?.plan) RR.arrived.add(`${id}@${out.view.head}@${out.view.arrive.plan}`); if (out?.view?.card) RR.rooms.set(id, out.view);
+    if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; if (onList()) readList(); else RR.list.fresh = false; } }
   catch (e) { if (onRoom(id)) RR.err.set(id, e.message); else if (RR.list) RR.list.err = e.message; }
   finally { RR.posting.delete(`${id}/archive`); rerender(); } }
 const roomRow = (x) => h("li", { "data-room-row": x.id },
@@ -1720,7 +1721,7 @@ routes.room = (arg) => {
  *  (POST …/arrive {plan}); Studio starts it only on that very plan. Once per room, head and plan on this page; a phone never. */
 function arriveIn(id, r) {
   // only this Mac's captain: who is looking is known once the server said so (GET /api/remote/me; the board redraws then)
-  const a = r?.arrive; if (!a?.plan || a.error || r.snapshot || !r.open || r.running != null || !onRoom(id) || BOARD.state.viewer !== "desktop") return;
+  const a = r?.arrive; if (RR.posting.has(`${id}/archive`) || !a?.plan || a.error || r.snapshot || !r.open || r.running != null || !onRoom(id) || BOARD.state.viewer !== "desktop") return;
   const key = `${id}@${r.head}@${a.plan}`; if (RR.arrived.has(key)) return; RR.arrived.add(key);
   postJ(`/api/review-room/${enc(id)}/arrive`, { lang: uiLang(), plan: a.plan }).then((out) => { if (out?.room?.card) RR.rooms.set(id, out.room);
       // what arriving starts changed since the page read it (a new tutor, pictures, a host): nothing started, and nothing is sent

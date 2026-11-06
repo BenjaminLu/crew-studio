@@ -16,6 +16,7 @@ const facts = (o: any = {}) => ({ archived: false, running: false, concluded: fa
 ok(JSON.stringify(ROOM_ZONES) === '["waiting","reviewing","concluded","archived"]', "four zones, in the order they show");
 ok(roomZone(facts({ waiting: true })) === "waiting" && roomZone(facts()) === "reviewing" && roomZone(facts({ concluded: true })) === "concluded" && roomZone(facts({ running: true, waiting: true })) === "reviewing",
   "waiting for the captain, nothing to do, concluded; a running turn is in review even when the captain has a card to answer");
+ok(roomZone(facts({ running: true, concluded: true })) === "reviewing", "a turn still running on a concluded room is in review until it ends");
 ok(roomZone(facts({ archived: true, running: true, concluded: true, waiting: true })) === "archived", "archived wins over everything");
 
 // ---------- fixtures: a Task at a merge card, a connected project, rooms as files ----------
@@ -114,6 +115,7 @@ room = install(); ok(zone(archivedPr) === "archived" && JSON.parse(readFileSync(
   const branch = join(E.rdir(h2.id), "review-room", `${h2.id}.json`); writeFileSync(branch, JSON.stringify({ ...base(h2.id), run: h2.id, node: "review", turns: [turn(1)], read: "2026-11-01T11:00:00.000Z" })); room = install();
   ok(zone(h2.id) === "reviewing", "a Task's branch, read, while its Task runs: in review", zone(h2.id));
   ok(room.list().find((x: any) => x.id === h2.id)?.repository === REPO, "a branch's room is listed under its Task's repository");
+  { const ctx = E.get(h2.id)!.ctx, was = ctx.pr; ctx.pr = { ...was, url: "https://github.com/other/repo/pull/2" }; ok(room.list().find((x: any) => x.id === h2.id)?.repository === "other/repo", "its Task's pull request says first"); ctx.pr = was; }
   { const ctx = E.get(h2.id)!.ctx, was = ctx.pr; ctx.pr = null; ok(room.list().find((x: any) => x.id === h2.id)?.repository === REPO, "with no pull request, its project's repository says"); ctx.pr = was; }
   { const ctx = E.get(h2.id)!.ctx; ctx.head = BASE; ok(zone(h2.id) === "waiting", "the branch moved past its last answer: it waits for the captain", zone(h2.id)); ctx.head = HEAD; }
   await E.cancel(h2.id, "cleanup"); await until(() => ["succeeded", "failed", "cancelled"].includes(E.get(h2.id)!.status), 20000);

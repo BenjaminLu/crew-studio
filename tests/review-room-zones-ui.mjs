@@ -58,7 +58,7 @@ try {
     await p.click('[data-room-zone="archived"] summary'); await p.waitForFunction((id) => document.querySelector(`[data-room-link="${id}"]`)?.checkVisibility(), reviewing);
     await p.click(`[data-room-restore="${reviewing}"]`); await p.waitForFunction((id) => document.querySelector(`[data-room-row="${id}"]`)?.closest("[data-room-zone]")?.dataset.roomZone === "reviewing", reviewing);
     ok(await shows(p, reviewing) && await p.$eval('[data-room-zone="archived"]', (e) => e.open), "restoring brings it back to its zone, and 封存 stays open as the captain left it");
-    await p.waitForTimeout(400); await p.click('[data-room-zone="archived"] summary'); // the list has been read again by now
+    await p.waitForTimeout(400); await p.click('[data-room-zone="archived"] summary'); await p.waitForTimeout(150); // the list has been read again by now; toggle has fired
 
     // ---- search ----
     await search(p, "legacy CRON");
@@ -83,6 +83,8 @@ try {
       ok(asked.length && !asked.some((u) => u.endsWith("?open=1")), "a turn that ends while the window is hidden is not marked read", JSON.stringify(asked));
       await p.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); });
       ok(await (async () => { for (let i = 0; i < 40 && !asked.some((u) => u.endsWith("?open=1")); i++) await p.waitForTimeout(100); return asked.some((u) => u.endsWith("?open=1")); })(), "coming back to the window reads the answer that came meanwhile", JSON.stringify(asked));
+      asked.length = 0; await p.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); await p.waitForTimeout(300);
+      ok(!asked.some((u) => u.endsWith("?open=1")), "coming back with nothing new reads nothing: that read would go to GitHub", JSON.stringify(asked));
       running = 1; await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-room-zones]"); await p.click(`[data-room-link="${reviewing}"]`); await p.waitForSelector("[data-board]"); await p.waitForTimeout(300);
       asked.length = 0; running = null;
       ok(await (async () => { for (let i = 0; i < 40 && !asked.some((u) => u.endsWith("?open=1")); i++) await p.waitForTimeout(100); return asked.some((u) => u.endsWith("?open=1")); })(), "a turn that ends with the captain on the room reads it as an arrival (?open=1), so it does not wait for them on the list", JSON.stringify(asked));
@@ -93,6 +95,9 @@ try {
     await p.click(`[data-room-archive="${waiting}"]`); await p.waitForSelector("[data-room-archived]"); await p.waitForSelector(`[data-room-restore="${waiting}"]`);
     ok(true, "a room archives from its own header, says so, and offers Restore there");
     await p.click(`[data-room-restore="${waiting}"]`); await p.waitForSelector(`[data-room-archive="${waiting}"]`); ok(!await p.$("[data-room-archived]"), "restored from the header, the mark goes");
+    // archived in the room, changed elsewhere, back on the list: the list is read again
+    await p.click(`[data-room-archive="${waiting}"]`); await p.waitForSelector("[data-room-archived]"); await post(waiting, false); await p.evaluate(() => { location.hash = "#/room"; });
+    ok(await p.waitForFunction((id) => document.querySelector(`[data-room-row="${id}"]`)?.closest("[data-room-zone]")?.dataset.roomZone === "waiting", waiting, { timeout: 5000 }).then(() => true, () => false), "coming back from a room reads the list again, after an archive in the room too");
     await ctx.close(); }
 
   { const { p, ctx } = await open("zh-TW", 1440);
