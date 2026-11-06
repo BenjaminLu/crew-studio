@@ -55,7 +55,7 @@ try {
     await p.goto(`${base}/session?t=${encodeURIComponent(process.env.CREW_SESSION_TOKEN)}`); await p.goto(`${base}/#/room`); await p.reload(); await p.waitForSelector("[data-room-zones]", { timeout: 20000 });
     ok(await zoneOf(p, reviewing) === "archived", "after a restart of the server the room is still in 封存");
 
-    await p.click('[data-room-zone="archived"] summary'); await p.waitForFunction((id) => document.querySelector(`[data-room-link="${id}"]`)?.checkVisibility(), reviewing);
+    await p.click('[data-room-zone="archived"] summary'); await p.waitForFunction((id) => document.querySelector(`[data-room-link="${id}"]`)?.checkVisibility(), reviewing); await p.waitForTimeout(150); // toggle has fired: the page remembers 封存 is open
     await p.click(`[data-room-restore="${reviewing}"]`); await p.waitForFunction((id) => document.querySelector(`[data-room-row="${id}"]`)?.closest("[data-room-zone]")?.dataset.roomZone === "reviewing", reviewing);
     ok(await shows(p, reviewing) && await p.$eval('[data-room-zone="archived"]', (e) => e.open), "restoring brings it back to its zone, and 封存 stays open as the captain left it");
     await p.waitForTimeout(400); await p.click('[data-room-zone="archived"] summary'); await p.waitForTimeout(150); // the list has been read again by now; toggle has fired
