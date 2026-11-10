@@ -14,7 +14,7 @@
 // any local program of that user can read).
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { sessionCookieName } from "../src/csrf";
@@ -27,6 +27,15 @@ if (role === "take" && process.platform !== "darwin") { console.error("only a Ma
 const PORT = Number(opt("port", "4310")), PEER_PORT = Number(opt("peer-port", "7417")), BIND = opt("bind", ""), DATA = resolve(opt("data", join(homedir(), "crew-lan-trial")));
 const TO_PORT = Number(opt("to-port", "7417")), PROVIDER = opt("provider", "codex"), ROUNDS = Number(opt("rounds", "6")), TO = opt("to", ""), NAME = opt("name", role === "take" ? "Mac" : "Desktop");
 if (role === "dispatch" && !TO) { console.error("dispatch needs --to <the Mac's LAN IP> (the take side prints it)"); process.exit(2); }
+
+// Never the live board: not its port, not its data dir, not the default data dir.
+const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
+const liveRecord = join(homedir(), ".crew-studio", "releases", "live.json");
+const live = existsSync(liveRecord) ? (() => { try { return JSON.parse(readFileSync(liveRecord, "utf8"))?.live ?? null; } catch { return null; } })() : null;
+const livePorts = new Set([4210, ...(live?.port ? [Number(live.port)] : [])]);
+const liveData = new Set([join(homedir(), ".crew-studio", "data"), ...(live?.data ? [String(live.data)] : [])].map(real));
+if (livePorts.has(PORT)) { console.error(`--port ${PORT} is the live board's port; pick another (default 4310)`); process.exit(2); }
+if (liveData.has(real(DATA))) { console.error(`--data ${DATA} is a live board data dir; pick another (default ~/crew-lan-trial)`); process.exit(2); }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (s: string) => console.log(s);
@@ -45,6 +54,9 @@ studio.stdout.pipe(log); studio.stderr.pipe(log);
 let exited = false; studio.on("exit", (c) => { exited = true; say(`\nStudio exited (${c}); its log: ${logFile}`); });
 const stop = () => { if (!exited) studio.kill("SIGTERM"); };
 process.on("SIGINT", () => { stop(); process.exit(130); });
+process.on("SIGTERM", () => { stop(); process.exit(143); });
+process.on("SIGHUP", () => { stop(); process.exit(129); });
+process.on("exit", stop);
 
 async function api(path: string, body?: unknown): Promise<{ status: number; body: any }> {
   const headers: Record<string, string> = { "content-type": "application/json", cookie: `${sessionCookieName(TOKEN)}=${TOKEN}`, "sec-fetch-site": "same-origin", ...(body === undefined ? {} : { origin: BASE }) };
@@ -74,7 +86,7 @@ async function boot() {
   const v = await view();
   say(`this board: ${v.me.name} · fingerprint ${v.me.fingerprint} · identity in ${v.me.store}${v.me.warning ? ` (${v.me.warning.en})` : ""}`);
   say(`peer listener: ${v.listening ? `${v.host}:${PEER_PORT}` : "NOT listening"}`);
-  if (!v.listening) throw new Error("the peer listener did not start; pass --bind <this machine's LAN IP>");
+  if (!v.listening) throw new Error(`the peer listener did not start on port ${PEER_PORT}. If this Mac's live board already has board-to-board work on, it holds that port: pass --peer-port <another port> (and --to-port with it on the other machine). Otherwise pass --bind <this machine's LAN IP>.`);
   return v;
 }
 
