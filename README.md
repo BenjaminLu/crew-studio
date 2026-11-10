@@ -34,6 +34,8 @@ bun scripts/live-release.ts status                                # "recorded pi
 bun scripts/live-release.ts deploy --ref <live SHA> --no-fetch    # reuses that release: verifies it, starts it, opens the Board
 ```
 
+If `status` lists Tasks in flight after a restart, they are not running: nothing updated their `run.json` while Studio was down, and deploy refuses until you check them and add `--force`.
+
 Do not run `bun run launch` in the dev checkout to bring the live board back: while the live release is down, the checkout's Studio can take the live port and data dir with the checkout's code.
 
 What you see first:
