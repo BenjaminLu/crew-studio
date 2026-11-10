@@ -144,7 +144,8 @@ export const shortSummary = (input: unknown, n = 160): string => {
 };
 
 export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean;signal?:AbortSignal;
- /** a Studio gate-repair turn: the ref its queued item carried (never parsed from text) */ repair?:{draft:string;nonce:string}|null}):Promise<unknown>};
+ /** a Studio gate-repair turn: the ref its queued item carried (never parsed from text) */ repair?:{draft:string;nonce:string}|null;
+ /** an external CLI grant's start_run (src/cli-grants.ts): the proposal carries the grant's id in its `by`, never a captain decision */ origin?:{grant:string}|null}):Promise<unknown>};
 
 /** Only trusted source code constructs public recovery guidance; arbitrary exceptions stay private. */
 export type NativeFailure={schema:1;code:string;reason:{en:string;'zh-TW':string};nextAction:string;retryable:boolean;correlationId?:string;diagnosticRecorded?:boolean};

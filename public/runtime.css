@@ -318,3 +318,5 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 /* the Task page's intent section: the captain's full request, under the short title */
 .rt-intent h3 { margin: 0 0 6px; }
 .rt-intent-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; color: var(--text); max-height: 16em; overflow-y: auto; }
+/* a card of a run an external CLI grant proposed (src/cli-grants.ts): where it came from, and that it is answered here */
+.cc-origin{font-size:12px;font-weight:600;color:var(--warn);padding:4px 0}

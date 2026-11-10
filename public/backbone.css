@@ -44,3 +44,12 @@
 .nav-labs-h:hover{background:var(--surface-2);color:var(--text)}
 .nav-labs-body{display:flex;flex-direction:column;gap:2px}
 @media(max-width:760px){.nav-labs{align-items:flex-start}.nav-labs-h{display:flex;white-space:nowrap}.nav-labs-body{flex-direction:row}}
+/* external CLI grants (Settings): issue form, each grant with its copy-able MCP command and revoke */
+.bb-grants{display:grid;gap:10px;margin-top:12px}
+.bb-grant-form{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+.bb-grant-form label{display:grid;gap:2px}
+.bb-grant-list{display:grid;gap:8px}
+.bb-grant{display:grid;gap:6px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
+.bb-grant.st-revoked,.bb-grant.st-expired{opacity:.7}
+.bb-grant-h{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bb-grant-cmd{margin:0;padding:8px;border-radius:6px;background:var(--surface-3);overflow-x:auto;white-space:pre;font-size:12px;user-select:all}

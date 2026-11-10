@@ -107,7 +107,43 @@ routes.settings = () => page(T("Settings", "設定"), T("Language, Doctor, keys 
     h("a", { class: "bb-set", href: "#/roadmap" }, icon("target"), h("span", {}, h("b", {}, T("Roadmap", "路線圖")), h("span", { class: "faint" }, T("What is planned next, by milestone.", "接下來的規劃，依里程碑。")))),
     h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "labsToggle", checked: labsOn(), onchange: (e) => { store.set("crew.labs", e.target.checked ? "1" : null); showLabs(); } }),
       h("span", {}, h("b", {}, T("Show labs", "顯示實驗功能")), h("span", { class: "faint" }, T("Adds the planned pages to the sidebar. They work, but they are not the backbone.", "把規劃中的頁面加回側邊欄；可以用，但不是主幹功能。"))))),
-  rulesEditor());
+  cliGrants(), rulesEditor());
+// External CLI grants (docs/units/cli-mcp-grant.md): the captain lets an agent CLI they opened themselves start and
+// follow runs in one project over MCP. Issued and revoked here only (this Mac's page session); the CLI reaches four tools
+// and none of them answers a card, so every decision stays on the board.
+function cliGrants() {
+  const box = h("section", { class: "card x-pad bb-grants", id: "cliGrants", "data-cli-grants": "1" });
+  const req = async (u, b) => { const r = await fetch(u, b === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`); return j; };
+  const TTL = { "1h": T("1 hour", "1 小時"), "8h": T("8 hours", "8 小時"), eod: T("Until the end of today", "到今天結束") };
+  const STATE = { active: T("active", "有效"), expired: T("expired", "已過期"), revoked: T("revoked", "已撤銷") };
+  const when = (iso) => iso ? new Date(iso).toLocaleString(document.documentElement.lang || undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  let data = null, fresh = null;
+  const draw = () => {
+    const projects = data?.projects ?? [], grants = data?.grants ?? [];
+    const project = h("select", { id: "grantProject", "aria-label": T("Project", "專案") }, projects.map((p) => h("option", { value: p.id }, p.name || p.id)));
+    const ttl = h("select", { id: "grantTtl", "aria-label": T("Expires", "有效期") }, (data?.ttls ?? ["8h", "1h", "eod"]).map((k) => h("option", { value: k, selected: k === "8h" || null }, TTL[k] ?? k)));
+    const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: !projects.length || null, onclick: async () => { issue.disabled = true;
+      try { fresh = (await req("/api/cli-grants", { project: project.value, ttl: ttl.value })).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
+    const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
+    box.replaceChildren(
+      h("h2", { style: "margin:0;font-size:16px" }, T("External CLI grants", "外部 CLI 授權")),
+      h("p", { class: "faint", style: "margin:4px 0 10px" }, T("Let a claude or codex you opened yourself list workflows, start runs (each waits for your approval), and read progress, cards and results, in one project. Approving cards, staffing and merging stay here. The token goes into a 0600 file, never on a command line.",
+        "讓你自己開的 claude 或 codex 在一個專案裡列出 workflow、發起 run（每個都等你核准）、讀進度、卡片和結果。核准卡片、staffing、merge 都只能在這裡做。token 寫進 0600 檔案，不出現在指令列。")),
+      h("div", { class: "bb-grant-form" }, h("label", {}, h("span", { class: "faint" }, T("Project", "專案")), project), h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
+        projects.length ? null : h("span", { class: "faint" }, T("Register a project first.", "請先登錄專案。"))),
+      grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
+        h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
+          h("span", { class: "faint" }, `${g.project} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)} · ${T(`${g.runs.length} runs`, `${g.runs.length} 個 run`)}`)),
+        g.state === "active" && g.claudeMcpAdd ? [h("span", { class: "faint" }, T("Add Studio's MCP in your terminal:", "在 terminal 加上 Studio 的 MCP：")),
+          h("pre", { class: "bb-grant-cmd mono", "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) }, g.claudeMcpAdd),
+          h("div", { class: "actions" }, h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(g.claudeMcpAdd) }, T("Copy command", "複製指令")),
+            h("button", { class: "btn danger", "data-grant-revoke": g.id, onclick: async () => { try { await req(`/api/cli-grants/${g.id}/revoke`, {}); await load(); } catch (e) { toast(String(e.message || e)); } } }, T("Revoke", "撤銷授權")))] : null)))
+        : h("div", { class: "empty" }, T("No external CLI grant yet.", "還沒有外部 CLI 授權。")));
+  };
+  const load = async () => { try { data = await req("/api/cli-grants"); } catch (e) { data = { grants: [], projects: [], error: String(e.message || e) }; } draw(); };
+  draw(); void load();
+  return box;
+}
 // The captain's operating rules: one Studio-wide text and one per project, sent to every
 // worker, reviewer, judge, media job and Firstmate. Edited here only (this Mac's page session).
 function rulesEditor() {
