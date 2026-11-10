@@ -303,6 +303,15 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
 .rr-roomlist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
 .rr-roomlist li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
 .rr-roomlist .rr-pill { height: 22px; line-height: 20px; }
+.rr-roomlist .rr-rowact { margin-left: auto; height: 26px; padding: 0 8px; font-size: 12px; }
+.rr-roomsearch { width: 100%; margin-top: 8px; }
+.rr-zone { margin-top: 16px; }
+.rr-zone h3 { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 15px; }
+.rr-zone summary { cursor: pointer; }
+.rr-zone summary h3 { display: inline-flex; }
+.rr-zonecount { color: var(--text-2); font-weight: 400; }
+.rr-repo { margin-top: 8px; }
+.rr-repo h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-2); overflow-wrap: anywhere; }
 .rr-notes { margin: 6px 0; font-size: 13px; }
 .rr-notes > summary { cursor: pointer; font-weight: 600; }
 .rr-notelist { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 8px; }
