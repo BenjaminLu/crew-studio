@@ -4,8 +4,8 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { imgWant: new Map(), resetAsk: new Set(), step: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
-  scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Set(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
+const RR = { tutorMenu: null, step: new Map(), explain: new Map(), arrived: new Set(), imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+  scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -14,7 +14,9 @@ const rerender = () => { if (S.route?.name === "room") render(); };
 // room's page (redraw): never the page the captain moved on to, where a redraw would replace the button being pressed
 // and swallow the click. Leaving a room stops its playback and its mic at once.
 const onRoom = (id) => S.route?.name === "room" && S.route.arg === id;
-const redraw = (id) => { if (onRoom(id)) render(); };
+// a background redraw (a poll, a live update) waits while the captain holds words selected on the board: it would drop the
+// selection and its "Ask about this"; it runs once the selection goes (public/review-board.js selHeld)
+const redraw = (id) => { if (!onRoom(id)) return; if (BOARD?.selHeld?.()) { RR.heldRedraw = true; return; } render(); };
 addEventListener("hashchange", () => { // after app.js's own listener: S.route is already the new page
   if (RR.playing && !onRoom(RR.playing)) stopPlay();
   if (RR.rec && !onRoom(RR.recCard)) try { RR.rec.stop(); } catch {}
@@ -22,19 +24,26 @@ addEventListener("hashchange", () => { // after app.js's own listener: S.route i
 const enc = encodeURIComponent;
 const page = (title, sub, ...kids) => h("div", { class: "page rr-page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, title), sub ? h("p", {}, sub) : null)), ...kids);
 /** a saved room's snapshot as the room reads it: its own view, read-only (no prompt, no paid action), citations resolved inside */
-const snapRoom = (id, snap) => ({ ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null, tutors: [], translate: null,
+const snapRoom = (id, snap) => ({ ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null, tutors: [], translate: null, arrive: null,
   snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, cites: snap.cites || {}, cost: snap.cost, tutors: snap.tutors, subject: snap.subject } });
+const readLater = new Set();
 async function load(id, open = false) {
-  if (RR.loading.has(id)) return; RR.loading.add(id);
+  if (RR.loading.has(id)) return; RR.loading.add(id); const was = RR.rooms.get(id)?.running;
   try { const lib = /^lib:(room-[a-z0-9-]+)(?:@(\d+))?$/.exec(id);
     RR.rooms.set(id, lib ? snapRoom(id, await api(`/api/review-room/library/${lib[1]}${lib[2] ? `?v=${lib[2]}` : ""}`)) : await api(`/api/review-room/${enc(id)}${open ? "?open=1" : ""}`)); RR.err.delete(id); }
   catch (e) { if (!RR.rooms.has(id)) RR.rooms.set(id, { error: e.message }); else RR.err.set(id, e.message); }
-  finally { RR.loading.delete(id); redraw(id); schedule(); }
+  finally { RR.loading.delete(id); redraw(id); schedule();
+    // an answer that arrives with the captain on the room is read: it does not wait for them on the room list
+    if (was != null && RR.rooms.get(id)?.running == null && onRoom(id)) { if (document.hidden) readLater.add(id); else load(id, true); } }
 }
 // while a turn runs, the page follows it (the live stream says when it ends; a slow poll covers a missed event)
 
 function schedule() { clearTimeout(RR.poll); RR.poll = null; const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) RR.poll = setTimeout(() => { RR.poll = null; load(id); }, 2500); }
-window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card); });
+window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card);
+  // on the room list: a room changed (a turn ended, an archive): the list is read again, once for a burst
+  if (RR.list && onList()) { clearTimeout(RR.listPoll); RR.listPoll = setTimeout(() => { if (onList()) readList(); }, 800); } });
+// back on a room whose answer came while the window was hidden: now it is read. Only then: reading as an arrival re-reads GitHub
+document.addEventListener("visibilitychange", () => { const id = S.route?.name === "room" ? S.route.arg : null; if (!document.hidden && id && readLater.delete(id)) load(id, true); });
 
 // ---------- the board's flowcharts: Studio draws mermaid's flowchart subset itself (no library, no markup) ----------
 function parseFlow(code) {
@@ -58,7 +67,7 @@ function parseFlow(code) {
 const SVGNS = "http://www.w3.org/2000/svg";
 const sv = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) e.setAttribute(k, String(v)); for (const c of kids) if (c != null) e.append(c); return e; };
 // the room's own line icons (drawn from fixed paths, nothing parsed)
-const ICO = { prev: "M15 6l-6 6 6 6", next: "M9 6l6 6-6 6", play: "M8 5l11 7-11 7z", pause: "M8 5v14M16 5v14", replay: ["M4 12a8 8 0 1 0 2.4-5.7", "M4 4v4h4"], list: "M4 6h16M4 12h16M4 18h10", msg: "M4 5h16v11H9l-5 4z", x: "M6 6l12 12M18 6L6 18", send: "M5 12h14M13 6l6 6-6 6", back: "M15 6l-6 6 6 6" };
+const ICO = { prev: "M15 6l-6 6 6 6", next: "M9 6l6 6-6 6", play: "M8 5l11 7-11 7z", pause: "M8 5v14M16 5v14", replay: ["M4 12a8 8 0 1 0 2.4-5.7", "M4 4v4h4"], list: "M4 6h16M4 12h16M4 18h10", msg: "M4 5h16v11H9l-5 4z", x: "M6 6l12 12M18 6L6 18", send: "M5 12h14M13 6l6 6-6 6", back: "M15 6l-6 6 6 6", expand: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5", shrink: "M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" };
 const ic = (n) => sv("svg", { viewBox: "0 0 24 24", class: "rr-ic", "aria-hidden": "true" }, ...[].concat(ICO[n]).map((d) => sv("path", { d })));
 /** a label in lines that fit `width` units at font size `fs` (a CJK character a whole em, Latin about half): words stay whole,
  *  CJK breaks anywhere; at most `max` lines, the last cut with an ellipsis */
@@ -76,9 +85,9 @@ const boxPath = (x, y, w, h, r) => `M${x + r},${y} H${x + w - r} Q${x + w},${y} 
 const diamondPath = (x, y, w, h) => `M${x + w / 2},${y} L${x + w},${y + h / 2} L${x + w / 2},${y + h} L${x},${y + h / 2} Z`;
 /** the parts of a picture this viewer has seen drawn (a diagram's steps share one set, so a step draws only what it adds) */
 const drawnOf = (card, it) => { const key = `${card}/${it.group ? `${it.turn}:${it.group}` : it.id}`; if (!RR.drawn.has(key)) RR.drawn.set(key, new Set()); return RR.drawn.get(key); };
-/** the picture's box, roughly: the board's left column on a desktop, the top of the board on a phone */
-let BOX = null; // the report's figure box, while a report figure is drawn
-const picBox = () => BOX ? BOX : innerWidth <= 760 ? { narrow: true, w: innerWidth - 48, h: Math.max(260, innerHeight - 340) } : { w: Math.max(400, (Math.min(innerWidth, 1480) - (document.body.dataset.focus === "room" ? 64 : 232) - 110) * 0.58), h: Math.max(300, innerHeight - 330) };
+/** the picture's box: the scene card's picture column (sceneCard) or a lesson figure's region (reportFigure), set while it is drawn */
+let BOX = null;
+const picBox = () => BOX || (innerWidth <= 760 ? { narrow: true, w: innerWidth - 60, h: 1400 } : { w: 540, h: 460 });
 const reduceMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 /** a flowchart's places, left to right (horiz) or top down; node size from its longest label */
 function flowLayout(g, horiz, fs) {
@@ -159,7 +168,7 @@ function flowSvg(g, prev, seen, box) {
     const head = sv("path", { d: `M${x2 - 11 * Math.cos(ang - 0.5)},${y2 - 11 * Math.sin(ang - 0.5)} L${x2},${y2} L${x2 - 11 * Math.cos(ang + 0.5)},${y2 - 11 * Math.sin(ang + 0.5)}`, pathLength: 1, class: `rr-ahead${cls}` });
     if (e.dashed) { if (anim && !seen.has(key)) { line.classList.add("rr-fade"); line.style.setProperty("--dl", `${t.toFixed(2)}s`); } } else pen(line, key, 0.35);
     if (anim && !seen.has(key)) { const t0 = t; t += 0.33; pen(head, key, 0.12); t = t0; }
-    svg.append(line, head);
+    svg.append(line, head, sv("path", { d, class: "rr-edge-hit", "data-edge-hit": `${e.from}>${e.to}`, "data-edge-n": e.n ?? null }));
     if (e.label) todo.push({ e, key, pt, cands, dl: t + 0.25 });
     if (anim && !seen.has(key)) { fresh.push(key); t += 0.18; } });
   const hit = (r) => [...boxes, ...placed].some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) || dots.some(([px, py]) => px > r.x && px < r.x + r.w && py > r.y && py < r.y + r.h);
@@ -179,11 +188,12 @@ function flowSvg(g, prev, seen, box) {
 
 // ---------- citations: a link to what a claim rests on ----------
 const CITE = /\[(diff|ledger|commit|source|board|review):([^\]\s]{1,300})\]|\[(inference|inferred|speculative|direct|supported)\]/gi;
-const KIND = { diff: ["diff", "diff"], ledger: ["ledger", "帳本"], commit: ["commit", "commit"], source: ["source", "來源"], board: ["board", "白板"], review: ["reviewer", "審查意見"] };
+const KIND = { code: ["code", "程式碼"], diff: ["diff", "diff"], ledger: ["ledger", "帳本"], commit: ["commit", "commit"], source: ["source", "來源"], board: ["board", "白板"], review: ["reviewer", "審查意見"] };
 // a link only to a page the server fetched and that is http(s): anything else (a refused address, any other scheme) is text
 const webLink = (s) => s && s.ok && typeof s.url === "string" && /^https?:\/\//i.test(s.url) ? s.url : null;
 function citeChip(card, ref, ok) {
-  const [k, v] = [ref.slice(0, ref.indexOf(":")), ref.slice(ref.indexOf(":") + 1)], label = `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`;
+  const dirRoom = RR.rooms.get(card)?.subject?.kind === "dir", [k0, v] = [ref.slice(0, ref.indexOf(":")), ref.slice(ref.indexOf(":") + 1)], k = dirRoom && k0 === "diff" ? "code" : k0;
+  const label = `${T(KIND[k]?.[0] || k, KIND[k]?.[1] || k)} ${v.length > 48 ? v.slice(0, 46) + "…" : v}`;
   // a citation Studio could not verify opens nothing
   if (ok === false) return h("span", { class: "rr-cite bad", "data-cite-invalid": ref, title: T("Studio could not verify this citation", "Studio 無法驗證這個引用") }, label);
   return h("button", { type: "button", class: `rr-cite${ok === false ? " bad" : ""}`, "data-cite": ref, title: ok === false ? T("Studio could not verify this citation", "Studio 無法驗證這個引用") : onGithub(card, ref) ? T("Open these lines of the pull request on GitHub, in a new window", "在新視窗開啟 GitHub 上這個 PR 的這幾行") : T("Open what this rests on", "開啟依據"), onclick: () => openCite(card, ref) },
@@ -216,6 +226,8 @@ const inferenceBadge = () => h("span", { class: "rr-inference", "data-basis": "i
 /*  A saved room keeps its frozen copy (GitHub's pull request may have moved on). Synchronous, so window.open keeps the click's activation. */
 function githubDiffUrl(r, ref) {
   const m = /^diff:(.+?)(?::L(\d+)(?:-(\d+))?)?$/.exec(ref), pr = r?.pr?.url || (r?.subject?.kind === "pr" ? r.subject.url : null);
+  // a directory room: the file at the pinned commit, those lines (a saved room links to the same commit: it never moves)
+  if (m && r?.subject?.kind === "dir" && r.dir?.sha && /^[\w.-]+\/[\w.-]+$/.test(r.dir.repository || "")) return `https://github.com/${r.dir.repository}/blob/${r.dir.sha}/${m[1].split("/").map(encodeURIComponent).join("/")}${m[2] ? `#L${m[2]}-L${m[3] || m[2]}` : ""}`;
   if (!m || r?.snapshot || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr || "")) return null;
   return `${pr}/files#diff-${sha256hex(m[1])}${m[2] ? `R${m[2]}-R${m[3] || m[2]}` : ""}`;
 }
@@ -259,7 +271,10 @@ function citePanel(r) {
     : d.kind === "review" ? [h("p", {}, h("b", {}, d.author), `${d.state ? ` · ${d.state.toLowerCase().replace(/_/g, " ")}` : ""}${d.path ? ` · ${d.path}${d.line ? `:${d.line}` : ""}` : ""}${d.at ? ` · ${String(d.at).slice(0, 10)}` : ""}`),
       h("p", { class: "faint" }, T("A reviewer's own words on GitHub: untrusted text, shown as written.", "審查者在 GitHub 上的原話：不受信任的文字，照原樣顯示。")), h("blockquote", { class: "rr-quote", "data-untrusted": "review" }, d.body || ""),
       d.url && /^https:\/\/github\.com\//.test(d.url) ? h("a", { href: d.url, target: "_blank", rel: "noopener noreferrer", "data-review-link": d.id }, T("Open on GitHub", "在 GitHub 開啟")) : null]
-    // a board item opens on the stage: its scene, that picture (never a scroll of the page)
+    // a board item opens on the board: the camera flies to its scene, that picture shown
+    : d.kind === "board" && isCode(d.item) ? [h("div", { class: "rr-item-h" }, h("b", {}, itemTitle(d.item)), d.item.path ? h("code", {}, `${d.item.path}${d.item.start ? `:${d.item.start}-${d.item.end}` : ""}`) : null, d.item.commit ? h("span", { class: "faint" }, ` @ ${String(d.item.commit).slice(0, 8)}`) : null),
+      d.item.type === "diff" ? h("div", {}, d.item.header ? h("p", { class: "faint" }, d.item.header) : null, diffPre(d.item.text)) : d.item.type === "code" ? linesPre(d.item, d.item.highlight || [])
+      : d.item.type === "compare" ? h("div", { class: "rr-compare" }, h("div", {}, h("b", {}, T("Before (base)", "之前（base）")), linesPre(d.item.before)), h("div", {}, h("b", {}, T("After (head)", "之後（head）")), linesPre(d.item.after))) : h("pre", { class: "rr-pre" }, d.item.text || "")]
     : d.kind === "board" ? h("a", { href: `#rr-${d.item.id}`, onclick: (e) => { e.preventDefault(); showItem(r, d.item.id); } }, T(`Board item ${d.item.id}: ${d.item.title}`, `白板項目 ${d.item.id}：${d.item.title}`)) : null;
   return h("section", { class: "card x-pad rr-cite-panel", "data-cite-panel": c.ref, tabindex: "-1", role: "dialog", "aria-label": T("Citation", "引用") },
     h("div", { class: "rr-item-h" }, h("b", {}, T("Basis", "依據")), h("code", {}, c.ref), h("span", { class: "x-grow" }), h("button", { type: "button", class: "btn ghost", onclick: () => { RR.cite.delete(r.card.id); rerender(); } }, T("Close", "關閉"))), body);
@@ -301,7 +316,7 @@ function imageView(it) {
 function basisRow(card, it) { return it.basis === "illustration" ? h("div", { class: "rr-basis" }, h("span", { class: "rr-inference", "data-basis": "illustration" }, T("Not evidence", "不是證據"))) : it.basis === "inference" ? h("div", { class: "rr-basis" }, inferenceBadge()) : it.cites?.length ? h("div", { class: "rr-basis" }, it.cites.map((c) => citeChip(card, c.ref, c.ok))) : null; }
 function itemView(card, it, prev) {
   it = figIn(RR.rooms.get(card), it);
-  const head = h("div", { class: "rr-item-h" }, it.kind ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge", "data-type": it.type }, typeLabel(it.type)), h("b", {}, itemTitle(it)), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
+  const head = h("div", { class: "rr-item-h" }, KIND_LABEL[it.kind] ? kindBadge(it.kind, it.kind === "chart" ? (it.from === "git" ? T("counted by git", "git 計算") : T("from cited numbers", "依引用的數字")) : it.kind === "illustration" && it.model ? `${it.provider} ${it.model}` : null) : h("span", { class: "vbadge", "data-type": it.type }, typeLabel(it.type)), h("b", {}, itemTitle(it)), it.path ? h("code", { "data-item-path": it.path }, `${it.path}${it.start ? `:${it.start}-${it.end}` : ""}`) : null, it.commit ? h("span", { class: "faint" }, ` @ ${String(it.commit).slice(0, 8)}`) : null);
   let body;
   if (it.type === "mermaid") { const g = parseFlow(it.code), p = prev ? parseFlow(prev.code) : null; body = g ? h("div", { class: "rr-flow-wrap", "data-flow": it.id }, flowSvg(g, p, drawnOf(card, it), picBox())) : [h("p", { class: "faint" }, T("Diagram source (Studio draws flowcharts; this kind is shown as text)", "圖表原始碼（Studio 會畫 flowchart；這種圖以文字顯示）")), h("pre", { class: "rr-pre" }, it.code)]; }
   else if (it.type === "diff") body = [it.header ? h("p", { class: "faint" }, it.header) : null, diffPre(it.text)];
@@ -501,7 +516,8 @@ function curveSvg(nodes, edges, placed, opt = {}) {
   const kindOf = (i) => (edges[i].from === edges[i].to ? "loop" : back.has(i) ? "back" : "next");
   for (const d of drawn) { const e = edges[d.i], P = d.P, kind = kindOf(d.i), cl = `${kind}${e.cls ? ` ${e.cls}` : ""}`; d.pts.forEach(([x, y]) => grow(x, y));
     const [ex, ey] = P[3], ang = Math.atan2(ey - P[2][1], ex - P[2][0]);
-    svg.append(sv("path", { d: `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)} C${P[1].map((v) => v.toFixed(1))} ${P[2].map((v) => v.toFixed(1))} ${P[3].map((v) => v.toFixed(1))}`, class: `rr-edge ${cl}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i, fill: "none" }),
+    const dd = `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)} C${P[1].map((v) => v.toFixed(1))} ${P[2].map((v) => v.toFixed(1))} ${P[3].map((v) => v.toFixed(1))}`;
+    svg.append(sv("path", { d: dd, class: `rr-edge ${cl}`, "data-edge": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i, fill: "none" }), sv("path", { d: dd, class: "rr-edge-hit", "data-edge-hit": `${e.from}>${e.to}`, "data-edge-n": e.n ?? d.i }),
       sv("path", { d: `M${ex - 10 * Math.cos(ang - 0.42)},${ey - 10 * Math.sin(ang - 0.42)} L${ex},${ey} L${ex - 10 * Math.cos(ang + 0.42)},${ey - 10 * Math.sin(ang + 0.42)} Z`, class: `rr-ahead ${cl}` })); }
   for (const n of nodes) { const b = box.get(n.id), grp = sv("g", { class: `rr-node${n.cls ? ` ${n.cls}` : ""}`, "data-node": n.id, "data-box": `${b.x},${b.y},${b.w},${b.h}` }), e = 9;
     grow(b.x, b.y); grow(b.x + b.w, b.y + b.h);
@@ -556,7 +572,7 @@ function transitionRows(card, it, sel, pick, lab) {
   return h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
     h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
     h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
-      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
+      t.detail ? h("p", { class: "rp-td" }, t.detail) : null, t.why ? h("p", { class: "rp-td rp-tw", "data-transition-why": i }, h("span", { class: "rr-explain-k" }, T("Why this way", "為什麼這樣設計")), " ", t.why) : null, t.cite ? h("div", {}, citeChip(card, t.cite.ref, t.cite.ok)) : h("div", {}, inferenceBadge())))));
 }
 /** the lifecycle in the report: the map, and every transition as a numbered row (what it writes, the code it rests on) */
 function statemapView(card, it) {
@@ -620,6 +636,9 @@ function svgFigureView(card, it) {
   if (svg) { svg.classList.add("rr-figsvg-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number); if (vb[2]) svg.style.maxWidth = `${Math.round(vb[2] * 1.2)}px`; }
   const key = `${card}/${it.id}`, sel = RR.tsel.get(key) ?? 0, tr = it.transitions || [];
   const pick = (i, t, quiet) => { RR.tsel.set(key, i); if (t?.cite?.ok && !quiet && !onBoard()) openCite(card, t.cite.ref); else rerender(); };
+  if (svg) for (const el of [...svg.querySelectorAll("[data-edge]")]) if (/^(path|line|polyline)$/.test(el.localName)) { const hit = el.cloneNode(false);
+    for (const a of ["data-edge", "data-cite", "marker-start", "marker-mid", "marker-end", "id", "stroke-dasharray"]) hit.removeAttribute(a);
+    hit.setAttribute("class", "rr-edge-hit"); hit.setAttribute("data-edge-hit", el.getAttribute("data-edge")); hit.setAttribute("fill", "none"); el.after(hit); }
   if (svg) { for (const el of svg.querySelectorAll("[data-edge]")) { const e = el.getAttribute("data-edge"), k = tr.findIndex((t) => t.edge === e), cite = el.getAttribute("data-cite");
       if (k >= 0) { el.classList.add("rr-pickable"); if (k === sel) el.classList.add("on"); asControl(el, () => pick(k, tr[k])); } else if (cite) { el.classList.add("rr-pickable"); asControl(el, () => { if (!onBoard()) openCite(card, cite); }); } }
     for (const el of svg.querySelectorAll("[data-node]")) { const id = el.getAttribute("data-node"), k = tr.findIndex((t) => t.to === id && t.from !== id); if (k >= 0) { el.classList.add("rr-pickable"); asControl(el, () => pick(k, tr[k], true)); } } }
@@ -652,13 +671,18 @@ function figWords(it) { const own = (() => { switch (it?.type) {
   case "decision": return [it.question, it.chosen, it.because, ...(it.rejected || []).flatMap((x) => [x.option, x.why])];
   case "states": return it.states?.length ? [...it.states.map((x) => x.label), ...(it.transitions || []).flatMap((t) => [t.label || "", t.detail || ""])] : null;
   case "sequence": return (it.steps || []).flatMap((x) => [x.label, x.frameLabel || ""]);
-  default: return null; } })(); return own ? [it.title || "", ...own] : []; }
+  default: return null; } })();
+  // what was added later goes after the words an older translation holds (src/domain/review-room.ts figureTexts)
+  const extra = [...(it?.type === "states" || it?.type === "svg" ? (it.transitions || []).filter((t) => t?.why).map((t) => t.why) : []), ...(it?.explain || []).flatMap((e) => [e.does || "", e.why || ""])];
+  return own ? [it.title || "", ...own, ...extra] : extra.length ? [it.title || "", ...extra] : []; }
 function withWords(it, w) { let i = 0; const n = () => String(w[i++] ?? ""), c = JSON.parse(JSON.stringify(it)); c.title = n();
   if (c.type === "arch") { c.nodes.forEach((x) => (x.label = n())); c.edges.forEach((x) => (x.label = n())); }
   else if (c.type === "item") { c.name = n(); c.before = n(); c.after = n(); c.mechanism = n(); }
   else if (c.type === "decision") { c.question = n(); c.chosen = n(); c.because = n(); (c.rejected || []).forEach((x) => { x.option = n(); x.why = n(); }); }
   else if (c.type === "states") { c.states.forEach((x) => (x.label = n())); (c.transitions || []).forEach((t) => { t.label = n(); t.detail = n(); }); }
   else if (c.type === "sequence") c.steps.forEach((x) => { x.label = n(); x.frameLabel = n(); });
+  if (c.type === "states" || c.type === "svg") (c.transitions || []).forEach((t) => { if (t.why) t.why = n(); });
+  (c.explain || []).forEach((e) => { e.does = n(); const w = n(); if (e.why) e.why = w; });
   return c; }
 /** a figure in the room's language: as drawn when its turn was in it (zh-CN through OpenCC), else the words kept for it */
 function figIn(r, it) {
@@ -692,7 +716,7 @@ function sequenceView(it, seen) {
     const line = sv("path", { d, pathLength: 1, class: "rr-step-line" }), head = sv("path", { d: self ? `M${ex + 10},${y + 2} L${ex},${y + 8} L${ex + 10},${y + 14}` : `M${ex - 10 * dir},${y - 6} L${ex},${y} L${ex - 10 * dir},${y + 6}${st.kind === "async" ? "" : " Z"}`, class: "rr-step-head" });
     if (anim) { line.classList.add("rr-pen"); line.style.setProperty("--dl", `${(i * 0.18).toFixed(2)}s`); }
     const t = sv("text", { x: self ? x1 + 44 : (x1 + x2) / 2, y: y - 7, "text-anchor": self ? "start" : "middle", class: "rr-step-l" }); t.textContent = `${i + 1}. ${clip(st.label, 34)}`;
-    g.append(line, head, t); svg.append(g); });
+    g.append(line, head, t, sv("path", { d, class: "rr-edge-hit", "data-edge-hit": `step:${i + 1}` })); svg.append(g); });
   return svg;
 }
 /** Studio's own picture when an answer drew none: the scene's title and the files it cites, as sticky notes (text nodes only) */
@@ -729,9 +753,9 @@ function turnIn(r, t, lang) {
 function localTurn(r, t, lang) {
   if (t.studio || t.status !== "done") return t;
   const w = turnIn(r, t, lang); if (!w) return { ...t, untranslated: true };
-  if (w.own) return lang === t.lang ? t : { ...t, answer: w.answer, scenes: t.scenes?.map((sc) => ({ ...sc, title: w.conv(sc.title), points: sc.points.map((p) => ({ ...p, text: w.conv(p.text) })) })), claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(c.text) } : c) };
+  if (w.own) return lang === t.lang ? t : { ...t, answer: w.answer, scenes: t.scenes?.map((sc) => ({ ...sc, title: w.conv(sc.title), points: sc.points.map((p) => ({ ...p, text: w.conv(p.text), ...(p.detail ? { detail: w.conv(p.detail) } : {}) })) })), claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(c.text) } : c) };
   let i = 0;
-  return { ...t, answer: w.answer, scenes: t.scenes?.map((sc, m) => ({ ...sc, title: w.conv(w.scenes[m]?.title ?? sc.title), points: sc.points.map((p, j) => ({ ...p, text: w.conv(w.scenes[m]?.points[j] ?? p.text) })) })),
+  return { ...t, answer: w.answer, scenes: t.scenes?.map((sc, m) => ({ ...sc, title: w.conv(w.scenes[m]?.title ?? sc.title), points: sc.points.map((p, j) => ({ ...p, text: w.conv(w.scenes[m]?.points[j] ?? p.text), ...(p.detail ? { detail: w.conv(w.scenes[m]?.details?.[j] || p.detail) } : {}) })) })),
     claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(w.claims[i++] ?? c.text) } : c) };
 }
 /** Studio's own scene lines in the room's language (a reviewer's words, the quote, stay as written) */
@@ -759,7 +783,7 @@ function langToggle(r) {
     const can = !missing || (r.open && !r.snapshot && !r.offer?.error) || ((r.snapshot || !r.open) && some);
     return h("button", { type: "button", class: "rr-lang", "data-lang-pick": l, "aria-pressed": String(cur === l), disabled: !can || r.running != null, title: missing ? (can ? T("Not translated yet: a small paid round", "還沒翻譯：一次小的付費回合") : T("Not in this language", "沒有這個語言的版本")) : "", onclick: () => switchLang(r, l) }, label); }));
 }
-// ---------- the stage: each answer is one or more scenes, a picture beside the tutor's points, revealed step by step ----------
+// ---------- the scenes: each answer is one or more, a picture beside the tutor's points, played point by point ----------
 const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"], reviews: ["Digest reviews", "整理審查意見"], since: ["What changed since last time", "上次之後改了什麼"], reviewers: ["What reviewers asked", "審查者問了什麼"] };
 /** text cut to n characters at a word, with an ellipsis (one long word is cut where it must) */
 const clip = (s, n) => { s = String(s || "").trim(); if (s.length <= n) return s; const cut = s.slice(0, n), at = cut.lastIndexOf(" "); return `${(at > n / 3 ? cut.slice(0, at) : cut.slice(0, n - 1)).replace(/[\s,.;:–—-]+$/, "")}…`; };
@@ -769,9 +793,13 @@ const STUDIO_TITLES = { "This change at a glance": "一眼看懂這個改動", "
 const itemTitle = (it) => (STUDIO_TITLES[it?.title] ? T(it.title, STUDIO_TITLES[it.title]) : it?.title || "");
 /** a lesson's chapters, in order (src/domain/review-room.ts CHAPTERS) */
 const CHAPTER = { calls: ["Every call: request, response, transaction", "每個呼叫：request、response、交易"], what: ["What this is", "這是什麼"], talks: ["What talks to what", "誰跟誰說話"], decisions: ["The decisions", "做了哪些決定"], roads: ["Roads not taken", "沒走的路"], change: ["The change itself", "改了什麼"], lifecycle: ["Its life, state by state", "狀態的一生"], sequence: ["One request, in order", "一次請求的順序"], reviewers: ["What reviewers raised", "審查者提了什麼"], watch: ["What to watch", "要注意的地方"], questions: ["Open questions", "待解問題"] };
-const chapterName = (id) => (CHAPTER[id] ? TL(...CHAPTER[id]) : "");
+/** a directory's lesson names some chapters its own way (src/domain/review-room.ts DIR_CHAPTERS) */
+const DIR_CHAPTER = { what: ["What this directory is", "這個目錄是什麼"], modules: ["Its parts, one by one", "它的組成，一個一個看"], talks: ["How the parts compose", "各部分怎麼組在一起"], sequence: ["How data flows through it", "資料怎麼流過它"], entry: ["Where to start reading", "從哪裡開始讀"] };
+const chapterName = (id) => (CUR.kind === "dir" && DIR_CHAPTER[id] ? TL(...DIR_CHAPTER[id]) : CHAPTER[id] ? TL(...CHAPTER[id]) : "");
 /** the chapters' order (src/domain/review-room.ts CHAPTERS): a lesson is shown in it */
 const CHAPTER_ORDER = ["what", "talks", "decisions", "change", "lifecycle", "sequence", "calls", "reviewers", "roads", "watch", "questions"];
+/** a directory's lesson's order (src/domain/review-room.ts DIR_CHAPTERS): what it is, its parts, how they compose and flow, where to start */
+const DIR_CHAPTER_ORDER = ["what", "modules", "talks", "sequence", "entry", "lifecycle", "watch", "questions"];
 const TYPE_LABEL = { svg: ["drawn by the tutor, checked by Studio", "導師畫的圖，Studio 檢查過"], calls: ["every call", "每個呼叫"], arch: ["what talks to what", "架構"], decision: ["a decision", "決定"], item: ["the change, before → after", "改動前後"], states: ["state machine", "狀態機"], sequence: ["sequence", "順序圖"], mermaid: ["diagram", "流程圖"], diff: ["diff", "diff"], code: ["code at the head", "head 的程式碼"], compare: ["before / after", "前後對照"], note: ["note", "筆記"], table: ["table", "表格"], snippet: ["the tutor's code", "導師寫的程式碼"], keycard: ["key card", "重點卡"] };
 const typeLabel = (t) => T(...(TYPE_LABEL[t] || [t, t]));
 // ---------- lengths: a point on the board is a sentence (two short ones at most), a CJK character weighing two Latin ones ----------
@@ -802,6 +830,7 @@ function legacyPoints(key, claims) {
 }
 /** what the room is about, in a few words: the pull request's number, the branch, or the merge card's pull request */
 const subjectName = (r) => { const k = r.subject?.kind || "merge";
+  if (k === "dir") { const d = r.dir || {}, where = `${d.repository || r.subject?.repository || ""}${d.path ? `/${d.path}` : ""}`; return { en: `the directory ${where}`, zh: `${where} 這個目錄` }; }
   return k === "pr" ? { en: `pull request #${r.subject?.number ?? ""}`, zh: `#${r.subject?.number ?? ""} 這一個 PR` }
     : k === "branch" ? { en: `branch ${r.card.title?.en?.replace(/^Branch\s+/, "") || r.card.id}`, zh: `${r.card.title?.en?.replace(/^Branch\s+/, "") || r.card.id} 這一個 branch` }
     : r.pr?.id ? { en: `pull request #${r.pr.id}`, zh: `#${r.pr.id} 這一個 PR` } : { en: "this change", zh: "這一個改動" }; };
@@ -809,6 +838,7 @@ const subjectName = (r) => { const k = r.subject?.kind || "merge";
  *  "Teach me this change" (a paid turn, confirmed like any other). The opening illustration, when there is one, is a picture
  *  of this scene too. */
 function welcomeScene(r, opening) {
+  if (r.subject?.kind === "dir") return dirWelcome(r, opening);
   const ds = r.diffstat, name = subjectName(r), files = ds?.files || [], top = [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed))[0];
   const chart = files.length ? { id: "t0-files", synth: true, turn: 0, type: "chart", kind: "chart", mode: "diffstat", from: ds.from === "github" ? "numbers" : "git", title: TL("What changed, by file", "改了哪些檔案"), unit: "lines", rows: [...files].sort((a, b) => (b.added + b.removed) - (a.added + a.removed)).slice(0, 8).map((f) => ({ label: f.path, added: f.added, removed: f.removed })), basis: "cited", cites: [] } : null;
   const ps = r.prState, verdict = ps?.verdicts?.find((v) => v.state === "CHANGES_REQUESTED") || ps?.verdicts?.find((v) => v.state === "APPROVED");
@@ -822,16 +852,26 @@ function welcomeScene(r, opening) {
     studio("Press “Teach me” to start; every point names its basis, a click opens it.", "按「教我這個 PR」開始；每一點都附依據，點了就打開。")];
   return { key: "t0", turn: 0, welcome: true, studio: true, title: TL(`This room is only about ${name.en}`, `這間審查室只講 ${name.zh}`), question: null, visuals: [chart, ...opening].filter(Boolean), points, questions: [] };
 }
+/** a directory room's welcome (Studio's, free): its parts by how many files each holds, where it is pinned, how to start */
+function dirWelcome(r, opening) {
+  const d = r.dir || { parts: [] }, name = subjectName(r), parts = d.parts || [], top = parts[0];
+  const chart = parts.length ? { id: "t0-parts", synth: true, turn: 0, type: "chart", kind: "chart", mode: "values", from: "numbers", title: TL("Its parts, by files", "它的組成（依檔案數）"), unit: TL("files", "個檔案"), rows: parts.slice(0, 10).map((x) => ({ label: `${x.name}${x.kind === "dir" ? "/" : ""}`, value: x.files })), basis: null, cites: [] } : null;
+  const studio = (en, zh) => ({ text: TL(en, zh), kind: "claim", basis: "studio", cites: [] });
+  const points = [studio(`It holds ${d.files ?? 0} file${d.files === 1 ? "" : "s"} in ${parts.length} part${parts.length === 1 ? "" : "s"}${top ? `; the most in ${top.name}${top.kind === "dir" ? "/" : ""} (${top.files})` : ""}.`, `它有 ${d.files ?? 0} 個檔案、${parts.length} 個部分${top ? `；最多在 ${top.name}${top.kind === "dir" ? "/" : ""}（${top.files} 個）` : ""}。`),
+    studio(`Read at ${d.refKind === "commit" ? "commit" : d.refKind === "tag" ? "tag" : "branch"} ${d.ref || ""}, pinned at ${String(d.sha || "").slice(0, 8)}: every citation opens that commit on GitHub, so it never moves.`, `讀的是 ${d.ref || ""}，固定在 ${String(d.sha || "").slice(0, 8)}：每個引用都打開 GitHub 上的那個 commit，不會變。`),
+    studio("Press “Teach me” for what each part does and how they compose; every point names its basis.", "按「教我這個目錄」看每個部分做什麼、怎麼組在一起；每一點都附依據。")];
+  return { key: "t0", turn: 0, welcome: true, studio: true, title: TL(`This room is only about ${name.en}`, `這間審查室只講 ${name.zh}`), question: null, visuals: [chart, ...opening].filter(Boolean), points, questions: [] };
+}
 /** the room's scenes: the welcome scene (turn 0, with the opening picture), then each turn's: the scenes the tutor showed (scene_show), else its answer
  *  as points; Studio's own scenes (what changed, what reviewers asked) as they are */
 function scenesOf(r) {
-  const out = [], opening = r.board.filter((b) => b.turn === 0), lang = roomLang(r); CUR = { lang };
+  const out = [], opening = r.board.filter((b) => b.turn === 0), lang = roomLang(r); CUR = { lang, kind: r.subject?.kind || "merge" };
   out.push(welcomeScene(r, opening));
   const rootOf = (t) => t.regenOf ?? t.n, versions = new Map();
   for (const t of r.turns) if (!t.studio) { const k = rootOf(t); if (!versions.has(k)) versions.set(k, []); versions.get(k).push(t); }
   const shownOf = (root) => { const vs = versions.get(root) || [], pick = RR.ver.get(`${r.card.id}/${root}`); return vs.find((t) => t.n === pick) || vs.at(-1); };
   for (const t0 of r.turns) {
-    // a question asked on the lesson board is answered in its card there, never a scene of the stage
+    // a question asked on a lesson's chapter is answered in its card there, never a scene of its own
     if (t0.hidden || t0.thread) continue;
     if (!t0.studio && shownOf(rootOf(t0)) !== t0) continue;
     const t = { ...localTurn(r, t0, lang), versions: t0.studio ? null : versions.get(rootOf(t0)) };
@@ -841,7 +881,7 @@ function scenesOf(r) {
     if (t.studio) { const [en, zh] = ACTION_LABEL[t.action] || [t.action, t.action]; out.push({ key: `t${t.n}`, turn: t.n, t, studio: true, title: TL(en, zh), question: null, visuals: turnBoard, points: claims, questions: [] }); continue; }
     // the tutor's own scenes: each its picture and its few points; the answer itself is in the transcript
     if ((t.status === "done" || t.status === "running") && t.scenes?.length) {
-      const used = new Set(t.scenes.map((s) => s.picture)), rank = (s) => (CHAPTER_ORDER.includes(s.chapter) ? CHAPTER_ORDER.indexOf(s.chapter) : -1);
+      const ORDER = r.subject?.kind === "dir" ? DIR_CHAPTER_ORDER : CHAPTER_ORDER, used = new Set(t.scenes.map((s) => s.picture)), rank = (s) => (ORDER.includes(s.chapter) ? ORDER.indexOf(s.chapter) : -1);
       const ordered = t.action === "teach" ? t.scenes.map((s, m) => [s, m]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]) : t.scenes.map((s, m) => [s, m]);
       ordered.forEach(([s, m], o) => { const pic = r.board.find((b) => b.id === s.picture), last = o === t.scenes.length - 1;
         out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, chapter: s.chapter || null, skip: !!s.skip, pic: pic || null, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
@@ -856,17 +896,95 @@ function scenesOf(r) {
   }
   return out;
 }
-const sceneState = (card, scenes) => { let i = RR.scene.get(card); if (i == null || i >= scenes.length) i = scenes.length - 1; return Math.max(0, i); };
+/** the scene the room is on: the one picked, else the latest (a lesson's first chapter, which is read from the top) */
+const sceneState = (card, scenes) => { let i = RR.scene.get(card);
+  if (i == null || i >= scenes.length) { i = scenes.length - 1; const last = scenes[i]; if (last?.chapter && last.t?.action === "teach") i = scenes.findIndex((x) => x.turn === last.turn); }
+  return Math.max(0, i); };
 const revealOf = (card, sc) => Math.min(sc.points.length, RR.reveal.get(`${card}/${sc.key}`) ?? sc.points.length);
-/** points a page shows: never more, so the points column never grows past the board; the next ones are the next page,
- *  reached like any other point (a page advances like a beat) */
-const PER = 4;
-const pageOf = (k) => (k > 0 ? Math.floor((k - 1) / PER) : 0);
 /** the visual a scene shows after k points: the last board item a shown point cites, else the scene's first */
 function visualAt(r, sc, k) {
   let v = sc.visuals[0] || null;
-  for (const p of sc.points.slice(0, k)) { if (p.visual) v = p.visual; for (const c of p.cites || []) if (c.ref.startsWith("board:")) { const b = r.board.find((x) => x.id === c.ref.slice(6)); if (b) v = b; } }
+  for (const p of sc.points.slice(0, k)) { if (p.visual) v = p.visual; for (const c of p.cites || []) if (c.ref.startsWith("board:")) { const b = r.board.find((x) => x.id === c.ref.slice(6)); if (b) v = b; }
+    // a step names the picture it shows (scene_show's picture on a point)
+    if (p.picture) { const b = r.board.find((x) => x.id === p.picture); if (b) v = b; } }
   return v;
+}
+// ---------- a card is numbered steps beside an illustration (docs/units/review-room.md, "Steps and illustrations") ----------
+/** code is never drawn in the illustration: it is cited, a link away (GitHub for a pull request on GitHub, else the citation panel) */
+const CODEISH = new Set(["code", "diff", "compare", "snippet"]);
+const isCode = (it) => !!it && CODEISH.has(it.type);
+/** the step a card is on: the point being read while it plays or is stepped through, else the step the captain picked (null: the whole card) */
+const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? (RR.playing === card && RR.playKey === sc.key && sc.points.length ? sc.points.length - 1 : null));
+/** pick a step: the points up to it shown (as the play bar's dots do), its picture zoomed to what it is about */
+function pickStep(card, sc, m) { markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.explain.delete(card); RR.reveal.set(`${card}/${sc.key}`, m + 1); RR.step.set(`${card}/${sc.key}`, m); rerender(); }
+const stepBtn = (card, sc, m, cur) => h("button", { type: "button", class: `rr-stepn${cur === m ? " on" : ""}`, "data-step-pick": m + 1, "aria-pressed": String(cur === m), "aria-label": T(`Show step ${m + 1}`, `看第 ${m + 1} 步`), onclick: (e) => { e.stopPropagation(); pickStep(card, sc, m); } }, String(m + 1));
+/** the focus keys of a step, with an edge's two ends: what the illustration zooms to */
+const focusOf = (p) => (Array.isArray(p?.focus) ? p.focus.filter((f) => typeof f === "string" && f).slice(0, 8) : []);
+/** a step's detail, under the illustration */
+const stepDetail = (sc, cur) => { const d = cur != null ? sc.points[cur]?.detail : null; return d ? h("p", { class: "rr-stepdetail", "data-step-detail": cur + 1 }, h("b", {}, T(`Step ${cur + 1}`, `第 ${cur + 1} 步`)), " ", plain(d)) : null; };
+/** the code a card rests on, as links: a pull request on GitHub opens there at those lines, anything else in the citation panel */
+function codeRefs(card, r, items) {
+  if (!items.length) return null;
+  return h("div", { class: "rr-coderefs", "data-code-refs": items.length }, h("span", { class: "rr-coderefs-k" }, T("Code this rests on", "依據的程式碼")),
+    items.map((it) => { const ref = it.path && it.type !== "snippet" ? `diff:${it.path}${it.start ? `:L${it.start}-${it.end || it.start}` : ""}` : null, gh = ref ? githubDiffUrl(r, ref) : null;
+      return h("button", { type: "button", class: "rr-cite rr-coderef", "data-code-ref": ref || `board:${it.id}`, "data-code-link": gh ? "github" : "panel", title: gh ? T("Open these lines on GitHub, in a new window", "在新視窗開啟 GitHub 上的這幾行") : T("Open the code", "打開程式碼"),
+        onclick: (e) => { e.stopPropagation(); if (gh) { window.open(gh, "_blank", "noopener,noreferrer"); return; } RR.cite.set(card, { ref: `board:${it.id}`, data: { kind: "board", item: it } }); rerender(); } },
+        `${it.path || itemTitle(it) || typeLabel(it.type)}${it.start ? `:${it.start}-${it.end}` : ""}${gh ? " ↗" : ""}`); })); }
+/** zoom every illustration with a focus to it: the padded box of its focused parts (an edge with its two ends), the rest dimmed */
+function zoomFocus() {
+  for (const fig of document.querySelectorAll("[data-zoom-focus]")) {
+    const want = fig.getAttribute("data-zoom-focus") || "", svg = fig.querySelector("svg.rr-flow, svg.rr-seq, svg.rr-figsvg-svg") || fig.querySelector("svg"); if (!svg || !want || svg.dataset.zoomed === want) continue;
+    const keys = want.split(",").filter(Boolean), q = (s) => [...svg.querySelectorAll(s)], all = new Set();
+    for (const k of keys) { const step = /^step:(\d+)$/.exec(k);
+      const els = step ? q(`[data-step="${step[1]}"]`) : k.includes(">") ? [...q(`[data-edge="${CSS.escape(k)}"]`), ...q(`[data-elabel="${CSS.escape(k)}"]`), ...k.split(">").flatMap((id) => q(`[data-node="${CSS.escape(id)}"]`))] : q(`[data-node="${CSS.escape(k)}"]`);
+      els.forEach((el) => all.add(el)); }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const toRoot = (() => { try { return svg.getScreenCTM().inverse(); } catch { return null; } })();
+    for (const el of all) { try { const b = el.getBBox(); if (!b.width && !b.height) continue; const m = toRoot && el.getScreenCTM ? toRoot.multiply(el.getScreenCTM()) : null;
+      for (const [px, py] of [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]]) { const q = m ? new DOMPoint(px, py).matrixTransform(m) : { x: px, y: py };
+        x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); } } catch {} }
+    if (!isFinite(x0)) continue;
+    // at most about half again as near: the rest of the picture stays in sight around what the step is about
+    const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number), pad = 28, w = Math.max(x1 - x0 + pad * 2, 200, (vb[2] || 0) * 0.7), hh = Math.max(y1 - y0 + pad * 2, 120, (vb[3] || 0) * 0.7), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (vb.length === 4 && w >= vb[2] * 0.92 && hh >= vb[3] * 0.92) { svg.dataset.zoomed = want; } // it is the whole picture already
+    else svg.setAttribute("viewBox", `${(cx - w / 2).toFixed(1)} ${(cy - hh / 2).toFixed(1)} ${w.toFixed(1)} ${hh.toFixed(1)}`);
+    svg.dataset.zoomed = want; svg.classList.add("rr-zoomed"); for (const el of all) el.classList.add("rr-focus"); }
+}
+/** what a connector's step does and why (the tutor's explain, a transition's detail and why), and the words the drawing gives it */
+function explainFor(it, key, label) {
+  const ex = (it?.explain || []).find((e) => e.edge === key) || null, tr = (it?.transitions || []).find((t) => (t.edge || `${t.from}>${t.to}`) === key) || null;
+  const lab = label || tr?.label || (it?.type === "arch" ? (it.edges || []).find((e) => `${e.from}>${e.to}` === key)?.label : null) || (/^step:\d+$/.test(key) ? it?.steps?.[Number(key.slice(5)) - 1]?.label : null) || "";
+  return { key, label: lab, does: ex?.does || null, why: ex?.why || tr?.why || null, detail: tr?.detail || null, cites: [...(ex?.cites || []), ...(tr?.cite ? [tr.cite] : [])] };
+}
+/** the explanation of one connector: what this step does, why it is built this way; with nothing recorded, what the drawing has */
+function explainBox(card, it0, key, label) {
+  const it = figIn(RR.rooms.get(card), it0), x = explainFor(it, key, label), name = /^step:(\d+)$/.test(key) ? T(`Step ${key.slice(5)}`, `第 ${key.slice(5)} 步`) : key.replace(">", " → ");
+  return h("div", { class: "rr-explain-body", "data-explain-edge": key },
+    h("p", { class: "rr-explain-h" }, h("b", {}, name), x.label ? h("span", { class: "faint" }, ` · ${x.label}`) : null),
+    x.does ? h("p", { "data-explain-does": "" }, h("span", { class: "rr-explain-k" }, T("What this step does", "這一步做什麼")), " ", x.does) : null,
+    x.why ? h("p", { "data-explain-why": "" }, h("span", { class: "rr-explain-k" }, T("Why this way", "為什麼這樣設計")), " ", x.why) : null,
+    x.detail ? h("p", { "data-explain-detail": "" }, h("span", { class: "rr-explain-k" }, T("What it writes", "它寫入什麼")), " ", x.detail) : null,
+    !x.does && !x.why ? h("p", { class: "faint", "data-explain-none": "" }, T("No explanation was recorded for this step: ask about it.", "這一步沒有記錄說明：可以問。")) : null,
+    x.cites.length ? h("div", { class: "rr-basis" }, x.cites.map((c) => citeChip(card, c.ref, c.ok))) : null);
+}
+/** a connector clicked on an answer's illustration: its explanation over the picture; "Ask about this" only fills the question (free) */
+function explainPop(card, r, sc, it) {
+  const ex = RR.explain.get(card); if (!ex || ex.scene !== sc.key || ex.item !== it?.id) return null;
+  const close = () => { RR.explain.delete(card); rerender(); };
+  return h("div", { class: "rr-explain", role: "dialog", "aria-label": T("Why this step", "這一步的說明"), "data-explain": ex.key, onclick: (e) => e.stopPropagation(), onpointerdown: (e) => e.stopPropagation() },
+    h("button", { type: "button", class: "rr-explain-x", "aria-label": T("Close", "關閉"), onclick: close }, "×"),
+    explainBox(card, it, ex.key, ex.label),
+    r.open && !r.snapshot ? h("button", { type: "button", class: "rb-btn", "data-explain-ask": "", title: T("Fills the question below; nothing is sent until you ask", "填進下方的問題；你按送出之前什麼都不會送出"),
+      onclick: () => { const name = /^step:/.test(ex.key) ? T(`step ${ex.key.slice(5)}`, `第 ${ex.key.slice(5)} 步`) : ex.key.replace(">", " → "); RR.draft.set(card, T(`Why does ${name}${ex.label ? ` (${ex.label})` : ""} work this way?`, `${name}${ex.label ? `（${ex.label}）` : ""} 為什麼這樣做？`)); RR.explain.delete(card); rerender();
+        requestAnimationFrame(() => document.querySelector(`[data-room-text="${CSS.escape(card)}"]`)?.focus()); } }, T("Ask about this", "問這一步")) : null);
+}
+/** a click on an answer's illustration: a connector (its line, its label, a sequence's step, a drawn figure's edge) opens its explanation */
+function edgeClick(card, sc, it) {
+  return (e) => { if (BOARD.state.moved) return; const t = e.target.closest?.("[data-edge-hit], [data-elabel], svg [data-edge], [data-step]"); if (!t || !it) return;
+    const key = t.getAttribute("data-edge-hit") || t.getAttribute("data-elabel") || t.getAttribute("data-edge") || `step:${t.getAttribute("data-step")}`;
+    const n = t.getAttribute("data-edge-n"), tr = it.type === "states" && n != null ? (it.transitions || [])[Number(n)] : null;
+    const label = (t.closest("svg")?.querySelector(`[data-elabel="${CSS.escape(key)}"]`)?.textContent || "").replace(/^[①-⑳]\s*/, "").trim();
+    e.stopPropagation(); RR.explain.set(card, { scene: sc.key, item: it.id, key: tr ? `${tr.from}>${tr.to}` : key, label: tr?.label || label }); rerender(); };
 }
 const citedFiles = (sc) => { const out = []; for (const p of sc.points) for (const c of p.cites || []) if (c.ref.startsWith("diff:")) { const f = c.ref.slice(5).replace(/:L\d+(?:-\d+)?$/, ""); if (f && !out.includes(f)) out.push(f); } return out; };
 /** An answer that drew no picture still gets one, free, from Studio: the cited files' line counts (git's numbers), else a key
@@ -877,7 +995,7 @@ function fallbackVisual(r, sc) {
   const top = files.length ? files : [...stat].sort((a, b) => (b.added + b.removed) - (a.added + a.removed)).map((f) => f.path);
   return { id: `${sc.key}-key`, synth: true, turn: sc.turn, type: "keycard", kind: "studio", title: sc.title, files: top.slice(0, 4), basis: null, cites: [] };
 }
-/** show a board item on the stage: its scene, that picture */
+/** show a board item: its scene (the board flies there), that picture */
 function showItem(r, id) {
   const card = r.card.id, scenes = scenesOf(r), i = scenes.findIndex((s) => s.visuals.some((b) => b.id === id)); RR.cite.delete(card);
   if (i >= 0) { stopPlay(); RR.scene.set(card, i); RR.pick.set(`${card}/${scenes[i].key}`, id); }
@@ -912,7 +1030,7 @@ const kokoroRefresh = (fresh = true) => { if (Date.now() - KV.asked < 1500) retu
 const kokoroStat = () => { if (!KV.stat && Date.now() - KV.asked > 30000) kokoroRefresh(false); return KV.stat; };
 addEventListener("focus", () => { if (S.route?.name === "room") kokoroRefresh(); });
 addEventListener("hashchange", () => { if (S.route?.name === "room") kokoroRefresh(); });
-const kokoroReady = (card) => !!kokoroStat()?.ready && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+)$/.test(String(card || S.route?.arg || ""));
+const kokoroReady = (card) => !!kokoroStat()?.ready && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/.test(String(card || S.route?.arg || ""));
 const kokoroVoice = () => (LANG_BASE(CUR.lang) === "en" ? kokoroStat()?.voices?.en : kokoroStat()?.voices?.zh) || "";
 /** mixed Chinese and English: "switch" speaks Latin runs with the English voice (the default), "same" keeps one voice */
 const voiceMix = () => (prefs.get("crew.room.voice.mix") === "same" ? "same" : "switch");
@@ -928,7 +1046,7 @@ function speak(text, done, fail, best = false) {
 }
 // a browser lists its voices late: the picker and the default voice follow when they arrive
 try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
-function stopPlay() { clearTimeout(RR.timer); RR.timer = null; RR.playing = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
+function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; RR.playKey = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
 /** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while
  *  one plays). A request playback no longer needs (paused, left, another mix) is cancelled, so Studio stops making it. */
 function kokoroClip(card, text) {
@@ -964,7 +1082,7 @@ function advance(card) {
   if (!onRoom(card)) return stopPlay();
   const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), sc = scenes[sceneState(card, scenes)]; if (!sc) return;
   const k = revealOf(card, sc); if (k >= sc.points.length || sc.quiz) { stopPlay(); rerender(); return; }
-  RR.pick.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
+  RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
   if (RR.playing !== card || RR.audio) return;
   const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
   const paced = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170)); };
@@ -986,7 +1104,8 @@ async function playVendor(card, sc) {
 /** play the scene: from where it stands, or from its start when it is already whole (from: 0 replays it) */
 function play(card, sc, from) {
   const k = revealOf(card, sc), start = from ?? (k >= sc.points.length ? 0 : Math.max(0, k - 1));
-  stopPlay(); RR.playing = card; RR.reveal.set(`${card}/${sc.key}`, start);
+  // playing takes over from a step picked before (a dot, a number): the step shown is the one being read, on either voice
+  stopPlay(); RR.playing = card; RR.playKey = sc.key; RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, start);
   const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t && !sc.studio) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
   advance(card);
 }
@@ -997,13 +1116,13 @@ function stepPoint(card, dir) {
   markMoved(card);
   const { scenes, i, sc } = curScene(card); if (!sc) return; stopPlay();
   const k = revealOf(card, sc), n = sc.points.length;
-  RR.pick.delete(`${card}/${sc.key}`);
+  RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`);
   if (dir > 0) { if (k < n) RR.reveal.set(`${card}/${sc.key}`, k + 1); else if (i < scenes.length - 1) { RR.scene.set(card, i + 1); RR.reveal.set(`${card}/${scenes[i + 1].key}`, Math.min(1, scenes[i + 1].points.length)); } }
   else if (k > 1) RR.reveal.set(`${card}/${sc.key}`, k - 1);
   else if (i > 0) { RR.scene.set(card, i - 1); RR.reveal.set(`${card}/${scenes[i - 1].key}`, scenes[i - 1].points.length); }
   rerender();
 }
-/** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind a chip instead of taking the stage */
+/** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind a chip instead of pulling the board away */
 const markMoved = (card) => { if (RR.rooms.get(card)?.running != null) RR.moved.add(card); };
 const goScene = (card, n) => { markMoved(card); const { scenes } = curScene(card); if (!scenes?.length) return; stopPlay(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
 function voicePicker(r) {
@@ -1062,13 +1181,43 @@ function regenList(r, t) {
       h("span", { class: `rr-pill${m.level === "vendor" ? "" : " warn"}`, "data-regen-level": m.level || "unknown" }, m.level ? T(...lvl[m.level]) : T("independence from the author unknown", "和作者的獨立程度未知")),
       m.held ? h("span", { class: "rr-pill bad", "data-regen-held": "" }, T(`held: ${m.held}`, `暫停：${m.held}`)) : null)));
 }
-/** The stage: the board (the scene's title, its picture on the left, at most four of its points on the right), the caption
- *  and the play bar. One viewport tall with the header and the dock: nothing in it grows the page. */
+// ---------- the tutor: the captain picks it (this room's, else Studio's default, else Automatic); independence is information ----------
+const LEVEL = { vendor: ["another vendor than the author", "和作者不同供應商"], model: ["same vendor as the author", "和作者同一個供應商"], same: ["the author's own model", "和作者同一個模型"] };
+const levelPill = (m) => h("span", { class: `rr-pill${m.level === "vendor" ? "" : " warn"}`, "data-tutor-level": m.level || "unknown" }, m.level ? T(...LEVEL[m.level]) : T("independence from the author unknown", "和作者的獨立程度未知"));
+/** the header's tutor: who it is and how independent from the author (said, not enforced); a click opens the picker */
+function tutorButton(r) {
+  const id = r.card.id, o = r.offer, src = r.tutorChoice?.source || "auto", pick = r.tutorChoice?.room || (src === "studio" ? r.tutorChoice?.studio : null);
+  const text = o?.error ? T(`Tutor: ${pick ? `${pick.provider} · ${pick.model}` : "none"} — cannot run now`, `導師：${pick ? `${pick.provider} · ${pick.model}` : "無"}：現在不能用`)
+    : T(`Tutor: ${o?.provider} · ${o?.model ?? "default model"} — ${o?.independence?.en ?? ""}`, `導師：${o?.provider} · ${o?.model ?? "預設模型"}：${o?.independence?.zh ?? ""}`);
+  return h("button", { type: "button", class: `rr-pill rr-tutor${o?.error ? " bad" : o?.independence?.level === "same" ? " warn" : ""}`, "data-tutor-open": id, "data-independence": o?.independence?.level ?? null, "data-tutor-source": src, "aria-expanded": String(RR.tutorMenu === id), "aria-haspopup": "dialog", title: o?.error || text,
+    onclick: () => { const open = RR.tutorMenu !== id; RR.tutorMenu = open ? id : null; rerender();
+      // the keyboard follows: into the picker when it opens, back to the tutor's button when it closes
+      requestAnimationFrame(() => document.querySelector(open ? "[data-tutor-menu] [data-tutor-pick]:not([disabled])" : "[data-tutor-open]")?.focus({ preventScroll: true })); } }, text);
+}
+async function pickTutor(id, pick) {
+  RR.posting.add(`${id}/tutor`); RR.err.delete(id); rerender();
+  try { RR.rooms.set(id, await postJ(`/api/review-room/${enc(id)}/tutor`, { pick })); RR.tutorMenu = null; dropPasteOffers(); } catch (e) { RR.err.set(id, e.message); }
+  finally { RR.posting.delete(`${id}/tutor`); redraw(id); if (!RR.tutorMenu) requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); }
+}
+/** the picker: Studio's default (or Automatic), then every model this machine has; one that cannot run or is not verified is
+ *  shown disabled with why (never swapped for another by itself); each says how independent it is from the change's author */
+function tutorMenu(r) {
+  const id = r.card.id, c = r.tutorChoice || {}, busy = RR.posting.has(`${id}/tutor`), cur = c.room;
+  const dflt = c.studio ? T(`Studio's default: ${c.studio.provider} · ${c.studio.model}`, `Studio 預設：${c.studio.provider} · ${c.studio.model}`) : T("Automatic: Studio picks the most independent model it can run", "自動：Studio 挑它能跑、最獨立的模型");
+  return h("div", { class: "rr-regenlist rr-tutormenu", role: "dialog", "aria-label": T("The tutor for this room", "這間審查室的導師"), "data-tutor-menu": id },
+    h("b", {}, T("The tutor for this room", "這間審查室的導師")),
+    h("p", { class: "faint" }, T("Every answer in this room, the analysis on arrival, questions and regenerations run on it. How independent it is from the author is shown, not enforced; one that cannot run is never swapped for another.", "這間房間的每個回答、進來時的分析、提問和重講都用它。和作者的獨立程度只是資訊，不會強制；不能用的導師不會被偷偷換掉。")),
+    h("button", { type: "button", class: "rr-regenopt", "data-tutor-pick": "default", "aria-pressed": String(!cur), disabled: busy, onclick: () => pickTutor(id, null) }, h("b", {}, dflt), !cur ? h("span", { class: "rr-pill ok" }, T("current", "目前")) : null),
+    (r.tutors || []).map((m) => h("button", { type: "button", class: "rr-regenopt", "data-tutor-pick": `${m.provider}|${m.model}`, "aria-pressed": String(!!cur && cur.provider === m.provider && cur.model === m.model), disabled: !m.runnable || busy, title: m.held || "", onclick: () => pickTutor(id, { provider: m.provider, model: m.model }) },
+      h("b", {}, `${m.provider} · ${m.model}`), cur && cur.provider === m.provider && cur.model === m.model ? h("span", { class: "rr-pill ok" }, T("this room", "這間房間")) : null, levelPill(m),
+      m.held ? h("span", { class: "rr-pill bad", "data-tutor-held": "" }, m.verified === false && m.runnable === false && /not verified/.test(m.held) ? T("not verified on this machine yet", "這台機器還沒驗證") : T(`cannot run: ${m.held}`, `不能用：${m.held}`)) : null)),
+    (r.tutors || []).length ? null : h("p", { class: "faint", "data-tutor-none": "" }, T("Studio has no facts about this machine's models yet: the room uses its own pick.", "Studio 還沒有這台機器模型的資料：房間用自己的選擇。")));
+}
 // ---------- a finished lesson is the lesson board (public/review-board.js): its chapters are regions of a canvas ----------
 const POINTS_TONE = { watch: ["risk", ["risk", "風險"]], reviewers: ["warn", ["reviewer", "審查"]], roads: ["ok", ["not taken", "沒走"]], questions: ["", ["open", "待解"]] };
 /** a figure in the report: the drawing Studio lays out from the tutor's data, its title and what it rests on */
 function reportFigure(card, r, it, box) {
-  // a lesson's figure reads at its drawn size, left to right where it fits: its region's column, not the stage's box
+  // a lesson's figure reads at its drawn size, left to right where it fits: its region's column
   BOX = box || (innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 });
   const v = figIn(r, it); let body; try { body = v.type === "arch" ? archView(card, v) : v.type === "decision" ? decisionView(card, v) : v.type === "item" ? itemFigure(v, drawnOf(card, v))
     : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : v.type === "svg" ? svgFigureView(card, v) : v.type === "calls" ? callsView(card, v) : itemView(card, v, null); } finally { BOX = null; }
@@ -1077,98 +1226,125 @@ function reportFigure(card, r, it, box) {
   return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
     h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)));
 }
-/** a lesson auto-teach started: said so, with what it ran on, and the room's switch to stop it starting on the next paste */
+/** a lesson auto-teach started (on arrival in the room, or on a paste): said so, with what it ran on, and the room's switch to
+ *  stop it starting by itself next time */
 function autoNote(r, t) {
-  if (!t?.auto) return null; const card = r.card.id;
-  return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n }, T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
-    !r.snapshot && r.subject?.kind === "pr" ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
-      T(" start by itself on the next paste", " 下次貼上時自動開始")) : null);
+  if (!t?.auto) return null; const card = r.card.id, arrival = t.autoFrom === "arrival";
+  return h("p", { class: "rr-auto-note faint", "data-auto-started": t.n, "data-auto-from": arrival ? "arrival" : "paste" }, arrival ? T(`Started automatically when you opened the room: one paid round on ${t.provider} · ${t.model}.`, `打開審查室時自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`)
+    : T(`Started automatically on paste: one paid round on ${t.provider} · ${t.model}.`, `貼上後自動開始：在 ${t.provider} · ${t.model} 上付費一回合。`), " ",
+    !r.snapshot ? h("label", {}, h("input", { type: "checkbox", "data-auto-off": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+      T(" start by itself next time (opening the room on a new head, or a paste)", " 下次（在新的 head 打開審查室或貼上時）自動開始")) : null);
 }
-function stageView(r) {
-  const card = r.card.id, scenes = scenesOf(r);
-  if (!scenes.length) return h("section", { class: "rr-stage", "data-stage": card, "aria-label": T("Board", "白板") },
-    h("div", { class: "rr-board" }, h("div", { class: "rr-empty", "data-board-empty": "" },
-      h("h2", { class: "rr-hand" }, T("Board", "白板")), h("p", { class: "faint" }, T("Ask below. Each answer becomes a scene here: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, revealed one at a time.", "在下方提問。每個回答會在這裡變成一個場景：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個出現。")))),
-    h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }), h("div", { class: "rr-playbar" }, voicePicker(r)));
-  const i = sceneState(card, scenes), sc = scenes[i], n = sc.points.length,
-    // a check opens on its first question not answered yet
-    k = sc.quiz && !RR.reveal.has(`${card}/${sc.key}`) ? (sc.points.findIndex((p) => !p.q.result) + 1 || n) : revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`);
-  const running = sc.t?.status === "running";
-  const quizQ = sc.quiz ? sc.points[Math.max(0, k - 1)]?.q : null;
-  const v = sc.quiz ? null : (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, k) || (running ? null : fallbackVisual(r, sc));
-  const prev = v?.group ? r.board.filter((b) => b.turn === v.turn && b.group === v.group && (b.step || 0) < (v.step || 0)).sort((a, b) => (a.step || 0) - (b.step || 0)).at(-1) : null;
-  const cur = sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
-  const page = pageOf(k), shown = sc.points.slice(page * PER, Math.max(page * PER, k)), pages = Math.max(1, Math.ceil(n / PER));
+// ---------- the board is the room's only view (public/review-board.js): every scene a region on its canvas ----------
+/** what a scene is, in a few words: its chapter, Studio's welcome, a check, the action asked */
+function sceneLabel(sc) {
   const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
-  const kicker = sc.chapter ? `${chapterName(sc.chapter)} · ${T(...(ACTION_LABEL[sc.t?.action] || ["", ""]))}` : sc.t?.untranslated ? T("Not in this language yet: shown as written", "還沒有這個語言的版本：照原文顯示") : sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · question ${k} of ${n}`, `考考我 · 第 ${k} 題 / ${n}`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
+  return sc.welcome ? T("Welcome", "開場") : sc.quiz ? T("Check me", "考考我") : sc.chapter ? chapterName(sc.chapter) : sc.t ? T(en, zh) : "";
+}
+/** what a turn is and what it did, over its first scene: the answers to the same question (one per tutor), Regenerate with…,
+ *  how it started (auto-teach), what it cost */
+function sceneHead(r, sc) {
+  const card = r.card.id, t = sc.t; if (!t || sc.studio || sc.quiz) return null;
+  const vers = t.versions?.length > 1 ? h("span", { class: "rr-vers", role: "group", "data-versions": t.regenOf ?? t.n, "aria-label": T("Answers to this question", "這一題的回答") }, t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${t.regenOf ?? t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null;
+  const regen = t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": t.n, "aria-expanded": String(RR.regen.get(card) === t.n), onclick: () => { RR.regen.get(card) === t.n ? RR.regen.delete(card) : RR.regen.set(card, t.n); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null;
+  const cost = t.status === "done" && t.cost?.usd != null ? h("span", { class: "faint rr-cost" }, `$${Number(t.cost.usd).toFixed(2)} · ${t.provider} · ${t.model}`) : null, auto = autoNote(r, t);
+  if (!vers && !regen && !cost && !auto) return null;
+  return h("div", { class: "rb-shead", "data-scene-head": t.n }, vers || regen || cost ? h("div", { class: "rb-shead-row" }, vers, regen, cost) : null, RR.regen.get(card) === t.n ? regenList(r, t) : null, auto);
+}
+/** One scene on the board: its title (the kicker says what it is), its picture (the one the point being read cites; the
+ *  others a chip away), its points (played: the ones not reached yet dimmed), and what the turn is doing: working (its tool
+ *  calls and what it said so far), failed, a check graded on the spot, the welcome's lesson button. */
+function sceneCard(r, scenes, j, W) {
+  const card = r.card.id, sc = scenes[j], n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc), picked = RR.pick.get(`${card}/${sc.key}`);
+  const running = sc.t?.status === "running", narrow = innerWidth <= 760, first = scenes.find((x) => x.turn === sc.turn) === sc;
+  // the step it is on (played, stepped through, or picked) sets the illustration: that step's picture, zoomed to its focus
+  const cur = sc.quiz ? null : stepOf(card, sc, k), v0 = sc.quiz ? null : (picked && sc.visuals.find((b) => b.id === picked)) || visualAt(r, sc, cur != null ? cur + 1 : k) || (running ? null : fallbackVisual(r, sc));
+  // code is never the illustration: Studio's own picture of the files instead, the code a link away
+  const pics = sc.visuals.filter((b) => !isCode(b)), codes = sc.quiz ? [] : [...new Set([...sc.visuals.filter(isCode), ...(isCode(v0) ? [v0] : [])])];
+  // the whole card shows its first picture that is not code; a step whose picture is code shows Studio's picture of the files
+  const v = isCode(v0) ? (cur == null && pics[0]) || fallbackVisual(r, sc) : v0;
+  const focus = cur != null && v === v0 ? focusOf(sc.points[cur]) : [];
+  const prev = v?.group ? r.board.filter((b) => b.turn === v.turn && b.group === v.group && (b.step || 0) < (v.step || 0)).sort((a, b) => (a.step || 0) - (b.step || 0)).at(-1) : null;
+  const [en, zh] = ACTION_LABEL[sc.t?.action] || ["", ""];
+  const kicker = sc.chapter ? `${chapterName(sc.chapter)} · ${T(en, zh)}` : sc.t?.untranslated ? T("Not in this language yet: shown as written", "還沒有這個語言的版本：照原文顯示") : sc.welcome ? T("Welcome · made by Studio, free", "開場 · Studio 做的，免費") : sc.quiz ? T(`Check me · ${n} question${n === 1 ? "" : "s"}`, `考考我 · ${n} 題`) : sc.studio ? T(`${en} · made by Studio, free`, `${zh} · Studio 做的，免費`) : sc.t ? T(en, zh) : "";
   const titleKey = `${card}/${sc.key}`, firstTitle = !RR.titled.has(titleKey); RR.titled.add(titleKey);
   const entering = RR.lastK.get(titleKey) !== k; RR.lastK.set(titleKey, k);
-  const pointView = (c, j) => { const at = page * PER + j, now = at === k - 1;
-    if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}`, "data-claim": "code" }, h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
-    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : " done"}${now && entering && !reduceMotion() ? " rr-enter" : ""}`, "data-claim": c.basis || c.kind, "aria-current": now ? "true" : null },
-      c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites)),
+  const pointView = (c, at) => { const now = k < n && at === k - 1, later = at >= k;
+    if (c.kind === "code") return h("li", { class: `rr-point code${now ? " now" : ""}${later ? " later" : ""}`, "data-claim": "code" }, stepBtn(card, sc, at, cur), h("pre", { class: "rr-pre" }, c.text.replace(/^\s*```[^\n]*\n?|\n?\s*```\s*$/g, "")));
+    return h("li", { class: `rr-point${c.basis === "inference" ? " inference" : ""}${now ? " now" : later ? " later" : " done"}${cur === at ? " picked" : ""}${now && entering && !reduceMotion() ? " rr-enter" : ""}`, "data-claim": c.basis || c.kind, "data-step": at + 1, "aria-current": now ? "true" : null },
+      stepBtn(card, sc, at, cur), c.basis === "inference" ? inferenceBadge() : c.basis === "reviewer" ? reviewerBadge() : null, h("span", { class: "rr-ptext" }, inline(card, (c.basis === "inference" ? c.text.replace(/\s*\[(inference|inferred|speculative)\]/gi, "") : c.text).replace(/^\s*[-*+]\s+/, ""), c.cites)),
       // what someone else wrote (a reviewer, a commit message): their words as plain text, never parsed for citations or markup;
       // the gist (its first line, cut short) on the board, the whole text only when the captain opens it
       c.quote ? quoteView(c, `${card}/${sc.key}/${at}`) : null); };
-  // the dots: one per scene, the current one opened into its points (or its pages, when it has many)
-  const dot = (j, m, on, label) => h("button", { type: "button", class: "rr-dot", "data-dot": `${j}:${m}`, "aria-current": on ? "step" : null, "aria-label": label,
-    onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); if (m) RR.reveal.set(`${card}/${scenes[j].key}`, m); rerender(); } }, h("i"));
-  const dots = scenes.map((x, j) => j !== i ? dot(j, 0, false, T(`Scene ${j + 1}`, `場景 ${j + 1}`))
-    : n <= 12 ? sc.points.map((_, m) => dot(j, m + 1, m + 1 === k, T(`Scene ${j + 1}, point ${m + 1}`, `場景 ${j + 1} 第 ${m + 1} 點`)))
-    : Array.from({ length: pages }, (_, m) => dot(j, Math.min(n, m * PER + 1), m === page, T(`Scene ${j + 1}, page ${m + 1}`, `場景 ${j + 1} 第 ${m + 1} 頁`)))).flat();
-  const toc = scenes.some((x) => x.chapter) ? h("nav", { class: "rr-toc", "data-toc": "", "aria-label": T("Chapters", "章節") },
-    (() => { const out = [], seenTurn = new Set(); scenes.forEach((x, j) => { const tn = x.turn ?? 0;
-      if (!seenTurn.has(tn)) { seenTurn.add(tn); out.push(h("p", { class: "rr-toc-h" }, x.welcome ? T("Welcome", "開場") : x.t ? clip(x.question || x.t.text || T(...(ACTION_LABEL[x.t.action] || [x.t.action, x.t.action])), 40) : "")); }
-      const prev = scenes[j - 1], run = x.chapter && ["change", "decisions", "lifecycle", "calls"].includes(x.chapter), cont = run && prev?.turn === x.turn && prev?.chapter === x.chapter;
-      if (run && !cont) out.push(h("p", { class: "rr-toc-ch", "data-toc-chapter": x.chapter }, chapterName(x.chapter)));
-      if (run) { const nth = scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === x.chapter).length;
-        out.push(h("button", { type: "button", class: "rr-toc-i sub", "data-toc-scene": x.key, "data-toc-item": nth, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
-          h("span", {}, x.chapter === "decisions" ? `${T(`Choice ${nth}`, `決定 ${nth}`)} · ${clip(x.title, 30)}` : clip(x.title, 36)))); return; }
-      out.push(h("button", { type: "button", class: "rr-toc-i", "data-toc-scene": x.key, "aria-current": j === i ? "true" : null, title: x.title, onclick: () => { markMoved(card); stopPlay(); RR.scene.set(card, j); RR.jump.set(card, x.key); rerender(); } },
-        x.chapter ? h("b", {}, chapterName(x.chapter)) : null, h("span", {}, clip(x.title, 36)), x.t && x.t.status === "running" ? h("i", { class: "rr-toc-run" }, "…") : null)); }); return out; })()) : null;
-  // a finished lesson reads as a report (baton's packet); the captain may step through it on the board instead
-  if (sc.t?.action === "teach" && sc.t.status === "done" && sc.chapter && !RR.step.has(`${card}/${sc.t.n}`)) return BOARD.view(r, scenes, i);
-  return h("section", { class: `rr-stage${toc ? " with-toc" : ""}`, "data-stage": card, "data-scene": sc.key, "aria-label": T("Board", "白板") }, toc,
-    h("div", { class: "rr-board", "aria-roledescription": T("board", "白板") },
-      h("div", { class: "rr-stitle" },
-        h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker, pages > 1 && !sc.quiz ? ` · ${page + 1}/${pages}` : "",
-          sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null,
-          sc.t?.versions?.length > 1 && !sc.quiz ? h("span", { class: "rr-vers", role: "group", "data-versions": sc.t.regenOf ?? sc.t.n, "aria-label": T("Answers to this question", "這一題的回答") }, sc.t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === sc.t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${sc.t.regenOf ?? sc.t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null,
-          sc.t && !sc.studio && !sc.quiz && sc.t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": sc.t.n, "aria-expanded": String(RR.regen.has(card)), onclick: () => { RR.regen.has(card) ? RR.regen.delete(card) : RR.regen.add(card); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null),
-        sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" ? h("button", { type: "button", class: "rr-mini", "data-report-back": sc.t.n, onclick: () => { RR.step.delete(`${card}/${sc.t.n}`); RR.jump.set(card, sc.key); stopPlay(); rerender(); } }, T("Back to the board", "回到白板")) : null,
-        RR.regen.has(card) && sc.t && !sc.studio ? regenList(r, sc.t) : null,
-        h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
-      h("div", { class: "rr-scene" },
-        h("figure", { class: "rr-visual", "data-visual": quizQ ? `quiz-${quizQ.n}` : v?.id || "" },
-          quizQ ? quizView(card, r, quizQ, [`${card}/${sc.key}`, k]) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")),
-          sc.visuals.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, sc.visuals.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, b.kind ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
-        h("div", { class: "rr-points" },
-          RR.ready.has(card) ? h("button", { type: "button", class: "rr-chip lead", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.reveal.set(`${card}/${key}`, 0); queueMicrotask(() => play(card, scenes[at])); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示")) : null,
-          sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
-          autoNote(r, sc.t),
-          sc.t && sc.t.status !== "done" ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
-          sc.quiz ? quizSide(r, sc) : h("ol", { class: "rr-pointlist", "data-points": n, start: page * PER + 1 }, shown.map(pointView)),
-          n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
-          // the welcome scene's one action: the lesson, a paid turn that asks to confirm first
-          sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
-          sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
-            T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
-          sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null,
-          sc.t?.status === "done" && sc.t.cost?.usd != null ? h("p", { class: "faint rr-cost" }, `$${Number(sc.t.cost.usd).toFixed(2)} · ${sc.t.provider} · ${sc.t.model}`) : null))),
+  // the picture is laid out for the scene's column: the left of the card on a desktop, its whole width on a phone
+  const box = narrow ? { narrow: true, w: W - 30, h: 1400 } : { w: Math.round(W * 0.56) - 30, h: 340 };
+  let pic; BOX = box; try { pic = sc.quiz ? h("div", { class: "rr-quizzes" }, sc.points.map((p) => quizView(card, r, p.q, null))) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")); } finally { BOX = null; }
+  const answers = (r.turns || []).some((t) => !t.studio && !t.hidden && !t.thread);
+  if (focus.length) queueMicrotask(zoomFocus);
+  return h("div", { class: `rp-card rb-scard${sc.quiz ? " quiz" : ""}`, "data-scene-card": sc.key },
+    first ? sceneHead(r, sc) : null,
+    h("div", { class: "rr-stitle" },
+      h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker,
+        sc.question ? h("span", { class: "rr-q", "data-scene-question": "", title: sc.question }, ` · ${clip(sc.question, 60)}`) : null),
+      h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
+    h("div", { class: `rr-scene${sc.quiz ? "" : " rr-steps"}` },
+      h("figure", { class: "rr-visual", "data-visual": sc.quiz ? "quiz" : v?.id || "", "data-illustration-of": sc.quiz ? null : cur != null ? cur + 1 : "all", "data-zoom-focus": focus.length ? focus.join(",") : null, onclick: sc.quiz ? null : edgeClick(card, sc, v) }, pic,
+        sc.quiz ? null : stepDetail(sc, cur), sc.quiz ? null : explainPop(card, r, sc, v), sc.quiz ? null : codeRefs(card, r, codes),
+        pics.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, pics.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, KIND_LABEL[b.kind] ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
+      h("div", { class: "rr-points" },
+        sc.t && sc.t.status !== "done" && r.progress?.turn === sc.t.n && first ? h("div", { class: "rr-progress faint", "data-turn-progress": sc.t.n }, T(`${r.progress.tools} tool call${r.progress.tools === 1 ? "" : "s"} so far`, `目前呼叫了 ${r.progress.tools} 次工具`), r.progress.said ? h("p", { class: "rr-progress-said" }, clip(plain(r.progress.said), 280)) : null) : null,
+        sc.t && sc.t.status !== "done" && first ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
+        sc.quiz ? quizSide(r, sc) : n ? h("ol", { class: "rr-pointlist", "data-points": n }, sc.points.map(pointView)) : null,
+        n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
+        // the welcome's one action: the lesson, a paid turn that asks to confirm first; before any answer, what the board is for
+        sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
+        // what arriving starts (on this Mac only: a phone reads the room and starts nothing)
+        sc.welcome && !r.snapshot && r.arrive && BOARD.state.viewer !== "phone" ? (r.arrive.error ? h("p", { class: "rr-err", "data-arrive": "none" }, T(`Studio cannot start the full analysis by itself: ${r.arrive.error}`, `Studio 無法自動開始完整分析：${r.arrive.error}`))
+          : h("p", { class: "rr-paste-offer", "data-arrive": "on", "data-arrive-images": r.arrive.images ? "on" : "off" }, T(`Arriving here starts the full analysis by itself: one paid model round on ${r.arrive.provider} · ${r.arrive.model ?? "default model"}${r.arrive.effort ? ` (${r.arrive.effort})` : ""}${r.arrive.createsHost ? ", after creating this room's host Task" : ""}; ${r.arrive.images ? "generated pictures are on in this room: the tutor may ask for up to two, and an opening picture is made once, each a paid image job" : "no generated pictures"}. The tutor only reads the code; turn it off in the transcript drawer.`,
+            `進到這裡就會自動開始完整分析：在 ${r.arrive.provider} · ${r.arrive.model ?? "預設模型"}${r.arrive.effort ? `（${r.arrive.effort}）` : ""} 上付費一回合${r.arrive.createsHost ? "，會先建立承載這間審查室的任務" : ""}；${r.arrive.images ? "這間房間開了生成圖片：導師可能要求最多兩張，另外會產生一次開場圖，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼；可在紀錄抽屜裡關掉。`))) : null,
+        sc.welcome && r.open && !r.offer?.error && r.actions?.some((a) => a.id === "teach") ? h("button", { type: "button", class: "rr-cta", "data-welcome-teach": "", disabled: r.running != null || RR.posting.has(card), onclick: () => askTurn(card, "teach") },
+          r.subject?.kind === "dir" ? T("Teach me this directory", "教我這個目錄") : T("Teach me this change", "教我這個 PR"), h("small", {}, T(`Asks first: ${r.offer?.provider ?? ""} · ${r.offer?.model ?? "default model"}, one paid round`, `會先確認：${r.offer?.provider ?? ""} · ${r.offer?.model ?? "預設模型"}，付費一回合`))) : null,
+        sc.welcome && !answers ? h("p", { class: "faint rr-boardhint", "data-board-empty": "" }, T("Ask below. Each answer becomes a block on this board: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, played one at a time.", "在下方提問。每個回答會在這塊白板上變成一個區塊：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個播放。")) : null,
+        sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null)));
+}
+/** The play bar, floating on the board: the caption of the point being read, a point back, a dot per point, a point on,
+ *  play / pause, replay, the scene before and after, the voice */
+function playBar(r, scenes, i) {
+  const card = r.card.id, sc = scenes[i]; if (!sc) return null;
+  const n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc), running = sc.t?.status === "running";
+  const cur = sc.quiz ? null : sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
+  // a lesson's chapter is read, not played: until it plays the bar is a small pill (play, replay, the voice) that leaves the
+  // chapter and its question cards clear
+  const playBtn = h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n || sc.quiz, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play"));
+  const replay = h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay"));
+  if (sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" && RR.playing !== card && k >= n)
+    return h("div", { class: "rb-play mini", "data-playbar": card, role: "group", "aria-label": T("Playback", "播放") }, h("div", { class: "rr-playbar" }, playBtn, replay, h("span", { class: "rb-play-l" }, T("Play this chapter", "播放這一章")), voicePicker(r)));
+  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.step.set(`${card}/${sc.key}`, m - 1); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
+  return h("div", { class: "rb-play", "data-playbar": card, role: "group", "aria-label": T("Captions and playback", "字幕與播放") },
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),
     h("div", { class: "rr-playbar" },
-      h("button", { type: "button", class: "rr-ibtn", "data-point-prev": "", disabled: i === 0 && k <= 1, onclick: () => stepPoint(card, -1), "aria-label": T("Previous point", "上一點"), title: T("Previous point (←)", "上一點（←）") }, ic("prev")),
-      h("div", { class: "rr-dots", role: "group", "aria-label": T("Scenes and points", "場景與重點") }, dots),
-      h("button", { type: "button", class: "rr-ibtn", "data-point-next": "", disabled: i === scenes.length - 1 && k >= n, onclick: () => stepPoint(card, 1), "aria-label": T(`Next point (${k}/${n})`, `下一點（${k}/${n}）`), title: T("Next point (→)", "下一點（→）") }, ic("next")),
-      h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n || sc.quiz, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play")),
-      h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay")),
+      h("button", { type: "button", class: "rr-ibtn", "data-point-prev": "", disabled: i === 0 && k <= 1, onclick: () => stepPoint(card, -1), "aria-label": T("Previous point", "上一點"), title: T("Previous point", "上一點") }, ic("prev")),
+      n && !sc.quiz && n <= 24 ? h("div", { class: "rr-dots", role: "group", "aria-label": T("Points", "重點") }, sc.points.map((_, m) => dot(m + 1))) : null,
+      h("button", { type: "button", class: "rr-ibtn", "data-point-next": "", disabled: i === scenes.length - 1 && k >= n, onclick: () => stepPoint(card, 1), "aria-label": T(`Next point (${k}/${n})`, `下一點（${k}/${n}）`), title: T("Next point", "下一點") }, ic("next")),
+      playBtn, replay,
       h("span", { class: "rr-scenenav" },
         h("button", { type: "button", class: "rr-mini", "data-scene-prev": "", disabled: i === 0, onclick: () => goScene(card, i - 1), "aria-label": T("Previous scene", "上一個場景") }, "«"),
         h("span", { class: "faint", "data-scene-pos": `${i + 1}/${scenes.length}` }, T(`Scene ${i + 1} of ${scenes.length}`, `場景 ${i + 1} / ${scenes.length}`)),
         h("button", { type: "button", class: "rr-mini", "data-scene-next": "", disabled: i === scenes.length - 1, onclick: () => goScene(card, i + 1), "aria-label": T("Next scene", "下一個場景") }, "»")),
-      h("span", { class: "x-grow" }),
       voicePicker(r)));
 }
+/** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind this chip on the board */
+function readyChip(r, scenes) {
+  const card = r.card.id; if (!RR.ready.has(card)) return null;
+  return h("button", { type: "button", class: "rr-chip lead rb-ready", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.jump.set(card, key); RR.reveal.set(`${card}/${key}`, 0); queueMicrotask(() => play(card, scenes[at])); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示"));
+}
+/** a point on or back while a scene is being played or stepped through (→ ← on the board); false when the scene is whole */
+function stepReveal(card, dir) {
+  const { sc } = curScene(card); if (!sc || sc.quiz) return false; const k = revealOf(card, sc), n = sc.points.length;
+  if (k >= n || (dir < 0 && k <= 1)) return false;
+  markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + dir); rerender(); return true;
+}
+const boardView = (r) => { const scenes = scenesOf(r); return BOARD.view(r, scenes, sceneState(r.card.id, scenes)); };
 // ---------- the prompt bar: quick actions, a question (typed or spoken), the paid-round confirmation ----------
 const SR = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
 /** push-to-talk, on-device only: the browser must recognise speech locally (processLocally), or the mic stays off */
@@ -1190,8 +1366,8 @@ const askTurn = (card, action, text, again) => { if (action === "ask" && !text) 
   RR.confirm.set(card, prior ? { action, text: text || "", existing: prior.n } : { action, text: text || "" }); rerender(); };
 /** go to a turn's scene (its first) */
 const showTurn = (card, n) => { const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), at = scenes.findIndex((x) => x.t?.n === n); if (at >= 0) { stopPlay(); RR.scene.set(card, at); } rerender(); };
-/** The dock under the stage: the quick actions, the question (typed or spoken), the transcript; the paid round's
- *  confirmation, a turn being sent and errors open above it, over the stage, never pushing it */
+/** The dock under the board: the quick actions, the question (typed or spoken), the transcript; the paid round's
+ *  confirmation, a turn being sent and errors open above it, over the board, never pushing it */
 function promptBar(r) {
   const card = r.card.id, busy = r.running != null || RR.posting.has(card), offer = r.offer, conf = RR.confirm.get(card), err = RR.err.get(card);
   const answers = (r.turns || []).filter((t) => !t.studio && t.status === "done").length;
@@ -1248,7 +1424,7 @@ function drawer(r) {
         h("button", { type: "button", class: "rr-ibtn", "data-transcript-close": "", "aria-label": T("Close", "關閉"), onclick: close }, ic("x"))),
       h("div", { class: "rr-drawer-body" },
         h("h3", {}, T("Scenes", "場景")),
-        // a jump changes the scene on the stage and closes the drawer: nothing scrolls
+        // a jump flies the board to the scene and closes the drawer: nothing scrolls
         h("ol", { class: "rr-turns" }, scenes.map((sc, i) => h("li", { "data-turn": sc.turn, "data-turn-status": sc.t?.status || "opening" }, h("button", { type: "button", class: "rr-jump", "data-jump": sc.key, onclick: () => { stopPlay(); markMoved(card); RR.scene.set(card, i); RR.drawer.delete(card); rerender(); } },
           sc.question ? h("span", { class: "rr-jq" }, sc.question.slice(0, 160)) : null, h("span", { class: "faint" }, ` → ${sc.title}`)),
           // the tutor's whole answer: the board shows it short, the transcript in full (text only)
@@ -1270,8 +1446,8 @@ function drawer(r) {
           s.kind === "search" ? s.query : webLink(s) ? h("a", { href: webLink(s), target: "_blank", rel: "noopener noreferrer", "data-source-link": s.n }, webLink(s)) : h("code", { "data-source-text": s.n }, s.url || s.text || ""), s.refused ? h("span", { class: "rr-err" }, T(` refused: ${s.refused}`, ` 已拒絕：${s.refused}`)) : s.error ? h("span", { class: "faint" }, ` ${s.error}`) : null)))
           : h("p", { class: "faint" }, T("Every web search and page the tutor uses is listed here. Studio refuses any that would carry this repository's code or names.", "導師用到的每個網路搜尋和網頁都列在這裡；會帶出這個儲存庫程式碼或名稱的查詢，Studio 一律拒絕。")),
         // start the room over: confirmed first; what goes and what stays said plainly; refused while a turn or a translation runs
-        !r.snapshot && r.subject?.kind === "pr" ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
-          h("span", {}, T("Start the lesson by itself when this pull request is pasted again on a new head", "這個 pull request 在新的 head 再次貼上時自動開始教學"))) : null,
+        !r.snapshot ? h("label", { class: "rr-imgopt", "data-auto-zone": "" }, h("input", { type: "checkbox", "data-auto-room": "", checked: r.autoTeach?.on !== false, onchange: async (e) => { try { RR.rooms.set(card, await postJ(`/api/review-room/${enc(card)}/auto`, { on: e.target.checked })); dropPasteOffers(); } catch (er) { RR.err.set(card, er.message); } rerender(); } }),
+          h("span", {}, T("Analyse this room by itself when you open it on a new head (or paste its pull request): one paid round on the room's tutor, once per head", "在新的 head 打開這個審查室（或貼上它的 pull request）時自動完整分析：用房間的導師付費一回合，每個 head 一次"))) : null,
         r.snapshot ? null : h("div", { class: "rr-reset", "data-reset-zone": "" }, h("h3", {}, T("Start over", "清空重來")),
           RR.resetAsk.has(card) ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-reset-confirm-box": "", "aria-label": T("Start this room over", "清空這個審查室重來") },
             h("p", {}, T("Start this room over? Its answers, its board, its translations and its generated pictures go (moved to an archive folder beside the room, not deleted; a Task's room keeps that archive in the Task's own folder, so it goes if the Task is deleted). The Library's saved snapshots and the Task's ledger stay.", "要清空這個審查室重來嗎？它的回答、白板、翻譯和生成圖片都會移走（搬到審查室旁的封存資料夾，不會刪除；任務的審查室會把封存放在任務自己的資料夾裡，任務被刪除時封存也會一起刪除）。成品庫裡存過的快照和任務的帳本都會保留。")),
@@ -1288,18 +1464,31 @@ async function resetRoom(card) {
     for (const m of [RR.scene, RR.seen, RR.confirm, RR.draft, RR.cite, RR.err, RR.reveal, RR.ready, RR.rscroll, RR.jump, RR.lang]) m.delete(card);
     for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
     for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);
-    for (const set of [RR.step, RR.titled, RR.fold]) for (const key of [...set]) if (key.startsWith(`${card}/`)) set.delete(key);
+    for (const set of [RR.titled, RR.fold]) for (const key of [...set]) if (key.startsWith(`${card}/`)) set.delete(key);
     BOARD.forget(card); RR.rooms.delete(card); RR.scene.set(card, 0); await load(card, true); RR.scene.set(card, 0); }
   catch (e) { RR.err.set(card, e.message); RR.resetAsk.delete(card); }
   finally { RR.posting.delete(card); rerender(); }
+}
+/** Studio's default tutor (the room list): Automatic, or a model this machine runs and has verified (one it cannot is disabled with why) */
+function tutorDefault() {
+  const list = RR.list?.tutors || [], cur = RR.list?.settings?.tutor || null, val = cur ? `${cur.provider}|${cur.model}` : "auto";
+  return h("label", { class: "rr-imgopt rr-tutordefault" }, h("span", {}, T("Studio's default tutor for every room (a room can pick its own):", "每間審查室的預設導師（房間可以自己選）：")),
+    h("select", { class: "input", "data-tutor-default": "", onchange: async (e) => { const v = e.target.value; try { const st = await postJ("/api/review-room/settings", { tutor: v === "auto" ? null : { provider: v.split("|")[0], model: v.split("|").slice(1).join("|") } }); if (RR.list) RR.list.settings = st; dropPasteOffers(); PR.err.delete("home");
+          // every room kept on this page offered the old default: each is read again when it is next opened
+          for (const [rid, rr] of [...RR.rooms]) if (!rr?.snapshot && rr?.running == null) RR.rooms.delete(rid); } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } },
+      h("option", { value: "auto", selected: val === "auto" }, T("Automatic: the most independent model Studio can run", "自動：Studio 能跑、最獨立的模型")),
+      list.map((m) => h("option", { value: `${m.provider}|${m.model}`, selected: val === `${m.provider}|${m.model}`, disabled: !m.runnable, "data-tutor-option-held": m.held ? "" : null }, `${m.provider} · ${m.model}${m.held ? T(` (cannot be picked: ${m.held})`, `（不能選：${m.held}）`) : ""}`))));
 }
 // ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------
 const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(), offer: new Map(), shown: new Map() };
 /** a switch changed: what a paste starts is asked again */
 const dropPasteOffers = () => { PR.offer.clear(); PR.shown.clear(); };
 const PR_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?$/;
+/** a GitHub directory's address: a repository's page, or …/tree/<branch, tag or commit>/<path> */
+const DIR_URL = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+(?:\/tree\/[^?#\s]+)?\/?$/;
+const pastable = (u) => PR_URL.test(u) || DIR_URL.test(u);
 /** what pasting this address would start, asked of Studio once per address (the paste box says it before the paste) */
-const pasteOffer = (url) => { if (!PR_URL.test(url) || PR.offer.has(url)) return PR.offer.get(url); PR.offer.set(url, { loading: true });
+const pasteOffer = (url) => { if (!pastable(url) || PR.offer.has(url)) return PR.offer.get(url); PR.offer.set(url, { loading: true });
   api(`/api/review-room/paste-offer?url=${encodeURIComponent(url)}`).then((o) => PR.offer.set(url, o)).catch((e) => PR.offer.set(url, { error: e.message })).finally(rerenderAny); return PR.offer.get(url); };
 /** the paste box's line about the paste: a paid round on this tutor when auto-teach is on, else nothing runs until asked */
 function pasteLine(url, where) {
@@ -1308,6 +1497,10 @@ function pasteLine(url, where) {
   if (o.auto === false) return h("p", { class: "faint", "data-paste-offer": "off" }, T("Pasting opens the room; nothing runs until you ask (auto-teach is off).", "貼上只會開啟審查室；你開口之前什麼都不跑（自動教學已關）。"));
   if (o.error) return h("p", { class: "faint", "data-paste-offer": "none" }, T(`Pasting opens the room; no lesson starts by itself: ${o.error}`, `貼上會開啟審查室，不會自動開始教學：${o.error}`));
   const who = `${o.provider} · ${o.model ?? T("default model", "預設模型")}${o.effort ? ` (${o.effort})` : ""}`;
+  // a directory: no pull request, its own host Task (no crew: the tutor the box names)
+  if (!PR_URL.test(url)) return h("p", { class: "rr-paste-offer", "data-paste-offer": "on", "data-paste-kind": "dir", "data-paste-images": o.images ? "on" : "off", "data-paste-host": o.createsHost ? "new" : "kept" },
+    T(`Pasting reads the directory at that ref (pinned at its commit) and starts its lesson by itself: ${o.createsHost ? "it creates the room's host Task, then runs " : ""}one paid model round on ${who}; ${o.images ? "the tutor may also ask for up to two generated pictures, each a paid image job" : "no generated pictures"}. The tutor only reads the code, and nothing is sent to GitHub.`,
+      `貼上會讀取這個目錄（固定在它的 commit）並自動開始這一課：${o.createsHost ? "會先建立承載這間審查室的任務，再" : ""}在 ${who} 上付費執行一回合；${o.images ? "導師也可能要求最多兩張生成圖片，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼，也不送任何東西到 GitHub。`));
   return h("p", { class: "rr-paste-offer", "data-paste-offer": "on", "data-paste-images": o.images ? "on" : "off", "data-paste-host": o.createsHost ? "new" : "kept" },
     T(`Pasting starts the lesson by itself: ${o.createsHost ? "it creates this pull request's host Task and its tutor's staffing, then runs " : ""}one paid model round on ${who}; ${o.images ? "the tutor may also ask for up to two generated pictures, each a paid image job" : "no generated pictures"}. The tutor only reads the code, and nothing is sent to GitHub.`,
       `貼上就會自動開始這一課：${o.createsHost ? "會先為這個 pull request 建立承載它的任務和導師的人員配置，再" : ""}在 ${who} 上付費執行一回合；${o.images ? "導師也可能要求最多兩張生成圖片，每張都是付費的圖片工作" : "不產生圖片"}。導師只讀程式碼，也不送任何東西到 GitHub。`));
@@ -1318,18 +1511,20 @@ function prBox(where, repository) {
   const go = async () => { const url = (PR.url.get(where) || "").trim(); if (!url || busy) return; PR.busy.add(where); PR.err.delete(where); rerenderAny();
     // the lesson starts by itself only when this box has said so for this very address; before that the paste opens the room only
     const said = PR.shown.get(where), auto = !!(said && said.url === url && said.auto && said.plan);
-    try { const out = await postJ("/api/review-room/open-pr", { url, lang: uiLang(), ...(auto ? { auto: true, plan: said.plan } : {}) }); RR.rooms.set(out.id, out.room);
+    // a pull request's address, or (the home's box) a GitHub directory's
+    try { const out = await postJ(PR_URL.test(url) || repository ? "/api/review-room/open-pr" : "/api/review-room/open-dir", { url, lang: uiLang(), ...(auto ? { auto: true, plan: said.plan } : {}) }); RR.rooms.set(out.id, out.room);
       // the plan changed since the box said it (a new tutor, pictures, a host): nothing started; the box shows the new plan to paste again
       if (out.plan) { PR.offer.set(url, out.plan); PR.err.set(where, T("What a paste starts has changed (above): nothing started. Paste again to start it.", "貼上會開始的內容變了（見上方）：什麼都沒有開始。再貼一次才會開始。")); return; }
       PR.url.delete(where); dropPasteOffers(); location.hash = out.href; }
     catch (e) { PR.err.set(where, e.message); } finally { PR.busy.delete(where); rerenderAny(); } };
   return h("form", { class: "rr-prbox", "data-pr-box": where, onsubmit: (e) => { e.preventDefault(); go(); } },
-    h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request", "審查一個 pull request")),
-      h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 300, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>", value: PR.url.get(where) || "",
-        oninput: (e) => { PR.url.set(where, e.target.value); if (PR_URL.test(e.target.value.trim()) && !PR.offer.has(e.target.value.trim())) { pasteOffer(e.target.value.trim()); } }, "aria-label": T("Pull request URL", "Pull request 網址") })),
+    h("label", { class: "rr-prlabel" }, h("span", {}, repository ? T(`Review a pull request of ${repository}`, `審查 ${repository} 的 pull request`) : T("Review a pull request, or learn a directory of any GitHub repository", "審查一個 pull request，或學習任何 GitHub 儲存庫的一個目錄")),
+      h("input", { class: "input", type: "url", "data-pr-url": where, required: true, disabled: busy, maxlength: 800, placeholder: repository ? `https://github.com/${repository}/pull/123` : "https://github.com/<owner>/<repo>/pull/<number>  ·  …/tree/<branch>/<path>", value: PR.url.get(where) || "",
+        oninput: (e) => { PR.url.set(where, e.target.value); const u = e.target.value.trim(); if ((repository ? PR_URL.test(u) : pastable(u)) && !PR.offer.has(u)) { pasteOffer(u); } }, "aria-label": repository ? T("Pull request URL", "Pull request 網址") : T("Pull request or directory URL", "Pull request 或目錄的網址") })),
     pasteLine((PR.url.get(where) || "").trim(), where),
     h("button", { type: "submit", class: "btn primary", "data-pr-open": where, disabled: busy }, busy ? T("Reading it on GitHub…", "正在讀取 GitHub…") : T("Open its review room", "開啟它的審查室")),
-    h("p", { class: "faint" }, T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
+    h("p", { class: "faint" }, repository ? T("Only a pull request of a registered project connected to GitHub. Studio only reads it on GitHub and copies its commits into its own folder; nothing is written to GitHub or to your checkout.", "只限已註冊且連到 GitHub 的專案的 pull request。Studio 只在 GitHub 上讀取，並把它的 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")
+      : T("A pull request of a registered project connected to GitHub; or a directory of any GitHub repository (a public one as it is, a private one through your gh login), read at one commit. Studio only reads GitHub and copies the commits into its own folder; nothing is written to GitHub or to your checkout.", "已註冊且連到 GitHub 的專案的 pull request；或任何 GitHub 儲存庫的一個目錄（公開的直接讀，私人的用你的 gh 登入），固定在一個 commit。Studio 只讀 GitHub，並把 commit 複製到 Studio 自己的資料夾；不寫任何東西到 GitHub 或你的本機儲存庫。")),
     err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);
 }
 const rerenderAny = () => { if (S.route?.name === "room" || S.route?.name === "project") render(); };
@@ -1345,6 +1540,7 @@ function header(r) {
   const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
   const sub = kind === "merge" ? T(`${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room never answers the merge card.`, `${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不會回覆合併卡。`)
     : kind === "branch" ? T(`${r.task?.title || r.card.id} · its branch · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room changes nothing about the Task.`, `${r.task?.title || r.card.id} · 它的分支 · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不改變任務的任何事。`)
+    : kind === "dir" ? T(`${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · pinned at ${String(r.dir?.sha || "").slice(0, 8)}. The tutor reads only; nothing is written to GitHub.`, `${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · 固定在 ${String(r.dir?.sha || "").slice(0, 8)}。導師只讀；不寫任何東西到 GitHub。`)
     : T(`${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}. Studio only reads GitHub; the room never comments, reviews or merges.`, `${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}。Studio 只讀 GitHub；審查室不留言、不審查、不合併。`);
   const verdicts = ps?.verdicts?.length ? ps.verdicts.map((v) => `${v.author}: ${v.state === "APPROVED" ? T("approved", "核准") : v.state === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : T("dismissed", "撤銷")}${v.current ? "" : T(" (an older head)", "（較舊的 head）")}`).join(" · ") : null;
   const pill = (attrs, ...kids) => h("span", { ...attrs, class: `rr-pill ${attrs.class || ""}`, title: attrs.title ?? kids.flat().map((k) => typeof k === "string" ? k : k?.textContent || "").join("") }, ...kids);
@@ -1361,11 +1557,16 @@ function header(r) {
       kind === "branch" ? pill({ class: r.reviewed ? "ok" : "", "data-branch-state": r.reviewed ? "reviewed" : "not-reviewed" }, r.reviewed ? T(`Reviewed by Studio at ${String(r.head || "").slice(0, 8)}${r.local ? " · ready on its local branch, not published" : ""}`, `Studio 已在 ${String(r.head || "").slice(0, 8)} 審查通過${r.local ? " · 在本機分支上就緒，不會發布" : ""}`) : T("Studio's review has not passed at this head yet.", "Studio 的審查還沒在這個 head 通過。")) : null,
       mv ? pill({ class: "warn", role: "status", "data-room-moved": mv.commits ?? "rewritten" }, mv.commits != null ? T(`${mv.commits} new commit${mv.commits === 1 ? "" : "s"} since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}). Your next question opens with what changed.`, `你上次看過之後有 ${mv.commits} 個新 commit（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。下一個問題會先看改了什麼。`)
         : T(`The branch was rewritten since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `你上次看過之後分支被改寫了（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)) : null,
+      // a directory: where it is pinned (its citations open that commit, it never moves), and whether it is private
+      kind === "dir" && r.dir ? pill({ "data-dir-pin": r.dir.sha, title: T(`Read at ${r.dir.ref}, pinned at commit ${r.dir.sha}`, `讀的是 ${r.dir.ref}，固定在 commit ${r.dir.sha}`) }, T(`Pinned at ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} files`, `固定在 ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} 個檔案`), r.dir.private ? T(" · private", " · 私人") : "") : null,
       ds ? pill({ "data-room-diffstat": "" }, h("b", { class: "add" }, `+${ds.added}`), " ", h("b", { class: "del" }, `−${ds.removed}`), T(` · ${ds.files} file${ds.files === 1 ? "" : "s"}`, ` · ${ds.files} 個檔案`)) : null,
       // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
-      offer?.independence ? pill({ class: offer.independence.level === "same" ? "warn" : "", "data-independence": offer.independence.level }, T(`Tutor: ${offer.provider} · ${offer.model ?? "default model"} — ${offer.independence.en}`, `導師：${offer.provider} · ${offer.model ?? "預設模型"}：${offer.independence.zh}`)) : null),
+      // a room that takes turns: the pill is the tutor picker (this room's pick, Studio's default, or Automatic)
+      r.open && !r.snapshot ? tutorButton(r) : offer?.independence ? pill({ class: offer.independence.level === "same" ? "warn" : "", "data-independence": offer.independence.level }, T(`Tutor: ${offer.provider} · ${offer.model ?? "default model"} — ${offer.independence.en}`, `導師：${offer.provider} · ${offer.model ?? "預設模型"}：${offer.independence.zh}`)) : null),
+    RR.tutorMenu === id && r.open && !r.snapshot ? tutorMenu(r) : null,
     kind === "pr" && !r.snapshot ? h("button", { type: "button", class: "rr-back", "data-room-check": id, disabled: PR.checking.has(id) || r.checking || null, onclick: () => checkNow(id) }, PR.checking.has(id) || r.checking ? T("Reading GitHub…", "正在讀取 GitHub…") : T("Check for new commits", "檢查新的 commit")) : null,
     kind === "pr" && /^https:\/\/github\.com\//.test(r.subject?.url || "") ? h("a", { class: "rr-back", href: r.subject.url, target: "_blank", rel: "noopener noreferrer", "data-room-github": "" }, T("Open on GitHub", "在 GitHub 開啟")) : null,
+    kind === "dir" && r.dir?.sha && /^[\w.-]+\/[\w.-]+$/.test(r.dir.repository || "") ? h("a", { class: "rr-back", href: `https://github.com/${r.dir.repository}/tree/${r.dir.sha}${r.dir.path ? `/${r.dir.path.split("/").map(encodeURIComponent).join("/")}` : ""}`, target: "_blank", rel: "noopener noreferrer", "data-room-github": "" }, T("Open on GitHub", "在 GitHub 開啟")) : null,
     // the Library: save the room (any time; an ended room is saved by Studio), or, in a saved room, its versions
     r.snapshot ? h("span", { class: "rr-pill", "data-room-snapshot": `${r.snapshot.artifact}@${r.snapshot.n}`, title: r.snapshot.reason || "" }, T(`Saved ${String(r.snapshot.savedAt || "").slice(0, 16).replace("T", " ")} · read-only`, `存於 ${String(r.snapshot.savedAt || "").slice(0, 16).replace("T", " ")} · 唯讀`)) : null,
     r.snapshot && r.snapshot.versions?.length > 1 ? h("span", { class: "rr-vers", role: "group", "aria-label": T("Saved versions", "存過的版本") }, r.snapshot.versions.map((v) => h("a", { class: "rr-ver", href: `#/room/lib:${r.snapshot.artifact}@${v.n}`, "data-snapshot-version": v.n, "aria-current": v.n === r.snapshot.n ? "page" : null }, `v${v.n}`))) : null,
@@ -1373,6 +1574,9 @@ function header(r) {
       onclick: async () => { RR.posting.add(`${id}/save`); rerender(); try { const out = await postJ(`/api/review-room/${enc(id)}/save`, {}); RR.saved = out; await load(id); } catch (e) { RR.err.set(id, e.message); } finally { RR.posting.delete(`${id}/save`); redraw(id); } } },
       RR.posting.has(`${id}/save`) ? T("Saving…", "存檔中…") : T("Save to Library", "存到成品庫")) : null,
     r.library && !r.snapshot ? h("a", { class: "rr-back", href: `#/room/lib:${r.library.artifact}`, "data-room-library": r.library.artifact }, T(`Library v${r.library.versions.at(-1)?.n}`, `成品庫 v${r.library.versions.at(-1)?.n}`)) : null,
+    // 封存: the room stays whole and keeps working; this only moves it on the room list
+    !r.snapshot && r.archived ? pill({ "data-room-archived": "" }, T("Archived", "已封存")) : null,
+    !r.snapshot ? archiveBtn({ id, zone: r.archived ? "archived" : null }) : null,
     // Firstmate opens over the room as a sheet, never a column beside the board
     h("button", { type: "button", class: "rr-back", "data-room-firstmate": "", "aria-label": T("Firstmate (over the room)", "Firstmate（疊在審查室上）"), onclick: () => (document.body.classList.contains("chat-closed") ? document.getElementById("chatFab") : document.getElementById("chatClose"))?.click() }, ic("msg"), h("span", {}, "Firstmate")));
 }
@@ -1383,58 +1587,148 @@ function header(r) {
 // list (for a room or any page) is what marks it stale
 addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room" && !S.route.arg)) RR.list.fresh = false;
   // back in a room whose turn still runs (the poll stopped when the captain left): read it now, and the poll follows it again
-  const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) load(id); });
-// the keyboard: ← → a point back or forward, Space play / pause, Escape closes what is open over the room
+  // back in any live room (the room list, a link): read it again as an arrival (?open=1), so a head that moved since (a pull
+  // request is read again on GitHub then) is seen, and its analysis starts by itself when auto-teach is on
+  const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && !r.snapshot && !r.error) load(id, r.running == null); });
+// ---------- full screen: only the board (docs/units/review-room.md 41). The Fullscreen API goes to #view, the stable container
+// the board is drawn in: every redraw replaces the board itself, and an element taken out of the page drops out of full
+// screen. body.rr-fs is the layout (only the board, the whole window) while the request is pending, when it is refused (said
+// nowhere: the layout is the mode) and on a phone, which gets the layout only. Nothing is kept: full screen is per visit ----------
+const FS = { card: null, last: null, at: 0 };
+const fsView = () => document.getElementById("view");
+/** the board's Full screen control; in full screen the same control, pressed, reads Exit full screen */
+function fsToggle(card) {
+  const on = FS.card === card;
+  return h("button", { type: "button", class: `rr-fs-btn${on ? " on" : ""}`, "data-fs-toggle": card, "aria-pressed": String(on), "aria-keyshortcuts": "F",
+    title: on ? T("Exit full screen (Esc or F)", "離開全螢幕（Esc 或 F）") : T("Full screen: only the board (F)", "全螢幕：只留下白板（F）"), onclick: () => (on ? exitFs() : enterFs(card)) },
+    ic(on ? "shrink" : "expand"), h("span", {}, on ? T("Exit full screen", "離開全螢幕") : T("Full screen", "全螢幕")));
+}
+/** the camera re-fitted once the new size is laid out (the scene regions are drawn for the new width anew) */
+const fsRefit = (card) => requestAnimationFrame(() => { if (onRoom(card)) BOARD.refit(card); });
+const isFs = () => FS.card != null;
+const fsFocus = () => requestAnimationFrame(() => document.querySelector("[data-fs-toggle]")?.focus({ preventScroll: true }));
+function enterFs(card) {
+  if (FS.card != null || !onRoom(card) || !document.querySelector("[data-board]")) return;
+  BOARD.fitMark(card); FS.card = card; FS.last = card; document.body.classList.add("rr-fs"); render(); fsRefit(card); fsFocus();
+  // true full screen where the window can have it; a phone keeps the layout only. A refusal leaves the layout as it is
+  const v = fsView();
+  if (innerWidth > 760 && v?.requestFullscreen && !document.fullscreenElement) try { Promise.resolve(v.requestFullscreen({ navigationUI: "hide" })).catch(() => {}); } catch {}
+}
+function exitFs(focus = true) {
+  const card = FS.card; if (card == null) return; FS.card = null; FS.at = performance.now(); document.body.classList.remove("rr-fs");
+  if (document.fullscreenElement) try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch {}
+  if (onRoom(card)) { render(); fsRefit(card); if (focus) fsFocus(); }
+}
+// the browser's own exit (its Esc, its menu) comes back to the room; any change of size re-fits the camera
+document.addEventListener("fullscreenchange", () => {
+  if (FS.card != null && !document.fullscreenElement) return exitFs();
+  // granted after the captain left full screen (or the room) while the request was pending: undone at once
+  if (FS.card == null && document.fullscreenElement && document.fullscreenElement === fsView()) { try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch {} return; }
+  const card = FS.card ?? FS.last; if (card != null && onRoom(card)) { render(); fsRefit(card); }
+});
+let fsResized = 0; addEventListener("resize", () => { if (FS.card == null && performance.now() - FS.at > 1500) return; clearTimeout(fsResized); fsResized = setTimeout(() => { const card = FS.card ?? FS.last; if (card != null && onRoom(card)) fsRefit(card); }, 160); });
+// leaving the room leaves full screen
+addEventListener("hashchange", () => { if (FS.card != null && !onRoom(FS.card)) exitFs(false); });
+// the keyboard: the board's own (← → n p a point of a scene being played, else a region; a Space tap plays or pauses, held it
+// pans; + − 0 zoom), f full screen, Escape closes what is open over the room (then full screen)
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
   const card = S.route.arg, t = e.target;
   // the lesson board's own keys first (a chapter on or back, ask here, zoom, Escape closes what it opened)
-  if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && BOARD.keydown(e, card)) return;
-  if (e.key === "Escape") { if (RR.zoom) RR.zoom = null; else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else return; e.preventDefault(); rerender(); return; }
+  // the board's keys are off while the tutor picker is open (its Escape closes the picker, its arrows stay in it)
+  if (!RR.zoom && !RR.cite.has(card) && !RR.drawer.has(card) && RR.tutorMenu !== card && !(e.key === "Escape" && RR.explain.has(card)) && BOARD.keydown(e, card)) return;
+  if (e.key === "Escape") { if (RR.explain.has(card)) RR.explain.delete(card); else if (RR.zoom) RR.zoom = null; else if (RR.tutorMenu === card) { RR.tutorMenu = null; e.preventDefault(); rerender(); requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); return; } else if (RR.cite.has(card)) RR.cite.delete(card); else if (RR.drawer.has(card)) RR.drawer.delete(card); else if (FS.card === card) { e.preventDefault(); exitFs(); return; } else return; e.preventDefault(); rerender(); return; }
   if (t?.closest?.("input,textarea,select,[contenteditable],[role=dialog]") || RR.zoom) return;
-  if (document.querySelector("[data-board-vp]")) return; // the board's keys are its own
-  if (e.key === "ArrowRight") { e.preventDefault(); stepPoint(card, 1); }
-  else if (e.key === "ArrowLeft") { e.preventDefault(); stepPoint(card, -1); }
-  else if (e.key === " " && !t?.closest?.("button,a,summary")) { e.preventDefault(); togglePlay(card); }
+  if ((e.key === "f" || e.key === "F") && !e.repeat && document.querySelector("[data-fs-toggle]")) { e.preventDefault(); if (FS.card === card) exitFs(); else enterFs(card); }
 });
-// the lesson board, built with the room's own helpers (public/review-board.js)
-const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl });
+// the board, built with the room's own helpers (public/review-board.js)
+const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
+  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual });
+const onList = () => S.route?.name === "room" && !S.route.arg;
+/** the list read again. Only the zones are drawn again when they are there: the search box stays the same element, a composition in it unbroken */
+function readList() { if (!RR.list) return; RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], fresh: true }; if (!onList()) return;
+  const zones = document.querySelector("[data-room-zones]"); if (!zones || !RR.list.rooms.length) return render(); zones.replaceWith(zonesView(RR.list.rooms)); document.querySelector("[data-room-list]")?.setAttribute("data-room-list", RR.list.rooms.length); }).catch(() => {}); }
+/** the room list's zones, in order (src/domain/review-room.ts ROOM_ZONES decides which one a room is in) */
+const ZONES = [["waiting", "Waiting for me", "等我看"], ["reviewing", "In review", "審查中"], ["concluded", "Concluded", "已結論"], ["archived", "Archived", "封存"]];
+/** a row's archive or restore button: the captain, on this Mac (a phone reads the list) */
+function archiveBtn(x) { if (BOARD.state.viewer === "phone" || window.crewRemote?.token?.()) return null; const off = x.zone === "archived";
+  return h("button", { type: "button", class: "rr-back rr-rowact", [off ? "data-room-restore" : "data-room-archive"]: x.id, disabled: RR.posting.has(`${x.id}/archive`), onclick: () => setArchived(x.id, !off) }, off ? T("Restore", "還原") : T("Archive", "封存")); }
+async function setArchived(id, on) { RR.posting.add(`${id}/archive`); rerender();
+  try { const out = await postJ(`/api/review-room/${enc(id)}/archive`, { archived: on });
+    // restoring in the room is not arriving: the captain was never shown this plan, so nothing paid starts by itself ("Teach me" still does)
+    if (onRoom(id) && out?.view?.arrive?.plan) RR.arrived.add(`${id}@${out.view.head}@${out.view.arrive.plan}`); if (out?.view?.card) RR.rooms.set(id, out.view);
+    if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; if (onList()) readList(); else RR.list.fresh = false; } }
+  catch (e) { if (onRoom(id)) RR.err.set(id, e.message); else if (RR.list) RR.list.err = e.message; }
+  finally { RR.posting.delete(`${id}/archive`); rerender(); } }
+const roomRow = (x) => h("li", { "data-room-row": x.id },
+  h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, T(x.title, x.titleZh || x.title))), " ",
+  h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("a turn is running", "有一回合在跑") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
+  h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`), archiveBtn(x));
+/** a zone's rooms under their repositories, by name; rooms with none last. A repository's letter case does not split it */
+function repoGroups(rooms) { const by = new Map(); for (const x of rooms) { const k = String(x.repository || "").toLowerCase(); if (!by.has(k)) by.set(k, { name: x.repository, rooms: [] }); by.get(k).rooms.push(x); }
+  return [...by.entries()].sort(([a], [b]) => !a - !b || a.localeCompare(b)).map(([k, g]) => h("div", { class: "rr-repo", "data-room-repo": k },
+    h("h4", {}, g.name || T("No repository", "沒有儲存庫")), h("ul", { class: "rr-roomlist" }, g.rooms.map(roomRow)))); }
+/** what the search reads of a room, the same way in both Chinese scripts (i18n.js: opencc-js) */
+const searchable = (s) => (window.crewI18n?.toCN?.(String(s)) ?? String(s)).toLowerCase();
+const matches = (x, q) => { const hay = searchable([x.title, x.titleZh, x.repository, x.id].filter(Boolean).join("\n")); return q.every((w) => hay.includes(w)); };
+/** the zones. Search covers all four, 封存 included (it opens for a search); a zone with no match is left out while searching */
+function zonesView(rooms) { const q = searchable(RR.listQ || "").split(/\s+/).filter(Boolean), shown = q.length ? rooms.filter((x) => matches(x, q)) : rooms;
+  const zones = ZONES.map(([id, en, zh]) => { const inZone = shown.filter((x) => (x.zone || "reviewing") === id), head = [T(en, zh), h("span", { class: "rr-zonecount" }, String(inZone.length))]; if (q.length && !inZone.length) return null;
+    const body = inZone.length ? repoGroups(inZone) : h("p", { class: "faint" }, T("Nothing here.", "這裡沒有審查室。"));
+    if (id !== "archived") return h("section", { class: "rr-zone", "data-room-zone": id }, h("h3", {}, head), body);
+    return h("details", { class: "rr-zone", "data-room-zone": id, open: !!q.length || !!RR.listArchived, ontoggle: (e) => { if (!q.length) RR.listArchived = e.target.open; } }, h("summary", {}, h("h3", {}, head)), body); });
+  return h("div", { "data-room-zones": "" }, q.length && !shown.length ? h("p", { class: "faint", "data-room-nomatch": "" }, T("No room matches.", "沒有符合的審查室。")) : zones); }
 routes.room = (arg) => {
-  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (S.route?.name === "room" && !S.route.arg) render(); }); }
-    else if (!RR.list.loading && !RR.list.fresh) { RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, fresh: true }; if (S.route?.name === "room" && !S.route.arg) render(); }).catch(() => {}); }
+  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (onList()) render(); }); }
+    else if (!RR.list.loading && !RR.list.fresh) readList();
     const rooms = RR.list.rooms || [];
-    return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 的網址。"),
+    return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL or a GitHub directory's.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 或 GitHub 目錄的網址。"),
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
-        RR.list.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : rooms.length ? h("ul", { class: "rr-roomlist" }, rooms.map((x) => h("li", {},
-          h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, T(x.title, x.titleZh || x.title))), " ",
-          h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("a turn is running", "有一回合在跑") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
-          h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`)))) : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
-      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null),
+        RR.list.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : rooms.length ? [
+          h("input", { class: "input rr-roomsearch", type: "search", "data-room-search": "", value: RR.listQ || "", placeholder: T("Search every zone: title, repository, room", "搜尋所有區：標題、儲存庫、審查室"), "aria-label": T("Search the review rooms", "搜尋審查室"),
+            oninput: (e) => { RR.listQ = e.target.value; document.querySelector("[data-room-zones]")?.replaceWith(zonesView(RR.list.rooms)); } }),
+          RR.list.err ? h("p", { class: "rr-err", role: "alert", "data-room-list-err": "" }, RR.list.err) : null, zonesView(rooms)] : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
+      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null), tutorDefault(),
         h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); dropPasteOffers(); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),
-          h("span", {}, T("Teach a pasted pull request by itself: pasting it starts the lesson (one paid round on the room's tutor, with the room's pictures setting; the paste box says which before you paste), once per head.", "貼上 pull request 就自動開始教學：貼上即開始這一課（用房間的導師付費一回合，圖片依房間設定；貼上前貼上框會先說明），每個 head 只一次。"))))); }
+          h("span", {}, T("Analyse a room by itself when you arrive: opening any review room (from a merge card, a Task, this list) or pasting a pull request starts its full analysis (one paid round on the room's tutor, with the room's pictures setting; the room and the paste box say which), once per head.", "一進審查室就自動完整分析：從合併卡、任務或這個清單打開任何審查室，或貼上 pull request，都會開始完整分析（用房間的導師付費一回合，圖片依房間設定；審查室和貼上框會先說明），每個 head 只一次。"))))); }
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
-  // a scene that arrives while the page is open is revealed point by point; scenes already there show whole
+  // a scene that arrives while the page is open is played point by point; scenes already there show whole
   const scenes = scenesOf(r), seen = RR.seen.get(arg);
   if (!seen) RR.seen.set(arg, new Set(scenes.filter((s) => !s.t || s.t.status !== "running").map((s) => s.key)));
-  // an answer of several scenes (a lesson's chapters) arrives at once: the stage goes to its first, the rest wait in order
+  // an answer of several scenes (a lesson's chapters) arrives at once: the board flies to its first, the rest wait in order
   else { const took = new Set(); for (const sc of scenes) if (!seen.has(sc.key) && (!sc.t || sc.t.status === "done")) { seen.add(sc.key);
     const tk = sc.turn ?? sc.key; if (took.has(tk)) continue; took.add(tk);
-    // the captain moved elsewhere while it ran: the answer waits behind "the answer is ready", never pulling the stage away
+    // the captain moved elsewhere while it ran: the answer waits behind "the answer is ready", never pulling the board away
     if (RR.moved.has(arg)) { if (!RR.ready.has(arg)) RR.ready.set(arg, sc.key); continue; }
-    // the stage moves to that answer itself (not to whatever scene happens to be last)
+    // the board flies to that answer itself (not to whatever scene happens to be last)
     RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue;
-    // a lesson opens as its report, at its first section: read, not played
-    if (sc.chapter && sc.t?.action === "teach" && !RR.step.has(`${arg}/${sc.t.n}`)) { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
-  // entering a room while a turn runs: the stage shows that turn (its progress, the scenes it made so far)
+    // a lesson opens at its first chapter: read, not played
+    if (sc.chapter && sc.t?.action === "teach") { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
+  // entering a room while a turn runs: the board shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);
+  queueMicrotask(() => arriveIn(arg, r));
   return h("div", { class: "rr-room", "data-review-room": r.card.id },
-    header(r), stageView(r), promptBar(r), drawer(r), citePanel(r),
+    header(r), boardView(r), promptBar(r), drawer(r), citePanel(r),
     RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } } },
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
+/** Arriving in a room (any route: a merge card, a Task's link, the room list, a paste) starts its full analysis by itself when
+ *  auto-teach is on and this head has none: the room says so on its welcome, and the page sends back the plan it was shown
+ *  (POST …/arrive {plan}); Studio starts it only on that very plan. Once per room, head and plan on this page; a phone never. */
+function arriveIn(id, r) {
+  // only this Mac's captain: who is looking is known once the server said so (GET /api/remote/me; the board redraws then)
+  const a = r?.arrive; if (RR.posting.has(`${id}/archive`) || !a?.plan || a.error || r.snapshot || !r.open || r.running != null || !onRoom(id) || BOARD.state.viewer !== "desktop") return;
+  const key = `${id}@${r.head}@${a.plan}`; if (RR.arrived.has(key)) return; RR.arrived.add(key);
+  postJ(`/api/review-room/${enc(id)}/arrive`, { lang: uiLang(), plan: a.plan }).then((out) => { if (out?.room?.card) RR.rooms.set(id, out.room);
+      // what arriving starts changed since the page read it (a new tutor, pictures, a host): nothing started, and nothing is sent
+      // again by itself; the welcome shows the new terms, and the captain starts it with "Teach me" (confirmed as usual)
+      if (out?.plan?.plan) { RR.arrived.add(`${id}@${r.head}@${out.plan.plan}`); RR.err.set(id, T("What arriving starts has changed (on the welcome): nothing started. Press “Teach me” to start it.", "進來時要開始的內容變了（見開場）：什麼都沒開始。按「教我」才會開始。")); } })
+    .catch((e) => RR.err.set(id, e.message)).finally(() => { redraw(id); schedule(); });
+}
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
 window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, board: BOARD };
 })();

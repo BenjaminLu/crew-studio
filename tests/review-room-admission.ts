@@ -140,5 +140,55 @@ try {
     const o: any = room.view(card.id).offer; let refusal: any = null; try { await room.start(card.id, { action: "how", confirm: o.hash }, "captain"); } catch (x) { refusal = x; }
     ok(refusal?.code === "no_tutor" && /out of quota/.test(refusal.message) && checked[0]?.provider === "claude" && checked[0].model === "claude-x" && h.agents.jobs.size === runs, "the chosen member is verified first; one that cannot run is refused with the reason and nothing is paid", refusal?.message);
     delete e.deps.ensurePick; delete e.deps.usableModels; }
+
+  // ---------- the captain picks the tutor: Studio's default and the room's own; the independence is shown, never enforced ----------
+  { const r0: any = room as any, hasPicker = typeof r0.setTutor === "function" && typeof r0.tutorChoices === "function";
+    ok(hasPicker, "the room has a tutor picker: a per-room choice and a Studio-wide default (setTutor, tutorChoices)");
+    if (hasPicker) {
+      e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x"], ["claude", "claude-new", { verified: false }], ["cursor", "composer", { runnable: false, held: "cursor is out of quota" }]);
+      const v0: any = room.view(card.id), list = v0.tutors, find = (p: string, m: string) => list.find((x: any) => x.provider === p && x.model === m);
+      ok(list.length === 5 && find("claude", "claude-new")?.runnable === false && /not verified/.test(find("claude", "claude-new")?.held ?? "") && find("cursor", "composer")?.runnable === false && /out of quota/.test(find("cursor", "composer")?.held ?? "")
+        && find("codex", "worker-model")?.runnable === true && find("codex", "worker-model")?.level === "same" && find("claude", "claude-x")?.level === "vendor" && v0.tutorChoice?.source === "auto",
+        "the picker lists every model of this machine: one not verified or held is listed with why and cannot be picked; the author's own model can, its independence said", JSON.stringify(list));
+      const refusedPick = async (p: any) => { try { r0.setTutor(card.id, p, "captain"); return null; } catch (x: any) { return x; } };
+      const unv = await refusedPick({ provider: "claude", model: "claude-new" }), held = await refusedPick({ provider: "cursor", model: "composer" }), none = await refusedPick({ provider: "gemini", model: "g-1" });
+      ok(unv?.code === "unverified" && held?.code === "held" && /out of quota/.test(held.message) && none?.code === "not_usable", "a model not verified, held or not on this machine cannot be picked, with why", JSON.stringify([unv?.code, held?.code, none?.code]));
+      // the room's pick: the author's own model, picked anyway (information, not a refusal); the turn runs on it, the receipt names it
+      const vs: any = r0.setTutor(card.id, { provider: "codex", model: "worker-model" }, "captain");
+      ok(vs.offer.provider === "codex" && vs.offer.model === "worker-model" && vs.offer.independence.level === "same" && /Same model as the author/.test(vs.offer.independence.en) && /Picked by the captain for this room/.test(vs.offer.independence.en) && vs.offer.picked === "room" && vs.tutorChoice.source === "room",
+        "the room's own pick is its tutor, whatever its independence: the label says how independent it is and who picked it", JSON.stringify(vs.offer));
+      { const { t, rec } = await turn();
+        ok(t.status === "done" && t.provider === "codex" && t.model === "worker-model" && t.independence === "same" && rec.data.model === "worker-model" && rec.data.adaptive?.independence === "same" && selects.at(-1)?.pick.model === "worker-model",
+          "a turn runs on the picked tutor through the native selection; the receipt names it as the seat's member", JSON.stringify({ t: [t.status, t.provider, t.model, t.error], rec: rec?.data })); }
+      // Studio's default: the room goes back to it; a default that cannot run is not swapped for another (the room asks for a pick)
+      const st = room.setSettings({ tutor: { provider: "claude", model: "claude-x" } } as any) as any, vd: any = r0.setTutor(card.id, null, "captain");
+      ok(st.tutor?.provider === "claude" && vd.offer.provider === "claude" && vd.offer.model === "claude-x" && vd.offer.picked === "studio" && vd.tutorChoice.source === "studio" && /Studio's default tutor/.test(vd.offer.independence.en),
+        "a room without its own pick runs on Studio's default tutor", JSON.stringify({ st, offer: vd.offer }));
+      e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x", { runnable: false, held: "claude is out of quota" }]);
+      const vh: any = room.view(card.id), runs = h.agents.jobs.size; let refusal: any = null; try { await room.start(card.id, { action: "how", confirm: "x" }, "captain"); } catch (x) { refusal = x; }
+      ok(vh.offer.code === "tutor_unavailable" && /Studio's default tutor \(claude claude-x\) cannot run now: claude is out of quota/.test(vh.offer.error) && !vh.offer.provider && refusal?.code === "tutor_unavailable" && h.agents.jobs.size === runs,
+        "a picked tutor that cannot run is never swapped for another vendor: the room says so and no turn starts until the captain picks again", JSON.stringify({ offer: vh.offer, refusal: refusal?.code }));
+      const badDefault = await (async () => { try { room.setSettings({ tutor: { provider: "claude", model: "claude-new" } } as any); return null; } catch (x: any) { return x; } })();
+      ok(badDefault?.code === "not_usable", "Studio's default is refused when it is not a model this machine can run", badDefault?.message);
+      // voice: only to the vendor of the tutor that answered, and only while the room's tutor is still that vendor
+      room.setSettings({ tutor: null } as any); e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x"]);
+      r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); const codexTurn = (room.view(card.id) as any).turns.filter((x: any) => x.provider === "codex" && x.status === "done").at(-1);
+      let vref: any = null; try { await room.speech(card.id, `t${codexTurn.n}`); } catch (x) { vref = x; }
+      ok(vref?.code === "no_voice" && /vendor changed/.test(vref.message), "a scene a codex tutor answered is not narrated by the vendor once the room's tutor is claude: the voice never goes to another vendor", vref?.message);
+      // from the review: a pick whose independence is unknown (an author outside Studio) still gets its receipt, claiming nothing
+      { const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]), { OperatingRules } = await import("../src/operating-rules"), rules = new OperatingRules(h.data).section("p");
+        const texts = ROOM_SKILLS.map((k) => ({ sha256: k.sha256, text: readFileSync(join(import.meta.dir, "..", k.ref), "utf8") })), sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
+        let got = "issued"; try { e.deps.instructionReceipt(x, "reviewer", sys, { id: "claude", model: "x-1", reasoningEffort: null }, { seat: TUTOR_SEAT, texts, rules, member: { provider: "claude", model: "claude-x", effort: null, independence: "unknown", crew: false } }); } catch (err: any) { got = String(err?.message ?? err); }
+        ok(!/malformed/.test(got), "a picked tutor whose independence from the author is unknown is admitted (its receipt claims no independence)", got); }
+      // from the review: a translation runs on the tutor the captain confirmed; a pick changed while it was admitted asks again
+      { r0.setTutor(card.id, null, "captain"); const realU = e.deps.refreshUsable; let refusalT: any = null;
+        const room0: any = room.view(card.id), done = room0.turns.some((t: any) => t.status === "done" && !t.studio);
+        e.deps.refreshUsable = async () => { e.deps.refreshUsable = realU; r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); };
+        try { await room.translate(card.id, { lang: "zh-TW", confirm: "x" }, "captain"); } catch (x) { refusalT = x; } e.deps.refreshUsable = realU;
+        ok(done && refusalT?.code === "confirm_required" && refusalT.offer?.provider === "claude", "a translation's tutor is read after what is usable is refreshed: a pick changed meanwhile asks to confirm again, never runs on the old confirmation", JSON.stringify([refusalT?.code, refusalT?.offer?.provider])); }
+      // from the review: starting the room over keeps the tutor the captain picked for it
+      { r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); await room.settle(card.id); room.reset(card.id, "captain"); const vr: any = room.view(card.id);
+        ok(vr.turns.length === 0 && vr.tutorChoice?.source === "room" && vr.offer?.provider === "claude", "started over, a room keeps the tutor the captain picked for it", JSON.stringify(vr.tutorChoice)); }
+      r0.setTutor(card.id, null, "captain"); delete e.deps.usableModels; } }
 } finally { for (const r of e.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await e.cancel(r.id, "cleanup"); h.stop(); rmSync(repo, { recursive: true, force: true }); }
 end();

@@ -97,32 +97,35 @@ const geo = (p) => p.evaluate(() => { const r = (e) => { const b = e.getBounding
     bodies: [...document.querySelectorAll("[data-region] > .rb-rbody")].map((e) => ({ id: e.parentElement.dataset.region, ...r(e) })), regions: [...document.querySelectorAll("[data-region]")].map((e) => ({ id: e.dataset.region, ...r(e) })) }; });
 const hit = (a, b, g = 0) => a.x < b.r + g && a.r + g > b.x && a.y < b.b + g && a.b + g > b.y;
 
+/** a tap on a place of a chapter on a phone: there the chapter's illustration is on top and its steps under it, so the
+ *  sentence may sit below the fold; the tap is dispatched where it is (the board opens the popover from the click's place) */
+const tapPlace = (p, sel) => p.$eval(sel, (e) => { const r = e.getBoundingClientRect(); e.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: Math.min(r.left + 10, innerWidth - 10), clientY: Math.min(r.top + 6, innerHeight - 10) })); });
 try {
   // ---------- 1440: the board, the camera, the walkthrough ----------
   { const { ctx, p, S } = await open(1440, "zh-TW");
     const base0 = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]"); vp.scrollTop = 400; vp.scrollLeft = 300; vp.dispatchEvent(new Event("scroll"));
-      return { regions: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.region), chapters: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.chapter), figures: [...document.querySelectorAll("[data-report-figure]")].map((e) => e.dataset.figureType),
+      return { regions: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.region), chapters: [...document.querySelectorAll("[data-region]")].map((e) => e.dataset.chapter), figures: [...document.querySelectorAll("[data-report-figure]:not([data-figure-studio])")].map((e) => e.dataset.figureType),
         statemap: document.querySelectorAll("[data-statemap] [data-transition]").length, tx: document.querySelectorAll("[data-tx-panel] [data-tx-table]").length, calls: document.querySelectorAll("[data-calls] [data-call]").length,
         scroll: [vp.scrollTop, vp.scrollLeft], page: document.documentElement.scrollHeight - innerHeight, wide: document.documentElement.scrollWidth - innerWidth, report: !!document.querySelector(".rr-report") }; });
-    ok(JSON.stringify(base0.chapters) === JSON.stringify(["what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "calls", "watch", "questions", "end"]) && JSON.stringify(base0.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence", "calls"])
+    ok(JSON.stringify(base0.chapters) === JSON.stringify(["welcome", "what", "talks", "decisions", "change", "change", "lifecycle", "sequence", "calls", "watch", "questions", "end"]) && JSON.stringify(base0.figures) === JSON.stringify(["arch", "decision", "item", "item", "states", "sequence", "calls"])
       && base0.statemap === 4 && base0.tx >= 1 && base0.calls === 2 && !base0.report,
-      "a finished lesson is the board: every chapter a region in its order, with all its drawings (the state map with its transitions and transaction, every call), and a last region for the questions", JSON.stringify(base0));
+      "a finished lesson is on the board: after the room's welcome, every chapter a region in its order, with all its drawings (the state map with its transitions and transaction, every call), and a last region for the questions", JSON.stringify(base0));
     ok(base0.scroll[0] === 0 && base0.scroll[1] === 0 && base0.page <= 0 && base0.wide <= 0, "the viewport never scrolls by itself, nor does the page: the camera owns the view", JSON.stringify(base0));
     // the walkthrough frames each chapter at a readable scale
     const c0 = await cam(p), g0 = await geo(p), what = g0.bodies.find((b) => b.id === "t1");
     ok(c0.s >= 0.85 && what.x >= g0.vp.x && what.r <= g0.vp.r && what.y >= g0.vp.y && what.y < g0.vp.b - 100, "the board opens on the first chapter, framed at a readable scale (0.85 or more at 1440) and in view", JSON.stringify({ c0, what, vp: g0.vp }));
     const steps = [];
-    for (let i = 0; i < 4; i++) { await p.click("[data-board-next]"); await settle(p); const c = await cam(p), g = await geo(p), cur = await p.$eval("[data-stage]", (e) => e.dataset.scene), b = g.bodies.find((x) => x.id === cur);
+    for (let i = 0; i < 4; i++) { await p.click("[data-board-next]"); await settle(p); const c = await cam(p), g = await geo(p), cur = await p.$eval("[data-board]", (e) => e.dataset.scene), b = g.bodies.find((x) => x.id === cur);
       const fs = await p.evaluate((k) => { const el = document.querySelector(`[data-region="${k}"] .rp-card p, [data-region="${k}"] .rp-card li`); return el ? parseFloat(getComputedStyle(el).fontSize) : 0; }, cur);
       steps.push({ cur, s: Math.round(c.s * 100) / 100, fs: Math.round(fs * c.s * 10) / 10, inView: b && b.x >= g.vp.x - 1 && b.x < g.vp.r - 200 && b.y >= g.vp.y && b.y < g.vp.b - 150 }); }
     ok(JSON.stringify(steps.map((x) => x.cur)) === '["t1-2","t1-3","t1-4","t1-5"]' && steps.every((x) => x.s >= 0.85 && x.fs >= 12.5 && x.inView), "“Next” flies to each chapter in order and frames its text at 0.85 or more (12.5px or more on screen), in view", JSON.stringify(steps));
-    await p.keyboard.press("n"); await settle(p); const kn = await p.$eval("[data-stage]", (e) => e.dataset.scene); await p.keyboard.press("p"); await p.keyboard.press("ArrowLeft"); await settle(p); const kp = await p.$eval("[data-stage]", (e) => e.dataset.scene);
-    await p.keyboard.press("ArrowRight"); await settle(p); const ka = await p.$eval("[data-stage]", (e) => e.dataset.scene);
+    await p.keyboard.press("n"); await settle(p); const kn = await p.$eval("[data-board]", (e) => e.dataset.scene); await p.keyboard.press("p"); await p.keyboard.press("ArrowLeft"); await settle(p); const kp = await p.$eval("[data-board]", (e) => e.dataset.scene);
+    await p.keyboard.press("ArrowRight"); await settle(p); const ka = await p.$eval("[data-board]", (e) => e.dataset.scene);
     ok(kn === "t1-6" && kp === "t1-4" && ka === "t1-5", "n and → step a chapter on, p and ← back", JSON.stringify([kn, kp, ka]));
     // the outline flies there; the chapters read are kept for the room
     await p.click('[data-outline="t1-8"]'); await settle(p);
-    const out = await p.evaluate(() => ({ cur: document.querySelector("[data-stage]").dataset.scene, on: document.querySelector('[data-outline="t1-8"]').getAttribute("aria-current"), mm: document.querySelectorAll("[data-minimap] rect.r").length, vw: !!document.querySelector("[data-minimap] rect.vw") }));
-    ok(out.cur === "t1-8" && out.on === "true" && out.mm === 11 && out.vw, "an outline click flies to its chapter, marked current; the minimap shows every region and the camera's view", JSON.stringify(out));
+    const out = await p.evaluate(() => ({ cur: document.querySelector("[data-board]").dataset.scene, on: document.querySelector('[data-outline="t1-8"]').getAttribute("aria-current"), mm: document.querySelectorAll("[data-minimap] rect.r").length, vw: !!document.querySelector("[data-minimap] rect.vw") }));
+    ok(out.cur === "t1-8" && out.on === "true" && out.mm === 12 && out.vw, "an outline click flies to its chapter, marked current; the minimap shows every region (the welcome, the chapters, the questions) and the camera's view", JSON.stringify(out));
     // zoom: the wheel at the pointer, ± and fit all; the levels of detail
     const before = await cam(p), vr = (await geo(p)).vp; await p.mouse.move(vr.x + 300, vr.y + 300); await p.mouse.wheel(0, 500); await settle(p, 120); const wheeled = await cam(p);
     await p.click("[data-zoom-in]"); await settle(p); const plus = await cam(p);
@@ -175,7 +178,8 @@ try {
     await p.keyboard.press("Escape"); await p.click('[data-outline="t1"]'); await settle(p);
     await p.screenshot({ path: join(shots, "desktop-light-chapter.png") });
     // the popover: inside the screen, its chips and the free question
-    const s1 = await p.$('[data-akey="what/t1/sentence#p1.s0"]'); const b1 = await s1.boundingBox(); await p.mouse.click(b1.x + b1.width - 4, b1.y + b1.height - 3); await p.waitForSelector(".rb-pop");
+    // the sentence's end: its last line's last text (a sentence wraps in the steps column beside the illustration)
+    const [b0, b1] = await p.$eval('[data-akey="what/t1/sentence#p1.s0"]', (e) => { const rs = [...e.getClientRects()].filter((r) => r.width > 8); return [rs[0], rs.at(-1)].map((r) => ({ x: r.left, y: r.top, width: r.width, height: r.height })); }); await p.mouse.click(b1.x + b1.width - 4, b1.y + b1.height - 3); await p.waitForSelector(".rb-pop");
     // the first chip takes the focus on the next frame: wait for it (a loaded machine paints late)
     await p.waitForFunction(() => document.activeElement?.closest?.(".rb-pop"), null, { timeout: 3000 }).catch(() => {});
     const pop = await p.evaluate(() => { const r = document.querySelector(".rb-pop").getBoundingClientRect(); return { inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, chips: [...document.querySelectorAll(".rb-pop [data-chip]")].map((b) => b.textContent), input: !!document.querySelector(".rb-pop [data-pop-input]"), modal: !!document.querySelector("[data-room-confirm]"), focus: document.activeElement?.dataset?.chip ?? null }; });
@@ -187,7 +191,7 @@ try {
     await p.keyboard.press("Escape"); await settle(p, 80);
     ok(!(await p.$(".rb-pop")) && await p.evaluate(() => document.activeElement?.dataset?.akey === "what/t1/sentence#p0.s0"), "Escape closes the popover and gives the focus back to the place");
     // asking: the question waits in its card for the confirmation, inline; nothing is sent before it
-    await p.mouse.click(b1.x + 8, b1.y + 6); await p.waitForSelector(".rb-pop"); await p.click('.rb-pop [data-chip="deeper"]'); await p.waitForSelector("[data-pending]", { timeout: 5000 }).catch(() => {});
+    await p.mouse.click(b0.x + 8, b0.y + 6); await p.waitForSelector(".rb-pop"); await p.click('.rb-pop [data-chip="deeper"]'); await p.waitForSelector("[data-pending]", { timeout: 5000 }).catch(() => {});
     const pend = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), c = document.querySelector("[data-pending]")?.getBoundingClientRect() ?? { left: -1 }; return { text: document.querySelector("[data-board-confirm]")?.textContent, consent: document.querySelector("[data-board-consent]")?.checked, label: document.querySelector(".rb-consent")?.textContent, right: c.left > a.right, modal: !!document.querySelector("[data-room-confirm], [role=dialog][aria-modal=true]"), pop: !!document.querySelector(".rb-pop") }; });
     ok(S.turns.length === 0 && /付費一回合：codex · gpt-6（high），不產生圖片/.test(pend.text) && pend.consent === true && /之後追問直接開始（這個房間）/.test(pend.label || "") && pend.right && !pend.modal && !pend.pop, "the room's first paid question shows its plan once in the new card beside its place (model, effort, paid, no picture), “之後追問直接開始（這個房間）” pre-checked; nothing is sent yet", JSON.stringify(pend));
     await p.click("[data-board-start]"); await p.waitForSelector("[data-thinking]", { timeout: 15000 }).catch(() => {});
@@ -329,14 +333,15 @@ try {
     ok(kept.card && kept.anchor, "a follow-up three cards down: the camera shows its card and keeps the place asked about in view", JSON.stringify(kept));
     await ctx.close(); }
 
-  // ---------- taught again: a question from the earlier lesson, picked in the notes, brings that lesson back to the board ----------
+  // ---------- taught again: both lessons are on the board; a question from the earlier one, picked in the notes, focuses it there ----------
   { const room = boardRoom("zh-TW"), first = room.turns.find((t) => t.action === "teach"), n = Math.max(...room.turns.map((t) => t.n)) + 1;
     room.turns.push({ ...clone(first), n });
     const { ctx, p } = await open(1440, "zh-TW", { room }); await settle(p, 300);
     const before = await p.evaluate(() => !!document.querySelector('[data-tcard="1:n1"]'));
     await p.click('[data-notes-list="side"] [data-note-thread="1"]', { timeout: 5000 }).catch(() => {}); await settle(p, 600);
     const after = await p.evaluate(() => ({ card: !!document.querySelector('[data-tcard="1:n1"]'), focus: document.querySelector("[data-board-plane]")?.dataset.focus, bar: !!document.querySelector("[data-focus-bar]") }));
-    ok(!before && after.card && after.focus === "1" && after.bar, "taught again, a question from the earlier lesson picked in the notes brings that lesson back and focuses it", JSON.stringify({ before, after }));
+    const both = await p.evaluate((n) => [!!document.querySelector('[data-region="t1"]'), !!document.querySelector(`[data-region="t${n}"]`)], n);
+    ok(before && both.every(Boolean) && after.card && after.focus === "1" && after.bar, "taught again, both lessons are on the board; a question from the earlier one picked in the notes focuses it", JSON.stringify({ before, both, after }));
     await ctx.close(); }
 
   // ---------- the agreement's count: each card it started says so; after ten the room asks once more ----------
@@ -393,12 +398,13 @@ try {
   { const { ctx, p, S } = await open(390, "zh-TW");
     const first = await p.evaluate(() => { const r = document.querySelector("[data-board-rail]"), b = r.getBoundingClientRect(); return { open: r.classList.contains("open"), bottom: Math.round(b.bottom), h: Math.round(b.height), H: innerHeight, items: r.querySelectorAll("[data-outline]").length, wide: document.documentElement.scrollWidth - innerWidth }; });
     await p.screenshot({ path: join(shots, "phone-light-outline.png") });
-    ok(first.open && first.bottom === first.H && first.h > first.H * 0.5 && first.items === 11 && first.wide <= 0, "a phone opens on the outline: a sheet from the bottom listing every chapter", JSON.stringify(first));
+    ok(first.open && first.bottom === first.H && first.h > first.H * 0.5 && first.items === 12 && first.wide <= 0, "a phone opens on the outline: a sheet from the bottom listing every answer and every chapter", JSON.stringify(first));
     await p.click('[data-outline="t1-6"]'); await settle(p, 300);
     const ph = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), b = document.querySelector('[data-region="t1-6"] .rb-rbody').getBoundingClientRect(); return { sheet: document.querySelector("[data-board-rail]").classList.contains("open"), s: window.crewReviewRoom.board.camOf("SC-60").s, left: b.left >= vp.left, right: b.right <= vp.right + 1, fill: b.width / vp.width, top: b.top >= vp.top && b.top < vp.top + 120 }; });
     ok(!ph.sheet && ph.s >= 0.9 && ph.left && ph.right && ph.fill > 0.85 && ph.top, "tapping a chapter closes the sheet and frames it across the phone's width at a readable size", JSON.stringify(ph));
     await p.screenshot({ path: join(shots, "phone-light-chapter.png") });
-    const a = await p.$('[data-region="t1-6"] [data-akind="sentence"]'); const ab = await a.boundingBox(); await p.mouse.click(ab.x + 10, ab.y + 6); await p.waitForSelector(".rb-pop");
+    // on a phone the chapter's illustration is on top and its steps under it: the sentence may sit below the fold, so it is tapped where it is
+    await tapPlace(p, '[data-region="t1-6"] [data-akind="sentence"]'); await p.waitForSelector(".rb-pop");
     const sheet = await p.evaluate(() => { const r = document.querySelector(".rb-pop").getBoundingClientRect(); return { left: r.left, right: Math.round(r.right), bottom: Math.round(r.bottom), W: innerWidth, H: innerHeight, chips: document.querySelectorAll(".rb-pop [data-chip]").length, chipH: document.querySelector(".rb-pop [data-chip]").getBoundingClientRect().height }; });
     await p.screenshot({ path: join(shots, "phone-light-popover.png") });
     ok(sheet.left === 0 && sheet.right === sheet.W && sheet.bottom === sheet.H && sheet.chips === 5 && sheet.chipH >= 32, "on a phone the popover is a bottom sheet across the screen, its chips big enough to tap", JSON.stringify(sheet));
@@ -406,7 +412,7 @@ try {
     ok(off.paid.length === 4 && off.paid.every(Boolean) && /在電腦上問/.test(off.desk || "") && off.code && !off.input && S.turns.length === 0, "a phone's paid chips are off, saying 在電腦上問 (a phone cannot start a paid round); show the code stays", JSON.stringify(off));
     // show the code on a phone: free, read through the citation viewer (a phone writes nothing to the room)
     await p.keyboard.press("Escape"); await settle(p, 150);
-    const rk = await p.$('[data-region="t1-6"] [data-akind="sentence"][data-arefs]:not([data-arefs=""])'); const rb = await rk.boundingBox(); await p.mouse.click(rb.x + 10, rb.y + 6); await p.waitForSelector(".rb-pop");
+    await tapPlace(p, '[data-region="t1-6"] [data-akind="sentence"][data-arefs]:not([data-arefs=""])'); await p.waitForSelector(".rb-pop");
     const cites0 = S.cites.length; await p.click('.rb-pop [data-chip="code"]'); await until(() => S.cites.length > cites0, 5000); await settle(p, 300);
     ok(S.cites.length > cites0 && !S.lessons.some((x) => x.op === "code"), "on a phone 看程式碼 opens the citation viewer and writes nothing to the room", JSON.stringify({ cites: S.cites.slice(cites0), ops: S.lessons.map((x) => x.op) }));
     await p.keyboard.press("Escape"); await settle(p, 150);
@@ -421,7 +427,7 @@ try {
     await ctx.close(); }
   // a narrow window on this Mac is not a phone: the server says who is looking
   { const { ctx, p } = await open(390, "zh-TW", { viewer: "desktop" }); if (await p.$("[data-board-rail].open")) { await p.click('[data-outline="t1-6"]'); await settle(p, 300); }
-    const a = await p.$('[data-region="t1-6"] [data-akind="sentence"]'); const ab = await a.boundingBox(); await p.mouse.click(ab.x + 10, ab.y + 6); await p.waitForSelector(".rb-pop", { timeout: 5000 }).catch(() => {});
+    await tapPlace(p, '[data-region="t1-6"] [data-akind="sentence"]'); await p.waitForSelector(".rb-pop", { timeout: 5000 }).catch(() => {});
     const on = await p.evaluate(() => ({ paid: [...document.querySelectorAll('.rb-pop [data-chip]:not([data-chip="code"])')].map((b) => b.disabled), desk: !!document.querySelector("[data-ask-desktop]") }));
     ok(on.paid.length === 4 && on.paid.every((d) => !d) && !on.desk, "a narrow window on the Mac is not a phone: its paid chips stay on", JSON.stringify(on));
     await ctx.close(); }
@@ -435,7 +441,7 @@ try {
     await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "zh-TW"); } catch {} Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak: () => {}, cancel: () => {} } }); window.webkitSpeechRecognition = undefined; });
     const live = []; await ctx.route(/\/api\/review-room\/(SC-60|library\/room-sc-60)/, (r) => { const u = r.request().url(); if (/library\/room-sc-60/.test(u)) return r.fulfill({ json: snap }); live.push(`${r.request().method()} ${u}`); r.fulfill({ status: 404, json: { error: "no" } }); });
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`lib: ${e.message}`));
-    await p.goto(`${base}/#/room/lib:room-sc-60`); await p.waitForSelector("[data-stage]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {}); await p.waitForSelector("[data-board-vp]", { timeout: 5000 }).catch(() => {});
+    await p.goto(`${base}/#/room/lib:room-sc-60`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.click('[data-toc-scene="t1"]').catch(() => {}); await p.waitForSelector("[data-board-vp]", { timeout: 5000 }).catch(() => {});
     const ro = await p.evaluate(() => ({ board: !!document.querySelector("[data-board-vp]"), unvisited: document.querySelectorAll("[data-region].unvisited").length, cards: document.querySelectorAll(".rb-card").length, tidy: !!document.querySelector("[data-board-tidy]"), follow: document.querySelectorAll("[data-follow], [data-resolve]").length }));
     await p.evaluate(() => document.querySelector('[data-akey="what/t1/sentence#p0.s0"]').dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 500, clientY: 300 }))); await p.waitForSelector(".rb-pop");
     const pop = await p.evaluate(() => ({ paid: [...document.querySelectorAll('.rb-pop [data-chip]:not([data-chip="code"])')].every((b) => b.disabled), input: !!document.querySelector(".rb-pop [data-pop-input]"), code: !document.querySelector('.rb-pop [data-chip="code"]').disabled }));
@@ -443,6 +449,95 @@ try {
     ok(ro.board && ro.unvisited === 0 && ro.cards >= 4 && !ro.tidy && ro.follow === 0 && pop.paid && !pop.input && pop.code && !!(await p.$("[data-cite-panel]")) && !live.length,
       "a Library snapshot replays the board read-only: every chapter shown, its questions' cards visible, no tidy or follow-up, the popover's paid chips off; show the code opens the saved citation (nothing read from the live room)", JSON.stringify({ ro, pop, live }));
     await ctx.close(); }
+
+  // ---------- full screen: only the board, edge to edge; the camera re-fits; Esc, the exit control and the browser's own exit
+  // come back to the same chapter, the camera where it was; a refused Fullscreen API keeps the full-viewport layout ----------
+  { // the Fullscreen API, stubbed (headless Chromium's own answers vary): a request is recorded and granted, or refused
+    const fsStub = ([refuse]) => { window.__fsReq = []; let el = null;
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => el });
+      Element.prototype.requestFullscreen = function () { window.__fsReq.push(this.id || this.className); if (refuse === "late") return new Promise((res) => { window.__grant = () => { el = this; document.dispatchEvent(new Event("fullscreenchange")); res(); }; });
+        if (refuse) return Promise.reject(new TypeError("Permissions check failed"));
+        el = this; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
+      document.exitFullscreen = () => { el = null; queueMicrotask(() => document.dispatchEvent(new Event("fullscreenchange"))); return Promise.resolve(); };
+      window.__browserExit = () => document.exitFullscreen(); };
+    /** what is on screen: only the board (and what it holds), its size against the window's */
+    const fsView = (p) => p.evaluate(() => { const st = document.querySelector("[data-board]"), vp = document.querySelector("[data-board-vp]"), box = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };
+      const vis = (e) => { const s = getComputedStyle(e); if (s.display === "none" || s.visibility === "hidden" || +s.opacity === 0) return false; const b = e.getBoundingClientRect(); return b.width > 2 && b.height > 2 && b.right > 0 && b.bottom > 0 && b.left < innerWidth && b.top < innerHeight; };
+      const others = [...document.body.querySelectorAll("*")].filter((e) => !st.contains(e) && !e.contains(st) && vis(e)).map((e) => e.id || e.className?.baseVal || e.className || e.tagName);
+      const shown = (q) => { const e = document.querySelector(q); return !!e && vis(e); };
+      return { on: document.body.classList.contains("rr-fs"), stage: box(st), vp: box(vp), win: [innerWidth, innerHeight], others: others.slice(0, 8), scene: st.dataset.scene, fsEl: document.fullscreenElement?.id ?? null, req: window.__fsReq,
+        rail: shown("[data-board-rail]"), notes: shown("[data-board-notes]"), head: shown(".rr-head"), toggle: document.querySelector("[data-fs-toggle]")?.textContent ?? null, pressed: document.querySelector("[data-fs-toggle]")?.getAttribute("aria-pressed") ?? null,
+        focus: !!document.activeElement?.matches?.("[data-fs-toggle]"), pins: [...document.querySelectorAll(".rb-pin")].filter(vis).length }; });
+    const near = (a, b, d = 2) => Math.abs(a - b) <= d;
+    for (const dark of [false, true]) {
+      const { ctx, p } = await open(1440, "en", { dark }); await p.addInitScript(fsStub, [false]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      const n0 = await fsView(p), c0 = await cam(p);
+      ok(!n0.on && n0.toggle && n0.pressed === "false" && n0.rail && n0.head, `${dark ? "dark: " : ""}the normal room is as it was (header, chapters' rail) and has a Full screen control on the board`, JSON.stringify(n0));
+      await p.screenshot({ path: join(shots, `fullscreen-before${dark ? "-dark" : ""}.png`) });
+      await p.click("[data-fs-toggle]"); await settle(p, 400);
+      const f1 = await fsView(p), c1 = await cam(p);
+      ok(f1.on && f1.fsEl === "view" && JSON.stringify(f1.req) === '["view"]', `${dark ? "dark: " : ""}the Full screen control asks the browser for true full screen (on the stable container that holds the board)`, JSON.stringify(f1));
+      ok(near(f1.stage[0], 0) && near(f1.stage[1], 0) && near(f1.stage[2], f1.win[0]) && near(f1.stage[3], f1.win[1]) && f1.vp[2] >= f1.win[0] - 24 && f1.vp[3] >= f1.win[1] - 24, `${dark ? "dark: " : ""}the board fills the window edge to edge`, JSON.stringify(f1));
+      ok(!f1.others.length && !f1.rail && !f1.notes && !f1.head, `${dark ? "dark: " : ""}only the board is visible: no sidebar, header, chapters' rail, questions panel or prompt`, JSON.stringify(f1));
+      ok(c1.x !== c0.x && c1.s >= 0.85, `${dark ? "dark: " : ""}the camera re-fits the chapter to the new size`, JSON.stringify([c0, c1]));
+      ok(/Exit full screen/.test(f1.toggle || "") && f1.pressed === "true", `${dark ? "dark: " : ""}a visible Exit full screen control`, JSON.stringify(f1));
+      await p.screenshot({ path: join(shots, `fullscreen-after${dark ? "-dark" : ""}.png`) });
+      if (!dark) {
+        // the board stays usable: pins, Next, the popover
+        ok(f1.pins > 0, "the board's pins show in full screen", JSON.stringify(f1));
+        await p.click("[data-board-next]"); await settle(p, 300); const f2 = await fsView(p);
+        ok(f2.on && f2.scene === "t1-2", "Next moves to the next chapter inside full screen", JSON.stringify(f2));
+        await p.evaluate(() => { const a = document.querySelector("[data-region='t1-2'] [data-akey]"); const b = a.getBoundingClientRect(); a.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + 4, clientY: b.top + 4 })); });
+        await p.waitForSelector(".rb-pop", { timeout: 3000 }).catch(() => {});
+        const pop = await p.evaluate(() => { const e = document.querySelector(".rb-pop"); if (!e) return null; const b = e.getBoundingClientRect(); return { inside: b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight, fs: document.body.classList.contains("rr-fs") }; });
+        ok(pop?.inside && pop.fs, "a place on the board still opens its popover in full screen, inside the screen", JSON.stringify(pop));
+        // Esc closes the popover first, then leaves full screen: the same chapter, the focus back on the control
+        await p.keyboard.press("Escape"); await settle(p, 150); const still = await fsView(p);
+        await p.keyboard.press("Escape"); await settle(p, 400); const x1 = await fsView(p), cx = await cam(p);
+        ok(still.on && !x1.on && x1.fsEl === null && x1.scene === "t1-2" && x1.rail && x1.head && x1.focus && near(x1.vp[2], n0.vp[2]) && cx.s >= 0.85, "Esc closes the popover, then leaves full screen: the normal room, the same chapter, the focus on the control", JSON.stringify({ still, x1, cx }));
+        // the shortcut f; a camera moved by hand comes back where it was
+        await p.locator("[data-board-vp]").focus(); const vr = (await geo(p)).vp; await p.mouse.move(vr.x + 500, vr.y + 400); await p.mouse.down(); await p.mouse.move(vr.x + 420, vr.y + 350, { steps: 4 }); await p.mouse.up(); await settle(p, 100);
+        const m0 = await cam(p); await p.keyboard.press("f"); await settle(p, 400); const f3 = await fsView(p), m1 = await cam(p);
+        ok(f3.on && f3.fsEl === "view", "f enters full screen when the focus is not in a field", JSON.stringify(f3));
+        ok(near(m1.x - m0.x, (f3.vp[2] - n0.vp[2]) / 2, 3) && m1.s === m0.s, "a camera moved by hand keeps the same middle of the board in full screen", JSON.stringify([m0, m1, f3.vp, n0.vp]));
+        // the browser's own exit (its Esc, its menu) comes back too
+        await p.evaluate(() => window.__browserExit()); await settle(p, 400); const x2 = await fsView(p), m2 = await cam(p);
+        ok(!x2.on && x2.rail && near(m2.x, m0.x, 1) && near(m2.y, m0.y, 1) && m2.s === m0.s, "the browser's own exit returns to the normal room, the camera where it was", JSON.stringify([x2, m0, m2]));
+        // the exit control, and f typed into a field is text
+        await p.click("[data-fs-toggle]"); await settle(p, 300); await p.click("[data-fs-toggle]"); await settle(p, 300); const x3 = await fsView(p);
+        ok(!x3.on && x3.focus, "the Exit full screen control returns to the normal room, the focus on the control", JSON.stringify(x3));
+        await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p0.s0"]'); const b = a.getBoundingClientRect(); a.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: b.left + 4, clientY: b.top + 4 })); });
+        await p.waitForSelector(".rb-pop [data-pop-input]", { timeout: 3000 }).catch(() => {});
+        if (await p.$(".rb-pop [data-pop-input]")) { await p.focus(".rb-pop [data-pop-input]"); await p.keyboard.type("f"); }
+        const typed = await p.evaluate(() => ({ on: document.body.classList.contains("rr-fs"), v: document.querySelector(".rb-pop [data-pop-input]")?.value ?? null }));
+        ok(!typed.on && typed.v === "f", "f typed into a field is text, not the shortcut", JSON.stringify(typed));
+        // nothing kept: a reload is the normal room
+        await p.keyboard.press("Escape"); await p.keyboard.press("f"); await settle(p, 300); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+        ok(!(await fsView(p)).on, "full screen is per visit: a reload opens the normal room");
+      }
+      await ctx.close(); }
+    // the Fullscreen API refused: the full-viewport layout still, nothing said
+    { const { ctx, p } = await open(1440, "en"); await p.addInitScript(fsStub, [true]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      await p.click("[data-fs-toggle]"); await settle(p, 400); const f = await fsView(p);
+      const said = await p.evaluate(() => [...document.querySelectorAll("[role=alert], .toast, [data-board-toast]")].map((e) => e.textContent));
+      ok(f.on && f.fsEl === null && f.req.length === 1 && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && !said.length, "a refused Fullscreen API keeps the full-viewport layout, only the board, and says nothing", JSON.stringify({ f, said }));
+      await p.keyboard.press("Escape"); await settle(p, 300);
+      ok(!(await fsView(p)).on, "Esc leaves the full-viewport layout");
+      await ctx.close(); }
+    // a request still pending when the captain leaves: granted later, the browser leaves full screen at once
+    { const { ctx, p } = await open(1440, "en"); await p.addInitScript(fsStub, ["late"]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      await p.click("[data-fs-toggle]"); await settle(p, 200); await p.click("[data-fs-toggle]"); await settle(p, 200);
+      await p.evaluate(() => window.__grant()); await settle(p, 300); const f = await fsView(p);
+      ok(!f.on && f.fsEl === null && f.rail && f.head, "a full-screen request granted after the captain left full screen is undone at once: the normal room, no browser full screen", JSON.stringify(f));
+      await ctx.close(); }
+    // a phone: the CSS path only; the board fills the screen and Next still shows
+    { const { ctx, p } = await open(390, "en"); await p.addInitScript(fsStub, [false]); await p.reload(); await p.waitForSelector("[data-board-vp]", { timeout: 15000 }); await settle(p, 300);
+      await p.evaluate(() => { const B = window.crewReviewRoom.board.state; B.sheet.clear(); }); await p.evaluate(() => window.dispatchEvent(new Event("resize"))); await settle(p, 300);
+      await p.click("[data-fs-toggle]"); await settle(p, 400); const f = await fsView(p);
+      const next = await p.evaluate(() => { const e = document.querySelector("[data-board-next]"); return !!e && getComputedStyle(e).display !== "none"; });
+      ok(f.on && !f.req.length && near(f.stage[2], f.win[0]) && near(f.stage[3], f.win[1]) && !f.others.length && next, "a phone gets full screen through the layout only (no Fullscreen API): the board fills the screen, Next still there", JSON.stringify({ f, next }));
+      await p.screenshot({ path: join(shots, "fullscreen-phone.png") });
+      await ctx.close(); } }
 
   // ---------- the real routes: findings and the board's free actions need a room and Studio's session ----------
   { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(`${base}/#/board`);

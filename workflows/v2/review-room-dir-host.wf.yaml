@@ -1,0 +1,8 @@
+{
+ "id":"review-room-dir-host","name":"Review room directory host","kind":"review-room-dir-host","version":1,
+ "description":"Hosts the review room's tutor turns on a GitHub directory (any repository, read at one pinned commit): one node the room's auxiliary owner holds. It writes nothing and runs no agent; the tutor runs on the model the captain picked (or Studio's Automatic pick), confirmed per turn.",
+ "params":{"dir":{"label":"Directory URL"},"room":{"label":"Review room"}},
+ "roles":[],"nodes":[
+  {"id":"review-room","kind":"hook","label":"Review room host","x":160,"y":140}
+ ],"edges":[]
+}

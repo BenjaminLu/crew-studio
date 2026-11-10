@@ -188,7 +188,46 @@ const TOOLRES: [string, any][] = [];
     ok(inv?.entity === "invoices.state" && inv.states[0].mark === "changed" && !("mark" in inv.states[1]) && inv.transitions[0].tx.outside[0].kind === "cache" && /transition 1: tx:/.test(bd?.errors?.[0] ?? "") && callIt?.calls[0].tx.tables[0].table === "orders" && callIt.calls[0].errors[0].code === "400" && /calls is 1 to 6/.test(bd?.errors?.[1] ?? ""),
       "a lifecycle names its entity, the states this change adds or changes, and each transition's transaction (tables, guard, fields was → now, writes outside); every call has its request, response, errors and transaction; a malformed one is refused", JSON.stringify(bd?.errors));
     ok(sh[0]?.scene && sh[1]?.scene && /every transition cites the code that makes it/.test(sh[2]?.error ?? "") && sh[3]?.scene && tf.scenes.filter((x: any) => x.chapter === "lifecycle").length === 2,
-      "a lesson may show one lifecycle for each entity; a lifecycle with a transition that cites nothing is refused; every call has a chapter of its own", JSON.stringify(sh.map((x: any) => x.error ?? x.scene))); }
+      "a lesson may show one lifecycle for each entity; a lifecycle with a transition that cites nothing is refused; every call has a chapter of its own", JSON.stringify(sh.map((x: any) => x.error ?? x.scene)));
+  // ---- steps and illustrations: a scene's points are numbered steps, each with the picture it shows, the part to zoom to and a
+  //      detail; every connector of a drawing may say what that step does and why it is built this way ----
+  { const nS = (room.view(t.id) as any).turns.length + 1, rS = TOOLRES.length, M = await import("../src/domain/review-room");
+    const ex = (edge: string, does = "Hands the amount over", why = "One place rounds, so every caller agrees") => ({ edge, does, why, cites: ["diff:src/percent.ts"] });
+    script.push([
+      ["board_draw", { items: [
+        { type: "mermaid", title: "The flow", code: "flowchart LR\n  A[amount] --> B[percent]\n  B --> C[cents]", explain: [ex("A>B"), ex("B>C", "Rounds to whole cents")], cites: ["diff:src/percent.ts"] },
+        { type: "arch", title: "Who calls it", nodes: [{ id: "cart", label: "Cart", kind: "actor" }, { id: "pct", label: "percent()", kind: "service", mark: "new" }], edges: [{ from: "cart", to: "pct", label: "calls", cite: "diff:src/percent.ts" }], explain: [ex("cart>pct")] },
+        { type: "arch", title: "Wrong edge", nodes: [{ id: "cart", label: "Cart", kind: "actor" }, { id: "pct", label: "percent()", kind: "service" }], edges: [{ from: "cart", to: "pct" }], explain: [ex("pct>cart"), { edge: "cart>pct", does: "" }] },
+        { type: "sequence", title: "One price", actors: ["Cart", "percent"], steps: [{ from: "Cart", to: "percent", label: "percent(1999, 15)" }, { from: "percent", to: "Cart", label: "300", kind: "return" }], explain: [ex("step:2", "Returns whole cents")] },
+        { type: "states", title: "Too long a why", states: [{ id: "a", label: "A" }, { id: "b", label: "B" }], transitions: [{ from: "a", to: "b", label: "go", cite: "diff:src/percent.ts", why: "w".repeat(170) }] },
+        { type: "states", title: "Paying", states: [{ id: "open", label: "Open" }, { id: "paid", label: "Paid" }], transitions: [{ from: "open", to: "paid", label: "pay", cite: "diff:src/percent.ts", why: "Paid once: the guard stops a second pay" }] }] }],
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", why: "Priced before it is shown" }], explain: [ex("draft>paid")] }],
+      ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", why: "Priced before it is shown" }], explain: [ex("draft>priced", "Prices the order")] }],
+      ["scene_show", { title: "Bad steps", picture: `B${nS}-1`, points: [{ text: "One [diff:src/percent.ts].", cites: ["diff:src/percent.ts"], picture: "B99-9" }, { text: "Two.", focus: "A", detail: "d".repeat(170) }] }],
+      ["scene_show", { title: "How a price is made", picture: `B${nS}-1`, points: [{ text: "The amount goes in [diff:src/percent.ts].", cites: ["diff:src/percent.ts"], focus: ["A", "A>B"], detail: "The cart passes cents, never a float." },
+        { text: "It is rounded to whole cents.", picture: `B${nS}-4`, focus: ["step:2"], detail: "Math.round, half up." }, { text: "The cart shows it." }] }],
+      ["say", "Steps [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const rr = TOOLRES.slice(rS), get = (n: string) => rr.filter(([x]) => x === n).map(([, j]) => j), bd = get("board_draw")[0], fs = get("figure_svg"), sh = get("scene_show");
+    const vS: any = room.view(t.id), it = (k: number) => vS.board.find((b: any) => b.id === `B${nS}-${k}`), ts = vS.turns.at(-1);
+    ok(JSON.stringify(bd?.added) === JSON.stringify([`B${nS}-1`, `B${nS}-2`, `B${nS}-4`, `B${nS}-6`]) && /edge "pct>cart" is not a connector of this drawing \(one of: cart>pct\)/.test(bd?.errors?.[0] ?? "") && /does is required/.test(bd?.errors?.[0] ?? "") && /transition 1: why is too long/.test(bd?.errors?.[1] ?? ""),
+      "a drawing's connectors may carry what that step does and why: an edge the drawing does not have, a missing does or a why over the limit is refused, saying which", JSON.stringify(bd));
+    ok(it(1)?.explain?.length === 2 && it(1).explain[1].does === "Rounds to whole cents" && it(1).explain[0].cites[0].ok && it(2)?.explain?.[0]?.edge === "cart>pct" && it(4)?.explain?.[0]?.edge === "step:2" && it(6)?.transitions?.[0]?.why === "Paid once: the guard stops a second pay",
+      "the explanations are kept on the drawing (a mermaid flow, an architecture, a sequence's step), a transition's why on the transition, each citation checked", JSON.stringify([it(1)?.explain, it(2)?.explain, it(4)?.explain, it(6)?.transitions]));
+    ok(/edge "draft>paid" is not a connector of this drawing/.test(fs[0]?.error ?? "") && fs[1]?.added?.length === 1 && it(7)?.explain?.[0]?.does === "Prices the order" && it(7).transitions[0].why === "Priced before it is shown",
+      "a figure the tutor draws carries its connectors' explanations and its transitions' why, checked against its own data-edge", JSON.stringify(fs));
+    const good = ts.scenes?.find((x: any) => x.title === "How a price is made");
+    ok(/point 1: picture is a board item id/.test(sh[0]?.error ?? "") && /point 2: focus is a list/.test(sh[0]?.error ?? "") && /point 2: detail is too long/.test(sh[0]?.error ?? "") && good
+      && JSON.stringify(good.points[0].focus) === '["A","A>B"]' && good.points[0].detail === "The cart passes cents, never a float." && good.points[1].picture === `B${nS}-4` && !("picture" in good.points[2]) && !("detail" in good.points[2]),
+      "a scene's steps each keep the picture they show, the part to zoom to and a short detail; a picture not on the board, a focus not a list or a detail over the limit is refused", JSON.stringify({ err: sh[0]?.error, pts: good?.points }));
+    ok(/STEPS AND ILLUSTRATIONS/.test(prompts.at(-1)?.text ?? "") && /never code/.test(prompts.at(-1)?.text ?? ""), "the tutor is told each scene is numbered steps beside an illustration, never code, and to explain every connector");
+    const ft = M.figureTexts(it(6)), ft0 = M.figureTexts({ ...it(6), transitions: it(6).transitions.map(({ why: _w, ...x }: any) => x) }), fm = M.figureTexts(it(1));
+    ok(ft.length === ft0.length + 1 && ft.at(-1) === "Paid once: the guard stops a second pay" && JSON.stringify(ft.slice(0, ft0.length)) === JSON.stringify(ft0) && JSON.stringify(fm) === JSON.stringify(["The flow", "Hands the amount over", "One place rounds, so every caller agrees", "Rounds to whole cents", "One place rounds, so every caller agrees"]),
+      "a translation carries the new words after the ones an older translation holds: a drawing without them keeps its length", JSON.stringify({ ft, fm }));
+    ok(typeof M.keepDetails === "function" && JSON.stringify(M.keepDetails(["a", ""], ["甲", ""])) === '["甲",""]' && M.keepDetails(["a", ""], ["甲"]) === null && M.keepDetails(["", ""], undefined) === null && M.keepDetails(["a"], ["金".repeat(90)]) === null,
+      "a translated scene keeps its steps' details only when every one came back within the board's limit; otherwise the original shows", "keepDetails");
+    const long = `${"a".repeat(45)}>${"b".repeat(45)}#2`;
+    ok(!M.explainErrors([{ edge: long, does: "d" }], [long]).length && !M.stepErrors([{ focus: [long] }], () => true).length, "an edge between two long node ids (as figure_svg keeps it) can be explained and focused", JSON.stringify(M.explainErrors([{ edge: long, does: "d" }], [long]))); } }
   // ---- start the room over: refused while a turn or a translation runs; archived, never deleted; nothing writes the old room back ----
   { const rd = join(E.rdir(t.id), "review-room"), f = join(rd, `${t.id}.json`), dir = join(rd, `${t.id}-images`), arch = join(rd, ".archive");
     let release!: () => void; const gate = new Promise<void>((r) => (release = r)); script.push([["wait", gate], ["say", "Still reading [diff:src/percent.ts]."]]);
@@ -223,9 +262,10 @@ const TOOLRES: [string, any][] = [];
       "the next view is a fresh room (no answers, board, translations or pictures; opening it makes no paid picture); the ledger records review-room-reset with no content", JSON.stringify({ turns: fresh.turns.length, board: fresh.board.length, rec: rec.map((e: any) => e.data) }));
     // a translation admitted while the room is started over: refused, nothing written, the seat released (the next turn runs)
     script.push([["say", "Rounds to the cent [diff:src/percent.ts]."]]); await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    // the confirmation's hash first (a translation reads what is usable before it checks it), then only the confirmed call is held
+    const need2 = await refused(() => room.translate(t.id, { lang: "zh-TW" }, "captain"));
     const realUsable = (E.deps as any).refreshUsable; let relU!: () => void; const gU = new Promise<void>((r) => (relU = r)); let inU = false;
     (E.deps as any).refreshUsable = async () => { inU = true; await gU; };
-    const need2 = await refused(() => room.translate(t.id, { lang: "zh-TW" }, "captain"));
     const tr = room.translate(t.id, { lang: "zh-TW", confirm: need2?.offer?.translate?.hash }, "captain").then(() => null, (e: any) => e);
     for (let i = 0; i < 300 && !inU; i++) await new Promise((r) => setTimeout(r, 10));
     const out2: any = room.reset(t.id, "captain"); relU(); const trErr: any = await tr; (E.deps as any).refreshUsable = realUsable;
@@ -269,6 +309,38 @@ const TOOLRES: [string, any][] = [];
     ok(off.provider === "codex" && off.model === "c-1" && off.independence?.adaptive === true && off.independence.level === "vendor" && tt.status === "done" && tt.provider === "codex" && tt.independence === "vendor" && trec.data.independence === "vendor"
       && auxes.at(-1)?.member?.provider === "codex" && auxes.at(-1).member.independence === "vendor",
       "a branch room picks its tutor with the adaptive selection (the approved reviewer held, another vendor runnable) and records its independence on the turn, the ledger and the seat's member", JSON.stringify([off, tt?.independence, trec?.data?.independence, auxes.at(-1)?.member])); }
+  // ---- arriving in a room starts its full analysis by itself: a merge card's room and a Task's branch, by any route; once per head ----
+  { const arrive = typeof (room as any).arrive === "function" ? (id: string, plan: unknown) => (room as any).arrive(id, "captain", "en", plan) : null;
+    ok(!!arrive, "the room takes an arrival (POST …/arrive): entering it is what starts its analysis");
+    if (arrive) {
+      const turnsOf = (id: string) => (room.view(id) as any).turns.length, mv: any = room.view(merge.id, true), m0 = turnsOf(merge.id);
+      ok(mv.arrive?.auto === true && mv.arrive.provider === mv.offer.provider && (mv.arrive.model ?? null) === (mv.offer.model ?? null) && typeof mv.arrive.plan === "string" && !("hash" in mv.arrive) && m0 === 0,
+        "a merge card's room says, before anything runs, that arriving starts its full analysis, and on which tutor (the room's own offer)", JSON.stringify({ arrive: mv.arrive, offer: [mv.offer.provider, mv.offer.model] }));
+      const stale: any = await arrive(merge.id, "0000000000000000"); await room.settle(merge.id);
+      ok(turnsOf(merge.id) === m0 && stale.plan?.plan === mv.arrive.plan, "an arrival on a plan the room no longer has (its fingerprint does not match) starts nothing and returns the plan to show", JSON.stringify(stale.plan ?? null));
+      script.push([["say", "The whole change: a percent helper [diff:src/percent.ts]."]]);
+      const got: any = await arrive(merge.id, mv.arrive.plan), mt = (room.view(merge.id) as any).turns.at(-1); await room.settle(merge.id);
+      const mrec = E.trusted(u.id).entries.filter((e: any) => e.record === "review-room-turn" && e.data?.card === merge.id).at(-1) as any;
+      ok(got.room?.running != null && mt?.action === "teach" && mt.auto === true && mt.autoFrom === "arrival" && mrec?.data.auto === true && mrec.data.autoFrom === "arrival" && mrec.data.action === "teach",
+        "arriving in a merge card's room starts its full analysis (the lesson) by itself: no click, no confirmation, marked auto from arrival on the ledger", JSON.stringify({ running: got.room?.running, turn: [mt?.action, mt?.auto, mt?.autoFrom], led: mrec?.data && [mrec.data.auto, mrec.data.autoFrom] }));
+      const m1 = turnsOf(merge.id); await arrive(merge.id, (room.view(merge.id) as any).arrive?.plan); room.view(merge.id, true); await room.settle(merge.id);
+      ok(turnsOf(merge.id) === m1 && (room.view(merge.id) as any).arrive === null, "arriving again (a reload, the room list, the merge card) on the same head starts nothing more", String(turnsOf(merge.id) - m1));
+      // a Task's branch room: the Studio-wide switch off starts nothing, on it starts; the room's own switch off wins
+      room.setSettings({ autoTeach: false }); const bv0: any = room.view(u.id, true), b0 = turnsOf(u.id);
+      ok(bv0.arrive === null, "auto-teach off (the Studio-wide setting): the room says nothing starts on arrival", JSON.stringify(bv0.arrive));
+      await arrive(u.id, "x"); await room.settle(u.id); ok(turnsOf(u.id) === b0, "auto-teach off: arriving in a Task's branch room starts nothing", String(turnsOf(u.id) - b0));
+      room.setSettings({ autoTeach: true }); room.autoTeachFor(u.id, false); await arrive(u.id, (room.view(u.id) as any).arrive?.plan); await room.settle(u.id);
+      ok(turnsOf(u.id) === b0 && (room.view(u.id) as any).arrive === null, "the room's own switch turned off: arriving starts nothing, whatever the Studio-wide setting", String(turnsOf(u.id) - b0));
+      room.autoTeachFor(u.id, true); const bv: any = room.view(u.id, true); script.push([["say", "The branch, whole [diff:src/percent.ts]."]]);
+      await arrive(u.id, bv.arrive?.plan); await room.settle(u.id); const bt = (room.view(u.id) as any).turns.at(-1);
+      ok(bt?.action === "teach" && bt.auto === true && bt.autoFrom === "arrival" && bt.head === uh, "arriving in a Task's branch room (its link on the Task page) starts its full analysis by itself", JSON.stringify([bt?.action, bt?.autoFrom, bt?.head === uh]));
+      // a merge card's room with no file yet keeps its own switch (the drawer's switch works in every room)
+      const sw: any = room.autoTeachFor(merge.id, false); room.autoTeachFor(merge.id, true);
+      ok(sw.autoTeach.room === false && sw.autoTeach.on === false, "every room has its own auto-teach switch, a merge card's room too", JSON.stringify(sw.autoTeach));
+      // from the review: a merge card's room started over keeps its switch and the heads it analysed by itself (no second paid lesson)
+      room.autoTeachFor(merge.id, false); await room.settle(merge.id); room.reset(merge.id, "captain"); const vr: any = room.view(merge.id, true);
+      room.autoTeachFor(merge.id, true); const vr2: any = room.view(merge.id, true);
+      ok(vr.turns.length === 0 && vr.autoTeach.room === false && vr2.arrive === null, "started over, a merge card's room keeps its switch and the heads it already analysed: arriving again on the same head starts nothing", JSON.stringify({ sw: vr.autoTeach, arrive: vr2.arrive })); } }
   globalThis.fetch = realFetch; H.stop();
 }
 
@@ -648,7 +720,18 @@ const TOOLRES: [string, any][] = [];
     // a reset keeps the room's switch: pasted again on the same head, a room whose auto-teach is off starts nothing
     room.autoTeachFor(opened.id, false); await room.settle(opened.id); room.reset(opened.id, "captain"); const vr: any = room.view(opened.id);
     headAs(E6); await paste(); await room.settle(opened.id); const va: any = room.view(opened.id);
-    ok(vr.autoTeach.room === false && vr.turns.length === 0 && va.turns.length === 0 && va.running == null, "started over, the room keeps its auto-teach switch: pasted again on the same head, nothing starts", JSON.stringify({ before: vr.autoTeach, turns: va.turns.length })); }
+    ok(vr.autoTeach.room === false && vr.turns.length === 0 && va.turns.length === 0 && va.running == null, "started over, the room keeps its auto-teach switch: pasted again on the same head, nothing starts", JSON.stringify({ before: vr.autoTeach, turns: va.turns.length }));
+    // ---- arriving (the room list, a link) in a pull request's room whose head moved: its new head is analysed by itself ----
+    const arrive = typeof (room as any).arrive === "function" ? (plan: unknown) => (room as any).arrive(opened.id, "captain", "en", plan) : null;
+    ok(!!arrive, "a pull request's room takes an arrival too, not only a paste");
+    if (arrive) { room.autoTeachFor(opened.id, true);
+      const sameHead: any = room.view(opened.id, true);
+      ok(sameHead.arrive === null, "a head already taught by itself (even before a reset) starts nothing on arrival", JSON.stringify(sameHead.arrive));
+      writeFileSync(join(scratch, "a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"); must(scratch, [...id, "commit", "-qam", "Add seven"]); const F = must(scratch, ["rev-parse", "HEAD"]); must(scratch, ["push", "-q", "-f", bare, `${F}:refs/pull/5/head`]);
+      headAs(F); const vf: any = await room.check(opened.id), nF = turns(); script.push([["say", "A seventh line [diff:a.txt]."]]);
+      await arrive(vf.arrive?.plan); await room.settle(opened.id); const tf = (room.view(opened.id) as any).turns.at(-1);
+      ok(vf.arrive?.plan && tf?.action === "teach" && tf.auto === true && tf.autoFrom === "arrival" && tf.head === F && turns() > nF,
+        "a pull request's head that moved is analysed again when the captain arrives: the new head's lesson starts by itself (after Studio's what-changed scene)", JSON.stringify({ arrive: vf.arrive, t: [tf?.action, tf?.autoFrom, tf?.head === F] })); } }
   sim.stop(); H.stop();
 }
 end();
