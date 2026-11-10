@@ -547,6 +547,11 @@ body.rr-fs .rr-room > .rb-view { height: 100%; box-sizing: border-box; padding: 
 .rr-tutormenu > p { margin: 0; font-size: 12px; max-width: 60ch; }
 .rr-tutordefault { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .rr-tutordefault select { max-width: 100%; }
+.rr-othermodel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 13px; }
+.rr-othermodel .input { width: auto; min-width: 0; max-width: 100%; }
+.rr-othermodel input.input { flex: 1 1 180px; }
+.rr-othermodel > p { flex-basis: 100%; margin: 0; font-size: 12px; }
+.rr-tutordefaults .rr-othermodel { margin-top: 8px; }
 @media (max-width: 760px) { .rr-tutormenu { right: 16px; top: 56px; } }
 
 /* steps and illustrations: a step's number picks it; the illustration zooms to what the step is about, the rest dimmed; a

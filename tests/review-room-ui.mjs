@@ -385,7 +385,7 @@ try {
     ok(trs.length === 2 && trs[0].lang === "zh-TW" && trs[1].confirm === "tr0123456789abcd" && !posts.length, "confirmed, the translation is sent with the room's confirmation; the dock says it is translating", JSON.stringify(trs));
     await ctx.close(); }
 
-  // ---------- regenerate with another model: both answers kept, the latest shown, a held model not pickable ----------
+  // ---------- regenerate with another model: both answers kept, the latest shown, a held model pickable with its warning ----------
   { const R7 = { ...ROOM, turns: [...ROOM.turns, { n: 3, action: "ask", text: "1: 300. 2: not sure.", regenOf: 2, picked: { provider: "claude", model: "opus-x", effort: null }, lang: "en", status: "done", provider: "claude", model: "opus-x", answer: "z", claims: [cl("Halves round away from zero, said again [source:1].", [ok1("source:1")])] }],
       tutors: [{ provider: "codex", model: "gpt-6", effort: "high", runnable: true, held: null, level: "same", current: true }, { provider: "claude", model: "opus-x", effort: null, runnable: true, held: null, level: "vendor", current: false }, { provider: "codex", model: "gpt-5", effort: "medium", runnable: true, held: null, level: "model", current: false }, { provider: "cursor", model: "c-9", effort: null, runnable: false, held: "out of quota", level: "vendor", current: false }] };
     const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const turns = [];
@@ -399,7 +399,7 @@ try {
     await p.click('[data-version-pick="2"]'); s7 = await stage(p);
     ok(s7.scene === "t2" && /Halves round up/.test(await p.textContent(".rb-region.cur .rr-pointlist")), "the switcher shows the first answer again", JSON.stringify(s7));
     await p.click(".rb-region.cur [data-regen]"); const list = await p.$$eval("[data-regen-pick]", (els) => els.map((e) => [e.dataset.regenPick, e.disabled, e.textContent]));
-    ok(list.length === 4 && list[0][2].includes("current") && list[2][2].includes("same vendor as the author") && list[3][1] === true && /out of quota/.test(list[3][2]) && list.slice(0, 3).every((x) => !x[1]), "“Regenerate with…” lists this machine's models: the current one marked, the author's vendor said, a held one not pickable", JSON.stringify(list));
+    ok(list.length === 4 && list[0][2].includes("current") && list[2][2].includes("same vendor as the author") && /may not run: out of quota/.test(list[3][2]) && list.every((x) => !x[1]), "“Regenerate with…” lists this machine's models, each pickable: the current one marked, the author's vendor said, a held one with its warning", JSON.stringify(list));
     await p.click('[data-regen-pick="claude|opus-x"]'); await p.waitForSelector('[data-room-confirm]');
     ok(turns.length === 1 && turns[0].regenerate === 2 && turns[0].pick.provider === "claude" && !turns[0].confirm && /claude · opus-x/.test(await p.textContent("[data-room-confirm]")), "picking a model asks to confirm a paid round on that model first", JSON.stringify(turns));
     await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector("[data-room-busy]"));

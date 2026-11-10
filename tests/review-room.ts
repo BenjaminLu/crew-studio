@@ -404,14 +404,24 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   ok(tutors.length === 3 && tutors.find((t: any) => t.provider === "tutor").current && tutors.find((t: any) => t.provider === "claude").runnable === false && /quota/.test(tutors.find((t: any) => t.provider === "claude").held) && tutors.find((t: any) => t.provider === "codex").level === "vendor", "the room lists the models this machine can run, the current tutor marked, a held one with its reason", JSON.stringify(tutors));
   let e1: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "claude", model: "x-1" }, confirm: "x" }, "captain"); } catch (e) { e1 = e; }
   let e2: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-1" } }, "captain"); } catch (e) { e2 = e; }
-  ok(e1?.code === "held" && /quota/.test(e1.message) && e2?.code === "confirm_required" && e2.offer.provider === "codex" && e2.offer.model === "c-1" && e2.offer.hash !== (room.view(merge.id) as any).offer.hash, "a held model cannot be picked; a runnable one asks to confirm its own paid round first", JSON.stringify({ e1: e1?.message, e2: e2?.offer }));
+  ok(e1?.code === "confirm_required" && e1.offer.provider === "claude" && e1.offer.model === "x-1" && /Held now \(claude's quota could not be read\)/.test(e1.offer.independence.en) && /quota/.test(e1.offer.warning?.en ?? "")
+    && e2?.code === "confirm_required" && e2.offer.provider === "codex" && e2.offer.model === "c-1" && e2.offer.warning === null && e2.offer.hash !== (room.view(merge.id) as any).offer.hash,
+    "a held model can be picked to explain again, its label warning why it may not run; each pick asks to confirm its own paid round first", JSON.stringify({ e1: e1?.offer ?? e1?.message, e2: e2?.offer }));
+  // a model entered by hand can be picked too; a malformed pick is still refused
+  let handOffer: any = null;
+  { let eh: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-hand-7" } }, "captain"); } catch (e) { eh = e; }
+    const bad: string[] = []; for (const p of [{ provider: "", model: "c-1" }, { provider: "codex", model: "x".repeat(121) }, { provider: "codex", model: "" }, { provider: "nope", model: "m" }]) { try { await room.start(merge.id, { regenerate: 3, pick: p }, "captain"); bad.push("accepted"); } catch (e: any) { bad.push(e.code); } }
+    ok(eh?.code === "confirm_required" && eh.offer.provider === "codex" && eh.offer.model === "c-hand-7" && eh.offer.picked === "regenerate" && /Not on this machine's model list/.test(eh.offer.independence.en) && bad.every((c) => c === "bad_request"),
+      "a model entered by hand can explain a turn again (confirmed first, its label says it is not on this machine's list); an empty provider, an oversize or empty model or an unknown provider is refused", JSON.stringify({ eh: eh?.offer ?? eh?.message, bad }));
+    handOffer = eh?.offer; }
   const e3 = await (async () => { try { await room.start(merge.id, { action: "how", pick: { provider: "codex", model: "c-1" }, confirm: e2.offer.hash }, "captain"); return null; } catch (e) { return e as any; } })();
   ok(e3?.code === "bad_pick" && (room.view(merge.id) as any).turns.length === 4, "a model is picked only to explain a finished answer again: a new question with a pick is refused", e3?.message);
   script.push([["say", "Again, more briefly: it rounds to the cent [diff:src/percent.ts:L2-3]."]]);
-  await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-1" }, confirm: e2.offer.hash, lang: "en" }, "captain"); await room.settle(merge.id);
+  // the regeneration runs on the model entered by hand
+  await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-hand-7" }, confirm: handOffer?.hash, lang: "en" }, "captain"); await room.settle(merge.id);
   const turns = (room.view(merge.id) as any).turns, again = turns.at(-1), led = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1);
-  ok(again.regenOf === 3 && again.provider === "codex" && again.text === turns[2].text && turns[2].status === "done" && /Again, more briefly/.test(again.answer) && led.data.regenerate?.of === 3 && led.data.regenerate.provider === "codex" && led.data.regenerate.model === "c-1",
-    "the regeneration asks the same question on the picked model; the old answer is kept beside it; the choice is on the turn and the ledger", JSON.stringify({ again: { n: again.n, regenOf: again.regenOf, provider: again.provider }, led: led.data.regenerate }));
+  ok(again.regenOf === 3 && again.provider === "codex" && again.text === turns[2].text && turns[2].status === "done" && /Again, more briefly/.test(again.answer) && led.data.regenerate?.of === 3 && led.data.regenerate.provider === "codex" && led.data.regenerate.model === "c-hand-7" && again.model === "c-hand-7" && again.picked?.model === "c-hand-7",
+    "the regeneration asks the same question on the picked model (here one entered by hand); the old answer is kept beside it; the choice is on the turn and the ledger", JSON.stringify({ again: { n: again.n, regenOf: again.regenOf, provider: again.provider, model: again.model }, led: led.data.regenerate }));
   delete E.deps.usableModels; }
 // ---------- a docs_hosts policy naming a host of user content refuses the turn ----------
 E.policies.setProject("sandbox", { install: false, review_room: { docs_hosts: ["raw.githubusercontent.com"] } } as any);

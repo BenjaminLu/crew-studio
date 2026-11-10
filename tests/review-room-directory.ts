@@ -68,6 +68,10 @@ try {
   const before: any = room.pasteOffer("https://github.com/acme/kit/tree/feature/x/src");
   ok(before.createsHost === true && before.provider === "codex" && before.model === "c-1" && typeof before.plan === "string" && before.auto === false,
     "before the paste, the box says what a directory's paste starts: its host Task, one paid round on the tutor (Automatic: this machine's default model)", JSON.stringify(before));
+  // Automatic (no pick) is unchanged by picks being free: it still takes only a model that runs now and is verified, never a held one
+  { const real = (E.deps as any).usableModels; (E.deps as any).usableModels = () => [{ provider: "codex", model: "c-held", efforts: ["medium"], verified: true, runnable: false, held: "codex is out of quota", isDefault: true }, { provider: "claude", model: "x-unv", efforts: [], verified: false, runnable: true }, ...real().filter((u: any) => u.provider === "claude")];
+    const auto: any = room.pasteOffer("https://github.com/acme/kit/tree/feature/x/src"); (E.deps as any).usableModels = real;
+    ok(auto.provider === "claude" && auto.model === "x-1", "Automatic for a directory passes over a held default and an unverified model: it takes a model that runs now and is verified", JSON.stringify(auto)); }
   const opened: any = await room.openDir("https://github.com/acme/kit/tree/feature/x/src", "captain"), v: any = room.view(opened.id, true);
   ok(opened.id === dirRoomId("acme/kit", "feature/x", "src") && v.subject.kind === "dir" && v.dir.ref === "feature/x" && v.dir.refKind === "branch" && v.dir.path === "src" && v.dir.sha === V1 && v.dir.private === false && tokenAsked === 0,
     "a public repository's directory opens without any login: the branch named in the address (its name may hold a slash) told apart from the path, pinned at its commit", JSON.stringify({ id: opened.id, dir: v.dir }));
