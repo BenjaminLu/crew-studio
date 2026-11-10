@@ -3,7 +3,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // revoke, call bound, audit) and the four grant tools over a real engine with Studio's proposal workflow. A grant reads
 // only the runs it started in its own project; start_run never reaches a running Task without the captain's dispatch answer.
 import assert from "node:assert/strict";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, until } from "./rt-harness";
 import { installFirstmate } from "../src/firstmate";
@@ -16,7 +16,9 @@ const H = await harness([readFileSync(new URL("../workflows/v2/firstmate-proposa
   JSON.stringify({ id: "loose-fixture", name: "No project", version: 1, roles: [], nodes: [{ id: "done", kind: "hook", label: "Done" }], edges: [] })]);
 const E: any = H.engine;
 const projects = new Projects(H.data); projects.add({ id: "alpha" }); projects.add({ id: "beta" });
-const fm = installFirstmate(E, projects, {});
+// a seat gate the test closes: work proposed while it is closed is held on the seat card's Task, as an empty team seat does
+let seat: string | null = null;
+const fm = installFirstmate(E, projects, { crewSeatGate: async () => { if (seat) throw Object.assign(new Error(`seat card ${seat}`), { seatRun: seat }); } });
 const audit: { type: string; data: any }[] = [];
 const grants = new CliGrants(H.data, (type, _s, data) => audit.push({ type, data }));
 installGrantViews(E, grants);
@@ -55,7 +57,7 @@ try {
     assert.ok(await until(() => E.cards.list({ run, open: true }).length === 1), "the dispatch card is raised");
     await new Promise((res) => setTimeout(res, 500));
     assert.equal(E.get(run).ctx.childRun, undefined); assert.ok(!E.list().some((x: any) => x.params._firstmateProposal === run), "no Task was started");
-    assert.equal(E.get(run).status, "waiting");
+    assert.ok(await until(() => E.get(run).status === "waiting"), `the proposal waits (${E.get(run).status})`);
     const card = E.cards.view(E.cards.list({ run, open: true })[0]); assert.equal(card.origin.kind, "external-cli"); assert.equal(card.origin.grant, A.id); assert.deepEqual(card.origin.staffing, { reviewer: "codex" });
     assert.equal(card.captainOnly, true);
     assert.equal((await call(ta, "run_status", { run })).state, "awaiting_captain");
@@ -93,6 +95,27 @@ try {
     process.env.CREW_CLI_GRANT_MAX_CALLS = "3"; const g = grants.issue({ project: "alpha", ttl: "1h" }, "captain").grant, t = tokenOf(g.id);
     try { for (let i = 0; i < 3; i++) assert.equal(grants.use(t, "list_workflows").ok, true); const u: any = grants.use(t, "list_workflows"); assert.equal(u.status, 429); }
     finally { delete process.env.CREW_CLI_GRANT_MAX_CALLS; }
+  });
+  await step("work held on a seat card is proposed again under the same grant, and never after it is revoked", async () => {
+    const holder = await fm.call("studio_propose_work", { workflow: "proj-fixture", version: 1, text: "a seat card stand-in", params: { project: "alpha" } }, { key: "seat-holder", captain: true, text: "a seat card stand-in", live: () => true }) as any;
+    assert.ok(await until(() => E.get(holder.proposal).status === "waiting")); seat = holder.proposal;
+    const g = grants.issue({ project: "alpha", ttl: "1h" }, "captain").grant, t = tokenOf(g.id), gone = grants.issue({ project: "alpha", ttl: "1h" }, "captain").grant, tg = tokenOf(gone.id);
+    assert.match((await call(t, "start_run", { workflow: "proj-fixture", input: { text: "held work" }, staffing: { reviewer: "claude" } })).error ?? "", /seat card/);
+    assert.match((await call(tg, "start_run", { workflow: "proj-fixture", input: { text: "held work of a revoked grant" } })).error ?? "", /seat card/);
+    seat = null; grants.revoke(gone.id, "captain");
+    const done = await (fm as any).resumeHeld(holder.proposal);
+    const again = done.find((d: any) => d.proposal), refused = done.find((d: any) => d.error);
+    assert.ok(again && refused && /no longer active/.test(refused.error), JSON.stringify(done));
+    assert.equal(E.get(again.proposal).by, `External CLI grant ${g.id} (captain approval required)`, "the proposal keeps the grant, not Firstmate");
+    assert.ok(await until(() => E.cards.list({ run: again.proposal, open: true }).length === 1));
+    const card = E.cards.view(E.cards.list({ run: again.proposal, open: true })[0]); assert.equal(card.origin?.grant, g.id); assert.deepEqual(card.origin.staffing, { reviewer: "claude" });
+    assert.match(card.sections.en.why, /external CLI/);
+    assert.equal((await call(t, "run_status", { run: again.proposal })).state, "awaiting_captain", "the grant reads the work it proposed again");
+  });
+  await step("an expired grant's token file is removed", () => {
+    const g = grants.issue({ project: "alpha", ttl: "1h" }, "captain").grant, f = join(H.data, "cli-grants.json"), all = JSON.parse(readFileSync(f, "utf8"));
+    all.find((x: any) => x.id === g.id).expiresAt = new Date(Date.now() - 1).toISOString(); writeFileSync(f, JSON.stringify(all));
+    grants.list(); assert.equal(existsSync(grants.tokenFile(g.id)), false);
   });
   await step("every issue, use, refusal and revoke is audited", () => {
     const types = new Set(audit.map((a) => a.type)); for (const t of ["cli_grant_issued", "cli_grant_used", "cli_grant_refused", "cli_grant_revoked", "cli_grant_run"]) assert.ok(types.has(t), t);

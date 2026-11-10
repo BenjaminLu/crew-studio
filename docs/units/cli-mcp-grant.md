@@ -2,7 +2,7 @@
 
 The captain opens `claude` (or codex) in their own terminal and wants it to run a Studio workflow and follow it. An
 **external CLI grant** lets that CLI start and read runs in one project for a bounded time, over Studio's MCP helper.
-Every captain decision stays on the board: the CLI can propose, follow and read, never approve.
+Every captain decision stays on the board: through the grant, the CLI can propose, follow and read, never approve.
 
 Code: `CliGrants`, `createGrantTools`, `installGrantViews` in `src/cli-grants.ts`; the routes `/api/cli-grants` and the
 grant branch of `/api/tools` in `src/server.ts`; `--grant-file` / `--url` in `src/mcp.ts`; the proposal's `by` and the
@@ -28,7 +28,7 @@ from this Mac (`origin` and `sec-fetch-site: same-origin`), as the operating-rul
 | `runs` | the proposals it started, each with the staffing preference it asked for |
 
 The token (`csg_<id>_<64 hex>`) is written once to `data/grants/<id>`, mode 0600, in a 0700 folder. `data/cli-grants.json`
-keeps only its SHA-256; no route ever returns the token or the hash. Revoke removes the token file. The board shows the
+keeps only its SHA-256; no route ever returns the token or the hash. Revoke removes the token file; so does the first call or board listing after the grant expired. The board shows the
 line to copy, which names the file and never the token:
 
 ```
@@ -71,6 +71,18 @@ merge, so an agent that tries gets "no such tool", not "permission denied". A re
 - **Audit.** Every issue (`cli_grant_issued`), use (`cli_grant_used`), proposal (`cli_grant_run`), refusal
   (`cli_grant_refused`: unknown, revoked, expired, call limit) and revoke (`cli_grant_revoked`) is a line in Studio's
   event log, `data/events.jsonl`, workflow `cli-grant`.
+
+## What the boundary is not
+
+- **It bounds the tool surface, not the process.** The CLI runs as the captain, unsandboxed, on the same Mac. A grant
+  token reaches only the four tools; but a process of that user can read Studio's data folder (`data/session-token`
+  included) and act as the captain's scripts can. The grant keeps a cooperating agent CLI on the four tools and every
+  decision on the board; it is not a sandbox against a hostile process the captain started.
+- **Revoking stops the CLI, not its proposals.** A proposal the grant already made keeps its dispatch card, labelled as
+  coming from the external CLI; the captain approves or closes it as any other. Work an empty team seat held is
+  proposed again under the grant only while the grant is active.
+- Refusals of an unknown token are logged at most once a minute (with the count of the ones not logged), so a loopback
+  process cannot fill the event log with them.
 
 ## Not in this unit
 

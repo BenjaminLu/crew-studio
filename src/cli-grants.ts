@@ -37,6 +37,7 @@ export function expiryOf(ttl: GrantTtl, now = new Date()): Date {
 }
 
 export class CliGrants {
+  private unknownAt = 0; private unknownQuiet = 0;
   constructor(readonly dataDir: string, private audit: Audit = () => {}) {}
   private file() { return join(this.dataDir, "cli-grants.json"); }
   tokenFile(id: string) { return join(this.dataDir, "grants", id); }
@@ -45,7 +46,7 @@ export class CliGrants {
   private stateOf(g: CliGrant, now = Date.now()): GrantView["state"] { return g.revokedAt ? "revoked" : Date.parse(g.expiresAt) <= now ? "expired" : "active"; }
   get(id: string): CliGrant | null { return this.read().find((g) => g.id === id) ?? null; }
   view(g: CliGrant): GrantView { const { tokenHash: _h, ...rest } = g; const state = this.stateOf(g); return { ...rest, state, file: state === "active" && existsSync(this.tokenFile(g.id)) ? this.tokenFile(g.id) : null }; }
-  list(): GrantView[] { return this.read().map((g) => this.view(g)).reverse(); }
+  list(): GrantView[] { const all = this.read(); for (const g of all) if (this.stateOf(g) !== "active") rmSync(this.tokenFile(g.id), { force: true }); return all.map((g) => this.view(g)).reverse(); }
   active(id: string) { const g = this.get(id); return !!g && this.stateOf(g) === "active"; }
 
   /** The captain issues a grant (called only from the board's authenticated, same-site route). */
@@ -76,12 +77,13 @@ export class CliGrants {
   /** The grant a token belongs to, counted as one call; else the HTTP refusal (403 revoked, expired or unknown; 429 over its calls). */
   use(token: string, tool: string): { ok: true; grant: CliGrant } | { ok: false; status: number; error: string } {
     const m = TOKEN.exec(token), all = this.read(), g = m ? all.find((x) => x.id === m[1]) : undefined;
-    const refuse = (status: number, error: string, why: string) => { this.audit("cli_grant_refused", `external CLI call ${tool} refused: ${why}`, { grant: g?.id ?? null, tool, why }); return { ok: false as const, status, error }; };
+    const refuse = (status: number, error: string, why: string) => { if (why === "unknown") { const now = Date.now(); if (now - this.unknownAt < 60_000) { this.unknownQuiet++; return { ok: false as const, status, error }; } this.unknownAt = now; }
+      const quiet = why === "unknown" && this.unknownQuiet ? this.unknownQuiet : 0; this.unknownQuiet = 0; this.audit("cli_grant_refused", `external CLI call ${tool} refused: ${why}`, { grant: g?.id ?? null, tool, why, ...(quiet ? { unloggedBefore: quiet } : {}) }); return { ok: false as const, status, error }; };
     if (!g) return refuse(403, "no valid external CLI grant", "unknown");
     const a = Buffer.from(sha(token)), b = Buffer.from(g.tokenHash);
     if (a.length !== b.length || !timingSafeEqual(a, b)) return refuse(403, "no valid external CLI grant", "unknown");
     if (g.revokedAt) return refuse(403, `grant ${g.id} was revoked by the captain at ${g.revokedAt}`, "revoked");
-    if (Date.parse(g.expiresAt) <= Date.now()) return refuse(403, `grant ${g.id} expired at ${g.expiresAt}`, "expired");
+    if (Date.parse(g.expiresAt) <= Date.now()) { rmSync(this.tokenFile(g.id), { force: true }); return refuse(403, `grant ${g.id} expired at ${g.expiresAt}`, "expired"); }
     if (g.calls >= maxCalls()) return refuse(429, `grant ${g.id} reached its limit of ${maxCalls()} calls; ask the captain for a new grant`, "call limit");
     g.calls += 1; g.lastUsedAt = new Date().toISOString(); this.write(all);
     this.audit("cli_grant_used", `external CLI grant ${g.id} called ${tool}`, { grant: g.id, tool });
@@ -119,7 +121,10 @@ export function externalOrigin(engine: Engine, grants: CliGrants, r: Run | null 
   let proposal: Run | null | undefined = r;
   if (typeof r.params?._firstmateProposal === "string") proposal = engine.get(r.params._firstmateProposal);
   const id = grantOfBy(proposal?.by); if (!id || !proposal) return null;
-  return { kind: "external-cli", grant: id, staffing: grants.staffingOf(id, proposal.id) };
+  // a proposal Studio raised again (the crew changed) carries the staffing preference of the one the grant started
+  let staffing = grants.staffingOf(id, proposal.id);
+  if (!staffing) { const g = grants.get(id); for (const x of g?.runs ?? []) { for (let r2 = engine.get(x.run), n = 0; r2 && n < 20; r2 = engine.get(r2.ctx?.crewReraised), n++) if (r2.id === proposal.id) { staffing = x.staffing; break; } if (staffing) break; } }
+  return { kind: "external-cli", grant: id, staffing };
 }
 
 /** Label every card of a grant's run as coming from an external CLI (a view only: the card itself is unchanged). */
@@ -136,7 +141,7 @@ export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstma
    *  cards started, and a proposal Studio raised again for one of them (the crew changed), all in the grant's project */
   const owned = (g: CliGrant, id: string): Run | null => {
     const mine = new Set(g.runs.map((x) => x.run).filter((x) => grantOfBy(engine.get(x)?.by) === g.id));
-    for (const x of [...mine]) { const again = engine.get(x)?.ctx?.crewReraised; if (typeof again === "string" && grantOfBy(engine.get(again)?.by) === g.id) mine.add(again); }
+    for (const x of [...mine]) for (let again = engine.get(x)?.ctx?.crewReraised, n = 0; typeof again === "string" && n < 20 && grantOfBy(engine.get(again)?.by) === g.id; again = engine.get(again)?.ctx?.crewReraised, n++) mine.add(again);
     const r = engine.get(id); if (!r) return null;
     const ok = mine.has(r.id) || (typeof r.params?._firstmateProposal === "string" && mine.has(r.params._firstmateProposal));
     if (!ok) return null;
@@ -192,7 +197,7 @@ export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstma
     const params: Record<string, string> = { ...(input.params ?? {}) };
     if (params.project !== undefined && params.project !== g.project) return { error: `grant ${g.id} is for project ${g.project}, not ${params.project}` };
     params.project = g.project;
-    const owner = { key: `cli-grant:${g.id}:${randomBytes(8).toString("hex")}`, captain: true, text: input.text, live: () => grants.active(g.id), origin: { grant: g.id } };
+    const owner = { key: `cli-grant:${g.id}:${randomBytes(8).toString("hex")}`, captain: true, text: input.text, live: () => grants.active(g.id), origin: { grant: g.id, staffing } };
     let r: any;
     try { r = await d.firstmate().call("studio_propose_work", { workflow: def.id, version: def.version, ...(input.title !== undefined ? { title: input.title } : {}), text: input.text, params }, owner); }
     catch (e: any) { return { error: e?.publicFailure?.reason?.en ?? String(e?.message ?? e), code: e?.publicFailure?.code ?? null }; }
