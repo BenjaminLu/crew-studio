@@ -323,6 +323,7 @@ bun scripts/live-release.ts deploy --ref <sha>     # any exact commit (--no-fetc
 bun scripts/live-release.ts status                 # live SHA, pid, port, data dir, and whether it matches origin/main (--fetch first)
 bun scripts/live-release.ts rollback               # back to the previous release
 bun scripts/live-release.ts stop                   # stop the live release only
+bun scripts/live-release.ts deploy --ref <live sha> --no-fetch   # start the live release again, e.g. after a reboot
 ```
 
 - **Deploy** checks out the commit (`git worktree add --detach`), runs
@@ -335,6 +336,12 @@ bun scripts/live-release.ts stop                   # stop the live release only
   was serving before is started again: the previous release, or on a first deploy
   the dev-checkout instance with its own command and folder. When that is not
   possible it prints `nothing serves port N; previous was …; restart with: …`.
+- **After a reboot.** Nothing starts the live release at login. `status` then shows
+  `process: none listening on port N` and `recorded pid N is not listening`. There is
+  no separate start command: `deploy --ref <live sha> --no-fetch` finds the existing
+  `releases/<sha>`, verifies it, starts it and opens the browser session, without
+  fetching or building another commit. Do not start the dev checkout instead; see
+  **Development instance** below.
 - **Tasks in flight.** Deploy, rollback and stop refuse while a Task has a step in
   flight (from `<data>/runs/*/run.json`; a Task waiting for a card does not count)
   and name those Tasks. `--force` restarts anyway; `status` lists them.
