@@ -14,10 +14,11 @@
 // any local program of that user can read).
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { createWriteStream, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { sessionCookieName } from "../src/csrf";
+import { liveBoardRefusal } from "./lan-guard";
 
 const REPO = resolve(import.meta.dir, "..");
 const args = process.argv.slice(2), role = args[0];
@@ -28,14 +29,9 @@ const PORT = Number(opt("port", "4310")), PEER_PORT = Number(opt("peer-port", "7
 const TO_PORT = Number(opt("to-port", "7417")), PROVIDER = opt("provider", "codex"), ROUNDS = Number(opt("rounds", "6")), TO = opt("to", ""), NAME = opt("name", role === "take" ? "Mac" : "Desktop");
 if (role === "dispatch" && !TO) { console.error("dispatch needs --to <the Mac's LAN IP> (the take side prints it)"); process.exit(2); }
 
-// Never the live board: not its port, not its data dir, not the default data dir.
-const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
-const liveRecord = join(homedir(), ".crew-studio", "releases", "live.json");
-const live = existsSync(liveRecord) ? (() => { try { return JSON.parse(readFileSync(liveRecord, "utf8"))?.live ?? null; } catch { return null; } })() : null;
-const livePorts = new Set([4210, ...(live?.port ? [Number(live.port)] : [])]);
-const liveData = new Set([join(homedir(), ".crew-studio", "data"), ...(live?.data ? [String(live.data)] : [])].map(real));
-if (livePorts.has(PORT)) { console.error(`--port ${PORT} is the live board's port; pick another (default 4310)`); process.exit(2); }
-if (liveData.has(real(DATA))) { console.error(`--data ${DATA} is a live board data dir; pick another (default ~/crew-lan-trial)`); process.exit(2); }
+// Never the live board (scripts/lan-guard.ts). Read before this script sets CREW_DATA/CREW_PORT for its own Studio.
+const refusal = liveBoardRefusal({ port: PORT, data: DATA, home: homedir(), env: process.env as Record<string, string | undefined> });
+if (refusal) { console.error(refusal); process.exit(2); }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (s: string) => console.log(s);
