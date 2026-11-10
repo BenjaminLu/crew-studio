@@ -140,7 +140,8 @@ try {
   script.push([["scene_show", { chapter: "what", title: "Only this", points: [{ text: "Sums [diff:src/README.md].", cites: ["diff:src/README.md"] }, { text: "Two.", cites: [] }] }], ["say", "Short [diff:src/README.md]."]]);
   await room.start(opened.id, { action: "teach", confirm: (room.view(opened.id) as any).offer.hash }, "captain"); await room.settle(opened.id);
   const short = (room.view(opened.id) as any).turns.at(-1);
-  ok(short.status === "failed" && /left out modules, talks, sequence/.test(short.error ?? "") && /a directory's lesson shows what it is and its parts/.test(short.error ?? ""), "a directory's lesson without its parts (or how they compose) is refused, saying which", short.error);
+  ok(short.status === "done" && !short.error && JSON.stringify(short.gaps) === JSON.stringify(["modules", "talks", "sequence"]) && short.jobs?.length === 3 && short.scenes.length === 1,
+    "a directory's lesson still without its parts (or how they compose) after its two follow-ups is kept as written, its gaps named on the turn (a directory's own chapters)", JSON.stringify([short.status, short.error, short.gaps, short.jobs]));
 
   // ---------- every follow-up: a question on the board, words selected, regenerate, the check, the voice's rule ----------
   const lessonScene = `t${lt.n}-2`;

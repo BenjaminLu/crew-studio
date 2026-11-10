@@ -40,7 +40,7 @@ import { helper, helperHead, normPath } from "../review-read";
 import { localUnrestricted } from "../local-execution";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { DOCS_HOSTS, docsHosts, ILLUSTRATION_CONCEPTS, ILLUSTRATION_LAYOUTS, WEB_CALLS_PER_TURN, illustrationPrompt, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebBackend, type WebContext } from "../review-web";
-import type { AgentTool } from "../agent";
+import { addUsage, type AgentTool } from "../agent";
 import { keys } from "../keys";
 import { openScopedProxy, type ProxyAuthority } from "../egress-client";
 import type { Engine, AgentPick } from "../runtime/engine";
@@ -176,6 +176,11 @@ export function stateWrites(diff: string): string[] {
     back = [...back, code].slice(-6); line++; }
   return [...new Set(out)].slice(0, 20);
 }
+/** a finished lesson that still lacks chapters is handed them back, in the same turn, at most this many times (each one more
+ *  paid job on the same tutor): a lesson can take up to 1 + LESSON_FOLLOW_UPS rounds */
+export const LESSON_FOLLOW_UPS = 2;
+/** two jobs' costs added: a dollar figure only when both report one (a sum of what some reported would look like the whole) */
+const sumCost = (a: any, b: any) => { const c: any = addUsage(a, b ?? {}); return typeof a?.usd === "number" && typeof b?.usd === "number" ? c : { ...c, usd: null }; };
 /** what a lesson still lacks: a required chapter not shown, a skippable one neither shown nor left out with a cited reason */
 export function lessonGaps(scenes: { chapter?: string; skip?: true }[] | undefined, chapters: Chapter[] = CHAPTERS): string[] {
   const has = (id: string) => (scenes ?? []).some((x) => x.chapter === id && !x.skip), skipped = (id: string) => (scenes ?? []).some((x) => x.chapter === id && x.skip);
@@ -277,7 +282,13 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   /** a question asked on the lesson board: the thread and the node (card) this turn answers */
   thread?: { n: number; node: string; chip?: string };
   /** a board follow-up the room's agreement started without a confirmation: how many it has started since the last one */
-  follow?: number };
+  follow?: number;
+  /** every job of this turn when a lesson took follow-ups (job is the first): each paid, its cost summed into cost */
+  jobs?: string[];
+  /** a lesson kept without these chapters (ids): the tutor left them out after its follow-ups; the room marks it incomplete */
+  gaps?: string[];
+  /** why a lesson's follow-ups stopped early (a job cancelled, timed out or refused), when they did */
+  followUpError?: string };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
 export type Subject = { kind: "merge" | "branch" | "pr" | "dir"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null; ref?: string; path?: string };
 /** a GitHub directory as Studio read it, pinned at one commit (the ref named in its address, resolved once; the room never moves) */
@@ -1343,6 +1354,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       `THE CAPTAIN'S NEW MESSAGE [${turn.action}]`, turn.text].join("\n");
   };
 
+  /** A lesson's follow-up: the same room and change as its first job (the whole prompt again: a job remembers nothing), the
+   *  scenes the lesson already shows, and only the chapters it still lacks, each to show or to leave out with chapter_skip
+   *  and a cited reason, as the chapter rules say */
+  const followUpPrompt = async (k: Key, room: Room, turn: Turn, s: S, gaps: string[]) => {
+    const CH = chaptersOf(k), name = (id: string) => { const c = CH.find((x) => x.id === id)!; return `${c.id} (${c.en})${c.skippable ? "" : ": always shown, never left out"}`; };
+    return [await prompt(k, room, turn, s), "",
+      "THIS LESSON SO FAR (this same turn: these scenes are on the board already and stay; do not show them again)",
+      ...(turn.scenes ?? []).map((x) => `- scene ${x.n}${x.chapter ? ` [${x.chapter}]` : ""}${x.skip ? " left out" : ""}: ${x.title}${x.picture ? ` (picture ${x.picture})` : ""}`), "",
+      `STUDIO'S FOLLOW-UP: the lesson is not finished. It still lacks ${gaps.length === 1 ? "this chapter" : "these chapters"}:`, ...gaps.map((id) => `- ${name(id)}`),
+      "Finish only these: show each with board_draw (or figure_svg) and scene_show; a skippable chapter the change truly has nothing for may instead be left out with chapter_skip and a citation Studio can verify. Call lesson_check before your final answer, and end with a short answer about what you added."].join("\n");
+  };
+
   /** A tutor round's admission, the same for a turn and a translation: the round sandbox only, the pinned skills, the Task's
    *  node (an auxiliary owner for a branch or pull request room), the member verified and selected natively, staffing's
    *  receipt for the tutor seat. On a refusal nothing is held. */
@@ -1382,8 +1405,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const web: WebBackend = typeof o.web === "function" ? o.web(check) : o.web ?? proxiedWeb(() => engine.deps.agents.egress, { check });
     const x = adm.x, system = adm.system, rules = adm.rules;
     let job: any = null;
-    try {
-      job = await engine.deps.agents.run({ kind: "review-room", title: `${s.run.id} review room turn ${turn.n}`, system, text: await prompt(k, room, turn, s), tools: tools(k, room, turn, s, web, ctx, allowed), provider,
+    // one tutor job of this turn: the first, and a lesson's follow-ups. They share one set of tools, so their scenes join this
+    // turn's, board ids keep counting and a turn's limits (scenes, figure tries, web calls) hold across them; attempt k > 1
+    // is written beside the first in the round's record (prompt.attempt<k>.md)
+    const turnTools = tools(k, room, turn, s, web, ctx, allowed);
+    const runJob = async (text: string, attempt: number) => engine.deps.agents.run({ kind: "review-room", title: `${s.run.id} review room turn ${turn.n}${attempt > 1 ? ` (follow-up ${attempt - 1})` : ""}`, system, text, tools: turnTools, provider,
         // one of the Task's jobs: its queue, its cancel, its staffing receipt (issued again if the rules change while it waits)
         ref: s.run.id, admissionReceipt: adm.admissionReceipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal, owns: () => engine.owns(x) && k.open(),
         // a branch or pull request room holds the review node as an auxiliary owner: the job is admitted on it, also once the Task ended
@@ -1391,19 +1417,37 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         project: s.run.params?.project || null, rules, maxTools: 40, timeoutMs: Number(process.env.CREW_REVIEW_ROOM_TIMEOUT_MS ?? 8 * 60_000),
         // the round sandbox with nothing to write and no host beyond its model (the egress.allow policy is not carried)
         sandbox: { writes: [], reads: [], allow: [] },
-        record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, turn.round), header: { run: s.run.id, node: s.node.id, round: turn.round, head: s.head, base: s.base, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, role: "review-room-tutor", skills: sk.map((k) => `${k.id}@sha256:${k.sha256}`) } } } as any);
+        record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, turn.round), header: { run: s.run.id, node: s.node.id, round: turn.round, head: s.head, base: s.base, card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, role: "review-room-tutor", skills: sk.map((k) => `${k.id}@sha256:${k.sha256}`), ...(attempt > 1 ? { attempt } : {}) } } } as any);
+    try {
+      job = await runJob(await prompt(k, room, turn, s), 1);
       // the answer is the tutor's final message only (src/agent.ts): a round that ends after its tools with nothing more
       // has no answer, and a blank scene is not one: the turn fails and says why
       const answer = String(job.answer ?? job.said ?? "").trim().slice(0, 20000), answered = job.status === "done" && !!answer;
-      Object.assign(turn, { status: answered ? "done" : "failed", job: job.id, answer, error: answered ? null : job.status === "done" ? "the tutor ended without an answer / 導師沒有給出回答就結束了" : String(job.error ?? job.status), cost: job.cost ?? null });
-      // a lesson is refused when it skipped a chapter it owes (never by convenience): the captain sees why, nothing half-made shows
-      const CHAPTERS = chaptersOf(k), gaps = turn.action === "teach" && turn.status === "done" ? lessonGaps(turn.scenes, CHAPTERS) : [];
-      if (gaps.length) Object.assign(turn, { status: "failed", error: `Studio refused the lesson: it left out ${gaps.join(", ")} (${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.en).join("; ")}); ${k.kind === "dir" ? "a directory's lesson shows what it is and its parts, and leaves talks or sequence out only with a cited reason" : "a lesson shows what and change, and leaves talks, lifecycle or sequence out only with a cited reason"} / Studio 退回了這一課：缺少 ${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.zh).join("、")}` });
+      const failed = answered ? null : job.status === "done" ? "the tutor ended without an answer / 導師沒有給出回答就結束了" : String(job.error ?? job.status);
+      // the turn stays running until its follow-ups end (a restart meanwhile shows it interrupted, never a finished lesson)
+      Object.assign(turn, { job: job.id, answer, cost: job.cost ?? null });
+      // a lesson that left out a chapter it owes is handed its gaps and finishes them in this turn (at most LESSON_FOLLOW_UPS
+      // more jobs, each paid and recorded); what it still lacks then is marked on the lesson, never hidden; a lesson with
+      // nothing to show is refused, saying why
+      const CHAPTERS = chaptersOf(k); let gaps = turn.action === "teach" && answered ? lessonGaps(turn.scenes, CHAPTERS) : [];
+      const mark = () => { if (gaps.length) turn.gaps = gaps; else delete turn.gaps; }; mark();
+      for (let i = 0; gaps.length && i < LESSON_FOLLOW_UPS && engine.owns(x) && k.open() && !engine.abortOf(s.run).signal.aborted; i++) {
+        let more: any; try { more = await runJob(await followUpPrompt(k, room, turn, s, gaps), i + 2); } catch (e: any) { turn.followUpError = String(e?.message ?? e).slice(0, 300); break; }
+        turn.jobs = [...(turn.jobs ?? [turn.job!]), more.id]; turn.cost = sumCost(turn.cost, more.cost);
+        const said = String(more.answer ?? "").trim(); if (more.status === "done" && said) turn.answer = `${turn.answer}\n\n${said}`.slice(0, 20000);
+        gaps = lessonGaps(turn.scenes, CHAPTERS); mark();
+        // cancelled, timed out or refused: no further paid job, and the lesson says why it stopped
+        if (more.status !== "done") { turn.followUpError = String(more.error ?? more.status).slice(0, 300); break; }
+      }
+      const why = k.kind === "dir" ? "a directory's lesson shows what it is and its parts, and leaves talks or sequence out only with a cited reason" : "a lesson shows what and change, and leaves talks, lifecycle or sequence out only with a cited reason";
+      if (failed) Object.assign(turn, { status: "failed", error: failed });
+      else if (gaps.length && !(turn.scenes ?? []).some((x) => !x.skip)) { delete turn.gaps; Object.assign(turn, { status: "failed", error: `Studio refused the lesson: it left out ${gaps.join(", ")} (${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.en).join("; ")}); ${why} / Studio 退回了這一課：缺少 ${gaps.map((id) => CHAPTERS.find((c) => c.id === id)!.zh).join("、")}` }); }
+      else Object.assign(turn, { status: "done", error: null });
     } catch (e: any) { Object.assign(turn, { status: "failed", error: String(e?.message ?? e).slice(0, 500) }); }
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
     turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
-    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, ...(turn.auto ? { auto: true, autoFrom: turn.autoFrom ?? "paste" } : {}), card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
+    engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, ...(turn.auto ? { auto: true, autoFrom: turn.autoFrom ?? "paste" } : {}), card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, ...(turn.jobs ? { jobs: turn.jobs } : {}), ...(turn.gaps ? { gaps: turn.gaps } : {}), ...(turn.followUpError ? { followUpError: turn.followUpError } : {}), status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
       check: { asked: q.length, graded: q.filter((x) => x.result).length, correct: q.filter((x) => x.result?.correct).length } } } as any);
   }

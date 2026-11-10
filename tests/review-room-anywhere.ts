@@ -116,9 +116,17 @@ const TOOLRES: [string, any][] = [];
       ["scene_show", { chapter: "roads", title: "Roads", points: [{ text: "A library was considered.", cites: [] }, { text: "It was dropped [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }] }],
       ["lesson_check", {}],
       ["say", "The lesson [diff:src/percent.ts]."]]);
-    const v0: any = room.view(t.id); await room.start(t.id, { action: "teach", confirm: v0.offer.hash }, "captain"); await room.settle(t.id);
-    const ta = (room.view(t.id) as any).turns.at(-1), ra = TOOLRES.slice(r0), get = (n: string) => ra.filter(([x]) => x === n).map(([, j]) => j);
-    ok(ta.action === "teach" && ta.status === "failed" && /Studio refused the lesson: it left out change, sequence/.test(ta.error ?? ""), "a lesson that leaves out the change itself (or a chapter it owes without a cited reason) is refused, saying which", JSON.stringify([ta.status, ta.error]));
+    const v0: any = room.view(t.id), pA = prompts.length, jA = runArgs.length; await room.start(t.id, { action: "teach", confirm: v0.offer.hash }, "captain"); await room.settle(t.id);
+    const ta = (room.view(t.id) as any).turns.at(-1), ra = TOOLRES.slice(r0), get = (n: string) => ra.filter(([x]) => x === n).map(([, j]) => j), recA = E.trusted(t.id).entries.filter((x: any) => x.record === "review-room-turn").at(-1) as any;
+    const follow = prompts.slice(pA + 1).map((x) => x.text);
+    // the tutor answers nothing more when handed its gaps (the script is empty): two follow-ups, then the lesson is kept, marked
+    ok(ta.action === "teach" && ta.status === "done" && !ta.error && JSON.stringify(ta.gaps) === JSON.stringify(["change", "sequence"]) && ta.scenes.length === 3,
+      "a lesson that still leaves out the change itself (or a chapter it owes without a cited reason) after its follow-ups is kept as written, its gaps named on the turn", JSON.stringify([ta.status, ta.error, ta.gaps, ta.scenes?.length]));
+    ok(prompts.length - pA === 3 && runArgs.length - jA === 3 && ta.jobs?.length === 3 && ta.jobs[0] === ta.job && new Set(ta.jobs).size === 3 && Math.abs((ta.cost?.usd ?? 0) - 0.03) < 1e-9 && ta.cost.inTokens === 3
+      && follow.length === 2 && follow.every((x) => /STUDIO'S FOLLOW-UP: the lesson is not finished/.test(x) && /- change \(The change itself\): always shown, never left out/.test(x) && /- sequence \(One request, in order\)\n/.test(x) && /scene 1 \[what\]: A percent helper/.test(x) && /scene 3 \[lifecycle\] left out/.test(x))
+      && recA?.data.gaps?.join() === "change,sequence" && recA.data.jobs?.length === 3 && Math.abs(recA.data.cost.usd - 0.03) < 1e-9,
+      "at most two follow-ups, each naming the missing chapters (id, title, the rule) and the scenes already shown; every job's id and cost is kept on the turn and its ledger entry",
+      JSON.stringify({ n: prompts.length - pA, jobs: ta.jobs, cost: ta.cost, rec: recA?.data && { gaps: recA.data.gaps, jobs: recA.data.jobs } }));
     ok(/rejected 1: an option the change turned down is shown only as the record shows it/.test(get("board_draw")[0]?.errors?.[0] ?? "") && get("scene_show")[0]?.scene === 1 && /one scene a chapter/.test(get("scene_show")[2]?.error ?? "")
       && /only talks or lifecycle or sequence may be left out/.test(get("chapter_skip")[0]?.error ?? "") && /only with a reason Studio can verify/.test(get("chapter_skip")[1]?.error ?? "") && get("chapter_skip")[2]?.skipped === "lifecycle"
       && /a road not taken is listed only when the record shows it/.test(get("scene_show")[3]?.error ?? "") && JSON.stringify(get("lesson_check")[0]?.missing) === JSON.stringify(["change", "sequence"]),
@@ -136,8 +144,9 @@ const TOOLRES: [string, any][] = [];
       ["chapter_skip", { chapter: "lifecycle", reason: "No state field or transition in this diff [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
       ["chapter_skip", { chapter: "sequence", reason: "No call across services or I/O [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
       ["lesson_check", {}], ["say", "The lesson [diff:src/percent.ts]."]]);
-    const r1 = TOOLRES.length; await room.start(t.id, { action: "teach", confirm: on.offer.hash }, "captain"); await room.settle(t.id);
+    const r1 = TOOLRES.length, pB = prompts.length; await room.start(t.id, { action: "teach", confirm: on.offer.hash }, "captain"); await room.settle(t.id);
     const tb = (room.view(t.id) as any).turns.at(-1), tools1 = (runArgs.at(-1)?.tools ?? []).map((x: any) => x.name), chk = TOOLRES.slice(r1).filter(([n]) => n === "lesson_check").map(([, j]) => j)[0];
+    ok(prompts.length - pB === 1 && !("jobs" in tb) && !("gaps" in tb) && Math.abs((tb.cost?.usd ?? 0) - 0.01) < 1e-9, "a complete lesson takes no follow-up: one job, one round's cost", JSON.stringify({ n: prompts.length - pB, jobs: tb.jobs, gaps: tb.gaps, cost: tb.cost }));
     ok(tb.status === "done" && JSON.stringify(tb.scenes.map((x: any) => [x.chapter, !!x.skip])) === JSON.stringify([["what", false], ["talks", false], ["change", false], ["lifecycle", true], ["sequence", true]]) && chk?.ok === true
       && tb.scenes[3].points[0].cites[0].ok === true && (room.view(t.id) as any).board.find((b: any) => b.id === `B${nB}-1`)?.inferred === true,
       "a lesson with what, talks and change, and lifecycle and sequence left out with a cited reason, is kept; the architecture is marked inferred (no design document cited)", JSON.stringify([tb.status, tb.error, tb.scenes?.map((x: any) => x.chapter)]));
@@ -152,6 +161,38 @@ const TOOLRES: [string, any][] = [];
     ok(sk[0]?.skipped === "talks" && td.scenes.find((x: any) => x.chapter === "talks")?.title === "谁跟谁说话" && td.scenes.at(-1)?.chapter === "what" && /at most 12 scenes a turn/.test(sk[1]?.error ?? "") && JSON.stringify(lc?.missing) === JSON.stringify(["change", "lifecycle", "sequence"]),
       "a lesson's chapters come in any order (what after the decisions); talks may be left out with a cited reason (its title in the turn's language, 简体 too); a chapter left out counts toward the scene limit; lesson_check names only what is missing", JSON.stringify({ sk, lc, chapters: td.scenes.map((x: any) => x.chapter) }));
     ok(board?.cites.some((c: any) => c.ref === `commit:${th}` && c.ok) && board.rejected[0].cite.ok, "a rejected option's citation is the decision's own too (the Library resolves it)", JSON.stringify(board?.cites)); }
+  // ---- a lesson that leaves chapters out is handed them back in the same turn: the follow-up fills them, both rounds paid ----
+  { const nG = (room.view(t.id) as any).turns.length + 1, pG = prompts.length; let open: () => void = () => {}; const gate = new Promise<void>((r) => { open = r; });
+    const arch = { type: "arch", title: "Pricing", nodes: [{ id: "cart", label: "Cart", kind: "actor" }, { id: "percent", label: "percent()", kind: "service", mark: "new" }], edges: [{ from: "cart", to: "percent", label: "percent(1999, 15)", cite: "diff:src/percent.ts" }] };
+    script.push([["board_draw", { items: [arch] }],
+      ["scene_show", { chapter: "what", title: "A percent helper", points: [{ text: "It adds percent [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "It rounds to the cent.", cites: [] }] }],
+      ["scene_show", { chapter: "talks", title: "Who calls it", picture: `B${nG}-1`, points: [{ text: "The cart calls it [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Nothing else does.", cites: [] }] }],
+      ["say", "The first part [diff:src/percent.ts]."]],
+      [["wait", gate], ["board_draw", { items: [{ type: "item", title: "Rounding", name: "percent()", before: "Fractions kept", after: "Whole cents", mechanism: "Math.round", cites: ["diff:src/percent.ts"] }] }],
+      ["scene_show", { chapter: "change", title: "Rounding", picture: `B${nG}-2`, points: [{ text: "It rounds [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Halves go up.", cites: [] }] }],
+      ["chapter_skip", { chapter: "lifecycle", reason: "No state field or transition in this diff [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
+      ["chapter_skip", { chapter: "sequence", reason: "No call across services or I/O [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
+      ["lesson_check", {}], ["say", "Added the change; lifecycle and sequence left out [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "teach", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await until(() => prompts.length - pG === 2, 30000);
+    const mid = JSON.parse(JSON.stringify((room.view(t.id) as any).turns.at(-1))); open(); await room.settle(t.id);
+    ok(mid.n === nG && mid.status === "running" && JSON.stringify(mid.gaps) === JSON.stringify(["change", "lifecycle", "sequence"]),
+      "while its follow-up runs the lesson is still running (a restart then shows it interrupted, never finished), its gaps so far marked", JSON.stringify([mid.status, mid.gaps]));
+    const tg = (room.view(t.id) as any).turns.at(-1), fu = prompts[pG + 1]?.text ?? "";
+    ok(tg.n === nG && tg.status === "done" && !tg.error && !("gaps" in tg) && JSON.stringify(tg.scenes.map((x: any) => [x.chapter, !!x.skip])) === JSON.stringify([["what", false], ["talks", false], ["change", false], ["lifecycle", true], ["sequence", true]]),
+      "a lesson that left chapters out is finished by its follow-up in the same turn: the scenes it wrote are kept, the new ones join them, no gaps", JSON.stringify([tg.status, tg.error, tg.gaps, tg.scenes?.map((x: any) => x.chapter)]));
+    ok(prompts.length - pG === 2 && tg.jobs?.length === 2 && tg.jobs[0] === tg.job && Math.abs((tg.cost?.usd ?? 0) - 0.02) < 1e-9 && /The first part/.test(tg.answer) && /Added the change/.test(tg.answer)
+      && /STUDIO'S FOLLOW-UP/.test(fu) && /- change \(The change itself\)/.test(fu) && /- lifecycle \(Its life, state by state\)/.test(fu) && /- sequence \(One request, in order\)/.test(fu) && !/^- (what|talks) \(/m.test(fu) && /scene 2 \[talks\]: Who calls it \(picture B/.test(fu),
+      "one follow-up, asking only for the missing chapters and naming the scenes already shown; both jobs kept, their costs summed, both answers in the transcript", JSON.stringify({ n: prompts.length - pG, jobs: tg.jobs, cost: tg.cost, answer: tg.answer })); }
+  // ---- a lesson with no answer, or with nothing to show, still fails ----
+  { const pE = prompts.length; script.push([["board_draw", { items: [{ type: "note", text: "Thinking." }] }]]);
+    await room.start(t.id, { action: "teach", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const te2 = (room.view(t.id) as any).turns.at(-1);
+    ok(te2.status === "failed" && /ended without an answer/.test(te2.error ?? "") && prompts.length - pE === 1 && !("jobs" in te2) && !("gaps" in te2), "a lesson whose tutor ends without an answer fails as before, with no follow-up", JSON.stringify([te2.status, te2.error, prompts.length - pE]));
+    const pF = prompts.length; script.push([["say", "This change adds a percent helper [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "teach", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const tf = (room.view(t.id) as any).turns.at(-1);
+    ok(tf.status === "failed" && /Studio refused the lesson: it left out what, talks, change, lifecycle, sequence/.test(tf.error ?? "") && !(tf.scenes?.length) && !("gaps" in tf) && prompts.length - pF === 3 && tf.jobs?.length === 3,
+      "a lesson that shows nothing even after its follow-ups is refused as before, saying which chapters it lacks", JSON.stringify([tf.status, tf.error, prompts.length - pF])); }
   // ---- figures: one the tutor draws itself (taken through Studio's allowlist and geometric gate), a lifecycle per entity with
   //      each transition's transaction, every call with its request, response and transaction ----
   { const nF = (room.view(t.id) as any).turns.length + 1, rF = TOOLRES.length;

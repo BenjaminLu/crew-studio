@@ -70,7 +70,7 @@ const stubs = () => { const v = [{ name: "Ava (Premium)", lang: "en-US", localSe
   window.__opened = []; window.open = (u) => { window.__opened.push(u); return null; }; };
 async function open(width, room, o = {}) {
   const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: o.dark ? "dark" : "light", reducedMotion: "reduce" });
-  await ctx.addInitScript(([l]) => { try { localStorage.setItem("crew.lang", l); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); }, ["en"]);
+  await ctx.addInitScript(([l]) => { try { localStorage.setItem("crew.lang", l); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); }, [o.lang || "en"]);
   await ctx.addInitScript(stubs);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: width < 600 ? "phone" : "desktop", device: null } }));
@@ -149,6 +149,17 @@ try {
     await fly(p, "t2"); const txt = await p.evaluate(() => { const r = document.querySelector('[data-region="t2"]'); return r && { illus: !!r.querySelector(".rb-illus"), solo: !!r.querySelector(".rb-split.solo"), nums: r.querySelectorAll("[data-step-pick]").length }; });
     ok(txt && !txt.illus && txt.solo && txt.nums === 2, "a text chapter with no drawing and no step picture stays one column of numbered steps", JSON.stringify(txt));
     await ctx.close(); }
+  // ---------- a lesson kept without some chapters (the tutor left them out after Studio's follow-ups): marked incomplete, naming them ----------
+  { const gapped = () => { const r = ROOM(); r.turns = r.turns.map((t) => t.n === 2 ? { ...t, gaps: ["change", "sequence"], jobs: ["J1", "J2", "J3"], cost: { usd: 0.3 } } : t); return r; };
+    const note = (p) => p.evaluate(() => { const x = document.querySelector('[data-region="t2"] [data-lesson-gaps]'); return x && { gaps: x.dataset.lessonGaps, text: x.textContent, shown: x.getBoundingClientRect().height > 0, all: document.querySelectorAll("[data-lesson-gaps]").length }; });
+    let { ctx, p } = await open(1440, gapped()); await fly(p, "t2"); const en = await note(p); await p.screenshot({ path: join(shots, "lesson-gaps-1440.png") }); await ctx.close();
+    ({ ctx, p } = await open(1440, gapped(), { lang: "zh-TW" })); await fly(p, "t2"); const zh = await note(p); await ctx.close();
+    ({ ctx, p } = await open(1440, ROOM())); await fly(p, "t2"); const none = await note(p), any = await p.evaluate(() => document.querySelectorAll("[data-lesson-gaps]").length); await ctx.close();
+    const busy = gapped(); busy.turns = busy.turns.map((t) => t.n === 2 ? { ...t, status: "running" } : t); busy.running = 2;
+    ({ ctx, p } = await open(1440, busy)); const whileRunning = await p.evaluate(() => document.querySelectorAll("[data-lesson-gaps]").length); await ctx.close();
+    ok(whileRunning === 0, "while its follow-ups run, a lesson is not yet called incomplete", String(whileRunning));
+    ok(en?.shown && en.gaps === "change sequence" && en.all === 1 && en.text === "Incomplete: missing The change itself; One request, in order" && zh?.shown && zh.text === "不完整：缺少 改了什麼、一次請求的順序" && !none && any === 0,
+      "a lesson kept with gaps says so over its first chapter, naming the missing chapters (en and zh); a complete lesson shows no such note", JSON.stringify({ en, zh, none, any })); }
   // ---------- a tutor's own figure: its connectors are wide click targets too; a zoom finds a part inside a moved group;
   //            the play bar's last dot picks the last step ----------
   { const { ctx, p } = await open(1440, ROOM()); await fly(p, "t4");

@@ -1014,7 +1014,7 @@ try {
     ok(/not the GitHub repository of a registered project connected to GitHub/.test(await p.textContent('[data-pr-error="home"]')), "the Review Room's home takes a pull request's URL; a repository not connected is refused with the reason");
     await p.fill('[data-pr-url="home"]', "https://github.com/fixture/project/pull/7"); await p.waitForSelector('[data-paste-offer="on"]', { timeout: 5000 }).catch(() => {});
     const po = await p.evaluate(() => document.querySelector('[data-pr-box="home"] [data-paste-offer]')?.textContent ?? null);
-    ok(/starts the lesson by itself/.test(po ?? "") && /one paid model round on codex · gpt-6 \(high\)/.test(po ?? "") && /up to two generated pictures/.test(po ?? "") && /creates this pull request's host Task and its tutor's staffing/.test(po ?? "") && !/nothing is written/i.test(po ?? ""),
+    ok(/starts the lesson by itself/.test(po ?? "") && /one paid model round on codex · gpt-6 \(high\) \(up to 3 if the tutor leaves chapters out\)/.test(po ?? "") && /up to two generated pictures/.test(po ?? "") && /creates this pull request's host Task and its tutor's staffing/.test(po ?? "") && !/nothing is written/i.test(po ?? ""),
       "before the paste, the paste box says what it starts, as the room would run it: the host Task and staffing it creates, one paid round on this tutor and model, the room's pictures setting", po);
     // a switch changed: the box asks again and says the new thing (no answer kept from before the change)
     const n0 = asked.length; await p.click("[data-auto-global]"); await p.waitForSelector('[data-pr-box="home"] [data-paste-offer="off"]', { timeout: 5000 }).catch(() => {});
