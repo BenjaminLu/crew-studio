@@ -180,9 +180,9 @@ try {
           "a model entered by hand that its vendor does not run fails visibly with the vendor's reason, starts no job and is not swapped for another", JSON.stringify([fail?.message, checked]));
         e.deps.selectProvider = sel; delete e.deps.ensurePick; }
       // a bad request is still refused: no provider, an oversize or blank model id, a provider Studio does not run
-      { const bad = [{ provider: "", model: "m" }, { provider: "claude", model: "x".repeat(121) }, { provider: "claude", model: "two words" }, { provider: "claude", model: "" }, { provider: "gemini", model: "g-1" }, { provider: "claude" }, "claude"].map((p) => tried(p).x?.code ?? "accepted");
+      { const bad = [{ provider: "", model: "m" }, { provider: "claude", model: "x".repeat(121) }, { provider: "claude", model: "two words" }, { provider: "claude", model: "-p" }, { provider: "claude", model: "--model=other" }, { provider: "claude", model: "" }, { provider: "gemini", model: "g-1" }, { provider: "claude" }, "claude"].map((p) => tried(p).x?.code ?? "accepted");
         const def0 = (() => { try { room.setSettings({ tutor: { provider: "claude", model: "x".repeat(121) } } as any); return "accepted"; } catch (x: any) { return x.code; } })();
-        ok(bad.every((c) => c === "bad_request") && def0 === "bad_request" && JSON.parse(readFileSync(join(e.rdir(run.id), "review-room", `${card.id}.json`), "utf8")).tutor.model === "claude-hand-9", "a malformed pick (empty provider, oversize or blank model, unknown provider) is refused, the room's pick unchanged", JSON.stringify([bad, def0])); }
+        ok(bad.every((c) => c === "bad_request") && def0 === "bad_request" && JSON.parse(readFileSync(join(e.rdir(run.id), "review-room", `${card.id}.json`), "utf8")).tutor.model === "claude-hand-9", "a malformed pick (empty provider, oversize or blank model, a model id that starts with '-', unknown provider) is refused, the room's pick unchanged", JSON.stringify([bad, def0])); }
       // the room's pick: the author's own model, picked anyway (information, not a refusal); the turn runs on it, the receipt names it
       const vs: any = r0.setTutor(card.id, { provider: "codex", model: "worker-model" }, "captain");
       ok(vs.offer.provider === "codex" && vs.offer.model === "worker-model" && vs.offer.independence.level === "same" && /Same model as the author/.test(vs.offer.independence.en) && /Picked by the captain for this room/.test(vs.offer.independence.en) && vs.offer.picked === "room" && vs.tutorChoice.source === "room" && vs.offer.warning === null,
@@ -194,10 +194,15 @@ try {
       const st = room.setSettings({ tutor: { provider: "claude", model: "claude-x" } } as any) as any, vd: any = r0.setTutor(card.id, null, "captain");
       ok(st.tutor?.provider === "claude" && vd.offer.provider === "claude" && vd.offer.model === "claude-x" && vd.offer.picked === "studio" && vd.tutorChoice.source === "studio" && /Studio's default tutor/.test(vd.offer.independence.en),
         "a room without its own pick runs on Studio's default tutor", JSON.stringify({ st, offer: vd.offer }));
+      // the offer the captain saw named a model that ran; it is held now: the old confirmation starts nothing, the new offer warns
+      const okHash = (room.view(card.id) as any).offer.hash;
       e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x", { runnable: false, held: "claude is out of quota" }]);
       { const vh: any = room.view(card.id); let refusal: any = null; try { await room.start(card.id, { action: "how", confirm: "x" }, "captain"); } catch (x) { refusal = x; }
         ok(!vh.offer.error && vh.offer.provider === "claude" && vh.offer.model === "claude-x" && /Held now \(claude is out of quota\)/.test(vh.offer.independence.en) && refusal?.code === "confirm_required" && refusal.offer?.provider === "claude",
-          "a picked tutor that is held is never swapped for another vendor: it stays the tutor, its label says it is held, and the turn asks to confirm on it", JSON.stringify({ offer: vh.offer, refusal: refusal?.code })); }
+          "a picked tutor that is held is never swapped for another vendor: it stays the tutor, its label says it is held, and the turn asks to confirm on it", JSON.stringify({ offer: vh.offer, refusal: refusal?.code }));
+        const runs1 = h.agents.jobs.size; let stale: any = null; try { await room.start(card.id, { action: "how", confirm: okHash }, "captain"); } catch (x) { stale = x; }
+        ok(stale?.code === "confirm_required" && stale.offer?.hash === vh.offer.hash && vh.offer.hash !== okHash && /out of quota/.test(stale.offer?.warning?.en ?? "") && h.agents.jobs.size === runs1,
+          "a confirmation given before the picked model turned held starts nothing: the captain confirms again on the offer that warns", JSON.stringify({ code: stale?.code, okHash, now: vh.offer.hash })); }
       // Studio's default may be any model too: one this machine does not list, entered by hand, is kept and listed for the room list
       { const sd = room.setSettings({ tutor: { provider: "codex", model: "codex-hand-2" } } as any) as any, choices = r0.tutorChoices(), vd2: any = room.view(card.id);
         ok(sd.tutor?.model === "codex-hand-2" && choices.some((x: any) => x.model === "codex-hand-2" && x.listed === false && x.current) && vd2.offer.model === "codex-hand-2" && vd2.offer.picked === "studio" && /Not reported by codex on this machine \(entered by hand\); the vendor decides/.test(vd2.offer.independence.en)

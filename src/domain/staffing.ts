@@ -391,7 +391,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
   if(m.picked!==true&&(!usable||!usable.some(u=>u.provider===m.provider&&u.model===m.model&&u.runnable!==false)))throw new Error('Adaptive seat member is not usable on this machine now');
   if(provider.id!==m.provider||provider.model!==m.model||(provider.reasoningEffort??null)!==m.effort)throw new Error('Actual provider differs from the tutor the captain confirmed');
   const hash=createHash('sha256').update(system).digest('hex');
-  engine.record(x,'staffing-instructions',{data:{schema:1,config:null,role:id,seat:aux.seat,skill,instructionsSha256:hash,provider:m.provider,model:m.model,effort:m.effort,directory:true,node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null}});
+  engine.record(x,'staffing-instructions',{data:{schema:1,config:null,role:id,seat:aux.seat,skill,instructionsSha256:hash,provider:m.provider,model:m.model,effort:m.effort,directory:true,...m.picked===true?{picked:true}:{},node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null}});
   const token=Object.freeze({});jobReceipts.set(token,{x,config:'',role:id,hash,node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null,used:false,member:{provider:m.provider,model:m.model,effort:m.effort}});return token;}
  function dirJob(run:any,provider:any,o:any,phase:'before'|'launch'){const pin=o.admissionReceipt&&jobReceipts.get(o.admissionReceipt);
   if(!pin||pin.used||o.ref!==run.id||pin.x.run!==run||!engine.owns(pin.x)||pin.node!==pin.x.node.id||pin.visit!==pin.x.rn.visits||pin.attempt!==pin.x.rn.attempt||pin.head!==(run.ctx.head??null)||!pin.member)throw new QueueRefusal('Native job staffing/owner receipt is missing, changed or consumed');

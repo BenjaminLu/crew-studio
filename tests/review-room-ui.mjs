@@ -391,7 +391,7 @@ try {
     const { ctx, p, posts } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 }); const turns = [];
     await p.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: R7 }));
     await p.route(/\/api\/review-room\/SC-50\/turn$/, (r) => { const b = JSON.parse(r.request().postData() || "{}"); turns.push(b);
-      if (!b.confirm) return r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: { ...ROOM.offer, provider: b.pick.provider, model: b.pick.model, hash: "re0123456789abcd" } } });
+      if (!b.confirm) return r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: { ...ROOM.offer, provider: b.pick.provider, model: b.pick.model, hash: "re0123456789abcd", ...(b.pick.provider === "cursor" ? { warning: { en: " Held now (out of quota): the turn may fail with cursor's error.", zh: "目前暫停（out of quota）：這一回合可能失敗並顯示 cursor 的錯誤。" } } : {}) } } });
       r.fulfill({ json: { ...R7, running: 4 } }); });
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     let s7 = await stage(p); const vers = await p.$$eval("[data-version-pick]", (els) => els.map((e) => [e.dataset.versionPick, e.getAttribute("aria-pressed"), e.textContent]));
@@ -400,10 +400,15 @@ try {
     ok(s7.scene === "t2" && /Halves round up/.test(await p.textContent(".rb-region.cur .rr-pointlist")), "the switcher shows the first answer again", JSON.stringify(s7));
     await p.click(".rb-region.cur [data-regen]"); const list = await p.$$eval("[data-regen-pick]", (els) => els.map((e) => [e.dataset.regenPick, e.disabled, e.textContent]));
     ok(list.length === 4 && list[0][2].includes("current") && list[2][2].includes("same vendor as the author") && /may not run: out of quota/.test(list[3][2]) && list.every((x) => !x[1]), "“Regenerate with…” lists this machine's models, each pickable: the current one marked, the author's vendor said, a held one with its warning", JSON.stringify(list));
+    // a held model: its paid round's confirmation says the warning before anything is paid
+    await p.click('[data-regen-pick="cursor|c-9"]'); await p.waitForSelector('[data-room-confirm]');
+    const heldConf = { text: await p.textContent("[data-room-confirm]"), warn: await p.$eval("[data-confirm-warning]", (e) => e.textContent).catch(() => null) };
+    ok(turns.length === 1 && turns[0].pick.provider === "cursor" && /cursor · c-9/.test(heldConf.text) && /Warning: Held now \(out of quota\): the turn may fail with cursor's error\./.test(heldConf.warn || ""), "picking a held model asks to confirm its paid round, and the confirmation shows its warning", JSON.stringify(heldConf));
+    await p.click("[data-room-cancel]"); await p.click(".rb-region.cur [data-regen]").catch(() => {});
     await p.click('[data-regen-pick="claude|opus-x"]'); await p.waitForSelector('[data-room-confirm]');
-    ok(turns.length === 1 && turns[0].regenerate === 2 && turns[0].pick.provider === "claude" && !turns[0].confirm && /claude · opus-x/.test(await p.textContent("[data-room-confirm]")), "picking a model asks to confirm a paid round on that model first", JSON.stringify(turns));
+    ok(turns.length === 2 && turns[1].regenerate === 2 && turns[1].pick.provider === "claude" && !turns[1].confirm && /claude · opus-x/.test(await p.textContent("[data-room-confirm]")) && !(await p.$("[data-confirm-warning]")), "picking a model asks to confirm a paid round on that model first (no warning for one that runs)", JSON.stringify(turns));
     await p.click("[data-room-start]"); await p.waitForFunction(() => document.querySelector("[data-room-busy]"));
-    ok(turns.length === 2 && turns[1].confirm === "re0123456789abcd" && turns[1].regenerate === 2 && !posts.length, "confirmed, the same question is asked again on the picked model", JSON.stringify(turns));
+    ok(turns.length === 3 && turns[2].confirm === "re0123456789abcd" && turns[2].regenerate === 2 && !posts.length, "confirmed, the same question is asked again on the picked model", JSON.stringify(turns));
     await ctx.close(); }
 
   // ---------- a room saved in the Library: replayed in the room, read-only, offline, no paid control ----------

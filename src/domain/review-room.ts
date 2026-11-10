@@ -804,7 +804,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const t = want ? pickedTutor(s.run, want) : tutorFor(k, s), p = t.pick, effort = p.effort ?? null, c = want ? null : choiceOf(load(k));
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
       return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, picked: want ? "regenerate" : c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label }, warning: t.warning ?? null,
-        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}) })).slice(0, 16) }; }
+        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}),
+          // a picked model that turned held, unverified or unreported since the offer is confirmed again, its warning said
+          ...(t.warning ? { warning: t.warning.en } : {}) })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
   const skills = () => ROOM_SKILLS.map((s) => { const t = bundledText(s.ref); if (t == null || sha(t) !== s.sha256) throw refuse(`The pinned skill ${s.id} changed or is missing; Studio refuses the turn`, "skill_pin"); return { ...s, text: t }; });

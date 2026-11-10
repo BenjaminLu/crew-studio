@@ -166,6 +166,16 @@ try {
   // the tutor the captain picks: the room's own pick runs its next turn
   const picked: any = (room as any).setTutor(opened.id, { provider: "claude", model: "x-1" }, "captain");
   ok(picked.offer.provider === "claude" && picked.offer.picked === "room", "the tutor picker works in a directory's room", JSON.stringify(picked.offer));
+  // a captain pick this machine does not list (entered by hand), or lists as held, still gets the directory host's receipt, marked picked
+  for (const [pick, usable] of [[{ provider: "claude", model: "x-hand-3" }, null], [{ provider: "claude", model: "x-held" }, { provider: "claude", model: "x-held", efforts: [], verified: true, runnable: false, held: "claude is out of quota" }]] as const) {
+    const real = (E.deps as any).usableModels; if (usable) (E.deps as any).usableModels = () => [...real(), usable];
+    try { (room as any).setTutor(opened.id, pick, "captain"); script.push([["say", "By the captain's pick [diff:src/api/server.ts:L1]."]]);
+      await room.start(opened.id, { action: "how", confirm: (room.view(opened.id) as any).offer.hash, lang: "en" }, "captain"); await room.settle(opened.id);
+      const th: any = (room.view(opened.id) as any).turns.at(-1), host = (room.view(opened.id) as any).card?.run ?? hosts[0].id;
+      const rec: any = E.trusted(hosts[0].id).entries.filter((x: any) => x.record === "staffing-instructions").at(-1);
+      ok(th.status === "done" && th.model === pick.model && rec?.data.directory === true && rec.data.model === pick.model && rec.data.picked === true && selects.at(-1)?.pick.model === pick.model,
+        `a directory room runs a captain pick ${usable ? "this machine holds" : "entered by hand"}: the host's receipt names it, marked picked`, JSON.stringify({ t: [th.status, th.model, th.error], rec: rec?.data, host })); }
+    finally { (E.deps as any).usableModels = real; } }
   (room as any).setTutor(opened.id, null, "captain");
 
   // ---------- arrival and paste start the analysis by themselves (auto-teach on), once per pinned commit ----------
