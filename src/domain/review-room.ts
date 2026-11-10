@@ -706,7 +706,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     return [...listed, ...more];
   };
   /** what a pick that is not on this machine's model list is said to be (entered by hand) */
-  const UNLISTED = "not on this machine's model list (entered by hand)";
+  const UNLISTED = "not reported on this machine (entered by hand): the vendor decides";
   /** the providers a tutor may be entered by hand for: the ones staffing runs (src/domain/crew.ts), and any this machine lists */
   const tutorProviders = () => [...new Set<string>([...CREW_PROVIDERS, ...(((engine.deps.usableModels?.() ?? null) as Usable[] | null) ?? []).map((u) => u.provider)])];
   /** a tutor's {provider, model} as the captain sent it: any model of a provider Studio runs, the model a free id (no blank, no
@@ -721,7 +721,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
    *  vendor's own error if it cannot run, it is never refused up front nor swapped for another) */
   const tutorFacts = (run: any | null, p: { provider: string; model: string }) => {
     const host = run && !isHostRun(run) && !isDirHostRun(run) ? run : null, u = tutorsOf(host, null, [p]).find((x) => x.provider === p.provider && x.model === p.model)!;
-    const warning = u.runnable ? null : !u.listed ? { en: ` Not on this machine's model list (entered by hand): if ${p.provider} does not offer it, the turn fails with its error.`, zh: `不在這台機器的模型清單上（手動輸入）：如果 ${p.provider} 沒有這個模型，這一回合會失敗並顯示它的錯誤。` }
+    const warning = u.runnable ? null : !u.listed ? { en: ` Not reported by ${p.provider} on this machine (entered by hand); the vendor decides: Studio passes the id as given, and the turn fails with ${p.provider}'s error if it rejects it.`, zh: `${p.provider} 在這台機器上沒有回報這個模型（手動輸入），由供應商決定：Studio 原樣傳給它，不接受時這一回合會失敗並顯示 ${p.provider} 的錯誤。` }
       : u.held === "not verified on this machine yet" ? { en: " Not verified on this machine yet: Studio verifies it with one bounded request before the paid round, and the turn fails with the reason if it does not pass.", zh: "這台機器還沒驗證：付費回合前 Studio 會先用一次有限請求驗證，沒通過時這一回合會失敗並說明原因。" }
       : { en: ` Held now (${u.held}): the turn may fail with ${p.provider}'s error.`, zh: `目前暫停（${u.held}）：這一回合可能失敗並顯示 ${p.provider} 的錯誤。` };
     return { effort: u.effort ?? null, level: (u.level ?? null) as Level | null, warning, unlisted: !u.listed };
@@ -1359,12 +1359,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
       // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
       // signed in, out of quota or not offered is refused with the reason. A model the captain entered by hand is not on the list
-      // Studio verifies from: the native selection below asks its vendor, and the turn fails with that answer if it cannot run
+      // Studio verifies from: the native selection passes it to its vendor as given (picked), and the turn fails with the vendor's error
       if (pick.model && !tutor.unlisted) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
         // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
         if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${k.id}`, at: new Date().toISOString() } } as any); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
-      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
+      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true, ...(tutor.picked ? { picked: true } : {}) } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
     } catch (e) { held?.release(); throw e; }
     const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);

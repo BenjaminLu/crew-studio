@@ -593,8 +593,11 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
   is refused (`bad_request`). Every turn of the room runs on it: the analysis on arrival and on paste, free questions, quick
   actions, board questions, translations; a regeneration runs on the model picked for it. A picked tutor that cannot run is
   never refused up front nor swapped for another: the offer names it, its label and `warning` say it is held, not verified
-  or not on this machine's list, and its turn fails with the reason (Studio's verification for a listed model; the vendor's
-  native selection for one entered by hand, which Studio does not verify first). The offer says whose pick it is (`picked`:
+  or not reported by its vendor on this machine, and its turn fails with the reason (Studio's verification for a listed
+  model; for one entered by hand, the vendor itself: Studio does not verify it first, and the native selection, told it is
+  the captain's pick (`picked`), passes an id the vendor's probe did not report to that vendor as given instead of refusing
+  it. The vendor must still be signed in and verified, and what runs must be that exact model; a pick Studio makes itself
+  keeps the probe's model check). The offer says whose pick it is (`picked`:
   room, studio, auto or regenerate) and the label says "Picked by the captain …". The approved reviewer picked runs as the
   seat's own member; any other model runs as the seat's adaptive member, its receipt naming it (`adaptive.picked`: staffing
   admits a member the captain picked even when this machine does not list it as runnable; one Studio chose must be). The vendor's voice goes only to the vendor of the tutor that answered a scene, and only while the room's tutor

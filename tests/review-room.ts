@@ -411,8 +411,8 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   let handOffer: any = null;
   { let eh: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-hand-7" } }, "captain"); } catch (e) { eh = e; }
     const bad: string[] = []; for (const p of [{ provider: "", model: "c-1" }, { provider: "codex", model: "x".repeat(121) }, { provider: "codex", model: "" }, { provider: "nope", model: "m" }]) { try { await room.start(merge.id, { regenerate: 3, pick: p }, "captain"); bad.push("accepted"); } catch (e: any) { bad.push(e.code); } }
-    ok(eh?.code === "confirm_required" && eh.offer.provider === "codex" && eh.offer.model === "c-hand-7" && eh.offer.picked === "regenerate" && /Not on this machine's model list/.test(eh.offer.independence.en) && bad.every((c) => c === "bad_request"),
-      "a model entered by hand can explain a turn again (confirmed first, its label says it is not on this machine's list); an empty provider, an oversize or empty model or an unknown provider is refused", JSON.stringify({ eh: eh?.offer ?? eh?.message, bad }));
+    ok(eh?.code === "confirm_required" && eh.offer.provider === "codex" && eh.offer.model === "c-hand-7" && eh.offer.picked === "regenerate" && /Not reported by codex on this machine \(entered by hand\); the vendor decides/.test(eh.offer.independence.en) && bad.every((c) => c === "bad_request"),
+      "a model entered by hand can explain a turn again (confirmed first, its label says codex did not report it here and the vendor decides); an empty provider, an oversize or empty model or an unknown provider is refused", JSON.stringify({ eh: eh?.offer ?? eh?.message, bad }));
     handOffer = eh?.offer; }
   const e3 = await (async () => { try { await room.start(merge.id, { action: "how", pick: { provider: "codex", model: "c-1" }, confirm: e2.offer.hash }, "captain"); return null; } catch (e) { return e as any; } })();
   ok(e3?.code === "bad_pick" && (room.view(merge.id) as any).turns.length === 4, "a model is picked only to explain a finished answer again: a new question with a pick is refused", e3?.message);

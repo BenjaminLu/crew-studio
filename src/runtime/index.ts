@@ -105,7 +105,7 @@ export type RuntimeDeps = {
   /** the captain approved a crew Firstmate proposed: tell Firstmate, so it proposes the work (still captain-approved) */
   staffingApproved?: (a: import('../firstmate-staffing').StaffingApproved) => void;
 
-  selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean }) => Promise<Provider>;
+  selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean; adaptive?: boolean; picked?: boolean }) => Promise<Provider>;
   /** the readiness gate (src/readiness): false inside the gate's own dry run */
   readiness?: false | { login?: (provider: string) => import("../readiness/stages").LoginState; knownProviders?: () => string[]; repoRoot?: string | null;
     /** send Firstmate a gate-repair turn; false when Firstmate is not running */ ask?: (text: string) => boolean; dryTimeoutMs?: number; smokePollMs?: number };

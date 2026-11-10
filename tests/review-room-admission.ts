@@ -36,7 +36,7 @@ try {
   e.actions.prep = async (x: any) => { Object.assign(x.ctx, { worktree: repo, repo, baseCommit: base, head }); x.save(); return "ok"; };
   // the server's native admission, with a certified stub selection: an uncertified provider is never picked silently
   const selects: any[] = [], systems: string[] = [], certified = new WeakMap<object, any>();
-  e.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ node: x.node.id, role: c?.role, pick: p });
+  e.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ node: x.node.id, role: c?.role, pick: p, picked: c?.picked, adaptive: c?.adaptive });
     const prov: any = { id: p.provider, model: p.model, reasoningEffort: p.effort ?? null, sandboxFree: true, start(system: string) { systems.push(system);
       return { interrupt() {}, async *send() { yield { type: "delta", text: "The change adds a line [diff:a.txt]." }; yield { type: "turnEnd", status: "ok", usage: { usd: 0.01, inTokens: 1, outTokens: 1 } }; } }; } };
     certified.set(prov, { input: {}, expires: Date.now() + 30000, x }); return prov; };
@@ -97,7 +97,7 @@ try {
   e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "designer-model"], ["claude", "claude-x"]);
   { const { o, t, rec } = await turn();
     ok(o.provider === "codex" && o.model === "designer-model" && o.effort === "medium" && o.independence.level === "model" && o.independence.adaptive === true && o.independence.outside === false && !/Not in this project's crew/.test(o.independence.en), "with the reviewer unable to run, a member already in the crew is preferred to a model outside it", JSON.stringify(o));
-    ok(t.status === "done" && rec.data.model === "designer-model" && rec.data.adaptive?.crew === true && rec.data.adaptive.approved?.model === "reviewer-model", "the receipt names the crew member used, and the approved one it stands in for", JSON.stringify(rec?.data)); }
+    ok(t.status === "done" && rec.data.model === "designer-model" && rec.data.adaptive?.crew === true && rec.data.adaptive.approved?.model === "reviewer-model" && selects.at(-1)?.adaptive === true && selects.at(-1)?.picked === undefined && rec.data.adaptive.picked === undefined, "the receipt names the crew member used, and the approved one it stands in for", JSON.stringify(rec?.data)); }
   // nothing in the crew differs from the author: a model outside it, labelled, recorded; a verified Claude before an unverified one
   e.deps.usableModels = () => U(["codex", "worker-model"], ["claude", "claude-new", { verified: false }], ["claude", "claude-x"]);
   { const { o, t, rec } = await turn();
@@ -165,12 +165,12 @@ try {
       // a model entered by hand: any model of a provider Studio runs, stored like any pick, listed after the machine's, said to be unlisted
       { const hand = tried({ provider: "claude", model: "claude-hand-9" }), saved = JSON.parse(readFileSync(join(e.rdir(run.id), "review-room", `${card.id}.json`), "utf8")).tutor;
         const v1: any = room.view(card.id), entry = v1.tutors.find((x: any) => x.provider === "claude" && x.model === "claude-hand-9");
-        ok(hand.v?.offer?.provider === "claude" && hand.v.offer.model === "claude-hand-9" && hand.v.offer.picked === "room" && /Not on this machine's model list/.test(hand.v.offer.independence.en) && hand.v.offer.independence.level === "vendor"
+        ok(hand.v?.offer?.provider === "claude" && hand.v.offer.model === "claude-hand-9" && hand.v.offer.picked === "room" && /Not reported by claude on this machine \(entered by hand\); the vendor decides/.test(hand.v.offer.independence.en) && hand.v.offer.independence.level === "vendor"
           && saved?.provider === "claude" && saved.model === "claude-hand-9" && entry?.listed === false && entry.current === true && /entered by hand/.test(entry.held ?? ""),
           "a model entered by hand is accepted, stored as the room's tutor and listed after the machine's models as entered by hand", JSON.stringify({ hand: hand.x?.message ?? hand.v?.offer, saved, entry }));
         const { t, rec } = await turn();
-        ok(t.status === "done" && t.provider === "claude" && t.model === "claude-hand-9" && selects.at(-1)?.pick.provider === "claude" && selects.at(-1)?.pick.model === "claude-hand-9" && rec.data.model === "claude-hand-9" && rec.data.adaptive?.crew === false,
-          "the turn runs on the model entered by hand: its provider and model go to the native selection and the receipt", JSON.stringify({ t: [t.status, t.provider, t.model, t.error], pick: selects.at(-1)?.pick, rec: rec?.data?.model }));
+        ok(t.status === "done" && t.provider === "claude" && t.model === "claude-hand-9" && selects.at(-1)?.pick.provider === "claude" && selects.at(-1)?.pick.model === "claude-hand-9" && selects.at(-1)?.picked === true && rec.data.model === "claude-hand-9" && rec.data.adaptive?.crew === false && rec.data.adaptive?.picked === true,
+          "the turn runs on the model entered by hand: its provider and model go to the native selection as the captain's pick (so an id the vendor's probe did not report is passed as given), and the receipt", JSON.stringify({ t: [t.status, t.provider, t.model, t.error], pick: selects.at(-1)?.pick, rec: rec?.data?.model }));
         // Studio's own verification is for the models on its list: a model entered by hand goes to its vendor as it is
         const checked: any[] = []; e.deps.ensurePick = async (p: any) => { checked.push(p); throw new Error("not on this machine's list"); };
         // at run time the vendor does not offer it (the native selection's probe): the turn fails with that reason, nothing is paid, no other tutor
@@ -200,7 +200,7 @@ try {
           "a picked tutor that is held is never swapped for another vendor: it stays the tutor, its label says it is held, and the turn asks to confirm on it", JSON.stringify({ offer: vh.offer, refusal: refusal?.code })); }
       // Studio's default may be any model too: one this machine does not list, entered by hand, is kept and listed for the room list
       { const sd = room.setSettings({ tutor: { provider: "codex", model: "codex-hand-2" } } as any) as any, choices = r0.tutorChoices(), vd2: any = room.view(card.id);
-        ok(sd.tutor?.model === "codex-hand-2" && choices.some((x: any) => x.model === "codex-hand-2" && x.listed === false && x.current) && vd2.offer.model === "codex-hand-2" && vd2.offer.picked === "studio" && /Not on this machine's model list/.test(vd2.offer.independence.en)
+        ok(sd.tutor?.model === "codex-hand-2" && choices.some((x: any) => x.model === "codex-hand-2" && x.listed === false && x.current) && vd2.offer.model === "codex-hand-2" && vd2.offer.picked === "studio" && /Not reported by codex on this machine \(entered by hand\); the vendor decides/.test(vd2.offer.independence.en)
           && JSON.stringify(r0.tutorProviders()) === JSON.stringify(["codex", "claude", "cursor"]),
           "Studio's default can be a model entered by hand: stored, listed in the default's choices, and every room without its own pick offers it", JSON.stringify({ sd, offer: vd2.offer })); }
       // Automatic is unchanged: with no pick it still chooses only what runs now, and waits rather than take a held model

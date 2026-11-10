@@ -1201,7 +1201,7 @@ async function pickTutor(id, pick) {
   finally { RR.posting.delete(`${id}/tutor`); redraw(id); if (!RR.tutorMenu) requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); }
 }
 /** a model that may not run as it stands (held, not verified, not on this machine's list): its reason, a warning, never a lock */
-const heldPill = (m, attr) => m.held ? h("span", { class: "rr-pill warn", [attr]: "" }, m.listed === false ? T("not on this machine's list: entered by hand", "不在這台機器的清單上：手動輸入") : /not verified/.test(m.held) ? T("not verified on this machine yet", "這台機器還沒驗證") : T(`may not run: ${m.held}`, `可能跑不了：${m.held}`)) : null;
+const heldPill = (m, attr) => m.held ? h("span", { class: "rr-pill warn", [attr]: "" }, m.listed === false ? T(`not reported by ${m.provider} on this machine; the vendor decides`, `${m.provider} 在這台機器上沒有回報；由供應商決定`) : /not verified/.test(m.held) ? T("not verified on this machine yet", "這台機器還沒驗證") : T(`may not run: ${m.held}`, `可能跑不了：${m.held}`)) : null;
 /** "Other model…": any model of a provider Studio runs, entered by hand (where: the room's id, or "default" for Studio's) */
 function otherModel(where, providers, busy, use) {
   const d = { provider: providers[0] || "", model: "", ...RR.other.get(where) }, now = () => ({ ...d, ...RR.other.get(where) }), model = d.model.trim();
@@ -1212,7 +1212,7 @@ function otherModel(where, providers, busy, use) {
     h("input", { class: "input", "data-tutor-other-model": where, disabled: busy, maxlength: 120, placeholder: T("model id", "模型代號"), value: d.model, "aria-label": T("Model id", "模型代號"),
       oninput: (e) => { RR.other.set(where, { ...now(), model: e.target.value }); const b = e.target.form?.querySelector("[data-tutor-other-use]"); if (b) b.disabled = busy || !e.target.value.trim(); } }),
     h("button", { type: "submit", class: "btn", "data-tutor-other-use": where, disabled: busy || !model || !d.provider }, T("Use it", "用這個")),
-    h("p", { class: "faint" }, T("Studio does not check it first: if the vendor does not offer it, or it is not signed in, the turn fails with its error.", "Studio 不會先檢查：如果供應商沒有這個模型或沒登入，這一回合會失敗並顯示它的錯誤。")));
+    h("p", { class: "faint" }, T("Studio passes the id to the vendor as given and does not check it first: the vendor decides, and if it rejects the id or is not signed in, the turn fails with its error.", "Studio 把代號原樣交給供應商，不會先檢查：由供應商決定；不接受這個代號或沒登入時，這一回合會失敗並顯示它的錯誤。")));
 }
 /** the picker: Studio's default (or Automatic), then every model this machine has, then any model entered by hand; one that
  *  is held or not verified can be picked, its reason said (never swapped for another by itself); each says how independent
@@ -1496,7 +1496,7 @@ function tutorDefault() {
   return h("div", { class: "rr-tutordefaults" }, h("label", { class: "rr-imgopt rr-tutordefault" }, h("span", {}, T("Studio's default tutor for every room (a room can pick its own):", "每間審查室的預設導師（房間可以自己選）：")),
     h("select", { class: "input", "data-tutor-default": "", disabled: busy, onchange: (e) => { const v = e.target.value; set(v === "auto" ? null : { provider: v.split("|")[0], model: v.split("|").slice(1).join("|") }); } },
       h("option", { value: "auto", selected: val === "auto" }, T("Automatic: the most independent model Studio can run", "自動：Studio 能跑、最獨立的模型")),
-      list.map((m) => h("option", { value: `${m.provider}|${m.model}`, selected: val === `${m.provider}|${m.model}`, "data-tutor-option-held": m.held ? "" : null }, `${m.provider} · ${m.model}${m.held ? m.listed === false ? T(" (entered by hand: not on this machine's list)", "（手動輸入：不在這台機器的清單上）") : T(` (warning: ${m.held})`, `（注意：${m.held}）`) : ""}`)))),
+      list.map((m) => h("option", { value: `${m.provider}|${m.model}`, selected: val === `${m.provider}|${m.model}`, "data-tutor-option-held": m.held ? "" : null }, `${m.provider} · ${m.model}${m.held ? m.listed === false ? T(` (entered by hand: not reported by ${m.provider} on this machine; the vendor decides)`, `（手動輸入：${m.provider} 在這台機器上沒有回報；由供應商決定）`) : T(` (warning: ${m.held})`, `（注意：${m.held}）`) : ""}`)))),
     (RR.list?.providers || []).length ? otherModel("default", RR.list.providers, busy, set) : null);
 }
 // ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------

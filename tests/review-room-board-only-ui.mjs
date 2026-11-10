@@ -179,9 +179,9 @@ try {
     await ctx.close(); }
   // a picked tutor with a warning (held, not verified, entered by hand): the header says it as a warning, not an error
   { const { ctx, p } = await open(1440, () => ({ ...clone(BASE), tutors: [], tutorChoice: { room: { provider: "claude", model: "claude-hand-9" }, studio: null, source: "room" },
-      offer: { ...clone(BASE).offer, provider: "claude", model: "claude-hand-9", picked: "room", warning: { en: " Not on this machine's model list (entered by hand)", zh: "不在清單上" }, independence: { level: "vendor", en: "Different vendor from the author. Picked by the captain for this room. Not on this machine's model list (entered by hand): if claude does not offer it, the turn fails with its error.", zh: "x" } } }));
+      offer: { ...clone(BASE).offer, provider: "claude", model: "claude-hand-9", picked: "room", warning: { en: " Not reported by claude on this machine (entered by hand); the vendor decides", zh: "不在清單上" }, independence: { level: "vendor", en: "Different vendor from the author. Picked by the captain for this room. Not reported by claude on this machine (entered by hand); the vendor decides: Studio passes the id as given, and the turn fails with claude's error if it rejects it.", zh: "x" } } }));
     const pill = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, warn: e.classList.contains("warn"), bad: e.classList.contains("bad"), w: e.hasAttribute("data-tutor-warning") })).catch(() => null);
-    ok(/claude · claude-hand-9 — .*Not on this machine's model list/.test(pill?.text || "") && pill.warn && !pill.bad && pill.w, "the header names a tutor entered by hand with its warning, as a warning, not as unable to run", JSON.stringify(pill));
+    ok(/claude · claude-hand-9 — .*Not reported by claude on this machine.*the vendor decides/.test(pill?.text || "") && pill.warn && !pill.bad && pill.w, "the header names a tutor entered by hand with its warning, as a warning, not as unable to run", JSON.stringify(pill));
     await ctx.close(); }
   // from the review: changing Studio's default on the room list makes the rooms kept on the page read again (their offer changed)
   { let reads = 0, dflt = null; const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
