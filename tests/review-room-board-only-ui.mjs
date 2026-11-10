@@ -143,15 +143,15 @@ try {
   { const { ctx, p, S } = await open(1440, () => ({ ...clone(BASE), turns: [], board: [BASE.board[0]], check: { questions: [] }, arrive: { auto: true, error: "No tutor can run on this Mac now", code: "no_tutor" } }));
     await p.waitForTimeout(500); const why = await inRegion(p, "t0", '[data-arrive="none"]');
     ok(!S.arrives.length && /Studio cannot start the full analysis by itself: No tutor can run/.test(why?.[0] || ""), "when the analysis cannot start on arrival, nothing is sent and the welcome says why", JSON.stringify({ why, arrives: S.arrives.length })); await ctx.close(); }
-  // ---------- the tutor picker: the header's tutor opens it; a model that cannot run or is not verified is disabled with why ----------
+  // ---------- the tutor picker: the header's tutor opens it; every model can be picked, one held or not verified with why ----------
   { const TUT = [{ provider: "codex", model: "gpt-6", effort: "high", verified: true, runnable: true, held: null, level: "same", current: true }, { provider: "claude", model: "opus-x", effort: null, verified: true, runnable: true, held: null, level: "vendor", current: false },
       { provider: "claude", model: "sonnet-new", effort: null, verified: false, runnable: false, held: "not verified on this machine yet", level: "vendor", current: false }, { provider: "cursor", model: "composer", effort: null, verified: true, runnable: false, held: "cursor is out of quota", level: "vendor", current: false }];
-    const { ctx, p, S } = await open(1440, () => ({ ...clone(BASE), tutors: TUT, tutorChoice: { room: null, studio: null, source: "auto" } }));
+    const { ctx, p, S } = await open(1440, () => ({ ...clone(BASE), tutors: TUT, tutorProviders: ["codex", "claude", "cursor"], tutorChoice: { room: null, studio: null, source: "auto" } }));
     const pill = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, level: e.dataset.independence, src: e.dataset.tutorSource })).catch(() => null);
     await tap(p, "[data-tutor-open]"); await p.waitForSelector("[data-tutor-menu]", { timeout: 3000 }).catch(() => {});
     const menu = await p.$$eval("[data-tutor-menu] [data-tutor-pick]", (els) => els.map((e) => [e.dataset.tutorPick, e.disabled, e.querySelector("[data-tutor-level]")?.dataset.tutorLevel ?? null, e.querySelector("[data-tutor-held]")?.textContent ?? null])).catch(() => []);
-    ok(/Tutor: codex · gpt-6/.test(pill?.text || "") && pill.src === "auto" && menu.length === 5 && menu[0][0] === "default" && JSON.stringify(menu.slice(1).map((m) => [m[0], m[1], m[2]])) === JSON.stringify([["codex|gpt-6", false, "same"], ["claude|opus-x", false, "vendor"], ["claude|sonnet-new", true, "vendor"], ["cursor|composer", true, "vendor"]])
-      && /not verified/.test(menu[3][3] || "") && /out of quota/.test(menu[4][3] || ""), "the header's tutor opens a picker: Studio's default, then every model, the author's own pickable with its independence said, one not verified or out of quota disabled with why", JSON.stringify({ pill, menu }));
+    ok(/Tutor: codex · gpt-6/.test(pill?.text || "") && pill.src === "auto" && menu.length === 5 && menu[0][0] === "default" && JSON.stringify(menu.slice(1).map((m) => [m[0], m[1], m[2]])) === JSON.stringify([["codex|gpt-6", false, "same"], ["claude|opus-x", false, "vendor"], ["claude|sonnet-new", false, "vendor"], ["cursor|composer", false, "vendor"]])
+      && /not verified/.test(menu[3][3] || "") && /may not run: cursor is out of quota/.test(menu[4][3] || ""), "the header's tutor opens a picker: Studio's default, then every model, each pickable; the author's own with its independence said, one not verified or out of quota with why as a warning", JSON.stringify({ pill, menu }));
     await p.screenshot({ path: join(shots, "tutor-picker-1440.png") });
     // from the review: the keyboard goes into the picker, Escape closes it (not the board) and gives the focus back
     const inMenu = await p.evaluate(() => !!document.activeElement?.closest("[data-tutor-menu]"));
@@ -163,6 +163,25 @@ try {
     const after = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, src: e.dataset.tutorSource })).catch(() => null);
     ok(JSON.stringify(S.tutors) === '[{"pick":{"provider":"claude","model":"opus-x"}}]' && /Tutor: claude · opus-x/.test(after?.text || "") && after.src === "room" && !(await p.$("[data-tutor-menu]")) && !S.posts.length,
       "picking a model sets this room's tutor (nothing paid runs) and the header names it", JSON.stringify({ sent: S.tutors, after }));
+    // a held model is picked like any other: the room's tutor, its warning said in the menu
+    await tap(p, "[data-tutor-open]"); await p.waitForSelector("[data-tutor-menu]", { timeout: 3000 }).catch(() => {});
+    await tap(p, '[data-tutor-pick="cursor|composer"]'); await p.waitForTimeout(300);
+    ok(JSON.stringify(S.tutors.at(-1)) === '{"pick":{"provider":"cursor","model":"composer"}}' && /Tutor: cursor · composer/.test(await p.$eval("[data-tutor-open]", (e) => e.textContent).catch(() => "")), "a model that is out of quota can be picked as the room's tutor", JSON.stringify(S.tutors));
+    // "Other model…": any model of a provider Studio runs, entered by hand
+    await tap(p, "[data-tutor-open]"); await p.waitForSelector("[data-tutor-menu] [data-tutor-other]", { timeout: 3000 }).catch(() => {});
+    const provs = await p.$$eval("[data-tutor-menu] [data-tutor-other-provider] option", (els) => els.map((e) => e.value)).catch(() => []), off0 = await p.$eval("[data-tutor-other-use]", (e) => e.disabled).catch(() => null);
+    await p.selectOption("[data-tutor-other-provider]", "claude").catch(() => {}); await p.fill("[data-tutor-other-model]", "claude-hand-9").catch(() => {});
+    const off1 = await p.$eval("[data-tutor-other-use]", (e) => e.disabled).catch(() => null);
+    await tap(p, "[data-tutor-other-use]"); await p.waitForTimeout(300);
+    const hand = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, src: e.dataset.tutorSource })).catch(() => null);
+    ok(JSON.stringify(provs) === '["codex","claude","cursor"]' && off0 === true && off1 === false && JSON.stringify(S.tutors.at(-1)) === '{"pick":{"provider":"claude","model":"claude-hand-9"}}' && /Tutor: claude · claude-hand-9/.test(hand?.text || "") && hand.src === "room" && !S.posts.length,
+      "“Other model…” takes any model id for a provider Studio runs: it is sent as the room's tutor (nothing paid runs) and the header names it", JSON.stringify({ provs, off0, off1, sent: S.tutors.at(-1), hand }));
+    await ctx.close(); }
+  // a picked tutor with a warning (held, not verified, entered by hand): the header says it as a warning, not an error
+  { const { ctx, p } = await open(1440, () => ({ ...clone(BASE), tutors: [], tutorChoice: { room: { provider: "claude", model: "claude-hand-9" }, studio: null, source: "room" },
+      offer: { ...clone(BASE).offer, provider: "claude", model: "claude-hand-9", picked: "room", warning: { en: " Not reported by claude on this machine (entered by hand); the vendor decides", zh: "不在清單上" }, independence: { level: "vendor", en: "Different vendor from the author. Picked by the captain for this room. Not reported by claude on this machine (entered by hand); the vendor decides: Studio passes the id as given, and the turn fails with claude's error if it rejects it.", zh: "x" } } }));
+    const pill = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, warn: e.classList.contains("warn"), bad: e.classList.contains("bad"), w: e.hasAttribute("data-tutor-warning") })).catch(() => null);
+    ok(/claude · claude-hand-9 — .*Not reported by claude on this machine.*the vendor decides/.test(pill?.text || "") && pill.warn && !pill.bad && pill.w, "the header names a tutor entered by hand with its warning, as a warning, not as unable to run", JSON.stringify(pill));
     await ctx.close(); }
   // from the review: changing Studio's default on the room list makes the rooms kept on the page read again (their offer changed)
   { let reads = 0, dflt = null; const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
@@ -170,7 +189,7 @@ try {
     await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()); await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: "desktop", device: null } }));
     await ctx.route(/\/api\/review-room\/SC-80(\?open=1)?$/, (r) => { reads++; r.fulfill({ json: { ...clone(BASE), offer: { ...OFFER, provider: dflt ? "claude" : "codex", model: dflt ? "opus-x" : "gpt-6" } } }); });
     await ctx.route(/\/api\/review-room\/SC-80\/lesson$/, (r) => r.fulfill({ json: { visited: [] } }));
-    await ctx.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: dflt }, tutors: [{ provider: "codex", model: "gpt-6", runnable: true, held: null }, { provider: "claude", model: "opus-x", runnable: true, held: null }] } }));
+    await ctx.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: dflt }, tutors: [{ provider: "codex", model: "gpt-6", runnable: true, held: null }, { provider: "claude", model: "opus-x", runnable: true, held: null }, { provider: "cursor", model: "composer", runnable: false, held: "cursor is out of quota" }], providers: ["codex", "claude", "cursor"] } }));
     await ctx.route(/\/api\/review-room\/settings$/, (r) => { dflt = JSON.parse(r.request().postData() || "{}").tutor; r.fulfill({ json: { autoTeach: true, tutor: dflt } }); });
     const p = await ctx.newPage(); await p.goto(`${base}/#/room/SC-80`); await p.waitForSelector("[data-tutor-open]", { timeout: 15000 });
     await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-tutor-default]", { timeout: 5000 }).catch(() => {});
@@ -178,6 +197,14 @@ try {
     await p.evaluate(() => { location.hash = "#/room/SC-80"; }); await p.waitForTimeout(600);
     const pill = await p.$eval("[data-tutor-open]", (e) => e.textContent).catch(() => null);
     ok(dflt?.provider === "claude" && /Tutor: claude · opus-x/.test(pill || ""), "after Studio's default changes, a room kept on the page is read again and names the new tutor", JSON.stringify({ dflt, pill, reads }));
+    // Studio's default may be any model: a held one is an option with its warning, and one entered by hand is sent as it is
+    await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-tutor-default]", { timeout: 5000 }).catch(() => {});
+    const held = await p.$eval('[data-tutor-default] option[value="cursor|composer"]', (e) => ({ disabled: e.disabled, text: e.textContent })).catch(() => null);
+    await p.selectOption("[data-tutor-default]", "cursor|composer").catch(() => {}); await p.waitForTimeout(300); const heldSent = dflt;
+    await p.selectOption('[data-tutor-other-provider="default"]', "codex").catch(() => {}); await p.fill('[data-tutor-other-model="default"]', "codex-hand-2").catch(() => {});
+    await tap(p, '[data-tutor-other-use="default"]'); await p.waitForTimeout(300);
+    ok(held && !held.disabled && /warning: cursor is out of quota/.test(held.text) && heldSent?.provider === "cursor" && heldSent.model === "composer" && dflt?.provider === "codex" && dflt.model === "codex-hand-2",
+      "Studio's default takes a held model (its warning in the option) and any model entered by hand under “Other model…”", JSON.stringify({ held, heldSent, dflt }));
     await ctx.close(); }
   { const { ctx, p } = await open(1440, () => ({ ...clone(BASE), tutors: [], tutorChoice: { room: null, studio: { provider: "claude", model: "opus-x" }, source: "studio" }, offer: { error: "Studio's default tutor (claude opus-x) cannot run now: claude is out of quota. Pick another tutor; Studio does not switch to another one by itself", code: "tutor_unavailable" } }));
     const pill = await p.$eval("[data-tutor-open]", (e) => ({ text: e.textContent, bad: e.classList.contains("bad") })).catch(() => null), dock = await p.$eval("[data-room-unavailable]", (e) => e.textContent).catch(() => null);

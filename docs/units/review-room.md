@@ -144,8 +144,10 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   machine can run, from the facts adaptive staffing uses (`usableModels`: codex, claude, cursor, …), each with how independent
   it is from the change's author (another vendor; "same vendor as the author"; the author's own model; "unknown" when the
   author is outside Studio, a pull request no Task made, and never claimed as another vendor), the current tutor
-  marked. A held model (out of quota, its quota unreadable, its verification being retried) is listed with the reason and
-  cannot be picked, nor one not verified on this machine yet; the author's own model can (its label says so). A pick is a paid
+  marked. Every one can be picked: a held model (out of quota, its quota unreadable, its verification being retried) or one
+  not verified on this machine yet shows the reason as a warning, and its label says it (a turn that cannot run fails with
+  the reason); the author's own model can be picked too (its label says so). Any {provider, model} is accepted, also one
+  this machine does not list; only a malformed pick is refused (`bad_request`). A pick is a paid
   turn on that model (`POST …/turn {regenerate: n, pick: {provider, model}, confirm}`; a pick is refused on anything but a
   regeneration, `bad_pick`): its own offer and confirmation hash,
   then the same admission as any turn (the staffing receipt names the picked member, `adaptive`), and the same question
@@ -581,16 +583,24 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
 - **Picked by the captain.** The tutor is not hard-wired to a vendor: the header's tutor pill opens a picker (`[data-tutor-open]`)
   listing Studio's default and every model this machine has (`view().tutors`: codex, claude, cursor, …), each with how
   independent it is from the change's author, shown as information and never enforced (the author's own model can be picked;
-  the label says so). A model not verified on this machine, held (out of quota, quota unreadable, stale facts) or in its
-  verification backoff is listed disabled with the reason. The room's pick (`POST /api/review-room/<room>/tutor {pick:
+  the label says so). Every model can be picked: one not verified on this machine, held (out of quota, quota unreadable, stale
+  facts) or in its verification backoff shows the reason next to it as a warning. "Other model…" (in the picker and under
+  Studio's default) takes any model by hand: a provider Studio runs (`tutorProviders`: the ones staffing runs, codex, claude
+  and cursor, and any this machine lists) and a free model id (at most 120 characters, no spaces); it is stored like any pick
+  and listed after the machine's models as entered by hand. The room's pick (`POST /api/review-room/<room>/tutor {pick:
   {provider, model} | null}`, desktop captain; null goes back to the default) wins over Studio's default (`POST
-  /api/review-room/settings {tutor}`, the room list's select; null is Automatic, the selection below); both are checked when
-  set. Every turn of the room runs on it: the analysis on arrival and on paste, free questions, quick actions, board questions,
-  translations; a regeneration runs on the model picked for it. A picked tutor that cannot run now is never swapped for
-  another: the offer is an error (`tutor_unavailable`) saying which and why, no turn starts, and the captain picks again. The
-  offer says whose pick it is (`picked`: room, studio, auto or regenerate) and the label says "Picked by the captain …". The
-  approved reviewer picked runs as the seat's own member; any other model runs as the seat's adaptive member, its receipt
-  naming it. The vendor's voice goes only to the vendor of the tutor that answered a scene, and only while the room's tutor
+  /api/review-room/settings {tutor}`, the room list's select; null is Automatic, the selection below); only a malformed pick
+  is refused (`bad_request`). Every turn of the room runs on it: the analysis on arrival and on paste, free questions, quick
+  actions, board questions, translations; a regeneration runs on the model picked for it. A picked tutor that cannot run is
+  never refused up front nor swapped for another: the offer names it, its label and `warning` say it is held, not verified
+  or not reported by its vendor on this machine, and its turn fails with the reason (Studio's verification for a listed
+  model; for one entered by hand, the vendor itself: Studio does not verify it first, and the native selection, told it is
+  the captain's pick (`picked`), passes an id the vendor's probe did not report to that vendor as given instead of refusing
+  it. The vendor must still be signed in and verified, and what runs must be that exact model; a pick Studio makes itself
+  keeps the probe's model check). The offer says whose pick it is (`picked`:
+  room, studio, auto or regenerate) and the label says "Picked by the captain …". The approved reviewer picked runs as the
+  seat's own member; any other model runs as the seat's adaptive member, its receipt naming it (`adaptive.picked`: staffing
+  admits a member the captain picked even when this machine does not list it as runnable; one Studio chose must be). The vendor's voice goes only to the vendor of the tutor that answered a scene, and only while the room's tutor
   is still that vendor.
 - **Verified by Studio.** Before the paid turn, Studio reads what this machine has again (the offer may change: a changed
   offer is answered with the current one) and verifies the chosen member itself when it is signed in but not verified yet
@@ -840,10 +850,11 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     a language already kept runs nothing …"; review-room-ui "a kept translation shows at once …", "a translation is text …",
     "the voice follows the language shown …", "简体 comes from the 繁體 text …", "a language not kept yet asks to confirm …",
     "confirmed, the translation is sent …".
-29. Regenerate with another model: the room lists this machine's models with their independence, a held one not
-    pickable; a pick asks to confirm its own paid round; the same question runs on that model; both answers are kept, the
-    latest shown, with a switcher; the choice is on the turn and the ledger. — review-room "the room lists the models …",
-    "a held model cannot be picked …", "the regeneration asks the same question on the picked model …"; review-room-ui "a
+29. Regenerate with another model: the room lists this machine's models with their independence, a held one pickable
+    with its warning, and takes a model entered by hand; a pick asks to confirm its own paid round; the same question runs
+    on that model; both answers are kept, the latest shown, with a switcher; the choice is on the turn and the ledger. —
+    review-room "the room lists the models …", "a held model can be picked to explain again …", "a model entered by hand
+    can explain a turn again …", "the regeneration asks the same question on the picked model …"; review-room-ui "a
     regenerated answer is kept beside the first …", "the switcher shows the first answer again", "“Regenerate with…” lists
     this machine's models …", "picking a model asks to confirm …", "confirmed, the same question is asked again …".
 30. Save to Library: a room is saved as one artifact with a version per save (on the captain's button, and when it ends;
@@ -975,14 +986,20 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "a room whose analysis starts on arrival says so …", "entering the room sends its arrival once …", "a paired phone never
     starts a paid analysis by arriving …", "when the analysis cannot start on arrival …".
 44. The captain picks the tutor: a Studio-wide default and a per-room choice, used by every turn of the room; every model of
-    this machine listed, one not verified or held disabled with why; the independence shown, never enforced; a pick that cannot
-    run is never swapped for another vendor; the receipt names the picked member; the vendor's voice only to the answering
-    tutor's vendor. — review-room-admission "the room has a tutor picker …", "the picker lists every model …", "a model not
-    verified, held or not on this machine cannot be picked …", "the room's own pick is its tutor …", "a turn runs on the picked
-    tutor …", "a room without its own pick runs on Studio's default …", "a picked tutor that cannot run is never swapped …",
-    "Studio's default is refused …", "a scene a codex tutor answered is not narrated …"; review-room-board-only-ui "the
-    header's tutor opens a picker …", "picking a model sets this room's tutor …", "a picked tutor that cannot run is shown as
-    such …".
+    this machine listed and pickable, one not verified or held with why as a warning; any model entered by hand ("Other
+    model…"), stored and run like any pick; only a malformed pick refused; the independence shown, never enforced; a pick
+    that cannot run fails with the reason and is never swapped for another vendor; Automatic unchanged; the receipt names the
+    picked member; the vendor's voice only to the answering tutor's vendor. — review-room-admission "the room has a tutor
+    picker …", "the picker lists every model …", "the room names the providers …", "a model not verified or held can be
+    picked …", "a picked model not verified yet is verified by Studio first …", "a model entered by hand is accepted …",
+    "the turn runs on the model entered by hand …", "a model entered by hand that its vendor does not run fails visibly …",
+    "a malformed pick … is refused …", "the room's own pick is its tutor …", "a turn runs on the picked tutor …", "a room
+    without its own pick runs on Studio's default …", "a picked tutor that is held is never swapped …", "Studio's default
+    can be a model entered by hand …", "Automatic (no pick) never takes a held model …", "a scene a codex tutor answered is
+    not narrated …"; review-room-board-only-ui "the header's tutor opens a picker …", "picking a model sets this room's
+    tutor …", "a model that is out of quota can be picked …", "“Other model…” takes any model id …", "the header names a
+    tutor entered by hand with its warning …", "Studio's default takes a held model …", "a picked tutor that cannot run is
+    shown as such …".
 45. Any words selected on the board can be asked about: "Ask about this" by the selection (in full screen too, and on a
     touch screen) opens the board's ask popover on them; the question is a board question anchored to the selected words on
     any finished scene (an answer, the welcome, a chapter, the caption's scene); a drag on words selects, a drag on paper

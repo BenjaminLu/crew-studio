@@ -105,7 +105,7 @@ export type RuntimeDeps = {
   /** the captain approved a crew Firstmate proposed: tell Firstmate, so it proposes the work (still captain-approved) */
   staffingApproved?: (a: import('../firstmate-staffing').StaffingApproved) => void;
 
-  selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean }) => Promise<Provider>;
+  selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean; adaptive?: boolean; picked?: boolean }) => Promise<Provider>;
   /** the readiness gate (src/readiness): false inside the gate's own dry run */
   readiness?: false | { login?: (provider: string) => import("../readiness/stages").LoginState; knownProviders?: () => string[]; repoRoot?: string | null;
     /** send Firstmate a gate-repair turn; false when Firstmate is not running */ ask?: (text: string) => boolean; dryTimeoutMs?: number; smokePollMs?: number };
@@ -761,7 +761,7 @@ export function createRuntime(d: RuntimeDeps) {
       // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
       // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
       // the Review Room's home: every room on this machine, open ones first (read on any authenticated page)
-      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [] }); }
+      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [], providers: rr ? rr.tutorProviders() : [] }); }
       // the review room's Studio-wide settings (auto-teach on paste): read anywhere, changed by the captain on this Mac
       if (p === "/api/review-room/settings") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing) return json(rr.settings());

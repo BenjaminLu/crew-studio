@@ -5,7 +5,10 @@ export class ProviderRefusal extends Error { readonly providerRefusal = true; }
 export type ProviderCapability = { provider: string; available: boolean; auth: "verified" | "unverified" | "missing"; quota: "available" | "exhausted" | "unknown"; models: { id: string; efforts?: string[] }[]; at: number; expires: number; reason?: string; refusal?: "unavailable" | "missing-login" | "exhausted" | "unverified" };
 export type ProviderSelection = { role: string; host: string | null; explicit: boolean; provider: string; model: string | null; effort?: string | null; configured: Record<string, { model: string | null; effort?: string | null }>; fallback: string[]; roleModel?: string | null; known: string[];
   /** an explicit provider's stand-ins, tried in order only when it is not installed or not signed in (the reviewer's policy vendor) */
-  alternates?: string[] };
+  alternates?: string[];
+  /** the captain named this model himself (the review room's tutor): a model id the vendor's probe did not report goes to the
+   *  vendor as given, and the vendor accepts or rejects it. Never set for a pick Studio makes (Automatic, any other seat). */
+  picked?: boolean };
 /** The host whose rules a native step selects under, and the policy reviewer's stand-ins. The chain is the attached Firstmate's
  *  host; with none attached it is Cursor only when Cursor is the one vendor signed in (Codex and Claude are not), so a Codex or
  *  Claude Studio selects as it always did, whatever its chat vendor. Only under Cursor does the policy reviewer stand in along
@@ -45,9 +48,10 @@ export async function selectNativeProvider(i: ProviderSelection, probe: (id: str
     const admittedQuota=cap.quota==='available'||execution;
     if ((!cap.available || cap.auth !== "verified" || !admittedQuota) && !fallbackAllowed) throw new ProviderRefusal(`provider capability is unverified: ${id}; hold without fallback`);
     if (cap.refusal !== undefined && !["unavailable", "missing-login", "exhausted", "unverified"].includes(cap.refusal)) throw new ProviderRefusal("provider refusal classification is invalid");
-    // Model typos never change vendor or silently use a CLI default.
-    const model = cap.models.find(m => m.id === selected.model);
-    if (cap.available && cap.auth === "verified" && admittedQuota && !model) throw new ProviderRefusal(`unknown or unavailable configured model for ${id}`);
+    // Model typos never change vendor or silently use a CLI default. A model the captain picked himself and the probe did not
+    // report runs on that same vendor as given: the vendor decides, and its own error ends the round if it rejects the id.
+    const model = cap.models.find(m => m.id === selected.model), captains = i.picked === true && explicit && !standIn;
+    if (cap.available && cap.auth === "verified" && admittedQuota && !model && !captains) throw new ProviderRefusal(`unknown or unavailable configured model for ${id}`);
     if (model && selected.effort && !model.efforts?.includes(selected.effort)) throw new ProviderRefusal(`configured reasoning effort is not supported by ${id}'s model`);
     if (!cap.available || cap.auth !== "verified" || !admittedQuota) {
       const reason = cap.reason ?? (!cap.available ? "adapter unavailable" : cap.auth !== "verified" ? "login is not verified" : cap.quota === "exhausted" ? "quota exhausted" : "quota is unverified");
@@ -58,7 +62,7 @@ export async function selectNativeProvider(i: ProviderSelection, probe: (id: str
     }
     const provider = make(id, selected.model, selected.effort ?? null);
     if (provider.id !== id || provider.model !== selected.model) throw new ProviderRefusal("actual provider/model identity does not match verified selection");
-    return { provider, evidence: { role: i.role, rule: standIn ? "explicit vendor unavailable: configured stand-in" : explicit ? "explicit" : pair.length ? "opposite-of-host" : "configured fallback: unknown host", provider: id, model: selected.model, effort: selected.effort ?? null, unavailable } };
+    return { provider, evidence: { role: i.role, rule: standIn ? "explicit vendor unavailable: configured stand-in" : explicit ? (captains && !model ? "explicit: the captain's pick, not reported by the vendor's probe" : "explicit") : pair.length ? "opposite-of-host" : "configured fallback: unknown host", provider: id, model: selected.model, effort: selected.effort ?? null, unavailable } };
   }
   throw new ProviderRefusal(`no verified provider is available (${unavailable.map(v => `${v.provider}: ${v.reason}`).join("; ")})`);
 }

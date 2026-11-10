@@ -45,6 +45,7 @@ import { keys } from "../keys";
 import { openScopedProxy, type ProxyAuthority } from "../egress-client";
 import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
+import { PROVIDERS as CREW_PROVIDERS } from "./crew";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { parseLocator, type Finding, type Locator } from "../runtime/locator";
 import { clipStore, kokoroSpeaker, localSynth, MAX_POINT, readClip, roomClip } from "../voice/kokoro";
@@ -636,7 +637,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const subjectRecord = (k: Key, s: { run: any; head: string; base: string }, room: Room | null): Subject & { head: string; base: string } =>
     k.kind === "pr" || k.kind === "dir" ? { ...(room?.subject ?? { kind: k.kind, room: k.id }), task: s.run?.id ?? null, head: s.head, base: s.base }
     : { kind: k.kind, room: k.id, task: s.run?.id ?? null, branch: s.run?.ctx.branch ?? null, url: s.run?.ctx.pr?.url ?? null, head: s.head, base: s.base };
-  type Tutor = { pick: AgentPick; level: Level; adaptive: boolean; outside: boolean; label: { en: string; zh: string } };
+  type Tutor = { pick: AgentPick; level: Level; adaptive: boolean; outside: boolean; label: { en: string; zh: string }; warning?: { en: string; zh: string } | null;
+    /** picked: the captain picked it (a room's, Studio's default, a regeneration); unlisted: not on this machine's model list */
+    picked?: boolean; unlisted?: boolean };
   const tutorPick = (run: any, node?: any): Tutor => {
     const review = reviewNode(run);
     if (!review) throw refuse("This workflow has no reviewer seat for the tutor", "no_seat");
@@ -695,57 +698,76 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     return [...writers.flatMap((n: any) => { try { return [engine.x(run, n, run.nodes[n.id]).pick()]; } catch { return []; } }), ...run.steps.filter((st: any) => writers.some((n: any) => n.id === st.node) && st.provider).map((st: any) => ({ provider: st.provider, model: st.model }))]
       .map((m: AgentPick) => resolve(m)).map((m) => ({ provider: m.provider, model: m.model ?? null }));
   };
-  /** the models the captain may pick to explain a turn again: what this machine has (adaptive staffing's facts), each with how
-   *  independent it is from the author; a held one (out of quota, unreadable, in its verification backoff) is listed, not pickable */
-  const tutorsOf = (run: any, current: { provider: string; model: string | null } | null) => {
-    const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null; if (!usable) return [];
+  /** the models the captain may pick as a tutor: what this machine has (adaptive staffing's facts), each with how independent it
+   *  is from the author. Every one can be picked: one that is held (out of quota, unreadable), not verified yet or in its
+   *  verification backoff keeps its reason in held, said next to it as a warning, never a refusal. runnable says whether it
+   *  runs now and is verified (what Automatic chooses from). extra: picks the captain made that the list lacks (a model entered
+   *  by hand), listed after it with why. */
+  const tutorsOf = (run: any, current: { provider: string; model: string | null } | null, extra: { provider: string; model: string }[] = []) => {
+    const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null;
     const group = run && !isHostRun(run) && !isDirHostRun(run) ? makersOf(run, usable) : [];
-    // a model the captain may pick runs now and is verified on this machine; any other is listed with why it cannot be picked
-    return usable.map((u) => { const backoff = !!engine.deps.verifyBackoff?.({ provider: u.provider, model: u.model } as AgentPick);
-      return { provider: u.provider, model: u.model, effort: defaultEffort(u), verified: !!u.verified, runnable: !!u.runnable && !!u.verified && !backoff,
+    const cur = (p: string, m: string | null) => !!current && current.provider === p && (current.model ?? null) === m;
+    const listed = (usable ?? []).map((u) => { const backoff = !!engine.deps.verifyBackoff?.({ provider: u.provider, model: u.model } as AgentPick);
+      return { provider: u.provider, model: u.model, effort: defaultEffort(u), verified: !!u.verified, listed: true, runnable: !!u.runnable && !!u.verified && !backoff,
         held: !u.runnable ? (u.held ?? "it cannot run now") : !u.verified ? "not verified on this machine yet" : backoff ? "its verification is being retried" : null,
-        level: group.length ? levelAgainst({ provider: u.provider, model: u.model }, group) : null, current: !!current && current.provider === u.provider && (current.model ?? null) === u.model }; });
+        level: group.length ? levelAgainst({ provider: u.provider, model: u.model }, group) : null, current: cur(u.provider, u.model) }; });
+    const more = extra.filter((p, i) => !listed.some((u) => u.provider === p.provider && u.model === p.model) && extra.findIndex((q) => q.provider === p.provider && q.model === p.model) === i)
+      .map((p) => ({ provider: p.provider, model: p.model, effort: null, verified: false, listed: false, runnable: false, held: UNLISTED,
+        level: group.length ? levelAgainst({ provider: p.provider, model: p.model }, group) : null, current: cur(p.provider, p.model) }));
+    return [...listed, ...more];
   };
-  /** the tutor the captain picked for a regeneration: refused unless this machine runs it now */
+  /** what a pick that is not on this machine's model list is said to be (entered by hand) */
+  const UNLISTED = "not reported on this machine (entered by hand): the vendor decides";
+  /** the providers a tutor may be entered by hand for: the ones staffing runs (src/domain/crew.ts), and any this machine lists */
+  const tutorProviders = () => [...new Set<string>([...CREW_PROVIDERS, ...(((engine.deps.usableModels?.() ?? null) as Usable[] | null) ?? []).map((u) => u.provider)])];
+  /** a tutor's {provider, model} as the captain sent it: any model of a provider Studio runs, the model a free id (no blank, no
+   *  control character, not an option); nothing else is refused here. Whether it runs is the vendor's answer, on the turn. */
+  const tutorArg = (want: any): { provider: string; model: string } => {
+    const provider = typeof want?.provider === "string" ? want.provider.trim() : "", model = typeof want?.model === "string" ? want.model.trim() : "";
+    if (!provider || !model || provider.length > 40 || model.length > 120 || /[\u0000-\u001f\u007f\s]/.test(model) || model.startsWith("-")) throw refuse("A tutor is {provider, model}: a provider Studio runs and a model id (at most 120 characters, no spaces) / 導師是 {provider, model}：Studio 能跑的供應商，加上模型代號（最多 120 字元、不含空白）", "bad_request");
+    if (!tutorProviders().includes(provider)) throw refuse(`${provider} is not a provider Studio runs: use one of ${tutorProviders().join(", ")} / Studio 不會跑 ${provider}：請用 ${tutorProviders().join("、")} 之一`, "bad_request");
+    return { provider, model }; };
+  /** a picked tutor as this machine has it now: its effort, its independence from the author (null: no author Studio knows) and,
+   *  when it is held, not verified or not listed, what to expect (said in its label; the turn then runs and fails with the
+   *  vendor's own error if it cannot run, it is never refused up front nor swapped for another) */
+  const tutorFacts = (run: any | null, p: { provider: string; model: string }) => {
+    const host = run && !isHostRun(run) && !isDirHostRun(run) ? run : null, u = tutorsOf(host, null, [p]).find((x) => x.provider === p.provider && x.model === p.model)!;
+    const warning = u.runnable ? null : !u.listed ? { en: ` Not reported by ${p.provider} on this machine (entered by hand); the vendor decides: Studio passes the id as given, and the turn fails with ${p.provider}'s error if it rejects it.`, zh: `${p.provider} 在這台機器上沒有回報這個模型（手動輸入），由供應商決定：Studio 原樣傳給它，不接受時這一回合會失敗並顯示 ${p.provider} 的錯誤。` }
+      : u.held === "not verified on this machine yet" ? { en: " Not verified on this machine yet: Studio verifies it with one bounded request before the paid round, and the turn fails with the reason if it does not pass.", zh: "這台機器還沒驗證：付費回合前 Studio 會先用一次有限請求驗證，沒通過時這一回合會失敗並說明原因。" }
+      : { en: ` Held now (${u.held}): the turn may fail with ${p.provider}'s error.`, zh: `目前暫停（${u.held}）：這一回合可能失敗並顯示 ${p.provider} 的錯誤。` };
+    return { effort: u.effort ?? null, level: (u.level ?? null) as Level | null, warning, unlisted: !u.listed };
+  };
+  /** the tutor the captain picked for a regeneration: any model (a listed one or one entered by hand); a held or unlisted one is said */
   const pickedTutor = (run: any, want: any): Tutor => {
-    const provider = String(want?.provider ?? ""), model = want?.model == null ? null : String(want.model), list = tutorsOf(run, null), u = list.find((x) => x.provider === provider && x.model === model);
-    if (!u) throw refuse(`${provider} ${model ?? ""} is not a model this machine can run / 這台機器不能跑這個模型`, "not_usable");
-    if (!u.runnable) throw refuse(`${provider} ${model} is held: ${u.held} / 這個模型目前不能用：${u.held}`, "held");
-    const level = (u.level ?? null) as Level | null;
+    const { provider, model } = tutorArg(want), { effort, level, warning, unlisted } = tutorFacts(run, { provider, model }), w = warning ?? { en: "", zh: "" };
     // no author Studio knows (a pull request no Task made): how independent the pick is cannot be said, and is not claimed
-    if (!level) return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level: null as unknown as Level, adaptive: true, outside: true, label: { en: "Independence from the author unknown: the change's author is outside Studio. Picked by the captain to explain this again.", zh: "和作者的獨立程度未知：改動的作者不在 Studio 裡。船長選來重講這一題。" } };
+    if (!level) return { pick: { provider, model, effort } as AgentPick, level: null as unknown as Level, adaptive: true, outside: true, warning, picked: true, unlisted, label: { en: `Independence from the author unknown: the change's author is outside Studio. Picked by the captain to explain this again.${w.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。船長選來重講這一題。${w.zh}` } };
     // the author's own model too: how independent it is, is said (the label), never a refusal: the captain picked it
-    return { pick: { provider, model, effort: u.effort ?? null } as AgentPick, level, adaptive: true, outside: true, label: { en: `${LEVEL_TEXT[level].en}. Picked by the captain to explain this again.`, zh: `${LEVEL_TEXT[level].zh}。船長選來重講這一題。` } };
+    return { pick: { provider, model, effort } as AgentPick, level, adaptive: true, outside: true, warning, picked: true, unlisted, label: { en: `${LEVEL_TEXT[level].en}. Picked by the captain to explain this again.${w.en}`, zh: `${LEVEL_TEXT[level].zh}。船長選來重講這一題。${w.zh}` } };
   };
   /** the tutor the captain picked: this room's, else Studio's default (settings().tutor), else none (Automatic: seatPick) */
   const choiceOf = (room: Room | null): { provider: string; model: string; source: "room" | "studio" } | null => {
     if (room?.tutor) return { provider: room.tutor.provider, model: room.tutor.model, source: "room" }; const d = settings().tutor; return d ? { ...d, source: "studio" } : null; };
-  /** the picked tutor as this machine has it now: refused with why when it is not here, held or not verified (the room then
-   *  asks for another pick; Studio never switches to another tutor by itself). Its independence from the author is said,
-   *  never enforced. The approved reviewer picked is the seat's own member; any other runs as the seat's adaptive member. */
+  /** the picked tutor: the turn runs on it whatever this machine says of it now (held, not verified, not listed: said in its
+   *  label, and a turn that cannot run fails with the vendor's error; Studio never switches to another tutor by itself). Its
+   *  independence from the author is said, never enforced. The approved reviewer picked is the seat's own member; any other
+   *  runs as the seat's adaptive member. */
   const chosenTutor = (run: any | null, node: any | null, c: { provider: string; model: string; source: "room" | "studio" }): Tutor => {
-    const host = run && !isHostRun(run) && !isDirHostRun(run) ? run : null, list = tutorsOf(host, null), u = list.find((x) => x.provider === c.provider && x.model === c.model), who = `${c.provider} ${c.model}`;
-    const whose = c.source === "room" ? { en: "The tutor picked for this room", zh: "這間審查室選的導師" } : { en: "Studio's default tutor", zh: "Studio 預設的導師" };
-    if (!u) throw refuse(`${whose.en} (${who}) is not a model this machine can run now: pick another tutor; Studio does not switch to another one by itself / ${whose.zh}（${who}）不是這台機器現在能跑的模型：請另選一位導師；Studio 不會自己換人`, "tutor_unavailable");
-    if (!u.runnable) throw refuse(`${whose.en} (${who}) cannot run now: ${u.held}. Pick another tutor; Studio does not switch to another one by itself / ${whose.zh}（${who}）現在不能用：${u.held}。請另選一位導師；Studio 不會自己換人`, "tutor_unavailable");
+    const { effort, level, warning, unlisted } = tutorFacts(run, c), w = warning ?? { en: "", zh: "" };
     let approved: AgentPick | null = null; if (run && node && !isDirHostRun(run)) { try { approved = (engine.deps.approvedPick?.(run, node, TUTOR_ROLE) as AgentPick | null) ?? (isHostRun(run) ? null : engine.x(run, reviewNode(run), run.nodes[reviewNode(run).id]).pick()); } catch {} }
-    const own = !!approved && approved.provider === c.provider && (approved.model ?? null) === c.model, level = (u.level ?? null) as Level | null;
+    const own = !!approved && approved.provider === c.provider && (approved.model ?? null) === c.model;
     const by = c.source === "room" ? { en: " Picked by the captain for this room.", zh: "船長為這間審查室選的。" } : { en: " Studio's default tutor, picked by the captain.", zh: "船長選的 Studio 預設導師。" };
-    const label = level ? { en: `${LEVEL_TEXT[level].en}.${by.en}`, zh: `${LEVEL_TEXT[level].zh}。${by.zh}` } : { en: `Independence from the author unknown: the change's author is outside Studio.${by.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。${by.zh}` };
-    return { pick: own ? approved! : { provider: c.provider, model: c.model, effort: u.effort ?? null } as AgentPick, level: level as Level, adaptive: !own, outside: !own, label };
+    const label = level ? { en: `${LEVEL_TEXT[level].en}.${by.en}${w.en}`, zh: `${LEVEL_TEXT[level].zh}。${by.zh}${w.zh}` } : { en: `Independence from the author unknown: the change's author is outside Studio.${by.en}${w.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。${by.zh}${w.zh}` };
+    return { pick: own ? approved! : { provider: c.provider, model: c.model, effort } as AgentPick, level: level as Level, adaptive: !own, outside: !own, warning, picked: true, unlisted, label };
   };
-  /** a tutor the captain picks (a room's, or Studio's default): {provider, model} of a model this machine runs now and has verified */
-  const pickable = (want: any, run: any | null): { provider: string; model: string } => {
-    const provider = String(want?.provider ?? ""), model = String(want?.model ?? ""); if (!provider || !model || provider.length > 40 || model.length > 120) throw refuse("A tutor is {provider, model} / 導師是 {provider, model}", "bad_request");
-    const u = tutorsOf(run, null).find((x) => x.provider === provider && x.model === model);
-    if (!u) throw refuse(`${provider} ${model} is not a model this machine can run / 這台機器不能跑 ${provider} ${model}`, "not_usable");
-    if (!u.runnable) throw refuse(`${provider} ${model} cannot be the tutor now: ${u.held} / ${provider} ${model} 現在不能當導師：${u.held}`, u.verified ? "held" : "unverified");
-    return { provider, model }; };
-  /** the room's tutor as the page shows it: every model this machine has (each pickable or why not, how independent it is from
-   *  the author, the current one marked), and whose pick it is (this room's, Studio's default, or Studio's own) */
+  /** a tutor the captain picks (a room's, or Studio's default): any {provider, model} of a provider Studio runs, listed or entered by hand */
+  const pickable = (want: any): { provider: string; model: string } => tutorArg(want);
+  /** the room's tutor as the page shows it: every model this machine has (each with why it may not run, how independent it is
+   *  from the author, the current one marked; a pick entered by hand listed after them), whose pick it is (this room's,
+   *  Studio's default, or Studio's own), and the providers a model may be entered by hand for */
   const tutorView = (k: Key, s: S | null, r: Room | null, open: boolean) => { const c = choiceOf(r), d = settings().tutor;
-    let tutors: any[] = []; if (open) { try { const o0: any = offerOf(k); tutors = tutorsOf(s?.run && !isHostRun(s.run) && !isDirHostRun(s.run) ? s.run : null, "error" in o0 ? null : { provider: o0.provider, model: o0.model }); } catch {} }
-    return { tutors, tutorChoice: { room: r?.tutor ? { provider: r.tutor.provider, model: r.tutor.model } : null, studio: d, source: c?.source ?? "auto" } }; };
+    let tutors: any[] = []; if (open) { try { const o0: any = offerOf(k); tutors = tutorsOf(s?.run && !isHostRun(s.run) && !isDirHostRun(s.run) ? s.run : null, "error" in o0 ? null : { provider: o0.provider, model: o0.model }, [...(r?.tutor ? [r.tutor] : []), ...(d ? [d] : [])]); } catch {} }
+    return { tutors, tutorProviders: open ? tutorProviders() : [], tutorChoice: { room: r?.tutor ? { provider: r.tutor.provider, model: r.tutor.model } : null, studio: d, source: c?.source ?? "auto" } }; };
   /** the tutor a turn of this room runs on: the captain's pick (the room's, else Studio's default), else Studio's own (Automatic) */
   const tutorFor = (k: Key, s: S): Tutor => { const c = choiceOf(load(k)); return c ? chosenTutor(s.run, s.node, c) : k.kind === "dir" ? autoDirTutor() : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)); };
   /** a directory room's tutor when the captain picked none (Automatic): a model this machine runs now and has verified, the
@@ -781,8 +803,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
       const t = want ? pickedTutor(s.run, want) : tutorFor(k, s), p = t.pick, effort = p.effort ?? null, c = want ? null : choiceOf(load(k));
       const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
-      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, picked: want ? "regenerate" : c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label },
-        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}) })).slice(0, 16) }; }
+      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, picked: want ? "regenerate" : c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label }, warning: t.warning ?? null,
+        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}),
+          // a picked model that turned held, unverified or unreported since the offer is confirmed again, its warning said
+          ...(t.warning ? { warning: t.warning.en } : {}) })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
   };
   const skills = () => ROOM_SKILLS.map((s) => { const t = bundledText(s.ref); if (t == null || sha(t) !== s.sha256) throw refuse(`The pinned skill ${s.id} changed or is missing; Studio refuses the turn`, "skill_pin"); return { ...s, text: t }; });
@@ -1359,17 +1383,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     try {
       if (!engine.owns(x)) throw refuse(k.kind === "merge" ? "The merge card's step is no longer live" : "The Task's review step changed", "closed");
       // a signed-in model not verified yet is verified by Studio itself (one bounded request, kept for its window); one that is not
-      // signed in, out of quota or not offered is refused with the reason
-      if (pick.model) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
+      // signed in, out of quota or not offered is refused with the reason. A model the captain entered by hand is not on the list
+      // Studio verifies from: the native selection passes it to its vendor as given (picked), and the turn fails with the vendor's error
+      if (pick.model && !tutor.unlisted) try { const v: any = await engine.deps.ensurePick?.({ provider: pick.provider, model: pick.model, effort: pick.effort ?? null }, { signal: engine.abortOf(run).signal, why: `review room ${k.id}` });
         // what Studio verified itself for this turn, on the Task's own ledger (as a Board start records it)
         if (v?.verified?.length) engine.record(x, "staffing-auto-verify", { data: { schema: 1, verified: v.verified, by: "studio", for: `review room ${k.id}`, at: new Date().toISOString() } } as any); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 400)}`, "no_tutor"); }
-      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
+      try { provider = engine.deps.selectProvider ? await engine.deps.selectProvider(x, pick, { role: TUTOR_ROLE, explicit: true, ...(tutor.adaptive ? { adaptive: true, ...(tutor.picked ? { picked: true } : {}) } : {}) }) : engine.deps.provider(pick.provider, pick.model ?? undefined); }
       catch (e: any) { throw refuse(`The tutor's model is not available: ${String(e?.message ?? e).slice(0, 300)}`, "no_tutor"); }
     } catch (e) { held?.release(); throw e; }
     const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
     // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
-    const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level ?? "unknown", crew: !tutor.outside } } : {}) };
+    const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level ?? "unknown", crew: !tutor.outside, ...(tutor.picked ? { picked: true } : {}) } } : {}) };
     const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
     let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
     return { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor };
@@ -1965,16 +1990,19 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     setSettings(a: { autoTeach?: unknown; tutor?: unknown }) {
       if (a?.autoTeach === undefined && a?.tutor === undefined) throw refuse("autoTeach is true or false; tutor is {provider, model} or null", "bad_request");
       if (a.autoTeach !== undefined && typeof a.autoTeach !== "boolean") throw refuse("autoTeach is true or false", "bad_request");
-      const tutor = a.tutor === undefined ? settings().tutor : a.tutor === null ? null : pickable(a.tutor, null);
+      const tutor = a.tutor === undefined ? settings().tutor : a.tutor === null ? null : pickable(a.tutor);
       writeFileSync(settingsFile(), JSON.stringify({ ...settings(), ...(a.autoTeach !== undefined ? { autoTeach: a.autoTeach } : {}), tutor })); return settings(); },
-    /** the models the captain may pick as a tutor (the room list's Studio-wide default): this machine's, each runnable or why not */
-    tutorChoices() { return tutorsOf(null, settings().tutor ? { provider: settings().tutor!.provider, model: settings().tutor!.model } : null); },
-    /** this room's tutor, picked by the captain: a model this machine runs now and has verified (else refused, with why); null
-     *  goes back to Studio's default. Its independence from the author is shown, never enforced. */
+    /** the models the captain may pick as a tutor (the room list's Studio-wide default): this machine's, each with why it may
+     *  not run, and Studio's default when it was entered by hand */
+    tutorChoices() { const d = settings().tutor; return tutorsOf(null, d ? { provider: d.provider, model: d.model } : null, d ? [d] : []); },
+    /** the providers a tutor may be entered by hand for (the ones staffing runs, and any this machine lists) */
+    tutorProviders() { return tutorProviders(); },
+    /** this room's tutor, picked by the captain: any model of a provider Studio runs (one held, not verified or entered by hand
+     *  is kept, its label says so, and its turn fails with the vendor's error if it cannot run); null goes back to Studio's default. Its independence from the author is shown, never enforced. */
     setTutor(id: string, pick: unknown, by: string) { const k = keyOf(id); let s: S | null = null; try { s = subjectOf(k); } catch {}
       if (!k.open()) throw refuse("This room takes no turn now: its tutor stays as it was / 這間審查室現在不能提問：導師維持原樣", "closed");
       let room = load(k); if (!room) { if (!s) throw refuse("No such review room", "not_found"); room = fresh(k, s); }
-      if (pick === null) delete room.tutor; else { const p = pickable(pick, s?.run && !isHostRun(s.run) ? s.run : null); room.tutor = { ...p, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() }; }
+      if (pick === null) delete room.tutor; else { const p = pickable(pick); room.tutor = { ...p, by: String(by ?? "captain").slice(0, 80), at: new Date().toISOString() }; }
       save(k, room); notify(k); return this.view(id); },
     /** this room's own auto-teach switch (any room: on arrival, and on paste for a pull request's) */
     autoTeachFor(id: string, on: unknown) { const k = keyOf(id); if (typeof on !== "boolean") throw refuse("on is true or false", "bad_request"); let room = load(k);

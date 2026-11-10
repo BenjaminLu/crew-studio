@@ -428,7 +428,7 @@ async function nativeSelection(input: ProviderSelection, x?: any): Promise<Provi
   if (x && x.engine.get(x.run.id)) { x.engine.record(x, "provider-selection", { data: selected.evidence }); const step = [...x.run.steps].reverse().find((s: any) => s.node === x.node.id && s.state === "running"); if (step) { step.provider = selected.provider.id; step.model = selected.provider.model; step.effort = selected.provider.reasoningEffort ?? null; } x.save(); }
   return selected.provider;
 }
-const nativePick = async (x: any, pick: any, context?: { role: string; explicit: boolean; adaptive?: boolean }): Promise<Provider> => {
+const nativePick = async (x: any, pick: any, context?: { role: string; explicit: boolean; adaptive?: boolean; picked?: boolean }): Promise<Provider> => {
   const settings = chatSettings(), config = runtimeCodexConfig(), hostView = main.view();
   const host = hostView.state === "attached" && hostView.driver.holder === "studio" ? hostView.host : null;
   const role = context?.role ?? (x.node.role === "worker" || x.node.mode === "deliver" ? "worker" : x.node.role ?? "coordinator");
@@ -447,7 +447,7 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
   const provider = fixture ? "stub" : !explicit && role === "reviewer" ? String(x.engine.policies.get("vendor_policy.reviewer", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value) : !explicit && role === "coordinator" && host ? host : pick.provider;
   // no attached host: Cursor's rules only when Cursor is the one vendor signed in; the reviewer's stand-ins only under Cursor
   const { chain, alternates } = nativeChain({ host, logins: host ? {} : await gateLogins(), role, explicit, fixture, fallback });
-  return nativeSelection({ role, host: chain, explicit: explicit || fixture || role === "reviewer", provider, alternates, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices] }, x);
+  return nativeSelection({ role, host: chain, explicit: explicit || fixture || role === "reviewer", provider, alternates, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices], ...(context?.adaptive && context?.picked ? { picked: true } : {}) }, x);
 
 };
 agents.providerAdmission = createNativeProviderAdmission({certified,engine:()=>nativeEngineForPolicy,select:nativeSelection,pick:nativePick});

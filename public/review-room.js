@@ -5,7 +5,7 @@
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
 const RR = { tutorMenu: null, step: new Map(), explain: new Map(), arrived: new Set(), imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
-  scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
+  scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), other: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -1167,8 +1167,9 @@ function quizSide(r, sc) {
   return [h("p", { class: "rr-quiz-help" }, T("Pick one. Studio grades it at once (no model, nothing paid); a missed one can be re-explained on the board.", "選一個答案。Studio 立刻評分（不用模型、不付費）；答錯的可以在白板上重講。")),
     h("p", { class: "rr-ppage", "data-quiz-score": `${right}/${done.length}` }, T(`${right} of ${done.length} right · ${qs.length - done.length} to go`, `答對 ${right}/${done.length} · 還有 ${qs.length - done.length} 題`))];
 }
-/** Explain a turn again with another model: the models this machine can run (adaptive staffing's facts), the current one and
- *  the author's vendor marked; a held one is listed but cannot be picked. A pick is a paid turn, confirmed like any other. */
+/** Explain a turn again with another model: the models this machine has (adaptive staffing's facts), the current one and
+ *  the author's vendor marked; every one can be picked, a held or unverified one with its reason as a warning. A pick is a
+ *  paid turn, confirmed like any other. */
 function regenList(r, t) {
   const card = r.card.id, lvl = { vendor: ["another vendor than the author", "和作者不同供應商"], model: ["same vendor as the author", "和作者同一個供應商"], same: ["same model as the author", "和作者同一個模型"] };
   const pick = async (m) => { RR.regen.delete(card); RR.posting.add(card); RR.err.delete(card); rerender();
@@ -1176,10 +1177,10 @@ function regenList(r, t) {
     catch (e) { if (e.code === "confirm_required" && e.offer) RR.confirm.set(card, { action: t.action, text: t.text, regenerate: t.n, pick: { provider: m.provider, model: m.model }, offer: e.offer }); else RR.err.set(card, e.message); }
     finally { RR.posting.delete(card); redraw(card); } };
   return h("div", { class: "rr-regenlist", role: "group", "data-regen-list": t.n, "aria-label": T("Models on this machine", "這台機器上的模型") },
-    (r.tutors || []).map((m) => h("button", { type: "button", class: "rr-regenopt", "data-regen-pick": `${m.provider}|${m.model}`, disabled: !m.runnable || RR.posting.has(card), title: m.held || "", onclick: () => pick(m) },
+    (r.tutors || []).map((m) => h("button", { type: "button", class: "rr-regenopt", "data-regen-pick": `${m.provider}|${m.model}`, disabled: RR.posting.has(card), title: m.held || "", onclick: () => pick(m) },
       h("b", {}, `${m.provider} · ${m.model}`), m.current ? h("span", { class: "rr-pill ok" }, T("current", "目前")) : null,
       h("span", { class: `rr-pill${m.level === "vendor" ? "" : " warn"}`, "data-regen-level": m.level || "unknown" }, m.level ? T(...lvl[m.level]) : T("independence from the author unknown", "和作者的獨立程度未知")),
-      m.held ? h("span", { class: "rr-pill bad", "data-regen-held": "" }, T(`held: ${m.held}`, `暫停：${m.held}`)) : null)));
+      heldPill(m, "data-regen-held"))));
 }
 // ---------- the tutor: the captain picks it (this room's, else Studio's default, else Automatic); independence is information ----------
 const LEVEL = { vendor: ["another vendor than the author", "和作者不同供應商"], model: ["same vendor as the author", "和作者同一個供應商"], same: ["the author's own model", "和作者同一個模型"] };
@@ -1189,29 +1190,45 @@ function tutorButton(r) {
   const id = r.card.id, o = r.offer, src = r.tutorChoice?.source || "auto", pick = r.tutorChoice?.room || (src === "studio" ? r.tutorChoice?.studio : null);
   const text = o?.error ? T(`Tutor: ${pick ? `${pick.provider} · ${pick.model}` : "none"} — cannot run now`, `導師：${pick ? `${pick.provider} · ${pick.model}` : "無"}：現在不能用`)
     : T(`Tutor: ${o?.provider} · ${o?.model ?? "default model"} — ${o?.independence?.en ?? ""}`, `導師：${o?.provider} · ${o?.model ?? "預設模型"}：${o?.independence?.zh ?? ""}`);
-  return h("button", { type: "button", class: `rr-pill rr-tutor${o?.error ? " bad" : o?.independence?.level === "same" ? " warn" : ""}`, "data-tutor-open": id, "data-independence": o?.independence?.level ?? null, "data-tutor-source": src, "aria-expanded": String(RR.tutorMenu === id), "aria-haspopup": "dialog", title: o?.error || text,
+  return h("button", { type: "button", class: `rr-pill rr-tutor${o?.error ? " bad" : o?.independence?.level === "same" || o?.warning ? " warn" : ""}`, "data-tutor-open": id, "data-tutor-warning": o?.warning ? "" : null, "data-independence": o?.independence?.level ?? null, "data-tutor-source": src, "aria-expanded": String(RR.tutorMenu === id), "aria-haspopup": "dialog", title: o?.error || text,
     onclick: () => { const open = RR.tutorMenu !== id; RR.tutorMenu = open ? id : null; rerender();
       // the keyboard follows: into the picker when it opens, back to the tutor's button when it closes
       requestAnimationFrame(() => document.querySelector(open ? "[data-tutor-menu] [data-tutor-pick]:not([disabled])" : "[data-tutor-open]")?.focus({ preventScroll: true })); } }, text);
 }
 async function pickTutor(id, pick) {
   RR.posting.add(`${id}/tutor`); RR.err.delete(id); rerender();
-  try { RR.rooms.set(id, await postJ(`/api/review-room/${enc(id)}/tutor`, { pick })); RR.tutorMenu = null; dropPasteOffers(); } catch (e) { RR.err.set(id, e.message); }
+  try { RR.rooms.set(id, await postJ(`/api/review-room/${enc(id)}/tutor`, { pick })); RR.tutorMenu = null; RR.other.delete(id); dropPasteOffers(); } catch (e) { RR.err.set(id, e.message); }
   finally { RR.posting.delete(`${id}/tutor`); redraw(id); if (!RR.tutorMenu) requestAnimationFrame(() => document.querySelector("[data-tutor-open]")?.focus({ preventScroll: true })); }
 }
-/** the picker: Studio's default (or Automatic), then every model this machine has; one that cannot run or is not verified is
- *  shown disabled with why (never swapped for another by itself); each says how independent it is from the change's author */
+/** a model that may not run as it stands (held, not verified, not on this machine's list): its reason, a warning, never a lock */
+const heldPill = (m, attr) => m.held ? h("span", { class: "rr-pill warn", [attr]: "" }, m.listed === false ? T(`not reported by ${m.provider} on this machine; the vendor decides`, `${m.provider} 在這台機器上沒有回報；由供應商決定`) : /not verified/.test(m.held) ? T("not verified on this machine yet", "這台機器還沒驗證") : T(`may not run: ${m.held}`, `可能跑不了：${m.held}`)) : null;
+/** "Other model…": any model of a provider Studio runs, entered by hand (where: the room's id, or "default" for Studio's) */
+function otherModel(where, providers, busy, use) {
+  const d = { provider: providers[0] || "", model: "", ...RR.other.get(where) }, now = () => ({ ...d, ...RR.other.get(where) }), model = d.model.trim();
+  return h("form", { class: "rr-othermodel", "data-tutor-other": where, onsubmit: (e) => { e.preventDefault(); const c = now(), m = c.model.trim(); if (m && c.provider && !busy) use({ provider: c.provider, model: m }); } },
+    h("span", {}, T("Other model…", "其他模型…")),
+    h("select", { class: "input", "data-tutor-other-provider": where, disabled: busy, "aria-label": T("Provider", "供應商"), onchange: (e) => RR.other.set(where, { ...now(), provider: e.target.value }) },
+      providers.map((p) => h("option", { value: p, selected: p === d.provider }, p))),
+    h("input", { class: "input", "data-tutor-other-model": where, disabled: busy, maxlength: 120, placeholder: T("model id", "模型代號"), value: d.model, "aria-label": T("Model id", "模型代號"),
+      oninput: (e) => { RR.other.set(where, { ...now(), model: e.target.value }); const b = e.target.form?.querySelector("[data-tutor-other-use]"); if (b) b.disabled = busy || !e.target.value.trim(); } }),
+    h("button", { type: "submit", class: "btn", "data-tutor-other-use": where, disabled: busy || !model || !d.provider }, T("Use it", "用這個")),
+    h("p", { class: "faint" }, T("Studio passes the id to the vendor as given and does not check it first: the vendor decides, and if it rejects the id or is not signed in, the turn fails with its error.", "Studio 把代號原樣交給供應商，不會先檢查：由供應商決定；不接受這個代號或沒登入時，這一回合會失敗並顯示它的錯誤。")));
+}
+/** the picker: Studio's default (or Automatic), then every model this machine has, then any model entered by hand; one that
+ *  is held or not verified can be picked, its reason said (never swapped for another by itself); each says how independent
+ *  it is from the change's author */
 function tutorMenu(r) {
   const id = r.card.id, c = r.tutorChoice || {}, busy = RR.posting.has(`${id}/tutor`), cur = c.room;
   const dflt = c.studio ? T(`Studio's default: ${c.studio.provider} · ${c.studio.model}`, `Studio 預設：${c.studio.provider} · ${c.studio.model}`) : T("Automatic: Studio picks the most independent model it can run", "自動：Studio 挑它能跑、最獨立的模型");
   return h("div", { class: "rr-regenlist rr-tutormenu", role: "dialog", "aria-label": T("The tutor for this room", "這間審查室的導師"), "data-tutor-menu": id },
     h("b", {}, T("The tutor for this room", "這間審查室的導師")),
-    h("p", { class: "faint" }, T("Every answer in this room, the analysis on arrival, questions and regenerations run on it. How independent it is from the author is shown, not enforced; one that cannot run is never swapped for another.", "這間房間的每個回答、進來時的分析、提問和重講都用它。和作者的獨立程度只是資訊，不會強制；不能用的導師不會被偷偷換掉。")),
+    h("p", { class: "faint" }, T("Every answer in this room, the analysis on arrival, questions and regenerations run on it. Any model can be picked: how independent it is from the author and whether it may not run are shown, not enforced; one that cannot run fails with its vendor's error and is never swapped for another.", "這間房間的每個回答、進來時的分析、提問和重講都用它。任何模型都能選：和作者的獨立程度、可能跑不了的原因只是資訊，不會強制；跑不了時會顯示供應商的錯誤，不會被偷偷換掉。")),
     h("button", { type: "button", class: "rr-regenopt", "data-tutor-pick": "default", "aria-pressed": String(!cur), disabled: busy, onclick: () => pickTutor(id, null) }, h("b", {}, dflt), !cur ? h("span", { class: "rr-pill ok" }, T("current", "目前")) : null),
-    (r.tutors || []).map((m) => h("button", { type: "button", class: "rr-regenopt", "data-tutor-pick": `${m.provider}|${m.model}`, "aria-pressed": String(!!cur && cur.provider === m.provider && cur.model === m.model), disabled: !m.runnable || busy, title: m.held || "", onclick: () => pickTutor(id, { provider: m.provider, model: m.model }) },
+    (r.tutors || []).map((m) => h("button", { type: "button", class: "rr-regenopt", "data-tutor-pick": `${m.provider}|${m.model}`, "aria-pressed": String(!!cur && cur.provider === m.provider && cur.model === m.model), disabled: busy, title: m.held || "", onclick: () => pickTutor(id, { provider: m.provider, model: m.model }) },
       h("b", {}, `${m.provider} · ${m.model}`), cur && cur.provider === m.provider && cur.model === m.model ? h("span", { class: "rr-pill ok" }, T("this room", "這間房間")) : null, levelPill(m),
-      m.held ? h("span", { class: "rr-pill bad", "data-tutor-held": "" }, m.verified === false && m.runnable === false && /not verified/.test(m.held) ? T("not verified on this machine yet", "這台機器還沒驗證") : T(`cannot run: ${m.held}`, `不能用：${m.held}`)) : null)),
-    (r.tutors || []).length ? null : h("p", { class: "faint", "data-tutor-none": "" }, T("Studio has no facts about this machine's models yet: the room uses its own pick.", "Studio 還沒有這台機器模型的資料：房間用自己的選擇。")));
+      heldPill(m, "data-tutor-held"))),
+    (r.tutors || []).length ? null : h("p", { class: "faint", "data-tutor-none": "" }, T("Studio has no facts about this machine's models yet: the room uses its own pick.", "Studio 還沒有這台機器模型的資料：房間用自己的選擇。")),
+    (r.tutorProviders || []).length ? otherModel(id, r.tutorProviders, busy, (p) => pickTutor(id, p)) : null);
 }
 // ---------- a finished lesson is the lesson board (public/review-board.js): its chapters are regions of a canvas ----------
 const POINTS_TONE = { watch: ["risk", ["risk", "風險"]], reviewers: ["warn", ["reviewer", "審查"]], roads: ["ok", ["not taken", "沒走"]], questions: ["", ["open", "待解"]] };
@@ -1403,7 +1420,9 @@ function promptBar(r) {
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); RR.lang.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
       h("p", {}, conf.regenerate ? T(`Explain this again with ${conf.offer.provider} · ${conf.offer.model ?? "default model"}: `, `改由 ${conf.offer.provider} · ${conf.offer.model ?? "預設模型"} 重講這一題：`) : null, T(`This starts a paid model round on ${(conf.offer || offer).provider} · ${(conf.offer || offer).model ?? "default model"}${(conf.offer || offer).effort ? ` (${(conf.offer || offer).effort})` : ""}${conf.action === "teach" ? LESSON_ROUNDS() : ""}${r.images ? "; the tutor may also ask for up to two generated pictures, each a paid image job made in the background" : ""}. The tutor only reads the code; nothing is written, and nothing is sent to GitHub.`,
-        `這會開始一次付費的模型執行：${offer.provider} · ${offer.model ?? "預設模型"}${offer.effort ? `（${offer.effort}）` : ""}${conf.action === "teach" ? LESSON_ROUNDS() : ""}${r.images ? "；導師也可能要求最多兩張生成圖片，每張都是在背景進行的付費圖片工作" : ""}。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
+        `這會開始一次付費的模型執行：${(conf.offer || offer).provider} · ${(conf.offer || offer).model ?? "預設模型"}${(conf.offer || offer).effort ? `（${(conf.offer || offer).effort}）` : ""}${conf.action === "teach" ? LESSON_ROUNDS() : ""}${r.images ? "；導師也可能要求最多兩張生成圖片，每張都是在背景進行的付費圖片工作" : ""}。導師只讀程式碼，不寫任何東西，也不送任何東西到 GitHub。`)),
+      // the picked model may not run as it stands (held, not verified, not reported by its vendor): said before anything is paid
+      (conf.offer || offer)?.warning ? h("p", { class: "rr-pill warn rr-confirmwarn", "data-confirm-warning": "" }, T(`Warning: ${(conf.offer || offer).warning.en.trim()}`, `注意：${(conf.offer || offer).warning.zh.trim()}`)) : null,
       h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-images-toggle": "", checked: RR.imgWant.get(card) ?? !!r.images, disabled: RR.posting.has(card), onchange: (e) => { RR.imgWant.set(card, e.target.checked); rerender(); } }),
         h("span", {}, T("Generated pictures for this room, from this round on: up to two a turn and, once, an opening picture of the change, each a paid image job. Applied only when you start this round; off by default (Studio draws every diagram from the tutor's data).", "這個審查室從這一回合起使用生成圖片：每回合最多兩張，另外會產生一次這個改動的開場圖，每張都是付費圖片工作。只有在你開始這一回合時才生效；預設關閉（Studio 會依導師的資料畫出每張圖）。"))),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-room-start": "", disabled: busy, onclick: start }, T("Start the round", "開始這一回合")),
@@ -1477,15 +1496,18 @@ async function resetRoom(card) {
   catch (e) { RR.err.set(card, e.message); RR.resetAsk.delete(card); }
   finally { RR.posting.delete(card); rerender(); }
 }
-/** Studio's default tutor (the room list): Automatic, or a model this machine runs and has verified (one it cannot is disabled with why) */
+/** Studio's default tutor (the room list): Automatic, any model this machine has (one held or not verified with its reason),
+ *  or any model entered by hand */
 function tutorDefault() {
-  const list = RR.list?.tutors || [], cur = RR.list?.settings?.tutor || null, val = cur ? `${cur.provider}|${cur.model}` : "auto";
-  return h("label", { class: "rr-imgopt rr-tutordefault" }, h("span", {}, T("Studio's default tutor for every room (a room can pick its own):", "每間審查室的預設導師（房間可以自己選）：")),
-    h("select", { class: "input", "data-tutor-default": "", onchange: async (e) => { const v = e.target.value; try { const st = await postJ("/api/review-room/settings", { tutor: v === "auto" ? null : { provider: v.split("|")[0], model: v.split("|").slice(1).join("|") } }); if (RR.list) RR.list.settings = st; dropPasteOffers(); PR.err.delete("home");
-          // every room kept on this page offered the old default: each is read again when it is next opened
-          for (const [rid, rr] of [...RR.rooms]) if (!rr?.snapshot && rr?.running == null) RR.rooms.delete(rid); } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } },
+  const list = RR.list?.tutors || [], cur = RR.list?.settings?.tutor || null, val = cur ? `${cur.provider}|${cur.model}` : "auto", busy = RR.posting.has("default/tutor");
+  const set = async (tutor) => { RR.posting.add("default/tutor"); try { const st = await postJ("/api/review-room/settings", { tutor }); if (RR.list) { RR.list.settings = st; readList(); } RR.other.delete("default"); dropPasteOffers(); PR.err.delete("home");
+      // every room kept on this page offered the old default: each is read again when it is next opened
+      for (const [rid, rr] of [...RR.rooms]) if (!rr?.snapshot && rr?.running == null) RR.rooms.delete(rid); } catch (er) { PR.err.set("home", er.message); } finally { RR.posting.delete("default/tutor"); } rerenderAny(); };
+  return h("div", { class: "rr-tutordefaults" }, h("label", { class: "rr-imgopt rr-tutordefault" }, h("span", {}, T("Studio's default tutor for every room (a room can pick its own):", "每間審查室的預設導師（房間可以自己選）：")),
+    h("select", { class: "input", "data-tutor-default": "", disabled: busy, onchange: (e) => { const v = e.target.value; set(v === "auto" ? null : { provider: v.split("|")[0], model: v.split("|").slice(1).join("|") }); } },
       h("option", { value: "auto", selected: val === "auto" }, T("Automatic: the most independent model Studio can run", "自動：Studio 能跑、最獨立的模型")),
-      list.map((m) => h("option", { value: `${m.provider}|${m.model}`, selected: val === `${m.provider}|${m.model}`, disabled: !m.runnable, "data-tutor-option-held": m.held ? "" : null }, `${m.provider} · ${m.model}${m.held ? T(` (cannot be picked: ${m.held})`, `（不能選：${m.held}）`) : ""}`))));
+      list.map((m) => h("option", { value: `${m.provider}|${m.model}`, selected: val === `${m.provider}|${m.model}`, "data-tutor-option-held": m.held ? "" : null }, `${m.provider} · ${m.model}${m.held ? m.listed === false ? T(` (entered by hand: not reported by ${m.provider} on this machine; the vendor decides)`, `（手動輸入：${m.provider} 在這台機器上沒有回報；由供應商決定）`) : T(` (warning: ${m.held})`, `（注意：${m.held}）`) : ""}`)))),
+    (RR.list?.providers || []).length ? otherModel("default", RR.list.providers, busy, set) : null);
 }
 // ---------- a pull request by its URL: Studio reads it on GitHub (GET only) for a project connected to GitHub ----------
 const PR = { url: new Map(), busy: new Set(), err: new Map(), checking: new Set(), offer: new Map(), shown: new Map() };
@@ -1655,7 +1677,7 @@ const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, 
   stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual });
 const onList = () => S.route?.name === "room" && !S.route.arg;
 /** the list read again. Only the zones are drawn again when they are there: the search box stays the same element, a composition in it unbroken */
-function readList() { if (!RR.list) return; RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], fresh: true }; if (!onList()) return;
+function readList() { if (!RR.list) return; RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], providers: j.providers || [], fresh: true }; if (!onList()) return;
   const zones = document.querySelector("[data-room-zones]"); if (!zones || !RR.list.rooms.length) return render(); zones.replaceWith(zonesView(RR.list.rooms)); document.querySelector("[data-room-list]")?.setAttribute("data-room-list", RR.list.rooms.length); }).catch(() => {}); }
 /** the room list's zones, in order (src/domain/review-room.ts ROOM_ZONES decides which one a room is in) */
 const ZONES = [["waiting", "Waiting for me", "等我看"], ["reviewing", "In review", "審查中"], ["concluded", "Concluded", "已結論"], ["archived", "Archived", "封存"]];
@@ -1688,7 +1710,7 @@ function zonesView(rooms) { const q = searchable(RR.listQ || "").split(/\s+/).fi
     return h("details", { class: "rr-zone", "data-room-zone": id, open: !!q.length || !!RR.listArchived, ontoggle: (e) => { if (!q.length) RR.listArchived = e.target.open; } }, h("summary", {}, h("h3", {}, head)), body); });
   return h("div", { "data-room-zones": "" }, q.length && !shown.length ? h("p", { class: "faint", "data-room-nomatch": "" }, T("No room matches.", "沒有符合的審查室。")) : zones); }
 routes.room = (arg) => {
-  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (onList()) render(); }); }
+  if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], providers: j.providers || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (onList()) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) readList();
     const rooms = RR.list.rooms || [];
     return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL or a GitHub directory's.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 或 GitHub 目錄的網址。"),
