@@ -1,0 +1,11 @@
+{
+ "id":"pr-watch-apply-depends","name":"Apply pull request dependencies","kind":"pr-watch-apply-depends","version":1,
+ "description":"The captain approves writing Studio's marked dependency block (crew-studio:depends) at the end of the named pull request bodies; nothing else in a body changes.",
+ "params":{"proposal":{"label":"Pinned targets: each pull request, its block and the body it was read from"}},
+ "roles":[],"nodes":[
+  {"id":"card","kind":"hook","label":"Approve writing the dependency block","do":"pr-watch.apply-card","x":160,"y":140},
+  {"id":"write","kind":"hook","label":"Write the block into each body","do":"pr-watch.apply-write","x":440,"y":140},
+  {"id":"done","kind":"hook","label":"Dependency block written","x":720,"y":140},
+  {"id":"closed","kind":"hook","label":"Closed without writing","args":{"result":"closed"},"x":440,"y":280}
+ ],"edges":[["card","write","apply"],["card","closed","close"],["write","done","ok"]]
+}

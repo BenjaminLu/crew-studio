@@ -1,11 +1,11 @@
-// The backbone sidebar (docs/architecture.md §2): exactly Board, Firstmate, Terminals, Inbox,
+// The backbone sidebar (docs/architecture.md §2): exactly Board, Firstmate, Terminals, Inbox, Pull requests,
 // Crew, Runs, Workflows, Skills, Library, Review room, Peers, plus a gear for Settings. Everything else is a
 // lab: hidden from the sidebar and the home page unless "Show labs" is on
 // (Settings, or ?labs=1). A labs link without the flag shows a small roadmap
 // panel instead of a 404. Loaded last, so every module has registered its routes.
 (() => {
 const BACKBONE = [
-  ["board", "board", "Board", "看板"], ["firstmate", "message", "Firstmate", "Firstmate"], ["terminals", "terminal", "Terminals", "終端機"], ["inbox", "inbox", "Inbox", "收件匣"], ["crew", "crew", "Crew", "船員"],
+  ["board", "board", "Board", "看板"], ["firstmate", "message", "Firstmate", "Firstmate"], ["terminals", "terminal", "Terminals", "終端機"], ["inbox", "inbox", "Inbox", "收件匣"], ["prs", "pr", "Pull requests", "Pull requests"], ["crew", "crew", "Crew", "船員"],
   ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["skills", "library", "Skills", "技能"], ["library", "library", "Library", "成品庫"], ["room", "monitor", "Review room", "審查室"], ["lan", "link", "Peers", "區網同事"],
   // Projects: on a desktop the sidebar's own Projects section (public/projects.js); this item shows only in the phone's top bar
   ["projects", "folder", "Projects", "專案"],
@@ -31,7 +31,9 @@ window.crewLabs = labsOn;
 const nav = $(".nav");
 const item = (view, ic, en, tw) => {
   let b = nav.querySelector(`.nav-item[data-view="${view}"]`);
-  if (!b) { b = h("button", { class: view === "projects" ? "nav-item nav-proj-phone" : "nav-item", "data-view": view, "data-tip": T(en, tw) }, icon(ic), h("span", { class: "nl" }, T(en, tw))); b.addEventListener("click", () => { location.hash = `#/${view}`; }); }
+  if (!b) { b = h("button", { class: view === "projects" ? "nav-item nav-proj-phone" : "nav-item", "data-view": view, "data-tip": T(en, tw) }, icon(ic), h("span", { class: "nl" }, T(en, tw)),
+    // Pull requests carries how many rows wait on an approval or are ready to merge (public/prs.js sets it)
+    view === "prs" ? h("span", { class: "count attn", id: "navPrs", hidden: true }) : null); b.addEventListener("click", () => { location.hash = `#/${view}`; }); }
   else { b.dataset.tip = T(en, tw); const nl = b.querySelector(".nl"); if (nl) nl.textContent = T(en, tw); }
   b.dataset.backbone = "1"; return b;
 };

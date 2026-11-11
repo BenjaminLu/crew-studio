@@ -1,66 +1,128 @@
 # Unit pr-watch: every pull request I am on, its state, what it waits for and who
 
-What: a **Pull requests** section on the Projects page (`#/projects`), and the same list filtered to one project on that
-project's page. No new sidebar item. It watches the GitHub repositories the captain names, keeps every open pull request
-the captain opened or is assigned to, and shows one row per pull request:
-
-| column | content |
-|---|---|
-| order | the release order (AI-proposed, captain-editable; see Order and dependencies) |
-| pull request | `owner/repo#N` linked to GitHub, and one line on what it does |
-| issue | every linked issue, in any repository, with its state |
-| group | an optional release group: pull requests shipped together |
-| reviews | each reviewer's latest verdict; stale when the head moved after it |
-| missing | who still has to approve, from the branch rules (below) |
-| environments | which environments run the head (below) |
-| test evidence | the latest verdict from the evidence sources, and whether it covers the current head |
-| depends on | the pull requests this one waits for, and whether they are done |
-| next | the next step and who it waits on |
+What: a top-level **Pull requests** page (`#/prs`), in the sidebar right after Inbox, with a count of the rows whose next
+step is approve or merge. One list, across projects and repositories; a repository need not be a registered Studio
+project (a row shows the project's mark when it is one, a grey "·" mark when not). One row per open pull request.
 
 Why: the captain asked the same thing again and again in agent sessions. Over 30 days of the captain's own messages,
 "list the pull requests' status" came 26 times on 9 days, and "is it deployed yet" 52 times on 12 days. The captain's
 rule: 「如果我一直機械式的問一樣的問題或一直重複同一個指令意思，那表示這個應該做成一個crew studio 的功能」.
-The section must be generic: no organisation, repository, team, bot or environment name is built in; all of them are
-settings.
+The page is generic: no organisation, repository, team, bot, account or environment name is built in; all of them are
+settings or what the captain pastes.
 
-## Settings (per board, edited on the Projects page)
+Code: `src/pr-watch-rules.ts` (the deterministic part: addresses, verdicts, approvals, the next step, the dependency block,
+the proposal), `src/pr-watch.ts` (state, GitHub reads, refresh, routes, the apply card), `public/prs.js`,
+`public/prs.css`, `workflows/v2/pr-watch-apply-depends.wf.yaml`.
 
-- **Watched repositories**: any `owner/repo` the GitHub connection can read.
-- **Which pull requests**: opened by me, assigned to me (both on by default); optionally review requested from me.
-- **Evidence sources**: GitHub accounts whose comments count as test evidence, plus check-run names and labels that count.
-  A comment's verdict is read by rules (a heading or line naming pass, conditional, fail, code review only) and the
-  commit SHAs it names. A comment the rules cannot classify shows as "unclassified"; no model guesses a verdict.
-- **Environments**: an ordered list (for example dev, staging, production). Each one says how to tell whether a head
-  runs there, by one of: a GitHub Deployment to that environment; a check run by name on the head; a branch whose
-  latest deployment contains the head; an image tag in a file in a repository (path and pattern), compared by commit.
-- **Release groups**: optional names; a group's pull requests ship together.
+## Adding and removing
+
+- A URL box at the top. `https://github.com/<owner>/<repo>` watches that repository: its open pull requests opened by the
+  captain or assigned to the captain (a setting adds "review requested from me").
+  `https://github.com/<owner>/<repo>/pull/<n>` (also `…/files`, `…/commits`, `…/checks`) watches that one pull request even
+  when it is not the captain's; its row carries a "single" badge.
+- Only https github.com repository and pull request addresses are accepted, parsed strictly (no other host, port, user,
+  issue or tree address; owner and repository match `^[A-Za-z0-9_.-]+$`); anything else is refused with a message.
+- Watched repositories and single pull requests show as chips, each repository with its count, each with an × to stop
+  watching. Removing one row that came in through its repository records it as excluded; an "excluded N · restore" chip
+  brings them back.
+
+## Columns, in this order
+
+| column | content |
+|---|---|
+| (handle) | drag to reorder (or Alt+↑/↓ on a focused row) |
+| # | the order: Studio's record, or the proposed position (shown as proposed) |
+| pull request | the project mark, `repo#n` linked to GitHub, the title, and "changed N min ago: …" when it changed |
+| next step · waits on | the next step (below) and who it waits on |
+| missing | the approvals the branch rules still miss: a button that opens the actions below |
+| depends on | the pull requests this one waits for and whether they merged; proposed ones dashed and tagged |
+| test evidence | the latest verdict from the evidence sources, and whether it covers the current head |
+| environments | each environment, lit when it runs the head |
+| reviews | each reviewer's latest verdict; stale when it was given on another head |
+| issues | every linked issue, in any repository; "external" outside the watched repositories |
+| group | an optional release group |
+
+Tabs filter by next-step kind with counts: all, approve, test, fix, dependency, mergeable, on hold. Clicking a row opens a
+dialog with the issues, reviews, evidence, environments, the order's reasons, the missing approvals and the next-step rule
+list with the matched rule highlighted. Every text from GitHub is set as text, never as HTML.
+
+## Settings (the gear on the page)
+
+- **Which pull requests** of a watched repository: opened by me, assigned to me (both on by default); review requested
+  from me.
+- **Evidence sources**: GitHub accounts whose comments count, check-run names, labels. A comment's verdict is read by
+  rules: a heading, a bold line, a `Verdict:/Result:/結論:` line, or a short line on its own that names pass, conditional,
+  fail or code review only. None, or two that disagree, is "unclassified"; no model guesses a verdict. The latest decided
+  comment of a listed account counts (else its latest comment, unclassified); a listed check run on the head counts as pass
+  or fail; a listed label counts as pass, not tied to a commit. The commit a comment covers: the latest pull request commit
+  it names, else the commit pushed before it.
+- **Required reviewers**: accounts (a review bot, say) whose review every pull request needs before anything else.
+- **Environments**: an ordered list; each is production or not and may be limited to some repositories. Each says how to
+  tell whether a head runs there, by one of: a GitHub Deployment to that environment (the latest one, at the head, status
+  success); a check run by name on the head; the latest deployment of a branch whose commit contains the head (compare);
+  an image tag in a file in a repository (path, a pattern whose first group is the commit, optional ref), compared by commit.
+- **Release groups**: names; each row may be put in one.
+- The short same-repository form `Depends-on: #<n>` in the block (off by default), and the language of the drafted message.
 
 ## Reading
 
-- One GitHub search per poll finds the set (`is:pr is:open` with the watched repositories and the author/assignee
-  filter); one GraphQL read per repository fills the rows. It runs on the shared `GitHubPoller`
-  (src/github-poller.ts): read authority per repository, backoff on failure. Every read is GET or GraphQL query; this
-  unit writes to GitHub only through the dependency hint below.
-- **Refresh**: every 5 minutes, when the page opens, and on a **Refresh** button. No read/unread state. A row that changed
-  in the latest refresh is marked, with "changed N min ago" and what changed; the mark stays until the next change.
-- **Issues**: links from the pull request body (any GitHub issue URL, in any repository), from
-  `closingIssuesReferences`, and from cross-reference events in the timeline. An issue outside the watched
-  repositories is read (title, state) and never written.
-- **Missing approvals**: from the base branch's rules (`GET /repos/{o}/{r}/rules/branches/{base}`): required count,
-  code owners, approval after the last push, required reviewer teams; team members from the teams API. The author's own
-  approval does not count. When the rules cannot be read, the row says so instead of guessing.
-- **Snapshot**: each refresh is saved in Studio's data directory (never in a repository); a row's change is the
-  difference from the previous snapshot.
+- Studio reads with the token `findToken` finds (src/github.ts); it never reaches the browser, which talks only to
+  `/api/prs…`. Every call goes to `api.github.com` (`CREW_GITHUB_API` may name a loopback test server, nothing else), at
+  an address Studio builds from validated owner, repository and number; no address a page or GitHub supplies is fetched.
+  Reads are GET and one GraphQL query per pull request; bodies are bounded (`boundedGitHubJSON`), lists capped (3 pages of
+  100 for pull requests, reviews, commits, comments and files; 2 for the timeline).
+- Per watched repository: the captain's login (`GET /user`), then the open pull requests (`GET …/pulls?state=open`),
+  filtered by author, assignee or requested reviewer. Per row: reviews, commits, comments, timeline, files, check runs on
+  the head, and `closingIssuesReferences` (GraphQL).
+- **Issues**: links from the body (any GitHub issue URL in any repository), `closingIssuesReferences`, and
+  cross-referenced events in the timeline. An issue outside the watched repositories is read (title, state), marked
+  external, and never written.
+- **Missing approvals**: from the base branch's rulesets (`GET …/rules/branches/<base>`) and its classic branch protection
+  (`GET …/branches/<base>/protection`), the stricter of each: the required count, code owners (CODEOWNERS at
+  `.github/`, the root or `docs/` on the base; every changed file's owners need an approval from one of them), approval after
+  the last push, stale approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
+  never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
+  the last pusher's own either). A protection read that GitHub refuses (it needs admin) makes the rules unreadable: the row
+  says so and its next step is approve with "rules unreadable", never a guess.
+- **Refresh**: when the page opens, every 5 minutes, and on the Refresh button. The timer runs on the shared
+  `GitHubPoller` (src/github-poller.ts) under its own key, never a repository's, so it cannot collide with a project grant
+  or the dashboard; a failed refresh backs off (10, then 15 minutes), and a rate limit (403 with no remaining, or 429)
+  fails the whole refresh and keeps the last list. A refresh asked while one runs waits for it and reads again.
+- **No read/unread state.** A row that changed in the latest refresh carries a left accent bar and "changed N min ago:
+  what" (new commits, a review, the evidence, an environment, the next step); the mark stays until the next change. A
+  settings change starts the marks afresh.
+- **State**: `<data>/pr-watch/state.json` (watch list, settings, Studio's order and dependencies, what Studio wrote) and
+  `<data>/pr-watch/snapshot.json` (the last refresh), 0600, never in a repository.
+
+## Next step and who it waits on
+
+The first matching rule, top to bottom; deterministic, no model:
+
+1. draft: on hold (the author)
+2. a reviewer asked for changes: fix (the author)
+3. a required reviewer has not reviewed: wait for that reviewer
+4. a dependency is not merged: wait for that pull request
+5. the head runs in no pre-production environment (when any is set): deploy for testing (the author)
+6. the evidence verdict is fail: fix (the author). Failed evidence never falls through to "ready".
+7. no evidence, unclassified, code review only, or evidence for an older head: test (the evidence sources), "test only
+   the change since <sha>" when an older head was tested
+8. approvals missing, or the rules unreadable: approve (the missing people, owners or teams)
+9. otherwise: ready to merge (the captain)
 
 ## Order and dependencies
 
-- **AI proposal**: on first sight of a set, and when a pull request joins it, a model proposes an order and the
-  dependencies, each with its reason: a `Depends-on:` line in a body, a body naming another pull request, a pull request
-  based on another's branch, files both change (a conflict risk), an issue that says which comes first. The proposal shows
-  marked "proposed" until the captain accepts it.
-- **Captain edits**: drag to reorder; add or remove a dependency on a row. An edit replaces the proposal for that row.
-- **Applied on the pull request**: the captain applies the dependencies through a card (Studio writes to GitHub only
-  after the captain approves a card). Studio writes one marked block at the end of the pull request body:
+- **Proposal**: from the pull requests themselves, each with its reason: a `Depends-on:` line in a body, a body naming
+  another watched pull request, a pull request based on another's head branch (stacked) → dependencies; files both change
+  and an issue both link → the older first. The order puts every dependency first, then those hints, then age. It shows as
+  proposed (dashed, tagged, the position in italics) until the captain accepts it ("Accept", or "Accept and apply…").
+- **AI proposal: a follow-up.** Studio has no one-shot model step behind a captain card today; this unit ships the
+  signals-based proposal. Asking a model to propose (through a captain card) is the next step of this unit.
+- **Captain edits**: drag to reorder; add or remove a dependency on a row (from the list or by `owner/repo#n`). An edit
+  replaces the proposal for that row and is Studio's record.
+- **Applied on the pull request**: only through a captain-only card (workflow `pr-watch-apply-depends`, in the Inbox)
+  that shows each target repository, pull request and the exact block. Studio reads each body when the card is made and
+  again right before writing; a body that changed in between is left alone and the Task says so (apply again). Only the
+  marked block at the end of the body is replaced (or added):
 
   ```
   <!-- crew-studio:depends -->
@@ -68,53 +130,65 @@ settings.
   <!-- /crew-studio:depends -->
   ```
 
-  A setting adds the short same-repository form (`Depends-on: #<n>`) for tools that read only that form.
-- **Drift**: every refresh compares the body's block with Studio's record. A block removed or edited on GitHub turns the
-  row's dependency cell amber, "the hint on GitHub changed", with two actions: apply Studio's record again (a card), or
-  take the body's version as the new record.
-
-## Next step and who it waits on
-
-The first matching rule, top to bottom; deterministic, no model:
-
-1. draft: on hold
-2. a reviewer asked for changes: fix (who: the author)
-3. a required reviewer has not reviewed: wait for that reviewer
-4. a dependency is not done: wait for that pull request
-5. the head runs in no pre-production environment: deploy for testing
-6. no evidence, or evidence for another head: test (who: the evidence sources), "test only the change since <sha>" when an
-   older head was tested
-7. approvals missing: approve (who: the missing people or teams)
-8. otherwise: ready to merge (who: the captain)
+  A body with an unpaired marker is refused. Firstmate cannot answer the card; closing it writes nothing.
+- **Drift**: every refresh compares the body's block with what Studio wrote. A block edited or removed on GitHub turns
+  the row's dependency cell amber, "the hint on GitHub changed", with two actions: apply Studio's record again (the card),
+  or take GitHub's version as Studio's record.
 
 ## Actions on a row that misses approvals
 
-- **Ask for review**: drafts a short message to the missing people (the pull request, what it does, its evidence, what is
-  asked), in the language the captain set; Copy, or Send through a messaging connector when one is connected. Studio
-  never sends without the captain's click.
-- **Open in the review room**: the existing review room for that pull request (docs/units/review-room.md).
-- **Handoff report**: a Task that writes a one-page report of the selected rows for a reader the captain names (the
-  pull requests, evidence, risks, what is asked); it starts only from its dispatch card.
-- **Copy as Markdown**: the visible rows, for pasting into a chat or a document.
+- **Ask for review**: a drafted message (the pull request, what it does, its evidence, environments, dependencies, who is
+  missing), in the language the captain picks; Copy. "Send via connector" is disabled with the reason while Studio has no
+  messaging connector. Studio never sends by itself.
+- **Open in the review room**: the existing review room for that pull request (`POST /api/review-room/open-pr`,
+  docs/units/review-room.md); its refusal (a repository that is not a connected project) shows as is.
+- **Handoff report**: today a one-page Markdown report of the row for a reader the captain names, copied. **Follow-up**: a
+  Task that writes it, started only from its dispatch card (no existing dispatch path fits a report of pull requests yet).
+- **Copy as Markdown**: the visible rows.
 
-## Done when (tests/pr-watch.ts, tests/pr-watch-ui.mjs; a fixture GitHub with three repositories, one outside the set)
+## Routes
 
-1. The set is exactly the open pull requests opened by or assigned to the captain in the watched repositories.
-2. An issue linked from the body in an unwatched repository shows with its title and state, and nothing is written to it.
-3. Missing approvals follow the rules fixture: required count, code owners, a required team, the author's own approval
-   ignored, an approval made stale by a later push.
-4. An environment shows the head as running from each of the four detectors.
+`GET /api/prs` (the list from the last snapshot; never calls GitHub), `GET /api/prs/count`; and, desktop only, through the
+CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}`, `/restore {pr?}`, `/settings`,
+`/order {order}`, `/deps {pr,on}`, `/group {pr,group}`, `/accept`, `/drift/take {pr}`, `/apply {prs,shortForm}`.
+
+## Done when (tests/pr-watch.ts, tests/pr-watch-ui.mjs; a fictional GitHub, tests/lib/pr-watch-github.ts: three watched repositories, an issues-only one outside the set, an infrastructure repository and a single pull request elsewhere)
+
+1. The set is exactly the open pull requests opened by or assigned to the captain in the watched repositories, plus the
+   single one — pr-watch.ts "the set: …".
+2. An issue linked from the body in an unwatched repository shows its title and state, marked external, and nothing is
+   written to it — pr-watch.ts "an issue linked from the body …", "nothing is written to the external issue".
+3. Missing approvals follow the rules fixture: the ruleset's count, a code owner, a required team, the author's own
+   approval ignored, a stale approval, classic protection dismissing stale approvals, unreadable protection —
+   pr-watch.ts "missing approvals from the ruleset …", "classic protection …", "branch protection that needs admin …".
+4. An environment shows the head as running from each of the four detectors — pr-watch.ts "a GitHub Deployment …",
+   "a check run by name …", "the latest deployment of a branch …", "an image tag in a file …".
 5. Evidence from a listed account is classified; evidence naming an older head reads "test only the change since";
-   an unclassifiable comment reads "unclassified".
-6. Each next-step rule fires on its fixture and the first match wins.
-7. Refresh: on open, on the button, on the interval; a changed row is marked with what changed; no read/unread state.
-8. The proposal shows as proposed with reasons; a drag and a dependency edit replace it for that row.
-9. Applying dependencies writes only the marked block, only after the card; a block edited on GitHub turns amber and
-   both drift actions work.
-10. The three actions on a row missing approvals: the draft names the missing people; the review room opens; the report
-    Task waits for its card.
-11. No name of an organisation, repository, team or account is in the source outside tests and fixtures.
-12. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways scroll at 390.
+   an unclassifiable comment reads "unclassified" — pr-watch.ts "evidence from the listed account …", "evidence naming an
+   older head …", "a comment the rules cannot classify …".
+6. Each next-step rule fires on its fixture and the first match wins; failed evidence is a fix, never ready —
+   pr-watch.ts "<id>: next step …", "the first matching rule wins …", "failed evidence: fix, never ready".
+7. Refresh on open, on the button and on the interval; a changed row is marked with what changed; no read/unread state —
+   pr-watch-ui.mjs "opening the page refreshes", "the refresh button reads GitHub …", "the 5-minute timer (shortened here)
+   …", "the changed row is marked with what changed", "no read/unread state anywhere"; pr-watch.ts "the mark stays …".
+8. The proposal shows as proposed with reasons; a drag and a dependency edit replace it for that row — pr-watch-ui.mjs
+   "the proposal shows each dependency with its reason", "a drag (…) reorders …", "a dependency edit becomes Studio's
+   record …".
+9. Applying writes only the marked block, only after the captain's card; a body changed after the card is not written; a
+   block edited on GitHub turns amber and both drift actions work — pr-watch.ts "nothing is written before the captain
+   answers", "Firstmate cannot answer it", "only the marked block was added …", "a body that changed after the card …",
+   "take GitHub's version …", "re-applying Studio's record …"; pr-watch-ui.mjs "the captain's approval writes …",
+   "a block edited on GitHub turns the cell amber".
+10. The actions on a row missing approvals: the draft names the missing people, the connector button is disabled with its
+    reason, the review room is asked for that pull request, the report and Markdown are copied — pr-watch-ui.mjs.
+11. Addresses are parsed strictly; settings are validated; the API origin is api.github.com — pr-watch.ts "refused: …",
+    "settings: …", "the API origin …"; the token is in no file and no answer — "the state lives in Studio's data directory …".
+12. No name of an organisation, repository, team or account is in the feature's source — pr-watch.ts "no organisation,
+    repository, team, bot or account name is hard-coded …".
+13. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
+    inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
 
-Touches outside the unit's own files: public/projects.js (the section on both pages), src/github-poller.ts (a
-subscriber), the card kinds (apply dependencies), docs/architecture.md (UI line).
+Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
+and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the
+internal apply workflow), tests/acceptance/pr-watch-apply-depends.yaml, tests/backbone-ui.mjs and tests/board-ui.mjs (the
+sidebar order), docs/architecture.md (UI line), docs/units/backbone-nav.md.
