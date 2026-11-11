@@ -162,7 +162,14 @@ export function createPrWatch(d: PrWatchDeps) {
   const iso = () => new Date(now()).toISOString();
   const read = <T>(f: string, def: () => T): T => { try { return existsSync(f) ? { ...def(), ...JSON.parse(readFileSync(f, "utf8")) } : def(); } catch { return def(); } };
   const write = (f: string, v: unknown) => { mkdirSync(dir, { recursive: true, mode: 0o700 }); const tmp = `${f}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(v, null, 1), { mode: 0o600 }); renameSync(tmp, f); };
-  let state: State = read(stateFile, fresh); state.settings = { ...structuredClone(DEFAULT_SETTINGS), ...state.settings };
+  let state: State = read(stateFile, fresh);
+  // saved settings pass the same checks as new ones before anything runs them; an environment that fails is dropped and
+  // the page says which (a template saved by an older Studio must never run)
+  let settingsWarning: { en: string; tw: string } | null = null;
+  { const raw: any = { ...structuredClone(DEFAULT_SETTINGS), ...state.settings }, dropped: string[] = [];
+    const envs = (Array.isArray(raw.environments) ? raw.environments : []).filter((e: any) => { try { cleanSettings({ ...raw, environments: [e] }); return true; } catch { dropped.push(String(e?.name ?? "?").slice(0, 40)); return false; } });
+    try { state.settings = cleanSettings({ ...raw, environments: envs }); } catch { state.settings = structuredClone(DEFAULT_SETTINGS); dropped.push("(all settings)"); }
+    if (dropped.length) settingsWarning = { en: `Saved settings that no longer pass Studio's checks were not used: ${dropped.join(", ")}. Open the settings to set them again.`, tw: `已儲存但不再通過 Studio 檢查的設定沒有使用：${dropped.join("、")}。請打開設定重新設定。` }; }
   let snap: Snapshot = read(snapFile, emptySnap);
   const etags = new EtagCache(); let etagToken = "";
   let version = 0, ranVersion = -1; // the state a refresh reads: a change while one runs asks for another
@@ -409,7 +416,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const repoCount = (repo: string) => rows.filter((r) => eq(r.repo, repo) && !r.single).length;
     const projects = (() => { try { return new Projects(d.dataDir).nativeSnapshot().records; } catch { return []; } })();
     return {
-      enabled: !disabled(), connected: !!tok.token, me: snap.me, refreshedAt: snap.at, refreshing: live.refreshing, error: live.error, backoffUntil: live.backoffUntil, errors: snap.errors, intervalMs: interval(),
+      enabled: !disabled(), connected: !!tok.token, settingsWarning, me: snap.me, refreshedAt: snap.at, refreshing: live.refreshing, error: live.error, backoffUntil: live.backoffUntil, errors: snap.errors, intervalMs: interval(),
       settings: state.settings,
       watch: { repos: state.watch.repos.map((repo) => { const p = projects.find((x) => x.github?.repository && eq(x.github.repository, repo)); return { repo, count: repoCount(repo), project: p ? { id: p.id, name: p.name || p.id } : null }; }),
         prs: state.watch.prs.map((id) => ({ id, state: snap.single[id] ?? (rows.some((r) => eq(r.id, id)) ? "open" : null) })), excluded: state.watch.excluded },
@@ -458,6 +465,8 @@ export function createPrWatch(d: PrWatchDeps) {
       // no dependency left: the card removes the block GitHub still has (nothing to do when there is none)
       if (!on.length && !(found && found !== "malformed")) throw new Error(`${id} has no dependency to write and no block on GitHub to remove`);
       const block = on.length ? R.renderBlock(on, r.repo, shortForm) : "";
+      // Studio never writes a block it would itself refuse to replace later (blockProblem's 4000-character limit)
+      if (block.length > R.BLOCK_MAX) throw new Error(`${id}: ${on.length} dependencies make a block of ${block.length} characters; at most ${R.BLOCK_MAX} fit. Remove some first.`);
       if (block && R.replaceBlock(body, block).length > MAX_BODY) throw new Error(`${id}: the body would exceed GitHub's limit`);
       targets.push({ id: r.id, repo: r.repo, number: r.number, title: r.title, on, block, bodyHash: bodyHash(body), current: found && found !== "malformed" ? found.text.slice(0, 4000) : null });
     }
@@ -473,7 +482,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const p = JSON.parse(String(x.run.params.proposal ?? "null")) as Proposal;
     if (p?.schema !== 1 || !Array.isArray(p.targets) || !p.targets.length || p.targets.length > 50) throw new Error("The apply proposal is malformed");
     for (const t of p.targets) { const sp = R.splitId(t.id);
-      if (!sp || !eq(sp.repo, t.repo) || sp.number !== t.number || !Array.isArray(t.on) || t.on.some((o) => !R.splitId(o)) || t.block !== (t.on.length ? R.renderBlock(t.on, t.repo, !!p.shortForm) : "") || (!t.on.length && !t.current) || !/^[a-f0-9]{64}$/.test(t.bodyHash) || !(t.current === null || typeof t.current === "string"))
+      if (!sp || !eq(sp.repo, t.repo) || sp.number !== t.number || !Array.isArray(t.on) || t.on.some((o) => !R.splitId(o)) || t.block !== (t.on.length ? R.renderBlock(t.on, t.repo, !!p.shortForm) : "") || (!t.on.length && !t.current) || t.block.length > R.BLOCK_MAX || !/^[a-f0-9]{64}$/.test(t.bodyHash) || !(t.current === null || typeof t.current === "string"))
         throw new Error("The apply proposal is malformed"); }
     return p;
   }
@@ -565,7 +574,7 @@ export function createPrWatch(d: PrWatchDeps) {
         case "/api/prs/watch": { const got = watchUrl(b?.url); ensure(); void refresh().catch(() => {}); return json({ ...view(), added: got }); }
         case "/api/prs/unwatch": unwatch(b); ensure(); return json(view());
         case "/api/prs/restore": { if (typeof b?.pr === "string") state.watch.excluded = state.watch.excluded.filter((x) => !eq(x, b.pr)); else state.watch.excluded = []; save(); void refresh().catch(() => {}); return json(view()); }
-        case "/api/prs/settings": { state.settings = cleanSettings(b?.settings); save();
+        case "/api/prs/settings": { state.settings = cleanSettings(b?.settings); settingsWarning = null; save();
           // what the settings change (environments, evidence, which pull requests) is not a change on GitHub: start the marks afresh
           snap.finger = {}; snap.changed = {}; write(snapFile, snap); void refresh().catch(() => {}); return json(view()); }
         case "/api/prs/order": { state.order = validIds(b?.order); save(); return json(view()); }

@@ -64,9 +64,12 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   tell whether a head runs there, by one of: a GitHub Deployment to that environment (the latest one, at the head, status
   success); a check run by name on the head; the latest deployment of a branch, when its latest status is success or active, whose commit contains the head (compare);
   an image tag in a file in a repository (path, a one-line template with exactly one `{tag}`, e.g.
-  `image: registry/app:{tag}`, optional ref), compared by commit. No regular expression is taken from the settings: Studio
-  finds the literal text around `{tag}`, reads a tag of `[0-9A-Za-z._-]{1,128}`, and takes its trailing 7 to 40 hex
-  characters as the commit, one line at a time (lines over 500 characters skipped).
+  `image: registry/app:{tag}`, with text before `{tag}`; optional ref), compared by commit. No regular expression is taken
+  from the settings: Studio finds the text before `{tag}`, then the text after it, and the tag between must be
+  `[0-9A-Za-z._-]{1,128}` (with nothing after `{tag}`, the tag ends at the end of the line or the first other character;
+  a longer run is no tag). The commit is the tag's trailing 7 to 40 hex characters, never all digits (a date or build
+  number is no commit). One line at a time, lines over 500 characters skipped. Saved settings pass the same checks when
+  Studio starts: an environment that fails is dropped and the page says which.
 - **Release groups**: names; each row may be put in one.
 - The short same-repository form `Depends-on: #<n>` in the block (off by default), and the language of the drafted message.
 
@@ -160,6 +163,7 @@ The first matching rule, top to bottom; deterministic, no model:
   When a row has no dependency left but GitHub still has the block, the same card removes the block: the block, its own
   line ending and at most the one blank line that set it apart; every other byte of the body stays, paragraph breaks
   included.
+  Studio never writes a block over 4000 characters (too many dependencies are refused before the card, with the reason).
   A body with an unpaired marker, two blocks, a block over 4000 characters, or a block holding anything but
   `Depends-on:` lines naming pull requests is refused (a marker pair
   around other text would otherwise delete it unseen). Firstmate cannot answer the card; closing it writes nothing.
@@ -231,7 +235,11 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     literal text; the block on GitHub refused unless Depends-on lines naming pull requests; a normalised body still a
     good write; in the page: "+n" and the names in the Missing cell (two lines at most), the proposed tag inside its
     column, aria-expanded on the missing-approval button.
-16. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
+16. Review round 5 (tests/pr-watch.ts "round 5", the UI suite): a template with nothing before {tag} is refused and never
+    loops; a suffix after {tag} matches; an over-long or all-digit tag is no commit; too many dependencies are refused
+    before the card; a bad saved template is dropped on load with a message; in the page: the template hint, "+1
+    approval", and a second click closing the menu.
+17. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
     inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script

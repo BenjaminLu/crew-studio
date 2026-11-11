@@ -58,6 +58,8 @@ export function dependsOnLines(body: string, repo: string): string[] {
 
 // ---------- Studio's dependency block ----------
 export const BLOCK_START = "<!-- crew-studio:depends -->", BLOCK_END = "<!-- /crew-studio:depends -->";
+/** The longest block Studio writes or replaces (the card shows the block GitHub has whole). */
+export const BLOCK_MAX = 4000;
 export function renderBlock(on: string[], repo: string, shortForm = false): string {
   const lines = on.map((id) => { const s = splitId(id)!; return `Depends-on: https://github.com/${s.repo}/pull/${s.number}`; });
   if (shortForm) for (const id of on) { const s = splitId(id)!; if (sameRepo(s.repo, repo)) lines.push(`Depends-on: #${s.number}`); }
@@ -80,7 +82,7 @@ export function blockProblem(body: string): string | null {
   if (b.indexOf(BLOCK_START, f.end) >= 0 || b.indexOf(BLOCK_END, f.end) >= 0) return "the pull request body has more than one crew-studio:depends block; fix it on GitHub first";
   // the card shows the block GitHub has now before it is replaced: so it must be short enough to show whole, and hold
   // nothing but Depends-on lines naming pull requests (anything else would be replaced unseen)
-  if (f.text.length > 4000) return "the crew-studio:depends block in the body is over 4000 characters; fix it on GitHub first";
+  if (f.text.length > BLOCK_MAX) return `the crew-studio:depends block in the body is over ${BLOCK_MAX} characters; fix it on GitHub first`;
   const inner = f.text.slice(BLOCK_START.length, f.text.length - BLOCK_END.length).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const ref = /^(?:https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9]\d{0,9}|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9]\d{0,9}|#[1-9]\d{0,9})$/;
   const onlyRefs = (l: string) => { const m = /^depends[- ]on\s*:\s*(.*)$/i.exec(l); if (!m) return false; const parts = m[1].split(/[\s,]+/).filter(Boolean); return parts.length > 0 && parts.every((x) => ref.test(x)); };
@@ -380,20 +382,34 @@ export function templateProblem(t: string): string | null {
   if (!s || s.length > 200) return "write a line with {tag} where the tag is, e.g. image: registry/app:{tag}";
   if (s.split("{tag}").length !== 2) return "the template needs exactly one {tag}";
   if (/[\r\n]/.test(s)) return "the template is one line";
+  if (!s.split("{tag}")[0].trim()) return "write the text that comes before {tag} on that line, e.g. image: registry/app:{tag}";
   return null;
 }
-const TAG_CHAR = /[0-9A-Za-z._-]/;
-/** The commit an image tag names: the trailing 7 to 40 hex characters of the tag the template finds (first match). */
+const TAG_CHAR = /^[0-9A-Za-z._-]$/;
+const isTag = (t: string) => t.length >= 1 && t.length <= 128 && [...t].every((c) => TAG_CHAR.test(c));
+/** The commit a tag ends in: its trailing 7 to 40 hex characters, not all digits (a date or a build number is no commit). */
+export function commitOfTag(tag: string): string | null {
+  const m = /[0-9a-f]{7,40}$/i.exec(tag); if (!m || /^\d+$/.test(m[0])) return null;
+  return m[0].toLowerCase();
+}
+/**
+ * The commit an image tag names: the first place on a line where the template's text before {tag} is followed by a tag
+ * of [0-9A-Za-z._-]{1,128} and then the text after {tag} (found first, so a suffix made of tag characters still
+ * matches). With nothing after {tag}, the tag ends at the end of the line or the first other character, and a longer
+ * run is no tag. Each line is scanned forward once per occurrence of the prefix: linear in the line's length.
+ */
 export function tagCommit(text: string, template: string): string | null {
   if (templateProblem(template)) return null;
   const [pre, post] = template.split("{tag}");
   for (const line of String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000)) {
     if (line.length > 500) continue;
-    let from = 0;
-    while (true) {
-      const at = line.indexOf(pre, from); if (at < 0) break;
-      let i = at + pre.length, j = i; while (j < line.length && j - i < 128 && TAG_CHAR.test(line[j])) j++;
-      if (j > i && line.startsWith(post, j)) { const m = /[0-9a-f]{7,40}$/i.exec(line.slice(i, j)); return m ? m[0].toLowerCase() : null; }
+    for (let from = 0; from < line.length;) {
+      const at = line.indexOf(pre, from); if (at < 0 || at >= line.length) break;
+      const i = at + pre.length; let j: number;
+      if (post) { j = line.indexOf(post, i); if (j < 0) break; }
+      else { j = i; while (j < line.length && TAG_CHAR.test(line[j])) j++; }
+      const tag = line.slice(i, j);
+      if (isTag(tag)) return commitOfTag(tag);
       from = at + 1;
     }
   }

@@ -87,3 +87,4 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-modal a{color:var(--accent-text);text-decoration:none}.pw-modal a:hover{text-decoration:underline}
 .pw-loaderr{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .pw-tabs .tb-tab[aria-pressed="true"]{border-color:var(--text);background:var(--surface);font-weight:600}
+.pw-envhint{grid-column:1/-1;margin:0}

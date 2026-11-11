@@ -120,6 +120,7 @@ function statusLine(d) {
   const lines = [];
   if (!d.enabled) lines.push(T("GitHub polling is off in this Studio (CREW_GH=0).", "這個 Studio 關閉了 GitHub 輪詢（CREW_GH=0）。"));
   else if (!d.connected && (d.watch.repos.length || d.watch.prs.length)) lines.push(T("GitHub is not connected: Studio has no token (CREW_GITHUB_TOKEN, a token saved in Studio, or gh auth token).", "GitHub 尚未連線：Studio 沒有權杖（CREW_GITHUB_TOKEN、存在 Studio 的權杖，或 gh auth token）。"));
+  if (d.settingsWarning) lines.push(LX(d.settingsWarning));
   if (d.error) lines.push(LX(d.error) + (d.backoffUntil ? T(` Next try after ${new Date(d.backoffUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`, ` ${new Date(d.backoffUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} 之後再試。`) : ""));
   for (const e of d.errors || []) lines.push(`${e.target}: ${LX(e)}`);
   if (PW.err) lines.push(PW.err);
@@ -179,7 +180,7 @@ function rowView(r, d) {
       n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、")))),
     h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { // compact in the cell: "+n" for the count, and a team of the row's own organisation without it (full names in the title)
       const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.toLowerCase().startsWith(own) ? `@${w.slice(own.length)}` : w;
-      const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
+      const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.length === 1 && miss[0].kind === "count" ? T(`+${miss[0].n} approval${miss[0].n === 1 ? "" : "s"}`, `還要 ${miss[0].n} 個`) : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
       return h("button", { class: "badge human pw-cta", "data-prs-cta": r.id, "aria-expanded": "false", title: miss[0].kind === "unreadable" ? LX({ en: miss[0].reason, tw: miss[0].tw }) : full, onclick: (e) => { e.stopPropagation(); ctaMenu(e.currentTarget, r); } },
         h("span", { class: "pw-ctat" }, label), h("span", { "aria-hidden": "true" }, " ▾")); })() : h("span", { class: "faint" }, "—")),
     h("span", { role: "cell" }, depCell(r)),
@@ -255,9 +256,11 @@ function detail(r) {
         r.partial?.length ? h("p", { class: "faint pw-small" }, T(`Not read this time: ${r.partial.join(", ")}.`, `這次沒讀到：${r.partial.join("、")}。`)) : null)),
   ], { wide: true, id: "detail" });
 }
+let closeMenu = null; // the open missing-approval menu's close, so a new one (or a second click) closes it properly
 function ctaMenu(anchor, r) {
-  document.querySelectorAll(".pw-menu").forEach((m) => m.remove());
-  const close = () => { m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true); };
+  if (anchor.getAttribute("aria-expanded") === "true" && closeMenu) { closeMenu(); return; }
+  closeMenu?.(); document.querySelectorAll(".pw-menu").forEach((x) => x.remove());
+  const close = () => { if (closeMenu === close) closeMenu = null; m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true); };
   const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
   const m = h("div", { class: "pop pw-menu", role: "group", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), "data-prs-menu": r.id },
     h("div", { class: "tgt" }, `${r.id} · `, (r.approvals?.missing || []).map(missWord).join(", ")),
@@ -265,9 +268,9 @@ function ctaMenu(anchor, r) {
     item("room", "monitor", "Open in the review room", "在審查室打開", () => openRoom(r)),
     item("report", "doc", "Handoff report…", "交接報告…", () => reportModal([r])),
     item("md", "copy", "Copy this row as Markdown", "把這一列複製成 Markdown", async () => { flash(await copy(markdown([r])) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); }));
-  document.body.append(m); anchor.setAttribute("aria-expanded", "true");
+  document.body.append(m); anchor.setAttribute("aria-expanded", "true"); closeMenu = close;
   const b = anchor.getBoundingClientRect(); m.style.position = "fixed"; m.style.left = `${Math.max(8, Math.min(b.left, innerWidth - 290))}px`; m.style.top = `${Math.min(b.bottom + 6, innerHeight - 220)}px`;
-  const off = (e) => { if (!m.contains(e.target)) close(); }, esc = (e) => { if (e.key === "Escape") { close(); anchor.focus(); } };
+  const off = (e) => { if (!m.contains(e.target) && !anchor.contains(e.target)) close(); }, esc = (e) => { if (e.key === "Escape") { close(); anchor.focus(); } };
   // the click that opened the menu has already passed the document's capture phase: listening now cannot catch it
   document.addEventListener("click", off, true); document.addEventListener("keydown", esc, true);
   m.querySelector("button")?.focus();
@@ -365,14 +368,15 @@ function settingsModal() {
   const csv = (key, label, get, set) => h("label", { class: "field" }, h("span", { class: "lbl" }, label), h("input", { class: "input", "data-prs-set": key, value: get().join(", "), oninput: (e) => set(e.target.value.split(",").map((x) => x.trim()).filter(Boolean)) }));
   const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" });
   const KINDS = [["deployment", T("GitHub Deployment to an environment", "GitHub Deployment 到某個環境")], ["check", T("A check run by name on the head", "head 上某個名稱的 check run")], ["branch", T("The latest deployment of a branch containing the head", "某個 branch 最新的部署包含這個 head")], ["file", T("An image tag in a file in a repository", "某個 repo 的檔案裡的 image tag")]];
-  const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", T("line with {tag}, e.g. image: registry/app:{tag}", "含 {tag} 的那一行，例如 image: registry/app:{tag}")], ["ref", T("ref (optional)", "ref（可省略）")]] };
+  const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", "image: registry/app:{tag}"], ["ref", T("ref (optional)", "ref（可省略）")]] };
   const drawEnvs = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i) },
     h("input", { class: "input pw-envname", value: e.name || "", placeholder: T("name", "名稱"), "aria-label": T("Environment name", "環境名稱"), oninput: (ev) => { e.name = ev.target.value; } }),
     h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!e.production, onchange: (ev) => { e.production = ev.target.checked; } }), T(" production", " 正式")),
     h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, KINDS.map(([k, l]) => h("option", { value: k, selected: e.detect?.kind === k }, l))),
     ...(FIELDS[e.detect?.kind] || []).map(([f, l]) => h("input", { class: "input", value: e.detect?.[f] || "", placeholder: l, "aria-label": l, oninput: (ev) => { e.detect[f] = ev.target.value; } })),
     h("input", { class: "input", value: (e.repos || []).join(", "), placeholder: T("only these repositories (optional)", "只用在這些 repo（可省略）"), "aria-label": T("Repositories", "repo"), oninput: (ev) => { e.repos = ev.target.value.split(",").map((x) => x.trim()).filter(Boolean); } }),
-    h("button", { class: "pw-x", "aria-label": T("Remove this environment", "移除這個環境"), onclick: () => { envs.splice(i, 1); drawEnvs(); } }, icon("x")))));
+    h("button", { class: "pw-x", "aria-label": T("Remove this environment", "移除這個環境"), onclick: () => { envs.splice(i, 1); drawEnvs(); } }, icon("x")),
+    e.detect?.kind === "file" ? h("p", { class: "faint pw-small pw-envhint", "data-prs-template-hint": "" }, T("Studio finds this line in the file and reads the tag at {tag}; the tag must end in the commit (7–40 hex characters), e.g. app:1.4.0-3f2a1c9.", "Studio 在檔案裡找這一行，讀 {tag} 位置的 tag；tag 結尾要是 commit（7–40 個十六進位字元），例如 app:1.4.0-3f2a1c9。")) : null)));
   drawEnvs();
   const err = h("p", { class: "pw-err", role: "alert", hidden: true });
   const close = pwModal(T("Pull requests settings", "Pull requests 設定"), [

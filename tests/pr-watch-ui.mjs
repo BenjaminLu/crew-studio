@@ -99,6 +99,9 @@ try {
   ok(cta.h < 44 && cta.t === '1 more approval · @dana · @northwind/release' && cta.text.replace(/\s+/g, ' ').includes('+1 · @dana · @release') && !/missing|more approval/.test(cta.text), 'the missing-approval button shows the count and the names (at most two lines), teams written one way', JSON.stringify(cta));
   await p.click('[data-prs-cta="northwind/checkout-api#18"]'); const exp = await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded'); await p.keyboard.press('Escape');
   ok(exp === 'true' && await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded') === 'false' && await p.locator('[data-prs-cta][aria-haspopup]').count() === 0, 'the missing-approval button says whether its actions are open (aria-expanded), no popup role it does not have', JSON.stringify([exp, await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded'), await p.locator('[data-prs-cta][aria-haspopup]').count()]));
+  await p.click('[data-prs-cta="northwind/checkout-api#18"]'); await p.waitForSelector('[data-prs-menu]'); await p.click('[data-prs-cta="northwind/checkout-api#18"]');
+  ok(await p.locator('[data-prs-menu]').count() === 0 && await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded') === 'false', 'a second click on the missing-approval button closes its menu instead of reopening it');
+  ok((await p.locator('[data-prs-cta="northwind/web-app#30"] .pw-ctat').innerText()) === '+1 approval', 'a missing count with no names reads "+1 approval"', await p.locator('[data-prs-cta="northwind/web-app#30"] .pw-ctat').innerText());
   ok((await p.locator('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]').innerText()) === 'Fix the failing tests', 'next-step words follow one pattern');
   const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
   ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all eleven columns fit without scrolling', JSON.stringify(fit));
@@ -173,6 +176,7 @@ try {
   // the settings dialog
   await p.click('[data-prs-settings]'); await p.waitForSelector('[data-prs-dialog="settings"]');
   ok(await p.locator('[data-prs-env]').count() === 4 && await p.locator('[data-prs-set="accounts"]').inputValue() === 'qa-lin', 'the settings dialog shows the environments and evidence sources');
+  ok((await p.locator('[data-prs-env="3"] [data-prs-template-hint]').innerText()).includes('reads the tag at {tag}') && await p.locator('[data-prs-env="3"] input[placeholder="image: registry/app:{tag}"]').count() === 1, 'the file detector explains its {tag} template in a hint under the row');
   await p.check('[data-prs-which="reviewRequested"]'); await p.click('[data-prs-settings-save]'); await p.waitForSelector('[data-prs-dialog="settings"]', { state: 'detached' });
   ok((await api('/api/prs')).body.settings.which.reviewRequested === true, 'settings save');
   await p.screenshot({ path: join(shots, 'list-1440-light-after.png'), fullPage: true });

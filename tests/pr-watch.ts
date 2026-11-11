@@ -145,6 +145,14 @@ const { ok, end } = suite("pr-watch");
     const orig = `Intro${eol}more${eol}`, appended = R.replaceBlock(orig, B);
     ok(R.removeBlock(appended) === orig, `appending then removing the block gives the body back byte for byte (${eol === "\n" ? "LF" : "CRLF"})`, JSON.stringify(R.removeBlock(appended)));
   }
+  // round 5: the tag template
+  { const t0 = performance.now(), r1 = R.tagCommit("version: 1\n", '{tag}"'), ms = performance.now() - t0;
+    ok(r1 === null && ms < 50 && /text that comes before \{tag\}/.test(R.templateProblem('{tag}"') ?? "") && /text that comes before/.test(R.templateProblem("  {tag}") ?? ""), "a template with nothing before {tag} is refused, and tagCommit returns at once instead of looping", `${ms.toFixed(1)} ms`);
+    ok(R.tagCommit("image: reg/app:3f2a1c9e-amd64\n", "image: reg/app:{tag}-amd64") === "3f2a1c9e" && R.tagCommit("image: reg/app:v2-3f2a1c9e-amd64 # x\n", "image: reg/app:{tag}-amd64 #") === "3f2a1c9e", "a template with text after {tag} matches (the suffix is found first)");
+    ok(R.tagCommit(`image: reg/app:${"a".repeat(130)}3f2a1c9e\n`, "image: reg/app:{tag}") === null && R.tagCommit(`image: reg/app:${"a".repeat(100)}-3f2a1c9e\n`, "image: reg/app:{tag}") === "3f2a1c9e", "a tag over 128 characters is no tag (never cut to its last hex)");
+    ok(R.tagCommit("image: reg/app:20241112\n", "image: reg/app:{tag}") === null && R.tagCommit("image: reg/app:1.4.0-20241112\n", "image: reg/app:{tag}") === null && R.commitOfTag("app-3f2a1c9") === "3f2a1c9", "an all-digit tag (a date, a build number) is no commit"); }
+  // round 5: Studio never writes a block it would refuse
+  ok(R.renderBlock(Array.from({ length: 120 }, (_, i) => `o/r#${i + 1}`), "o/r").length > R.BLOCK_MAX, "120 dependencies render past the block limit (what the apply refuses)");
   // round 4
   { const lp0 = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_last_push_approval: true } }], "none", null, "o");
     const none = R.approvalsOf(lp0, [], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: { author: "pat", committer: "pat" } });
@@ -371,6 +379,12 @@ try {
   await E.answer((E.cards.list({ run: apN.body.task }).find((c: any) => c.status === "open") as any).id, { choice: "apply", by: "captain" });
   await until(() => E.list().find((r: any) => r.id === apN.body.task)!.status === "succeeded", 10000); gh.knobs.normalizeOnPatch = false;
   ok(Object.keys(W.state.applied).some((k) => k.toLowerCase() === "northwind/web-app#30"), "a body GitHub normalised (line endings, trailing spaces) still counts as written", String(E.list().find((r: any) => r.id === apN.body.task)!.nodes?.write?.note));
+  // round 5: a block over the limit is refused before any card
+  const many = Array.from({ length: 80 }, (_, i) => `northwind/other#${i + 1}`);
+  W.state.deps["northwind/checkout-api#19"] = { on: many, by: "captain", at: "2026-11-12T00:00:00Z" };
+  const big = await call("/api/prs/apply", { prs: ["northwind/checkout-api#19"] });
+  ok(big.status === 400 && /at most 4000 fit/.test(big.body.error), "too many dependencies for the block: the apply is refused with the reason, nothing is written", JSON.stringify(big.body));
+  delete W.state.deps["northwind/checkout-api#19"];
   // rate limit: the refresh fails, the list stays, Studio backs off
   gh.setRateLimited(true); const atBefore = W.snapshot.at;
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.setRateLimited(false);
@@ -385,6 +399,13 @@ try {
   ok(saved.watch.repos.length === 2 && !JSON.stringify(saved).includes("fixture-token") && !JSON.stringify(W.snapshot).includes("fixture-token") && !JSON.stringify(v).includes("fixture-token"), "the state lives in Studio's data directory; the token is in no file and no answer");
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }
 
+{ // round 5: a bad template saved by an older Studio is dropped on load, with a message, never run
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs"); const { tmpdir } = await import("node:os");
+  const dd = mkdtempSync(join(tmpdir(), "prw-saved-")); mkdirSync(join(dd, "pr-watch"));
+  writeFileSync(join(dd, "pr-watch", "state.json"), JSON.stringify({ schema: 1, settings: { environments: [{ name: "prod", production: true, repos: [], detect: { kind: "file", repository: "o/r", path: "a.yaml", template: '{tag}"' } }, { name: "qa", production: false, repos: [], detect: { kind: "check", name: "deploy/qa" } }] }, watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {} }));
+  const p2 = new GitHubPoller(), W2 = createPrWatch({ dataDir: dd, poller: p2 }), v2 = W2.view();
+  ok(v2.settings.environments.map((e: any) => e.name).join() === "qa" && /prod/.test(v2.settingsWarning?.en ?? ""), "a saved template that fails the checks is dropped on load and the page says which", JSON.stringify(v2.settingsWarning));
+  W2.stop(); p2.stop(); }
 // ---------- generic: no organisation, repository, team or account name in the feature's source ----------
 {
   const root = join(import.meta.dir, "..");
