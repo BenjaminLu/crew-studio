@@ -78,8 +78,13 @@ export function blockProblem(body: string): string | null {
   if (f === "malformed") return "the pull request body has an unpaired crew-studio:depends marker; fix it on GitHub first";
   if (!f) return null;
   if (b.indexOf(BLOCK_START, f.end) >= 0 || b.indexOf(BLOCK_END, f.end) >= 0) return "the pull request body has more than one crew-studio:depends block; fix it on GitHub first";
+  // the card shows the block GitHub has now before it is replaced: so it must be short enough to show whole, and hold
+  // nothing but Depends-on lines naming pull requests (anything else would be replaced unseen)
+  if (f.text.length > 4000) return "the crew-studio:depends block in the body is over 4000 characters; fix it on GitHub first";
   const inner = f.text.slice(BLOCK_START.length, f.text.length - BLOCK_END.length).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (inner.some((l) => !/^depends-on\s*:/i.test(l))) return "the crew-studio:depends block in the body holds other text than Depends-on lines; fix it on GitHub first";
+  const ref = /^(?:https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9]\d{0,9}|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9]\d{0,9}|#[1-9]\d{0,9})$/;
+  const onlyRefs = (l: string) => { const m = /^depends[- ]on\s*:\s*(.*)$/i.exec(l); if (!m) return false; const parts = m[1].split(/[\s,]+/).filter(Boolean); return parts.length > 0 && parts.every((x) => ref.test(x)); };
+  if (inner.some((l) => !onlyRefs(l))) return "the crew-studio:depends block in the body holds other text than Depends-on lines naming pull requests; fix it on GitHub first";
   return null;
 }
 /** The body with only Studio's block replaced (or appended at the end), in the body's own line endings; everything outside
@@ -215,7 +220,9 @@ export function latestReviews(reviews: Review[], head: string, author: string): 
   return [...by.values()];
 }
 // CODEOWNERS: the last matching line wins (GitHub's rule); patterns follow gitignore's shape
-export const CODEOWNERS_LIMITS = { bytes: 200000, lines: 2000, pattern: 256, patternSegments: 32, path: 1024, pathSegments: 128 };
+export const CODEOWNERS_LIMITS = { bytes: 200000, lines: 2000, pattern: 256, patternSegments: 32, path: 1024, pathSegments: 32, steps: 1_000_000 };
+/** A shared count of matching steps: one row's code-owner check may take at most CODEOWNERS_LIMITS.steps, then "limit". */
+export type StepBudget = { left: number };
 /** Whether a CODEOWNERS text is past Studio's limits (then the code owners are unreadable: a rule past them may own a file). */
 export function codeownersOverLimit(text: string): string | null {
   const t = String(text ?? "");
@@ -229,11 +236,14 @@ export function parseCodeowners(text: string): { pattern: string; owners: string
 }
 // No regular expression is built from a pattern (a CODEOWNERS line is text others write): a segment matcher with a
 // two-pointer wildcard walk, and `**` segments matched over path segments with a memo, so the work is bounded by
-// (pattern segments × path segments × segment length). A pattern over 256 characters or 32 segments, or a path over
-// 1024 characters or 128 segments, answers "limit": the caller treats the owners as unreadable, never as no match.
-const segMatch = (p: string, s: string) => {
+// (pattern segments × path segments × segment length). A pattern over 256 characters or 32 segments, a path over
+// 1024 characters or 32 segments, or a check that runs past its step budget, answers "limit": the caller treats the
+// owners as unreadable, never as no match.
+class OverSteps extends Error {}
+const segMatch = (p: string, s: string, b?: StepBudget) => {
   let i = 0, j = 0, star = -1, mark = 0;
   while (j < s.length) {
+    if (b && --b.left < 0) throw new OverSteps();
     if (i < p.length && (p[i] === "?" || p[i] === s[j])) { i++; j++; }
     else if (i < p.length && p[i] === "*") { star = i++; mark = j; }
     else if (star >= 0) { i = star + 1; j = ++mark; }
@@ -242,7 +252,7 @@ const segMatch = (p: string, s: string) => {
   while (i < p.length && p[i] === "*") i++;
   return i === p.length;
 };
-export function globMatch(pattern: string, path: string): boolean | "limit" {
+export function globMatch(pattern: string, path: string, budget?: StepBudget): boolean | "limit" {
   const L = CODEOWNERS_LIMITS; if (pattern.length > L.pattern || path.length > L.path) return "limit";
   let pat = pattern, anchored = pat.startsWith("/"); if (anchored) pat = pat.slice(1);
   const dirOnly = pat.endsWith("/"); if (dirOnly) pat = pat.slice(0, -1);
@@ -254,19 +264,20 @@ export function globMatch(pattern: string, path: string): boolean | "limit" {
   const memo = new Map<number, boolean>();
   const go = (pi: number, si: number): boolean => {
     const k = pi * 256 + si; const m = memo.get(k); if (m !== undefined) return m;
+    if (budget && --budget.left < 0) throw new OverSteps();
     let r: boolean;
     if (pi === ps.length) r = dirOnly ? si < ss.length : si <= ss.length; // a pattern matching a directory owns what is in it
     else if (ps[pi] === "**") r = go(pi + 1, si) || (si < ss.length && go(pi, si + 1));
-    else r = si < ss.length && segMatch(ps[pi], ss[si]) && go(pi + 1, si + 1);
+    else r = si < ss.length && segMatch(ps[pi], ss[si], budget) && go(pi + 1, si + 1);
     memo.set(k, r); return r;
   };
-  return go(0, 0);
+  try { return go(0, 0); } catch (e) { if (e instanceof OverSteps) return "limit"; throw e; }
 }
 /** The owners of a path (the last matching line wins); "limit" when a line or the path is past the limits, since that
  *  line could be the one that owns it. */
-export function ownersOf(path: string, rules: { pattern: string; owners: string[] }[]): string[] | "limit" {
+export function ownersOf(path: string, rules: { pattern: string; owners: string[] }[], budget?: StepBudget): string[] | "limit" {
   let out: string[] = [];
-  for (const r of rules) { const m = globMatch(r.pattern, path); if (m === "limit") return "limit"; if (m) out = r.owners; }
+  for (const r of rules) { const m = globMatch(r.pattern, path, budget); if (m === "limit") return "limit"; if (m) out = r.owners; }
   return out;
 }
 export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string };
@@ -282,6 +293,8 @@ export type Approvals = { readable: boolean; required: number; counted: number; 
 export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: string[]; codeowners: { pattern: string; owners: string[] }[] | null; teamMembers: Map<string, string[] | null>;
   /** the pull request's author, and the head commit's author and committer logins (null when the head commit could not be read) */
   author?: string; headCommit?: { author: string | null; committer: string | null } | null;
+  /** owners already found for a path under the same CODEOWNERS (shared by the rows of one repository and base) */
+  ownersCache?: Map<string, string[] | "limit">;
   /** why the code owners cannot be checked: CODEOWNERS or the changed files could not be read (not "no owner applies") */
   ownersUnreadable?: { en: string; tw: string } | null }): Approvals {
   if (!rules.readable) return { readable: false, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [{ kind: "unreadable", reason: rules.reason, tw: rules.tw }], sources: [] };
@@ -293,12 +306,16 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   if (rules.codeOwners && o.ownersUnreadable) return { readable: false, required: rules.required, counted: 0, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: o.ownersUnreadable.en, tw: o.ownersUnreadable.tw }], sources: rules.sources };
   const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || (!rules.dismissStale && !rules.lastPush)) && !pusher.includes(r.login.toLowerCase()));
   const approvers = new Set(valid.map((r) => r.login.toLowerCase())), missing: Missing[] = [];
-  if (valid.length < rules.required) missing.push({ kind: "count", n: rules.required - valid.length });
+  // "approval after the last push" asks for one approval on the head by someone other than the pusher, even when the
+  // rules ask for no approval count
+  const needed = Math.max(rules.required, rules.lastPush ? 1 : 0);
+  if (valid.length < needed) missing.push({ kind: "count", n: needed - valid.length });
   const memberOf = (team: string) => (o.teamMembers.get(team.toLowerCase()) ?? []).map((m) => m.toLowerCase());
   const satisfied = (owner: string) => { const k = owner.toLowerCase(); return k.includes("/") ? memberOf(k.replace(/^@/, "")).some((m) => approvers.has(m)) : approvers.has(k.replace(/^@/, "")); };
   if (rules.codeOwners && o.codeowners) {
     const sets = new Map<string, string[]>();
-    for (const f of o.files) { const ow = ownersOf(f, o.codeowners);
+    const budget: StepBudget = { left: CODEOWNERS_LIMITS.steps };
+    for (const f of o.files) { let ow = o.ownersCache?.get(f); if (ow === undefined) { ow = ownersOf(f, o.codeowners, budget); if (ow !== "limit") o.ownersCache?.set(f, ow); }
       if (ow === "limit") return { readable: false, required: rules.required, counted: valid.length, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources,
         missing: [{ kind: "unreadable", reason: "a CODEOWNERS line or a changed file's path is past Studio's limits, so the code owners cannot be checked", tw: "CODEOWNERS 的某一行或某個改動檔案的路徑超過 Studio 的上限，無法檢查 code owner" }] };
       if (ow.length) sets.set(ow.map((x) => x.toLowerCase()).sort().join(" "), ow); }
@@ -353,18 +370,32 @@ export function nextStep(p: StepInput): Step {
 }
 
 // ---------- environments ----------
-export type EnvDetect = { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; pattern: string; ref?: string };
+export type EnvDetect = { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; template: string; ref?: string };
 export type EnvSetting = { name: string; production: boolean; repos: string[]; detect: EnvDetect };
 export const envApplies = (e: EnvSetting, repo: string) => !e.repos.length || e.repos.some((r) => sameRepo(r, repo));
-/** The commit an image tag names: the first capture group of the pattern (else the whole match), if it holds 7+ hex. */
-export function tagCommit(text: string, pattern: string): string | null {
-  let re: RegExp; try { re = new RegExp(pattern); } catch { return null; }
-  // the pattern (the captain's) runs on one line at a time, lines over 500 characters skipped, at most 5000 lines:
-  // the file is text others write, so its size never multiplies the pattern's cost
+/** A tag template: literal text around exactly one `{tag}`, e.g. `image: registry/app:{tag}`. No regular expression is
+ *  taken from the settings; Studio matches the literal prefix, then a tag of [0-9A-Za-z._-]{1,128}, then the literal suffix. */
+export function templateProblem(t: string): string | null {
+  const s = String(t ?? "");
+  if (!s || s.length > 200) return "write a line with {tag} where the tag is, e.g. image: registry/app:{tag}";
+  if (s.split("{tag}").length !== 2) return "the template needs exactly one {tag}";
+  if (/[\r\n]/.test(s)) return "the template is one line";
+  return null;
+}
+const TAG_CHAR = /[0-9A-Za-z._-]/;
+/** The commit an image tag names: the trailing 7 to 40 hex characters of the tag the template finds (first match). */
+export function tagCommit(text: string, template: string): string | null {
+  if (templateProblem(template)) return null;
+  const [pre, post] = template.split("{tag}");
   for (const line of String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000)) {
     if (line.length > 500) continue;
-    const m = re.exec(line); if (!m) continue;
-    const v = (m[1] ?? m[0]).match(/[0-9a-f]{7,40}/i); return v ? v[0].toLowerCase() : null;
+    let from = 0;
+    while (true) {
+      const at = line.indexOf(pre, from); if (at < 0) break;
+      let i = at + pre.length, j = i; while (j < line.length && j - i < 128 && TAG_CHAR.test(line[j])) j++;
+      if (j > i && line.startsWith(post, j)) { const m = /[0-9a-f]{7,40}$/i.exec(line.slice(i, j)); return m ? m[0].toLowerCase() : null; }
+      from = at + 1;
+    }
   }
   return null;
 }

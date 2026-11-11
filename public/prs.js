@@ -41,7 +41,7 @@ function nextWord(n) {
   if (n.rule === "required") return T("Wait for the review", "等 review");
   if (n.rule === "dependency") return T("Wait for the dependency", "等依賴");
   if (n.rule === "environment") return T("Deploy for testing", "部署去測");
-  if (n.rule === "evidence") return n.reason === "unknown-commit" ? T("Test (the evidence names no commit)", "測試（證據沒指明 commit）") : n.since ? T(`Test only the change since ${n.since}`, `只驗 ${n.since} 之後的改動`) : n.reason === "unclassified" ? T("Confirm the test verdict", "確認測試結論") : n.reason === "code-only" ? T("Test (code review only so far)", "測試（目前只審了 code）") : T("Test", "測試");
+  if (n.rule === "evidence") return n.reason === "unknown-commit" ? T("Test (commit not named)", "測試（沒指明 commit）") : n.since ? T(`Test only the change since ${n.since}`, `只驗 ${n.since} 之後的改動`) : n.reason === "unclassified" ? T("Confirm the test verdict", "確認測試結論") : n.reason === "code-only" ? T("Test (code review only so far)", "測試（目前只審了 code）") : T("Test", "測試");
   if (n.rule === "approvals") return T("Approve", "等 approve");
   return T("Ready to merge", "可合併");
 }
@@ -109,7 +109,7 @@ function view() {
       watchCard(d),
       proposalCard(d),
       h("div", { class: "tb-tabs pw-tabs", role: "group", "aria-label": T("Filter by next step", "依下一步篩選") }, TABS.map(([k, en, tw]) =>
-        h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "aria-selected": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0))))),
+        h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0))))),
       h("div", { class: "card pw-tbl", role: "table", "aria-label": T("Pull requests", "Pull requests"), "data-prs-table": "" },
         h("div", { class: "pw-row h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Next step · waits on", "下一步 · 等誰"), T("Missing", "還缺"), T("Depends on", "依賴"), T("Test evidence", "測試證據"), T("Environments", "環境"), T("Reviews", "Reviews"), T("Issues", "Issue"), T("Group", "組")].map((t) => h("span", { role: "columnheader" }, t))),
         shown.length ? shown.map((r) => rowView(r, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, rows.length ? T("No pull request under this filter.", "這個篩選下沒有 pull request。") : T("Nothing watched yet, or nothing open: paste a repository or pull request address above.", "還沒有追蹤任何東西，或沒有開著的 PR：在上方貼上 repo 或 PR 網址。"))),
@@ -177,8 +177,10 @@ function rowView(r, d) {
       c ? h("small", { class: "pw-chg", "data-prs-changed": "" }, T(`changed ${ago(c.at)}: `, `${ago(c.at)}變更：`), c.what.map(changeWord).filter(Boolean).join(T("; ", "；"))) : null),
     h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${TONE[n.kind] || ""}`, "data-prs-next": n.rule }, nextWord(n)),
       n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、")))),
-    h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { const label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.map(missWord).join(" · ");
-      return h("button", { class: "badge human pw-cta", "data-prs-cta": r.id, "aria-haspopup": "true", title: miss[0].kind === "unreadable" ? LX({ en: miss[0].reason, tw: miss[0].tw }) : label, onclick: (e) => { e.stopPropagation(); ctaMenu(e.currentTarget, r); } },
+    h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { // compact in the cell: "+n" for the count, and a team of the row's own organisation without it (full names in the title)
+      const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.toLowerCase().startsWith(own) ? `@${w.slice(own.length)}` : w;
+      const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
+      return h("button", { class: "badge human pw-cta", "data-prs-cta": r.id, "aria-expanded": "false", title: miss[0].kind === "unreadable" ? LX({ en: miss[0].reason, tw: miss[0].tw }) : full, onclick: (e) => { e.stopPropagation(); ctaMenu(e.currentTarget, r); } },
         h("span", { class: "pw-ctat" }, label), h("span", { "aria-hidden": "true" }, " ▾")); })() : h("span", { class: "faint" }, "—")),
     h("span", { role: "cell" }, depCell(r)),
     h("span", { role: "cell" }, evBadge(r.evidence)),
@@ -239,7 +241,7 @@ function detail(r) {
         h("h3", {}, T("Issues", "Issue")), r.issues.length ? r.issues.map((i) => h("div", { class: "kv" }, h("span", {}, extLink(ghIssue(i.ref), i.ref), i.title ? ` ${i.title}` : "", i.external ? T(" (external, read only)", "（外部，只讀）") : ""), h("span", {}, i.state || "?"))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Reviews", "Reviews")), r.reviews.length ? r.reviews.map((x) => h("div", { class: "kv" }, h("span", {}, x.login, x.author ? T(" (author)", "（作者）") : ""), h("span", {}, reviewWord(x.state), x.stale ? T(" · stale", " · 舊 head") : ""))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Test evidence", "測試證據")), r.evidence ? [h("div", { class: "kv" }, h("span", {}, `${r.evidence.by}${r.evidence.at ? ` · ${day(r.evidence.at)}` : ""} (${r.evidence.source})`), h("span", {}, verdictWord(r.evidence.verdict))),
-          h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : r.evidence.covers === "unknown" ? T("unknown: it names no commit", "不確定：沒指明 commit") : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
+          h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : r.evidence.covers === "unknown" ? T("unknown: commit not named", "不確定：沒指明 commit") : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
         h("h3", {}, T("Environments", "環境")), r.envs.length ? r.envs.map((e) => h("div", { class: "kv" }, h("span", {}, e.name, e.production ? T(" (production)", "（正式）") : ""), h("span", {}, e.on ? T("runs this head", "跑著這個 head") : e.on === null ? T("could not be read", "讀不到") : T("no", "沒有")))) : h("span", { class: "faint" }, T("none set", "未設定"))),
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("How the next step was found", "下一步怎麼算出來的")),
@@ -255,7 +257,7 @@ function detail(r) {
 }
 function ctaMenu(anchor, r) {
   document.querySelectorAll(".pw-menu").forEach((m) => m.remove());
-  const close = () => { m.remove(); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true); };
+  const close = () => { m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true); };
   const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
   const m = h("div", { class: "pop pw-menu", role: "group", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), "data-prs-menu": r.id },
     h("div", { class: "tgt" }, `${r.id} · `, (r.approvals?.missing || []).map(missWord).join(", ")),
@@ -263,10 +265,11 @@ function ctaMenu(anchor, r) {
     item("room", "monitor", "Open in the review room", "在審查室打開", () => openRoom(r)),
     item("report", "doc", "Handoff report…", "交接報告…", () => reportModal([r])),
     item("md", "copy", "Copy this row as Markdown", "把這一列複製成 Markdown", async () => { flash(await copy(markdown([r])) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); }));
-  document.body.append(m);
+  document.body.append(m); anchor.setAttribute("aria-expanded", "true");
   const b = anchor.getBoundingClientRect(); m.style.position = "fixed"; m.style.left = `${Math.max(8, Math.min(b.left, innerWidth - 290))}px`; m.style.top = `${Math.min(b.bottom + 6, innerHeight - 220)}px`;
   const off = (e) => { if (!m.contains(e.target)) close(); }, esc = (e) => { if (e.key === "Escape") { close(); anchor.focus(); } };
-  setTimeout(() => { document.addEventListener("click", off, true); document.addEventListener("keydown", esc, true); }, 0);
+  // the click that opened the menu has already passed the document's capture phase: listening now cannot catch it
+  document.addEventListener("click", off, true); document.addEventListener("keydown", esc, true);
   m.querySelector("button")?.focus();
 }
 const visibleRows = () => (PW.data?.rows || []).filter((r) => PW.tab === "all" || r.next.kind === PW.tab);
@@ -362,7 +365,7 @@ function settingsModal() {
   const csv = (key, label, get, set) => h("label", { class: "field" }, h("span", { class: "lbl" }, label), h("input", { class: "input", "data-prs-set": key, value: get().join(", "), oninput: (e) => set(e.target.value.split(",").map((x) => x.trim()).filter(Boolean)) }));
   const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" });
   const KINDS = [["deployment", T("GitHub Deployment to an environment", "GitHub Deployment 到某個環境")], ["check", T("A check run by name on the head", "head 上某個名稱的 check run")], ["branch", T("The latest deployment of a branch containing the head", "某個 branch 最新的部署包含這個 head")], ["file", T("An image tag in a file in a repository", "某個 repo 的檔案裡的 image tag")]];
-  const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["pattern", T("pattern (group 1 = commit)", "pattern（第 1 組＝commit）")], ["ref", T("ref (optional)", "ref（可省略）")]] };
+  const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", T("line with {tag}, e.g. image: registry/app:{tag}", "含 {tag} 的那一行，例如 image: registry/app:{tag}")], ["ref", T("ref (optional)", "ref（可省略）")]] };
   const drawEnvs = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i) },
     h("input", { class: "input pw-envname", value: e.name || "", placeholder: T("name", "名稱"), "aria-label": T("Environment name", "環境名稱"), oninput: (ev) => { e.name = ev.target.value; } }),
     h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!e.production, onchange: (ev) => { e.production = ev.target.checked; } }), T(" production", " 正式")),

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { harness, until, suite } from "./rt-harness";
 import { bundledText } from "../src/bundled";
 import { GitHubPoller } from "../src/github-poller";
-import { createPrWatch, APPLY_WORKFLOW, cleanSettings, apiBase } from "../src/pr-watch";
+import { createPrWatch, APPLY_WORKFLOW, cleanSettings, apiBase, EtagCache } from "../src/pr-watch";
 import * as R from "../src/pr-watch-rules";
 import { prWatchGitHub, fixtureSettings, ME, sha } from "./lib/pr-watch-github";
 
@@ -91,7 +91,7 @@ const { ok, end } = suite("pr-watch");
   ok(sg.hints.some((h) => h.kind === "files" && h.first === "o/r#3" && h.then === "o/r#4"), "files both change: the older first");
   const order = R.proposeOrder(prs, sg.deps, sg.hints).map((x) => x.id);
   ok(order.indexOf("o/r#3") < order.indexOf("o/r#1") && order.indexOf("o/r#1") < order.indexOf("o/r#2") && order.indexOf("o/r#2") < order.indexOf("o/r#4"), "the proposed order puts every dependency first", order.join());
-  ok(R.tagCommit("image: reg/app:3f2a1c9e\n", "image: \\S+:([0-9a-f]{7,40})") === "3f2a1c9e" && R.tagCommit("x", "(") === null, "an image tag's commit from the pattern's group");
+  ok(R.tagCommit("image: reg/app:3f2a1c9e\n", "image: reg/app:{tag}") === "3f2a1c9e" && R.tagCommit("image: reg/app:v1.4-3f2a1c9e # pinned\n", "image: reg/app:{tag} #") === "3f2a1c9e" && R.tagCommit("image: reg/app:latest\n", "image: reg/app:{tag}") === null && R.tagCommit("x", "no tag here") === null, "an image tag's commit: the trailing hex of the tag the template finds");
 }
 // ---------- round 2: the reviews' findings ----------
 {
@@ -102,10 +102,11 @@ const { ok, end } = suite("pr-watch");
     "CODEOWNERS globs: anchoring, directories, *, **, ?, and the length caps");
   const t4 = performance.now(); const v = R.classifyComment(`**a**${" ".repeat(65000)}b c`).verdict; const t5 = performance.now() - t4;
   ok(v === "unclassified" && t5 < 50, "a long comment line is never fed to a verdict pattern (no quadratic bold match)", `${t5.toFixed(1)} ms`);
-  const t6 = performance.now(); const tc = R.tagCommit(" ".repeat(200000), "\\s*\\s*x"); const t7 = performance.now() - t6;
-  ok(tc === null && t7 < 50 && R.tagCommit("a: 1\nimage: reg/app:3f2a1c9e\n", "image: \\S+:([0-9a-f]{7,40})") === "3f2a1c9e", "the environment pattern runs line by line, long lines skipped", `${t7.toFixed(1)} ms`);
-  let nested = ""; try { cleanSettings({ environments: [{ name: "prod", detect: { kind: "file", repository: "o/r", path: "a.yaml", pattern: "(a+)+$" } }] }); } catch (e: any) { nested = e.message; }
-  ok(/repeats a repeated group/.test(nested), "settings: an environment pattern with a nested quantifier is refused");
+  const t6 = performance.now(); const tc = R.tagCommit(`${"a".repeat(200)}\n`.repeat(1000), "a{tag}b"); const t7 = performance.now() - t6;
+  ok(tc === null && t7 < 200 && R.tagCommit("a: 1\nimage: reg/app:3f2a1c9e\n", "image: reg/app:{tag}") === "3f2a1c9e", "the environment template is matched as literal text in linear time (no regular expression from the settings)", `${t7.toFixed(1)} ms`);
+  let nested = ""; try { cleanSettings({ environments: [{ name: "prod", detect: { kind: "file", repository: "o/r", path: "a.yaml", template: "image: (a|aa)+$" } }] }); } catch (e: any) { nested = e.message; }
+  let nested2 = ""; try { cleanSettings({ environments: [{ name: "prod", detect: { kind: "file", repository: "o/r", path: "a.yaml", template: "{tag} and {tag}" } }] }); } catch (e: any) { nested2 = e.message; }
+  ok(/exactly one \{tag\}/.test(nested) && /exactly one \{tag\}/.test(nested2) && cleanSettings({ environments: [{ name: "prod", detect: { kind: "file", repository: "o/r", path: "a.yaml", template: "image: r/a:{tag}" } }] }).environments[0].detect.kind === "file", "settings: the environment file detector takes a literal template with exactly one {tag}, never a regular expression");
   for (const neg of ["Result: didn't pass", "## Didn’t pass", "Verdict: does not pass", "## Not passed", "Result: wasn't passing", "## 沒通過", "## 没通过", "結論：沒有通過"]) ok(R.classifyComment(neg).verdict === "fail", `a negated pass is a fail: ${neg}`);
   ok(R.classifyComment("## Not yet passed").verdict === "unclassified" && R.classifyComment("## 尚未通過").verdict === "unclassified", "not yet: unclassified, never pass");
   const crlf = "Intro\r\nline two\r\n";
@@ -144,15 +145,33 @@ const { ok, end } = suite("pr-watch");
     const orig = `Intro${eol}more${eol}`, appended = R.replaceBlock(orig, B);
     ok(R.removeBlock(appended) === orig, `appending then removing the block gives the body back byte for byte (${eol === "\n" ? "LF" : "CRLF"})`, JSON.stringify(R.removeBlock(appended)));
   }
+  // round 4
+  { const lp0 = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_last_push_approval: true } }], "none", null, "o");
+    const none = R.approvalsOf(lp0, [], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: { author: "pat", committer: "pat" } });
+    const byPusher = R.approvalsOf(lp0, [{ login: "pat", state: "APPROVED", stale: false, at: "", author: true }], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: { author: "pat", committer: "pat" } });
+    const byOther = R.approvalsOf(lp0, [{ login: "zoe", state: "APPROVED", stale: false, at: "", author: false }], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: { author: "pat", committer: "pat" } });
+    ok(none.missing[0]?.kind === "count" && byPusher.missing.length === 1 && !byOther.missing.length, "after the last push with no approval count: one approval on the head by someone other than the pusher is still needed"); }
+  { const rules = Array.from({ length: 2000 }, (_, i) => ({ pattern: `**/a/**/a/**/a/**/a/**/a/**/b${i}`, owners: ["@x"] })), files = Array.from({ length: 300 }, (_, i) => `${"a/".repeat(30)}f${i}`);
+    const co4 = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_code_owner_review: true } }], "none", null, "o");
+    const t0 = performance.now(), got = R.approvalsOf(co4, [], { files, codeowners: rules, teamMembers: new Map() }), ms = performance.now() - t0;
+    ok(!got.readable && got.missing[0].kind === "unreadable" && ms < 3000, "CODEOWNERS work is bounded by a step budget per row: past it the owners are unreadable", `${ms.toFixed(0)} ms`);
+    ok(R.globMatch("*", Array.from({ length: 33 }, () => "d").join("/")) === "limit", "a path over 32 segments is past the limit"); }
+  { const blk = (inner: string) => `${R.BLOCK_START}\n${inner}\n${R.BLOCK_END}`;
+    ok(R.blockProblem(blk("Depends-on: https://github.com/o/r/pull/3, o/r#4 #5")) === null && /naming pull requests/.test(R.blockProblem(blk("Depends-on: see the plan in the wiki")) ?? "") && /over 4000/.test(R.blockProblem(blk(`Depends-on: ${"#1 ".repeat(1400)}`)) ?? ""),
+      "the block GitHub has must be Depends-on lines naming pull requests, and short enough for the card to show whole"); }
   ok(R.removeBlock(`a ${B} b`) === "a  b" && R.removeBlock(`${B}\n\nRest`) === "Rest", "a block inside a line goes alone; a block at the very start takes its separator");
   const rb = R.removeBlock(`Intro\n\n${R.renderBlock(["o/r#3"], "o/r")}\n`); ok(rb === "Intro\n", "removing the block keeps the rest of the body", JSON.stringify(rb));
   ok(!unr.readable && unr.missing[0].kind === "unreadable" && R.approvalsOf(rul, [], { files: ["a"], codeowners: null, teamMembers: new Map() }).readable, "code owners that cannot be checked are unreadable, distinct from no CODEOWNERS file");
 }
+{ // round 4: the ETag cache is bounded by bytes, keeps none over 256 KB, and drops the least recently used first
+  const c = new EtagCache(700, 400);
+  c.set("/a", "e1", "x".repeat(300)); c.set("/b", "e2", "y".repeat(300)); c.get("/a"); c.set("/c", "e3", "z".repeat(300)); c.set("/big", "e4", "w".repeat(500));
+  ok(!!c.get("/a") && !c.get("/b") && !!c.get("/c") && !c.get("/big") && c.bytes <= 700, "the ETag cache holds at most its byte budget, keeps nothing over the entry cap, and evicts the least recently used", `${c.size} entries, ${c.bytes} bytes`); }
 // ---------- settings and the API origin ----------
 {
   let msg = ""; try { cleanSettings({ evidence: { accounts: ["bad name!"] } }); } catch (e: any) { msg = e.message; }
   ok(/not a GitHub account/.test(msg), "settings: an account name GitHub does not allow is refused");
-  msg = ""; try { cleanSettings({ environments: [{ name: "prod", detect: { kind: "file", repository: "o/r", path: "../etc/passwd", pattern: "x" } }] }); } catch (e: any) { msg = e.message; }
+  msg = ""; try { cleanSettings({ environments: [{ name: "prod", detect: { kind: "file", repository: "o/r", path: "../etc/passwd", template: "x:{tag}" } }] }); } catch (e: any) { msg = e.message; }
   ok(/plain path/.test(msg), "settings: a file path that climbs is refused");
   const keep = process.env.CREW_GITHUB_API;
   process.env.CREW_GITHUB_API = "https://evil.example"; let refused = false; try { apiBase(); } catch { refused = true; }
@@ -345,6 +364,13 @@ try {
   const a30b = row(v, "northwind/web-app#30").approvals;
   ok(a30b.readable && a30b.lastPush && a30b.counted === 1 && !a30b.missing.length && a30b.inferredPusher.includes("skipper"), "after the last push (fixture): ana's older approval is stale, the author's is not counted, zoe's on the head counts; the pusher is shown as inferred", JSON.stringify(a30b));
   wa.require_last_push_approval = false; p30.reviews = keepReviews;
+  // round 4: GitHub handing the body back normalised (CRLF, trailing spaces) is still a good write
+  gh.data.find("northwind/web-app", 30)!.body = "Line one  \r\nLine two\r\n"; await call("/api/prs/deps", { pr: "northwind/web-app#30", on: ["northwind/checkout-api#19"] });
+  gh.knobs.normalizeOnPatch = true;
+  const apN = await call("/api/prs/apply", { prs: ["northwind/web-app#30"] }); await until(() => !!E.cards.list({ run: apN.body.task }).find((c: any) => c.status === "open"), 10000);
+  await E.answer((E.cards.list({ run: apN.body.task }).find((c: any) => c.status === "open") as any).id, { choice: "apply", by: "captain" });
+  await until(() => E.list().find((r: any) => r.id === apN.body.task)!.status === "succeeded", 10000); gh.knobs.normalizeOnPatch = false;
+  ok(Object.keys(W.state.applied).some((k) => k.toLowerCase() === "northwind/web-app#30"), "a body GitHub normalised (line endings, trailing spaces) still counts as written", String(E.list().find((r: any) => r.id === apN.body.task)!.nodes?.write?.note));
   // rate limit: the refresh fails, the list stays, Studio backs off
   gh.setRateLimited(true); const atBefore = W.snapshot.at;
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.setRateLimited(false);

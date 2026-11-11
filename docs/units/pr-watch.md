@@ -63,9 +63,10 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 - **Environments**: an ordered list; each is production or not and may be limited to some repositories. Each says how to
   tell whether a head runs there, by one of: a GitHub Deployment to that environment (the latest one, at the head, status
   success); a check run by name on the head; the latest deployment of a branch, when its latest status is success or active, whose commit contains the head (compare);
-  an image tag in a file in a repository (path, a pattern whose first group is the commit, optional ref), compared by commit.
-  The pattern runs one line at a time (lines over 500 characters skipped); a pattern that repeats a repeated group or uses
-  a backreference is refused in the settings, since the file is text others write.
+  an image tag in a file in a repository (path, a one-line template with exactly one `{tag}`, e.g.
+  `image: registry/app:{tag}`, optional ref), compared by commit. No regular expression is taken from the settings: Studio
+  finds the literal text around `{tag}`, reads a tag of `[0-9A-Za-z._-]{1,128}`, and takes its trailing 7 to 40 hex
+  characters as the commit, one line at a time (lines over 500 characters skipped).
 - **Release groups**: names; each row may be put in one.
 - The short same-repository form `Depends-on: #<n>` in the block (off by default), and the language of the drafted message.
 
@@ -78,7 +79,8 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   100 for pull requests, reviews, commits, comments and files; 2 for the timeline). A refresh reads at most 60 rows (the
   single ones first, then the most recently updated, saying how many it left out), two at a time, at most 1500 requests
   (past it the refresh fails and the last list stays), at most 60 issues and 30 outside dependencies. A GET is repeated with
-  `If-None-Match`; GitHub's 304 reuses the kept answer (the cache is dropped when the token changes). Redirects are never
+  `If-None-Match`; GitHub's 304 reuses the kept answer (at most 32 MB kept, none over 256 KB, least recently used out;
+  dropped when the token changes). Redirects are never
   followed.
 - Per watched repository: the captain's login (`GET /user`), then the open pull requests (`GET …/pulls?state=open`),
   filtered by author, assignee or requested reviewer. Per row: reviews, commits, comments, timeline, files, check runs on
@@ -91,12 +93,14 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   `.github/`, the root or `docs/` on the base; every changed file's owners need an approval from one of them; patterns are
   matched without building a regular expression from the file, in time bounded by the pattern and path, with length caps;
   a file, line, pattern or path past those caps (200,000 characters, 2,000 lines, 256-character or 32-segment patterns,
-  1,024-character or 128-segment paths) makes the code owners unreadable, never a silent non-match;
+  1,024-character or 32-segment paths), or a row whose check runs past 1,000,000 matching steps, makes the code owners
+  unreadable, never a silent non-match; owners found for a path are shared by the rows of one repository and base;
   a CODEOWNERS that cannot be read, or changed files that could not all be read, make the approvals unreadable, never
   "no owner"), approval after
   the last push (an approval counts only when given on the current head, by someone other than the pusher; GitHub does not
   say who pushed, so the pusher is inferred as the pull request's author and the head commit's author and committer, and
-  the row's detail says it is inferred; only when the head commit cannot be read are the approvals unreadable), stale
+  the row's detail says it is inferred; the rule asks for one such approval even when the approval count is 0; only when
+  the head commit cannot be read are the approvals unreadable), stale
   approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
   never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
   the last pusher's own either). A protection read that GitHub refuses (it needs admin) makes the rules unreadable: the row
@@ -143,7 +147,8 @@ The first matching rule, top to bottom; deterministic, no model:
   again right before writing; a body that changed in between is left alone and the Task says so (apply again). The card
   also shows the block GitHub has now. Only the marked block is replaced (or added at the end); everything else in the
   body is kept byte for byte, line endings included. After the write Studio compares the body GitHub kept with what it
-  sent and reports a difference instead of recording the block as applied. A Task that ends while GitHub answers writes
+  sent (line endings and trailing spaces normalised, the block itself exactly) and reports a difference instead of
+  recording the block as applied. A Task that ends while GitHub answers writes
   nothing more.
 
   ```
@@ -155,7 +160,8 @@ The first matching rule, top to bottom; deterministic, no model:
   When a row has no dependency left but GitHub still has the block, the same card removes the block: the block, its own
   line ending and at most the one blank line that set it apart; every other byte of the body stays, paragraph breaks
   included.
-  A body with an unpaired marker, two blocks, or a block holding anything but `Depends-on:` lines is refused (a marker pair
+  A body with an unpaired marker, two blocks, a block over 4000 characters, or a block holding anything but
+  `Depends-on:` lines naming pull requests is refused (a marker pair
   around other text would otherwise delete it unseen). Firstmate cannot answer the card; closing it writes nothing.
 - **Drift**: every refresh compares the body's block with what Studio wrote. A block edited or removed on GitHub turns
   the row's dependency cell amber, "the hint on GitHub changed", with two actions: apply Studio's record again (the card),
@@ -220,7 +226,12 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
 14. Review round 3 (tests/pr-watch.ts "round 3"): CODEOWNERS past the caps reads unreadable; removing the block keeps
     paragraph breaks (LF and CRLF) and round-trips an appended block byte for byte; after the last push, an older-commit
     approval, the author's and the head committer's do not count and someone else's on the head does.
-15. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
+15. Review round 4 (tests/pr-watch.ts "round 4", the UI suite): after the last push with a count of 0 still needs one
+    approval; CODEOWNERS work bounded per row; the ETag cache bounded by bytes; the environment template matched as
+    literal text; the block on GitHub refused unless Depends-on lines naming pull requests; a normalised body still a
+    good write; in the page: "+n" and the names in the Missing cell (two lines at most), the proposed tag inside its
+    column, aria-expanded on the missing-approval button.
+16. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
     inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script

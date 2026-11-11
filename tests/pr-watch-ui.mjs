@@ -96,20 +96,25 @@ try {
   ok(rep12.includes('https://github.com/northwind/platform-issues/issues/7') && !rep12.includes('Capture retries double-charge'), 'copied text leaves out the title of an issue outside the watched repositories (the link stays)', rep12);
   ok(await p.locator('[data-prs-row="northwind/ledger#40"] .pw-next small').innerText() === 'approval rules could not be read', 'unreadable rules: the subtitle says so, no "waits on"');
   const cta = await p.locator('[data-prs-cta="northwind/checkout-api#18"]').evaluate((e) => ({ h: e.getBoundingClientRect().height, t: e.getAttribute('title'), text: e.innerText }));
-  ok(cta.h < 30 && cta.t === '1 more approval · @dana · @northwind/release' && !/missing/.test(cta.text), 'the missing-approval button is one line, the full list in its title, teams written one way', JSON.stringify(cta));
+  ok(cta.h < 44 && cta.t === '1 more approval · @dana · @northwind/release' && cta.text.replace(/\s+/g, ' ').includes('+1 · @dana · @release') && !/missing|more approval/.test(cta.text), 'the missing-approval button shows the count and the names (at most two lines), teams written one way', JSON.stringify(cta));
+  await p.click('[data-prs-cta="northwind/checkout-api#18"]'); const exp = await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded'); await p.keyboard.press('Escape');
+  ok(exp === 'true' && await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded') === 'false' && await p.locator('[data-prs-cta][aria-haspopup]').count() === 0, 'the missing-approval button says whether its actions are open (aria-expanded), no popup role it does not have', JSON.stringify([exp, await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded'), await p.locator('[data-prs-cta][aria-haspopup]').count()]));
   ok((await p.locator('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]').innerText()) === 'Fix the failing tests', 'next-step words follow one pattern');
   const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
   ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all eleven columns fit without scrolling', JSON.stringify(fit));
-  ok(await p.locator('[data-prs-tab][role="tab"]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
+  ok(await p.locator('[data-prs-tab][role="tab"], [data-prs-tab][aria-selected]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
   await p.focus('[data-prs-row="northwind/checkout-api#13"]'); await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(400);
   ok(await p.evaluate(() => document.activeElement?.dataset?.prsRow) === 'northwind/checkout-api#13', 'a live update gives the keyboard focus back to the row that had it');
   // the proposal, a drag and a dependency edit
   ok(await p.locator('[data-prs-proposed-dep="northwind/checkout-api#14>northwind/checkout-api#15"]').count() === 1 && /Depends-on/.test(await p.locator('[data-prs-proposal]').innerText()), 'the proposal shows each dependency with its reason');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-prop-tag').count() === 1 && await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-proposed-pos').count() === 1, 'the row shows the dependency and its position as proposed');
+  const fitsCell = await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-prop-tag').evaluate((t) => { const cell = t.closest('[role="cell"]').getBoundingClientRect(), r = t.getBoundingClientRect(); return r.right <= cell.right + 1; });
+  ok(fitsCell, 'the proposed tag stays inside the Depends on column');
   await p.screenshot({ path: join(shots, 'list-1440-light.png'), fullPage: true });
   const firstId = await p.locator('[data-prs-row]').first().getAttribute('data-prs-row'), lastId = await p.locator('[data-prs-row]').nth(2).getAttribute('data-prs-row');
   await p.locator(`[data-prs-row="${firstId}"]`).scrollIntoViewIfNeeded();
-  await p.locator(`[data-prs-row="${lastId}"] .pw-grip`).dragTo(p.locator(`[data-prs-row="${firstId}"]`));
+  const saved = p.waitForResponse((r) => r.url().endsWith('/api/prs/order') && r.request().method() === 'POST');
+  await p.locator(`[data-prs-row="${lastId}"] .pw-grip`).dragTo(p.locator(`[data-prs-row="${firstId}"]`)); await saved;
   await until(async () => (await p.locator('[data-prs-row]').first().getAttribute('data-prs-row')) === lastId);
   ok(await p.locator('[data-prs-row]').first().getAttribute('data-prs-row') === lastId && (await api('/api/prs')).body.rows[0].id === lastId, 'a drag (the third row onto the first) reorders, saved in Studio', `${firstId} ${lastId} ${await p.locator('[data-prs-row]').first().getAttribute('data-prs-row')} ${(await api('/api/prs')).body.rows.map((r) => r.id).join()}`);
   ok(await p.locator('.pw-proposed-pos').count() === 0, 'after a drag no position is proposed');

@@ -53,7 +53,20 @@ const SHA = /^[0-9a-f]{7,40}$/i;
 
 /** GET answers kept with their ETag: a later identical GET asks If-None-Match, and a 304 (which GitHub does not count
  *  against the rate limit) reuses the kept answer. Bounded; dropped when the token changes. */
-export type EtagCache = Map<string, { etag: string; data: any }>;
+/** Kept GET answers by path, bounded by their serialized size (32 MB in all, none over 256 KB), least recently used out. */
+export class EtagCache {
+  private m = new Map<string, { etag: string; data: any; bytes: number }>(); bytes = 0;
+  constructor(readonly maxBytes = 32 * 1024 * 1024, readonly maxEntry = 256 * 1024) {}
+  get size() { return this.m.size; }
+  get(path: string) { const e = this.m.get(path); if (e) { this.m.delete(path); this.m.set(path, e); } return e; }
+  set(path: string, etag: string, data: any) {
+    const old = this.m.get(path); if (old) { this.bytes -= old.bytes; this.m.delete(path); }
+    const bytes = JSON.stringify(data ?? null).length; if (bytes > this.maxEntry) return;
+    this.m.set(path, { etag, data: structuredClone(data), bytes }); this.bytes += bytes;
+    for (const [k, v] of this.m) { if (this.bytes <= this.maxBytes) break; this.m.delete(k); this.bytes -= v.bytes; }
+  }
+  clear() { this.m.clear(); this.bytes = 0; }
+}
 async function call(api: string, token: string, method: "GET" | "POST" | "PATCH", path: string, body?: unknown, signal?: AbortSignal, etags?: EtagCache): Promise<any> {
   if (!path.startsWith("/") || /(^|\/)\.\.?(\/|\?|$)|[\s#\\]/.test(path)) throw new Error("invalid GitHub path");
   const timeout = AbortSignal.timeout(15_000), kept = method === "GET" ? etags?.get(path) : undefined;
@@ -66,7 +79,7 @@ async function call(api: string, token: string, method: "GET" | "POST" | "PATCH"
   if (r.status !== 204) { try { data = await boundedGitHubJSON(r); } catch (e) { if (r.ok) throw e; } }
   if (!r.ok) throw new HttpError(r.status, data && typeof data === "object" ? { message: String(data.message ?? "").slice(0, 200) } : null);
   const etag = method === "GET" ? r.headers.get("etag") : null;
-  if (etags && etag && etag.length < 200) { if (etags.size >= 3000) etags.clear(); etags.set(path, { etag, data: structuredClone(data) }); }
+  if (etags && etag && etag.length < 200) etags.set(path, etag, data);
   return data;
 }
 /** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
@@ -131,10 +144,8 @@ export function cleanSettings(v: any): Settings {
     else if (d.kind === "branch") detect = { kind: "branch", branch: txt(d.branch, 200), ...(String(d.environment ?? "").trim() ? { environment: txt(d.environment) } : {}) };
     else if (d.kind === "file") { const repository = txt(d.repository); if (!R.repoOk(repository)) throw new Error(`${name}: the file's repository must be owner/repo`);
       const path = txt(d.path, 300); if (path.split("/").some((p) => !p || p === "." || p === "..")) throw new Error(`${name}: the file path is not a plain path`);
-      const pattern = txt(d.pattern, 200); try { new RegExp(pattern); } catch { throw new Error(`${name}: the pattern is not a regular expression`); }
-      // it runs on a file others write: a quantified group that itself repeats (a+)+ or a backreference can take forever
-      if (/\([^)]*[+*}][^)]*\)\s*[+*{?]|\\[1-9]/.test(pattern)) throw new Error(`${name}: the pattern repeats a repeated group (or uses a backreference); write it without nesting`);
-      detect = { kind: "file", repository, path, pattern, ...(String(d.ref ?? "").trim() ? { ref: txt(d.ref, 200) } : {}) }; }
+      const template = txt(d.template, 200), bad = R.templateProblem(template); if (bad) throw new Error(`${name}: ${bad}`);
+      detect = { kind: "file", repository, path, template, ...(String(d.ref ?? "").trim() ? { ref: txt(d.ref, 200) } : {}) }; }
     else throw new Error(`${name}: choose how it is detected`);
     return { name, production: !!e?.production, repos, detect };
   });
@@ -153,7 +164,7 @@ export function createPrWatch(d: PrWatchDeps) {
   const write = (f: string, v: unknown) => { mkdirSync(dir, { recursive: true, mode: 0o700 }); const tmp = `${f}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(v, null, 1), { mode: 0o600 }); renameSync(tmp, f); };
   let state: State = read(stateFile, fresh); state.settings = { ...structuredClone(DEFAULT_SETTINGS), ...state.settings };
   let snap: Snapshot = read(snapFile, emptySnap);
-  const etags: EtagCache = new Map(); let etagToken = "";
+  const etags = new EtagCache(); let etagToken = "";
   let version = 0, ranVersion = -1; // the state a refresh reads: a change while one runs asks for another
   const save = () => { version++; write(stateFile, state); };
   const live = { refreshing: false, error: null as null | { en: string; tw: string }, backoffUntil: null as string | null, failures: 0 };
@@ -267,13 +278,14 @@ export function createPrWatch(d: PrWatchDeps) {
           const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (!["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return false;
           return await contains(repo, head, String(dep.sha)); }
         const text = await contents(dt.repository, dt.path, dt.ref ?? null); if (text == null) return null;
-        const tag = R.tagCommit(text, dt.pattern); return tag ? await contains(repo, head, tag) : false;
+        const tag = R.tagCommit(text, dt.template); return tag ? await contains(repo, head, tag) : false;
       } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return null; }
     };
     let issueReads = 0; // issues named in bodies may be anywhere: at most 60 read per refresh
     const issueOf = (repo: string, n: number) => once(issueCache, `${repo}#${n}`.toLowerCase(), async () => { if (++issueReads > 60) return { title: null, state: null }; try { const j = await g.get(`${repoPath(repo)}/issues/${n}`); return { title: String(j?.title ?? "").slice(0, 300) || null, state: String(j?.state ?? "") || null }; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return { title: null, state: null }; } });
 
     // at most MAX_ROWS rows a refresh, the single pull requests first, then the most recently updated
+    const ownersByBase = new Map<string, Map<string, string[] | "limit">>(); // code owners per path, shared by the rows of one base
     let picked = [...found.values()]; const maxRows = d.limits?.rows ?? MAX_ROWS;
     if (picked.length > maxRows) { out.errors.push({ target: "", en: `${picked.length} pull requests match: only ${maxRows} are read per refresh (the single ones, then the most recently updated)`, tw: `符合的 PR 有 ${picked.length} 個：每次刷新只讀 ${maxRows} 個（先單獨加入的，再依最近更新）` });
       picked = picked.sort((a, b) => Number(b.single) - Number(a.single) || String(b.pr.updated_at ?? "").localeCompare(String(a.pr.updated_at ?? ""))).slice(0, maxRows); }
@@ -314,7 +326,8 @@ export function createPrWatch(d: PrWatchDeps) {
         const teamKeys = [...rules.teams.map((t) => t.key), ...(owners ?? []).flatMap((o) => o.owners).filter((o) => o.startsWith("@") && o.includes("/")).map((o) => o.slice(1))];
         for (const k of [...new Set(teamKeys.map((k) => k.toLowerCase()))].slice(0, 10)) teamMembers.set(k, await members(k, repo.split("/")[0]));
       }
-      const approvals = R.approvalsOf(rules, rv, { files, codeowners: owners, teamMembers, author, headCommit: commits.length && commits.at(-1)!.sha === head && !partial.includes("commits") ? { author: commits.at(-1)!.author, committer: commits.at(-1)!.committer } : null, ownersUnreadable });
+      const ownersKey = `${repo}|${base}`.toLowerCase(); if (!ownersByBase.has(ownersKey)) ownersByBase.set(ownersKey, new Map());
+      const approvals = R.approvalsOf(rules, rv, { ownersCache: ownersByBase.get(ownersKey), files, codeowners: owners, teamMembers, author, headCommit: commits.length && commits.at(-1)!.sha === head && !partial.includes("commits") ? { author: commits.at(-1)!.author, committer: commits.at(-1)!.committer } : null, ownersUnreadable });
       const seen = snap.heads?.[id.toLowerCase()], headSeenAt = seen && seen.sha === head ? seen.at : out.at!;
       out.heads[id.toLowerCase()] = { sha: head, at: headSeenAt };
       const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,
@@ -507,7 +520,11 @@ export function createPrWatch(d: PrWatchDeps) {
           const next = t.block ? R.replaceBlock(body, t.block) : R.removeBlock(body); if (next.length > MAX_BODY) { refused.push({ id: t.id, why: "the body would exceed GitHub's limit" }); continue; }
           const out = await call(api, token, "PATCH", path, { body: next });
           // GitHub has no conditional write for a body: an edit between the read and the write shows as a different answer
-          if (String(out?.body ?? "") !== next) { refused.push({ id: t.id, why: "the body GitHub kept differs from what Studio wrote (edited at the same moment?); check it on GitHub and apply again" }); continue; }
+          // GitHub may hand the body back with its line endings or trailing spaces normalised: compare after normalising
+          // those, and the block itself exactly (line endings aside)
+          const flat = (t: string) => t.replace(/\r\n/g, "\n").split("\n").map((l) => l.trimEnd()).join("\n").trimEnd();
+          const keptBlock = R.findBlock(String(out?.body ?? "")), sameBlock = t.block ? !!keptBlock && keptBlock !== "malformed" && keptBlock.text.replace(/\r\n/g, "\n") === t.block : !keptBlock;
+          if (flat(String(out?.body ?? "")) !== flat(next) || !sameBlock) { refused.push({ id: t.id, why: "the body GitHub kept differs from what Studio wrote (edited at the same moment?); check it on GitHub and apply again" }); continue; }
           const k = Object.keys(state.applied).find((a) => eq(a, t.id)) ?? t.id; if (t.block) state.applied[k] = { block: t.block, on: t.on, at: iso() }; else delete state.applied[k];
           const dk = Object.keys(state.deps).find((a) => eq(a, t.id)) ?? t.id; state.deps[dk] = { on: t.on, by: "captain", at: iso() };
           written.push(t.id);

@@ -95,7 +95,7 @@ export function prWatchGitHub(data = fixtureData()) {
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
   let notModified = 0;
   // knobs: a PATCH whose kept body differs from what was sent, a slow GET of one pull request, an unreadable CODEOWNERS
-  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false };
+  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false };
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const res = await answer(req);
     if (req.method !== "GET" || res.status !== 200) return res;
@@ -117,7 +117,7 @@ export function prWatchGitHub(data = fixtureData()) {
     if (method === "GET" && rest === "/pulls") return json(page(data.prs.filter((x) => x.repo === repo && (x.state ?? "open") === (q.get("state") ?? "open")).map(pullJson), q));
     let k: RegExpExecArray | null;
     if ((k = /^\/pulls\/(\d+)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
-      if (method === "PATCH") { if (typeof body?.body === "string") pr.body = knobs.tamper ? `${body.body}\nedited meanwhile` : body.body; return json(pullJson(pr)); }
+      if (method === "PATCH") { if (typeof body?.body === "string") pr.body = knobs.tamper ? `${body.body}\nedited meanwhile` : knobs.normalizeOnPatch ? body.body.replace(/\r\n/g, "\n").split("\n").map((l: string) => l.trimEnd()).join("\n") : body.body; return json(pullJson(pr)); }
       if (method === "GET") { if (knobs.slowPull?.path === p) await new Promise((r) => setTimeout(r, knobs.slowPull!.ms)); return json(pullJson(pr)); } }
     if (method !== "GET") { unknown.push(`${method} ${p}`); return json({ message: "Not Found" }, 404); }
     if ((k = /^\/pulls\/(\d+)\/(reviews|commits|files)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
@@ -156,7 +156,7 @@ export const fixtureSettings = {
     { name: "dev", production: false, repos: [], detect: { kind: "deployment", environment: "dev" } },
     { name: "qa", production: false, repos: [], detect: { kind: "check", name: "deploy/qa" } },
     { name: "staging", production: false, repos: [], detect: { kind: "branch", branch: "staging" } },
-    { name: "prod", production: true, repos: [], detect: { kind: "file", repository: "northwind/infra", path: "deploy/prod.yaml", pattern: "image: \\S+:([0-9a-f]{7,40})" } },
+    { name: "prod", production: true, repos: [], detect: { kind: "file", repository: "northwind/infra", path: "deploy/prod.yaml", template: "image: registry.example/checkout:{tag}" } },
   ],
   groups: ["A", "B"], shortForm: false, messageLang: null,
 };
