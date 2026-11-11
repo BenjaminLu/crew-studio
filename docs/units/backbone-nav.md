@@ -17,3 +17,5 @@ The existing UI suites turn labs on before visiting labs pages; their assertions
 Note for the takeover branch: public/index.html gains one stylesheet and one script line; app.js, inbox and crew code are untouched (the inbox list of intents is appended by public/backbone.js).
 
 Later (2026-10-29, feat/terminal-focus): the sidebar gained Terminals right after Firstmate (its own icon, in the full sidebar and the 64 px rail), so the backbone is Board, Firstmate, Terminals, Inbox, Crew, Tasks, Workflows, Skills, Library. `#/terminals` no longer lights Firstmate; its "waiting for you" count moved to the Terminals item (docs/units/web-terminal.md, "Focus mode").
+
+Later (2026-11-12, pr-watch): the sidebar gained Pull requests right after Inbox, with a count of the rows that wait on an approval or are ready to merge (docs/units/pr-watch.md).

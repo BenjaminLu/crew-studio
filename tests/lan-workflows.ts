@@ -26,7 +26,7 @@ const EXPECTED: Record<string, "passes" | RegExp> = {
   "hello-crew-studio": /a guided tour of this Studio/, images: /binary output \(PNG\)/, video: /binary output \(MP4\)/,
   "pack-genesis": /writes a workflow pack into this Studio/, "startup-recursion": /two-vendor demonstration/,
   "github-review": /is held/, "refine-demo": /not installed/, "trivial-lane": /not installed/,
-  ...Object.fromEntries(["crew-change", "firstmate-connect-github", "firstmate-grant-merge", "firstmate-proposal", "firstmate-register-project", "firstmate-staffing", "issue-categories", "issue-triage", "local-project-register", "review-room-host", "review-room-dir-host"].map((id) => [id, /is internal: Studio starts it itself/])),
+  ...Object.fromEntries(["crew-change", "firstmate-connect-github", "firstmate-grant-merge", "firstmate-proposal", "firstmate-register-project", "firstmate-staffing", "issue-categories", "issue-triage", "local-project-register", "review-room-host", "review-room-dir-host", "pr-watch-apply-depends"].map((id) => [id, /is internal: Studio starts it itself/])),
 };
 // the profile's no-binding scope is enforced only on macOS: anywhere else every workflow would refuse, which proves nothing
 if (process.platform !== "darwin") { console.log(`  FAIL  the two-board workflow table runs on macOS only (this is ${process.platform}): it is not a pass that every workflow refuses here`); process.exit(1); }
