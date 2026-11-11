@@ -317,10 +317,11 @@ function blockOf(on, repo, short) { const lines = ["<!-- crew-studio:depends -->
   if (short) for (const id of on) { const m = ID.exec(id); if (m && `${m[1]}/${m[2]}`.toLowerCase() === String(repo).toLowerCase()) lines.push(`Depends-on: #${m[3]}`); }
   return [...lines, "<!-- /crew-studio:depends -->"].join("\n"); }
 function applyModal(ids) {
-  const rows = (PW.data?.rows || []).filter((r) => ids.includes(r.id) && r.deps.on.length);
+  // a row with no dependency left but a block on GitHub: the card removes the block
+  const rows = (PW.data?.rows || []).filter((r) => ids.includes(r.id) && (r.deps.on.length || r.bodyBlock));
   if (!rows.length) { flash(T("No dependency to apply", "沒有依賴可以套用")); return; }
   let short = !!PW.data?.settings?.shortForm;
-  const pres = () => rows.map((r) => h("div", { class: "card x-pad pw-target", "data-prs-target": r.id }, h("b", {}, r.id, " ", h("span", { class: "faint" }, r.title)), h("pre", { class: "pw-pre" }, blockOf(r.deps.on.map((x) => x.id), r.repo, short))));
+  const pres = () => rows.map((r) => h("div", { class: "card x-pad pw-target", "data-prs-target": r.id }, h("b", {}, r.id, " ", h("span", { class: "faint" }, r.title)), r.deps.on.length ? h("pre", { class: "pw-pre" }, blockOf(r.deps.on.map((x) => x.id), r.repo, short)) : h("p", { class: "muted", "data-prs-removes": "" }, T("No dependency left: the block on GitHub is removed.", "沒有依賴了：移除 GitHub 上的區塊。"))));
   const list = h("div", { class: "pw-targets" }, pres());
   const close = pwModal(T("Apply the dependencies to the pull requests", "套用依賴到 pull request"), [
     h("p", { class: "muted" }, T("Studio adds one marked block at the end of each pull request body and changes nothing else. It writes only after you approve the card this sends to your Inbox; every refresh afterwards checks whether the block was edited.", "Studio 會在每個 PR 的 body 尾端寫入一段帶標記的區塊，其他內容不動。要等你核准這裡送到收件匣的卡片才會寫入；之後每次刷新都會比對它有沒有被改。")),
@@ -342,7 +343,7 @@ function depModal(r) {
     h("div", { class: "chips", "data-prs-dep-list": "" }, cur.length ? cur.map((d) => h("span", { class: "chip" }, d, h("button", { class: "pw-x", "data-prs-dep-rm": d, "aria-label": T(`Remove ${d}`, `移除 ${d}`), onclick: () => save(cur.filter((x) => x !== d)) }, icon("x")))) : h("span", { class: "faint" }, T("No dependency recorded", "沒有記錄依賴"))),
     h("div", { class: "pw-depadd" }, h("select", { class: "input", "data-prs-dep-add": "", "aria-label": T("Add a dependency", "加入依賴"), onchange: (e) => { if (e.target.value) save([...cur, e.target.value]); } }, h("option", { value: "" }, T("Add a dependency from the list…", "從清單加入依賴…")), others.map((x) => h("option", { value: x }, x))),
       typed, h("button", { class: "btn", onclick: () => { const v = typed.value.trim(); if (!ID.test(v)) { flash(T("Write owner/repo#number", "請寫 owner/repo#number")); return; } save([...cur, v]); } }, T("Add", "加入"))),
-    foot(h("span", { class: "x-grow" }), h("button", { class: "btn primary", "data-prs-dep-apply": "", disabled: !cur.length, onclick: () => applyModal([r.id]) }, T("Apply to the pull request…", "套用到 PR…")))], { id: "deps" });
+    foot(h("span", { class: "x-grow" }), h("button", { class: "btn primary", "data-prs-dep-apply": "", disabled: !cur.length && !r.bodyBlock, onclick: () => applyModal([r.id]) }, T("Apply to the pull request…", "套用到 PR…")))], { id: "deps" });
 }
 function driftModal(r) {
   const dr = r.deps.drift;

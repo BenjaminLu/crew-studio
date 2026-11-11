@@ -116,6 +116,9 @@ const { ok, end } = suite("pr-watch");
   ok(/other text than Depends-on/.test(refusedFake) && R.blockProblem(`${R.renderBlock(["o/r#3"], "o/r")}\n${R.renderBlock(["o/r#4"], "o/r")}`)?.includes("more than one") === true, "a marker pair around other text, or two blocks, is refused, never deleted unseen");
   const rul = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_code_owner_review: true } }], "none", null, "o");
   const unr = R.approvalsOf(rul, [], { files: [], codeowners: null, teamMembers: new Map(), lastPusher: null, ownersUnreadable: { en: "CODEOWNERS could not be read", tw: "x" } });
+  const lp = R.approvalsOf(R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true } }], "none", null, "o"), [{ login: "a", state: "APPROVED", stale: false, at: "", author: false }], { files: [], codeowners: null, teamMembers: new Map(), lastPusher: "b" });
+  ok(!lp.readable && /who pushed/.test((lp.missing[0] as any).reason), "approval after the last push: GitHub does not say who pushed, so the approvals are unreadable, never satisfied");
+  const rb = R.removeBlock(`Intro\n\n${R.renderBlock(["o/r#3"], "o/r")}\n`); ok(rb === "Intro\n", "removing the block keeps the rest of the body", JSON.stringify(rb));
   ok(!unr.readable && unr.missing[0].kind === "unreadable" && R.approvalsOf(rul, [], { files: ["a"], codeowners: null, teamMembers: new Map(), lastPusher: null }).readable, "code owners that cannot be checked are unreadable, distinct from no CODEOWNERS file");
 }
 // ---------- settings and the API origin ----------
@@ -287,6 +290,26 @@ try {
   await E.answer((E.cards.list({ run: apC.body.task }).find((c: any) => c.status === "open") as any).id, { choice: "apply", by: "captain" });
   await new Promise((r) => setTimeout(r, 200)); E.cancel(apC.body.task); await new Promise((r) => setTimeout(r, 1200)); gh.knobs.slowPull = null;
   ok(writes().length === before6, "a Task cancelled while GitHub answers writes nothing after", JSON.stringify(writes().slice(before6)));
+  // round 2, the other review threads: a failed branch deployment runs nothing; removing the last dependency removes the
+  // block through the card; a watch removed while a refresh runs stays removed
+  gh.data.deployments[1].state = "failure"; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.data.deployments[1].state = "success";
+  ok(row(v, "northwind/checkout-api#17").envs.find((e: any) => e.name === "staging")?.on === false, "a branch whose latest deployment failed does not run the head");
+  await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+  ok(row(v, "northwind/checkout-api#17").envs.find((e: any) => e.name === "staging")?.on === true, "precondition back: the successful deployment runs it");
+  const has14 = String(gh.data.find("northwind/checkout-api", 14)!.body);
+  ok(!!R.findBlock(has14), "precondition: #14's body has the block");
+  await call("/api/prs/deps", { pr: "northwind/checkout-api#14", on: [] });
+  const apR = await call("/api/prs/apply", { prs: ["northwind/checkout-api#14"] }); await until(() => !!E.cards.list({ run: apR.body.task }).find((c: any) => c.status === "open"), 10000);
+  const cR: any = E.cards.list({ run: apR.body.task }).find((c: any) => c.status === "open");
+  ok(apR.status === 200 && /the block is removed/.test(cR.body), "with no dependency left the card offers to remove the block", JSON.stringify(apR.body));
+  await E.answer(cR.id, { choice: "apply", by: "captain" }); await until(() => E.list().find((r: any) => r.id === apR.body.task)!.status === "succeeded", 10000);
+  const after14b = String(gh.data.find("northwind/checkout-api", 14)!.body);
+  ok(!R.findBlock(after14b) && after14b.trim() === R.stripBlock(has14).trim() && !Object.keys(W.state.applied).some((k) => k.toLowerCase() === "northwind/checkout-api#14"), "the block is gone from GitHub and from Studio's record; the rest of the body kept", JSON.stringify(after14b));
+  gh.knobs.slowPull = { path: "/repos/northwind/mobile/pulls/5", ms: 600 };
+  const running = call("/api/prs/refresh", {}); await new Promise((r) => setTimeout(r, 150));
+  await call("/api/prs/unwatch", { repo: "northwind/ledger" }); await running; gh.knobs.slowPull = null; v = (await call("/api/prs")).body;
+  ok(!row(v, "northwind/ledger#40") && !W.snapshot.rows.some((r) => r.id === "northwind/ledger#40"), "a repository removed while a refresh runs does not come back with it");
+  await call("/api/prs/watch", { url: "https://github.com/northwind/ledger" }); await call("/api/prs/refresh", {});
   // rate limit: the refresh fails, the list stays, Studio backs off
   gh.setRateLimited(true); const atBefore = W.snapshot.at;
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.setRateLimited(false);

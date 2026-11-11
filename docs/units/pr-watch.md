@@ -62,7 +62,7 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 - **Required reviewers**: accounts (a review bot, say) whose review every pull request needs before anything else.
 - **Environments**: an ordered list; each is production or not and may be limited to some repositories. Each says how to
   tell whether a head runs there, by one of: a GitHub Deployment to that environment (the latest one, at the head, status
-  success); a check run by name on the head; the latest deployment of a branch whose commit contains the head (compare);
+  success); a check run by name on the head; the latest deployment of a branch, when its latest status is success or active, whose commit contains the head (compare);
   an image tag in a file in a repository (path, a pattern whose first group is the commit, optional ref), compared by commit.
   The pattern runs one line at a time (lines over 500 characters skipped); a pattern that repeats a repeated group or uses
   a backreference is refused in the settings, since the file is text others write.
@@ -92,7 +92,8 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   matched without building a regular expression from the file, in time bounded by the pattern and path, with length caps;
   a CODEOWNERS that cannot be read, or changed files that could not all be read, make the approvals unreadable, never
   "no owner"), approval after
-  the last push, stale approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
+  the last push (GitHub does not say who pushed, so with this rule the approvals read "unreadable", never satisfied), stale
+  approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
   never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
   the last pusher's own either). A protection read that GitHub refuses (it needs admin) makes the rules unreadable: the row
   says so and its next step is approve with "rules unreadable", never a guess.
@@ -103,6 +104,8 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 - **No read/unread state.** A row that changed in the latest refresh carries a left accent bar and "changed N min ago:
   what" (new commits, a review, the evidence, an environment, the next step); the mark stays until the next change. A
   settings change starts the marks afresh.
+- A refresh's result is filtered by the watch list as it is when the refresh ends: what the captain removed meanwhile
+  stays removed.
 - **State**: `<data>/pr-watch/state.json` (watch list, settings, Studio's order and dependencies, what Studio wrote) and
   `<data>/pr-watch/snapshot.json` (the last refresh), 0600, never in a repository.
 
@@ -145,6 +148,7 @@ The first matching rule, top to bottom; deterministic, no model:
   <!-- /crew-studio:depends -->
   ```
 
+  When a row has no dependency left but GitHub still has the block, the same card removes the block.
   A body with an unpaired marker, two blocks, or a block holding anything but `Depends-on:` lines is refused (a marker pair
   around other text would otherwise delete it unseen). Firstmate cannot answer the card; closing it writes nothing.
 - **Drift**: every refresh compares the body's block with what Studio wrote. A block edited or removed on GitHub turns

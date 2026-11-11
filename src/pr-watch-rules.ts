@@ -91,6 +91,13 @@ export function replaceBlock(body: string, block: string): string {
   const head = b.replace(/\s+$/, "");
   return head ? `${head}${eol}${eol}${blk}${eol}` : `${blk}${eol}`;
 }
+/** The body without Studio's block (the blank lines that set it apart go with it); everything else kept. */
+export function removeBlock(body: string): string {
+  const b = String(body ?? ""), why = blockProblem(b); if (why) throw new Error(why);
+  const f = findBlock(b); if (!f || f === "malformed") return b;
+  const eol = b.includes("\r\n") ? "\r\n" : "\n", before = b.slice(0, f.start).replace(/\s+$/, ""), after = b.slice(f.end);
+  return before + (after.trim() ? after : before ? eol : "");
+}
 /** The pull requests Studio's block in a body names (null when the body has no block). */
 export function blockDeps(body: string, repo: string): string[] | null {
   const f = findBlock(body); if (!f || f === "malformed") return null;
@@ -257,6 +264,9 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   /** why the code owners cannot be checked: CODEOWNERS or the changed files could not be read (not "no owner applies") */
   ownersUnreadable?: { en: string; tw: string } | null }): Approvals {
   if (!rules.readable) return { readable: false, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [{ kind: "unreadable", reason: rules.reason, tw: rules.tw }], sources: [] };
+  // GitHub's REST and GraphQL APIs do not say who pushed the last commit (its author or committer need not be the pusher):
+  // with "approval after the last push" Studio cannot tell whose approval counts, so it says so instead of guessing
+  if (rules.lastPush) return { readable: false, required: rules.required, counted: 0, codeOwners: rules.codeOwners, lastPush: true, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: "the branch rules ask for an approval after the last push, and GitHub does not say who pushed it: check the approvals on GitHub", tw: "分支規則要求最後一次 push 之後的 approve，但 GitHub 不提供是誰 push 的：請到 GitHub 確認 approve" }], sources: rules.sources };
   if (rules.codeOwners && o.ownersUnreadable) return { readable: false, required: rules.required, counted: 0, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: o.ownersUnreadable.en, tw: o.ownersUnreadable.tw }], sources: rules.sources };
   const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || (!rules.dismissStale && !rules.lastPush)) && !(rules.lastPush && o.lastPusher && r.login.toLowerCase() === o.lastPusher.toLowerCase()));
   const approvers = new Set(valid.map((r) => r.login.toLowerCase())), missing: Missing[] = [];

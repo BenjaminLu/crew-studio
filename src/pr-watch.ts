@@ -186,6 +186,8 @@ export function createPrWatch(d: PrWatchDeps) {
       const g = reader(apiBase(), token, signal, d.poller, authority, { etags, budget: { left: d.limits?.reads ?? READ_BUDGET } });
       const next = await collect(g, signal);
       signal.throwIfAborted();
+      // the watch list may have changed while GitHub answered: what was removed meanwhile stays removed
+      const w = state.watch; next.rows = next.rows.filter((r) => r.single ? has(w.prs, r.id) : has(w.repos, r.repo) && !has(w.excluded, r.id));
       snap = next; write(snapFile, snap); live.error = null; live.backoffUntil = null; live.failures = 0;
     } catch (e: any) {
       if (signal.aborted) return;
@@ -260,7 +262,10 @@ export function createPrWatch(d: PrWatchDeps) {
         if (dt.kind === "check") return checks.some((c) => eq(String(c.name), dt.name) && c.status === "completed" && ["success", "neutral"].includes(String(c.conclusion)));
         if (dt.kind === "deployment") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || String(dep.sha) !== head || !Number.isSafeInteger(dep.id)) return false;
           const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); return ["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : "")); }
-        if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep) return false; return await contains(repo, head, String(dep.sha)); }
+        if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep || !Number.isSafeInteger(dep.id)) return false;
+          // a failed, pending or inactive deployment of the branch runs nothing: only a successful (or active) one counts
+          const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (!["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return false;
+          return await contains(repo, head, String(dep.sha)); }
         const text = await contents(dt.repository, dt.path, dt.ref ?? null); if (text == null) return null;
         const tag = R.tagCommit(text, dt.pattern); return tag ? await contains(repo, head, tag) : false;
       } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return null; }
@@ -433,11 +438,14 @@ export function createPrWatch(d: PrWatchDeps) {
     const rows = viewRows(snap, state), g = reader(apiBase(), token, undefined, null, null), targets: Target[] = [];
     for (const id of ids) {
       const r = rows.find((x) => eq(x.id, id)); if (!r) throw new Error(`${id} is not in the list`);
-      const on = r.deps.on.map((x) => x.id); if (!on.length) throw new Error(`${id} has no dependency to write`);
+      const on = r.deps.on.map((x) => x.id);
       const p = await g.get(`${repoPath(r.repo)}/pulls/${r.number}`), body = String(p?.body ?? "");
       const problem = R.blockProblem(body); if (problem) throw new Error(`${id}: ${problem}`);
-      const block = R.renderBlock(on, r.repo, shortForm), found = R.findBlock(body);
-      if (R.replaceBlock(body, block).length > MAX_BODY) throw new Error(`${id}: the body would exceed GitHub's limit`);
+      const found = R.findBlock(body);
+      // no dependency left: the card removes the block GitHub still has (nothing to do when there is none)
+      if (!on.length && !(found && found !== "malformed")) throw new Error(`${id} has no dependency to write and no block on GitHub to remove`);
+      const block = on.length ? R.renderBlock(on, r.repo, shortForm) : "";
+      if (block && R.replaceBlock(body, block).length > MAX_BODY) throw new Error(`${id}: the body would exceed GitHub's limit`);
       targets.push({ id: r.id, repo: r.repo, number: r.number, title: r.title, on, block, bodyHash: bodyHash(body), current: found && found !== "malformed" ? found.text.slice(0, 4000) : null });
     }
     const proposal: Proposal = { schema: 1, targets, shortForm };
@@ -452,7 +460,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const p = JSON.parse(String(x.run.params.proposal ?? "null")) as Proposal;
     if (p?.schema !== 1 || !Array.isArray(p.targets) || !p.targets.length || p.targets.length > 50) throw new Error("The apply proposal is malformed");
     for (const t of p.targets) { const sp = R.splitId(t.id);
-      if (!sp || !eq(sp.repo, t.repo) || sp.number !== t.number || !Array.isArray(t.on) || !t.on.length || t.on.some((o) => !R.splitId(o)) || t.block !== R.renderBlock(t.on, t.repo, !!p.shortForm) || !/^[a-f0-9]{64}$/.test(t.bodyHash) || !(t.current === null || typeof t.current === "string"))
+      if (!sp || !eq(sp.repo, t.repo) || sp.number !== t.number || !Array.isArray(t.on) || t.on.some((o) => !R.splitId(o)) || t.block !== (t.on.length ? R.renderBlock(t.on, t.repo, !!p.shortForm) : "") || (!t.on.length && !t.current) || !/^[a-f0-9]{64}$/.test(t.bodyHash) || !(t.current === null || typeof t.current === "string"))
         throw new Error("The apply proposal is malformed"); }
     return p;
   }
@@ -468,7 +476,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const p = checkProposal(x, source), n = p.targets.length, repos = [...new Set(p.targets.map((t) => t.repo))];
       const body = p.targets.flatMap((t) => [`Repository / 儲存庫: ${t.repo}`, `Pull request: https://github.com/${t.repo}/pull/${t.number}${t.title ? ` (${t.title})` : ""}`,
         ...(t.current ? ["Block on GitHub now, which this replaces / GitHub 上現在的區塊（會被取代）:", t.current] : ["No block on GitHub yet: it is added at the end / GitHub 上還沒有區塊：會加在尾端"]),
-        "Block written / 寫入的區塊:", t.block, ""]).concat([
+        ...(t.block ? ["Block written / 寫入的區塊:", t.block] : ["No dependency left: the block is removed / 沒有依賴了：移除這個區塊"]), ""]).concat([
         "Studio replaces only this marked block (or adds it at the end) and changes nothing else in the body. It reads the body again right before writing; a body that changed since this card is left alone.",
         "Studio 只取代這段帶標記的區塊（沒有就加在尾端），body 其他內容一律不動。寫入前會再讀一次 body；如果它在這張卡片之後被改過，就不寫入。"]).join("\n");
       await e.card(x, "permission", { captainOnly: true, title: `Write the dependency block into ${n === 1 ? p.targets[0].id : `${n} pull requests`}?`, zhTitle: `把依賴區塊寫進 ${n === 1 ? p.targets[0].id : `${n} 個 pull request`} 嗎？`,
@@ -496,11 +504,11 @@ export function createPrWatch(d: PrWatchDeps) {
           const path = `${repoPath(t.repo)}/pulls/${t.number}`, cur = await call(api, token, "GET", path), body = String(cur?.body ?? "");
           if (ended()) { refused.push({ id: t.id, why: "the Task ended before this write" }); continue; }
           if (bodyHash(body) !== t.bodyHash) { refused.push({ id: t.id, why: "the body changed on GitHub since the card; apply again" }); continue; }
-          const next = R.replaceBlock(body, t.block); if (next.length > MAX_BODY) { refused.push({ id: t.id, why: "the body would exceed GitHub's limit" }); continue; }
+          const next = t.block ? R.replaceBlock(body, t.block) : R.removeBlock(body); if (next.length > MAX_BODY) { refused.push({ id: t.id, why: "the body would exceed GitHub's limit" }); continue; }
           const out = await call(api, token, "PATCH", path, { body: next });
           // GitHub has no conditional write for a body: an edit between the read and the write shows as a different answer
           if (String(out?.body ?? "") !== next) { refused.push({ id: t.id, why: "the body GitHub kept differs from what Studio wrote (edited at the same moment?); check it on GitHub and apply again" }); continue; }
-          const k = Object.keys(state.applied).find((a) => eq(a, t.id)) ?? t.id; state.applied[k] = { block: t.block, on: t.on, at: iso() };
+          const k = Object.keys(state.applied).find((a) => eq(a, t.id)) ?? t.id; if (t.block) state.applied[k] = { block: t.block, on: t.on, at: iso() }; else delete state.applied[k];
           const dk = Object.keys(state.deps).find((a) => eq(a, t.id)) ?? t.id; state.deps[dk] = { on: t.on, by: "captain", at: iso() };
           written.push(t.id);
         } catch (err: any) { refused.push({ id: t.id, why: err instanceof HttpError ? why(err).en : "GitHub could not be reached" }); }
