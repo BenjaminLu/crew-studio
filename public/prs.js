@@ -247,6 +247,8 @@ function detail(r) {
         h("h3", {}, T("Missing approvals", "還缺的 approve")), h("div", {}, (r.approvals?.missing || []).length ? r.approvals.missing.map((m) => m.kind === "unreadable" ? LX({ en: m.reason, tw: m.tw }) : missWord(m)).join(T("; ", "；")) : "—"),
         r.approvals?.readable ? h("p", { class: "faint pw-small" }, T(`Rules: ${r.approvals.required} approval${r.approvals.required === 1 ? "" : "s"}${r.approvals.codeOwners ? ", code owners" : ""}${r.approvals.lastPush ? ", approval after the last push" : ""}${r.approvals.dismissStale ? ", stale approvals dismissed" : ""} (${(r.approvals.sources || []).join(", ") || "no rule"}).`,
           `規則：${r.approvals.required} 個 approve${r.approvals.codeOwners ? "、code owner" : ""}${r.approvals.lastPush ? "、最後一次 push 之後的 approve" : ""}${r.approvals.dismissStale ? "、舊 approve 失效" : ""}（${(r.approvals.sources || []).join("、") || "沒有規則"}）。`)) : null,
+        r.approvals?.inferredPusher ? h("p", { class: "faint pw-small", "data-prs-inferred": "" }, T(`Approval after the last push: the pusher is inferred from the author and the head commit (${r.approvals.inferredPusher.join(", ") || "none known"}); GitHub does not expose it. Only approvals on the current head by someone else count.`,
+          `最後一次 push 之後的 approve：push 的人是從作者和 head commit 推斷的（${r.approvals.inferredPusher.join("、") || "不明"}）；GitHub 不提供這項資訊。只有其他人在目前 head 上的 approve 才算。`)) : null,
         h("h3", {}, T("Order", "順序")), h("ul", { class: "pw-why" }, (r.orderWhy || []).map((w) => h("li", {}, w))),
         r.partial?.length ? h("p", { class: "faint pw-small" }, T(`Not read this time: ${r.partial.join(", ")}.`, `這次沒讀到：${r.partial.join("、")}。`)) : null)),
   ], { wide: true, id: "detail" });

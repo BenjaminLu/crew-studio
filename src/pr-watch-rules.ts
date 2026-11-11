@@ -91,12 +91,19 @@ export function replaceBlock(body: string, block: string): string {
   const head = b.replace(/\s+$/, "");
   return head ? `${head}${eol}${eol}${blk}${eol}` : `${blk}${eol}`;
 }
-/** The body without Studio's block (the blank lines that set it apart go with it); everything else kept. */
+/** The body without Studio's block: the block, its own line ending, and at most the one blank line that set it apart
+ *  (the separator Studio adds when it appends the block). Everything else is kept byte for byte, paragraph breaks included. */
 export function removeBlock(body: string): string {
   const b = String(body ?? ""), why = blockProblem(b); if (why) throw new Error(why);
   const f = findBlock(b); if (!f || f === "malformed") return b;
-  const eol = b.includes("\r\n") ? "\r\n" : "\n", before = b.slice(0, f.start).replace(/\s+$/, ""), after = b.slice(f.end);
-  return before + (after.trim() ? after : before ? eol : "");
+  const eol = b.includes("\r\n") ? "\r\n" : "\n";
+  let before = b.slice(0, f.start), after = b.slice(f.end);
+  const ownLine = (before === "" || before.endsWith(eol)) && (after === "" || after.startsWith(eol));
+  if (!ownLine) return before + after; // inside a line: only the block itself goes
+  if (after.startsWith(eol)) after = after.slice(eol.length); // the block's own line ending
+  if (before.endsWith(eol + eol) && (after === "" || after.startsWith(eol))) before = before.slice(0, -eol.length); // one blank-line separator
+  else if (before === "" && after.startsWith(eol)) after = after.slice(eol.length);
+  return before + after;
 }
 /** The pull requests Studio's block in a body names (null when the body has no block). */
 export function blockDeps(body: string, repo: string): string[] | null {
@@ -208,14 +215,22 @@ export function latestReviews(reviews: Review[], head: string, author: string): 
   return [...by.values()];
 }
 // CODEOWNERS: the last matching line wins (GitHub's rule); patterns follow gitignore's shape
+export const CODEOWNERS_LIMITS = { bytes: 200000, lines: 2000, pattern: 256, patternSegments: 32, path: 1024, pathSegments: 128 };
+/** Whether a CODEOWNERS text is past Studio's limits (then the code owners are unreadable: a rule past them may own a file). */
+export function codeownersOverLimit(text: string): string | null {
+  const t = String(text ?? "");
+  if (t.length > CODEOWNERS_LIMITS.bytes) return `the CODEOWNERS file is over ${CODEOWNERS_LIMITS.bytes} characters`;
+  if (t.split(/\r?\n/).length > CODEOWNERS_LIMITS.lines) return `the CODEOWNERS file has over ${CODEOWNERS_LIMITS.lines} lines`;
+  return null;
+}
 export function parseCodeowners(text: string): { pattern: string; owners: string[] }[] {
-  return String(text ?? "").slice(0, 200000).split(/\r?\n/).slice(0, 2000).join("\n").split(/\r?\n/).map((l) => l.replace(/(^|\s)#.*$/, "").trim()).filter(Boolean)
+  return String(text ?? "").split(/\r?\n/).map((l) => l.replace(/(^|\s)#.*$/, "").trim()).filter(Boolean)
     .map((l) => { const [pattern, ...owners] = l.split(/\s+/); return { pattern, owners: owners.filter((o) => /^@[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)?$/.test(o) || /^[^@\s]+@[^@\s]+$/.test(o)) }; });
 }
 // No regular expression is built from a pattern (a CODEOWNERS line is text others write): a segment matcher with a
 // two-pointer wildcard walk, and `**` segments matched over path segments with a memo, so the work is bounded by
-// (pattern segments × path segments × segment length). Patterns over 256 characters or 32 segments, and paths over
-// 1024 characters or 128 segments, never match.
+// (pattern segments × path segments × segment length). A pattern over 256 characters or 32 segments, or a path over
+// 1024 characters or 128 segments, answers "limit": the caller treats the owners as unreadable, never as no match.
 const segMatch = (p: string, s: string) => {
   let i = 0, j = 0, star = -1, mark = 0;
   while (j < s.length) {
@@ -227,15 +242,15 @@ const segMatch = (p: string, s: string) => {
   while (i < p.length && p[i] === "*") i++;
   return i === p.length;
 };
-export function globMatch(pattern: string, path: string): boolean {
-  if (pattern.length > 256 || path.length > 1024) return false;
+export function globMatch(pattern: string, path: string): boolean | "limit" {
+  const L = CODEOWNERS_LIMITS; if (pattern.length > L.pattern || path.length > L.path) return "limit";
   let pat = pattern, anchored = pat.startsWith("/"); if (anchored) pat = pat.slice(1);
   const dirOnly = pat.endsWith("/"); if (dirOnly) pat = pat.slice(0, -1);
   if (!pat) return true;
   if (pat.includes("/")) anchored = true;
   const ps = pat.split("/").map((x) => x === "**" ? x : x.replace(/\*+/g, "*")), ss = path.split("/");
   if (!anchored) ps.unshift("**");
-  if (ps.length > 32 || ss.length > 128) return false;
+  if (ps.length > L.patternSegments || ss.length > L.pathSegments) return "limit";
   const memo = new Map<number, boolean>();
   const go = (pi: number, si: number): boolean => {
     const k = pi * 256 + si; const m = memo.get(k); if (m !== undefined) return m;
@@ -247,39 +262,50 @@ export function globMatch(pattern: string, path: string): boolean {
   };
   return go(0, 0);
 }
-export function ownersOf(path: string, rules: { pattern: string; owners: string[] }[]): string[] {
+/** The owners of a path (the last matching line wins); "limit" when a line or the path is past the limits, since that
+ *  line could be the one that owns it. */
+export function ownersOf(path: string, rules: { pattern: string; owners: string[] }[]): string[] | "limit" {
   let out: string[] = [];
-  for (const r of rules) if (globMatch(r.pattern, path)) out = r.owners;
+  for (const r of rules) { const m = globMatch(r.pattern, path); if (m === "limit") return "limit"; if (m) out = r.owners; }
   return out;
 }
 export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string };
-export type Approvals = { readable: boolean; required: number; counted: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; missing: Missing[]; sources: string[] };
+export type Approvals = { readable: boolean; required: number; counted: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; missing: Missing[]; sources: string[];
+  /** with "approval after the last push": the logins treated as the pusher (inferred: GitHub does not expose who pushed) */
+  inferredPusher?: string[] };
 /**
  * What the base branch's rules still miss. The author's own approval never counts; an approval given on another head is
  * stale and counts only when neither the rules dismiss stale approvals nor ask for an approval after the last push (then
- * the last pusher's own approval does not count either). Code owners: every changed file's owners need one approval from
+ * the inferred pusher's own approval does not count either). Code owners: every changed file's owners need one approval from
  * an owner (a user, or a member of an owner team). Required teams: one approval from a member each.
  */
-export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: string[]; codeowners: { pattern: string; owners: string[] }[] | null; teamMembers: Map<string, string[] | null>; lastPusher: string | null;
+export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: string[]; codeowners: { pattern: string; owners: string[] }[] | null; teamMembers: Map<string, string[] | null>;
+  /** the pull request's author, and the head commit's author and committer logins (null when the head commit could not be read) */
+  author?: string; headCommit?: { author: string | null; committer: string | null } | null;
   /** why the code owners cannot be checked: CODEOWNERS or the changed files could not be read (not "no owner applies") */
   ownersUnreadable?: { en: string; tw: string } | null }): Approvals {
   if (!rules.readable) return { readable: false, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [{ kind: "unreadable", reason: rules.reason, tw: rules.tw }], sources: [] };
-  // GitHub's REST and GraphQL APIs do not say who pushed the last commit (its author or committer need not be the pusher):
-  // with "approval after the last push" Studio cannot tell whose approval counts, so it says so instead of guessing
-  if (rules.lastPush) return { readable: false, required: rules.required, counted: 0, codeOwners: rules.codeOwners, lastPush: true, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: "the branch rules ask for an approval after the last push, and GitHub does not say who pushed it: check the approvals on GitHub", tw: "分支規則要求最後一次 push 之後的 approve，但 GitHub 不提供是誰 push 的：請到 GitHub 確認 approve" }], sources: rules.sources };
+  // "approval after the last push": an approval counts when it was given on the current head, by someone other than the
+  // pusher. GitHub does not say who pushed, so the pusher is inferred: the pull request's author and the head commit's
+  // author and committer. Without the head commit the rule cannot be applied: unreadable.
+  if (rules.lastPush && !o.headCommit) return { readable: false, required: rules.required, counted: 0, codeOwners: rules.codeOwners, lastPush: true, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: "the branch rules ask for an approval after the last push, and the head commit could not be read", tw: "分支規則要求最後一次 push 之後的 approve，但讀不到 head commit" }], sources: rules.sources };
+  const pusher = rules.lastPush ? [...new Set([o.author, o.headCommit?.author, o.headCommit?.committer].filter((x): x is string => !!x).map((x) => x.toLowerCase()))] : [];
   if (rules.codeOwners && o.ownersUnreadable) return { readable: false, required: rules.required, counted: 0, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: o.ownersUnreadable.en, tw: o.ownersUnreadable.tw }], sources: rules.sources };
-  const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || (!rules.dismissStale && !rules.lastPush)) && !(rules.lastPush && o.lastPusher && r.login.toLowerCase() === o.lastPusher.toLowerCase()));
+  const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || (!rules.dismissStale && !rules.lastPush)) && !pusher.includes(r.login.toLowerCase()));
   const approvers = new Set(valid.map((r) => r.login.toLowerCase())), missing: Missing[] = [];
   if (valid.length < rules.required) missing.push({ kind: "count", n: rules.required - valid.length });
   const memberOf = (team: string) => (o.teamMembers.get(team.toLowerCase()) ?? []).map((m) => m.toLowerCase());
   const satisfied = (owner: string) => { const k = owner.toLowerCase(); return k.includes("/") ? memberOf(k.replace(/^@/, "")).some((m) => approvers.has(m)) : approvers.has(k.replace(/^@/, "")); };
   if (rules.codeOwners && o.codeowners) {
     const sets = new Map<string, string[]>();
-    for (const f of o.files) { const ow = ownersOf(f, o.codeowners); if (ow.length) sets.set(ow.map((x) => x.toLowerCase()).sort().join(" "), ow); }
+    for (const f of o.files) { const ow = ownersOf(f, o.codeowners);
+      if (ow === "limit") return { readable: false, required: rules.required, counted: valid.length, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources,
+        missing: [{ kind: "unreadable", reason: "a CODEOWNERS line or a changed file's path is past Studio's limits, so the code owners cannot be checked", tw: "CODEOWNERS 的某一行或某個改動檔案的路徑超過 Studio 的上限，無法檢查 code owner" }] };
+      if (ow.length) sets.set(ow.map((x) => x.toLowerCase()).sort().join(" "), ow); }
     for (const ow of sets.values()) if (!ow.some(satisfied)) missing.push({ kind: "owner", who: ow });
   }
   for (const t of rules.teams) if (!memberOf(t.key).some((m) => approvers.has(m))) missing.push({ kind: "team", who: t.label });
-  return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources };
+  return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources, ...(rules.lastPush ? { inferredPusher: pusher } : {}) };
 }
 export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : []);
 

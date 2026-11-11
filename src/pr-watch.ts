@@ -242,7 +242,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const contents = async (repo: string, path: string, ref: string | null) => { const t = await fileOf(repo, path, ref); return t === "missing" || t === "unreadable" ? null : t; };
     // CODEOWNERS: its rules, null when the repository has none, "unreadable" when one could not be read
     const codeownersFor = (repo: string, base: string) => once(ownersCache, `${repo}|${base}`.toLowerCase(), async (): Promise<{ pattern: string; owners: string[] }[] | null | "unreadable"> => {
-      for (const p of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) { const t = await fileOf(repo, p, base); if (t === "unreadable") return "unreadable"; if (t !== "missing") return R.parseCodeowners(t); }
+      for (const p of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) { const t = await fileOf(repo, p, base); if (t === "unreadable") return "unreadable"; if (t !== "missing") return R.codeownersOverLimit(t) ? "unreadable" : R.parseCodeowners(t); }
       return null; });
     const members = (key: string, owner: string) => once(teamCache, key.toLowerCase(), async () => {
       try {
@@ -282,7 +282,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const partial: string[] = [];
       const [reviews, commits, comments, timeline, files, checks, closing] = await Promise.all([
         soft(async () => (await g.pages(`${path}/pulls/${n}/reviews`, 3)).map((r: any) => ({ login: String(r.user?.login ?? ""), state: String(r.state ?? ""), commit: r.commit_id ? String(r.commit_id) : null, at: String(r.submitted_at ?? "") })), [] as R.Review[], partial, "reviews"),
-        soft(async () => (await g.pages(`${path}/pulls/${n}/commits`, 3)).map((c: any) => ({ sha: String(c.sha ?? ""), at: String(c.commit?.committer?.date ?? c.commit?.author?.date ?? ""), login: String(c.author?.login ?? c.committer?.login ?? "") })), [] as (R.Commit & { login: string })[], partial, "commits"),
+        soft(async () => (await g.pages(`${path}/pulls/${n}/commits`, 3)).map((c: any) => ({ sha: String(c.sha ?? ""), at: String(c.commit?.committer?.date ?? c.commit?.author?.date ?? ""), login: String(c.author?.login ?? c.committer?.login ?? ""), author: c.author?.login ? String(c.author.login) : null, committer: c.committer?.login ? String(c.committer.login) : null })), [] as (R.Commit & { login: string; author: string | null; committer: string | null })[], partial, "commits"),
         soft(async () => (await g.pages(`${path}/issues/${n}/comments`, 3)).map((c: any) => ({ login: String(c.user?.login ?? ""), body: String(c.body ?? "").slice(0, 65536), at: String(c.created_at ?? ""), url: String(c.html_url ?? "") })), [] as R.EvidenceInput["comments"], partial, "comments"),
         soft(() => g.pages(`${path}/issues/${n}/timeline`, 2), [] as any[], partial, "timeline"),
         soft(async () => (await g.pages(`${path}/pulls/${n}/files`, 3)).map((f: any) => String(f.filename ?? "")).filter(Boolean), [] as string[], partial, "files"),
@@ -307,14 +307,14 @@ export function createPrWatch(d: PrWatchDeps) {
       let owners: { pattern: string; owners: string[] }[] | null = null, ownersUnreadable: { en: string; tw: string } | null = null; const teamMembers = new Map<string, string[] | null>();
       if (rules.readable) {
         if (rules.codeOwners) { const got = await codeownersFor(repo, base);
-          if (got === "unreadable") ownersUnreadable = { en: `the CODEOWNERS file of ${repo} could not be read, so the code owners cannot be checked`, tw: `讀不到 ${repo} 的 CODEOWNERS，無法檢查 code owner` };
+          if (got === "unreadable") ownersUnreadable = { en: `the CODEOWNERS file of ${repo} could not be read (or is past Studio's limits), so the code owners cannot be checked`, tw: `讀不到 ${repo} 的 CODEOWNERS（或超過 Studio 的上限），無法檢查 code owner` };
           else owners = got;
           const total = Number(p.changed_files);
           if (partial.includes("files") || (Number.isSafeInteger(total) && total > files.length) || files.length >= 300) ownersUnreadable ??= { en: "not every changed file could be read, so the code owners cannot be checked", tw: "沒能讀到所有改動的檔案，無法檢查 code owner" }; }
         const teamKeys = [...rules.teams.map((t) => t.key), ...(owners ?? []).flatMap((o) => o.owners).filter((o) => o.startsWith("@") && o.includes("/")).map((o) => o.slice(1))];
         for (const k of [...new Set(teamKeys.map((k) => k.toLowerCase()))].slice(0, 10)) teamMembers.set(k, await members(k, repo.split("/")[0]));
       }
-      const approvals = R.approvalsOf(rules, rv, { files, codeowners: owners, teamMembers, lastPusher: commits.at(-1)?.login || null, ownersUnreadable });
+      const approvals = R.approvalsOf(rules, rv, { files, codeowners: owners, teamMembers, author, headCommit: commits.length && commits.at(-1)!.sha === head && !partial.includes("commits") ? { author: commits.at(-1)!.author, committer: commits.at(-1)!.committer } : null, ownersUnreadable });
       const seen = snap.heads?.[id.toLowerCase()], headSeenAt = seen && seen.sha === head ? seen.at : out.at!;
       out.heads[id.toLowerCase()] = { sha: head, at: headSeenAt };
       const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,

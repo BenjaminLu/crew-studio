@@ -178,7 +178,10 @@ try {
     ok(sx.doc <= sx.w && sx.main <= sx.mainW + 1, `no sideways page scroll at ${w} ${theme}${w === 390 ? ' (the table scrolls inside its card)' : ''}`, JSON.stringify(sx));
     if (w === 390) ok(sx.tbl, `at ${w} the table scrolls inside its card`);
     if (w === 390) { const tc = await browser.newContext({ viewport: { width: 390, height: 900 }, isMobile: true, hasTouch: true }); const tp = await tc.newPage(); await tp.goto(`${base}/#/prs`); await tp.waitForSelector('[data-prs-row]');
-      ok(await tp.locator('[data-prs-drop]').first().evaluate((e) => getComputedStyle(e).opacity) === '1', 'on a touch screen the row × is visible without hover'); await tc.close(); }
+      // read on the element on the page now (a live redraw may replace the row between finding it and reading it)
+      const touchOpacity = async () => tp.evaluate(() => { const e = document.querySelector('[data-prs-drop]'); return e ? getComputedStyle(e).opacity : null; });
+      await until(async () => (await touchOpacity()) === '1', 5000);
+      ok(await touchOpacity() === '1', 'on a touch screen the row × is visible without hover', String(await touchOpacity())); await tc.close(); }
     await o.p.screenshot({ path: join(shots, `list-${w}-${theme}.png`), fullPage: w === 390 });
     if (w === 390) { await o.p.click('[data-prs-row="northwind/checkout-api#18"] .pw-title'); await o.p.waitForSelector('[data-prs-dialog="detail"]');
       const dx = await o.p.evaluate(() => document.documentElement.scrollWidth <= innerWidth); ok(dx, `the detail dialog fits at ${w} ${theme}`); await o.p.screenshot({ path: join(shots, `detail-${w}-${theme}.png`) }); }

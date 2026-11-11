@@ -68,9 +68,9 @@ const { ok, end } = suite("pr-watch");
   ok(rv.find((r) => r.login === "b")?.state === "APPROVED" && rv.find((r) => r.login === "a")?.stale === true && rv.find((r) => r.login === "me")?.author === true, "latest verdict per reviewer; a later comment keeps the approval; stale on another head; the author marked");
   const r = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 2 } }], { required_pull_request_reviews: { required_approving_review_count: 1, dismiss_stale_reviews: true } }, null);
   ok(r.readable && r.required === 2 && r.dismissStale && r.sources.join() === "ruleset,protection", "rulesets and classic protection merge: the stricter of each");
-  const ap = R.approvalsOf(r, rv, { files: [], codeowners: null, teamMembers: new Map(), lastPusher: null });
+  const ap = R.approvalsOf(r, rv, { files: [], codeowners: null, teamMembers: new Map() });
   ok(ap.counted === 1 && ap.missing[0]?.kind === "count" && (ap.missing[0] as any).n === 1, "the author's own approval and a stale one (stale dismissed) do not count", JSON.stringify(ap));
-  ok(R.mergeRules([], null, { en: "x", tw: "x" }).readable === false && R.approvalsOf(R.mergeRules([], null, { en: "no admin", tw: "x" }), [], { files: [], codeowners: null, teamMembers: new Map(), lastPusher: null }).missing[0].kind === "unreadable", "unreadable rules say so instead of guessing");
+  ok(R.mergeRules([], null, { en: "x", tw: "x" }).readable === false && R.approvalsOf(R.mergeRules([], null, { en: "no admin", tw: "x" }), [], { files: [], codeowners: null, teamMembers: new Map() }).missing[0].kind === "unreadable", "unreadable rules say so instead of guessing");
   const co = R.parseCodeowners("* @org/core\n/docs/ @dana\n*.md @writer\nsrc/**/api.ts @api-lead");
   ok(R.ownersOf("docs/a.ts", co).join() === "@dana" && R.ownersOf("docs/a.md", co).join() === "@writer" && R.ownersOf("x/y.ts", co).join() === "@org/core" && R.ownersOf("src/a/b/api.ts", co).join() === "@api-lead", "CODEOWNERS: the last matching line wins");
 }
@@ -98,7 +98,7 @@ const { ok, end } = suite("pr-watch");
   const t0 = performance.now(); const hit = R.globMatch("a**a**a**a**a**a**a**a**b", "a".repeat(50)); const t1 = performance.now() - t0;
   const many = Array.from({ length: 2000 }, (_, i) => ({ pattern: `*a*a*a*a*a*a*${i}`, owners: ["@x"] })), t2 = performance.now(); R.ownersOf("a".repeat(255), many); const t3 = performance.now() - t2;
   ok(!hit && t1 < 20 && t3 < 1000, "CODEOWNERS: a pattern built to backtrack matches in linear time (no regular expression from the text)", `${t1.toFixed(1)} ms, 2000 lines ${t3.toFixed(1)} ms`);
-  ok(R.globMatch("/docs/", "docs/a/b.md") && !R.globMatch("/docs/", "docs") && R.globMatch("*.md", "x/y/z.md") && R.globMatch("src/**/api.ts", "src/api.ts") && R.globMatch("src/**/api.ts", "src/a/b/api.ts") && !R.globMatch("src/*/api.ts", "src/a/b/api.ts") && R.globMatch("docs", "docs/x") && R.globMatch("a?c", "abc") && R.globMatch("*", "anything/at/all") && !R.globMatch("x".repeat(300), "x".repeat(300)) && !R.globMatch("*", "y".repeat(2000)),
+  ok(R.globMatch("/docs/", "docs/a/b.md") && !R.globMatch("/docs/", "docs") && R.globMatch("*.md", "x/y/z.md") && R.globMatch("src/**/api.ts", "src/api.ts") && R.globMatch("src/**/api.ts", "src/a/b/api.ts") && !R.globMatch("src/*/api.ts", "src/a/b/api.ts") && R.globMatch("docs", "docs/x") && R.globMatch("a?c", "abc") && R.globMatch("*", "anything/at/all") && R.globMatch("x".repeat(300), "x".repeat(300)) === "limit" && R.globMatch("*", "y".repeat(2000)) === "limit",
     "CODEOWNERS globs: anchoring, directories, *, **, ?, and the length caps");
   const t4 = performance.now(); const v = R.classifyComment(`**a**${" ".repeat(65000)}b c`).verdict; const t5 = performance.now() - t4;
   ok(v === "unclassified" && t5 < 50, "a long comment line is never fed to a verdict pattern (no quadratic bold match)", `${t5.toFixed(1)} ms`);
@@ -115,11 +115,38 @@ const { ok, end } = suite("pr-watch");
   let refusedFake = ""; try { R.replaceBlock(fake, R.renderBlock(["o/r#3"], "o/r")); } catch (e: any) { refusedFake = e.message; }
   ok(/other text than Depends-on/.test(refusedFake) && R.blockProblem(`${R.renderBlock(["o/r#3"], "o/r")}\n${R.renderBlock(["o/r#4"], "o/r")}`)?.includes("more than one") === true, "a marker pair around other text, or two blocks, is refused, never deleted unseen");
   const rul = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_code_owner_review: true } }], "none", null, "o");
-  const unr = R.approvalsOf(rul, [], { files: [], codeowners: null, teamMembers: new Map(), lastPusher: null, ownersUnreadable: { en: "CODEOWNERS could not be read", tw: "x" } });
-  const lp = R.approvalsOf(R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true } }], "none", null, "o"), [{ login: "a", state: "APPROVED", stale: false, at: "", author: false }], { files: [], codeowners: null, teamMembers: new Map(), lastPusher: "b" });
-  ok(!lp.readable && /who pushed/.test((lp.missing[0] as any).reason), "approval after the last push: GitHub does not say who pushed, so the approvals are unreadable, never satisfied");
+  const unr = R.approvalsOf(rul, [], { files: [], codeowners: null, teamMembers: new Map(), ownersUnreadable: { en: "CODEOWNERS could not be read", tw: "x" } });
+  // round 3: approval after the last push, with the pusher inferred
+  const lpRules = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true } }], "none", null, "o");
+  const head = { author: "hana", committer: "cody" }, ap1 = (rv: R.ReviewView[]) => R.approvalsOf(lpRules, rv, { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: head });
+  const rvw = (login: string, stale = false, author = false): R.ReviewView => ({ login, state: "APPROVED", stale, at: "", author });
+  ok(ap1([rvw("zoe", true)]).counted === 0 && ap1([rvw("zoe", true)]).missing[0].kind === "count", "after the last push: an approval on an older commit is stale and does not count");
+  ok(ap1([rvw("pat", false, true)]).counted === 0, "after the last push: the pull request author's approval on the head does not count");
+  ok(ap1([rvw("cody")]).counted === 0 && ap1([rvw("hana")]).counted === 0, "after the last push: the head commit's committer or author does not count (the inferred pusher)");
+  const other = ap1([rvw("zoe")]);
+  ok(other.readable && other.counted === 1 && !other.missing.length && other.inferredPusher!.join() === "pat,hana,cody", "after the last push: someone else's approval on the head counts; the inferred pusher is shown", JSON.stringify(other));
+  const noHead = R.approvalsOf(lpRules, [rvw("zoe")], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: null });
+  ok(!noHead.readable && /head commit could not be read/.test((noHead.missing[0] as any).reason), "after the last push without the head commit: unreadable");
+  // round 3: CODEOWNERS limits never read as "no owner"
+  const coRules = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_code_owner_review: true } }], "none", null, "o");
+  const longFile = [...Array.from({ length: 2500 }, (_, i) => `/unused${i}/ @nobody`), "* @owner-past-the-cap"].join("\n");
+  ok(!!R.codeownersOverLimit(longFile) && !R.codeownersOverLimit("* @a\n"), "a CODEOWNERS whose rule is past the line cap is over the limit (unreadable), never parsed short");
+  const longPat = R.approvalsOf(coRules, [], { files: ["src/a.ts"], codeowners: [{ pattern: `src/${"x".repeat(300)}`, owners: ["@a"] }], teamMembers: new Map() });
+  const longPath = R.approvalsOf(coRules, [], { files: [`src/${"d/".repeat(600)}a.ts`], codeowners: [{ pattern: "*", owners: ["@a"] }], teamMembers: new Map() });
+  ok(!longPat.readable && !longPath.readable && longPat.missing[0].kind === "unreadable" && R.globMatch("x".repeat(300), "x") === "limit", "an over-long CODEOWNERS pattern or changed path: unreadable, not no owner", JSON.stringify([longPat.missing, longPath.missing]));
+  // round 3: removing the block keeps paragraph breaks
+  const B = R.renderBlock(["o/r#3"], "o/r");
+  for (const eol of ["\n", "\r\n"]) {
+    const mid = `First paragraph${eol}${eol}${B.split("\n").join(eol)}${eol}${eol}Second paragraph`;
+    ok(R.removeBlock(mid) === `First paragraph${eol}${eol}Second paragraph`, `removing a block between paragraphs keeps one paragraph break (${eol === "\n" ? "LF" : "CRLF"})`, JSON.stringify(R.removeBlock(mid)));
+    const tight = `First paragraph  ${eol}${eol}${B.split("\n").join(eol)}${eol}Second paragraph${eol}`;
+    ok(R.removeBlock(tight) === `First paragraph  ${eol}${eol}Second paragraph${eol}`, `a block directly above a paragraph: the paragraph break and trailing spaces stay (${eol === "\n" ? "LF" : "CRLF"})`, JSON.stringify(R.removeBlock(tight)));
+    const orig = `Intro${eol}more${eol}`, appended = R.replaceBlock(orig, B);
+    ok(R.removeBlock(appended) === orig, `appending then removing the block gives the body back byte for byte (${eol === "\n" ? "LF" : "CRLF"})`, JSON.stringify(R.removeBlock(appended)));
+  }
+  ok(R.removeBlock(`a ${B} b`) === "a  b" && R.removeBlock(`${B}\n\nRest`) === "Rest", "a block inside a line goes alone; a block at the very start takes its separator");
   const rb = R.removeBlock(`Intro\n\n${R.renderBlock(["o/r#3"], "o/r")}\n`); ok(rb === "Intro\n", "removing the block keeps the rest of the body", JSON.stringify(rb));
-  ok(!unr.readable && unr.missing[0].kind === "unreadable" && R.approvalsOf(rul, [], { files: ["a"], codeowners: null, teamMembers: new Map(), lastPusher: null }).readable, "code owners that cannot be checked are unreadable, distinct from no CODEOWNERS file");
+  ok(!unr.readable && unr.missing[0].kind === "unreadable" && R.approvalsOf(rul, [], { files: ["a"], codeowners: null, teamMembers: new Map() }).readable, "code owners that cannot be checked are unreadable, distinct from no CODEOWNERS file");
 }
 // ---------- settings and the API origin ----------
 {
@@ -310,6 +337,14 @@ try {
   await call("/api/prs/unwatch", { repo: "northwind/ledger" }); await running; gh.knobs.slowPull = null; v = (await call("/api/prs")).body;
   ok(!row(v, "northwind/ledger#40") && !W.snapshot.rows.some((r) => r.id === "northwind/ledger#40"), "a repository removed while a refresh runs does not come back with it");
   await call("/api/prs/watch", { url: "https://github.com/northwind/ledger" }); await call("/api/prs/refresh", {});
+  // round 3: classic protection asking for an approval after the last push, against the fixture
+  const wa = gh.data.rules["northwind/web-app"].protection.body.required_pull_request_reviews; wa.require_last_push_approval = true;
+  const p30 = gh.data.find("northwind/web-app", 30)!, h30 = gh.data.head(p30), keepReviews = [...p30.reviews!];
+  p30.reviews!.push({ user: "skipper", state: "APPROVED", commit: h30, at: "2026-11-02T10:00:00Z" }, { user: "zoe", state: "APPROVED", commit: h30, at: "2026-11-02T10:01:00Z" });
+  await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+  const a30b = row(v, "northwind/web-app#30").approvals;
+  ok(a30b.readable && a30b.lastPush && a30b.counted === 1 && !a30b.missing.length && a30b.inferredPusher.includes("skipper"), "after the last push (fixture): ana's older approval is stale, the author's is not counted, zoe's on the head counts; the pusher is shown as inferred", JSON.stringify(a30b));
+  wa.require_last_push_approval = false; p30.reviews = keepReviews;
   // rate limit: the refresh fails, the list stays, Studio backs off
   gh.setRateLimited(true); const atBefore = W.snapshot.at;
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.setRateLimited(false);

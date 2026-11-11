@@ -122,7 +122,7 @@ export function prWatchGitHub(data = fixtureData()) {
     if (method !== "GET") { unknown.push(`${method} ${p}`); return json({ message: "Not Found" }, 404); }
     if ((k = /^\/pulls\/(\d+)\/(reviews|commits|files)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
       if (k[2] === "reviews") return json(page((pr.reviews ?? []).map((r, i) => ({ id: i + 1, user: { login: r.user }, state: r.state, commit_id: r.commit, submitted_at: r.at })), q));
-      if (k[2] === "commits") return json(page(pr.commits.map((c) => ({ sha: c.sha, commit: { committer: { date: c.at } }, author: { login: c.login } })), q));
+      if (k[2] === "commits") return json(page(pr.commits.map((c: any) => ({ sha: c.sha, commit: { committer: { date: c.at } }, author: { login: c.login }, committer: { login: c.committer ?? c.login } })), q));
       return json(page((pr.files ?? []).map((filename) => ({ filename })), q)); }
     if ((k = /^\/issues\/(\d+)\/(comments|timeline)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
       if (k[2] === "comments") return json(page((pr.comments ?? []).map((c, i) => ({ id: i + 1, user: { login: c.user }, body: c.body, created_at: c.at, html_url: `https://github.com/${repo}/pull/${pr.number}#issuecomment-${i + 1}` })), q));

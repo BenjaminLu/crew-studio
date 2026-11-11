@@ -90,9 +90,13 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   (`GET …/branches/<base>/protection`), the stricter of each: the required count, code owners (CODEOWNERS at
   `.github/`, the root or `docs/` on the base; every changed file's owners need an approval from one of them; patterns are
   matched without building a regular expression from the file, in time bounded by the pattern and path, with length caps;
+  a file, line, pattern or path past those caps (200,000 characters, 2,000 lines, 256-character or 32-segment patterns,
+  1,024-character or 128-segment paths) makes the code owners unreadable, never a silent non-match;
   a CODEOWNERS that cannot be read, or changed files that could not all be read, make the approvals unreadable, never
   "no owner"), approval after
-  the last push (GitHub does not say who pushed, so with this rule the approvals read "unreadable", never satisfied), stale
+  the last push (an approval counts only when given on the current head, by someone other than the pusher; GitHub does not
+  say who pushed, so the pusher is inferred as the pull request's author and the head commit's author and committer, and
+  the row's detail says it is inferred; only when the head commit cannot be read are the approvals unreadable), stale
   approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
   never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
   the last pusher's own either). A protection read that GitHub refuses (it needs admin) makes the rules unreadable: the row
@@ -148,7 +152,9 @@ The first matching rule, top to bottom; deterministic, no model:
   <!-- /crew-studio:depends -->
   ```
 
-  When a row has no dependency left but GitHub still has the block, the same card removes the block.
+  When a row has no dependency left but GitHub still has the block, the same card removes the block: the block, its own
+  line ending and at most the one blank line that set it apart; every other byte of the body stays, paragraph breaks
+  included.
   A body with an unpaired marker, two blocks, or a block holding anything but `Depends-on:` lines is refused (a marker pair
   around other text would otherwise delete it unseen). Firstmate cannot answer the card; closing it writes nothing.
 - **Drift**: every refresh compares the body's block with what Studio wrote. A block edited or removed on GitHub turns
@@ -211,7 +217,10 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     other text refused, unreadable CODEOWNERS, ETag reuse, evidence naming no commit, a write GitHub kept differently, a
     cancelled Task writing nothing; in the page: one toast at a time, one-line missing-approval button, all columns at 1440,
     the × on touch screens, Try again after a failed load, focus kept across a live update, the row menu copying one row.
-14. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
+14. Review round 3 (tests/pr-watch.ts "round 3"): CODEOWNERS past the caps reads unreadable; removing the block keeps
+    paragraph breaks (LF and CRLF) and round-trips an appended block byte for byte; after the last push, an older-commit
+    approval, the author's and the head committer's do not count and someone else's on the head does.
+15. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
     inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
