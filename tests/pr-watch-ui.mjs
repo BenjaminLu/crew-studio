@@ -41,6 +41,9 @@ try {
   ok(views.indexOf('prs') === views.indexOf('inbox') + 1, 'Pull requests is a top-level sidebar item right after Inbox', JSON.stringify(views));
   await p.click('.nav-item[data-view="prs"]'); await p.waitForSelector('[data-prs-page]:not([data-loading])');
   ok(await p.locator('[data-prs-empty]').isVisible(), 'empty at first: it says to paste an address');
+  { const o = await open(1440, 'light'); let failing = true; await o.p.route(/\/api\/prs(\/refresh)?$/, (r) => failing ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }) : r.continue());
+    await o.p.goto(`${base}/#/prs`); await o.p.waitForSelector('[data-prs-load-error]'); failing = false; await o.p.click('[data-prs-retry]'); await o.p.waitForSelector('[data-prs-page]:not([data-loading])');
+    ok(await o.p.locator('[data-prs-empty]').isVisible(), 'opening #/prs directly loads it; a failed first load offers Try again, which loads the page'); await o.ctx.close(); }
   // adding by address
   await p.fill('#pwAdd', 'https://gitlab.com/northwind/web-app'); await p.press('#pwAdd', 'Enter');
   await p.waitForSelector('[data-prs-add-error]'); ok(/github\.com/.test(await p.locator('[data-prs-add-error]').innerText()), 'a non-GitHub address is refused with a message');
@@ -67,6 +70,7 @@ try {
   // the detail dialog
   await p.click('[data-prs-row="northwind/checkout-api#16"] .pw-title'); await p.waitForSelector('[data-prs-dialog="detail"]');
   ok(await p.locator('[data-prs-rules] li.hit').getAttribute('data-rule') === 'failed' && (await p.locator('[data-prs-dialog="detail"]').innerText()).includes('Fee lookup'), 'a row opens its detail: the matched rule highlighted');
+  ok(await p.locator('[data-prs-dialog="detail"] a').first().evaluate((a) => getComputedStyle(a).textDecorationLine) === 'none' && !(await p.locator('.pw-dtitle a').innerText()).includes('Fee lookup'), 'links in the dialog use Studio\'s link style; the title is text');
   await p.screenshot({ path: join(shots, 'detail-1440-light.png') }); await p.keyboard.press('Escape');
   // the missing-approval menu
   await p.click('[data-prs-cta="northwind/checkout-api#18"]'); await p.waitForSelector('[data-prs-menu]');
@@ -83,8 +87,22 @@ try {
   await p.click('[data-prs-cta="northwind/checkout-api#18"]'); await p.click('[data-prs-action="report"]'); await p.waitForSelector('[data-prs-dialog="report"]');
   await p.click('[data-prs-report-copy]'); const rep = await p.evaluate(() => navigator.clipboard.readText());
   ok(rep.startsWith('# Handoff: northwind/checkout-api#18') && rep.includes('| # | Pull request |'), 'the handoff report is copied as Markdown (its Task is a follow-up)', rep.slice(0, 200));
-  await p.click('[data-prs-cta="northwind/checkout-api#18"]'); await p.click('[data-prs-action="md"]'); const md = await p.evaluate(() => navigator.clipboard.readText());
-  ok(md.split('\n').length === 14 && md.includes('[northwind/checkout-api#19](https://github.com/northwind/checkout-api/pull/19)'), 'Copy as Markdown: the visible rows');
+  await p.click('[data-prs-md]'); const md = await p.evaluate(() => navigator.clipboard.readText());
+  ok(md.split('\n').length === 14 && md.includes('[northwind/checkout-api#19](https://github.com/northwind/checkout-api/pull/19)'), 'Copy as Markdown (the toolbar): the visible rows');
+  await p.click('[data-prs-cta="northwind/checkout-api#18"]'); await p.click('[data-prs-action="md"]'); const md1 = await p.evaluate(() => navigator.clipboard.readText());
+  ok(md1.split('\n').length === 3 && md1.includes('northwind/checkout-api#18') && !md1.includes('checkout-api#19'), 'the row menu copies only that row', md1);
+  ok(await p.locator('body > .toast').count() === 1, 'one toast at a time: a new one replaces the last', String(await p.locator('body > .toast').count()));
+  await p.click('[data-prs-cta="northwind/checkout-api#12"]'); await p.click('[data-prs-action="report"]'); await p.click('[data-prs-report-copy]'); const rep12 = await p.evaluate(() => navigator.clipboard.readText());
+  ok(rep12.includes('https://github.com/northwind/platform-issues/issues/7') && !rep12.includes('Capture retries double-charge'), 'copied text leaves out the title of an issue outside the watched repositories (the link stays)', rep12);
+  ok(await p.locator('[data-prs-row="northwind/ledger#40"] .pw-next small').innerText() === 'approval rules could not be read', 'unreadable rules: the subtitle says so, no "waits on"');
+  const cta = await p.locator('[data-prs-cta="northwind/checkout-api#18"]').evaluate((e) => ({ h: e.getBoundingClientRect().height, t: e.getAttribute('title'), text: e.innerText }));
+  ok(cta.h < 30 && cta.t === '1 more approval · @dana · @northwind/release' && !/missing/.test(cta.text), 'the missing-approval button is one line, the full list in its title, teams written one way', JSON.stringify(cta));
+  ok((await p.locator('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]').innerText()) === 'Fix the failing tests', 'next-step words follow one pattern');
+  const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
+  ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all eleven columns fit without scrolling', JSON.stringify(fit));
+  ok(await p.locator('[data-prs-tab][role="tab"]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
+  await p.focus('[data-prs-row="northwind/checkout-api#13"]'); await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(400);
+  ok(await p.evaluate(() => document.activeElement?.dataset?.prsRow) === 'northwind/checkout-api#13', 'a live update gives the keyboard focus back to the row that had it');
   // the proposal, a drag and a dependency edit
   ok(await p.locator('[data-prs-proposed-dep="northwind/checkout-api#14>northwind/checkout-api#15"]').count() === 1 && /Depends-on/.test(await p.locator('[data-prs-proposal]').innerText()), 'the proposal shows each dependency with its reason');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-prop-tag').count() === 1 && await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-proposed-pos').count() === 1, 'the row shows the dependency and its position as proposed');
@@ -159,6 +177,8 @@ try {
     const sx = await o.p.evaluate(() => ({ doc: document.documentElement.scrollWidth, main: document.querySelector('#main').scrollWidth, mainW: document.querySelector('#main').clientWidth, w: innerWidth, tbl: document.querySelector('[data-prs-table]').scrollWidth > document.querySelector('[data-prs-table]').clientWidth }));
     ok(sx.doc <= sx.w && sx.main <= sx.mainW + 1, `no sideways page scroll at ${w} ${theme}${w === 390 ? ' (the table scrolls inside its card)' : ''}`, JSON.stringify(sx));
     if (w === 390) ok(sx.tbl, `at ${w} the table scrolls inside its card`);
+    if (w === 390) { const tc = await browser.newContext({ viewport: { width: 390, height: 900 }, isMobile: true, hasTouch: true }); const tp = await tc.newPage(); await tp.goto(`${base}/#/prs`); await tp.waitForSelector('[data-prs-row]');
+      ok(await tp.locator('[data-prs-drop]').first().evaluate((e) => getComputedStyle(e).opacity) === '1', 'on a touch screen the row × is visible without hover'); await tc.close(); }
     await o.p.screenshot({ path: join(shots, `list-${w}-${theme}.png`), fullPage: w === 390 });
     if (w === 390) { await o.p.click('[data-prs-row="northwind/checkout-api#18"] .pw-title'); await o.p.waitForSelector('[data-prs-dialog="detail"]');
       const dx = await o.p.evaluate(() => document.documentElement.scrollWidth <= innerWidth); ok(dx, `the detail dialog fits at ${w} ${theme}`); await o.p.screenshot({ path: join(shots, `detail-${w}-${theme}.png`) }); }

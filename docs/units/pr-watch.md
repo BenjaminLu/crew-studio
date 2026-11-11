@@ -42,7 +42,7 @@ the proposal), `src/pr-watch.ts` (state, GitHub reads, refresh, routes, the appl
 | issues | every linked issue, in any repository; "external" outside the watched repositories |
 | group | an optional release group |
 
-Tabs filter by next-step kind with counts: all, approve, test, fix, dependency, mergeable, on hold. Clicking a row opens a
+Filters (pressed buttons) by next-step kind with counts: all, approve, test, fix, dependency, mergeable, on hold. Clicking a row opens a
 dialog with the issues, reviews, evidence, environments, the order's reasons, the missing approvals and the next-step rule
 list with the matched rule highlighted. Every text from GitHub is set as text, never as HTML.
 
@@ -52,15 +52,20 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   from me.
 - **Evidence sources**: GitHub accounts whose comments count, check-run names, labels. A comment's verdict is read by
   rules: a heading, a bold line, a `Verdict:/Result:/結論:` line, or a short line on its own that names pass, conditional,
-  fail or code review only. None, or two that disagree, is "unclassified"; no model guesses a verdict. The latest decided
+  fail or code review only (lines over 500 characters are never read). A negated pass ("didn't pass", "does not pass",
+  「沒通過」) is a fail; "not yet" is unclassified. None, or two that disagree, is "unclassified"; no model guesses a verdict. The latest decided
   comment of a listed account counts (else its latest comment, unclassified); a listed check run on the head counts as pass
   or fail; a listed label counts as pass, not tied to a commit. The commit a comment covers: the latest pull request commit
-  it names, else the commit pushed before it.
+  it names. A comment that names none covers the head only when Studio saw that head (in an earlier refresh) before the
+  comment was written; a commit's date says when it was made, not pushed, so otherwise the coverage is unknown ("commit not
+  named") and the next step is test.
 - **Required reviewers**: accounts (a review bot, say) whose review every pull request needs before anything else.
 - **Environments**: an ordered list; each is production or not and may be limited to some repositories. Each says how to
   tell whether a head runs there, by one of: a GitHub Deployment to that environment (the latest one, at the head, status
   success); a check run by name on the head; the latest deployment of a branch whose commit contains the head (compare);
   an image tag in a file in a repository (path, a pattern whose first group is the commit, optional ref), compared by commit.
+  The pattern runs one line at a time (lines over 500 characters skipped); a pattern that repeats a repeated group or uses
+  a backreference is refused in the settings, since the file is text others write.
 - **Release groups**: names; each row may be put in one.
 - The short same-repository form `Depends-on: #<n>` in the block (off by default), and the language of the drafted message.
 
@@ -70,7 +75,11 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   `/api/prs…`. Every call goes to `api.github.com` (`CREW_GITHUB_API` may name a loopback test server, nothing else), at
   an address Studio builds from validated owner, repository and number; no address a page or GitHub supplies is fetched.
   Reads are GET and one GraphQL query per pull request; bodies are bounded (`boundedGitHubJSON`), lists capped (3 pages of
-  100 for pull requests, reviews, commits, comments and files; 2 for the timeline).
+  100 for pull requests, reviews, commits, comments and files; 2 for the timeline). A refresh reads at most 60 rows (the
+  single ones first, then the most recently updated, saying how many it left out), two at a time, at most 1500 requests
+  (past it the refresh fails and the last list stays), at most 60 issues and 30 outside dependencies. A GET is repeated with
+  `If-None-Match`; GitHub's 304 reuses the kept answer (the cache is dropped when the token changes). Redirects are never
+  followed.
 - Per watched repository: the captain's login (`GET /user`), then the open pull requests (`GET …/pulls?state=open`),
   filtered by author, assignee or requested reviewer. Per row: reviews, commits, comments, timeline, files, check runs on
   the head, and `closingIssuesReferences` (GraphQL).
@@ -79,7 +88,10 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   external, and never written.
 - **Missing approvals**: from the base branch's rulesets (`GET …/rules/branches/<base>`) and its classic branch protection
   (`GET …/branches/<base>/protection`), the stricter of each: the required count, code owners (CODEOWNERS at
-  `.github/`, the root or `docs/` on the base; every changed file's owners need an approval from one of them), approval after
+  `.github/`, the root or `docs/` on the base; every changed file's owners need an approval from one of them; patterns are
+  matched without building a regular expression from the file, in time bounded by the pattern and path, with length caps;
+  a CODEOWNERS that cannot be read, or changed files that could not all be read, make the approvals unreadable, never
+  "no owner"), approval after
   the last push, stale approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
   never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
   the last pusher's own either). A protection read that GitHub refuses (it needs admin) makes the rules unreadable: the row
@@ -121,8 +133,11 @@ The first matching rule, top to bottom; deterministic, no model:
   replaces the proposal for that row and is Studio's record.
 - **Applied on the pull request**: only through a captain-only card (workflow `pr-watch-apply-depends`, in the Inbox)
   that shows each target repository, pull request and the exact block. Studio reads each body when the card is made and
-  again right before writing; a body that changed in between is left alone and the Task says so (apply again). Only the
-  marked block at the end of the body is replaced (or added):
+  again right before writing; a body that changed in between is left alone and the Task says so (apply again). The card
+  also shows the block GitHub has now. Only the marked block is replaced (or added at the end); everything else in the
+  body is kept byte for byte, line endings included. After the write Studio compares the body GitHub kept with what it
+  sent and reports a difference instead of recording the block as applied. A Task that ends while GitHub answers writes
+  nothing more.
 
   ```
   <!-- crew-studio:depends -->
@@ -130,7 +145,8 @@ The first matching rule, top to bottom; deterministic, no model:
   <!-- /crew-studio:depends -->
   ```
 
-  A body with an unpaired marker is refused. Firstmate cannot answer the card; closing it writes nothing.
+  A body with an unpaired marker, two blocks, or a block holding anything but `Depends-on:` lines is refused (a marker pair
+  around other text would otherwise delete it unseen). Firstmate cannot answer the card; closing it writes nothing.
 - **Drift**: every refresh compares the body's block with what Studio wrote. A block edited or removed on GitHub turns
   the row's dependency cell amber, "the hint on GitHub changed", with two actions: apply Studio's record again (the card),
   or take GitHub's version as Studio's record.
@@ -144,7 +160,8 @@ The first matching rule, top to bottom; deterministic, no model:
   docs/units/review-room.md); its refusal (a repository that is not a connected project) shows as is.
 - **Handoff report**: today a one-page Markdown report of the row for a reader the captain names, copied. **Follow-up**: a
   Task that writes it, started only from its dispatch card (no existing dispatch path fits a report of pull requests yet).
-- **Copy as Markdown**: the visible rows.
+- **Copy as Markdown**: that row (the list's toolbar copies the rows the current filter shows).
+- Copied text (the report, Markdown) leaves out the titles of issues outside the watched repositories: their links stay.
 
 ## Routes
 
@@ -152,7 +169,7 @@ The first matching rule, top to bottom; deterministic, no model:
 CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}`, `/restore {pr?}`, `/settings`,
 `/order {order}`, `/deps {pr,on}`, `/group {pr,group}`, `/accept`, `/drift/take {pr}`, `/apply {prs,shortForm}`.
 
-## Done when (tests/pr-watch.ts, tests/pr-watch-ui.mjs; a fictional GitHub, tests/lib/pr-watch-github.ts: three watched repositories, an issues-only one outside the set, an infrastructure repository and a single pull request elsewhere)
+## Done when (`bun tests/pr-watch.ts`, `bun tests/pr-watch-ui.mjs` (run with bun: it imports the TypeScript fixture), `bun run test:pr-watch` for both; a fictional GitHub, tests/lib/pr-watch-github.ts: three watched repositories, an issues-only one outside the set, an infrastructure repository and a single pull request elsewhere)
 
 1. The set is exactly the open pull requests opened by or assigned to the captain in the watched repositories, plus the
    single one — pr-watch.ts "the set: …".
@@ -185,7 +202,12 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     "settings: …", "the API origin …"; the token is in no file and no answer — "the state lives in Studio's data directory …".
 12. No name of an organisation, repository, team or account is in the feature's source — pr-watch.ts "no organisation,
     repository, team, bot or account name is hard-coded …".
-13. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
+13. Review round 2 (tests/pr-watch.ts "round 2" and the UI suite): CODEOWNERS globs and verdict lines in bounded time,
+    the environment pattern per line and nested quantifiers refused, negated passes, CRLF kept and marker pairs around
+    other text refused, unreadable CODEOWNERS, ETag reuse, evidence naming no commit, a write GitHub kept differently, a
+    cancelled Task writing nothing; in the page: one toast at a time, one-line missing-approval button, all columns at 1440,
+    the × on touch screens, Try again after a failed load, focus kept across a live update, the row menu copying one row.
+14. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
     inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script

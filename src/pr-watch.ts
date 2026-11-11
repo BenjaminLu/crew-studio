@@ -51,21 +51,32 @@ const enc = encodeURIComponent;
 const repoPath = (repo: string) => { if (!R.repoOk(repo)) throw new Error("invalid repository"); const [o, r] = repo.split("/"); return `/repos/${o}/${r}`; };
 const SHA = /^[0-9a-f]{7,40}$/i;
 
-async function call(api: string, token: string, method: "GET" | "POST" | "PATCH", path: string, body?: unknown, signal?: AbortSignal): Promise<any> {
+/** GET answers kept with their ETag: a later identical GET asks If-None-Match, and a 304 (which GitHub does not count
+ *  against the rate limit) reuses the kept answer. Bounded; dropped when the token changes. */
+export type EtagCache = Map<string, { etag: string; data: any }>;
+async function call(api: string, token: string, method: "GET" | "POST" | "PATCH", path: string, body?: unknown, signal?: AbortSignal, etags?: EtagCache): Promise<any> {
   if (!path.startsWith("/") || /(^|\/)\.\.?(\/|\?|$)|[\s#\\]/.test(path)) throw new Error("invalid GitHub path");
-  const timeout = AbortSignal.timeout(15_000);
-  const r = await fetch(api + path, { method, headers: { ...githubHeaders(token), ...(body !== undefined ? { "content-type": "application/json" } : {}) }, body: body === undefined ? undefined : JSON.stringify(body),
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+  const timeout = AbortSignal.timeout(15_000), kept = method === "GET" ? etags?.get(path) : undefined;
+  const r = await fetch(api + path, { method, headers: { ...githubHeaders(token), ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(kept ? { "if-none-match": kept.etag } : {}) }, body: body === undefined ? undefined : JSON.stringify(body),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "manual" }); // a redirect is never followed (304 is not one)
+  if (r.status >= 300 && r.status < 400 && r.status !== 304) { await r.body?.cancel().catch(() => {}); throw new HttpError(r.status, null); }
+  if (r.status === 304 && kept) { await r.body?.cancel().catch(() => {}); return structuredClone(kept.data); }
   if (r.status === 429 || (r.status === 403 && (r.headers.get("x-ratelimit-remaining") === "0" || r.headers.has("retry-after")))) { await r.body?.cancel().catch(() => {}); throw new RateLimited(); }
   let data: any = null;
   if (r.status !== 204) { try { data = await boundedGitHubJSON(r); } catch (e) { if (r.ok) throw e; } }
   if (!r.ok) throw new HttpError(r.status, data && typeof data === "object" ? { message: String(data.message ?? "").slice(0, 200) } : null);
+  const etag = method === "GET" ? r.headers.get("etag") : null;
+  if (etags && etag && etag.length < 200) { if (etags.size >= 3000) etags.clear(); etags.set(path, { etag, data: structuredClone(data) }); }
   return data;
 }
+/** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
+export const READ_BUDGET = 1500, MAX_ROWS = 60;
+export class OverBudget extends Error { constructor() { super(`a refresh would read GitHub more than ${READ_BUDGET} times: watch fewer repositories or pull requests`); } }
 type Reader = { get(path: string): Promise<any>; pages(path: string, max: number): Promise<any[]>; graphql(query: string, variables: Record<string, unknown>): Promise<any> };
-function reader(api: string, token: string, signal: AbortSignal | undefined, poller: GitHubPoller | null, authority: ReadAuthority | null): Reader {
-  const through = (key: string, load: () => Promise<any>) => poller && authority ? poller.read(authority, key, () => load(), signal) : load();
-  const get = (path: string) => through(`GET ${path}`, () => call(api, token, "GET", path, undefined, signal));
+function reader(api: string, token: string, signal: AbortSignal | undefined, poller: GitHubPoller | null, authority: ReadAuthority | null, o: { etags?: EtagCache; budget?: { left: number } } = {}): Reader {
+  const spend = () => { if (o.budget && --o.budget.left < 0) throw new OverBudget(); };
+  const through = (key: string, load: () => Promise<any>) => poller && authority ? poller.read(authority, key, () => { spend(); return load(); }, signal) : (spend(), load());
+  const get = (path: string) => through(`GET ${path}`, () => call(api, token, "GET", path, undefined, signal, o.etags));
   return {
     get,
     async pages(path, max) { const out: any[] = []; const sep = path.includes("?") ? "&" : "?";
@@ -97,8 +108,10 @@ export type RawRow = {
   facts: R.PrFacts; partial: string[];
 };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
-  depState: Record<string, string>; proposal: { deps: R.Signal[]; hints: R.Hint[] }; changed: Record<string, { at: string; what: Change[] }>; finger: Record<string, any> };
-const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {} });
+  depState: Record<string, string>; proposal: { deps: R.Signal[]; hints: R.Hint[] }; changed: Record<string, { at: string; what: Change[] }>; finger: Record<string, any>;
+  /** each row's head and when Studio first saw it: a comment that names no commit covers a head seen before it */
+  heads: Record<string, { sha: string; at: string }> };
+const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {}, heads: {} });
 
 const list = (v: unknown, max = 50, each = 100) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : []).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => s.length <= each).slice(0, max);
 const login = (s: string) => /^[A-Za-z0-9_.\-[\]]{1,60}$/.test(s);
@@ -119,6 +132,8 @@ export function cleanSettings(v: any): Settings {
     else if (d.kind === "file") { const repository = txt(d.repository); if (!R.repoOk(repository)) throw new Error(`${name}: the file's repository must be owner/repo`);
       const path = txt(d.path, 300); if (path.split("/").some((p) => !p || p === "." || p === "..")) throw new Error(`${name}: the file path is not a plain path`);
       const pattern = txt(d.pattern, 200); try { new RegExp(pattern); } catch { throw new Error(`${name}: the pattern is not a regular expression`); }
+      // it runs on a file others write: a quantified group that itself repeats (a+)+ or a backreference can take forever
+      if (/\([^)]*[+*}][^)]*\)\s*[+*{?]|\\[1-9]/.test(pattern)) throw new Error(`${name}: the pattern repeats a repeated group (or uses a backreference); write it without nesting`);
       detect = { kind: "file", repository, path, pattern, ...(String(d.ref ?? "").trim() ? { ref: txt(d.ref, 200) } : {}) }; }
     else throw new Error(`${name}: choose how it is detected`);
     return { name, production: !!e?.production, repos, detect };
@@ -128,7 +143,8 @@ export function cleanSettings(v: any): Settings {
     evidence: { accounts, checks: list(s.evidence?.checks), labels: list(s.evidence?.labels) }, requiredReviewers: req, environments: envs, groups: list(s.groups, 20, 30), shortForm: !!s.shortForm, messageLang: lang };
 }
 
-export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number };
+export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
+  /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number } };
 export function createPrWatch(d: PrWatchDeps) {
   const dir = join(d.dataDir, "pr-watch"), stateFile = join(dir, "state.json"), snapFile = join(dir, "snapshot.json");
   const now = d.now ?? (() => Date.now());
@@ -137,6 +153,7 @@ export function createPrWatch(d: PrWatchDeps) {
   const write = (f: string, v: unknown) => { mkdirSync(dir, { recursive: true, mode: 0o700 }); const tmp = `${f}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(v, null, 1), { mode: 0o600 }); renameSync(tmp, f); };
   let state: State = read(stateFile, fresh); state.settings = { ...structuredClone(DEFAULT_SETTINGS), ...state.settings };
   let snap: Snapshot = read(snapFile, emptySnap);
+  const etags: EtagCache = new Map(); let etagToken = "";
   let version = 0, ranVersion = -1; // the state a refresh reads: a change while one runs asks for another
   const save = () => { version++; write(stateFile, state); };
   const live = { refreshing: false, error: null as null | { en: string; tw: string }, backoffUntil: null as string | null, failures: 0 };
@@ -165,14 +182,15 @@ export function createPrWatch(d: PrWatchDeps) {
   async function refreshOnce(token: string, authority: ReadAuthority, signal: AbortSignal) {
     live.refreshing = true; ranVersion = version; d.notify?.("prs", { refreshing: true });
     try {
-      const g = reader(apiBase(), token, signal, d.poller, authority);
+      if (etagToken !== token) { etags.clear(); etagToken = token; } // kept answers belong to the token that read them
+      const g = reader(apiBase(), token, signal, d.poller, authority, { etags, budget: { left: d.limits?.reads ?? READ_BUDGET } });
       const next = await collect(g, signal);
       signal.throwIfAborted();
       snap = next; write(snapFile, snap); live.error = null; live.backoffUntil = null; live.failures = 0;
     } catch (e: any) {
       if (signal.aborted) return;
       live.failures++; live.backoffUntil = new Date(now() + Math.min(15 * 60_000, interval() * 2 ** Math.min(live.failures, 20))).toISOString();
-      live.error = e instanceof RateLimited ? { en: e.message, tw: "GitHub 限流：Studio 會等一下再讀" } : e instanceof HttpError ? why(e) : { en: "the refresh failed; Studio tries again later", tw: "刷新失敗；Studio 稍後再試" };
+      live.error = e instanceof RateLimited ? { en: e.message, tw: "GitHub 限流：Studio 會等一下再讀" } : e instanceof OverBudget ? { en: e.message, tw: `一次刷新要讀 GitHub 超過 ${READ_BUDGET} 次：請少追蹤一些 repo 或 PR` } : e instanceof HttpError ? why(e) : { en: "the refresh failed; Studio tries again later", tw: "刷新失敗；Studio 稍後再試" };
       throw e;
     } finally { live.refreshing = false; d.notify?.("prs", { count: count(), at: snap.at }); }
   }
@@ -182,7 +200,7 @@ export function createPrWatch(d: PrWatchDeps) {
     await Promise.all(Array.from({ length: Math.min(n, xs.length) }, async () => { while (i < xs.length) { const k = i++; out[k] = await f(xs[k]); } }));
     return out;
   }
-  const soft = async <T>(f: () => Promise<T>, fallback: T, partial?: string[], what?: string): Promise<T> => { try { return await f(); } catch (e) { if (e instanceof RateLimited || (e as any)?.name === "AbortError") throw e; if (partial && what) partial.push(what); return fallback; } };
+  const soft = async <T>(f: () => Promise<T>, fallback: T, partial?: string[], what?: string): Promise<T> => { try { return await f(); } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget || (e as any)?.name === "AbortError") throw e; if (partial && what) partial.push(what); return fallback; } };
 
   async function collect(g: Reader, signal: AbortSignal): Promise<Snapshot> {
     const s = state, out = emptySnap(); out.at = iso();
@@ -193,33 +211,36 @@ export function createPrWatch(d: PrWatchDeps) {
         || (w.reviewRequested && (p.requested_reviewers ?? []).some((a: any) => String(a?.login ?? "").toLowerCase() === l)); };
     for (const repo of s.watch.repos) {
       try { for (const p of await g.pages(`${repoPath(repo)}/pulls?state=open`, 3)) { const id = R.prId(repo, Number(p.number)); if (Number.isSafeInteger(p.number) && keep(p) && !has(s.watch.excluded, id)) found.set(id.toLowerCase(), { pr: p, repo, single: false }); } }
-      catch (e) { if (e instanceof RateLimited) throw e; out.errors.push({ target: repo, ...why(e) }); }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: repo, ...why(e) }); }
     }
     for (const id of s.watch.prs) { const sp = R.splitId(id); if (!sp) continue;
       try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.state === "open") found.set(id.toLowerCase(), { pr: p, repo: sp.repo, single: true }); else out.single[id] = p?.merged_at ? "merged" : "closed"; }
-      catch (e) { if (e instanceof RateLimited) throw e; out.errors.push({ target: id, ...why(e) }); }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: id, ...why(e) }); }
     }
     signal.throwIfAborted();
-    const rulesCache = new Map<string, Promise<R.Rules>>(), ownersCache = new Map<string, Promise<{ pattern: string; owners: string[] }[] | null>>(), teamCache = new Map<string, Promise<string[] | null>>();
-    const issueCache = new Map<string, Promise<{ title: string | null; state: string | null }>>(), fileCache = new Map<string, Promise<string | null>>(), compareCache = new Map<string, Promise<boolean | null>>(), deployCache = new Map<string, Promise<any>>();
+    const rulesCache = new Map<string, Promise<R.Rules>>(), ownersCache = new Map<string, Promise<{ pattern: string; owners: string[] }[] | null | "unreadable">>(), teamCache = new Map<string, Promise<string[] | null>>();
+    const issueCache = new Map<string, Promise<{ title: string | null; state: string | null }>>(), fileCache = new Map<string, Promise<string | "missing" | "unreadable">>(), compareCache = new Map<string, Promise<boolean | null>>(), deployCache = new Map<string, Promise<any>>();
     const once = <T>(m: Map<string, Promise<T>>, k: string, f: () => Promise<T>) => { if (!m.has(k)) m.set(k, f()); return m.get(k)!; };
     const rulesFor = (repo: string, base: string) => once(rulesCache, `${repo}|${base}`.toLowerCase(), async () => {
       let rulesets: any[] | null = null, prot: any = null, unreadable: { en: string; tw: string } | null = null;
       try { const r = await g.get(`${repoPath(repo)}/rules/branches/${enc(base)}`); rulesets = Array.isArray(r) ? r : []; }
-      catch (e) { if (e instanceof RateLimited) throw e; unreadable = { en: `the rulesets of ${repo} ${base} could not be read (${why(e).en})`, tw: `讀不到 ${repo} ${base} 的 rulesets（${why(e).tw}）` }; }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; unreadable = { en: `the rulesets of ${repo} ${base} could not be read (${why(e).en})`, tw: `讀不到 ${repo} ${base} 的 rulesets（${why(e).tw}）` }; }
       try { prot = await g.get(`${repoPath(repo)}/branches/${enc(base)}/protection`); }
-      catch (e) { if (e instanceof RateLimited) throw e;
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e;
         if (e instanceof HttpError && e.status === 404 && /not protected/i.test(String(e.data?.message ?? ""))) prot = "none";
         else unreadable ??= { en: `the branch protection of ${repo} ${base} could not be read (${why(e).en}; reading it needs admin access)`, tw: `讀不到 ${repo} ${base} 的分支保護（${why(e).tw}；需要 admin 權限）` }; }
-      return R.mergeRules(rulesets, prot, unreadable);
+      return R.mergeRules(rulesets, prot, unreadable, repo.split("/")[0]);
     });
-    const contents = (repo: string, path: string, ref: string | null) => once(fileCache, `${repo}|${path}|${ref ?? ""}`.toLowerCase(), async () => {
+    // a file's text; "missing" when GitHub says there is none (404), "unreadable" for any other failure
+    const fileOf = (repo: string, path: string, ref: string | null) => once(fileCache, `${repo}|${path}|${ref ?? ""}`.toLowerCase(), async (): Promise<string | "missing" | "unreadable"> => {
       try { const j = await g.get(`${repoPath(repo)}/contents/${path.split("/").map(enc).join("/")}${ref ? `?ref=${enc(ref)}` : ""}`);
-        if (j?.type !== "file" || j.encoding !== "base64" || typeof j.content !== "string" || Number(j.size) > 200_000) return null;
+        if (j?.type !== "file" || j.encoding !== "base64" || typeof j.content !== "string" || Number(j.size) > 200_000) return "unreadable";
         return Buffer.from(j.content, "base64").toString("utf8"); }
-      catch (e) { if (e instanceof RateLimited) throw e; return null; } });
-    const codeownersFor = (repo: string, base: string) => once(ownersCache, `${repo}|${base}`.toLowerCase(), async () => {
-      for (const p of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) { const t = await contents(repo, p, base); if (t != null) return R.parseCodeowners(t); }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return e instanceof HttpError && e.status === 404 ? "missing" : "unreadable"; } });
+    const contents = async (repo: string, path: string, ref: string | null) => { const t = await fileOf(repo, path, ref); return t === "missing" || t === "unreadable" ? null : t; };
+    // CODEOWNERS: its rules, null when the repository has none, "unreadable" when one could not be read
+    const codeownersFor = (repo: string, base: string) => once(ownersCache, `${repo}|${base}`.toLowerCase(), async (): Promise<{ pattern: string; owners: string[] }[] | null | "unreadable"> => {
+      for (const p of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) { const t = await fileOf(repo, p, base); if (t === "unreadable") return "unreadable"; if (t !== "missing") return R.parseCodeowners(t); }
       return null; });
     const members = (key: string, owner: string) => once(teamCache, key.toLowerCase(), async () => {
       try {
@@ -228,10 +249,10 @@ export function createPrWatch(d: PrWatchDeps) {
         else if (key.startsWith("slug:")) slug = key.slice(5); else { [org, slug] = key.split("/"); }
         if (!R.NAME.test(org) || !R.NAME.test(slug ?? "")) return null;
         return (await g.pages(`/orgs/${org}/teams/${slug}/members`, 3)).map((m: any) => String(m?.login ?? "")).filter(Boolean);
-      } catch (e) { if (e instanceof RateLimited) throw e; return null; } });
+      } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } });
     const contains = (repo: string, head: string, deployed: string) => once(compareCache, `${repo}|${head}|${deployed}`.toLowerCase(), async () => {
       if (!SHA.test(head) || !SHA.test(deployed)) return null; if (head.toLowerCase().startsWith(deployed.toLowerCase()) || deployed.toLowerCase().startsWith(head.toLowerCase())) return true;
-      try { const c = await g.get(`${repoPath(repo)}/compare/${head}...${deployed}`); return c?.status === "ahead" || c?.status === "identical"; } catch (e) { if (e instanceof RateLimited) throw e; return null; } });
+      try { const c = await g.get(`${repoPath(repo)}/compare/${head}...${deployed}`); return c?.status === "ahead" || c?.status === "identical"; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } });
     const latestDeploy = (repo: string, q: string) => once(deployCache, `${repo}|${q}`.toLowerCase(), async () => { const l = await g.get(`${repoPath(repo)}/deployments?${q}&per_page=5`); return Array.isArray(l) ? l[0] ?? null : null; });
     const envOn = async (e: R.EnvSetting, repo: string, head: string, checks: any[]): Promise<boolean | null> => {
       try {
@@ -242,12 +263,16 @@ export function createPrWatch(d: PrWatchDeps) {
         if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep) return false; return await contains(repo, head, String(dep.sha)); }
         const text = await contents(dt.repository, dt.path, dt.ref ?? null); if (text == null) return null;
         const tag = R.tagCommit(text, dt.pattern); return tag ? await contains(repo, head, tag) : false;
-      } catch (err) { if (err instanceof RateLimited) throw err; return null; }
+      } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return null; }
     };
     let issueReads = 0; // issues named in bodies may be anywhere: at most 60 read per refresh
-    const issueOf = (repo: string, n: number) => once(issueCache, `${repo}#${n}`.toLowerCase(), async () => { if (++issueReads > 60) return { title: null, state: null }; try { const j = await g.get(`${repoPath(repo)}/issues/${n}`); return { title: String(j?.title ?? "").slice(0, 300) || null, state: String(j?.state ?? "") || null }; } catch (e) { if (e instanceof RateLimited) throw e; return { title: null, state: null }; } });
+    const issueOf = (repo: string, n: number) => once(issueCache, `${repo}#${n}`.toLowerCase(), async () => { if (++issueReads > 60) return { title: null, state: null }; try { const j = await g.get(`${repoPath(repo)}/issues/${n}`); return { title: String(j?.title ?? "").slice(0, 300) || null, state: String(j?.state ?? "") || null }; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return { title: null, state: null }; } });
 
-    const rows = await pool([...found.values()], 4, async ({ pr: p, repo, single }) => {
+    // at most MAX_ROWS rows a refresh, the single pull requests first, then the most recently updated
+    let picked = [...found.values()]; const maxRows = d.limits?.rows ?? MAX_ROWS;
+    if (picked.length > maxRows) { out.errors.push({ target: "", en: `${picked.length} pull requests match: only ${maxRows} are read per refresh (the single ones, then the most recently updated)`, tw: `符合的 PR 有 ${picked.length} 個：每次刷新只讀 ${maxRows} 個（先單獨加入的，再依最近更新）` });
+      picked = picked.sort((a, b) => Number(b.single) - Number(a.single) || String(b.pr.updated_at ?? "").localeCompare(String(a.pr.updated_at ?? ""))).slice(0, maxRows); }
+    const rows = await pool(picked, 2, async ({ pr: p, repo, single }) => {
       const n = Number(p.number), id = R.prId(repo, n), path = `${repoPath(repo)}`, head = String(p.head?.sha ?? ""), base = String(p.base?.ref ?? ""), author = String(p.user?.login ?? "");
       const partial: string[] = [];
       const [reviews, commits, comments, timeline, files, checks, closing] = await Promise.all([
@@ -274,14 +299,20 @@ export function createPrWatch(d: PrWatchDeps) {
       // reviews and the approvals the rules still miss
       const rv = R.latestReviews(reviews, head, author);
       const rules = base ? await rulesFor(repo, base) : R.mergeRules(null, null, { en: "the base branch is unknown", tw: "不知道 base branch" });
-      let owners: { pattern: string; owners: string[] }[] | null = null; const teamMembers = new Map<string, string[] | null>();
+      let owners: { pattern: string; owners: string[] }[] | null = null, ownersUnreadable: { en: string; tw: string } | null = null; const teamMembers = new Map<string, string[] | null>();
       if (rules.readable) {
-        if (rules.codeOwners) owners = await codeownersFor(repo, base);
+        if (rules.codeOwners) { const got = await codeownersFor(repo, base);
+          if (got === "unreadable") ownersUnreadable = { en: `the CODEOWNERS file of ${repo} could not be read, so the code owners cannot be checked`, tw: `讀不到 ${repo} 的 CODEOWNERS，無法檢查 code owner` };
+          else owners = got;
+          const total = Number(p.changed_files);
+          if (partial.includes("files") || (Number.isSafeInteger(total) && total > files.length) || files.length >= 300) ownersUnreadable ??= { en: "not every changed file could be read, so the code owners cannot be checked", tw: "沒能讀到所有改動的檔案，無法檢查 code owner" }; }
         const teamKeys = [...rules.teams.map((t) => t.key), ...(owners ?? []).flatMap((o) => o.owners).filter((o) => o.startsWith("@") && o.includes("/")).map((o) => o.slice(1))];
         for (const k of [...new Set(teamKeys.map((k) => k.toLowerCase()))].slice(0, 10)) teamMembers.set(k, await members(k, repo.split("/")[0]));
       }
-      const approvals = R.approvalsOf(rules, rv, { files, codeowners: owners, teamMembers, lastPusher: commits.at(-1)?.login || null });
-      const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits,
+      const approvals = R.approvalsOf(rules, rv, { files, codeowners: owners, teamMembers, lastPusher: commits.at(-1)?.login || null, ownersUnreadable });
+      const seen = snap.heads?.[id.toLowerCase()], headSeenAt = seen && seen.sha === head ? seen.at : out.at!;
+      out.heads[id.toLowerCase()] = { sha: head, at: headSeenAt };
+      const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,
         checks: checks.map((c: any) => ({ name: String(c.name ?? ""), status: String(c.status ?? ""), conclusion: c.conclusion ? String(c.conclusion) : null, at: c.completed_at ? String(c.completed_at) : null, url: c.html_url ? String(c.html_url) : null })) });
       const envs = await Promise.all(s.settings.environments.filter((e) => R.envApplies(e, repo)).map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks) })));
       const block = R.findBlock(body);
@@ -299,7 +330,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const want = new Set<string>([...out.proposal.deps.map((x) => x.on), ...Object.values(s.deps).flatMap((x) => x.on), ...rows.flatMap((r) => r.githubDeps ?? [])]);
     let depReads = 0; // pull requests named as dependencies outside the list: at most 30 read per refresh
     for (const id of want) { if (rows.some((r) => eq(r.id, id))) continue; const sp = R.splitId(id); if (!sp) continue; if (++depReads > 30) { out.depState[id] = "unread"; continue; }
-      try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); out.depState[id] = p?.merged_at ? "merged" : String(p?.state ?? "unknown"); } catch (e) { if (e instanceof RateLimited) throw e; out.depState[id] = "unreadable"; } }
+      try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); out.depState[id] = p?.merged_at ? "merged" : String(p?.state ?? "unknown"); } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.depState[id] = "unreadable"; } }
     // what changed since the last refresh: the mark stays until the next change
     const prevRows = new Map(snap.rows.map((r) => [r.id.toLowerCase(), r]));
     for (const r of viewRows(out, s)) {
@@ -392,8 +423,8 @@ export function createPrWatch(d: PrWatchDeps) {
 
   // ---------- the captain-only card that writes the block ----------
   const pin = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
-  const bodyHash = (b: string) => createHash("sha256").update(String(b ?? "").replace(/\r\n/g, "\n")).digest("hex");
-  type Target = { id: string; repo: string; number: number; title: string; on: string[]; block: string; bodyHash: string };
+  const bodyHash = (b: string) => createHash("sha256").update(String(b ?? "")).digest("hex");
+  type Target = { id: string; repo: string; number: number; title: string; on: string[]; block: string; bodyHash: string; current: string | null };
   type Proposal = { schema: 1; targets: Target[]; shortForm: boolean };
   async function startApply(ids: string[], shortForm: boolean) {
     if (!engine) throw new Error("Studio's runtime is not ready yet");
@@ -404,10 +435,10 @@ export function createPrWatch(d: PrWatchDeps) {
       const r = rows.find((x) => eq(x.id, id)); if (!r) throw new Error(`${id} is not in the list`);
       const on = r.deps.on.map((x) => x.id); if (!on.length) throw new Error(`${id} has no dependency to write`);
       const p = await g.get(`${repoPath(r.repo)}/pulls/${r.number}`), body = String(p?.body ?? "");
-      if (R.findBlock(body) === "malformed") throw new Error(`${id}: its body has an unpaired crew-studio:depends marker; fix it on GitHub first`);
-      const block = R.renderBlock(on, r.repo, shortForm);
+      const problem = R.blockProblem(body); if (problem) throw new Error(`${id}: ${problem}`);
+      const block = R.renderBlock(on, r.repo, shortForm), found = R.findBlock(body);
       if (R.replaceBlock(body, block).length > MAX_BODY) throw new Error(`${id}: the body would exceed GitHub's limit`);
-      targets.push({ id: r.id, repo: r.repo, number: r.number, title: r.title, on, block, bodyHash: bodyHash(body) });
+      targets.push({ id: r.id, repo: r.repo, number: r.number, title: r.title, on, block, bodyHash: bodyHash(body), current: found && found !== "malformed" ? found.text.slice(0, 4000) : null });
     }
     const proposal: Proposal = { schema: 1, targets, shortForm };
     const params = { proposal: JSON.stringify(proposal) };
@@ -421,7 +452,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const p = JSON.parse(String(x.run.params.proposal ?? "null")) as Proposal;
     if (p?.schema !== 1 || !Array.isArray(p.targets) || !p.targets.length || p.targets.length > 50) throw new Error("The apply proposal is malformed");
     for (const t of p.targets) { const sp = R.splitId(t.id);
-      if (!sp || !eq(sp.repo, t.repo) || sp.number !== t.number || !Array.isArray(t.on) || !t.on.length || t.on.some((o) => !R.splitId(o)) || t.block !== R.renderBlock(t.on, t.repo, !!p.shortForm) || !/^[a-f0-9]{64}$/.test(t.bodyHash))
+      if (!sp || !eq(sp.repo, t.repo) || sp.number !== t.number || !Array.isArray(t.on) || !t.on.length || t.on.some((o) => !R.splitId(o)) || t.block !== R.renderBlock(t.on, t.repo, !!p.shortForm) || !/^[a-f0-9]{64}$/.test(t.bodyHash) || !(t.current === null || typeof t.current === "string"))
         throw new Error("The apply proposal is malformed"); }
     return p;
   }
@@ -436,7 +467,8 @@ export function createPrWatch(d: PrWatchDeps) {
     e.actions["pr-watch.apply-card"] = async (x) => {
       const p = checkProposal(x, source), n = p.targets.length, repos = [...new Set(p.targets.map((t) => t.repo))];
       const body = p.targets.flatMap((t) => [`Repository / 儲存庫: ${t.repo}`, `Pull request: https://github.com/${t.repo}/pull/${t.number}${t.title ? ` (${t.title})` : ""}`,
-        "Block written at the end of its body / 寫在 body 尾端的區塊:", t.block, ""]).concat([
+        ...(t.current ? ["Block on GitHub now, which this replaces / GitHub 上現在的區塊（會被取代）:", t.current] : ["No block on GitHub yet: it is added at the end / GitHub 上還沒有區塊：會加在尾端"]),
+        "Block written / 寫入的區塊:", t.block, ""]).concat([
         "Studio replaces only this marked block (or adds it at the end) and changes nothing else in the body. It reads the body again right before writing; a body that changed since this card is left alone.",
         "Studio 只取代這段帶標記的區塊（沒有就加在尾端），body 其他內容一律不動。寫入前會再讀一次 body；如果它在這張卡片之後被改過，就不寫入。"]).join("\n");
       await e.card(x, "permission", { captainOnly: true, title: `Write the dependency block into ${n === 1 ? p.targets[0].id : `${n} pull requests`}?`, zhTitle: `把依賴區塊寫進 ${n === 1 ? p.targets[0].id : `${n} 個 pull request`} 嗎？`,
@@ -456,14 +488,18 @@ export function createPrWatch(d: PrWatchDeps) {
         throw new Error("The captain's answer on this card is unavailable");
       const token = findToken(d.dataDir).token; if (!token) throw new Error("GitHub is not connected: Studio has no token");
       const api = apiBase(), written: string[] = [], refused: { id: string; why: string }[] = [];
+      // the Task may end (cancelled, deleted) while GitHub answers: checked after every await and before every write
+      const ended = () => x.cancelled() || !e.owns(x);
       for (const t of p.targets) {
+        if (ended()) { refused.push({ id: t.id, why: "the Task ended before this write" }); continue; }
         try {
           const path = `${repoPath(t.repo)}/pulls/${t.number}`, cur = await call(api, token, "GET", path), body = String(cur?.body ?? "");
+          if (ended()) { refused.push({ id: t.id, why: "the Task ended before this write" }); continue; }
           if (bodyHash(body) !== t.bodyHash) { refused.push({ id: t.id, why: "the body changed on GitHub since the card; apply again" }); continue; }
           const next = R.replaceBlock(body, t.block); if (next.length > MAX_BODY) { refused.push({ id: t.id, why: "the body would exceed GitHub's limit" }); continue; }
           const out = await call(api, token, "PATCH", path, { body: next });
-          const kept = R.findBlock(String(out?.body ?? ""));
-          if (!kept || kept === "malformed" || R.normBlock(kept.text) !== R.normBlock(t.block)) { refused.push({ id: t.id, why: "GitHub did not keep the block" }); continue; }
+          // GitHub has no conditional write for a body: an edit between the read and the write shows as a different answer
+          if (String(out?.body ?? "") !== next) { refused.push({ id: t.id, why: "the body GitHub kept differs from what Studio wrote (edited at the same moment?); check it on GitHub and apply again" }); continue; }
           const k = Object.keys(state.applied).find((a) => eq(a, t.id)) ?? t.id; state.applied[k] = { block: t.block, on: t.on, at: iso() };
           const dk = Object.keys(state.deps).find((a) => eq(a, t.id)) ?? t.id; state.deps[dk] = { on: t.on, by: "captain", at: iso() };
           written.push(t.id);

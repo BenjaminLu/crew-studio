@@ -21,7 +21,7 @@
 .pw-acts{display:flex;gap:8px;flex-wrap:wrap}
 .pw-tabs{margin:14px 0 12px}
 .pw-tbl{display:grid;overflow-x:auto;max-width:100%;min-width:0}
-.pw-row{display:grid;grid-template-columns:18px 26px minmax(170px,1.5fr) minmax(130px,1fr) 160px minmax(100px,.8fr) 100px 178px minmax(100px,1fr) minmax(110px,.9fr) 56px;gap:10px;align-items:center;padding:10px 14px;border-top:1px solid var(--border);font-size:13px;min-width:1180px;cursor:pointer}
+.pw-row{display:grid;grid-template-columns:18px 24px minmax(150px,1.5fr) minmax(120px,1fr) 130px minmax(90px,.8fr) 92px 150px minmax(90px,1fr) minmax(100px,.9fr) 48px;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--border);font-size:13px;min-width:1110px;cursor:pointer}
 .pw-row:first-child{border-top:0}
 .pw-row.h{cursor:default;font-size:12px;color:var(--text-3);padding-top:8px;padding-bottom:8px;background:var(--surface-2)}
 .pw-row:not(.h):hover{background:var(--surface-2)}
@@ -36,11 +36,13 @@
 .pw-pr small,.pw-iss small,.pw-next small{font-size:12px;color:var(--text-3);overflow-wrap:anywhere}
 .pw-pid{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0}
 .pw-unw{position:absolute;right:-6px;top:-4px;opacity:0}.pw-row:hover .pw-unw,.pw-unw:focus-visible{opacity:1}
+@media (hover:none){.pw-unw{opacity:1}}
 .pw-chg{color:var(--accent-text)!important;font-weight:500}
 .pw-next b{font-weight:600}.pw-next .t-ok{color:var(--ok)}.pw-next .t-warn{color:var(--warn)}.pw-next .t-bad{color:var(--bad)}.pw-next .t-human{color:var(--human)}
 .pw-row .badge{white-space:normal;overflow-wrap:anywhere}
 .pw-depbtn .badge{white-space:nowrap}
-.pw-cta{cursor:pointer;font:inherit;font-size:12px;font-weight:500;text-align:left}
+.pw-cta{cursor:pointer;font:inherit;font-size:12px;font-weight:500;text-align:left;display:inline-flex;max-width:100%;white-space:nowrap!important}
+.pw-ctat{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pw-misscell{min-width:0}
 .pw-revs{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
 .pw-envs{display:flex;gap:4px;flex-wrap:wrap}
 .pw-env{font:500 11px var(--f-mono);border:1px dashed var(--border-strong);border-radius:5px;padding:1px 5px;color:var(--text-3)}
@@ -82,3 +84,6 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
   .pw-add{flex-wrap:wrap}.pw-add input{flex-basis:100%}
 }
 .pw-toastlink{color:inherit;text-decoration:underline;font-weight:600}
+.pw-modal a{color:var(--accent-text);text-decoration:none}.pw-modal a:hover{text-decoration:underline}
+.pw-loaderr{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.pw-tabs .tb-tab[aria-pressed="true"]{border-color:var(--text);background:var(--surface);font-weight:600}

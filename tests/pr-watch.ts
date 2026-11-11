@@ -38,7 +38,8 @@ const { ok, end } = suite("pr-watch");
   ok(R.classifyComment("PASS on 3f2a1c9 and deadbeef12").shas.join() === "3f2a1c9,deadbeef12" && !R.classifyComment("ticket 1234567").shas.length, "commit SHAs named (hex with a letter and a digit)");
   const commits = [{ sha: sha("a"), at: "2026-11-01T00:00:00Z" }, { sha: sha("b"), at: "2026-11-02T00:00:00Z" }];
   ok(R.coverage([sha("a").slice(0, 7)], "2026-11-03T00:00:00Z", commits, sha("b")).since === sha("a").slice(0, 7), "naming an older commit: the change since it is untested");
-  ok(R.coverage([], "2026-11-01T12:00:00Z", commits, sha("b")).covers === "older" && R.coverage([], "2026-11-03T00:00:00Z", commits, sha("b")).covers === "head", "naming none: the commit pushed before the comment");
+  ok(R.coverage([], "2026-11-01T12:00:00Z", commits, sha("b")).covers === "unknown" && R.coverage([], "2026-11-03T00:00:00Z", commits, sha("b")).covers === "unknown", "naming no commit: unknown, whatever the commit dates say (a commit made before a comment may be pushed after it)");
+  ok(R.coverage([], "2026-11-03T00:00:00Z", commits, sha("b"), "2026-11-02T12:00:00Z").covers === "head" && R.coverage([], "2026-11-03T00:00:00Z", commits, sha("b"), "2026-11-03T01:00:00Z").covers === "unknown", "naming no commit covers the head only when Studio saw that head before the comment");
   ok(R.evidenceOf({ accounts: [], checks: [], labels: ["qa-passed"] }, { comments: [], checks: [], labels: ["QA-passed"], commits, head: sha("b") })?.source === "label", "a listed label counts as evidence");
   ok(R.evidenceOf({ accounts: [], checks: ["e2e"], labels: [] }, { comments: [], checks: [{ name: "e2e", status: "completed", conclusion: "failure", at: "2026-11-03T00:00:00Z", url: null }], labels: [], commits, head: sha("b") })?.verdict === "fail", "a listed check run that failed is failing evidence");
 }
@@ -92,6 +93,31 @@ const { ok, end } = suite("pr-watch");
   ok(order.indexOf("o/r#3") < order.indexOf("o/r#1") && order.indexOf("o/r#1") < order.indexOf("o/r#2") && order.indexOf("o/r#2") < order.indexOf("o/r#4"), "the proposed order puts every dependency first", order.join());
   ok(R.tagCommit("image: reg/app:3f2a1c9e\n", "image: \\S+:([0-9a-f]{7,40})") === "3f2a1c9e" && R.tagCommit("x", "(") === null, "an image tag's commit from the pattern's group");
 }
+// ---------- round 2: the reviews' findings ----------
+{
+  const t0 = performance.now(); const hit = R.globMatch("a**a**a**a**a**a**a**a**b", "a".repeat(50)); const t1 = performance.now() - t0;
+  const many = Array.from({ length: 2000 }, (_, i) => ({ pattern: `*a*a*a*a*a*a*${i}`, owners: ["@x"] })), t2 = performance.now(); R.ownersOf("a".repeat(255), many); const t3 = performance.now() - t2;
+  ok(!hit && t1 < 20 && t3 < 1000, "CODEOWNERS: a pattern built to backtrack matches in linear time (no regular expression from the text)", `${t1.toFixed(1)} ms, 2000 lines ${t3.toFixed(1)} ms`);
+  ok(R.globMatch("/docs/", "docs/a/b.md") && !R.globMatch("/docs/", "docs") && R.globMatch("*.md", "x/y/z.md") && R.globMatch("src/**/api.ts", "src/api.ts") && R.globMatch("src/**/api.ts", "src/a/b/api.ts") && !R.globMatch("src/*/api.ts", "src/a/b/api.ts") && R.globMatch("docs", "docs/x") && R.globMatch("a?c", "abc") && R.globMatch("*", "anything/at/all") && !R.globMatch("x".repeat(300), "x".repeat(300)) && !R.globMatch("*", "y".repeat(2000)),
+    "CODEOWNERS globs: anchoring, directories, *, **, ?, and the length caps");
+  const t4 = performance.now(); const v = R.classifyComment(`**a**${" ".repeat(65000)}b c`).verdict; const t5 = performance.now() - t4;
+  ok(v === "unclassified" && t5 < 50, "a long comment line is never fed to a verdict pattern (no quadratic bold match)", `${t5.toFixed(1)} ms`);
+  const t6 = performance.now(); const tc = R.tagCommit(" ".repeat(200000), "\\s*\\s*x"); const t7 = performance.now() - t6;
+  ok(tc === null && t7 < 50 && R.tagCommit("a: 1\nimage: reg/app:3f2a1c9e\n", "image: \\S+:([0-9a-f]{7,40})") === "3f2a1c9e", "the environment pattern runs line by line, long lines skipped", `${t7.toFixed(1)} ms`);
+  let nested = ""; try { cleanSettings({ environments: [{ name: "prod", detect: { kind: "file", repository: "o/r", path: "a.yaml", pattern: "(a+)+$" } }] }); } catch (e: any) { nested = e.message; }
+  ok(/repeats a repeated group/.test(nested), "settings: an environment pattern with a nested quantifier is refused");
+  for (const neg of ["Result: didn't pass", "## Didn’t pass", "Verdict: does not pass", "## Not passed", "Result: wasn't passing", "## 沒通過", "## 没通过", "結論：沒有通過"]) ok(R.classifyComment(neg).verdict === "fail", `a negated pass is a fail: ${neg}`);
+  ok(R.classifyComment("## Not yet passed").verdict === "unclassified" && R.classifyComment("## 尚未通過").verdict === "unclassified", "not yet: unclassified, never pass");
+  const crlf = "Intro\r\nline two\r\n";
+  const w = R.replaceBlock(crlf, R.renderBlock(["o/r#3"], "o/r"));
+  ok(w.startsWith("Intro\r\nline two") && w.includes("\r\n\r\n<!-- crew-studio:depends -->\r\nDepends-on:") && !/[^\r]\n/.test(w), "a body with CRLF keeps its line endings; the block is written in them", JSON.stringify(w));
+  const fake = "Keep <!-- crew-studio:depends -->this real text<!-- /crew-studio:depends --> end";
+  let refusedFake = ""; try { R.replaceBlock(fake, R.renderBlock(["o/r#3"], "o/r")); } catch (e: any) { refusedFake = e.message; }
+  ok(/other text than Depends-on/.test(refusedFake) && R.blockProblem(`${R.renderBlock(["o/r#3"], "o/r")}\n${R.renderBlock(["o/r#4"], "o/r")}`)?.includes("more than one") === true, "a marker pair around other text, or two blocks, is refused, never deleted unseen");
+  const rul = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_code_owner_review: true } }], "none", null, "o");
+  const unr = R.approvalsOf(rul, [], { files: [], codeowners: null, teamMembers: new Map(), lastPusher: null, ownersUnreadable: { en: "CODEOWNERS could not be read", tw: "x" } });
+  ok(!unr.readable && unr.missing[0].kind === "unreadable" && R.approvalsOf(rul, [], { files: ["a"], codeowners: null, teamMembers: new Map(), lastPusher: null }).readable, "code owners that cannot be checked are unreadable, distinct from no CODEOWNERS file");
+}
 // ---------- settings and the API origin ----------
 {
   let msg = ""; try { cleanSettings({ evidence: { accounts: ["bad name!"] } }); } catch (e: any) { msg = e.message; }
@@ -144,7 +170,7 @@ try {
   ok(v.count === 3 && sent.some(([t]) => t === "prs"), "the sidebar count: rows whose next step is approve or merge; the page is told", String(v.count));
   // approvals
   const a18 = row(v, "northwind/checkout-api#18").approvals;
-  ok(a18.required === 2 && a18.counted === 1 && a18.missing.some((m: any) => m.kind === "count" && m.n === 1) && a18.missing.some((m: any) => m.kind === "owner" && m.who.join() === "@dana") && a18.missing.some((m: any) => m.kind === "team" && m.who === "release"),
+  ok(a18.required === 2 && a18.counted === 1 && a18.missing.some((m: any) => m.kind === "count" && m.n === 1) && a18.missing.some((m: any) => m.kind === "owner" && m.who.join() === "@dana") && a18.missing.some((m: any) => m.kind === "team" && m.who === "@northwind/release"),
     "missing approvals from the ruleset: the count (the author's own approval ignored, a stale one counted as the rules allow), a code owner, a required team", JSON.stringify(a18));
   ok(row(v, "northwind/checkout-api#18").reviews.some((r: any) => r.login === "bo" && r.stale), "the approval given on an older head shows stale");
   const a30 = row(v, "northwind/web-app#30").approvals;
@@ -193,7 +219,7 @@ try {
   const openCard = () => E.cards.list({ run: ap.body.task }).find((c: any) => c.status === "open");
   await until(() => !!openCard(), 10000);
   const card: any = openCard();
-  ok(card?.captainOnly && card.body.includes("<!-- crew-studio:depends -->\nDepends-on: https://github.com/northwind/checkout-api/pull/15\n<!-- /crew-studio:depends -->") && card.body.includes("Repository / 儲存庫: northwind/checkout-api"), "the captain-only card shows the exact block and the target repository", card?.body);
+  ok(card?.captainOnly && card.body.includes("<!-- crew-studio:depends -->\nDepends-on: https://github.com/northwind/checkout-api/pull/15\n<!-- /crew-studio:depends -->") && card.body.includes("Repository / 儲存庫: northwind/checkout-api") && card.body.includes("No block on GitHub yet"), "the captain-only card shows the exact block, the target repository and what is there now", card?.body);
   ok(!writes().length, "nothing is written before the captain answers");
   let refused = ""; try { await E.answer(card.id, { choice: "apply", by: "Firstmate" }); } catch (e: any) { refused = e.message; }
   ok(/Only the captain/.test(refused) && !writes().length, "Firstmate cannot answer it");
@@ -233,6 +259,34 @@ try {
   const n4 = writes().length, c4: any = E.cards.list({ run: ap4.body.task }).find((c: any) => c.status === "open"); await E.answer(c4.id, { choice: "close", by: "captain" });
   await until(() => ["succeeded", "failed"].includes(E.list().find((r: any) => r.id === ap4.body.task)!.status), 10000);
   ok(writes().length === n4, "closing the card writes nothing");
+  // round 2: a CODEOWNERS that cannot be read is not "no owners"; a 304 reuses the kept answer; evidence that names no
+  // commit counts for a head Studio saw before it; a write GitHub kept differently is reported; a cancelled Task stops
+  gh.knobs.codeownersFail = true; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.knobs.codeownersFail = false;
+  ok(!row(v, "northwind/checkout-api#18").approvals.readable && row(v, "northwind/checkout-api#18").next.rule === "approvals" && /CODEOWNERS/.test(row(v, "northwind/checkout-api#18").approvals.missing[0].reason), "CODEOWNERS that cannot be read: the approvals are unreadable, never ready", JSON.stringify(row(v, "northwind/checkout-api#18").approvals));
+  const nm0 = gh.notModified; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+  ok(gh.notModified > nm0 + 20, "a refresh asks with If-None-Match and reuses the answers GitHub says did not change (304)", `${gh.notModified - nm0}`);
+  const mb = gh.data.find("northwind/mobile", 5)!;
+  ok(row(v, "northwind/mobile#5").evidence === null, "precondition: no evidence on the single pull request");
+  mb.comments = [{ user: "qa-lin", body: "## PASS", at: new Date(Date.now() + 1000).toISOString() }];
+  await new Promise((r) => setTimeout(r, 1100)); await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+  ok(row(v, "northwind/mobile#5").evidence?.covers === "head", "a comment naming no commit, written after Studio saw the head, covers the head", JSON.stringify(row(v, "northwind/mobile#5").evidence));
+  const p17 = gh.data.find("northwind/checkout-api", 17)!; p17.comments!.push({ user: "qa-lin", body: "# PASS", at: "2026-11-01T09:00:00Z" });
+  await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; p17.comments!.pop();
+  ok(row(v, "northwind/checkout-api#17").evidence?.covers === "unknown" && row(v, "northwind/checkout-api#17").next.rule === "evidence", "a comment naming no commit, older than when Studio saw the head: unknown, test again", JSON.stringify(row(v, "northwind/checkout-api#17").evidence));
+  await call("/api/prs/deps", { pr: "northwind/web-app#30", on: ["northwind/checkout-api#19"] });
+  gh.knobs.tamper = true; const before5 = writes().length;
+  const apT = await call("/api/prs/apply", { prs: ["northwind/web-app#30"] }); await until(() => !!E.cards.list({ run: apT.body.task }).find((c: any) => c.status === "open"), 10000);
+  await E.answer((E.cards.list({ run: apT.body.task }).find((c: any) => c.status === "open") as any).id, { choice: "apply", by: "captain" });
+  await until(() => E.list().find((r: any) => r.id === apT.body.task)!.status === "succeeded", 10000); gh.knobs.tamper = false;
+  const noteT = String(E.list().find((r: any) => r.id === apT.body.task)!.nodes?.write?.note ?? "");
+  ok(writes().length === before5 + 1 && /differs from what Studio wrote/.test(noteT) && !W.state.applied["northwind/web-app#30"], "a body GitHub kept differently from what Studio wrote is reported, not recorded as applied", noteT);
+  gh.data.find("northwind/web-app", 30)!.body = "";
+  gh.knobs.slowPull = { path: "/repos/northwind/web-app/pulls/30", ms: 800 };
+  const apC = await call("/api/prs/apply", { prs: ["northwind/web-app#30"] }); await until(() => !!E.cards.list({ run: apC.body.task }).find((c: any) => c.status === "open"), 10000);
+  const before6 = writes().length;
+  await E.answer((E.cards.list({ run: apC.body.task }).find((c: any) => c.status === "open") as any).id, { choice: "apply", by: "captain" });
+  await new Promise((r) => setTimeout(r, 200)); E.cancel(apC.body.task); await new Promise((r) => setTimeout(r, 1200)); gh.knobs.slowPull = null;
+  ok(writes().length === before6, "a Task cancelled while GitHub answers writes nothing after", JSON.stringify(writes().slice(before6)));
   // rate limit: the refresh fails, the list stays, Studio backs off
   gh.setRateLimited(true); const atBefore = W.snapshot.at;
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.setRateLimited(false);

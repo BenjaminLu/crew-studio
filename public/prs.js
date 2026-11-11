@@ -25,22 +25,23 @@ const pmark = (project) => project ? h("span", { class: `pmark ${markClass(proje
   : h("span", { class: "pmark pw-unreg", title: T("Not a registered Studio project", "沒有註冊成 Studio 專案的 repo") }, "·");
 const ago = (iso) => { const t = Date.parse(iso || ""); if (!t) return ""; const m = Math.max(0, Math.round((Date.now() - t) / 60000)); return m === 0 ? T("just now", "剛剛") : m < 60 ? T(`${m} min ago`, `${m} 分鐘前`) : T(`${Math.round(m / 60)} h ago`, `${Math.round(m / 60)} 小時前`); };
 const day = (iso) => { const d = new Date(iso || ""); return isNaN(d) ? "" : `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, "0")}`; };
-function flash(msg, link) { toast(link ? h("span", {}, msg, " ", h("a", { href: link.href, class: "pw-toastlink" }, link.text)) : msg); }
+// one toast at a time: a new one replaces the last instead of stacking on it
+function flash(msg, link) { document.querySelectorAll("body > .toast").forEach((t) => t.remove()); toast(link ? h("span", {}, msg, " ", h("a", { href: link.href, class: "pw-toastlink" }, link.text)) : msg); }
 async function copy(text) { try { await navigator.clipboard.writeText(text); return true; } catch {
   const ta = h("textarea", { style: "position:fixed;left:-9999px" }); ta.value = text; document.body.append(ta); ta.select(); let ok = false; try { ok = document.execCommand("copy"); } catch {} ta.remove(); return ok; } }
 
 // ---------- words ----------
 const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
-const missWord = (m) => m.kind === "count" ? T(`${m.n} more`, `${m.n} 位`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : T("rules unreadable", "讀不到規則");
+const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `還要 ${m.n} 個 approve`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : T("rules unreadable", "讀不到規則");
 const TONE = { hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
 function nextWord(n) {
   if (n.rule === "draft") return T("On hold (draft)", "暫緩（draft）");
   if (n.rule === "changes") return T("Fix the review comments", "修正 reviewer 意見");
-  if (n.rule === "failed") return T("Fix: the tests failed", "修正：測試不通過");
+  if (n.rule === "failed") return T("Fix the failing tests", "修正失敗的測試");
   if (n.rule === "required") return T("Wait for the review", "等 review");
   if (n.rule === "dependency") return T("Wait for the dependency", "等依賴");
   if (n.rule === "environment") return T("Deploy for testing", "部署去測");
-  if (n.rule === "evidence") return n.since ? T(`Test only the change since ${n.since}`, `只驗 ${n.since} 之後的改動`) : n.reason === "unclassified" ? T("Confirm the test verdict", "確認測試結論") : n.reason === "code-only" ? T("Test (code review only so far)", "測試（目前只審了 code）") : T("Test", "測試");
+  if (n.rule === "evidence") return n.reason === "unknown-commit" ? T("Test (the evidence names no commit)", "測試（證據沒指明 commit）") : n.since ? T(`Test only the change since ${n.since}`, `只驗 ${n.since} 之後的改動`) : n.reason === "unclassified" ? T("Confirm the test verdict", "確認測試結論") : n.reason === "code-only" ? T("Test (code review only so far)", "測試（目前只審了 code）") : T("Test", "測試");
   if (n.rule === "approvals") return T("Approve", "等 approve");
   return T("Ready to merge", "可合併");
 }
@@ -64,19 +65,22 @@ function changeWord(w) {
 // ---------- data ----------
 function setCount(n) { const c = document.getElementById("navPrs"); if (!c) return; c.hidden = !n; c.textContent = n ? String(n) : ""; }
 // a live update never redraws the list under a drag: it waits for the drop
-const redraw = () => { if (S.route?.name !== "prs") return; if (PW.drag) { PW.later = true; return; } render(); };
+// a live update never redraws the list under a drag, and gives the keyboard focus back to the row that had it
+const redraw = () => { if (S.route?.name !== "prs") return; if (PW.drag) { PW.later = true; return; }
+  const had = document.activeElement?.closest?.("[data-prs-row]")?.dataset.prsRow; render();
+  if (had && document.activeElement === document.body) document.querySelector(`[data-prs-row="${CSS.escape(had)}"]`)?.focus({ preventScroll: true }); };
 async function load() {
   try { PW.data = await getJ("/api/prs"); PW.err = null; setCount(PW.data.count); } catch (e) { PW.err = e.message; }
   redraw();
 }
 async function refresh() {
-  if (PW.busy) return; PW.busy = true; if (S.route?.name === "prs") render();
+  if (PW.busy) return; PW.busy = true; redraw();
   try { PW.data = await postJ("/api/prs/refresh", {}); PW.err = null; setCount(PW.data.count); } catch (e) { PW.err = e.message; } finally { PW.busy = false; }
-  if (S.route?.name === "prs") render();
+  redraw();
 }
 async function act(u, b, done) {
   try { PW.data = await postJ(u, b); setCount(PW.data.count); if (done) flash(done); } catch (e) { flash(e.message); }
-  if (S.route?.name === "prs") render();
+  redraw();
 }
 const enter = () => { const on = S.route?.name === "prs"; if (on && !PW.onPage) { PW.onPage = true; load().then(refresh); } else if (!on) PW.onPage = false; };
 addEventListener("hashchange", () => setTimeout(enter, 0)); setTimeout(enter, 0);
@@ -90,7 +94,8 @@ function view() {
   const d = PW.data;
   const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Pull requests", "Pull requests")),
     h("p", {}, T("One list across projects and repositories. Paste a repository address to watch the pull requests you opened or are assigned to there; paste a pull request address to watch just that one.", "一份清單，跨專案、跨 repo。貼上 repo 網址就追蹤你在那個 repo 開的或被指派的 PR；貼上 PR 網址就只追蹤那一個。"))));
-  if (!d) return h("div", { class: "page pw-page", "data-prs-page": "", "data-loading": "1" }, head, PW.err ? h("div", { class: "card x-pad", role: "alert" }, PW.err) : h("div", { class: "skel", style: "height:180px" }));
+  if (!d) return h("div", { class: "page pw-page", "data-prs-page": "", "data-loading": "1" }, head, PW.err ? h("div", { class: "card x-pad pw-loaderr", role: "alert", "data-prs-load-error": "" }, h("span", {}, PW.err),
+    h("button", { class: "btn", "data-prs-retry": "", onclick: () => { PW.err = null; render(); load().then(refresh); } }, icon("refresh"), T("Try again", "再試一次"))) : h("div", { class: "skel", style: "height:180px" }));
   const rows = d.rows || [], counts = {}; for (const r of rows) counts[r.next.kind] = (counts[r.next.kind] || 0) + 1;
   const shown = rows.filter((r) => PW.tab === "all" || r.next.kind === PW.tab);
   return h("div", { class: "page pw-page", "data-prs-page": "" }, head,
@@ -98,12 +103,13 @@ function view() {
       h("div", { class: "sec-head" }, h("h2", { id: "pwListH", class: "sr" }, T("The list", "清單")), h("span", { class: "x-grow" }),
         h("span", { class: "faint", "data-prs-refreshed": "" }, PW.busy || d.refreshing ? T("reading GitHub…", "讀取 GitHub 中…") : refreshedText(d)),
         h("button", { class: "btn", "data-prs-refresh": "", disabled: PW.busy, onclick: refresh }, icon("refresh"), PW.busy ? T("Reading…", "讀取中…") : T("Refresh", "重新整理")),
+        h("button", { class: "btn ghost", "data-prs-md": "", title: T("Copy the rows this tab shows as Markdown", "把這個分頁的列複製成 Markdown"), onclick: async () => { flash(await copy(markdown(visibleRows())) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); } }, icon("copy"), T("Copy as Markdown", "複製成 Markdown")),
         h("button", { class: "btn ghost icon", "data-prs-settings": "", "aria-label": T("Settings", "設定"), title: T("Settings", "設定"), onclick: settingsModal }, icon("tool"))),
       statusLine(d),
       watchCard(d),
       proposalCard(d),
-      h("nav", { class: "tb-tabs pw-tabs", role: "tablist", "aria-label": T("Filter by next step", "依下一步篩選") }, TABS.map(([k, en, tw]) =>
-        h("button", { class: "tb-tab", role: "tab", "aria-selected": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0))))),
+      h("div", { class: "tb-tabs pw-tabs", role: "group", "aria-label": T("Filter by next step", "依下一步篩選") }, TABS.map(([k, en, tw]) =>
+        h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "aria-selected": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0))))),
       h("div", { class: "card pw-tbl", role: "table", "aria-label": T("Pull requests", "Pull requests"), "data-prs-table": "" },
         h("div", { class: "pw-row h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Next step · waits on", "下一步 · 等誰"), T("Missing", "還缺"), T("Depends on", "依賴"), T("Test evidence", "測試證據"), T("Environments", "環境"), T("Reviews", "Reviews"), T("Issues", "Issue"), T("Group", "組")].map((t) => h("span", { role: "columnheader" }, t))),
         shown.length ? shown.map((r) => rowView(r, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, rows.length ? T("No pull request under this filter.", "這個篩選下沒有 pull request。") : T("Nothing watched yet, or nothing open: paste a repository or pull request address above.", "還沒有追蹤任何東西，或沒有開著的 PR：在上方貼上 repo 或 PR 網址。"))),
@@ -122,11 +128,13 @@ function statusLine(d) {
 function watchCard(d) {
   const input = h("input", { class: "input", id: "pwAdd", type: "url", maxlength: 300, autocomplete: "off", "aria-label": T("GitHub repository or pull request address", "GitHub repo 或 pull request 網址"),
     placeholder: T("Paste a GitHub repository or pull request address: https://github.com/<owner>/<repo> or …/pull/<n>", "貼上 GitHub repo 或 PR 網址：https://github.com/<owner>/<repo> 或 …/pull/<n>") });
-  const add = async (e) => { e.preventDefault(); const url = input.value.trim(); if (!url || PW.adding) return; PW.adding = true; PW.addErr = null;
+  const add = async (e) => { e.preventDefault(); const url = input.value.trim(); if (!url || PW.adding) return; PW.adding = true; PW.addErr = null; let added = false;
     try { PW.data = await postJ("/api/prs/watch", { url }); setCount(PW.data.count); const a = PW.data.added;
       flash(a?.kind === "pr" ? T(`Watching ${a.repo}#${a.number}`, `開始追蹤 ${a.repo}#${a.number}`) : T(`Watching ${a?.repo}: the pull requests you opened or are assigned to, read on the next refresh`, `開始追蹤 ${a?.repo}：你開的或被指派的 PR，下一次刷新讀取`));
-      input.value = ""; setTimeout(load, 1500); }
-    catch (err) { PW.addErr = err.message; } finally { PW.adding = false; render(); } };
+      input.value = ""; added = true; setTimeout(load, 1500); }
+    catch (err) { PW.addErr = err.message; } finally { PW.adding = false; render();
+      // a live redraw while the request ran may have carried the address into a new field: clear the one on the page now
+      if (added) { const cur = document.getElementById("pwAdd"); if (cur) cur.value = ""; } } };
   const chips = [
     ...d.watch.repos.map((w) => h("span", { class: "chip", "data-prs-repo": w.repo }, pmark(w.project), extLink(ghRepo(w.repo), w.repo), h("span", { class: "faint num" }, String(w.count)),
       h("button", { class: "pw-x", "data-prs-unwatch-repo": w.repo, "aria-label": T(`Stop watching ${w.repo}`, `不再追蹤 ${w.repo}`), title: T("Stop watching this repository", "不再追蹤這個 repo"), onclick: () => act("/api/prs/unwatch", { repo: w.repo }, T(`Stopped watching ${w.repo}`, `不再追蹤 ${w.repo}`)) }, icon("x")))),
@@ -167,9 +175,11 @@ function rowView(r, d) {
       h("span", { class: "pw-pid" }, pmark(r.project), extLink(ghPr(r.id), short(r.id, null), { "data-prs-link": "", title: r.id }), r.single ? h("span", { class: "badge", title: T("Added by its own address", "用 PR 網址單獨加入") }, T("single", "單獨")) : null, r.draft ? h("span", { class: "badge" }, "draft") : null),
       h("small", { class: "pw-title" }, r.title),
       c ? h("small", { class: "pw-chg", "data-prs-changed": "" }, T(`changed ${ago(c.at)}: `, `${ago(c.at)}變更：`), c.what.map(changeWord).filter(Boolean).join(T("; ", "；"))) : null),
-    h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${TONE[n.kind] || ""}`, "data-prs-next": n.rule }, nextWord(n)), h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、")))),
-    h("span", { role: "cell" }, miss.length && !r.draft ? h("button", { class: "badge human pw-cta", "data-prs-cta": r.id, "aria-haspopup": "menu", onclick: (e) => { e.stopPropagation(); ctaMenu(e.currentTarget, r); } },
-      miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : T(`missing ${miss.map(missWord).join(" · ")}`, `缺 ${miss.map(missWord).join(" · ")}`), h("span", { "aria-hidden": "true" }, " ▾")) : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${TONE[n.kind] || ""}`, "data-prs-next": n.rule }, nextWord(n)),
+      n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、")))),
+    h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { const label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.map(missWord).join(" · ");
+      return h("button", { class: "badge human pw-cta", "data-prs-cta": r.id, "aria-haspopup": "true", title: miss[0].kind === "unreadable" ? LX({ en: miss[0].reason, tw: miss[0].tw }) : label, onclick: (e) => { e.stopPropagation(); ctaMenu(e.currentTarget, r); } },
+        h("span", { class: "pw-ctat" }, label), h("span", { "aria-hidden": "true" }, " ▾")); })() : h("span", { class: "faint" }, "—")),
     h("span", { role: "cell" }, depCell(r)),
     h("span", { role: "cell" }, evBadge(r.evidence)),
     h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`) }, e.name)) : h("span", { class: "faint" }, "—")),
@@ -186,6 +196,7 @@ function evBadge(e) {
   if (e.verdict === "fail") return h("span", { class: "badge bad", "data-prs-ev": "fail" }, T("fail", "不通過"), when);
   if (e.verdict === "unclassified") return h("span", { class: "badge", "data-prs-ev": "unclassified" }, T("unclassified", "無法分類"));
   if (e.verdict === "code-only") return h("span", { class: "badge warn", "data-prs-ev": "code-only" }, T("code review only", "只審 code"));
+  if (e.covers === "unknown") return h("span", { class: "badge warn", "data-prs-ev": "unknown", title: T("The evidence names no commit, and Studio did not see this head before it", "證據沒指明 commit，Studio 也沒在它之前看過這個 head") }, T("commit not named", "沒指明 commit"));
   if (e.covers === "older") return h("span", { class: "badge warn", "data-prs-ev": "older", title: e.since ? T(`tested ${e.since}`, `驗的是 ${e.since}`) : "" }, T("older head", "舊 head"));
   return h("span", { class: "badge ok", "data-prs-ev": e.verdict }, e.verdict === "conditional" ? T("conditional", "有條件") : T("pass", "通過"), when);
 }
@@ -222,13 +233,13 @@ const foot = (...kids) => h("div", { class: "pw-mf" }, ...kids);
 function detail(r) {
   const n = r.next, rules = PW.data?.rules || [];
   pwModal(r.id, [
-    h("p", { class: "muted pw-dtitle" }, extLink(ghPr(r.id), r.title || r.id)),
+    h("p", { class: "muted pw-dtitle" }, r.title || "", " · ", extLink(ghPr(r.id), T("on GitHub", "在 GitHub 上看"))),
     h("div", { class: "pw-cols" },
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("Issues", "Issue")), r.issues.length ? r.issues.map((i) => h("div", { class: "kv" }, h("span", {}, extLink(ghIssue(i.ref), i.ref), i.title ? ` ${i.title}` : "", i.external ? T(" (external, read only)", "（外部，只讀）") : ""), h("span", {}, i.state || "?"))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Reviews", "Reviews")), r.reviews.length ? r.reviews.map((x) => h("div", { class: "kv" }, h("span", {}, x.login, x.author ? T(" (author)", "（作者）") : ""), h("span", {}, reviewWord(x.state), x.stale ? T(" · stale", " · 舊 head") : ""))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Test evidence", "測試證據")), r.evidence ? [h("div", { class: "kv" }, h("span", {}, `${r.evidence.by}${r.evidence.at ? ` · ${day(r.evidence.at)}` : ""} (${r.evidence.source})`), h("span", {}, verdictWord(r.evidence.verdict))),
-          h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
+          h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : r.evidence.covers === "unknown" ? T("unknown: it names no commit", "不確定：沒指明 commit") : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
         h("h3", {}, T("Environments", "環境")), r.envs.length ? r.envs.map((e) => h("div", { class: "kv" }, h("span", {}, e.name, e.production ? T(" (production)", "（正式）") : ""), h("span", {}, e.on ? T("runs this head", "跑著這個 head") : e.on === null ? T("could not be read", "讀不到") : T("no", "沒有")))) : h("span", { class: "faint" }, T("none set", "未設定"))),
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("How the next step was found", "下一步怎麼算出來的")),
@@ -243,13 +254,13 @@ function detail(r) {
 function ctaMenu(anchor, r) {
   document.querySelectorAll(".pw-menu").forEach((m) => m.remove());
   const close = () => { m.remove(); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true); };
-  const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", role: "menuitem", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
-  const m = h("div", { class: "pop pw-menu", role: "menu", "data-prs-menu": r.id },
+  const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
+  const m = h("div", { class: "pop pw-menu", role: "group", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), "data-prs-menu": r.id },
     h("div", { class: "tgt" }, `${r.id} · `, (r.approvals?.missing || []).map(missWord).join(", ")),
     item("ask", "message", "Ask for review: draft a message", "請人審：產生訊息", () => askModal(r)),
     item("room", "monitor", "Open in the review room", "在審查室打開", () => openRoom(r)),
     item("report", "doc", "Handoff report…", "交接報告…", () => reportModal([r])),
-    item("md", "copy", "Copy the visible rows as Markdown", "把看得到的列複製成 Markdown", async () => { flash(await copy(markdown(visibleRows())) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); }));
+    item("md", "copy", "Copy this row as Markdown", "把這一列複製成 Markdown", async () => { flash(await copy(markdown([r])) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); }));
   document.body.append(m);
   const b = anchor.getBoundingClientRect(); m.style.position = "fixed"; m.style.left = `${Math.max(8, Math.min(b.left, innerWidth - 290))}px`; m.style.top = `${Math.min(b.bottom + 6, innerHeight - 220)}px`;
   const off = (e) => { if (!m.contains(e.target)) close(); }, esc = (e) => { if (e.key === "Escape") { close(); anchor.focus(); } };
@@ -259,7 +270,7 @@ function ctaMenu(anchor, r) {
 const visibleRows = () => (PW.data?.rows || []).filter((r) => PW.tab === "all" || r.next.kind === PW.tab);
 function draft(r, lang) {
   const P = (en, tw) => window.crewI18n.pick(lang, en, tw), miss = (r.approvals?.missing || []).map(missWord).join(P(", ", "、"));
-  const ev = r.evidence ? (r.evidence.verdict === "pass" || r.evidence.verdict === "conditional") && r.evidence.covers !== "older" ? P(`${r.evidence.by} passed it${r.evidence.at ? ` on ${day(r.evidence.at)}` : ""}, on the current head`, `${r.evidence.by}${r.evidence.at ? ` ${day(r.evidence.at)}` : ""} 驗過，驗的是目前的 head`)
+  const ev = r.evidence ? (r.evidence.verdict === "pass" || r.evidence.verdict === "conditional") && (r.evidence.covers === "head" || r.evidence.covers === "unbound") ? P(`${r.evidence.by} passed it${r.evidence.at ? ` on ${day(r.evidence.at)}` : ""}, on the current head`, `${r.evidence.by}${r.evidence.at ? ` ${day(r.evidence.at)}` : ""} 驗過，驗的是目前的 head`)
     : P(`${verdictWord(r.evidence.verdict)}${r.evidence.covers === "older" ? ` (an older head: ${r.evidence.since || ""})` : ""}`, `${verdictWord(r.evidence.verdict)}${r.evidence.covers === "older" ? `（舊 head：${r.evidence.since || ""}）` : ""}`) : P("not tested yet", "還沒測");
   const envs = r.envs.filter((e) => e.on).map((e) => e.name).join(", ") || P("not deployed yet", "尚未部署");
   const deps = r.deps.on.map((x) => `${x.id}${x.done ? P(" (merged)", "（已合併）") : ""}`).join(", ") || P("none", "無");
@@ -299,7 +310,7 @@ function reportModal(rows) {
     foot(h("span", { class: "x-grow" }), h("button", { class: "btn primary", "data-prs-report-copy": "", onclick: async () => {
       const text = [`# ${T("Handoff", "交接")}: ${rows.map((r) => r.id).join(", ")}`, `${T("For", "給")}: ${who.value.trim() || "—"}`, "", markdown(rows), "",
         ...rows.flatMap((r) => [`## ${r.id} ${r.title}`, `- ${T("Next step", "下一步")}: ${nextWord(r.next)} (${r.next.who.map(whoWord).join(", ")})`, `- ${T("Asked", "請求")}: ${(r.approvals?.missing || []).length ? T(`approve (${r.approvals.missing.map(missWord).join(", ")})`, `approve（${r.approvals.missing.map(missWord).join("、")}）`) : "—"}`,
-          `- ${T("Issues", "Issue")}: ${r.issues.map((i) => `${i.ref}${i.title ? ` ${i.title}` : ""} (${i.state || "?"})`).join("; ") || "—"}`, ""])].join("\n");
+          `- ${T("Issues", "Issue")}: ${r.issues.map((i) => i.external ? ghIssue(i.ref) || i.ref : `${i.ref}${i.title ? ` ${i.title}` : ""} (${i.state || "?"})`).join("; ") || "—"}`, ""])].join("\n");
       const ok = await copy(text); close(); flash(ok ? T("Report copied as Markdown", "報告已複製成 Markdown") : T("Could not copy", "無法複製")); } }, T("Copy the report", "複製報告")))], { id: "report" });
 }
 function blockOf(on, repo, short) { const lines = ["<!-- crew-studio:depends -->", ...on.map((id) => `Depends-on: ${ghPr(id)}`)];
@@ -377,6 +388,7 @@ function settingsModal() {
       try { PW.data = await postJ("/api/prs/settings", { settings: s }); setCount(PW.data.count); close(); render(); flash(T("Settings saved", "設定已儲存")); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings" });
 }
 
-routes.prs = view;
+// opening the page (a link, a reload, the sidebar) loads it and asks for a refresh; a redraw while it is open does not
+routes.prs = () => { if (!PW.onPage) setTimeout(enter, 0); return view(); };
 window.crewPrs = { reload: load, state: PW };
 })();

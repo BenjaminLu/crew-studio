@@ -71,13 +71,25 @@ export function findBlock(body: string): { text: string; start: number; end: num
   return { text: b.slice(s, e + BLOCK_END.length), start: s, end: e + BLOCK_END.length };
 }
 export const stripBlock = (body: string) => { const f = findBlock(body); return f && f !== "malformed" ? body.slice(0, f.start) + body.slice(f.end) : String(body ?? ""); };
-/** The body with only Studio's block replaced (or appended at the end); throws when the body's block is malformed. */
+/** Why Studio may not replace the block a body has: unpaired markers, two blocks, or a block holding anything but
+ *  Depends-on lines (a marker pair around other text would delete that text unseen). null when it may. */
+export function blockProblem(body: string): string | null {
+  const b = String(body ?? ""), f = findBlock(b);
+  if (f === "malformed") return "the pull request body has an unpaired crew-studio:depends marker; fix it on GitHub first";
+  if (!f) return null;
+  if (b.indexOf(BLOCK_START, f.end) >= 0 || b.indexOf(BLOCK_END, f.end) >= 0) return "the pull request body has more than one crew-studio:depends block; fix it on GitHub first";
+  const inner = f.text.slice(BLOCK_START.length, f.text.length - BLOCK_END.length).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (inner.some((l) => !/^depends-on\s*:/i.test(l))) return "the crew-studio:depends block in the body holds other text than Depends-on lines; fix it on GitHub first";
+  return null;
+}
+/** The body with only Studio's block replaced (or appended at the end), in the body's own line endings; everything outside
+ *  the block is kept byte for byte. Throws blockProblem's reason. */
 export function replaceBlock(body: string, block: string): string {
-  const b = String(body ?? "").replace(/\r\n/g, "\n"), f = findBlock(b);
-  if (f === "malformed") throw new Error("the pull request body has an unpaired crew-studio:depends marker; fix it on GitHub first");
-  if (f) return b.slice(0, f.start) + block + b.slice(f.end);
+  const b = String(body ?? ""), why = blockProblem(b); if (why) throw new Error(why);
+  const eol = b.includes("\r\n") ? "\r\n" : "\n", blk = block.split("\n").join(eol), f = findBlock(b);
+  if (f && f !== "malformed") return b.slice(0, f.start) + blk + b.slice(f.end);
   const head = b.replace(/\s+$/, "");
-  return head ? `${head}\n\n${block}\n` : `${block}\n`;
+  return head ? `${head}${eol}${eol}${blk}${eol}` : `${blk}${eol}`;
 }
 /** The pull requests Studio's block in a body names (null when the body has no block). */
 export function blockDeps(body: string, repo: string): string[] | null {
@@ -91,12 +103,15 @@ export const normBlock = (t: string | null) => t == null ? null : t.replace(/\r\
 // ---------- test evidence ----------
 export type Verdict = "pass" | "conditional" | "fail" | "code-only" | "unclassified";
 const LABEL_LINE = /^(?:verdict|result|results|status|outcome|test result|qa|結論|結果|測試結果|测试结果|结论|结果)\s*[:：]/i;
-const strip = (l: string) => l.replace(/[*_`~>#|]/g, " ").replace(/\s+/g, " ").trim();
+const strip = (l: string) => l.replace(/[*_`~>#|]/g, " ").replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim();
 function verdictOf(line: string): Verdict | null {
   const l = line.toLowerCase();
   if (/conditional(?:ly)?(?:\s+pass(?:ed)?)?|pass(?:ed)?\s+with\s+conditions?|有條件通過|有条件通过|條件通過|条件通过/.test(l)) return "conditional";
   if (/code[- ]review only|code[- ]only|只審\s*code|只审\s*code|僅\s*code\s*review|仅\s*code\s*review/.test(l)) return "code-only";
-  if (/\bnot\s+pass(?:ed)?\b|\bfail(?:ed|s|ure|ing)?\b|❌|不通過|未通過|不通过|未通过|失敗|失败/.test(l)) return "fail";
+  // a negated pass is never a pass: "not yet" says nothing, the other negations are a fail
+  if (/\bnot\s+yet\b|尚未|還沒|还没/.test(l)) return null;
+  if (/\b(?:not|never|didn'?t|doesn'?t|don'?t|isn'?t|wasn'?t|aren'?t|weren'?t|won'?t|can'?t|cannot|couldn'?t|did\s+not|does\s+not|do\s+not|is\s+not|was\s+not|failed\s+to)\s+(?:\w+\s+)?pass/.test(l)) return "fail";
+  if (/\bfail(?:ed|s|ure|ing)?\b|❌|不通過|未通過|不通过|未通过|沒通過|没通过|沒有通過|没有通过|失敗|失败/.test(l)) return "fail";
   if (/\bpass(?:ed|es)?\b|\blgtm\b|✅|通過|通过/.test(l)) return "pass";
   return null;
 }
@@ -108,8 +123,8 @@ function verdictOf(line: string): Verdict | null {
 export function classifyComment(body: string): { verdict: Verdict; shas: string[] } {
   const text = String(body ?? "").slice(0, 65536), found = new Set<Verdict>();
   for (const raw of text.split(/\r?\n/)) {
-    const t = raw.trim(); if (!t) continue;
-    const heading = /^#{1,6}\s/.test(t), bold = /^\*\*[^*]+\*\*\s*[:：]?\s*\S*$/.test(t), label = LABEL_LINE.test(strip(t)), short = strip(t).length <= 24;
+    const t = raw.trim(); if (!t || t.length > 500) continue; // a verdict line is short: long lines are never read by a pattern
+    const heading = /^#{1,6}\s/.test(t), bold = /^\*\*[^*]+\*\*\s*(?:[:：]\s*)?\S*$/.test(t), label = LABEL_LINE.test(strip(t)), short = strip(t).length <= 24;
     if (!(heading || bold || label || short)) continue;
     const v = verdictOf(strip(t)); if (v) found.add(v);
   }
@@ -117,18 +132,22 @@ export function classifyComment(body: string): { verdict: Verdict; shas: string[
   return { verdict: found.size === 1 ? [...found][0] : "unclassified", shas };
 }
 export type Commit = { sha: string; at: string };
-export type Evidence = { verdict: Verdict; source: "comment" | "check" | "label"; by: string; at: string | null; url: string | null; covers: "head" | "older" | "unbound"; since: string | null; shas: string[] };
-/** Which commit a comment's verdict covers: the latest PR commit it names, else the latest commit pushed before it. */
-export function coverage(shas: string[], at: string, commits: Commit[], head: string): { covers: "head" | "older"; since: string | null } {
+export type Evidence = { verdict: Verdict; source: "comment" | "check" | "label"; by: string; at: string | null; url: string | null; covers: "head" | "older" | "unknown" | "unbound"; since: string | null; shas: string[] };
+/**
+ * Which commit a comment's verdict covers: the latest pull request commit it names. A comment that names none covers the
+ * head only when Studio itself saw that head before the comment was written (`headSeenAt`, from its own refreshes); a
+ * commit's date is when it was made, not when it was pushed, so it proves nothing. Otherwise the coverage is unknown.
+ */
+export function coverage(shas: string[], at: string, commits: Commit[], head: string, headSeenAt: string | null = null): { covers: "head" | "older" | "unknown"; since: string | null } {
   const named = commits.filter((c) => shas.some((s) => c.sha.toLowerCase().startsWith(s)));
-  const tested = named.length ? named[named.length - 1] : [...commits].filter((c) => Date.parse(c.at) <= Date.parse(at)).at(-1) ?? null;
-  if (!tested) return { covers: "older", since: null };
-  return tested.sha === head ? { covers: "head", since: null } : { covers: "older", since: tested.sha.slice(0, 7) };
+  if (named.length) { const tested = named[named.length - 1]; return tested.sha === head ? { covers: "head", since: null } : { covers: "older", since: tested.sha.slice(0, 7) }; }
+  if (headSeenAt && Date.parse(headSeenAt) <= Date.parse(at)) return { covers: "head", since: null };
+  return { covers: "unknown", since: null };
 }
 export type EvidenceInput = {
   comments: { login: string; body: string; at: string; url: string }[];
   checks: { name: string; status: string; conclusion: string | null; at: string | null; url: string | null }[];
-  labels: string[]; commits: Commit[]; head: string;
+  labels: string[]; commits: Commit[]; head: string; headSeenAt?: string | null;
 };
 export type EvidenceSources = { accounts: string[]; checks: string[]; labels: string[] };
 /** The latest evidence from the configured sources: a classified comment or a named check run (newest first), else a label. */
@@ -137,7 +156,7 @@ export function evidenceOf(src: EvidenceSources, x: EvidenceInput): Evidence | n
   const mine = x.comments.filter((c) => acct.has(c.login.toLowerCase())).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const classified = mine.map((c) => ({ c, k: classifyComment(c.body) })), decided = classified.filter((r) => r.k.verdict !== "unclassified");
   const pick = decided.at(-1) ?? classified.at(-1);
-  if (pick) { const cov = coverage(pick.k.shas, pick.c.at, x.commits, x.head); cands.push({ verdict: pick.k.verdict, source: "comment", by: pick.c.login, at: pick.c.at, url: pick.c.url, covers: cov.covers, since: cov.since, shas: pick.k.shas }); }
+  if (pick) { const cov = coverage(pick.k.shas, pick.c.at, x.commits, x.head, x.headSeenAt ?? null); cands.push({ verdict: pick.k.verdict, source: "comment", by: pick.c.login, at: pick.c.at, url: pick.c.url, covers: cov.covers, since: cov.since, shas: pick.k.shas }); }
   const names = new Set(src.checks.map((n) => n.toLowerCase()));
   for (const c of x.checks) if (names.has(c.name.toLowerCase()) && c.status === "completed") {
     const ok = ["success", "neutral"].includes(String(c.conclusion)), skip = ["skipped", "cancelled", "stale"].includes(String(c.conclusion));
@@ -153,7 +172,7 @@ export function evidenceOf(src: EvidenceSources, x: EvidenceInput): Evidence | n
 export type Rules = { readable: true; required: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; teams: { key: string; label: string }[]; sources: string[] }
   | { readable: false; reason: string; tw: string };
 /** Merge a base branch's rulesets (GET …/rules/branches/<base>) and classic protection (GET …/branches/<base>/protection). */
-export function mergeRules(rulesets: any[] | null, protection: any | "none" | null, unreadable: { en: string; tw: string } | null): Rules {
+export function mergeRules(rulesets: any[] | null, protection: any | "none" | null, unreadable: { en: string; tw: string } | null, owner = ""): Rules {
   if (unreadable) return { readable: false, reason: unreadable.en, tw: unreadable.tw };
   let required = 0, codeOwners = false, lastPush = false, dismissStale = false; const teams: { key: string; label: string }[] = [], sources: string[] = [];
   for (const r of rulesets ?? []) if (r?.type === "pull_request") {
@@ -161,7 +180,7 @@ export function mergeRules(rulesets: any[] | null, protection: any | "none" | nu
     required = Math.max(required, Number(p.required_approving_review_count) || 0); codeOwners ||= !!p.require_code_owner_review;
     lastPush ||= !!p.require_last_push_approval; dismissStale ||= !!p.dismiss_stale_reviews_on_push;
     for (const rr of Array.isArray(p.required_reviewers) ? p.required_reviewers : []) { const rv = rr?.reviewer ?? {};
-      if (String(rv.type).toLowerCase() === "team" && (rv.slug || rv.id != null)) { const key = rv.slug ? `slug:${rv.slug}` : `id:${rv.id}`; if (!teams.some((t) => t.key === key)) teams.push({ key, label: rv.slug ? String(rv.slug) : `team ${rv.id}` }); } }
+      if (String(rv.type).toLowerCase() === "team" && (rv.slug || rv.id != null)) { const key = rv.slug ? `slug:${rv.slug}` : `id:${rv.id}`; if (!teams.some((t) => t.key === key)) teams.push({ key, label: rv.slug ? `@${owner ? `${owner}/` : ""}${rv.slug}` : `team ${rv.id}` }); } }
   }
   const pr = protection && protection !== "none" ? protection.required_pull_request_reviews : null;
   if (pr) { sources.push("protection"); required = Math.max(required, Number(pr.required_approving_review_count) || 0); codeOwners ||= !!pr.require_code_owner_reviews; lastPush ||= !!pr.require_last_push_approval; dismissStale ||= !!pr.dismiss_stale_reviews; }
@@ -183,21 +202,47 @@ export function latestReviews(reviews: Review[], head: string, author: string): 
 }
 // CODEOWNERS: the last matching line wins (GitHub's rule); patterns follow gitignore's shape
 export function parseCodeowners(text: string): { pattern: string; owners: string[] }[] {
-  return String(text ?? "").slice(0, 200000).split(/\r?\n/).map((l) => l.replace(/(^|\s)#.*$/, "").trim()).filter(Boolean)
+  return String(text ?? "").slice(0, 200000).split(/\r?\n/).slice(0, 2000).join("\n").split(/\r?\n/).map((l) => l.replace(/(^|\s)#.*$/, "").trim()).filter(Boolean)
     .map((l) => { const [pattern, ...owners] = l.split(/\s+/); return { pattern, owners: owners.filter((o) => /^@[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)?$/.test(o) || /^[^@\s]+@[^@\s]+$/.test(o)) }; });
 }
-function globRe(p: string): RegExp {
-  let anchored = p.startsWith("/"), pat = anchored ? p.slice(1) : p; const dir = pat.endsWith("/"); if (dir) pat = pat.slice(0, -1);
+// No regular expression is built from a pattern (a CODEOWNERS line is text others write): a segment matcher with a
+// two-pointer wildcard walk, and `**` segments matched over path segments with a memo, so the work is bounded by
+// (pattern segments × path segments × segment length). Patterns over 256 characters or 32 segments, and paths over
+// 1024 characters or 128 segments, never match.
+const segMatch = (p: string, s: string) => {
+  let i = 0, j = 0, star = -1, mark = 0;
+  while (j < s.length) {
+    if (i < p.length && (p[i] === "?" || p[i] === s[j])) { i++; j++; }
+    else if (i < p.length && p[i] === "*") { star = i++; mark = j; }
+    else if (star >= 0) { i = star + 1; j = ++mark; }
+    else return false;
+  }
+  while (i < p.length && p[i] === "*") i++;
+  return i === p.length;
+};
+export function globMatch(pattern: string, path: string): boolean {
+  if (pattern.length > 256 || path.length > 1024) return false;
+  let pat = pattern, anchored = pat.startsWith("/"); if (anchored) pat = pat.slice(1);
+  const dirOnly = pat.endsWith("/"); if (dirOnly) pat = pat.slice(0, -1);
+  if (!pat) return true;
   if (pat.includes("/")) anchored = true;
-  let re = "";
-  for (let i = 0; i < pat.length; i++) { const c = pat[i];
-    if (c === "*" && pat[i + 1] === "*") { re += pat[i + 2] === "/" ? "(?:.*/)?" : ".*"; i += pat[i + 2] === "/" ? 2 : 1; }
-    else if (c === "*") re += "[^/]*"; else if (c === "?") re += "[^/]"; else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&"); }
-  return new RegExp(`^${anchored ? "" : "(?:.*/)?"}${re}(?:/.*)?$`);
+  const ps = pat.split("/").map((x) => x === "**" ? x : x.replace(/\*+/g, "*")), ss = path.split("/");
+  if (!anchored) ps.unshift("**");
+  if (ps.length > 32 || ss.length > 128) return false;
+  const memo = new Map<number, boolean>();
+  const go = (pi: number, si: number): boolean => {
+    const k = pi * 256 + si; const m = memo.get(k); if (m !== undefined) return m;
+    let r: boolean;
+    if (pi === ps.length) r = dirOnly ? si < ss.length : si <= ss.length; // a pattern matching a directory owns what is in it
+    else if (ps[pi] === "**") r = go(pi + 1, si) || (si < ss.length && go(pi, si + 1));
+    else r = si < ss.length && segMatch(ps[pi], ss[si]) && go(pi + 1, si + 1);
+    memo.set(k, r); return r;
+  };
+  return go(0, 0);
 }
 export function ownersOf(path: string, rules: { pattern: string; owners: string[] }[]): string[] {
   let out: string[] = [];
-  for (const r of rules) { try { if (globRe(r.pattern).test(path)) out = r.owners; } catch {} }
+  for (const r of rules) if (globMatch(r.pattern, path)) out = r.owners;
   return out;
 }
 export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string };
@@ -208,8 +253,11 @@ export type Approvals = { readable: boolean; required: number; counted: number; 
  * the last pusher's own approval does not count either). Code owners: every changed file's owners need one approval from
  * an owner (a user, or a member of an owner team). Required teams: one approval from a member each.
  */
-export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: string[]; codeowners: { pattern: string; owners: string[] }[] | null; teamMembers: Map<string, string[] | null>; lastPusher: string | null }): Approvals {
+export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: string[]; codeowners: { pattern: string; owners: string[] }[] | null; teamMembers: Map<string, string[] | null>; lastPusher: string | null;
+  /** why the code owners cannot be checked: CODEOWNERS or the changed files could not be read (not "no owner applies") */
+  ownersUnreadable?: { en: string; tw: string } | null }): Approvals {
   if (!rules.readable) return { readable: false, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [{ kind: "unreadable", reason: rules.reason, tw: rules.tw }], sources: [] };
+  if (rules.codeOwners && o.ownersUnreadable) return { readable: false, required: rules.required, counted: 0, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: o.ownersUnreadable.en, tw: o.ownersUnreadable.tw }], sources: rules.sources };
   const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || (!rules.dismissStale && !rules.lastPush)) && !(rules.lastPush && o.lastPusher && r.login.toLowerCase() === o.lastPusher.toLowerCase()));
   const approvers = new Set(valid.map((r) => r.login.toLowerCase())), missing: Missing[] = [];
   if (valid.length < rules.required) missing.push({ kind: "count", n: rules.required - valid.length });
@@ -223,7 +271,7 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   for (const t of rules.teams) if (!memberOf(t.key).some((m) => approvers.has(m))) missing.push({ kind: "team", who: t.label });
   return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources };
 }
-export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n}×`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : []);
+export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : []);
 
 // ---------- the next step ----------
 export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "test" | "approve" | "merge";
@@ -234,7 +282,7 @@ export const RULES: { id: string; kind: StepKind; en: string; tw: string }[] = [
   { id: "dependency", kind: "dependency", en: "a dependency is not merged → wait for it", tw: "依賴還沒合併 → 等依賴" },
   { id: "environment", kind: "deploy", en: "the head runs in no pre-production environment → deploy for testing", tw: "head 沒在任何測試環境 → 部署去測" },
   { id: "failed", kind: "fix", en: "the test evidence says fail → fix (the author)", tw: "測試證據是不通過 → 修正（作者）" },
-  { id: "evidence", kind: "test", en: "no evidence, unclassified, code review only, or evidence for an older head → test", tw: "沒有證據、無法分類、只審 code、或證據不是這個 head → 測試" },
+  { id: "evidence", kind: "test", en: "no evidence, unclassified, code review only, evidence for an older head, or evidence that names no commit → test", tw: "沒有證據、無法分類、只審 code、證據不是這個 head、或證據沒指明 commit → 測試" },
   { id: "approvals", kind: "approve", en: "approvals missing (or the rules cannot be read) → approve", tw: "approve 不夠（或讀不到規則）→ approve" },
   { id: "ready", kind: "merge", en: "everything above is satisfied → ready to merge (you)", tw: "以上都滿足 → 可合併（你）" },
 ];
@@ -260,7 +308,7 @@ export function nextStep(p: StepInput): Step {
     [open.length > 0, () => ({ rule: "dependency", kind: "dependency", who: open.map((d) => d.id) })],
     [pre.length > 0 && !pre.some((e) => e.on), () => ({ rule: "environment", kind: "deploy", who: [p.author] })],
     [ev?.verdict === "fail", () => ({ rule: "failed", kind: "fix", who: [p.author], reason: ev?.by })],
-    [!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older", () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev?.verdict })],
+    [!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older" || ev.covers === "unknown", () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev && ev.covers === "unknown" && ev.verdict !== "unclassified" && ev.verdict !== "code-only" ? "unknown-commit" : ev?.verdict })],
     [p.approvals.missing.length > 0, () => ({ rule: "approvals", kind: "approve", who: p.approvals.readable ? missingWho(p.approvals.missing) : ["(rules unreadable)"] })],
     [true, () => ({ rule: "ready", kind: "merge", who: ["captain"] })],
   ];
@@ -275,8 +323,14 @@ export const envApplies = (e: EnvSetting, repo: string) => !e.repos.length || e.
 /** The commit an image tag names: the first capture group of the pattern (else the whole match), if it holds 7+ hex. */
 export function tagCommit(text: string, pattern: string): string | null {
   let re: RegExp; try { re = new RegExp(pattern); } catch { return null; }
-  const m = re.exec(String(text ?? "").slice(0, 200000)); if (!m) return null;
-  const v = (m[1] ?? m[0]).match(/[0-9a-f]{7,40}/i); return v ? v[0].toLowerCase() : null;
+  // the pattern (the captain's) runs on one line at a time, lines over 500 characters skipped, at most 5000 lines:
+  // the file is text others write, so its size never multiplies the pattern's cost
+  for (const line of String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000)) {
+    if (line.length > 500) continue;
+    const m = re.exec(line); if (!m) continue;
+    const v = (m[1] ?? m[0]).match(/[0-9a-f]{7,40}/i); return v ? v[0].toLowerCase() : null;
+  }
+  return null;
 }
 
 // ---------- order and dependencies ----------

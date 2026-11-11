@@ -49,7 +49,7 @@ export function fixtureData() {
   // 19 everything satisfied: ready to merge; on dev through a deployment
   { const c = two("ca19"); add({ repo: ca, number: 19, title: "Capture retries back off", user: ME, commits: c,
     reviews: [bot(c[1].sha), { user: "ana", state: "APPROVED", commit: c[1].sha, at: at(22) }, { user: "rel-ray", state: "APPROVED", commit: c[1].sha, at: at(23) }],
-    checks: [qa(c[1].sha)], files: ["src/capture.ts"], comments: [{ user: "qa-lin", body: "## Verdict: PASS", at: at(28) }],
+    checks: [qa(c[1].sha)], files: ["src/capture.ts"], comments: [{ user: "qa-lin", body: `## Verdict: PASS\n\nTested ${c[1].sha.slice(0, 10)}.`, at: at(28) }],
     body: "Backs off. See https://github.com/northwind/platform-issues/issues/7", closing: [{ repo: "northwind/web-app", number: 2, title: "Retries hammer the API", state: "OPEN" }] }); }
   // 20 opened by someone else, not assigned: not in the set; 9 closed: not in the set
   { const c = two("ca20"); add({ repo: ca, number: 20, title: "Someone else's change", user: "lee", commits: c }); }
@@ -59,7 +59,7 @@ export function fixtureData() {
     checks: [qa(c[1].sha)], files: ["src/login.tsx"], comments: [{ user: "qa-lin", body: "Looked at it, will finish tomorrow", at: at(29) }] }); }
   // ledger: its branch protection cannot be read (403): the rules are unreadable
   { const c = two("lg40"); add({ repo: "northwind/ledger", number: 40, title: "Statements in the account currency", user: ME, commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["src/statement.ts"],
-    comments: [{ user: "qa-lin", body: "### PASS", at: at(29) }] }); }
+    comments: [{ user: "qa-lin", body: `### PASS\non ${c[1].sha.slice(0, 7)}`, at: at(29) }] }); }
   // a single watched pull request by someone else, outside the watched repositories
   { const c = two("mb5"); add({ repo: "northwind/mobile", number: 5, title: "App checkout uses the new retry API", user: "lee", commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["app/checkout.ts"] }); }
 
@@ -90,9 +90,20 @@ export function prWatchGitHub(data = fixtureData()) {
   const json = (v: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", ...headers } });
   const nf = () => json({ message: "Not Found" }, 404);
   const pullJson = (p: Pr) => ({ number: p.number, title: p.title, body: p.body ?? "", state: p.state ?? "open", draft: !!p.draft, merged_at: p.merged ? at(40) : null, user: { login: p.user }, assignees: (p.assignees ?? []).map((l) => ({ login: l })),
-    requested_reviewers: [], labels: (p.labels ?? []).map((name) => ({ name })), base: { ref: p.base ?? "main", repo: { full_name: p.repo } }, head: { ref: p.headRef, sha: data.head(p) }, created_at: p.created, html_url: `https://github.com/${p.repo}/pull/${p.number}` });
+    requested_reviewers: [], labels: (p.labels ?? []).map((name) => ({ name })), base: { ref: p.base ?? "main", repo: { full_name: p.repo } }, head: { ref: p.headRef, sha: data.head(p) }, created_at: p.created, changed_files: (p.files ?? []).length, html_url: `https://github.com/${p.repo}/pull/${p.number}` });
   const page = (list: any[], q: URLSearchParams) => { const per = Number(q.get("per_page") ?? 30), pg = Number(q.get("page") ?? 1); return list.slice((pg - 1) * per, pg * per); };
+  // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
+  let notModified = 0;
+  // knobs: a PATCH whose kept body differs from what was sent, a slow GET of one pull request, an unreadable CODEOWNERS
+  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false };
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
+    const res = await answer(req);
+    if (req.method !== "GET" || res.status !== 200) return res;
+    const text = await res.text(), etag = `"${sha(text)}"`;
+    if (req.headers.get("if-none-match") === etag) { notModified++; return new Response(null, { status: 304, headers: { etag } }); }
+    return new Response(text, { status: 200, headers: { "content-type": "application/json", etag } });
+  } });
+  async function answer(req: Request): Promise<Response> {
     const u = new URL(req.url), p = u.pathname, q = u.searchParams, method = req.method;
     let body: any; if (method !== "GET") { try { body = await req.json(); } catch {} }
     calls.push({ method, path: p + u.search, body });
@@ -106,8 +117,8 @@ export function prWatchGitHub(data = fixtureData()) {
     if (method === "GET" && rest === "/pulls") return json(page(data.prs.filter((x) => x.repo === repo && (x.state ?? "open") === (q.get("state") ?? "open")).map(pullJson), q));
     let k: RegExpExecArray | null;
     if ((k = /^\/pulls\/(\d+)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
-      if (method === "PATCH") { if (typeof body?.body === "string") pr.body = body.body; return json(pullJson(pr)); }
-      if (method === "GET") return json(pullJson(pr)); }
+      if (method === "PATCH") { if (typeof body?.body === "string") pr.body = knobs.tamper ? `${body.body}\nedited meanwhile` : body.body; return json(pullJson(pr)); }
+      if (method === "GET") { if (knobs.slowPull?.path === p) await new Promise((r) => setTimeout(r, knobs.slowPull!.ms)); return json(pullJson(pr)); } }
     if (method !== "GET") { unknown.push(`${method} ${p}`); return json({ message: "Not Found" }, 404); }
     if ((k = /^\/pulls\/(\d+)\/(reviews|commits|files)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
       if (k[2] === "reviews") return json(page((pr.reviews ?? []).map((r, i) => ({ id: i + 1, user: { login: r.user }, state: r.state, commit_id: r.commit, submitted_at: r.at })), q));
@@ -122,6 +133,7 @@ export function prWatchGitHub(data = fixtureData()) {
     if ((k = /^\/rules\/branches\/(.+)$/.exec(rest))) { const r = data.rules[repo]; return r ? json(r.rulesets) : nf(); }
     if ((k = /^\/branches\/(.+)\/protection$/.exec(rest))) { const r = data.rules[repo]; return r ? json(r.protection.body, r.protection.status) : nf(); }
     if ((k = /^\/contents\/(.+)$/.exec(rest))) { const path = decodeURIComponent(k[1]);
+      if (path.endsWith("CODEOWNERS") && knobs.codeownersFail) return json({ message: "Server Error" }, 500);
       const text = path.endsWith("CODEOWNERS") ? (path === ".github/CODEOWNERS" ? data.rules[repo]?.codeowners : undefined) : data.files[`${repo}/${path}`];
       return text == null ? nf() : json({ type: "file", encoding: "base64", size: text.length, content: Buffer.from(text).toString("base64") }); }
     if (rest === "/deployments") { const list = data.deployments.filter((d) => d.repo === repo && (!q.get("environment") || d.environment === q.get("environment")) && (!q.get("ref") || d.ref === q.get("ref"))).reverse();
@@ -131,8 +143,8 @@ export function prWatchGitHub(data = fixtureData()) {
       const full = (s: string) => data.prs.map(data.head).find((h) => h.startsWith(s)) ?? Object.keys(data.contains).find((h) => h.startsWith(s)) ?? s;
       const A = full(a), B = full(b); return json({ status: A === B ? "identical" : (data.contains[B] ?? []).includes(A) ? "ahead" : "diverged" }); }
     unknown.push(`${method} ${p}`); return nf();
-  } });
-  return { origin: `http://127.0.0.1:${server.port}`, calls, unknown, data, setRateLimited: (v: boolean) => { rateLimited = v; }, stop: () => server.stop(true) };
+  }
+  return { knobs, get notModified() { return notModified; }, origin: `http://127.0.0.1:${server.port}`, calls, unknown, data, setRateLimited: (v: boolean) => { rateLimited = v; }, stop: () => server.stop(true) };
 }
 
 /** The settings the suites use: every detector and source named here is invented. */
