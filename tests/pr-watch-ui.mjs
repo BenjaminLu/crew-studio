@@ -20,7 +20,7 @@ gh.data.find('northwind/mobile', 5).title = 'App checkout <img src=x onerror="wi
 const root = join(import.meta.dir, '..'), port = await freePort(), base = `http://127.0.0.1:${port}`, data = mkdtempSync(join(tmpdir(), 'crew-prwatch-ui-'));
 mkdirSync(join(data, 'fm', 'state'), { recursive: true });
 process.env.CREW_SESSION_TOKEN = 'test-session';
-const app = spawn('bun', ['src/server.ts'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CREW_DATA: data, CREW_PORT: String(port), CREW_CHAT_PROVIDER: 'stub', CREW_GH: '0',
+const app = spawn('bun', ['src/server.ts'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CREW_DATA: data, CREW_PORT: String(port), CREW_CHAT_PROVIDER: 'stub', CREW_GH: '0', CREW_PR_WATCH: '', // CREW_GH=0 must not turn the list off; an exported CREW_PR_WATCH=0 is not inherited
   CREW_GITHUB_API: gh.origin, CREW_GITHUB_TOKEN: 'fixture-token', CREW_GH_NO_CLI: '1', CREW_PR_WATCH_INTERVAL_MS: '4000', CREW_RETRO_AUTO: '0', CREW_SESSION_TOKEN: 'test-session',
   CREW_FM_STATE: join(data, 'fm', 'state'), CREW_CLAUDE_BIN: '/nonexistent', CREW_CODEX_BIN: '/nonexistent', CREW_CODEX_MODEL: '', CODEX_HOME: join(data, 'codex-config'), CREW_TEAM_SEED: '0' } });
 const shots = join(root, 'tests/out/pr-watch'); mkdirSync(shots, { recursive: true });
