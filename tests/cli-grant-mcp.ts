@@ -100,6 +100,31 @@ try {
     const viaB = await b.tool("run_status", { run: st.task }); assert.match(viaB.body.error ?? "", /no run/);
     await s.api(`/api/wruns/${st.task}/cancel`, { reason: "test done" });
   });
+  await step("a pull request list grant: issued with scope prs, it reaches only the list's tools, edits Studio's list and is audited", async () => {
+    const withProject = await post("/api/cli-grants", { scope: "prs", project: "sandbox", ttl: "1h" }, page()); assert.equal(withProject.status, 400, "a list grant has no project");
+    const badScope = await post("/api/cli-grants", { scope: "everything", ttl: "1h" }, page()); assert.equal(badScope.status, 400);
+    const asScript = await post("/api/cli-grants", { scope: "prs", ttl: "1h" }, { "content-type": "application/json", "x-crew-session": s.token }); assert.equal(asScript.status, 403, "only the captain's page issues it");
+    const r = await post("/api/cli-grants", { scope: "prs", ttl: "1h" }, page()); assert.equal(r.status, 200, JSON.stringify(r.body)); const P = r.body.grant;
+    assert.equal(P.scope, "prs"); assert.equal(P.project, ""); assert.equal(statSync(P.file).mode & 0o777, 0o600); assert.match(P.claudeMcpAdd, /--grant-file /);
+    const c = mcp(P.file);
+    try {
+      const list = await c.rpc("tools/list"); const names = list.result.tools.map((t: any) => t.name);
+      assert.ok(names.includes("prs_list") && names.includes("prs_watch") && names.includes("prs_settings"), names.join());
+      assert.ok(!names.some((n: string) => ["start_run", "list_workflows", "run_status", "read_cards"].includes(n) || /apply|merge|approve/.test(n)), `no run tool and no GitHub write: ${names}`);
+      for (const n of ["start_run", "prs_apply", "merge"]) { const x = await c.tool(n, {}); assert.ok(x.isError, `${n} must fail`); assert.match(x.text, /no such tool/); }
+      const w = await c.tool("prs_watch", { url: "https://github.com/northwind/web-app" }); assert.ok(!w.isError && !w.body.error, w.text); assert.equal(w.body.added.repo, "northwind/web-app");
+      const st = (await s.api("/api/prs")).body; assert.ok(st.watch.repos.some((x: any) => x.repo === "northwind/web-app"), "the board's list shows the repository the CLI added");
+      const set = await c.tool("prs_settings", { settings: { evidence: { accounts: ["qa-lin"] } } }); assert.ok(!set.body.error, set.text);
+      assert.deepEqual((await s.api("/api/prs")).body.settings.evidence.accounts, ["qa-lin"]);
+      const ls = await c.tool("prs_list"); assert.ok(Array.isArray(ls.body.rows), ls.text);
+      // a project grant cannot reach the list's tools
+      const viaRuns = mcp(B.file); try { const x = await viaRuns.tool("prs_list"); assert.ok(x.isError); } finally { viaRuns.close(); }
+      const events = readFileSync(join(s.data, "events.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.workflow === "cli-grant" && e.data?.grant === P.id);
+      const edits = events.filter((e) => e.type === "cli_grant_prs_edit").map((e) => e.data.tool); assert.deepEqual(edits, ["prs_watch", "prs_settings"], JSON.stringify(edits));
+      assert.ok(events.some((e) => e.type === "cli_grant_issued" && e.data.scope === "prs"));
+      await post(`/api/cli-grants/${P.id}/revoke`, {}, page()); const after = await c.tool("prs_list"); assert.ok(after.isError); assert.match(after.text, /HTTP 403/);
+    } finally { c.close(); }
+  });
   await step("a revoked grant gets HTTP 403 on its next call, and its token file is gone", async () => {
     const r = await post(`/api/cli-grants/${A.id}/revoke`, {}, page()); assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.body.grant.state, "revoked");
     assert.ok(!existsSync(A.file));
@@ -117,7 +142,7 @@ try {
   });
   await step("the board lists grants without any token or hash", async () => {
     const r = await s.api("/api/cli-grants"); assert.equal(r.status, 200); const txt = JSON.stringify(r.body);
-    assert.ok(!/csg_g-/.test(txt) && !/tokenHash/.test(txt)); assert.deepEqual(r.body.grants.map((g: any) => g.state).sort(), ["expired", "revoked"]);
+    assert.ok(!/csg_g-/.test(txt) && !/tokenHash/.test(txt)); assert.deepEqual(r.body.grants.map((g: any) => g.state).sort(), ["expired", "revoked", "revoked"]);
   });
   a.close(); b.close();
   await step("the MCP helper refuses a missing grant file", async () => {

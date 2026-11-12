@@ -439,6 +439,31 @@ try {
       await until(() => !!W2.snapshot.at, 10000); const r17 = W2.snapshot.rows.find((r) => r.id === "northwind/checkout-api#17");
       ok(!!r17 && r17.envs.length === 0 && !W2.snapshot.errors.some((e) => /budget/i.test(e.en)), "past the cap on reads for a repository's own environments the refresh still reads the rows, with no environments", JSON.stringify(r17?.envs));
     } finally { W2.stop(); p2.stop(); rmSync(dir, { recursive: true, force: true }); } }
+  // an external CLI grant's tools (docs/units/cli-mcp-grant.md): the same edits as the board, never a GitHub write
+  { const T = W.tools, names = T.list().map((x) => x.name);
+    ok(names.join() === "prs_list,prs_get,prs_refresh,prs_watch,prs_unwatch,prs_restore,prs_settings,prs_order,prs_deps,prs_group,prs_accept", "the list's tools: read, refresh, and Studio's own edits", names.join());
+    ok(!names.some((n) => /apply|merge|approve|comment|label|drift/.test(n)), "no tool writes to GitHub (the dependency block, merge, review, comment, label)");
+    let before = sent.length, r: any = await T.call("prs_watch", { url: "https://github.com/northwind/ledger" });
+    ok(!r.error && r.added?.repo === "northwind/ledger" && r.watch.repos.some((w: any) => w.repo === "northwind/ledger") && sent.slice(before).some(([t]) => t === "prs"), "prs_watch watches a repository and tells the page", JSON.stringify(r).slice(0, 300));
+    const [ra, rb] = W.snapshot.rows.filter((x) => !x.single).map((x) => x.id);
+    r = await T.call("prs_watch", { url: "https://github.com/northwind/ledger" }); ok(/Already watching/.test(r.error ?? ""), "watching it again is an error answer, not a throw");
+    r = await T.call("prs_watch", { url: "javascript:alert(1)" }); ok(!!r.error, "a bad address is refused");
+    r = await T.call("prs_list", {}); const lr = r.rows.find((x: any) => x.pr === ra);
+    ok(!!lr && "ci" in lr && "next" in lr && "approvals" in lr && "evidence" in lr && !("facts" in lr) && r.note.includes("No tool here writes to GitHub"), "prs_list: each row with CI, approvals, evidence and the next step, without the raw facts", JSON.stringify(lr).slice(0, 300));
+    r = await T.call("prs_get", { pr: ra.toUpperCase() }); ok(r.pr === ra && typeof r.body === "string", "prs_get: one row in full, the id matched without case");
+    r = await T.call("prs_get", { pr: "northwind/ledger#999" }); ok(/not in the list/.test(r.error ?? ""), "prs_get of a pull request not in the list is an error");
+    const keep = JSON.stringify(W.state.settings.evidence.labels);
+    r = await T.call("prs_settings", { settings: { evidence: { accounts: ["qa-lin", "dana"] } } });
+    ok(!r.error && W.state.settings.evidence.accounts.join() === "qa-lin,dana" && JSON.stringify(W.state.settings.evidence.labels) === keep && W.state.settings.which.mine === true, "prs_settings changes only what it names and keeps the rest", JSON.stringify(W.state.settings.evidence));
+    r = await T.call("prs_settings", { settings: "x" }); ok(!!r.error, "prs_settings takes an object");
+    r = await T.call("prs_deps", { pr: ra, on: [rb] }); ok(!r.error && W.state.deps[ra]?.on.join() === rb && W.state.deps[ra].by === "captain", "prs_deps records a dependency, as the board does", JSON.stringify(r.error));
+    r = await T.call("prs_deps", { pr: "northwind/nope#1", on: [] }); ok(!!r.error, "prs_deps outside the list is refused");
+    r = await T.call("prs_order", { order: [rb] }); ok(!r.error && r.rows[0].pr === rb, "prs_order puts the named pull request first");
+    r = await T.call("prs_unwatch", { repo: "northwind/ledger", pr: "x/y#1" }); ok(!!r.error, "prs_unwatch takes one of repo or pr");
+    r = await T.call("prs_list", { extra: 1 }); ok(/does not take extra/.test(r.error ?? ""), "an argument a tool does not take is refused");
+    r = await T.call("prs_apply", {}); ok(/no such tool/.test(r.error ?? ""), "the board's apply is no tool");
+    r = await T.call("prs_unwatch", { repo: "northwind/ledger" }); ok(!r.error && !W.state.watch.repos.includes("northwind/ledger"), "prs_unwatch stops watching it");
+    ok(T.writes("prs_watch") && !T.writes("prs_list") && !T.writes("prs_get") && !T.writes("prs_refresh"), "which tools change the list (audited by the grant)"); }
   { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
     ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }

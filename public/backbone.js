@@ -111,7 +111,7 @@ routes.settings = () => page(T("Settings", "設定"), T("Language, Doctor, keys 
       h("span", {}, h("b", {}, T("Show labs", "顯示實驗功能")), h("span", { class: "faint" }, T("Adds the planned pages to the sidebar. They work, but they are not the backbone.", "把規劃中的頁面加回側邊欄；可以用，但不是主幹功能。"))))),
   cliGrants(), rulesEditor());
 // External CLI grants (docs/units/cli-mcp-grant.md): the captain lets an agent CLI they opened themselves start and
-// follow runs in one project over MCP. Issued and revoked here only (this Mac's page session); the CLI reaches four tools
+// follow runs in one project over MCP, or read and edit the pull request list. Issued and revoked here only (this Mac's page session); the CLI reaches four tools
 // and none of them answers a card, so every decision stays on the board.
 function cliGrants() {
   const box = h("section", { class: "card x-pad bb-grants", id: "cliGrants", "data-cli-grants": "1" });
@@ -122,20 +122,23 @@ function cliGrants() {
   let data = null, fresh = null;
   const draw = () => {
     const projects = data?.projects ?? [], grants = data?.grants ?? [];
+    const scope = h("select", { id: "grantScope", "aria-label": T("Reaches", "可以做"), onchange: () => { projLabel.hidden = scope.value === "prs"; issue.disabled = scope.value !== "prs" && !projects.length; } },
+      h("option", { value: "project" }, T("Runs in a project", "專案裡的 run")), h("option", { value: "prs" }, T("The pull request list", "PR 列表")));
     const project = h("select", { id: "grantProject", "aria-label": T("Project", "專案") }, projects.map((p) => h("option", { value: p.id }, p.name || p.id)));
+    const projLabel = h("label", {}, h("span", { class: "faint" }, T("Project", "專案")), project);
     const ttl = h("select", { id: "grantTtl", "aria-label": T("Expires", "有效期") }, (data?.ttls ?? ["8h", "1h", "eod"]).map((k) => h("option", { value: k, selected: k === "8h" || null }, TTL[k] ?? k)));
     const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: !projects.length || null, onclick: async () => { issue.disabled = true;
-      try { fresh = (await req("/api/cli-grants", { project: project.value, ttl: ttl.value })).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
+      try { fresh = (await req("/api/cli-grants", scope.value === "prs" ? { scope: "prs", ttl: ttl.value } : { project: project.value, ttl: ttl.value })).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
     const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
     box.replaceChildren(
       h("h2", { style: "margin:0;font-size:16px" }, T("External CLI grants", "外部 CLI 授權")),
-      h("p", { class: "faint", style: "margin:4px 0 10px" }, T("Let a claude or codex you opened yourself list workflows, start runs (each waits for your approval), and read progress, cards and results, in one project. Approving cards, staffing and merging stay here. The token goes into a 0600 file, never on a command line.",
-        "讓你自己開的 claude 或 codex 在一個專案裡列出 workflow、發起 run（每個都等你核准）、讀進度、卡片和結果。核准卡片、staffing、merge 都只能在這裡做。token 寫進 0600 檔案，不出現在指令列。")),
-      h("div", { class: "bb-grant-form" }, h("label", {}, h("span", { class: "faint" }, T("Project", "專案")), project), h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
+      h("p", { class: "faint", style: "margin:4px 0 10px" }, T("Let a claude or codex you opened yourself list workflows, start runs (each waits for your approval), and read progress, cards and results, in one project. Or let it read and edit the pull request list: watch repositories, settings, order, dependencies, groups (Studio's own list; nothing is written to GitHub). Approving cards, staffing and merging stay here. The token goes into a 0600 file, never on a command line.",
+        "讓你自己開的 claude 或 codex 在一個專案裡列出 workflow、發起 run（每個都等你核准）、讀進度、卡片和結果；或讀取、編輯 PR 列表：追蹤的 repo、設定、順序、依賴、分組（只改 Studio 自己的清單，不寫 GitHub）。核准卡片、staffing、merge 都只能在這裡做。token 寫進 0600 檔案，不出現在指令列。")),
+      h("div", { class: "bb-grant-form" }, h("label", {}, h("span", { class: "faint" }, T("Reaches", "可以做")), scope), projLabel, h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
         projects.length ? null : h("span", { class: "faint" }, T("Register a project first.", "請先登錄專案。"))),
       grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
         h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
-          h("span", { class: "faint" }, `${g.project} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)} · ${T(`${g.runs.length} runs`, `${g.runs.length} 個 run`)}`)),
+          h("span", { class: "faint", "data-grant-scope": g.scope || "project" }, `${g.scope === "prs" ? T("Pull request list", "PR 列表") : g.project} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)} · ${g.scope === "prs" ? T(`${g.calls} calls`, `${g.calls} 次呼叫`) : T(`${g.runs.length} runs`, `${g.runs.length} 個 run`)}`)),
         g.state === "active" && g.claudeMcpAdd ? [h("span", { class: "faint" }, T("Add Studio's MCP in your terminal:", "在 terminal 加上 Studio 的 MCP：")),
           h("pre", { class: "bb-grant-cmd mono", "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) }, g.claudeMcpAdd),
           h("div", { class: "actions" }, h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(g.claudeMcpAdd) }, T("Copy command", "複製指令")),

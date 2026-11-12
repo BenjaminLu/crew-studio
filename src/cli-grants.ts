@@ -4,7 +4,8 @@
 //                          started, and only a SHA-256 of the token
 //   data/grants/<id>       the token itself, mode 0600 (directory 0700): `crew-studio mcp --grant-file <path>` reads it,
 //                          so it never appears on a command line; removed on revoke
-// A grant token reaches exactly four tools (GRANT_TOOLS). None answers a card, changes staffing or merges: a run a grant
+// A project grant reaches exactly four tools (GRANT_TOOLS); a pull request list grant (scope "prs") reaches only that list's
+// tools (src/pr-watch.ts), which edit Studio's own list and never write to GitHub. None answers a card, changes staffing or merges: a run a grant
 // starts is a Firstmate-style proposal whose dispatch card only the captain answers, on the board. Every issue, use,
 // refusal and revoke is appended to Studio's own event log (data/events.jsonl) through `audit`.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -14,7 +15,10 @@ import type { Engine, Run } from "./runtime/engine";
 
 export const GRANT_TTLS = ["1h", "8h", "eod"] as const;
 export type GrantTtl = (typeof GRANT_TTLS)[number];
-export type CliGrant = { id: string; project: string; ttl: GrantTtl; createdAt: string; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null;
+/** project: start and follow runs in one project (the default, and every grant issued before scopes); prs: read and edit the pull request list */
+export const GRANT_SCOPES = ["project", "prs"] as const;
+export type GrantScope = (typeof GRANT_SCOPES)[number];
+export type CliGrant = { id: string; scope?: GrantScope; project: string; ttl: GrantTtl; createdAt: string; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null;
   revokedBy: string | null; createdBy: string; calls: number; tokenHash: string; runs: { run: string; at: string; staffing: Record<string, string> | null }[] };
 export type GrantView = Omit<CliGrant, "tokenHash"> & { state: "active" | "expired" | "revoked"; file: string | null };
 export type Audit = (type: string, summary: string, data: Record<string, unknown>) => void;
@@ -50,16 +54,18 @@ export class CliGrants {
   active(id: string) { const g = this.get(id); return !!g && this.stateOf(g) === "active"; }
 
   /** The captain issues a grant (called only from the board's authenticated, same-site route). */
-  issue(o: { project: string; ttl: string }, by: string): { grant: GrantView; file: string } {
+  issue(o: { project?: string; ttl: string; scope?: string }, by: string): { grant: GrantView; file: string } {
     if (!(GRANT_TTLS as readonly string[]).includes(o.ttl)) throw new Error(`choose an expiry: ${GRANT_TTLS.join(", ")}`);
-    if (!o.project || typeof o.project !== "string") throw new Error("choose a project");
+    const scope: GrantScope = o.scope === undefined ? "project" : (GRANT_SCOPES as readonly string[]).includes(o.scope) ? o.scope as GrantScope : (() => { throw new Error(`choose what the grant reaches: ${GRANT_SCOPES.join(", ")}`); })();
+    if (scope === "project" && (!o.project || typeof o.project !== "string")) throw new Error("choose a project");
+    if (scope === "prs") o = { ...o, project: "" };
     const id = `g-${randomBytes(4).toString("hex")}`, token = `csg_${id}_${randomBytes(32).toString("hex")}`, now = new Date();
-    const g: CliGrant = { id, project: o.project, ttl: o.ttl as GrantTtl, createdAt: now.toISOString(), expiresAt: expiryOf(o.ttl as GrantTtl, now).toISOString(), lastUsedAt: null,
+    const g: CliGrant = { id, scope, project: o.project!, ttl: o.ttl as GrantTtl, createdAt: now.toISOString(), expiresAt: expiryOf(o.ttl as GrantTtl, now).toISOString(), lastUsedAt: null,
       revokedAt: null, revokedBy: null, createdBy: by, calls: 0, tokenHash: sha(token), runs: [] };
     const dir = join(this.dataDir, "grants"); mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700);
     const f = this.tokenFile(id); writeFileSync(f, token + "\n", { mode: 0o600 }); chmodSync(f, 0o600);
     this.write([...this.read(), g]);
-    this.audit("cli_grant_issued", `external CLI grant ${id} issued for ${g.project} until ${g.expiresAt}`, { grant: id, project: g.project, expiresAt: g.expiresAt, by });
+    this.audit("cli_grant_issued", `external CLI grant ${id} issued for ${scope === "prs" ? "the pull request list" : g.project} until ${g.expiresAt}`, { grant: id, scope, project: g.project, expiresAt: g.expiresAt, by });
     return { grant: this.view(g), file: f };
   }
 
@@ -95,6 +101,8 @@ export class CliGrants {
     g.runs.push({ run, at: new Date().toISOString(), staffing }); this.write(all);
     this.audit("cli_grant_run", `external CLI grant ${id} proposed ${run} (waits for the captain)`, { grant: id, run, staffing });
   }
+  /** A change a grant made to Studio's pull request list, with what it sent (addresses, ids, settings: no secrets). */
+  recordEdit(id: string, tool: string, args: unknown) { this.audit("cli_grant_prs_edit", `external CLI grant ${id} changed the pull request list (${tool})`, { grant: id, tool, args }); }
   /** The staffing preference a grant's run was proposed with (shown on its cards; never applied). */
   staffingOf(id: string, run: string) { return this.get(id)?.runs.find((r) => r.run === run)?.staffing ?? null; }
 }
@@ -134,7 +142,11 @@ export function installGrantViews(engine: Engine, grants: CliGrants) {
   engine.externalOrigin = (r) => externalOrigin(engine, grants, r);
 }
 
-export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstmate: () => Firstmate }) {
+/** The pull request list's tools (src/pr-watch.ts `tools`): what a grant of scope "prs" reaches instead of the four. */
+export type PrTools = { list(): { name: string; description: string; inputSchema: unknown }[]; call(name: string, args: unknown): Promise<unknown>; writes(name: string): boolean };
+export const scopeOf = (g: Pick<CliGrant, "scope">): GrantScope => g.scope ?? "project";
+
+export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstmate: () => Firstmate; prs?: () => PrTools | null }) {
   const { engine, grants } = d;
   const projectScoped = (def: any) => !!def && Object.hasOwn(def.params ?? {}, "project") && !String(def.id).startsWith("firstmate-");
   /** the runs a grant may read: the proposals it started (recorded here and marked with its id), the work their dispatch
@@ -211,8 +223,15 @@ export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstma
       inputs: Object.entries(w.params ?? {}).filter(([k]) => !["project", "repo", "base", "branch", "worktree"].includes(k)).map(([k, s]: [string, any]) => ({ name: k, label: s?.label ?? k, required: !!s?.required })) })) };
   }
   return {
-    list: () => GRANT_TOOLS.map((t) => ({ ...t })),
+    /** the tools a grant reaches: the four run tools for a project grant, the pull request list's for a "prs" grant */
+    list: (g?: Pick<CliGrant, "scope">): { name: string; description: string; inputSchema: unknown }[] => g && scopeOf(g) === "prs" ? d.prs?.()?.list() ?? [] : GRANT_TOOLS.map((t) => ({ ...t })),
     async call(g: CliGrant, name: string, args: unknown): Promise<unknown> {
+      if (scopeOf(g) === "prs") {
+        const prs = d.prs?.(); if (!prs || !prs.list().some((t) => t.name === name)) return { error: `no such tool: ${name}` };
+        const out: any = await prs.call(name, args);
+        if (prs.writes(name) && !(out && typeof out === "object" && "error" in out)) grants.recordEdit(g.id, name, args);
+        return out;
+      }
       if (name === "list_workflows") return list();
       if (name === "start_run") return start(g, args);
       if (name === "run_status") return status(g, args);
