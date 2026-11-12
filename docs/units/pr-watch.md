@@ -208,6 +208,11 @@ The first matching rule, top to bottom; deterministic, no model:
 - **Copy as Markdown**: that row (the list's toolbar copies the rows the current filter shows).
 - Copied text (the report, Markdown) leaves out the titles of issues outside the watched repositories: their links stay.
 
+## From an agent CLI
+
+A pull request list grant (docs/units/cli-mcp-grant.md, scope `prs`) lets the captain's own claude or codex read the list
+and make the same edits over MCP (`tools` in `src/pr-watch.ts`, the board's `act`); never a GitHub write.
+
 ## Routes
 
 `GET /api/prs` (the list from the last snapshot; never calls GitHub), `GET /api/prs/count`; and, desktop only, through the

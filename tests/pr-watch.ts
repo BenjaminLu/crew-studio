@@ -442,6 +442,56 @@ try {
       await until(() => !!W2.snapshot.at, 10000); const r17 = W2.snapshot.rows.find((r) => r.id === "northwind/checkout-api#17");
       ok(!!r17 && r17.envs.length === 0 && !W2.snapshot.errors.some((e) => /budget/i.test(e.en)), "past the cap on reads for a repository's own environments the refresh still reads the rows, with no environments", JSON.stringify(r17?.envs));
     } finally { W2.stop(); p2.stop(); rmSync(dir, { recursive: true, force: true }); } }
+  // an external CLI grant's tools (docs/units/cli-mcp-grant.md): the same edits as the board, never a GitHub write
+  { const T = W.tools, names = T.list().map((x) => x.name);
+    ok(names.join() === "prs_list,prs_get,prs_refresh,prs_watch,prs_unwatch,prs_restore,prs_settings,prs_order,prs_deps,prs_group,prs_accept", "the list's tools: read, refresh, and Studio's own edits", names.join());
+    ok(!names.some((n) => /apply|merge|approve|comment|label|drift/.test(n)), "no tool writes to GitHub (the dependency block, merge, review, comment, label)");
+    let before = sent.length, r: any = await T.call("prs_watch", { url: "https://github.com/northwind/ledger" });
+    ok(!r.error && r.added?.repo === "northwind/ledger" && r.watch.repos.some((w: any) => w.repo === "northwind/ledger") && sent.slice(before).some(([t]) => t === "prs"), "prs_watch watches a repository and tells the page", JSON.stringify(r).slice(0, 300));
+    const [ra, rb] = W.snapshot.rows.filter((x) => !x.single).map((x) => x.id);
+    r = await T.call("prs_watch", { url: "https://github.com/northwind/ledger" }); ok(/Already watching/.test(r.error ?? ""), "watching it again is an error answer, not a throw");
+    r = await T.call("prs_watch", { url: "javascript:alert(1)" }); ok(!!r.error, "a bad address is refused");
+    r = await T.call("prs_list", {}); const lr = r.rows.find((x: any) => x.pr === ra);
+    ok(!!lr && "ci" in lr && "next" in lr && "approvals" in lr && "evidence" in lr && !("facts" in lr) && r.note.includes("No tool here writes to GitHub"), "prs_list: each row with CI, approvals, evidence and the next step, without the raw facts", JSON.stringify(lr).slice(0, 300));
+    r = await T.call("prs_get", { pr: ra.toUpperCase() }); ok(r.pr === ra && typeof r.body === "string", "prs_get: one row in full, the id matched without case");
+    r = await T.call("prs_get", { pr: "northwind/ledger#999" }); ok(/not in the list/.test(r.error ?? ""), "prs_get of a pull request not in the list is an error");
+    r = await T.call("prs_settings", { settings: { groups: ["wave-1"], evidence: { labels: ["qa-passed"] }, which: { reviewRequested: true } } }); ok(!r.error && W.state.settings.groups.join() === "wave-1", "prs_settings sets what it names", JSON.stringify(r.error));
+    r = await T.call("prs_settings", { settings: { evidence: { accounts: ["qa-lin", "dana"] } } });
+    ok(!r.error && W.state.settings.evidence.accounts.join() === "qa-lin,dana" && W.state.settings.evidence.labels.join() === "qa-passed" && W.state.settings.groups.join() === "wave-1" && W.state.settings.which.reviewRequested === true && W.state.settings.which.mine === true, "prs_settings changes only what it names and keeps the rest", JSON.stringify(W.state.settings.evidence));
+    r = await T.call("prs_settings", { settings: "x" }); ok(!!r.error, "prs_settings takes an object");
+    const envsBefore = JSON.stringify(W.state.settings.environments);
+    for (const bad of [{ environments: "staging" }, { requiredReviewers: null }, { junk: 1 }, { which: { mine: "yes" } }, { evidence: { accounts: "qa" } }, { evidence: { other: [] } }, { shortForm: 1 }]) {
+      r = await T.call("prs_settings", { settings: bad }); ok(!!r.error && JSON.stringify(W.state.settings.environments) === envsBefore, `prs_settings refuses ${JSON.stringify(bad)} and changes nothing`, JSON.stringify(r).slice(0, 200)); }
+    r = await T.call("prs_watch", { url: "https://github.com/" + "x".repeat(20000) }); ok(/over 16384 bytes/.test(r.error ?? ""), "arguments over the cap are refused before anything runs");
+    r = await T.call("prs_refresh", {}); const r2: any = await T.call("prs_refresh", {}); ok(!r.error && /less than a minute/.test(r2.note ?? ""), "a CLI refreshes at most once a minute: the second answers with the last refresh", JSON.stringify(r2.note));
+    r = await T.call("prs_deps", { pr: ra, on: [rb] }, "g-0000abcd"); ok(!r.error && W.state.deps[ra]?.on.join() === rb && W.state.deps[ra].by === "external-cli" && (W.state.deps[ra] as any).grant === "g-0000abcd" && r.rows.find((x: any) => x.pr === ra) && W.view().rows.find((x) => x.id === ra)?.deps.source === "external-cli", "prs_deps records a dependency, marked as set by the grant (not the captain)", JSON.stringify(r.error));
+    r = await T.call("prs_deps", { pr: "northwind/nope#1", on: [] }); ok(!!r.error, "prs_deps outside the list is refused");
+    r = await T.call("prs_order", { order: [rb] }); ok(!r.error && r.rows[0].pr === rb, "prs_order puts the named pull request first");
+    r = await T.call("prs_unwatch", { repo: "northwind/ledger", pr: "x/y#1" }); ok(!!r.error, "prs_unwatch takes one of repo or pr");
+    r = await T.call("prs_list", { extra: 1 }); ok(/does not take extra/.test(r.error ?? ""), "an argument a tool does not take is refused");
+    r = await T.call("prs_apply", {}); ok(/no such tool/.test(r.error ?? ""), "the board's apply is no tool");
+    r = await T.call("prs_unwatch", { repo: "northwind/ledger" }); ok(!r.error && !W.state.watch.repos.includes("northwind/ledger"), "prs_unwatch stops watching it");
+    { gh.setRateLimited(false); const p = gh.data.find(ra.split("#")[0], Number(ra.split("#")[1]))!, list = gh.data.prs, i = list.indexOf(p); list.splice(i, 1);
+      try { const a = await call("/api/prs/apply", { prs: [ra] }); ok(a.status === 400 && a.body.error !== "not found", "a pull request GitHub answers 404 for is the 400 it always was, never the route's own 404", JSON.stringify(a)); }
+      finally { list.splice(i, 0, p); }
+      const u = await call("/api/prs/nonsense", {}); ok(u.status === 404 && u.body.error === "not found", "an unknown action is the route's 404"); }
+    { const n = W.view().rows.length; r = await T.call("prs_order", { order: [ra, ra.toUpperCase(), ra] }); ok(!r.error && r.rows.length === n && r.rows.filter((x: any) => x.pr === ra).length === 1, "a repeated id in the order (any case) counts once: no row twice", String(r.rows?.length)); }
+    { const cur = JSON.parse(JSON.stringify(W.state.settings)), stale = { ...cur, groups: ["old"] };
+      const a1 = await call("/api/prs/settings", { settings: { ...cur, shortForm: !cur.shortForm }, base: stale }); ok(a1.status === 400 && /changed while this dialog was open/.test(a1.body.error) && W.state.settings.shortForm === cur.shortForm, "a settings save from a dialog opened before another change is refused, nothing undone", JSON.stringify(a1.body));
+      const a2 = await call("/api/prs/settings", { settings: cur, base: cur }); ok(a2.status === 200, "a save whose base is current goes through"); }
+    ok(T.writes("prs_watch") && !T.writes("prs_list") && !T.writes("prs_get") && !T.writes("prs_refresh"), "which tools change the list (audited by the grant)"); }
+  // a grant's edits read GitHub no sooner than once a minute; the board's edits always do (a fresh list, no backoff)
+  { gh.setRateLimited(false); const dir = mkdtempSync(join(tmpdir(), "pr-watch-kick-")), p4 = new GitHubPoller(), got: any[] = [], W4 = createPrWatch({ dataDir: dir, poller: p4, notify: (t, x) => got.push([t, x]) });
+    const refreshes = () => got.filter(([t, x]) => t === "prs" && x?.refreshing).length;
+    const post4 = async (path: string, body: unknown) => { const u = new URL(`http://127.0.0.1${path}`); return W4.handle(new Request(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), u, { kind: "desktop" }, true); };
+    try {
+      await post4("/api/prs/watch", { url: "https://github.com/northwind/checkout-api" }); await until(() => !!W4.snapshot.at && !W4.view().refreshing, 10000);
+      await W4.tools.call("prs_refresh", {}, "g-1"); await until(() => !W4.view().refreshing, 10000);
+      let n0 = refreshes(); await W4.tools.call("prs_restore", {}, "g-1"); await W4.tools.call("prs_settings", { settings: {} }, "g-1"); await Bun.sleep(1500);
+      ok(refreshes() === n0, "a grant's edits right after its refresh do not read GitHub again", String(refreshes() - n0));
+      n0 = refreshes(); await post4("/api/prs/restore", {}); await until(() => refreshes() > n0, 10000);
+      ok(refreshes() > n0, "control: the board's edit reads GitHub again");
+    } finally { W4.stop(); p4.stop(); rmSync(dir, { recursive: true, force: true }); } }
   { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
     ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }
