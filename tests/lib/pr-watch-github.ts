@@ -83,12 +83,14 @@ export function fixtureData() {
     { id: 502, repo: ca, environment: "staging", ref: "staging", sha: sha("staging-tip"), state: "success" },
     // a newer staging deployment from another ref that failed: the environment stays on what 502 deployed
     { id: 503, repo: ca, environment: "staging", ref: "hotfix", sha: sha("hotfix-tip"), state: "failure" },
+    // "preproduction" is a test environment, not production
+    { id: 504, repo: ca, environment: "preproduction", ref: "preprod", sha: sha("preprod-tip"), state: "success" },
   ];
   // the staging branch's tip contains #17's head (it was merged into staging)
   const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!)] };
   const files: Record<string, string> = { "northwind/infra/deploy/prod.yaml": `app:\n  image: registry.example/checkout:${head(find(ca, 18)!).slice(0, 12)}\n` };
   // the repositories' own GitHub environments (used when the settings name none)
-  const envs: Record<string, string[]> = { [ca]: ["production", "dev", "staging"] };
+  const envs: Record<string, string[]> = { [ca]: ["production", "dev", "staging", "preproduction"] };
   return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs };
 }
 

@@ -223,7 +223,7 @@ try {
   ok((await call("/api/prs/watch", { url: "https://github.com/northwind/web-app" }, "phone")).status === 403, "a paired phone cannot change the list");
   // no settings yet: the environments are each repository's own, and evidence offers who may post it
   { await until(() => !!W.snapshot.at, 10000); await call("/api/prs/refresh", {}); const v0 = (await call("/api/prs")).body, envOf = (id: string) => row(v0, id).envs.map((e: any) => `${e.name}:${e.on}${e.auto ? "" : "!"}${e.production ? "P" : ""}`).join();
-    ok(envOf("northwind/checkout-api#17") === "dev:false,staging:true" && envOf("northwind/checkout-api#19") === "dev:true,staging:false" && row(v0, "northwind/web-app#30").envs.length === 0,
+    ok(envOf("northwind/checkout-api#17") === "dev:false,staging:true,preproduction:false" && envOf("northwind/checkout-api#19") === "dev:true,staging:false,preproduction:false" && row(v0, "northwind/web-app#30").envs.length === 0,
       "no environments set: a repository's GitHub environments that have a successful deployment (production, never deployed, is left out), on when the newest successful one (not a newer failed one) contains the head", JSON.stringify([envOf("northwind/checkout-api#17"), envOf("northwind/checkout-api#19")]));
     ok(v0.rows.every((r: any) => r.next.rule !== "environment"), "a repository's own environments are shown only: they never make the next step deploy for testing");
     ok(v0.suggest.evidenceAccounts[0]?.login === "qa-lin" && !v0.suggest.evidenceAccounts.some((x: any) => ["skipper", "review-bot", "ana", "bo", "rel-ray"].includes(x.login)) && v0.rows.every((r: any) => r.evidence === null),

@@ -308,8 +308,9 @@ export function createPrWatch(d: PrWatchDeps) {
     const repoEnvs = (repo: string) => once(envCache, repo.toLowerCase(), async () => {
       try { const j = await autoGet(`${repoPath(repo)}/environments?per_page=30`);
         const names = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n.length > 0 && n.length <= 60 && !/[\u0000-\u001f]/.test(n));
-        const prod = (n: string) => /prod/i.test(n);
-        const used = (await Promise.all(names.filter((n: string) => n.toLowerCase() !== "github-pages").slice(0, 10).map(async (n: string) => (await deployedOn(repo, n)) ? n : null))).filter((n): n is string => !!n);
+        const prod = (n: string) => /^(?:prod|production|live)(?:$|[-_ ./])/i.test(n); // not preproduction, nonprod
+        // each environment on its own: one that cannot be read is left out, the others stay
+        const used = (await Promise.all(names.filter((n: string) => n.toLowerCase() !== "github-pages").slice(0, 10).map(async (n: string) => { try { return (await deployedOn(repo, n)) ? n : null; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } }))).filter((n): n is string => !!n);
         return [...used.filter((n) => !prod(n)), ...used.filter(prod)].slice(0, 6).map((n) => ({ name: n, production: prod(n), repos: [repo], detect: { kind: "deployed" as const, environment: n } })); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return []; } });
     const commenters = new Map<string, { login: string; prs: Set<string> }>();
@@ -386,7 +387,8 @@ export function createPrWatch(d: PrWatchDeps) {
       const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : s.settings.environments.filter((e) => R.envApplies(e, repo));
       const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks), ...(auto ? { auto: true } : {}) })));
       const reviewers = new Set(reviews.map((x) => x.login.toLowerCase()));
-      for (const c of comments) { const k = c.login.toLowerCase(); if (!k || k === author.toLowerCase() || k === me.toLowerCase() || reviewers.has(k) || k.endsWith("[bot]") || /(?:^|[-_])bot$|^bot[-_]/.test(k) || !R.NAME.test(c.login)) continue;
+      // without the reviews (or comments) read, reviewers cannot be told apart: such a row offers no one
+      if (!partial.includes("reviews") && !partial.includes("comments")) for (const c of comments) { const k = c.login.toLowerCase(); if (!k || k === author.toLowerCase() || k === me.toLowerCase() || reviewers.has(k) || k.endsWith("[bot]") || /(?:^|[-_])bot$|^bot[-_]/.test(k) || !R.NAME.test(c.login)) continue;
         const e = commenters.get(k) ?? { login: c.login, prs: new Set<string>() }; e.prs.add(id); commenters.set(k, e); }
       const block = R.findBlock(body);
       const row: RawRow = { id, repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author, draft: !!p.draft, single, base, headRef: String(p.head?.ref ?? ""), head,
