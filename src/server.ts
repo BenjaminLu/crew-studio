@@ -940,7 +940,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
         const u = cliGrants.use(wt, name); if (!u.ok) return json({ error: u.error }, u.status);
         if (p === "/api/tools") return json(grantTools.list(u.grant));
         if (!grantTools.list(u.grant).some((t) => t.name === name)) return json({ error: `no such tool: ${name} (studio exposes ${grantTools.list(u.grant).map((t) => t.name).join(", ")})` }, 404);
-        let args: any = {}; try { args = await req.json(); } catch {}
+        const raw = await req.text(); if (raw.length > 65_536) return json({ error: "arguments too large" }, 413);
+        let args: any = {}; try { args = raw ? JSON.parse(raw) : {}; } catch {}
         try { return json(await grantTools.call(u.grant, name, args)); } catch (e: any) { return json({ error: String(e?.message ?? e) }); }
       }
       const tk = tokens.get(req.headers.get("x-crew-tool-token") ?? "");

@@ -92,7 +92,16 @@ are reversible on the page, and are each audited.
 They run the board's own code (`act` in `src/pr-watch.ts`), so the same checks hold, and the open page reloads (live event
 `prs`). **Nothing writes to GitHub**: there is no tool for the dependency block (that stays the captain-only card the
 board's Apply starts), merging, reviews, comments or labels. A tool error is `{error}`. Every successful edit is a
-`cli_grant_prs_edit` line in the event log with the tool and what it sent; reads are `cli_grant_used` as for any call.
+`cli_grant_prs_edit` line in the event log with the tool and what it sent (cut to 4 KB); reads are `cli_grant_used` as for any call.
+
+- Arguments over 16 KB are refused (the route itself takes at most 64 KB). `prs_settings` refuses a field it does not know
+  or one of the wrong type, so a mistaken call never clears a setting.
+- A dependency a grant sets is recorded as `by: "external-cli"` with the grant's id (the row's `deps.source`), not as the
+  captain's, until the captain sets it on the page.
+- `prs_refresh` reads GitHub at most once a minute for a CLI (the captain's token is shared with the rest of Studio); a
+  sooner call answers with the last refresh.
+- **What it can read is what the captain's GitHub token can read.** `prs_watch` takes any pull request address and
+  `prs_get` returns its body, so a list grant reads every pull request that token reaches, private repositories included.
 
 ## What the boundary is not
 

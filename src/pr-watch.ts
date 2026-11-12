@@ -109,7 +109,8 @@ export type Settings = {
   messageLang: "en" | "zh-TW" | "zh-CN" | null;
 };
 export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: [], checks: [], labels: [] }, requiredReviewers: [], environments: [], groups: [], shortForm: false, messageLang: null };
-type Dep = { on: string[]; by: "captain" | "accepted" | "github"; at: string };
+/** by: who set it. external-cli: a pull request list grant's prs_deps (grant names which), shown as such until the captain sets it again */
+type Dep = { on: string[]; by: "captain" | "accepted" | "github" | "external-cli"; grant?: string; at: string };
 export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string> };
 const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {} });
 type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" } | { k: "ci"; state: string };
@@ -161,6 +162,9 @@ export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (typ
   /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number; autoReads?: number } };
 /** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
 class OverAuto extends Error {}
+
+/** An action name `act` does not know: the route's 404 (an error GitHub answered with 404 stays the 400 it always was). */
+class NoSuchAction extends Error { constructor(name: string) { super(`no such action: ${name}`); } }
 
 export function createPrWatch(d: PrWatchDeps) {
   const dir = join(d.dataDir, "pr-watch"), stateFile = join(dir, "state.json"), snapFile = join(dir, "snapshot.json");
@@ -610,7 +614,7 @@ export function createPrWatch(d: PrWatchDeps) {
   }
 
   /** The captain's edits, by name: the board's POST /api/prs/<name> and an external CLI grant's PR tools both come here. */
-  async function act(name: string, b: any): Promise<any> {
+  async function act(name: string, b: any, actor: { grant: string } | null = null): Promise<any> {
     switch (name) {
       case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };
         await refresh().catch(() => {}); return view(); }
@@ -622,7 +626,7 @@ export function createPrWatch(d: PrWatchDeps) {
         snap.finger = {}; snap.changed = {}; write(snapFile, snap); void refresh().catch(() => {}); return view(); }
       case "order": { state.order = validIds(b?.order); save(); return view(); }
       case "deps": { const id = String(b?.pr ?? ""); if (!R.splitId(id) || !rowIdsNow().some((r) => eq(r, id))) throw new Error("Choose a pull request in the list");
-        const on = validIds(b?.on, 20).filter((o) => !eq(o, id)); const k = Object.keys(state.deps).find((a) => eq(a, id)) ?? id; state.deps[k] = { on: [...new Set(on)], by: "captain", at: iso() }; save(); return view(); }
+        const on = validIds(b?.on, 20).filter((o) => !eq(o, id)); const k = Object.keys(state.deps).find((a) => eq(a, id)) ?? id; state.deps[k] = { on: [...new Set(on)], ...(actor ? { by: "external-cli" as const, grant: actor.grant } : { by: "captain" as const }), at: iso() }; save(); return view(); }
       case "group": { const id = String(b?.pr ?? ""), g = String(b?.group ?? "").trim(); if (!R.splitId(id)) throw new Error("Choose a pull request");
         if (g && !state.settings.groups.includes(g)) throw new Error("Choose one of the release groups in the settings");
         const k = Object.keys(state.groups).find((a) => eq(a, id)) ?? id; if (g) state.groups[k] = g; else delete state.groups[k]; save(); return view(); }
@@ -638,7 +642,7 @@ export function createPrWatch(d: PrWatchDeps) {
       case "apply": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the pull requests to apply");
         const run = await startApply(ids, b?.shortForm === undefined ? state.settings.shortForm : !!b.shortForm); return ({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
     }
-    throw Object.assign(new Error(`no such action: ${name}`), { status: 404 });
+    throw new NoSuchAction(name);
   }
 
   // ---------- an external CLI grant's tools (docs/units/cli-mcp-grant.md) ----------
@@ -655,7 +659,17 @@ export function createPrWatch(d: PrWatchDeps) {
   const str = (v: unknown) => typeof v === "string" && v.trim() ? v.trim() : null;
   const ids = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
   const obj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
-  const changedBy = async (name: string, b: unknown) => { const out = await act(name, b); d.notify?.("prs", { count: count(), at: snap.at }); return out; };
+  const changedBy = async (name: string, b: unknown, grant: string) => { const out = await act(name, b, { grant }); d.notify?.("prs", { count: count(), at: snap.at }); return out; };
+  /** the settings fields and the type each must have: a tool names only these, each with its own type (never cleared by a wrong one) */
+  const SETTING_TYPES: Record<string, "object" | "array" | "boolean" | "lang"> = { which: "object", evidence: "object", requiredReviewers: "array", environments: "array", groups: "array", shortForm: "boolean", messageLang: "lang" };
+  const settingError = (n: Record<string, any>): string | null => {
+    for (const [k, v] of Object.entries(n)) { const t = SETTING_TYPES[k]; if (!t) return `prs_settings does not know ${k} (${Object.keys(SETTING_TYPES).join(", ")})`;
+      if (t === "object" ? !obj(v) : t === "array" ? !Array.isArray(v) : t === "boolean" ? typeof v !== "boolean" : !(v === null || typeof v === "string")) return `settings.${k} must be ${t === "lang" ? "a language or null" : t === "object" ? "an object" : t === "array" ? "a list" : "true or false"}`; }
+    for (const k of ["which", "evidence"] as const) if (obj(n[k])) { const allowed = k === "which" ? ["mine", "assigned", "reviewRequested"] : ["accounts", "checks", "labels"];
+      for (const [f, v] of Object.entries(n[k] as Record<string, unknown>)) { if (!allowed.includes(f)) return `settings.${k} does not know ${f}`; if (k === "which" ? typeof v !== "boolean" : !Array.isArray(v)) return `settings.${k}.${f} must be ${k === "which" ? "true or false" : "a list"}`; } }
+    return null; };
+  const REFRESH_GAP = 60_000; let toolRefreshAt = 0;
+  const MAX_ARGS = 16_384;
   const TOOLS = [
     { name: "prs_list", description: "Studio's pull request list: every watched open pull request in the captain's order, with CI, approvals (what is still missing, per required team), reviews, test evidence, environments, dependencies, linked issues and the next step. Also the watch list and the settings.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "prs_get", description: "One pull request of the list in full: everything prs_list has plus the merge-box facts Studio read.", inputSchema: { type: "object", required: ["pr"], additionalProperties: false, properties: { pr: { type: "string", description: "owner/repo#number" } } } },
@@ -669,8 +683,10 @@ export function createPrWatch(d: PrWatchDeps) {
     { name: "prs_group", description: "Put a pull request in one of the release groups from the settings ({pr, group}); an empty group takes it out.", inputSchema: { type: "object", required: ["pr", "group"], additionalProperties: false, properties: { pr: { type: "string" }, group: { type: "string" } } } },
     { name: "prs_accept", description: "Accept Studio's proposed order and dependencies as the captain's.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   ] as const;
-  async function tool(name: string, a: unknown): Promise<unknown> {
+  /** A tool call from a pull request list grant (grant: its id, recorded on what it changes). */
+  async function tool(name: string, a: unknown, grant = "external-cli"): Promise<unknown> {
     const b: Record<string, any> = obj(a) ? a : {};
+    if (JSON.stringify(b).length > MAX_ARGS) return { error: `${name}: arguments over ${MAX_ARGS} bytes` };
     const extra = (allowed: string[]) => Object.keys(b).find((k) => !allowed.includes(k));
     const t = TOOLS.find((x) => x.name === name); if (!t) return { error: `no such tool: ${name}` };
     const bad = extra(Object.keys((t.inputSchema as any).properties ?? {})); if (bad) return { error: `${name} does not take ${bad}` };
@@ -679,17 +695,20 @@ export function createPrWatch(d: PrWatchDeps) {
         case "prs_list": ensure(); return listView();
         case "prs_get": { const id = str(b.pr), r = id ? view().rows.find((x) => eq(x.id, id)) : null; if (!r) return { error: `${b.pr ?? "(none)"} is not in the list (prs_list)` };
           const raw = snap.rows.find((x) => eq(x.id, r.id)); return { ...brief(r), labels: r.labels, head: r.head, headRef: r.headRef, createdAt: r.createdAt, reviews: r.reviews, partial: r.partial, deps: r.deps, orderWhy: r.orderWhy, body: raw?.facts?.body ?? null }; }
-        case "prs_refresh": { const v: any = await act("refresh", {}); return { ...listView(), ...(v.error ? { refreshError: v.error } : {}) }; }
-        case "prs_watch": { if (!str(b.url)) return { error: "prs_watch takes {url}" }; const v: any = await changedBy("watch", { url: b.url }); return { added: v.added, ...listView() }; }
-        case "prs_unwatch": { if (!!str(b.repo) === !!str(b.pr)) return { error: "prs_unwatch takes {repo} or {pr}" }; await changedBy("unwatch", b); return listView(); }
-        case "prs_restore": { if (b.pr !== undefined && !str(b.pr)) return { error: "prs_restore takes {pr} or {}" }; await changedBy("restore", b); return listView(); }
+        case "prs_refresh": { // the captain's GitHub token is shared: a CLI refreshes at most once a minute (Studio also refreshes every 5 minutes)
+          if (Date.now() - toolRefreshAt < REFRESH_GAP) return { ...listView(), note: `Refreshed less than a minute ago; this is the last refresh (${snap.at}).` };
+          toolRefreshAt = Date.now(); const v: any = await act("refresh", {}); return { ...listView(), ...(v.error ? { refreshError: v.error } : {}) }; }
+        case "prs_watch": { if (!str(b.url)) return { error: "prs_watch takes {url}" }; const v: any = await changedBy("watch", { url: b.url }, grant); return { added: v.added, ...listView() }; }
+        case "prs_unwatch": { if (!!str(b.repo) === !!str(b.pr)) return { error: "prs_unwatch takes {repo} or {pr}" }; await changedBy("unwatch", b, grant); return listView(); }
+        case "prs_restore": { if (b.pr !== undefined && !str(b.pr)) return { error: "prs_restore takes {pr} or {}" }; await changedBy("restore", b, grant); return listView(); }
         case "prs_settings": { if (!obj(b.settings)) return { error: "prs_settings takes {settings: {...only what changes}}" }; const cur: any = state.settings, n = b.settings;
+          const bad = settingError(n); if (bad) return { error: bad };
           const merged = { ...cur, ...n, which: { ...cur.which, ...(obj(n.which) ? n.which : {}) }, evidence: { ...cur.evidence, ...(obj(n.evidence) ? n.evidence : {}) } };
-          await changedBy("settings", { settings: merged }); return listView(); }
-        case "prs_order": { if (!ids(b.order)) return { error: "prs_order takes {order: [owner/repo#N, …]}" }; await changedBy("order", b); return listView(); }
-        case "prs_deps": { if (!str(b.pr) || !ids(b.on)) return { error: "prs_deps takes {pr, on: [ids]}" }; await changedBy("deps", b); return listView(); }
-        case "prs_group": { if (!str(b.pr) || typeof b.group !== "string") return { error: "prs_group takes {pr, group}" }; await changedBy("group", b); return listView(); }
-        case "prs_accept": await changedBy("accept", {}); return listView();
+          await changedBy("settings", { settings: merged }, grant); return listView(); }
+        case "prs_order": { if (!ids(b.order)) return { error: "prs_order takes {order: [owner/repo#N, …]}" }; await changedBy("order", b, grant); return listView(); }
+        case "prs_deps": { if (!str(b.pr) || !ids(b.on)) return { error: "prs_deps takes {pr, on: [ids]}" }; await changedBy("deps", b, grant); return listView(); }
+        case "prs_group": { if (!str(b.pr) || typeof b.group !== "string") return { error: "prs_group takes {pr, group}" }; await changedBy("group", b, grant); return listView(); }
+        case "prs_accept": await changedBy("accept", {}, grant); return listView();
       }
     } catch (e: any) { return { error: String(e?.message ?? e).slice(0, 300) }; }
     return { error: `no such tool: ${name}` };
@@ -709,7 +728,7 @@ export function createPrWatch(d: PrWatchDeps) {
     if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
     let b: any = {}; try { b = await req.json(); } catch {}
     try { return json(await act(p.slice("/api/prs/".length), b)); }
-    catch (e: any) { return e?.status === 404 ? json({ error: "not found" }, 404) : fail(e); }
+    catch (e: any) { return e instanceof NoSuchAction ? json({ error: "not found" }, 404) : fail(e); }
   }
   return { handle, install, view, count, refresh, ensure, tools, stop: () => { sub?.cancel(); sub = null; }, get state() { return state; }, get snapshot() { return snap; } };
 }

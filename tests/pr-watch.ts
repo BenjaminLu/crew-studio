@@ -456,13 +456,22 @@ try {
     r = await T.call("prs_settings", { settings: { evidence: { accounts: ["qa-lin", "dana"] } } });
     ok(!r.error && W.state.settings.evidence.accounts.join() === "qa-lin,dana" && W.state.settings.evidence.labels.join() === "qa-passed" && W.state.settings.groups.join() === "wave-1" && W.state.settings.which.reviewRequested === true && W.state.settings.which.mine === true, "prs_settings changes only what it names and keeps the rest", JSON.stringify(W.state.settings.evidence));
     r = await T.call("prs_settings", { settings: "x" }); ok(!!r.error, "prs_settings takes an object");
-    r = await T.call("prs_deps", { pr: ra, on: [rb] }); ok(!r.error && W.state.deps[ra]?.on.join() === rb && W.state.deps[ra].by === "captain", "prs_deps records a dependency, as the board does", JSON.stringify(r.error));
+    const envsBefore = JSON.stringify(W.state.settings.environments);
+    for (const bad of [{ environments: "staging" }, { requiredReviewers: null }, { junk: 1 }, { which: { mine: "yes" } }, { evidence: { accounts: "qa" } }, { evidence: { other: [] } }, { shortForm: 1 }]) {
+      r = await T.call("prs_settings", { settings: bad }); ok(!!r.error && JSON.stringify(W.state.settings.environments) === envsBefore, `prs_settings refuses ${JSON.stringify(bad)} and changes nothing`, JSON.stringify(r).slice(0, 200)); }
+    r = await T.call("prs_watch", { url: "https://github.com/" + "x".repeat(20000) }); ok(/over 16384 bytes/.test(r.error ?? ""), "arguments over the cap are refused before anything runs");
+    r = await T.call("prs_refresh", {}); const r2: any = await T.call("prs_refresh", {}); ok(!r.error && /less than a minute/.test(r2.note ?? ""), "a CLI refreshes at most once a minute: the second answers with the last refresh", JSON.stringify(r2.note));
+    r = await T.call("prs_deps", { pr: ra, on: [rb] }, "g-0000abcd"); ok(!r.error && W.state.deps[ra]?.on.join() === rb && W.state.deps[ra].by === "external-cli" && (W.state.deps[ra] as any).grant === "g-0000abcd" && r.rows.find((x: any) => x.pr === ra) && W.view().rows.find((x) => x.id === ra)?.deps.source === "external-cli", "prs_deps records a dependency, marked as set by the grant (not the captain)", JSON.stringify(r.error));
     r = await T.call("prs_deps", { pr: "northwind/nope#1", on: [] }); ok(!!r.error, "prs_deps outside the list is refused");
     r = await T.call("prs_order", { order: [rb] }); ok(!r.error && r.rows[0].pr === rb, "prs_order puts the named pull request first");
     r = await T.call("prs_unwatch", { repo: "northwind/ledger", pr: "x/y#1" }); ok(!!r.error, "prs_unwatch takes one of repo or pr");
     r = await T.call("prs_list", { extra: 1 }); ok(/does not take extra/.test(r.error ?? ""), "an argument a tool does not take is refused");
     r = await T.call("prs_apply", {}); ok(/no such tool/.test(r.error ?? ""), "the board's apply is no tool");
     r = await T.call("prs_unwatch", { repo: "northwind/ledger" }); ok(!r.error && !W.state.watch.repos.includes("northwind/ledger"), "prs_unwatch stops watching it");
+    { gh.setRateLimited(false); const p = gh.data.find(ra.split("#")[0], Number(ra.split("#")[1]))!, list = gh.data.prs, i = list.indexOf(p); list.splice(i, 1);
+      try { const a = await call("/api/prs/apply", { prs: [ra] }); ok(a.status === 400 && a.body.error !== "not found", "a pull request GitHub answers 404 for is the 400 it always was, never the route's own 404", JSON.stringify(a)); }
+      finally { list.splice(i, 0, p); }
+      const u = await call("/api/prs/nonsense", {}); ok(u.status === 404 && u.body.error === "not found", "an unknown action is the route's 404"); }
     ok(T.writes("prs_watch") && !T.writes("prs_list") && !T.writes("prs_get") && !T.writes("prs_refresh"), "which tools change the list (audited by the grant)"); }
   { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
     ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }

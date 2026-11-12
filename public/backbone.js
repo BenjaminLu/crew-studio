@@ -122,7 +122,7 @@ function cliGrants() {
   let data = null, fresh = null, picked = "project";
   const draw = () => {
     const projects = data?.projects ?? [], grants = data?.grants ?? [];
-    const scope = h("select", { id: "grantScope", "aria-label": T("Reaches", "可以做"), onchange: () => { picked = scope.value; projLabel.hidden = picked === "prs"; issue.disabled = picked !== "prs" && !projects.length; } },
+    const scope = h("select", { id: "grantScope", "aria-label": T("Reaches", "可以做"), onchange: () => { picked = scope.value; draw(); } },
       h("option", { value: "project", selected: picked === "project" || null }, T("Runs in a project", "專案裡的 run")), h("option", { value: "prs", selected: picked === "prs" || null }, T("The pull request list", "PR 列表")));
     const project = h("select", { id: "grantProject", "aria-label": T("Project", "專案") }, projects.map((p) => h("option", { value: p.id }, p.name || p.id)));
     const projLabel = h("label", { hidden: picked === "prs" || null }, h("span", { class: "faint" }, T("Project", "專案")), project);
@@ -135,7 +135,7 @@ function cliGrants() {
       h("p", { class: "faint", style: "margin:4px 0 10px" }, T("Let a claude or codex you opened yourself list workflows, start runs (each waits for your approval), and read progress, cards and results, in one project. Or let it read and edit the pull request list: watch repositories, settings, order, dependencies, groups (Studio's own list; nothing is written to GitHub). Approving cards, staffing and merging stay here. The token goes into a 0600 file, never on a command line.",
         "讓你自己開的 claude 或 codex 在一個專案裡列出 workflow、發起 run（每個都等你核准）、讀進度、卡片和結果；或讀取、編輯 PR 列表：追蹤的 repo、設定、順序、依賴、分組（只改 Studio 自己的清單，不寫 GitHub）。核准卡片、staffing、merge 都只能在這裡做。token 寫進 0600 檔案，不出現在指令列。")),
       h("div", { class: "bb-grant-form" }, h("label", {}, h("span", { class: "faint" }, T("Reaches", "可以做")), scope), projLabel, h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
-        projects.length ? null : h("span", { class: "faint" }, T("Register a project first.", "請先登錄專案。"))),
+        projects.length || picked === "prs" ? null : h("span", { class: "faint", "data-grant-need-project": "" }, T("Register a project first.", "請先登錄專案。"))),
       grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
         h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
           h("span", { class: "faint", "data-grant-scope": g.scope || "project" }, `${g.scope === "prs" ? T("Pull request list", "PR 列表") : g.project} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)} · ${g.scope === "prs" ? T(`${g.calls} calls`, `${g.calls} 次呼叫`) : T(`${g.runs.length} runs`, `${g.runs.length} 個 run`)}`)),

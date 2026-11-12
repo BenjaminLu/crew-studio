@@ -101,8 +101,9 @@ export class CliGrants {
     g.runs.push({ run, at: new Date().toISOString(), staffing }); this.write(all);
     this.audit("cli_grant_run", `external CLI grant ${id} proposed ${run} (waits for the captain)`, { grant: id, run, staffing });
   }
-  /** A change a grant made to Studio's pull request list, with what it sent (addresses, ids, settings: no secrets). */
-  recordEdit(id: string, tool: string, args: unknown) { this.audit("cli_grant_prs_edit", `external CLI grant ${id} changed the pull request list (${tool})`, { grant: id, tool, args }); }
+  /** A change a grant made to Studio's pull request list, with what it sent (addresses, ids, settings: no secrets), cut to 4 KB. */
+  recordEdit(id: string, tool: string, args: unknown) { let sent = JSON.stringify(args ?? {}); if (sent.length > 4096) sent = sent.slice(0, 4096) + "…";
+    this.audit("cli_grant_prs_edit", `external CLI grant ${id} changed the pull request list (${tool})`, { grant: id, tool, args: sent }); }
   /** The staffing preference a grant's run was proposed with (shown on its cards; never applied). */
   staffingOf(id: string, run: string) { return this.get(id)?.runs.find((r) => r.run === run)?.staffing ?? null; }
 }
@@ -143,7 +144,7 @@ export function installGrantViews(engine: Engine, grants: CliGrants) {
 }
 
 /** The pull request list's tools (src/pr-watch.ts `tools`): what a grant of scope "prs" reaches instead of the four. */
-export type PrTools = { list(): { name: string; description: string; inputSchema: unknown }[]; call(name: string, args: unknown): Promise<unknown>; writes(name: string): boolean };
+export type PrTools = { list(): { name: string; description: string; inputSchema: unknown }[]; call(name: string, args: unknown, grant: string): Promise<unknown>; writes(name: string): boolean };
 export const scopeOf = (g: Pick<CliGrant, "scope">): GrantScope => g.scope ?? "project";
 
 export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstmate: () => Firstmate; prs?: () => PrTools | null }) {
@@ -228,7 +229,7 @@ export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstma
     async call(g: CliGrant, name: string, args: unknown): Promise<unknown> {
       if (scopeOf(g) === "prs") {
         const prs = d.prs?.(); if (!prs || !prs.list().some((t) => t.name === name)) return { error: `no such tool: ${name}` };
-        const out: any = await prs.call(name, args);
+        const out: any = await prs.call(name, args, g.id);
         if (prs.writes(name) && !(out && typeof out === "object" && "error" in out)) grants.recordEdit(g.id, name, args);
         return out;
       }
