@@ -109,7 +109,8 @@ export type Settings = {
   messageLang: "en" | "zh-TW" | "zh-CN" | null;
 };
 export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: [], checks: [], labels: [] }, requiredReviewers: [], environments: [], groups: [], shortForm: false, messageLang: null };
-type Dep = { on: string[]; by: "captain" | "accepted" | "github"; at: string };
+/** by: who set it. external-cli: a pull request list grant's prs_deps (grant names which), shown as such until the captain sets it again */
+type Dep = { on: string[]; by: "captain" | "accepted" | "github" | "external-cli"; grant?: string; at: string };
 export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string> };
 const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {} });
 type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" } | { k: "ci"; state: string };
@@ -161,6 +162,9 @@ export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (typ
   /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number; autoReads?: number } };
 /** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
 class OverAuto extends Error {}
+
+/** An action name `act` does not know: the route's 404 (an error GitHub answered with 404 stays the 400 it always was). */
+class NoSuchAction extends Error { constructor(name: string) { super(`no such action: ${name}`); } }
 
 export function createPrWatch(d: PrWatchDeps) {
   const dir = join(d.dataDir, "pr-watch"), stateFile = join(dir, "state.json"), snapFile = join(dir, "snapshot.json");
@@ -498,7 +502,7 @@ export function createPrWatch(d: PrWatchDeps) {
     else throw new Error("Name a repository or a pull request");
     save();
   }
-  const validIds = (v: unknown, max = 400) => { if (!Array.isArray(v) || v.length > max) throw new Error("Send a list of pull requests"); const ids = v.map(String); if (ids.some((x) => !R.splitId(x))) throw new Error("A pull request is owner/repo#number"); return ids; };
+  const validIds = (v: unknown, max = 400) => { if (!Array.isArray(v) || v.length > max) throw new Error("Send a list of pull requests"); const ids = v.map(String); if (ids.some((x) => !R.splitId(x))) throw new Error("A pull request is owner/repo#number"); return ids.filter((x, i) => ids.findIndex((y) => eq(y, x)) === i); }; // a repeated id (any case) counts once
 
   // ---------- the captain-only card that writes the block ----------
   const pin = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
@@ -609,6 +613,112 @@ export function createPrWatch(d: PrWatchDeps) {
     if (sub && (joined || ranVersion < want)) await d.poller.refresh(sub.authority);
   }
 
+  /** The captain's edits, by name: the board's POST /api/prs/<name> and an external CLI grant's PR tools both come here. */
+  async function act(name: string, b: any, actor: { grant: string } | null = null): Promise<any> {
+    // a grant's edits read GitHub again at most once a minute (the captain's token is shared); the board's always do
+    const kick = () => { if (actor) { if (Date.now() - toolRefreshAt < REFRESH_GAP) return; toolRefreshAt = Date.now(); } void refresh().catch(() => {}); };
+    switch (name) {
+      case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };
+        await refresh().catch(() => {}); return view(); }
+      case "watch": { const got = watchUrl(b?.url); ensure(); kick(); return { ...view(), added: got }; }
+      case "unwatch": unwatch(b); ensure(); return view();
+      case "restore": { if (typeof b?.pr === "string") state.watch.excluded = state.watch.excluded.filter((x) => !eq(x, b.pr)); else state.watch.excluded = []; save(); kick(); return view(); }
+      case "settings": { // the page sends the settings it opened with: a change made meanwhile (another window, an agent CLI) is never undone silently
+        if (b?.base !== undefined && JSON.stringify(cleanSettings(b.base)) !== JSON.stringify(state.settings)) throw Object.assign(new Error("The settings changed while this dialog was open (another window or an agent CLI). Close it and open it again."), { tw: "這個視窗開著的時候設定被改過了（別的視窗或 agent CLI）。請關掉再重新打開。" });
+        state.settings = cleanSettings(b?.settings); settingsWarning = null; save();
+        // what the settings change (environments, evidence, which pull requests) is not a change on GitHub: start the marks afresh
+        snap.finger = {}; snap.changed = {}; write(snapFile, snap); kick(); return view(); }
+      case "order": { state.order = validIds(b?.order); save(); return view(); }
+      case "deps": { const id = String(b?.pr ?? ""); if (!R.splitId(id) || !rowIdsNow().some((r) => eq(r, id))) throw new Error("Choose a pull request in the list");
+        const on = validIds(b?.on, 20).filter((o) => !eq(o, id)); const k = Object.keys(state.deps).find((a) => eq(a, id)) ?? id; state.deps[k] = { on: [...new Set(on)], ...(actor ? { by: "external-cli" as const, grant: actor.grant } : { by: "captain" as const }), at: iso() }; save(); return view(); }
+      case "group": { const id = String(b?.pr ?? ""), g = String(b?.group ?? "").trim(); if (!R.splitId(id)) throw new Error("Choose a pull request");
+        if (g && !state.settings.groups.includes(g)) throw new Error("Choose one of the release groups in the settings");
+        const k = Object.keys(state.groups).find((a) => eq(a, id)) ?? id; if (g) state.groups[k] = g; else delete state.groups[k]; save(); return view(); }
+      case "accept": { const v = view(); state.order = v.rows.map((r) => r.id);
+        for (const r of v.rows) if (r.deps.source === "proposal") state.deps[r.id] = { on: r.deps.on.map((x) => x.id), by: "accepted", at: iso() };
+        save(); return view(); }
+      case "drift/take": { const id = String(b?.pr ?? ""), r = snap.rows.find((x) => eq(x.id, id)); if (!r) throw new Error("Choose a pull request in the list");
+        const ak = Object.keys(state.applied).find((a) => eq(a, id)); if (!ak) throw new Error("Studio never wrote a block into this pull request");
+        const dk = Object.keys(state.deps).find((a) => eq(a, id)) ?? id;
+        if (r.bodyBlock) { state.applied[ak] = { block: r.bodyBlock, on: r.githubDeps ?? [], at: iso() }; state.deps[dk] = { on: r.githubDeps ?? [], by: "github", at: iso() }; }
+        else { delete state.applied[ak]; state.deps[dk] = { on: [], by: "github", at: iso() }; }
+        save(); return view(); }
+      case "apply": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the pull requests to apply");
+        const run = await startApply(ids, b?.shortForm === undefined ? state.settings.shortForm : !!b.shortForm); return ({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
+    }
+    throw new NoSuchAction(name);
+  }
+
+  // ---------- an external CLI grant's tools (docs/units/cli-mcp-grant.md) ----------
+  // The same edits as the board (act), so a CLI the captain granted changes Studio's own list directly. Nothing here
+  // writes to GitHub: the dependency block is written only through the captain-only card the board's Apply starts.
+  const brief = (r: ReturnType<typeof view>["rows"][number]) => ({ pr: r.id, url: r.url, title: r.title, author: r.author, draft: r.draft, base: r.base, position: r.position,
+    group: r.group, project: r.project?.id ?? null, ci: r.ci ?? null, next: r.next,
+    approvals: r.approvals ? { readable: r.approvals.readable, required: r.approvals.required, counted: r.approvals.counted, missing: r.approvals.missing, groups: r.approvals.groups ?? [], blocked: !!r.approvals.blocked } : null,
+    reviews: r.reviews.map((x) => ({ login: x.login, state: x.state, stale: x.stale })), evidence: r.evidence, envs: r.envs, deps: r.deps.on,
+    issues: (r.issues ?? []).map((i: any) => ({ ref: i.ref, url: i.url, title: i.title })), changed: r.changed });
+  const listView = () => { const v = view(); return { enabled: v.enabled, connected: v.connected, refreshedAt: v.refreshedAt, refreshing: v.refreshing, refreshError: v.error, errors: v.errors,
+    watch: v.watch, settings: v.settings, suggest: v.suggest, proposal: { pending: v.proposal.pending, accepted: v.proposal.accepted }, rows: v.rows.map(brief),
+    board: "#/prs", note: "Studio's own list. No tool here writes to GitHub (merge, review, comment, label, the dependency block)." }; };
+  const str = (v: unknown) => typeof v === "string" && v.trim() ? v.trim() : null;
+  const ids = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+  const obj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
+  const changedBy = async (name: string, b: unknown, grant: string) => { const out = await act(name, b, { grant }); d.notify?.("prs", { count: count(), at: snap.at }); return out; };
+  /** the settings fields and the type each must have: a tool names only these, each with its own type (never cleared by a wrong one) */
+  const SETTING_TYPES: Record<string, "object" | "array" | "boolean" | "lang"> = { which: "object", evidence: "object", requiredReviewers: "array", environments: "array", groups: "array", shortForm: "boolean", messageLang: "lang" };
+  const settingError = (n: Record<string, any>): string | null => {
+    for (const [k, v] of Object.entries(n)) { const t = SETTING_TYPES[k]; if (!t) return `prs_settings does not know ${k} (${Object.keys(SETTING_TYPES).join(", ")})`;
+      if (t === "object" ? !obj(v) : t === "array" ? !Array.isArray(v) : t === "boolean" ? typeof v !== "boolean" : !(v === null || typeof v === "string")) return `settings.${k} must be ${t === "lang" ? "a language or null" : t === "object" ? "an object" : t === "array" ? "a list" : "true or false"}`; }
+    for (const k of ["which", "evidence"] as const) if (obj(n[k])) { const allowed = k === "which" ? ["mine", "assigned", "reviewRequested"] : ["accounts", "checks", "labels"];
+      for (const [f, v] of Object.entries(n[k] as Record<string, unknown>)) { if (!allowed.includes(f)) return `settings.${k} does not know ${f}`; if (k === "which" ? typeof v !== "boolean" : !Array.isArray(v)) return `settings.${k}.${f} must be ${k === "which" ? "true or false" : "a list"}`; } }
+    return null; };
+  const REFRESH_GAP = 60_000; let toolRefreshAt = 0;
+  const MAX_ARGS = 16_384;
+  const TOOLS = [
+    { name: "prs_list", description: "Studio's pull request list: every watched open pull request in the captain's order, with CI, approvals (what is still missing, per required team), reviews, test evidence, environments, dependencies, linked issues and the next step. Also the watch list and the settings.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    { name: "prs_get", description: "One pull request of the list in full: everything prs_list has plus the merge-box facts Studio read.", inputSchema: { type: "object", required: ["pr"], additionalProperties: false, properties: { pr: { type: "string", description: "owner/repo#number" } } } },
+    { name: "prs_refresh", description: "Read GitHub again now (Studio also refreshes every 5 minutes), then return the list.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    { name: "prs_watch", description: "Watch a repository (its open pull requests the captain opened or is assigned to) or one pull request, by its GitHub address.", inputSchema: { type: "object", required: ["url"], additionalProperties: false, properties: { url: { type: "string", description: "https://github.com/<owner>/<repo> or …/pull/<n>" } } } },
+    { name: "prs_unwatch", description: "Stop watching a repository ({repo: owner/repo}) or leave one pull request out of the list ({pr: owner/repo#N}).", inputSchema: { type: "object", additionalProperties: false, properties: { repo: { type: "string" }, pr: { type: "string" } } } },
+    { name: "prs_restore", description: "Bring back a pull request left out of the list ({pr}), or all of them ({}).", inputSchema: { type: "object", additionalProperties: false, properties: { pr: { type: "string" } } } },
+    { name: "prs_settings", description: "Change the list's settings. Pass only what changes; the rest is kept. Fields: which {mine, assigned, reviewRequested}, evidence {accounts, checks, labels}, requiredReviewers, environments, groups, shortForm, messageLang.", inputSchema: { type: "object", required: ["settings"], additionalProperties: false, properties: { settings: { type: "object" } } } },
+    { name: "prs_order", description: "Set the release order: pull request ids first to last (owner/repo#N). Rows not named follow in Studio's proposed order.", inputSchema: { type: "object", required: ["order"], additionalProperties: false, properties: { order: { type: "array", items: { type: "string" } } } } },
+    { name: "prs_deps", description: "Set what one pull request waits for: {pr, on: [ids]} (an empty list clears it). Studio's record only; nothing is written to GitHub.", inputSchema: { type: "object", required: ["pr", "on"], additionalProperties: false, properties: { pr: { type: "string" }, on: { type: "array", items: { type: "string" } } } } },
+    { name: "prs_group", description: "Put a pull request in one of the release groups from the settings ({pr, group}); an empty group takes it out.", inputSchema: { type: "object", required: ["pr", "group"], additionalProperties: false, properties: { pr: { type: "string" }, group: { type: "string" } } } },
+    { name: "prs_accept", description: "Accept Studio's proposed order and dependencies as the captain's.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  ] as const;
+  /** A tool call from a pull request list grant (grant: its id, recorded on what it changes). */
+  async function tool(name: string, a: unknown, grant = "external-cli"): Promise<unknown> {
+    const b: Record<string, any> = obj(a) ? a : {};
+    if (JSON.stringify(b).length > MAX_ARGS) return { error: `${name}: arguments over ${MAX_ARGS} bytes` };
+    const extra = (allowed: string[]) => Object.keys(b).find((k) => !allowed.includes(k));
+    const t = TOOLS.find((x) => x.name === name); if (!t) return { error: `no such tool: ${name}` };
+    const bad = extra(Object.keys((t.inputSchema as any).properties ?? {})); if (bad) return { error: `${name} does not take ${bad}` };
+    try {
+      switch (name) {
+        case "prs_list": ensure(); return listView();
+        case "prs_get": { const id = str(b.pr), r = id ? view().rows.find((x) => eq(x.id, id)) : null; if (!r) return { error: `${b.pr ?? "(none)"} is not in the list (prs_list)` };
+          const raw = snap.rows.find((x) => eq(x.id, r.id)); return { ...brief(r), labels: r.labels, head: r.head, headRef: r.headRef, createdAt: r.createdAt, reviews: r.reviews, partial: r.partial, deps: r.deps, orderWhy: r.orderWhy, body: raw?.facts?.body ?? null }; }
+        case "prs_refresh": { // the captain's GitHub token is shared: a CLI refreshes at most once a minute (Studio also refreshes every 5 minutes)
+          if (Date.now() - toolRefreshAt < REFRESH_GAP) return { ...listView(), note: `Refreshed less than a minute ago; this is the last refresh (${snap.at}).` };
+          toolRefreshAt = Date.now(); const v: any = await act("refresh", {}); return { ...listView(), ...(v.error ? { refreshError: v.error } : {}) }; }
+        case "prs_watch": { if (!str(b.url)) return { error: "prs_watch takes {url}" }; const v: any = await changedBy("watch", { url: b.url }, grant); return { added: v.added, ...listView() }; }
+        case "prs_unwatch": { if (!!str(b.repo) === !!str(b.pr)) return { error: "prs_unwatch takes {repo} or {pr}" }; await changedBy("unwatch", b, grant); return listView(); }
+        case "prs_restore": { if (b.pr !== undefined && !str(b.pr)) return { error: "prs_restore takes {pr} or {}" }; await changedBy("restore", b, grant); return listView(); }
+        case "prs_settings": { if (!obj(b.settings)) return { error: "prs_settings takes {settings: {...only what changes}}" }; const cur: any = state.settings, n = b.settings;
+          const bad = settingError(n); if (bad) return { error: bad };
+          const merged = { ...cur, ...n, which: { ...cur.which, ...(obj(n.which) ? n.which : {}) }, evidence: { ...cur.evidence, ...(obj(n.evidence) ? n.evidence : {}) } };
+          await changedBy("settings", { settings: merged }, grant); return listView(); }
+        case "prs_order": { if (!ids(b.order)) return { error: "prs_order takes {order: [owner/repo#N, …]}" }; await changedBy("order", b, grant); return listView(); }
+        case "prs_deps": { if (!str(b.pr) || !ids(b.on)) return { error: "prs_deps takes {pr, on: [ids]}" }; await changedBy("deps", b, grant); return listView(); }
+        case "prs_group": { if (!str(b.pr) || typeof b.group !== "string") return { error: "prs_group takes {pr, group}" }; await changedBy("group", b, grant); return listView(); }
+        case "prs_accept": await changedBy("accept", {}, grant); return listView();
+      }
+    } catch (e: any) { return { error: String(e?.message ?? e).slice(0, 300) }; }
+    return { error: `no such tool: ${name}` };
+  }
+  const tools = { list: () => TOOLS.map((t) => ({ ...t })), call: tool, writes: (name: string) => !["prs_list", "prs_get", "prs_refresh"].includes(name) };
+
   // ---------- routes ----------
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   const fail = (e: any, status = 400) => json({ error: String(e?.message ?? e).slice(0, 300), ...(e?.tw ? { tw: e.tw } : {}) }, status);
@@ -621,36 +731,8 @@ export function createPrWatch(d: PrWatchDeps) {
     }
     if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
     let b: any = {}; try { b = await req.json(); } catch {}
-    try {
-      switch (p) {
-        case "/api/prs/refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return json(view()); if (!token) return json({ ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } });
-          await refresh().catch(() => {}); return json(view()); }
-        case "/api/prs/watch": { const got = watchUrl(b?.url); ensure(); void refresh().catch(() => {}); return json({ ...view(), added: got }); }
-        case "/api/prs/unwatch": unwatch(b); ensure(); return json(view());
-        case "/api/prs/restore": { if (typeof b?.pr === "string") state.watch.excluded = state.watch.excluded.filter((x) => !eq(x, b.pr)); else state.watch.excluded = []; save(); void refresh().catch(() => {}); return json(view()); }
-        case "/api/prs/settings": { state.settings = cleanSettings(b?.settings); settingsWarning = null; save();
-          // what the settings change (environments, evidence, which pull requests) is not a change on GitHub: start the marks afresh
-          snap.finger = {}; snap.changed = {}; write(snapFile, snap); void refresh().catch(() => {}); return json(view()); }
-        case "/api/prs/order": { state.order = validIds(b?.order); save(); return json(view()); }
-        case "/api/prs/deps": { const id = String(b?.pr ?? ""); if (!R.splitId(id) || !rowIdsNow().some((r) => eq(r, id))) throw new Error("Choose a pull request in the list");
-          const on = validIds(b?.on, 20).filter((o) => !eq(o, id)); const k = Object.keys(state.deps).find((a) => eq(a, id)) ?? id; state.deps[k] = { on: [...new Set(on)], by: "captain", at: iso() }; save(); return json(view()); }
-        case "/api/prs/group": { const id = String(b?.pr ?? ""), g = String(b?.group ?? "").trim(); if (!R.splitId(id)) throw new Error("Choose a pull request");
-          if (g && !state.settings.groups.includes(g)) throw new Error("Choose one of the release groups in the settings");
-          const k = Object.keys(state.groups).find((a) => eq(a, id)) ?? id; if (g) state.groups[k] = g; else delete state.groups[k]; save(); return json(view()); }
-        case "/api/prs/accept": { const v = view(); state.order = v.rows.map((r) => r.id);
-          for (const r of v.rows) if (r.deps.source === "proposal") state.deps[r.id] = { on: r.deps.on.map((x) => x.id), by: "accepted", at: iso() };
-          save(); return json(view()); }
-        case "/api/prs/drift/take": { const id = String(b?.pr ?? ""), r = snap.rows.find((x) => eq(x.id, id)); if (!r) throw new Error("Choose a pull request in the list");
-          const ak = Object.keys(state.applied).find((a) => eq(a, id)); if (!ak) throw new Error("Studio never wrote a block into this pull request");
-          const dk = Object.keys(state.deps).find((a) => eq(a, id)) ?? id;
-          if (r.bodyBlock) { state.applied[ak] = { block: r.bodyBlock, on: r.githubDeps ?? [], at: iso() }; state.deps[dk] = { on: r.githubDeps ?? [], by: "github", at: iso() }; }
-          else { delete state.applied[ak]; state.deps[dk] = { on: [], by: "github", at: iso() }; }
-          save(); return json(view()); }
-        case "/api/prs/apply": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the pull requests to apply");
-          const run = await startApply(ids, b?.shortForm === undefined ? state.settings.shortForm : !!b.shortForm); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
-      }
-      return json({ error: "not found" }, 404);
-    } catch (e: any) { return fail(e); }
+    try { return json(await act(p.slice("/api/prs/".length), b)); }
+    catch (e: any) { return e instanceof NoSuchAction ? json({ error: "not found" }, 404) : fail(e); }
   }
-  return { handle, install, view, count, refresh, ensure, stop: () => { sub?.cancel(); sub = null; }, get state() { return state; }, get snapshot() { return snap; } };
+  return { handle, install, view, count, refresh, ensure, tools, stop: () => { sub?.cancel(); sub = null; }, get state() { return state; }, get snapshot() { return snap; } };
 }

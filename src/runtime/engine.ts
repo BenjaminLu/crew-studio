@@ -336,6 +336,8 @@ export class Engine {
   modes: Record<string, AgentMode> = {};
   /** the merge card's review room (src/domain/review-room.ts), installed by the code domain */
   reviewRoom: import("../domain/review-room").ReviewRoom | null = null;
+  /** where a run came from when an external CLI grant proposed it (src/cli-grants.ts); null for every other run */
+  externalOrigin: ((r: Run) => import("../cli-grants").ExternalOrigin | null) | null = null;
   /** native checks: Studio functions behind the same JSON contract */
   natives: Record<string, Native> = {};
   /** what a check sees as its artifact, by type (code-diff, spec, video, card, run …) */

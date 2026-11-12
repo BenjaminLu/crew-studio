@@ -686,6 +686,8 @@ function mountCard(el, card, opts = {}) {
     const body = !d && zhWhy && c.body === c.sections?.en?.why ? zhWhy : c.body;
     const kids = [
       h("div", { class: "cc-h rt-card-h" }, h("span", { class: "vbadge" }, c.kind), h("b", {}, L(c.title)), c.door ? h("span", { class: `vbadge door-${c.door}` }, c.door) : null, lang),
+      c.origin?.kind === "external-cli" ? h("div", { class: "cc-origin", "data-card-origin": c.origin.grant }, T(`From an external CLI · grant ${c.origin.grant} · answered here only`, `來自外部 CLI · 授權 ${c.origin.grant} · 只能在這裡決定`),
+        c.origin.staffing ? h("span", { class: "faint" }, " · ", T("the CLI asked for", "CLI 希望"), " ", Object.entries(c.origin.staffing).map(([k, v]) => `${k}: ${v}`).join(", ")) : null) : null,
       opts.inbox ? h("div", { class: "cardmeta cc-meta", "data-scard-meta": c.id }, h("span", { class: "mono" }, c.id), h("a", { href: `#/run/${encodeURIComponent(c.run)}` }, c.run), h("span", {}, scardWorkflowName(c.workflow)), h("span", { class: "badge" }, c.node)) : null,
       failureView(c),
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
