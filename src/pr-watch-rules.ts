@@ -331,7 +331,6 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   const needed = Math.max(rules.required, rules.lastPush ? 1 : 0);
   if (valid.length < needed) missing.push({ kind: "count", n: needed - valid.length });
   const memberOf = (team: string) => (o.teamMembers.get(team.toLowerCase()) ?? []).map((m) => m.toLowerCase());
-  const satisfied = (owner: string) => { const k = owner.toLowerCase(); return k.includes("/") ? memberOf(k.replace(/^@/, "")).some((m) => approvers.has(m)) : approvers.has(k.replace(/^@/, "")); };
   if (rules.codeOwners && o.codeowners) {
     const sets = new Map<string, string[]>();
     const budget: StepBudget = { left: CODEOWNERS_LIMITS.steps };

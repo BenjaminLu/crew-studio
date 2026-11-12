@@ -14,7 +14,7 @@ type Pr = { repo: string; number: number; title: string; user: string; assignees
   body?: string; commits: { sha: string; at: string; login: string }[]; reviews?: { user: string; state: string; commit: string; at: string }[];
   comments?: { user: string; body: string; at: string }[]; files?: string[]; checks?: { name: string; conclusion: string; at: string }[]; labels?: string[];
   closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string;
-  github?: { reviewDecision?: string | null; mergeState?: string; requested?: string[]; ci?: string } };
+  github?: { reviewDecision?: string | null; mergeState?: string; requested?: string[]; ci?: string; ciOnOlderHead?: boolean } };
 const two = (n: string, h = 0) => [{ sha: sha(`${n}-1`), at: at(h), login: ME }, { sha: sha(`${n}-2`), at: at(h + 1), login: ME }];
 const head = (p: Pr) => p.commits.at(-1)!.sha;
 
@@ -60,7 +60,7 @@ export function fixtureData() {
     checks: [qa(c[1].sha)], files: ["src/login.tsx"], comments: [{ user: "qa-lin", body: "Looked at it, will finish tomorrow", at: at(29) }] }); }
   // ledger: its branch protection cannot be read without admin (404 "Not Found"); its ruleset asks for one approval and a
   // team named only by id (88), whose name Studio looks up
-  { const c = two("lg40"); add({ repo: "northwind/ledger", number: 40, title: "Statements in the account currency", user: ME, commits: c, reviews: [bot(c[1].sha)], github: { reviewDecision: "REVIEW_REQUIRED", requested: ["northwind/finance"] }, checks: [qa(c[1].sha)], files: ["src/statement.ts"],
+  { const c = two("lg40"); add({ repo: "northwind/ledger", number: 40, title: "Statements in the account currency", user: ME, commits: c, reviews: [bot(c[1].sha)], github: { reviewDecision: "REVIEW_REQUIRED", requested: ["northwind/finance"], ciOnOlderHead: true }, checks: [qa(c[1].sha)], files: ["src/statement.ts"],
     comments: [{ user: "qa-lin", body: `### PASS\non ${c[1].sha.slice(0, 7)}`, at: at(29) }] }); }
   // a single watched pull request by someone else, outside the watched repositories
   { const c = two("mb5"); add({ repo: "northwind/mobile", number: 5, title: "App checkout uses the new retry API", user: "lee", commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["app/checkout.ts"] }); }
@@ -115,7 +115,7 @@ export function prWatchGitHub(data = fixtureData()) {
     if (rateLimited) return json({ message: "API rate limit exceeded" }, 403, { "x-ratelimit-remaining": "0" });
     if (method === "GET" && p === "/user") return json({ login: ME });
     if (method === "POST" && p === "/graphql") { const v = body?.variables ?? {}; const pr = data.find(`${v.o}/${v.r}`, v.n);
-      return json({ data: { repository: { pullRequest: pr ? { commits: { nodes: [{ commit: { oid: data.head(pr), statusCheckRollup: pr.github?.ci ? { state: pr.github.ci } : pr.checks?.length ? { state: pr.checks.some((c) => c.conclusion === "failure") ? "FAILURE" : "SUCCESS" } : null } }] }, reviewDecision: pr.github?.reviewDecision ?? null, mergeStateStatus: pr.github?.mergeState ?? "BLOCKED",
+      return json({ data: { repository: { pullRequest: pr ? { commits: { nodes: [{ commit: { oid: pr.github?.ciOnOlderHead ? pr.commits[0].sha : data.head(pr), statusCheckRollup: pr.github?.ci ? { state: pr.github.ci } : pr.checks?.length ? { state: pr.checks.some((c) => c.conclusion === "failure") ? "FAILURE" : "SUCCESS" } : null } }] }, reviewDecision: pr.github?.reviewDecision ?? null, mergeStateStatus: pr.github?.mergeState ?? "BLOCKED",
         reviewRequests: { nodes: (pr.github?.requested ?? []).map((x: string) => x.includes("/") ? { requestedReviewer: { __typename: "Team", slug: x.split("/")[1], organization: { login: x.split("/")[0] } } } : { requestedReviewer: { __typename: "User", login: x } }) },
         closingIssuesReferences: { nodes: (pr.closing ?? []).map((c) => ({ number: c.number, title: c.title, state: c.state, url: `https://github.com/${c.repo}/issues/${c.number}`, repository: { nameWithOwner: c.repo } })) } } : null } } }); }
     let m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p); if (!m) { if ((m = /^\/teams\/(\d+)$/.exec(p))) { const t = data.teamIds[m[1]]; return t ? json({ slug: t.split("/")[1], organization: { login: t.split("/")[0] } }) : nf(); }

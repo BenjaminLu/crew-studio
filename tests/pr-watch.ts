@@ -254,7 +254,7 @@ try {
   { const g18 = row(v, "northwind/checkout-api#18").approvals.groups, g19 = row(v, "northwind/checkout-api#19").approvals.groups;
     ok(g18.some((g: any) => g.kind === "team" && g.who === "@northwind/release" && !g.ok) && g18.some((g: any) => g.kind === "owner" && g.who === "@dana" && !g.ok)
       && g19.every((g: any) => g.ok) && g19.some((g: any) => g.who === "@northwind/release" && g.by.join() === "rel-ray"), "each approval group shows met or not and by whom", JSON.stringify([g18, g19])); }
-  ok(row(v, "northwind/checkout-api#19").ci === "SUCCESS" && row(v, "northwind/checkout-api#20") === undefined && (row(v, "northwind/mobile#5").ci === "SUCCESS") && row(v, "northwind/web-app#30").ci === "FAILURE", "CI is GitHub's combined state for the head", JSON.stringify(row(v, "northwind/checkout-api#19").ci));
+  ok(row(v, "northwind/checkout-api#19").ci === "SUCCESS" && row(v, "northwind/checkout-api#20") === undefined && (row(v, "northwind/mobile#5").ci === "SUCCESS") && row(v, "northwind/web-app#30").ci === "FAILURE" && row(v, "northwind/ledger#40").ci === null, "CI is GitHub's combined state for the head (none when GitHub's last commit is another one)", JSON.stringify(row(v, "northwind/checkout-api#19").ci));
   ok(row(v, "northwind/checkout-api#19").approvals.missing.length === 0, "two approvals from a code owner and the required team: nothing missing");
   // environments
   const env = (id: string, n: string) => row(v, id).envs.find((e: any) => e.name === n)?.on;

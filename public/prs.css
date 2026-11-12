@@ -44,6 +44,8 @@
 .pw-cta{cursor:pointer;font:inherit;font-size:12px;font-weight:500;text-align:left;display:inline-flex;max-width:100%;white-space:nowrap!important}
 .pw-ctat{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow-wrap:anywhere;min-width:0}.pw-misscell{min-width:0}
 .pw-revs{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.pw-row .pw-ci .badge{white-space:nowrap}
+.pw-row .pw-agrp{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .pw-envs{display:flex;gap:4px;flex-wrap:wrap}
 .pw-env{font:500 11px var(--f-mono);border:1px dashed var(--border-strong);border-radius:5px;padding:1px 5px;color:var(--text-3)}
 .pw-env.on{border-style:solid;border-color:transparent;background:var(--ok-soft);color:var(--ok)}
