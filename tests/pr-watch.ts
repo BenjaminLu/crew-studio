@@ -70,6 +70,21 @@ const { ok, end } = suite("pr-watch");
   ok(r.readable && r.required === 2 && r.dismissStale && r.sources.join() === "ruleset,protection", "rulesets and classic protection merge: the stricter of each");
   const ap = R.approvalsOf(r, rv, { files: [], codeowners: null, teamMembers: new Map() });
   ok(ap.counted === 1 && ap.missing[0]?.kind === "count" && (ap.missing[0] as any).n === 1, "the author's own approval and a stale one (stale dismissed) do not count", JSON.stringify(ap));
+  { const unread = { en: "no admin", tw: "x" }, none = R.mergeRules([], null, null, "o", unread), gm = (d: string | null) => ({ reviewDecision: d, mergeState: "BLOCKED", requested: ["@o/ops"] });
+    const base = { files: [], codeowners: null, teamMembers: new Map() };
+    const fill = R.approvalsOf(none, [], { ...base, github: gm("REVIEW_REQUIRED") }), done = R.approvalsOf(none, [], { ...base, github: gm("APPROVED") }), nul = R.approvalsOf(none, [], { ...base, github: gm(null) });
+    const read = R.approvalsOf(R.mergeRules([], "none", null), [], { ...base, github: gm("REVIEW_REQUIRED") });
+    const more = R.approvalsOf(R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1 } }], null, null, "o", unread), [], { ...base, github: gm("REVIEW_REQUIRED") });
+    ok(none.readable && fill.readable && fill.missing.length === 1 && fill.missing[0].kind === "github" && R.missingWho(fill.missing).join() === "@o/ops" && fill.unread?.[0].en === "no admin",
+      "classic protection unread: GitHub's REVIEW_REQUIRED that the readable rules do not explain is a missing review from the pending requests", JSON.stringify(fill));
+    const clean = (d: string | null, m: string) => R.approvalsOf(none, [], { ...base, github: { reviewDecision: d, mergeState: m, requested: [] } });
+    ok(!clean("APPROVED", "CLEAN").missing.length && !clean(null, "BEHIND").missing.length && !read.missing.length && read.unread === undefined, "GitHub's decision is used only when classic protection was unread; an approved, unblocked merge adds nothing");
+    const stepOf = (a: R.Approvals) => R.nextStep({ draft: false, author: "me", reviews: [], requiredReviewers: [], deps: [], envs: [], evidence: { verdict: "pass", source: "check", by: "qa", at: null, url: null, covers: "head", since: null, shas: [] }, evidenceSources: { accounts: [], checks: ["qa"], labels: [] }, approvals: a });
+    ok(done.blocked && nul.blocked && !done.missing.length && stepOf(done).rule === "blocked" && stepOf(done).kind === "hold" && stepOf(clean("APPROVED", "CLEAN")).rule === "ready" && stepOf(clean("APPROVED", "UNKNOWN")).rule === "blocked",
+      "classic protection unread and GitHub blocks the merge for a reason the rules do not show: on hold, not ready, and not a missing approval", JSON.stringify([done, stepOf(done)]));
+    const lost = R.approvalsOf(none, [], { ...base, github: null }), half = R.approvalsOf(none, [], { ...base, github: { reviewDecision: null, mergeState: null, requested: [] } });
+    ok(!lost.readable && lost.missing[0].kind === "unreadable" && !half.readable && /merge box/.test((half.missing[0] as any).reason), "classic protection unread and GitHub's merge box not read (or read without a merge state): unreadable, never ready", JSON.stringify(lost));
+    ok(more.missing.length === 1 && more.missing[0].kind === "count", "the readable rules' own gaps come first; GitHub's decision adds nothing on top of them"); }
   ok(R.mergeRules([], null, { en: "x", tw: "x" }).readable === false && R.approvalsOf(R.mergeRules([], null, { en: "no admin", tw: "x" }), [], { files: [], codeowners: null, teamMembers: new Map() }).missing[0].kind === "unreadable", "unreadable rules say so instead of guessing");
   const co = R.parseCodeowners("* @org/core\n/docs/ @dana\n*.md @writer\nsrc/**/api.ts @api-lead");
   ok(R.ownersOf("docs/a.ts", co).join() === "@dana" && R.ownersOf("docs/a.md", co).join() === "@writer" && R.ownersOf("x/y.ts", co).join() === "@org/core" && R.ownersOf("src/a/b/api.ts", co).join() === "@api-lead", "CODEOWNERS: the last matching line wins");
@@ -236,7 +251,9 @@ try {
   const a30 = row(v, "northwind/web-app#30").approvals;
   ok(a30.counted === 0 && a30.missing[0]?.n === 1 && a30.sources.join() === "protection", "classic protection that dismisses stale approvals: the stale approval does not count", JSON.stringify(a30));
   const a40 = row(v, "northwind/ledger#40").approvals;
-  ok(!a40.readable && a40.missing[0]?.kind === "unreadable" && /admin/.test(a40.missing[0].reason) && nx("northwind/ledger#40").who.join() === "(rules unreadable)", "branch protection that needs admin: the rules are unreadable, never guessed", JSON.stringify(a40));
+  ok(a40.readable && /admin/.test(a40.unread?.[0]?.en ?? "") && a40.missing.some((m: any) => m.kind === "count" && m.n === 1) && a40.missing.some((m: any) => m.kind === "team" && m.who === "@northwind/finance")
+    && nx("northwind/ledger#40").who.includes("@northwind/finance") && a40.github?.mergeState === "BLOCKED" && a40.github?.requested.join() === "@northwind/finance",
+    "branch protection that needs admin: the readable ruleset still decides (a team named only by id gets its name), with GitHub's merge box beside it", JSON.stringify(a40));
   ok(row(v, "northwind/checkout-api#19").approvals.missing.length === 0, "two approvals from a code owner and the required team: nothing missing");
   // environments
   const env = (id: string, n: string) => row(v, id).envs.find((e: any) => e.name === n)?.on;

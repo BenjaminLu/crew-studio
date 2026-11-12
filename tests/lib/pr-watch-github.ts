@@ -13,7 +13,8 @@ const at = (h: number) => new Date(T0 + h * 3600_000).toISOString();
 type Pr = { repo: string; number: number; title: string; user: string; assignees?: string[]; draft?: boolean; state?: "open" | "closed"; merged?: boolean; base?: string; headRef?: string;
   body?: string; commits: { sha: string; at: string; login: string }[]; reviews?: { user: string; state: string; commit: string; at: string }[];
   comments?: { user: string; body: string; at: string }[]; files?: string[]; checks?: { name: string; conclusion: string; at: string }[]; labels?: string[];
-  closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string };
+  closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string;
+  github?: { reviewDecision?: string | null; mergeState?: string; requested?: string[] } };
 const two = (n: string, h = 0) => [{ sha: sha(`${n}-1`), at: at(h), login: ME }, { sha: sha(`${n}-2`), at: at(h + 1), login: ME }];
 const head = (p: Pr) => p.commits.at(-1)!.sha;
 
@@ -57,8 +58,9 @@ export function fixtureData() {
   // web-app: classic protection dismisses stale approvals; ana's approval on the older head does not count
   { const c = two("wa30"); add({ repo: "northwind/web-app", number: 30, title: "Login copy rewrite", user: ME, commits: c, reviews: [bot(c[1].sha), { user: "ana", state: "APPROVED", commit: c[0].sha, at: at(0.5) }],
     checks: [qa(c[1].sha)], files: ["src/login.tsx"], comments: [{ user: "qa-lin", body: "Looked at it, will finish tomorrow", at: at(29) }] }); }
-  // ledger: its branch protection cannot be read (403): the rules are unreadable
-  { const c = two("lg40"); add({ repo: "northwind/ledger", number: 40, title: "Statements in the account currency", user: ME, commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["src/statement.ts"],
+  // ledger: its branch protection cannot be read without admin (404 "Not Found"); its ruleset asks for one approval and a
+  // team named only by id (88), whose name Studio looks up
+  { const c = two("lg40"); add({ repo: "northwind/ledger", number: 40, title: "Statements in the account currency", user: ME, commits: c, reviews: [bot(c[1].sha)], github: { reviewDecision: "REVIEW_REQUIRED", requested: ["northwind/finance"] }, checks: [qa(c[1].sha)], files: ["src/statement.ts"],
     comments: [{ user: "qa-lin", body: `### PASS\non ${c[1].sha.slice(0, 7)}`, at: at(29) }] }); }
   // a single watched pull request by someone else, outside the watched repositories
   { const c = two("mb5"); add({ repo: "northwind/mobile", number: 5, title: "App checkout uses the new retry API", user: "lee", commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["app/checkout.ts"] }); }
@@ -69,10 +71,12 @@ export function fixtureData() {
       required_reviewers: [{ reviewer: { type: "Team", id: 77, slug: "release" }, minimum_approvals: 1, file_patterns: ["*"] }] } }], protection: { status: 404, body: { message: "Branch not protected" } },
       codeowners: "# owners\n* @northwind/payments\n/docs/ @dana\n" },
     "northwind/web-app": { rulesets: [], protection: { status: 200, body: { required_pull_request_reviews: { required_approving_review_count: 1, dismiss_stale_reviews: true, require_code_owner_reviews: false } } } },
-    "northwind/ledger": { rulesets: [], protection: { status: 403, body: { message: "Must have admin rights to Repository." } } },
+    "northwind/ledger": { rulesets: [{ type: "pull_request", parameters: { required_approving_review_count: 1, require_code_owner_review: false, require_last_push_approval: false, dismiss_stale_reviews_on_push: true,
+      required_reviewers: [{ reviewer: { type: "Team", id: 88 }, minimum_approvals: 1, file_patterns: ["*"] }] } }], protection: { status: 404, body: { message: "Not Found" } } },
     "northwind/mobile": { rulesets: [], protection: { status: 404, body: { message: "Branch not protected" } } },
   };
-  const teams: Record<string, string[]> = { "northwind/payments": ["ana", "bo"], "northwind/release": ["rel-ray"] };
+  const teams: Record<string, string[]> = { "northwind/payments": ["ana", "bo"], "northwind/release": ["rel-ray"], "northwind/finance": ["fin-fay"] };
+  const teamIds: Record<string, string> = { "88": "northwind/finance" };
   const find = (repo: string, n: number) => prs.find((p) => p.repo === repo && p.number === n);
   const deployments = [
     { id: 501, repo: ca, environment: "dev", ref: "topic-19", sha: head(find(ca, 19)!), state: "success" },
@@ -81,7 +85,7 @@ export function fixtureData() {
   // the staging branch's tip contains #17's head (it was merged into staging)
   const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!)] };
   const files: Record<string, string> = { "northwind/infra/deploy/prod.yaml": `app:\n  image: registry.example/checkout:${head(find(ca, 18)!).slice(0, 12)}\n` };
-  return { prs, issues, rules, teams, deployments, contains, files, head, find };
+  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find };
 }
 
 export function prWatchGitHub(data = fixtureData()) {
@@ -111,8 +115,11 @@ export function prWatchGitHub(data = fixtureData()) {
     if (rateLimited) return json({ message: "API rate limit exceeded" }, 403, { "x-ratelimit-remaining": "0" });
     if (method === "GET" && p === "/user") return json({ login: ME });
     if (method === "POST" && p === "/graphql") { const v = body?.variables ?? {}; const pr = data.find(`${v.o}/${v.r}`, v.n);
-      return json({ data: { repository: { pullRequest: pr ? { closingIssuesReferences: { nodes: (pr.closing ?? []).map((c) => ({ number: c.number, title: c.title, state: c.state, url: `https://github.com/${c.repo}/issues/${c.number}`, repository: { nameWithOwner: c.repo } })) } } : null } } }); }
-    let m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p); if (!m) { if ((m = /^\/orgs\/([^/]+)\/teams\/([^/]+)\/members$/.exec(p))) { const t = data.teams[`${m[1]}/${m[2]}`]; return t ? json(page(t.map((login) => ({ login })), q)) : nf(); } unknown.push(`${method} ${p}`); return nf(); }
+      return json({ data: { repository: { pullRequest: pr ? { reviewDecision: pr.github?.reviewDecision ?? null, mergeStateStatus: pr.github?.mergeState ?? "BLOCKED",
+        reviewRequests: { nodes: (pr.github?.requested ?? []).map((x: string) => x.includes("/") ? { requestedReviewer: { __typename: "Team", slug: x.split("/")[1], organization: { login: x.split("/")[0] } } } : { requestedReviewer: { __typename: "User", login: x } }) },
+        closingIssuesReferences: { nodes: (pr.closing ?? []).map((c) => ({ number: c.number, title: c.title, state: c.state, url: `https://github.com/${c.repo}/issues/${c.number}`, repository: { nameWithOwner: c.repo } })) } } : null } } }); }
+    let m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p); if (!m) { if ((m = /^\/teams\/(\d+)$/.exec(p))) { const t = data.teamIds[m[1]]; return t ? json({ slug: t.split("/")[1], organization: { login: t.split("/")[0] } }) : nf(); }
+      if ((m = /^\/orgs\/([^/]+)\/teams\/([^/]+)\/members$/.exec(p))) { const t = data.teams[`${m[1]}/${m[2]}`]; return t ? json(page(t.map((login) => ({ login })), q)) : nf(); } unknown.push(`${method} ${p}`); return nf(); }
     const repo = `${m[1]}/${m[2]}`, rest = m[3] ?? "";
     if (method === "GET" && rest === "/pulls") return json(page(data.prs.filter((x) => x.repo === repo && (x.state ?? "open") === (q.get("state") ?? "open")).map(pullJson), q));
     let k: RegExpExecArray | null;

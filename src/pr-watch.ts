@@ -243,14 +243,17 @@ export function createPrWatch(d: PrWatchDeps) {
     const issueCache = new Map<string, Promise<{ title: string | null; state: string | null }>>(), fileCache = new Map<string, Promise<string | "missing" | "unreadable">>(), compareCache = new Map<string, Promise<boolean | null>>(), deployCache = new Map<string, Promise<any>>();
     const once = <T>(m: Map<string, Promise<T>>, k: string, f: () => Promise<T>) => { if (!m.has(k)) m.set(k, f()); return m.get(k)!; };
     const rulesFor = (repo: string, base: string) => once(rulesCache, `${repo}|${base}`.toLowerCase(), async () => {
-      let rulesets: any[] | null = null, prot: any = null, unreadable: { en: string; tw: string } | null = null;
+      let rulesets: any[] | null = null, prot: any = null, unreadable: { en: string; tw: string } | null = null, unread: { en: string; tw: string } | null = null;
       try { const r = await g.get(`${repoPath(repo)}/rules/branches/${enc(base)}`); rulesets = Array.isArray(r) ? r : []; }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; unreadable = { en: `the rulesets of ${repo} ${base} could not be read (${why(e).en})`, tw: `讀不到 ${repo} ${base} 的 rulesets（${why(e).tw}）` }; }
       try { prot = await g.get(`${repoPath(repo)}/branches/${enc(base)}/protection`); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e;
         if (e instanceof HttpError && e.status === 404 && /not protected/i.test(String(e.data?.message ?? ""))) prot = "none";
+        // reading classic protection needs admin access: GitHub answers 403, or 404 without "not protected". The rulesets
+        // are readable with read access, so they stand, and GitHub's own review decision covers what the protection may add.
+        else if (e instanceof HttpError && (e.status === 403 || e.status === 404 && /^not found$/i.test(String(e.data?.message ?? "").trim()))) unread = { en: `the branch protection of ${repo} ${base} could not be read (${why(e).en}; reading it needs admin access): the rulesets and GitHub's own review decision are used`, tw: `讀不到 ${repo} ${base} 的分支保護（${why(e).tw}；需要 admin 權限）：改用 rulesets 和 GitHub 自己的 review 判定` };
         else unreadable ??= { en: `the branch protection of ${repo} ${base} could not be read (${why(e).en}; reading it needs admin access)`, tw: `讀不到 ${repo} ${base} 的分支保護（${why(e).tw}；需要 admin 權限）` }; }
-      return R.mergeRules(rulesets, prot, unreadable, repo.split("/")[0]);
+      return R.mergeRules(rulesets, prot, unreadable, repo.split("/")[0], unread);
     });
     // a file's text; "missing" when GitHub says there is none (404), "unreadable" for any other failure
     const fileOf = (repo: string, path: string, ref: string | null) => once(fileCache, `${repo}|${path}|${ref ?? ""}`.toLowerCase(), async (): Promise<string | "missing" | "unreadable"> => {
@@ -263,12 +266,14 @@ export function createPrWatch(d: PrWatchDeps) {
     const codeownersFor = (repo: string, base: string) => once(ownersCache, `${repo}|${base}`.toLowerCase(), async (): Promise<{ pattern: string; owners: string[] }[] | null | "unreadable"> => {
       for (const p of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) { const t = await fileOf(repo, p, base); if (t === "unreadable") return "unreadable"; if (t !== "missing") return R.codeownersOverLimit(t) ? "unreadable" : R.parseCodeowners(t); }
       return null; });
+    const teamNames = new Map<string, string>(); // a required team named only by id: its org/slug, once looked up
     const members = (key: string, owner: string) => once(teamCache, key.toLowerCase(), async () => {
       try {
         let org = owner, slug: string;
         if (key.startsWith("id:")) { const id = key.slice(3); if (!/^\d{1,12}$/.test(id)) return null; const t = await g.get(`/teams/${id}`); slug = String(t?.slug ?? ""); org = String(t?.organization?.login ?? owner); }
         else if (key.startsWith("slug:")) slug = key.slice(5); else { [org, slug] = key.split("/"); }
         if (!R.NAME.test(org) || !R.NAME.test(slug ?? "")) return null;
+        teamNames.set(key.toLowerCase(), `@${org}/${slug}`);
         return (await g.pages(`/orgs/${org}/teams/${slug}/members`, 3)).map((m: any) => String(m?.login ?? "")).filter(Boolean);
       } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } });
     const contains = (repo: string, head: string, deployed: string) => once(compareCache, `${repo}|${head}|${deployed}`.toLowerCase(), async () => {
@@ -300,22 +305,22 @@ export function createPrWatch(d: PrWatchDeps) {
     const rows = await pool(picked, 2, async ({ pr: p, repo, single }) => {
       const n = Number(p.number), id = R.prId(repo, n), path = `${repoPath(repo)}`, head = String(p.head?.sha ?? ""), base = String(p.base?.ref ?? ""), author = String(p.user?.login ?? "");
       const partial: string[] = [];
-      const [reviews, commits, comments, timeline, files, checks, closing] = await Promise.all([
+      const [reviews, commits, comments, timeline, files, checks, gql] = await Promise.all([
         soft(async () => (await g.pages(`${path}/pulls/${n}/reviews`, 3)).map((r: any) => ({ login: String(r.user?.login ?? ""), state: String(r.state ?? ""), commit: r.commit_id ? String(r.commit_id) : null, at: String(r.submitted_at ?? "") })), [] as R.Review[], partial, "reviews"),
         soft(async () => (await g.pages(`${path}/pulls/${n}/commits`, 3)).map((c: any) => ({ sha: String(c.sha ?? ""), at: String(c.commit?.committer?.date ?? c.commit?.author?.date ?? ""), login: String(c.author?.login ?? c.committer?.login ?? ""), author: c.author?.login ? String(c.author.login) : null, committer: c.committer?.login ? String(c.committer.login) : null })), [] as (R.Commit & { login: string; author: string | null; committer: string | null })[], partial, "commits"),
         soft(async () => (await g.pages(`${path}/issues/${n}/comments`, 3)).map((c: any) => ({ login: String(c.user?.login ?? ""), body: String(c.body ?? "").slice(0, 65536), at: String(c.created_at ?? ""), url: String(c.html_url ?? "") })), [] as R.EvidenceInput["comments"], partial, "comments"),
         soft(() => g.pages(`${path}/issues/${n}/timeline`, 2), [] as any[], partial, "timeline"),
         soft(async () => (await g.pages(`${path}/pulls/${n}/files`, 3)).map((f: any) => String(f.filename ?? "")).filter(Boolean), [] as string[], partial, "files"),
         soft(async () => SHA.test(head) ? ((await g.get(`${path}/commits/${head}/check-runs?per_page=100`))?.check_runs ?? []) : [], [] as any[], partial, "checks"),
-        soft(async () => { const [o, r] = repo.split("/"); const data = await g.graphql("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){closingIssuesReferences(first:20){nodes{number title state url repository{nameWithOwner}}}}}}", { o, r, n });
-          return (data?.repository?.pullRequest?.closingIssuesReferences?.nodes ?? []) as any[]; }, [] as any[], partial, "closing issues"),
+        soft(async () => { const [o, r] = repo.split("/"); const data = await g.graphql("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewDecision mergeStateStatus reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{slug organization{login}}}}} closingIssuesReferences(first:20){nodes{number title state url repository{nameWithOwner}}}}}}", { o, r, n });
+          return (data?.repository?.pullRequest ?? null) as any; }, null as any, partial, "closing issues"),
       ]);
       signal.throwIfAborted();
       const body = String(p.body ?? "");
       // issues: the body's links, closingIssuesReferences, and cross-references in the timeline
       const iss = new Map<string, { repo: string; number: number; title: string | null; state: string | null }>();
       const addIssue = (r: string, num: number, title: string | null = null, st: string | null = null) => { if (!R.repoOk(r) || !Number.isSafeInteger(num) || num < 1) return; const k = `${r}#${num}`.toLowerCase(); const prev = iss.get(k); if (!prev || (!prev.title && title)) iss.set(k, { repo: r, number: num, title: title ?? prev?.title ?? null, state: st ?? prev?.state ?? null }); };
-      for (const c of closing) addIssue(String(c?.repository?.nameWithOwner ?? ""), Number(c?.number), c?.title ? String(c.title).slice(0, 300) : null, c?.state ? String(c.state).toLowerCase() : null);
+      for (const c of gql?.closingIssuesReferences?.nodes ?? []) addIssue(String(c?.repository?.nameWithOwner ?? ""), Number(c?.number), c?.title ? String(c.title).slice(0, 300) : null, c?.state ? String(c.state).toLowerCase() : null);
       for (const l of R.issueLinks(body)) addIssue(l.repo, l.number);
       for (const ev of timeline) if (ev?.event === "cross-referenced" && ev.source?.issue && !ev.source.issue.pull_request) {
         const m = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/(\d+)$/.exec(String(ev.source.issue.html_url ?? "")); if (m) addIssue(m[1], Number(m[2]), String(ev.source.issue.title ?? "").slice(0, 300) || null, String(ev.source.issue.state ?? "") || null); }
@@ -335,7 +340,12 @@ export function createPrWatch(d: PrWatchDeps) {
         for (const k of [...new Set(teamKeys.map((k) => k.toLowerCase()))].slice(0, 10)) teamMembers.set(k, await members(k, repo.split("/")[0]));
       }
       const ownersKey = `${repo}|${base}`.toLowerCase(); if (!ownersByBase.has(ownersKey)) ownersByBase.set(ownersKey, new Map());
-      const approvals = R.approvalsOf(rules, rv, { ownersCache: ownersByBase.get(ownersKey), files, codeowners: owners, teamMembers, author, headCommit: commits.length && commits.at(-1)!.sha === head && !partial.includes("commits") ? { author: commits.at(-1)!.author, committer: commits.at(-1)!.committer } : null, ownersUnreadable });
+      // what GitHub's merge box shows: its review decision, merge state and the pending review requests
+      const word = (x: unknown) => { const t = String(x ?? ""); return /^[A-Z_]{1,40}$/.test(t) ? t : null; };
+      const github: R.GitHubMerge | null = gql ? { reviewDecision: word(gql.reviewDecision), mergeState: word(gql.mergeStateStatus),
+        requested: (gql.reviewRequests?.nodes ?? []).map((x: any) => { const v = x?.requestedReviewer ?? {}; return v.__typename === "Team" && R.NAME.test(String(v.organization?.login ?? "")) && R.NAME.test(String(v.slug ?? "")) ? `@${v.organization.login}/${v.slug}` : v.__typename === "User" && R.NAME.test(String(v.login ?? "")) ? String(v.login) : ""; }).filter(Boolean).slice(0, 20) } : null;
+      const named: R.Rules = rules.readable ? { ...rules, teams: rules.teams.map((t) => ({ ...t, label: teamNames.get(t.key.toLowerCase()) ?? t.label })) } : rules;
+      const approvals = R.approvalsOf(named, rv, { github, ownersCache: ownersByBase.get(ownersKey), files, codeowners: owners, teamMembers, author, headCommit: commits.length && commits.at(-1)!.sha === head && !partial.includes("commits") ? { author: commits.at(-1)!.author, committer: commits.at(-1)!.committer } : null, ownersUnreadable });
       const seen = snap.heads?.[id.toLowerCase()], headSeenAt = seen && seen.sha === head ? seen.at : out.at!;
       out.heads[id.toLowerCase()] = { sha: head, at: headSeenAt };
       const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,

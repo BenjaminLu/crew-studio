@@ -190,10 +190,14 @@ export function evidenceOf(src: EvidenceSources, x: EvidenceInput): Evidence | n
 }
 
 // ---------- branch rules and approvals ----------
-export type Rules = { readable: true; required: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; teams: { key: string; label: string }[]; sources: string[] }
+export type Rules = { readable: true; required: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; teams: { key: string; label: string }[]; sources: string[];
+  /** parts of the rules Studio could not read but worked around: classic protection that needs admin access */
+  unread?: { en: string; tw: string }[] }
   | { readable: false; reason: string; tw: string };
-/** Merge a base branch's rulesets (GET …/rules/branches/<base>) and classic protection (GET …/branches/<base>/protection). */
-export function mergeRules(rulesets: any[] | null, protection: any | "none" | null, unreadable: { en: string; tw: string } | null, owner = ""): Rules {
+/** Merge a base branch's rulesets (GET …/rules/branches/<base>) and classic protection (GET …/branches/<base>/protection).
+ *  `unread` names classic protection Studio may not read (it needs admin access): the rules are then the rulesets, and
+ *  GitHub's own review decision stands in for what the protection may add (approvalsOf). */
+export function mergeRules(rulesets: any[] | null, protection: any | "none" | null, unreadable: { en: string; tw: string } | null, owner = "", unread: { en: string; tw: string } | null = null): Rules {
   if (unreadable) return { readable: false, reason: unreadable.en, tw: unreadable.tw };
   let required = 0, codeOwners = false, lastPush = false, dismissStale = false; const teams: { key: string; label: string }[] = [], sources: string[] = [];
   for (const r of rulesets ?? []) if (r?.type === "pull_request") {
@@ -205,7 +209,7 @@ export function mergeRules(rulesets: any[] | null, protection: any | "none" | nu
   }
   const pr = protection && protection !== "none" ? protection.required_pull_request_reviews : null;
   if (pr) { sources.push("protection"); required = Math.max(required, Number(pr.required_approving_review_count) || 0); codeOwners ||= !!pr.require_code_owner_reviews; lastPush ||= !!pr.require_last_push_approval; dismissStale ||= !!pr.dismiss_stale_reviews; }
-  return { readable: true, required, codeOwners, lastPush, dismissStale, teams, sources };
+  return { readable: true, required, codeOwners, lastPush, dismissStale, teams, sources, ...(unread ? { unread: [unread] } : {}) };
 }
 export type Review = { login: string; state: string; commit: string | null; at: string };
 export type ReviewView = { login: string; state: "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED" | "COMMENTED"; stale: boolean; at: string; author: boolean };
@@ -282,8 +286,17 @@ export function ownersOf(path: string, rules: { pattern: string; owners: string[
   for (const r of rules) { const m = globMatch(r.pattern, path, budget); if (m === "limit") return "limit"; if (m) out = r.owners; }
   return out;
 }
-export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string };
+export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string }
+  /** GitHub's merge box says a review is still required, for a rule Studio could not read; `who` are the pending review requests */
+  | { kind: "github"; who: string[] };
+/** What GitHub itself says about a pull request's merge (GraphQL reviewDecision, mergeStateStatus, review requests). */
+export type GitHubMerge = { reviewDecision: string | null; mergeState: string | null; requested: string[] };
 export type Approvals = { readable: boolean; required: number; counted: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; missing: Missing[]; sources: string[];
+  /** rules Studio could not read, and GitHub's own merge state shown beside them */
+  unread?: { en: string; tw: string }[]; github?: GitHubMerge | null;
+  /** classic protection unread, and GitHub blocks the merge for a reason the readable rules do not show (a required
+   *  check, a rule Studio cannot see): not a missing approval, and never ready */
+  blocked?: boolean;
   /** with "approval after the last push": the logins treated as the pusher (inferred: GitHub does not expose who pushed) */
   inferredPusher?: string[] };
 /**
@@ -298,7 +311,10 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   /** owners already found for a path under the same CODEOWNERS (shared by the rows of one repository and base) */
   ownersCache?: Map<string, string[] | "limit">;
   /** why the code owners cannot be checked: CODEOWNERS or the changed files could not be read (not "no owner applies") */
-  ownersUnreadable?: { en: string; tw: string } | null }): Approvals {
+  ownersUnreadable?: { en: string; tw: string } | null;
+  /** GitHub's own merge state: with classic protection unread, a review decision of REVIEW_REQUIRED that the readable rules
+   *  do not explain is a missing review (who: the pending review requests) */
+  github?: GitHubMerge | null }): Approvals {
   if (!rules.readable) return { readable: false, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [{ kind: "unreadable", reason: rules.reason, tw: rules.tw }], sources: [] };
   // "approval after the last push": an approval counts when it was given on the current head, by someone other than the
   // pusher. GitHub does not say who pushed, so the pusher is inferred: the pull request's author and the head commit's
@@ -324,9 +340,20 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
     for (const ow of sets.values()) if (!ow.some(satisfied)) missing.push({ kind: "owner", who: ow });
   }
   for (const t of rules.teams) if (!memberOf(t.key).some((m) => approvers.has(m))) missing.push({ kind: "team", who: t.label });
-  return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources, ...(rules.lastPush ? { inferredPusher: pusher } : {}) };
+  // Classic protection unread: GitHub's merge box stands in for it. Without the merge box (its read failed) the rules
+  // are unreadable, never "nothing missing"; a review decision of REVIEW_REQUIRED, or a merge GitHub blocks, that the
+  // readable rules do not explain is still missing.
+  if (rules.unread?.length) {
+    if (!o.github?.mergeState) return { readable: false, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources, unread: rules.unread, github: o.github ?? null,
+      missing: [{ kind: "unreadable", reason: `${rules.unread[0].en}, and GitHub's merge box could not be read`, tw: `${rules.unread[0].tw}，也讀不到 GitHub 的 merge 狀態` }] };
+    if (!missing.length && o.github.reviewDecision === "REVIEW_REQUIRED") missing.push({ kind: "github", who: o.github.requested.slice(0, 10) });
+  }
+  // UNKNOWN: GitHub is still computing the merge state (just after a push); with the protection unread that is not ready either
+  const blocked = !!rules.unread?.length && !missing.length && (o.github?.mergeState === "BLOCKED" || o.github?.mergeState === "UNKNOWN");
+  return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources,
+    ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}), ...(blocked ? { blocked } : {}) };
 }
-export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : []);
+export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : []);
 
 // ---------- the next step ----------
 export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "test" | "approve" | "merge";
@@ -339,6 +366,7 @@ export const RULES: { id: string; kind: StepKind; en: string; tw: string }[] = [
   { id: "failed", kind: "fix", en: "the test evidence says fail → fix (the author)", tw: "測試證據是不通過 → 修正（作者）" },
   { id: "evidence", kind: "test", en: "no evidence, unclassified, code review only, evidence for an older head, or evidence that names no commit → test", tw: "沒有證據、無法分類、只審 code、證據不是這個 head、或證據沒指明 commit → 測試" },
   { id: "approvals", kind: "approve", en: "approvals missing (or the rules cannot be read) → approve", tw: "approve 不夠（或讀不到規則）→ approve" },
+  { id: "blocked", kind: "hold", en: "the branch protection could not be read and GitHub blocks the merge for a reason the readable rules do not show → on hold (see the merge box on GitHub)", tw: "讀不到分支保護，GitHub 又因為讀得到的規則看不出的原因擋住 merge → 暫緩（看 GitHub 的 merge 區塊）" },
   { id: "ready", kind: "merge", en: "everything above is satisfied → ready to merge (you)", tw: "以上都滿足 → 可合併（你）" },
 ];
 export type StepInput = {
@@ -365,6 +393,7 @@ export function nextStep(p: StepInput): Step {
     [ev?.verdict === "fail", () => ({ rule: "failed", kind: "fix", who: [p.author], reason: ev?.by })],
     [!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older" || ev.covers === "unknown", () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev && ev.covers === "unknown" && ev.verdict !== "unclassified" && ev.verdict !== "code-only" ? "unknown-commit" : ev?.verdict })],
     [p.approvals.missing.length > 0, () => ({ rule: "approvals", kind: "approve", who: p.approvals.readable ? missingWho(p.approvals.missing) : ["(rules unreadable)"] })],
+    [!!p.approvals.blocked, () => ({ rule: "blocked", kind: "hold", who: ["(GitHub blocks the merge)"] })],
     [true, () => ({ rule: "ready", kind: "merge", who: ["captain"] })],
   ];
   const matched = tests.map(([t]) => !!t), i = matched.indexOf(true);

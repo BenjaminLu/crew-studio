@@ -108,8 +108,14 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   the head commit cannot be read are the approvals unreadable), stale
   approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
   never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
-  the last pusher's own either). A protection read that GitHub refuses (it needs admin) makes the rules unreadable: the row
-  says so and its next step is approve with "rules unreadable", never a guess.
+  the last pusher's own either). Classic protection needs admin access to read; rulesets, CODEOWNERS and team
+  members need only read access. When GitHub refuses the protection (403, or 404 without "not protected") the rulesets
+  decide, a required team named only by id is looked up by name (`GET /teams/<id>`), and the row's detail shows that the
+  protection was not read beside GitHub's own merge box (GraphQL `reviewDecision`, `mergeStateStatus`, review requests).
+  If those rules miss nothing yet GitHub's review decision is `REVIEW_REQUIRED`, the protection asks for more: the missing
+  review is "a review GitHub still requires", from the pending review requests. If they miss nothing and GitHub still
+  blocks the merge, the row is on hold (rule 9), not ready; without the merge box at all, the rules are unreadable. Only when the rulesets themselves cannot
+  be read, or the protection read fails any other way, are the rules unreadable (the next step names "rules unreadable").
 - **Refresh**: when the page opens, every 5 minutes, and on the Refresh button. The timer runs on the shared
   `GitHubPoller` (src/github-poller.ts) under its own key, never a repository's, so it cannot collide with a project grant
   or the dashboard; a failed refresh backs off (10, then 15 minutes), and a rate limit (403 with no remaining, or 429)
@@ -135,7 +141,9 @@ The first matching rule, top to bottom; deterministic, no model:
 7. no evidence, unclassified, code review only, or evidence for an older head: test (the evidence sources), "test only
    the change since <sha>" when an older head was tested
 8. approvals missing, or the rules unreadable: approve (the missing people, owners or teams)
-9. otherwise: ready to merge (the captain)
+9. branch protection unread and GitHub blocks the merge for a reason the readable rules do not show (a required check,
+   a rule Studio cannot see): on hold, waiting on the merge box on GitHub; never a missing approval
+10. otherwise: ready to merge (the captain)
 
 ## Order and dependencies
 
