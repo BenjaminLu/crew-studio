@@ -190,7 +190,9 @@ const { ok, end } = suite("pr-watch");
 // ---------- the module against the fictional GitHub ----------
 const gh = prWatchGitHub();
 const H = await harness([bundledText(`workflows/v2/${APPLY_WORKFLOW}.wf.yaml`)!]), E = H.engine;
-process.env.CREW_GITHUB_API = gh.origin; process.env.CREW_GITHUB_TOKEN = "fixture-token"; process.env.CREW_GH_NO_CLI = "1"; process.env.CREW_PR_WATCH = "1";
+process.env.CREW_GITHUB_API = gh.origin; process.env.CREW_GITHUB_TOKEN = "fixture-token"; process.env.CREW_GH_NO_CLI = "1";
+// CREW_GH=0 (the firstmate dashboard's poller off) leaves this list on; only CREW_PR_WATCH=0 turns it off
+process.env.CREW_GH = "0"; delete process.env.CREW_PR_WATCH;
 const poller = new GitHubPoller(), sent: any[] = [];
 const W = createPrWatch({ dataDir: H.data, poller, notify: (t, d) => sent.push([t, d]) }); W.install(E);
 const call = async (path: string, body?: unknown, who = "desktop") => { const url = new URL(`http://127.0.0.1${path}`), writing = body !== undefined;
@@ -206,6 +208,7 @@ try {
   ok((await call("/api/prs/settings", { settings: fixtureSettings })).status === 200, "settings saved");
   await until(() => !!W.snapshot.at, 10000); await call("/api/prs/refresh", {});
   let v = (await call("/api/prs")).body;
+  ok(v.enabled === true && v.connected === true && v.rows.length > 0, "CREW_GH=0 does not turn the list off: it reads GitHub with the token");
   const ids = v.rows.map((r: any) => r.id).sort();
   const want = ["northwind/checkout-api#11", "northwind/checkout-api#12", "northwind/checkout-api#13", "northwind/checkout-api#14", "northwind/checkout-api#15", "northwind/checkout-api#16", "northwind/checkout-api#17", "northwind/checkout-api#18", "northwind/checkout-api#19", "northwind/ledger#40", "northwind/mobile#5", "northwind/web-app#30"].sort();
   ok(JSON.stringify(ids) === JSON.stringify(want), "the set: open pull requests opened by or assigned to the captain in the watched repositories, plus the single one (not someone else's, not a closed one)", JSON.stringify(ids));
@@ -397,6 +400,8 @@ try {
   v = (await call("/api/prs/unwatch", { repo: "northwind/ledger" })).body; ok(!v.watch.repos.some((r: any) => r.repo === "northwind/ledger") && !row(v, "northwind/ledger#40"), "removing a repository stops watching it");
   const saved = JSON.parse(readFileSync(join(H.data, "pr-watch", "state.json"), "utf8"));
   ok(saved.watch.repos.length === 2 && !JSON.stringify(saved).includes("fixture-token") && !JSON.stringify(W.snapshot).includes("fixture-token") && !JSON.stringify(v).includes("fixture-token"), "the state lives in Studio's data directory; the token is in no file and no answer");
+  { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
+    ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }
 
 { // round 5: a bad template saved by an older Studio is dropped on load, with a message, never run
