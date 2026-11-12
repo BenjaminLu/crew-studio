@@ -76,6 +76,7 @@ import { Workflows } from "./workflows";
 import { createImprove } from "./improve";
 import { createChanges } from "./changes";
 import { createProjectOverview } from "./project-overview";
+import { createPrWatch } from "./pr-watch";
 import { createM7 } from "./m7";
 import { createDocs } from "./docs";
 import { Skins, snapshotFor, nativeSkinData } from "./skins";
@@ -203,6 +204,8 @@ setInterval(() => {
   if (sig !== crewSig) { crewSig = sig; send("crew", { crew: crewCache.slice(0, 40), tasks: tasks() }); }
 }, 3000);
 gh.onChange = s => send("github", s);
+// Pull requests (#/prs, docs/units/pr-watch.md): every pull request the captain is on, read on the shared poller under its own key
+const prWatch = createPrWatch({ dataDir: DATA, poller: githubPoller, notify: (t, d) => send(t, d) });
 // Studio's own intents and firstmate's links to them
 const dataSig = () => ["intents.jsonl", "intent-links.jsonl", "artifacts.json"].map(f => { try { return statSync(join(DATA, f)).mtimeMs; } catch { return 0; } }).join("|");
 let lastData = dataSig();
@@ -511,7 +514,7 @@ const runtime = createRuntime({providerLogins:()=>gateLogins(),onboardingProvide
     return generateCodexImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model, effort: crew ? crew.effort : config.effort } });
   },
   // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
-  install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller, artifacts: m3.store }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
+  install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller, artifacts: m3.store }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); prWatch.install(engine); }], skills: improve.skills });
 nativeEngineForPolicy = runtime.engine;
 // external CLI grants (docs/units/cli-mcp-grant.md): issued and revoked on the board only; a grant token reaches four tools
 const cliGrants = new CliGrants(DATA, (type, summary, data) => { try { studioLog.emit({ type, workflow: "cli-grant", actor: type === "cli_grant_issued" || type === "cli_grant_revoked" ? "captain" : "external-cli", summary, data }); } catch {} });
@@ -536,7 +539,8 @@ runtime.engine.modelChoices = () => { const s = chatSettings(); return choices.f
 runtime.engine.notifyFirstmate = (text, summary) => { if (main.view().state === "detached") return false; main.enqueue("wake", text, "studio-native", undefined, undefined, { en: summary.en, "zh-TW": summary.zh }); return true; };
 runtime.engine.resumeFirstmateQuestions(); // questions pending at the restart: their wake notices died with the old process
 gh.start();
-process.once("exit",()=>{gh.stop();githubPoller.stop();});
+prWatch.ensure(); // the 5-minute refresh of the watched pull requests, when anything is watched and GitHub is connected
+process.once("exit",()=>{gh.stop();prWatch.stop();githubPoller.stop();});
 const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }), projectOf: (r) => runtime.engine.projectRow(r),
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
 // board-to-board work (docs/units/lan-relay.md): the restricted profile on every Task a peer's work started, and this
@@ -706,6 +710,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     { const rp = await packGenesis.handle(req, url, who, writing); if (rp) return rp; }
     { const r6 = await improve.handle(req, url, who, writing); if (r6) return r6; }
     { const ro = await projectOverview.handle(req, url, who as any, writing); if (ro) return ro; }
+    { const rp = await prWatch.handle(req, url, who as any, writing); if (rp) return rp; }
     { const rc = await changes.handle(req, url, who, writing); if (rc) return rc; }
     { const r7 = await m7.handle(req, url, who, writing); if (r7) return r7; }
     { const r8 = await docs.handle(req, url, who, writing); if (r8) return r8; }
