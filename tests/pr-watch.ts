@@ -453,6 +453,16 @@ try {
   const p2 = new GitHubPoller(), W2 = createPrWatch({ dataDir: dd, poller: p2 }), v2 = W2.view();
   ok(v2.settings.environments.map((e: any) => e.name).join() === "qa" && /prod/.test(v2.settingsWarning?.en ?? ""), "a saved template that fails the checks is dropped on load and the page says which", JSON.stringify(v2.settingsWarning));
   W2.stop(); p2.stop(); }
+{ // a proposal saved by an older Studio (every body mention a dependency) is rebuilt from the saved facts on load
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs"); const { tmpdir } = await import("node:os");
+  const dd = mkdtempSync(join(tmpdir(), "prw-oldprop-")); mkdirSync(join(dd, "pr-watch"));
+  const f = (n: number, body = "") => ({ id: `o/r#${n}`, repo: "o/r", number: n, body, base: "main", headRef: `t${n}`, createdAt: `2026-11-0${n}T00:00:00Z`, files: [], issues: [] });
+  const row = (n: number, body = "") => ({ id: `o/r#${n}`, repo: "o/r", number: n, url: "", title: "t", author: "a", draft: false, single: false, base: "main", headRef: `t${n}`, head: "", createdAt: f(n).createdAt, labels: [], bodyBlock: null, githubDeps: null, bodyMalformed: false, issues: [], reviews: [], approvals: { readable: true, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [], sources: [] }, evidence: null, ci: null, envs: [], partial: [], facts: f(n, body) });
+  writeFileSync(join(dd, "pr-watch", "snapshot.json"), JSON.stringify({ schema: 1, at: "2026-11-01T00:00:00Z", me: "a", rows: [row(1, "see o/r#2"), row(2)], errors: [], single: {}, depState: {}, proposal: { deps: [{ pr: "o/r#1", on: "o/r#2", kind: "mentions", why: "its body names o/r#2" }], hints: [] }, changed: {}, finger: {}, heads: {} }));
+  const p3 = new GitHubPoller(), W3 = createPrWatch({ dataDir: dd, poller: p3 }), v3 = W3.view(), r1 = v3.rows.find((r) => r.id === "o/r#1");
+  ok(!!r1 && r1.deps.proposed.length === 0 && r1.deps.source === "none" && r1.next.rule !== "dependency", "an old saved proposal's mention is not a dependency before any refresh", JSON.stringify(r1?.deps));
+  ok(v3.rows.findIndex((r) => r.id === "o/r#2") < v3.rows.findIndex((r) => r.id === "o/r#1"), "the mention still orders: the named pull request first");
+  W3.stop(); p3.stop(); }
 // ---------- generic: no organisation, repository, team or account name in the feature's source ----------
 {
   const root = join(import.meta.dir, "..");

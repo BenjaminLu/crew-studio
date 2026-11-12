@@ -177,6 +177,9 @@ export function createPrWatch(d: PrWatchDeps) {
     try { state.settings = cleanSettings({ ...raw, environments: envs }); } catch { state.settings = structuredClone(DEFAULT_SETTINGS); dropped.push("(all settings)"); }
     if (dropped.length) settingsWarning = { en: `Saved settings that no longer pass Studio's checks were not used: ${dropped.join(", ")}. Open the settings to set them again.`, tw: `已儲存但不再通過 Studio 檢查的設定沒有使用：${dropped.join("、")}。請打開設定重新設定。` }; }
   let snap: Snapshot = read(snapFile, emptySnap);
+  // the proposal is derived from the rows' saved facts: rebuild it on load, so one saved by an older Studio (which proposed
+  // every body mention as a dependency) never shows or gets accepted; the captain's own dependencies are in state.json
+  if (snap.rows?.length && snap.rows.every((r) => r.facts)) { try { snap.proposal = R.signals(snap.rows.map((r) => r.facts)); } catch { snap.proposal = { deps: [], hints: [] }; } }
   const etags = new EtagCache(); let etagToken = "";
   let version = 0, ranVersion = -1; // the state a refresh reads: a change while one runs asks for another
   const save = () => { version++; write(stateFile, state); };
