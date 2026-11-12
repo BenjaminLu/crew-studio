@@ -175,7 +175,8 @@ export function createPrWatch(d: PrWatchDeps) {
   let version = 0, ranVersion = -1; // the state a refresh reads: a change while one runs asks for another
   const save = () => { version++; write(stateFile, state); };
   const live = { refreshing: false, error: null as null | { en: string; tw: string }, backoffUntil: null as string | null, failures: 0 };
-  const disabled = () => process.env.CREW_GH === "0" && process.env.CREW_PR_WATCH !== "1";
+  // its own switch only: CREW_GH=0 turns off the firstmate dashboard's poller, not a list the captain filled in by hand
+  const disabled = () => process.env.CREW_PR_WATCH === "0";
   const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
   const has = (xs: string[], v: string) => xs.some((x) => eq(x, v));
   let engine: Engine | null = null;
@@ -569,7 +570,7 @@ export function createPrWatch(d: PrWatchDeps) {
     let b: any = {}; try { b = await req.json(); } catch {}
     try {
       switch (p) {
-        case "/api/prs/refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return json(view()); if (!token) return json({ ...view(), error: disabled() ? { en: "GitHub polling is off (CREW_GH=0)", tw: "GitHub 輪詢已關閉（CREW_GH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } });
+        case "/api/prs/refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return json(view()); if (!token) return json({ ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } });
           await refresh().catch(() => {}); return json(view()); }
         case "/api/prs/watch": { const got = watchUrl(b?.url); ensure(); void refresh().catch(() => {}); return json({ ...view(), added: got }); }
         case "/api/prs/unwatch": unwatch(b); ensure(); return json(view());

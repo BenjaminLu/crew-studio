@@ -118,7 +118,7 @@ function view() {
 }
 function statusLine(d) {
   const lines = [];
-  if (!d.enabled) lines.push(T("GitHub polling is off in this Studio (CREW_GH=0).", "這個 Studio 關閉了 GitHub 輪詢（CREW_GH=0）。"));
+  if (!d.enabled) lines.push(T("The pull request list is off in this Studio (CREW_PR_WATCH=0).", "這個 Studio 關閉了 PR 列表（CREW_PR_WATCH=0）。"));
   else if (!d.connected && (d.watch.repos.length || d.watch.prs.length)) lines.push(T("GitHub is not connected: Studio has no token (CREW_GITHUB_TOKEN, a token saved in Studio, or gh auth token).", "GitHub 尚未連線：Studio 沒有權杖（CREW_GITHUB_TOKEN、存在 Studio 的權杖，或 gh auth token）。"));
   if (d.settingsWarning) lines.push(LX(d.settingsWarning));
   if (d.error) lines.push(LX(d.error) + (d.backoffUntil ? T(` Next try after ${new Date(d.backoffUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`, ` ${new Date(d.backoffUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} 之後再試。`) : ""));
