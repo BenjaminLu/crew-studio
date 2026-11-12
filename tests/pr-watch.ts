@@ -206,7 +206,9 @@ const { ok, end } = suite("pr-watch");
 // ---------- the module against the fictional GitHub ----------
 const gh = prWatchGitHub();
 const H = await harness([bundledText(`workflows/v2/${APPLY_WORKFLOW}.wf.yaml`)!]), E = H.engine;
-process.env.CREW_GITHUB_API = gh.origin; process.env.CREW_GITHUB_TOKEN = "fixture-token"; process.env.CREW_GH_NO_CLI = "1"; process.env.CREW_PR_WATCH = "1";
+process.env.CREW_GITHUB_API = gh.origin; process.env.CREW_GITHUB_TOKEN = "fixture-token"; process.env.CREW_GH_NO_CLI = "1";
+// CREW_GH=0 (the firstmate dashboard's poller off) leaves this list on; only CREW_PR_WATCH=0 turns it off
+process.env.CREW_GH = "0"; delete process.env.CREW_PR_WATCH;
 const poller = new GitHubPoller(), sent: any[] = [];
 const W = createPrWatch({ dataDir: H.data, poller, notify: (t, d) => sent.push([t, d]) }); W.install(E);
 const call = async (path: string, body?: unknown, who = "desktop") => { const url = new URL(`http://127.0.0.1${path}`), writing = body !== undefined;
@@ -229,6 +231,7 @@ try {
   ok((await call("/api/prs/settings", { settings: fixtureSettings })).status === 200, "settings saved");
   await until(() => !!W.snapshot.at, 10000); await call("/api/prs/refresh", {});
   let v = (await call("/api/prs")).body;
+  ok(v.enabled === true && v.connected === true && v.rows.length > 0, "CREW_GH=0 does not turn the list off: it reads GitHub with the token");
   const ids = v.rows.map((r: any) => r.id).sort();
   const want = ["northwind/checkout-api#11", "northwind/checkout-api#12", "northwind/checkout-api#13", "northwind/checkout-api#14", "northwind/checkout-api#15", "northwind/checkout-api#16", "northwind/checkout-api#17", "northwind/checkout-api#18", "northwind/checkout-api#19", "northwind/ledger#40", "northwind/mobile#5", "northwind/web-app#30"].sort();
   ok(JSON.stringify(ids) === JSON.stringify(want), "the set: open pull requests opened by or assigned to the captain in the watched repositories, plus the single one (not someone else's, not a closed one)", JSON.stringify(ids));
@@ -436,6 +439,8 @@ try {
       await until(() => !!W2.snapshot.at, 10000); const r17 = W2.snapshot.rows.find((r) => r.id === "northwind/checkout-api#17");
       ok(!!r17 && r17.envs.length === 0 && !W2.snapshot.errors.some((e) => /budget/i.test(e.en)), "past the cap on reads for a repository's own environments the refresh still reads the rows, with no environments", JSON.stringify(r17?.envs));
     } finally { W2.stop(); p2.stop(); rmSync(dir, { recursive: true, force: true }); } }
+  { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
+    ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }
 
 { // round 5: a bad template saved by an older Studio is dropped on load, with a message, never run

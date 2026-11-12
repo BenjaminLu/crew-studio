@@ -75,6 +75,8 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 
 ## Reading
 
+- The list has its own switch: `CREW_PR_WATCH=0` turns it off. `CREW_GH=0` does not; that switch is for the firstmate
+  dashboard's poller, and this list reads only what the captain pasted in.
 - Studio reads with the token `findToken` finds (src/github.ts); it never reaches the browser, which talks only to
   `/api/prs…`. Every call goes to `api.github.com` (`CREW_GITHUB_API` may name a loopback test server, nothing else), at
   an address Studio builds from validated owner, repository and number; no address a page or GitHub supplies is fetched.
