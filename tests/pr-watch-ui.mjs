@@ -50,6 +50,14 @@ try {
   for (const u of ['https://github.com/northwind/checkout-api', 'https://github.com/northwind/web-app', 'https://github.com/northwind/ledger', 'https://github.com/northwind/mobile/pull/5']) {
     await p.fill('#pwAdd', u); await p.press('#pwAdd', 'Enter'); await p.waitForFunction((u) => !document.querySelector('#pwAdd')?.value && !document.querySelector('[data-prs-add-error]'), u); }
   ok(await p.locator('[data-prs-repo]').count() === 3 && await p.locator('[data-prs-single="northwind/mobile#5"]').count() === 1, 'three watched repositories and a single pull request show as chips');
+  // before any setting: evidence asks to be set up (offering who commented), environments are the repository's own
+  await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
+  ok(await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-env-auto="staging"].on').count() === 1, 'no environments set: the GitHub environment whose latest deployment contains the head is on');
+  ok(await p.locator('[data-prs-ev-setup]').count() === 12, 'no evidence source set: every row offers Set up, not a blank');
+  await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-ev-setup]').click(); await p.waitForSelector('[data-prs-suggest-account="qa-lin"]');
+  await p.click('[data-prs-suggest-account="qa-lin"]');
+  ok(await p.locator('[data-prs-set="accounts"]').inputValue() === 'qa-lin' && await p.locator('[data-prs-suggest-account="qa-lin"]').count() === 0, 'Set up opens the settings; a suggested account is added with one click');
+  await p.getByRole('button', { name: 'Cancel' }).click(); await p.waitForSelector('[data-prs-set="accounts"]', { state: 'detached' });
   ok((await api('/api/prs/settings', { settings: fixtureSettings })).status === 200, 'settings saved (evidence source, required reviewer, four environments, groups)');
   await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
   ok(await p.locator('[data-prs-row]').count() === 12, 'the refresh button reads GitHub: twelve rows');

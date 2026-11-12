@@ -117,13 +117,16 @@ export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
   createdAt: string; labels: string[]; bodyBlock: string | null; githubDeps: string[] | null; bodyMalformed: boolean;
   issues: { ref: string; url: string; title: string | null; state: string | null; external: boolean }[];
-  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean }[];
+  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[];
   facts: R.PrFacts; partial: string[];
 };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
   depState: Record<string, string>; proposal: { deps: R.Signal[]; hints: R.Hint[] }; changed: Record<string, { at: string; what: Change[] }>; finger: Record<string, any>;
   /** each row's head and when Studio first saw it: a comment that names no commit covers a head seen before it */
-  heads: Record<string, { sha: string; at: string }> };
+  heads: Record<string, { sha: string; at: string }>;
+  /** accounts that may post test evidence, offered when none is set: people who commented on a row's pull request but
+   *  are not its author, did not review it, and are not a bot account */
+  suggest?: { evidenceAccounts: { login: string; prs: number }[] } };
 const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {}, heads: {} });
 
 const list = (v: unknown, max = 50, each = 100) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : []).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => s.length <= each).slice(0, max);
@@ -283,6 +286,9 @@ export function createPrWatch(d: PrWatchDeps) {
       try {
         const dt = e.detect;
         if (dt.kind === "check") return checks.some((c) => eq(String(c.name), dt.name) && c.status === "completed" && ["success", "neutral"].includes(String(c.conclusion)));
+        if (dt.kind === "deployed") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || !Number.isSafeInteger(dep.id)) return false;
+          const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (!["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return false;
+          return await contains(repo, head, String(dep.sha)); }
         if (dt.kind === "deployment") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || String(dep.sha) !== head || !Number.isSafeInteger(dep.id)) return false;
           const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); return ["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : "")); }
         if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep || !Number.isSafeInteger(dep.id)) return false;
@@ -293,6 +299,15 @@ export function createPrWatch(d: PrWatchDeps) {
         const tag = R.tagCommit(text, dt.template); return tag ? await contains(repo, head, tag) : false;
       } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return null; }
     };
+    // a repository's own GitHub environments, used when the settings name none (at most 6, production last)
+    const envCache = new Map<string, Promise<R.EnvSetting[]>>();
+    const repoEnvs = (repo: string) => once(envCache, repo.toLowerCase(), async () => {
+      try { const j = await g.get(`${repoPath(repo)}/environments?per_page=30`);
+        const names = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n.length > 0 && n.length <= 60 && !/[\u0000-\u001f]/.test(n));
+        const prod = (n: string) => /prod/i.test(n);
+        return [...names.filter((n: string) => !prod(n)), ...names.filter(prod)].slice(0, 6).map((n: string) => ({ name: n, production: prod(n), repos: [repo], detect: { kind: "deployed" as const, environment: n } })); }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return []; } });
+    const commenters = new Map<string, { login: string; prs: Set<string> }>();
     let issueReads = 0; // issues named in bodies may be anywhere: at most 60 read per refresh
     const issueOf = (repo: string, n: number) => once(issueCache, `${repo}#${n}`.toLowerCase(), async () => { if (++issueReads > 60) return { title: null, state: null }; try { const j = await g.get(`${repoPath(repo)}/issues/${n}`); return { title: String(j?.title ?? "").slice(0, 300) || null, state: String(j?.state ?? "") || null }; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return { title: null, state: null }; } });
 
@@ -351,7 +366,11 @@ export function createPrWatch(d: PrWatchDeps) {
       out.heads[id.toLowerCase()] = { sha: head, at: headSeenAt };
       const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,
         checks: checks.map((c: any) => ({ name: String(c.name ?? ""), status: String(c.status ?? ""), conclusion: c.conclusion ? String(c.conclusion) : null, at: c.completed_at ? String(c.completed_at) : null, url: c.html_url ? String(c.html_url) : null })) });
-      const envs = await Promise.all(s.settings.environments.filter((e) => R.envApplies(e, repo)).map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks) })));
+      const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : s.settings.environments.filter((e) => R.envApplies(e, repo));
+      const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks), ...(auto ? { auto: true } : {}) })));
+      const reviewers = new Set(reviews.map((x) => x.login.toLowerCase()));
+      for (const c of comments) { const k = c.login.toLowerCase(); if (!k || k === author.toLowerCase() || k === me.toLowerCase() || reviewers.has(k) || k.endsWith("[bot]") || !R.NAME.test(c.login)) continue;
+        const e = commenters.get(k) ?? { login: c.login, prs: new Set<string>() }; e.prs.add(id); commenters.set(k, e); }
       const block = R.findBlock(body);
       const row: RawRow = { id, repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author, draft: !!p.draft, single, base, headRef: String(p.head?.ref ?? ""), head,
         createdAt: String(p.created_at ?? ""), labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")).filter(Boolean).slice(0, 20),
@@ -363,6 +382,7 @@ export function createPrWatch(d: PrWatchDeps) {
     rows.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id));
     out.rows = rows;
     out.proposal = R.signals(rows.map((r) => r.facts));
+    out.suggest = { evidenceAccounts: [...commenters.values()].map((c) => ({ login: c.login, prs: c.prs.size })).sort((a, b) => b.prs - a.prs || a.login.localeCompare(b.login)).slice(0, 6) };
     // the state of every pull request a row may depend on that is not itself a row
     const want = new Set<string>([...out.proposal.deps.map((x) => x.on), ...Object.values(s.deps).flatMap((x) => x.on), ...rows.flatMap((r) => r.githubDeps ?? [])]);
     let depReads = 0; // pull requests named as dependencies outside the list: at most 30 read per refresh
@@ -431,7 +451,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const projects = (() => { try { return new Projects(d.dataDir).nativeSnapshot().records; } catch { return []; } })();
     return {
       enabled: !disabled(), connected: !!tok.token, settingsWarning, me: snap.me, refreshedAt: snap.at, refreshing: live.refreshing, error: live.error, backoffUntil: live.backoffUntil, errors: snap.errors, intervalMs: interval(),
-      settings: state.settings,
+      settings: state.settings, suggest: snap.suggest ?? { evidenceAccounts: [] },
       watch: { repos: state.watch.repos.map((repo) => { const p = projects.find((x) => x.github?.repository && eq(x.github.repository, repo)); return { repo, count: repoCount(repo), project: p ? { id: p.id, name: p.name || p.id } : null }; }),
         prs: state.watch.prs.map((id) => ({ id, state: snap.single[id] ?? (rows.some((r) => eq(r.id, id)) ? "open" : null) })), excluded: state.watch.excluded },
       rows, rules: R.RULES, count: rows.filter((r) => r.next.kind === "approve" || r.next.kind === "merge").length,

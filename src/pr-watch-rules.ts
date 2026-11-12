@@ -404,7 +404,9 @@ export function nextStep(p: StepInput): Step {
 }
 
 // ---------- environments ----------
-export type EnvDetect = { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; template: string; ref?: string };
+/** "deployed" is never a setting: Studio uses it for a repository's own GitHub environments when none are set (the
+ *  environment's latest successful deployment contains the head). */
+export type EnvDetect = { kind: "deployed"; environment: string } | { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; template: string; ref?: string };
 export type EnvSetting = { name: string; production: boolean; repos: string[]; detect: EnvDetect };
 export const envApplies = (e: EnvSetting, repo: string) => !e.repos.length || e.repos.some((r) => sameRepo(r, repo));
 /** A tag template: literal text around exactly one `{tag}`, e.g. `image: registry/app:{tag}`. No regular expression is
