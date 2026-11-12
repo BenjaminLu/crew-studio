@@ -7,7 +7,7 @@
 // only through the captain-only card POST /api/prs/apply starts. Loaded before backbone.js.
 (() => {
 P.grip ??= '<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>';
-const PW = { data: null, err: null, busy: false, tab: "all", onPage: false, adding: false, addErr: null, drag: null };
+const PW = { data: null, err: null, busy: false, tab: "all", onPage: false, adding: false, addErr: null, addDraft: "", drag: null };
 const getJ = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(T(j.error || `HTTP ${r.status}`, j.tw || j.error || `HTTP ${r.status}`)); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error && typeof j.error === "string") throw new Error(T(j.error || `HTTP ${r.status}`, j.tw || j.error || `HTTP ${r.status}`)); return j; };
 const LX = (o) => (o ? T(o.en ?? "", o.tw ?? o.en ?? "") : "");
@@ -130,12 +130,13 @@ function statusLine(d) {
   return lines.length ? h("div", { class: "pw-status", role: "status", "data-prs-status": "" }, lines.map((l) => h("div", {}, icon("alert", "ic sm"), h("span", {}, l)))) : null;
 }
 function watchCard(d) {
-  const input = h("input", { class: "input", id: "pwAdd", type: "url", maxlength: 300, autocomplete: "off", "aria-label": T("GitHub repository or pull request address", "GitHub repo 或 pull request 網址"),
+  // the address being typed lives in PW, so a redraw (Refresh, a filter, a live update) never clears it before it is sent
+  const input = h("input", { class: "input", id: "pwAdd", type: "url", maxlength: 300, autocomplete: "off", value: PW.addDraft || "", oninput: (e) => { PW.addDraft = e.target.value; }, "aria-label": T("GitHub repository or pull request address", "GitHub repo 或 pull request 網址"),
     placeholder: T("Paste a GitHub repository or pull request address: https://github.com/<owner>/<repo> or …/pull/<n>", "貼上 GitHub repo 或 PR 網址：https://github.com/<owner>/<repo> 或 …/pull/<n>") });
   const add = async (e) => { e.preventDefault(); const url = input.value.trim(); if (!url || PW.adding) return; PW.adding = true; PW.addErr = null; let added = false;
     try { PW.data = await postJ("/api/prs/watch", { url }); setCount(PW.data.count); const a = PW.data.added;
       flash(a?.kind === "pr" ? T(`Watching ${a.repo}#${a.number}`, `開始追蹤 ${a.repo}#${a.number}`) : T(`Watching ${a?.repo}: the pull requests you opened or are assigned to, read on the next refresh`, `開始追蹤 ${a?.repo}：你開的或被指派的 PR，下一次刷新讀取`));
-      input.value = ""; added = true; setTimeout(load, 1500); }
+      input.value = ""; PW.addDraft = ""; added = true; setTimeout(load, 1500); }
     catch (err) { PW.addErr = err.message; } finally { PW.adding = false; render();
       // a live redraw while the request ran may have carried the address into a new field: clear the one on the page now
       if (added) { const cur = document.getElementById("pwAdd"); if (cur) cur.value = ""; } } };
@@ -245,8 +246,13 @@ function move(id, by) { const ids = allIds(), i = ids.indexOf(id), j = i + by; i
 
 // ---------- dialogs ----------
 function pwModal(title, kids, o = {}) {
+  // a live update may replace the row or control that opened the dialog: remember how to find it again, not the element
   const root = document.getElementById("modalRoot"), prev = document.activeElement;
-  const close = () => { root.replaceChildren(); prev?.focus?.(); };
+  const prevRow = prev?.closest?.("[data-prs-row]")?.dataset.prsRow ?? null, mark = prev?.getAttributeNames?.().find((n) => n.startsWith("data-prs-")) ?? null;
+  const prevSel = prev?.id ? `#${CSS.escape(prev.id)}` : mark ? `[${mark}="${CSS.escape(prev.getAttribute(mark) || "")}"]` : null;
+  const refocus = () => { if (prev?.isConnected) return prev.focus?.();
+    const el = (prevSel && document.querySelector(prevSel)) || (prevRow && document.querySelector(`[data-prs-row="${CSS.escape(prevRow)}"]`)); el?.focus?.(); };
+  const close = () => { root.replaceChildren(); refocus(); };
   const box = h("div", { class: `modal pw-modal${o.wide ? " wide" : ""}`, role: "dialog", "aria-modal": "true", "aria-label": title, "data-prs-dialog": o.id || "" },
     h("div", { class: "pw-mh" }, h("h2", {}, title), h("span", { class: "x-grow" }), h("button", { class: "btn ghost icon", "aria-label": T("Close", "關閉"), "data-prs-close": "", onclick: close }, icon("x"))), ...kids);
   const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); }, onkeydown: (e) => { if (e.key === "Escape") close(); } }, box);

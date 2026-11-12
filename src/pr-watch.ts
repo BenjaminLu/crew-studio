@@ -85,16 +85,17 @@ async function call(api: string, token: string, method: "GET" | "POST" | "PATCH"
 /** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
 export const READ_BUDGET = 1500, MAX_ROWS = 60;
 export class OverBudget extends Error { constructor() { super(`a refresh would read GitHub more than ${READ_BUDGET} times: watch fewer repositories or pull requests`); } }
-type Reader = { get(path: string): Promise<any>; pages(path: string, max: number): Promise<any[]>; graphql(query: string, variables: Record<string, unknown>): Promise<any> };
+/** pages: up to max pages of 100; the list carries capped: true when GitHub has more past the last page read */
+type Reader = { get(path: string): Promise<any>; pages(path: string, max: number): Promise<any[] & { capped?: boolean }>; graphql(query: string, variables: Record<string, unknown>): Promise<any> };
 function reader(api: string, token: string, signal: AbortSignal | undefined, poller: GitHubPoller | null, authority: ReadAuthority | null, o: { etags?: EtagCache; budget?: { left: number } } = {}): Reader {
   const spend = () => { if (o.budget && --o.budget.left < 0) throw new OverBudget(); };
   const through = (key: string, load: () => Promise<any>) => poller && authority ? poller.read(authority, key, () => { spend(); return load(); }, signal) : (spend(), load());
   const get = (path: string) => through(`GET ${path}`, () => call(api, token, "GET", path, undefined, signal, o.etags));
   return {
     get,
-    async pages(path, max) { const out: any[] = []; const sep = path.includes("?") ? "&" : "?";
-      for (let page = 1; page <= max; page++) { const part = await get(`${path}${sep}per_page=100&page=${page}`); const list = Array.isArray(part) ? part : []; out.push(...list); if (list.length < 100) break; }
-      return out; },
+    async pages(path, max) { const out: any[] & { capped?: boolean } = []; const sep = path.includes("?") ? "&" : "?";
+      for (let page = 1; page <= max; page++) { const part = await get(`${path}${sep}per_page=100&page=${page}`); const list = Array.isArray(part) ? part : []; out.push(...list); if (list.length < 100) return out; }
+      out.capped = true; return out; }, // a full last page: there may be more
     graphql: (query, variables) => through(`POST /graphql ${JSON.stringify(variables)} ${createHash("sha256").update(query).digest("hex").slice(0, 16)}`,
       async () => { const j = await call(api, token, "POST", "/graphql", { query, variables }, signal); if (j?.errors?.length && !j.data) throw new HttpError(200, { message: "GraphQL error" }); return j?.data ?? null; }),
   };
@@ -164,6 +165,8 @@ export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (typ
 class OverAuto extends Error {}
 
 /** An action name `act` does not know: the route's 404 (an error GitHub answered with 404 stays the 400 it always was). */
+/** the same pull requests, whatever the order or case */
+const sameIds = (a: string[], b: string[]) => { const n = (x: string[]) => [...new Set(x.map((i) => i.toLowerCase()))].sort().join(); return n(a) === n(b); };
 class NoSuchAction extends Error { constructor(name: string) { super(`no such action: ${name}`); } }
 
 export function createPrWatch(d: PrWatchDeps) {
@@ -344,10 +347,12 @@ export function createPrWatch(d: PrWatchDeps) {
     const rows = await pool(picked, 2, async ({ pr: p, repo, single }) => {
       const n = Number(p.number), id = R.prId(repo, n), path = `${repoPath(repo)}`, head = String(p.head?.sha ?? ""), base = String(p.base?.ref ?? ""), author = String(p.user?.login ?? "");
       const partial: string[] = [];
+      // a list past the page cap is read as incomplete (the newest entries are the ones left out): the row is held
+      const capped = <T extends any[] & { capped?: boolean }>(list: T, what: string): T => { if (list.capped && !partial.includes(what)) partial.push(what); return list; };
       const [reviews, commits, comments, timeline, files, checks, gql] = await Promise.all([
-        soft(async () => (await g.pages(`${path}/pulls/${n}/reviews`, 3)).map((r: any) => ({ login: String(r.user?.login ?? ""), state: String(r.state ?? ""), commit: r.commit_id ? String(r.commit_id) : null, at: String(r.submitted_at ?? "") })), [] as R.Review[], partial, "reviews"),
+        soft(async () => capped(await g.pages(`${path}/pulls/${n}/reviews`, 3), "reviews").map((r: any) => ({ login: String(r.user?.login ?? ""), state: String(r.state ?? ""), commit: r.commit_id ? String(r.commit_id) : null, at: String(r.submitted_at ?? "") })), [] as R.Review[], partial, "reviews"),
         soft(async () => (await g.pages(`${path}/pulls/${n}/commits`, 3)).map((c: any) => ({ sha: String(c.sha ?? ""), at: String(c.commit?.committer?.date ?? c.commit?.author?.date ?? ""), login: String(c.author?.login ?? c.committer?.login ?? ""), author: c.author?.login ? String(c.author.login) : null, committer: c.committer?.login ? String(c.committer.login) : null })), [] as (R.Commit & { login: string; author: string | null; committer: string | null })[], partial, "commits"),
-        soft(async () => (await g.pages(`${path}/issues/${n}/comments`, 3)).map((c: any) => ({ login: String(c.user?.login ?? ""), body: String(c.body ?? "").slice(0, 65536), at: String(c.created_at ?? ""), url: String(c.html_url ?? "") })), [] as R.EvidenceInput["comments"], partial, "comments"),
+        soft(async () => capped(await g.pages(`${path}/issues/${n}/comments`, 3), "comments").map((c: any) => ({ login: String(c.user?.login ?? ""), body: String(c.body ?? "").slice(0, 65536), at: String(c.created_at ?? ""), url: String(c.html_url ?? "") })), [] as R.EvidenceInput["comments"], partial, "comments"),
         soft(() => g.pages(`${path}/issues/${n}/timeline`, 2), [] as any[], partial, "timeline"),
         soft(async () => (await g.pages(`${path}/pulls/${n}/files`, 3)).map((f: any) => String(f.filename ?? "")).filter(Boolean), [] as string[], partial, "files"),
         soft(async () => SHA.test(head) ? ((await g.get(`${path}/commits/${head}/check-runs?per_page=100`))?.check_runs ?? []) : [], [] as any[], partial, "checks"),
@@ -449,16 +454,17 @@ export function createPrWatch(d: PrWatchDeps) {
     return rows.map((r) => {
       const key = Object.keys(s.deps).find((k) => eq(k, r.id)), record = key ? s.deps[key] : null;
       const proposed = sn.proposal.deps.filter((x) => eq(x.pr, r.id)).map((x) => ({ on: x.on, why: x.why, kind: x.kind }));
-      const on = record ? record.on : proposed.map((x) => x.on);
+      // no record of Studio's: a valid block on GitHub (written by Studio elsewhere, or before its state was lost) still holds the row
+      const fromGithub = !record && !!r.githubDeps?.length, on = record ? record.on : fromGithub ? r.githubDeps! : proposed.map((x) => x.on);
       const depsView = on.map((id) => { const inList = rowIds.get(id.toLowerCase()); const st = inList ? "open" : sn.depState[id] ?? Object.entries(sn.depState).find(([k]) => eq(k, id))?.[1] ?? "unread"; return { id, done: st === "merged", state: st }; });
       const ak = Object.keys(s.applied).find((k) => eq(k, r.id)), applied = ak ? s.applied[ak] : null;
       const drift = applied && R.normBlock(r.bodyBlock) !== R.normBlock(applied.block) ? { github: r.bodyBlock, studio: applied.block, githubDeps: r.githubDeps } : null;
       const next = R.nextStep({ draft: r.draft, author: r.author, reviews: r.reviews, requiredReviewers: s.settings.requiredReviewers, deps: depsView,
-        envs: r.envs.filter((e) => !e.auto).map((e) => ({ name: e.name, on: !!e.on, production: e.production })), /* a repository's own environments are shown, never a step */ evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals });
+        envs: r.envs.filter((e) => !e.auto).map((e) => ({ name: e.name, on: !!e.on, production: e.production })), /* a repository's own environments are shown, never a step */ evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals, incomplete: r.partial });
       const gk = Object.keys(s.groups).find((k) => eq(k, r.id));
       const { facts: _f, ...rest } = r;
       return { ...rest, project: projectOf(r.repo), group: gk ? s.groups[gk] : null, next,
-        deps: { on: depsView, source: record ? record.by : proposed.length ? "proposal" : "none", proposed: record ? [] : proposed, applied: !!applied && !drift, drift },
+        deps: { on: depsView, source: record ? record.by : fromGithub ? "github" : proposed.length ? "proposal" : "none", proposed: record || fromGithub ? [] : proposed, applied: !!applied && !drift && sameIds(applied.on, on), drift },
         changed: sn.changed[r.id.toLowerCase()] ?? null };
     });
   }
@@ -596,7 +602,8 @@ export function createPrWatch(d: PrWatchDeps) {
           const keptBlock = R.findBlock(String(out?.body ?? "")), sameBlock = t.block ? !!keptBlock && keptBlock !== "malformed" && keptBlock.text.replace(/\r\n/g, "\n") === t.block : !keptBlock;
           if (flat(String(out?.body ?? "")) !== flat(next) || !sameBlock) { refused.push({ id: t.id, why: "the body GitHub kept differs from what Studio wrote (edited at the same moment?); check it on GitHub and apply again" }); continue; }
           const k = Object.keys(state.applied).find((a) => eq(a, t.id)) ?? t.id; if (t.block) state.applied[k] = { block: t.block, on: t.on, at: iso() }; else delete state.applied[k];
-          const dk = Object.keys(state.deps).find((a) => eq(a, t.id)) ?? t.id; state.deps[dk] = { on: t.on, by: "captain", at: iso() };
+          // the record follows the card only while it is still the one the card was made from: a change since (the board, a CLI) stays
+          const dk = Object.keys(state.deps).find((a) => eq(a, t.id)) ?? t.id, rec = state.deps[dk]; if (!rec || sameIds(rec.on, t.on)) state.deps[dk] = { on: t.on, by: "captain", at: iso() };
           written.push(t.id);
         } catch (err: any) { refused.push({ id: t.id, why: err instanceof HttpError ? why(err).en : "GitHub could not be reached" }); }
       }

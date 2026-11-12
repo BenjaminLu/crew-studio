@@ -146,17 +146,19 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 The first matching rule, top to bottom; deterministic, no model:
 
 1. draft: on hold (the author)
-2. a reviewer asked for changes: fix (the author)
-3. a required reviewer has not reviewed: wait for that reviewer
-4. a dependency is not merged: wait for that pull request
-5. the head runs in no pre-production environment (when any is set): deploy for testing (the author)
-6. the evidence verdict is fail: fix (the author). Failed evidence never falls through to "ready".
-7. no evidence, unclassified, code review only, or evidence for an older head: test (the evidence sources), "test only
+2. Studio could not read every review or comment (a read failed, or more than the 300 it reads): on hold, see GitHub. A
+   change request or a later failing verdict may be among the unread ones, so such a row is never ready.
+3. a reviewer asked for changes: fix (the author)
+4. a required reviewer has not reviewed: wait for that reviewer
+5. a dependency is not merged: wait for that pull request
+6. the head runs in no pre-production environment (when any is set): deploy for testing (the author)
+7. the evidence verdict is fail: fix (the author). Failed evidence never falls through to "ready".
+8. no evidence, unclassified, code review only, or evidence for an older head: test (the evidence sources), "test only
    the change since <sha>" when an older head was tested
-8. approvals missing, or the rules unreadable: approve (the missing people, owners or teams)
-9. branch protection unread and GitHub blocks the merge for a reason the readable rules do not show (a required check,
+9. approvals missing, or the rules unreadable: approve (the missing people, owners or teams)
+10. branch protection unread and GitHub blocks the merge for a reason the readable rules do not show (a required check,
    a rule Studio cannot see): on hold, waiting on the merge box on GitHub; never a missing approval
-10. otherwise: ready to merge (the captain)
+11. otherwise: ready to merge (the captain)
 
 ## Order and dependencies
 
@@ -170,11 +172,16 @@ The first matching rule, top to bottom; deterministic, no model:
   signals-based proposal. Asking a model to propose (through a captain card) is the next step of this unit.
 - **Captain edits**: drag to reorder; add or remove a dependency on a row (from the list or by `owner/repo#n`). An edit
   replaces the proposal for that row and is Studio's record.
+- **A block already on GitHub**: a row with no record of Studio's (its state was lost, or another Studio wrote the block)
+  takes its dependencies from the valid `crew-studio:depends` block in its body, shown as from GitHub.
 - **Applied on the pull request**: only through a captain-only card (workflow `pr-watch-apply-depends`, in the Inbox)
   that shows each target repository, pull request and the exact block. Studio reads each body when the card is made and
   again right before writing; a body that changed in between is left alone and the Task says so (apply again). The card
-  also shows the block GitHub has now. Only the marked block is replaced (or added at the end); everything else in the
-  body is kept byte for byte, line endings included. After the write Studio compares the body GitHub kept with what it
+  also shows the block GitHub has now. Only the marked block is replaced (or added at the end, after the body as it is
+  and one blank line, so removing it gives that body back exactly); everything else in the body is kept byte for byte,
+  line endings, trailing spaces and blank lines included. The card's answer updates Studio's record only while the row
+  still has the dependencies the card was made from: a change made since (on the page, by a CLI) is kept, and the row
+  does not say applied until its record and the block agree. After the write Studio compares the body GitHub kept with what it
   sent (line endings and trailing spaces normalised, the block itself exactly) and reports a difference instead of
   recording the block as applied. A Task that ends while GitHub answers writes
   nothing more.

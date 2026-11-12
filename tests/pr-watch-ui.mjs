@@ -118,6 +118,12 @@ try {
   ok(await p.locator('[data-prs-tab][role="tab"], [data-prs-tab][aria-selected]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
   await p.focus('[data-prs-row="northwind/checkout-api#13"]'); await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(400);
   ok(await p.evaluate(() => document.activeElement?.dataset?.prsRow) === 'northwind/checkout-api#13', 'a live update gives the keyboard focus back to the row that had it');
+  await p.press('[data-prs-row="northwind/checkout-api#13"]', 'Enter'); await p.waitForSelector('[data-prs-dialog="detail"]');
+  await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(500); await p.keyboard.press('Escape');
+  ok(await p.locator('[data-prs-dialog]').count() === 0 && await p.evaluate(() => document.activeElement?.dataset?.prsRow) === 'northwind/checkout-api#13', 'closing a dialog after a live update gives the focus back to the row that opened it (the new one)', await p.evaluate(() => document.activeElement?.outerHTML?.slice(0, 80)));
+  await p.fill('#pwAdd', 'https://github.com/northwind/not-sent-yet'); await p.click('[data-prs-tab="approve"]'); await p.click('[data-prs-refresh]'); await p.waitForTimeout(600);
+  ok(await p.inputValue('#pwAdd') === 'https://github.com/northwind/not-sent-yet', 'an address typed but not sent survives a filter, a refresh and the redraw they cause', await p.inputValue('#pwAdd'));
+  await p.fill('#pwAdd', ''); await p.click('[data-prs-tab="all"]');
   // the proposal, a drag and a dependency edit
   ok(await p.locator('[data-prs-proposed-dep="northwind/checkout-api#14>northwind/checkout-api#15"]').count() === 1 && /Depends-on/.test(await p.locator('[data-prs-proposal]').innerText()), 'the proposal shows each dependency with its reason');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-prop-tag').count() === 1 && await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-proposed-pos').count() === 1, 'the row shows the dependency and its position as proposed');
