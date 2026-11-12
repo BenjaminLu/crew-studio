@@ -1,0 +1,19 @@
+# Writing the dependency block into pull request bodies (internal): made only by the Pull requests page (POST /api/prs/apply);
+# its captain-only card shows each block and repository, and only the captain's approval writes (docs/units/pr-watch.md;
+# driven end to end against a fixture GitHub by tests/pr-watch.ts).
+schema: 2
+workflow: pr-watch-apply-depends
+pin: { version: 1, sha256: "69908928f4f84b5430f62317462a9b55c4038ff4d7da19e20cf41bfbfc1ae60a" }   # bun scripts/acceptance/pin.ts pr-watch-apply-depends
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: internal
+    covers: "the board's workflow list does not offer it and the start route refuses it: only the Pull requests page makes an apply Task"
+    how: internal
+    board_refusal: { status: 409, error: "internal or retired" }

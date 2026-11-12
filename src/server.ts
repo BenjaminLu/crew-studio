@@ -76,6 +76,7 @@ import { Workflows } from "./workflows";
 import { createImprove } from "./improve";
 import { createChanges } from "./changes";
 import { createProjectOverview } from "./project-overview";
+import { createPrWatch } from "./pr-watch";
 import { createM7 } from "./m7";
 import { createDocs } from "./docs";
 import { Skins, snapshotFor, nativeSkinData } from "./skins";
@@ -203,6 +204,8 @@ setInterval(() => {
   if (sig !== crewSig) { crewSig = sig; send("crew", { crew: crewCache.slice(0, 40), tasks: tasks() }); }
 }, 3000);
 gh.onChange = s => send("github", s);
+// Pull requests (#/prs, docs/units/pr-watch.md): every pull request the captain is on, read on the shared poller under its own key
+const prWatch = createPrWatch({ dataDir: DATA, poller: githubPoller, notify: (t, d) => send(t, d) });
 // Studio's own intents and firstmate's links to them
 const dataSig = () => ["intents.jsonl", "intent-links.jsonl", "artifacts.json"].map(f => { try { return statSync(join(DATA, f)).mtimeMs; } catch { return 0; } }).join("|");
 let lastData = dataSig();
@@ -511,12 +514,12 @@ const runtime = createRuntime({providerLogins:()=>gateLogins(),onboardingProvide
     return generateCodexImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model, effort: crew ? crew.effort : config.effort } });
   },
   // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
-  install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller, artifacts: m3.store }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
+  install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller, artifacts: m3.store }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); prWatch.install(engine); }], skills: improve.skills });
 nativeEngineForPolicy = runtime.engine;
-// external CLI grants (docs/units/cli-mcp-grant.md): issued and revoked on the board only; a grant token reaches four tools
+// external CLI grants (docs/units/cli-mcp-grant.md): issued and revoked on the board only; a grant token reaches four run tools, or the pull request list's
 const cliGrants = new CliGrants(DATA, (type, summary, data) => { try { studioLog.emit({ type, workflow: "cli-grant", actor: type === "cli_grant_issued" || type === "cli_grant_revoked" ? "captain" : "external-cli", summary, data }); } catch {} });
 installGrantViews(runtime.engine, cliGrants);
-const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants, firstmate: () => runtime.firstmate });
+const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants, firstmate: () => runtime.firstmate, prs: () => prWatch.tools });
 /** the line the board shows to copy: the MCP helper with the grant's token file (and Studio's URL when not the default port) */
 const grantCommand = (file: string) => { const port = server?.port ?? PORT; return helperCommand("mcp", ["--grant-file", file, ...(port !== 4210 ? ["--url", `http://127.0.0.1:${port}`] : [])]); };
 const shq = (a: string) => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
@@ -536,7 +539,8 @@ runtime.engine.modelChoices = () => { const s = chatSettings(); return choices.f
 runtime.engine.notifyFirstmate = (text, summary) => { if (main.view().state === "detached") return false; main.enqueue("wake", text, "studio-native", undefined, undefined, { en: summary.en, "zh-TW": summary.zh }); return true; };
 runtime.engine.resumeFirstmateQuestions(); // questions pending at the restart: their wake notices died with the old process
 gh.start();
-process.once("exit",()=>{gh.stop();githubPoller.stop();});
+prWatch.ensure(); // the 5-minute refresh of the watched pull requests, when anything is watched and GitHub is connected
+process.once("exit",()=>{gh.stop();prWatch.stop();githubPoller.stop();});
 const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }), projectOf: (r) => runtime.engine.projectRow(r),
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
 // board-to-board work (docs/units/lan-relay.md): the restricted profile on every Task a peer's work started, and this
@@ -706,6 +710,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     { const rp = await packGenesis.handle(req, url, who, writing); if (rp) return rp; }
     { const r6 = await improve.handle(req, url, who, writing); if (r6) return r6; }
     { const ro = await projectOverview.handle(req, url, who as any, writing); if (ro) return ro; }
+    { const rp = await prWatch.handle(req, url, who as any, writing); if (rp) return rp; }
     { const rc = await changes.handle(req, url, who, writing); if (rc) return rc; }
     { const r7 = await m7.handle(req, url, who, writing); if (r7) return r7; }
     { const r8 = await docs.handle(req, url, who, writing); if (r8) return r8; }
@@ -757,12 +762,15 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/api/cli-grants" || /^\/api\/cli-grants\/g-[0-9a-f]{8}\/revoke$/.test(p)) {
       if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (!hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
-      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
+      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], scopes: ["project", "prs"], projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
       if (req.headers.get("x-crew-tool-token") || !hasSessionCookie(req, SESSION) || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin")
         return json({ error: "Only the captain issues or revokes an external CLI grant, from Studio's page on this Mac / 只有船長能在這台 Mac 的 Studio 頁面發出或撤銷外部 CLI 授權", code: "captainOnly" }, 403);
       let b: any; try { b = await req.json(); } catch { return json({ error: "json only" }, 400); }
       if (p !== "/api/cli-grants") { try { return json({ grant: grantView(cliGrants.revoke(p.split("/")[3], "captain")) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 404); } }
-      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => k !== "project" && k !== "ttl")) return json({ error: "send {project, ttl}" }, 400);
+      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => k !== "project" && k !== "ttl" && k !== "scope")) return json({ error: "send {project, ttl} or {scope: \"prs\", ttl}" }, 400);
+      if (b.scope === "prs") { if (b.project !== undefined) return json({ error: "a pull request list grant has no project" }, 400);
+        try { const r = cliGrants.issue({ scope: "prs", ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
+      if (b.scope !== undefined && b.scope !== "project") return json({ error: "scope is project or prs" }, 400);
       const project = runtime.projects.get(String(b.project ?? "")) as any; if (!project || project.enabled === false) return json({ error: "no such project" }, 404);
       try { const r = cliGrants.issue({ project: project.id, ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); }
     }
@@ -926,13 +934,14 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
         let args: any = {}; try { args = await req.json(); } catch {}
         return json(m3.runs.callTool(wt, decodeURIComponent(p.slice("/api/tools/".length)), args));
       }
-      // an external CLI grant (src/cli-grants.ts): its four tools only; revoked, expired or unknown is 403 on the next call
+      // an external CLI grant (src/cli-grants.ts): only the tools of its scope; revoked, expired or unknown is 403 on the next call
       if (CliGrants.claims(wt)) {
         const name = p === "/api/tools" ? "tools/list" : decodeURIComponent(p.slice("/api/tools/".length));
         const u = cliGrants.use(wt, name); if (!u.ok) return json({ error: u.error }, u.status);
-        if (p === "/api/tools") return json(grantTools.list());
-        if (!grantTools.list().some((t) => t.name === name)) return json({ error: `no such tool: ${name} (studio exposes ${grantTools.list().map((t) => t.name).join(", ")})` }, 404);
-        let args: any = {}; try { args = await req.json(); } catch {}
+        if (p === "/api/tools") return json(grantTools.list(u.grant));
+        if (!grantTools.list(u.grant).some((t) => t.name === name)) return json({ error: `no such tool: ${name} (studio exposes ${grantTools.list(u.grant).map((t) => t.name).join(", ")})` }, 404);
+        const raw = await req.text(); if (raw.length > 65_536) return json({ error: "arguments too large" }, 413);
+        let args: any = {}; try { args = raw ? JSON.parse(raw) : {}; } catch {}
         try { return json(await grantTools.call(u.grant, name, args)); } catch (e: any) { return json({ error: String(e?.message ?? e) }); }
       }
       const tk = tokens.get(req.headers.get("x-crew-tool-token") ?? "");

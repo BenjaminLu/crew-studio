@@ -17,7 +17,7 @@ Status: binding. A change to this document goes through the same adversarial rev
 ## 2. Layers
 
 ```
-UI                            backbone: Board (home: every task in flight, the decisions waiting, answered in place) · Firstmate · Terminals (agent CLIs in real terminals, full window) · Inbox (decisions only) · Peers (board-to-board work, units/lan-relay.md) · Crew · Tasks (live graph; review loops open as Rounds) · Workflows (editor, checks, gates) · Library · Settings (gear: Doctor, keys, roadmap). Labs, behind a flag: improve · retro · packs · docs · file org · skins · changes · phone pairing
+UI                            backbone: Board (home: every task in flight, the decisions waiting, answered in place) · Firstmate · Terminals (agent CLIs in real terminals, full window) · Inbox (decisions only) · Pull requests (every open pull request the captain is on, across repositories: its next step and who it waits on, units/pr-watch.md) · Peers (board-to-board work, units/lan-relay.md) · Crew · Tasks (live graph; review loops open as Rounds) · Workflows (editor, checks, gates) · Library · Settings (gear: Doctor, keys, roadmap). Labs, behind a flag: improve · retro · packs · docs · file org · skins · changes · phone pairing
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 API + SSE                     one HTTP server; every mutation is an event; SSE streams events and snapshots
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

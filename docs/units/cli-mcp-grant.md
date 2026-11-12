@@ -40,7 +40,7 @@ From source the helper is `bun src/mcp.ts --grant-file …`; Studio adds `--url 
 
 ## The four tools
 
-A grant token reaches exactly these, through `/api/tools` (never the sandbox's tools-only listener):
+A project grant's token reaches exactly these, through `/api/tools` (never the sandbox's tools-only listener):
 
 | Tool | What it does |
 | --- | --- |
@@ -71,6 +71,37 @@ merge, so an agent that tries gets "no such tool", not "permission denied". A re
 - **Audit.** Every issue (`cli_grant_issued`), use (`cli_grant_used`), proposal (`cli_grant_run`), refusal
   (`cli_grant_refused`: unknown, revoked, expired, call limit) and revoke (`cli_grant_revoked`) is a line in Studio's
   event log, `data/events.jsonl`, workflow `cli-grant`.
+
+## A pull request list grant (scope `prs`)
+
+Settings → External CLI grants → **Reaches: The pull request list / PR 列表** issues a grant with `scope: "prs"` and no
+project (`POST /api/cli-grants {scope: "prs", ttl}`; the same captain-only page checks). Its token reaches only the pull
+request list's tools (`tools` in `src/pr-watch.ts`), never the four run tools; a project grant never reaches these.
+The captain chose that the list's own edits go through directly, without a card: they change Studio's own record only,
+are reversible on the page, and are each audited.
+
+| Tool | What it does |
+| --- | --- |
+| `prs_list` | every watched row in the captain's order: CI, approvals (count, missing, per required team), reviews, test evidence, environments, dependencies, linked issues, the next step; the watch list and the settings |
+| `prs_get` | `{pr}`: one row in full, with the head, labels, the dependency record, why it sits where it does, and the body |
+| `prs_refresh` | read GitHub now, then `prs_list` (a refresh error is `refreshError`, not `error`) |
+| `prs_watch`, `prs_unwatch`, `prs_restore` | the watch list, as the page's address field and remove buttons |
+| `prs_settings` | `{settings}`: only what it names changes (`which` and `evidence` merge one level down) |
+| `prs_order`, `prs_deps`, `prs_group`, `prs_accept` | the order, a dependency, a release group, accepting Studio's proposal |
+
+They run the board's own code (`act` in `src/pr-watch.ts`), so the same checks hold, and the open page reloads (live event
+`prs`). **Nothing writes to GitHub**: there is no tool for the dependency block (that stays the captain-only card the
+board's Apply starts), merging, reviews, comments or labels. A tool error is `{error}`. Every successful edit is a
+`cli_grant_prs_edit` line in the event log with the tool and what it sent (cut to 4 KB); reads are `cli_grant_used` as for any call.
+
+- Arguments over 16 KB are refused (the route itself takes at most 64 KB). `prs_settings` refuses a field it does not know
+  or one of the wrong type, so a mistaken call never clears a setting.
+- A dependency a grant sets is recorded as `by: "external-cli"` with the grant's id (the row's `deps.source`), not as the
+  captain's, until the captain sets it on the page.
+- `prs_refresh` reads GitHub at most once a minute for a CLI (the captain's token is shared with the rest of Studio); a
+  sooner call answers with the last refresh.
+- **What it can read is what the captain's GitHub token can read.** `prs_watch` takes any pull request address and
+  `prs_get` returns its body, so a list grant reads every pull request that token reaches, private repositories included.
 
 ## What the boundary is not
 
