@@ -5,7 +5,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // detectors, evidence, every next-step rule, change marks, the captain-only card that writes only the marked block, drift
 // and both of its actions, the rate limit, and that no organisation, repository, team or account name is in the source.
 //   bun tests/pr-watch.ts
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harness, until, suite } from "./rt-harness";
 import { bundledText } from "../src/bundled";
@@ -220,6 +221,13 @@ try {
   ok((await call("/api/prs/watch", { url: "https://github.com/northwind/web-app" })).status === 400, "watching the same repository again is refused with a message");
   ok((await call("/api/prs/watch", { url: "https://example.com/northwind/web-app" })).body.error?.includes("github.com"), "a non-GitHub address is refused with a message");
   ok((await call("/api/prs/watch", { url: "https://github.com/northwind/web-app" }, "phone")).status === 403, "a paired phone cannot change the list");
+  // no settings yet: the environments are each repository's own, and evidence offers who may post it
+  { await until(() => !!W.snapshot.at, 10000); await call("/api/prs/refresh", {}); const v0 = (await call("/api/prs")).body, envOf = (id: string) => row(v0, id).envs.map((e: any) => `${e.name}:${e.on}${e.auto ? "" : "!"}${e.production ? "P" : ""}`).join();
+    ok(envOf("northwind/checkout-api#17") === "dev:false,staging:true,preproduction:false" && envOf("northwind/checkout-api#19") === "dev:true,staging:false,preproduction:false" && row(v0, "northwind/web-app#30").envs.length === 0,
+      "no environments set: a repository's GitHub environments that have a successful deployment (production, never deployed, is left out), on when the newest successful one (not a newer failed one) contains the head", JSON.stringify([envOf("northwind/checkout-api#17"), envOf("northwind/checkout-api#19")]));
+    ok(v0.rows.every((r: any) => r.next.rule !== "environment"), "a repository's own environments are shown only: they never make the next step deploy for testing");
+    ok(v0.suggest.evidenceAccounts[0]?.login === "qa-lin" && !v0.suggest.evidenceAccounts.some((x: any) => ["skipper", "review-bot", "ana", "bo", "rel-ray"].includes(x.login)) && v0.rows.every((r: any) => r.evidence === null),
+      "no evidence source set: no evidence is guessed, and the people who commented without authoring or reviewing are offered", JSON.stringify(v0.suggest)); }
   ok((await call("/api/prs/settings", { settings: fixtureSettings })).status === 200, "settings saved");
   await until(() => !!W.snapshot.at, 10000); await call("/api/prs/refresh", {});
   let v = (await call("/api/prs")).body;
@@ -425,6 +433,12 @@ try {
   v = (await call("/api/prs/unwatch", { repo: "northwind/ledger" })).body; ok(!v.watch.repos.some((r: any) => r.repo === "northwind/ledger") && !row(v, "northwind/ledger#40"), "removing a repository stops watching it");
   const saved = JSON.parse(readFileSync(join(H.data, "pr-watch", "state.json"), "utf8"));
   ok(saved.watch.repos.length === 2 && !JSON.stringify(saved).includes("fixture-token") && !JSON.stringify(W.snapshot).includes("fixture-token") && !JSON.stringify(v).includes("fixture-token"), "the state lives in Studio's data directory; the token is in no file and no answer");
+  // a repository's own environments are for show: past their read cap the refresh still succeeds, without them
+  { const dir = mkdtempSync(join(tmpdir(), "pr-watch-cap-")), p2 = new GitHubPoller(), W2 = createPrWatch({ dataDir: dir, poller: p2, notify: () => {}, limits: { autoReads: 2 } });
+    try { const u = new URL("http://127.0.0.1/api/prs/watch"); await W2.handle(new Request(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "https://github.com/northwind/checkout-api" }) }), u, { kind: "desktop" }, true);
+      await until(() => !!W2.snapshot.at, 10000); const r17 = W2.snapshot.rows.find((r) => r.id === "northwind/checkout-api#17");
+      ok(!!r17 && r17.envs.length === 0 && !W2.snapshot.errors.some((e) => /budget/i.test(e.en)), "past the cap on reads for a repository's own environments the refresh still reads the rows, with no environments", JSON.stringify(r17?.envs));
+    } finally { W2.stop(); p2.stop(); rmSync(dir, { recursive: true, force: true }); } }
   { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
     ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }

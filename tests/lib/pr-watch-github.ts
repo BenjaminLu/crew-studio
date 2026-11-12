@@ -81,11 +81,17 @@ export function fixtureData() {
   const deployments = [
     { id: 501, repo: ca, environment: "dev", ref: "topic-19", sha: head(find(ca, 19)!), state: "success" },
     { id: 502, repo: ca, environment: "staging", ref: "staging", sha: sha("staging-tip"), state: "success" },
+    // a newer staging deployment from another ref that failed: the environment stays on what 502 deployed
+    { id: 503, repo: ca, environment: "staging", ref: "hotfix", sha: sha("hotfix-tip"), state: "failure" },
+    // "preproduction" is a test environment, not production
+    { id: 504, repo: ca, environment: "preproduction", ref: "preprod", sha: sha("preprod-tip"), state: "success" },
   ];
   // the staging branch's tip contains #17's head (it was merged into staging)
   const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!)] };
   const files: Record<string, string> = { "northwind/infra/deploy/prod.yaml": `app:\n  image: registry.example/checkout:${head(find(ca, 18)!).slice(0, 12)}\n` };
-  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find };
+  // the repositories' own GitHub environments (used when the settings name none)
+  const envs: Record<string, string[]> = { [ca]: ["production", "dev", "staging", "preproduction"] };
+  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs };
 }
 
 export function prWatchGitHub(data = fixtureData()) {
@@ -143,6 +149,7 @@ export function prWatchGitHub(data = fixtureData()) {
       if (path.endsWith("CODEOWNERS") && knobs.codeownersFail) return json({ message: "Server Error" }, 500);
       const text = path.endsWith("CODEOWNERS") ? (path === ".github/CODEOWNERS" ? data.rules[repo]?.codeowners : undefined) : data.files[`${repo}/${path}`];
       return text == null ? nf() : json({ type: "file", encoding: "base64", size: text.length, content: Buffer.from(text).toString("base64") }); }
+    if (rest === "/environments") return json({ environments: (data.envs[repo] ?? []).map((name) => ({ name })) });
     if (rest === "/deployments") { const list = data.deployments.filter((d) => d.repo === repo && (!q.get("environment") || d.environment === q.get("environment")) && (!q.get("ref") || d.ref === q.get("ref"))).reverse();
       return json(list.map((d) => ({ id: d.id, sha: d.sha, ref: d.ref, environment: d.environment }))); }
     if ((k = /^\/deployments\/(\d+)\/statuses$/.exec(rest))) { const d = data.deployments.find((x) => x.id === Number(k![1])); return d ? json([{ state: d.state }]) : nf(); }

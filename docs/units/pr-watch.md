@@ -93,6 +93,14 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 - **Issues**: links from the body (any GitHub issue URL in any repository), `closingIssuesReferences`, and
   cross-referenced events in the timeline. An issue outside the watched repositories is read (title, state), marked
   external, and never written.
+- **No settings yet**: with no environment set, each repository's own GitHub environments that have a successful
+  deployment are shown (at most 6, production last; `github-pages` left out): one is on when the newest successful of its
+  last five deployments contains the head (`GET …/environments`, the deployments and their statuses, then a compare, at
+  most 120 compares a refresh, past which an environment reads "not read"). They are shown only: they never make the
+  next step "deploy for testing", which needs environments set by the captain. With no evidence source set, no evidence is guessed: the column offers Set up,
+  and the settings offer, as one-click additions, the accounts that commented on a row's pull request without authoring
+  or reviewing it (bot accounts and the captain excluded).
+- A refresh that lands while a row is dragged or its actions menu is open waits until they close.
 - **CI**: GitHub's combined state of the head's check runs and commit statuses (GraphQL `statusCheckRollup`, read in
   the same query as the merge box), only when GitHub's last commit is the row's head: passing, failing, error, running,
   waiting, or "—" for none.

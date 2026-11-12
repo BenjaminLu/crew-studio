@@ -117,13 +117,16 @@ export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
   createdAt: string; labels: string[]; bodyBlock: string | null; githubDeps: string[] | null; bodyMalformed: boolean;
   issues: { ref: string; url: string; title: string | null; state: string | null; external: boolean }[];
-  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean }[];
+  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[];
   facts: R.PrFacts; partial: string[];
 };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
   depState: Record<string, string>; proposal: { deps: R.Signal[]; hints: R.Hint[] }; changed: Record<string, { at: string; what: Change[] }>; finger: Record<string, any>;
   /** each row's head and when Studio first saw it: a comment that names no commit covers a head seen before it */
-  heads: Record<string, { sha: string; at: string }> };
+  heads: Record<string, { sha: string; at: string }>;
+  /** accounts that may post test evidence, offered when none is set: people who commented on a row's pull request but
+   *  are not its author, did not review it, and are not a bot account */
+  suggest?: { evidenceAccounts: { login: string; prs: number }[] } };
 const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {}, heads: {} });
 
 const list = (v: unknown, max = 50, each = 100) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : []).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => s.length <= each).slice(0, max);
@@ -155,7 +158,10 @@ export function cleanSettings(v: any): Settings {
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
-  /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number } };
+  /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number; autoReads?: number } };
+/** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
+class OverAuto extends Error {}
+
 export function createPrWatch(d: PrWatchDeps) {
   const dir = join(d.dataDir, "pr-watch"), stateFile = join(dir, "state.json"), snapFile = join(dir, "snapshot.json");
   const now = d.now ?? (() => Date.now());
@@ -284,6 +290,9 @@ export function createPrWatch(d: PrWatchDeps) {
       try {
         const dt = e.detect;
         if (dt.kind === "check") return checks.some((c) => eq(String(c.name), dt.name) && c.status === "completed" && ["success", "neutral"].includes(String(c.conclusion)));
+        if (dt.kind === "deployed") { const dep = await deployedOn(repo, dt.environment); if (!dep) return false;
+          if (++autoCompares > AUTO_COMPARES) return null; // past the cap a refresh reads no more: shown as not read, never as off
+          return await contains(repo, head, dep); }
         if (dt.kind === "deployment") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || String(dep.sha) !== head || !Number.isSafeInteger(dep.id)) return false;
           const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); return ["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : "")); }
         if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep || !Number.isSafeInteger(dep.id)) return false;
@@ -294,6 +303,29 @@ export function createPrWatch(d: PrWatchDeps) {
         const tag = R.tagCommit(text, dt.template); return tag ? await contains(repo, head, tag) : false;
       } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return null; }
     };
+    // a repository's own GitHub environments, used when the settings name none (at most 6, production last)
+    const envCache = new Map<string, Promise<R.EnvSetting[]>>();
+    const repoEnvs = (repo: string) => once(envCache, repo.toLowerCase(), async () => {
+      try { const j = await autoGet(`${repoPath(repo)}/environments?per_page=30`);
+        const names = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n.length > 0 && n.length <= 60 && !/[\u0000-\u001f]/.test(n));
+        const prod = (n: string) => /^(?:prod|production|live)(?:$|[-_ ./])/i.test(n); // not preproduction, nonprod
+        // each environment on its own: one that cannot be read is left out, the others stay
+        const used = (await Promise.all(names.filter((n: string) => n.toLowerCase() !== "github-pages").slice(0, 10).map(async (n: string) => { try { return (await deployedOn(repo, n)) ? n : null; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } }))).filter((n): n is string => !!n);
+        return [...used.filter((n) => !prod(n)), ...used.filter(prod)].slice(0, 6).map((n) => ({ name: n, production: prod(n), repos: [repo], detect: { kind: "deployed" as const, environment: n } })); }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return []; } });
+    const commenters = new Map<string, { login: string; prs: Set<string> }>();
+    // the newest of an environment's last five deployments whose latest status is success (or active): a deployment still
+    // running, or one that failed, leaves the environment on the commit it ran before
+    const deployedCache = new Map<string, Promise<string | null>>();
+    const deployedOn = (repo: string, env: string) => once(deployedCache, `${repo}|${env}`.toLowerCase(), async () => {
+      const l = await autoGet(`${repoPath(repo)}/deployments?environment=${enc(env)}&per_page=5`);
+      for (const dep of Array.isArray(l) ? l : []) { if (!Number.isSafeInteger(dep?.id) || !SHA.test(String(dep?.sha ?? ""))) continue;
+        const st = await autoGet(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return String(dep.sha); }
+      return null; });
+    // a repository's own environments are for show: their reads (environment lists, deployments, statuses, compares)
+    // share one cap a refresh, past which a repository shows none and an environment reads "not read"
+    let autoCompares = 0, autoReads = 0; const AUTO_COMPARES = 120, AUTO_READS = d.limits?.autoReads ?? 200;
+    const autoGet = (path: string) => { if (++autoReads > AUTO_READS) throw new OverAuto(); return g.get(path); };
     let issueReads = 0; // issues named in bodies may be anywhere: at most 60 read per refresh
     const issueOf = (repo: string, n: number) => once(issueCache, `${repo}#${n}`.toLowerCase(), async () => { if (++issueReads > 60) return { title: null, state: null }; try { const j = await g.get(`${repoPath(repo)}/issues/${n}`); return { title: String(j?.title ?? "").slice(0, 300) || null, state: String(j?.state ?? "") || null }; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return { title: null, state: null }; } });
 
@@ -352,7 +384,12 @@ export function createPrWatch(d: PrWatchDeps) {
       out.heads[id.toLowerCase()] = { sha: head, at: headSeenAt };
       const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,
         checks: checks.map((c: any) => ({ name: String(c.name ?? ""), status: String(c.status ?? ""), conclusion: c.conclusion ? String(c.conclusion) : null, at: c.completed_at ? String(c.completed_at) : null, url: c.html_url ? String(c.html_url) : null })) });
-      const envs = await Promise.all(s.settings.environments.filter((e) => R.envApplies(e, repo)).map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks) })));
+      const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : s.settings.environments.filter((e) => R.envApplies(e, repo));
+      const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks), ...(auto ? { auto: true } : {}) })));
+      const reviewers = new Set(reviews.map((x) => x.login.toLowerCase()));
+      // without the reviews (or comments) read, reviewers cannot be told apart: such a row offers no one
+      if (!partial.includes("reviews") && !partial.includes("comments")) for (const c of comments) { const k = c.login.toLowerCase(); if (!k || k === author.toLowerCase() || k === me.toLowerCase() || reviewers.has(k) || k.endsWith("[bot]") || /(?:^|[-_])bot$|^bot[-_]/.test(k) || !R.NAME.test(c.login)) continue;
+        const e = commenters.get(k) ?? { login: c.login, prs: new Set<string>() }; e.prs.add(id); commenters.set(k, e); }
       const block = R.findBlock(body);
       const row: RawRow = { id, repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author, draft: !!p.draft, single, base, headRef: String(p.head?.ref ?? ""), head,
         createdAt: String(p.created_at ?? ""), labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")).filter(Boolean).slice(0, 20),
@@ -364,6 +401,7 @@ export function createPrWatch(d: PrWatchDeps) {
     rows.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id));
     out.rows = rows;
     out.proposal = R.signals(rows.map((r) => r.facts));
+    out.suggest = { evidenceAccounts: [...commenters.values()].map((c) => ({ login: c.login, prs: c.prs.size })).sort((a, b) => b.prs - a.prs || a.login.localeCompare(b.login)).slice(0, 6) };
     // the state of every pull request a row may depend on that is not itself a row
     const want = new Set<string>([...out.proposal.deps.map((x) => x.on), ...Object.values(s.deps).flatMap((x) => x.on), ...rows.flatMap((r) => r.githubDeps ?? [])]);
     let depReads = 0; // pull requests named as dependencies outside the list: at most 30 read per refresh
@@ -382,7 +420,8 @@ export function createPrWatch(d: PrWatchDeps) {
         if (before.evidence !== f.evidence) what.push({ k: "evidence", verdict: f.evidence });
         // CI that finishes or fails on the same head (a snapshot from before CI was read has no entry: not a change)
         if ("ci" in before && before.ci !== f.ci && f.ci) what.push({ k: "ci", state: f.ci });
-        for (const [nm, on] of Object.entries(f.envs as Record<string, boolean>)) if ((before.envs?.[nm] ?? null) !== on) what.push({ k: "env", name: nm, on: !!on });
+        // an environment that could not be read this time (null) is not a change
+        for (const [nm, on] of Object.entries(f.envs as Record<string, boolean | null>)) if (on !== null && (before.envs?.[nm] ?? null) !== on) what.push({ k: "env", name: nm, on: !!on });
         if (before.next !== f.next) what.push({ k: "next", from: before.next, to: f.next });
       }
       out.finger[r.id.toLowerCase()] = f;
@@ -408,7 +447,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const ak = Object.keys(s.applied).find((k) => eq(k, r.id)), applied = ak ? s.applied[ak] : null;
       const drift = applied && R.normBlock(r.bodyBlock) !== R.normBlock(applied.block) ? { github: r.bodyBlock, studio: applied.block, githubDeps: r.githubDeps } : null;
       const next = R.nextStep({ draft: r.draft, author: r.author, reviews: r.reviews, requiredReviewers: s.settings.requiredReviewers, deps: depsView,
-        envs: r.envs.map((e) => ({ name: e.name, on: !!e.on, production: e.production })), evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals });
+        envs: r.envs.filter((e) => !e.auto).map((e) => ({ name: e.name, on: !!e.on, production: e.production })), /* a repository's own environments are shown, never a step */ evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals });
       const gk = Object.keys(s.groups).find((k) => eq(k, r.id));
       const { facts: _f, ...rest } = r;
       return { ...rest, project: projectOf(r.repo), group: gk ? s.groups[gk] : null, next,
@@ -432,7 +471,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const projects = (() => { try { return new Projects(d.dataDir).nativeSnapshot().records; } catch { return []; } })();
     return {
       enabled: !disabled(), connected: !!tok.token, settingsWarning, me: snap.me, refreshedAt: snap.at, refreshing: live.refreshing, error: live.error, backoffUntil: live.backoffUntil, errors: snap.errors, intervalMs: interval(),
-      settings: state.settings,
+      settings: state.settings, suggest: snap.suggest ?? { evidenceAccounts: [] },
       watch: { repos: state.watch.repos.map((repo) => { const p = projects.find((x) => x.github?.repository && eq(x.github.repository, repo)); return { repo, count: repoCount(repo), project: p ? { id: p.id, name: p.name || p.id } : null }; }),
         prs: state.watch.prs.map((id) => ({ id, state: snap.single[id] ?? (rows.some((r) => eq(r.id, id)) ? "open" : null) })), excluded: state.watch.excluded },
       rows, rules: R.RULES, count: rows.filter((r) => r.next.kind === "approve" || r.next.kind === "merge").length,

@@ -68,7 +68,8 @@ function changeWord(w) {
 function setCount(n) { const c = document.getElementById("navPrs"); if (!c) return; c.hidden = !n; c.textContent = n ? String(n) : ""; }
 // a live update never redraws the list under a drag: it waits for the drop
 // a live update never redraws the list under a drag, and gives the keyboard focus back to the row that had it
-const redraw = () => { if (S.route?.name !== "prs") return; if (PW.drag) { PW.later = true; return; }
+// a refresh that lands while a row is dragged or its actions menu is open waits: redrawing would orphan them
+const redraw = () => { if (S.route?.name !== "prs") return; if (PW.drag || closeMenu) { PW.later = true; return; }
   const had = document.activeElement?.closest?.("[data-prs-row]")?.dataset.prsRow; render();
   if (had && document.activeElement === document.body) document.querySelector(`[data-prs-row="${CSS.escape(had)}"]`)?.focus({ preventScroll: true }); };
 async function load() {
@@ -84,7 +85,7 @@ async function act(u, b, done) {
   try { PW.data = await postJ(u, b); setCount(PW.data.count); if (done) flash(done); } catch (e) { flash(e.message); }
   redraw();
 }
-const enter = () => { const on = S.route?.name === "prs"; if (on && !PW.onPage) { PW.onPage = true; load().then(refresh); } else if (!on) PW.onPage = false; };
+const enter = () => { const on = S.route?.name === "prs"; if (on && !PW.onPage) { PW.onPage = true; load().then(refresh); } else if (!on) { PW.onPage = false; closeMenu?.(); } }; // leaving the page closes an open actions menu (it would float over the next page and hold redraws back)
 addEventListener("hashchange", () => setTimeout(enter, 0)); setTimeout(enter, 0);
 fetch("/api/prs/count").then((r) => (r.ok ? r.json() : null)).then((j) => j && setCount(j.count)).catch(() => {});
 window.liveListen?.("prs", (m) => { let d = {}; try { d = JSON.parse(m.data); } catch {} if (typeof d.count === "number") setCount(d.count); if (S.route?.name === "prs" && !d.refreshing) load(); });
@@ -200,8 +201,8 @@ function rowView(r, d) {
         h("span", { class: "pw-ctat" }, label), h("span", { "aria-hidden": "true" }, " ▾")); })() : h("span", { class: "faint" }, "—")),
     h("span", { role: "cell", class: "pw-ci" }, ciBadge(r.ci)),
     h("span", { role: "cell" }, depCell(r)),
-    h("span", { role: "cell" }, evBadge(r.evidence)),
-    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`) }, e.name)) : h("span", { class: "faint" }, "—")),
+    h("span", { role: "cell" }, evBadge(r.evidence, d)),
+    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, "data-prs-env-auto": e.auto ? e.name : null, title: (e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`)) + (e.auto ? T(" (a GitHub environment of this repository: its latest successful deployment contains the head or not; set environments in Settings to choose)", "（這個 repo 的 GitHub 環境：看它最近一次成功的 deployment 有沒有包含這個 head；要自己挑環境請到設定）") : "") }, e.name)) : h("span", { class: "faint" }, "—")),
     h("span", { class: "pw-revs", role: "cell" }, groupChips(r), r.reviews.length || !(r.approvals?.groups || []).length ? (r.reviews.length ? r.reviews.map((x) => h("span", { class: `badge ${x.state === "APPROVED" && !x.stale ? "ok" : x.state === "CHANGES_REQUESTED" ? "bad" : ""}`, title: `${reviewWord(x.state)}${x.stale ? T(" (an older head)", "（較舊的 head）") : ""}${x.author ? T(" (the author: does not count)", "（作者本人：不算）") : ""}` },
       x.login, x.state === "CHANGES_REQUESTED" ? " ✕" : x.stale ? T(" (stale)", "（舊）") : "")) : h("span", { class: "faint" }, "—")) : null),
     h("span", { class: "pw-iss", role: "cell" }, r.issues.length ? r.issues.map((i) => h("span", { class: "pw-iss1" }, extLink(ghIssue(i.ref), short(i.ref, null), { title: `${i.ref} ${i.title || ""}${i.state ? ` (${i.state})` : ""}${i.external ? T(" · outside the watched repositories, read only", " · 不在監控的 repo，只讀") : ""}` }), i.external ? h("small", {}, T("external", "外部")) : null)) : h("span", { class: "faint" }, "—")),
@@ -209,7 +210,10 @@ function rowView(r, d) {
   return el;
 }
 const waitsOn = (r) => r.next.rule === "dependency" ? r.next.who.map((x) => short(x, r.repo)) : r.next.rule === "approvals" && r.approvals?.readable ? r.approvals.missing.map(missWord) : r.next.who.map(whoWord);
-function evBadge(e) {
+const noEvidenceSource = (d) => { const ev = d?.settings?.evidence; return !!ev && !ev.accounts.length && !ev.checks.length && !ev.labels.length; };
+function evBadge(e, d) {
+  if (!e && noEvidenceSource(d)) return h("button", { class: "badge pw-evset", "data-prs-ev-setup": "", title: T("No evidence source is set: choose whose comments, which checks or labels count", "還沒設定證據來源：選擇誰的留言、哪些 check 或 label 算數"),
+    onclick: (ev) => { ev.stopPropagation(); settingsModal(); } }, T("Set up", "設定"));
   if (!e) return h("span", { class: "faint", "data-prs-ev": "none" }, "—");
   const when = e.at ? ` · ${day(e.at)}` : "";
   if (e.verdict === "fail") return h("span", { class: "badge bad", "data-prs-ev": "fail" }, T("fail", "不通過"), when);
@@ -281,7 +285,8 @@ let closeMenu = null; // the open missing-approval menu's close, so a new one (o
 function ctaMenu(anchor, r) {
   if (anchor.getAttribute("aria-expanded") === "true" && closeMenu) { closeMenu(); return; }
   closeMenu?.(); document.querySelectorAll(".pw-menu").forEach((x) => x.remove());
-  const close = () => { if (closeMenu === close) closeMenu = null; m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true); };
+  const close = () => { if (closeMenu === close) closeMenu = null; m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true);
+    if (PW.later && !PW.drag && !closeMenu) { PW.later = false; queueMicrotask(redraw); } };
   const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
   const m = h("div", { class: "pop pw-menu", role: "group", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), "data-prs-menu": r.id },
     h("div", { class: "tgt" }, `${r.id} · `, (r.approvals?.missing || []).map(missWord).join(", ")),
@@ -407,10 +412,14 @@ function settingsModal() {
       h("h3", {}, T("For a watched repository, which pull requests", "貼 repo 網址時，追蹤這個 repo 裡的哪些 PR")), cb("mine", "opened by me", "我開的"), cb("assigned", "assigned to me", "指派給我的"), cb("reviewRequested", "review requested from me", "請我 review 的"),
       h("h3", {}, T("Test evidence", "測試證據來源")),
       csv("accounts", T("Accounts whose comments count (comma separated)", "留言算數的帳號（逗號分隔）"), () => s.evidence.accounts, (v) => { s.evidence.accounts = v; }),
+      ...(() => { const sug = (PW.data?.suggest?.evidenceAccounts || []).filter((x) => !s.evidence.accounts.some((a) => a.toLowerCase() === x.login.toLowerCase()));
+        return sug.length ? [h("div", { class: "pw-sug", "data-prs-suggest": "" }, h("span", { class: "faint pw-small" }, T("Commented on these pull requests without authoring or reviewing them:", "在這些 PR 留過言、但不是作者也沒 review 的人：")),
+          ...sug.map((x) => h("button", { class: "badge", "data-prs-suggest-account": x.login, title: T(`Add ${x.login}: commented on ${x.prs} pull request${x.prs === 1 ? "" : "s"}`, `加入 ${x.login}：在 ${x.prs} 個 PR 留過言`),
+            onclick: (ev) => { if (!s.evidence.accounts.some((a) => a.toLowerCase() === x.login.toLowerCase())) s.evidence.accounts = [...s.evidence.accounts, x.login]; const inp = ev.currentTarget.closest(".pw-dl").querySelector('[data-prs-set="accounts"]'); if (inp) inp.value = s.evidence.accounts.join(", "); ev.currentTarget.remove(); } }, "+ ", x.login, h("span", { class: "faint" }, ` · ${x.prs}`))))] : []; })(),
       csv("checks", T("Check runs that count", "算數的 check run"), () => s.evidence.checks, (v) => { s.evidence.checks = v; }),
       csv("labels", T("Labels that count", "算數的 label"), () => s.evidence.labels, (v) => { s.evidence.labels = v; }),
       csv("required", T("Reviewers who must review every pull request (for example a review bot)", "每個 PR 都要 review 的人（例如 review bot）"), () => s.requiredReviewers, (v) => { s.requiredReviewers = v; }),
-      h("h3", {}, T("Environments, in order", "環境（依順序）")), envBox,
+      h("h3", {}, T("Environments, in order", "環境（依順序）")), envs.length ? null : h("p", { class: "faint pw-small", "data-prs-envs-auto": "" }, T("None set: each repository's own GitHub environments that have a successful deployment are shown, on when the newest one contains the head. They are shown only; set environments here to make “deploy for testing” a step.", "沒有設定：顯示每個 repo 自己有成功部署過的 GitHub 環境，最新一次成功的 deployment 包含 head 就算在上面。這些只供顯示；要讓「部署去測」成為下一步，請在這裡設定環境。")), envBox,
       h("button", { class: "btn", "data-prs-env-add": "", onclick: () => { envs.push({ name: "", production: false, repos: [], detect: { kind: "deployment", environment: "" } }); drawEnvs(); } }, icon("plus"), T("Add an environment", "加入環境")),
       h("h3", {}, T("Release groups", "上線分組")), csv("groups", T("Group names (comma separated)", "分組名稱（逗號分隔）"), () => s.groups, (v) => { s.groups = v; }),
       h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!s.shortForm, onchange: (e) => { s.shortForm = e.target.checked; } }), T(" Also write the short same-repository form Depends-on: #N", " 另外寫同 repo 簡寫 Depends-on: #N"))),
