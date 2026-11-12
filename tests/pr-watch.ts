@@ -103,7 +103,10 @@ const { ok, end } = suite("pr-watch");
   const facts = (id: string, o: Partial<R.PrFacts> = {}): R.PrFacts => { const s = R.splitId(id)!; return { id, repo: s.repo, number: s.number, body: "", base: "main", headRef: `t${s.number}`, createdAt: `2026-11-0${s.number % 9 + 1}T00:00:00Z`, files: [], issues: [], ...o }; };
   const prs = [facts("o/r#1", { body: "Depends-on: #3" }), facts("o/r#2", { base: "t1" }), facts("o/r#3", { files: ["a.ts"] }), facts("o/r#4", { files: ["a.ts"], body: "see o/r#2" })];
   const sg = R.signals(prs);
-  ok(sg.deps.some((d) => d.pr === "o/r#1" && d.on === "o/r#3" && d.kind === "depends-on") && sg.deps.some((d) => d.pr === "o/r#2" && d.on === "o/r#1" && d.kind === "stacked") && sg.deps.some((d) => d.pr === "o/r#4" && d.on === "o/r#2" && d.kind === "mentions"), "signals: Depends-on, stacked branches, a body naming another", JSON.stringify(sg.deps));
+  ok(sg.deps.some((d) => d.pr === "o/r#1" && d.on === "o/r#3" && d.kind === "depends-on") && sg.deps.some((d) => d.pr === "o/r#2" && d.on === "o/r#1" && d.kind === "stacked")  && sg.deps.length === 2, "dependencies only where the order is forced: Depends-on and stacked branches", JSON.stringify(sg.deps));
+  ok(!sg.deps.some((d) => d.pr === "o/r#4") && sg.hints.some((h) => h.kind === "mentions" && h.first === "o/r#2" && h.then === "o/r#4"), "a body that only names another pull request orders it (a hint), never makes it a dependency", JSON.stringify(sg.hints));
+  { const mutual = R.signals([facts("o/r#5", { body: "see o/r#6" }), facts("o/r#6", { body: "see o/r#5" })]); ok(!mutual.deps.length && mutual.hints.filter((h) => h.kind === "mentions").length === 2 && R.proposeOrder([facts("o/r#5"), facts("o/r#6")], mutual.deps, mutual.hints).length === 2, "two bodies naming each other: no dependency, and the order still comes out"); }
+  { const both = R.signals([facts("o/r#7", { body: "Depends-on: #8, and see o/r#8" }), facts("o/r#8")]); ok(both.deps.length === 1 && !both.hints.some((h) => h.kind === "mentions"), "a pull request both depended on and named is one dependency, no extra hint"); }
   ok(sg.hints.some((h) => h.kind === "files" && h.first === "o/r#3" && h.then === "o/r#4"), "files both change: the older first");
   const order = R.proposeOrder(prs, sg.deps, sg.hints).map((x) => x.id);
   ok(order.indexOf("o/r#3") < order.indexOf("o/r#1") && order.indexOf("o/r#1") < order.indexOf("o/r#2") && order.indexOf("o/r#2") < order.indexOf("o/r#4"), "the proposed order puts every dependency first", order.join());
@@ -500,6 +503,16 @@ try {
   const p2 = new GitHubPoller(), W2 = createPrWatch({ dataDir: dd, poller: p2 }), v2 = W2.view();
   ok(v2.settings.environments.map((e: any) => e.name).join() === "qa" && /prod/.test(v2.settingsWarning?.en ?? ""), "a saved template that fails the checks is dropped on load and the page says which", JSON.stringify(v2.settingsWarning));
   W2.stop(); p2.stop(); }
+{ // a proposal saved by an older Studio (every body mention a dependency) is rebuilt from the saved facts on load
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs"); const { tmpdir } = await import("node:os");
+  const dd = mkdtempSync(join(tmpdir(), "prw-oldprop-")); mkdirSync(join(dd, "pr-watch"));
+  const f = (n: number, body = "") => ({ id: `o/r#${n}`, repo: "o/r", number: n, body, base: "main", headRef: `t${n}`, createdAt: `2026-11-0${n}T00:00:00Z`, files: [], issues: [] });
+  const row = (n: number, body = "") => ({ id: `o/r#${n}`, repo: "o/r", number: n, url: "", title: "t", author: "a", draft: false, single: false, base: "main", headRef: `t${n}`, head: "", createdAt: f(n).createdAt, labels: [], bodyBlock: null, githubDeps: null, bodyMalformed: false, issues: [], reviews: [], approvals: { readable: true, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [], sources: [] }, evidence: null, ci: null, envs: [], partial: [], facts: f(n, body) });
+  writeFileSync(join(dd, "pr-watch", "snapshot.json"), JSON.stringify({ schema: 1, at: "2026-11-01T00:00:00Z", me: "a", rows: [row(1, "see o/r#2"), row(2)], errors: [], single: {}, depState: {}, proposal: { deps: [{ pr: "o/r#1", on: "o/r#2", kind: "mentions", why: "its body names o/r#2" }], hints: [] }, changed: {}, finger: {}, heads: {} }));
+  const p3 = new GitHubPoller(), W3 = createPrWatch({ dataDir: dd, poller: p3 }), v3 = W3.view(), r1 = v3.rows.find((r) => r.id === "o/r#1");
+  ok(!!r1 && r1.deps.proposed.length === 0 && r1.deps.source === "none" && r1.next.rule !== "dependency", "an old saved proposal's mention is not a dependency before any refresh", JSON.stringify(r1?.deps));
+  ok(v3.rows.findIndex((r) => r.id === "o/r#2") < v3.rows.findIndex((r) => r.id === "o/r#1"), "the mention still orders: the named pull request first");
+  W3.stop(); p3.stop(); }
 // ---------- generic: no organisation, repository, team or account name in the feature's source ----------
 {
   const root = join(import.meta.dir, "..");

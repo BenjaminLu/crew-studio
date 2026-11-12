@@ -451,8 +451,10 @@ export function tagCommit(text: string, template: string): string | null {
 }
 
 // ---------- order and dependencies ----------
-export type Signal = { pr: string; on: string; kind: "depends-on" | "stacked" | "mentions"; why: string };
-export type Hint = { first: string; then: string; kind: "files" | "issue"; why: string };
+/** A dependency proposed only where the merge order is forced: a Depends-on line, or a branch stacked on another's head. */
+export type Signal = { pr: string; on: string; kind: "depends-on" | "stacked"; why: string };
+/** An ordering hint: places one before another in the proposed order, never a dependency (it does not hold a row back). */
+export type Hint = { first: string; then: string; kind: "files" | "issue" | "mentions"; why: string };
 export type PrFacts = { id: string; repo: string; number: number; body: string; base: string; headRef: string; createdAt: string; files: string[]; issues: string[] };
 /** The proposal's signals: Depends-on lines, a body naming another watched pull request, a pull request based on another's
  *  branch (stacked) → dependencies; files both change and an issue both link → which goes first (older first). */
@@ -462,7 +464,8 @@ export function signals(prs: PrFacts[]): { deps: Signal[]; hints: Hint[] } {
   for (const p of prs) {
     for (const id of dependsOnLines(p.body, p.repo)) { const on = ids.get(id.toLowerCase()) ?? id; add({ pr: p.id, on, kind: "depends-on", why: `its body says Depends-on: ${on}` }); }
     for (const q of prs) if (q !== p && sameRepo(q.repo, p.repo) && p.base === q.headRef && p.base) add({ pr: p.id, on: q.id, kind: "stacked", why: `it is based on ${q.id}'s branch ${q.headRef}` });
-    for (const id of prMentions(stripBlock(p.body), p.repo)) { const on = ids.get(id.toLowerCase()); if (on && on !== p.id) add({ pr: p.id, on, kind: "mentions", why: `its body names ${on}` }); }
+    // a body that only names another pull request (context, "see also", a follow-up) orders it, never makes it a dependency
+    for (const id of prMentions(stripBlock(p.body), p.repo)) { const on = ids.get(id.toLowerCase()); if (on && on !== p.id && !deps.some((d) => d.pr === p.id && d.on === on) && !hints.some((h) => h.first === on && h.then === p.id)) hints.push({ first: on, then: p.id, kind: "mentions", why: `its body names ${on}` }); }
   }
   for (let i = 0; i < prs.length; i++) for (let j = i + 1; j < prs.length; j++) {
     const [a, b] = [prs[i], prs[j]].sort((x, y) => Date.parse(x.createdAt) - Date.parse(y.createdAt) || x.id.localeCompare(y.id));
