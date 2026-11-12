@@ -378,7 +378,7 @@ export const RULES: { id: string; kind: StepKind; en: string; tw: string }[] = [
   { id: "dependency", kind: "dependency", en: "a dependency is not merged → wait for it", tw: "依賴還沒合併 → 等依賴" },
   { id: "environment", kind: "deploy", en: "the head runs in no pre-production environment → deploy for testing", tw: "head 沒在任何測試環境 → 部署去測" },
   { id: "failed", kind: "fix", en: "the test evidence says fail → fix (the author)", tw: "測試證據是不通過 → 修正（作者）" },
-  { id: "evidence", kind: "test", en: "no evidence, unclassified, code review only, evidence for an older head, or evidence that names no commit → test", tw: "沒有證據、無法分類、只審 code、證據不是這個 head、或證據沒指明 commit → 測試" },
+  { id: "evidence", kind: "test", en: "(an evidence source is set) no evidence, unclassified, code review only, evidence for an older head, or evidence that names no commit → test", tw: "（已設定證據來源）沒有證據、無法分類、只審 code、證據不是這個 head、或證據沒指明 commit → 測試" },
   { id: "approvals", kind: "approve", en: "approvals missing (or the rules cannot be read) → approve", tw: "approve 不夠（或讀不到規則）→ approve" },
   { id: "blocked", kind: "hold", en: "the branch protection could not be read and GitHub blocks the merge for a reason the readable rules do not show → on hold (see the merge box on GitHub)", tw: "讀不到分支保護，GitHub 又因為讀得到的規則看不出的原因擋住 merge → 暫緩（看 GitHub 的 merge 區塊）" },
   { id: "ready", kind: "merge", en: "everything above is satisfied → ready to merge (you)", tw: "以上都滿足 → 可合併（你）" },
