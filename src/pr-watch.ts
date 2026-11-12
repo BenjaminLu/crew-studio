@@ -286,9 +286,9 @@ export function createPrWatch(d: PrWatchDeps) {
       try {
         const dt = e.detect;
         if (dt.kind === "check") return checks.some((c) => eq(String(c.name), dt.name) && c.status === "completed" && ["success", "neutral"].includes(String(c.conclusion)));
-        if (dt.kind === "deployed") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || !Number.isSafeInteger(dep.id)) return false;
-          const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (!["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return false;
-          return await contains(repo, head, String(dep.sha)); }
+        if (dt.kind === "deployed") { const dep = await deployedOn(repo, dt.environment); if (!dep) return false;
+          if (++autoCompares > AUTO_COMPARES) return null; // past the cap a refresh reads no more: shown as not read, never as off
+          return await contains(repo, head, dep); }
         if (dt.kind === "deployment") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || String(dep.sha) !== head || !Number.isSafeInteger(dep.id)) return false;
           const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); return ["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : "")); }
         if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep || !Number.isSafeInteger(dep.id)) return false;
@@ -305,9 +305,19 @@ export function createPrWatch(d: PrWatchDeps) {
       try { const j = await g.get(`${repoPath(repo)}/environments?per_page=30`);
         const names = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n.length > 0 && n.length <= 60 && !/[\u0000-\u001f]/.test(n));
         const prod = (n: string) => /prod/i.test(n);
-        return [...names.filter((n: string) => !prod(n)), ...names.filter(prod)].slice(0, 6).map((n: string) => ({ name: n, production: prod(n), repos: [repo], detect: { kind: "deployed" as const, environment: n } })); }
+        const used = (await Promise.all(names.filter((n: string) => n.toLowerCase() !== "github-pages").slice(0, 10).map(async (n: string) => (await deployedOn(repo, n)) ? n : null))).filter((n): n is string => !!n);
+        return [...used.filter((n) => !prod(n)), ...used.filter(prod)].slice(0, 6).map((n) => ({ name: n, production: prod(n), repos: [repo], detect: { kind: "deployed" as const, environment: n } })); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return []; } });
     const commenters = new Map<string, { login: string; prs: Set<string> }>();
+    // the newest of an environment's last five deployments whose latest status is success (or active): a deployment still
+    // running, or one that failed, leaves the environment on the commit it ran before
+    const deployedCache = new Map<string, Promise<string | null>>();
+    const deployedOn = (repo: string, env: string) => once(deployedCache, `${repo}|${env}`.toLowerCase(), async () => {
+      const l = await g.get(`${repoPath(repo)}/deployments?environment=${enc(env)}&per_page=5`);
+      for (const dep of Array.isArray(l) ? l : []) { if (!Number.isSafeInteger(dep?.id) || !SHA.test(String(dep?.sha ?? ""))) continue;
+        const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return String(dep.sha); }
+      return null; });
+    let autoCompares = 0; const AUTO_COMPARES = 120;
     let issueReads = 0; // issues named in bodies may be anywhere: at most 60 read per refresh
     const issueOf = (repo: string, n: number) => once(issueCache, `${repo}#${n}`.toLowerCase(), async () => { if (++issueReads > 60) return { title: null, state: null }; try { const j = await g.get(`${repoPath(repo)}/issues/${n}`); return { title: String(j?.title ?? "").slice(0, 300) || null, state: String(j?.state ?? "") || null }; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return { title: null, state: null }; } });
 
@@ -369,7 +379,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : s.settings.environments.filter((e) => R.envApplies(e, repo));
       const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks), ...(auto ? { auto: true } : {}) })));
       const reviewers = new Set(reviews.map((x) => x.login.toLowerCase()));
-      for (const c of comments) { const k = c.login.toLowerCase(); if (!k || k === author.toLowerCase() || k === me.toLowerCase() || reviewers.has(k) || k.endsWith("[bot]") || !R.NAME.test(c.login)) continue;
+      for (const c of comments) { const k = c.login.toLowerCase(); if (!k || k === author.toLowerCase() || k === me.toLowerCase() || reviewers.has(k) || k.endsWith("[bot]") || /(?:^|[-_])bot$|^bot[-_]/.test(k) || !R.NAME.test(c.login)) continue;
         const e = commenters.get(k) ?? { login: c.login, prs: new Set<string>() }; e.prs.add(id); commenters.set(k, e); }
       const block = R.findBlock(body);
       const row: RawRow = { id, repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author, draft: !!p.draft, single, base, headRef: String(p.head?.ref ?? ""), head,
@@ -427,7 +437,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const ak = Object.keys(s.applied).find((k) => eq(k, r.id)), applied = ak ? s.applied[ak] : null;
       const drift = applied && R.normBlock(r.bodyBlock) !== R.normBlock(applied.block) ? { github: r.bodyBlock, studio: applied.block, githubDeps: r.githubDeps } : null;
       const next = R.nextStep({ draft: r.draft, author: r.author, reviews: r.reviews, requiredReviewers: s.settings.requiredReviewers, deps: depsView,
-        envs: r.envs.map((e) => ({ name: e.name, on: !!e.on, production: e.production })), evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals });
+        envs: r.envs.filter((e) => !e.auto).map((e) => ({ name: e.name, on: !!e.on, production: e.production })), /* a repository's own environments are shown, never a step */ evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals });
       const gk = Object.keys(s.groups).find((k) => eq(k, r.id));
       const { facts: _f, ...rest } = r;
       return { ...rest, project: projectOf(r.repo), group: gk ? s.groups[gk] : null, next,

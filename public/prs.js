@@ -85,7 +85,7 @@ async function act(u, b, done) {
   try { PW.data = await postJ(u, b); setCount(PW.data.count); if (done) flash(done); } catch (e) { flash(e.message); }
   redraw();
 }
-const enter = () => { const on = S.route?.name === "prs"; if (on && !PW.onPage) { PW.onPage = true; load().then(refresh); } else if (!on) PW.onPage = false; };
+const enter = () => { const on = S.route?.name === "prs"; if (on && !PW.onPage) { PW.onPage = true; load().then(refresh); } else if (!on) { PW.onPage = false; closeMenu?.(); } }; // leaving the page closes an open actions menu (it would float over the next page and hold redraws back)
 addEventListener("hashchange", () => setTimeout(enter, 0)); setTimeout(enter, 0);
 fetch("/api/prs/count").then((r) => (r.ok ? r.json() : null)).then((j) => j && setCount(j.count)).catch(() => {});
 window.liveListen?.("prs", (m) => { let d = {}; try { d = JSON.parse(m.data); } catch {} if (typeof d.count === "number") setCount(d.count); if (S.route?.name === "prs" && !d.refreshing) load(); });
@@ -419,7 +419,7 @@ function settingsModal() {
       csv("checks", T("Check runs that count", "算數的 check run"), () => s.evidence.checks, (v) => { s.evidence.checks = v; }),
       csv("labels", T("Labels that count", "算數的 label"), () => s.evidence.labels, (v) => { s.evidence.labels = v; }),
       csv("required", T("Reviewers who must review every pull request (for example a review bot)", "每個 PR 都要 review 的人（例如 review bot）"), () => s.requiredReviewers, (v) => { s.requiredReviewers = v; }),
-      h("h3", {}, T("Environments, in order", "環境（依順序）")), envs.length ? null : h("p", { class: "faint pw-small", "data-prs-envs-auto": "" }, T("None set: each repository's own GitHub environments are used, on when their latest successful deployment contains the head.", "沒有設定：用每個 repo 自己的 GitHub 環境，最近一次成功的 deployment 包含 head 就算在上面。")), envBox,
+      h("h3", {}, T("Environments, in order", "環境（依順序）")), envs.length ? null : h("p", { class: "faint pw-small", "data-prs-envs-auto": "" }, T("None set: each repository's own GitHub environments that have a successful deployment are shown, on when the newest one contains the head. They are shown only; set environments here to make "deploy for testing" a step.", "沒有設定：顯示每個 repo 自己有成功部署過的 GitHub 環境，最新一次成功的 deployment 包含 head 就算在上面。這些只供顯示；要讓「部署去測」成為下一步，請在這裡設定環境。")), envBox,
       h("button", { class: "btn", "data-prs-env-add": "", onclick: () => { envs.push({ name: "", production: false, repos: [], detect: { kind: "deployment", environment: "" } }); drawEnvs(); } }, icon("plus"), T("Add an environment", "加入環境")),
       h("h3", {}, T("Release groups", "上線分組")), csv("groups", T("Group names (comma separated)", "分組名稱（逗號分隔）"), () => s.groups, (v) => { s.groups = v; }),
       h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!s.shortForm, onchange: (e) => { s.shortForm = e.target.checked; } }), T(" Also write the short same-repository form Depends-on: #N", " 另外寫同 repo 簡寫 Depends-on: #N"))),

@@ -81,6 +81,8 @@ export function fixtureData() {
   const deployments = [
     { id: 501, repo: ca, environment: "dev", ref: "topic-19", sha: head(find(ca, 19)!), state: "success" },
     { id: 502, repo: ca, environment: "staging", ref: "staging", sha: sha("staging-tip"), state: "success" },
+    // a newer staging deployment from another ref that failed: the environment stays on what 502 deployed
+    { id: 503, repo: ca, environment: "staging", ref: "hotfix", sha: sha("hotfix-tip"), state: "failure" },
   ];
   // the staging branch's tip contains #17's head (it was merged into staging)
   const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!)] };
