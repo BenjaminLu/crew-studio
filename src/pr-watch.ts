@@ -117,7 +117,7 @@ export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
   createdAt: string; labels: string[]; bodyBlock: string | null; githubDeps: string[] | null; bodyMalformed: boolean;
   issues: { ref: string; url: string; title: string | null; state: string | null; external: boolean }[];
-  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; envs: { name: string; on: boolean | null; production: boolean }[];
+  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean }[];
   facts: R.PrFacts; partial: string[];
 };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
@@ -311,7 +311,7 @@ export function createPrWatch(d: PrWatchDeps) {
         soft(() => g.pages(`${path}/issues/${n}/timeline`, 2), [] as any[], partial, "timeline"),
         soft(async () => (await g.pages(`${path}/pulls/${n}/files`, 3)).map((f: any) => String(f.filename ?? "")).filter(Boolean), [] as string[], partial, "files"),
         soft(async () => SHA.test(head) ? ((await g.get(`${path}/commits/${head}/check-runs?per_page=100`))?.check_runs ?? []) : [], [] as any[], partial, "checks"),
-        soft(async () => { const [o, r] = repo.split("/"); const data = await g.graphql("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewDecision mergeStateStatus reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{slug organization{login}}}}} closingIssuesReferences(first:20){nodes{number title state url repository{nameWithOwner}}}}}}", { o, r, n });
+        soft(async () => { const [o, r] = repo.split("/"); const data = await g.graphql("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviewDecision mergeStateStatus reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{slug organization{login}}}}} closingIssuesReferences(first:20){nodes{number title state url repository{nameWithOwner}}}}}}", { o, r, n });
           return (data?.repository?.pullRequest ?? null) as any; }, null as any, partial, "closing issues"),
       ]);
       signal.throwIfAborted();
@@ -343,6 +343,8 @@ export function createPrWatch(d: PrWatchDeps) {
       const word = (x: unknown) => { const t = String(x ?? ""); return /^[A-Z_]{1,40}$/.test(t) ? t : null; };
       const github: R.GitHubMerge | null = gql ? { reviewDecision: word(gql.reviewDecision), mergeState: word(gql.mergeStateStatus),
         requested: (gql.reviewRequests?.nodes ?? []).map((x: any) => { const v = x?.requestedReviewer ?? {}; return v.__typename === "Team" && R.NAME.test(String(v.organization?.login ?? "")) && R.NAME.test(String(v.slug ?? "")) ? `@${v.organization.login}/${v.slug}` : v.__typename === "User" && R.NAME.test(String(v.login ?? "")) ? String(v.login) : ""; }).filter(Boolean).slice(0, 20) } : null;
+      // CI: GitHub's combined state of the head's checks and commit statuses (statusCheckRollup), for this head only
+      const tip = gql?.commits?.nodes?.[0]?.commit, ci = tip && String(tip.oid ?? "") === head ? word(tip.statusCheckRollup?.state) ?? "NONE" : null;
       const named: R.Rules = rules.readable ? { ...rules, teams: rules.teams.map((t) => ({ ...t, label: teamNames.get(t.key.toLowerCase()) ?? t.label })) } : rules;
       const approvals = R.approvalsOf(named, rv, { github, ownersCache: ownersByBase.get(ownersKey), files, codeowners: owners, teamMembers, author, headCommit: commits.length && commits.at(-1)!.sha === head && !partial.includes("commits") ? { author: commits.at(-1)!.author, committer: commits.at(-1)!.committer } : null, ownersUnreadable });
       const seen = snap.heads?.[id.toLowerCase()], headSeenAt = seen && seen.sha === head ? seen.at : out.at!;
@@ -354,7 +356,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const row: RawRow = { id, repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author, draft: !!p.draft, single, base, headRef: String(p.head?.ref ?? ""), head,
         createdAt: String(p.created_at ?? ""), labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")).filter(Boolean).slice(0, 20),
         bodyBlock: block && block !== "malformed" ? block.text : null, githubDeps: R.blockDeps(body, repo), bodyMalformed: block === "malformed",
-        issues, reviews: rv, approvals, evidence, envs, partial,
+        issues, reviews: rv, approvals, evidence, ci, envs, partial,
         facts: { id, repo, number: n, body: body.slice(0, 65536), base, headRef: String(p.head?.ref ?? ""), createdAt: String(p.created_at ?? ""), files: files.slice(0, 300), issues: issues.map((i) => i.ref) } };
       return row;
     });

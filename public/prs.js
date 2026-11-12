@@ -112,7 +112,7 @@ function view() {
       h("div", { class: "tb-tabs pw-tabs", role: "group", "aria-label": T("Filter by next step", "依下一步篩選") }, TABS.map(([k, en, tw]) =>
         h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0))))),
       h("div", { class: "card pw-tbl", role: "table", "aria-label": T("Pull requests", "Pull requests"), "data-prs-table": "" },
-        h("div", { class: "pw-row h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Next step · waits on", "下一步 · 等誰"), T("Missing", "還缺"), T("Depends on", "依賴"), T("Test evidence", "測試證據"), T("Environments", "環境"), T("Reviews", "Reviews"), T("Issues", "Issue"), T("Group", "組")].map((t) => h("span", { role: "columnheader" }, t))),
+        h("div", { class: "pw-row h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Next step · waits on", "下一步 · 等誰"), T("Missing", "還缺"), T("CI", "CI"), T("Depends on", "依賴"), T("Test evidence", "測試證據"), T("Environments", "環境"), T("Reviews", "Reviews"), T("Issues", "Issue"), T("Group", "組")].map((t) => h("span", { role: "columnheader" }, t))),
         shown.length ? shown.map((r) => rowView(r, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, rows.length ? T("No pull request under this filter.", "這個篩選下沒有 pull request。") : T("Nothing watched yet, or nothing open: paste a repository or pull request address above.", "還沒有追蹤任何東西，或沒有開著的 PR：在上方貼上 repo 或 PR 網址。"))),
       h("p", { class: "pw-foot faint" }, T("Hover a row and press × to drop it (a pull request that came in through its repository is recorded as excluded, and can be restored). Drag the handle (or Alt+↑/↓) to reorder; click a row for its details. The next step is the first matching rule, top to bottom; no model decides it.",
         "滑過一列按 × 從清單移除（從 repo 帶進來的 PR 會記成「已排除」，可還原）。拖拉把手（或 Alt+↑/↓）調整順序；點一列看細節。下一步由固定規則從上往下取第一條符合的，不靠模型。"))));
@@ -160,6 +160,19 @@ function proposalCard(d) {
     h("div", { class: "pw-acts" }, h("button", { class: "btn primary", "data-prs-accept": "", onclick: () => act("/api/prs/accept", {}, T("Accepted: the order and dependencies are Studio's record; nothing was written to GitHub", "已接受：順序與依賴存在 Studio，尚未寫入 GitHub")) }, T("Accept", "接受")),
       deps.length ? h("button", { class: "btn", "data-prs-accept-apply": "", onclick: async () => { await act("/api/prs/accept", {}); const ids = [...new Set(deps.map((x) => x.pr))]; applyModal(ids); } }, T("Accept and apply to the pull requests…", "接受並套用到 PR…")) : null));
 }
+// CI: GitHub's combined state of the head's checks and statuses
+const CI = { SUCCESS: ["ok", "passing", "通過"], FAILURE: ["bad", "failing", "失敗"], ERROR: ["bad", "error", "錯誤"], PENDING: ["", "running", "執行中"], EXPECTED: ["", "waiting", "等待中"] };
+function ciBadge(ci) {
+  const c = CI[ci]; if (!c) return h("span", { class: "faint", title: ci === "NONE" ? T("No checks on this head", "這個 head 沒有 check") : T("Not read", "沒讀到") }, "—");
+  return h("span", { class: `badge ${c[0]}`, "data-prs-ci": ci, title: T(`CI on the head: ${c[1]}`, `head 的 CI：${c[2]}`) }, T(c[1], c[2]));
+}
+// each group the rules ask an approval from (required team, code owners): ✓ with who approved, or ✕
+function groupChips(r) {
+  const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.split(" | ").map((x) => x.toLowerCase().startsWith(own) ? `@${x.slice(own.length)}` : x).join(T(" or ", " 或 "));
+  return (r.approvals?.groups || []).map((g) => h("span", { class: `badge pw-grp ${g.ok ? "ok" : "bad"}`, "data-prs-group": g.who,
+    title: g.ok ? T(`${g.kind === "team" ? "Required team" : "Code owners"} ${g.who}: approved by ${g.by.join(", ")}`, `${g.kind === "team" ? "必要 team" : "Code owner"} ${g.who}：${g.by.join("、")} 已 approve`) : T(`${g.kind === "team" ? "Required team" : "Code owners"} ${g.who}: no approval yet`, `${g.kind === "team" ? "必要 team" : "Code owner"} ${g.who}：還沒有 approve`) },
+    compact(g.who), g.ok ? " ✓" : " ✕"));
+}
 function rowView(r, d) {
   const c = r.changed, n = r.next, miss = r.approvals?.missing || [];
   const el = h("div", { class: `pw-row${c ? " chg" : ""}`, role: "row", tabindex: "0", draggable: "true", "data-prs-row": r.id, "data-next": n.kind, "aria-label": `${r.id} ${r.title}`,
@@ -184,10 +197,11 @@ function rowView(r, d) {
       const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.length === 1 && miss[0].kind === "count" ? T(`+${miss[0].n} approval${miss[0].n === 1 ? "" : "s"}`, `還要 ${miss[0].n} 個`) : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
       return h("button", { class: "badge human pw-cta", "data-prs-cta": r.id, "aria-expanded": "false", title: miss[0].kind === "unreadable" ? LX({ en: miss[0].reason, tw: miss[0].tw }) : full, onclick: (e) => { e.stopPropagation(); ctaMenu(e.currentTarget, r); } },
         h("span", { class: "pw-ctat" }, label), h("span", { "aria-hidden": "true" }, " ▾")); })() : h("span", { class: "faint" }, "—")),
+    h("span", { role: "cell", class: "pw-ci" }, ciBadge(r.ci)),
     h("span", { role: "cell" }, depCell(r)),
     h("span", { role: "cell" }, evBadge(r.evidence)),
     h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`) }, e.name)) : h("span", { class: "faint" }, "—")),
-    h("span", { class: "pw-revs", role: "cell" }, r.reviews.length ? r.reviews.map((x) => h("span", { class: `badge ${x.state === "APPROVED" && !x.stale ? "ok" : x.state === "CHANGES_REQUESTED" ? "bad" : ""}`, title: `${reviewWord(x.state)}${x.stale ? T(" (an older head)", "（較舊的 head）") : ""}${x.author ? T(" (the author: does not count)", "（作者本人：不算）") : ""}` },
+    h("span", { class: "pw-revs", role: "cell" }, groupChips(r), r.reviews.length ? r.reviews.map((x) => h("span", { class: `badge ${x.state === "APPROVED" && !x.stale ? "ok" : x.state === "CHANGES_REQUESTED" ? "bad" : ""}`, title: `${reviewWord(x.state)}${x.stale ? T(" (an older head)", "（較舊的 head）") : ""}${x.author ? T(" (the author: does not count)", "（作者本人：不算）") : ""}` },
       x.login, x.state === "CHANGES_REQUESTED" ? " ✕" : x.stale ? T(" (stale)", "（舊）") : "")) : h("span", { class: "faint" }, "—")),
     h("span", { class: "pw-iss", role: "cell" }, r.issues.length ? r.issues.map((i) => h("span", { class: "pw-iss1" }, extLink(ghIssue(i.ref), short(i.ref, null), { title: `${i.ref} ${i.title || ""}${i.state ? ` (${i.state})` : ""}${i.external ? T(" · outside the watched repositories, read only", " · 不在監控的 repo，只讀") : ""}` }), i.external ? h("small", {}, T("external", "外部")) : null)) : h("span", { class: "faint" }, "—")),
     h("span", { role: "cell" }, groupCell(r, d)));
@@ -248,6 +262,8 @@ function detail(r) {
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("How the next step was found", "下一步怎麼算出來的")),
         h("ol", { class: "pw-rules", "data-prs-rules": "" }, rules.map((x, i) => h("li", { class: x.id === n.rule ? "hit" : n.matched?.[i] ? "" : "no", "data-rule": x.id }, T(x.en, x.tw), x.id === n.rule ? T(" ← this one", " ← 這條") : ""))),
+        h("h3", {}, T("CI", "CI")), h("div", {}, ciBadge(r.ci)),
+        (r.approvals?.groups || []).length ? h("h3", {}, T("Approval groups", "要 approve 的群組")) : null, ...(r.approvals?.groups || []).map((g) => h("div", { class: "kv" }, h("span", {}, g.who), h("span", {}, g.ok ? T(`approved by ${g.by.join(", ")}`, `${g.by.join("、")} 已 approve`) : T("not yet", "還沒")))),
         h("h3", {}, T("Missing approvals", "還缺的 approve")), h("div", {}, (r.approvals?.missing || []).length ? r.approvals.missing.map((m) => m.kind === "unreadable" ? LX({ en: m.reason, tw: m.tw }) : missWord(m)).join(T("; ", "；")) : "—"),
         r.approvals?.readable ? h("p", { class: "faint pw-small" }, T(`Rules: ${r.approvals.required} approval${r.approvals.required === 1 ? "" : "s"}${r.approvals.codeOwners ? ", code owners" : ""}${r.approvals.lastPush ? ", approval after the last push" : ""}${r.approvals.dismissStale ? ", stale approvals dismissed" : ""} (${(r.approvals.sources || []).join(", ") || "no rule"}).`,
           `規則：${r.approvals.required} 個 approve${r.approvals.codeOwners ? "、code owner" : ""}${r.approvals.lastPush ? "、最後一次 push 之後的 approve" : ""}${r.approvals.dismissStale ? "、舊 approve 失效" : ""}（${(r.approvals.sources || []).join("、") || "沒有規則"}）。`)) : null,
@@ -310,8 +326,8 @@ async function openRoom(r) {
 }
 function markdown(rows) {
   const esc = (s) => String(s ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
-  return [`| # | ${T("Pull request", "Pull request")} | ${T("Next step", "下一步")} | ${T("Waits on", "等誰")} | ${T("Missing", "還缺")} | ${T("Test evidence", "測試證據")} | ${T("Environments", "環境")} | ${T("Depends on", "依賴")} |`, "|---|---|---|---|---|---|---|---|",
-    ...rows.map((r) => `| ${r.position} | [${r.id}](${ghPr(r.id)}) ${esc(r.title)} | ${esc(nextWord(r.next))} | ${esc(r.next.who.map(whoWord).join(", "))} | ${esc((r.approvals?.missing || []).map(missWord).join(", ") || "—")} | ${esc(r.evidence ? verdictWord(r.evidence.verdict) + (r.evidence.covers === "older" ? ` (${r.evidence.since || "older"})` : "") : "—")} | ${esc(r.envs.filter((e) => e.on).map((e) => e.name).join(", ") || "—")} | ${esc(r.deps.on.map((x) => x.id).join(", ") || "—")} |`)].join("\n");
+  return [`| # | ${T("Pull request", "Pull request")} | ${T("Next step", "下一步")} | ${T("Waits on", "等誰")} | ${T("Missing", "還缺")} | ${T("CI", "CI")} | ${T("Approvals", "Approve")} | ${T("Test evidence", "測試證據")} | ${T("Environments", "環境")} | ${T("Depends on", "依賴")} |`, "|---|---|---|---|---|---|---|---|---|---|",
+    ...rows.map((r) => `| ${r.position} | [${r.id}](${ghPr(r.id)}) ${esc(r.title)} | ${esc(nextWord(r.next))} | ${esc(r.next.who.map(whoWord).join(", "))} | ${esc((r.approvals?.missing || []).map(missWord).join(", ") || "—")} | ${esc(CI[r.ci] ? T(CI[r.ci][1], CI[r.ci][2]) : "—")} | ${esc([...(r.approvals?.groups || []).map((g) => `${g.who} ${g.ok ? "✓" : "✕"}`), ...r.reviews.filter((x) => !x.author).map((x) => `${x.login} ${x.state === "APPROVED" && !x.stale ? "✓" : x.state === "CHANGES_REQUESTED" ? "✕" : "💬"}`)].join(", ") || "—")} | ${esc(r.evidence ? verdictWord(r.evidence.verdict) + (r.evidence.covers === "older" ? ` (${r.evidence.since || "older"})` : "") : "—")} | ${esc(r.envs.filter((e) => e.on).map((e) => e.name).join(", ") || "—")} | ${esc(r.deps.on.map((x) => x.id).join(", ") || "—")} |`)].join("\n");
 }
 function reportModal(rows) {
   const who = h("input", { class: "input", "data-prs-reader": "", value: T("the approvers", "approver"), "aria-label": T("For whom", "給誰看") });

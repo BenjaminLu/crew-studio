@@ -54,7 +54,7 @@ try {
   await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
   ok(await p.locator('[data-prs-row]').count() === 12, 'the refresh button reads GitHub: twelve rows');
   const cols = await p.locator('.pw-row.h [role="columnheader"]').allInnerTexts();
-  ok(JSON.stringify(cols.slice(1)) === JSON.stringify(['#', 'Pull request', 'Next step · waits on', 'Missing', 'Depends on', 'Test evidence', 'Environments', 'Reviews', 'Issues', 'Group']), 'the columns, in order', JSON.stringify(cols));
+  ok(JSON.stringify(cols.slice(1)) === JSON.stringify(['#', 'Pull request', 'Next step · waits on', 'Missing', 'CI', 'Depends on', 'Test evidence', 'Environments', 'Reviews', 'Issues', 'Group']), 'the columns, in order', JSON.stringify(cols));
   const next = async (id) => p.locator(`[data-prs-row="${id}"] [data-prs-next]`).getAttribute('data-prs-next');
   ok(await next('northwind/checkout-api#16') === 'failed' && await next('northwind/checkout-api#19') === 'ready' && await next('northwind/checkout-api#11') === 'draft', 'the next step per row (failed evidence is a fix, never ready)');
   ok((await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-next]').innerText()).startsWith('Test only the change since '), 'evidence for an older head: test only the change since');
@@ -65,6 +65,8 @@ try {
   // text from GitHub is text
   ok(await p.evaluate(() => window.__xss === undefined && !document.querySelector('[data-prs-row="northwind/mobile#5"] img')) && (await p.locator('[data-prs-row="northwind/mobile#5"] .pw-title').innerText()).includes('<img src=x'), 'a title with HTML is shown as text, never run');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#12"] .pw-iss small').innerText() === 'external' && await p.locator('[data-prs-single="northwind/mobile#5"]').count() === 1 && await p.locator('[data-prs-row="northwind/mobile#5"] .badge', { hasText: 'single' }).count() === 1, 'an issue outside the watched repositories is marked external; the single pull request is marked single');
+  ok(await p.locator('[data-prs-row="northwind/checkout-api#19"] [data-prs-ci="SUCCESS"]').count() === 1 && await p.locator('[data-prs-row="northwind/web-app#30"] [data-prs-ci="FAILURE"]').count() === 1, 'the CI column: passing and failing heads');
+  ok(await p.locator('[data-prs-row="northwind/checkout-api#18"] [data-prs-group="@northwind/release"].bad').count() === 1 && await p.locator('[data-prs-row="northwind/checkout-api#19"] [data-prs-group="@northwind/release"].ok').count() === 1, 'a required team shows ✕ until a member approves, then ✓');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#19"] .pw-unreg').count() === 1, 'a repository that is not a registered project gets the grey mark');
   ok(!(await p.locator('text=/mark as read|\\bunread\\b/i').count()), 'no read/unread state anywhere');
   // the detail dialog
@@ -104,7 +106,7 @@ try {
   ok((await p.locator('[data-prs-cta="northwind/web-app#30"] .pw-ctat').innerText()) === '+1 approval', 'a missing count with no names reads "+1 approval"', await p.locator('[data-prs-cta="northwind/web-app#30"] .pw-ctat').innerText());
   ok((await p.locator('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]').innerText()) === 'Fix the failing tests', 'next-step words follow one pattern');
   const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
-  ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all eleven columns fit without scrolling', JSON.stringify(fit));
+  ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all twelve columns fit without scrolling', JSON.stringify(fit));
   ok(await p.locator('[data-prs-tab][role="tab"], [data-prs-tab][aria-selected]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
   await p.focus('[data-prs-row="northwind/checkout-api#13"]'); await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(400);
   ok(await p.evaluate(() => document.activeElement?.dataset?.prsRow) === 'northwind/checkout-api#13', 'a live update gives the keyboard focus back to the row that had it');

@@ -251,6 +251,10 @@ try {
   ok(a40.readable && /admin/.test(a40.unread?.[0]?.en ?? "") && a40.missing.some((m: any) => m.kind === "count" && m.n === 1) && a40.missing.some((m: any) => m.kind === "team" && m.who === "@northwind/finance")
     && nx("northwind/ledger#40").who.includes("@northwind/finance") && a40.github?.mergeState === "BLOCKED" && a40.github?.requested.join() === "@northwind/finance",
     "branch protection that needs admin: the readable ruleset still decides (a team named only by id gets its name), with GitHub's merge box beside it", JSON.stringify(a40));
+  { const g18 = row(v, "northwind/checkout-api#18").approvals.groups, g19 = row(v, "northwind/checkout-api#19").approvals.groups;
+    ok(g18.some((g: any) => g.kind === "team" && g.who === "@northwind/release" && !g.ok) && g18.some((g: any) => g.kind === "owner" && g.who === "@dana" && !g.ok)
+      && g19.every((g: any) => g.ok) && g19.some((g: any) => g.who === "@northwind/release" && g.by.join() === "rel-ray"), "each approval group shows met or not and by whom", JSON.stringify([g18, g19])); }
+  ok(row(v, "northwind/checkout-api#19").ci === "SUCCESS" && row(v, "northwind/checkout-api#20") === undefined && (row(v, "northwind/mobile#5").ci === "SUCCESS") && row(v, "northwind/web-app#30").ci === "FAILURE", "CI is GitHub's combined state for the head", JSON.stringify(row(v, "northwind/checkout-api#19").ci));
   ok(row(v, "northwind/checkout-api#19").approvals.missing.length === 0, "two approvals from a code owner and the required team: nothing missing");
   // environments
   const env = (id: string, n: string) => row(v, id).envs.find((e: any) => e.name === n)?.on;

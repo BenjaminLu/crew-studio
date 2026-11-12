@@ -14,7 +14,7 @@ type Pr = { repo: string; number: number; title: string; user: string; assignees
   body?: string; commits: { sha: string; at: string; login: string }[]; reviews?: { user: string; state: string; commit: string; at: string }[];
   comments?: { user: string; body: string; at: string }[]; files?: string[]; checks?: { name: string; conclusion: string; at: string }[]; labels?: string[];
   closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string;
-  github?: { reviewDecision?: string | null; mergeState?: string; requested?: string[] } };
+  github?: { reviewDecision?: string | null; mergeState?: string; requested?: string[]; ci?: string } };
 const two = (n: string, h = 0) => [{ sha: sha(`${n}-1`), at: at(h), login: ME }, { sha: sha(`${n}-2`), at: at(h + 1), login: ME }];
 const head = (p: Pr) => p.commits.at(-1)!.sha;
 
@@ -56,7 +56,7 @@ export function fixtureData() {
   { const c = two("ca20"); add({ repo: ca, number: 20, title: "Someone else's change", user: "lee", commits: c }); }
   { const c = two("ca9"); add({ repo: ca, number: 9, title: "Closed change", user: ME, state: "closed", commits: c }); }
   // web-app: classic protection dismisses stale approvals; ana's approval on the older head does not count
-  { const c = two("wa30"); add({ repo: "northwind/web-app", number: 30, title: "Login copy rewrite", user: ME, commits: c, reviews: [bot(c[1].sha), { user: "ana", state: "APPROVED", commit: c[0].sha, at: at(0.5) }],
+  { const c = two("wa30"); add({ repo: "northwind/web-app", number: 30, title: "Login copy rewrite", user: ME, commits: c, github: { ci: "FAILURE" }, reviews: [bot(c[1].sha), { user: "ana", state: "APPROVED", commit: c[0].sha, at: at(0.5) }],
     checks: [qa(c[1].sha)], files: ["src/login.tsx"], comments: [{ user: "qa-lin", body: "Looked at it, will finish tomorrow", at: at(29) }] }); }
   // ledger: its branch protection cannot be read without admin (404 "Not Found"); its ruleset asks for one approval and a
   // team named only by id (88), whose name Studio looks up
@@ -115,7 +115,7 @@ export function prWatchGitHub(data = fixtureData()) {
     if (rateLimited) return json({ message: "API rate limit exceeded" }, 403, { "x-ratelimit-remaining": "0" });
     if (method === "GET" && p === "/user") return json({ login: ME });
     if (method === "POST" && p === "/graphql") { const v = body?.variables ?? {}; const pr = data.find(`${v.o}/${v.r}`, v.n);
-      return json({ data: { repository: { pullRequest: pr ? { reviewDecision: pr.github?.reviewDecision ?? null, mergeStateStatus: pr.github?.mergeState ?? "BLOCKED",
+      return json({ data: { repository: { pullRequest: pr ? { commits: { nodes: [{ commit: { oid: data.head(pr), statusCheckRollup: pr.github?.ci ? { state: pr.github.ci } : pr.checks?.length ? { state: pr.checks.some((c) => c.conclusion === "failure") ? "FAILURE" : "SUCCESS" } : null } }] }, reviewDecision: pr.github?.reviewDecision ?? null, mergeStateStatus: pr.github?.mergeState ?? "BLOCKED",
         reviewRequests: { nodes: (pr.github?.requested ?? []).map((x: string) => x.includes("/") ? { requestedReviewer: { __typename: "Team", slug: x.split("/")[1], organization: { login: x.split("/")[0] } } } : { requestedReviewer: { __typename: "User", login: x } }) },
         closingIssuesReferences: { nodes: (pr.closing ?? []).map((c) => ({ number: c.number, title: c.title, state: c.state, url: `https://github.com/${c.repo}/issues/${c.number}`, repository: { nameWithOwner: c.repo } })) } } : null } } }); }
     let m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p); if (!m) { if ((m = /^\/teams\/(\d+)$/.exec(p))) { const t = data.teamIds[m[1]]; return t ? json({ slug: t.split("/")[1], organization: { login: t.split("/")[0] } }) : nf(); }
