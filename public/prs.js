@@ -44,7 +44,8 @@ function nextWord(n) {
   if (n.rule === "evidence") return n.reason === "unknown-commit" ? T("Test (commit not named)", "測試（沒指明 commit）") : n.since ? T(`Test only the change since ${n.since}`, `只驗 ${n.since} 之後的改動`) : n.reason === "unclassified" ? T("Confirm the test verdict", "確認測試結論") : n.reason === "code-only" ? T("Test (code review only so far)", "測試（目前只審了 code）") : T("Test", "測試");
   if (n.rule === "approvals") return T("Approve", "等 approve");
   if (n.rule === "blocked") return T("Blocked on GitHub", "GitHub 擋住 merge");
-  return T("Ready to merge", "可合併");
+  if (n.rule === "unread") return T("On hold: not all reviews or comments read (see GitHub)", "暫緩：沒讀到全部 review 或留言（看 GitHub）");
+  return n.rule === "ready" ? T("Ready to merge", "可合併") : n.rule; // a rule this page does not know is named, never "ready"
 }
 const TABS = [["all", "All", "全部"], ["approve", "Approve", "等 approve"], ["test", "Test", "等測試"], ["fix", "Fix", "等修正"], ["dependency", "Dependency", "等依賴"], ["merge", "Mergeable", "可合併"], ["hold", "On hold", "暫緩"]];
 const reviewWord = (s) => s === "APPROVED" ? T("approved", "approve") : s === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : s === "DISMISSED" ? T("dismissed", "撤銷") : T("commented", "留言");
@@ -251,7 +252,9 @@ function pwModal(title, kids, o = {}) {
   const prevRow = prev?.closest?.("[data-prs-row]")?.dataset.prsRow ?? null, mark = prev?.getAttributeNames?.().find((n) => n.startsWith("data-prs-")) ?? null;
   const prevSel = prev?.id ? `#${CSS.escape(prev.id)}` : mark ? `[${mark}="${CSS.escape(prev.getAttribute(mark) || "")}"]` : null;
   const refocus = () => { if (prev?.isConnected) return prev.focus?.();
-    const el = (prevSel && document.querySelector(prevSel)) || (prevRow && document.querySelector(`[data-prs-row="${CSS.escape(prevRow)}"]`)); el?.focus?.(); };
+    // the same control in the same row first (several rows have one alike), then that row, then the control on the page
+    const row = prevRow ? document.querySelector(`[data-prs-row="${CSS.escape(prevRow)}"]`) : null;
+    const el = row ? (prevSel && row.querySelector(prevSel)) || row : prevSel && document.querySelector(prevSel); el?.focus?.(); };
   const close = () => { root.replaceChildren(); refocus(); };
   const box = h("div", { class: `modal pw-modal${o.wide ? " wide" : ""}`, role: "dialog", "aria-modal": "true", "aria-label": title, "data-prs-dialog": o.id || "" },
     h("div", { class: "pw-mh" }, h("h2", {}, title), h("span", { class: "x-grow" }), h("button", { class: "btn ghost icon", "aria-label": T("Close", "關閉"), "data-prs-close": "", onclick: close }, icon("x"))), ...kids);
