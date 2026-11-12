@@ -287,6 +287,10 @@ try {
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
   const ch = row(v, "northwind/checkout-api#18").changed;
   ok(ch && ch.what.some((w: any) => w.k === "review" && w.login === "rel-ray") && ch.what.some((w: any) => w.k === "next" && w.from === "approve" && w.to === "merge") && v.rows.filter((r: any) => r.changed && r.id !== "northwind/checkout-api#19").length === 1 && row(v, "northwind/checkout-api#19").changed.what.join && row(v, "northwind/checkout-api#19").changed.what[0].to === "dependency", "a refresh marks the rows that changed, with what changed (the dependency the captain added changed #19's next step)", JSON.stringify(ch));
+  { gh.data.find("northwind/web-app", 30)!.github!.ci = "SUCCESS"; // a refresh may still be running from the calls above: refresh until it is read
+    for (let i = 0; i < 20 && W.snapshot.rows.find((r) => r.id === "northwind/web-app#30")?.ci !== "SUCCESS"; i++) { await call("/api/prs/refresh", {}); await new Promise((r) => setTimeout(r, 250)); }
+    const vc = (await call("/api/prs")).body, ch = row(vc, "northwind/web-app#30").changed;
+    ok(row(vc, "northwind/web-app#30").ci === "SUCCESS" && ch?.what.some((w: any) => w.k === "ci" && w.state === "SUCCESS") && ch.what.every((w: any) => w.k !== "head"), "CI that turns green on the same head marks the row changed", JSON.stringify(ch)); }
   const at1 = ch.at; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
   ok(row(v, "northwind/checkout-api#18").changed?.at === at1 && !("read" in row(v, "northwind/checkout-api#18")) && !("unread" in v), "the mark stays until the next change; there is no read/unread state");
   // applying the dependencies: only through the captain's card, only the marked block

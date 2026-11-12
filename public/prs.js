@@ -59,6 +59,7 @@ function changeWord(w) {
     case "evidence": return T(`test evidence: ${verdictWord(String(w.verdict).split(":")[0])}`, `測試證據：${verdictWord(String(w.verdict).split(":")[0])}`);
     case "env": return w.on ? T(`runs on ${w.name}`, `${w.name} 跑著它`) : T(`left ${w.name}`, `${w.name} 不再跑它`);
     case "next": return T(`next step ${w.from} → ${w.to}`, `下一步 ${w.from} → ${w.to}`);
+    case "ci": return CI[w.state] ? T(`CI ${CI[w.state][1]}`, `CI ${CI[w.state][2]}`) : "";
   }
   return "";
 }

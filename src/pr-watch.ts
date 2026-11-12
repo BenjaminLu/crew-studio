@@ -112,7 +112,7 @@ export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true,
 type Dep = { on: string[]; by: "captain" | "accepted" | "github"; at: string };
 export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string> };
 const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {} });
-type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" };
+type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" } | { k: "ci"; state: string };
 export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
   createdAt: string; labels: string[]; bodyBlock: string | null; githubDeps: string[] | null; bodyMalformed: boolean;
@@ -379,6 +379,8 @@ export function createPrWatch(d: PrWatchDeps) {
         if (before.draft !== f.draft) what.push({ k: "draft", draft: f.draft });
         for (const [lg, st] of Object.entries(f.reviews as Record<string, string>)) if (before.reviews?.[lg] !== st) what.push({ k: "review", login: lg, state: st });
         if (before.evidence !== f.evidence) what.push({ k: "evidence", verdict: f.evidence });
+        // CI that finishes or fails on the same head (a snapshot from before CI was read has no entry: not a change)
+        if ("ci" in before && before.ci !== f.ci && f.ci) what.push({ k: "ci", state: f.ci });
         for (const [nm, on] of Object.entries(f.envs as Record<string, boolean>)) if ((before.envs?.[nm] ?? null) !== on) what.push({ k: "env", name: nm, on: !!on });
         if (before.next !== f.next) what.push({ k: "next", from: before.next, to: f.next });
       }
@@ -390,7 +392,7 @@ export function createPrWatch(d: PrWatchDeps) {
   }
   const finger = (r: ReturnType<typeof viewRows>[number]) => ({ head: r.head, title: r.title, draft: r.draft, next: r.next.kind,
     reviews: Object.fromEntries(r.reviews.map((x) => [x.login, `${x.state}${x.stale ? ":stale" : ""}`])), evidence: r.evidence ? `${r.evidence.verdict}:${r.evidence.covers}` : "none",
-    envs: Object.fromEntries(r.envs.map((e) => [e.name, e.on])) });
+    envs: Object.fromEntries(r.envs.map((e) => [e.name, e.on])), ci: r.ci ?? null });
 
   // ---------- the list as the page shows it ----------
   function viewRows(sn: Snapshot, s: State) {
