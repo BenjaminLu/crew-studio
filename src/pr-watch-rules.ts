@@ -348,7 +348,8 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
       missing: [{ kind: "unreadable", reason: `${rules.unread[0].en}, and GitHub's merge box could not be read`, tw: `${rules.unread[0].tw}，也讀不到 GitHub 的 merge 狀態` }] };
     if (!missing.length && o.github.reviewDecision === "REVIEW_REQUIRED") missing.push({ kind: "github", who: o.github.requested.slice(0, 10) });
   }
-  const blocked = !!rules.unread?.length && !missing.length && o.github?.mergeState === "BLOCKED";
+  // UNKNOWN: GitHub is still computing the merge state (just after a push); with the protection unread that is not ready either
+  const blocked = !!rules.unread?.length && !missing.length && (o.github?.mergeState === "BLOCKED" || o.github?.mergeState === "UNKNOWN");
   return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources,
     ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}), ...(blocked ? { blocked } : {}) };
 }
