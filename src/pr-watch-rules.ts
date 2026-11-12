@@ -123,7 +123,13 @@ export const normBlock = (t: string | null) => t == null ? null : t.replace(/\r\
 
 // ---------- test evidence ----------
 export type Verdict = "pass" | "conditional" | "fail" | "code-only" | "unclassified";
-const LABEL_LINE = /^(?:verdict|result|results|status|outcome|test result|qa|結論|結果|測試結果|测试结果|结论|结果)\s*[:：]/i;
+const LABEL_LINE = /^(?:verdict|result|results|status|outcome|test result|qa|結論|結果|測試結果|测试结果|结论|结果|測試結論|测试结论|驗收結論|验收结论)\s*[:：]/i;
+/** A line that names the report's conclusion: a heading or label "結論 / 测试结论 / Verdict / Conclusion …", or a table row whose first cell is one. */
+const CONCLUSION = /^(?:(?:test\s+)?(?:verdict|conclusion|result)|(?:測試|测试|驗收|验收|qa\s*)?(?:結論|结论))(?:\s*[:：|]\s*|\s*$)/i;
+/** An HTML report as text lines: block tags end a line, every other tag goes, the common entities are decoded. */
+const htmlLines = (t: string) => /<(?:p|div|h[1-6]|li|br|table|tr|td|th|strong|span|html|body)\b/i.test(t)
+  ? t.replace(/<(?:br|\/p|\/div|\/h[1-6]|\/li|\/tr|\/table)\s*\/?>/gi, "\n").replace(/<\/t[dh]>/gi, " | ").replace(/<[^>]{0,400}>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+  : t;
 const strip = (l: string) => l.replace(/[*_`~>#|]/g, " ").replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim();
 function verdictOf(line: string): Verdict | null {
   const l = line.toLowerCase();
@@ -142,13 +148,18 @@ function verdictOf(line: string): Verdict | null {
  * anywhere in the comment are returned (7 to 40 hex characters with at least one letter and one digit).
  */
 export function classifyComment(body: string): { verdict: Verdict; shas: string[] } {
-  const text = String(body ?? "").slice(0, 65536), found = new Set<Verdict>();
-  for (const raw of text.split(/\r?\n/)) {
-    const t = raw.trim(); if (!t || t.length > 500) continue; // a verdict line is short: long lines are never read by a pattern
-    const heading = /^#{1,6}\s/.test(t), bold = /^\*\*[^*]+\*\*\s*(?:[:：]\s*)?\S*$/.test(t), label = LABEL_LINE.test(strip(t)), short = strip(t).length <= 24;
+  const text = htmlLines(String(body ?? "").slice(0, 65536)), found = new Set<Verdict>(), concluded = new Set<Verdict>();
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i]; if (t.length > 500) continue; // a verdict line is short: long lines are never read by a pattern
+    // the report's own conclusion ("### 测试结论" then its line, "**测试结论：…**", "| 结论 | … |") outranks every other line
+    const st = strip(t);
+    if (CONCLUSION.test(st)) { const own = verdictOf(st.replace(CONCLUSION, "")) ?? (st.replace(CONCLUSION, "").trim() ? null : lines[i + 1] && lines[i + 1].length <= 500 ? verdictOf(strip(lines[i + 1])) : null); if (own) concluded.add(own); }
+    const heading = /^#{1,6}\s/.test(t), bold = /^\*\*[^*]+\*\*\s*(?:[:：]\s*)?\S*$/.test(t), label = LABEL_LINE.test(st), short = st.length <= 24;
     if (!(heading || bold || label || short)) continue;
-    const v = verdictOf(strip(t)); if (v) found.add(v);
+    const v = verdictOf(st); if (v) found.add(v);
   }
+  if (concluded.size) found.clear(), concluded.forEach((v) => found.add(v));
   const shas = [...new Set([...text.matchAll(/\b[0-9a-f]{7,40}\b/gi)].map((m) => m[0].toLowerCase()).filter((s) => /[a-f]/.test(s) && /\d/.test(s)))];
   return { verdict: found.size === 1 ? [...found][0] : "unclassified", shas };
 }
@@ -386,6 +397,7 @@ export function nextStep(p: StepInput): Step {
   const open = p.deps.filter((d) => !d.done);
   const pre = p.envs.filter((e) => !e.production);
   const ev = p.evidence;
+  const noSource = !p.evidenceSources.accounts.length && !p.evidenceSources.checks.length && !p.evidenceSources.labels.length;
   const evWho = p.evidenceSources.accounts.length || p.evidenceSources.checks.length || p.evidenceSources.labels.length ? [...p.evidenceSources.accounts, ...p.evidenceSources.checks, ...p.evidenceSources.labels] : ["(no evidence source set)"];
   const tests: [boolean, () => Omit<Step, "matched">][] = [
     [p.draft, () => ({ rule: "draft", kind: "hold", who: [p.author] })],
@@ -394,7 +406,8 @@ export function nextStep(p: StepInput): Step {
     [open.length > 0, () => ({ rule: "dependency", kind: "dependency", who: open.map((d) => d.id) })],
     [pre.length > 0 && !pre.some((e) => e.on), () => ({ rule: "environment", kind: "deploy", who: [p.author] })],
     [ev?.verdict === "fail", () => ({ rule: "failed", kind: "fix", who: [p.author], reason: ev?.by })],
-    [!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older" || ev.covers === "unknown", () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev && ev.covers === "unknown" && ev.verdict !== "unclassified" && ev.verdict !== "code-only" ? "unknown-commit" : ev?.verdict })],
+    // no evidence source set: the rule does not apply (as with no environment); the evidence column offers Set up
+    [!noSource && (!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older" || ev.covers === "unknown"), () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev && ev.covers === "unknown" && ev.verdict !== "unclassified" && ev.verdict !== "code-only" ? "unknown-commit" : ev?.verdict })],
     [p.approvals.missing.length > 0, () => ({ rule: "approvals", kind: "approve", who: p.approvals.readable ? missingWho(p.approvals.missing) : ["(rules unreadable)"] })],
     [!!p.approvals.blocked, () => ({ rule: "blocked", kind: "hold", who: ["(GitHub blocks the merge)"] })],
     [true, () => ({ rule: "ready", kind: "merge", who: ["captain"] })],

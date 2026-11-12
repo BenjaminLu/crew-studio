@@ -44,6 +44,16 @@ const { ok, end } = suite("pr-watch");
   ok(R.evidenceOf({ accounts: [], checks: [], labels: ["qa-passed"] }, { comments: [], checks: [], labels: ["QA-passed"], commits, head: sha("b") })?.source === "label", "a listed label counts as evidence");
   ok(R.evidenceOf({ accounts: [], checks: ["e2e"], labels: [] }, { comments: [], checks: [{ name: "e2e", status: "completed", conclusion: "failure", at: "2026-11-03T00:00:00Z", url: null }], labels: [], commits, head: sha("b") })?.verdict === "fail", "a listed check run that failed is failing evidence");
 }
+// ---------- verdicts: the report's own conclusion (real report shapes, fictional text) ----------
+{
+  const c = (b: string) => R.classifyComment(b).verdict;
+  ok(c("### 测试结论\n\n通过（代码审查与回归范围）。\n\n| 验证项 | 结果 |\n|---|---|\n| 失败日志处理 | 未发现问题 |\n| 探针 | 通过 |") === "pass", "a conclusion heading reads its next line; a table row naming failure handling does not outvote it");
+  ok(c("**测试结论：数据库记录验证通过；整体验收暂保留条件通过。**\n\n| 项 | 结论 |\n| 状态 | 通过 |") === "conditional", "a bold conclusion line outranks the table's pass cells");
+  ok(c("<html><body><p><strong><span>PR 专项测试通过</span></strong></p><div><table><tr><td>结论</td><td>已执行专项测试通过</td></tr></table></div></body></html>") === "pass", "an HTML report: tags become lines and cells, its conclusion row is read");
+  ok(c("### 结论\n**已执行业务回归通过。") === "pass", "a conclusion heading followed by an unclosed bold line");
+  ok(c("## 結論\n未通過：匯出失敗") === "fail" && c("Conclusion: passed with conditions") === "conditional", "a conclusion that fails, and one in English");
+  ok(c("| 验证项 | 通过 |\n| 其他 | 失败 |") === "unclassified", "no conclusion and lines that disagree: still unclassified");
+}
 // ---------- the next step: each rule on its own, and the first match wins ----------
 {
   const okApprovals: R.Approvals = { readable: true, required: 1, counted: 1, codeOwners: false, lastPush: false, dismissStale: false, missing: [], sources: [] };
@@ -230,7 +240,8 @@ try {
       "no environments set: a repository's GitHub environments that have a successful deployment (production, never deployed, is left out), on when the newest successful one (not a newer failed one) contains the head", JSON.stringify([envOf("northwind/checkout-api#17"), envOf("northwind/checkout-api#19")]));
     ok(v0.rows.every((r: any) => r.next.rule !== "environment"), "a repository's own environments are shown only: they never make the next step deploy for testing");
     ok(v0.suggest.evidenceAccounts[0]?.login === "qa-lin" && !v0.suggest.evidenceAccounts.some((x: any) => ["skipper", "review-bot", "ana", "bo", "rel-ray"].includes(x.login)) && v0.rows.every((r: any) => r.evidence === null),
-      "no evidence source set: no evidence is guessed, and the people who commented without authoring or reviewing are offered", JSON.stringify(v0.suggest)); }
+      "no evidence source set: no evidence is guessed, and the people who commented without authoring or reviewing are offered", JSON.stringify(v0.suggest));
+    ok(v0.rows.every((r: any) => r.next.rule !== "evidence"), "no evidence source set: the test step does not apply, so no row stops at it (the column offers Set up)", JSON.stringify(v0.rows.map((r: any) => r.next.rule))); }
   ok((await call("/api/prs/settings", { settings: fixtureSettings })).status === 200, "settings saved");
   await until(() => !!W.snapshot.at, 10000); await call("/api/prs/refresh", {});
   let v = (await call("/api/prs")).body;
