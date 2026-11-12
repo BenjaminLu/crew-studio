@@ -53,6 +53,8 @@ const { ok, end } = suite("pr-watch");
   ok(c("### 结论\n**已执行业务回归通过。") === "pass", "a conclusion heading followed by an unclosed bold line");
   ok(c("## 結論\n未通過：匯出失敗") === "fail" && c("Conclusion: passed with conditions") === "conditional", "a conclusion that fails, and one in English");
   ok(c("| 验证项 | 通过 |\n| 其他 | 失败 |") === "unclassified", "no conclusion and lines that disagree: still unclassified");
+  ok(c("| 验证项 | 结果 |\n|---|---|\n| 导出 | 通过 |\n| 结论 | 未通过：导出丢失列 |") === "fail" && c("| Conclusion | FAIL — export loses a column |\n| step | PASS |") === "fail", "a markdown table's conclusion row is read (its | separators kept), and outranks the other rows");
+  ok(R.classifyComment('<p><strong>PASS</strong> on <a href="https://example.invalid/commit/3f2a1c9e5b7d">the head</a></p>').shas.includes("3f2a1c9e5b7d"), "an HTML report's link still names the tested commit");
 }
 // ---------- the next step: each rule on its own, and the first match wins ----------
 {

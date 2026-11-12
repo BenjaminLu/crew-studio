@@ -148,19 +148,19 @@ function verdictOf(line: string): Verdict | null {
  * anywhere in the comment are returned (7 to 40 hex characters with at least one letter and one digit).
  */
 export function classifyComment(body: string): { verdict: Verdict; shas: string[] } {
-  const text = htmlLines(String(body ?? "").slice(0, 65536)), found = new Set<Verdict>(), concluded = new Set<Verdict>();
+  const raw = String(body ?? "").slice(0, 65536), text = htmlLines(raw), found = new Set<Verdict>(), concluded = new Set<Verdict>();
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i]; if (t.length > 500) continue; // a verdict line is short: long lines are never read by a pattern
     // the report's own conclusion ("### 测试结论" then its line, "**测试结论：…**", "| 结论 | … |") outranks every other line
-    const st = strip(t);
-    if (CONCLUSION.test(st)) { const own = verdictOf(st.replace(CONCLUSION, "")) ?? (st.replace(CONCLUSION, "").trim() ? null : lines[i + 1] && lines[i + 1].length <= 500 ? verdictOf(strip(lines[i + 1])) : null); if (own) concluded.add(own); }
+    const st = strip(t), lead = t.replace(/^[\s|*_#>`~]+/, "").replace(/[*_`~]/g, "").trim(); // lead keeps the table's | separators
+    if (CONCLUSION.test(lead)) { const rest = lead.replace(CONCLUSION, ""), own = verdictOf(strip(rest)) ?? (strip(rest) ? null : lines[i + 1] && lines[i + 1].length <= 500 ? verdictOf(strip(lines[i + 1])) : null); if (own) concluded.add(own); }
     const heading = /^#{1,6}\s/.test(t), bold = /^\*\*[^*]+\*\*\s*(?:[:：]\s*)?\S*$/.test(t), label = LABEL_LINE.test(st), short = st.length <= 24;
     if (!(heading || bold || label || short)) continue;
     const v = verdictOf(st); if (v) found.add(v);
   }
   if (concluded.size) found.clear(), concluded.forEach((v) => found.add(v));
-  const shas = [...new Set([...text.matchAll(/\b[0-9a-f]{7,40}\b/gi)].map((m) => m[0].toLowerCase()).filter((s) => /[a-f]/.test(s) && /\d/.test(s)))];
+  const shas = [...new Set([...raw.matchAll(/\b[0-9a-f]{7,40}\b/gi)].map((m) => m[0].toLowerCase()).filter((s) => /[a-f]/.test(s) && /\d/.test(s)))];
   return { verdict: found.size === 1 ? [...found][0] : "unclassified", shas };
 }
 export type Commit = { sha: string; at: string };
