@@ -21,7 +21,7 @@
 .pw-acts{display:flex;gap:8px;flex-wrap:wrap}
 .pw-tabs{margin:14px 0 12px}
 .pw-tbl{display:grid;overflow-x:auto;max-width:100%;min-width:0}
-.pw-row{display:grid;grid-template-columns:18px 24px minmax(150px,1.5fr) minmax(120px,1fr) 160px minmax(110px,.8fr) 92px 130px minmax(84px,1fr) minmax(96px,.9fr) 48px;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--border);font-size:13px;min-width:1140px;cursor:pointer}
+.pw-row{display:grid;grid-template-columns:18px 24px minmax(142px,1.5fr) minmax(120px,1fr) 136px 60px minmax(110px,.8fr) 92px 112px minmax(84px,1fr) minmax(88px,.9fr) 48px;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--border);font-size:13px;min-width:1146px;cursor:pointer}
 .pw-row:first-child{border-top:0}
 .pw-row.h{cursor:default;font-size:12px;color:var(--text-3);padding-top:8px;padding-bottom:8px;background:var(--surface-2)}
 .pw-row:not(.h):hover{background:var(--surface-2)}
@@ -44,6 +44,8 @@
 .pw-cta{cursor:pointer;font:inherit;font-size:12px;font-weight:500;text-align:left;display:inline-flex;max-width:100%;white-space:nowrap!important}
 .pw-ctat{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow-wrap:anywhere;min-width:0}.pw-misscell{min-width:0}
 .pw-revs{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.pw-row .pw-ci .badge{white-space:nowrap}
+.pw-row .pw-agrp{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .pw-envs{display:flex;gap:4px;flex-wrap:wrap}
 .pw-env{font:500 11px var(--f-mono);border:1px dashed var(--border-strong);border-radius:5px;padding:1px 5px;color:var(--text-3)}
 .pw-env.on{border-style:solid;border-color:transparent;background:var(--ok-soft);color:var(--ok)}

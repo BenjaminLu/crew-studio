@@ -112,12 +112,12 @@ export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true,
 type Dep = { on: string[]; by: "captain" | "accepted" | "github"; at: string };
 export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string> };
 const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {} });
-type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" };
+type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" } | { k: "ci"; state: string };
 export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
   createdAt: string; labels: string[]; bodyBlock: string | null; githubDeps: string[] | null; bodyMalformed: boolean;
   issues: { ref: string; url: string; title: string | null; state: string | null; external: boolean }[];
-  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; envs: { name: string; on: boolean | null; production: boolean }[];
+  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean }[];
   facts: R.PrFacts; partial: string[];
 };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
@@ -312,7 +312,7 @@ export function createPrWatch(d: PrWatchDeps) {
         soft(() => g.pages(`${path}/issues/${n}/timeline`, 2), [] as any[], partial, "timeline"),
         soft(async () => (await g.pages(`${path}/pulls/${n}/files`, 3)).map((f: any) => String(f.filename ?? "")).filter(Boolean), [] as string[], partial, "files"),
         soft(async () => SHA.test(head) ? ((await g.get(`${path}/commits/${head}/check-runs?per_page=100`))?.check_runs ?? []) : [], [] as any[], partial, "checks"),
-        soft(async () => { const [o, r] = repo.split("/"); const data = await g.graphql("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewDecision mergeStateStatus reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{slug organization{login}}}}} closingIssuesReferences(first:20){nodes{number title state url repository{nameWithOwner}}}}}}", { o, r, n });
+        soft(async () => { const [o, r] = repo.split("/"); const data = await g.graphql("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviewDecision mergeStateStatus reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{slug organization{login}}}}} closingIssuesReferences(first:20){nodes{number title state url repository{nameWithOwner}}}}}}", { o, r, n });
           return (data?.repository?.pullRequest ?? null) as any; }, null as any, partial, "closing issues"),
       ]);
       signal.throwIfAborted();
@@ -344,6 +344,8 @@ export function createPrWatch(d: PrWatchDeps) {
       const word = (x: unknown) => { const t = String(x ?? ""); return /^[A-Z_]{1,40}$/.test(t) ? t : null; };
       const github: R.GitHubMerge | null = gql ? { reviewDecision: word(gql.reviewDecision), mergeState: word(gql.mergeStateStatus),
         requested: (gql.reviewRequests?.nodes ?? []).map((x: any) => { const v = x?.requestedReviewer ?? {}; return v.__typename === "Team" && R.NAME.test(String(v.organization?.login ?? "")) && R.NAME.test(String(v.slug ?? "")) ? `@${v.organization.login}/${v.slug}` : v.__typename === "User" && R.NAME.test(String(v.login ?? "")) ? String(v.login) : ""; }).filter(Boolean).slice(0, 20) } : null;
+      // CI: GitHub's combined state of the head's checks and commit statuses (statusCheckRollup), for this head only
+      const tip = gql?.commits?.nodes?.[0]?.commit, ci = tip && String(tip.oid ?? "") === head ? word(tip.statusCheckRollup?.state) ?? "NONE" : null;
       const named: R.Rules = rules.readable ? { ...rules, teams: rules.teams.map((t) => ({ ...t, label: teamNames.get(t.key.toLowerCase()) ?? t.label })) } : rules;
       const approvals = R.approvalsOf(named, rv, { github, ownersCache: ownersByBase.get(ownersKey), files, codeowners: owners, teamMembers, author, headCommit: commits.length && commits.at(-1)!.sha === head && !partial.includes("commits") ? { author: commits.at(-1)!.author, committer: commits.at(-1)!.committer } : null, ownersUnreadable });
       const seen = snap.heads?.[id.toLowerCase()], headSeenAt = seen && seen.sha === head ? seen.at : out.at!;
@@ -355,7 +357,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const row: RawRow = { id, repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author, draft: !!p.draft, single, base, headRef: String(p.head?.ref ?? ""), head,
         createdAt: String(p.created_at ?? ""), labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")).filter(Boolean).slice(0, 20),
         bodyBlock: block && block !== "malformed" ? block.text : null, githubDeps: R.blockDeps(body, repo), bodyMalformed: block === "malformed",
-        issues, reviews: rv, approvals, evidence, envs, partial,
+        issues, reviews: rv, approvals, evidence, ci, envs, partial,
         facts: { id, repo, number: n, body: body.slice(0, 65536), base, headRef: String(p.head?.ref ?? ""), createdAt: String(p.created_at ?? ""), files: files.slice(0, 300), issues: issues.map((i) => i.ref) } };
       return row;
     });
@@ -378,6 +380,8 @@ export function createPrWatch(d: PrWatchDeps) {
         if (before.draft !== f.draft) what.push({ k: "draft", draft: f.draft });
         for (const [lg, st] of Object.entries(f.reviews as Record<string, string>)) if (before.reviews?.[lg] !== st) what.push({ k: "review", login: lg, state: st });
         if (before.evidence !== f.evidence) what.push({ k: "evidence", verdict: f.evidence });
+        // CI that finishes or fails on the same head (a snapshot from before CI was read has no entry: not a change)
+        if ("ci" in before && before.ci !== f.ci && f.ci) what.push({ k: "ci", state: f.ci });
         for (const [nm, on] of Object.entries(f.envs as Record<string, boolean>)) if ((before.envs?.[nm] ?? null) !== on) what.push({ k: "env", name: nm, on: !!on });
         if (before.next !== f.next) what.push({ k: "next", from: before.next, to: f.next });
       }
@@ -389,7 +393,7 @@ export function createPrWatch(d: PrWatchDeps) {
   }
   const finger = (r: ReturnType<typeof viewRows>[number]) => ({ head: r.head, title: r.title, draft: r.draft, next: r.next.kind,
     reviews: Object.fromEntries(r.reviews.map((x) => [x.login, `${x.state}${x.stale ? ":stale" : ""}`])), evidence: r.evidence ? `${r.evidence.verdict}:${r.evidence.covers}` : "none",
-    envs: Object.fromEntries(r.envs.map((e) => [e.name, e.on])) });
+    envs: Object.fromEntries(r.envs.map((e) => [e.name, e.on])), ci: r.ci ?? null });
 
   // ---------- the list as the page shows it ----------
   function viewRows(sn: Snapshot, s: State) {

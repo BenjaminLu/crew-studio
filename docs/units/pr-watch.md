@@ -93,6 +93,11 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 - **Issues**: links from the body (any GitHub issue URL in any repository), `closingIssuesReferences`, and
   cross-referenced events in the timeline. An issue outside the watched repositories is read (title, state), marked
   external, and never written.
+- **CI**: GitHub's combined state of the head's check runs and commit statuses (GraphQL `statusCheckRollup`, read in
+  the same query as the merge box), only when GitHub's last commit is the row's head: passing, failing, error, running,
+  waiting, or "—" for none.
+- **Approval groups**: each group the rules ask an approval from (a required team, a set of code owners) shows in the
+  Reviews column as ✓ (with who approved) or ✕, ahead of each reviewer's own latest verdict.
 - **Missing approvals**: from the base branch's rulesets (`GET …/rules/branches/<base>`) and its classic branch protection
   (`GET …/branches/<base>/protection`), the stricter of each: the required count, code owners (CODEOWNERS at
   `.github/`, the root or `docs/` on the base; every changed file's owners need an approval from one of them; patterns are

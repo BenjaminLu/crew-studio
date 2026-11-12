@@ -254,6 +254,10 @@ try {
   ok(a40.readable && /admin/.test(a40.unread?.[0]?.en ?? "") && a40.missing.some((m: any) => m.kind === "count" && m.n === 1) && a40.missing.some((m: any) => m.kind === "team" && m.who === "@northwind/finance")
     && nx("northwind/ledger#40").who.includes("@northwind/finance") && a40.github?.mergeState === "BLOCKED" && a40.github?.requested.join() === "@northwind/finance",
     "branch protection that needs admin: the readable ruleset still decides (a team named only by id gets its name), with GitHub's merge box beside it", JSON.stringify(a40));
+  { const g18 = row(v, "northwind/checkout-api#18").approvals.groups, g19 = row(v, "northwind/checkout-api#19").approvals.groups;
+    ok(g18.some((g: any) => g.kind === "team" && g.who === "@northwind/release" && !g.ok) && g18.some((g: any) => g.kind === "owner" && g.who === "@dana" && !g.ok)
+      && g19.every((g: any) => g.ok) && g19.some((g: any) => g.who === "@northwind/release" && g.by.join() === "rel-ray"), "each approval group shows met or not and by whom", JSON.stringify([g18, g19])); }
+  ok(row(v, "northwind/checkout-api#19").ci === "SUCCESS" && row(v, "northwind/checkout-api#20") === undefined && (row(v, "northwind/mobile#5").ci === "SUCCESS") && row(v, "northwind/web-app#30").ci === "FAILURE" && row(v, "northwind/ledger#40").ci === null, "CI is GitHub's combined state for the head (none when GitHub's last commit is another one)", JSON.stringify(row(v, "northwind/checkout-api#19").ci));
   ok(row(v, "northwind/checkout-api#19").approvals.missing.length === 0, "two approvals from a code owner and the required team: nothing missing");
   // environments
   const env = (id: string, n: string) => row(v, id).envs.find((e: any) => e.name === n)?.on;
@@ -286,6 +290,10 @@ try {
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
   const ch = row(v, "northwind/checkout-api#18").changed;
   ok(ch && ch.what.some((w: any) => w.k === "review" && w.login === "rel-ray") && ch.what.some((w: any) => w.k === "next" && w.from === "approve" && w.to === "merge") && v.rows.filter((r: any) => r.changed && r.id !== "northwind/checkout-api#19").length === 1 && row(v, "northwind/checkout-api#19").changed.what.join && row(v, "northwind/checkout-api#19").changed.what[0].to === "dependency", "a refresh marks the rows that changed, with what changed (the dependency the captain added changed #19's next step)", JSON.stringify(ch));
+  { gh.data.find("northwind/web-app", 30)!.github!.ci = "SUCCESS"; // a refresh may still be running from the calls above: refresh until it is read
+    for (let i = 0; i < 20 && W.snapshot.rows.find((r) => r.id === "northwind/web-app#30")?.ci !== "SUCCESS"; i++) { await call("/api/prs/refresh", {}); await new Promise((r) => setTimeout(r, 250)); }
+    const vc = (await call("/api/prs")).body, ch = row(vc, "northwind/web-app#30").changed;
+    ok(row(vc, "northwind/web-app#30").ci === "SUCCESS" && ch?.what.some((w: any) => w.k === "ci" && w.state === "SUCCESS") && ch.what.every((w: any) => w.k !== "head"), "CI that turns green on the same head marks the row changed", JSON.stringify(ch)); }
   const at1 = ch.at; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
   ok(row(v, "northwind/checkout-api#18").changed?.at === at1 && !("read" in row(v, "northwind/checkout-api#18")) && !("unread" in v), "the mark stays until the next change; there is no read/unread state");
   // applying the dependencies: only through the captain's card, only the marked block
