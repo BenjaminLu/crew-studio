@@ -77,7 +77,11 @@ const { ok, end } = suite("pr-watch");
     const more = R.approvalsOf(R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1 } }], null, null, "o", unread), [], { ...base, github: gm("REVIEW_REQUIRED") });
     ok(none.readable && fill.readable && fill.missing.length === 1 && fill.missing[0].kind === "github" && R.missingWho(fill.missing).join() === "@o/ops" && fill.unread?.[0].en === "no admin",
       "classic protection unread: GitHub's REVIEW_REQUIRED that the readable rules do not explain is a missing review from the pending requests", JSON.stringify(fill));
-    ok(!done.missing.length && !nul.missing.length && !read.missing.length && read.unread === undefined, "GitHub's decision is used only when classic protection was unread, and only REVIEW_REQUIRED adds a review");
+    const clean = (d: string | null, m: string) => R.approvalsOf(none, [], { ...base, github: { reviewDecision: d, mergeState: m, requested: [] } });
+    ok(!clean("APPROVED", "CLEAN").missing.length && !clean(null, "BEHIND").missing.length && !read.missing.length && read.unread === undefined, "GitHub's decision is used only when classic protection was unread; an approved, unblocked merge adds nothing");
+    ok(done.missing[0]?.kind === "blocked" && nul.missing[0]?.kind === "blocked", "classic protection unread and GitHub blocks the merge for a reason the rules do not show: not ready", JSON.stringify(done.missing));
+    const lost = R.approvalsOf(none, [], { ...base, github: null }), half = R.approvalsOf(none, [], { ...base, github: { reviewDecision: null, mergeState: null, requested: [] } });
+    ok(!lost.readable && lost.missing[0].kind === "unreadable" && !half.readable && /merge box/.test((half.missing[0] as any).reason), "classic protection unread and GitHub's merge box not read (or read without a merge state): unreadable, never ready", JSON.stringify(lost));
     ok(more.missing.length === 1 && more.missing[0].kind === "count", "the readable rules' own gaps come first; GitHub's decision adds nothing on top of them"); }
   ok(R.mergeRules([], null, { en: "x", tw: "x" }).readable === false && R.approvalsOf(R.mergeRules([], null, { en: "no admin", tw: "x" }), [], { files: [], codeowners: null, teamMembers: new Map() }).missing[0].kind === "unreadable", "unreadable rules say so instead of guessing");
   const co = R.parseCodeowners("* @org/core\n/docs/ @dana\n*.md @writer\nsrc/**/api.ts @api-lead");

@@ -60,7 +60,7 @@ export function fixtureData() {
     checks: [qa(c[1].sha)], files: ["src/login.tsx"], comments: [{ user: "qa-lin", body: "Looked at it, will finish tomorrow", at: at(29) }] }); }
   // ledger: its branch protection cannot be read without admin (404 "Not Found"); its ruleset asks for one approval and a
   // team named only by id (88), whose name Studio looks up
-  { const c = two("lg40"); add({ repo: "northwind/ledger", number: 40, title: "Statements in the account currency", user: ME, commits: c, reviews: [bot(c[1].sha)], github: { reviewDecision: null, requested: ["northwind/finance"] }, checks: [qa(c[1].sha)], files: ["src/statement.ts"],
+  { const c = two("lg40"); add({ repo: "northwind/ledger", number: 40, title: "Statements in the account currency", user: ME, commits: c, reviews: [bot(c[1].sha)], github: { reviewDecision: "REVIEW_REQUIRED", requested: ["northwind/finance"] }, checks: [qa(c[1].sha)], files: ["src/statement.ts"],
     comments: [{ user: "qa-lin", body: `### PASS\non ${c[1].sha.slice(0, 7)}`, at: at(29) }] }); }
   // a single watched pull request by someone else, outside the watched repositories
   { const c = two("mb5"); add({ repo: "northwind/mobile", number: 5, title: "App checkout uses the new retry API", user: "lee", commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["app/checkout.ts"] }); }

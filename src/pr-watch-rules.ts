@@ -288,7 +288,9 @@ export function ownersOf(path: string, rules: { pattern: string; owners: string[
 }
 export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string }
   /** GitHub's merge box says a review is still required, for a rule Studio could not read; `who` are the pending review requests */
-  | { kind: "github"; who: string[] };
+  | { kind: "github"; who: string[] }
+  /** GitHub blocks the merge and the readable rules do not say why (a rule Studio could not read) */
+  | { kind: "blocked"; who: string[] };
 /** What GitHub itself says about a pull request's merge (GraphQL reviewDecision, mergeStateStatus, review requests). */
 export type GitHubMerge = { reviewDecision: string | null; mergeState: string | null; requested: string[] };
 export type Approvals = { readable: boolean; required: number; counted: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; missing: Missing[]; sources: string[];
@@ -337,11 +339,19 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
     for (const ow of sets.values()) if (!ow.some(satisfied)) missing.push({ kind: "owner", who: ow });
   }
   for (const t of rules.teams) if (!memberOf(t.key).some((m) => approvers.has(m))) missing.push({ kind: "team", who: t.label });
-  if (rules.unread?.length && !missing.length && o.github?.reviewDecision === "REVIEW_REQUIRED") missing.push({ kind: "github", who: o.github.requested.slice(0, 10) });
+  // Classic protection unread: GitHub's merge box stands in for it. Without the merge box (its read failed) the rules
+  // are unreadable, never "nothing missing"; a review decision of REVIEW_REQUIRED, or a merge GitHub blocks, that the
+  // readable rules do not explain is still missing.
+  if (rules.unread?.length) {
+    if (!o.github?.mergeState) return { readable: false, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources, unread: rules.unread, github: o.github ?? null,
+      missing: [{ kind: "unreadable", reason: `${rules.unread[0].en}, and GitHub's merge box could not be read`, tw: `${rules.unread[0].tw}，也讀不到 GitHub 的 merge 狀態` }] };
+    if (!missing.length && o.github.reviewDecision === "REVIEW_REQUIRED") missing.push({ kind: "github", who: o.github.requested.slice(0, 10) });
+    else if (!missing.length && o.github.mergeState === "BLOCKED") missing.push({ kind: "blocked", who: o.github.requested.slice(0, 10) });
+  }
   return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources,
     ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}) };
 }
-export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : []);
+export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : x.kind === "blocked" ? [x.who.length ? x.who.join(" | ") : "GitHub blocks the merge"] : []);
 
 // ---------- the next step ----------
 export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "test" | "approve" | "merge";

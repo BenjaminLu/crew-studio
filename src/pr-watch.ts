@@ -250,7 +250,7 @@ export function createPrWatch(d: PrWatchDeps) {
         if (e instanceof HttpError && e.status === 404 && /not protected/i.test(String(e.data?.message ?? ""))) prot = "none";
         // reading classic protection needs admin access: GitHub answers 403, or 404 without "not protected". The rulesets
         // are readable with read access, so they stand, and GitHub's own review decision covers what the protection may add.
-        else if (e instanceof HttpError && (e.status === 403 || e.status === 404)) unread = { en: `the branch protection of ${repo} ${base} could not be read (${why(e).en}; reading it needs admin access): the rulesets and GitHub's own review decision are used`, tw: `讀不到 ${repo} ${base} 的分支保護（${why(e).tw}；需要 admin 權限）：改用 rulesets 和 GitHub 自己的 review 判定` };
+        else if (e instanceof HttpError && (e.status === 403 || e.status === 404 && /^not found$/i.test(String(e.data?.message ?? "").trim()))) unread = { en: `the branch protection of ${repo} ${base} could not be read (${why(e).en}; reading it needs admin access): the rulesets and GitHub's own review decision are used`, tw: `讀不到 ${repo} ${base} 的分支保護（${why(e).tw}；需要 admin 權限）：改用 rulesets 和 GitHub 自己的 review 判定` };
         else unreadable ??= { en: `the branch protection of ${repo} ${base} could not be read (${why(e).en}; reading it needs admin access)`, tw: `讀不到 ${repo} ${base} 的分支保護（${why(e).tw}；需要 admin 權限）` }; }
       return R.mergeRules(rulesets, prot, unreadable, repo.split("/")[0], unread);
     });

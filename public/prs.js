@@ -32,7 +32,7 @@ async function copy(text) { try { await navigator.clipboard.writeText(text); ret
 
 // ---------- words ----------
 const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
-const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `還要 ${m.n} 個 approve`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
+const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `還要 ${m.n} 個 approve`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : m.kind === "blocked" ? (m.who.length ? T(`GitHub blocks the merge (asked: ${m.who.join(", ")})`, `GitHub 擋住 merge（已請求：${m.who.join("、")}）`) : T("GitHub blocks the merge", "GitHub 擋住 merge")) : T("rules unreadable", "讀不到規則");
 const TONE = { hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
 function nextWord(n) {
   if (n.rule === "draft") return T("On hold (draft)", "暫緩（draft）");
