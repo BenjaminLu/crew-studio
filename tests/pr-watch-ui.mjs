@@ -58,6 +58,10 @@ try {
   await p.click('[data-prs-suggest-account="qa-lin"]');
   ok(await p.locator('[data-prs-set="accounts"]').inputValue() === 'qa-lin' && await p.locator('[data-prs-suggest-account="qa-lin"]').count() === 0, 'Set up opens the settings; a suggested account is added with one click');
   await p.getByRole('button', { name: 'Cancel' }).click(); await p.waitForSelector('[data-prs-set="accounts"]', { state: 'detached' });
+  { const firstIs17 = await p.evaluate(() => !!document.querySelector('[data-prs-ev-setup]')?.closest('[data-prs-row="northwind/checkout-api#17"]'));
+    await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-ev-setup]').focus(); await p.keyboard.press('Enter'); await p.waitForSelector('[data-prs-set="accounts"]');
+    await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(500); await p.keyboard.press('Escape'); await p.waitForSelector('[data-prs-set="accounts"]', { state: 'detached' });
+    ok(!firstIs17 && await p.evaluate(() => !!document.activeElement?.closest('[data-prs-row="northwind/checkout-api#17"]') && document.activeElement?.hasAttribute('data-prs-ev-setup')), 'closing settings after a live update focuses the Set up of the row that opened it, not the first one alike', await p.evaluate(() => document.activeElement?.closest('[data-prs-row]')?.dataset.prsRow)); }
   ok((await api('/api/prs/settings', { settings: fixtureSettings })).status === 200, 'settings saved (evidence source, required reviewer, four environments, groups)');
   await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
   ok(await p.locator('[data-prs-row]').count() === 12, 'the refresh button reads GitHub: twelve rows');
@@ -113,11 +117,23 @@ try {
   ok(await p.locator('[data-prs-menu]').count() === 0 && await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded') === 'false', 'a second click on the missing-approval button closes its menu instead of reopening it');
   ok((await p.locator('[data-prs-cta="northwind/web-app#30"] .pw-ctat').innerText()) === '+1 approval', 'a missing count with no names reads "+1 approval"', await p.locator('[data-prs-cta="northwind/web-app#30"] .pw-ctat').innerText());
   ok((await p.locator('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]').innerText()) === 'Fix the failing tests', 'next-step words follow one pattern');
+  gh.knobs.reviewsFail = 16; await p.click('[data-prs-refresh]');
+  await p.waitForFunction(() => document.querySelector('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]')?.dataset.prsNext === 'unread', null, { timeout: 20000 }).catch(() => {});
+  const held = await p.locator('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]').innerText();
+  ok(/^On hold: not all reviews or comments read/.test(held) && !/Ready/.test(held), 'a row held because its reviews could not be read says on hold, never ready', held);
+  gh.knobs.reviewsFail = null; await p.click('[data-prs-refresh]');
+  await p.waitForFunction(() => document.querySelector('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]')?.dataset.prsNext === 'failed', null, { timeout: 20000 });
   const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
   ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all twelve columns fit without scrolling', JSON.stringify(fit));
   ok(await p.locator('[data-prs-tab][role="tab"], [data-prs-tab][aria-selected]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
   await p.focus('[data-prs-row="northwind/checkout-api#13"]'); await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(400);
   ok(await p.evaluate(() => document.activeElement?.dataset?.prsRow) === 'northwind/checkout-api#13', 'a live update gives the keyboard focus back to the row that had it');
+  await p.press('[data-prs-row="northwind/checkout-api#13"]', 'Enter'); await p.waitForSelector('[data-prs-dialog="detail"]');
+  await p.evaluate(() => window.crewPrs.reload()); await p.waitForTimeout(500); await p.keyboard.press('Escape');
+  ok(await p.locator('[data-prs-dialog]').count() === 0 && await p.evaluate(() => document.activeElement?.dataset?.prsRow) === 'northwind/checkout-api#13', 'closing a dialog after a live update gives the focus back to the row that opened it (the new one)', await p.evaluate(() => document.activeElement?.outerHTML?.slice(0, 80)));
+  await p.fill('#pwAdd', 'https://github.com/northwind/not-sent-yet'); await p.click('[data-prs-tab="approve"]'); await p.click('[data-prs-refresh]'); await p.waitForTimeout(600);
+  ok(await p.inputValue('#pwAdd') === 'https://github.com/northwind/not-sent-yet', 'an address typed but not sent survives a filter, a refresh and the redraw they cause', await p.inputValue('#pwAdd'));
+  await p.fill('#pwAdd', ''); await p.click('[data-prs-tab="all"]');
   // the proposal, a drag and a dependency edit
   ok(await p.locator('[data-prs-proposed-dep="northwind/checkout-api#14>northwind/checkout-api#15"]').count() === 1 && /Depends-on/.test(await p.locator('[data-prs-proposal]').innerText()), 'the proposal shows each dependency with its reason');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-prop-tag').count() === 1 && await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-proposed-pos').count() === 1, 'the row shows the dependency and its position as proposed');
