@@ -158,7 +158,10 @@ export function cleanSettings(v: any): Settings {
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
-  /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number } };
+  /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number; autoReads?: number } };
+/** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
+class OverAuto extends Error {}
+
 export function createPrWatch(d: PrWatchDeps) {
   const dir = join(d.dataDir, "pr-watch"), stateFile = join(dir, "state.json"), snapFile = join(dir, "snapshot.json");
   const now = d.now ?? (() => Date.now());
@@ -302,7 +305,7 @@ export function createPrWatch(d: PrWatchDeps) {
     // a repository's own GitHub environments, used when the settings name none (at most 6, production last)
     const envCache = new Map<string, Promise<R.EnvSetting[]>>();
     const repoEnvs = (repo: string) => once(envCache, repo.toLowerCase(), async () => {
-      try { const j = await g.get(`${repoPath(repo)}/environments?per_page=30`);
+      try { const j = await autoGet(`${repoPath(repo)}/environments?per_page=30`);
         const names = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n.length > 0 && n.length <= 60 && !/[\u0000-\u001f]/.test(n));
         const prod = (n: string) => /prod/i.test(n);
         const used = (await Promise.all(names.filter((n: string) => n.toLowerCase() !== "github-pages").slice(0, 10).map(async (n: string) => (await deployedOn(repo, n)) ? n : null))).filter((n): n is string => !!n);
@@ -313,11 +316,14 @@ export function createPrWatch(d: PrWatchDeps) {
     // running, or one that failed, leaves the environment on the commit it ran before
     const deployedCache = new Map<string, Promise<string | null>>();
     const deployedOn = (repo: string, env: string) => once(deployedCache, `${repo}|${env}`.toLowerCase(), async () => {
-      const l = await g.get(`${repoPath(repo)}/deployments?environment=${enc(env)}&per_page=5`);
+      const l = await autoGet(`${repoPath(repo)}/deployments?environment=${enc(env)}&per_page=5`);
       for (const dep of Array.isArray(l) ? l : []) { if (!Number.isSafeInteger(dep?.id) || !SHA.test(String(dep?.sha ?? ""))) continue;
-        const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return String(dep.sha); }
+        const st = await autoGet(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return String(dep.sha); }
       return null; });
-    let autoCompares = 0; const AUTO_COMPARES = 120;
+    // a repository's own environments are for show: their reads (environment lists, deployments, statuses, compares)
+    // share one cap a refresh, past which a repository shows none and an environment reads "not read"
+    let autoCompares = 0, autoReads = 0; const AUTO_COMPARES = 120, AUTO_READS = d.limits?.autoReads ?? 200;
+    const autoGet = (path: string) => { if (++autoReads > AUTO_READS) throw new OverAuto(); return g.get(path); };
     let issueReads = 0; // issues named in bodies may be anywhere: at most 60 read per refresh
     const issueOf = (repo: string, n: number) => once(issueCache, `${repo}#${n}`.toLowerCase(), async () => { if (++issueReads > 60) return { title: null, state: null }; try { const j = await g.get(`${repoPath(repo)}/issues/${n}`); return { title: String(j?.title ?? "").slice(0, 300) || null, state: String(j?.state ?? "") || null }; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return { title: null, state: null }; } });
 
@@ -411,7 +417,8 @@ export function createPrWatch(d: PrWatchDeps) {
         if (before.evidence !== f.evidence) what.push({ k: "evidence", verdict: f.evidence });
         // CI that finishes or fails on the same head (a snapshot from before CI was read has no entry: not a change)
         if ("ci" in before && before.ci !== f.ci && f.ci) what.push({ k: "ci", state: f.ci });
-        for (const [nm, on] of Object.entries(f.envs as Record<string, boolean>)) if ((before.envs?.[nm] ?? null) !== on) what.push({ k: "env", name: nm, on: !!on });
+        // an environment that could not be read this time (null) is not a change
+        for (const [nm, on] of Object.entries(f.envs as Record<string, boolean | null>)) if (on !== null && (before.envs?.[nm] ?? null) !== on) what.push({ k: "env", name: nm, on: !!on });
         if (before.next !== f.next) what.push({ k: "next", from: before.next, to: f.next });
       }
       out.finger[r.id.toLowerCase()] = f;
