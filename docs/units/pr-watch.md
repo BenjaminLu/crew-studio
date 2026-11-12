@@ -160,9 +160,11 @@ The first matching rule, top to bottom; deterministic, no model:
 
 ## Order and dependencies
 
-- **Proposal**: from the pull requests themselves, each with its reason: a `Depends-on:` line in a body, a body naming
-  another watched pull request, a pull request based on another's head branch (stacked) → dependencies; files both change
-  and an issue both link → the older first. The order puts every dependency first, then those hints, then age. It shows as
+- **Proposal**: from the pull requests themselves, each with its reason. A dependency is proposed only where the merge
+  order is forced: a `Depends-on:` line in a body, or a pull request based on another's head branch (stacked). Everything
+  else only orders: a body naming another watched pull request (that one first), files both change and an issue both
+  link (the older first). These hints never hold a row back. The order puts every dependency first, then those hints,
+  then age. It shows as
   proposed (dashed, tagged, the position in italics) until the captain accepts it ("Accept", or "Accept and apply…").
 - **AI proposal: a follow-up.** Studio has no one-shot model step behind a captain card today; this unit ships the
   signals-based proposal. Asking a model to propose (through a captain card) is the next step of this unit.
