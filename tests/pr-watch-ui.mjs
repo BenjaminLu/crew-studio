@@ -94,7 +94,7 @@ try {
   ok(await p.locator('body > .toast').count() === 1, 'one toast at a time: a new one replaces the last', String(await p.locator('body > .toast').count()));
   await p.click('[data-prs-cta="northwind/checkout-api#12"]'); await p.click('[data-prs-action="report"]'); await p.click('[data-prs-report-copy]'); const rep12 = await p.evaluate(() => navigator.clipboard.readText());
   ok(rep12.includes('https://github.com/northwind/platform-issues/issues/7') && !rep12.includes('Capture retries double-charge'), 'copied text leaves out the title of an issue outside the watched repositories (the link stays)', rep12);
-  ok(await p.locator('[data-prs-row="northwind/ledger#40"] .pw-next small').innerText() === 'approval rules could not be read', 'unreadable rules: the subtitle says so, no "waits on"');
+  ok(/@northwind\/finance/.test(await p.locator('[data-prs-row="northwind/ledger#40"] .pw-next small').innerText()), 'branch protection that needs admin: the row still says who it waits on, from the ruleset');
   const cta = await p.locator('[data-prs-cta="northwind/checkout-api#18"]').evaluate((e) => ({ h: e.getBoundingClientRect().height, t: e.getAttribute('title'), text: e.innerText }));
   ok(cta.h < 44 && cta.t === '1 more approval · @dana · @northwind/release' && cta.text.replace(/\s+/g, ' ').includes('+1 · @dana · @release') && !/missing|more approval/.test(cta.text), 'the missing-approval button shows the count and the names (at most two lines), teams written one way', JSON.stringify(cta));
   await p.click('[data-prs-cta="northwind/checkout-api#18"]'); const exp = await p.locator('[data-prs-cta="northwind/checkout-api#18"]').getAttribute('aria-expanded'); await p.keyboard.press('Escape');

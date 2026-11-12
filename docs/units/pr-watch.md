@@ -106,8 +106,13 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   the head commit cannot be read are the approvals unreadable), stale
   approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
   never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
-  the last pusher's own either). A protection read that GitHub refuses (it needs admin) makes the rules unreadable: the row
-  says so and its next step is approve with "rules unreadable", never a guess.
+  the last pusher's own either). Classic protection needs admin access to read; rulesets, CODEOWNERS and team
+  members need only read access. When GitHub refuses the protection (403, or 404 without "not protected") the rulesets
+  decide, a required team named only by id is looked up by name (`GET /teams/<id>`), and the row's detail shows that the
+  protection was not read beside GitHub's own merge box (GraphQL `reviewDecision`, `mergeStateStatus`, review requests).
+  If those rules miss nothing yet GitHub's review decision is `REVIEW_REQUIRED`, the protection asks for more: the missing
+  review is "a review GitHub still requires", from the pending review requests. Only when the rulesets themselves cannot
+  be read, or the protection read fails any other way, are the rules unreadable (the next step names "rules unreadable").
 - **Refresh**: when the page opens, every 5 minutes, and on the Refresh button. The timer runs on the shared
   `GitHubPoller` (src/github-poller.ts) under its own key, never a repository's, so it cannot collide with a project grant
   or the dashboard; a failed refresh backs off (10, then 15 minutes), and a rate limit (403 with no remaining, or 429)
