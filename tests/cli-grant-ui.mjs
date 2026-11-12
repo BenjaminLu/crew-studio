@@ -45,6 +45,17 @@ try {
     await p.click(`[data-grant-revoke="${id}"]`);
     await p.waitForSelector(`[data-grant="${id}"][data-grant-state=revoked]`, { timeout: 10000 });
     ok(!existsSync(file) && !(await p.locator(`[data-grant-command="${id}"]`).count()), `${key}: Revoke removes the token file and the command`);
+    // a pull request list grant: no project to choose, the row says what it reaches
+    await p.selectOption("#grantScope", "prs");
+    ok(await p.locator("#grantProject").isHidden(), `${key}: the list scope hides the project picker`);
+    await p.click("#grantIssue");
+    const pcmd = p.locator("[data-cli-grants] [data-grant-command][data-fresh]"); await p.waitForFunction((old) => { const e = document.querySelector("[data-cli-grants] [data-grant-command][data-fresh]"); return e && e.getAttribute("data-grant-command") !== old; }, id, { timeout: 10000 });
+    const pid = await pcmd.getAttribute("data-grant-command");
+    ok(await p.locator(`[data-grant="${pid}"] [data-grant-scope=prs]`).textContent().then((t) => t.includes(language === "en" ? "Pull request list" : "PR 列表")), `${key}: the list grant's row says it reaches the pull request list`);
+    ok(await p.locator("#grantScope").inputValue() === "prs" && await p.locator("#grantProject").isHidden(), `${key}: the picked scope stays after issuing`);
+    ok((await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)) <= 0, `${key}: no overflow with the scope picker`);
+    if (shots) { await p.locator("[data-cli-grants]").scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, `cli-grant-prs-${key}.png`), fullPage: width < 600 }); }
+    await p.click(`[data-grant-revoke="${pid}"]`); await p.waitForSelector(`[data-grant="${pid}"][data-grant-state=revoked]`, { timeout: 10000 });
     ok(!errors.length, `${key}: no page errors`, errors.join("; "));
     await ctx.close();
   }

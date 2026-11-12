@@ -119,15 +119,15 @@ function cliGrants() {
   const TTL = { "1h": T("1 hour", "1 小時"), "8h": T("8 hours", "8 小時"), eod: T("Until the end of today", "到今天結束") };
   const STATE = { active: T("active", "有效"), expired: T("expired", "已過期"), revoked: T("revoked", "已撤銷") };
   const when = (iso) => iso ? new Date(iso).toLocaleString(document.documentElement.lang || undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
-  let data = null, fresh = null;
+  let data = null, fresh = null, picked = "project";
   const draw = () => {
     const projects = data?.projects ?? [], grants = data?.grants ?? [];
-    const scope = h("select", { id: "grantScope", "aria-label": T("Reaches", "可以做"), onchange: () => { projLabel.hidden = scope.value === "prs"; issue.disabled = scope.value !== "prs" && !projects.length; } },
-      h("option", { value: "project" }, T("Runs in a project", "專案裡的 run")), h("option", { value: "prs" }, T("The pull request list", "PR 列表")));
+    const scope = h("select", { id: "grantScope", "aria-label": T("Reaches", "可以做"), onchange: () => { picked = scope.value; projLabel.hidden = picked === "prs"; issue.disabled = picked !== "prs" && !projects.length; } },
+      h("option", { value: "project", selected: picked === "project" || null }, T("Runs in a project", "專案裡的 run")), h("option", { value: "prs", selected: picked === "prs" || null }, T("The pull request list", "PR 列表")));
     const project = h("select", { id: "grantProject", "aria-label": T("Project", "專案") }, projects.map((p) => h("option", { value: p.id }, p.name || p.id)));
-    const projLabel = h("label", {}, h("span", { class: "faint" }, T("Project", "專案")), project);
+    const projLabel = h("label", { hidden: picked === "prs" || null }, h("span", { class: "faint" }, T("Project", "專案")), project);
     const ttl = h("select", { id: "grantTtl", "aria-label": T("Expires", "有效期") }, (data?.ttls ?? ["8h", "1h", "eod"]).map((k) => h("option", { value: k, selected: k === "8h" || null }, TTL[k] ?? k)));
-    const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: !projects.length || null, onclick: async () => { issue.disabled = true;
+    const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: picked !== "prs" && !projects.length || null, onclick: async () => { issue.disabled = true;
       try { fresh = (await req("/api/cli-grants", scope.value === "prs" ? { scope: "prs", ttl: ttl.value } : { project: project.value, ttl: ttl.value })).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
     const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
     box.replaceChildren(

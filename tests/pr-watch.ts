@@ -452,9 +452,9 @@ try {
     ok(!!lr && "ci" in lr && "next" in lr && "approvals" in lr && "evidence" in lr && !("facts" in lr) && r.note.includes("No tool here writes to GitHub"), "prs_list: each row with CI, approvals, evidence and the next step, without the raw facts", JSON.stringify(lr).slice(0, 300));
     r = await T.call("prs_get", { pr: ra.toUpperCase() }); ok(r.pr === ra && typeof r.body === "string", "prs_get: one row in full, the id matched without case");
     r = await T.call("prs_get", { pr: "northwind/ledger#999" }); ok(/not in the list/.test(r.error ?? ""), "prs_get of a pull request not in the list is an error");
-    const keep = JSON.stringify(W.state.settings.evidence.labels);
+    r = await T.call("prs_settings", { settings: { groups: ["wave-1"], evidence: { labels: ["qa-passed"] }, which: { reviewRequested: true } } }); ok(!r.error && W.state.settings.groups.join() === "wave-1", "prs_settings sets what it names", JSON.stringify(r.error));
     r = await T.call("prs_settings", { settings: { evidence: { accounts: ["qa-lin", "dana"] } } });
-    ok(!r.error && W.state.settings.evidence.accounts.join() === "qa-lin,dana" && JSON.stringify(W.state.settings.evidence.labels) === keep && W.state.settings.which.mine === true, "prs_settings changes only what it names and keeps the rest", JSON.stringify(W.state.settings.evidence));
+    ok(!r.error && W.state.settings.evidence.accounts.join() === "qa-lin,dana" && W.state.settings.evidence.labels.join() === "qa-passed" && W.state.settings.groups.join() === "wave-1" && W.state.settings.which.reviewRequested === true && W.state.settings.which.mine === true, "prs_settings changes only what it names and keeps the rest", JSON.stringify(W.state.settings.evidence));
     r = await T.call("prs_settings", { settings: "x" }); ok(!!r.error, "prs_settings takes an object");
     r = await T.call("prs_deps", { pr: ra, on: [rb] }); ok(!r.error && W.state.deps[ra]?.on.join() === rb && W.state.deps[ra].by === "captain", "prs_deps records a dependency, as the board does", JSON.stringify(r.error));
     r = await T.call("prs_deps", { pr: "northwind/nope#1", on: [] }); ok(!!r.error, "prs_deps outside the list is refused");
