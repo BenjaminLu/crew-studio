@@ -502,7 +502,7 @@ export function createPrWatch(d: PrWatchDeps) {
     else throw new Error("Name a repository or a pull request");
     save();
   }
-  const validIds = (v: unknown, max = 400) => { if (!Array.isArray(v) || v.length > max) throw new Error("Send a list of pull requests"); const ids = v.map(String); if (ids.some((x) => !R.splitId(x))) throw new Error("A pull request is owner/repo#number"); return ids; };
+  const validIds = (v: unknown, max = 400) => { if (!Array.isArray(v) || v.length > max) throw new Error("Send a list of pull requests"); const ids = v.map(String); if (ids.some((x) => !R.splitId(x))) throw new Error("A pull request is owner/repo#number"); return ids.filter((x, i) => ids.findIndex((y) => eq(y, x)) === i); }; // a repeated id (any case) counts once
 
   // ---------- the captain-only card that writes the block ----------
   const pin = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
@@ -615,15 +615,19 @@ export function createPrWatch(d: PrWatchDeps) {
 
   /** The captain's edits, by name: the board's POST /api/prs/<name> and an external CLI grant's PR tools both come here. */
   async function act(name: string, b: any, actor: { grant: string } | null = null): Promise<any> {
+    // a grant's edits read GitHub again at most once a minute (the captain's token is shared); the board's always do
+    const kick = () => { if (actor) { if (Date.now() - toolRefreshAt < REFRESH_GAP) return; toolRefreshAt = Date.now(); } void refresh().catch(() => {}); };
     switch (name) {
       case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };
         await refresh().catch(() => {}); return view(); }
-      case "watch": { const got = watchUrl(b?.url); ensure(); void refresh().catch(() => {}); return { ...view(), added: got }; }
+      case "watch": { const got = watchUrl(b?.url); ensure(); kick(); return { ...view(), added: got }; }
       case "unwatch": unwatch(b); ensure(); return view();
-      case "restore": { if (typeof b?.pr === "string") state.watch.excluded = state.watch.excluded.filter((x) => !eq(x, b.pr)); else state.watch.excluded = []; save(); void refresh().catch(() => {}); return view(); }
-      case "settings": { state.settings = cleanSettings(b?.settings); settingsWarning = null; save();
+      case "restore": { if (typeof b?.pr === "string") state.watch.excluded = state.watch.excluded.filter((x) => !eq(x, b.pr)); else state.watch.excluded = []; save(); kick(); return view(); }
+      case "settings": { // the page sends the settings it opened with: a change made meanwhile (another window, an agent CLI) is never undone silently
+        if (b?.base !== undefined && JSON.stringify(cleanSettings(b.base)) !== JSON.stringify(state.settings)) throw Object.assign(new Error("The settings changed while this dialog was open (another window or an agent CLI). Close it and open it again."), { tw: "這個視窗開著的時候設定被改過了（別的視窗或 agent CLI）。請關掉再重新打開。" });
+        state.settings = cleanSettings(b?.settings); settingsWarning = null; save();
         // what the settings change (environments, evidence, which pull requests) is not a change on GitHub: start the marks afresh
-        snap.finger = {}; snap.changed = {}; write(snapFile, snap); void refresh().catch(() => {}); return view(); }
+        snap.finger = {}; snap.changed = {}; write(snapFile, snap); kick(); return view(); }
       case "order": { state.order = validIds(b?.order); save(); return view(); }
       case "deps": { const id = String(b?.pr ?? ""); if (!R.splitId(id) || !rowIdsNow().some((r) => eq(r, id))) throw new Error("Choose a pull request in the list");
         const on = validIds(b?.on, 20).filter((o) => !eq(o, id)); const k = Object.keys(state.deps).find((a) => eq(a, id)) ?? id; state.deps[k] = { on: [...new Set(on)], ...(actor ? { by: "external-cli" as const, grant: actor.grant } : { by: "captain" as const }), at: iso() }; save(); return view(); }

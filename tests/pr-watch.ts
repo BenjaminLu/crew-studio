@@ -472,7 +472,23 @@ try {
       try { const a = await call("/api/prs/apply", { prs: [ra] }); ok(a.status === 400 && a.body.error !== "not found", "a pull request GitHub answers 404 for is the 400 it always was, never the route's own 404", JSON.stringify(a)); }
       finally { list.splice(i, 0, p); }
       const u = await call("/api/prs/nonsense", {}); ok(u.status === 404 && u.body.error === "not found", "an unknown action is the route's 404"); }
+    { const n = W.view().rows.length; r = await T.call("prs_order", { order: [ra, ra.toUpperCase(), ra] }); ok(!r.error && r.rows.length === n && r.rows.filter((x: any) => x.pr === ra).length === 1, "a repeated id in the order (any case) counts once: no row twice", String(r.rows?.length)); }
+    { const cur = JSON.parse(JSON.stringify(W.state.settings)), stale = { ...cur, groups: ["old"] };
+      const a1 = await call("/api/prs/settings", { settings: { ...cur, shortForm: !cur.shortForm }, base: stale }); ok(a1.status === 400 && /changed while this dialog was open/.test(a1.body.error) && W.state.settings.shortForm === cur.shortForm, "a settings save from a dialog opened before another change is refused, nothing undone", JSON.stringify(a1.body));
+      const a2 = await call("/api/prs/settings", { settings: cur, base: cur }); ok(a2.status === 200, "a save whose base is current goes through"); }
     ok(T.writes("prs_watch") && !T.writes("prs_list") && !T.writes("prs_get") && !T.writes("prs_refresh"), "which tools change the list (audited by the grant)"); }
+  // a grant's edits read GitHub no sooner than once a minute; the board's edits always do (a fresh list, no backoff)
+  { gh.setRateLimited(false); const dir = mkdtempSync(join(tmpdir(), "pr-watch-kick-")), p4 = new GitHubPoller(), got: any[] = [], W4 = createPrWatch({ dataDir: dir, poller: p4, notify: (t, x) => got.push([t, x]) });
+    const refreshes = () => got.filter(([t, x]) => t === "prs" && x?.refreshing).length;
+    const post4 = async (path: string, body: unknown) => { const u = new URL(`http://127.0.0.1${path}`); return W4.handle(new Request(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), u, { kind: "desktop" }, true); };
+    try {
+      await post4("/api/prs/watch", { url: "https://github.com/northwind/checkout-api" }); await until(() => !!W4.snapshot.at && !W4.view().refreshing, 10000);
+      await W4.tools.call("prs_refresh", {}, "g-1"); await until(() => !W4.view().refreshing, 10000);
+      let n0 = refreshes(); await W4.tools.call("prs_restore", {}, "g-1"); await W4.tools.call("prs_settings", { settings: {} }, "g-1"); await Bun.sleep(1500);
+      ok(refreshes() === n0, "a grant's edits right after its refresh do not read GitHub again", String(refreshes() - n0));
+      n0 = refreshes(); await post4("/api/prs/restore", {}); await until(() => refreshes() > n0, 10000);
+      ok(refreshes() > n0, "control: the board's edit reads GitHub again");
+    } finally { W4.stop(); p4.stop(); rmSync(dir, { recursive: true, force: true }); } }
   { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
     ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }

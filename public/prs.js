@@ -390,7 +390,7 @@ function driftModal(r) {
       h("button", { class: "btn primary", "data-prs-drift-reapply": "", onclick: () => { close(); applyModal([r.id]); } }, T("Apply Studio's record again…", "重新套用 Studio 的紀錄…")))], { id: "drift" });
 }
 function settingsModal() {
-  const s = structuredClone(PW.data?.settings || {}), envs = s.environments || [];
+  const s = structuredClone(PW.data?.settings || {}), base = structuredClone(PW.data?.settings || {}), envs = s.environments || [];
   const cb = (k, en, tw) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-which": k, checked: !!s.which?.[k], onchange: (e) => { s.which[k] = e.target.checked; } }), " ", T(en, tw));
   const csv = (key, label, get, set) => h("label", { class: "field" }, h("span", { class: "lbl" }, label), h("input", { class: "input", "data-prs-set": key, value: get().join(", "), oninput: (e) => set(e.target.value.split(",").map((x) => x.trim()).filter(Boolean)) }));
   const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" });
@@ -426,7 +426,7 @@ function settingsModal() {
     err,
     foot(h("span", { class: "x-grow" }), h("button", { class: "btn", onclick: () => close() }, T("Cancel", "取消")), h("button", { class: "btn primary", "data-prs-settings-save": "", onclick: async () => {
       s.environments = envs;
-      try { PW.data = await postJ("/api/prs/settings", { settings: s }); setCount(PW.data.count); close(); render(); flash(T("Settings saved", "設定已儲存")); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings" });
+      try { PW.data = await postJ("/api/prs/settings", { settings: s, base }); setCount(PW.data.count); close(); render(); flash(T("Settings saved", "設定已儲存")); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings" });
 }
 
 // opening the page (a link, a reload, the sidebar) loads it and asks for a refresh; a redraw while it is open does not
