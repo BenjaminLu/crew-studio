@@ -288,14 +288,15 @@ export function ownersOf(path: string, rules: { pattern: string; owners: string[
 }
 export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string }
   /** GitHub's merge box says a review is still required, for a rule Studio could not read; `who` are the pending review requests */
-  | { kind: "github"; who: string[] }
-  /** GitHub blocks the merge and the readable rules do not say why (a rule Studio could not read) */
-  | { kind: "blocked"; who: string[] };
+  | { kind: "github"; who: string[] };
 /** What GitHub itself says about a pull request's merge (GraphQL reviewDecision, mergeStateStatus, review requests). */
 export type GitHubMerge = { reviewDecision: string | null; mergeState: string | null; requested: string[] };
 export type Approvals = { readable: boolean; required: number; counted: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; missing: Missing[]; sources: string[];
   /** rules Studio could not read, and GitHub's own merge state shown beside them */
   unread?: { en: string; tw: string }[]; github?: GitHubMerge | null;
+  /** classic protection unread, and GitHub blocks the merge for a reason the readable rules do not show (a required
+   *  check, a rule Studio cannot see): not a missing approval, and never ready */
+  blocked?: boolean;
   /** with "approval after the last push": the logins treated as the pusher (inferred: GitHub does not expose who pushed) */
   inferredPusher?: string[] };
 /**
@@ -346,12 +347,12 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
     if (!o.github?.mergeState) return { readable: false, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources, unread: rules.unread, github: o.github ?? null,
       missing: [{ kind: "unreadable", reason: `${rules.unread[0].en}, and GitHub's merge box could not be read`, tw: `${rules.unread[0].tw}，也讀不到 GitHub 的 merge 狀態` }] };
     if (!missing.length && o.github.reviewDecision === "REVIEW_REQUIRED") missing.push({ kind: "github", who: o.github.requested.slice(0, 10) });
-    else if (!missing.length && o.github.mergeState === "BLOCKED") missing.push({ kind: "blocked", who: o.github.requested.slice(0, 10) });
   }
+  const blocked = !!rules.unread?.length && !missing.length && o.github?.mergeState === "BLOCKED";
   return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources,
-    ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}) };
+    ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}), ...(blocked ? { blocked } : {}) };
 }
-export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : x.kind === "blocked" ? [x.who.length ? x.who.join(" | ") : "GitHub blocks the merge"] : []);
+export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : []);
 
 // ---------- the next step ----------
 export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "test" | "approve" | "merge";
@@ -364,6 +365,7 @@ export const RULES: { id: string; kind: StepKind; en: string; tw: string }[] = [
   { id: "failed", kind: "fix", en: "the test evidence says fail → fix (the author)", tw: "測試證據是不通過 → 修正（作者）" },
   { id: "evidence", kind: "test", en: "no evidence, unclassified, code review only, evidence for an older head, or evidence that names no commit → test", tw: "沒有證據、無法分類、只審 code、證據不是這個 head、或證據沒指明 commit → 測試" },
   { id: "approvals", kind: "approve", en: "approvals missing (or the rules cannot be read) → approve", tw: "approve 不夠（或讀不到規則）→ approve" },
+  { id: "blocked", kind: "hold", en: "the branch protection could not be read and GitHub blocks the merge for a reason the readable rules do not show → on hold (see the merge box on GitHub)", tw: "讀不到分支保護，GitHub 又因為讀得到的規則看不出的原因擋住 merge → 暫緩（看 GitHub 的 merge 區塊）" },
   { id: "ready", kind: "merge", en: "everything above is satisfied → ready to merge (you)", tw: "以上都滿足 → 可合併（你）" },
 ];
 export type StepInput = {
@@ -390,6 +392,7 @@ export function nextStep(p: StepInput): Step {
     [ev?.verdict === "fail", () => ({ rule: "failed", kind: "fix", who: [p.author], reason: ev?.by })],
     [!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older" || ev.covers === "unknown", () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev && ev.covers === "unknown" && ev.verdict !== "unclassified" && ev.verdict !== "code-only" ? "unknown-commit" : ev?.verdict })],
     [p.approvals.missing.length > 0, () => ({ rule: "approvals", kind: "approve", who: p.approvals.readable ? missingWho(p.approvals.missing) : ["(rules unreadable)"] })],
+    [!!p.approvals.blocked, () => ({ rule: "blocked", kind: "hold", who: ["(GitHub blocks the merge)"] })],
     [true, () => ({ rule: "ready", kind: "merge", who: ["captain"] })],
   ];
   const matched = tests.map(([t]) => !!t), i = matched.indexOf(true);

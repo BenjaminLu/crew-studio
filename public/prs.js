@@ -31,8 +31,8 @@ async function copy(text) { try { await navigator.clipboard.writeText(text); ret
   const ta = h("textarea", { style: "position:fixed;left:-9999px" }); ta.value = text; document.body.append(ta); ta.select(); let ok = false; try { ok = document.execCommand("copy"); } catch {} ta.remove(); return ok; } }
 
 // ---------- words ----------
-const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
-const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `還要 ${m.n} 個 approve`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : m.kind === "blocked" ? (m.who.length ? T(`GitHub blocks the merge (asked: ${m.who.join(", ")})`, `GitHub 擋住 merge（已請求：${m.who.join("、")}）`) : T("GitHub blocks the merge", "GitHub 擋住 merge")) : T("rules unreadable", "讀不到規則");
+const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(GitHub blocks the merge)" ? T("the merge box on GitHub", "GitHub 的 merge 區塊") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
+const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `還要 ${m.n} 個 approve`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
 const TONE = { hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
 function nextWord(n) {
   if (n.rule === "draft") return T("On hold (draft)", "暫緩（draft）");
@@ -43,6 +43,7 @@ function nextWord(n) {
   if (n.rule === "environment") return T("Deploy for testing", "部署去測");
   if (n.rule === "evidence") return n.reason === "unknown-commit" ? T("Test (commit not named)", "測試（沒指明 commit）") : n.since ? T(`Test only the change since ${n.since}`, `只驗 ${n.since} 之後的改動`) : n.reason === "unclassified" ? T("Confirm the test verdict", "確認測試結論") : n.reason === "code-only" ? T("Test (code review only so far)", "測試（目前只審了 code）") : T("Test", "測試");
   if (n.rule === "approvals") return T("Approve", "等 approve");
+  if (n.rule === "blocked") return T("Blocked on GitHub", "GitHub 擋住 merge");
   return T("Ready to merge", "可合併");
 }
 const TABS = [["all", "All", "全部"], ["approve", "Approve", "等 approve"], ["test", "Test", "等測試"], ["fix", "Fix", "等修正"], ["dependency", "Dependency", "等依賴"], ["merge", "Mergeable", "可合併"], ["hold", "On hold", "暫緩"]];

@@ -79,7 +79,9 @@ const { ok, end } = suite("pr-watch");
       "classic protection unread: GitHub's REVIEW_REQUIRED that the readable rules do not explain is a missing review from the pending requests", JSON.stringify(fill));
     const clean = (d: string | null, m: string) => R.approvalsOf(none, [], { ...base, github: { reviewDecision: d, mergeState: m, requested: [] } });
     ok(!clean("APPROVED", "CLEAN").missing.length && !clean(null, "BEHIND").missing.length && !read.missing.length && read.unread === undefined, "GitHub's decision is used only when classic protection was unread; an approved, unblocked merge adds nothing");
-    ok(done.missing[0]?.kind === "blocked" && nul.missing[0]?.kind === "blocked", "classic protection unread and GitHub blocks the merge for a reason the rules do not show: not ready", JSON.stringify(done.missing));
+    const stepOf = (a: R.Approvals) => R.nextStep({ draft: false, author: "me", reviews: [], requiredReviewers: [], deps: [], envs: [], evidence: { verdict: "pass", source: "check", by: "qa", at: null, url: null, covers: "head", since: null, shas: [] }, evidenceSources: { accounts: [], checks: ["qa"], labels: [] }, approvals: a });
+    ok(done.blocked && nul.blocked && !done.missing.length && stepOf(done).rule === "blocked" && stepOf(done).kind === "hold" && stepOf(clean("APPROVED", "CLEAN")).rule === "ready",
+      "classic protection unread and GitHub blocks the merge for a reason the rules do not show: on hold, not ready, and not a missing approval", JSON.stringify([done, stepOf(done)]));
     const lost = R.approvalsOf(none, [], { ...base, github: null }), half = R.approvalsOf(none, [], { ...base, github: { reviewDecision: null, mergeState: null, requested: [] } });
     ok(!lost.readable && lost.missing[0].kind === "unreadable" && !half.readable && /merge box/.test((half.missing[0] as any).reason), "classic protection unread and GitHub's merge box not read (or read without a merge state): unreadable, never ready", JSON.stringify(lost));
     ok(more.missing.length === 1 && more.missing[0].kind === "count", "the readable rules' own gaps come first; GitHub's decision adds nothing on top of them"); }
