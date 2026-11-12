@@ -72,6 +72,7 @@ const { ok, end } = suite("pr-watch");
   ok(k({ deps: [{ id: "o/r#1", done: false }] }).rule === "dependency" && k({ deps: [{ id: "o/r#1", done: true }] }).rule === "ready", "an open dependency: wait for it; a merged one: done");
   ok(k({ reviews: [] }).rule === "required" && k({ reviews: [], author: "bot" }).rule === "ready", "a required reviewer who has not reviewed: wait (not the author)");
   ok(k({ reviews: [...base.reviews, { login: "x", state: "CHANGES_REQUESTED", stale: false, at: "", author: false }] }).rule === "changes", "changes requested: fix");
+  ok(k({ incomplete: ["reviews"] }).rule === "unread" && k({ incomplete: ["comments"] }).kind === "hold" && k({ incomplete: ["files"] }).rule === "ready" && k({ draft: true, incomplete: ["reviews"] }).rule === "draft", "reviews or comments not all read: on hold (after draft); other partial reads do not hold the row");
   const all = k({ draft: true, reviews: [{ login: "x", state: "CHANGES_REQUESTED", stale: false, at: "", author: false }], deps: [{ id: "o/r#1", done: false }], evidence: null, envs: [{ name: "dev", on: false, production: false }] });
   ok(all.rule === "draft" && all.matched.filter(Boolean).length === 7, "the first matching rule wins (a draft that matches seven rules is on hold)", JSON.stringify(all.matched));
 }
@@ -108,7 +109,7 @@ const { ok, end } = suite("pr-watch");
   ok(block === "<!-- crew-studio:depends -->\nDepends-on: https://github.com/northwind/web-app/pull/3\nDepends-on: https://github.com/northwind/ledger/pull/9\nDepends-on: #3\n<!-- /crew-studio:depends -->", "the block: full addresses, plus the short same-repository form when set", block);
   const body = "Intro\n\nMore text\n";
   const once = R.replaceBlock(body, block), twice = R.replaceBlock(`${once}\nA later line\n`, R.renderBlock(["northwind/ledger#9"], "northwind/web-app"));
-  ok(once === `Intro\n\nMore text\n\n${block}\n` && twice.startsWith("Intro\n\nMore text\n\n<!-- crew-studio:depends -->\nDepends-on: https://github.com/northwind/ledger/pull/9\n<!-- /crew-studio:depends -->") && twice.endsWith("\nA later line\n"), "only the marked block is replaced; the rest of the body is kept", JSON.stringify(twice));
+  ok(once === `Intro\n\nMore text\n\n\n${block}\n` && twice.startsWith("Intro\n\nMore text\n\n\n<!-- crew-studio:depends -->\nDepends-on: https://github.com/northwind/ledger/pull/9\n<!-- /crew-studio:depends -->") && twice.endsWith("\nA later line\n"), "only the marked block is replaced; the rest of the body is kept", JSON.stringify(twice));
   let threw = false; try { R.replaceBlock("x <!-- crew-studio:depends --> no end", block); } catch { threw = true; }
   ok(threw, "an unpaired marker is refused, never guessed");
   ok(R.blockDeps(once, "northwind/web-app")!.join() === "northwind/web-app#3,northwind/ledger#9", "the block's dependencies read back");
@@ -199,7 +200,11 @@ const { ok, end } = suite("pr-watch");
     ok(R.blockProblem(blk("Depends-on: https://github.com/o/r/pull/3, o/r#4 #5")) === null && /naming pull requests/.test(R.blockProblem(blk("Depends-on: see the plan in the wiki")) ?? "") && /over 4000/.test(R.blockProblem(blk(`Depends-on: ${"#1 ".repeat(1400)}`)) ?? ""),
       "the block GitHub has must be Depends-on lines naming pull requests, and short enough for the card to show whole"); }
   ok(R.removeBlock(`a ${B} b`) === "a  b" && R.removeBlock(`${B}\n\nRest`) === "Rest", "a block inside a line goes alone; a block at the very start takes its separator");
-  const rb = R.removeBlock(`Intro\n\n${R.renderBlock(["o/r#3"], "o/r")}\n`); ok(rb === "Intro\n", "removing the block keeps the rest of the body", JSON.stringify(rb));
+  const rb = R.removeBlock(`Intro\n\n${R.renderBlock(["o/r#3"], "o/r")}\n`); ok(rb === "Intro", "removing the block at the end takes back the separator Studio appended", JSON.stringify(rb));
+  { const blk3 = R.renderBlock(["o/r#3"], "o/r"), bodies = ["Intro", "Intro\n", "Intro   ", "Intro\n\n\n", "Intro  \n  \n", "", "a\r\nb\r\n", "a\r\nb   "];
+    const bad = bodies.filter((x) => R.removeBlock(R.replaceBlock(x, blk3)) !== x);
+    ok(!bad.length, "appending the block keeps the body as it was (trailing spaces and blank lines included), and removing it gives that body back exactly", JSON.stringify(bad));
+    ok(R.replaceBlock("Intro  \n\n", blk3).startsWith("Intro  \n\n"), "nothing outside the block is trimmed when it is appended"); }
   ok(!unr.readable && unr.missing[0].kind === "unreadable" && R.approvalsOf(rul, [], { files: ["a"], codeowners: null, teamMembers: new Map() }).readable, "code owners that cannot be checked are unreadable, distinct from no CODEOWNERS file");
 }
 { // round 4: the ETag cache is bounded by bytes, keeps none over 256 KB, and drops the least recently used first
@@ -340,13 +345,31 @@ try {
   ok(after14.startsWith(before14.replace(/\s+$/, "")) && after14.endsWith("<!-- /crew-studio:depends -->\n") && R.stripBlock(after14).trim() === before14.trim(), "only the marked block was added; the rest of the body is unchanged", JSON.stringify(after14));
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
   ok(row(v, "northwind/checkout-api#14").deps.applied && !row(v, "northwind/checkout-api#14").deps.drift, "the row says the block is applied");
+  // a card answered after the row's dependencies changed writes its block but keeps the newer record; a block on GitHub
+  // with no record of Studio's still holds the row
+  { const id18 = "northwind/checkout-api#18", p18b = gh.data.find("northwind/checkout-api", 18)!, body18 = p18b.body, keep18 = Object.entries(W.state.deps).find(([k]) => k.toLowerCase() === id18);
+    await call("/api/prs/deps", { pr: id18, on: ["northwind/checkout-api#15"] });
+    const ap5 = await call("/api/prs/apply", { prs: [id18] }); await until(() => !!E.cards.list({ run: ap5.body.task }).find((c: any) => c.status === "open"), 10000);
+    await call("/api/prs/deps", { pr: id18, on: ["northwind/checkout-api#13"] });
+    const c5: any = E.cards.list({ run: ap5.body.task }).find((c: any) => c.status === "open"); await E.answer(c5.id, { choice: "apply", by: "captain" });
+    await until(() => ["succeeded", "failed"].includes(E.list().find((r: any) => r.id === ap5.body.task)!.status), 10000);
+    const rec = Object.entries(W.state.deps).find(([k]) => k.toLowerCase() === id18)?.[1] as any;
+    ok(rec?.on.join() === "northwind/checkout-api#13" && String(gh.data.find("northwind/checkout-api", 18)!.body).includes("/pull/15"), "an older card writes its block but does not erase the dependency set since", JSON.stringify(rec));
+    for (let i = 0; i < 40 && !W.snapshot.rows.find((r) => r.id === id18)?.bodyBlock; i++) { await call("/api/prs/refresh", {}); await new Promise((r) => setTimeout(r, 250)); }
+    let r18 = row((await call("/api/prs")).body, id18);
+    ok(!!W.snapshot.rows.find((r) => r.id === id18)?.bodyBlock && r18.deps.applied === false && !r18.deps.drift, "the row does not say applied while its record differs from the block written", JSON.stringify(r18.deps));
+    for (const k of Object.keys(W.state.deps)) if (k.toLowerCase() === id18) delete W.state.deps[k];
+    r18 = row((await call("/api/prs")).body, id18);
+    ok(r18.deps.source === "github" && r18.deps.on.map((x: any) => x.id).join() === "northwind/checkout-api#15" && !r18.deps.proposed.length, "no record of Studio's: the block on GitHub is the row's dependency", JSON.stringify(r18.deps));
+    ok(r18.next.rule === "dependency" || r18.deps.on.every((x: any) => x.done), "an open dependency from the block holds the row", r18.next.rule);
+    p18b.body = body18; if (keep18) W.state.deps[keep18[0]] = keep18[1]; await call("/api/prs/refresh", {}); }
   // a body edited between the card and the write is left alone
   const p19 = gh.data.find("northwind/checkout-api", 19)!;
   const ap2 = await call("/api/prs/apply", { prs: ["northwind/checkout-api#19"] }); await until(() => !!E.cards.list({ run: ap2.body.task }).find((c: any) => c.status === "open"), 10000);
   p19.body = `${p19.body}\n\nEdited on GitHub meanwhile.`;
   const c2: any = E.cards.list({ run: ap2.body.task }).find((c: any) => c.status === "open"); await E.answer(c2.id, { choice: "apply", by: "captain" });
   await until(() => E.list().find((r: any) => r.id === ap2.body.task)!.status === "succeeded", 10000);
-  ok(writes().length === 1 && /changed on GitHub since the card/.test(String(E.list().find((r: any) => r.id === ap2.body.task)!.nodes?.write?.note ?? JSON.stringify(E.list().find((r: any) => r.id === ap2.body.task)))), "a body that changed after the card is not written; the Task says why");
+  ok(writes().length === 2 && /changed on GitHub since the card/.test(String(E.list().find((r: any) => r.id === ap2.body.task)!.nodes?.write?.note ?? JSON.stringify(E.list().find((r: any) => r.id === ap2.body.task)))), "a body that changed after the card is not written; the Task says why");
   // drift: the block edited on GitHub turns the cell amber; both actions
   const p14 = gh.data.find("northwind/checkout-api", 14)!;
   p14.body = String(p14.body).replace("Depends-on: https://github.com/northwind/checkout-api/pull/15", "Depends-on: https://github.com/northwind/checkout-api/pull/15\nDepends-on: https://github.com/northwind/checkout-api/pull/13");
@@ -362,7 +385,7 @@ try {
   await until(() => E.list().find((r: any) => r.id === ap3.body.task)!.status === "succeeded", 10000);
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
   ok(!row(v, "northwind/checkout-api#14").deps.drift && R.blockDeps(String(p14.body), "northwind/checkout-api")!.length === 2, "re-applying Studio's record through the card writes the block back");
-  ok(writes().every((c) => c.method === "PATCH" && /\/pulls\/1[49]$/.test(c.path)), "every write was a pull request body PATCH from a card");
+  ok(writes().every((c) => c.method === "PATCH" && /\/pulls\/1[489]$/.test(c.path)), "every write was a pull request body PATCH from a card");
   // close without writing
   const ap4 = await call("/api/prs/apply", { prs: ["northwind/checkout-api#19"] }); await until(() => !!E.cards.list({ run: ap4.body.task }).find((c: any) => c.status === "open"), 10000);
   const n4 = writes().length, c4: any = E.cards.list({ run: ap4.body.task }).find((c: any) => c.status === "open"); await E.answer(c4.id, { choice: "close", by: "captain" });
@@ -505,6 +528,21 @@ try {
       n0 = refreshes(); await post4("/api/prs/restore", {}); await until(() => refreshes() > n0, 10000);
       ok(refreshes() > n0, "control: the board's edit reads GitHub again");
     } finally { W4.stop(); p4.stop(); rmSync(dir, { recursive: true, force: true }); } }
+  // reads Studio could not finish hold the row: a failed reviews read, more comments than it reads
+  { gh.setRateLimited(false); const dir = mkdtempSync(join(tmpdir(), "pr-watch-unread-")), p5 = new GitHubPoller(), W5 = createPrWatch({ dataDir: dir, poller: p5, notify: () => {} });
+    const post5 = async (path: string, body: unknown) => { const u = new URL(`http://127.0.0.1${path}`); return W5.handle(new Request(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), u, { kind: "desktop" }, true); };
+    const pr = gh.data.find("northwind/checkout-api", 17)!, keepComments = pr.comments;
+    try {
+      await post5("/api/prs/watch", { url: "https://github.com/northwind/checkout-api" }); await until(() => !!W5.snapshot.at && !W5.view().refreshing, 10000);
+      const before = W5.view().rows.find((r) => r.id === "northwind/checkout-api#17")!;
+      ok(!!before && before.next.rule !== "unread", "control: a fully read row is not held", before?.next.rule);
+      pr.comments = [...(keepComments ?? []), ...Array.from({ length: 301 }, (_, i) => ({ user: "someone", body: `note ${i}`, at: "2026-11-02T00:00:00Z" }))];
+      await post5("/api/prs/refresh", {}); let r = W5.view().rows.find((x) => x.id === "northwind/checkout-api#17")!;
+      ok(r.partial.includes("comments") && r.next.rule === "unread" && r.next.kind === "hold", "more comments than Studio reads: the row is held, never ready on the ones it read", JSON.stringify({ p: r.partial, n: r.next.rule }));
+      pr.comments = keepComments; gh.knobs.reviewsFail = 17;
+      await post5("/api/prs/refresh", {}); r = W5.view().rows.find((x) => x.id === "northwind/checkout-api#17")!;
+      ok(r.partial.includes("reviews") && r.next.rule === "unread", "a failed reviews read: the row is held (a change request may be among them)", JSON.stringify({ p: r.partial, n: r.next.rule }));
+    } finally { gh.knobs.reviewsFail = null; pr.comments = keepComments; W5.stop(); p5.stop(); rmSync(dir, { recursive: true, force: true }); } }
   { process.env.CREW_PR_WATCH = "0"; const off = (await call("/api/prs")).body, r = (await call("/api/prs/refresh", {})).body; delete process.env.CREW_PR_WATCH;
     ok(off.enabled === false && off.connected === false && String(r.error?.en ?? "").includes("CREW_PR_WATCH=0"), "CREW_PR_WATCH=0 is the list's own off switch, and the refresh says so", JSON.stringify(r.error)); }
 } finally { W.stop(); poller.stop(); gh.stop(); H.stop(); }
