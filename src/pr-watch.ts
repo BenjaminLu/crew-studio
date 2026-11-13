@@ -798,6 +798,7 @@ export function createPrWatch(d: PrWatchDeps) {
   const KIND_OF: Partial<Record<F.Branch, FollowKind>> = { "needs-evidence": "qa", "evidence-covers-head": "nudge", "missing-approvals": "approve", mergeable: "merge", ask: "ask" };
   const KIND_LABEL: Record<FollowKind, F.L> = { qa: { en: "Ask QA to test", tw: "請 QA 測試" }, nudge: { en: "Ask reviewers to look again", tw: "請 reviewer 重驗" }, approve: { en: "Ask for approval", tw: "請 approve" },
     merge: { en: "Ready to merge", tw: "可合併" }, ask: { en: "Your call", tw: "等你決定" }, push: { en: "Confirm before pushing", tw: "push 前確認" } };
+  const VERDICT_TW: Record<string, string> = { pass: "通過", conditional: "有條件通過", fail: "不通過", "code-only": "只審 code", unclassified: "無法分類" };
   const hist = (en: string, tw: string, hit = false) => ({ at: iso(), en, tw, ...(hit ? { hit: true } : {}) });
   const noteKey = (pr: string, n: F.Note) => `${pr}@${n.login}@${n.at}`.toLowerCase();
   const rowNotes = (r: { id: string; notes?: F.Note[] }) => (r.notes ?? []).map((n) => { const k = state.follow.classified[noteKey(r.id, n)]; return k ? { ...n, kind: k, confidence: "high" as const } : n; });
@@ -820,7 +821,7 @@ export function createPrWatch(d: PrWatchDeps) {
   function followPayload(kind: FollowKind, r: ReturnType<typeof viewRows>[number], sh: F.Shepherd, extra: { quote?: string | null; by?: string | null; tests?: boolean; voids?: number | null; who?: string[] } = {}) {
     const pr: F.MsgPr = { id: r.id, url: r.url, title: r.title, head: r.head, env: testEnv(r, sh.note?.quote ?? null) };
     const ciOk = r.ci === "SUCCESS", ev = r.evidence;
-    const done: F.L[] = [...(ciOk ? [{ en: "CI passes", tw: "CI 通過" }] : []), ...(ev && ev.verdict !== "fail" && ev.covers === "head" ? [{ en: `evidence: ${ev.verdict} on the current head (${ev.by})`, tw: `證據：${ev.verdict === "pass" ? "通過" : ev.verdict} · 目前 head（${ev.by}）` }] : []),
+    const done: F.L[] = [...(ciOk ? [{ en: "CI passes", tw: "CI 通過" }] : []), ...(ev && ev.verdict !== "fail" && ev.covers === "head" ? [{ en: `evidence: ${ev.verdict} on the current head (${ev.by})`, tw: `證據：${VERDICT_TW[ev.verdict] ?? ev.verdict} · 目前 head（${ev.by}）` }] : []),
       ...r.reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => ({ en: `${v.login} approved`, tw: `${v.login} approve` }))];
     const note = sh.note ?? null, q = note?.quote ? { en: `${note.login}'s comment: "${F.unq(note.quote)}". `, tw: `${note.login} 的意見是「${F.unq(note.quote)}」。` } : { en: "", tw: "" };
     const base = { schema: 1, kind, kindLabel: KIND_LABEL[kind], pr: r.id, repo: r.repo, url: r.url, title: r.title, head: r.head, channel: channelFor(kind), snoozeUntil: null as string | null, chased: 0 };
@@ -835,7 +836,7 @@ export function createPrWatch(d: PrWatchDeps) {
       return { ...base, heading: { en: `The evidence is in: ask ${who.length === 1 ? who[0] : `the ${who.length} reviewers`} to look again on the current head`, tw: `證據齊了，請 ${who.length === 1 ? who[0] : `${who.length} 個 reviewer`} 在目前 head 重驗` },
         lead: (() => { const older = r.reviews.some((v) => v.stale && who.some((w) => eq(w, v.login)));
           return { en: `${ev!.by}'s report (${ev!.verdict}) covers the current head ${r.head.slice(0, 7)}; ${who.join(", ")} ${older ? "gave their verdict on an older head" : "reviewed before the evidence arrived"}. The card comes as soon as the evidence does.`,
-            tw: `${ev!.by} 的報告（結論：${ev!.verdict === "pass" ? "通過" : ev!.verdict}）覆蓋目前 head ${r.head.slice(0, 7)}；${who.join("、")} ${older ? "的意見還停在舊 head" : "是在證據之前 review 的"}。證據一齊就出卡，不等。` }; })(),
+            tw: `${ev!.by} 的報告（結論：${VERDICT_TW[ev!.verdict] ?? ev!.verdict}）覆蓋目前 head ${r.head.slice(0, 7)}；${who.join("、")} ${older ? "的意見還停在舊 head" : "是在證據之前 review 的"}。證據一齊就出卡，不等。` }; })(),
         done: [...done, ...(() => { const ns = rowNotes(r).filter((n) => who.some((w) => eq(w, n.login)) && n.quote); return ns.length && ns.every((n) => n.fixedBy?.length) ? [{ en: `the ${ns.length === 1 ? "last comment was" : `${ns.length} last comments were`} answered by new commits`, tw: `上次${ns.length === 1 ? "的意見" : ` ${ns.length} 條意見`}都已修` }] : []; })()],
         missing: who.map((w) => ({ en: `${w}'s result on the current head`, tw: `${w} 在目前 head 的結果` })), msgHead: { en: "Ask to review again", tw: "請重驗" }, recipients: who.map(person), message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the reviews", "我已發出，等重驗", true, { en: "the card closes when they review the current head", tw: "兩人在目前 head 給結果卡就關" }),
@@ -880,27 +881,37 @@ export function createPrWatch(d: PrWatchDeps) {
       autoClose: { en: "A new review or a change on GitHub closes this card.", tw: "GitHub 上有新 review 或改動 → 卡自動關" } };
   }
   const short = (r: { id: string }) => r.id.split("/")[1];
-  const followCard = (o: FollowOpen) => o.card ? engine?.cards.get(o.card) ?? null : null;
+  /** an open entry's card: by its id, else (the node is still raising it, its id not written yet) by its run */
+  const followCard = (o: FollowOpen) => { if (!engine) return null; if (o.card) return engine.cards.get(o.card) ?? null;
+    const c = engine.cards.list({ run: o.run }).find((x: any) => x.status === "open" && x.follow) ?? null; if (c) o.card = c.id; return c; };
   /** update an open follow card's content and history (a live update tells the Inbox) */
   function patchCard(o: FollowOpen, f: (p: any) => void) { const c = followCard(o); if (!c || c.status !== "open" || !c.follow) return null; f(c.follow); engine!.cards.save(c); return c; }
-  async function closeFollow(key: string, en: string, tw: string) {
-    const o = state.follow.open[key]; if (!o) return; delete state.follow.open[key];
-    const c = followCard(o); if (c?.status === "open") { patchCard(o, (p) => { p.history.push(hist(en, tw, true)); }); try { await engine!.answer(c.id, { choice: "auto", note: en, by: "studio (GitHub)" }); } catch {} }
+  /** close an entry and its card together: an entry whose card is not raised yet stays (the next refresh closes both);
+   *  an answer that does not land keeps the entry, so the card is never left open without one */
+  async function closeFollow(key: string, en: string, tw: string): Promise<boolean> {
+    const o = state.follow.open[key]; if (!o) return true;
+    const run = engine?.list().find((x) => x.id === o.run), ended = !run || ["succeeded", "failed", "cancelled"].includes(run.status);
+    const c = followCard(o);
+    if (!c) { if (ended) { delete state.follow.open[key]; return true; } return false; }
+    if (c.status === "open") { patchCard(o, (p) => { p.history.push(hist(en, tw, true)); });
+      try { await engine!.answer(c.id, { choice: "auto", note: en, by: "studio (GitHub)" }); } catch { if (engine!.cards.get(c.id)?.status === "open") return false; } }
+    delete state.follow.open[key]; return true;
   }
   /** why a card closes: what GitHub shows now that it did not when the card was raised (new commits, the evidence, an
-   *  approval, a review), else the rule the pull request now waits on; and the branch it moved to */
+   *  approval, a review), else the rule the pull request now waits on, as one plain sentence */
   function closeReason(o: FollowOpen, r: ReturnType<typeof viewRows>[number], sh: F.Shepherd): F.L {
-    const c = followCard(o), p: any = c?.follow ?? {}, to = { en: ` → ${sh.branch}`, tw: ` → ${sh.branch}` }, raised = Date.parse(o.at);
+    const c = followCard(o), p: any = c?.follow ?? {}, raised = Date.parse(o.at);
     const after = (at: string | null | undefined) => !!at && Date.parse(at) >= raised - 60_000;
     let what: F.L | null = null;
     if (r.head !== o.head) what = { en: `new commits: the head is now ${r.head.slice(0, 7)}`, tw: `有新 commit：head 變成 ${r.head.slice(0, 7)}` };
-    else if (o.kind === "qa" && r.evidence && r.evidence.covers === "head") what = { en: `evidence from ${r.evidence.by} (${r.evidence.verdict}) covers the head`, tw: `${r.evidence.by} 的證據（${r.evidence.verdict}）覆蓋目前 head` };
+    else if (o.kind === "qa" && r.evidence && r.evidence.covers === "head") what = { en: `evidence from ${r.evidence.by} (${r.evidence.verdict}) covers the head`, tw: `${r.evidence.by} 的證據（${VERDICT_TW[r.evidence.verdict] ?? r.evidence.verdict}）覆蓋目前 head` };
     else if (o.kind === "nudge") { const who = r.reviews.filter((v) => !v.stale && after(v.at) && (p.recipients ?? []).some((x: any) => eq(x.who, v.login))).map((v) => `${v.login} (${v.state.toLowerCase().replace(/_/g, " ")})`);
       if (who.length) what = { en: `new review on the head: ${who.join(", ")}`, tw: `目前 head 上的新 review：${who.join("、")}` }; }
-    else if (o.kind === "approve") { const got = (r.approvals.groups ?? []).filter((g) => g.ok && (p.groupsMissing ?? []).includes(g.who)).map((g) => `${g.who} (${g.by.join(", ")})`);
-      if (got.length) what = { en: `approved: ${got.join(", ")}`, tw: `已 approve：${got.join("、")}` }; }
-    if (!what) { const rule = R.RULES.find((x) => x.id === r.next.rule); what = rule ? { en: `now: ${rule.en}`, tw: `現在：${rule.tw}` } : { en: sh.why.en, tw: sh.why.tw }; }
-    return { en: what.en + to.en, tw: what.tw + to.tw };
+    else if (o.kind === "approve") { const got = (r.approvals.groups ?? []).filter((g) => g.ok && (p.groupsMissing ?? []).includes(g.who));
+      if (got.length) what = { en: `approved: ${got.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")}`, tw: `已 approve：${got.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")}` }; }
+    // else the rule the pull request now waits on, as one plain sentence (its condition and what follows from it, no arrow)
+    if (!what) { const rule = R.RULES.find((x) => x.id === r.next.rule); what = rule ? { en: `now ${rule.en.replace(" → ", ", so ")}`, tw: `現在${rule.tw.replace(" → ", "，所以 ")}` } : { en: sh.why.en, tw: sh.why.tw }; }
+    return what;
   }
   /** after a refresh: each open row's branch, its card raised, kept, updated or closed */
   async function followUp() {
@@ -917,14 +928,18 @@ export function createPrWatch(d: PrWatchDeps) {
       if (o.kind === "approve") { const fresh = followPayload("approve", r, sh) as any;
         patchCard(o, (p) => { const gone = (p.groupsMissing ?? []).filter((g: string) => !fresh.groupsMissing.includes(g));
           if (gone.length || fresh.groupsMissing.some((g: string) => !(p.groupsMissing ?? []).includes(g))) {
-            const by = (r.approvals.groups ?? []).filter((g) => gone.includes(g.who)).map((g) => `${g.who} (${g.by.join(", ")})`);
-            p.history.push(hist(`approved: ${by.join(", ") || gone.join(", ")} ✓ → the card keeps ${fresh.groupsMissing.join(", ")}`, `${by.join("、") || gone.join("、")} approve ✓ → 卡裡只留 ${fresh.groupsMissing.join("、")}`));
+            // a group that went because someone approved, or because the rules no longer ask for it (GitHub ignores an owner it
+            // reports as unknown, or the rules changed): said as it is
+            const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g: string) => !ok.some((x) => x.who === g));
+            const keeps = fresh.groupsMissing.length ? { en: ` → the card keeps ${fresh.groupsMissing.join(", ")}`, tw: ` → 卡裡只留 ${fresh.groupsMissing.join("、")}` } : { en: "", tw: "" };
+            if (ok.length) p.history.push(hist(`approved: ${ok.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")} ✓${keeps.en}`, `${ok.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")} approve ✓${keeps.tw}`));
+            if (dropped.length) p.history.push(hist(`no longer required: ${dropped.join(", ")} (GitHub ignores an owner it reports as unknown, or the branch rules changed)${keeps.en}`, `不再需要：${dropped.join("、")}（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）${keeps.tw}`));
             Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); } }); }
     }
     for (const r of rows) {
       const sh = shepherdOf(r), kind = KIND_OF[sh.branch]; if (!kind) continue;
       if (state.follow.hold[`${r.id}@${r.head}@${kind}`.toLowerCase()]) continue;
-      if (Object.values(state.follow.open).some((o) => eq(o.pr, r.id) && o.kind === kind)) continue;
+      if (Object.values(state.follow.open).some((o) => eq(o.pr, r.id) && (o.kind === kind || o.kind !== "push"))) continue; // one card at a time: a card still closing holds the next
       await startFollow(r.id, kind, r.head, sh); changed = true;
     }
     if (changed) write(stateFile, state);
@@ -975,7 +990,14 @@ export function createPrWatch(d: PrWatchDeps) {
   async function pushCheck(b: any) {
     const id = String(b?.pr ?? ""), r = viewRows(snap, state).find((x) => eq(x.id, id)); if (!r) throw new Error("Choose a pull request in the list");
     const v = F.pushVoids(r.approvals, r.reviews); if (v.voids === 0) return { voids: 0, card: false };
-    const run = await startFollow(r.id, "push", r.head, null, { voids: v.voids, who: v.who, quote: typeof b?.quote === "string" ? b.quote.slice(0, 300) : null, by: typeof b?.by === "string" && R.NAME.test(b.by) ? b.by.slice(0, 60) : null, tests: b?.tests === true });
+    // one push card per pull request and head: asking again shows the one already waiting
+    const same = Object.values(state.follow.open).find((o) => o.kind === "push" && eq(o.pr, r.id) && o.head === r.head);
+    if (same) return { voids: v.voids, who: v.who, card: true, task: same.run, existing: true };
+    // who asked for the change: the caller says, else the latest reviewer comment read as a code change (with its sentence)
+    const asked = rowNotes(r).filter((n) => n.kind === "code-change" && n.quote).sort((x, y) => Date.parse(y.at) - Date.parse(x.at))[0];
+    const quote = typeof b?.quote === "string" ? b.quote.slice(0, 300) : asked?.quote ?? null;
+    const by = typeof b?.by === "string" && R.NAME.test(b.by) ? b.by.slice(0, 60) : rowNotes(r).find((n) => n.quote && quote && n.quote === quote)?.login ?? (typeof b?.quote === "string" ? null : asked?.login ?? null);
+    const run = await startFollow(r.id, "push", r.head, null, { voids: v.voids, who: v.who, quote, by, tests:b?.tests === true });
     write(stateFile, state); return { voids: v.voids, who: v.who, card: true, task: run.id };
   }
 

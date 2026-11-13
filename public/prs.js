@@ -393,11 +393,11 @@ function flowSection(r) {
   const f = r.follow; if (!f) return null;
   const at = STAGE_AT[f.branch] ?? -1, ev = r.evidence, miss = (r.approvals?.missing || []).map(missWord).join(T(", ", "、"));
   const stages = [[T("Reviews", "Review"), f.quote && at === 0 ? T(`${f.by}: “${unq(f.quote)}”`, `${f.by}：「${unq(f.quote)}」`) : r.reviews.length ? r.reviews.map((x) => `${x.login} ${reviewWord(x.state)}`).join(T(", ", "、")) : ""],
-    [T("QA test", "QA 實測"), ev ? `${ev.by}: ${verdictWord(ev.verdict)}${ev.covers === "head" ? T(" · current head", " · 目前 head") : ""}` : at === 1 && f.quote ? T(`${f.by} asked: “${unq(f.quote)}”`, `${f.by} 要求：「${unq(f.quote)}」`) : ""],
+    [T("QA test", "QA 實測"), ev ? T(`${ev.by}: ${verdictWord(ev.verdict)}`, `${ev.by}：${verdictWord(ev.verdict)}`) + (ev.covers === "head" ? T(" · current head", " · 目前 head") : "") : at === 1 && f.quote ? T(`${f.by} asked: “${unq(f.quote)}”`, `${f.by} 要求：「${unq(f.quote)}」`) : ""],
     [T("Ask the reviewers again", "請 reviewer 重驗"), at === 2 ? T(`the evidence covers the head; ${f.stale.join(", ")} gave their verdict on an older one`, `證據覆蓋目前 head；${f.stale.join("、")} 的意見還停在舊 head`) : ""],
     [T("Approvals the rules ask for", "分支規則要的 approve"), miss], [T("Mergeable (the branch rules all met)", "可合併（分支規則全滿足）"), ""]];
   const box = h("div", { class: "pw-followcard", "data-prs-detail-card": r.followCard?.card || "" });
-  if (r.followCard && window.crewFollowCard) fetch("/api/scards?open=1").then((x) => x.json()).then((j) => { const c = (j.cards || []).find((x) => x.id === r.followCard.card); if (c && box.isConnected) window.crewFollowCard.mount(box, c, {}); }).catch(() => {});
+  if (r.followCard && window.crewFollowCard) fetch("/api/scards?open=1").then((x) => x.json()).then((j) => { const c = (j.cards || []).find((x) => x.id === r.followCard.card); if (c && box.isConnected) window.crewFollowCard.mount(box, c, { marks: true }); }).catch(() => {});
   return h("div", { class: "pw-cols", "data-prs-flow": f.branch },
     h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Where the flow is", "流程走到哪")),
       h("ol", { class: "pw-rules" }, stages.map(([label, note], i) => h("li", { class: i < at ? "no" : i === at ? "hit" : "" }, label, i === at ? T(" ← now", " ← 現在") : "", note ? h("div", { class: "faint pw-small", style: "font-weight:400" }, note) : null))),

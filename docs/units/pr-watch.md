@@ -220,9 +220,16 @@ Off by default (settings: "Follow-through"); on, after every refresh each watche
   recorded and keeps the card; the others answer it. A card closes by itself when GitHub shows what it waits for
   (Studio answers it as `studio (GitHub)`); an approve card that is partly met keeps only the groups still missing.
   The row on the page links to its open card. Firstmate cannot answer one.
-- **Push before voiding approvals**: `POST /api/prs/push-check {pr, quote?}` (for a worker round about to push): when the
-  rules dismiss stale approvals (or ask for one after the last push) and approvals exist, a card "this push voids N
-  approvals" with push / don't push (with a reason) / follow-up pull request.
+- **Push before voiding approvals**: `POST /api/prs/push-check {pr, quote?, by?, tests?}` (for a worker round about to
+  push): when the rules dismiss stale approvals (or ask for one after the last push) and approvals exist, a card "this
+  push voids N approvals" with push / don't push (with a reason) / follow-up pull request. `quote` and `by` are the
+  comment the change answers and who wrote it; without them Studio takes the latest reviewer comment it read as a code
+  change, and its author. `tests: true` is the round's own result (its tests passed), shown under done; Studio does not
+  guess it. One push card per pull request and head: asking again returns the one waiting.
+- **Why PR follow-through is a hook node**: a check node can route by a check's outcome (`args.route_from`), but its
+  outcome comes from checks that judge a round's work; the follow-through reads the Pull requests page's row (no check
+  produces it) and picks one of five branches, which is what a hook action's outcome is. A deliberate deviation from the
+  design's "check · pr.shepherd".
 - **Studio never** @-mentions on GitHub, re-requests a review, merges a pull request it did not open, or sends anything
   without the captain's click. It writes nothing to GitHub here.
 - **The github-review workflow** shows the same nodes (PR follow-through `pr.shepherd`, the three cards, Follow to

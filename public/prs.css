@@ -115,3 +115,5 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 @media (max-width:760px){.pw-envrow{position:relative;padding-right:34px}.pw-envrow>.pw-x{position:absolute;top:8px;right:6px}}
 /* the row detail's follow-through: its columns start at the top (a list is not stretched to the card next to it) */
 [data-prs-flow]{align-items:start}[data-prs-flow]>.card{align-content:start}
+/* the card inside the row dialog: no second padding at phone width */
+@media (max-width:760px){[data-prs-flow]>.card{padding:10px}.pw-followcard .icard{padding:0}}

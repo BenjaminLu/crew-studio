@@ -75,12 +75,18 @@ try {
   gh.data.find(gw, 212)!.comments = [{ user: "qa-lead", body: `### PASS\non ${c212[1].sha}`, at: T(5) }];
   gh.data.find(gw, 216)!.reviews!.push({ user: "sec-bob", state: "APPROVED", commit: c216[1].sha, at: T(5) } as any);
   await refresh(); await until(() => E.cards.get(qa.id)!.status !== "open" && !!cardOf(`${gw}#216`, "merge"), 15000);
-  ok(E.cards.get(qa.id)!.status === "answered" && E.cards.get(qa.id)!.answer!.by === "studio (GitHub)" && /^evidence from qa-lead \(pass\) covers the head → evidence-covers-head$/.test(E.cards.get(qa.id)!.answer!.note ?? ""), "the QA card closes by itself when evidence on the head arrives", JSON.stringify(E.cards.get(qa.id)!.answer));
+  ok(E.cards.get(qa.id)!.status === "answered" && E.cards.get(qa.id)!.answer!.by === "studio (GitHub)" && /^evidence from qa-lead \(pass\) covers the head$/.test(E.cards.get(qa.id)!.answer!.note ?? ""), "the QA card closes by itself when evidence on the head arrives", JSON.stringify(E.cards.get(qa.id)!.answer));
   ok(!!cardOf(`${gw}#212`, "nudge") && cardOf(`${gw}#212`, "nudge").follow.recipients[0].who === "review-bot-a", "and the reviewer who asked for it is asked to look again right away");
   ok(E.cards.get(ap.id)!.status === "answered" && !!cardOf(`${gw}#216`, "merge"), "the approve card closes when the rules are met, and the merge card follows");
   // a push that would void the approvals asks first
-  a = await call("/api/prs/push-check", { pr: `${gw}#216`, quote: "Do not log the key id." });
+  // the reviewer's comment on the head, read as a code change: the push card names them and quotes it without being told
+  gh.data.find(gw, 216)!.reviews!.push({ user: "review-bot-b", state: "COMMENTED", commit: c216[1].sha, at: T(6), body: "Please do not log the key id." } as any);
+  await refresh(); await new Promise((res) => setTimeout(res, 300));
+  a = await call("/api/prs/push-check", { pr: `${gw}#216`, tests: true });
   await until(() => !!cardOf(`${gw}#216`, "push"), 10000); const push = cardOf(`${gw}#216`, "push");
+  const again = await call("/api/prs/push-check", { pr: `${gw}#216` }); await new Promise((res) => setTimeout(res, 500));
+  ok(again.body.existing === true && again.body.task === a.body.task && open().filter((c: any) => c.follow.kind === "push").length === 1, "asking again for the same pull request and head shows the push card already waiting, never a second", JSON.stringify(again.body));
+  ok(push.follow.lead.en.startsWith("review-bot-b left a comment: “Please do not log the key id”") && push.follow.done[0].en.includes("tests pass"), "the push card names who commented (read from the reviews) and that the tests pass", push.follow.lead.en);
   ok(a.body.voids === 3 && push.follow.heading.en === "This push voids 3 approvals: push?" && push.follow.opts.map((o: any) => o.id).join() === "push,no-push,follow-up", "a push that would void 3 approvals raises its card: push, don't push with a reason, follow-up", JSON.stringify(a.body));
   ok(!gh.calls.some((c) => c.method !== "GET" && c.path !== "/graphql") && !gh.unknown.length, "nothing was written to GitHub; every request was one the fixture knows", JSON.stringify(gh.unknown));
 } catch (e: any) { ok(false, "the suite ran to its end", String(e?.stack || e)); }
