@@ -479,7 +479,7 @@ function focusView(arg) {
           : h("span", { class: "badge", "data-term-readonly": "1", title: T("Typing, starting and stopping happen on the Mac.", "輸入、啟動和停止要在 Mac 上做。") }, T("View only", "只能檢視")))),
     appBanner(),
     TM.err ? h("p", { class: "faint" }, TM.err) : null,
-    TM.canWrite && showNew ? h("div", { class: "wt-launch" }, launcher(), h("div", { class: "wt-list", role: "list" }, listRows(t))) : null,
+    TM.canWrite && showNew ? h("div", { class: "wt-launch" }, launcher(), terminalsList(t)) : null,
     h("section", { class: "wt-detail", "data-term-detail": t.id }, ...detailHead(t), h("div", { class: "wt-stage" }, drawNode(tab.zoom ? panesOf(tab.root).find((p) => p.id === tab.zoom) || tab.root : tab.root, tab))),
     statusLine(),
     TM.ui.help ? helpSheet() : null, TM.ui.picker ? pickerSheet() : null, TM.ui.naming ? namingSheet() : null);
@@ -518,7 +518,8 @@ function patchPage() {
   // the launcher (busy, presets), unless the captain is in it, and the list beside it
   const nw = document.querySelector(".wt-new"); if (nw && !nw.contains(document.activeElement)) nw.replaceWith(launcher());
   const tab = curTab(), t = termOf(focusPane(tab));
-  const list = document.querySelector(".wt-list"); if (list) list.replaceChildren(...listRows(t || selected(cur())));
+  // the list under its toolbar takes the new rows in place (public/list-tools.js): its search box is never replaced
+  TM.listSel = t || selected(cur()); document.querySelector('#view [data-lt="terminals"]')?.ltItems?.(TM.list);
   const sec = document.querySelector("[data-term-detail]"), stage = sec?.querySelector(":scope > .wt-stage");
   // a pane whose terminal went (a shell that exited leaves the list) or left the tabs (a restart ended it): drawn again
   // now, unless the captain is typing in a field (another terminal, the go-to picker, a tab's name, the command field:
@@ -582,22 +583,36 @@ function detailHead(t) {
       TM.canWrite && t.remote?.enabled && t.running ? h("div", { class: "faint wt-remote-wait" }, T("Remote Control: waiting for Claude Code to print its link…", "Remote Control：等 Claude Code 印出連結…")) : null];
 }
 const selected = (arg) => TM.list.find((t) => t.id === arg) || (arg ? null : TM.list.filter((t) => t.running).at(-1) || TM.list.at(-1) || null);
-const listRows = (sel) => TM.list.map((t) => h("a", { class: "wt-item", href: `#/terminals/${encodeURIComponent(t.id)}`, "data-term-row": t.id, "aria-current": sel?.id === t.id ? "page" : null },
-  h("span", { class: "wt-iname" }, t.label), badge(t), h("span", { class: "faint wt-iproj" }, t.project.name),
+const listRows = (sel, list = TM.list, mark = (x) => x) => list.map((t) => h("a", { class: "wt-item", href: `#/terminals/${encodeURIComponent(t.id)}`, "data-term-row": t.id, "aria-current": sel?.id === t.id ? "page" : null },
+  h("span", { class: "wt-iname" }, mark(t.label)), badge(t), h("span", { class: "faint wt-iproj" }, t.project.name),
   t.restored ? h("span", { class: "faint", "data-term-row-restored": t.id }, T(t.stopped ? "· stopped by Studio's restart" : "· before the restart", t.stopped ? "・Studio 重啟時停掉" : "・重啟前")) : null, t.ask && t.state === "waiting" ? h("span", { class: "wt-iask" }, t.ask) : null));
+/** the page's list of terminals under the list toolbar (public/list-tools.js); the jump menu keeps its own search */
+const TERM_STATE = { working: ["Working", "執行中"], waiting: ["Waiting for you", "等你"], done: ["Done", "完成"], exited: ["Exited", "已結束"] };
+function terminalsList(sel) {
+  TM.listSel = sel;
+  return window.crewListTools.list({ id: "terminals", route: "terminals", title: T("terminals", "終端機"), noun: ["terminal", "終端機"], items: TM.list,
+    placeholder: T("Search names, projects, commands…  or type state:waiting", "搜尋名稱、專案、指令…  也可以打 state:等你"),
+    text: (t) => [t.label, t.id, t.project?.name, t.command, t.ask],
+    facets: [{ key: "state", name: T("State", "狀態"), value: (t) => t.state || "working", show: (k) => T(...(TERM_STATE[k] || [k, k])) },
+      { key: "project", name: T("Project", "專案"), value: (t) => t.project?.name }],
+    sorts: [{ key: "new", label: T("Recently used", "最近用過"), cmp: (a, b) => Number(!!b.running) - Number(!!a.running) || String(b.endedAt || b.startedAt || "").localeCompare(String(a.endedAt || a.startedAt || "")) || TM.list.indexOf(b) - TM.list.indexOf(a) },
+      { key: "title", label: T("Name", "名稱"), cmp: (a, b) => String(a.label).localeCompare(String(b.label), lang) }],
+    none: () => h("div", { class: "wt-list", role: "list" }, h("p", { class: "faint" }, T("No terminals yet.", "還沒有終端機。"))),
+    rows: (page, ctx) => h("div", { class: "wt-list", role: "list" }, listRows(TM.listSel, page, ctx.mark)) });
+}
 function viewTerminals(arg) {
   if (TM.list === null) { load(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:240px" })); }
   // a terminal no longer listed loses its stream
   queueMicrotask(muxSync);
   // a terminal shown: the terminal takes the window (body[data-focus="terminal"], app.js pageFocus), in tabs and panes
   const full = focusView(arg); if (full) return full;
-  const sel = arg ? selected(arg) : null, rows = listRows(sel);
+  const sel = arg ? selected(arg) : null;
   return h("div", { class: "page wt-page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Terminals", "終端機")),
       h("p", {}, T("Any agent CLI in a real terminal, in your project's folder. Working, waiting for you, done or exited, at a glance.", "在專案資料夾裡，用真的終端機跑任何 agent CLI；執行中、等你、完成或結束，一眼看見。")))),
     TM.err ? h("p", { class: "faint" }, TM.err) : null,
     h("div", { class: "wt-grid" },
-      h("aside", { class: "wt-side" }, launcher(), h("div", { class: "wt-list", role: "list" }, rows.length ? rows : h("p", { class: "faint" }, T("No terminals yet.", "還沒有終端機。")))),
+      h("aside", { class: "wt-side" }, launcher(), terminalsList(sel)),
       h("section", { class: "wt-detail wt-empty" }, h("p", { class: "faint" }, arg && !sel ? T("This terminal is gone (Studio restarted, or it was removed).", "這個終端機已不在（Studio 重新啟動過，或已移除）。") : T("Start an agent on the left.", "從左邊啟動一個 agent。")))));
 }
 routes.terminals = viewTerminals;

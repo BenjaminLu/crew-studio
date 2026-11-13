@@ -127,6 +127,7 @@ import { staffingVerify } from "./providers/staffing-verify";
 import { cursorKeyCheck, cursorModel, probeCursor, probeCursorChecked, verifyCursor } from "./providers/cursor";
 import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,admitSignedInClaude,validClaudePair,claudeEfforts,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
 import { ProviderRefusal, nativeChain, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
+import { activityPage, activityQuery } from "./activity-list";
 
 const ROOT = SRC_ROOT;
 const DATA = process.env.CREW_DATA ?? DEFAULT_DATA;
@@ -919,6 +920,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     }
     if (p === "/api/activity") {
       const q = url.searchParams;
+      // the Activity page's toolbar: filtered, counted and paged over the whole log (src/activity-list.ts)
+      if (q.has("page")) return json(activityPage(fm.events, activityQuery(q)));
       return json(fm.activity({ task: q.get("task") || undefined, type: q.get("type") || undefined, actor: q.get("actor") || undefined,
         limit: Number(q.get("limit") || 150), before: q.get("before") ? Number(q.get("before")) : undefined }));
     }

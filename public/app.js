@@ -465,43 +465,37 @@ async function loadFocus(actor) {
 }
 
 // ---------- activity ----------
-const AF = { task: "", type: "", actor: "", items: [], loaded: false, key: "" };
+// The event log under the list toolbar (public/list-tools.js), filtered and paged by the server (src/activity-list.ts): the
+// log has no cap, so a filter or a page always reads all of it. Task, type and actor are facets; a search reads the
+// summaries. #/activity/<task> is the task facet (the URL becomes #/activity?task=<task>).
+const AF = { seen: 0, liveT: null };
 const evClass = (t) => /failed|crashed|lost|violation|unavailable/.test(t) ? "gate-fail" : /approved|merged|passed/.test(t) ? "gate-pass" : /decision/.test(t) ? "card" : t === "crew_status" ? "" : "fm";
 function viewActivity(task) {
-  if (task !== null && task !== undefined && AF.task !== task) { AF.task = task; AF.loaded = false; }
-  const key = `${AF.task}|${AF.type}|${AF.actor}`;
-  if (!AF.loaded || AF.key !== key) { AF.key = key; AF.loaded = true; loadActivity(); }
-  const taskIds = [...new Set([...S.tasks.map((t) => t.id), AF.task].filter(Boolean))];
+  if (task) { const q = new URLSearchParams(S.route.query); if (!q.getAll("task").includes(task)) q.append("task", task); q.delete("page");
+    history.replaceState(history.state, "", `#/activity?${q}`); S.route = { ...S.route, arg: null, query: q }; }
+  const taskName = (id) => { const t = S.tasks.find((x) => x.id === id); return t?.title ? `${id} · ${t.title}` : id; };
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Activity", "事件紀錄")),
-      h("p", {}, T(`firstmate's event log, ${S.events.toLocaleString()} events. Everything the crew does lands here first.`, `firstmate 的事件紀錄，共 ${S.events.toLocaleString()} 筆。船員做的每件事都先寫到這裡。`)))),
-    h("div", { class: "filters" },
-      h("select", { class: "select", "aria-label": T("Task", "任務"), onchange: (e) => { AF.task = e.target.value; location.hash = AF.task ? `#/activity/${AF.task}` : "#/activity"; } },
-        h("option", { value: "" }, T("All tasks", "全部任務")), taskIds.map((id) => h("option", { value: id, selected: id === AF.task || null }, id))),
-      h("select", { class: "select", "aria-label": T("Type", "類型"), onchange: (e) => { AF.type = e.target.value; render(); } },
-        h("option", { value: "" }, T("All types", "全部類型")), S.types.map((t) => h("option", { value: t, selected: t === AF.type || null }, t))),
-      h("input", { class: "input", placeholder: T("Actor contains…", "actor 包含…"), value: AF.actor, onchange: (e) => { AF.actor = e.target.value.trim(); render(); } })),
-    h("div", { class: "card evlist", id: "evlist" }, AF.items.length ? AF.items.map(evRow) : h("div", { class: "empty" }, h("b", {}, T("No events match", "沒有符合的事件")))),
-    AF.items.length >= 150 ? h("button", { class: "btn", onclick: () => loadActivity(AF.items.at(-1).seq) }, T("Load older", "載入更早的")) : null);
+      h("p", {}, T(`firstmate's event log, ${S.events.toLocaleString()} events. Everything the crew does lands here first.`, `firstmate 的事件紀錄，共 ${S.events.toLocaleString()} 筆。船員做的每件事都先寫到這裡。`))),
+      h("a", { class: "btn", href: "#/crew" }, T("← Back to Crew", "← 回 Crew"))),
+    window.crewListTools.list({ id: "activity", route: "activity", path: "#/activity", title: T("events", "事件"), noun: ["event", "事件"],
+      placeholder: T("Search what happened…  or type type:node_failed", "搜尋事件內容…  也可以打 type:node_failed"),
+      facets: [{ key: "type", name: "Type" }, { key: "actor", name: "Actor" }, { key: "task", name: "Task", show: taskName }],
+      sorts: [{ key: "new", label: T("Newest first", "最新的在上") }, { key: "old", label: T("Oldest first", "最舊的在上") }],
+      server: async (st) => { const q = new URLSearchParams({ page: String(st.page), size: String(st.size) });
+        if (st.sort === "old") q.set("sort", "old"); if (st.free.length) q.set("q", st.free.join(" "));
+        for (const k of ["type", "actor", "task"]) { for (const v of st.f[k] || []) q.append(k, v); for (const v of st.tok[k] || []) q.append(`tok.${k}`, v); }
+        const r = await fetch(`/api/activity?${q}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); },
+      none: () => h("div", { class: "card evlist" }, h("div", { class: "empty" }, h("b", {}, T("No events yet", "還沒有事件")))),
+      rows: (page, ctx) => { const seen = AF.seen; AF.seen = Math.max(AF.seen, ...page.map((e) => e.seq)); return h("div", { class: "card evlist", id: "evlist" }, page.map((e) => evRow(e, seen > 0 && e.seq > seen, ctx.mark))); } }));
 }
-function evRow(e, fresh) {
+function evRow(e, fresh, mark = (t) => t) {
   return h("div", { class: `ev${fresh === true ? " new" : ""}`, "data-seq": e.seq },
     h("span", { class: "faint num", title: e.ts }, clock(e.ts)),
     h("span", { class: `evt ${evClass(e.type)}` }, e.type),
-    h("span", { style: "min-width:0;overflow-wrap:anywhere" }, L(e.summary), act(e.activity) && act(e.activity) !== L(e.summary) ? h("span", { class: "faint" }, ` — ${act(e.activity)}`) : null),
+    h("span", { style: "min-width:0;overflow-wrap:anywhere" }, mark(L(e.summary)), act(e.activity) && act(e.activity) !== L(e.summary) ? h("span", { class: "faint" }, ` — ${act(e.activity)}`) : null),
     h("span", { class: "evmeta" }, e.task ? h("a", { class: "vbadge", href: `#/activity/${e.task}` }, e.task) : null, h("span", { class: "vbadge" }, e.actor || "—")));
 }
-async function loadActivity(before) {
-  const q = new URLSearchParams({ limit: "150" });
-  if (AF.task) q.set("task", AF.task); if (AF.type) q.set("type", AF.type); if (AF.actor) q.set("actor", AF.actor);
-  if (before !== undefined) q.set("before", String(before));
-  try {
-    const items = await fetch(`/api/activity?${q}`).then((r) => r.json());
-    AF.items = before !== undefined ? AF.items.concat(items) : items;
-  } catch {}
-  if (S.route?.name === "activity") render();
-}
-const matchAF = (e) => (!AF.task || e.task === AF.task) && (!AF.type || e.type === AF.type) && (!AF.actor || e.actor.includes(AF.actor));
 
 // ---------- workflow ----------
 function viewWorkflow(taskId) {
@@ -638,11 +632,8 @@ function connect() {
   es.onerror = () => conn("down");
   es.addEventListener("events", (m) => {
     const d = JSON.parse(m.data); S.tasks = d.tasks; S.events += d.events.length;
-    if (S.route?.name === "activity") {
-      const fresh = d.events.filter(matchAF).reverse();
-      if (fresh.length) { AF.items = fresh.concat(AF.items).slice(0, 600); const list = $("#evlist");
-        if (list) { list.querySelector(".empty")?.remove(); for (const e of fresh.slice().reverse()) list.prepend(evRow(e, true)); return updateNav(); } }
-    }
+    // the Activity page asks its page again (the server filters): new events that match show up marked as new
+    if (S.route?.name === "activity") { clearTimeout(AF.liveT); AF.liveT = setTimeout(() => $('#view [data-lt="activity"]')?.ltRefresh?.(), 250); return updateNav(); }
     if (S.route?.name === "board" || S.route?.name === "workflow") soft(); else updateNav();
   });
   es.addEventListener("pending", (m) => { const d = JSON.parse(m.data); S.pending = d.pending; S.tasks = d.tasks;
