@@ -725,7 +725,8 @@ export function createPrWatch(d: PrWatchDeps) {
       const runs = (await g.get(`${repoPath(repo)}/commits/${sha}/check-runs?per_page=100`))?.check_runs ?? [], st = await g.get(`${repoPath(repo)}/commits/${sha}/status`);
       const bad = runs.some((c: any) => c.status !== "completed" || !["success", "neutral", "skipped"].includes(String(c.conclusion))) || ["failure", "error", "pending"].includes(String(st?.state)) && Number(st?.total_count) > 0;
       return bad ? "red" : runs.length || Number(st?.total_count) > 0 ? "green" : "none"; });
-    const prevTag = new Map<string, string>(); // a unit's tag after the batch before: the next batch's old tag
+    // a unit's tag after the batch before (the next batch's old tag, and the commit it runs); "" when no tag could be built
+    const prevTag = new Map<string, { name: string; sha: string | null }>();
     const batches = [];
     for (let i = 0; i < plan.batches.length; i++) {
       const b = plan.batches[i], repos = [...new Set(b.map((id) => row(id).repo))], units = [];
@@ -735,19 +736,28 @@ export function createPrWatch(d: PrWatchDeps) {
         const prodFiles = state.settings.environments.filter((e) => e.production && e.detect.kind === "file" && R.envApplies(e, repo));
         const lines = [], carries = new Set<string>();
         for (const e of prodFiles) { const dt = e.detect as Extract<R.EnvDetect, { kind: "file" }>, key = `${repo}|${e.name}`.toLowerCase();
-          const text = prevTag.has(key) ? null : await fileOf(dt.repository, dt.path, dt.ref), before = prevTag.get(key) ?? (text != null ? R.tagOf(text, dt.template) : null);
-          let after: string | null = null, problem: string | null = text == null && !prevTag.has(key) ? "file" : null, ci: string | null = null;
+          const prev = prevTag.get(key), text = prev ? null : await fileOf(dt.repository, dt.path, dt.ref);
+          const fileTag = text != null ? R.tagOf(text, dt.template) : null, before = prev ? prev.name || null : fileTag;
+          // the commit production runs before this batch: the batch before's tag, else the file's tag
+          const baseSha = prev ? prev.sha : fileTag ? (await tagsOf(repo)).find((t) => t.name === fileTag)?.sha ?? R.commitOfTag(fileTag) : null;
+          let after: string | null = null, problem: string | null = text == null && !prev ? "file" : prev && !prev.name ? "previous" : null, ci: string | null = null;
+          const lack = { contains: 0, laterBy: new Set<string>(), red: 0 };
           for (const t of (await tagsOf(repo)).slice(0, 20)) {
             if (!(await Promise.all(mine.map((m) => has_(repo, m, t.sha)))).every((x) => x === true)) continue;
-            if ((await Promise.all(later.map((m) => has_(repo, m, t.sha)))).some((x) => x === true)) continue; // it would carry a later batch
-            const c = await ciOf(repo, t.sha); if (c === "red") continue;
+            lack.contains++;
+            const lateHits = await Promise.all(later.map((m) => has_(repo, m, t.sha)));
+            if (lateHits.some((x) => x === true)) { later.forEach((m, k) => { if (lateHits[k]) lack.laterBy.add(plan.batches.slice(i + 1).flat().find((id) => row(id).mergeSha === m)!); }); continue; } // it would carry a later batch
+            const c = await ciOf(repo, t.sha); if (c === "red") { lack.red++; continue; }
             after = t.name; ci = c;
-            // merged pull requests of this unit, not selected, that this tag also carries
-            for (const o of waiting) if (eq(o.repo, repo) && o.mergeSha && !plan.batches.flat().some((x) => eq(x, o.id)) && (await has_(repo, o.mergeSha, t.sha)) === true) carries.add(o.id);
+            // merged pull requests of this unit, not selected, that this tag carries and production does not run yet
+            for (const o of waiting) if (eq(o.repo, repo) && o.mergeSha && !plan.batches.flat().some((x) => eq(x, o.id)) && (await has_(repo, o.mergeSha, t.sha)) === true
+              && !(baseSha && (await has_(repo, o.mergeSha, baseSha)) === true)) carries.add(o.id);
+            prevTag.set(key, { name: t.name, sha: t.sha });
             break; }
-          if (!after) problem ??= "tag"; else prevTag.set(key, after);
+          // no tag: say why (none has these merges yet; every one that has them also carries a later batch; or CI failed)
+          if (!after) { problem ??= !lack.contains ? "tag" : lack.laterBy.size && lack.red < lack.contains ? "order" : "ci"; prevTag.set(key, { name: "", sha: null }); }
           const [pre, post] = dt.template.split("{tag}");
-          lines.push({ env: e.name, repository: dt.repository, path: dt.path, before: before ? `${pre}${before}${post}` : null, after: after ? `${pre}${after}${post}` : null, oldTag: before, newTag: after, ci, problem }); }
+          lines.push({ env: e.name, repository: dt.repository, path: dt.path, before: before ? `${pre}${before}${post}` : null, after: after ? `${pre}${after}${post}` : null, oldTag: before, newTag: after, ci, problem, laterBy: [...lack.laterBy] }); }
         units.push({ repo, unit: repo.split("/")[1], prs: b.filter((id) => eq(row(id).repo, repo)), lines, carries: [...carries], noFile: !prodFiles.length }); }
       batches.push({ n: i + 1, of: plan.batches.length, prs: b.map((id) => ({ id: row(id).id, title: row(id).title, url: row(id).url })), units,
         added: plan.added.filter((a) => b.some((x) => eq(x, a.id))), forced: plan.forced.filter((f) => b.some((x) => eq(x, f.pr))),

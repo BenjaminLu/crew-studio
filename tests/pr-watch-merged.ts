@@ -66,6 +66,17 @@ try {
   ok(br.body.batches[1].ops.some((o: any) => o.kind === "migration") && br.body.batches[0].ops.some((o: any) => o.kind === "metric"), "each batch carries its own pull requests' items");
   br = await call("/api/prs/brief", { prs: ["northwind/checkout-api#21"] });
   ok(br.body.batches.length === 1 && br.body.batches[0].units[0].lines[0].after.endsWith(":v1.4.0") && br.body.batches[0].units[0].carries.join() === "northwind/checkout-api#22", "21 alone: the newest green tag with 21 also carries 22, which was not selected: the brief says so", JSON.stringify(br.body.batches[0].units[0]));
+  { // a pull request production already runs is not "carried": only what is new beside the old tag
+    const prodHead = gh.data.head(gh.data.find("northwind/checkout-api", 18)!), m22 = gh.data.merge(gh.data.find("northwind/checkout-api", 22)!);
+    gh.data.contains[prodHead].push(m22); const b = await call("/api/prs/brief", { prs: ["northwind/checkout-api#21"] }); gh.data.contains[prodHead].pop();
+    ok(b.body.batches[0].units[0].carries.length === 0, "a tag's unselected pull request that production already runs is not listed as carried", JSON.stringify(b.body.batches[0].units[0])); }
+  { // no tag between 21 and 22: the reason is the merge order, and batch 2 starts from "none built", never the old file tag
+    const tags = gh.data.tags["northwind/checkout-api"], v130 = tags.pop()!; const b = await call("/api/prs/brief", { prs: ["northwind/checkout-api#22"] }); tags.push(v130);
+    const l1 = b.body.batches[0].units[0].lines[0], l2 = b.body.batches[1].units[0].lines[0];
+    ok(l1.after === null && l1.problem === "order" && l1.laterBy.join() === "northwind/checkout-api#22", "no tag for batch 1 because every tag with 21 also has 22: said as the merge order", JSON.stringify(l1));
+    ok(l2.before === null && l2.problem === "previous" && l2.newTag === "v1.4.0", "batch 2's old tag is batch 1's (none built), not the file's", JSON.stringify(l2)); }
+  { const b = await call("/api/prs/brief", { prs: ["northwind/checkout-api#21"] });
+    ok(b.body.batches[0].units[0].lines[0].ci === "green", "a tag's CI is reported with its line (none ran: said in the brief)"); }
   ok((await call("/api/prs/brief", { prs: ["northwind/checkout-api#23"] })).status === 400 && (await call("/api/prs/brief", { prs: [] })).status === 400, "a live pull request, or none, is refused");
   ok(!gh.calls.some((c) => c.method !== "GET" && c.path !== "/graphql"), "a brief writes nothing to GitHub");
   // later: 23 stays live with the day Studio first saw it; 21 reaches production
