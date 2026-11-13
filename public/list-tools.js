@@ -148,7 +148,7 @@ function list(cfg) {
   const sortSel = (cfg.sorts || []).length > 1 ? h("select", { class: "select", "aria-label": tr("Sort", "排序"), "data-lt-sort": cfg.id, onchange: (e) => set({ sort: e.target.value, page: st.page }) },
     cfg.sorts.map((s) => h("option", { value: s.key }, s.label))) : null;
   const active = h("div", { class: "lt-active", "aria-live": "polite" });
-  const bar = h("div", { class: "lt", role: "search", "aria-label": tr(`Search and filter ${cfg.title}`, `${cfg.title}搜尋與篩選`) },
+  const bar = h("div", { class: "lt", "data-lt-bar": cfg.id, role: "search", "aria-label": tr(`Search and filter ${cfg.title}`, `${cfg.title}搜尋與篩選`) },
     h("div", { class: "lt-row" }, qbox, [...facetEls.values()].map((x) => x.wrap), sortSel ? h("label", { class: "lt-check" }, h("span", { class: "faint lt-small" }, tr("Sort", "排序")), sortSel) : null), active);
   const region = h("div", { class: "lt-region", "data-lt-region": cfg.id }), foot = h("div", { class: "lt-foot", "data-lt-foot": cfg.id, hidden: true });
   root.append(...(cfg.items == null && !cfg.server ? [] : [bar]), region, foot);
@@ -257,6 +257,8 @@ function list(cfg) {
   const goPage = (p) => { if (typeof p !== "number") return; set({ page: p }); root.scrollIntoView?.({ block: "start", behavior: "instant" }); };
   const clearAll = () => { input.value = ""; u.open = null; set({ q: "", f: {}, old: false }); };
   root.ltRefresh = () => draw(); // a server list asks again (a live event)
+  // the page that holds the first matching row that passes test is shown (no redraw when it already is)
+  root.ltReveal = (test) => { if (cfg.server || !view) return; const i = view.matched.findIndex(test); if (i < 0) return; const p = Math.floor(i / view.size) + 1; if (p !== view.page) set({ page: p }); };
   root.ltItems = (items) => { cfg.items = items; cfg._hay = null; draw(); }; // new rows in place: the search box stays the same element
   draw();
   return root;
@@ -276,7 +278,7 @@ addEventListener("keydown", (e) => {
   if (e.key === "Escape") { const pop = document.querySelector("#view .lt-pop"); if (pop) { e.preventDefault(); closePop(pop)?.focus(); } }
 });
 /** an open popover closed without redrawing the list (a press on a row goes on to its click); answers its button */
-function closePop(pop) { const btn = pop.closest(".lt-facet")?.querySelector("[data-lt-facet]"), id = pop.closest("[data-lt]")?.dataset.lt;
+function closePop(pop) { const btn = pop.closest(".lt-facet")?.querySelector("[data-lt-facet]"), id = pop.closest("[data-lt-bar]")?.dataset.ltBar;
   if (id) ui(id).open = null; pop.remove(); btn?.setAttribute("aria-expanded", "false"); return btn; }
 addEventListener("pointerdown", (e) => { const pop = document.querySelector("#view .lt-pop"); if (pop && !pop.closest(".lt-facet")?.contains(e.target)) closePop(pop); }, true);
 

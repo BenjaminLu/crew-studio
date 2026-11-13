@@ -1,7 +1,7 @@
 # Unit: list-tools — one search, filter and paging toolbar for every list page
 
-Every list page in the sidebar has the same toolbar above its rows: Tasks, Workflows, Skills, Projects, Crew, Terminals,
-Library, Review room and Activity. One component draws it (`public/list-tools.js`, styles in `public/list-tools.css`);
+Every list page in the sidebar has the same toolbar above its rows: Tasks, Inbox, Workflows, Skills, Projects, Crew,
+Terminals, Library, Review room and Activity. One component draws it (`public/list-tools.js`, styles in `public/list-tools.css`);
 a page hands it its rows and how to read them and gets back one element: the toolbar, the page of rows (drawn by the
 page's own row function) and the paging footer.
 
@@ -36,6 +36,7 @@ left (`soft()` in `public/app.js`).
 | Page | Facets | Sorts | Notes |
 | --- | --- | --- | --- |
 | Tasks `#/runs` | status, workflow, project | newest, oldest, title | The last 30 days by default (a Task in flight always shows); "N more older than 30 days are not shown · Include them". Show archived stays its own toggle. `#/runs?project=<id>` is the project facet (`/api/wruns` rows carry `project`). The Agent rounds panel follows the filter. |
+| Inbox `#/inbox` | kind, workflow, project | oldest, newest | Filters the left list only. The card shown is always a match (a filter that leaves it out shows the first match, or none); j / k move among the matches; a card's address keeps the query (`#/inbox/<id>?kind=merge`); a link to a card deep in the list opens its page. |
 | Workflows | source (built in / mine) | name, recently changed | Held and trashed workflows keep their own sections. |
 | Skills | source, used by a node, workflow | name, recently added | Role skills stay below. |
 | Projects | kind, status | name, busiest | |
