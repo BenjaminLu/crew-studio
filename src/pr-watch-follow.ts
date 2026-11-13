@@ -77,15 +77,15 @@ export function shepherd(p: ShepherdInput): Shepherd {
 }
 
 // ---------- a push that would void approvals ----------
-/** How many approvals a push would void: those counted on the head now, when the rules dismiss stale approvals or ask for
- *  one after the last push. Unreadable rules: unknown (the card says so). */
-export function pushVoids(a: Approvals, reviews: ReviewView[]): { voids: number | null; who: string[] } {
-  if (!a.readable) return { voids: null, who: [] };
-  // only stale dismissal voids approvals; "approval of the most recent push" voids none (the push then needs one more)
-  if (!a.dismissStale) return { voids: 0, who: [] };
-  // the approvals the rules count now (never the pusher's or the author's): those a push would void
+/** What a push does to the approvals: how many it voids (those counted now, when the rules dismiss stale approvals), and
+ *  whether the new head then needs an approval by someone other than the pusher (the rules ask for an approval of the
+ *  most recent push; that voids none). Unreadable rules: unknown (the card says so). */
+export function pushVoids(a: Approvals, reviews: ReviewView[]): { voids: number | null; who: string[]; latestPush: boolean } {
+  if (!a.readable) return { voids: null, who: [], latestPush: false };
+  if (!a.dismissStale) return { voids: 0, who: [], latestPush: !!a.lastPush };
+  // the approvals the rules count now (never the author's): those a push would void
   const who = a.approvers ?? reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => v.login);
-  return { voids: who.length, who };
+  return { voids: who.length, who, latestPush: !!a.lastPush };
 }
 
 // ---------- routes a QA request may cite ----------
@@ -128,12 +128,14 @@ export function nudgeMessage(pr: MsgPr, who: string[], ev: Evidence, notes: Note
     short: { en: `${at} one more nudge on ${pr.id}, the evidence is here: ${ev.url ?? pr.url} (current head ${short(pr.head)})`, tw: `${at} 再麻煩一下 ${pr.id}，證據在這：${ev.url ?? pr.url}（目前 head ${short(pr.head)}）` } };
 }
 /** "请 approve": one block per group the rules still miss, what is already done, the files a code owner should look at. */
-export function approveMessage(pr: MsgPr, missing: { who: string; whoTw?: string; files: string[]; count?: boolean }[], done: L[], lastPush: boolean): { msg: L; short: L } {
+export function approveMessage(pr: MsgPr, missing: { who: string; whoTw?: string; shortTw?: string; files: string[]; count?: boolean; lastPush?: boolean }[], done: L[], lastPush: boolean): { msg: L; short: L } {
+  // the rule's closing note only while the latest push has its approval: when it is missing, the list already says so
+  const note = lastPush && !missing.some((m) => m.lastPush);
   const lines = (z: boolean) => missing.map((m) => `- ${z ? m.whoTw ?? m.who : m.who}${m.count ? "" : z ? "：1 人" : ": 1 approval"}${m.files.length ? z ? `（這次改了 ${m.files.slice(0, 4).join("、")}）` : ` (this changes ${m.files.slice(0, 4).join(", ")})` : ""}`).join("\n");
   return {
-    msg: { en: `Could you approve ${pr.id}: ${pr.title}?\n${pr.url}\n\nDone: ${done.map((d) => d.en).join(", ") || "—"}\n\nStill missing:\n${lines(false)}${lastPush ? `\n\nThe branch rules ask for the approval after the last push (${short(pr.head)}); another push needs it again.` : ""}`,
-      tw: `麻煩 approve ${pr.id}：${pr.title}\n${pr.url}\n\n已完成：${done.map((d) => d.tw).join("、") || "—"}\n\n還缺：\n${lines(true)}${lastPush ? `\n\n注意：分支規則要求在最後一次 push（${short(pr.head)}）之後 approve，之後若再 push 需要重新 approve。` : ""}` },
-    short: { en: `A reminder: ${pr.id} still needs ${missing.map((m) => m.who).join(", ")}: ${pr.url}`, tw: `再提醒一下 ${pr.id} 還差 ${missing.map((m) => m.whoTw ?? m.who).join("、")} 的 approve：${pr.url}` } };
+    msg: { en: `Could you approve ${pr.id}: ${pr.title}?\n${pr.url}\n\nDone: ${done.map((d) => d.en).join(", ") || "—"}\n\nStill missing:\n${lines(false)}${note ? `\n\nThe branch rules ask for the approval after the last push (${short(pr.head)}); another push needs it again.` : ""}`,
+      tw: `麻煩 approve ${pr.id}：${pr.title}\n${pr.url}\n\n已完成：${done.map((d) => d.tw).join("、") || "—"}\n\n還缺：\n${lines(true)}${note ? `\n\n注意：分支規則要求在最後一次 push（${short(pr.head)}）之後 approve，之後若再 push 需要重新 approve。` : ""}` },
+    short: { en: `A reminder: ${pr.id} still needs ${missing.map((m) => m.who).join(", ")}: ${pr.url}`, tw: `再提醒一下 ${pr.id} 還缺 ${missing.map((m) => m.shortTw ?? `${m.who} 的 approve`).join("、")}：${pr.url}` } };
 }
 
 // ---------- sending ----------

@@ -125,8 +125,8 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   commit's author and committer, and the row's detail says it is inferred; only when the head commit cannot be read are
   the approvals unreadable), stale
   approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
-  never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
-  the last pusher's own either). Classic protection needs admin access to read; rulesets, CODEOWNERS and team
+  never counts; an approval given on an older head shows stale and counts unless the rules dismiss stale approvals (the
+  pusher's own approval counts toward the number too, but never as the approval of the latest push). Classic protection needs admin access to read; rulesets, CODEOWNERS and team
   members need only read access. When GitHub refuses the protection (403, or 404 without "not protected") the rulesets
   decide, a required team named only by id is looked up by name (`GET /teams/<id>`), and the row's detail shows that the
   protection was not read beside GitHub's own merge box (GraphQL `reviewDecision`, `mergeStateStatus`, review requests).
@@ -223,8 +223,9 @@ Off by default (settings: "Follow-through"); on, after every refresh each watche
   (Studio answers it as `studio (GitHub)`); an approve card that is partly met keeps only the groups still missing.
   The row on the page links to its open card. Firstmate cannot answer one.
 - **Push before voiding approvals**: `POST /api/prs/push-check {pr, quote?, by?, tests?}` (for a worker round about to
-  push): when the rules dismiss stale approvals (or ask for one after the last push) and approvals exist, a card "this
-  push voids N approvals" with push / don't push (with a reason) / follow-up pull request. `quote` and `by` are the
+  push): when the rules dismiss stale approvals and approvals exist, a card "this push voids N approvals"; when the
+  rules ask for an approval of the latest push (none voided), a card "this push needs a new approval of its head";
+  either with push / don't push (with a reason) / follow-up pull request. `quote` and `by` are the
   comment the change answers and who wrote it; without them Studio takes the latest reviewer comment it read as a code
   change, and its author. `tests: true` is the round's own result (its tests passed), shown under done; Studio does not
   guess it. One push card per pull request and head: asking again returns the one waiting.

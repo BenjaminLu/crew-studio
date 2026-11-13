@@ -323,8 +323,8 @@ export type Approvals = { readable: boolean; required: number; counted: number; 
   inferredPusher?: string[] };
 /**
  * What the base branch's rules still miss. The author's own approval never counts; an approval given on another head is
- * stale and counts only when neither the rules dismiss stale approvals nor ask for an approval after the last push (then
- * the inferred pusher's own approval does not count either). Code owners: every changed file's owners need one approval from
+ * stale and counts unless the rules dismiss stale approvals. An approval of the latest push, when the rules ask for one,
+ * is its own missing item: one approval on the head by someone other than the inferred pusher. Code owners: every changed file's owners need one approval from
  * an owner (a user, or a member of an owner team). Required teams: one approval from a member each.
  */
 export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: string[]; codeowners: { pattern: string; owners: string[] }[] | null; teamMembers: Map<string, string[] | null>;

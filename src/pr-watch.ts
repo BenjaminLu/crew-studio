@@ -726,7 +726,7 @@ export function createPrWatch(d: PrWatchDeps) {
       if (x.run.def.id !== FOLLOW_WORKFLOW || f?.schema !== 1 || !R.splitId(String(f.pr)) || !(f.kind in KIND_LABEL)) throw new Error("The follow-through card is malformed");
       const r = viewRows(snap, state).find((v) => eq(v.id, f.pr)); if (!r) { delete state.follow.open[x.run.id]; write(stateFile, state); return { outcome: "done", note: `${f.pr} is no longer an open watched pull request` }; }
       const sh: F.Shepherd = f.kind === "push" ? { branch: "code-change", why: { en: "a push is about to happen", tw: "準備 push" } } : shepherdOf(r);
-      const p: any = followPayload(f.kind, r, sh, { quote: f.quote ?? null, by: f.by ?? null, tests: f.tests === true, voids: f.voids ?? null, who: f.who ?? [] }); p.history = [hist("card raised", "出卡", true)];
+      const p: any = followPayload(f.kind, r, sh, { quote: f.quote ?? null, by: f.by ?? null, tests: f.tests === true, voids: f.voids ?? null, who: f.who ?? [], latestPush: f.latestPush === true }); p.history = [hist("card raised", "出卡", true)];
       const c = await e.card(x, "question", { title: p.heading.en, zhTitle: p.heading.tw, en: { why: p.lead.en, how: p.autoClose.en }, zh: { why: p.lead.tw, how: p.autoClose.tw }, body: p.message?.en ?? p.lead.en,
         options: p.opts.map((o: any) => ({ id: o.id, label: o.label.en, labelZh: o.label.tw, ...(o.keep ? { hold: true } : {}), ...(o.note ? { note: true, noteLabel: "Why", noteLabelZh: "理由" } : {}) })).concat([
           // how Studio closes the card when GitHub shows what it waits for (the follow-through layout does not offer it)
@@ -818,11 +818,11 @@ export function createPrWatch(d: PrWatchDeps) {
     const named = pre.filter((e) => q && new RegExp(`(^|[^a-z0-9_-])${e.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9_-])`).test(q)).sort((a, b) => b.name.length - a.name.length)[0];
     return named?.name ?? pre.find((e) => e.on === true)?.name ?? null; };
   /** a follow-through card's content for a row as it is now */
-  function followPayload(kind: FollowKind, r: ReturnType<typeof viewRows>[number], sh: F.Shepherd, extra: { quote?: string | null; by?: string | null; tests?: boolean; voids?: number | null; who?: string[] } = {}) {
+  function followPayload(kind: FollowKind, r: ReturnType<typeof viewRows>[number], sh: F.Shepherd, extra: { quote?: string | null; by?: string | null; tests?: boolean; voids?: number | null; who?: string[]; latestPush?: boolean } = {}) {
     const pr: F.MsgPr = { id: r.id, url: r.url, title: r.title, head: r.head, env: testEnv(r, sh.note?.quote ?? null) };
     const ciOk = r.ci === "SUCCESS", ev = r.evidence;
     const done: F.L[] = [...(ciOk ? [{ en: "CI passes", tw: "CI 通過" }] : []), ...(ev && ev.verdict !== "fail" && ev.covers === "head" ? [{ en: `evidence: ${ev.verdict} on the current head (${ev.by})`, tw: `證據：${VERDICT_TW[ev.verdict] ?? ev.verdict} · 目前 head（${ev.by}）` }] : []),
-      // the approvals the rules count (the row's own list: not the author's, not the pusher's)
+      // the approvals the rules count (the row's own list: never the author's)
       ...(r.approvals.approvers ?? r.reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => v.login)).map((l) => ({ en: `${l} approved`, tw: `${l} approve` }))];
     const note = sh.note ?? null, q = note?.quote ? { en: `${note.login}'s comment: "${F.unq(note.quote)}". `, tw: `${note.login} 的意見是「${F.unq(note.quote)}」。` } : { en: "", tw: "" };
     const base = { schema: 1, kind, kindLabel: KIND_LABEL[kind], pr: r.id, repo: r.repo, url: r.url, title: r.title, head: r.head, channel: channelFor(kind), snoozeUntil: null as string | null, chased: 0 };
@@ -847,18 +847,23 @@ export function createPrWatch(d: PrWatchDeps) {
     if (kind === "approve") { const a = r.approvals, groups = (a.groups ?? []).filter((g) => !g.ok), count = a.missing.find((m) => m.kind === "count") as { n: number } | undefined;
       // the author is never asked (their own approval does not count); a team owner is asked through its members
       const recips = groups.flatMap((g) => g.kind === "team" ? [teamPerson(g.who, (r.teams ?? {})[g.who] ?? [])] : g.who.split(" | ").filter((o) => !eq(o.replace(/^@/, ""), r.author)).map((o) => o.startsWith("@") && o.includes("/") ? teamPerson(o, ((r.teams ?? {})[o] ?? []).filter((m) => !eq(m, r.author))) : person(o.replace(/^@/, ""))));
-      const miss = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (g.files ?? []).slice(0, 4) : [], authorOnly: !!g.authorOnly })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, whoTw: `還要 ${count.n} 個 approve`, files: [] as string[], count: true }] : []),
-        // the latest push still needs an approval from someone other than the pusher (approval of the most recent push)
-        ...(a.missing.some((m) => m.kind === "lastpush") ? [{ who: "an approval of the latest push by someone other than the pusher", whoTw: "最後一次 push 要由推的人以外的人 approve", files: [] as string[], count: true, lastPush: true }] : [])];
+      const needsLatestPush = a.missing.some((m) => m.kind === "lastpush");
+      const miss: { who: string; whoTw?: string; shortTw?: string; files: string[]; authorOnly?: boolean; count?: boolean; lastPush?: boolean }[] = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (g.files ?? []).slice(0, 4) : [], authorOnly: !!g.authorOnly })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, whoTw: `還要 ${count.n} 個 approve`, shortTw: `${count.n} 個 approve`, files: [] as string[], count: true }] : []),
+        // the latest push still needs an approval from someone other than the pusher (approval of the most recent push): its
+        // own item, never part of the count
+        ...(needsLatestPush ? [{ who: "an approval of the latest push by someone other than the pusher", whoTw: "最後一次 push 要由推的人以外的人 approve", shortTw: "推的人以外的人對最後一次 push 的 approve", files: [] as string[], count: true, lastPush: true }] : [])];
       // each approver once: a team that approved names them, so their own "approved" line goes
       const doneA = [...done.filter((d) => !(a.groups ?? []).some((g) => g.ok && g.by.some((l) => d.en === `${l} approved`))), ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))];
       const m = F.approveMessage(pr, miss, doneA, a.lastPush);
-      const named = miss.filter((x) => !(x as any).count), cnt = miss.find((x) => (x as any).count) as any;
-      return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: [named.length ? `還缺 ${named.map((x) => x.who).join("、")} 的 approve` : "", cnt ? cnt.whoTw : ""].filter(Boolean).join("，") },
+      const named = miss.filter((x) => !x.count);
+      // every missing item, in every language
+      return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: [named.length ? `還缺 ${named.map((x) => x.who).join("、")} 的 approve` : "", ...miss.filter((x) => x.count).map((x) => x.whoTw)].filter(Boolean).join("，") },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
-        done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: named.map((x) => x.who), countGap: (count?.n ?? 0) + (a.missing.some((m) => m.kind === "lastpush") ? 1 : 0),
-        // the rules and head this card last saw: a later change is told from what actually changed, never guessed
-        seen: { head: r.head, required: a.required, dismissStale: a.dismissStale, lastPush: a.lastPush, groups: (a.groups ?? []).map((g) => g.who) },
+        done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${x.authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${x.whoTw ?? x.who}${x.authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: named.map((x) => x.who), countGap: count?.n ?? 0,
+        // the rules and head this card last saw, whether the latest push still needed its approval and who had approved the
+        // head: a later change is told from what actually changed, never guessed
+        seen: { head: r.head, required: a.required, dismissStale: a.dismissStale, lastPush: a.lastPush, groups: (a.groups ?? []).map((g) => g.who), needsLatestPush,
+          onHead: r.reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => v.login) },
         approvedBy: [...(a.approvers ?? [])],
         msgHead: { en: "Ask for approval", tw: "請 approve" }, recipients: recips, message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the approval", "我已發出，等 approve", true, { en: "an approval updates or closes the card", tw: "有人 approve 卡就更新或關掉" }),
@@ -869,14 +874,21 @@ export function createPrWatch(d: PrWatchDeps) {
       done, missing: [{ en: "your merge", tw: "你的合併" }], recipients: [], message: null, short: null,
       opts: [OPT("merging", "A", "I will merge it on GitHub", "我去 GitHub 合併", true, { en: "the card closes when it merges; the row moves to Merged", tw: "合併後卡自動關，PR 移到「已合併未上線」" }), OPT("hold", "B", "Not now", "先不合併", false, { en: "no merge card again for this head", tw: "這個 head 不再出合併卡" })],
       autoClose: { en: "Merged (or no longer mergeable) closes this card.", tw: "合併了（或不再可合併），卡就自動關" } };
-    if (kind === "push") return { ...base, heading: { en: `This push voids ${extra.voids ?? "the"} approval${extra.voids === 1 ? "" : "s"}: push?`, tw: `這次 push 會讓 ${extra.voids ?? "已有的"} 個 approve 失效，要推嗎？` },
-      lead: { en: `${extra.quote ? `${extra.by ? `${extra.by} left a comment` : "A reviewer left a comment"}: “${extra.quote.replace(/[.。]+$/, "")}”. ` : ""}The fix is ready, but the branch rules dismiss approvals on a push: ${extra.who?.join(", ") || "the approvers"} would have to approve again.`,
-        tw: `${extra.quote ? `${extra.by ?? "reviewer"} 留了一條意見：「${extra.quote.replace(/[.。]+$/, "")}」。` : ""}修改已經好了，但分支規則會讓舊 approve 失效：推了之後 ${extra.who?.join("、") || "approver"} 要重新 approve。` },
+    if (kind === "push") { const voids = extra.voids !== 0, lp = extra.latestPush === true;
+      const said = extra.quote ? { en: `${extra.by ? `${extra.by} left a comment` : "A reviewer left a comment"}: “${extra.quote.replace(/[.。]+$/, "")}”. `, tw: `${extra.by ?? "reviewer"} 留了一條意見：「${extra.quote.replace(/[.。]+$/, "")}」。` } : { en: "", tw: "" };
+      const latest = { en: "the branch rules ask for an approval of the latest push, so after it someone other than the pusher has to approve the new head", tw: "分支規則要求最後一次 push 要有人 approve，所以推了之後要由推的人以外的人 approve 新的 head" };
+      return { ...base, heading: voids ? { en: `This push voids ${extra.voids ?? "the"} approval${extra.voids === 1 ? "" : "s"}: push?`, tw: `這次 push 會讓 ${extra.voids ?? "已有的"} 個 approve 失效，要推嗎？` }
+          : { en: "This push needs a new approval of its head: push?", tw: "這次 push 之後新的 head 要有人 approve，要推嗎？" },
+      lead: voids ? { en: `${said.en}The fix is ready, but the branch rules dismiss approvals on a push: ${extra.who?.join(", ") || "the approvers"} would have to approve again${lp ? `, and ${latest.en}` : ""}.`,
+          tw: `${said.tw}修改已經好了，但分支規則會讓舊 approve 失效：推了之後 ${extra.who?.join("、") || "approver"} 要重新 approve${lp ? `，而且${latest.tw}` : ""}。` }
+        : { en: `${said.en}The fix is ready; no approval is voided, but ${latest.en}.`, tw: `${said.tw}修改已經好了，已有的 approve 不會失效，但${latest.tw}。` },
       done: [extra.tests ? { en: "the change is ready; its tests pass", tw: "修改已在本機，測試通過" } : { en: "the change is ready", tw: "修改已在本機" }], missing: [{ en: "your decision", tw: "你決定要不要推" }], recipients: [], message: null, short: null,
-      opts: [OPT("push", "A", "Push, then ask for the approvals again", "推，之後重新請 approve", false, { en: "the reviewer's comment is fixed", tw: "修好 reviewer 的意見" }, { en: `${extra.who?.join(", ") || "the approvers"} approve again`, tw: `${extra.who?.join("、") || "approver"} 要再 approve 一次` }),
+      opts: [voids ? OPT("push", "A", "Push, then ask for the approvals again", "推，之後重新請 approve", false, { en: "the reviewer's comment is fixed", tw: "修好 reviewer 的意見" }, { en: `${extra.who?.join(", ") || "the approvers"} approve again`, tw: `${extra.who?.join("、") || "approver"} 要再 approve 一次` })
+          : OPT("push", "A", "Push, then ask for an approval of the new head", "推，之後請人 approve 新的 head", false, { en: "the reviewer's comment is fixed", tw: "修好 reviewer 的意見" }, { en: "someone other than the pusher approves the new head", tw: "要由推的人以外的人 approve 新的 head" }),
         OPT("no-push", "B", "Do not push; reply that it stays as it is", "先不推，回覆 reviewer 這次不改", false, { en: "the approvals stay", tw: "已有 approve 不受影響" }, { en: "needs a reason", tw: "要寫理由" }, true),
         OPT("follow-up", "C", "Merge first, fix in a follow-up pull request", "合併後另開 PR 處理", false, { en: "this pull request merges first", tw: "這個 PR 先合" }, { en: "the reviewer may still block", tw: "reviewer 可能仍擋" })],
-      autoClose: { en: "Push goes on and the approve card lists the voided approvals again.", tw: "選 A 會推送並回到 PR 跟進；「請 approve」卡會自動重新列出要重新 approve 的人" } };
+      autoClose: voids ? { en: "Push goes on and the approve card lists the voided approvals again.", tw: "選 A 會推送並回到 PR 跟進；「請 approve」卡會自動重新列出要重新 approve 的人" }
+        : { en: "Push goes on and the approve card asks for an approval of the new head.", tw: "選 A 會推送並回到 PR 跟進；「請 approve」卡會列出新 head 要的 approve" } }; }
     // ask: a comment Studio could not read as one kind, or rules it could not read
     return { ...base, heading: note ? { en: `What does ${note.login} ask for on ${short(r)}?`, tw: `${note.login} 在 ${short(r)} 要的是什麼？` } : { en: `The branch rules of ${short(r)} could not be read`, tw: `讀不到 ${short(r)} 的分支規則` },
       lead: note ? (() => { const qs = (note.quotes?.length ? note.quotes : note.quote ? [note.quote] : []).map(F.unq);
@@ -955,6 +967,12 @@ export function createPrWatch(d: PrWatchDeps) {
           const gone = was.filter((g) => !now.includes(g)), added = now.some((g) => !was.includes(g)), gap0 = Number(p.countGap ?? 0), gap1 = Number(fresh.countGap ?? 0);
           const was0 = p.seen, now0 = fresh.seen, headMoved = now0.head !== was0.head, head7 = now0.head.slice(0, 7);
           const lost = (p.approvedBy ?? []).filter((l: string) => !(fresh.approvedBy ?? []).some((x: string) => eq(x, l)));
+          // the latest push's own approval, followed apart from the count (a card that never saw it: as it is now)
+          const lp0 = was0.needsLatestPush ?? fresh.seen.needsLatestPush, lp1 = !!now0.needsLatestPush;
+          // someone whose approval already counted approved the head again (an older approval kept by the rules, then one on
+          // the new head): said too, though who counts does not change (a card that never saw who approved the head: no line)
+          const again: string[] = was0.onHead === undefined ? [] : now0.onHead.filter((l: string) => (p.approvedBy ?? []).some((x: string) => eq(x, l)) && !newSince.some((x: string) => eq(x, l))
+            && !(was0.head === now0.head && was0.onHead.some((x: string) => eq(x, l))));
           // what changed in the rules: each its own clause
           const rule: { en: string; tw: string }[] = [];
           if (now0.required !== was0.required) rule.push({ en: `the rules now ask for ${now0.required} approvals, not ${was0.required}`, tw: `分支規則要求的 approve 從 ${was0.required} 個改為 ${now0.required} 個` });
@@ -962,13 +980,15 @@ export function createPrWatch(d: PrWatchDeps) {
           if (now0.lastPush && !was0.lastPush) rule.push({ en: "the rules now ask for an approval of the latest push by someone other than the pusher", tw: "分支規則改為最後一次 push 要由推的人以外的人 approve" });
           const newGroups = now0.groups.filter((g: string) => !was0.groups.includes(g)); if (newGroups.length) rule.push({ en: `the rules now also ask for ${newGroups.join(", ")}`, tw: `分支規則現在也要 ${newGroups.join("、")}` });
           // nothing changed that the card asks for or says: what it shows still follows GitHub, no line
-          if (!gone.length && !added && gap0 === gap1 && !lost.length && !newSince.length && !rule.length) { show(); return; }
+          if (!gone.length && !added && gap0 === gap1 && lp0 === lp1 && !lost.length && !newSince.length && !again.length && !rule.length) { show(); return; }
           const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g) => !ok.some((x) => x.who === g));
           const newApprovers = newSince.filter((l: string) => !ok.some((g) => g.by.some((x) => eq(x, l))));
           const en: string[] = [], tw: string[] = [];
           // who approved (a team with who, then everyone else) — always said, whatever the count does
           if (ok.length) { en.push(`${ok.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")} approved ✓`); tw.push(`${ok.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")}approve ✓`); }
           if (newApprovers.length) { en.push(`${newApprovers.join(", ")} approved ✓`); tw.push(`${newApprovers.join("、")} approve ✓`); }
+          if (again.length) { en.push(`${again.join(", ")} approved again on the head ${head7} ✓`); tw.push(`${again.join("、")} 在 head ${head7} 上重新 approve ✓`); }
+          const said = en.length - 1; // the last "approved" clause: the latest-push approval it brings is said with it
           for (const c of rule) { en.push(c.en); tw.push(c.tw); }
           if (dropped.length) { en.push(`${dropped.join(", ")} is no longer required (GitHub ignores an owner it reports as unknown, or the branch rules changed)`); tw.push(`${dropped.join("、")} 不再需要（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）`); }
           // each approval that stopped counting, with its own reason — always said, whatever the count does
@@ -983,7 +1003,17 @@ export function createPrWatch(d: PrWatchDeps) {
           for (const l of lost) { const w = why(l), g = byWhy.get(w.k) ?? { w, who: [] }; g.who.push(l); byWhy.set(w.k, g); }
           const names = (xs: string[]) => xs.length === 1 ? `${xs[0]}'s approval no longer counts` : `the approvals of ${xs.slice(0, -1).join(", ")} and ${xs.at(-1)} no longer count`;
           for (const { w, who } of byWhy.values()) { en.push(`${names(who)} (${w.en})`); tw.push(`${who.join("、")} 的 approve 不再算數（${w.tw}）`); }
-          const grows = added || gap1 > gap0;
+          // the latest push: a new one needs its own approval, or the one it needed came (each said on its own)
+          if (lp1 && !lp0 && !(now0.lastPush && !was0.lastPush)) {
+            if (headMoved) { en.push(`a new push needs an approval on the head ${head7} by someone other than the pusher`); tw.push(`新的 push 要由推的人以外的人在 head ${head7} 上 approve`); }
+            else { en.push(`the latest push needs an approval on the head ${head7} by someone other than the pusher`); tw.push(`最後一次 push 要由推的人以外的人在 head ${head7} 上 approve`); } }
+          if (lp0 && !lp1) {
+            const pusher = (r.approvals.inferredPusher ?? []).map((x) => x.toLowerCase()), by = now0.onHead.filter((l: string) => !pusher.includes(l.toLowerCase()));
+            const toldNow = [...newApprovers, ...again, ...ok.flatMap((g) => g.by)], told = by.length > 0 && by.every((l: string) => toldNow.some((x) => eq(x, l)));
+            if (!now0.lastPush) { en.push("the rules no longer ask for an approval of the latest push"); tw.push("分支規則不再要求最後一次 push 的 approve"); }
+            else if (told && said >= 0) { en[said] += ", so the latest-push approval is met"; tw[said] += "，最後一次 push 的 approve 有了"; }
+            else { en.push(`${by.length ? `${by.join(", ")} approved the latest push ✓, so the` : "the"} latest-push approval is met`); tw.push(`${by.length ? `${by.join("、")} approve 了最後一次 push ✓，` : ""}最後一次 push 的 approve 有了`); } }
+          const grows = added || gap1 > gap0 || (lp1 && !lp0);
           if (grows && !en.length) { en.push("the counted approvals changed"); tw.push("算數的 approve 變了"); }
           if (gap0 && !gap1) { en.push("the approval count is met"); tw.push("approve 人數已夠"); }
           // and what is left, so consecutive lines add up
@@ -1042,19 +1072,20 @@ export function createPrWatch(d: PrWatchDeps) {
     await r.body?.cancel().catch(() => {}); if (!r.ok) throw new Error(`${t.name} answered ${r.status}`);
     return t;
   }
-  /** before a push: when the rules void approvals on a push and there are some, the captain confirms first (a card) */
+  /** before a push: when the rules void approvals on a push and there are some, or ask for an approval of the latest push
+   *  (the new head then needs one), the captain confirms first (a card) */
   async function pushCheck(b: any) {
     const id = String(b?.pr ?? ""), r = viewRows(snap, state).find((x) => eq(x.id, id)); if (!r) throw new Error("Choose a pull request in the list");
-    const v = F.pushVoids(r.approvals, r.reviews); if (v.voids === 0) return { voids: 0, card: false };
+    const v = F.pushVoids(r.approvals, r.reviews); if (v.voids === 0 && !v.latestPush) return { voids: 0, card: false };
     // one push card per pull request and head: asking again shows the one already waiting
     const same = Object.values(state.follow.open).find((o) => o.kind === "push" && eq(o.pr, r.id) && o.head === r.head);
-    if (same) return { voids: v.voids, who: v.who, card: true, task: same.run, existing: true };
+    if (same) return { voids: v.voids, who: v.who, latestPush: v.latestPush, card: true, task: same.run, existing: true };
     // who asked for the change: the caller says, else the latest reviewer comment read as a code change (with its sentence)
     const asked = rowNotes(r).filter((n) => n.kind === "code-change" && n.quote).sort((x, y) => Date.parse(y.at) - Date.parse(x.at))[0];
     const quote = typeof b?.quote === "string" ? b.quote.slice(0, 300) : asked?.quote ?? null;
     const by = typeof b?.by === "string" && R.NAME.test(b.by) ? b.by.slice(0, 60) : rowNotes(r).find((n) => n.quote && quote && n.quote === quote)?.login ?? (typeof b?.quote === "string" ? null : asked?.login ?? null);
-    const run = await startFollow(r.id, "push", r.head, null, { voids: v.voids, who: v.who, quote, by, tests:b?.tests === true });
-    write(stateFile, state); return { voids: v.voids, who: v.who, card: true, task: run.id };
+    const run = await startFollow(r.id, "push", r.head, null, { voids: v.voids, who: v.who, latestPush: v.latestPush, quote, by, tests:b?.tests === true });
+    write(stateFile, state); return { voids: v.voids, who: v.who, latestPush: v.latestPush, card: true, task: run.id };
   }
 
   // ---------- the release brief (docs/units/pr-watch.md "Release brief") ----------

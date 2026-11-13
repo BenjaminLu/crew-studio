@@ -98,12 +98,21 @@ const { ok, end } = suite("pr-watch-follow");
   const rv = (login: string): ReviewView => ({ login, state: "APPROVED", stale: false, at: "2026-11-01T00:00:00Z", author: false });
   const ctx = { files: [], codeowners: null, teamMembers: new Map(), author: "dev", headCommit: { author: "lee", committer: "lee" } };
   const a = R4.approvalsOf(rules, [rv("lee"), rv("kim")], ctx);
-  ok(a.approvers?.join() === "lee,kim" && a.counted === 2 && !a.missing.length && F.pushVoids(a, [rv("lee"), rv("kim")]).voids === 0, "after the last push, stale approvals kept: the pusher's approval counts toward the number, kim approves the latest push, and a push voids none", JSON.stringify(a));
+  ok(a.approvers?.join() === "lee,kim" && a.counted === 2 && !a.missing.length && F.pushVoids(a, [rv("lee"), rv("kim")]).voids === 0 && F.pushVoids(a, [rv("lee"), rv("kim")]).latestPush === true, "after the last push, stale approvals kept: the pusher's approval counts toward the number, kim approves the latest push, and a push voids none but needs a new approval", JSON.stringify(a));
   const own = R4.approvalsOf(rules, [rv("lee")], ctx);
   ok(own.counted === 1 && own.missing.map((m) => m.kind).join() === "lastpush", "the pusher's own approval never approves the latest push", JSON.stringify(own.missing));
   const both = R4.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true, dismiss_stale_reviews_on_push: true } }], "none", null, "o");
   const b = R4.approvalsOf(both, [rv("lee"), rv("kim")], ctx), v = F.pushVoids(b, [rv("lee"), rv("kim")]);
-  ok(b.approvers?.join() === "lee,kim" && v.voids === 2 && v.who.join() === "lee,kim", "after the last push with stale approvals dismissed: a push voids every approval the row counts", JSON.stringify(v));
+  ok(b.approvers?.join() === "lee,kim" && v.voids === 2 && v.who.join() === "lee,kim" && v.latestPush === true, "after the last push with stale approvals dismissed: a push voids every approval the row counts", JSON.stringify(v));
+  { const none = R4.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1 } }], "none", null, "o"), n = F.pushVoids(R4.approvalsOf(none, [rv("kim")], ctx), [rv("kim")]);
+    ok(n.voids === 0 && n.latestPush === false, "neither rule: a push voids none and needs nothing new", JSON.stringify(n)); }
+  // the request: each missing item once; the note that another push needs it again only while the latest push is met
+  { const pr = { id: "o/r#1", url: "https://example.test/o/r/pull/1", title: "t", head: "a41f9c2aaaa", env: null };
+    const lp = { who: "an approval of the latest push by someone other than the pusher", whoTw: "最後一次 push 要由推的人以外的人 approve", shortTw: "推的人以外的人對最後一次 push 的 approve", files: [], count: true, lastPush: true };
+    const m = F.approveMessage(pr, [{ who: "2 more approvals", whoTw: "還要 2 個 approve", shortTw: "2 個 approve", files: [], count: true }, lp], [], true);
+    ok(m.msg.en.split("latest push").length === 2 && m.msg.tw.split("最後一次 push").length === 2 && m.short.tw === "再提醒一下 o/r#1 還缺 2 個 approve、推的人以外的人對最後一次 push 的 approve：https://example.test/o/r/pull/1", "the latest push missing: said once in the message; the short form never doubles a word", JSON.stringify({ en: m.msg.en, short: m.short.tw }));
+    const g = F.approveMessage(pr, [{ who: "@o/sec", files: [] }], [], false);
+    ok(g.short.tw === "再提醒一下 o/r#1 還缺 @o/sec 的 approve：https://example.test/o/r/pull/1", "a group in the short form: its name and approve once", g.short.tw); }
   const stale = R4.approvalsOf(both, [{ ...rv("kim"), stale: true }], ctx);
   ok(stale.counted === 0 && stale.missing.map((m) => m.kind).join() === "count,lastpush", "stale dismissed: an older approval counts for nothing, and the latest push needs one", JSON.stringify(stale.missing));
 }
