@@ -124,7 +124,13 @@ export const normBlock = (t: string | null) => t == null ? null : t.replace(/\r\
 
 // ---------- test evidence ----------
 export type Verdict = "pass" | "conditional" | "fail" | "code-only" | "unclassified";
-const LABEL_LINE = /^(?:verdict|result|results|status|outcome|test result|qa|結論|結果|測試結果|测试结果|结论|结果)\s*[:：]/i;
+const LABEL_LINE = /^(?:verdict|result|results|status|outcome|test result|qa|結論|結果|測試結果|测试结果|结论|结果|測試結論|测试结论|驗收結論|验收结论)\s*[:：]/i;
+/** A line that names the report's conclusion: a heading or label "結論 / 测试结论 / Verdict / Conclusion …", or a table row whose first cell is one. */
+const CONCLUSION = /^(?:(?:test\s+)?(?:verdict|conclusion|result)|(?:測試|测试|驗收|验收|qa\s*)?(?:結論|结论))(?:\s*[:：|]\s*|\s*$)/i;
+/** An HTML report as text lines: block tags end a line, every other tag goes, the common entities are decoded. */
+const htmlLines = (t: string) => /<(?:p|div|h[1-6]|li|br|table|tr|td|th|strong|span|html|body)\b/i.test(t)
+  ? t.replace(/<(?:br|\/p|\/div|\/h[1-6]|\/li|\/tr|\/table)\s*\/?>/gi, "\n").replace(/<\/t[dh]>/gi, " | ").replace(/<[^>]{0,400}>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+  : t;
 const strip = (l: string) => l.replace(/[*_`~>#|]/g, " ").replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim();
 function verdictOf(line: string): Verdict | null {
   const l = line.toLowerCase();
@@ -143,14 +149,19 @@ function verdictOf(line: string): Verdict | null {
  * anywhere in the comment are returned (7 to 40 hex characters with at least one letter and one digit).
  */
 export function classifyComment(body: string): { verdict: Verdict; shas: string[] } {
-  const text = String(body ?? "").slice(0, 65536), found = new Set<Verdict>();
-  for (const raw of text.split(/\r?\n/)) {
-    const t = raw.trim(); if (!t || t.length > 500) continue; // a verdict line is short: long lines are never read by a pattern
-    const heading = /^#{1,6}\s/.test(t), bold = /^\*\*[^*]+\*\*\s*(?:[:：]\s*)?\S*$/.test(t), label = LABEL_LINE.test(strip(t)), short = strip(t).length <= 24;
+  const raw = String(body ?? "").slice(0, 65536), text = htmlLines(raw), found = new Set<Verdict>(), concluded = new Set<Verdict>();
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i]; if (t.length > 500) continue; // a verdict line is short: long lines are never read by a pattern
+    // the report's own conclusion ("### 测试结论" then its line, "**测试结论：…**", "| 结论 | … |") outranks every other line
+    const st = strip(t), lead = t.replace(/^[\s|*_#>`~]+/, "").replace(/[*_`~]/g, "").trim(); // lead keeps the table's | separators
+    if (CONCLUSION.test(lead)) { const rest = lead.replace(CONCLUSION, ""), own = verdictOf(strip(rest)) ?? (strip(rest) ? null : lines[i + 1] && lines[i + 1].length <= 500 ? verdictOf(strip(lines[i + 1])) : null); if (own) concluded.add(own); }
+    const heading = /^#{1,6}\s/.test(t), bold = /^\*\*[^*]+\*\*\s*(?:[:：]\s*)?\S*$/.test(t), label = LABEL_LINE.test(st), short = st.length <= 24;
     if (!(heading || bold || label || short)) continue;
-    const v = verdictOf(strip(t)); if (v) found.add(v);
+    const v = verdictOf(st); if (v) found.add(v);
   }
-  const shas = [...new Set([...text.matchAll(/\b[0-9a-f]{7,40}\b/gi)].map((m) => m[0].toLowerCase()).filter((s) => /[a-f]/.test(s) && /\d/.test(s)))];
+  if (concluded.size) found.clear(), concluded.forEach((v) => found.add(v));
+  const shas = [...new Set([...raw.matchAll(/\b[0-9a-f]{7,40}\b/gi)].map((m) => m[0].toLowerCase()).filter((s) => /[a-f]/.test(s) && /\d/.test(s)))];
   return { verdict: found.size === 1 ? [...found][0] : "unclassified", shas };
 }
 export type Commit = { sha: string; at: string };
@@ -369,7 +380,7 @@ export const RULES: { id: string; kind: StepKind; en: string; tw: string }[] = [
   { id: "dependency", kind: "dependency", en: "a dependency is not merged → wait for it", tw: "依賴還沒合併 → 等依賴" },
   { id: "environment", kind: "deploy", en: "the head runs in no pre-production environment → deploy for testing", tw: "head 沒在任何測試環境 → 部署去測" },
   { id: "failed", kind: "fix", en: "the test evidence says fail → fix (the author)", tw: "測試證據是不通過 → 修正（作者）" },
-  { id: "evidence", kind: "test", en: "no evidence, unclassified, code review only, evidence for an older head, or evidence that names no commit → test", tw: "沒有證據、無法分類、只審 code、證據不是這個 head、或證據沒指明 commit → 測試" },
+  { id: "evidence", kind: "test", en: "(an evidence source is set) no evidence, unclassified, code review only, evidence for an older head, or evidence that names no commit → test", tw: "（已設定證據來源）沒有證據、無法分類、只審 code、證據不是這個 head、或證據沒指明 commit → 測試" },
   { id: "approvals", kind: "approve", en: "approvals missing (or the rules cannot be read) → approve", tw: "approve 不夠（或讀不到規則）→ approve" },
   { id: "blocked", kind: "hold", en: "the branch protection could not be read and GitHub blocks the merge for a reason the readable rules do not show → on hold (see the merge box on GitHub)", tw: "讀不到分支保護，GitHub 又因為讀得到的規則看不出的原因擋住 merge → 暫緩（看 GitHub 的 merge 區塊）" },
   { id: "ready", kind: "merge", en: "everything above is satisfied → ready to merge (you)", tw: "以上都滿足 → 可合併（你）" },
@@ -390,6 +401,7 @@ export function nextStep(p: StepInput): Step {
   const open = p.deps.filter((d) => !d.done);
   const pre = p.envs.filter((e) => !e.production);
   const ev = p.evidence;
+  const noSource = !p.evidenceSources.accounts.length && !p.evidenceSources.checks.length && !p.evidenceSources.labels.length;
   const evWho = p.evidenceSources.accounts.length || p.evidenceSources.checks.length || p.evidenceSources.labels.length ? [...p.evidenceSources.accounts, ...p.evidenceSources.checks, ...p.evidenceSources.labels] : ["(no evidence source set)"];
   const tests: [boolean, () => Omit<Step, "matched">][] = [
     [p.draft, () => ({ rule: "draft", kind: "hold", who: [p.author] })],
@@ -400,7 +412,8 @@ export function nextStep(p: StepInput): Step {
     [open.length > 0, () => ({ rule: "dependency", kind: "dependency", who: open.map((d) => d.id) })],
     [pre.length > 0 && !pre.some((e) => e.on), () => ({ rule: "environment", kind: "deploy", who: [p.author] })],
     [ev?.verdict === "fail", () => ({ rule: "failed", kind: "fix", who: [p.author], reason: ev?.by })],
-    [!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older" || ev.covers === "unknown", () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev && ev.covers === "unknown" && ev.verdict !== "unclassified" && ev.verdict !== "code-only" ? "unknown-commit" : ev?.verdict })],
+    // no evidence source set: the rule does not apply (as with no environment); the evidence column offers Set up
+    [!noSource && (!ev || ev.verdict === "unclassified" || ev.verdict === "code-only" || ev.covers === "older" || ev.covers === "unknown"), () => ({ rule: "evidence", kind: "test", who: evWho, since: ev && ev.covers === "older" && ev.verdict !== "fail" ? ev.since : null, reason: ev && ev.covers === "unknown" && ev.verdict !== "unclassified" && ev.verdict !== "code-only" ? "unknown-commit" : ev?.verdict })],
     [p.approvals.missing.length > 0, () => ({ rule: "approvals", kind: "approve", who: p.approvals.readable ? missingWho(p.approvals.missing) : ["(rules unreadable)"] })],
     [!!p.approvals.blocked, () => ({ rule: "blocked", kind: "hold", who: ["(GitHub blocks the merge)"] })],
     [true, () => ({ rule: "ready", kind: "merge", who: ["captain"] })],

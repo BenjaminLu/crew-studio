@@ -52,7 +52,10 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   from me.
 - **Evidence sources**: GitHub accounts whose comments count, check-run names, labels. A comment's verdict is read by
   rules: a heading, a bold line, a `Verdict:/Result:/結論:` line, or a short line on its own that names pass, conditional,
-  fail or code review only (lines over 500 characters are never read). A negated pass ("didn't pass", "does not pass",
+  fail or code review only (lines over 500 characters are never read). The report's own conclusion outranks every other
+  line: a heading or label naming it (`結論`, `测试结论`, `驗收結論`, `Verdict`, `Conclusion`) read from its own text or,
+  when it has none, from the next line, and a table row whose first cell is one. An HTML comment is read as text: block
+  tags end a line, table cells become `|` cells. A negated pass ("didn't pass", "does not pass",
   「沒通過」) is a fail; "not yet" is unclassified. None, or two that disagree, is "unclassified"; no model guesses a verdict. The latest decided
   comment of a listed account counts (else its latest comment, unclassified); a listed check run on the head counts as pass
   or fail; a listed label counts as pass, not tied to a commit. The commit a comment covers: the latest pull request commit
@@ -153,8 +156,9 @@ The first matching rule, top to bottom; deterministic, no model:
 5. a dependency is not merged: wait for that pull request
 6. the head runs in no pre-production environment (when any is set): deploy for testing (the author)
 7. the evidence verdict is fail: fix (the author). Failed evidence never falls through to "ready".
-8. no evidence, unclassified, code review only, or evidence for an older head: test (the evidence sources), "test only
-   the change since <sha>" when an older head was tested
+8. (when an evidence source is set) no evidence, unclassified, code review only, or evidence for an older head: test
+   (the evidence sources), "test only the change since <sha>" when an older head was tested. With no source set the
+   rule does not apply, as with environments; the evidence column offers Set up.
 9. approvals missing, or the rules unreadable: approve (the missing people, owners or teams)
 10. branch protection unread and GitHub blocks the merge for a reason the readable rules do not show (a required check,
    a rule Studio cannot see): on hold, waiting on the merge box on GitHub; never a missing approval
