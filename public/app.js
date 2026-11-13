@@ -468,7 +468,7 @@ async function loadFocus(actor) {
 // The event log under the list toolbar (public/list-tools.js), filtered and paged by the server (src/activity-list.ts): the
 // log has no cap, so a filter or a page always reads all of it. Task, type and actor are facets; a search reads the
 // summaries. #/activity/<task> is the task facet (the URL becomes #/activity?task=<task>).
-const AF = { seen: 0, liveT: null };
+const AF = { shown: 0, mark: null, liveT: null };
 const evClass = (t) => /failed|crashed|lost|violation|unavailable/.test(t) ? "gate-fail" : /approved|merged|passed/.test(t) ? "gate-pass" : /decision/.test(t) ? "card" : t === "crew_status" ? "" : "fm";
 function viewActivity(task) {
   if (task) { const q = new URLSearchParams(S.route.query); if (!q.getAll("task").includes(task)) q.append("task", task); q.delete("page");
@@ -483,11 +483,13 @@ function viewActivity(task) {
       facets: [{ key: "type", name: "Type" }, { key: "actor", name: "Actor" }, { key: "task", name: "Task", show: taskName }],
       sorts: [{ key: "new", label: T("Newest first", "最新的在上") }, { key: "old", label: T("Oldest first", "最舊的在上") }],
       server: async (st) => { const q = new URLSearchParams({ page: String(st.page), size: String(st.size) });
-        if (st.sort === "old") q.set("sort", "old"); if (st.free.length) q.set("q", st.free.join(" "));
+        if (st.sort === "old") q.set("sort", "old"); if (st.free.length) q.set("q", st.free.map((w) => (/\s/.test(w) ? `"${w}"` : w)).join(" "));
         for (const k of ["type", "actor", "task"]) { for (const v of st.f[k] || []) q.append(k, v); for (const v of st.tok[k] || []) q.append(`tok.${k}`, v); }
         const r = await fetch(`/api/activity?${q}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); },
       none: () => h("div", { class: "card evlist" }, h("div", { class: "empty" }, h("b", {}, T("No events yet", "還沒有事件")))),
-      rows: (page, ctx) => { const seen = AF.seen; AF.seen = Math.max(AF.seen, ...page.map((e) => e.seq)); return h("div", { class: "card evlist", id: "evlist" }, page.map((e) => evRow(e, seen > 0 && e.seq > seen, ctx.mark))); } }));
+      // a live refresh (connect(), below) marks the rows newer than the newest one shown before it; any other draw marks none
+      rows: (page, ctx) => { const mark = AF.mark; AF.mark = null; AF.shown = Math.max(0, ...page.map((e) => e.seq));
+        return h("div", { class: "card evlist", id: "evlist" }, page.map((e) => evRow(e, mark != null && e.seq > mark, ctx.mark))); } }));
 }
 function evRow(e, fresh, mark = (t) => t) {
   return h("div", { class: `ev${fresh === true ? " new" : ""}`, "data-seq": e.seq },
@@ -633,7 +635,7 @@ function connect() {
   es.addEventListener("events", (m) => {
     const d = JSON.parse(m.data); S.tasks = d.tasks; S.events += d.events.length;
     // the Activity page asks its page again (the server filters): new events that match show up marked as new
-    if (S.route?.name === "activity") { clearTimeout(AF.liveT); AF.liveT = setTimeout(() => $('#view [data-lt="activity"]')?.ltRefresh?.(), 250); return updateNav(); }
+    if (S.route?.name === "activity") { clearTimeout(AF.liveT); AF.liveT = setTimeout(() => { AF.mark = AF.shown; $('#view [data-lt="activity"]')?.ltRefresh?.(); }, 250); return updateNav(); }
     if (S.route?.name === "board" || S.route?.name === "workflow") soft(); else updateNav();
   });
   es.addEventListener("pending", (m) => { const d = JSON.parse(m.data); S.pending = d.pending; S.tasks = d.tasks;

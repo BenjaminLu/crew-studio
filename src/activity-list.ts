@@ -33,7 +33,8 @@ const valueOf = (e: Ev, k: Key): string | null => (k === "task" ? e.task : k ===
 
 /** One page of the events that match, how many match, how many there are, and every facet's counts. */
 export function activityPage(events: readonly Ev[], q: ActivityQuery) {
-  const free = q.q.match(/\S+/g)?.map(norm) ?? [];
+  // a word, or a phrase in double quotes (the toolbar sends a quoted phrase as one)
+  const free = (q.q.match(/"[^"]*"|\S+/g) ?? []).map((w) => norm(w.replace(/^"|"$/g, "")).trim()).filter(Boolean);
   const facet = (e: Ev, k: Key) => { const s = q.f[k], t = q.tok[k]; if (!s.length && !t.length) return true; const v = valueOf(e, k); if (!v) return false;
     return s.includes(v) || t.some((w) => norm(v).startsWith(w)); };
   const counts = { type: {}, actor: {}, task: {} } as Record<Key, Record<string, number>>;

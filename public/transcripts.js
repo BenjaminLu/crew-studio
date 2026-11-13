@@ -239,10 +239,16 @@ for (const name of ["firstmate", "takeover"]) { const base = routes[name]; if (b
 // it keeps the newest 200, and says how many there are, so a filter never reads only the first 200
 const nodesKey = (f) => (f ? `runs:${[...f].sort().join(",")}` : "all");
 async function loadNodes(key) {
-  const seq = TR.nodesSeq = (TR.nodesSeq || 0) + 1; let r = [], total = null;
-  try { const res = key === "runs:" ? null : await fetch(`/api/node-runs${key.startsWith("runs:") ? `?runs=${encodeURIComponent(key.slice(5))}` : ""}`);
-    if (res) { r = await res.json(); total = Number(res.headers.get("x-total-count")) || r.length; } else total = 0; } catch {}
-  if (seq !== TR.nodesSeq) return; TR.nodes = Array.isArray(r) ? r : []; TR.nodesFor = key; TR.nodesTotal = total ?? TR.nodes.length;
+  const seq = TR.nodesSeq = (TR.nodesSeq || 0) + 1; let r = [], total = 0, err = null;
+  const get = async (q) => { const res = await fetch(`/api/node-runs${q}`); if (!res.ok) throw new Error(`HTTP ${res.status}`); const j = await res.json(); return { j: Array.isArray(j) ? j : [], n: Number(res.headers.get("x-total-count")) || 0 }; };
+  try {
+    if (!key.startsWith("runs:")) { const x = await get(""); r = x.j; total = x.n || r.length; }
+    else { const ids = key.slice(5).split(",").filter(Boolean);
+      // 200 ids a request (about 2 KB of URL); each answer is that chunk's newest 200 and its total: merged, the newest 200 overall
+      for (let i = 0; i < ids.length; i += 200) { const x = await get(`?runs=${encodeURIComponent(ids.slice(i, i + 200).join(","))}`); r = r.concat(x.j); total += x.n || x.j.length; }
+      r = r.sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 200); }
+  } catch (e) { err = String(e?.message || e); }
+  if (seq !== TR.nodesSeq) return; TR.nodes = r; TR.nodesFor = key; TR.nodesTotal = total; TR.nodesErr = err;
   if (S.route?.name === "runs") redrawNodes();
 }
 function redrawNodes() { const el = document.querySelector('#view [data-section="node-runs"]'); if (el) { el.replaceWith(nodesCard()); return; } render(); }
@@ -257,8 +263,9 @@ function nodesCard() {
   if (TR.nodesFor !== key) { loadNodes(key); return h("section", { class: "card tr-pad", "data-section": "node-runs", "data-loading": "1" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")), h("div", { class: "skel", style: "height:60px" })); }
   const nodes = TR.nodes || [], total = TR.nodesTotal ?? nodes.length;
   return h("section", { class: "card tr-pad", "data-section": "node-runs", "data-node-runs-total": String(total) }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")),
+    TR.nodesErr ? h("div", { class: "err", role: "alert", "data-node-runs-error": "" }, T(`The agent rounds could not be read (${TR.nodesErr}).`, `無法讀取 agent 回合（${TR.nodesErr}）。`)) : null,
     f ? h("div", { class: "faint", "data-node-runs-filtered": "" }, T(`Rounds of the ${f.size} task${f.size === 1 ? "" : "s"} the filter above shows.`, `上面篩選出的 ${f.size} 個任務的回合。`)) : null,
-    nodes.length ? h("div", { class: "tr-list" }, nodes.map((n) => h("a", { class: "tr-e tr-link", href: `#/runs/node/${n.run}/${n.node}/${n.round}`, "data-node-run": `${n.run}/${n.node}/${n.round}` },
+    TR.nodesErr ? null : nodes.length ? h("div", { class: "tr-list" }, nodes.map((n) => h("a", { class: "tr-e tr-link", href: `#/runs/node/${n.run}/${n.node}/${n.round}`, "data-node-run": `${n.run}/${n.node}/${n.round}` },
       h("span", { class: "tr-t" }, fmtT(n.updated)), h("span", {}, h("b", {}, n.node), ` · ${n.run} · ${T(`Round ${n.round}`, `第 ${n.round} 回合`)}`),
       h("span", { class: "faint" }, [n.prompt && "prompt", n.stream && "stream", n.report && "report"].filter(Boolean).join(" · ")))))
       : h("div", { class: "faint" }, f ? T("None of these tasks has an agent round yet.", "這些任務都還沒有 agent 回合。") : T("No agent rounds yet. Each one keeps its prompt, stream and report.", "還沒有 agent 回合。每個回合都會保留提示詞、串流和報告。")),

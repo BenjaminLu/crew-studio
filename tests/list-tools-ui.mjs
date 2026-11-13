@@ -198,6 +198,17 @@ try {
     if (total > 25) { await p.click(`[data-lt-next="${list}"]`); await p.waitForTimeout(100); ok(await range(p, list) === `第 26–${Math.min(50, total)} 條，共 ${total} 條` && (await hashQ(p)).get("page") === "2", `${list}: next page`, await range(p, list)); await p.evaluate(() => scrollTo(0, document.body.scrollHeight)); await p.$eval("#main", (m) => { m.scrollTop = m.scrollHeight; }); await shot(p, `${list}-paging-1440-zh`); }
     await ctx.close();
   }
+  // Crew: while the captain types in the search, the 3 s poll goes on and new rounds come in place
+  { const { p, ctx } = await open("en"); await go(p, "#/crew", "crew");
+    await type(p, "crew", "Zed"); ok(!!await p.$('[data-lt-empty="crew"]'), "Crew: no round named Zed yet");
+    crew.unshift({ ...crew[0], actor: "worker-new", name: "Zed", alive: true, phase: "building" });
+    const came = await p.waitForSelector('[data-actor="worker-new"]', { timeout: 9000 }).then(() => true, () => false);
+    ok(came && await p.evaluate(() => document.activeElement?.matches('[data-lt-q="crew"]')) && await p.$eval('[data-lt-q="crew"]', (e) => e.value) === "Zed", "a round that starts while the search box has the focus shows up, the focus and the text stay");
+    crew.shift(); await ctx.close(); }
+  // the Agent rounds panel says when it cannot read the rounds (never "none yet")
+  { const { p, ctx } = await open("en"); await ctx.route((u) => u.pathname === "/api/node-runs", (r) => r.fulfill({ status: 500, json: { error: "x" } }));
+    await go(p, "#/runs", "runs"); ok(await p.waitForSelector('[data-node-runs-error]', { timeout: 9000 }).then(() => true, () => false) && !/No agent rounds yet/.test(await p.$eval('[data-section="node-runs"]', (e) => e.textContent)), "a failed read of the rounds says so");
+    await ctx.close(); }
   // the review room: zones kept under 按區, the old search attribute kept, archived opens while filtering
   { const { p, ctx } = await open("en"); await go(p, "#/room", "room");
     ok(JSON.stringify(await p.$$eval("[data-room-zone]", (es) => [...new Set(es.map((e) => e.dataset.roomZone))])) === '["waiting","reviewing"]' || (await p.$$("[data-room-zone]")).length >= 1, "Review room: a page's rooms in their zones");
@@ -212,6 +223,8 @@ try {
     await shot(p, "activity-toolbar-1440-en");
     await p.click('[data-lt-page]:not([aria-current]):not([disabled])'); await p.waitForTimeout(300);
     ok(await range(p, "activity") === `26–50 of ${total}`, "page 2 comes from the server");
+    await p.click('[data-lt-page="1"]'); await p.waitForTimeout(300); ok(!(await p.$$(".ev.new")).length, "back on page 1 nothing is marked new: only a live refresh marks rows");
+    await p.click('[data-lt-page="2"]'); await p.waitForTimeout(300);
     await p.click('[data-lt-facet="type"]'); await p.waitForSelector('[data-lt-pop="type"] label');
     const [tv, tn] = await p.$eval('[data-lt-pop="type"] label', (e) => [e.querySelector("input").dataset.ltOpt.slice(5), Number(e.querySelector(".num").textContent)]);
     await shot(p, "activity-facet-1440-en");

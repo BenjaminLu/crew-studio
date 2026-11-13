@@ -27,15 +27,16 @@ function parse(q, keys) {
   for (const w of words(q)) {
     const m = /^([a-z][\w-]*):(.*)$/i.exec(w), k = m ? m[1].toLowerCase() : null;
     if (m && keys.includes(k)) { const v = m[2].replace(/^"|"$/g, ""); if (v) (tok[k] ||= []).push(norm(v)); continue; }
-    const f = norm(w.replace(/^"|"$/g, "")); if (f) free.push(f);
+    const f = norm(w.replace(/^"|"$/g, "")).trim(); if (f) free.push(f);
   }
   return { free, tok };
 }
 const valuesOf = (f, x) => { const v = f.value(x); return (Array.isArray(v) ? v : [v]).filter((y) => y != null && y !== "").map(String); };
 const showOf = (f, v) => String(f.show ? f.show(v) : v);
-const hayMemo = new WeakMap();
-function hay(cfg, x) { if (x && typeof x === "object") { const m = hayMemo.get(x); if (m && m.cfg === cfg.id) return m.s; }
-  const s = norm((cfg.text?.(x) || []).filter((y) => y != null && y !== "").join("\n")); if (x && typeof x === "object") hayMemo.set(x, { cfg: cfg.id, s }); return s; }
+// a row's search text, kept for one list element only: a workflow rename or a language switch draws the page again (a new
+// list), so its words are read again then, never from an older drawing
+function hay(cfg, x) { const memo = (cfg._hay ||= new WeakMap()); if (x && typeof x === "object" && memo.has(x)) return memo.get(x);
+  const s = norm((cfg.text?.(x) || []).filter((y) => y != null && y !== "").join("\n")); if (x && typeof x === "object") memo.set(x, s); return s; }
 
 /** Everything the toolbar shows for a state over items: the matched rows in order, this page of them, each facet's
  *  values with counts, the chips, the suggestions for the last word, and the rows the recent window leaves out. */
@@ -256,7 +257,7 @@ function list(cfg) {
   const goPage = (p) => { if (typeof p !== "number") return; set({ page: p }); root.scrollIntoView?.({ block: "start", behavior: "instant" }); };
   const clearAll = () => { input.value = ""; u.open = null; set({ q: "", f: {}, old: false }); };
   root.ltRefresh = () => draw(); // a server list asks again (a live event)
-  root.ltItems = (items) => { cfg.items = items; draw(); }; // new rows in place: the search box stays the same element
+  root.ltItems = (items) => { cfg.items = items; cfg._hay = null; draw(); }; // new rows in place: the search box stays the same element
   draw();
   return root;
 }
@@ -279,5 +280,10 @@ function closePop(pop) { const btn = pop.closest(".lt-facet")?.querySelector("[d
   if (id) ui(id).open = null; pop.remove(); btn?.setAttribute("aria-expanded", "false"); return btn; }
 addEventListener("pointerdown", (e) => { const pop = document.querySelector("#view .lt-pop"); if (pop && !pop.closest(".lt-facet")?.contains(e.target)) closePop(pop); }, true);
 
-window.crewListTools = { list, compute, parse, words, suggest, pageList, readQuery, writeQuery, norm, SIZES };
+/** New rows for list `id` drawn in place when a field of the page has the focus (app.js soft() would wait for its blur and
+ *  the list would go stale while the captain types); true when it did, else the caller renders as usual */
+function feed(id, items) { const root = document.querySelector(`#view [data-lt="${id}"]`), a = document.activeElement;
+  if (!root?.ltItems || !a || !document.querySelector("#view")?.contains(a) || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return false;
+  root.ltItems(items); return true; }
+window.crewListTools = { list, feed, compute, parse, words, suggest, pageList, readQuery, writeQuery, norm, SIZES };
 })();

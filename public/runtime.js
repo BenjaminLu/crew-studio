@@ -1168,7 +1168,7 @@ live.listeners.add((t, d) => {
   if (S.route?.name === "run" && RN.view && (d.id === RN.view.id || d.run === RN.view.id)) { clearTimeout(RN.t); RN.t = setTimeout(() => loadRun(RN.view), 150); }
   // the list is read again behind the page and drawn when the captain is not typing (app.js soft): the toolbar's search
   // box is never replaced under a composition, and the page never flashes back to its skeleton
-  if (S.route?.name === "runs" && t === "wrun") { clearTimeout(RN.lt); RN.lt = setTimeout(() => { const archived = !!RN.archived; api(`/api/wruns${archived ? "?archived=1" : ""}`).then((r) => { if (!Array.isArray(RN.list) || archived !== !!RN.archived) return; RN.list = r.runs; RN.cards = r.cards; if (S.route?.name === "runs") soft(); }).catch(() => {}); }, 300); }
+  if (S.route?.name === "runs" && t === "wrun") { clearTimeout(RN.lt); RN.lt = setTimeout(() => { const archived = !!RN.archived; api(`/api/wruns${archived ? "?archived=1" : ""}`).then((r) => { if (!Array.isArray(RN.list) || archived !== !!RN.archived) return; RN.list = r.runs; RN.cards = r.cards; if (S.route?.name === "runs" && !window.crewListTools?.feed("runs", r.runs.slice().reverse())) soft(); }).catch(() => {}); }, 300); }
 });
 // leaving a page drops what it loaded, so coming back shows fresh data
 addEventListener("hashchange", () => { if (!/^#\/(runs|tasks)(\/|$)/.test(location.hash)) RN.list = null; if (!/^#\/(run\/|tasks\/R-\d+)/.test(location.hash)) RN.view = null;

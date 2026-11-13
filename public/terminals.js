@@ -290,7 +290,7 @@ function detachPane(tab, pn) {
 /** A terminal no longer listed (removed, or gone with a restart) leaves its pane. */
 function reconcile() { const known = new Set((TM.list || []).map((t) => t.id)); for (const tab of [...TM.lay.tabs]) for (const pn of panesOf(tab.root)) if (!known.has(pn.term)) detachPane(tab, pn); }
 // the address names the focused terminal; replaced in place, so moving between panes does not add history or re-route
-function syncHash() { const t = termOf(focusPane()), want = t ? `#/terminals/${encodeURIComponent(t.id)}` : "#/terminals";
+function syncHash() { const t = termOf(focusPane()), q = location.hash.split("?")[1], want = (t ? `#/terminals/${encodeURIComponent(t.id)}` : "#/terminals") + (q ? `?${q}` : "");
   if (location.hash !== want) { history.replaceState(null, "", want); if (S.route?.name === "terminals") S.route.arg = t?.id ?? null; } TM.lastArg = t?.id ?? null; }
 // asked again on the next frame: a sheet opened in between (a double-click's rename) keeps its field's focus
 const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help;

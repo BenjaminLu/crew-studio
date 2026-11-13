@@ -25,6 +25,7 @@ const q = (s: string) => activityQuery(new URLSearchParams(s));
   ok(activityPage(events, q("page=1&task=T-3")).rows.every((e) => e.task === "T-3") && !activityPage(events, q("page=1&task=T-3")).counts.task["null"], "the task facet; an event with no task has no task value"); }
 { ok(activityPage(events, q("page=1&q=软件")).matched === 1 && activityPage(events, q("page=1&q=軟體")).matched === 1 && activityPage(events, q("page=1&q=SOFTWARE update")).matched === 1, "a free word reads both languages of the summary, in either Chinese script");
   ok(activityPage(events, q("page=1&q=step 99")).matched === events.filter((e) => /^Step .*99/.test(e.summary.en)).length && activityPage(events, q("page=1&q=step nothing")).matched === 0, "every word must match");
+  ok(activityPage(events, q('page=1&q="software update"')).matched === 1 && activityPage(events, q('page=1&q="update software"')).matched === 0, "a quoted phrase matches as one");
   const r = activityPage(events, q("page=1&q=worker-1"));
   ok(r.matched === events.filter((e) => e.actor === "worker-1").length && r.counts.type.merged === events.filter((e) => e.actor === "worker-1" && e.type === "merged").length, "the counts follow the free text"); }
 
