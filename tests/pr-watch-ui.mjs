@@ -227,6 +227,7 @@ try {
     const sx = await o.p.evaluate(() => ({ doc: document.documentElement.scrollWidth, main: document.querySelector('#main').scrollWidth, mainW: document.querySelector('#main').clientWidth, w: innerWidth, tbl: document.querySelector('[data-prs-table]').scrollWidth > document.querySelector('[data-prs-table]').clientWidth }));
     ok(sx.doc <= sx.w && sx.main <= sx.mainW + 1, `no sideways page scroll at ${w} ${theme}${w === 390 ? ' (the table scrolls inside its card)' : ''}`, JSON.stringify(sx));
     if (w === 390) ok(sx.tbl, `at ${w} the table scrolls inside its card`);
+    if (w === 390) ok(await o.p.evaluate(() => { const m = document.querySelector('[data-prs-tab="merged"]').getBoundingClientRect(), a = document.querySelector('[data-prs-tab="all"]').getBoundingClientRect(); return Math.abs(m.left - a.left) < 2; }), `at ${w} ${theme} the merged tabs start their own line (no separator left at a line end)`);
     if (w === 390) { const tc = await browser.newContext({ viewport: { width: 390, height: 900 }, isMobile: true, hasTouch: true }); const tp = await tc.newPage(); await tp.goto(`${base}/#/prs`); await tp.waitForSelector('[data-prs-row]');
       // read on the element on the page now (a live redraw may replace the row between finding it and reading it)
       const touchOpacity = async () => tp.evaluate(() => { const e = document.querySelector('[data-prs-drop]'); return e ? getComputedStyle(e).opacity : null; });
