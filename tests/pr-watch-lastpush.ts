@@ -67,6 +67,12 @@ try {
   named("both missing");
   // nothing changes: no line
   { const n = card().follow.history.length; await call("/api/prs/refresh", {}); await new Promise((r) => setTimeout(r, 800)); ok(card().follow.history.length === n, "a refresh with nothing new adds no line"); }
+  // another push while the latest push still misses its approval: the record names the new head
+  push("c6", "uma"); h = await grow();
+  ok(h.en.startsWith(`a new push still needs an approval on the head ${h7()} by someone other than the pusher; the card now asks for:`) && h.tw.startsWith(`新的 push 仍要由推的人以外的人在 head ${h7()} 上 approve；`), "a further push with the latest push still missing: the line names the new head", JSON.stringify(h));
+  // the pusher and someone else approve together: only the other one is credited with the latest push
+  approve("uma", 8); approve("vic", 8); h = await grow();
+  ok(h.en.startsWith("uma, vic approved ✓; vic's approval meets the latest-push requirement; the card now asks for:") && h.tw.startsWith("uma、vic approve ✓；vic 的 approve 滿足了最後一次 push 的要求；"), "the pusher approving with another: only the non-pusher meets the latest push", JSON.stringify(h));
   // a push with stale approvals kept voids none, but the new head will need an approval: the captain is asked first
   { const a = await call("/api/prs/push-check", { pr: id18 }); await until(() => !!pushCard(), 10000); const c = pushCard().follow;
     ok(a.body.card === true && a.body.voids === 0 && a.body.latestPush === true, "push-check: none voided, the latest push needs an approval, a card", JSON.stringify(a.body));

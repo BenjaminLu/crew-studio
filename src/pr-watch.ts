@@ -980,7 +980,8 @@ export function createPrWatch(d: PrWatchDeps) {
           if (now0.lastPush && !was0.lastPush) rule.push({ en: "the rules now ask for an approval of the latest push by someone other than the pusher", tw: "分支規則改為最後一次 push 要由推的人以外的人 approve" });
           const newGroups = now0.groups.filter((g: string) => !was0.groups.includes(g)); if (newGroups.length) rule.push({ en: `the rules now also ask for ${newGroups.join(", ")}`, tw: `分支規則現在也要 ${newGroups.join("、")}` });
           // nothing changed that the card asks for or says: what it shows still follows GitHub, no line
-          if (!gone.length && !added && gap0 === gap1 && lp0 === lp1 && !lost.length && !newSince.length && !again.length && !rule.length) { show(); return; }
+          const lpMoved = lp0 && lp1 && headMoved; // still missing, now on a newer head: the record points at the new one
+          if (!gone.length && !added && gap0 === gap1 && lp0 === lp1 && !lpMoved && !lost.length && !newSince.length && !again.length && !rule.length) { show(); return; }
           const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g) => !ok.some((x) => x.who === g));
           const newApprovers = newSince.filter((l: string) => !ok.some((g) => g.by.some((x) => eq(x, l))));
           const en: string[] = [], tw: string[] = [];
@@ -1007,11 +1008,14 @@ export function createPrWatch(d: PrWatchDeps) {
           if (lp1 && !lp0 && !(now0.lastPush && !was0.lastPush)) {
             if (headMoved) { en.push(`a new push needs an approval on the head ${head7} by someone other than the pusher`); tw.push(`新的 push 要由推的人以外的人在 head ${head7} 上 approve`); }
             else { en.push(`the latest push needs an approval on the head ${head7} by someone other than the pusher`); tw.push(`最後一次 push 要由推的人以外的人在 head ${head7} 上 approve`); } }
+          if (lpMoved) { en.push(`a new push still needs an approval on the head ${head7} by someone other than the pusher`); tw.push(`新的 push 仍要由推的人以外的人在 head ${head7} 上 approve`); }
           if (lp0 && !lp1) {
             const pusher = (r.approvals.inferredPusher ?? []).map((x) => x.toLowerCase()), by = now0.onHead.filter((l: string) => !pusher.includes(l.toLowerCase()));
             const toldNow = [...newApprovers, ...again, ...ok.flatMap((g) => g.by)], told = by.length > 0 && by.every((l: string) => toldNow.some((x) => eq(x, l)));
             if (!now0.lastPush) { en.push("the rules no longer ask for an approval of the latest push"); tw.push("分支規則不再要求最後一次 push 的 approve"); }
-            else if (told && said >= 0) { en[said] += ", so the latest-push approval is met"; tw[said] += "，最後一次 push 的 approve 有了"; }
+            // only the approvals that meet it are credited: when the pusher approved in the same clause, the others are named
+            else if (told && said >= 0 && !toldNow.some((x) => pusher.includes(x.toLowerCase()))) { en[said] += ", so the latest-push approval is met"; tw[said] += "，最後一次 push 的 approve 有了"; }
+            else if (told) { en.push(`${by.length === 1 ? `${by[0]}'s approval meets` : `the approvals of ${by.slice(0, -1).join(", ")} and ${by.at(-1)} meet`} the latest-push requirement`); tw.push(`${by.join("、")} 的 approve 滿足了最後一次 push 的要求`); }
             else { en.push(`${by.length ? `${by.join(", ")} approved the latest push ✓, so the` : "the"} latest-push approval is met`); tw.push(`${by.length ? `${by.join("、")} approve 了最後一次 push ✓，` : ""}最後一次 push 的 approve 有了`); } }
           const grows = added || gap1 > gap0 || (lp1 && !lp0);
           if (grows && !en.length) { en.push("the counted approvals changed"); tw.push("算數的 approve 變了"); }

@@ -224,7 +224,8 @@ Off by default (settings: "Follow-through"); on, after every refresh each watche
   The row on the page links to its open card. Firstmate cannot answer one.
 - **Push before voiding approvals**: `POST /api/prs/push-check {pr, quote?, by?, tests?}` (for a worker round about to
   push): when the rules dismiss stale approvals and approvals exist, a card "this push voids N approvals"; when the
-  rules ask for an approval of the latest push (none voided), a card "this push needs a new approval of its head";
+  rules ask for an approval of the latest push (none voided), a card "this push needs a new approval of its head"
+  (with both rules on, the voids card adds that the new head needs an approval by someone other than the pusher);
   either with push / don't push (with a reason) / follow-up pull request. `quote` and `by` are the
   comment the change answers and who wrote it; without them Studio takes the latest reviewer comment it read as a code
   change, and its author. `tests: true` is the round's own result (its tests passed), shown under done; Studio does not
@@ -378,7 +379,9 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     the × on touch screens, Try again after a failed load, focus kept across a live update, the row menu copying one row.
 14. Review round 3 (tests/pr-watch.ts "round 3"): CODEOWNERS past the caps reads unreadable; removing the block keeps
     paragraph breaks (LF and CRLF) and round-trips an appended block byte for byte; after the last push, an older-commit
-    approval, the author's and the head committer's do not count and someone else's on the head does.
+    approval counts toward the number unless stale approvals are dismissed, the head committer's (the inferred pusher)
+    counts toward the number but never meets the latest-push requirement, the author's never counts, and someone else's on
+    the head meets it (corrected in review round 8).
 15. Review round 4 (tests/pr-watch.ts "round 4", the UI suite): after the last push with a count of 0 still needs one
     approval; CODEOWNERS work bounded per row; the ETag cache bounded by bytes; the environment template matched as
     literal text; the block on GitHub refused unless Depends-on lines naming pull requests; a normalised body still a

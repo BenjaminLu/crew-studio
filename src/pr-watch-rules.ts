@@ -338,9 +338,9 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
    *  do not explain is a missing review (who: the pending review requests) */
   github?: GitHubMerge | null }): Approvals {
   if (!rules.readable) return { readable: false, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [{ kind: "unreadable", reason: rules.reason, tw: rules.tw }], sources: [] };
-  // "approval after the last push": an approval counts when it was given on the current head, by someone other than the
-  // pusher. GitHub does not say who pushed, so the pusher is inferred: the pull request's author and the head commit's
-  // author and committer. Without the head commit the rule cannot be applied: unreadable.
+  // "approval of the most recent push" needs to know who pushed. GitHub does not say, so the pusher is inferred: the pull
+  // request's author and the head commit's author and committer. Without the head commit the rule cannot be applied:
+  // unreadable.
   if (rules.lastPush && !o.headCommit) return { readable: false, required: rules.required, counted: 0, codeOwners: rules.codeOwners, lastPush: true, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: "the branch rules ask for an approval after the last push, and the head commit could not be read", tw: "分支規則要求最後一次 push 之後的 approve，但讀不到 head commit" }], sources: rules.sources };
   const pusher = rules.lastPush ? [...new Set([o.author, o.headCommit?.author, o.headCommit?.committer].filter((x): x is string => !!x).map((x) => x.toLowerCase()))] : [];
   if (rules.codeOwners && o.ownersUnreadable) return { readable: false, required: rules.required, counted: 0, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: o.ownersUnreadable.en, tw: o.ownersUnreadable.tw }], sources: rules.sources };
