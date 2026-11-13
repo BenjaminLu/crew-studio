@@ -910,11 +910,19 @@ export function createPrWatch(d: PrWatchDeps) {
     else if (o.kind === "approve") { const got = (r.approvals.groups ?? []).filter((g) => g.ok && (p.groupsMissing ?? []).includes(g.who));
       if (got.length) what = { en: `approved: ${got.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")}`, tw: `已 approve：${got.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")}` }; }
     // else the rule the pull request now waits on, as one plain sentence (its condition and what follows from it, no arrow)
-    if (!what) { const rule = R.RULES.find((x) => x.id === r.next.rule); what = rule ? { en: `now ${rule.en.replace(" → ", ", so ")}`, tw: `現在${rule.tw.replace(" → ", "，所以 ")}` } : { en: sh.why.en, tw: sh.why.tw }; }
+    if (!what) { const rule = R.RULES.find((x) => x.id === r.next.rule); what = rule ? R.ruleSentence(rule) : { en: sh.why.en, tw: sh.why.tw }; }
     return what;
   }
   /** after a refresh: each open row's branch, its card raised, kept, updated or closed */
-  async function followUp() {
+  // one follow-through pass at a time: a refresh, a settings save or an answer that asks for one while a pass runs gets
+  // exactly one more pass after it (two passes at once would log twice and could raise a card twice)
+  let followRun: Promise<void> | null = null, followAgain = false;
+  function followUp(): Promise<void> {
+    if (followRun) { followAgain = true; return followRun; }
+    followRun = (async () => { try { do { followAgain = false; await followUpOnce(); } while (followAgain); } finally { followRun = null; } })();
+    return followRun;
+  }
+  async function followUpOnce() {
     if (!engine || !state.settings.follow?.enabled) return;
     const rows = viewRows(snap, state); let changed = false;
     for (const [key, o] of Object.entries(state.follow.open)) {
@@ -931,7 +939,7 @@ export function createPrWatch(d: PrWatchDeps) {
             // a group that went because someone approved, or because the rules no longer ask for it (GitHub ignores an owner it
             // reports as unknown, or the rules changed): said as it is
             const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g: string) => !ok.some((x) => x.who === g));
-            const keeps = fresh.groupsMissing.length ? { en: ` → the card keeps ${fresh.groupsMissing.join(", ")}`, tw: ` → 卡裡只留 ${fresh.groupsMissing.join("、")}` } : { en: "", tw: "" };
+            const keeps = fresh.groupsMissing.length ? { en: ` → the card keeps ${fresh.groupsMissing.join(", ")}`, tw: ` → 卡裡只留 ${fresh.missing.map((m: F.L) => m.tw.replace(/^✕ /, "")).join("、")}` } : { en: "", tw: "" };
             if (ok.length) p.history.push(hist(`approved: ${ok.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")} ✓${keeps.en}`, `${ok.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")} approve ✓${keeps.tw}`));
             if (dropped.length) p.history.push(hist(`no longer required: ${dropped.join(", ")} (GitHub ignores an owner it reports as unknown, or the branch rules changed)${keeps.en}`, `不再需要：${dropped.join("、")}（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）${keeps.tw}`));
             Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); } }); }

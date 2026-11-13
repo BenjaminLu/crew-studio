@@ -91,4 +91,10 @@ const { ok, end } = suite("pr-watch-follow");
   const m = F.approveMessage({ id: "o/r#1", url: "u", title: "t", head: "abcdef1", env: null }, [{ who: "1 more approval", whoTw: "還要 1 個 approve", files: [], count: true }], [], false);
   ok(/- 1 more approval$/m.test(m.msg.en) && !m.msg.en.includes("1 more approval: 1 approval") && m.msg.tw.includes("- 還要 1 個 approve"), "a missing count reads once, in both languages", m.msg.en);
 }
+// ---------- a rule as one plain sentence ----------
+{
+  const R3 = await import("../src/pr-watch-rules"), O = await import("opencc-js"), cn = O.Converter({ from: "tw", to: "cn" });
+  for (const rule of R3.RULES) { const t = R3.ruleSentence(rule), z = cn(t.tw);
+    ok(![t.en, t.tw, z].some((x) => x.includes("→") || /\s{2}|\s[，。、）]|[（，]\s|現在\s|现在\s|所以\s/.test(x)) && t.en.startsWith("now ") && t.tw.startsWith("現在"), `rule ${rule.id} reads as one sentence in English, zh-TW and zh-CN, no arrow or stray space`, `${t.en} | ${t.tw} | ${z}`); }
+}
 end();

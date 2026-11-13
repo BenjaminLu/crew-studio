@@ -74,9 +74,14 @@ try {
   // GitHub moves: QA posts evidence on 212's head, security approves 216
   gh.data.find(gw, 212)!.comments = [{ user: "qa-lead", body: `### PASS\non ${c212[1].sha}`, at: T(5) }];
   gh.data.find(gw, 216)!.reviews!.push({ user: "sec-bob", state: "APPROVED", commit: c216[1].sha, at: T(5) } as any);
-  await refresh(); await until(() => E.cards.get(qa.id)!.status !== "open" && !!cardOf(`${gw}#216`, "merge"), 15000);
+  // the answer that closes a card is slow, and two settings saves land meanwhile: still one pass at a time
+  const answer0 = E.answer.bind(E); (E as any).answer = async (...a: any[]) => { await new Promise((res) => setTimeout(res, 400)); return answer0(...(a as [any, any])); };
+  await Promise.all([refresh(), call("/api/prs/settings", { settings }), call("/api/prs/settings", { settings })]);
+  await until(() => E.cards.get(qa.id)!.status !== "open" && !!cardOf(`${gw}#216`, "merge"), 15000);
   ok(E.cards.get(qa.id)!.status === "answered" && E.cards.get(qa.id)!.answer!.by === "studio (GitHub)" && /^evidence from qa-lead \(pass\) covers the head$/.test(E.cards.get(qa.id)!.answer!.note ?? ""), "the QA card closes by itself when evidence on the head arrives", JSON.stringify(E.cards.get(qa.id)!.answer));
   ok(!!cardOf(`${gw}#212`, "nudge") && cardOf(`${gw}#212`, "nudge").follow.recipients[0].who === "review-bot-a", "and the reviewer who asked for it is asked to look again right away");
+  (E as any).answer = answer0;
+  ok(E.cards.get(qa.id)!.follow!.history.filter((x: any) => /^evidence from qa-lead/.test(x.en)).length === 1 && open().filter((c: any) => c.follow.pr === `${gw}#212`).length === 1, "a slow answer and saves meanwhile: one close line, one next card (one follow-through pass at a time)", JSON.stringify(E.cards.get(qa.id)!.follow!.history.map((x: any) => x.en)));
   ok(E.cards.get(ap.id)!.status === "answered" && !!cardOf(`${gw}#216`, "merge"), "the approve card closes when the rules are met, and the merge card follows");
   // a push that would void the approvals asks first
   // the reviewer's comment on the head, read as a code change: the push card names them and quotes it without being told

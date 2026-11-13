@@ -548,3 +548,11 @@ export function proposeOrder(prs: PrFacts[], deps: { pr: string; on: string }[],
   }
   return out.map((id) => ({ id, why: why.get(id)!.length ? why.get(id)! : ["opened earlier than the ones after it"] }));
 }
+
+/** A rule as one plain sentence, built from its two parts (the condition, and what follows from it), never by editing its
+ *  arrow: "now a reviewer asked for changes, so fix (the author)" / 「現在有人要求修改，所以修正（作者）」. */
+export function ruleSentence(rule: { en: string; tw: string }): { en: string; tw: string } {
+  const part = (t: string) => { const i = t.indexOf("→"); return i < 0 ? [t.trim(), ""] : [t.slice(0, i).trim(), t.slice(i + 1).trim()]; };
+  const [ce, re] = part(rule.en), [ct, rt] = part(rule.tw);
+  return { en: re ? `now ${ce}, so ${re}` : `now ${ce}`, tw: rt ? `現在${ct}，所以${rt}` : `現在${ct}` };
+}

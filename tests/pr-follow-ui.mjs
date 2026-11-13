@@ -97,6 +97,17 @@ try {
   await p.click(`[data-prs-row="${gw}#212"] .pw-title`); await p.waitForSelector('[data-prs-flow="needs-evidence"]'); await p.waitForSelector('[data-prs-detail-card] [data-follow-card]');
   ok(await p.locator('[data-prs-detail-card] .pw-new').count() === 2 && (await p.locator('[data-prs-flow] > .card:first-child .pw-rules li.hit').innerText()).startsWith('QA 實測') && (await p.locator('[data-prs-flow]').innerText()).includes('為什麼走這條岔路') && await p.locator('[data-prs-rules] li.hit').getAttribute('data-rule') === 'evidence-asked', 'the row detail: where the flow is, why this branch, its card; the rule list agrees (evidence asked, not fix)');
   await p.screenshot({ path: join(shots, 'prs-detail-212-1440.png') }); await p.keyboard.press('Escape');
+  // every kind of card, embedded in its row's dialog, stays inside the dialog at 1440 and at 390
+  for (const w of [1440, 390]) { await p.setViewportSize({ width: w, height: 1000 });
+    for (const id of [`${gw}#212`, `${gw}#215`, `${gw}#216`]) {
+      await p.locator(`[data-prs-row="${id}"] .pw-title`).click(); await p.waitForSelector('[data-prs-dialog="detail"] [data-prs-detail-card] [data-follow-card]', { timeout: 10000 });
+      const fit = await p.evaluate(() => { const d = document.querySelector('[data-prs-dialog="detail"]').getBoundingClientRect(), c = document.querySelector('[data-prs-detail-card]');
+        const out = [...c.querySelectorAll('*')].filter((e) => e.getClientRects().length).map((e) => e.getBoundingClientRect().right).filter((r) => r > d.right + 1); return { dr: d.right, n: out.length, max: Math.max(0, ...out) }; });
+      ok(fit.n === 0, `at ${w} the ${id} card inside the dialog stays inside it`, JSON.stringify(fit));
+      if (id.endsWith('#216') && w === 1440) await p.screenshot({ path: join(shots, 'prs-detail-216-1440.png') });
+      if (id.endsWith('#216') && w === 390) await p.screenshot({ path: join(shots, 'prs-detail-216-390.png') });
+      await p.keyboard.press('Escape'); await p.waitForSelector('[data-prs-dialog="detail"]', { state: 'detached' }); } }
+  await p.setViewportSize({ width: 1440, height: 1000 });
   await p.click('[data-prs-settings]'); await p.waitForSelector('[data-prs-targets]');
   const hookShown = await p.locator('[data-prs-hook="qa"]').inputValue();
   ok(hookShown.includes('••••') && !hookShown.includes('services/T0') && await p.locator('[data-prs-contact]').count() === 3, 'the settings show the webhook masked and the contacts', hookShown);
