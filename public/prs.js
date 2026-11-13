@@ -271,8 +271,8 @@ function opText(o, P) {
     case "k8s-configmap": return P(`Kubernetes ConfigMap ${names || o.path}: apply it with the release`, `Kubernetes ConfigMap ${names || o.path}：隨這次上線套用`);
     case "k8s-secret": return P(`Kubernetes Secret ${names || o.path}: create or update it in production first`, `Kubernetes Secret ${names || o.path}：先在 production 建好或更新`);
     case "metric": { const m = o.metric, s = suggest(m, o.job), lab = m.labels.length ? `{${m.labels.join(",")}}` : "";
-      return P(`The diff adds metric ${m.name}${lab} (${m.type}, ${m.zero ? "starts at 0" : "a labelled series appears on its first increment"}). Suggested: ${s.expr}; for ${s.for}; noData = Alerting; also ${s.up}. Studio cannot read your alert configuration: this is a suggestion worked out from the metric.`,
-        `diff 新增 metric ${m.name}${lab}（${m.type}，${m.zero ? "啟動即為 0" : "帶 label 的指標要第一次遞增才出現"}）。建議：${s.expr}；for ${s.for}；noData = Alerting；另配 ${s.up}。Studio 讀不到你們的告警設定，這是照 metric 推的建議。`); }
+      return P(`The diff adds metric ${m.name}${lab} (${m.type}, ${m.zero ? "starts at 0" : `each label set appears only on its first ${m.type === "gauge" ? "set" : m.type === "counter" ? "increment" : "observation"}`}). Suggested: ${s.expr}; for ${s.for}; noData = Alerting; also ${s.up}. Studio cannot read your alert configuration: this is a suggestion worked out from the metric.`,
+        `diff 新增 metric ${m.name}${lab}（${m.type}，${m.zero ? "啟動即為 0" : `每組 label 要第一次${m.type === "gauge" ? "設值" : m.type === "counter" ? "遞增" : "記錄"}才會出現`}）。建議：${s.expr}；for ${s.for}；noData = Alerting；另配 ${s.up}。Studio 讀不到你們的告警設定，這是照 metric 推的建議。`); }
     case "rollout": return P(`「${o.quote}」`, `「${o.quote}」`);
   }
   return o.kind;
@@ -284,12 +284,18 @@ function suggest(m, job) {
   return { expr, for: m.type === "counter" ? "0m" : "5m", up: `up{job="${job}"} == 0` };
 }
 const opTag = (o, P) => o.kind === "metric" ? P("Alert suggestion", "告警建議") : P(OPS[o.kind][1], OPS[o.kind][2]);
+// why a batch has no new tag: none has these merges yet; every tag that has them also carries a later batch (the merge
+// order: they ship together, or a tag must be cut between them); or CI failed on each
+const noTag = (l, P) => { const ids = (l.laterBy || []).map((x) => `#${String(x).split("#")[1]}`).join(", ");
+  return l.problem === "order" ? P(`(every tag with these merges also carries ${ids}, of a later batch: they were merged in this order, so ship them together or cut a tag between them)`, `（每個包含這些合併的 tag 也帶了後一批的 ${ids}：它們是依這個順序合併的，要一起上，或在兩者之間另打一個 tag）`)
+    : l.problem === "ci" ? P("(every tag with these merges failed CI: fix it and build one)", "（包含這些合併的 tag CI 都失敗：修好再建一個）")
+    : l.problem === "previous" ? P("(the batch before has no tag yet)", "（前一批還沒有 tag）") : P("(no tag has these merges yet: build one)", "（還沒有包含這些合併的 tag：先建一個）"); };
 function briefText(b, P) {
   const N = b.of, hash = (id) => `#${String(id).split("#")[1]}`, title = (id) => { const p = b.prs.find((x) => x.id === id); return `${hash(id)} ${p?.title || ""}`.trim(); };
   const forced = b.forced.map((f) => P(`${hash(f.pr)} depends on ${hash(f.on)}`, `${hash(f.pr)} 依賴 ${hash(f.on)}`)).join(P(", ", "，"));
   const order = N === 1 ? "" : b.n === 1 ? P(` (batch 1 of ${N}; batch 2 opens only after this one runs in production)`, `（第 1/${N} 批；第 2 批要等這批上到 production 才開）`) : P(` (batch ${b.n} of ${N}; open it after batch ${b.n - 1} runs in production. ${forced})`, `（第 ${b.n}/${N} 批；等第 ${b.n - 1} 批上到 production 之後再開。${forced}）`);
   const lines = b.units.flatMap((u) => u.noFile ? [P(`${u.repo}: no production environment reads its image tag from a file; write this change by hand.`, `${u.repo}：沒有 production 環境從檔案讀它的 image tag，這一行請自己寫。`)]
-    : u.lines.map((l) => `${l.repository} · ${l.path}\n- ${l.before ?? P("(the current line could not be read)", "（讀不到現在那一行）")}\n+ ${l.after ?? P("(no tag carries these merges with green CI yet: build one)", "（還沒有 CI 通過、又包含這些合併的 tag：先建一個）")}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
+    : u.lines.map((l) => `${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
   const added = b.added.map((a) => P(`${hash(a.id)} was added: ${hash(a.for)} depends on it`, `${hash(a.id)} 是補進來的：${hash(a.for)} 依賴它`));
   const ops = b.ops.map((o) => `- [${opTag(o, P)}] ${opText(o, P)} (${o.url})`);
   return [P("Please open a deploy pull request following the team's rules", "請照團隊規範開一個部署 PR") + order, "", lines.join("\n\n"), "", P("Includes: ", "包含：") + b.prs.map((p) => title(p.id)).join(P("; ", "；")),
