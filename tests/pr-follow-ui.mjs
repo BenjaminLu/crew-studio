@@ -101,6 +101,9 @@ try {
   const hookShown = await p.locator('[data-prs-hook="qa"]').inputValue();
   ok(hookShown.includes('••••') && !hookShown.includes('services/T0') && await p.locator('[data-prs-contact]').count() === 3, 'the settings show the webhook masked and the contacts', hookShown);
   await p.locator('[data-prs-targets]').scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, 'settings-1440.png') });
+  await p.setViewportSize({ width: 390, height: 900 }); await p.locator('[data-prs-contacts]').scrollIntoViewIfNeeded();
+  ok(await p.evaluate(() => [...document.querySelectorAll('[data-prs-contact]')].every((row) => { const x = row.querySelector('.pw-x').getBoundingClientRect(), r = row.getBoundingClientRect(); return x.top - r.top < 20; })), 'at 390 each settings row keeps its × at the top, not on a line of its own');
+  await p.screenshot({ path: join(shots, 'settings-390.png') }); await p.setViewportSize({ width: 1440, height: 1000 });
   await p.click('[data-prs-hook-test="qa"]'); await until(() => posted.length === 2); ok(posted.length === 2, 'Send a test posts once');
   await p.keyboard.press('Escape');
   // the github-review graph with the new nodes
