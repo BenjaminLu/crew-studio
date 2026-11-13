@@ -20,6 +20,9 @@
 const SVGNS = "http://www.w3.org/2000/svg";
 const s = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null && v !== false) e.setAttribute(k, v === true ? "" : v); } for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); return e; };
 const api = async (u, body, method, signal) => { const r = await fetch(u, { signal, ...(body === undefined && !method ? {} : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.problems = j.problems; e.code=j.code; e.status=r.status; e.staffing=j.staffing; throw e; } return j; };
+const PR_PRESETS = [["PR follow-through", "PR 跟進", { kind: "hook", do: "pr.shepherd", new: true }], ["Ask QA to test (card)", "請 QA 測試（卡片）", { kind: "card", new: true, card: { options: [{ id: "sent", label: "Sent", labelZh: "已轉給 QA" }] } }],
+  ["Ask reviewers again (card)", "請 reviewer 重驗（卡片）", { kind: "card", new: true, card: { options: [{ id: "sent", label: "Sent", labelZh: "已發出" }] } }], ["Follow to production", "跟到上線", { kind: "hook", do: "pr.track-deploy", new: true }],
+  ["Release brief (card)", "上線 brief（卡片）", { kind: "card", new: true, card: { options: [{ id: "done", label: "Released", labelZh: "已上線" }] } }]];
 const KINDS = [["agent", "Agent", "代理"], ["check", "Check", "檢查"], ["card", "Card", "卡片"], ["loop", "Refine loop", "精修迴圈"], ["hook", "Hook", "掛勾"]];
 const NW = 150, NH = 52;
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -129,6 +132,8 @@ function graph(def, o = {}) {
     g.append(s("rect", { width: vn.w, height: vn.h, rx: 10, class: "rt-box" }), s("text", { x: 12, y: 21, class: "rt-label" }, fitText(n.label, n.checks?.length ? 13 : 20)),
       s("text", { x: 12, y: 39, class: "rt-kind" }, fitText(`${n.kind}${n.mode ? ` · ${n.mode}` : n.do ? ` · ${n.do}` : ""}`, 20)));
     if (st) g.setAttribute("data-state", st);
+    // a node the definition marks new (the PR follow-through nodes): the small "new" badge of the design
+    if (n.new) g.append(s("rect", { x: vn.w - 32, y: -8, width: 28, height: 16, rx: 8, class: "rt-badge" }), s("text", { x: vn.w - 18, y: 4, class: "rt-badge-t", "text-anchor": "middle", "data-node-new": n.id }, T("new", "新")));
     if (o.editable && !o.simple) g.append(s("circle", { cx: vn.w, cy: vn.h / 2, r: 7, class: "rt-port", "data-port": n.id }));
     g.addEventListener("focus", () => { const v = view; if (vn.x < v.x || vn.y < v.y || vn.x + vn.w > v.x + v.w || vn.y + vn.h > v.y + v.h) { v.x = vn.x + vn.w / 2 - v.w / 2; v.y = vn.y + vn.h / 2 - v.h / 2; svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); o.onView?.(v); } });
     if (o.onSelect) {
@@ -490,10 +495,11 @@ function buildEditor(ed) {
       ...[...errs, ...warns].slice(0, 12).map((p) => h("div", { class: `rt-prob ${p.level}`, "data-problem": p.node || p.edge || "" }, `${p.level === "error" ? "✗" : "!"} ${p.text}`))); };
   const persistLayout = nid => queueLayout(snapshot(), T(`Position saved for v${ed.def.version}`, `位置已儲存於 v${ed.def.version}`));
   const uniq = (base) => { let i = 1, idv = base; while (ed.def.nodes.some((n) => n.id === idv)) idv = `${base}-${++i}`; return idv; };
-  const addNode = (kind, at) => {
+  const addNode = (kind, at, preset = null) => {
     const c = at || (view ? { x: view.x + view.w / 2 - NW / 2, y: view.y + view.h / 2 - NH / 2 } : { x: 40, y: 40 });
     const idv = uniq(kind); const n = { id: idv, kind, label: `${KINDS.find((k) => k[0] === kind)[1]} ${idv.split("-").at(-1) === kind ? "" : idv.split("-").at(-1)}`.trim(), x: Math.round(c.x), y: Math.round(c.y) };
     if (kind === "agent") { n.role = ed.def.roles[0]?.id; n.mode = "test"; } if (kind === "hook") { n.do = "note"; n.args = { text: "" }; } if (kind === "card") n.card = { options: [{ id: "ok", label: "OK" }] }; if (kind === "loop") n.args = { producer: ed.def.nodes.find((x) => x.kind === "agent")?.id ?? "" };
+    if (preset) { const { id: _i, ...rest } = structuredClone(preset); Object.assign(n, rest); }
     ed.def.nodes.push(n); ed.sel = { node: idv }; dirty(); say(T(`added ${kind} node ${idv}`, `已加入 ${kind} 節點 ${idv}`)); focusNode(idv);
   };
   const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`Removed ${nid} and its connections; ${ed.def.nodes.length} other nodes remain. Disconnected steps stay available to reconnect.`, `已移除 ${nid} 與其連線；其餘 ${ed.def.nodes.length} 個節點仍保留，斷線步驟可重新接回。`)); };
@@ -663,7 +669,13 @@ function buildEditor(ed) {
       const target = h("select", { class: "select", "aria-label": T("Connect to", "連到") }, ed.def.nodes.filter((x) => x.id !== n.id).map((x) => h("option", { value: x.id }, x.id)));
       const when = h("input", { class: "input", placeholder: T("when (outcome, optional)", "條件（結果，可留空）"), "aria-label": T("Edge outcome", "邊的結果") });
       // (fields a node kind does not have are null: left out, never shown as the text "null")
-      panel.replaceChildren(...[h("h3", {}, n.label), h("p", { class: "faint" }, `${n.id} · ${n.kind}`),
+      // a node that explains itself (the PR follow-through nodes): what it reads and does, its branches, and where its card shows
+      const out = ed.def.edges.filter((e) => e.from === n.id), lab = (id) => ed.def.nodes.find((x) => x.id === id)?.label || id;
+      const EH = "font-size:12px;color:var(--text-3);font-weight:600;margin:8px 0 2px;letter-spacing:.04em";
+      const explain = Array.isArray(n.explain) ? h("div", { class: "rt-explain", "data-node-explain": n.id }, n.explain.map((x) => h("div", { class: "pw-dl" }, h("div", { style: EH }, L(x.h)), h("div", { style: "font-size:13px;white-space:pre-line" }, L(x.v)))),
+        out.length > 1 ? h("div", { class: "pw-dl", "data-node-branches": n.id }, h("div", { style: EH }, T("Branches (when → where)", "分支（when → 去哪）")), out.map((e) => h("div", { class: "kv" }, h("span", { class: "mono" }, e.when || "—"), h("b", {}, lab(e.to))))) : null,
+        n.preview === "inbox" ? h("a", { class: "btn", href: "#/inbox", "data-node-preview": n.id }, T("See this card in the Inbox →", "看這張船長卡在 Inbox 長什麼樣 →")) : null) : null;
+      panel.replaceChildren(...[h("h3", {}, n.label, n.new ? h("span", { class: "pw-new" }, T("new", "新")) : null), h("p", { class: "faint" }, `${n.id} · ${n.kind}`), explain,
         txt("label", T("Label", "名稱")), txt("detail", T("Detail", "說明")),
         n.kind === "agent" ? field(T("Role", "角色"), h("select", { class: "select", onchange: (e) => { n.role = e.target.value; dirty(); } }, ed.def.roles.map((r) => h("option", { value: r.id, selected: r.id === n.role || null }, r.label)))) : null,
         n.kind === "agent" ? txt("mode", T("Mode", "模式")) : null,
@@ -691,6 +703,8 @@ function buildEditor(ed) {
     h("button", { class: "btn sm", "data-edit-detail": "1", onclick: () => setView("detail") }, T("Edit in Detail view", "到詳細檢視編輯")));
   const palette = h("aside", { class: "rt-palette card", "aria-label": T("Palette", "調色盤") }, h("h4", {}, T("Add a node", "加節點")),
     ...KINDS.map(([k, en, tw]) => h("button", { class: `btn sm rt-pal k-${k}`, draggable: "true", "data-add": k, onclick: () => { addNode(k); drawPanel(); }, ondragstart: (e) => { e.dataTransfer.setData("text/x-kind", k); } }, T(en, tw))),
+    // the pull request follow-through nodes (docs/units/pr-watch.md "Follow-through"), ready to place
+    h("h4", {}, "PR"), ...PR_PRESETS.map(([en, tw, p]) => h("button", { class: `btn sm rt-pal k-${p.kind}`, "data-add-preset": p.do || en, onclick: () => { addNode(p.kind, null, { ...p, label: T(en, tw) }); drawPanel(); } }, T(en, tw), h("span", { class: "pw-new" }, T("new", "新")))),
     h("h4", {}, T("Checks", "檢查")), h("p", { class: "faint" }, T("Drag one onto a node or an edge.", "拖到節點或邊上。")),
     h("div", { class: "rt-pal-checks" }, ed.checks.map((c) => h("div", { class: "rt-pal-check", draggable: "true", tabindex: 0, "data-pal-check": c.ref, title: c.description || c.ref, ondragstart: (e) => { e.dataTransfer.setData("text/x-check", c.ref); e.dataTransfer.effectAllowed = "copy"; } }, c.ref))));
   canvas.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("text/x-kind")) e.preventDefault(); });

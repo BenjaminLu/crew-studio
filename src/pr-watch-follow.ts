@@ -8,7 +8,8 @@ import type { Approvals, Evidence, ReviewView, Step } from "./pr-watch-rules";
 export type L = { en: string; tw: string };
 // ---------- a reviewer's comment ----------
 export type NoteKind = "code-change" | "needs-evidence" | "question" | "non-blocking";
-export type Note = { login: string; state: string; at: string; url: string | null; stale: boolean; kind: NoteKind | null; quote: string | null; confidence: "high" | "low" };
+export type Note = { login: string; state: string; at: string; url: string | null; stale: boolean; kind: NoteKind | null; quote: string | null; confidence: "high" | "low";
+  /** the commits pushed after this review (short): what answered it */ fixedBy?: string[] };
 const SENTENCES = (t: string) => String(t ?? "").replace(/\r/g, "").split(/(?<=[.!?。！？])\s+|\n+/).map((s) => s.replace(/^[\s>*#\-–•]+/, "").trim()).filter((s) => s.length > 2 && s.length <= 400);
 const EVIDENCE = /\b(staging|prod(?:uction)?|e2e|end[- ]to[- ]end|manual(?:ly)? test|smoke test|load test|benchmark|repro(?:duce)?|screenshot|recording|test evidence|evidence|qa)\b|實測|实测|證據|证据|截圖|截图|驗證結果|验证结果|測試報告|测试报告|跑一下|測一下|测一下/i;
 const ASKS = /\b(need|needs|please|show|provide|attach|post|share|run|verify|confirm|prove)\b|需要|請|请|麻煩|麻烦|補|补|貼|贴/i;
@@ -60,7 +61,8 @@ export function shepherd(p: ShepherdInput): Shepherd {
   // evidence on the head while reviewers' latest verdicts sit on an older head: ask them again now, not hours later
   // (also one who asked for evidence on this head before it arrived: their verdict predates it)
   const before = (at: string) => !!ev?.at && Date.parse(at) < Date.parse(ev.at);
-  const stale = p.reviews.filter((v) => !v.author && v.state !== "DISMISSED" && (v.stale || asks.some((n) => n.login === v.login && n.kind === "needs-evidence" && before(n.at)))).map((v) => v.login);
+  // (an approval on an older head is the rules' business: it counts or not, and a missing one is asked for as an approval)
+  const stale = p.reviews.filter((v) => !v.author && v.state !== "DISMISSED" && v.state !== "APPROVED" && (v.stale || asks.some((n) => n.login === v.login && n.kind === "needs-evidence" && before(n.at)))).map((v) => v.login);
   if (evOk && stale.length) return { branch: "evidence-covers-head", stale, why: { en: "the evidence covers the current head; the reviewers' verdicts are on an older one", tw: "證據已覆蓋目前的 head；reviewer 的意見還停在舊 head" } };
   if (asks.length) return { branch: "wait", why: { en: "a change request is waiting on its reviewer", tw: "要求修改的 reviewer 還沒重看" } };
   if (!p.approvals.readable) return { branch: "ask", why: { en: "the base branch's rules could not be read: Studio will not treat them as met", tw: "讀不到 base branch 的規則：Studio 不會當作已滿足" } };
@@ -116,8 +118,8 @@ export function nudgeMessage(pr: MsgPr, who: string[], ev: Evidence, notes: Note
   const at = who.map((w) => `@${w}`).join(" ");
   const said = notes.filter((n) => n.quote && who.some((w) => w.toLowerCase() === n.login.toLowerCase()));
   return {
-    msg: { en: `${at} could you review ${pr.id} again?\n${pr.url}\n\nThe evidence you asked for is in: ${ev.by}, ${ev.verdict}, on ${short(pr.head)} = the current head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\nYour last comments:\n${said.map((n) => `- ${n.login}: "${n.quote}"`).join("\n")}` : ""}`,
-      tw: `${at} 麻煩重驗 ${pr.id}\n${pr.url}\n\n上次要求的證據已補齊：${ev.by}，結論 ${ev.verdict === "pass" ? "通過" : ev.verdict === "conditional" ? "有條件通過" : ev.verdict}，測的是 ${short(pr.head)} = 目前的 head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\n上次的意見：\n${said.map((n) => `- ${n.login}「${n.quote}」`).join("\n")}` : ""}` },
+    msg: { en: `${at} could you review ${pr.id} again?\n${pr.url}\n\nThe evidence you asked for is in: ${ev.by}, ${ev.verdict}, on ${short(pr.head)} = the current head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\nYour last comments and what changed since:\n${said.map((n) => `- ${n.login}: "${n.quote}"${n.fixedBy?.length ? ` → ${n.fixedBy.join(", ")}` : ""}`).join("\n")}` : ""}`,
+      tw: `${at} 麻煩重驗 ${pr.id}\n${pr.url}\n\n上次要求的證據已補齊：${ev.by}，結論 ${ev.verdict === "pass" ? "通過" : ev.verdict === "conditional" ? "有條件通過" : ev.verdict}，測的是 ${short(pr.head)} = 目前的 head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\n上次的意見和對應修改：\n${said.map((n) => `- ${n.login}「${n.quote}」${n.fixedBy?.length ? ` → ${n.fixedBy.join("、")}` : ""}`).join("\n")}` : ""}` },
     short: { en: `${at} one more nudge on ${pr.id}, the evidence is here: ${ev.url ?? pr.url} (current head ${short(pr.head)})`, tw: `${at} 再麻煩一下 ${pr.id}，證據在這：${ev.url ?? pr.url}（目前 head ${short(pr.head)}）` } };
 }
 /** "请 approve": one block per group the rules still miss, what is already done, the files a code owner should look at. */

@@ -111,3 +111,7 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 /* a release-brief item: badge, text and source on one line (the text takes the room, the source stays beside it) */
 .pw-propbox .pw-check{flex-wrap:nowrap;align-items:baseline}.pw-optext{flex:1 1 auto;min-width:0}.pw-propbox .pw-check>a{flex:none;max-width:40%}
 @media (max-width:760px){.pw-propbox .pw-check{flex-wrap:wrap}.pw-propbox .pw-check>a{max-width:100%}}
+/* the settings rows: at phone width the × stays at the row's top right instead of wrapping onto its own line */
+@media (max-width:760px){.pw-envrow{position:relative;padding-right:34px}.pw-envrow>.pw-x{position:absolute;top:8px;right:6px}}
+/* the row detail's follow-through: its columns start at the top (a list is not stretched to the card next to it) */
+[data-prs-flow]{align-items:start}[data-prs-flow]>.card{align-content:start}

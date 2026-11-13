@@ -570,9 +570,73 @@
       "kind": "hook",
       "do": "pr.shepherd",
       "label": "PR follow-through",
-      "detail": "reads the PR on every PR-list refresh; branches by rules and the reviewer's quoted comment",
+      "detail": "Reads the pull request on every refresh of the Pull requests list and picks the branch. State, evidence and CI by rules; a reviewer's comment by its quoted sentence; unclear → a card asks you.",
       "x": 2240,
-      "y": 220
+      "y": 220,
+      "explain": [
+        {
+          "h": {
+            "en": "Reads",
+            "zh-TW": "讀什麼"
+          },
+          "v": {
+            "en": "The same as the Pull requests page: required reviewers, evidence sources, environments, and the base branch's rules (rulesets and branch protection: approval count, required teams, code owners, approval after the last push, stale approvals dismissed).",
+            "zh-TW": "和 Pull requests 頁同一套：必須的 reviewer、證據來源、環境，以及 base branch 的規則（rulesets / branch protection：approve 數、必須的 team、code owners、最後一次 push 之後的 approve、push 是否讓舊 approve 失效）"
+          }
+        },
+        {
+          "h": {
+            "en": "Mergeable is not built in",
+            "zh-TW": "合併條件不寫死"
+          },
+          "v": {
+            "en": "Mergeable = this repository's own branch rules all met + the required reviewers + evidence (when a source is set) + CI. Rules that cannot be read stop and ask; never treated as met.",
+            "zh-TW": "「可合併」= 這個 repo 自己的分支規則全部滿足 + 設定的必須 reviewer + 證據（有設定時）+ CI。規則讀不到就停住問你，不當作滿足。"
+          }
+        },
+        {
+          "h": {
+            "en": "Before a push",
+            "zh-TW": "push 前提醒"
+          },
+          "v": {
+            "en": "When the rules void approvals on a push and there are some, a card asks first: \"this push voids N approvals\"; it pushes only on your yes.",
+            "zh-TW": "規則會讓舊 approve 失效、而且已有 approve 時，先出卡：「這次 push 會讓 N 個 approve 失效」，你確認才推。"
+          }
+        },
+        {
+          "h": {
+            "en": "Classifying a comment",
+            "zh-TW": "留言分類"
+          },
+          "v": {
+            "en": "Code change / needs evidence / a question / not blocking, always quoting the sentence; no quote → a card asks you.",
+            "zh-TW": "要改代碼 / 要外部證據 / 只是提問 / 不擋合併，一定引用原句；引不出來就出卡問你。"
+          }
+        },
+        {
+          "h": {
+            "en": "Never",
+            "zh-TW": "不會做"
+          },
+          "v": {
+            "en": "@-mention anyone on GitHub, press re-request review, or send a message without your click.",
+            "zh-TW": "不會自己在 GitHub @ 人、不會按 re-request review、不會沒經過你按就送出訊息。"
+          }
+        },
+        {
+          "h": {
+            "en": "Not running yet",
+            "zh-TW": "還不會執行"
+          },
+          "v": {
+            "en": "This workflow is held (draft only) until its runtime is rebuilt from code-firstmate, so this node does not run yet. Today the same follow-through runs for the pull requests on the Pull requests page: its cards come from there (workflow pr-follow).",
+            "zh-TW": "這個流程目前暫停（只能存草稿），要等它的執行改由 code-firstmate 重建，所以這個節點還不會執行。現在同樣的 PR 跟進由 Pull requests 頁對追蹤中的 PR 執行，卡片從那裡來（流程 pr-follow）。"
+          }
+        }
+      ],
+      "new": true,
+      "preview": "inbox"
     },
     {
       "id": "qa-card",
@@ -605,11 +669,46 @@
           },
           {
             "id": "code",
-            "label": "It is a code problem: back to the worker",
-            "labelZh": "其實是代碼問題，回 Worker"
+            "label": "It is a code problem: back to the author for a fix",
+            "labelZh": "其實是代碼問題，回作者修正"
           }
         ]
-      }
+      },
+      "detail": "Inbox card: a test request to forward to QA (only routes the diff has; unknowns stay placeholders).",
+      "explain": [
+        {
+          "h": {
+            "en": "On the card",
+            "zh-TW": "卡片內容"
+          },
+          "v": {
+            "en": "What changed, where to test, a command per route, what to expect, how to post the evidence back.",
+            "zh-TW": "改了什麼、在哪個環境測、可直接跑的指令、預期結果、證據要怎麼貼回 PR"
+          }
+        },
+        {
+          "h": {
+            "en": "Goes on when",
+            "zh-TW": "什麼時候繼續"
+          },
+          "v": {
+            "en": "Evidence on the pull request covering the current head closes the card.",
+            "zh-TW": "證據貼回 PR、而且覆蓋目前 head → 卡自動關，回 PR 跟進"
+          }
+        },
+        {
+          "h": {
+            "en": "Not running yet",
+            "zh-TW": "還不會執行"
+          },
+          "v": {
+            "en": "This workflow is held (draft only) until its runtime is rebuilt from code-firstmate, so this node does not run yet. Today the same follow-through runs for the pull requests on the Pull requests page: its cards come from there (workflow pr-follow).",
+            "zh-TW": "這個流程目前暫停（只能存草稿），要等它的執行改由 code-firstmate 重建，所以這個節點還不會執行。現在同樣的 PR 跟進由 Pull requests 頁對追蹤中的 PR 執行，卡片從那裡來（流程 pr-follow）。"
+          }
+        }
+      ],
+      "new": true,
+      "preview": "inbox"
     },
     {
       "id": "nudge-card",
@@ -643,7 +742,42 @@
             "labelZh": "先不催"
           }
         ]
-      }
+      },
+      "detail": "Inbox card: as soon as the evidence covers the head while the reviewers' verdicts are older, ask them to look again.",
+      "explain": [
+        {
+          "h": {
+            "en": "On the card",
+            "zh-TW": "卡片內容"
+          },
+          "v": {
+            "en": "The evidence link, the commit it tested, each reviewer's last comment and the commits since.",
+            "zh-TW": "證據連結、測的是哪個 commit、reviewer 上次的意見和對應修改"
+          }
+        },
+        {
+          "h": {
+            "en": "Goes on when",
+            "zh-TW": "什麼時候繼續"
+          },
+          "v": {
+            "en": "Each reviewer's verdict on the current head closes it.",
+            "zh-TW": "reviewer 在目前 head 給出結果 → 卡自動關"
+          }
+        },
+        {
+          "h": {
+            "en": "Not running yet",
+            "zh-TW": "還不會執行"
+          },
+          "v": {
+            "en": "This workflow is held (draft only) until its runtime is rebuilt from code-firstmate, so this node does not run yet. Today the same follow-through runs for the pull requests on the Pull requests page: its cards come from there (workflow pr-follow).",
+            "zh-TW": "這個流程目前暫停（只能存草稿），要等它的執行改由 code-firstmate 重建，所以這個節點還不會執行。現在同樣的 PR 跟進由 Pull requests 頁對追蹤中的 PR 執行，卡片從那裡來（流程 pr-follow）。"
+          }
+        }
+      ],
+      "new": true,
+      "preview": "inbox"
     },
     {
       "id": "approve-card",
@@ -677,16 +811,74 @@
             "labelZh": "先不合併"
           }
         ]
-      }
+      },
+      "detail": "Inbox card: the approvals the base branch's rules still miss, one entry per team or code-owner group.",
+      "explain": [
+        {
+          "h": {
+            "en": "Who",
+            "zh-TW": "誰"
+          },
+          "v": {
+            "en": "From the Missing column: each team (members read from GitHub, pick one), code owners, the count, after the last push.",
+            "zh-TW": "取 Pull requests 頁「還缺」那一欄：team（成員從 GitHub 讀、選一人）、code owners、人數、最後一次 push 之後"
+          }
+        },
+        {
+          "h": {
+            "en": "Goes on when",
+            "zh-TW": "什麼時候繼續"
+          },
+          "v": {
+            "en": "An approval updates it; met in part, it keeps only the groups still missing.",
+            "zh-TW": "有人 approve → 重讀規則；只滿足一部分，卡只留還缺的組"
+          }
+        },
+        {
+          "h": {
+            "en": "Not running yet",
+            "zh-TW": "還不會執行"
+          },
+          "v": {
+            "en": "This workflow is held (draft only) until its runtime is rebuilt from code-firstmate, so this node does not run yet. Today the same follow-through runs for the pull requests on the Pull requests page: its cards come from there (workflow pr-follow).",
+            "zh-TW": "這個流程目前暫停（只能存草稿），要等它的執行改由 code-firstmate 重建，所以這個節點還不會執行。現在同樣的 PR 跟進由 Pull requests 頁對追蹤中的 PR 執行，卡片從那裡來（流程 pr-follow）。"
+          }
+        }
+      ],
+      "new": true,
+      "preview": "inbox"
     },
     {
       "id": "track",
       "kind": "hook",
       "do": "pr.track-deploy",
       "label": "Follow to production",
-      "detail": "the merge commit in each environment; done in every production one",
+      "detail": "After the merge: whether each environment has the merge commit; done in every production environment.",
       "x": 2750,
-      "y": 330
+      "y": 330,
+      "explain": [
+        {
+          "h": {
+            "en": "Ends",
+            "zh-TW": "結束條件"
+          },
+          "v": {
+            "en": "In every production environment; dropped from the list 14 days later.",
+            "zh-TW": "進到所有 production 環境；14 天後從清單收起"
+          }
+        },
+        {
+          "h": {
+            "en": "Not running yet",
+            "zh-TW": "還不會執行"
+          },
+          "v": {
+            "en": "This workflow is held (draft only) until its runtime is rebuilt from code-firstmate, so this node does not run yet. Today the same follow-through runs for the pull requests on the Pull requests page: its cards come from there (workflow pr-follow).",
+            "zh-TW": "這個流程目前暫停（只能存草稿），要等它的執行改由 code-firstmate 重建，所以這個節點還不會執行。現在同樣的 PR 跟進由 Pull requests 頁對追蹤中的 PR 執行，卡片從那裡來（流程 pr-follow）。"
+          }
+        }
+      ],
+      "new": true
     },
     {
       "id": "brief",
@@ -710,7 +902,31 @@
             "labelZh": "已上線"
           }
         ]
-      }
+      },
+      "detail": "Picked on the Pull requests page with the others to release: batches by dependency, one deploy pull request and one brief each.",
+      "explain": [
+        {
+          "h": {
+            "en": "Each brief",
+            "zh-TW": "每張單"
+          },
+          "v": {
+            "en": "The line to change (old tag → new tag), the pull requests, and what to handle first: migration, secret, config, alert suggestion, the body's rollout text.",
+            "zh-TW": "要改的那一行（舊 tag → 新 tag）、包含的 PR、上線前要處理：migration、secret、config、告警建議、PR 原文"
+          }
+        },
+        {
+          "h": {
+            "en": "Not running yet",
+            "zh-TW": "還不會執行"
+          },
+          "v": {
+            "en": "This workflow is held (draft only) until its runtime is rebuilt from code-firstmate, so this node does not run yet. Today the same follow-through runs for the pull requests on the Pull requests page: its cards come from there (workflow pr-follow).",
+            "zh-TW": "這個流程目前暫停（只能存草稿），要等它的執行改由 code-firstmate 重建，所以這個節點還不會執行。現在同樣的 PR 跟進由 Pull requests 頁對追蹤中的 PR 執行，卡片從那裡來（流程 pr-follow）。"
+          }
+        }
+      ],
+      "new": true
     }
   ],
   "edges": [

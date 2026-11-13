@@ -371,10 +371,12 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
 export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : []);
 
 // ---------- the next step ----------
-export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "test" | "approve" | "merge";
+export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "nudge" | "test" | "approve" | "merge";
 export const RULES: { id: string; kind: StepKind; en: string; tw: string }[] = [
   { id: "draft", kind: "hold", en: "draft → on hold", tw: "draft → 暫緩" },
   { id: "unread", kind: "hold", en: "Studio could not read every review or comment (a read failed, or there are more than it reads) → on hold (see GitHub)", tw: "Studio 沒讀到全部的 review 或留言（讀取失敗，或超過它讀的數量）→ 暫緩（看 GitHub）" },
+  { id: "evidence-asked", kind: "test", en: "a reviewer asked for evidence, not a code change (their comment, quoted) → test (QA)", tw: "reviewer 要的是外部證據，不是改代碼（引用原句）→ 測試（QA）" },
+  { id: "re-review", kind: "nudge", en: "the evidence covers the current head while a reviewer's verdict is on an older head → ask them to look again", tw: "證據已覆蓋目前 head，reviewer 的意見還停在舊 head → 請 reviewer 重驗" },
   { id: "changes", kind: "fix", en: "a reviewer asked for changes → fix (the author)", tw: "有人要求修改 → 修正（作者）" },
   { id: "required", kind: "review", en: "a required reviewer has not reviewed → wait for them", tw: "必要 reviewer 還沒 review → 等他" },
   { id: "dependency", kind: "dependency", en: "a dependency is not merged → wait for it", tw: "依賴還沒合併 → 等依賴" },
@@ -391,6 +393,9 @@ export type StepInput = {
   evidence: Evidence | null; evidenceSources: EvidenceSources; approvals: Approvals;
   /** what Studio could not read in full (a read failed, or past its page cap): "reviews", "comments" */
   incomplete?: string[];
+  /** the follow-through's reading of the reviewers (src/pr-watch-follow.ts shepherd): a change request that asked for
+   *  evidence, or evidence that now covers the head, is not a fix */
+  follow?: { branch: string; who: string[]; quote?: string | null } | null;
 };
 export type Step = { rule: string; kind: StepKind; who: string[]; reason?: string; since?: string | null; matched: boolean[] };
 /** The first matching rule, top to bottom (RULES). `matched` says which rules match at all, for the detail view. */
@@ -407,6 +412,8 @@ export function nextStep(p: StepInput): Step {
     [p.draft, () => ({ rule: "draft", kind: "hold", who: [p.author] })],
     // without every review and comment, a change request or a later failing verdict may be among the unread ones
     [!!p.incomplete?.some((x) => x === "reviews" || x === "comments"), () => ({ rule: "unread", kind: "hold", who: ["(see GitHub)"], reason: p.incomplete!.filter((x) => x === "reviews" || x === "comments").join(", ") })],
+    [p.follow?.branch === "needs-evidence" && changes.length > 0, () => ({ rule: "evidence-asked", kind: "test", who: p.follow!.who, reason: p.follow!.quote ?? undefined })],
+    [p.follow?.branch === "evidence-covers-head", () => ({ rule: "re-review", kind: "nudge", who: p.follow!.who })],
     [changes.length > 0, () => ({ rule: "changes", kind: "fix", who: [p.author], reason: changes.map((c) => c.login).join(", ") })],
     [pendingRequired.length > 0, () => ({ rule: "required", kind: "review", who: pendingRequired })],
     [open.length > 0, () => ({ rule: "dependency", kind: "dependency", who: open.map((d) => d.id) })],

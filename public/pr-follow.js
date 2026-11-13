@@ -34,7 +34,7 @@ function mount(el, card, opts = {}) {
         h("span", { class: "faint pw-small" }, L(r.via)), h("span", { class: "x-grow" }),
         h("button", { class: "btn sm", "data-follow-dm": pick, disabled: !open || !pick, onclick: async () => { const ok = await copyText(text()); const got = await act("dm", { login: pick, text: text() }); if (!got) return;
           st.flash[k] = got.href && openSafe(got.href) ? T("Copied, DM opened", "已複製，DM 已打開") : ok ? T("Copied (no contact: paste it yourself)", "已複製（沒有聯絡人：自己貼上）") : T("Could not copy", "無法複製"); draw(); } }, st.flash[k] || T(`Copy and DM ${pick}`, `複製並 DM ${pick}`))); };
-    const tsel = h("select", { class: "pw-lang", "aria-label": T("Channel", "頻道"), "data-follow-target": "" }, (targets || []).length ? targets.map((t) => h("option", { value: t.id, selected: t.id === f.channel }, t.name)) : h("option", { value: "" }, T("no channel set", "沒有設定頻道")));
+    const tsel = h("select", { class: "pw-lang", "aria-label": T("Channel", "頻道"), "data-follow-target": "" }, (targets || []).length ? [f.channel ? null : h("option", { value: "", selected: true }, T("choose a channel", "選頻道")), ...targets.map((t) => h("option", { value: t.id, selected: t.id === f.channel }, t.name))] : h("option", { value: "" }, T("no channel set", "沒有設定頻道")));
     const picked = (f.opts || []).find((o) => o.id === st.pick);
     const kids = [
       h("div", { class: "cardmeta" }, h("span", { class: "mono" }, c.id), h("a", { href: f.url, target: "_blank", rel: "noopener noreferrer" }, f.pr.split("/")[1]), h("span", { class: "badge" }, L(f.kindLabel)), h("span", {}, ago(c.createdAt))),
@@ -46,7 +46,7 @@ function mount(el, card, opts = {}) {
         f.recipients?.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, T("To", "發給誰")), f.recipients.map(rcpt)) : null, ta,
         h("div", { class: "actions" }, h("button", { class: "btn sm", "data-follow-copy": "", disabled: !open, onclick: async () => { const ok = await copyText(text()); await act("copy", {}); st.flash.copy = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); draw(); } }, st.flash.copy || T("Copy", "複製")),
           h("span", { class: "faint pw-small" }, T("or send to a channel", "或發到頻道")), tsel,
-          h("button", { class: "btn sm", "data-follow-send": "", disabled: !open || !(targets || []).length, onclick: async () => { const got = await act("send", { target: tsel.value, text: text() }); if (got) { st.flash.send = T(`Sent to ${got.target}`, `已發到 ${got.target}`); draw(); } } }, st.flash.send || T("Send", "發送")))) : null,
+          h("button", { class: "btn sm", "data-follow-send": "", disabled: !open || !(targets || []).length, onclick: async () => { if (!tsel.value) { say(T("Choose a channel first", "先選頻道")); return; } const got = await act("send", { target: tsel.value, text: text() }); if (got) { st.flash.send = T(`Sent to ${got.target}`, `已發到 ${got.target}`); draw(); } } }, st.flash.send || T("Send", "發送")))) : null,
       h("div", { style: "display:grid;gap:6px" }, h("h2", { style: "margin:0;font-size:15px" }, T("Follow-up record", "跟進紀錄")),
         h("ol", { class: "pw-rules", "data-follow-history": "" }, (f.history || []).map((x) => h("li", { class: x.hit ? "hit" : "no" }, h("span", { class: "mono faint", style: "font-weight:400" }, when(x.at)), " ", L(x)))),
         f.message && open ? [h("div", { class: "actions" }, h("button", { class: "btn", "data-follow-chase": "", onclick: async () => { st.msg = null; await act("chase", {}); } }, T("Nudge again", "再催一次")),

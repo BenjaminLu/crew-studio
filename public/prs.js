@@ -33,9 +33,11 @@ async function copy(text) { try { await navigator.clipboard.writeText(text); ret
 // ---------- words ----------
 const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(GitHub blocks the merge)" ? T("the merge box on GitHub", "GitHub 的 merge 區塊") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
 const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `還要 ${m.n} 個 approve`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
-const TONE = { hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
+const TONE = { nudge: "human", hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
 function nextWord(n) {
   if (n.rule === "draft") return T("On hold (draft)", "暫緩（draft）");
+  if (n.rule === "evidence-asked") return T("Waits for the QA test", "等 QA 實測");
+  if (n.rule === "re-review") return T("Ask the reviewers to look again", "請 reviewer 重驗");
   if (n.rule === "changes") return T("Fix the review comments", "修正 reviewer 意見");
   if (n.rule === "failed") return T("Fix the failing tests", "修正失敗的測試");
   if (n.rule === "required") return T("Wait for the review", "等 review");
@@ -48,6 +50,8 @@ function nextWord(n) {
   return n.rule === "ready" ? T("Ready to merge", "可合併") : n.rule; // a rule this page does not know is named, never "ready"
 }
 const TABS = [["all", "All", "全部"], ["approve", "Approve", "等 approve"], ["test", "Test", "等測試"], ["fix", "Fix", "等修正"], ["dependency", "Dependency", "等依賴"], ["merge", "Mergeable", "可合併"], ["hold", "On hold", "暫緩"]];
+// "look again" (the follow-through): after Fix, as in the design; Dependency stays (rows can wait on another pull request)
+TABS.splice(4, 0, ["nudge", "Re-review", "等重驗"]);
 // merged pull requests, followed until production: their own two tabs after the open ones
 const SHIP_TABS = [["merged", "Merged, not live", "已合併未上線"], ["live", "Live", "已上線"]];
 const isShip = (tab) => tab === "merged" || tab === "live";
@@ -206,7 +210,7 @@ function rowView(r, d) {
       n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、"))),
       // its open follow-through card (docs/units/pr-watch.md "Follow-through"), one click away in the Inbox
       r.followCard ? h("a", { class: "badge human pw-cta pw-followcta", href: `#/inbox/${encodeURIComponent(r.followCard.card)}`, "data-prs-follow-card": r.followCard.kind },
-        h("span", { class: "pw-ctat" }, ({ qa: T("Ask QA to test", "請 QA 測試"), nudge: T("Ask to review again", "請重驗"), approve: T("Ask for approval", "請 approve"), merge: T("Ready to merge", "可合併"), ask: T("Your call", "等你決定"), push: T("Confirm the push", "push 前確認") })[r.followCard.kind] || r.followCard.kind)) : null),
+        h("span", { class: "pw-ctat" }, ({ qa: T("Ask QA to test", "請 QA 測試"), nudge: T("Ask to review again", "請重驗"), approve: T("Ask for approval", "請 approve"), merge: T("Ready to merge", "可合併"), ask: T("Your call", "等你決定"), push: T("Confirm the push", "push 前確認") })[r.followCard.kind] || r.followCard.kind), h("span", { class: "pw-new" }, T("new", "新"))) : null),
     h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { // compact in the cell: "+n" for the count, and a team of the row's own organisation without it (full names in the title)
       const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.toLowerCase().startsWith(own) ? `@${w.slice(own.length)}` : w;
       const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.length === 1 && miss[0].kind === "count" ? T(`+${miss[0].n} approval${miss[0].n === 1 ? "" : "s"}`, `還要 ${miss[0].n} 個`) : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
@@ -375,10 +379,29 @@ function pwModal(title, kids, o = {}) {
   root.replaceChildren(back); hydrateIcons(back); (box.querySelector("[autofocus]") || box.querySelector("button.primary") || box.querySelector("button"))?.focus(); return close;
 }
 const foot = (...kids) => h("div", { class: "pw-mf" }, ...kids);
+// where the pull request is in its follow-through (docs/units/pr-watch.md "Follow-through"), why it took that branch, and
+// its open card's message (the same card as in the Inbox)
+const STAGE_AT = { "code-change": 0, "needs-evidence": 1, "evidence-covers-head": 2, "missing-approvals": 3, mergeable: 4 };
+function flowSection(r) {
+  const f = r.follow; if (!f) return null;
+  const at = STAGE_AT[f.branch] ?? -1, ev = r.evidence, miss = (r.approvals?.missing || []).map(missWord).join(T(", ", "、"));
+  const stages = [[T("Reviews", "Review"), f.quote && at === 0 ? T(`${f.by}: “${f.quote}”`, `${f.by}：「${f.quote}」`) : r.reviews.length ? r.reviews.map((x) => `${x.login} ${reviewWord(x.state)}`).join(T(", ", "、")) : ""],
+    [T("QA test", "QA 實測"), ev ? `${ev.by}: ${verdictWord(ev.verdict)}${ev.covers === "head" ? T(" · current head", " · 目前 head") : ""}` : at === 1 && f.quote ? T(`${f.by} asked: “${f.quote}”`, `${f.by} 要求：「${f.quote}」`) : ""],
+    [T("Ask the reviewers again", "請 reviewer 重驗"), at === 2 ? T(`the evidence covers the head; ${f.stale.join(", ")} gave their verdict on an older one`, `證據覆蓋目前 head；${f.stale.join("、")} 的意見還停在舊 head`) : ""],
+    [T("Approvals the rules ask for", "分支規則要的 approve"), miss], [T("Mergeable (the branch rules all met)", "可合併（分支規則全滿足）"), ""]];
+  const box = h("div", { class: "pw-followcard", "data-prs-detail-card": r.followCard?.card || "" });
+  if (r.followCard && window.crewFollowCard) fetch("/api/scards?open=1").then((x) => x.json()).then((j) => { const c = (j.cards || []).find((x) => x.id === r.followCard.card); if (c && box.isConnected) window.crewFollowCard.mount(box, c, {}); }).catch(() => {});
+  return h("div", { class: "pw-cols", "data-prs-flow": f.branch },
+    h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Where the flow is", "流程走到哪")),
+      h("ol", { class: "pw-rules" }, stages.map(([label, note], i) => h("li", { class: i < at ? "no" : i === at ? "hit" : "" }, label, i === at ? T(" ← now", " ← 現在") : "", note ? h("div", { class: "faint pw-small", style: "font-weight:400" }, note) : null))),
+      h("h3", {}, T("Why this branch", "為什麼走這條岔路")), h("div", { class: "pw-small muted" }, LX(f.why), f.quote ? T(` — ${f.by}: “${f.quote}”`, `——${f.by}：「${f.quote}」`) : "")),
+    r.followCard ? h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Its card", "它的卡片")), box) : null);
+}
 function detail(r) {
   const n = r.next, rules = PW.data?.rules || [];
   pwModal(r.id, [
     h("p", { class: "muted pw-dtitle" }, r.title || "", " · ", extLink(ghPr(r.id), T("on GitHub", "在 GitHub 上看"))),
+    flowSection(r),
     h("div", { class: "pw-cols" },
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("Issues", "Issue")), r.issues.length ? r.issues.map((i) => h("div", { class: "kv" }, h("span", {}, extLink(ghIssue(i.ref), i.ref), i.title ? ` ${i.title}` : "", i.external ? T(" (external, read only)", "（外部，只讀）") : ""), h("span", {}, i.state || "?"))) : h("span", { class: "faint" }, T("none", "無")),
@@ -536,11 +559,11 @@ function sendingSection(s) {
       h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.contacts.splice(i, 1); drawC(); } }, icon("x")))),
     h("div", {}, h("button", { class: "btn", "data-prs-contact-add": "", onclick: () => { s.sending.contacts.push({ gh: "", tool: "slack", id: "" }); drawC(); } }, T("+ Add a contact", "＋ 加聯絡人"))));
   drawT(); drawC();
-  return [h("h3", {}, T("Send targets", "發送目標")),
+  return [h("h3", {}, T("Send targets", "發送目標"), h("span", { class: "pw-new" }, T("new", "新"))),
     h("p", { class: "faint pw-small", style: "margin:0" }, T("Paste a chat tool's incoming webhook. Message cards and release briefs get a Send button, which sends only when pressed; without one, Copy still works.", "貼上聊天工具的 incoming webhook。訊息卡和上線 brief 會多一個「發到」按鈕，按了才發；沒設也照樣能複製。")), tbox,
-    h("h3", {}, T("Contacts: GitHub account → chat tool", "聯絡人：GitHub 帳號 → 聊天工具")),
+    h("h3", {}, T("Contacts: GitHub account → chat tool", "聯絡人：GitHub 帳號 → 聊天工具"), h("span", { class: "pw-new" }, T("new", "新"))),
     h("p", { class: "faint pw-small", style: "margin:0" }, T("To DM someone, and to turn a GitHub account in a message into the chat's @. A GitHub team needs nothing here: its members are read from GitHub and picked on the card.", "用來 DM 某個人，也用來把訊息裡的 GitHub 帳號換成聊天裡的 @。GitHub team 不用填：成員從 GitHub 讀，卡片上選人。")), cbox,
-    h("h3", {}, T("How a DM is sent", "DM 怎麼發")),
+    h("h3", {}, T("How a DM is sent", "DM 怎麼發"), h("span", { class: "pw-new" }, T("new", "新"))),
     h("div", { class: "pw-envset" },
       h("label", { class: "pw-check" }, h("input", { type: "radio", name: "pwdm", checked: true }), T(" Copy and open the chat (default, nothing to install: Studio copies the message and opens the DM; you paste and send)", " 複製並打開對話（預設，不用裝任何東西：複製訊息，再打開和對方的 DM，你貼上按送出）")),
       h("label", { class: "pw-check faint" }, h("input", { type: "radio", name: "pwdm", disabled: true }), T(" Send through a bot (not in this version)", " 用 bot 直接發（這一版還沒有）")),
@@ -584,7 +607,7 @@ function settingsModal() {
       csv("ops-migration", T("Database migrations", "DB migration"), () => s.opsRules.migration, (v) => { s.opsRules.migration = v; }),
       csv("ops-config", T("Configuration", "設定"), () => s.opsRules.config, (v) => { s.opsRules.config = v; }),
       csv("ops-secret", T("Secrets", "Secret"), () => s.opsRules.secret, (v) => { s.opsRules.secret = v; }),
-      h("h3", {}, T("Follow-through", "PR 跟進")),
+      h("h3", {}, T("Follow-through", "PR 跟進"), h("span", { class: "pw-new" }, T("new", "新"))),
       h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-follow": "", checked: !!s.follow?.enabled, onchange: (e) => { s.follow = { enabled: e.target.checked }; } }),
         T(" Raise Inbox cards for these pull requests: ask QA to test, ask reviewers to look again, ask for the approvals the rules miss, ready to merge. Studio sends nothing by itself.", " 為這些 PR 在收件匣出卡：請 QA 測試、請 reviewer 重驗、請 approve、可合併。Studio 不會自己送出任何東西。")),
       sendingSection(s),

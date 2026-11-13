@@ -17,6 +17,8 @@ import { followFixture } from "./lib/pr-follow-github";
 const { ok, end } = suite("pr-watch-follow-flow");
 const { data, gw, T, c212, c215, c216 } = followFixture();
 const gh = prWatchGitHub(data);
+// 216 starts with neither team: release-approvers comes in later, and the card shrinks to what is still missing
+const p216 = gh.data.find(gw, 216)!, relDan = p216.reviews!.find((x: any) => x.user === "rel-dan")!; p216.reviews = p216.reviews!.filter((x: any) => x !== relDan);
 // the chat's incoming webhook, a loopback stub
 const posted: any[] = []; const hook = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { posted.push({ path: new URL(req.url).pathname, body: await req.json() }); return new Response("ok"); } });
 process.env.CREW_GITHUB_API = gh.origin; process.env.CREW_GITHUB_TOKEN = "fixture-token"; process.env.CREW_GH_NO_CLI = "1"; process.env.CREW_GH = "0"; delete process.env.CREW_PR_WATCH; process.env.CREW_WEBHOOK_LOOPBACK = "1";
@@ -29,7 +31,7 @@ const cardOf = (pr: string, kind: string) => open().find((c: any) => c.follow?.p
 const refresh = async () => { await call("/api/prs/refresh", {}); await new Promise((r) => setTimeout(r, 300)); };
 try {
   await call("/api/prs/watch", { url: `https://github.com/${gw}` });
-  const settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: ["qa-lead"], checks: [], labels: [] }, requiredReviewers: [], environments: [{ name: "staging", production: false, repos: [], detect: { kind: "check", name: "deploy/staging" } }], groups: [], shortForm: false, messageLang: null,
+  const settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: ["qa-lead"], checks: [], labels: [] }, requiredReviewers: [], environments: [{ name: "dev", production: false, repos: [], detect: { kind: "check", name: "deploy/dev" } }, { name: "staging", production: false, repos: [], detect: { kind: "check", name: "deploy/staging" } }], groups: [], shortForm: false, messageLang: null,
     follow: { enabled: false }, sending: { targets: [{ id: "qa", name: "#qa-requests", tool: "slack", use: "qa", url: `http://127.0.0.1:${hook.port}/services/T0/B0/x` }], contacts: [{ gh: "qa-lead", tool: "slack", id: "U04QALEAD" }, { gh: "sec-bob", tool: "email", id: "bob@example.com" }, { gh: "rel-dan", tool: "teams", id: "dan@example.com" }], slackTeam: "T0TEAM" } };
   let r = await call("/api/prs/settings", { settings }); ok(r.status === 200, "settings with a send target and contacts", JSON.stringify(r.body).slice(0, 200));
   ok(r.body.sending.targets[0].masked && !JSON.stringify(r.body).includes("/services/T0/B0/x") && !JSON.stringify((await call("/api/prs/sending")).body).includes("B0/x"), "the webhook address never reaches the page unmasked");
@@ -38,10 +40,19 @@ try {
   settings.follow.enabled = true; delete (settings.sending.targets[0] as any).url; (settings.sending.targets[0] as any).url = "https://hooks.slack.com/services/T0/B0/••••";
   r = await call("/api/prs/settings", { settings }); ok(r.status === 200 && W.state.hooks.qa?.includes(`127.0.0.1:${hook.port}`), "saving the masked address keeps the stored one");
   await refresh(); await until(() => open().length >= 3, 15000);
+  { const v = (await call("/api/prs")).body, rule = (id: string) => v.rows.find((x: any) => x.id === id)?.next.rule;
+    ok(rule(`${gw}#212`) === "evidence-asked" && rule(`${gw}#215`) === "re-review" && v.rows.find((x: any) => x.id === `${gw}#212`).follow.branch === "needs-evidence", "the list's next step is the follow-through's: 212 waits for the QA test, 215 asks the reviewers again (not \"fix\")", `${rule(`${gw}#212`)} ${rule(`${gw}#215`)}`);
+    ok(v.rows.find((x: any) => x.id === `${gw}#212`).next.kind === "test" && v.rows.find((x: any) => x.id === `${gw}#215`).next.kind === "nudge", "so they sit under the Test and Re-review tabs"); }
+  { const a0 = cardOf(`${gw}#216`, "approve"); ok([...(a0?.follow.groupsMissing ?? [])].sort().join() === "@northwind/release-approvers,@northwind/security", "216 first misses both teams", JSON.stringify(a0?.follow.groupsMissing));
+    p216.reviews!.push(relDan); await refresh(); await until(() => cardOf(`${gw}#216`, "approve")?.follow.groupsMissing.length === 1, 15000);
+    const a1 = cardOf(`${gw}#216`, "approve");
+    ok(a1?.id === a0?.id && a1.follow.history.some((x: any) => x.tw.includes("rel-dan") && x.tw.includes("approve ✓ → 卡裡只留 @northwind/security")), "rel-dan approves: the same card keeps only security, and its record says so", JSON.stringify(a1?.follow.history)); }
   const qa = cardOf(`${gw}#212`, "qa"), nudge = cardOf(`${gw}#215`, "nudge"), ap = cardOf(`${gw}#216`, "approve");
   ok(!!qa && !!nudge && !!ap && open().length === 3, "three cards: ask QA (212), ask the reviewers again (215), ask for approval (216)", JSON.stringify(open().map((c: any) => `${c.follow.pr}:${c.follow.kind}`)));
   ok(qa.follow.lead.en.includes('review-bot-a\'s comment: "Please attach a staging run that shows the 429 for the 21st request."') && qa.follow.recipients[0].who === "qa-lead" && qa.follow.recipients[0].via.en === "Slack DM", "the QA card quotes the reviewer and is for the evidence source, by Slack DM");
   ok(qa.follow.message.en.includes('POST /v1/orders (src/routes.ts:1)') && qa.follow.message.en.includes('-X POST "$STAGING_URL/v1/orders"') && qa.follow.message.en.includes(c212[1].sha.slice(0, 7)) && qa.follow.channel === "qa", "the request cites the route the diff adds, the head, and goes to the QA channel by default");
+  ok(qa.follow.message.en.includes("on staging") && !qa.follow.message.en.includes("$DEV_URL"), "the QA request names the environment the reviewer named (and that runs the head), not the first one set");
+  ok(nudge.follow.message.tw.includes(`→ ${c215[1].sha.slice(0, 7)}`) && nudge.follow.done.some((d: any) => d.tw === "上次 2 條意見都已修"), "the nudge lists each comment with the commit that answered it, and says both were fixed", nudge.follow.message.tw);
   ok(nudge.follow.recipients.map((x: any) => x.who).join() === "review-bot-a,review-bot-b" && nudge.follow.message.tw.includes("麻煩重驗") && nudge.follow.message.tw.includes("「需要 staging 上的實測證據」"), "the nudge card is for both reviewers, quoting their last comments", nudge.follow.message.tw);
   ok(ap.follow.groupsMissing.join() === "@northwind/security" && ap.follow.recipients[0].team && ap.follow.recipients[0].members.join() === "sec-alice,sec-bob,sec-carol" && ap.follow.done.some((d: any) => d.en.includes("@northwind/release-approvers (rel-dan)")), "the approve card: only the group the repository's rules still miss, its members read from GitHub");
   ok(ap.follow.message.tw.includes("最後一次 push") && ap.follow.message.en.includes("@northwind/security: 1 approval"), "its message names the missing group and the last-push rule");

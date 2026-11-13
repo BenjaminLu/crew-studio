@@ -464,7 +464,8 @@ export function createPrWatch(d: PrWatchDeps) {
         const mine = reviews.filter((x) => x.login.toLowerCase() === v.login.toLowerCase() && String(x.state).toUpperCase() !== "PENDING").sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
         const last = [...mine].reverse().find((x) => String(x.state).toUpperCase() === v.state) ?? mine.at(-1);
         const text = [last?.body ?? "", ...inline.filter((c) => last && c.review === last.id).map((c) => c.body)].join("\n");
-        return { login: v.login, state: v.state, at: v.at, url: last?.url ?? null, stale: v.stale, ...F.classifyNote(text) }; });
+        const fixedBy = commits.filter((c) => Date.parse(c.at) > Date.parse(v.at)).map((c) => c.sha.slice(0, 7)).slice(-3);
+        return { login: v.login, state: v.state, at: v.at, url: last?.url ?? null, stale: v.stale, ...F.classifyNote(text), ...(fixedBy.length ? { fixedBy } : {}) }; });
       const rules = base ? await rulesFor(repo, base) : R.mergeRules(null, null, { en: "the base branch is unknown", tw: "不知道 base branch" });
       let owners: { pattern: string; owners: string[] }[] | null = null, ownersUnreadable: { en: string; tw: string } | null = null; const teamMembers = new Map<string, string[] | null>();
       if (rules.readable) {
@@ -569,12 +570,21 @@ export function createPrWatch(d: PrWatchDeps) {
       const depsView = on.map((id) => { const inList = rowIds.get(id.toLowerCase()); const st = inList ? "open" : sn.depState[id] ?? Object.entries(sn.depState).find(([k]) => eq(k, id))?.[1] ?? "unread"; return { id, done: st === "merged", state: st }; });
       const ak = Object.keys(s.applied).find((k) => eq(k, r.id)), applied = ak ? s.applied[ak] : null;
       const drift = applied && R.normBlock(r.bodyBlock) !== R.normBlock(applied.block) ? { github: r.bodyBlock, studio: applied.block, githubDeps: r.githubDeps } : null;
-      const next = R.nextStep({ draft: r.draft, author: r.author, reviews: r.reviews, requiredReviewers: s.settings.requiredReviewers, deps: depsView,
-        envs: r.envs.filter((e) => !e.auto).map((e) => ({ name: e.name, on: !!e.on, production: e.production })), /* a repository's own environments are shown, never a step */ evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals, incomplete: r.partial });
+      const stepIn: R.StepInput = { draft: r.draft, author: r.author, reviews: r.reviews, requiredReviewers: s.settings.requiredReviewers, deps: depsView,
+        envs: r.envs.filter((e) => !e.auto).map((e) => ({ name: e.name, on: !!e.on, production: e.production })), /* a repository's own environments are shown, never a step */ evidence: r.evidence, evidenceSources: s.settings.evidence, approvals: r.approvals, incomplete: r.partial };
+      // the follow-through's reading of the reviewers decides between "fix" and "test" or "look again": the list, the
+      // detail and the Inbox card say the same thing
+      const next0 = R.nextStep(stepIn), ev = s.settings.evidence;
+      const sh = F.shepherd({ draft: r.draft, author: r.author, next: next0, ci: r.ci ?? null, evidence: r.evidence, evidenceSet: !!(ev.accounts.length + ev.checks.length + ev.labels.length), reviews: r.reviews, approvals: r.approvals,
+        notes: rowNotes(r), skipEvidence: !!s.follow?.skip?.[`${r.id}@${r.head}`.toLowerCase()] });
+      const next = sh.branch === "needs-evidence" || sh.branch === "evidence-covers-head" ? R.nextStep({ ...stepIn, follow: { branch: sh.branch, who: sh.branch === "needs-evidence" ? (ev.accounts.length ? ev.accounts : ["QA"]) : sh.stale ?? [], quote: sh.note?.quote ?? null } }) : next0;
       const gk = Object.keys(s.groups).find((k) => eq(k, r.id));
       const { facts: _f, ...rest } = r;
       const fo = Object.values(s.follow?.open ?? {}).find((o) => eq(o.pr, r.id) && !!o.card);
-      return { ...rest, project: projectOf(r.repo), group: gk ? s.groups[gk] : null, next, followCard: fo ? { card: fo.card, kind: fo.kind } : null,
+      // the row's card button only when the card asks for what the row's next step is (one next step per row)
+      const fits = fo && ({ qa: ["evidence-asked", "evidence"], nudge: ["re-review"], approve: ["approvals"], merge: ["ready"] } as Record<string, string[]>)[fo.kind]?.includes(next.rule) !== false;
+      return { ...rest, project: projectOf(r.repo), group: gk ? s.groups[gk] : null, next, followCard: fo && fits ? { card: fo.card, kind: fo.kind } : null,
+        follow: { branch: sh.branch, why: sh.why, quote: sh.note?.quote ?? null, by: sh.note?.login ?? null, stale: sh.stale ?? [] },
         deps: { on: depsView, source: record ? record.by : fromGithub ? "github" : proposed.length ? "proposal" : "none", proposed: record || fromGithub ? [] : proposed, applied: !!applied && !drift && sameIds(applied.on, on), drift },
         changed: sn.changed[r.id.toLowerCase()] ?? null };
     });
@@ -711,7 +721,7 @@ export function createPrWatch(d: PrWatchDeps) {
       if (x.run.def.id !== FOLLOW_WORKFLOW || f?.schema !== 1 || !R.splitId(String(f.pr)) || !(f.kind in KIND_LABEL)) throw new Error("The follow-through card is malformed");
       const r = viewRows(snap, state).find((v) => eq(v.id, f.pr)); if (!r) { delete state.follow.open[x.run.id]; write(stateFile, state); return { outcome: "done", note: `${f.pr} is no longer an open watched pull request` }; }
       const sh: F.Shepherd = f.kind === "push" ? { branch: "code-change", why: { en: "a push is about to happen", tw: "準備 push" } } : shepherdOf(r);
-      const p: any = followPayload(f.kind, r, sh, { quote: f.quote ?? null, voids: f.voids ?? null, who: f.who ?? [] }); p.history = [hist("card raised", "出卡", true)];
+      const p: any = followPayload(f.kind, r, sh, { quote: f.quote ?? null, by: f.by ?? null, tests: f.tests === true, voids: f.voids ?? null, who: f.who ?? [] }); p.history = [hist("card raised", "出卡", true)];
       const c = await e.card(x, "question", { title: p.heading.en, zhTitle: p.heading.tw, en: { why: p.lead.en, how: p.autoClose.en }, zh: { why: p.lead.tw, how: p.autoClose.tw }, body: p.message?.en ?? p.lead.en,
         options: p.opts.map((o: any) => ({ id: o.id, label: o.label.en, labelZh: o.label.tw, ...(o.keep ? { hold: true } : {}), ...(o.note ? { note: true, noteLabel: "Why", noteLabelZh: "理由" } : {}) })).concat([
           // how Studio closes the card when GitHub shows what it waits for (the follow-through layout does not offer it)
@@ -795,9 +805,15 @@ export function createPrWatch(d: PrWatchDeps) {
     const c = pick ? contactOf(pick) : null; return { who: label, team: true, members, pick, via: c ? TOOL_WORD[c.tool] : { en: "members from GitHub", tw: "成員從 GitHub 讀" }, last: state.follow.picks[label.toLowerCase()] ?? null }; };
   const channelFor = (kind: string) => (state.settings.sending.targets.find((t) => t.use === kind) ?? state.settings.sending.targets.find((t) => t.use === "any"))?.id ?? null;
   const OPT = (id: string, letter: string, en: string, tw: string, keep: boolean, pro: F.L | null = null, con: F.L | null = null, note = false) => ({ id, letter, label: { en, tw }, keep, pro, con, note });
+  /** where QA should test: the environment the reviewer named, else a pre-production environment that runs the head now,
+   *  else none (the request keeps a placeholder) */
+  const testEnv = (r: { envs: { name: string; on: boolean | null; production: boolean }[] }, quote: string | null) => {
+    const pre = r.envs.filter((e) => !e.production), q = String(quote ?? "").toLowerCase();
+    const named = pre.filter((e) => q && new RegExp(`(^|[^a-z0-9_-])${e.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9_-])`).test(q)).sort((a, b) => b.name.length - a.name.length)[0];
+    return named?.name ?? pre.find((e) => e.on === true)?.name ?? null; };
   /** a follow-through card's content for a row as it is now */
-  function followPayload(kind: FollowKind, r: ReturnType<typeof viewRows>[number], sh: F.Shepherd, extra: { quote?: string | null; voids?: number | null; who?: string[] } = {}) {
-    const pr: F.MsgPr = { id: r.id, url: r.url, title: r.title, head: r.head, env: state.settings.environments.find((e) => !e.production && R.envApplies(e, r.repo))?.name ?? null };
+  function followPayload(kind: FollowKind, r: ReturnType<typeof viewRows>[number], sh: F.Shepherd, extra: { quote?: string | null; by?: string | null; tests?: boolean; voids?: number | null; who?: string[] } = {}) {
+    const pr: F.MsgPr = { id: r.id, url: r.url, title: r.title, head: r.head, env: testEnv(r, sh.note?.quote ?? null) };
     const ciOk = r.ci === "SUCCESS", ev = r.evidence;
     const done: F.L[] = [...(ciOk ? [{ en: "CI passes", tw: "CI 通過" }] : []), ...(ev && ev.verdict !== "fail" && ev.covers === "head" ? [{ en: `evidence: ${ev.verdict} on the current head (${ev.by})`, tw: `證據：${ev.verdict === "pass" ? "通過" : ev.verdict} · 目前 head（${ev.by}）` }] : []),
       ...r.reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => ({ en: `${v.login} approved`, tw: `${v.login} approve` }))];
@@ -808,12 +824,13 @@ export function createPrWatch(d: PrWatchDeps) {
         done, missing: [{ en: `QA evidence covering the current head ${r.head.slice(0, 7)}`, tw: `QA 證據，要覆蓋目前 head ${r.head.slice(0, 7)}` }], msgHead: { en: "Test request", tw: "測試請求" }, recipients: state.settings.evidence.accounts.map(person), message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it to QA; waiting for the evidence", "我已轉給 QA，等證據", true, { en: "the card closes when the evidence arrives", tw: "證據貼回來卡就自己關" }),
           OPT("skip", "B", "No test this time", "這次不做實測", false, { en: "reply to the reviewer with the reason", tw: "回 reviewer 說明理由" }, { en: "needs a reason; the reviewer may not accept it", tw: "要寫理由；reviewer 可能不收" }, true),
-          OPT("code", "C", "It is a code problem after all", "其實是代碼問題，回 Worker", false, { en: "the pull request goes back to its author for a fix", tw: "回作者修正，開下一個 round" })],
+          OPT("code", "C", "It is a code problem: back to the author for a fix", "其實是代碼問題，回作者修正", false, { en: "the pull request goes back to its author for a fix", tw: "回作者修正，開下一個 round" })],
         autoClose: { en: "Evidence on the pull request that covers the current head closes this card and moves on to asking the reviewers again.", tw: "證據貼回 PR 而且覆蓋目前 head → 卡自動關，進「請 reviewer 重驗」" } }; }
     if (kind === "nudge") { const who = sh.stale ?? [], m = F.nudgeMessage(pr, who, ev!, rowNotes(r));
       return { ...base, heading: { en: `The evidence is in: ask ${who.length === 1 ? who[0] : `the ${who.length} reviewers`} to look again on the current head`, tw: `證據齊了，請 ${who.length === 1 ? who[0] : `${who.length} 個 reviewer`} 在目前 head 重驗` },
         lead: { en: `${ev!.by}'s report (${ev!.verdict}) covers the current head ${r.head.slice(0, 7)}; ${who.join(", ")} gave their verdict on an older head. The card comes as soon as the evidence does.`, tw: `${ev!.by} 的報告（結論：${ev!.verdict === "pass" ? "通過" : ev!.verdict}）覆蓋目前 head ${r.head.slice(0, 7)}；${who.join("、")} 的意見還停在舊 head。證據一齊就出卡，不等。` },
-        done, missing: who.map((w) => ({ en: `${w}'s result on the current head`, tw: `${w} 在目前 head 的結果` })), msgHead: { en: "Ask to review again", tw: "請重驗" }, recipients: who.map(person), message: m.msg, short: m.short,
+        done: [...done, ...(() => { const ns = rowNotes(r).filter((n) => who.some((w) => eq(w, n.login)) && n.quote); return ns.length && ns.every((n) => n.fixedBy?.length) ? [{ en: `the ${ns.length === 1 ? "last comment was" : `${ns.length} last comments were`} answered by new commits`, tw: `上次${ns.length === 1 ? "的意見" : ` ${ns.length} 條意見`}都已修` }] : []; })()],
+        missing: who.map((w) => ({ en: `${w}'s result on the current head`, tw: `${w} 在目前 head 的結果` })), msgHead: { en: "Ask to review again", tw: "請重驗" }, recipients: who.map(person), message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the reviews", "我已發出，等重驗", true, { en: "the card closes when they review the current head", tw: "兩人在目前 head 給結果卡就關" }),
           OPT("more", "B", "The evidence is not enough: ask QA again", "證據還不夠，再請 QA 補", false, { en: "back to asking QA", tw: "回「請 QA 測試」" }),
           OPT("later", "C", "Not now", "先不催", true, { en: "the card stays", tw: "卡留著" })],
@@ -824,7 +841,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const m = F.approveMessage(pr, miss, done, a.lastPush);
       return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: `還缺 ${miss.map((x) => (x as any).whoTw ?? x.who).join("、")} 的 approve` },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
-        done: [...done, ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))], missing: miss.map((x) => ({ en: `✕ ${x.who}`, tw: `✕ ${(x as any).whoTw ?? x.who}` })), groupsMissing: miss.map((x) => x.who),
+        done: [...done.filter((d) => !(a.groups ?? []).some((g) => g.ok && g.by.some((l) => d.en === `${l} approved`))), ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))], missing: miss.map((x) => ({ en: `✕ ${x.who}`, tw: `✕ ${(x as any).whoTw ?? x.who}` })), groupsMissing: miss.map((x) => x.who),
         msgHead: { en: "Ask for approval", tw: "請 approve" }, recipients: recips, message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the approval", "我已發出，等 approve", true, { en: "an approval updates or closes the card", tw: "有人 approve 卡就更新或關掉" }),
           OPT("switch", "B", "Someone else", "換人", true, { en: "pick another member above and DM them", tw: "在上面選別的成員再 DM" }),
@@ -835,8 +852,9 @@ export function createPrWatch(d: PrWatchDeps) {
       opts: [OPT("merging", "A", "I will merge it on GitHub", "我去 GitHub 合併", true, { en: "the card closes when it merges; the row moves to Merged", tw: "合併後卡自動關，PR 移到「已合併未上線」" }), OPT("hold", "B", "Not now", "先不合併", false, { en: "no merge card again for this head", tw: "這個 head 不再出合併卡" })],
       autoClose: { en: "Merged (or no longer mergeable) closes this card.", tw: "合併了（或不再可合併）→ 卡自動關" } };
     if (kind === "push") return { ...base, heading: { en: `This push voids ${extra.voids ?? "the"} approval${extra.voids === 1 ? "" : "s"}: push?`, tw: `這次 push 會讓 ${extra.voids ?? "已有的"} 個 approve 失效，要推嗎？` },
-      lead: { en: `${extra.quote ? `"${extra.quote}". ` : ""}The fix is ready, but the branch rules dismiss approvals on a push: ${extra.who?.join(", ") || "the approvers"} would have to approve again.`, tw: `${extra.quote ? `「${extra.quote}」。` : ""}修改已經好了，但分支規則會讓舊 approve 失效：推了之後 ${extra.who?.join("、") || "approver"} 要重新 approve。` },
-      done: [{ en: "the change is ready", tw: "修改已在本機" }], missing: [{ en: "your decision", tw: "你決定要不要推" }], recipients: [], message: null, short: null,
+      lead: { en: `${extra.quote ? `${extra.by ? `${extra.by} left a comment` : "A reviewer left a comment"}: “${extra.quote.replace(/[.。]+$/, "")}”. ` : ""}The fix is ready, but the branch rules dismiss approvals on a push: ${extra.who?.join(", ") || "the approvers"} would have to approve again.`,
+        tw: `${extra.quote ? `${extra.by ?? "reviewer"} 留了一條意見：「${extra.quote.replace(/[.。]+$/, "")}」。` : ""}修改已經好了，但分支規則會讓舊 approve 失效：推了之後 ${extra.who?.join("、") || "approver"} 要重新 approve。` },
+      done: [extra.tests ? { en: "the change is ready; its tests pass", tw: "修改已在本機，測試通過" } : { en: "the change is ready", tw: "修改已在本機" }], missing: [{ en: "your decision", tw: "你決定要不要推" }], recipients: [], message: null, short: null,
       opts: [OPT("push", "A", "Push, then ask for the approvals again", "推，之後重新請 approve", false, { en: "the reviewer's comment is fixed", tw: "修好 reviewer 的意見" }, { en: `${extra.who?.join(", ") || "the approvers"} approve again`, tw: `${extra.who?.join("、") || "approver"} 要再 approve 一次` }),
         OPT("no-push", "B", "Do not push; reply that it stays as it is", "先不推，回覆 reviewer 這次不改", false, { en: "the approvals stay", tw: "已有 approve 不受影響" }, { en: "needs a reason", tw: "要寫理由" }, true),
         OPT("follow-up", "C", "Merge first, fix in a follow-up pull request", "合併後另開 PR 處理", false, { en: "this pull request merges first", tw: "這個 PR 先合" }, { en: "the reviewer may still block", tw: "reviewer 可能仍擋" })],
@@ -905,7 +923,8 @@ export function createPrWatch(d: PrWatchDeps) {
       case "copy": patchCard(o, (q) => q.history.push(hist("copied the message", "複製了訊息"))); break;
       case "dm": { const login = String(b?.login ?? ""), ok = (p.recipients ?? []).some((x: any) => eq(x.pick, login)); if (!ok) throw new Error("DM someone this card is for");
         const cc = contactOf(login), link = F.dmLink(cc, String(b?.text ?? "").slice(0, 8000), `${p.pr}: ${p.title}`, state.settings.sending.slackTeam);
-        patchCard(o, (q) => q.history.push(link ? hist(`copied and opened a DM with ${login} (${cc!.tool})`, `複製並 DM ${login}（${cc!.tool}）`) : hist(`copied the message for ${login} (no contact set: copy only)`, `複製訊息給 ${login}（沒有聯絡人：只複製）`)));
+        patchCard(o, (q) => { for (const t of q.recipients ?? []) if (t.team && eq(t.pick, login)) t.last = login; // "last time: …" on the card
+          q.history.push(link ? hist(`copied and opened a DM with ${login} (${cc!.tool})`, `複製並 DM ${login}（${cc!.tool}）`) : hist(`copied the message for ${login} (no contact set: copy only)`, `複製訊息給 ${login}（沒有聯絡人：只複製）`)); });
         out = { ok: true, href: link?.href ?? null, prefilled: link?.prefilled ?? false, tool: cc?.tool ?? null }; break; }
       case "send": { const t = await sendTo(String(b?.target ?? ""), String(b?.text ?? "")); patchCard(o, (q) => q.history.push(hist(`sent to ${t.name}`, `已發到 ${t.name}`))); out = { ok: true, target: t.name }; break; }
       case "chase": patchCard(o, (q) => { q.chased = (q.chased ?? 0) + 1; q.history.push(hist("nudged again with the short version", "再催一次：跟進版")); }); break;
@@ -930,7 +949,7 @@ export function createPrWatch(d: PrWatchDeps) {
   async function pushCheck(b: any) {
     const id = String(b?.pr ?? ""), r = viewRows(snap, state).find((x) => eq(x.id, id)); if (!r) throw new Error("Choose a pull request in the list");
     const v = F.pushVoids(r.approvals, r.reviews); if (v.voids === 0) return { voids: 0, card: false };
-    const run = await startFollow(r.id, "push", r.head, null, { voids: v.voids, who: v.who, quote: typeof b?.quote === "string" ? b.quote.slice(0, 300) : null });
+    const run = await startFollow(r.id, "push", r.head, null, { voids: v.voids, who: v.who, quote: typeof b?.quote === "string" ? b.quote.slice(0, 300) : null, by: typeof b?.by === "string" && R.NAME.test(b.by) ? b.by.slice(0, 60) : null, tests: b?.tests === true });
     write(stateFile, state); return { voids: v.voids, who: v.who, card: true, task: run.id };
   }
 
