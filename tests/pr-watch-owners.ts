@@ -13,6 +13,7 @@ import { prWatchGitHub, fixtureSettings } from "./lib/pr-watch-github";
 const { ok, end } = suite("pr-watch-owners");
 const gh = prWatchGitHub(), ca = "northwind/checkout-api", id18 = `${ca}#18`, p18 = gh.data.find(ca, 18)!, head = gh.data.head(p18);
 gh.data.rules[ca].rulesets[0].parameters.required_approving_review_count = 5;
+gh.data.rules[ca].codeowners += "/src/settings.ts @skipper\n"; // a file only the author owns
 process.env.CREW_GITHUB_API = gh.origin; process.env.CREW_GITHUB_TOKEN = "fixture-token"; process.env.CREW_GH_NO_CLI = "1"; process.env.CREW_GH = "0"; delete process.env.CREW_PR_WATCH;
 const H = await harness([bundledText(`workflows/v2/${APPLY_WORKFLOW}.wf.yaml`)!, bundledText(`workflows/v2/${FOLLOW_WORKFLOW}.wf.yaml`)!]), E = H.engine;
 const poller = new GitHubPoller(), W = createPrWatch({ dataDir: H.data, poller }); W.install(E);
@@ -29,6 +30,12 @@ try {
   await call("/api/prs/settings", { settings: { ...fixtureSettings, follow: { enabled: true } } });
   await call("/api/prs/refresh", {}); await until(() => !!card(), 15000);
   ok(card()?.follow.countGap === 4 && card().follow.groupsMissing.includes("@dana") && card().follow.groupsMissing.includes("@northwind/release") && !card().follow.groupsMissing.some((g: string) => /approval/.test(g)), "first: four more approvals (bo's older approval counts: these rules keep stale ones), @dana and the release team named apart from the count", JSON.stringify(card()?.follow));
+  { const m = card().follow.missing.find((x: any) => x.en.includes("@skipper"));
+    ok(m?.en === "✕ @skipper (only the author owns these files: GitHub needs another owner or an admin)" && m?.tw === "✕ @skipper（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）", "a group only the author owns says so, in both languages", JSON.stringify(m)); }
+  // a card raised before the count was followed (no countGap): the next refresh takes the count silently
+  { const c = card(), n = c.follow.history.length, gap = c.follow.countGap; delete c.follow.countGap; E.cards.save(c);
+    await call("/api/prs/refresh", {}); await until(() => card()?.follow.countGap !== undefined, 15000);
+    ok(card().follow.countGap === gap && card().follow.history.length === n, "an older card gets its count on the next refresh without a line in its record"); }
   // a count drop alone: someone outside every group approves
   approve("zed", 1); await step(1); let h = last();
   ok(/^zed approved ✓; the card now asks for: .*3 more approvals/.test(h.en) && h.tw.startsWith("zed approve ✓；卡裡只留：") && h.tw.includes("還要 3 個 approve") && !/no longer required|不再需要/.test(h.en + h.tw) && clean(h), "a smaller count: who approved and what is left, never \"no longer required\"", JSON.stringify(h));
@@ -40,6 +47,9 @@ try {
   await step(3); h = last(); const r = await row();
   ok(!r.approvals.missing.some((m: any) => m.kind === "owner" && m.who.includes("@dana")) && !(r.approvals.groups ?? []).some((g: any) => g.who.includes("@dana")), "an owner GitHub reports as unknown is left out, as GitHub does", JSON.stringify(r.approvals));
   ok(h.en.startsWith("kim approved ✓; @dana is no longer required (GitHub ignores an owner it reports as unknown") && h.tw.startsWith("kim approve ✓；@dana 不再需要（GitHub 會略過") && h.tw.includes("還要 1 個 approve") && !/@dana[^;]*approved/.test(h.en) && clean(h), "kim's approval and @dana no longer required, each said as it is", JSON.stringify(h));
+  // the card grows: the rules now dismiss approvals given before the last push, so bo's older approval stops counting
+  gh.data.rules[ca].rulesets[0].parameters.dismiss_stale_reviews_on_push = true; await step(4); h = last();
+  ok(h.en.startsWith("bo's approval no longer counts (the rules now dismiss approvals given before the last push); the card now asks for:") && h.tw.startsWith("bo 的 approve 不再算數（分支規則改為舊 approve 不算）；卡片現在要：") && clean(h), "a card that grows says why, and does not read as shrinking", JSON.stringify(h));
   { const keys = E.cards.list({}).filter((c: any) => c.workflow === FOLLOW_WORKFLOW && c.status === "open").map((c: any) => `${c.follow.pr}:${c.follow.kind}`); ok(new Set(keys).size === keys.length, "never two open cards of one kind for one pull request", JSON.stringify(keys)); }
   ok(gh.calls.some((c) => c.path.startsWith(`/repos/${ca}/codeowners/errors`)) && !gh.unknown.length, "codeowners/errors is read; every request was one the fixture knows", JSON.stringify(gh.unknown));
 } catch (e: any) { ok(false, "the suite ran to its end", String(e?.stack || e)); }

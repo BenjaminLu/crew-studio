@@ -314,6 +314,8 @@ export type Approvals = { readable: boolean; required: number; counted: number; 
     /** a code-owner group: the changed files it owns (at most 20) */ files?: string[];
     /** a code-owner group no one but the author can approve (the author's own approval never counts): GitHub cannot be
      *  satisfied by the people here; another owner, or an admin, has to act */ authorOnly?: boolean }[];
+  /** the approvals the rules count (the same ones the row counts): what a card and a push check read */
+  approvers?: string[];
   /** with "approval after the last push": the logins treated as the pusher (inferred: GitHub does not expose who pushed) */
   inferredPusher?: string[] };
 /**
@@ -375,7 +377,7 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   }
   // UNKNOWN: GitHub is still computing the merge state (just after a push); with the protection unread that is not ready either
   const blocked = !!rules.unread?.length && !missing.length && (o.github?.mergeState === "BLOCKED" || o.github?.mergeState === "UNKNOWN");
-  return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources, groups,
+  return { readable: true, required: rules.required, counted: valid.length, approvers: valid.map((v) => v.login), codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources, groups,
     ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}), ...(blocked ? { blocked } : {}) };
 }
 export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : []);

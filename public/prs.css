@@ -121,3 +121,5 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 [data-prs-flow]>.card,.pw-followcard,.pw-followcard .icard{min-width:0;max-width:100%}
 .pw-followcard .pw-check{flex-wrap:wrap}.pw-followcard .pw-check .x-grow{flex:1 0 0}.pw-followcard .ba{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))}
 .pw-followcard .actions{flex-wrap:wrap}.pw-followcard .opts{grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr))}
+/* the next-step cell never runs under the next column: its words and its card button wrap inside it */
+.pw-next b{overflow-wrap:anywhere}.pw-next .pw-followcta{max-width:100%;width:auto!important;white-space:normal!important}.pw-row>[role="cell"]{min-width:0}

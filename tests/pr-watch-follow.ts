@@ -91,6 +91,14 @@ const { ok, end } = suite("pr-watch-follow");
   const m = F.approveMessage({ id: "o/r#1", url: "u", title: "t", head: "abcdef1", env: null }, [{ who: "1 more approval", whoTw: "還要 1 個 approve", files: [], count: true }], [], false);
   ok(/- 1 more approval$/m.test(m.msg.en) && !m.msg.en.includes("1 more approval: 1 approval") && m.msg.tw.includes("- 還要 1 個 approve"), "a missing count reads once, in both languages", m.msg.en);
 }
+// ---------- the approvals that count: the pusher's never, wherever they are read ----------
+{
+  const R4 = await import("../src/pr-watch-rules");
+  const rules = R4.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true } }], "none", null, "o");
+  const rv = (login: string): ReviewView => ({ login, state: "APPROVED", stale: false, at: "2026-11-01T00:00:00Z", author: false });
+  const a = R4.approvalsOf(rules, [rv("lee"), rv("kim")], { files: [], codeowners: null, teamMembers: new Map(), author: "dev", headCommit: { author: "lee", committer: "lee" } });
+  ok(a.approvers?.join() === "kim" && a.counted === 1 && F.pushVoids(a, [rv("lee"), rv("kim")]).who.join() === "kim", "approval after the last push: the head's pusher (lee) is never counted, by the row, the card or a push", JSON.stringify(a));
+}
 // ---------- a rule as one plain sentence ----------
 {
   const R3 = await import("../src/pr-watch-rules"), O = await import("opencc-js"), cn = O.Converter({ from: "tw", to: "cn" });

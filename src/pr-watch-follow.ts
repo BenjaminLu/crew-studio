@@ -82,7 +82,8 @@ export function shepherd(p: ShepherdInput): Shepherd {
 export function pushVoids(a: Approvals, reviews: ReviewView[]): { voids: number | null; who: string[] } {
   if (!a.readable) return { voids: null, who: [] };
   if (!a.dismissStale && !a.lastPush) return { voids: 0, who: [] };
-  const who = reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => v.login);
+  // the approvals the rules count now (never the pusher's or the author's): those a push would void
+  const who = a.approvers ?? reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => v.login);
   return { voids: who.length, who };
 }
 

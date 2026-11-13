@@ -154,6 +154,8 @@ try {
   ok(/^On hold: not all reviews or comments read/.test(held) && !/Ready/.test(held), 'a row held because its reviews could not be read says on hold, never ready', held);
   gh.knobs.reviewsFail = null; await p.click('[data-prs-refresh]');
   await p.waitForFunction(() => document.querySelector('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]')?.dataset.prsNext === 'failed', null, { timeout: 20000 });
+  { const spill = await p.evaluate(() => [...document.querySelectorAll('[data-prs-row] .pw-next')].flatMap((c) => { const r = { right: Math.min(c.getBoundingClientRect().right, c.nextElementSibling.getBoundingClientRect().left) }; return [c, ...c.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > r.right + 1 || e.scrollWidth > e.clientWidth + 1).map((e) => `${c.closest('[data-prs-row]').dataset.prsRow}: ${e.textContent.slice(0, 30)}`); }));
+    ok(!spill.length, 'at 1440 the next step and its card button stay inside their column (never under Missing)', JSON.stringify(spill)); }
   const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
   ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all twelve columns fit without scrolling', JSON.stringify(fit));
   ok(await p.locator('[data-prs-tab][role="tab"], [data-prs-tab][aria-selected]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');

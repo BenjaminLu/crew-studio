@@ -16,6 +16,7 @@ import { followFixture } from "./lib/pr-follow-github";
 
 const { ok, end } = suite("pr-watch-follow-flow");
 const { data, gw, T, c212, c215, c216 } = followFixture();
+(c216[1] as any).committer = "lee"; data.find(gw, 216)!.reviews!.push({ user: "lee", state: "APPROVED", commit: c216[1].sha, at: T(2.2) } as any); // the head's committer approves: never counted
 const gh = prWatchGitHub(data);
 // 216 starts with neither team: release-approvers comes in later, and the card shrinks to what is still missing
 const p216 = gh.data.find(gw, 216)!, relDan = p216.reviews!.find((x: any) => x.user === "rel-dan")!; p216.reviews = p216.reviews!.filter((x: any) => x !== relDan);
@@ -55,6 +56,7 @@ try {
   ok(nudge.follow.message.tw.includes(`→ ${c215[1].sha.slice(0, 7)}`) && nudge.follow.done.some((d: any) => d.tw === "上次 2 條意見都已修"), "the nudge lists each comment with the commit that answered it, and says both were fixed", nudge.follow.message.tw);
   ok(nudge.follow.recipients.map((x: any) => x.who).join() === "review-bot-a,review-bot-b" && nudge.follow.message.tw.includes("麻煩重驗") && nudge.follow.message.tw.includes("「需要 staging 上的實測證據」"), "the nudge card is for both reviewers, quoting their last comments", nudge.follow.message.tw);
   ok(ap.follow.groupsMissing.join() === "@northwind/security" && ap.follow.recipients[0].team && ap.follow.recipients[0].members.join() === "sec-alice,sec-bob,sec-carol" && ap.follow.done.some((d: any) => d.en.includes("@northwind/release-approvers (rel-dan)")), "the approve card: only the group the repository's rules still miss, its members read from GitHub");
+  ok(!ap.follow.done.some((d: any) => d.en.startsWith("lee ")) && !(ap.follow.approvedBy ?? []).includes("lee") && !ap.follow.message.en.includes("lee"), "the head's committer (lee) approved: the card never counts it, as the row does not", JSON.stringify({ done: ap.follow.done, by: ap.follow.approvedBy }));
   ok(ap.follow.message.tw.includes("最後一次 push") && ap.follow.message.en.includes("@northwind/security: 1 approval"), "its message names the missing group and the last-push rule");
   // the captain's actions on a card
   let a = await call("/api/prs/follow/pick", { card: ap.id, who: "@northwind/security", member: "sec-bob" });

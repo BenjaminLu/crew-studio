@@ -822,7 +822,8 @@ export function createPrWatch(d: PrWatchDeps) {
     const pr: F.MsgPr = { id: r.id, url: r.url, title: r.title, head: r.head, env: testEnv(r, sh.note?.quote ?? null) };
     const ciOk = r.ci === "SUCCESS", ev = r.evidence;
     const done: F.L[] = [...(ciOk ? [{ en: "CI passes", tw: "CI 通過" }] : []), ...(ev && ev.verdict !== "fail" && ev.covers === "head" ? [{ en: `evidence: ${ev.verdict} on the current head (${ev.by})`, tw: `證據：${VERDICT_TW[ev.verdict] ?? ev.verdict} · 目前 head（${ev.by}）` }] : []),
-      ...r.reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => ({ en: `${v.login} approved`, tw: `${v.login} approve` }))];
+      // the approvals the rules count (the row's own list: not the author's, not the pusher's)
+      ...(r.approvals.approvers ?? r.reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => v.login)).map((l) => ({ en: `${l} approved`, tw: `${l} approve` }))];
     const note = sh.note ?? null, q = note?.quote ? { en: `${note.login}'s comment: "${F.unq(note.quote)}". `, tw: `${note.login} 的意見是「${F.unq(note.quote)}」。` } : { en: "", tw: "" };
     const base = { schema: 1, kind, kindLabel: KIND_LABEL[kind], pr: r.id, repo: r.repo, url: r.url, title: r.title, head: r.head, channel: channelFor(kind), snoozeUntil: null as string | null, chased: 0 };
     if (kind === "qa") { const m = F.qaMessage(pr, r.routes ?? [], note);
@@ -831,7 +832,7 @@ export function createPrWatch(d: PrWatchDeps) {
         opts: [OPT("sent", "A", "I sent it to QA; waiting for the evidence", "我已轉給 QA，等證據", true, { en: "the card closes when the evidence arrives", tw: "證據貼回來卡就自己關" }),
           OPT("skip", "B", "No test this time", "這次不做實測", false, { en: "reply to the reviewer with the reason", tw: "回 reviewer 說明理由" }, { en: "needs a reason; the reviewer may not accept it", tw: "要寫理由；reviewer 可能不收" }, true),
           OPT("code", "C", "It is a code problem: back to the author for a fix", "其實是代碼問題，回作者修正", false, { en: "the pull request goes back to its author for a fix", tw: "回作者修正，開下一個 round" })],
-        autoClose: { en: "Evidence on the pull request that covers the current head closes this card and moves on to asking the reviewers again.", tw: "證據貼回 PR 而且覆蓋目前 head → 卡自動關，進「請 reviewer 重驗」" } }; }
+        autoClose: { en: "Evidence on the pull request that covers the current head closes this card and moves on to asking the reviewers again.", tw: "證據貼回 PR 而且覆蓋目前 head，卡就自動關，接著「請 reviewer 重驗」" } }; }
     if (kind === "nudge") { const who = sh.stale ?? [], m = F.nudgeMessage(pr, who, ev!, rowNotes(r));
       return { ...base, heading: { en: `The evidence is in: ask ${who.length === 1 ? who[0] : `the ${who.length} reviewers`} to look again on the current head`, tw: `證據齊了，請 ${who.length === 1 ? who[0] : `${who.length} 個 reviewer`} 在目前 head 重驗` },
         lead: (() => { const older = r.reviews.some((v) => v.stale && who.some((w) => eq(w, v.login)));
@@ -842,7 +843,7 @@ export function createPrWatch(d: PrWatchDeps) {
         opts: [OPT("sent", "A", "I sent it; waiting for the reviews", "我已發出，等重驗", true, { en: "the card closes when they review the current head", tw: "兩人在目前 head 給結果卡就關" }),
           OPT("more", "B", "The evidence is not enough: ask QA again", "證據還不夠，再請 QA 補", false, { en: "back to asking QA", tw: "回「請 QA 測試」" }),
           OPT("later", "C", "Not now", "先不催", true, { en: "the card stays", tw: "卡留著" })],
-        autoClose: { en: "Every reviewer giving a verdict on the current head closes this card; a change request goes back to the follow-through.", tw: "兩人都在目前 head 給出 review → 卡自動關；有 change request 就回 PR 跟進分岔" } }; }
+        autoClose: { en: "Every reviewer giving a verdict on the current head closes this card; a change request goes back to the follow-through.", tw: "reviewer 都在目前 head 給出 review，卡就自動關；有 change request 就回到 PR 跟進" } }; }
     if (kind === "approve") { const a = r.approvals, groups = (a.groups ?? []).filter((g) => !g.ok), count = a.missing.find((m) => m.kind === "count") as { n: number } | undefined;
       // the author is never asked (their own approval does not count); a team owner is asked through its members
       const recips = groups.flatMap((g) => g.kind === "team" ? [teamPerson(g.who, (r.teams ?? {})[g.who] ?? [])] : g.who.split(" | ").filter((o) => !eq(o.replace(/^@/, ""), r.author)).map((o) => o.startsWith("@") && o.includes("/") ? teamPerson(o, ((r.teams ?? {})[o] ?? []).filter((m) => !eq(m, r.author))) : person(o.replace(/^@/, ""))));
@@ -854,16 +855,16 @@ export function createPrWatch(d: PrWatchDeps) {
       return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: [named.length ? `還缺 ${named.map((x) => x.who).join("、")} 的 approve` : "", cnt ? cnt.whoTw : ""].filter(Boolean).join("，") },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
         done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: named.map((x) => x.who), countGap: count?.n ?? 0,
-        approvedBy: r.reviews.filter((v) => v.state === "APPROVED" && !v.author && (!v.stale || (!a.dismissStale && !a.lastPush))).map((v) => v.login),
+        approvedBy: [...(a.approvers ?? [])],
         msgHead: { en: "Ask for approval", tw: "請 approve" }, recipients: recips, message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the approval", "我已發出，等 approve", true, { en: "an approval updates or closes the card", tw: "有人 approve 卡就更新或關掉" }),
           OPT("switch", "B", "Someone else", "換人", true, { en: "pick another member above and DM them", tw: "在上面選別的成員再 DM" }),
           OPT("hold", "C", "Not merging yet; keep the card", "先不合併，卡留著", true)],
-        autoClose: { en: "All of the branch rules met closes this card and raises the merge card; partly met, the card keeps only the groups still missing.", tw: "分支規則全部滿足 → 卡自動關，出合併卡；只滿足一部分，卡只留還缺的組" } }; }
+        autoClose: { en: "All of the branch rules met closes this card and raises the merge card; partly met, the card keeps only the groups still missing.", tw: "分支規則全部滿足，卡就自動關並出合併卡；只滿足一部分，卡只留還缺的組" } }; }
     if (kind === "merge") return { ...base, heading: { en: `${short(r)} can merge`, tw: `${short(r)} 可以合併了` }, lead: { en: `${sh.why.en}. Studio does not merge a pull request it did not open: merge it on GitHub.`, tw: `${sh.why.tw}。Studio 不會合併不是它開的 PR：請在 GitHub 上合併。` },
       done, missing: [{ en: "your merge", tw: "你的合併" }], recipients: [], message: null, short: null,
       opts: [OPT("merging", "A", "I will merge it on GitHub", "我去 GitHub 合併", true, { en: "the card closes when it merges; the row moves to Merged", tw: "合併後卡自動關，PR 移到「已合併未上線」" }), OPT("hold", "B", "Not now", "先不合併", false, { en: "no merge card again for this head", tw: "這個 head 不再出合併卡" })],
-      autoClose: { en: "Merged (or no longer mergeable) closes this card.", tw: "合併了（或不再可合併）→ 卡自動關" } };
+      autoClose: { en: "Merged (or no longer mergeable) closes this card.", tw: "合併了（或不再可合併），卡就自動關" } };
     if (kind === "push") return { ...base, heading: { en: `This push voids ${extra.voids ?? "the"} approval${extra.voids === 1 ? "" : "s"}: push?`, tw: `這次 push 會讓 ${extra.voids ?? "已有的"} 個 approve 失效，要推嗎？` },
       lead: { en: `${extra.quote ? `${extra.by ? `${extra.by} left a comment` : "A reviewer left a comment"}: “${extra.quote.replace(/[.。]+$/, "")}”. ` : ""}The fix is ready, but the branch rules dismiss approvals on a push: ${extra.who?.join(", ") || "the approvers"} would have to approve again.`,
         tw: `${extra.quote ? `${extra.by ?? "reviewer"} 留了一條意見：「${extra.quote.replace(/[.。]+$/, "")}」。` : ""}修改已經好了，但分支規則會讓舊 approve 失效：推了之後 ${extra.who?.join("、") || "approver"} 要重新 approve。` },
@@ -879,7 +880,7 @@ export function createPrWatch(d: PrWatchDeps) {
       done, missing: [{ en: "your call", tw: "你的判斷" }], recipients: [], message: null, short: null, note: note ? { login: note.login, at: note.at } : null,
       opts: note ? [OPT("code-change", "A", "A code change", "要改代碼", false), OPT("needs-evidence", "B", "Evidence from a test", "要外部證據", false), OPT("non-blocking", "C", "Nothing that blocks the merge", "不擋合併", false)]
         : [OPT("hold", "A", "I will check the rules on GitHub", "我去 GitHub 看規則", false, { en: "no card again for this head", tw: "這個 head 不再出卡" })],
-      autoClose: { en: "A new review or a change on GitHub closes this card.", tw: "GitHub 上有新 review 或改動 → 卡自動關" } };
+      autoClose: { en: "A new review or a change on GitHub closes this card.", tw: "GitHub 上有新 review 或改動，卡就自動關" } };
   }
   const short = (r: { id: string }) => r.id.split("/")[1];
   /** an open entry's card: by its id, else (the node is still raising it, its id not written yet) by its run */
@@ -940,6 +941,8 @@ export function createPrWatch(d: PrWatchDeps) {
           // someone's approval, never a group that "left"
           const was: string[] = (p.groupsMissing ?? []).filter((g: string) => !/more approvals?$/.test(g)), now: string[] = fresh.groupsMissing;
           const gone = was.filter((g) => !now.includes(g)), added = now.some((g) => !was.includes(g)), gap0 = Number(p.countGap ?? 0), gap1 = Number(fresh.countGap ?? 0);
+          // a card raised before the count was followed: take this refresh's count as where it starts, without a line
+          if (p.countGap === undefined) { Object.assign(p, { groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy }); return; }
           if (!gone.length && !added && gap0 === gap1) return;
           const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g) => !ok.some((x) => x.who === g));
           const newApprovers = (fresh.approvedBy ?? []).filter((l: string) => !(p.approvedBy ?? []).some((x: string) => eq(x, l)) && !ok.some((g) => g.by.some((b) => eq(b, l))));
@@ -949,8 +952,14 @@ export function createPrWatch(d: PrWatchDeps) {
           if (dropped.length) { en.push(`${dropped.join(", ")} is no longer required (GitHub ignores an owner it reports as unknown, or the branch rules changed)`); tw.push(`${dropped.join("、")} 不再需要（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）`); }
           // (a smaller gap is in what the card still asks for, below; a gap that closes is said here)
           if (gap0 && !gap1) { en.push("the approval count is met"); tw.push("approve 人數已夠"); }
+          // the card grows: an approval no longer counts (new commits, or the rules now dismiss stale approvals), or the rules
+          // ask for a new group; said with its cause
+          const grows = added || gap1 > gap0, lost = (p.approvedBy ?? []).filter((l: string) => !(fresh.approvedBy ?? []).some((x: string) => eq(x, l)));
+          if (grows) { const cause = r.head !== o.head ? { en: "after new commits", tw: "有新 commit 之後" } : r.approvals.dismissStale || r.approvals.lastPush ? { en: "the rules now dismiss approvals given before the last push", tw: "分支規則改為舊 approve 不算" } : { en: "the branch rules changed", tw: "分支規則改了" };
+            if (lost.length) { en.push(`${lost.join(", ")}'s approval no longer counts (${cause.en})`); tw.push(`${lost.join("、")} 的 approve 不再算數（${cause.tw}）`); }
+            else { en.push(`the branch rules now ask for more (${cause.en})`); tw.push(`分支規則現在要求更多（${cause.tw}）`); } }
           const left = (fresh.missing ?? []).map((m: F.L) => ({ en: m.en.replace(/^✕ /, ""), tw: m.tw.replace(/^✕ /, "") }));
-          if (left.length) { en.push(`the card now asks for: ${left.map((m: F.L) => m.en).join(", ")}`); tw.push(`卡裡只留：${left.map((m: F.L) => m.tw).join("、")}`); }
+          if (left.length) { en.push(`the card now asks for: ${left.map((m: F.L) => m.en).join(", ")}`); tw.push(`${grows ? "卡片現在要" : "卡裡只留"}：${left.map((m: F.L) => m.tw).join("、")}`); }
           p.history.push(hist(`${en.join("; ")}.`, `${tw.join("；")}。`));
           Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); }); }
     }
