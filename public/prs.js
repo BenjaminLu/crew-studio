@@ -51,7 +51,7 @@ const TABS = [["all", "All", "全部"], ["approve", "Approve", "等 approve"], [
 // merged pull requests, followed until production: their own two tabs after the open ones
 const SHIP_TABS = [["merged", "Merged, not live", "已合併未上線"], ["live", "Live", "已上線"]];
 const isShip = (tab) => tab === "merged" || tab === "live";
-const span = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); return h < 24 ? T(`${h} h`, `${h} 小時`) : T(`${Math.round(h / 24)} d`, `${Math.round(h / 24)} 天`); };
+const span = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); if (ms < 3600000) { const m = Math.max(1, Math.round(ms / 60000)); return T(`${m} min`, `${m} 分鐘`); } return h < 24 ? T(`${h} h`, `${h} 小時`) : T(`${Math.round(h / 24)} d`, `${Math.round(h / 24)} 天`); };
 const reviewWord = (s) => s === "APPROVED" ? T("approved", "approve") : s === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : s === "DISMISSED" ? T("dismissed", "撤銷") : T("commented", "留言");
 const verdictWord = (v) => ({ pass: T("pass", "通過"), conditional: T("conditional pass", "有條件通過"), fail: T("fail", "不通過"), "code-only": T("code review only", "只審 code"), unclassified: T("unclassified", "無法分類") })[v] || v;
 function changeWord(w) {
@@ -268,7 +268,7 @@ function opText(o, P) {
     case "k8s-secret": return P(`Kubernetes Secret ${names || o.path}: create or update it in production first`, `Kubernetes Secret ${names || o.path}：先在 production 建好或更新`);
     case "metric": { const m = o.metric, s = suggest(m, o.job), lab = m.labels.length ? `{${m.labels.join(",")}}` : "";
       return P(`The diff adds metric ${m.name}${lab} (${m.type}, ${m.zero ? "starts at 0" : "a labelled series appears on its first increment"}). Suggested: ${s.expr}; for ${s.for}; noData = Alerting; also ${s.up}. Studio cannot read your alert configuration: this is a suggestion worked out from the metric.`,
-        `diff 新增 metric ${m.name}${lab}（${m.type}，${m.zero ? "啟動即為 0" : "帶 label 的序列要第一次遞增才出現"}）。建議：${s.expr}；for ${s.for}；noData = Alerting；另配 ${s.up}。Studio 讀不到你們的告警設定，這是照 metric 推的建議。`); }
+        `diff 新增 metric ${m.name}${lab}（${m.type}，${m.zero ? "啟動即為 0" : "帶 label 的指標要第一次遞增才出現"}）。建議：${s.expr}；for ${s.for}；noData = Alerting；另配 ${s.up}。Studio 讀不到你們的告警設定，這是照 metric 推的建議。`); }
     case "rollout": return P(`「${o.quote}」`, `「${o.quote}」`);
   }
   return o.kind;

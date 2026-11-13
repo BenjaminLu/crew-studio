@@ -820,11 +820,11 @@ export function createPrWatch(d: PrWatchDeps) {
         autoClose: { en: "Every reviewer giving a verdict on the current head closes this card; a change request goes back to the follow-through.", tw: "兩人都在目前 head 給出 review → 卡自動關；有 change request 就回 PR 跟進分岔" } }; }
     if (kind === "approve") { const a = r.approvals, groups = (a.groups ?? []).filter((g) => !g.ok), count = a.missing.find((m) => m.kind === "count") as { n: number } | undefined;
       const recips = groups.flatMap((g) => g.kind === "team" ? [teamPerson(g.who, (r.teams ?? {})[g.who] ?? [])] : g.who.split(" | ").map((o) => o.startsWith("@") && o.includes("/") ? teamPerson(o, (r.teams ?? {})[o] ?? []) : person(o.replace(/^@/, ""))));
-      const miss = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (snap.rows.find((x) => eq(x.id, r.id))?.facts.files ?? []).slice(0, 4) : [] })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, files: [] }] : [])];
+      const miss = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (snap.rows.find((x) => eq(x.id, r.id))?.facts.files ?? []).slice(0, 4) : [] })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, whoTw: `還要 ${count.n} 個 approve`, files: [] as string[] }] : [])];
       const m = F.approveMessage(pr, miss, done, a.lastPush);
-      return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: `還缺 ${miss.map((x) => x.who).join("、")} 的 approve` },
+      return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: `還缺 ${miss.map((x) => (x as any).whoTw ?? x.who).join("、")} 的 approve` },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
-        done: [...done, ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))], missing: miss.map((x) => ({ en: `✕ ${x.who}`, tw: `✕ ${x.who}` })), groupsMissing: miss.map((x) => x.who),
+        done: [...done, ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))], missing: miss.map((x) => ({ en: `✕ ${x.who}`, tw: `✕ ${(x as any).whoTw ?? x.who}` })), groupsMissing: miss.map((x) => x.who),
         msgHead: { en: "Ask for approval", tw: "請 approve" }, recipients: recips, message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the approval", "我已發出，等 approve", true, { en: "an approval updates or closes the card", tw: "有人 approve 卡就更新或關掉" }),
           OPT("switch", "B", "Someone else", "換人", true, { en: "pick another member above and DM them", tw: "在上面選別的成員再 DM" }),
@@ -894,7 +894,9 @@ export function createPrWatch(d: PrWatchDeps) {
   /** the captain's actions on a follow card: pick a team member, copy, DM, send to a channel, nudge again, snooze, an
    *  option that keeps the card open. Each is written into the card's history. */
   async function followAction(name: string, b: any) {
-    const o = Object.values(state.follow.open).find((x) => x.card === String(b?.card ?? "")); if (!o) throw new Error("That card is not an open follow-through card");
+    // the card is shown while its node still finishes raising it: find it by its run then
+    const asked = String(b?.card ?? ""), byRun = engine?.cards.get(asked)?.run;
+    const o = Object.values(state.follow.open).find((x) => x.card === asked) ?? (byRun ? state.follow.open[byRun] : undefined); if (o && !o.card) o.card = asked; if (!o) throw new Error("That card is not an open follow-through card");
     const c = followCard(o); if (!c?.follow) throw new Error("That card is gone");
     const p = c.follow; let out: any = { ok: true };
     switch (name) {

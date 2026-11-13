@@ -121,12 +121,12 @@ export function nudgeMessage(pr: MsgPr, who: string[], ev: Evidence, notes: Note
     short: { en: `${at} one more nudge on ${pr.id}, the evidence is here: ${ev.url ?? pr.url} (current head ${short(pr.head)})`, tw: `${at} 再麻煩一下 ${pr.id}，證據在這：${ev.url ?? pr.url}（目前 head ${short(pr.head)}）` } };
 }
 /** "请 approve": one block per group the rules still miss, what is already done, the files a code owner should look at. */
-export function approveMessage(pr: MsgPr, missing: { who: string; files: string[] }[], done: L[], lastPush: boolean): { msg: L; short: L } {
-  const lines = (z: boolean) => missing.map((m) => `- ${m.who}${z ? "：1 人" : ": 1 approval"}${m.files.length ? z ? `（這次改了 ${m.files.slice(0, 4).join("、")}）` : ` (this changes ${m.files.slice(0, 4).join(", ")})` : ""}`).join("\n");
+export function approveMessage(pr: MsgPr, missing: { who: string; whoTw?: string; files: string[] }[], done: L[], lastPush: boolean): { msg: L; short: L } {
+  const lines = (z: boolean) => missing.map((m) => `- ${z ? m.whoTw ?? m.who : m.who}${z && m.whoTw ? "" : z ? "：1 人" : ": 1 approval"}${m.files.length ? z ? `（這次改了 ${m.files.slice(0, 4).join("、")}）` : ` (this changes ${m.files.slice(0, 4).join(", ")})` : ""}`).join("\n");
   return {
     msg: { en: `Could you approve ${pr.id}: ${pr.title}?\n${pr.url}\n\nDone: ${done.map((d) => d.en).join(", ") || "—"}\n\nStill missing:\n${lines(false)}${lastPush ? `\n\nThe branch rules ask for the approval after the last push (${short(pr.head)}); another push needs it again.` : ""}`,
       tw: `麻煩 approve ${pr.id}：${pr.title}\n${pr.url}\n\n已完成：${done.map((d) => d.tw).join("、") || "—"}\n\n還缺：\n${lines(true)}${lastPush ? `\n\n注意：分支規則要求在最後一次 push（${short(pr.head)}）之後 approve，之後若再 push 需要重新 approve。` : ""}` },
-    short: { en: `A reminder: ${pr.id} still needs ${missing.map((m) => m.who).join(", ")}: ${pr.url}`, tw: `再提醒一下 ${pr.id} 還差 ${missing.map((m) => m.who).join("、")} 的 approve：${pr.url}` } };
+    short: { en: `A reminder: ${pr.id} still needs ${missing.map((m) => m.who).join(", ")}: ${pr.url}`, tw: `再提醒一下 ${pr.id} 還差 ${missing.map((m) => m.whoTw ?? m.who).join("、")} 的 approve：${pr.url}` } };
 }
 
 // ---------- sending ----------
