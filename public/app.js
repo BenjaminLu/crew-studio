@@ -69,13 +69,18 @@ function ciSummary(pr) {
 
 // ---------- routing ----------
 const routes = { board: viewBoard, inbox: viewInbox, crew: viewCrew, activity: viewActivity, workflow: viewWorkflow };
-function route() {
+/** the route the address names now (route() draws it): name, its path parts and its query */
+function hashRoute() {
   // a route may carry a query after "?" (#/run/R-1?card=SC-2, #/runs?project=studio): S.route.query
   const raw = location.hash.replace(/^#\/?/, "") || "board", qi = raw.indexOf("?");
   const [name, ...rest] = (qi < 0 ? raw : raw.slice(0, qi)).split("/");
   const query = new URLSearchParams(qi < 0 ? "" : raw.slice(qi + 1));
   const normalized = name === "tasks" ? (/^R-\d+$/.test(rest[0] || "") ? "run" : "runs") : name;
-  const v = routes[normalized] ? normalized : "board";
+  return { v: routes[normalized] ? normalized : "board", rest, query };
+}
+window.crewHashRoute = () => hashRoute().v;
+function route() {
+  const { v, rest, query } = hashRoute();
   $$(".nav-item").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
   render.nav = true; render();
@@ -104,11 +109,15 @@ const focusOf = (r) => { const f = routes[r?.name]?.focus; return (typeof f === 
 const fieldKey = (el) => { if (el.id) return `#${CSS.escape(el.id)}`; const d = [...el.attributes].find((x) => x.name.startsWith("data-"));
   return d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : null; };
 function render() {
-  // a list toolbar's search box (public/list-tools.js) is never replaced under the captain's typing (an input method's
-  // composition would break): a redraw of the same page waits for its blur, as a live update does (soft)
-  // (a navigation, route(), always draws)
   const nav = render.nav; render.nav = false;
-  if (!nav && document.activeElement?.matches?.("#view [data-lt-q], #view [data-lt-fq]") && String(render.at).split("/")[0] === S.route?.name) return soft();
+  // a draw that is not route()'s, asked for after the address moved on (a deferred redraw landing between a sidebar click
+  // and its hashchange): route() draws the new page; drawing the old one on the new address would carry its state there
+  if (!nav && S.route && hashRoute().v !== S.route.name) return;
+  // a list toolbar (public/list-tools.js) is never redrawn while the focus is in it, its search box, a suggestion or a
+  // facet's popover (an input method's composition, a keyboard pick): a redraw of the same page waits until the focus
+  // leaves the toolbar. A navigation, route(), always draws
+  const bar = !nav && ltFocus();
+  if (bar && String(render.at).split("/")[0] === S.route?.name) return renderAfterBar(bar);
   const root = $("#view");
   pageFocus(focusOf(S.route));
   const scroll = $("#main").scrollTop;
@@ -143,6 +152,18 @@ function render() {
   $("#main").scrollTop = scroll;
   updateNav();
 }
+/** one redraw when the focus leaves the toolbar (not when it moves within it: box → suggestion → popover); none if the page changed */
+function renderAfterBar(bar) {
+  if (renderAfterBar.on === bar) return; renderAfterBar.on = bar;
+  const out = (e) => { if (e.relatedTarget && bar.contains(e.relatedTarget) && !e.relatedTarget.closest(".lt-extra")) return; bar.removeEventListener("focusout", out);
+    afterPress(() => setTimeout(() => { if (renderAfterBar.on === bar) renderAfterBar.on = null;
+      const again = ltFocus(); if (again) return renderAfterBar(again); // focus put back (a redrawn checkbox)
+      if (S.route && hashRoute().v === S.route.name) render(); }, 0)); };
+  bar.addEventListener("focusout", out);
+}
+/** the toolbar the focus is in, when it is in the toolbar's own controls (the box, a suggestion, a facet popover); a page's
+ *  own control placed in the toolbar's row (Tasks' Show archived) redraws its page as usual */
+const ltFocus = () => { const a = document.activeElement; return a?.matches?.("#view [data-lt-q], #view [data-lt-fq], #view [data-lt-sug], #view .lt-pop *") ? a.closest("[data-lt-bar]") : null; };
 // a live update never yanks focus out of a field being typed in; it renders once the field is left
 let deferred = false;
 // a pointer press in progress: a render now would replace the pressed button before its click (mouseup on a new
@@ -165,7 +186,8 @@ function soft() {
   const a = document.activeElement;
   if (a && $("#view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
     deferred = true; deferredOn = a;
-    a.addEventListener("blur", () => afterPress(() => { if (deferredOn !== a) return; deferred = false; deferredOn = null; render(); }), { once: true });
+    // drawn once the new focus has landed (during blur it is nowhere): a focus moving within a list toolbar keeps waiting (render)
+    a.addEventListener("blur", () => afterPress(() => setTimeout(() => { if (deferredOn !== a) return; deferred = false; deferredOn = null; render(); }, 0)), { once: true });
     return updateNav();
   }
   if (pressing) { deferred = true; deferredOn = null; afterPress(() => { deferred = false; render(); }); return updateNav(); }

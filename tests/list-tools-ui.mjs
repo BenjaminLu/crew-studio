@@ -64,6 +64,7 @@ const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe
   CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: "/nonexistent/codex", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
 app.stdout.resume(); await waitUp(base, app);
 let pass = 0, fail = 0;
+const HAS_INBOX = /crewListTools\.list\(\{ id: "inbox"/.test((await import("node:fs")).readFileSync(join(root, "public/app.js"), "utf8"));
 const ok = (c, name, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const browser = withSession(await chromium.launch(), base), errors = [];
 const open = async (lang, width = 1440) => {
@@ -331,6 +332,47 @@ try {
     ok(await same(p, "crew") && before !== await count(p, "crew") && JSON.stringify(await p.$$eval('[data-lt-region="crew"] [data-actor]', (es) => es.map((e) => e.dataset.actor))) === '["worker-ime"]',
       "Crew: a poll lands during the composition, the box is the same and focused, and the committed 软 shows the new 軟體 round", await count(p, "crew"));
     crew.shift(); await ctx.close(); }
+
+  // ======== round 2: leaving mid-composition, a sidebar hop after typing, a keyboard pick, a popover through a redraw ========
+  const ALL = [["runs", "#/runs", "status"], ["inbox", "#/inbox", "kind"], ["workflows", "#/workflows", "kind"], ["skills", "#/skills", "source"], ["projects", "#/projects", "kind"], ["crew", "#/crew", "phase"], ["terminals", "#/terminals", "state"], ["library", "#/library", "type"], ["room", "#/room", "zone"], ["activity", "#/activity", "type"]]
+    .filter(([l]) => l !== "inbox" || HAS_INBOX);
+  for (const [list, hash, key] of ALL) {
+    const { p, ctx } = await open("zh-TW"); await go(p, hash, list); const cdp = await ctx.newCDPSession(p);
+    // 1. a page left mid-composition (no compositionend), then come back: its search filters again
+    await p.focus(`[data-lt-q="${list}"]`); await cdp.send("Input.imeSetComposition", { text: "ru", selectionStart: 2, selectionEnd: 2 }); await p.waitForTimeout(100);
+    // the address changes under the composition (Back, a link): the box is dropped without a blur or a compositionend
+    await p.evaluate(() => { location.hash = "#/board"; }); await p.waitForFunction(() => location.hash.startsWith("#/board")); await p.waitForTimeout(200);
+    ok(await p.evaluate(() => !location.hash.includes("?")), `${list}: leaving mid-composition carries nothing to the next page`, await p.evaluate(() => location.hash));
+    await p.goto(`${base}/${hash}?`); if (list === "terminals") { await p.waitForSelector("[data-term-new]"); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+    await p.waitForSelector(`[data-lt-count="${list}"]`); const c0 = await count(p, list);
+    await p.focus(`[data-lt-q="${list}"]`); await p.keyboard.type("zzqx"); await p.waitForTimeout(list === "activity" ? 600 : 200);
+    ok(await count(p, list) !== c0 && !!await p.$(`[data-lt-empty="${list}"]`), `${list}: after leaving mid-composition and coming back, typing filters again`, `${c0} -> ${await count(p, list)}`);
+    // 2. typed, then a sidebar hop (with a deferred live redraw waiting): the next page opens clean
+    await p.evaluate(() => soft()); await p.click('.nav-item[data-view="board"]'); await p.waitForFunction(() => location.hash.startsWith("#/board")); await p.waitForTimeout(300);
+    ok(await p.evaluate(() => location.hash === "#/board"), `${list}: typed, then a sidebar hop: the next page's address has no query`, await p.evaluate(() => location.hash));
+    // 3. key: then ↓ and Enter picks the first suggestion from the keyboard; the box keeps the focus
+    await p.goto(`${base}/${hash}?`); if (list === "terminals") { await p.waitForSelector("[data-term-new]"); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+    await p.waitForSelector(`[data-lt-count="${list}"]`); await p.waitForTimeout(list === "activity" ? 400 : 100);
+    await p.focus(`[data-lt-q="${list}"]`); await p.keyboard.type(`${key}:`); await p.waitForSelector("[data-lt-sug]");
+    await p.evaluate(() => soft()); // a live update arrives while typing: its redraw waits
+    const first = await p.$eval("[data-lt-sug]", (e) => e.dataset.ltSug); await p.keyboard.press("ArrowDown"); await p.waitForTimeout(250); await p.keyboard.press("Enter"); await p.waitForTimeout(list === "activity" ? 600 : 250);
+    const v = await p.$eval(`[data-lt-q="${list}"]`, (e) => e.value);
+    ok(new RegExp(`^${key}:\\S+ $`).test(v) && await p.evaluate((l) => document.activeElement === document.querySelector(`[data-lt-q="${l}"]`), list) && (await hashQ(p)).get("q") === v, `${list}: ↓ then Enter picks ${first} from the keyboard, the box keeps the focus`, `${v} focus=${await p.evaluate(() => document.activeElement?.tagName)}`);
+    // 4. a popover open through a redraw of its list (a box ticked) stays inside the page
+    await p.fill(`[data-lt-q="${list}"]`, ""); await p.waitForTimeout(list === "activity" ? 500 : 100);
+    const last = await p.$$eval(`[data-lt-bar="${list}"] .lt-facet:not([hidden]) [data-lt-facet]`, (es) => es.at(-1)?.dataset.ltFacet);
+    await p.click(`[data-lt-bar="${list}"] [data-lt-facet="${last}"]`); await p.waitForSelector(`[data-lt-pop="${last}"] label input`);
+    await p.click(`[data-lt-pop="${last}"] label input`); await p.waitForTimeout(list === "activity" ? 600 : 250);
+    const box = await p.$eval(`[data-lt-pop="${last}"]`, (e) => { const r = e.getBoundingClientRect(), m = document.querySelector("#main").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(Math.max(0, m.left)), Math.round(Math.min(innerWidth, m.right))]; }).catch(() => null);
+    ok(box && box[0] >= box[2] && box[1] <= box[3], `${list}: the ${last} popover stays inside the page through a redraw`, JSON.stringify(box));
+    await ctx.close();
+  }
+  // the search that started on Tasks never follows a hop to the Inbox (the review's case), with or without a pending live redraw
+  for (const live of [false, true]) { const { p, ctx } = await open("zh-CN"); await go(p, "#/runs", "runs");
+    await p.focus('[data-lt-q="runs"]'); await p.keyboard.type("ru"); await p.waitForTimeout(150); if (live) await p.evaluate(() => soft());
+    await p.click('.nav-item[data-view="inbox"]'); await p.waitForFunction(() => location.hash.startsWith("#/inbox")); await p.waitForTimeout(400);
+    ok(await p.evaluate(() => !/[?&]q=/.test(location.hash)), `Tasks → Inbox after typing${live ? " (a live redraw waiting)" : ""}: the Inbox opens without the search`, await p.evaluate(() => location.hash));
+    await ctx.close(); }
 
   // ======== right after load, typing goes into one search box that is never replaced ========
   for (const [list, hash] of [["runs", "#/runs"], ["inbox", "#/inbox"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
