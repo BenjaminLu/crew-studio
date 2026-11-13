@@ -54,7 +54,7 @@ try {
   ok(h.en.startsWith("zed's approval no longer counts (dismissed on GitHub); the card now asks for:") && h.tw.startsWith("zed 的 approve 不再算數（在 GitHub 上被 dismiss）；卡片現在要：") && clean(h), "an approval dismissed on GitHub, no rule change: said as dismissed", JSON.stringify(h));
   // stale dismissal turned on: bo's older approval stops counting
   gh.data.rules[ca].rulesets[0].parameters.dismiss_stale_reviews_on_push = true; h = await grow(5);
-  ok(h.en.startsWith("the rules now dismiss stale approvals; bo's approval no longer counts (given on an older head; the head is now ") && h.tw.startsWith("分支規則改為舊 approve 不算；bo 的 approve 不再算數（給在舊 head 上；head 現在是 ") && clean(h), "stale dismissal turned on: said as that", JSON.stringify(h));
+  ok(h.en.startsWith("the rules now dismiss stale approvals; bo's approval no longer counts (given on an older head);") && h.tw.startsWith("分支規則改為舊 approve 不算；bo 的 approve 不再算數（給在舊 head 上）；") && !/head is now|head 現在是/.test(h.en + h.tw) && clean(h), "stale dismissal turned on: said as that", JSON.stringify(h));
   // (a) the rules already dismiss stale approvals; the required count goes 5 → 6: said as the count, never as dismissal
   gh.data.rules[ca].rulesets[0].parameters.required_approving_review_count = 6; h = await grow(6);
   ok(h.en.startsWith("the rules now ask for 6 approvals, not 5; the card now asks for:") && h.tw.startsWith("分支規則要求的 approve 從 5 個改為 6 個；卡片現在要：") && !/dismiss|舊 approve/.test(h.en + h.tw) && clean(h), "a higher required count: said as the count", JSON.stringify(h));
@@ -64,7 +64,7 @@ try {
   // (b) a push: every approval on the old head stops counting; then a rule change says only the rule, not the old push
   approve("amy", 6); await step(8);
   const c3 = { sha: sha("ca18-3"), at: "2026-11-02T17:00:00Z", login: "skipper" }; p18.commits.push(c3 as any); h = await grow(9);
-  ok(h.en.startsWith(`the approvals of rel-ray and amy no longer count (given on an older head; the head is now ${c3.sha.slice(0, 7)} and the rules dismiss stale approvals)`) && h.tw.startsWith(`rel-ray、amy 的 approve 不再算數（給在舊 head 上；head 現在是 ${c3.sha.slice(0, 7)}，分支規則不算舊 approve）`) && clean(h), "a push: the approvals it voids, plural, said as new commits", JSON.stringify(h));
+  ok(h.en.startsWith(`the approvals of rel-ray and amy no longer count (given on an older head, and the head is now ${c3.sha.slice(0, 7)}; stale approvals do not count)`) && h.tw.startsWith(`rel-ray、amy 的 approve 不再算數（給在舊 head 上，head 現在是 ${c3.sha.slice(0, 7)}；舊 approve 不算）`) && !/\([^)]*\(/.test(h.en) && clean(h), "a push: the approvals it voids, plural, said as new commits", JSON.stringify(h));
   gh.data.rules[ca].rulesets[0].parameters.required_approving_review_count = 7; h = await grow(10);
   ok(h.en.startsWith("the rules now ask for 7 approvals, not 6") && !/new commits|新 commit/.test(h.en + h.tw) && clean(h), "after the push, a rule change says only the rule (the card follows the head)", JSON.stringify(h));
   // two things in one refresh: each approval that stops counting has its own reason; a rule change is its own clause
@@ -84,15 +84,23 @@ try {
   rs.dismiss_stale_reviews_on_push = true; await step(18); approveNow("pat", 7); await step(19);
   gh.data.teams["northwind/qa-team"] = ["qa-one"]; rs.required_reviewers = [...rs.required_reviewers, { reviewer: { type: "Team", slug: "qa-team" } }];
   const c5 = { sha: sha("ca18-5"), at: at(8), login: "skipper" }; p18.commits.push(c5 as any); h = await grow(20);
-  ok(h.en.startsWith("the rules now also ask for @northwind/qa-team; pat's approval no longer counts (given on an older head; the head is now " + c5.sha.slice(0, 7) + " and the rules dismiss stale approvals)") && clean(h), "a push and a new team: the team its own clause, pat's reason the push under stale dismissal", JSON.stringify(h));
+  ok(h.en.startsWith("the rules now also ask for @northwind/qa-team; pat's approval no longer counts (given on an older head, and the head is now " + c5.sha.slice(0, 7) + "; stale approvals do not count)") && clean(h), "a push and a new team: the team its own clause, pat's reason the push under stale dismissal", JSON.stringify(h));
   // an older card (no count or rules seen yet) still says a real approval on its first refresh, and nothing else
   { const c = card(), n = c.follow.history.length; delete c.follow.countGap; delete c.follow.seen; E.cards.save(c); approveNow("sam", 9); await step(21);
     const added = card().follow.history.slice(n).map((x: any) => x.en);
     ok(added.length === 1 && added[0] === "sam approved ✓." && card().follow.seen && card().follow.countGap !== undefined, "an older card's first refresh: the approval said, the rest taken silently", JSON.stringify(added)); }
-  // nothing the card asks for changes, but who counts does (sam's review gone, tom approves): what the card shows follows
-  { const n = card().follow.history.length; p18.reviews = p18.reviews!.filter((v: any) => v.user !== "sam"); approveNow("tom", 10);
-    await call("/api/prs/refresh", {}); await until(() => (card()?.follow.approvedBy ?? []).includes("tom"), 15000);
-    ok(card().follow.approvedBy.includes("tom") && !card().follow.approvedBy.includes("sam") && card().follow.done.some((d: any) => d.en === "tom approved") && !card().follow.done.some((d: any) => d.en === "sam approved") && card().follow.history.length === n, "who counts and the done list follow GitHub even when the card's asks do not change", JSON.stringify({ by: card().follow.approvedBy, done: card().follow.done })); }
+  // the gap unchanged: sam's review gone and tom approving in one refresh: both said, and what the card shows (who counts,
+  // done, the message and its short form) follows GitHub
+  { p18.reviews = p18.reviews!.filter((v: any) => v.user !== "sam"); approveNow("tom", 10); h = await grow(22);
+    ok(h.en.startsWith("tom approved ✓; sam's approval no longer counts (no longer on GitHub); the card now asks for:") && h.tw.startsWith("tom approve ✓；sam 的 approve 不再算數（GitHub 上已經沒有）；") && clean(h), "the gap unchanged: the new approval and the loss both said", JSON.stringify(h));
+    const f = card().follow;
+    ok(f.approvedBy.includes("tom") && !f.approvedBy.includes("sam") && f.done.some((d: any) => d.en === "tom approved") && !f.done.some((d: any) => d.en === "sam approved") && f.message.en.includes("tom approved") && !f.message.en.includes("sam") && !f.message.tw.includes("sam") && !f.short.en.includes("sam"), "who counts, done, the message and its short form follow GitHub", JSON.stringify({ by: f.approvedBy, msg: f.message.en })); }
+  // the gap grows while someone approves: both said, and the numbers add up
+  { const g0 = card().follow.countGap; approveNow("uma", 11); p18.reviews!.push({ user: "tom", state: "DISMISSED", commit: headNow(), at: at(12) }); rs.required_approving_review_count = 10; h = await grow(23);
+    ok(h.en.startsWith("uma approved ✓; the rules now ask for 10 approvals, not 9; tom's approval no longer counts (dismissed on GitHub); the card now asks for:") && card().follow.countGap === g0 + 1 && clean(h), "the gap grows with an approval in the same refresh: the approval, the rule and the loss all said", JSON.stringify(h)); }
+  // the gap shrinks while someone is dismissed: both said
+  { const g0 = card().follow.countGap; approveNow("vic", 13); approveNow("wes", 14); p18.reviews!.push({ user: "uma", state: "DISMISSED", commit: headNow(), at: at(15) }); h = await grow(24);
+    ok(h.en.startsWith("vic, wes approved ✓; uma's approval no longer counts (dismissed on GitHub); the card now asks for:") && h.tw.startsWith("vic、wes approve ✓；uma 的 approve 不再算數（在 GitHub 上被 dismiss）；卡裡只留：") && card().follow.countGap === g0 - 1 && clean(h), "the gap shrinks with a dismissal in the same refresh: both said", JSON.stringify(h)); }
   { const keys = E.cards.list({}).filter((c: any) => c.workflow === FOLLOW_WORKFLOW && c.status === "open").map((c: any) => `${c.follow.pr}:${c.follow.kind}`); ok(new Set(keys).size === keys.length, "never two open cards of one kind for one pull request", JSON.stringify(keys)); }
   ok(gh.calls.some((c) => c.path.startsWith(`/repos/${ca}/codeowners/errors`)) && !gh.unknown.length, "codeowners/errors is read; every request was one the fixture knows", JSON.stringify(gh.unknown));
 } catch (e: any) { ok(false, "the suite ran to its end", String(e?.stack || e)); }

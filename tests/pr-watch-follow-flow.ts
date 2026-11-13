@@ -56,7 +56,8 @@ try {
   ok(nudge.follow.message.tw.includes(`→ ${c215[1].sha.slice(0, 7)}`) && nudge.follow.done.some((d: any) => d.tw === "上次 2 條意見都已修"), "the nudge lists each comment with the commit that answered it, and says both were fixed", nudge.follow.message.tw);
   ok(nudge.follow.recipients.map((x: any) => x.who).join() === "review-bot-a,review-bot-b" && nudge.follow.message.tw.includes("麻煩重驗") && nudge.follow.message.tw.includes("「需要 staging 上的實測證據」"), "the nudge card is for both reviewers, quoting their last comments", nudge.follow.message.tw);
   ok(ap.follow.groupsMissing.join() === "@northwind/security" && ap.follow.recipients[0].team && ap.follow.recipients[0].members.join() === "sec-alice,sec-bob,sec-carol" && ap.follow.done.some((d: any) => d.en.includes("@northwind/release-approvers (rel-dan)")), "the approve card: only the group the repository's rules still miss, its members read from GitHub");
-  ok(!ap.follow.done.some((d: any) => d.en.startsWith("lee ")) && !(ap.follow.approvedBy ?? []).includes("lee") && !ap.follow.message.en.includes("lee"), "the head's committer (lee) approved: the card never counts it, as the row does not", JSON.stringify({ done: ap.follow.done, by: ap.follow.approvedBy }));
+  { const row = (await call("/api/prs")).body.rows.find((x: any) => x.id === `${gw}#216`);
+    ok((ap.follow.approvedBy ?? []).join() === (row.approvals.approvers ?? []).join() && ap.follow.approvedBy.includes("lee") && !ap.follow.missing.some((m: any) => m.en.includes("latest push")), "the head's committer (lee) approved: the card counts who the row counts (lee toward the number; the latest push is approved by others)", JSON.stringify({ by: ap.follow.approvedBy, row: row.approvals.approvers, missing: ap.follow.missing })); }
   ok(ap.follow.message.tw.includes("最後一次 push") && ap.follow.message.en.includes("@northwind/security: 1 approval"), "its message names the missing group and the last-push rule");
   // the captain's actions on a card
   let a = await call("/api/prs/follow/pick", { card: ap.id, who: "@northwind/security", member: "sec-bob" });
@@ -94,7 +95,7 @@ try {
   const again = await call("/api/prs/push-check", { pr: `${gw}#216` }); await new Promise((res) => setTimeout(res, 500));
   ok(again.body.existing === true && again.body.task === a.body.task && open().filter((c: any) => c.follow.kind === "push").length === 1, "asking again for the same pull request and head shows the push card already waiting, never a second", JSON.stringify(again.body));
   ok(push.follow.lead.en.startsWith("review-bot-b left a comment: “Please do not log the key id”") && push.follow.done[0].en.includes("tests pass"), "the push card names who commented (read from the reviews) and that the tests pass", push.follow.lead.en);
-  ok(a.body.voids === 3 && push.follow.heading.en === "This push voids 3 approvals: push?" && push.follow.opts.map((o: any) => o.id).join() === "push,no-push,follow-up", "a push that would void 3 approvals raises its card: push, don't push with a reason, follow-up", JSON.stringify(a.body));
+  ok(a.body.voids === 4 && push.follow.heading.en === "This push voids 4 approvals: push?" && push.follow.opts.map((o: any) => o.id).join() === "push,no-push,follow-up", "a push that would void 4 approvals (every one the row counts) raises its card: push, don't push with a reason, follow-up", JSON.stringify(a.body));
   ok(!gh.calls.some((c) => c.method !== "GET" && c.path !== "/graphql") && !gh.unknown.length, "nothing was written to GitHub; every request was one the fixture knows", JSON.stringify(gh.unknown));
 } catch (e: any) { ok(false, "the suite ran to its end", String(e?.stack || e)); }
 finally { W.stop(); poller.stop(); gh.stop(); hook.stop(true); }

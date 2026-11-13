@@ -32,7 +32,7 @@ async function copy(text) { try { await navigator.clipboard.writeText(text); ret
 
 // ---------- words ----------
 const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(GitHub blocks the merge)" ? T("the merge box on GitHub", "GitHub 的 merge 區塊") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
-const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `approve（還要 ${m.n} 個）`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
+const missWord = (m) => m.kind === "lastpush" ? T("an approval of the latest push (not by the pusher)", "最後一次 push 的 approve（不能是推的人）") : m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `approve（還要 ${m.n} 個）`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
 const TONE = { nudge: "human", hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
 function nextWord(n) {
   if (n.rule === "draft") return T("On hold (draft)", "暫緩（draft）");
@@ -427,8 +427,8 @@ function detail(r) {
         ...(r.approvals?.unread || []).map((u) => h("p", { class: "faint pw-small", "data-prs-unread": "" }, LX(u))),
         r.approvals?.unread && r.approvals.github ? h("p", { class: "faint pw-small", "data-prs-github": "" }, T(`GitHub's merge box: review ${(r.approvals.github.reviewDecision || "no decision").toLowerCase().replace(/_/g, " ")}, merge ${(r.approvals.github.mergeState || "unknown").toLowerCase()}${r.approvals.github.requested.length ? `; review requested from ${r.approvals.github.requested.join(", ")}` : ""}.`,
           `GitHub merge 區塊：review ${r.approvals.github.reviewDecision || "沒有判定"}、merge ${r.approvals.github.mergeState || "不明"}${r.approvals.github.requested.length ? `；已請求 ${r.approvals.github.requested.join("、")} review` : ""}。`)) : null,
-        r.approvals?.inferredPusher ? h("p", { class: "faint pw-small", "data-prs-inferred": "" }, T(`Approval after the last push: the pusher is inferred from the author and the head commit (${r.approvals.inferredPusher.join(", ") || "none known"}); GitHub does not expose it. Only approvals on the current head by someone else count.`,
-          `最後一次 push 之後的 approve：push 的人是從作者和 head commit 推斷的（${r.approvals.inferredPusher.join("、") || "不明"}）；GitHub 不提供這項資訊。只有其他人在目前 head 上的 approve 才算。`)) : null,
+        r.approvals?.inferredPusher ? h("p", { class: "faint pw-small", "data-prs-inferred": "" }, T(`Approval after the last push: the pusher is inferred from the author and the head commit (${r.approvals.inferredPusher.join(", ") || "none known"}); GitHub does not expose it. The latest push needs an approval on the current head from someone else; older approvals still count toward the number unless stale approvals are dismissed.`,
+          `最後一次 push 之後的 approve：push 的人是從作者和 head commit 推斷的（${r.approvals.inferredPusher.join("、") || "不明"}）；GitHub 不提供這項資訊。最後一次 push 要由其他人在目前 head 上 approve；舊的 approve 仍算進數量，除非分支規則讓舊 approve 失效。`)) : null,
         h("h3", {}, T("Order", "順序")), h("ul", { class: "pw-why" }, (r.orderWhy || []).map((w) => h("li", {}, w))),
         r.partial?.length ? h("p", { class: "faint pw-small" }, T(`Not read this time: ${r.partial.join(", ")}.`, `這次沒讀到：${r.partial.join("、")}。`)) : null)),
   ], { wide: true, id: "detail" });

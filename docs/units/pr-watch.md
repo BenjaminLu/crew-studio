@@ -118,10 +118,12 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   unreadable, never a silent non-match; owners found for a path are shared by the rows of one repository and base;
   a CODEOWNERS that cannot be read, or changed files that could not all be read, make the approvals unreadable, never
   "no owner"), approval after
-  the last push (an approval counts only when given on the current head, by someone other than the pusher; GitHub does not
-  say who pushed, so the pusher is inferred as the pull request's author and the head commit's author and committer, and
-  the row's detail says it is inferred; the rule asks for one such approval even when the approval count is 0; only when
-  the head commit cannot be read are the approvals unreadable), stale
+  the last push (GitHub: "the most recent reviewable push must be approved by someone other than the person who pushed
+  it"; it dismisses nothing, so older approvals keep counting toward the number unless stale approvals are dismissed, and
+  the latest push needs, in addition, one approval on the current head by someone other than the pusher, even when the
+  approval count is 0; GitHub does not say who pushed, so the pusher is inferred as the pull request's author and the head
+  commit's author and committer, and the row's detail says it is inferred; only when the head commit cannot be read are
+  the approvals unreadable), stale
   approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
   never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
   the last pusher's own either). Classic protection needs admin access to read; rulesets, CODEOWNERS and team

@@ -91,13 +91,21 @@ const { ok, end } = suite("pr-watch-follow");
   const m = F.approveMessage({ id: "o/r#1", url: "u", title: "t", head: "abcdef1", env: null }, [{ who: "1 more approval", whoTw: "還要 1 個 approve", files: [], count: true }], [], false);
   ok(/- 1 more approval$/m.test(m.msg.en) && !m.msg.en.includes("1 more approval: 1 approval") && m.msg.tw.includes("- 還要 1 個 approve"), "a missing count reads once, in both languages", m.msg.en);
 }
-// ---------- the approvals that count: the pusher's never, wherever they are read ----------
+// ---------- the approvals that count after the last push: the row, the card and a push agree with GitHub ----------
 {
   const R4 = await import("../src/pr-watch-rules");
   const rules = R4.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true } }], "none", null, "o");
   const rv = (login: string): ReviewView => ({ login, state: "APPROVED", stale: false, at: "2026-11-01T00:00:00Z", author: false });
-  const a = R4.approvalsOf(rules, [rv("lee"), rv("kim")], { files: [], codeowners: null, teamMembers: new Map(), author: "dev", headCommit: { author: "lee", committer: "lee" } });
-  ok(a.approvers?.join() === "kim" && a.counted === 1 && F.pushVoids(a, [rv("lee"), rv("kim")]).who.join() === "kim", "approval after the last push: the head's pusher (lee) is never counted, by the row, the card or a push", JSON.stringify(a));
+  const ctx = { files: [], codeowners: null, teamMembers: new Map(), author: "dev", headCommit: { author: "lee", committer: "lee" } };
+  const a = R4.approvalsOf(rules, [rv("lee"), rv("kim")], ctx);
+  ok(a.approvers?.join() === "lee,kim" && a.counted === 2 && !a.missing.length && F.pushVoids(a, [rv("lee"), rv("kim")]).voids === 0, "after the last push, stale approvals kept: the pusher's approval counts toward the number, kim approves the latest push, and a push voids none", JSON.stringify(a));
+  const own = R4.approvalsOf(rules, [rv("lee")], ctx);
+  ok(own.counted === 1 && own.missing.map((m) => m.kind).join() === "lastpush", "the pusher's own approval never approves the latest push", JSON.stringify(own.missing));
+  const both = R4.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true, dismiss_stale_reviews_on_push: true } }], "none", null, "o");
+  const b = R4.approvalsOf(both, [rv("lee"), rv("kim")], ctx), v = F.pushVoids(b, [rv("lee"), rv("kim")]);
+  ok(b.approvers?.join() === "lee,kim" && v.voids === 2 && v.who.join() === "lee,kim", "after the last push with stale approvals dismissed: a push voids every approval the row counts", JSON.stringify(v));
+  const stale = R4.approvalsOf(both, [{ ...rv("kim"), stale: true }], ctx);
+  ok(stale.counted === 0 && stale.missing.map((m) => m.kind).join() === "count,lastpush", "stale dismissed: an older approval counts for nothing, and the latest push needs one", JSON.stringify(stale.missing));
 }
 // ---------- a rule as one plain sentence ----------
 {

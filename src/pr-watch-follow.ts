@@ -81,7 +81,8 @@ export function shepherd(p: ShepherdInput): Shepherd {
  *  one after the last push. Unreadable rules: unknown (the card says so). */
 export function pushVoids(a: Approvals, reviews: ReviewView[]): { voids: number | null; who: string[] } {
   if (!a.readable) return { voids: null, who: [] };
-  if (!a.dismissStale && !a.lastPush) return { voids: 0, who: [] };
+  // only stale dismissal voids approvals; "approval of the most recent push" voids none (the push then needs one more)
+  if (!a.dismissStale) return { voids: 0, who: [] };
   // the approvals the rules count now (never the pusher's or the author's): those a push would void
   const who = a.approvers ?? reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => v.login);
   return { voids: who.length, who };

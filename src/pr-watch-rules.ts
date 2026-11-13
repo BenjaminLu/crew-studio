@@ -300,7 +300,10 @@ export function ownersOf(path: string, rules: { pattern: string; owners: string[
 }
 export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string }
   /** GitHub's merge box says a review is still required, for a rule Studio could not read; `who` are the pending review requests */
-  | { kind: "github"; who: string[] };
+  | { kind: "github"; who: string[] }
+  /** "require approval of the most recent reviewable push": the latest push still needs an approval from someone other
+   *  than the pusher (older approvals keep counting toward the number unless stale ones are dismissed) */
+  | { kind: "lastpush"; pusher: string[] };
 /** What GitHub itself says about a pull request's merge (GraphQL reviewDecision, mergeStateStatus, review requests). */
 export type GitHubMerge = { reviewDecision: string | null; mergeState: string | null; requested: string[] };
 export type Approvals = { readable: boolean; required: number; counted: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; missing: Missing[]; sources: string[];
@@ -341,12 +344,13 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   if (rules.lastPush && !o.headCommit) return { readable: false, required: rules.required, counted: 0, codeOwners: rules.codeOwners, lastPush: true, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: "the branch rules ask for an approval after the last push, and the head commit could not be read", tw: "分支規則要求最後一次 push 之後的 approve，但讀不到 head commit" }], sources: rules.sources };
   const pusher = rules.lastPush ? [...new Set([o.author, o.headCommit?.author, o.headCommit?.committer].filter((x): x is string => !!x).map((x) => x.toLowerCase()))] : [];
   if (rules.codeOwners && o.ownersUnreadable) return { readable: false, required: rules.required, counted: 0, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: o.ownersUnreadable.en, tw: o.ownersUnreadable.tw }], sources: rules.sources };
-  const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || (!rules.dismissStale && !rules.lastPush)) && !pusher.includes(r.login.toLowerCase()));
+  // GitHub keeps an approval given on an older head unless the rules dismiss stale approvals; "approval of the most recent
+  // push" does not dismiss anything, it asks in addition that someone other than the pusher approves the head
+  // (docs: "the most recent reviewable push must be approved by someone other than the person who pushed it")
+  const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || !rules.dismissStale));
   const approvers = new Set(valid.map((r) => r.login.toLowerCase())), missing: Missing[] = [], groups: NonNullable<Approvals["groups"]> = [];
-  // "approval after the last push" asks for one approval on the head by someone other than the pusher, even when the
-  // rules ask for no approval count
-  const needed = Math.max(rules.required, rules.lastPush ? 1 : 0);
-  if (valid.length < needed) missing.push({ kind: "count", n: needed - valid.length });
+  if (valid.length < rules.required) missing.push({ kind: "count", n: rules.required - valid.length });
+  if (rules.lastPush && !valid.some((r) => !r.stale && !pusher.includes(r.login.toLowerCase()))) missing.push({ kind: "lastpush", pusher });
   const memberOf = (team: string) => (o.teamMembers.get(team.toLowerCase()) ?? []).map((m) => m.toLowerCase());
   if (rules.codeOwners && o.codeowners) {
     const sets = new Map<string, { ow: string[]; files: string[] }>();
@@ -380,7 +384,7 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   return { readable: true, required: rules.required, counted: valid.length, approvers: valid.map((v) => v.login), codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources, groups,
     ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}), ...(blocked ? { blocked } : {}) };
 }
-export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : []);
+export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : x.kind === "lastpush" ? ["an approval of the latest push by someone other than the pusher"] : []);
 
 // ---------- the next step ----------
 export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "nudge" | "test" | "approve" | "merge";

@@ -847,14 +847,16 @@ export function createPrWatch(d: PrWatchDeps) {
     if (kind === "approve") { const a = r.approvals, groups = (a.groups ?? []).filter((g) => !g.ok), count = a.missing.find((m) => m.kind === "count") as { n: number } | undefined;
       // the author is never asked (their own approval does not count); a team owner is asked through its members
       const recips = groups.flatMap((g) => g.kind === "team" ? [teamPerson(g.who, (r.teams ?? {})[g.who] ?? [])] : g.who.split(" | ").filter((o) => !eq(o.replace(/^@/, ""), r.author)).map((o) => o.startsWith("@") && o.includes("/") ? teamPerson(o, ((r.teams ?? {})[o] ?? []).filter((m) => !eq(m, r.author))) : person(o.replace(/^@/, ""))));
-      const miss = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (g.files ?? []).slice(0, 4) : [], authorOnly: !!g.authorOnly })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, whoTw: `還要 ${count.n} 個 approve`, files: [] as string[], count: true }] : [])];
+      const miss = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (g.files ?? []).slice(0, 4) : [], authorOnly: !!g.authorOnly })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, whoTw: `還要 ${count.n} 個 approve`, files: [] as string[], count: true }] : []),
+        // the latest push still needs an approval from someone other than the pusher (approval of the most recent push)
+        ...(a.missing.some((m) => m.kind === "lastpush") ? [{ who: "an approval of the latest push by someone other than the pusher", whoTw: "最後一次 push 要由推的人以外的人 approve", files: [] as string[], count: true, lastPush: true }] : [])];
       // each approver once: a team that approved names them, so their own "approved" line goes
       const doneA = [...done.filter((d) => !(a.groups ?? []).some((g) => g.ok && g.by.some((l) => d.en === `${l} approved`))), ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))];
       const m = F.approveMessage(pr, miss, doneA, a.lastPush);
       const named = miss.filter((x) => !(x as any).count), cnt = miss.find((x) => (x as any).count) as any;
       return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: [named.length ? `還缺 ${named.map((x) => x.who).join("、")} 的 approve` : "", cnt ? cnt.whoTw : ""].filter(Boolean).join("，") },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
-        done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: named.map((x) => x.who), countGap: count?.n ?? 0,
+        done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: named.map((x) => x.who), countGap: (count?.n ?? 0) + (a.missing.some((m) => m.kind === "lastpush") ? 1 : 0),
         // the rules and head this card last saw: a later change is told from what actually changed, never guessed
         seen: { head: r.head, required: a.required, dismissStale: a.dismissStale, lastPush: a.lastPush, groups: (a.groups ?? []).map((g) => g.who) },
         approvedBy: [...(a.approvers ?? [])],
@@ -940,53 +942,55 @@ export function createPrWatch(d: PrWatchDeps) {
       if (o.kind === "approve") { if (o.head !== r.head) { o.head = r.head; changed = true; } // an approve card lives across pushes: it follows the head
         const fresh = followPayload("approve", r, sh) as any;
         patchCard(o, (p) => {
-          // the named groups (a team, a code-owner set) and the approval count are followed apart: a count that drops is
-          // someone's approval, never a group that "left"
+          // everything the card shows (who counts, what is done, the message and its short form, who it is for) is rebuilt from
+          // GitHub now on every refresh: a stale name never reaches a message someone copies
+          const show = () => Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, seen: fresh.seen, recipients: fresh.recipients, message: fresh.message, short: fresh.short });
+          const newSince = (fresh.approvedBy ?? []).filter((l: string) => p.approvedBy && !p.approvedBy.some((x: string) => eq(x, l)));
+          // a card raised before the count and the rules were followed: take them as where it starts (no growth or shrink
+          // reason), but an approval that is new since the card last looked is still said
+          if (p.countGap === undefined || p.seen === undefined) { if (newSince.length) p.history.push(hist(`${newSince.join(", ")} approved ✓.`, `${newSince.join("、")} approve ✓。`)); show(); return; }
+          // the named groups (a team, a code-owner set) and the count are followed apart: a count that drops is someone's
+          // approval, never a group that "left"
           const was: string[] = (p.groupsMissing ?? []).filter((g: string) => !/more approvals?$/.test(g)), now: string[] = fresh.groupsMissing;
           const gone = was.filter((g) => !now.includes(g)), added = now.some((g) => !was.includes(g)), gap0 = Number(p.countGap ?? 0), gap1 = Number(fresh.countGap ?? 0);
-          // a card raised before the count was followed: take this refresh's count as where it starts, without a line
-          // a card raised before the count and the rules were followed: take them as where it starts (no growth or shrink line),
-          // but an approval that is new since the card last looked is still said
-          if (p.countGap === undefined || p.seen === undefined) { const fresh1 = (fresh.approvedBy ?? []).filter((l: string) => p.approvedBy && !p.approvedBy.some((x: string) => eq(x, l)));
-            if (fresh1.length) p.history.push(hist(`${fresh1.join(", ")} approved ✓.`, `${fresh1.join("、")} approve ✓。`));
-            Object.assign(p, { groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, seen: fresh.seen, done: fresh.done }); return; }
-          // nothing the card asks for changed: what it shows (who counts, what is done, what it saw) still follows GitHub
-          if (!gone.length && !added && gap0 === gap1) { Object.assign(p, { seen: fresh.seen, approvedBy: fresh.approvedBy, done: fresh.done }); return; }
+          const was0 = p.seen, now0 = fresh.seen, headMoved = now0.head !== was0.head, head7 = now0.head.slice(0, 7);
+          const lost = (p.approvedBy ?? []).filter((l: string) => !(fresh.approvedBy ?? []).some((x: string) => eq(x, l)));
+          // what changed in the rules: each its own clause
+          const rule: { en: string; tw: string }[] = [];
+          if (now0.required !== was0.required) rule.push({ en: `the rules now ask for ${now0.required} approvals, not ${was0.required}`, tw: `分支規則要求的 approve 從 ${was0.required} 個改為 ${now0.required} 個` });
+          if (now0.dismissStale && !was0.dismissStale) rule.push({ en: "the rules now dismiss stale approvals", tw: "分支規則改為舊 approve 不算" });
+          if (now0.lastPush && !was0.lastPush) rule.push({ en: "the rules now ask for an approval of the latest push by someone other than the pusher", tw: "分支規則改為最後一次 push 要由推的人以外的人 approve" });
+          const newGroups = now0.groups.filter((g: string) => !was0.groups.includes(g)); if (newGroups.length) rule.push({ en: `the rules now also ask for ${newGroups.join(", ")}`, tw: `分支規則現在也要 ${newGroups.join("、")}` });
+          // nothing changed that the card asks for or says: what it shows still follows GitHub, no line
+          if (!gone.length && !added && gap0 === gap1 && !lost.length && !newSince.length && !rule.length) { show(); return; }
           const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g) => !ok.some((x) => x.who === g));
-          const newApprovers = (fresh.approvedBy ?? []).filter((l: string) => !(p.approvedBy ?? []).some((x: string) => eq(x, l)) && !ok.some((g) => g.by.some((b) => eq(b, l))));
+          const newApprovers = newSince.filter((l: string) => !ok.some((g) => g.by.some((x) => eq(x, l))));
           const en: string[] = [], tw: string[] = [];
+          // who approved (a team with who, then everyone else) — always said, whatever the count does
           if (ok.length) { en.push(`${ok.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")} approved ✓`); tw.push(`${ok.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")}approve ✓`); }
-          if (gap1 < gap0 && newApprovers.length) { en.push(`${newApprovers.join(", ")} approved ✓`); tw.push(`${newApprovers.join("、")} approve ✓`); }
+          if (newApprovers.length) { en.push(`${newApprovers.join(", ")} approved ✓`); tw.push(`${newApprovers.join("、")} approve ✓`); }
+          for (const c of rule) { en.push(c.en); tw.push(c.tw); }
           if (dropped.length) { en.push(`${dropped.join(", ")} is no longer required (GitHub ignores an owner it reports as unknown, or the branch rules changed)`); tw.push(`${dropped.join("、")} 不再需要（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）`); }
-          // (a smaller gap is in what the card still asks for, below; a gap that closes is said here)
+          // each approval that stopped counting, with its own reason — always said, whatever the count does
+          const why = (l: string): { k: string; en: string; tw: string } => {
+            const v = r.reviews.find((x) => eq(x.login, l));
+            if (v?.state === "DISMISSED") return { k: "dismissed", en: "dismissed on GitHub", tw: "在 GitHub 上被 dismiss" };
+            if (!v) return { k: "gone", en: "no longer on GitHub", tw: "GitHub 上已經沒有" };
+            if (v.stale && now0.dismissStale) { const turned = !was0.dismissStale; // the rule clause already says it turned on
+              return { k: "stale", en: `given on an older head${headMoved ? `, and the head is now ${head7}` : ""}${turned ? "" : "; stale approvals do not count"}`, tw: `給在舊 head 上${headMoved ? `，head 現在是 ${head7}` : ""}${turned ? "" : "；舊 approve 不算"}` }; }
+            return { k: "other", en: "no longer counted by the rules", tw: "分支規則不再算它" }; };
+          const byWhy = new Map<string, { w: { en: string; tw: string }; who: string[] }>();
+          for (const l of lost) { const w = why(l), g = byWhy.get(w.k) ?? { w, who: [] }; g.who.push(l); byWhy.set(w.k, g); }
+          const names = (xs: string[]) => xs.length === 1 ? `${xs[0]}'s approval no longer counts` : `the approvals of ${xs.slice(0, -1).join(", ")} and ${xs.at(-1)} no longer count`;
+          for (const { w, who } of byWhy.values()) { en.push(`${names(who)} (${w.en})`); tw.push(`${who.join("、")} 的 approve 不再算數（${w.tw}）`); }
+          const grows = added || gap1 > gap0;
+          if (grows && !en.length) { en.push("the counted approvals changed"); tw.push("算數的 approve 變了"); }
           if (gap0 && !gap1) { en.push("the approval count is met"); tw.push("approve 人數已夠"); }
-          // the card grows. What changed in the rules is its own clause (the count, stale dismissal, the approval after the last
-          // push, a group they now ask for); each approval that stopped counting gets its own reason: dismissed on GitHub, no
-          // longer on GitHub, given on an older head while the rules void those (which rule, and the head now), or its giver
-          // pushed the head. Nothing found: said plainly.
-          const grows = added || gap1 > gap0, lost = (p.approvedBy ?? []).filter((l: string) => !(fresh.approvedBy ?? []).some((x: string) => eq(x, l)));
-          if (grows) { const was0 = p.seen, now0 = fresh.seen, before = en.length;
-            if (now0.required > was0.required) { en.push(`the rules now ask for ${now0.required} approvals, not ${was0.required}`); tw.push(`分支規則要求的 approve 從 ${was0.required} 個改為 ${now0.required} 個`); }
-            if (now0.dismissStale && !was0.dismissStale) { en.push("the rules now dismiss stale approvals"); tw.push("分支規則改為舊 approve 不算"); }
-            if (now0.lastPush && !was0.lastPush) { en.push("the rules now ask for an approval after the last push"); tw.push("分支規則改為要最後一次 push 之後的 approve"); }
-            const newGroups = now0.groups.filter((g: string) => !was0.groups.includes(g)); if (newGroups.length) { en.push(`the rules now also ask for ${newGroups.join(", ")}`); tw.push(`分支規則現在也要 ${newGroups.join("、")}`); }
-            const why = (l: string): { k: string; en: string; tw: string } => {
-              const v = r.reviews.find((x) => eq(x.login, l)), head = now0.head.slice(0, 7);
-              if (v?.state === "DISMISSED") return { k: "dismissed", en: "dismissed on GitHub", tw: "在 GitHub 上被 dismiss" };
-              if (!v) return { k: "gone", en: "no longer on GitHub", tw: "GitHub 上已經沒有" };
-              if (v.stale && (now0.dismissStale || now0.lastPush)) return now0.dismissStale ? { k: "stale-d", en: `given on an older head; the head is now ${head} and the rules dismiss stale approvals`, tw: `給在舊 head 上；head 現在是 ${head}，分支規則不算舊 approve` }
-                : { k: "stale-l", en: `given before the last push (head ${head}); the rules ask for an approval after it`, tw: `給在最後一次 push 之前（head ${head}）；分支規則要的是 push 之後的 approve` };
-              if ((r.approvals.inferredPusher ?? []).some((x) => eq(x, l))) return { k: "pusher", en: "they pushed the head, and the rules ask for an approval from someone else after the last push", tw: "head 是他推的，分支規則要的是別人在最後一次 push 之後的 approve" };
-              return { k: "other", en: "no longer counted by the rules", tw: "分支規則不再算它" }; };
-            const byWhy = new Map<string, { r: { en: string; tw: string }; who: string[] }>();
-            for (const l of lost) { const w = why(l), g = byWhy.get(w.k) ?? { r: w, who: [] }; g.who.push(l); byWhy.set(w.k, g); }
-            const names = (xs: string[]) => xs.length === 1 ? `${xs[0]}'s approval no longer counts` : `the approvals of ${xs.slice(0, -1).join(", ")} and ${xs.at(-1)} no longer count`;
-            for (const { r: w, who } of byWhy.values()) { en.push(`${names(who)} (${w.en})`); tw.push(`${who.join("、")} 的 approve 不再算數（${w.tw}）`); }
-            if (en.length === before) { en.push("the counted approvals changed"); tw.push("算數的 approve 變了"); } }
+          // and what is left, so consecutive lines add up
           const left = (fresh.missing ?? []).map((m: F.L) => ({ en: m.en.replace(/^✕ /, ""), tw: m.tw.replace(/^✕ /, "") }));
           if (left.length) { en.push(`the card now asks for: ${left.map((m: F.L) => m.en).join(", ")}`); tw.push(`${grows ? "卡片現在要" : "卡裡只留"}：${left.map((m: F.L) => m.tw).join("、")}`); }
           p.history.push(hist(`${en.join("; ")}.`, `${tw.join("；")}。`));
-          Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, seen: fresh.seen, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); }); }
+          show(); }); }
     }
     for (const r of rows) {
       const sh = shepherdOf(r), kind = KIND_OF[sh.branch]; if (!kind) continue;

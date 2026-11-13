@@ -64,11 +64,13 @@ try {
     ok(!firstIs17 && await p.evaluate(() => !!document.activeElement?.closest('[data-prs-row="northwind/checkout-api#17"]') && document.activeElement?.hasAttribute('data-prs-ev-setup')), 'closing settings after a live update focuses the Set up of the row that opened it, not the first one alike', await p.evaluate(() => document.activeElement?.closest('[data-prs-row]')?.dataset.prsRow)); }
   ok((await api('/api/prs/settings', { settings: fixtureSettings })).status === 200, 'settings saved (evidence source, required reviewer, four environments, groups)');
   await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
+  // twelve rows may already be on screen from before the settings: wait for the read that uses them (the evidence source)
+  await p.waitForSelector(`[data-prs-row="northwind/checkout-api#16"] [data-prs-next="failed"]`, { timeout: 20000 }).catch(() => {});
   ok(await p.locator('[data-prs-row]').count() === 12, 'the refresh button reads GitHub: twelve rows');
   const cols = await p.locator('.pw-row.h [role="columnheader"]').allInnerTexts();
   ok(JSON.stringify(cols.slice(1)) === JSON.stringify(['#', 'Pull request', 'Next step · waits on', 'Missing', 'CI', 'Depends on', 'Test evidence', 'Environments', 'Reviews', 'Issues', 'Group']), 'the columns, in order', JSON.stringify(cols));
   const next = async (id) => p.locator(`[data-prs-row="${id}"] [data-prs-next]`).getAttribute('data-prs-next');
-  ok(await next('northwind/checkout-api#16') === 'failed' && await next('northwind/checkout-api#19') === 'ready' && await next('northwind/checkout-api#11') === 'draft', 'the next step per row (failed evidence is a fix, never ready)');
+  ok(await next('northwind/checkout-api#16') === 'failed' && await next('northwind/checkout-api#19') === 'ready' && await next('northwind/checkout-api#11') === 'draft', 'the next step per row (failed evidence is a fix, never ready)', JSON.stringify([await next('northwind/checkout-api#16'), await next('northwind/checkout-api#19'), await next('northwind/checkout-api#11'), await next('northwind/checkout-api#17')]));
   ok((await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-next]').innerText()).startsWith('Test only the change since '), 'evidence for an older head: test only the change since');
   ok(await p.locator('#navPrs').innerText() === '3', 'the sidebar count: rows waiting on approval or ready to merge', await p.locator('#navPrs').innerText());
   const tab = async (k) => (await p.locator(`[data-prs-tab="${k}"] .tb-count`).innerText()).trim();
