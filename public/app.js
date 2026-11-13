@@ -352,11 +352,13 @@ function inboxSection(items, cur, mode) {
       if (!IB.order.includes(IB.sel)) IB.sel = IB.order[0] || null;
       const word = T(ctx.sort === "new" ? "newest first" : "oldest first", ctx.sort === "new" ? "最新的在上" : "最久的在上");
       return h("div", { class: "ib-list card" },
-        h("div", { class: "ib-list-h" }, h("b", {}, T("Waiting on you", "等你處理")), h("span", { class: "badge human" }, String(items.length)), h("span", { class: "faint" }, word)),
+        h("div", { class: "ib-list-h" }, h("b", {}, T("Waiting on you", "等你處理")), h("span", { class: "badge human", "data-inbox-count": "" }, IB.order.length < items.length ? T(`${IB.order.length} of ${items.length}`, `${IB.order.length} / ${items.length}`) : String(items.length)), h("span", { class: "faint" }, word)),
         h("div", { role: "listbox", "aria-label": T(`Open cards, ${word}`, `待處理的卡，${word}`) }, page.map((x) => inboxRow(x, IB.order.indexOf(x.id), x.id === IB.sel, ctx.mark))));
     },
     onChange: (v) => {
       IB.order = v.matched.map((x) => x.id); if (!IB.order.includes(IB.sel)) IB.sel = IB.order[0] || null; // no match draws no rows
+      // the shown card's place among the matches follows every filter change
+      const pos = detail?.querySelector("[data-inbox-pos]"), cur = items.find((y) => y.id === detail?.dataset.inboxShows); if (pos && cur) pos.textContent = inboxPos(cur, items);
       // a filter took the shown card out of the list: the first match is shown (or none), and the address follows
       if (!detail || detail.dataset.inboxShows === (IB.sel || "")) return;
       const x = items.find((y) => y.id === IB.sel) || null;

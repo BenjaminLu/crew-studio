@@ -251,6 +251,13 @@ try {
     const shown = await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead);
     ok(merges.includes(shown) && (await p.evaluate(() => location.hash)).includes("kind=merge"), "the card shown is a match (the first one), and the URL keeps the filter", shown);
     ok(await p.$eval("[data-inbox-pos]", (e) => e.textContent) === `1 of ${merges.length} (46 in all)`, "its header counts it among the matches, and says how many wait in all", await p.$eval("[data-inbox-pos]", (e) => e.textContent));
+    ok(await p.$eval("[data-inbox-count]", (e) => e.textContent) === `${merges.length} of 46`, "the list's badge says the matches and the total", await p.$eval("[data-inbox-count]", (e) => e.textContent));
+    { // the shown card stays a match while the filter changes: its place follows in place (focus kept in the box)
+      const shownNow = await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead);
+      await p.focus('[data-lt-q="inbox"]'); await p.keyboard.type(shownNow); await p.waitForTimeout(200);
+      ok(await p.$eval("[data-inbox-pos]", (e) => e.textContent) === "1 of 1 (46 in all)" && await p.evaluate(() => document.activeElement?.matches('[data-lt-q="inbox"]')), "narrowed to the shown card, its header says 1 of 1 at once, while the box keeps the focus", await p.$eval("[data-inbox-pos]", (e) => e.textContent));
+      await p.fill('[data-lt-q="inbox"]', ""); await p.waitForTimeout(200);
+      ok(await p.$eval("[data-inbox-pos]", (e) => e.textContent) === `${merges.indexOf(shownNow) + 1} of ${merges.length} (46 in all)`, "widened again, it follows back", await p.$eval("[data-inbox-pos]", (e) => e.textContent)); }
     ok(!!await p.$('[data-lt-facet="kind"]') && await p.$eval('[data-lt-facet="project"]', (e) => e.closest(".lt-facet").hidden), "a facet no card has a value for (Project) is not offered");
     await p.focus(`[data-inbox-row="${shown}"]`); await p.keyboard.press("j"); await p.waitForTimeout(150);
     const next = await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead);
