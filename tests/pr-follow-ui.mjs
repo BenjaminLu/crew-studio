@@ -75,7 +75,7 @@ try {
   ok((await p.locator(`[data-follow-card="${ap.id}"] [data-follow-missing]`).innerText()).includes('@northwind/security') && !(await p.locator(`[data-follow-card="${ap.id}"] [data-follow-missing]`).innerText()).includes('release-approvers'), 'only the group still missing');
   await p.waitForFunction((id) => document.querySelector(`[data-follow-card="${id}"] [data-follow-rcpt]`)?.innerText.includes('上次找的是 sec-bob'), ap.id).catch(() => {});
   ok((await p.locator(`[data-follow-card="${ap.id}"] [data-follow-rcpt]`).innerText()).includes('上次找的是 sec-bob') && await p.locator(`[data-follow-card="${ap.id}"] [data-follow-target]`).inputValue() === '', 'the approve card says who was asked last time, and offers no QA channel by default');
-  ok((await p.locator(`[data-follow-card="${ap.id}"] .ba`).innerText()).split('rel-dan').length === 2, 'rel-dan shows once under done (as the team that approved)');
+  ok((await p.locator(`[data-follow-card="${ap.id}"] .ba`).innerText()).split('rel-dan').length === 2 && (await p.locator(`[data-follow-card="${ap.id}"] [data-follow-msg]`).inputValue()).split('rel-dan').length === 2, 'rel-dan shows once under done and once in the message (as the team that approved)');
   await p.screenshot({ path: join(shots, 'card-approve-1440.png'), fullPage: true });
   // the push card: answering it with a reason
   await p.goto(`${base}/#/inbox/${encodeURIComponent(pc.id)}`); await p.waitForSelector(`[data-follow-card="${pc.id}"]`);
