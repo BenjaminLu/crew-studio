@@ -8,7 +8,8 @@ page's own row function) and the paging footer.
 ## What the captain gets
 
 - **Search** (`type=search`, a magnifier, a `/` hint) filters as they type over the page's text. Chinese matches in either
-  script: the query and the text both go through `crewI18n.toCN` (opencc-js). The first free word is marked
+  script: the query and the text both go through `crewI18n.toCN` (opencc-js). OpenCC converts phrases as well as characters
+  (Taiwan 軟體 becomes Mainland 软件), so a word typed in the other region's vocabulary (软体) does not find it. The first free word is marked
   (`mark.lt-mark`) in each row's title.
 - **`key:value` words** in the box filter a facet; the value matches from its start, as stored or as the page shows it
   (`status:waiting`, `status:等你`). A value with spaces goes in double quotes. Typing `key:` lists that facet's values
@@ -40,9 +41,14 @@ Chinese is typed through an input method, so the search box is built around its 
   once, on `compositionend`, with the committed text. The facet popover's own search does the same.
 - Enter, Escape and the arrow keys during a composition belong to the input method: no suggestion is picked, nothing is
   cleared.
-- The box is never re-rendered while it has the focus: `render()` (public/app.js) waits for its blur, as a live update
-  does (`soft()`); live rows go in place (`crewListTools.feed`, `root.ltItems`); a terminal never takes the focus from it.
-  Value, focus, selection and an active composition survive.
+- The toolbar is never redrawn while the focus is anywhere in it (the box, a suggestion picked with ↓, a facet's
+  popover): `render()` (public/app.js) waits until the focus leaves the toolbar; live rows go in place
+  (`crewListTools.feed`, `root.ltItems`); a terminal never takes the focus from it. Value, focus, selection and an active
+  composition survive.
+- A waiting redraw never runs against another page: once the address names a different route (a sidebar click before
+  its hashchange), only route() draws, and a list writes its state only while the address is its own page.
+- The composing state belongs to the box: a page left mid-composition (Back, a link: no compositionend) leaves nothing
+  stuck, and the page's new box filters normally.
 
 The UI test drives compositions through Chrome's DevTools protocol (`Input.imeSetComposition`, `Input.insertText`):
 Pinyin (r → ru → ruan → 软) and Zhuyin-style (ㄖ → ㄖㄨ → ㄖㄨㄢ → ㄖㄨㄢˇ → 軟) on Tasks, Terminals (Launch… open) and

@@ -107,7 +107,7 @@ function writeQuery(cfg, st, prev) {
   if (st.page > 1) out.set("page", String(st.page));
   return out;
 }
-const onRoute = (cfg) => !cfg.route || (typeof S !== "undefined" && S.route?.name === cfg.route);
+const onRoute = (cfg) => !cfg.route || (typeof S !== "undefined" && S.route?.name === cfg.route && (window.crewHashRoute?.() ?? cfg.route) === cfg.route);
 
 // ---------- the element ----------
 const UI = new Map(); // per list id: what is open (a popover, its search), kept across the page's redraws
@@ -149,7 +149,7 @@ function list(cfg) {
     cfg.sorts.map((s) => h("option", { value: s.key }, s.label))) : null;
   const active = h("div", { class: "lt-active", "aria-live": "polite" });
   const bar = h("div", { class: "lt", "data-lt-bar": cfg.id, role: "search", "aria-label": tr(`Search and filter ${cfg.title}`, `${cfg.title}搜尋與篩選`) },
-    h("div", { class: "lt-row" }, qbox, [...facetEls.values()].map((x) => x.wrap), sortSel ? h("label", { class: "lt-check" }, h("span", { class: "faint lt-small" }, tr("Sort", "排序")), sortSel) : null, cfg.extra || null), active);
+    h("div", { class: "lt-row" }, qbox, [...facetEls.values()].map((x) => x.wrap), sortSel ? h("label", { class: "lt-check" }, h("span", { class: "faint lt-small" }, tr("Sort", "排序")), sortSel) : null, cfg.extra ? h("span", { class: "lt-extra" }, cfg.extra) : null), active);
   const region = h("div", { class: "lt-region", "data-lt-region": cfg.id }), foot = h("div", { class: "lt-foot", "data-lt-foot": cfg.id, hidden: true });
   root.append(...(cfg.items == null && !cfg.server ? [] : [bar]), region, foot);
 
@@ -157,10 +157,12 @@ function list(cfg) {
   const typed = () => { u.sug = true; set({ q: input.value }, { typing: true }); };
   // while an input method composes (compositionstart … compositionend) nothing filters, redraws or moves this box: the list
   // filters once, on compositionend, with the committed text; Enter, Escape and the arrows belong to the input method
-  const composing = (e) => e.isComposing || e.keyCode === 229 || u.composing;
-  input.addEventListener("compositionstart", () => { u.composing = true; });
+  let composingNow = false; // this box's own: a page left mid-composition fires no compositionend, and a new box starts clean
+  const composing = (e) => e.isComposing || e.keyCode === 229 || composingNow;
+  input.addEventListener("compositionstart", () => { composingNow = true; });
+  input.addEventListener("blur", () => { composingNow = false; });
   input.addEventListener("input", (e) => { if (!composing(e)) typed(); });
-  input.addEventListener("compositionend", () => { u.composing = false; typed(); });
+  input.addEventListener("compositionend", () => { composingNow = false; typed(); });
   input.addEventListener("keydown", (e) => {
     if (composing(e)) return;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (!sugBox.hidden) { u.sug = false; sugBox.hidden = true; return; } if (input.value) { input.value = ""; typed(); } else input.blur(); return; }
@@ -216,9 +218,10 @@ function list(cfg) {
       el.btn.className = `btn sm${n ? " primary" : ""}`; el.btn.setAttribute("aria-expanded", String(open));
       el.btn.replaceChildren(`${el.f.name}${n ? ` · ${n}` : ""} ▾`);
       if (open && !el.pop.isConnected) el.wrap.append(el.pop); if (!open && el.pop.isConnected) el.pop.remove();
-      if (open) { drawOpts(key); place(el.pop); } }
+      if (open) { drawOpts(key); place(el.pop); requestAnimationFrame(() => place(el.pop)); } }
     if (sortSel && v.sort) sortSel.value = v.sort;
     if (input.value !== st.q && document.activeElement !== input) input.value = st.q;
+    if (sugBox.contains(document.activeElement)) return; // the captain is choosing among them (↓): they stay as they are
     const sug = u.sug && document.activeElement === input ? v.suggest || [] : [];
     sugBox.hidden = !sug.length;
     sugBox.replaceChildren(...sug.map((g) => h("button", { type: "button", role: "option", "data-lt-sug": `${g.key}:${g.val}`, onclick: () => { input.value = g.q; input.focus(); u.sug = !g.q.endsWith(" "); set({ q: g.q }); } },
