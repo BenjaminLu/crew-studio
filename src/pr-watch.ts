@@ -853,7 +853,8 @@ export function createPrWatch(d: PrWatchDeps) {
       const named = miss.filter((x) => !(x as any).count), cnt = miss.find((x) => (x as any).count) as any;
       return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: [named.length ? `還缺 ${named.map((x) => x.who).join("、")} 的 approve` : "", cnt ? cnt.whoTw : ""].filter(Boolean).join("，") },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
-        done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: miss.map((x) => x.who),
+        done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: named.map((x) => x.who), countGap: count?.n ?? 0,
+        approvedBy: r.reviews.filter((v) => v.state === "APPROVED" && !v.author && (!v.stale || (!a.dismissStale && !a.lastPush))).map((v) => v.login),
         msgHead: { en: "Ask for approval", tw: "請 approve" }, recipients: recips, message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the approval", "我已發出，等 approve", true, { en: "an approval updates or closes the card", tw: "有人 approve 卡就更新或關掉" }),
           OPT("switch", "B", "Someone else", "換人", true, { en: "pick another member above and DM them", tw: "在上面選別的成員再 DM" }),
@@ -934,15 +935,24 @@ export function createPrWatch(d: PrWatchDeps) {
       if (want !== o.kind || (o.kind !== "approve" && o.kind !== "merge" && o.head !== r.head)) {
         const why = closeReason(o, r, sh); await closeFollow(key, why.en, why.tw); changed = true; continue; }
       if (o.kind === "approve") { const fresh = followPayload("approve", r, sh) as any;
-        patchCard(o, (p) => { const gone = (p.groupsMissing ?? []).filter((g: string) => !fresh.groupsMissing.includes(g));
-          if (gone.length || fresh.groupsMissing.some((g: string) => !(p.groupsMissing ?? []).includes(g))) {
-            // a group that went because someone approved, or because the rules no longer ask for it (GitHub ignores an owner it
-            // reports as unknown, or the rules changed): said as it is
-            const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g: string) => !ok.some((x) => x.who === g));
-            const keeps = fresh.groupsMissing.length ? { en: ` → the card keeps ${fresh.groupsMissing.join(", ")}`, tw: ` → 卡裡只留 ${fresh.missing.map((m: F.L) => m.tw.replace(/^✕ /, "")).join("、")}` } : { en: "", tw: "" };
-            if (ok.length) p.history.push(hist(`approved: ${ok.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")} ✓${keeps.en}`, `${ok.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")} approve ✓${keeps.tw}`));
-            if (dropped.length) p.history.push(hist(`no longer required: ${dropped.join(", ")} (GitHub ignores an owner it reports as unknown, or the branch rules changed)${keeps.en}`, `不再需要：${dropped.join("、")}（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）${keeps.tw}`));
-            Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); } }); }
+        patchCard(o, (p) => {
+          // the named groups (a team, a code-owner set) and the approval count are followed apart: a count that drops is
+          // someone's approval, never a group that "left"
+          const was: string[] = (p.groupsMissing ?? []).filter((g: string) => !/more approvals?$/.test(g)), now: string[] = fresh.groupsMissing;
+          const gone = was.filter((g) => !now.includes(g)), added = now.some((g) => !was.includes(g)), gap0 = Number(p.countGap ?? 0), gap1 = Number(fresh.countGap ?? 0);
+          if (!gone.length && !added && gap0 === gap1) return;
+          const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g) => !ok.some((x) => x.who === g));
+          const newApprovers = (fresh.approvedBy ?? []).filter((l: string) => !(p.approvedBy ?? []).some((x: string) => eq(x, l)) && !ok.some((g) => g.by.some((b) => eq(b, l))));
+          const en: string[] = [], tw: string[] = [];
+          if (ok.length) { en.push(`${ok.map((g) => `${g.who} (${g.by.join(", ")})`).join(", ")} approved ✓`); tw.push(`${ok.map((g) => `${g.who}（${g.by.join("、")}）`).join("、")}approve ✓`); }
+          if (gap1 < gap0 && newApprovers.length) { en.push(`${newApprovers.join(", ")} approved ✓`); tw.push(`${newApprovers.join("、")} approve ✓`); }
+          if (dropped.length) { en.push(`${dropped.join(", ")} is no longer required (GitHub ignores an owner it reports as unknown, or the branch rules changed)`); tw.push(`${dropped.join("、")} 不再需要（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）`); }
+          // (a smaller gap is in what the card still asks for, below; a gap that closes is said here)
+          if (gap0 && !gap1) { en.push("the approval count is met"); tw.push("approve 人數已夠"); }
+          const left = (fresh.missing ?? []).map((m: F.L) => ({ en: m.en.replace(/^✕ /, ""), tw: m.tw.replace(/^✕ /, "") }));
+          if (left.length) { en.push(`the card now asks for: ${left.map((m: F.L) => m.en).join(", ")}`); tw.push(`卡裡只留：${left.map((m: F.L) => m.tw).join("、")}`); }
+          p.history.push(hist(`${en.join("; ")}.`, `${tw.join("；")}。`));
+          Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); }); }
     }
     for (const r of rows) {
       const sh = shepherdOf(r), kind = KIND_OF[sh.branch]; if (!kind) continue;

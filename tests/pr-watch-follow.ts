@@ -95,6 +95,8 @@ const { ok, end } = suite("pr-watch-follow");
 {
   const R3 = await import("../src/pr-watch-rules"), O = await import("opencc-js"), cn = O.Converter({ from: "tw", to: "cn" });
   for (const rule of R3.RULES) { const t = R3.ruleSentence(rule), z = cn(t.tw);
-    ok(![t.en, t.tw, z].some((x) => x.includes("→") || /\s{2}|\s[，。、）]|[（，]\s|現在\s|现在\s|所以\s/.test(x)) && t.en.startsWith("now ") && t.tw.startsWith("現在"), `rule ${rule.id} reads as one sentence in English, zh-TW and zh-CN, no arrow or stray space`, `${t.en} | ${t.tw} | ${z}`); }
+    // no arrow, no double space, no space beside full-width punctuation; Chinese and Latin words keep one space between them
+    const cjkLatin = (x: string) => /[\u4e00-\u9fff][A-Za-z]|[A-Za-z][\u4e00-\u9fff]/.test(x);
+    ok(![t.en, t.tw, z].some((x) => x.includes("→") || /\s{2}|\s[，。、；：（）]|[，。、；：（）]\s/.test(x)) && !cjkLatin(t.tw) && !cjkLatin(z) && /^[A-Z].*\.$/.test(t.en) && /。$/.test(t.tw), `rule ${rule.id} reads as one plain sentence in English, zh-TW and zh-CN`, `${t.en} | ${t.tw} | ${z}`); }
 }
 end();

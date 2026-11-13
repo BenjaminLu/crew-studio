@@ -549,10 +549,22 @@ export function proposeOrder(prs: PrFacts[], deps: { pr: string; on: string }[],
   return out.map((id) => ({ id, why: why.get(id)!.length ? why.get(id)! : ["opened earlier than the ones after it"] }));
 }
 
-/** A rule as one plain sentence, built from its two parts (the condition, and what follows from it), never by editing its
- *  arrow: "now a reviewer asked for changes, so fix (the author)" / 「現在有人要求修改，所以修正（作者）」. */
-export function ruleSentence(rule: { en: string; tw: string }): { en: string; tw: string } {
-  const part = (t: string) => { const i = t.indexOf("→"); return i < 0 ? [t.trim(), ""] : [t.slice(0, i).trim(), t.slice(i + 1).trim()]; };
-  const [ce, re] = part(rule.en), [ct, rt] = part(rule.tw);
-  return { en: re ? `now ${ce}, so ${re}` : `now ${ce}`, tw: rt ? `現在${ct}，所以${rt}` : `現在${ct}` };
+/** Each rule as one plain sentence: what is true, and what follows from it (the card's record, a closed card's note). */
+const SENTENCES: Record<string, { en: string; tw: string }> = {
+  draft: { en: "It is a draft, so it is on hold.", tw: "這是 draft，所以暫緩。" },
+  unread: { en: "Studio could not read every review or comment, so it is on hold (see GitHub).", tw: "Studio 沒讀到全部的 review 或留言，所以暫緩（看 GitHub）。" },
+  "evidence-asked": { en: "A reviewer asked for evidence, not a code change, so it waits for the QA test.", tw: "reviewer 要的是外部證據，不是改代碼，所以等 QA 實測。" },
+  "re-review": { en: "The evidence covers the current head while a reviewer's verdict is older, so the reviewers are asked to look again.", tw: "證據已覆蓋目前 head，reviewer 的意見還停在舊的，所以請 reviewer 重驗。" },
+  changes: { en: "A reviewer asked for changes, so the author fixes them.", tw: "有人要求修改，所以由作者修正。" },
+  required: { en: "A required reviewer has not reviewed yet, so it waits for them.", tw: "必要 reviewer 還沒 review，所以等他。" },
+  dependency: { en: "A pull request it depends on is not merged yet, so it waits for it.", tw: "依賴的 PR 還沒合併，所以等它。" },
+  environment: { en: "The head runs in no pre-production environment, so it waits to be deployed for testing.", tw: "head 沒在任何測試環境，所以等部署去測。" },
+  failed: { en: "The test evidence says fail, so the author fixes it.", tw: "測試證據是不通過，所以由作者修正。" },
+  evidence: { en: "There is no test evidence for the current head, so it waits for a test.", tw: "目前 head 還沒有測試證據，所以等測試。" },
+  approvals: { en: "Approvals are missing (or the rules cannot be read), so it waits for them.", tw: "approve 不夠（或讀不到規則），所以等 approve。" },
+  blocked: { en: "GitHub blocks the merge for a reason the readable rules do not show, so it is on hold.", tw: "GitHub 因為讀得到的規則看不出的原因擋住 merge，所以暫緩。" },
+  ready: { en: "Everything is satisfied, so it is ready to merge.", tw: "條件都滿足，所以可以合併。" },
+};
+export function ruleSentence(rule: { id?: string; en: string; tw: string }): { en: string; tw: string } {
+  return (rule.id && SENTENCES[rule.id]) || { en: rule.en.replace(/\s*→\s*/g, ": "), tw: rule.tw.replace(/\s*→\s*/g, "：") };
 }

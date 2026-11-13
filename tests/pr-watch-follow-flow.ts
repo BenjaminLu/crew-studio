@@ -46,7 +46,7 @@ try {
   { const a0 = cardOf(`${gw}#216`, "approve"); ok([...(a0?.follow.groupsMissing ?? [])].sort().join() === "@northwind/release-approvers,@northwind/security", "216 first misses both teams", JSON.stringify(a0?.follow.groupsMissing));
     p216.reviews!.push(relDan); await refresh(); await until(() => cardOf(`${gw}#216`, "approve")?.follow.groupsMissing.length === 1, 15000);
     const a1 = cardOf(`${gw}#216`, "approve");
-    ok(a1?.id === a0?.id && a1.follow.history.some((x: any) => x.tw.includes("rel-dan") && x.tw.includes("approve ✓ → 卡裡只留 @northwind/security")), "rel-dan approves: the same card keeps only security, and its record says so", JSON.stringify(a1?.follow.history)); }
+    ok(a1?.id === a0?.id && a1.follow.history.some((x: any) => x.tw.includes("rel-dan") && x.tw.includes("approve ✓；卡裡只留：@northwind/security") && x.en.includes("approved ✓; the card now asks for: @northwind/security") && !x.en.includes("→") && !/\s[（]|[）]\s/.test(x.tw)), "rel-dan approves: the same card keeps only security, and its record says so", JSON.stringify(a1?.follow.history)); }
   const qa = cardOf(`${gw}#212`, "qa"), nudge = cardOf(`${gw}#215`, "nudge"), ap = cardOf(`${gw}#216`, "approve");
   ok(!!qa && !!nudge && !!ap && open().length === 3, "three cards: ask QA (212), ask the reviewers again (215), ask for approval (216)", JSON.stringify(open().map((c: any) => `${c.follow.pr}:${c.follow.kind}`)));
   ok(qa.follow.lead.en.includes('review-bot-a\'s comment: "Please attach a staging run that shows the 429 for the 21st request". ') && qa.follow.recipients[0].who === "qa-lead" && qa.follow.recipients[0].via.en === "Slack DM", "the QA card quotes the reviewer and is for the evidence source, by Slack DM");
