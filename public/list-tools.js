@@ -248,7 +248,10 @@ function list(cfg) {
         h("button", { type: "button", class: "btn", "data-lt-reset": cfg.id, onclick: clearAll }, tr("Clear search and filters", "清除搜尋和篩選")))))];
     else body = [cfg.rows(v.rows, { mark: (t) => mark(t, v.free[0]), older, sort: v.sort, matched: v.matched, filtered, page: v.page })].flat();
     if (n && older && !body.some((x) => x?.contains?.(older))) body.push(older);
+    // a row (or its control) with the focus keeps it through the redraw: the same one drawn anew, by its key and place
+    const had = region.contains(document.activeElement) ? keyOf(document.activeElement, region) : null;
     region.replaceChildren(...body.filter(Boolean));
+    if (had && !region.contains(document.activeElement)) { const m = region.querySelectorAll(had.key), el = m.length === 1 ? m[0] : m[had.at]; if (el?.tagName === had.tag) el.focus({ preventScroll: true }); }
     if (typeof hydrateIcons === "function") hydrateIcons(region);
     // the footer
     foot.hidden = !n || v.loading;
@@ -279,6 +282,13 @@ function place(pop) {
   let dx = 0; if (r.right > right) dx = right - r.right; if (r.left + dx < left) dx = left - r.left;
   if (dx) pop.style.transform = `translateX(${Math.round(dx)}px)`;
 }
+/** a stable way to find an element again in a redrawn scope: its id, else its first data- attribute, else its link; and
+ *  which one of several it was */
+function keyOf(el, scope) {
+  const d = [...el.attributes].find((x) => x.name.startsWith("data-")), href = el.getAttribute("href");
+  const key = el.id ? `#${CSS.escape(el.id)}` : d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : href ? `${el.tagName.toLowerCase()}[href="${CSS.escape(href)}"]` : null;
+  return key ? { key, tag: el.tagName, at: [...scope.querySelectorAll(key)].indexOf(el) } : null;
+}
 /** the title with the first free word marked, found the same way in both Chinese scripts */
 function mark(text, w) {
   const t = String(text ?? ""); if (!w) return t;
@@ -296,6 +306,8 @@ addEventListener("keydown", (e) => {
 /** an open popover closed without redrawing the list (a press on a row goes on to its click); answers its button */
 function closePop(pop) { const btn = pop.closest(".lt-facet")?.querySelector("[data-lt-facet]"), id = pop.closest("[data-lt-bar]")?.dataset.ltBar;
   if (id) ui(id).open = null; pop.remove(); btn?.setAttribute("aria-expanded", "false"); return btn; }
+// a window that changes size keeps an open popover inside the page
+addEventListener("resize", () => { for (const pop of document.querySelectorAll("#view .lt-pop")) place(pop); });
 addEventListener("pointerdown", (e) => { const pop = document.querySelector("#view .lt-pop"); if (pop && !pop.closest(".lt-facet")?.contains(e.target)) closePop(pop); }, true);
 
 /** New rows for list `id` drawn in place when a field of the page has the focus (app.js soft() would wait for its blur and
