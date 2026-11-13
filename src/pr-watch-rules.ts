@@ -451,7 +451,9 @@ export function commitOfTag(tag: string): string | null {
  * matches). With nothing after {tag}, the tag ends at the end of the line or the first other character, and a longer
  * run is no tag. Each line is scanned forward once per occurrence of the prefix: linear in the line's length.
  */
-export function tagCommit(text: string, template: string): string | null {
+export function tagCommit(text: string, template: string): string | null { const t = tagOf(text, template); return t ? commitOfTag(t) : null; }
+/** The tag itself (as tagCommit finds it), or null: what a release brief replaces on that line. */
+export function tagOf(text: string, template: string): string | null {
   if (templateProblem(template)) return null;
   const [pre, post] = template.split("{tag}");
   for (const line of String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000)) {
@@ -462,7 +464,7 @@ export function tagCommit(text: string, template: string): string | null {
       if (post) { j = line.indexOf(post, i); if (j < 0) break; }
       else { j = i; while (j < line.length && TAG_CHAR.test(line[j])) j++; }
       const tag = line.slice(i, j);
-      if (isTag(tag)) return commitOfTag(tag);
+      if (isTag(tag)) return tag;
       from = at + 1;
     }
   }

@@ -28,6 +28,7 @@ import { normalize } from "./runtime/defs";
 import { Projects } from "./doors";
 import type { Engine, X } from "./runtime/engine";
 import * as R from "./pr-watch-rules";
+import * as X from "./pr-watch-release";
 
 export const APPLY_WORKFLOW = "pr-watch-apply-depends";
 export const INTERVAL_MS = 5 * 60_000;
@@ -108,8 +109,10 @@ export type Settings = {
   which: { mine: boolean; assigned: boolean; reviewRequested: boolean };
   evidence: R.EvidenceSources; requiredReviewers: string[]; environments: R.EnvSetting[]; groups: string[]; shortForm: boolean;
   messageLang: "en" | "zh-TW" | "zh-CN" | null;
+  /** the paths that mean a migration, configuration or a secret, for the release brief (CODEOWNERS-style patterns) */
+  opsRules: X.OpsRules;
 };
-export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: [], checks: [], labels: [] }, requiredReviewers: [], environments: [], groups: [], shortForm: false, messageLang: null };
+export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: [], checks: [], labels: [] }, requiredReviewers: [], environments: [], groups: [], shortForm: false, messageLang: null, opsRules: structuredClone(X.DEFAULT_OPS_RULES) };
 /** by: who set it. external-cli: a pull request list grant's prs_deps (grant names which), shown as such until the captain sets it again */
 type Dep = { on: string[]; by: "captain" | "accepted" | "github" | "external-cli"; grant?: string; at: string };
 export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string>;
@@ -127,7 +130,9 @@ export type RawRow = {
 };
 /** A merged pull request on its way to production: each environment is on when its commit contains the merge commit. */
 export type MergedRow = { id: string; repo: string; number: number; url: string; title: string; author: string; single: boolean; base: string; mergedAt: string; mergeSha: string;
-  envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[]; deps: string[]; body: string; partial: string[] };
+  envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[]; deps: string[]; body: string; partial: string[];
+  /** what it asks for before it goes live (src/pr-watch-release.ts), each with the address it came from */
+  ops: X.Op[] };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
   depState: Record<string, string>; proposal: { deps: R.Signal[]; hints: R.Hint[] }; changed: Record<string, { at: string; what: Change[] }>; finger: Record<string, any>;
   /** each row's head and when Studio first saw it: a comment that names no commit covers a head seen before it */
@@ -163,8 +168,11 @@ export function cleanSettings(v: any): Settings {
     return { name, production: !!e?.production, repos, detect };
   });
   const lang = ["en", "zh-TW", "zh-CN"].includes(s.messageLang) ? s.messageLang : null;
+  const rules = (k: keyof X.OpsRules) => { const v = s.opsRules?.[k]; if (v === undefined) return [...X.DEFAULT_OPS_RULES[k]];
+    const l = list(v, 30, 256); for (const p of l) if (/[\u0000-\u001f]/.test(p) || p.split("/").length > 32) throw new Error(`"${p}" is not a path pattern`); return l; };
+  const opsRules = { migration: rules("migration"), config: rules("config"), secret: rules("secret") };
   return { which: { mine: w.mine !== false, assigned: w.assigned !== false, reviewRequested: !!w.reviewRequested },
-    evidence: { accounts, checks: list(s.evidence?.checks), labels: list(s.evidence?.labels) }, requiredReviewers: req, environments: envs, groups: list(s.groups, 20, 30), shortForm: !!s.shortForm, messageLang: lang };
+    evidence: { accounts, checks: list(s.evidence?.checks), labels: list(s.evidence?.labels) }, requiredReviewers: req, environments: envs, groups: list(s.groups, 20, 30), shortForm: !!s.shortForm, messageLang: lang, opsRules };
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
@@ -470,8 +478,11 @@ export function createPrWatch(d: PrWatchDeps) {
       const checks = SHA.test(mergeSha) && envList.some((e) => e.detect.kind === "check") ? await soft(async () => (await g.get(`${repoPath(repo)}/commits/${mergeSha}/check-runs?per_page=100`))?.check_runs ?? [], [] as any[], partial, "checks") : [];
       const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: SHA.test(mergeSha) ? await envOn(e, repo, mergeSha, checks, true) : null, ...(auto ? { auto: true } : {}) })));
       if (!SHA.test(mergeSha)) partial.push("merge commit");
+      // the changed files with their patches: what the diff adds is scanned for the release brief's items
+      const files = SHA.test(mergeSha) ? await soft(async () => (await g.pages(`${repoPath(repo)}/pulls/${n}/files`, 3)).map((f: any) => ({ filename: String(f.filename ?? ""), status: String(f.status ?? ""), patch: typeof f.patch === "string" ? f.patch.slice(0, 200_000) : null })), [] as X.ChangedFile[], partial, "files") : [];
+      const ops = SHA.test(mergeSha) ? X.opsOf({ id: R.prId(repo, n), repo, number: n, mergeSha: mergeSha.toLowerCase(), body, files }, s.settings.opsRules ?? X.DEFAULT_OPS_RULES).slice(0, 40) : [];
       return { id: R.prId(repo, n), repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author: String(p.user?.login ?? ""), single, base: String(p.base?.ref ?? ""),
-        mergedAt: String(p.merged_at), mergeSha: SHA.test(mergeSha) ? mergeSha.toLowerCase() : "", envs, deps: [...new Set([...(R.blockDeps(body, repo) ?? []), ...R.dependsOnLines(body, repo)])], body, partial };
+        mergedAt: String(p.merged_at), mergeSha: SHA.test(mergeSha) ? mergeSha.toLowerCase() : "", envs, deps: [...new Set([...(R.blockDeps(body, repo) ?? []), ...R.dependsOnLines(body, repo)])], body, partial, ops };
     })).sort((a, b) => a.mergedAt.localeCompare(b.mergedAt) || a.id.localeCompare(b.id));
     out.suggest = { evidenceAccounts: [...commenters.values()].map((c) => ({ login: c.login, prs: c.prs.size })).sort((a, b) => b.prs - a.prs || a.login.localeCompare(b.login)).slice(0, 6) };
     // the state of every pull request a row may depend on that is not itself a row
@@ -690,6 +701,61 @@ export function createPrWatch(d: PrWatchDeps) {
     };
   }
 
+  // ---------- the release brief (docs/units/pr-watch.md "Release brief") ----------
+  /** The selected merged pull requests in batches, each with, per deploy unit, the line to change in each production
+   *  environment's image-tag file (old tag → new tag) and what it asks for before going live. Reads GitHub (the file, the
+   *  repository's tags, compares and the tag's CI) at most 300 times; writes nothing. */
+  async function buildBrief(ids: string[]) {
+    const token = tokenNow(); if (!token) throw new Error("GitHub is not connected: Studio has no token");
+    const rows = mergedRows(snap, state), waiting = rows.filter((r) => r.tab === "merged");
+    for (const id of ids) if (!waiting.some((r) => eq(r.id, id))) throw new Error(`${id} is not a merged pull request waiting to go live`);
+    const plan = X.batchesOf(ids, waiting.map((r) => ({ id: r.id, deps: r.deps })));
+    const g = reader(apiBase(), token, undefined, null, null, { budget: { left: 300 } });
+    const row = (id: string) => waiting.find((r) => eq(r.id, id))!;
+    const tagsCache = new Map<string, Promise<{ name: string; sha: string }[]>>(), fileCache = new Map<string, Promise<string | null>>(), cmpCache = new Map<string, Promise<boolean | null>>(), ciCache = new Map<string, Promise<"green" | "red" | "none">>();
+    const once = <T>(m: Map<string, Promise<T>>, k: string, f: () => Promise<T>) => { if (!m.has(k)) m.set(k, f()); return m.get(k)!; };
+    const tagsOf = (repo: string) => once(tagsCache, repo.toLowerCase(), async () => { const l = await g.get(`${repoPath(repo)}/tags?per_page=50`);
+      return (Array.isArray(l) ? l : []).map((t: any) => ({ name: String(t?.name ?? ""), sha: String(t?.commit?.sha ?? "") })).filter((t) => /^[0-9A-Za-z._-]{1,128}$/.test(t.name) && SHA.test(t.sha)); });
+    const fileOf = (repo: string, path: string, ref: string | undefined) => once(fileCache, `${repo}|${path}|${ref ?? ""}`, async () => { try { const j = await g.get(`${repoPath(repo)}/contents/${path.split("/").map(enc).join("/")}${ref ? `?ref=${enc(ref)}` : ""}`);
+      return j?.type === "file" && j.encoding === "base64" && typeof j.content === "string" && Number(j.size) <= 200_000 ? Buffer.from(j.content, "base64").toString("utf8") : null; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } });
+    const has_ = (repo: string, commit: string, tip: string) => once(cmpCache, `${repo}|${commit}|${tip}`.toLowerCase(), async () => { if (commit.toLowerCase() === tip.toLowerCase()) return true;
+      try { const c = await g.get(`${repoPath(repo)}/compare/${commit}...${tip}`); return c?.status === "ahead" || c?.status === "identical"; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } });
+    // CI on a tag's commit: green when nothing failed and nothing still runs (no CI at all reads "none")
+    const ciOf = (repo: string, sha: string) => once(ciCache, `${repo}|${sha}`.toLowerCase(), async () => {
+      const runs = (await g.get(`${repoPath(repo)}/commits/${sha}/check-runs?per_page=100`))?.check_runs ?? [], st = await g.get(`${repoPath(repo)}/commits/${sha}/status`);
+      const bad = runs.some((c: any) => c.status !== "completed" || !["success", "neutral", "skipped"].includes(String(c.conclusion))) || ["failure", "error", "pending"].includes(String(st?.state)) && Number(st?.total_count) > 0;
+      return bad ? "red" : runs.length || Number(st?.total_count) > 0 ? "green" : "none"; });
+    const prevTag = new Map<string, string>(); // a unit's tag after the batch before: the next batch's old tag
+    const batches = [];
+    for (let i = 0; i < plan.batches.length; i++) {
+      const b = plan.batches[i], repos = [...new Set(b.map((id) => row(id).repo))], units = [];
+      for (const repo of repos) {
+        const mine = plan.batches.slice(0, i + 1).flat().filter((id) => eq(row(id).repo, repo)).map((id) => row(id).mergeSha).filter(Boolean);
+        const later = plan.batches.slice(i + 1).flat().filter((id) => eq(row(id).repo, repo)).map((id) => row(id).mergeSha).filter(Boolean);
+        const prodFiles = state.settings.environments.filter((e) => e.production && e.detect.kind === "file" && R.envApplies(e, repo));
+        const lines = [], carries = new Set<string>();
+        for (const e of prodFiles) { const dt = e.detect as Extract<R.EnvDetect, { kind: "file" }>, key = `${repo}|${e.name}`.toLowerCase();
+          const text = prevTag.has(key) ? null : await fileOf(dt.repository, dt.path, dt.ref), before = prevTag.get(key) ?? (text != null ? R.tagOf(text, dt.template) : null);
+          let after: string | null = null, problem: string | null = text == null && !prevTag.has(key) ? "file" : null, ci: string | null = null;
+          for (const t of (await tagsOf(repo)).slice(0, 20)) {
+            if (!(await Promise.all(mine.map((m) => has_(repo, m, t.sha)))).every((x) => x === true)) continue;
+            if ((await Promise.all(later.map((m) => has_(repo, m, t.sha)))).some((x) => x === true)) continue; // it would carry a later batch
+            const c = await ciOf(repo, t.sha); if (c === "red") continue;
+            after = t.name; ci = c;
+            // merged pull requests of this unit, not selected, that this tag also carries
+            for (const o of waiting) if (eq(o.repo, repo) && o.mergeSha && !plan.batches.flat().some((x) => eq(x, o.id)) && (await has_(repo, o.mergeSha, t.sha)) === true) carries.add(o.id);
+            break; }
+          if (!after) problem ??= "tag"; else prevTag.set(key, after);
+          const [pre, post] = dt.template.split("{tag}");
+          lines.push({ env: e.name, repository: dt.repository, path: dt.path, before: before ? `${pre}${before}${post}` : null, after: after ? `${pre}${after}${post}` : null, oldTag: before, newTag: after, ci, problem }); }
+        units.push({ repo, unit: repo.split("/")[1], prs: b.filter((id) => eq(row(id).repo, repo)), lines, carries: [...carries], noFile: !prodFiles.length }); }
+      batches.push({ n: i + 1, of: plan.batches.length, prs: b.map((id) => ({ id: row(id).id, title: row(id).title, url: row(id).url })), units,
+        added: plan.added.filter((a) => b.some((x) => eq(x, a.id))), forced: plan.forced.filter((f) => b.some((x) => eq(x, f.pr))),
+        ops: b.flatMap((id) => row(id).ops ?? []) });
+    }
+    return { batches, notMerged: plan.notMerged, selected: ids.length };
+  }
+
   async function refresh(): Promise<void> {
     const { token } = ensure(); if (!token || !sub) return;
     // a refresh asked while one runs joins it; when the list or settings changed since that one started, read again once
@@ -728,6 +794,7 @@ export function createPrWatch(d: PrWatchDeps) {
         if (r.bodyBlock) { state.applied[ak] = { block: r.bodyBlock, on: r.githubDeps ?? [], at: iso() }; state.deps[dk] = { on: r.githubDeps ?? [], by: "github", at: iso() }; }
         else { delete state.applied[ak]; state.deps[dk] = { on: [], by: "github", at: iso() }; }
         save(); return view(); }
+      case "brief": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the merged pull requests to release"); return await buildBrief(ids); }
       case "apply": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the pull requests to apply");
         const run = await startApply(ids, b?.shortForm === undefined ? state.settings.shortForm : !!b.shortForm); return ({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
     }
@@ -750,11 +817,11 @@ export function createPrWatch(d: PrWatchDeps) {
   const obj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
   const changedBy = async (name: string, b: unknown, grant: string) => { const out = await act(name, b, { grant }); d.notify?.("prs", { count: count(), at: snap.at }); return out; };
   /** the settings fields and the type each must have: a tool names only these, each with its own type (never cleared by a wrong one) */
-  const SETTING_TYPES: Record<string, "object" | "array" | "boolean" | "lang"> = { which: "object", evidence: "object", requiredReviewers: "array", environments: "array", groups: "array", shortForm: "boolean", messageLang: "lang" };
+  const SETTING_TYPES: Record<string, "object" | "array" | "boolean" | "lang"> = { opsRules: "object", which: "object", evidence: "object", requiredReviewers: "array", environments: "array", groups: "array", shortForm: "boolean", messageLang: "lang" };
   const settingError = (n: Record<string, any>): string | null => {
     for (const [k, v] of Object.entries(n)) { const t = SETTING_TYPES[k]; if (!t) return `prs_settings does not know ${k} (${Object.keys(SETTING_TYPES).join(", ")})`;
       if (t === "object" ? !obj(v) : t === "array" ? !Array.isArray(v) : t === "boolean" ? typeof v !== "boolean" : !(v === null || typeof v === "string")) return `settings.${k} must be ${t === "lang" ? "a language or null" : t === "object" ? "an object" : t === "array" ? "a list" : "true or false"}`; }
-    for (const k of ["which", "evidence"] as const) if (obj(n[k])) { const allowed = k === "which" ? ["mine", "assigned", "reviewRequested"] : ["accounts", "checks", "labels"];
+    for (const k of ["which", "evidence", "opsRules"] as const) if (obj(n[k])) { const allowed = k === "which" ? ["mine", "assigned", "reviewRequested"] : k === "opsRules" ? ["migration", "config", "secret"] : ["accounts", "checks", "labels"];
       for (const [f, v] of Object.entries(n[k] as Record<string, unknown>)) { if (!allowed.includes(f)) return `settings.${k} does not know ${f}`; if (k === "which" ? typeof v !== "boolean" : !Array.isArray(v)) return `settings.${k}.${f} must be ${k === "which" ? "true or false" : "a list"}`; } }
     return null; };
   const REFRESH_GAP = 60_000; let toolRefreshAt = 0;
@@ -792,7 +859,7 @@ export function createPrWatch(d: PrWatchDeps) {
         case "prs_restore": { if (b.pr !== undefined && !str(b.pr)) return { error: "prs_restore takes {pr} or {}" }; await changedBy("restore", b, grant); return listView(); }
         case "prs_settings": { if (!obj(b.settings)) return { error: "prs_settings takes {settings: {...only what changes}}" }; const cur: any = state.settings, n = b.settings;
           const bad = settingError(n); if (bad) return { error: bad };
-          const merged = { ...cur, ...n, which: { ...cur.which, ...(obj(n.which) ? n.which : {}) }, evidence: { ...cur.evidence, ...(obj(n.evidence) ? n.evidence : {}) } };
+          const merged = { ...cur, ...n, which: { ...cur.which, ...(obj(n.which) ? n.which : {}) }, evidence: { ...cur.evidence, ...(obj(n.evidence) ? n.evidence : {}) }, opsRules: { ...cur.opsRules, ...(obj(n.opsRules) ? n.opsRules : {}) } };
           await changedBy("settings", { settings: merged }, grant); return listView(); }
         case "prs_order": { if (!ids(b.order)) return { error: "prs_order takes {order: [owner/repo#N, …]}" }; await changedBy("order", b, grant); return listView(); }
         case "prs_deps": { if (!str(b.pr) || !ids(b.on)) return { error: "prs_deps takes {pr, on: [ids]}" }; await changedBy("deps", b, grant); return listView(); }
