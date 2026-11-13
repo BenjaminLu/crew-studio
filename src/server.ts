@@ -46,7 +46,7 @@ import { homedir } from "node:os";
 import { extname, join, normalize } from "node:path";
 import { Board } from "./board";
 import { FmState, type Card, type Ev } from "./fm";
-import { GitHub } from "./github";
+import { GitHub, MERGED_KEPT } from "./github";
 import { Store } from "./store";
 import { TOOLS, toolByName, type ToolCtx } from "./tools";
 import { manualFor } from "./manual";
@@ -996,7 +996,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       return json(chatInfo());
     }
     if (p === "/api/intents") return json(store.intentView(fm));
-    if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
+    if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, mergedKept: MERGED_KEPT, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
     if (p.startsWith("/api/task/")) {
       const id = decodeURIComponent(p.slice("/api/task/".length)).toUpperCase();
       if (!fm.known(id)) return json({ error: "not in the log" }, 404);

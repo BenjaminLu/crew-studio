@@ -165,7 +165,7 @@ function pane(t) {
     try { fit.fit(); } catch {}
     // everything the shared stream brought for it so far, a tab drawn later or a pane unzoomed included
     const f = FEED.get(t.id); if (f) { if (f.trimmed) term.write(dropNote()); for (const c of f.log) term.write(c); }
-    if (TM.canWrite && focusPane()?.term === t.id && !TM.ui.picker && !TM.ui.naming && !TM.ui.help) term.focus();
+    if (TM.canWrite && focusPane()?.term === t.id && !TM.ui.picker && !TM.ui.naming && !TM.ui.help && !document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) term.focus(); // never from the list search being typed in
   }).catch((e) => { p.err = String(e.message || e); p.host.replaceChildren(h("p", { class: "faint" }, T(`The terminal view could not load: ${p.err}`, `終端機畫面無法載入：${p.err}`))); });
   return p;
 }
@@ -294,7 +294,8 @@ function syncHash() { const t = termOf(focusPane()), q = location.hash.split("?"
   if (location.hash !== want) { history.replaceState(null, "", want); if (S.route?.name === "terminals") S.route.arg = t?.id ?? null; } TM.lastArg = t?.id ?? null; }
 // asked again on the next frame: a sheet opened in between (a double-click's rename) keeps its field's focus
 const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help;
-function focusTerm() { if (!TM.canWrite || sheetOpen()) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(go); }
+// the terminal never takes the focus from the list toolbar's search the captain is typing in (public/list-tools.js)
+function focusTerm() { if (!TM.canWrite || sheetOpen() || document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(go); }
 const redo = () => { saveLay(); syncHash(); render(); focusTerm(); };
 // a click in a pane moves the focus without rebuilding the page (xterm keeps its focus and selection)
 function markFocus() { syncHash(); const tab = curTab(), t = termOf(focusPane(tab)), sec = document.querySelector("[data-term-detail]"); if (!tab || !t || !sec) return;

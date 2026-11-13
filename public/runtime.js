@@ -896,9 +896,8 @@ function viewRuns() {
         }
         const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); window.pageDirty?.clean(); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
       catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), startParamInputs(wf.value), msg),
-    // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
-    h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
-    RN.list === "loading" || RN.list === null ? h("div", { class: "skel", style: "height:120px" }) : runsList(runs));
+    // one word per state (public/runstate.js); archived runs only with "Show archived" (in the toolbar's row, right above the list), each with Unarchive
+    RN.list === "loading" || RN.list === null ? [archivedToggle(), h("div", { class: "skel", style: "height:120px" })] : runsList(runs));
 }
 const runProjectName = (v) => v === "studio" ? T("No project (Studio)", "無專案（Studio）") : (window.crewProjects?.state?.side?.projects || []).find((p) => p.id === v)?.name || v;
 /** a toolbar filter in the URL: a search or a facet (the default 30-day window is not a filter) */
@@ -907,9 +906,10 @@ const runsFiltered = () => { const q = S.route?.query; return !!q && ["q", "stat
 const runLive = (r) => ["queued", "running", "waiting", "paused"].includes(r.status);
 const projectFilterRow = (pf) => !pf ? null : h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${runProjectName(pf)}`, `專案：${runProjectName(pf)}`)),
   pf === "studio" ? null : h("a", { href: `#/project/${encodeURIComponent(pf)}` }, T("Open the project", "開啟專案")), h("a", { href: "#/runs?" }, T("Show all tasks", "顯示全部任務")));
+const archivedToggle = () => h("label", { class: "lt-check rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存"));
 function runsList(runs) {
   const words = {}, pfBox = h("div", { "data-project-filter-box": "" });
-  const list = window.crewListTools.list({ id: "runs", route: "runs", title: T("tasks", "任務"), noun: ["task", "任務"], items: runs,
+  const list = window.crewListTools.list({ id: "runs", route: "runs", title: T("tasks", "任務"), noun: ["task", "任務"], items: runs, extra: archivedToggle(),
     placeholder: T("Search titles, task ids, workflows, projects…  or type status:waiting", "搜尋標題、任務 id、流程、專案…  也可以打 status:等你處理"),
     text: (r) => [r.title, window.crewLan?.shownTitle?.(r.id, r.title), r.id, r.workflow, wfName(r.workflow), String(r.request || "").slice(0, 400), runProjectName(r.project || "studio")],
     facets: [{ key: "status", name: T("Status", "狀態"), value: (r) => { const st = window.runState(r); words[st.key] = T(st.en, st.tw); return st.key; }, show: (k) => words[k] || k },
@@ -923,7 +923,7 @@ function runsList(runs) {
     rows: (page, ctx) => h("div", { class: "card rt-runs" }, page.map((r) => runRow(r, ctx.mark)), ctx.older),
     onChange: (v, st) => {
       const pf = (st.f.project || []).length === 1 && !st.q.trim() ? st.f.project[0] : null;
-      if (pfBox.dataset.pf !== String(pf)) { pfBox.dataset.pf = String(pf); pfBox.replaceChildren(...[projectFilterRow(pf)].filter(Boolean)); }
+      if (pfBox.dataset.pf !== String(pf)) { pfBox.dataset.pf = String(pf); pfBox.hidden = !pf; pfBox.replaceChildren(...[projectFilterRow(pf)].filter(Boolean)); } // an empty box would leave a gap above the toolbar
       const filtered = !!(st.q.trim() || Object.values(st.f).some((x) => x.length) || st.old);
       const ids = filtered ? new Set(v.matched.map((r) => r.id)) : undefined;
       const same = ids === RN.filterIds || (ids && RN.filterIds && ids.size === RN.filterIds.size && [...ids].every((x) => RN.filterIds.has(x)));

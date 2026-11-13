@@ -44,12 +44,12 @@ const terms = Array.from({ length: 52 }, (_, i) => ({ id: `t${i}`, project: { id
   startedAt: ago(i), endedAt: i < 4 ? null : ago(i), exitCode: i < 4 ? null : 0, signal: null, state: i < 2 ? "working" : i < 4 ? "waiting" : pick(["done", "exited"]), reason: null, ask: null, cols: 80, rows: 24, running: i < 4, transcriptTruncated: false, git: null, review: null, restored: false, stopped: null }));
 const arts = Array.from({ length: 150 }, (_, i) => ({ id: `art-${i}`, title: `${pick(["Home page", "Launch page", "Product shot", "Intro film", "Voice-over", "Guide"])} ${i + 1}`, type: pick(["web", "image", "video", "audio"]), project: pick(["api-gateway", "docs-site"]), source: "url", created: ago(Math.floor(i / 3)), note: null, entry: null,
   versions: [{ n: 1, status: pick(["draft", "approved", "in-review"]), createdAt: ago(Math.floor(i / 3)), url: "https://example.com", files: [] }], latest: 1, approved: null }));
-const code = Array.from({ length: 30 }, (_, i) => ({ kind: "code", id: `PR-${500 + i}`, title: `${pick(verbs)} ${pick(things)}`, ts: ago(i * 2), pr: 500 + i, url: `https://example.com/pull/${500 + i}`, commit: null, branch: `feat/x-${i}`, checks: { pass: 3, fail: 0 }, task: null, intent: null, door: null, lineage: null }));
+const code = Array.from({ length: 50 }, (_, i) => ({ kind: "code", id: `PR-${500 + i}`, title: `${pick(verbs)} ${pick(things)}`, ts: ago(i * 2), pr: 500 + i, url: `https://example.com/pull/${500 + i}`, commit: null, branch: `feat/x-${i}`, checks: { pass: 3, fail: 0 }, task: null, intent: null, door: null, lineage: null }));
 const ZONES = ["waiting", "reviewing", "concluded", "archived"];
 const rooms = Array.from({ length: 96 }, (_, i) => ({ id: `PR-${String(i).padStart(4, "0")}`, title: `${pick(verbs)} ${pick(things)} #${100 + i}`, titleZh: null, repository: pick(["owner/api-gateway", "owner/docs-site", "owner/mobile-app"]), zone: pick(ZONES), open: rnd() > 0.3, running: false, turns: Math.floor(rnd() * 9), updatedAt: ago(Math.floor(i / 4)) }));
 const projects = Array.from({ length: 36 }, (_, i) => ({ id: `proj-${i}`, name: `owner/${pick(["billing", "search", "auth", "infra", "sdk-js", "status-page"])}-${i}`, kind: i === 0 ? "studio" : pick(["local", "local", "external", "builtin"]), enabled: rnd() > 0.15, attention: rnd() > 0.8 ? 1 : 0, running: rnd() > 0.6 ? 2 : 0, held: 0, failed24h: rnd() > 0.85 ? 1 : 0, mini: [], connected: false }));
 const API = { "/api/wruns": { runs, cards: [] }, "/api/wf": { workflows: wfList, held: [], trash: [], names: {}, checks: [] }, "/api/skills": { skills, roles: [], caps: {} }, "/api/skills/homes": { homes: [] },
-  "/api/crew/live": crew, "/api/terminals": { terminals: terms, presets: [], projects: [], canWrite: true }, "/api/artifacts": { artifacts: arts, runs: [], render: {} }, "/api/library": { code, files: [], artifacts: arts },
+  "/api/crew/live": crew, "/api/terminals": { terminals: terms, presets: [], projects: [], canWrite: true }, "/api/artifacts": { artifacts: arts, runs: [], render: {} }, "/api/library": { code, files: [], artifacts: arts, mergedKept: 50 },
   "/api/review-room": { rooms, settings: { autoTeach: false }, tutors: [], providers: [] }, "/api/projects/overview": { projects } };
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`, env = { ...process.env };
@@ -209,6 +209,20 @@ try {
   { const { p, ctx } = await open("en"); await ctx.route((u) => u.pathname === "/api/node-runs", (r) => r.fulfill({ status: 500, json: { error: "x" } }));
     await go(p, "#/runs", "runs"); ok(await p.waitForSelector('[data-node-runs-error]', { timeout: 9000 }).then(() => true, () => false) && !/No agent rounds yet/.test(await p.$eval('[data-section="node-runs"]', (e) => e.textContent)), "a failed read of the rounds says so");
     await ctx.close(); }
+  // the Library says its merged code is the sync's newest 50, never silently
+  { const { p, ctx } = await open("zh-TW"); await go(p, "#/library?type=code", "library");
+    ok(await p.$eval("[data-lib-code-capped]", (e) => e.dataset.libCodeCapped === "50" && /最近 50/.test(e.textContent)).catch(() => false), "Library: the merged code says it is the newest 50 the sync keeps");
+    await ctx.close(); }
+  // Crew: while the search has the focus, the header's count follows, and a failed poll does not stop the next ones
+  { const { p, ctx } = await open("en"); let fail = false;
+    await ctx.route((u) => u.pathname === "/api/crew/live", (r) => (fail ? r.fulfill({ status: 500, json: { error: "x" } }) : r.fulfill({ json: crew })));
+    await go(p, "#/crew", "crew"); await p.focus('[data-lt-q="crew"]'); const head0 = await p.$eval("[data-crew-head]", (e) => e.textContent);
+    crew.unshift({ ...crew[0], actor: "worker-h1", name: "Zed", alive: true, phase: "building" });
+    ok(await p.waitForFunction((h0) => document.querySelector("[data-crew-head]").textContent !== h0, head0, { timeout: 9000 }).then(() => true, () => false) && await p.evaluate(() => document.activeElement?.matches('[data-lt-q="crew"]')), "the header's count changes while the search box keeps the focus", head0);
+    fail = true; ok(await p.waitForFunction(() => /unavailable/.test(document.querySelector("[data-crew-head]").textContent), null, { timeout: 9000 }).then(() => true, () => false), "a failed poll says so in the header, focus kept");
+    fail = false; crew.unshift({ ...crew[0], actor: "worker-h2", name: "Zed", alive: true, phase: "building" });
+    ok(await p.waitForSelector('[data-actor="worker-h2"]', { timeout: 9000 }).then(() => true, () => false) && await p.evaluate(() => document.activeElement?.matches('[data-lt-q="crew"]')), "the poll goes on after the failure: the next round arrives, still without a blur");
+    crew.splice(0, 2); await ctx.close(); }
   // the review room: zones kept under 按區, the old search attribute kept, archived opens while filtering
   { const { p, ctx } = await open("en"); await go(p, "#/room", "room");
     ok(JSON.stringify(await p.$$eval("[data-room-zone]", (es) => [...new Set(es.map((e) => e.dataset.roomZone))])) === '["waiting","reviewing"]' || (await p.$$("[data-room-zone]")).length >= 1, "Review room: a page's rooms in their zones");
@@ -238,6 +252,73 @@ try {
     await p.goto(`${base}/#/activity/T-nope`); await p.waitForSelector('[data-lt="activity"] [data-lt-count]'); await p.waitForTimeout(400);
     ok(await p.evaluate(() => location.hash) === "#/activity?task=T-nope" && !!await p.$('[data-lt-empty="activity"]'), "#/activity/<task> is the task facet; nothing for it says so");
     await shot(p, "activity-empty-1440-en"); await ctx.close(); }
+
+  // ======== an input method composing in the search box (driven through CDP: Input.imeSetComposition, Input.insertText) ========
+  // Nothing filters, asks the server, redraws or replaces the box while it composes; the committed text filters once.
+  const imeRun = async (p, cdp, steps, commit, mid) => { for (const s of steps) { await cdp.send("Input.imeSetComposition", { text: s, selectionStart: s.length, selectionEnd: s.length }); await p.waitForTimeout(150); if (mid) await mid(s); } await cdp.send("Input.insertText", { text: commit }); await p.waitForTimeout(400); };
+  const tag = (p, list) => p.$eval(`[data-lt-q="${list}"]`, (e) => { e.__ime = 1; });
+  const same = (p, list) => p.$eval(`[data-lt-q="${list}"]`, (e) => e.__ime === 1 && document.activeElement === e);
+  for (const [list, hash, steps, commit, expect] of [
+    ["runs", "#/runs", ["r", "ru", "rua", "ruan"], "软", (n) => n >= 1],
+    ["runs", "#/runs", ["ㄖ", "ㄖㄨ", "ㄖㄨㄢ", "ㄖㄨㄢˇ"], "軟", (n) => n >= 1],
+    ["terminals", "#/terminals", ["d", "de", "dev"], "dev", (n) => n >= 1],
+    ["activity", "#/activity", ["x", "xu", "xuy", "xuyao"], "需要", () => true]]) {
+    const { p, ctx } = await open("zh-TW"); await go(p, hash, list); const cdp = await ctx.newCDPSession(p);
+    let asked = 0; p.on("request", (r) => { if (/\/api\/activity\?page=/.test(r.url())) asked++; });
+    await p.focus(`[data-lt-q="${list}"]`); await tag(p, list);
+    const before = await count(p, list), url0 = await p.evaluate(() => location.hash); asked = 0; let midBad = [];
+    await imeRun(p, cdp, steps, commit, async (s) => { const c = await count(p, list), u = await p.evaluate(() => location.hash), v = await p.$eval(`[data-lt-q="${list}"]`, (e) => e.value);
+      if (c !== before || u !== url0 || asked || v !== s) midBad.push({ s, c, u, asked, v }); });
+    ok(!midBad.length, `${list}: while ${steps.at(-1)} composes, nothing filters, the URL stays and the server is not asked`, JSON.stringify(midBad));
+    ok(await same(p, list), `${list}: the composing box is the same element and keeps the focus`);
+    const v = await p.$eval(`[data-lt-q="${list}"]`, (e) => e.value), after = await count(p, list), n = Number((/(\d+)\s*條符合/.exec(after) || [])[1]);
+    ok(v === commit && (await hashQ(p)).get("q") === commit && /條符合/.test(after) && expect(n) && (list !== "activity" || asked >= 1), `${list}: the committed ${commit} filters once`, `${v} ${after} asked=${asked}`);
+    await ctx.close();
+  }
+  // Enter, Escape and ArrowDown during a composition belong to the input method: no suggestion picked, nothing cleared
+  { const { p, ctx } = await open("zh-TW"); await go(p, "#/runs", "runs"); const cdp = await ctx.newCDPSession(p);
+    await p.focus('[data-lt-q="runs"]'); await p.keyboard.type("status:"); await p.waitForTimeout(150); await tag(p, "runs");
+    ok((await p.$$("[data-lt-sug]")).length > 0, "status: shows its suggestions");
+    await cdp.send("Input.imeSetComposition", { text: "deng", selectionStart: 4, selectionEnd: 4 }); await p.waitForTimeout(100);
+    for (const [key, code] of [["Enter", 13], ["ArrowDown", 40], ["Escape", 27]]) await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Process", code: key, windowsVirtualKeyCode: 229, nativeVirtualKeyCode: 229 });
+    await p.waitForTimeout(150);
+    ok(await p.$eval('[data-lt-q="runs"]', (e) => e.value) === "status:deng" && await same(p, "runs") && !(await hashQ(p)).get("status"), "keys during a composition pick no suggestion and clear nothing");
+    await cdp.send("Input.insertText", { text: "等" }); await p.waitForTimeout(250);
+    ok(await p.$eval('[data-lt-q="runs"]', (e) => e.value) === "status:等" && (await hashQ(p)).get("q") === "status:等", "the committed value is written once");
+    await ctx.close(); }
+  // Crew: a live poll lands mid-composition; the box survives, and the committed word filters the new rows
+  { const { p, ctx } = await open("zh-TW"); await go(p, "#/crew", "crew"); const cdp = await ctx.newCDPSession(p);
+    await p.focus('[data-lt-q="crew"]'); await tag(p, "crew"); const before = await count(p, "crew");
+    crew.unshift({ ...crew[0], actor: "worker-ime", name: "軟體", alive: true, phase: "building" });
+    await imeRun(p, cdp, ["r", "ru", "rua", "ruan"], "软", async () => { await p.waitForTimeout(900); });
+    ok(await same(p, "crew") && before !== await count(p, "crew") && JSON.stringify(await p.$$eval('[data-lt-region="crew"] [data-actor]', (es) => es.map((e) => e.dataset.actor))) === '["worker-ime"]',
+      "Crew: a poll lands during the composition, the box is the same and focused, and the committed 软 shows the new 軟體 round", await count(p, "crew"));
+    crew.shift(); await ctx.close(); }
+
+  // ======== right after load, typing goes into one search box that is never replaced ========
+  for (const [list, hash] of [["runs", "#/runs"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
+    const { p, ctx } = await open("en");
+    await p.goto(`${base}/${hash}`);
+    if (list === "terminals") { await p.waitForSelector("[data-term-new]", { timeout: 20000 }); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+    const q = `[data-lt-q="${list}"]`; await p.waitForSelector(q, { timeout: 20000 });
+    await p.focus(q); // from the moment the captain is in the box
+    await p.evaluate((s) => { window.__swaps = 0; let cur = document.querySelector(s); new MutationObserver(() => { const n = document.querySelector(s); if (n && n !== cur) { window.__swaps++; cur = n; } }).observe(document.body, { subtree: true, childList: true }); }, q);
+    let lost = 0;
+    for (const ch of "webhook") { await p.keyboard.type(ch); await p.waitForTimeout(250); if (!(await p.evaluate((s) => document.activeElement === document.querySelector(s), q))) lost++; }
+    const v = await p.$eval(q, (e) => e.value), swaps = await p.evaluate(() => window.__swaps);
+    ok(!swaps && !lost && v === "webhook", `${list}: typing right after load: the search box is never replaced and keeps every letter`, JSON.stringify({ swaps, lost, v }));
+    await ctx.close();
+  }
+  // ======== every page's last facet: its popover stays inside the window, at 1440 and 390 ========
+  for (const width of [1440, 390]) for (const [list, hash] of [["runs", "#/runs"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
+    const { p, ctx } = await open("zh-TW", width); await go(p, hash, list);
+    const last = await p.$$eval(`[data-lt-bar="${list}"] .lt-facet:not([hidden]) [data-lt-facet]`, (es) => es.at(-1)?.dataset.ltFacet);
+    await p.click(`[data-lt-bar="${list}"] [data-lt-facet="${last}"]`); await p.waitForSelector(`[data-lt-pop="${last}"]`);
+    const box = await p.$eval(`[data-lt-pop="${last}"]`, (e) => { const r = e.getBoundingClientRect(), m = document.querySelector("#main").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(Math.max(0, m.left)), Math.round(Math.min(innerWidth, m.right))]; });
+    ok(box[0] >= box[2] && box[1] <= box[3], `${list} at ${width}: the last facet's (${last}) popover is inside the page`, JSON.stringify(box));
+    if (width === 390 || list === "terminals") await p.screenshot({ path: join(shots, `${list}-lastfacet-${width}-zh.png`) });
+    await ctx.close();
+  }
 
   // ======== 390: no sideways scroll, the popover fits ========
   { const { p, ctx } = await open("zh-TW", 390); await go(p, "#/runs", "runs");

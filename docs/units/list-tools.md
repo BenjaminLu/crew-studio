@@ -12,10 +12,13 @@ page's own row function) and the paging footer.
   (`mark.lt-mark`) in each row's title.
 - **`key:value` words** in the box filter a facet; the value matches from its start, as stored or as the page shows it
   (`status:waiting`, `status:等你`). A value with spaces goes in double quotes. Typing `key:` lists that facet's values
-  with their counts; a key's first letters list the keys. A word whose key is not a facet is a free word.
+  with their counts; a key's first letters list the keys. Picking a value writes its stored form (`status:waiting`), so a
+  shared link reads the same in every language. A word whose key is not a facet is a free word.
 - **Facet buttons** open a popover of checkboxes. Each count is the rows left if that box is ticked as well, with every
   other filter applied. More than six values: the popover has its own search. Clear / Done; Escape or a click outside
-  closes it. A button with a selection is primary and says how many (`Status · 2`).
+  closes it. A button with a selection is primary and says how many (`Status · 2`). An open popover is moved left as far
+  as it must to stay inside the page (the last facet's would run off the right edge). A facet no row has a value for is
+  not offered.
 - **Sort**, per page.
 - **The active line**: `N of M match` (`M 條中 N 條符合`), or `N in the last 30 days`, or `N in all`; a removable chip per
   ticked value; Clear all.
@@ -25,7 +28,26 @@ page's own row function) and the paging footer.
   filters. A page with no rows at all keeps its own empty state.
 - **The URL** keeps the state in the hash's query (`#/runs?q=fix&status=waiting&page=2`): back, reload and a shared link
   keep it. A change replaces the history entry. Parameters the toolbar does not own stay.
-- **Keys**: `/` focuses the search (never while typing in another field); Escape closes the suggestions, then clears.
+- **Keys**: `/` focuses the search (never while typing in another field or composing); Escape closes the suggestions,
+  then clears. The `/` hint gives way to the field's own clear button once something is typed.
+
+## Input methods
+
+Chinese is typed through an input method, so the search box is built around its composition:
+
+- Nothing filters, asks the server, redraws, replaces or moves the box while a composition is active
+  (`compositionstart` … `compositionend`); input events with `isComposing` (or keyCode 229) are ignored. The list filters
+  once, on `compositionend`, with the committed text. The facet popover's own search does the same.
+- Enter, Escape and the arrow keys during a composition belong to the input method: no suggestion is picked, nothing is
+  cleared.
+- The box is never re-rendered while it has the focus: `render()` (public/app.js) waits for its blur, as a live update
+  does (`soft()`); live rows go in place (`crewListTools.feed`, `root.ltItems`); a terminal never takes the focus from it.
+  Value, focus, selection and an active composition survive.
+
+The UI test drives compositions through Chrome's DevTools protocol (`Input.imeSetComposition`, `Input.insertText`):
+Pinyin (r → ru → ruan → 软) and Zhuyin-style (ㄖ → ㄖㄨ → ㄖㄨㄢ → ㄖㄨㄢˇ → 軟) on Tasks, Terminals (Launch… open) and
+Activity (no request until the commit), and Crew with a live poll landing mid-composition. A real keyboard and input
+method were not driven.
 
 A change redraws the toolbar and the rows only. The search box stays the same element, so an input method's composition
 in it is never broken; a live update of a page's rows goes in place (`root.ltItems(rows)`) or waits until the field is
@@ -35,7 +57,7 @@ left (`soft()` in `public/app.js`).
 
 | Page | Facets | Sorts | Notes |
 | --- | --- | --- | --- |
-| Tasks `#/runs` | status, workflow, project | newest, oldest, title | The last 30 days by default (a Task in flight always shows); "N more older than 30 days are not shown · Include them". Show archived stays its own toggle. `#/runs?project=<id>` is the project facet (`/api/wruns` rows carry `project`). The Agent rounds panel follows the filter. |
+| Tasks `#/runs` | status, workflow, project | newest, oldest, title | The last 30 days by default (a Task in flight always shows); "N more older than 30 days are not shown · Include them". Show archived sits in the toolbar's row, right above the list. `#/runs?project=<id>` is the project facet (`/api/wruns` rows carry `project`). The Agent rounds panel follows the filter. |
 | Workflows | source (built in / mine) | name, recently changed | Held and trashed workflows keep their own sections. |
 | Skills | source, used by a node, workflow | name, recently added | Role skills stay below. |
 | Projects | kind, status | name, busiest | |
@@ -57,7 +79,8 @@ A list the server caps is never filtered over its first rows only:
 
 The other lists' endpoints answer every row (`/api/wruns`, `/api/wf`, `/api/skills`, `/api/projects/overview`,
 `/api/crew/live`, `/api/terminals`, `/api/artifacts`, `/api/review-room`); the toolbar filters them in the page. The
-Library's merged code is what the GitHub sync keeps (its newest 50 merged pull requests).
+Library's merged code is what the GitHub sync keeps (its newest 50 merged pull requests, `MERGED_KEPT` in
+src/github.ts): when it holds that many, the list says so.
 
 ## Tests
 

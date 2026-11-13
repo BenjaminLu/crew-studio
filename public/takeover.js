@@ -566,12 +566,15 @@ function viewCrewLive(actor) {
   const all = TK.crew || [];
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Crew", "船員")),
-      h("p", {}, TK.crew && !TK.crewError && window.studioAgents?.ready() ? T(`${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} working now · Studio agents and recent Firstmate rounds`, `目前 ${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} 位工作中 · Studio 的 agent 與近期 Firstmate 回合`) : TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"))),
+      h("p", { "data-crew-head": "" }, crewHead())),
       h("a", { class: "btn", href: "#/activity", "data-crew-activity-link": "" }, T("Activity (event log) →", "Activity（事件紀錄）→"))),
     window.studioAgents?.section() || null,
     !TK.crew ? h("div", { class: "skel", style: "height:240px" }) : crewList(all),
     null); // Firstmate history stays separate from Studio jobs
 }
+/** the header's line: how many work now, or why it cannot say */
+function crewHead() { const all = TK.crew || [];
+  return TK.crew && !TK.crewError && window.studioAgents?.ready() ? T(`${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} working now · Studio agents and recent Firstmate rounds`, `目前 ${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} 位工作中 · Studio 的 agent 與近期 Firstmate 回合`) : TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"); }
 const crewCi = (c) => !c.ci ? h("span", { class: "faint" }, "—") : c.ci.fail ? h("span", { class: "badge bad" }, `✗ ${c.ci.fail}`) : c.ci.pending ? h("span", { class: "badge warn" }, `… ${c.ci.pending}`) : h("span", { class: "badge ok" }, `✓ ${c.ci.pass}`);
 const crewPhase = (c) => (/^ended/.test(c.phase || "") ? "ended" : c.phase || "stopped");
 const crewModel = (c) => `${c.vendor || "?"}${c.model ? " · " + c.model : ""}`;
@@ -606,9 +609,11 @@ function crewRound(c, mark) {
           c.report ? h("button", { class: "btn ghost", "data-report": c.actor, onclick: () => openReport(c.actor) }, icon("doc", "ic sm"), T("Final report", "最終報告")) : null));
 }
 const phaseLabel = (p) => ({ building: T("building", "實作中"), reviewing: T("reviewing", "審查中"), finished: T("finished", "完成"), stopped: T("stopped", "已停止") })[p] || p;
-async function loadCrewLive() { const seq = TK.crewSeq = (TK.crewSeq || 0) + 1; let r = null; try { r = await getJ("/api/crew/live"); } catch {} if (seq !== TK.crewSeq) return; TK.crewError = !r; if (r) TK.crew = r; if (S.route?.name !== "crew" || S.route.arg) return;
-  // typing in the search box: the rows change in place and the poll goes on (a render would wait for the blur)
-  if (r && window.crewListTools?.feed("crew", TK.crew)) { if (!TK.crewTimer) TK.crewTimer = setTimeout(() => { TK.crewTimer = null; if (S.route?.name === "crew" && !S.route.arg) loadCrewLive(); }, 3000); return; }
+const crewPoll = () => { if (!TK.crewTimer) TK.crewTimer = setTimeout(() => { TK.crewTimer = null; if (S.route?.name === "crew" && !S.route.arg) loadCrewLive(); }, 3000); };
+async function loadCrewLive() { const seq = TK.crewSeq = (TK.crewSeq || 0) + 1; let r = null; try { r = await getJ("/api/crew/live"); } catch {} if (!Array.isArray(r)) r = null; /* an error answer is a failed read */ if (seq !== TK.crewSeq) return; TK.crewError = !r; if (r) TK.crew = r; if (S.route?.name !== "crew" || S.route.arg) return;
+  // typing in the search box (a field of the page has the focus): the rows and the header's count change in place and the
+  // poll goes on, a failed read included; a render would wait for the blur
+  if (TK.crew && window.crewListTools?.feed("crew", TK.crew)) { const head = document.querySelector("#view [data-crew-head]"); if (head) head.textContent = crewHead(); crewPoll(); return; }
   soft(); }
 async function openReport(actor) {
   const seq = TK.reportSeq = (TK.reportSeq || 0) + 1;

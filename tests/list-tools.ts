@@ -72,7 +72,7 @@ const run = (o: any = {}, c: any = cfg) => LT.compute(c, st(o), items, NOW);
 // ---- suggestions ----
 { const s1 = run({ q: "fix status:" }).suggest;
   ok(s1.length === 4 && s1.every((g: any) => g.key === "status" && typeof g.n === "number") && s1[0].q.startsWith("fix status:"), "status: lists that facet's values with their counts", JSON.stringify(s1));
-  ok(run({ q: "status:等" }).suggest.map((g: any) => g.val).join() === "等你" && run({ q: "status:等" }).suggest[0].q === "status:等你 ", "a value's first letters narrow it; picking writes the token");
+  ok(run({ q: "status:等" }).suggest.map((g: any) => g.val).join() === "等你" && run({ q: "status:等" }).suggest[0].q === "status:waiting ", "a value's first letters narrow it (as stored or as shown); picking writes the stored value, so a link reads the same in every language");
   ok(run({ q: "st" }).suggest.map((g: any) => g.key).join() === "status" && run({ q: "st" }).suggest[0].q === "status:", "a key's first letters suggest the key");
   ok(!run({ q: "status:done " }).suggest.length, "after a space, nothing");
   ok(run({ q: "workflow:" }).suggest.find((g: any) => g.val === "code-change").n === run().matched.filter((x: any) => x.workflow === "code-change").length, "a suggestion's count is over the rows shown (the recent window)"); }

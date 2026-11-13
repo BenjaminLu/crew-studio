@@ -8,6 +8,9 @@
 .lt-kbd{position:absolute;right:8px;font:500 11px var(--f-mono);color:var(--text-3);border:1px solid var(--border-strong);border-radius:4px;padding:0 5px;background:var(--surface-2)}
 .lt-sug{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:20;padding:6px;display:grid;gap:2px}
 .lt-sug[hidden]{display:none}
+.lt-facet[hidden]{display:none}
+/* the "/" hint makes room for the search field's own clear button once something is typed */
+.lt-q input:not(:placeholder-shown)~.lt-kbd{display:none}
 .lt-sug button{display:flex;justify-content:space-between;gap:8px;border:0;background:none;text-align:left;padding:6px 8px;border-radius:6px;font-size:13px;color:var(--text);cursor:pointer}
 .lt-sug button:hover,.lt-sug button:focus-visible{background:var(--surface-2)}
 .lt-facet{position:relative}

@@ -78,7 +78,7 @@ function route() {
   const v = routes[normalized] ? normalized : "board";
   $$(".nav-item").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
-  render();
+  render.nav = true; render();
 }
 // A focus page takes the whole screen: the terminal page (docs/units/web-terminal.md) and an open review room
 // (docs/units/review-room.md). A route's view says so with .focus: a name, or a function of the route's argument that
@@ -104,6 +104,11 @@ const focusOf = (r) => { const f = routes[r?.name]?.focus; return (typeof f === 
 const fieldKey = (el) => { if (el.id) return `#${CSS.escape(el.id)}`; const d = [...el.attributes].find((x) => x.name.startsWith("data-"));
   return d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : null; };
 function render() {
+  // a list toolbar's search box (public/list-tools.js) is never replaced under the captain's typing (an input method's
+  // composition would break): a redraw of the same page waits for its blur, as a live update does (soft)
+  // (a navigation, route(), always draws)
+  const nav = render.nav; render.nav = false;
+  if (!nav && document.activeElement?.matches?.("#view [data-lt-q], #view [data-lt-fq]") && String(render.at).split("/")[0] === S.route?.name) return soft();
   const root = $("#view");
   pageFocus(focusOf(S.route));
   const scroll = $("#main").scrollTop;
