@@ -353,7 +353,12 @@ export function createPrWatch(d: PrWatchDeps) {
     const contents = async (repo: string, path: string, ref: string | null) => { const t = await fileOf(repo, path, ref); return t === "missing" || t === "unreadable" ? null : t; };
     // CODEOWNERS: its rules, null when the repository has none, "unreadable" when one could not be read
     const codeownersFor = (repo: string, base: string) => once(ownersCache, `${repo}|${base}`.toLowerCase(), async (): Promise<{ pattern: string; owners: string[] }[] | null | "unreadable"> => {
-      for (const p of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) { const t = await fileOf(repo, p, base); if (t === "unreadable") return "unreadable"; if (t !== "missing") return R.codeownersOverLimit(t) ? "unreadable" : R.parseCodeowners(t); }
+      for (const p of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) { const t = await fileOf(repo, p, base); if (t === "unreadable") return "unreadable"; if (t !== "missing") { if (R.codeownersOverLimit(t)) return "unreadable";
+        // owners GitHub reports as unknown (codeowners/errors) are left out, as GitHub itself ignores them
+        const unknown = new Set<string>(); try { const e = await g.get(`${repoPath(repo)}/codeowners/errors?ref=${enc(base)}`);
+          for (const x of Array.isArray(e?.errors) ? e.errors : []) if (/unknown owner/i.test(String(x?.kind ?? "")) && typeof x.source === "string") { const tok = x.source.slice(Math.max(0, Number(x.column) - 1)).split(/\s+/)[0]; if (tok) unknown.add(tok.toLowerCase()); } }
+        catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; }
+        return R.parseCodeowners(t).map((r) => ({ ...r, owners: r.owners.filter((o) => !unknown.has(o.toLowerCase())) })); } }
       return null; });
     const teamNames = new Map<string, string>(); // a required team named only by id: its org/slug, once looked up
     const members = (key: string, owner: string) => once(teamCache, key.toLowerCase(), async () => {
@@ -817,7 +822,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const ciOk = r.ci === "SUCCESS", ev = r.evidence;
     const done: F.L[] = [...(ciOk ? [{ en: "CI passes", tw: "CI 通過" }] : []), ...(ev && ev.verdict !== "fail" && ev.covers === "head" ? [{ en: `evidence: ${ev.verdict} on the current head (${ev.by})`, tw: `證據：${ev.verdict === "pass" ? "通過" : ev.verdict} · 目前 head（${ev.by}）` }] : []),
       ...r.reviews.filter((v) => v.state === "APPROVED" && !v.stale && !v.author).map((v) => ({ en: `${v.login} approved`, tw: `${v.login} approve` }))];
-    const note = sh.note ?? null, q = note?.quote ? { en: `${note.login}'s comment: "${note.quote}". `, tw: `${note.login} 的意見是「${note.quote}」。` } : { en: "", tw: "" };
+    const note = sh.note ?? null, q = note?.quote ? { en: `${note.login}'s comment: "${F.unq(note.quote)}". `, tw: `${note.login} 的意見是「${F.unq(note.quote)}」。` } : { en: "", tw: "" };
     const base = { schema: 1, kind, kindLabel: KIND_LABEL[kind], pr: r.id, repo: r.repo, url: r.url, title: r.title, head: r.head, channel: channelFor(kind), snoozeUntil: null as string | null, chased: 0 };
     if (kind === "qa") { const m = F.qaMessage(pr, r.routes ?? [], note);
       return { ...base, heading: { en: `Ask QA to test ${short(r)} on ${pr.env ?? "an environment"}`, tw: `請 QA 在 ${pr.env ?? "測試環境"} 實測 ${short(r)}` }, lead: { en: `${q.en}No code change is asked for, so the flow waits for evidence.`, tw: `${q.tw}代碼這邊沒有要改的，所以流程停在這裡等證據。` },
@@ -828,7 +833,9 @@ export function createPrWatch(d: PrWatchDeps) {
         autoClose: { en: "Evidence on the pull request that covers the current head closes this card and moves on to asking the reviewers again.", tw: "證據貼回 PR 而且覆蓋目前 head → 卡自動關，進「請 reviewer 重驗」" } }; }
     if (kind === "nudge") { const who = sh.stale ?? [], m = F.nudgeMessage(pr, who, ev!, rowNotes(r));
       return { ...base, heading: { en: `The evidence is in: ask ${who.length === 1 ? who[0] : `the ${who.length} reviewers`} to look again on the current head`, tw: `證據齊了，請 ${who.length === 1 ? who[0] : `${who.length} 個 reviewer`} 在目前 head 重驗` },
-        lead: { en: `${ev!.by}'s report (${ev!.verdict}) covers the current head ${r.head.slice(0, 7)}; ${who.join(", ")} gave their verdict on an older head. The card comes as soon as the evidence does.`, tw: `${ev!.by} 的報告（結論：${ev!.verdict === "pass" ? "通過" : ev!.verdict}）覆蓋目前 head ${r.head.slice(0, 7)}；${who.join("、")} 的意見還停在舊 head。證據一齊就出卡，不等。` },
+        lead: (() => { const older = r.reviews.some((v) => v.stale && who.some((w) => eq(w, v.login)));
+          return { en: `${ev!.by}'s report (${ev!.verdict}) covers the current head ${r.head.slice(0, 7)}; ${who.join(", ")} ${older ? "gave their verdict on an older head" : "reviewed before the evidence arrived"}. The card comes as soon as the evidence does.`,
+            tw: `${ev!.by} 的報告（結論：${ev!.verdict === "pass" ? "通過" : ev!.verdict}）覆蓋目前 head ${r.head.slice(0, 7)}；${who.join("、")} ${older ? "的意見還停在舊 head" : "是在證據之前 review 的"}。證據一齊就出卡，不等。` }; })(),
         done: [...done, ...(() => { const ns = rowNotes(r).filter((n) => who.some((w) => eq(w, n.login)) && n.quote); return ns.length && ns.every((n) => n.fixedBy?.length) ? [{ en: `the ${ns.length === 1 ? "last comment was" : `${ns.length} last comments were`} answered by new commits`, tw: `上次${ns.length === 1 ? "的意見" : ` ${ns.length} 條意見`}都已修` }] : []; })()],
         missing: who.map((w) => ({ en: `${w}'s result on the current head`, tw: `${w} 在目前 head 的結果` })), msgHead: { en: "Ask to review again", tw: "請重驗" }, recipients: who.map(person), message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the reviews", "我已發出，等重驗", true, { en: "the card closes when they review the current head", tw: "兩人在目前 head 給結果卡就關" }),
@@ -836,12 +843,14 @@ export function createPrWatch(d: PrWatchDeps) {
           OPT("later", "C", "Not now", "先不催", true, { en: "the card stays", tw: "卡留著" })],
         autoClose: { en: "Every reviewer giving a verdict on the current head closes this card; a change request goes back to the follow-through.", tw: "兩人都在目前 head 給出 review → 卡自動關；有 change request 就回 PR 跟進分岔" } }; }
     if (kind === "approve") { const a = r.approvals, groups = (a.groups ?? []).filter((g) => !g.ok), count = a.missing.find((m) => m.kind === "count") as { n: number } | undefined;
-      const recips = groups.flatMap((g) => g.kind === "team" ? [teamPerson(g.who, (r.teams ?? {})[g.who] ?? [])] : g.who.split(" | ").map((o) => o.startsWith("@") && o.includes("/") ? teamPerson(o, (r.teams ?? {})[o] ?? []) : person(o.replace(/^@/, ""))));
-      const miss = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (snap.rows.find((x) => eq(x.id, r.id))?.facts.files ?? []).slice(0, 4) : [] })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, whoTw: `還要 ${count.n} 個 approve`, files: [] as string[] }] : [])];
+      // the author is never asked (their own approval does not count); a team owner is asked through its members
+      const recips = groups.flatMap((g) => g.kind === "team" ? [teamPerson(g.who, (r.teams ?? {})[g.who] ?? [])] : g.who.split(" | ").filter((o) => !eq(o.replace(/^@/, ""), r.author)).map((o) => o.startsWith("@") && o.includes("/") ? teamPerson(o, ((r.teams ?? {})[o] ?? []).filter((m) => !eq(m, r.author))) : person(o.replace(/^@/, ""))));
+      const miss = [...groups.map((g) => ({ who: g.who, files: g.kind === "owner" ? (g.files ?? []).slice(0, 4) : [], authorOnly: !!g.authorOnly })), ...(count ? [{ who: count.n === 1 ? "1 more approval" : `${count.n} more approvals`, whoTw: `還要 ${count.n} 個 approve`, files: [] as string[], count: true }] : [])];
       const m = F.approveMessage(pr, miss, done, a.lastPush);
-      return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: `還缺 ${miss.map((x) => (x as any).whoTw ?? x.who).join("、")} 的 approve` },
+      const named = miss.filter((x) => !(x as any).count), cnt = miss.find((x) => (x as any).count) as any;
+      return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: [named.length ? `還缺 ${named.map((x) => x.who).join("、")} 的 approve` : "", cnt ? cnt.whoTw : ""].filter(Boolean).join("，") },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
-        done: [...done.filter((d) => !(a.groups ?? []).some((g) => g.ok && g.by.some((l) => d.en === `${l} approved`))), ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))], missing: miss.map((x) => ({ en: `✕ ${x.who}`, tw: `✕ ${(x as any).whoTw ?? x.who}` })), groupsMissing: miss.map((x) => x.who),
+        done: [...done.filter((d) => !(a.groups ?? []).some((g) => g.ok && g.by.some((l) => d.en === `${l} approved`))), ...(a.groups ?? []).filter((g) => g.ok).map((g) => ({ en: `${g.who} (${g.by.join(", ")})`, tw: `${g.who}（${g.by.join("、")}）` }))], missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: miss.map((x) => x.who),
         msgHead: { en: "Ask for approval", tw: "請 approve" }, recipients: recips, message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the approval", "我已發出，等 approve", true, { en: "an approval updates or closes the card", tw: "有人 approve 卡就更新或關掉" }),
           OPT("switch", "B", "Someone else", "換人", true, { en: "pick another member above and DM them", tw: "在上面選別的成員再 DM" }),
@@ -861,7 +870,8 @@ export function createPrWatch(d: PrWatchDeps) {
       autoClose: { en: "Push goes on and the approve card lists the voided approvals again.", tw: "選 A 會推送並回到 PR 跟進；「請 approve」卡會自動重新列出要重新 approve 的人" } };
     // ask: a comment Studio could not read as one kind, or rules it could not read
     return { ...base, heading: note ? { en: `What does ${note.login} ask for on ${short(r)}?`, tw: `${note.login} 在 ${short(r)} 要的是什麼？` } : { en: `The branch rules of ${short(r)} could not be read`, tw: `讀不到 ${short(r)} 的分支規則` },
-      lead: note ? { en: `${note.quote ? `"${note.quote}" — ` : ""}${sh.why.en}. Studio does not guess: tell it which kind of request this is.`, tw: `${note.quote ? `「${note.quote}」— ` : ""}${sh.why.tw}。Studio 不猜：請告訴它這是哪一種要求。` } : { en: `${sh.why.en}.`, tw: `${sh.why.tw}。` },
+      lead: note ? (() => { const qs = (note.quotes?.length ? note.quotes : note.quote ? [note.quote] : []).map(F.unq);
+        return { en: `${qs.map((x) => `"${x}"`).join(" / ")}${qs.length ? " — " : ""}${sh.why.en}. Studio does not guess: tell it which kind of request this is.`, tw: `${qs.map((x) => `「${x}」`).join("／")}${qs.length ? "——" : ""}${sh.why.tw}。Studio 不猜：請告訴它這是哪一種要求。` }; })() : { en: `${sh.why.en}.`, tw: `${sh.why.tw}。` },
       done, missing: [{ en: "your call", tw: "你的判斷" }], recipients: [], message: null, short: null, note: note ? { login: note.login, at: note.at } : null,
       opts: note ? [OPT("code-change", "A", "A code change", "要改代碼", false), OPT("needs-evidence", "B", "Evidence from a test", "要外部證據", false), OPT("non-blocking", "C", "Nothing that blocks the merge", "不擋合併", false)]
         : [OPT("hold", "A", "I will check the rules on GitHub", "我去 GitHub 看規則", false, { en: "no card again for this head", tw: "這個 head 不再出卡" })],
@@ -875,6 +885,21 @@ export function createPrWatch(d: PrWatchDeps) {
     const o = state.follow.open[key]; if (!o) return; delete state.follow.open[key];
     const c = followCard(o); if (c?.status === "open") { patchCard(o, (p) => { p.history.push(hist(en, tw, true)); }); try { await engine!.answer(c.id, { choice: "auto", note: en, by: "studio (GitHub)" }); } catch {} }
   }
+  /** why a card closes: what GitHub shows now that it did not when the card was raised (new commits, the evidence, an
+   *  approval, a review), else the rule the pull request now waits on; and the branch it moved to */
+  function closeReason(o: FollowOpen, r: ReturnType<typeof viewRows>[number], sh: F.Shepherd): F.L {
+    const c = followCard(o), p: any = c?.follow ?? {}, to = { en: ` → ${sh.branch}`, tw: ` → ${sh.branch}` }, raised = Date.parse(o.at);
+    const after = (at: string | null | undefined) => !!at && Date.parse(at) >= raised - 60_000;
+    let what: F.L | null = null;
+    if (r.head !== o.head) what = { en: `new commits: the head is now ${r.head.slice(0, 7)}`, tw: `有新 commit：head 變成 ${r.head.slice(0, 7)}` };
+    else if (o.kind === "qa" && r.evidence && r.evidence.covers === "head") what = { en: `evidence from ${r.evidence.by} (${r.evidence.verdict}) covers the head`, tw: `${r.evidence.by} 的證據（${r.evidence.verdict}）覆蓋目前 head` };
+    else if (o.kind === "nudge") { const who = r.reviews.filter((v) => !v.stale && after(v.at) && (p.recipients ?? []).some((x: any) => eq(x.who, v.login))).map((v) => `${v.login} (${v.state.toLowerCase().replace(/_/g, " ")})`);
+      if (who.length) what = { en: `new review on the head: ${who.join(", ")}`, tw: `目前 head 上的新 review：${who.join("、")}` }; }
+    else if (o.kind === "approve") { const got = (r.approvals.groups ?? []).filter((g) => g.ok && (p.groupsMissing ?? []).includes(g.who)).map((g) => `${g.who} (${g.by.join(", ")})`);
+      if (got.length) what = { en: `approved: ${got.join(", ")}`, tw: `已 approve：${got.join("、")}` }; }
+    if (!what) { const rule = R.RULES.find((x) => x.id === r.next.rule); what = rule ? { en: `now: ${rule.en}`, tw: `現在：${rule.tw}` } : { en: sh.why.en, tw: sh.why.tw }; }
+    return { en: what.en + to.en, tw: what.tw + to.tw };
+  }
   /** after a refresh: each open row's branch, its card raised, kept, updated or closed */
   async function followUp() {
     if (!engine || !state.settings.follow?.enabled) return;
@@ -886,8 +911,7 @@ export function createPrWatch(d: PrWatchDeps) {
       if (o.kind === "push") continue; // a push card waits on its answer only
       const sh = shepherdOf(r), want = KIND_OF[sh.branch];
       if (want !== o.kind || (o.kind !== "approve" && o.kind !== "merge" && o.head !== r.head)) {
-        const why: Record<FollowKind, [string, string]> = { qa: ["evidence covering the current head arrived", "覆蓋目前 head 的證據到了"], nudge: ["the reviewers gave their verdict on the current head", "reviewer 已在目前 head 給出結果"], approve: ["the branch rules are met", "分支規則都滿足了"], merge: ["no longer mergeable", "不再可合併"], ask: ["GitHub changed: read again", "GitHub 有變動：重新判斷"], push: ["", ""] };
-        await closeFollow(key, `${why[o.kind][0]} → ${sh.branch}`, `${why[o.kind][1]} → ${sh.branch}`); changed = true; continue; }
+        const why = closeReason(o, r, sh); await closeFollow(key, why.en, why.tw); changed = true; continue; }
       if (o.kind === "approve") { const fresh = followPayload("approve", r, sh) as any;
         patchCard(o, (p) => { const gone = (p.groupsMissing ?? []).filter((g: string) => !fresh.groupsMissing.includes(g));
           if (gone.length || fresh.groupsMissing.some((g: string) => !(p.groupsMissing ?? []).includes(g))) {

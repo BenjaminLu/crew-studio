@@ -48,7 +48,7 @@ try {
   // the QA card
   await p.goto(`${base}/#/inbox/${encodeURIComponent(qa.id)}`); await p.waitForSelector(`[data-follow-card="${qa.id}"]`);
   const box = p.locator(`[data-follow-card="${qa.id}"]`);
-  ok((await box.locator('[data-follow-lead]').innerText()).includes('「Please attach a staging run that shows the 429 for the 21st request.」') && await box.locator('[data-follow-rcpt="qa-lead"]').count() === 1, 'the QA card: the reviewer quoted, for the evidence source');
+  ok((await box.locator('[data-follow-lead]').innerText()).includes('「Please attach a staging run that shows the 429 for the 21st request」') && await box.locator('[data-follow-rcpt="qa-lead"]').count() === 1, 'the QA card: the reviewer quoted, for the evidence source');
   ok((await box.locator('[data-follow-msg]').inputValue()).includes('POST /v1/orders') && await p.locator('.ib-row.on .ib-kind').innerText() === '請 QA 測試', 'its message cites the route in the diff; the Inbox row names the kind');
   await box.locator('[data-follow-dm="qa-lead"]').click(); await p.waitForFunction(() => window.__opened.length === 1);
   ok(await p.evaluate(() => window.__opened[0]) === 'slack://user?team=T0TEAM&id=U04QALEAD' && (await p.evaluate(() => navigator.clipboard.readText())).includes('POST /v1/orders'), 'copy and DM: the message copied, the Slack DM opened from the contact');
@@ -99,7 +99,7 @@ try {
   await p.screenshot({ path: join(shots, 'prs-detail-212-1440.png') }); await p.keyboard.press('Escape');
   await p.click('[data-prs-settings]'); await p.waitForSelector('[data-prs-targets]');
   const hookShown = await p.locator('[data-prs-hook="qa"]').inputValue();
-  ok(hookShown.includes('••••') && !hookShown.includes('/x') && await p.locator('[data-prs-contact]').count() === 3, 'the settings show the webhook masked and the contacts', hookShown);
+  ok(hookShown.includes('••••') && !hookShown.includes('services/T0') && await p.locator('[data-prs-contact]').count() === 3, 'the settings show the webhook masked and the contacts', hookShown);
   await p.locator('[data-prs-targets]').scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, 'settings-1440.png') });
   await p.click('[data-prs-hook-test="qa"]'); await until(() => posted.length === 2); ok(posted.length === 2, 'Send a test posts once');
   await p.keyboard.press('Escape');

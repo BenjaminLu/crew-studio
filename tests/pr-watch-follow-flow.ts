@@ -34,7 +34,7 @@ try {
   const settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: ["qa-lead"], checks: [], labels: [] }, requiredReviewers: [], environments: [{ name: "dev", production: false, repos: [], detect: { kind: "check", name: "deploy/dev" } }, { name: "staging", production: false, repos: [], detect: { kind: "check", name: "deploy/staging" } }], groups: [], shortForm: false, messageLang: null,
     follow: { enabled: false }, sending: { targets: [{ id: "qa", name: "#qa-requests", tool: "slack", use: "qa", url: `http://127.0.0.1:${hook.port}/services/T0/B0/x` }], contacts: [{ gh: "qa-lead", tool: "slack", id: "U04QALEAD" }, { gh: "sec-bob", tool: "email", id: "bob@example.com" }, { gh: "rel-dan", tool: "teams", id: "dan@example.com" }], slackTeam: "T0TEAM" } };
   let r = await call("/api/prs/settings", { settings }); ok(r.status === 200, "settings with a send target and contacts", JSON.stringify(r.body).slice(0, 200));
-  ok(r.body.sending.targets[0].masked && !JSON.stringify(r.body).includes("/services/T0/B0/x") && !JSON.stringify((await call("/api/prs/sending")).body).includes("B0/x"), "the webhook address never reaches the page unmasked");
+  ok(r.body.sending.targets[0].masked && !JSON.stringify(r.body).includes("/services/T0/B0/x") && !JSON.stringify((await call("/api/prs/sending")).body).includes("/services/T0/B0/x"), "the webhook address never reaches the page unmasked");
   await refresh(); await new Promise((res) => setTimeout(res, 500));
   ok(!open().length, "follow-through off: no card");
   settings.follow.enabled = true; delete (settings.sending.targets[0] as any).url; (settings.sending.targets[0] as any).url = "https://hooks.slack.com/services/T0/B0/••••";
@@ -49,7 +49,7 @@ try {
     ok(a1?.id === a0?.id && a1.follow.history.some((x: any) => x.tw.includes("rel-dan") && x.tw.includes("approve ✓ → 卡裡只留 @northwind/security")), "rel-dan approves: the same card keeps only security, and its record says so", JSON.stringify(a1?.follow.history)); }
   const qa = cardOf(`${gw}#212`, "qa"), nudge = cardOf(`${gw}#215`, "nudge"), ap = cardOf(`${gw}#216`, "approve");
   ok(!!qa && !!nudge && !!ap && open().length === 3, "three cards: ask QA (212), ask the reviewers again (215), ask for approval (216)", JSON.stringify(open().map((c: any) => `${c.follow.pr}:${c.follow.kind}`)));
-  ok(qa.follow.lead.en.includes('review-bot-a\'s comment: "Please attach a staging run that shows the 429 for the 21st request."') && qa.follow.recipients[0].who === "qa-lead" && qa.follow.recipients[0].via.en === "Slack DM", "the QA card quotes the reviewer and is for the evidence source, by Slack DM");
+  ok(qa.follow.lead.en.includes('review-bot-a\'s comment: "Please attach a staging run that shows the 429 for the 21st request". ') && qa.follow.recipients[0].who === "qa-lead" && qa.follow.recipients[0].via.en === "Slack DM", "the QA card quotes the reviewer and is for the evidence source, by Slack DM");
   ok(qa.follow.message.en.includes('POST /v1/orders (src/routes.ts:1)') && qa.follow.message.en.includes('-X POST "$STAGING_URL/v1/orders"') && qa.follow.message.en.includes(c212[1].sha.slice(0, 7)) && qa.follow.channel === "qa", "the request cites the route the diff adds, the head, and goes to the QA channel by default");
   ok(qa.follow.message.en.includes("on staging") && !qa.follow.message.en.includes("$DEV_URL"), "the QA request names the environment the reviewer named (and that runs the head), not the first one set");
   ok(nudge.follow.message.tw.includes(`→ ${c215[1].sha.slice(0, 7)}`) && nudge.follow.done.some((d: any) => d.tw === "上次 2 條意見都已修"), "the nudge lists each comment with the commit that answered it, and says both were fixed", nudge.follow.message.tw);
@@ -75,7 +75,7 @@ try {
   gh.data.find(gw, 212)!.comments = [{ user: "qa-lead", body: `### PASS\non ${c212[1].sha}`, at: T(5) }];
   gh.data.find(gw, 216)!.reviews!.push({ user: "sec-bob", state: "APPROVED", commit: c216[1].sha, at: T(5) } as any);
   await refresh(); await until(() => E.cards.get(qa.id)!.status !== "open" && !!cardOf(`${gw}#216`, "merge"), 15000);
-  ok(E.cards.get(qa.id)!.status === "answered" && E.cards.get(qa.id)!.answer!.by === "studio (GitHub)" && /evidence covering the current head arrived/.test(E.cards.get(qa.id)!.answer!.note ?? ""), "the QA card closes by itself when evidence on the head arrives", JSON.stringify(E.cards.get(qa.id)!.answer));
+  ok(E.cards.get(qa.id)!.status === "answered" && E.cards.get(qa.id)!.answer!.by === "studio (GitHub)" && /^evidence from qa-lead \(pass\) covers the head → evidence-covers-head$/.test(E.cards.get(qa.id)!.answer!.note ?? ""), "the QA card closes by itself when evidence on the head arrives", JSON.stringify(E.cards.get(qa.id)!.answer));
   ok(!!cardOf(`${gw}#212`, "nudge") && cardOf(`${gw}#212`, "nudge").follow.recipients[0].who === "review-bot-a", "and the reviewer who asked for it is asked to look again right away");
   ok(E.cards.get(ap.id)!.status === "answered" && !!cardOf(`${gw}#216`, "merge"), "the approve card closes when the rules are met, and the merge card follows");
   // a push that would void the approvals asks first

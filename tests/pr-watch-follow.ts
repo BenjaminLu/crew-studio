@@ -17,7 +17,7 @@ const { ok, end } = suite("pr-watch-follow");
   ok(c("The counter is not initialised to 0, so the first failure is missed. Please fix it.").kind === "code-change" && c("log 裡不要印出 key id").kind === "code-change", "a change to the code: code change");
   ok(c("Why does the lock expire after 30 seconds?").kind === "question" && c("nit: maybe rename this, optional").kind === "non-blocking", "a question; a nit");
   const both = c("Please add a test for the timeout. Also show a staging run with real traffic.");
-  ok(both.confidence === "low" && !!both.quote, "two kinds of request in one comment: low confidence, the captain decides");
+  ok(both.confidence === "low" && !!both.quote && both.quotes?.length === 2, "two kinds of request in one comment: low confidence, the captain decides, every asking sentence kept");
   ok(c("👍").kind === null && c("👍").confidence === "low" && c("👍").quote === null, "nothing to quote: no kind, low confidence, never a guess");
   ok(c("Please fix the null check.").quote === "Please fix the null check.", "the quote is the reviewer's own sentence");
 }
@@ -65,12 +65,30 @@ const { ok, end } = suite("pr-watch-follow");
 // ---------- sending ----------
 {
   ok(F.webhookProblem("slack", "https://hooks.slack.com/services/T0/B0/x") === null && !!F.webhookProblem("slack", "https://evil.example/services/x") && !!F.webhookProblem("slack", "http://hooks.slack.com/x") && !!F.webhookProblem("json", "http://127.0.0.1:9/x") && F.webhookProblem("json", "http://127.0.0.1:9/x", true) === null, "a webhook: https on the tool's own host; loopback only when tests allow it");
-  ok(F.maskHook("https://hooks.slack.com/services/T0AAA/B0BBB/secretpart") === "https://hooks.slack.com/services/T0AAA/…/••••", "the browser sees a masked webhook");
+  for (const [u, want] of [["https://hooks.slack.com/services/T0AAA/B0BBB/secretpart", "https://hooks.slack.com/••••part"], ["https://chat.example/hooks/abcdefghijklmnop", "https://chat.example/••••mnop"],
+    ["https://chat.example/abcdefghijklmnopq", "https://chat.example/••••nopq"], ["https://chat.example/hook?token=s3cr3tvalue123", "https://chat.example/••••e123"], ["https://chat.example/x", "https://chat.example/••••"]] as const)
+    ok(F.maskHook(u) === want && (u.split("/").at(-1)!.length < 8 || !F.maskHook(u).includes(u.split("/").at(-1)!.slice(0, 8))), `the browser sees a masked webhook, whatever its shape: ${want}`, F.maskHook(u));
   ok(JSON.stringify(F.webhookBody("lark", "hi")) === '{"msg_type":"text","content":{"text":"hi"}}' && JSON.stringify(F.webhookBody("slack", "hi")) === '{"text":"hi"}', "each tool's body");
   ok(F.chatMentions("@qa-lead please, and @owner/security", "slack", [{ gh: "qa-lead", tool: "slack", id: "U04QA" }]) === "<@U04QA> please, and @owner/security", "a GitHub login becomes the chat's @ where a contact says who they are");
   ok(F.dmLink({ tool: "slack", id: "U04QA" }, "hi", "s", "T0TEAM")?.href === "slack://user?team=T0TEAM&id=U04QA" && F.dmLink({ tool: "slack", id: "U04QA" }, "hi", "s", null) === null, "Slack: the app link to that member (the message is pasted)");
   ok(F.dmLink({ tool: "teams", id: "dan@example.com" }, "a b", "s", null)?.href === "https://teams.microsoft.com/l/chat/0/0?users=dan%40example.com&message=a%20b", "Teams: a chat with the message filled in");
   ok(F.dmLink({ tool: "email", id: "alice@example.com" }, "body", "subj", null)?.href === "mailto:alice@example.com?subject=subj&body=body" && F.dmLink(null, "x", "s", null) === null && F.dmLink({ tool: "email", id: "javascript:alert(1)" }, "x", "s", null) === null, "Email: mailto; no contact or a bad one: no link (copy only)");
   ok(!!F.contactProblem({ gh: "a", tool: "discord", id: "x" }) && F.contactProblem({ gh: "qa-lead", tool: "slack", id: "U04QA12" }) === null, "contacts: Slack, Microsoft Teams or Email only");
+}
+
+// ---------- code-owner groups (the approve card asks only what GitHub would) ----------
+{
+  const R2 = await import("../src/pr-watch-rules");
+  const rules = R2.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_code_owner_review: true } }], "none", null, "o");
+  const co = [{ pattern: "/auth/", owners: ["@o/security"] }, { pattern: "/docs/", owners: ["dana"] }, { pattern: "/tools/", owners: ["dev"] }];
+  const members = new Map<string, string[] | null>([["o/security", ["sec-bob"]]]);
+  const a = R2.approvalsOf(rules, [], { files: ["auth/a.go", "auth/b.go", "docs/x.md", "src/y.ts", "tools/t.sh"], codeowners: co, teamMembers: members, author: "dev" });
+  const g = (who: string) => a.groups!.find((x) => x.who === who)!;
+  ok(g("@o/security").files!.join() === "auth/a.go,auth/b.go" && g("dana").files!.join() === "docs/x.md", "each owner group lists only the files it owns");
+  ok(g("dev").authorOnly === true && !g("dana").authorOnly, "a group only the author owns says so (the author's approval never counts)");
+  const u = R2.approvalsOf(rules, [], { files: ["auth/a.go"], codeowners: co, teamMembers: new Map(), author: "dev" });
+  ok(!u.readable && /could not be read/.test((u.missing[0] as any).reason), "an owner team whose members cannot be read stops and asks, never a group to approve", JSON.stringify(u.missing));
+  const m = F.approveMessage({ id: "o/r#1", url: "u", title: "t", head: "abcdef1", env: null }, [{ who: "1 more approval", whoTw: "還要 1 個 approve", files: [], count: true }], [], false);
+  ok(/- 1 more approval$/m.test(m.msg.en) && !m.msg.en.includes("1 more approval: 1 approval") && m.msg.tw.includes("- 還要 1 個 approve"), "a missing count reads once, in both languages", m.msg.en);
 }
 end();

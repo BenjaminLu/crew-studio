@@ -6,9 +6,11 @@
 import type { Approvals, Evidence, ReviewView, Step } from "./pr-watch-rules";
 
 export type L = { en: string; tw: string };
+/** a reviewer's sentence set inside quotation marks, without its own final full stop (the text around it adds one) */
+export const unq = (q: string | null | undefined) => String(q ?? "").replace(/[.。]+\s*$/, "");
 // ---------- a reviewer's comment ----------
 export type NoteKind = "code-change" | "needs-evidence" | "question" | "non-blocking";
-export type Note = { login: string; state: string; at: string; url: string | null; stale: boolean; kind: NoteKind | null; quote: string | null; confidence: "high" | "low";
+export type Note = { login: string; state: string; at: string; url: string | null; stale: boolean; kind: NoteKind | null; quote: string | null; confidence: "high" | "low"; quotes?: string[];
   /** the commits pushed after this review (short): what answered it */ fixedBy?: string[] };
 const SENTENCES = (t: string) => String(t ?? "").replace(/\r/g, "").split(/(?<=[.!?。！？])\s+|\n+/).map((s) => s.replace(/^[\s>*#\-–•]+/, "").trim()).filter((s) => s.length > 2 && s.length <= 400);
 const EVIDENCE = /\b(staging|prod(?:uction)?|e2e|end[- ]to[- ]end|manual(?:ly)? test|smoke test|load test|benchmark|repro(?:duce)?|screenshot|recording|test evidence|evidence|qa)\b|實測|实测|證據|证据|截圖|截图|驗證結果|验证结果|測試報告|测试报告|跑一下|測一下|测一下/i;
@@ -20,7 +22,7 @@ const CODE = /\b(should|must|change|fix|rename|remove|add|replace|refactor|bug|w
  * in this order: evidence asked for, not blocking, a question (it ends in a question mark and asks for nothing), a code
  * change. Two kinds in the same comment, or none, is low confidence: the captain is asked. Never a guess without a quote.
  */
-export function classifyNote(body: string): { kind: NoteKind | null; quote: string | null; confidence: "high" | "low" } {
+export function classifyNote(body: string): { kind: NoteKind | null; quote: string | null; confidence: "high" | "low"; quotes?: string[] } {
   const found: { kind: NoteKind; quote: string }[] = [];
   for (const s of SENTENCES(body)) {
     const k: NoteKind | null = EVIDENCE.test(s) && ASKS.test(s) ? "needs-evidence" : NONBLOCK.test(s) ? "non-blocking" : /[?？]\s*$/.test(s) && !ASKS.test(s) ? "question" : CODE.test(s) ? "code-change" : null;
@@ -30,7 +32,8 @@ export function classifyNote(body: string): { kind: NoteKind | null; quote: stri
   // "nit:" next to a real change is still a change; evidence next to a code change is two asks: the captain decides
   const kinds = new Set(found.map((f) => f.kind)); if (kinds.size > 1 && kinds.has("non-blocking")) kinds.delete("non-blocking");
   const first = found.find((f) => kinds.has(f.kind))!;
-  return { kind: first.kind, quote: first.quote, confidence: kinds.size === 1 ? "high" : "low" };
+  // a comment with two kinds of request: every sentence that asks, so the captain sees all of them
+  return { kind: first.kind, quote: first.quote, confidence: kinds.size === 1 ? "high" : "low", ...(kinds.size > 1 ? { quotes: found.filter((f) => kinds.has(f.kind)).map((f) => f.quote) } : {}) };
 }
 
 // ---------- the branch ----------
@@ -107,7 +110,7 @@ export function qaMessage(pr: MsgPr, routes: Route[], note: Note | null): { msg:
   const cmd = (r: Route) => `curl -s -o /dev/null -w "%{http_code}\\n" -X ${r.method === "ANY" ? "GET" : r.method} "$${(pr.env ?? "TEST").toUpperCase().replace(/[^A-Z0-9]/g, "_")}_URL${r.path}" -H "Authorization: Bearer <token>"${["POST", "PUT", "PATCH"].includes(r.method) ? " -d @<body.json>" : ""}`;
   const steps = routes.length ? routes.map((r, i) => `${i + 1}) ${r.method} ${r.path} (${r.file}:${r.line})\n${cmd(r)}\n`) : [];
   const stepsZ = routes.length ? routes.map((r, i) => `${i + 1}) ${r.method} ${r.path}（${r.file}:${r.line}）\n${cmd(r)}\n預期：<填預期結果>`) : [];
-  const asked = note?.quote ? { en: `The reviewer asked: "${note.quote}"\n\n`, tw: `reviewer 的原話：「${note.quote}」\n\n` } : { en: "", tw: "" };
+  const asked = note?.quote ? { en: `The reviewer asked: "${unq(note.quote)}"\n\n`, tw: `reviewer 的原話：「${unq(note.quote)}」\n\n` } : { en: "", tw: "" };
   return {
     msg: { en: `Could you test ${pr.id} on ${env} (head ${short(pr.head)})?\n${pr.url}\n\nWhat changed: ${pr.title}\n\n${asked.en}${steps.length ? `${steps.map((s) => `${s}Expected: <fill in the expected result>`).join("\n\n")}` : "What to test: <the diff names no route: fill in the entry point>"}\n\nPlease post the evidence on the pull request, first line "Verdict: pass / fail", and name the commit you tested (${short(pr.head)}).`,
       tw: `請幫忙在 ${envZ} 測 ${pr.id}（head ${short(pr.head)}）\n${pr.url}\n\n改了什麼：${pr.title}\n\n${asked.tw}${stepsZ.length ? stepsZ.join("\n\n") : "要測什麼：<diff 裡沒找到路由，請填入口>"}\n\n證據請貼回 PR，第一行寫「結論：通過 / 不通過」，並註明測的是 ${short(pr.head)}。` },
@@ -118,13 +121,13 @@ export function nudgeMessage(pr: MsgPr, who: string[], ev: Evidence, notes: Note
   const at = who.map((w) => `@${w}`).join(" ");
   const said = notes.filter((n) => n.quote && who.some((w) => w.toLowerCase() === n.login.toLowerCase()));
   return {
-    msg: { en: `${at} could you review ${pr.id} again?\n${pr.url}\n\nThe evidence you asked for is in: ${ev.by}, ${ev.verdict}, on ${short(pr.head)} = the current head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\nYour last comments and what changed since:\n${said.map((n) => `- ${n.login}: "${n.quote}"${n.fixedBy?.length ? ` → ${n.fixedBy.join(", ")}` : ""}`).join("\n")}` : ""}`,
-      tw: `${at} 麻煩重驗 ${pr.id}\n${pr.url}\n\n上次要求的證據已補齊：${ev.by}，結論 ${ev.verdict === "pass" ? "通過" : ev.verdict === "conditional" ? "有條件通過" : ev.verdict}，測的是 ${short(pr.head)} = 目前的 head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\n上次的意見和對應修改：\n${said.map((n) => `- ${n.login}「${n.quote}」${n.fixedBy?.length ? ` → ${n.fixedBy.join("、")}` : ""}`).join("\n")}` : ""}` },
+    msg: { en: `${at} could you review ${pr.id} again?\n${pr.url}\n\nThe evidence you asked for is in: ${ev.by}, ${ev.verdict}, on ${short(pr.head)} = the current head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\nYour last comments and what changed since:\n${said.map((n) => `- ${n.login}: "${unq(n.quote)}"${n.fixedBy?.length ? ` → ${n.fixedBy.join(", ")}` : ""}`).join("\n")}` : ""}`,
+      tw: `${at} 麻煩重驗 ${pr.id}\n${pr.url}\n\n上次要求的證據已補齊：${ev.by}，結論 ${ev.verdict === "pass" ? "通過" : ev.verdict === "conditional" ? "有條件通過" : ev.verdict}，測的是 ${short(pr.head)} = 目前的 head${ev.url ? `\n${ev.url}` : ""}${said.length ? `\n\n上次的意見和對應修改：\n${said.map((n) => `- ${n.login}「${unq(n.quote)}」${n.fixedBy?.length ? ` → ${n.fixedBy.join("、")}` : ""}`).join("\n")}` : ""}` },
     short: { en: `${at} one more nudge on ${pr.id}, the evidence is here: ${ev.url ?? pr.url} (current head ${short(pr.head)})`, tw: `${at} 再麻煩一下 ${pr.id}，證據在這：${ev.url ?? pr.url}（目前 head ${short(pr.head)}）` } };
 }
 /** "请 approve": one block per group the rules still miss, what is already done, the files a code owner should look at. */
-export function approveMessage(pr: MsgPr, missing: { who: string; whoTw?: string; files: string[] }[], done: L[], lastPush: boolean): { msg: L; short: L } {
-  const lines = (z: boolean) => missing.map((m) => `- ${z ? m.whoTw ?? m.who : m.who}${z && m.whoTw ? "" : z ? "：1 人" : ": 1 approval"}${m.files.length ? z ? `（這次改了 ${m.files.slice(0, 4).join("、")}）` : ` (this changes ${m.files.slice(0, 4).join(", ")})` : ""}`).join("\n");
+export function approveMessage(pr: MsgPr, missing: { who: string; whoTw?: string; files: string[]; count?: boolean }[], done: L[], lastPush: boolean): { msg: L; short: L } {
+  const lines = (z: boolean) => missing.map((m) => `- ${z ? m.whoTw ?? m.who : m.who}${m.count ? "" : z ? "：1 人" : ": 1 approval"}${m.files.length ? z ? `（這次改了 ${m.files.slice(0, 4).join("、")}）` : ` (this changes ${m.files.slice(0, 4).join(", ")})` : ""}`).join("\n");
   return {
     msg: { en: `Could you approve ${pr.id}: ${pr.title}?\n${pr.url}\n\nDone: ${done.map((d) => d.en).join(", ") || "—"}\n\nStill missing:\n${lines(false)}${lastPush ? `\n\nThe branch rules ask for the approval after the last push (${short(pr.head)}); another push needs it again.` : ""}`,
       tw: `麻煩 approve ${pr.id}：${pr.title}\n${pr.url}\n\n已完成：${done.map((d) => d.tw).join("、") || "—"}\n\n還缺：\n${lines(true)}${lastPush ? `\n\n注意：分支規則要求在最後一次 push（${short(pr.head)}）之後 approve，之後若再 push 需要重新 approve。` : ""}` },
@@ -149,7 +152,9 @@ export function webhookProblem(tool: string, url: string, loopbackOk = false): s
   return null;
 }
 /** What the browser sees of a webhook: its host and a masked path. */
-export const maskHook = (url: string) => { try { const u = new URL(url); const p = u.pathname.split("/").filter(Boolean); return `${u.protocol}//${u.host}/${p.slice(0, 2).join("/")}${p.length > 2 ? "/…/••••" : ""}`; } catch { return "••••"; } };
+export const maskHook = (url: string) => { try { const u = new URL(url), rest = `${u.pathname}${u.search}`.replace(/^\/+/, "");
+  // nothing after the host is shown but its last four characters: a secret may sit in any path segment or the query
+  const tail = rest.replace(/[^A-Za-z0-9]/g, ""); return `${u.protocol}//${u.host}/••••${tail.length > 12 ? tail.slice(-4) : ""}`; } catch { return "••••"; } };
 /** The JSON body each tool's incoming webhook takes for plain text. */
 export function webhookBody(tool: Tool, text: string): unknown {
   const t = String(text ?? "").slice(0, 3900);

@@ -164,6 +164,7 @@ export function prWatchGitHub(data = fixtureData()) {
       return json({ total_count: pr?.checks?.length ?? 0, check_runs: (pr?.checks ?? []).map((c, i) => ({ id: i + 1, name: c.name, status: "completed", conclusion: c.conclusion, completed_at: c.at, html_url: `https://github.com/${repo}/runs/${i + 1}` })) }); }
     if ((k = /^\/rules\/branches\/(.+)$/.exec(rest))) { const r = data.rules[repo]; return r ? json(r.rulesets) : nf(); }
     if ((k = /^\/branches\/(.+)\/protection$/.exec(rest))) { const r = data.rules[repo]; return r ? json(r.protection.body, r.protection.status) : nf(); }
+    if (rest === "/codeowners/errors") return json({ errors: data.rules[repo]?.codeownersErrors ?? [] });
     if ((k = /^\/contents\/(.+)$/.exec(rest))) { const path = decodeURIComponent(k[1]);
       if (path.endsWith("CODEOWNERS") && knobs.codeownersFail) return json({ message: "Server Error" }, 500);
       const text = path.endsWith("CODEOWNERS") ? (path === ".github/CODEOWNERS" ? data.rules[repo]?.codeowners : undefined) : data.files[`${repo}/${path}`];

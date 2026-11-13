@@ -310,7 +310,10 @@ export type Approvals = { readable: boolean; required: number; counted: number; 
    *  check, a rule Studio cannot see): not a missing approval, and never ready */
   blocked?: boolean;
   /** each group the rules ask an approval from (a required team, a set of code owners): met or not, and by whom */
-  groups?: { who: string; kind: "team" | "owner"; ok: boolean; by: string[] }[];
+  groups?: { who: string; kind: "team" | "owner"; ok: boolean; by: string[];
+    /** a code-owner group: the changed files it owns (at most 20) */ files?: string[];
+    /** a code-owner group no one but the author can approve (the author's own approval never counts): GitHub cannot be
+     *  satisfied by the people here; another owner, or an admin, has to act */ authorOnly?: boolean }[];
   /** with "approval after the last push": the logins treated as the pusher (inferred: GitHub does not expose who pushed) */
   inferredPusher?: string[] };
 /**
@@ -344,14 +347,21 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   if (valid.length < needed) missing.push({ kind: "count", n: needed - valid.length });
   const memberOf = (team: string) => (o.teamMembers.get(team.toLowerCase()) ?? []).map((m) => m.toLowerCase());
   if (rules.codeOwners && o.codeowners) {
-    const sets = new Map<string, string[]>();
+    const sets = new Map<string, { ow: string[]; files: string[] }>();
     const budget: StepBudget = { left: CODEOWNERS_LIMITS.steps };
     for (const f of o.files) { let ow = o.ownersCache?.get(f); if (ow === undefined) { ow = ownersOf(f, o.codeowners, budget); if (ow !== "limit") o.ownersCache?.set(f, ow); }
       if (ow === "limit") return { readable: false, required: rules.required, counted: valid.length, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources,
         missing: [{ kind: "unreadable", reason: "a CODEOWNERS line or a changed file's path is past Studio's limits, so the code owners cannot be checked", tw: "CODEOWNERS 的某一行或某個改動檔案的路徑超過 Studio 的上限，無法檢查 code owner" }] };
-      if (ow.length) sets.set(ow.map((x) => x.toLowerCase()).sort().join(" "), ow); }
-    for (const ow of sets.values()) { const by = valid.filter((r) => ow.some((x) => x.includes("/") ? memberOf(x.replace(/^@/, "")).includes(r.login.toLowerCase()) : x.replace(/^@/, "").toLowerCase() === r.login.toLowerCase())).map((r) => r.login);
-      groups.push({ who: ow.join(" | "), kind: "owner", ok: by.length > 0, by }); if (!by.length) missing.push({ kind: "owner", who: ow }); }
+      if (ow.length) { const k = ow.map((x) => x.toLowerCase()).sort().join(" "), cur = sets.get(k) ?? { ow, files: [] }; if (cur.files.length < 20) cur.files.push(f); sets.set(k, cur); } }
+    // a team owner whose members could not be read: Studio cannot tell who may approve, so it stops and asks
+    const unreadTeam = [...sets.values()].flatMap((x) => x.ow).find((x) => x.includes("/") && o.teamMembers.get(x.replace(/^@/, "").toLowerCase()) == null);
+    if (unreadTeam) return { readable: false, required: rules.required, counted: valid.length, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources,
+      missing: [{ kind: "unreadable", reason: `the members of the code-owner team ${unreadTeam} could not be read`, tw: `讀不到 code owner team ${unreadTeam} 的成員` }] };
+    for (const { ow, files } of sets.values()) {
+      // who can approve this group: users other than the author, and members of the owner teams (an empty team counts no one)
+      const author = String(o.author ?? "").toLowerCase(), can = [...ow.filter((x) => !x.includes("/")).map((x) => x.replace(/^@/, "").toLowerCase()), ...ow.filter((x) => x.includes("/")).flatMap((x) => memberOf(x.replace(/^@/, "")))].filter((x) => x && x !== author);
+      const by = valid.filter((r) => ow.some((x) => x.includes("/") ? memberOf(x.replace(/^@/, "")).includes(r.login.toLowerCase()) : x.replace(/^@/, "").toLowerCase() === r.login.toLowerCase())).map((r) => r.login);
+      groups.push({ who: ow.join(" | "), kind: "owner", ok: by.length > 0, by, files, ...(!by.length && !can.length ? { authorOnly: true } : {}) }); if (!by.length) missing.push({ kind: "owner", who: ow }); }
   }
   for (const t of rules.teams) { const by = valid.filter((r) => memberOf(t.key).includes(r.login.toLowerCase())).map((r) => r.login);
     groups.push({ who: t.label, kind: "team", ok: by.length > 0, by }); if (!by.length) missing.push({ kind: "team", who: t.label }); }

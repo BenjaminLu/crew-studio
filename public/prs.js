@@ -387,12 +387,13 @@ function pwModal(title, kids, o = {}) {
 const foot = (...kids) => h("div", { class: "pw-mf" }, ...kids);
 // where the pull request is in its follow-through (docs/units/pr-watch.md "Follow-through"), why it took that branch, and
 // its open card's message (the same card as in the Inbox)
+const unq = (q) => String(q ?? "").replace(/[.。]+\s*$/, ""); // a quoted sentence without its own final full stop
 const STAGE_AT = { "code-change": 0, "needs-evidence": 1, "evidence-covers-head": 2, "missing-approvals": 3, mergeable: 4 };
 function flowSection(r) {
   const f = r.follow; if (!f) return null;
   const at = STAGE_AT[f.branch] ?? -1, ev = r.evidence, miss = (r.approvals?.missing || []).map(missWord).join(T(", ", "、"));
-  const stages = [[T("Reviews", "Review"), f.quote && at === 0 ? T(`${f.by}: “${f.quote}”`, `${f.by}：「${f.quote}」`) : r.reviews.length ? r.reviews.map((x) => `${x.login} ${reviewWord(x.state)}`).join(T(", ", "、")) : ""],
-    [T("QA test", "QA 實測"), ev ? `${ev.by}: ${verdictWord(ev.verdict)}${ev.covers === "head" ? T(" · current head", " · 目前 head") : ""}` : at === 1 && f.quote ? T(`${f.by} asked: “${f.quote}”`, `${f.by} 要求：「${f.quote}」`) : ""],
+  const stages = [[T("Reviews", "Review"), f.quote && at === 0 ? T(`${f.by}: “${unq(f.quote)}”`, `${f.by}：「${unq(f.quote)}」`) : r.reviews.length ? r.reviews.map((x) => `${x.login} ${reviewWord(x.state)}`).join(T(", ", "、")) : ""],
+    [T("QA test", "QA 實測"), ev ? `${ev.by}: ${verdictWord(ev.verdict)}${ev.covers === "head" ? T(" · current head", " · 目前 head") : ""}` : at === 1 && f.quote ? T(`${f.by} asked: “${unq(f.quote)}”`, `${f.by} 要求：「${unq(f.quote)}」`) : ""],
     [T("Ask the reviewers again", "請 reviewer 重驗"), at === 2 ? T(`the evidence covers the head; ${f.stale.join(", ")} gave their verdict on an older one`, `證據覆蓋目前 head；${f.stale.join("、")} 的意見還停在舊 head`) : ""],
     [T("Approvals the rules ask for", "分支規則要的 approve"), miss], [T("Mergeable (the branch rules all met)", "可合併（分支規則全滿足）"), ""]];
   const box = h("div", { class: "pw-followcard", "data-prs-detail-card": r.followCard?.card || "" });
@@ -400,7 +401,7 @@ function flowSection(r) {
   return h("div", { class: "pw-cols", "data-prs-flow": f.branch },
     h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Where the flow is", "流程走到哪")),
       h("ol", { class: "pw-rules" }, stages.map(([label, note], i) => h("li", { class: i < at ? "no" : i === at ? "hit" : "" }, label, i === at ? T(" ← now", " ← 現在") : "", note ? h("div", { class: "faint pw-small", style: "font-weight:400" }, note) : null))),
-      h("h3", {}, T("Why this branch", "為什麼走這條岔路")), h("div", { class: "pw-small muted" }, LX(f.why), f.quote ? T(` — ${f.by}: “${f.quote}”`, `——${f.by}：「${f.quote}」`) : "")),
+      h("h3", {}, T("Why this branch", "為什麼走這條岔路")), h("div", { class: "pw-small muted" }, LX(f.why), f.quote ? T(` — ${f.by}: “${unq(f.quote)}”`, `——${f.by}：「${unq(f.quote)}」`) : "")),
     r.followCard ? h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Its card", "它的卡片")), box) : null);
 }
 function detail(r) {
@@ -542,7 +543,7 @@ function driftModal(r) {
 }
 // where cards and briefs may be sent (docs/units/pr-watch.md "Sending"): the webhook is a secret, shown masked; typing a
 // new one replaces it. Contacts say who a GitHub account is in Slack, Microsoft Teams or email, for a DM.
-const TOOLS = () => [["slack", "Slack"], ["lark", "飛書 / Lark"], ["dingtalk", "釘釘 / DingTalk"], ["teams", "Microsoft Teams"], ["discord", "Discord"], ["json", T("Generic JSON", "通用 JSON")]];
+const TOOLS = () => [["slack", "Slack"], ["lark", T("Lark / Feishu", "飛書 / Lark")], ["dingtalk", T("DingTalk", "釘釘 / DingTalk")], ["teams", "Microsoft Teams"], ["discord", "Discord"], ["json", T("Generic JSON", "通用 JSON")]];
 const USES = () => [["qa", T("Ask QA to test", "請 QA 測試")], ["nudge", T("Ask reviewers again", "請 reviewer 重驗")], ["approve", T("Ask for approval", "請 approve")], ["brief", T("Release brief", "上線 brief")], ["any", T("Anything", "全部")]];
 const CTOOLS = [["slack", "Slack"], ["teams", "Microsoft Teams"], ["email", "Email"]];
 function sendingSection(s) {
