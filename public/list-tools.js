@@ -77,7 +77,7 @@ function suggest(cfg, q, facets, countsOf) {
   const f = facets.find((x) => x.key === k0);
   if (m[2] && f) { const w = norm(m[3].replace(/^"|"$/g, "")), c = countsOf(f);
     return [...c.entries()].filter(([v]) => !w || norm(v).startsWith(w) || norm(showOf(f, v)).startsWith(w)).sort((a, b) => b[1] - a[1]).slice(0, 6)
-      .map(([v, n]) => { const s = showOf(f, v), t = /\s|"/.test(s) ? (/\s|"/.test(v) ? `"${s.replace(/"/g, "")}"` : v) : s; return { key: k0, val: s, n, q: [...head, `${k0}:${t}`].join(" ") + " " }; }); }
+      .map(([v, n]) => { const t = /\s|"/.test(v) ? `"${v.replace(/"/g, "")}"` : v; return { key: k0, val: showOf(f, v), n, q: [...head, `${k0}:${t}`].join(" ") + " " }; }); }
   if (!m[2] && !m[3]) return facets.filter((x) => x.key.startsWith(k0) && x.key !== k0).map((x) => ({ key: x.key, val: `（${x.name}）`, n: null, q: [...head, `${x.key}:`].join(" ") }));
   return [];
 }
@@ -138,7 +138,7 @@ function list(cfg) {
   const facetEls = new Map();
   for (const f of cfg.facets || []) {
     const btn = h("button", { type: "button", class: "btn sm", "aria-expanded": "false", "aria-haspopup": "true", "data-lt-facet": f.key, onclick: () => { u.open = u.open === f.key ? null : f.key; draw(); if (u.open) [...facetEls.get(f.key).pop.querySelectorAll("input")].find((x) => !x.hidden)?.focus(); } });
-    const fq = h("input", { class: "input", type: "search", "data-lt-fq": f.key, placeholder: tr(`Find ${f.name}…`, `找${f.name}…`), "aria-label": tr(`Find ${f.name}`, `找${f.name}`), oninput: (e) => { if (e.isComposing) return; u.fq[f.key] = fq.value; drawOpts(f.key); }, oncompositionend: () => { u.fq[f.key] = fq.value; drawOpts(f.key); } });
+    const fq = h("input", { class: "input", type: "search", "data-lt-fq": f.key, placeholder: tr(`Find ${f.name}…`, `找${f.name}…`), "aria-label": tr(`Find ${f.name}`, `找${f.name}`), oninput: (e) => { if (e.isComposing || e.keyCode === 229) return; u.fq[f.key] = fq.value; drawOpts(f.key); }, oncompositionend: () => { u.fq[f.key] = fq.value; drawOpts(f.key); } });
     const opts = h("div", { class: "lt-opts" });
     const pop = h("div", { class: "lt-pop card", role: "group", "aria-label": f.name, "data-lt-pop": f.key }, fq, opts,
       h("div", { class: "actions", style: "justify-content:space-between" }, h("button", { type: "button", class: "btn ghost sm", "data-lt-clear": f.key, onclick: () => set({ f: { ...st.f, [f.key]: [] } }) }, tr("Clear", "清除")),
@@ -149,16 +149,20 @@ function list(cfg) {
     cfg.sorts.map((s) => h("option", { value: s.key }, s.label))) : null;
   const active = h("div", { class: "lt-active", "aria-live": "polite" });
   const bar = h("div", { class: "lt", "data-lt-bar": cfg.id, role: "search", "aria-label": tr(`Search and filter ${cfg.title}`, `${cfg.title}搜尋與篩選`) },
-    h("div", { class: "lt-row" }, qbox, [...facetEls.values()].map((x) => x.wrap), sortSel ? h("label", { class: "lt-check" }, h("span", { class: "faint lt-small" }, tr("Sort", "排序")), sortSel) : null), active);
+    h("div", { class: "lt-row" }, qbox, [...facetEls.values()].map((x) => x.wrap), sortSel ? h("label", { class: "lt-check" }, h("span", { class: "faint lt-small" }, tr("Sort", "排序")), sortSel) : null, cfg.extra || null), active);
   const region = h("div", { class: "lt-region", "data-lt-region": cfg.id }), foot = h("div", { class: "lt-foot", "data-lt-foot": cfg.id, hidden: true });
   root.append(...(cfg.items == null && !cfg.server ? [] : [bar]), region, foot);
 
   // ---- typing ----
   const typed = () => { u.sug = true; set({ q: input.value }, { typing: true }); };
-  input.addEventListener("input", (e) => { if (!e.isComposing) typed(); });
-  input.addEventListener("compositionend", typed);
+  // while an input method composes (compositionstart … compositionend) nothing filters, redraws or moves this box: the list
+  // filters once, on compositionend, with the committed text; Enter, Escape and the arrows belong to the input method
+  const composing = (e) => e.isComposing || e.keyCode === 229 || u.composing;
+  input.addEventListener("compositionstart", () => { u.composing = true; });
+  input.addEventListener("input", (e) => { if (!composing(e)) typed(); });
+  input.addEventListener("compositionend", () => { u.composing = false; typed(); });
   input.addEventListener("keydown", (e) => {
-    if (e.isComposing) return;
+    if (composing(e)) return;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (!sugBox.hidden) { u.sug = false; sugBox.hidden = true; return; } if (input.value) { input.value = ""; typed(); } else input.blur(); return; }
     if (e.key === "ArrowDown" && !sugBox.hidden) { e.preventDefault(); sugBox.querySelector("button")?.focus(); }
   });
@@ -170,7 +174,7 @@ function list(cfg) {
   function drawOpts(key) {
     const el = facetEls.get(key), fv = view?.facets.find((x) => x.key === key); if (!el || !fv) return;
     const had = document.activeElement?.dataset?.ltOpt, w = norm(u.fq[key] || "");
-    el.fq.hidden = fv.opts.length <= 6; if (el.fq.value !== (u.fq[key] || "")) el.fq.value = u.fq[key] || "";
+    el.fq.hidden = fv.opts.length <= 6; if (document.activeElement !== el.fq && el.fq.value !== (u.fq[key] || "")) el.fq.value = u.fq[key] || "";
     const shown = fv.opts.filter((o) => !w || norm(o.label).includes(w) || norm(o.v).includes(w));
     el.opts.replaceChildren(...(shown.length ? shown.map((o) => h("label", {}, h("input", { type: "checkbox", "data-lt-opt": `${key}=${o.v}`, checked: o.on || null,
       onchange: () => { const cur = st.f[key] || []; set({ f: { ...st.f, [key]: o.on ? cur.filter((y) => y !== o.v) : [...cur, o.v] } }); } }), h("span", {}, o.label), h("span", { class: "num" }, String(o.n))))
@@ -206,11 +210,13 @@ function list(cfg) {
       suggest: suggest(cfg, st.q, sugFacets, (f) => new Map(Object.entries(r.counts?.[f.key] || {}))) };
   }
   function paintBar(v) {
-    for (const [key, el] of facetEls) { const fv = v.facets.find((x) => x.key === key), n = fv?.n || 0, open = u.open === key;
+    for (const [key, el] of facetEls) { const fv = v.facets.find((x) => x.key === key), n = fv?.n || 0;
+      el.wrap.hidden = !!fv && !fv.opts.length && !n; // a facet with no value in any row (and none selected) is left out
+      const open = u.open === key && !el.wrap.hidden;
       el.btn.className = `btn sm${n ? " primary" : ""}`; el.btn.setAttribute("aria-expanded", String(open));
       el.btn.replaceChildren(`${el.f.name}${n ? ` · ${n}` : ""} ▾`);
       if (open && !el.pop.isConnected) el.wrap.append(el.pop); if (!open && el.pop.isConnected) el.pop.remove();
-      if (open) drawOpts(key); }
+      if (open) { drawOpts(key); place(el.pop); } }
     if (sortSel && v.sort) sortSel.value = v.sort;
     if (input.value !== st.q && document.activeElement !== input) input.value = st.q;
     const sug = u.sug && document.activeElement === input ? v.suggest || [] : [];
@@ -263,6 +269,15 @@ function list(cfg) {
   draw();
   return root;
 }
+/** an open popover moved left as far as it must to stay inside the main column and the window (the last facet's would
+ *  run off the right edge), and never past its left edge */
+function place(pop) {
+  pop.style.transform = ""; if (!pop.isConnected) return;
+  const r = pop.getBoundingClientRect(), main = document.querySelector("#main")?.getBoundingClientRect();
+  const right = Math.min(innerWidth, main ? main.right : innerWidth) - 8, left = Math.max(0, main ? main.left : 0) + 8;
+  let dx = 0; if (r.right > right) dx = right - r.right; if (r.left + dx < left) dx = left - r.left;
+  if (dx) pop.style.transform = `translateX(${Math.round(dx)}px)`;
+}
 /** the title with the first free word marked, found the same way in both Chinese scripts */
 function mark(text, w) {
   const t = String(text ?? ""); if (!w) return t;
@@ -273,7 +288,7 @@ function mark(text, w) {
 // ---------- the keyboard and the open popover ----------
 const editable = (t) => t?.closest?.("input,textarea,select,[contenteditable=''],[contenteditable='true'],[role=dialog]");
 addEventListener("keydown", (e) => {
-  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.keyCode === 229) return;
   if (e.key === "/" && !editable(e.target)) { const q = [...document.querySelectorAll("#view [data-lt-q]")].find((x) => x.getClientRects().length); if (q) { e.preventDefault(); q.focus(); q.select(); } return; }
   if (e.key === "Escape") { const pop = document.querySelector("#view .lt-pop"); if (pop) { e.preventDefault(); closePop(pop)?.focus(); } }
 });

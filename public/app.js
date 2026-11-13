@@ -78,7 +78,7 @@ function route() {
   const v = routes[normalized] ? normalized : "board";
   $$(".nav-item").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
-  render();
+  render.nav = true; render();
 }
 // A focus page takes the whole screen: the terminal page (docs/units/web-terminal.md) and an open review room
 // (docs/units/review-room.md). A route's view says so with .focus: a name, or a function of the route's argument that
@@ -104,6 +104,11 @@ const focusOf = (r) => { const f = routes[r?.name]?.focus; return (typeof f === 
 const fieldKey = (el) => { if (el.id) return `#${CSS.escape(el.id)}`; const d = [...el.attributes].find((x) => x.name.startsWith("data-"));
   return d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : null; };
 function render() {
+  // a list toolbar's search box (public/list-tools.js) is never replaced under the captain's typing (an input method's
+  // composition would break): a redraw of the same page waits for its blur, as a live update does (soft)
+  // (a navigation, route(), always draws)
+  const nav = render.nav; render.nav = false;
+  if (!nav && document.activeElement?.matches?.("#view [data-lt-q], #view [data-lt-fq]") && String(render.at).split("/")[0] === S.route?.name) return soft();
   const root = $("#view");
   pageFocus(focusOf(S.route));
   const scroll = $("#main").scrollTop;
@@ -352,10 +357,13 @@ const inboxRow = (x, i, on, mark = (t) => t) => h("a", { class: `ib-row${on ? " 
   h("span", { class: "ib-row-main" }, h("span", { class: "ib-row-t", title: x.task }, mark(x.task)),
     h("span", { class: "ib-row-d" }, h("span", { class: "vbadge ib-kind", "data-kind": x.kind }, x.kind), x.workflow ? h("span", { class: "ib-wf" }, icon("workflow", "ic sm"), wfName(x.workflow)) : null, x.run ? h("span", { class: "mono" }, x.run) : null)),
   h("span", { class: "ib-age faint num", title: x.ts || "" }, ago(x.ts)));
+/** where the card is: among the cards the toolbar lets through (and how many wait in all, when that is fewer) */
+function inboxPos(x, items) { const shown = IB.order.length && IB.order.includes(x.id) ? IB.order : items.map((y) => y.id), i = shown.indexOf(x.id) + 1, n = shown.length;
+  return n < items.length ? T(`${i} of ${n} (${items.length} in all)`, `第 ${i} / ${n} 張（共 ${items.length}）`) : T(`${i} of ${n}`, `第 ${i} / ${n} 張`); }
 // the selected card's header: which Task this is, kept on screen while the card scrolls (Back returns to the list when narrow)
 const inboxHead = (x, items) => h("div", { class: "ib-head", tabindex: "-1", "aria-label": T(`${x.task}, ${x.kind}`, `${x.task}，${x.kind}`), "data-inbox-head": x.id },
   h("a", { class: "btn ghost ib-back", href: "#/inbox", "data-inbox-back": "" }, "← ", T("Back to list", "回到列表")),
-  h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num" }, T(`${items.indexOf(x) + 1} of ${items.length}`, `第 ${items.indexOf(x) + 1} / ${items.length} 張`))),
+  h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num", "data-inbox-pos": "" }, inboxPos(x, items))),
   h("div", { class: "ib-head-d" }, h("span", { class: "vbadge" }, x.kind), x.workflow ? h("span", {}, wfName(x.workflow)) : null,
     x.run ? h("a", { class: "mono", href: x.source === "studio" ? `#/run/${encodeURIComponent(x.run)}` : `#/activity/${encodeURIComponent(x.run)}` }, x.run) : null, h("span", { class: "mono" }, x.id)));
 const inboxCard = (x) => (x.source === "studio" ? window.studioCards.card(x.data, x.task) : cardView(x.data));

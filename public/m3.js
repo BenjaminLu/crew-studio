@@ -72,6 +72,9 @@ const LIB_TYPE = { code: ["Code", "程式碼"], video: ["Video", "影片"], audi
 const LIB_RANGE = { d7: ["Last 7 days", "近 7 天"], d30: ["Last 30 days", "近 30 天"], older: ["Older", "更早"] };
 const libTs = (x) => (x.code ? x.code.ts : x.art.versions?.at(-1)?.createdAt || x.art.created) || "";
 const libRange = (x) => { const t = Date.parse(libTs(x)); if (!(t > 0)) return "older"; const d = (Date.now() - t) / 86400e3; return d <= 7 ? "d7" : d <= 30 ? "d30" : "older"; };
+/** the merged code is what the GitHub sync keeps, its newest N: the list says so when it holds that many, never silently */
+const codeCapped = () => { const n = LB.data?.mergedKept, have = (LB.data?.code || []).length; return n && have >= n ? h("div", { class: "lt-hidden", "data-lib-code-capped": String(n) },
+  T(`Merged code shows the newest ${n} pull requests only: that is what the GitHub sync keeps.`, `已合併的程式碼只顯示最近 ${n} 個 pull request：GitHub 同步只保留這些。`)) : null; };
 function libraryList() {
   const items = [...A.list.map((a) => ({ id: a.id, art: a })), ...(LB.data?.code || []).map((x) => ({ id: x.id, code: x }))];
   return window.crewListTools.list({ id: "library", route: "library", title: T("the Library", "成品庫"), noun: ["item", "成品"], items,
@@ -87,7 +90,7 @@ function libraryList() {
     rows: (page, ctx) => { const arts = page.filter((x) => x.art), code = page.filter((x) => x.code);
       return [arts.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Artifacts", "成品")), h("span", { class: "faint" }, String(ctx.matched.filter((x) => x.art).length))), libGrid(arts.map((x) => artCard(x.art, ctx.mark)))) : null,
         code.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Merged code", "已合併的程式碼")), h("span", { class: "faint" }, String(ctx.matched.filter((x) => x.code).length))),
-          h("div", { class: "card", style: "display:grid" }, code.map((x) => codeRow(x.code)))) : null]; } });
+          h("div", { class: "card", style: "display:grid" }, code.map((x) => codeRow(x.code)), codeCapped())) : null]; } });
 }
 // List previews are read-only, scripts-off. A successful iframe load alone does not mean
 // the source exists (browsers also fire load for error documents), so check the actual response.
