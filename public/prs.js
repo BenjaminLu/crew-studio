@@ -301,10 +301,10 @@ async function openBrief(ids) {
     box.replaceChildren(...got.batches.map((b) => { const text = briefText(b, P);
       return h("div", { class: "card x-pad pw-target", "data-prs-batch": String(b.n) },
         h("div", { class: "pw-check" }, h("span", { class: "badge run" }, String(b.n)), h("b", {}, P(`Batch ${b.n}/${b.of} · ${unitsOf(b)}`, `第 ${b.n}/${b.of} 批 · ${unitsOf(b)}`)), h("span", { class: "faint" }, b.n === 1 ? P("goes first", "先上") : P(`after batch ${b.n - 1} is in production`, `等第 ${b.n - 1} 批上 production`)), h("span", { class: "x-grow" }),
-          h("button", { class: "btn sm", "data-prs-batch-copy": String(b.n), onclick: async (e) => { const ok = await copy(text); e.currentTarget.textContent = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); } }, T("Copy this one", "複製這張"))),
+          h("button", { class: "btn sm", "data-prs-batch-copy": String(b.n), ...(b.n === 1 ? { autofocus: true } : {}), onclick: async (e) => { const ok = await copy(text); e.currentTarget.textContent = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); } }, T("Copy this one", "複製這張"))),
         h("pre", { class: "pw-pre", "data-prs-batch-text": String(b.n) }, text),
         b.ops.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, P("Before going live", "上線前要處理")),
-          b.ops.map((o) => h("div", { class: "pw-check", "data-prs-brief-op": o.kind }, h("span", { class: `badge ${OPS[o.kind === "metric" ? "alert" : o.kind][0]}` }, opTag(o, P)), h("span", {}, opText(o, P)), extLink(o.url, o.path ? `${o.path}${o.line ? `:${o.line}` : ""}` : P(`${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`, `${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`), { class: "mono faint pw-small" })))) : null); })); };
+          b.ops.map((o) => h("div", { class: "pw-check", "data-prs-brief-op": o.kind }, h("span", { class: `badge ${OPS[o.kind === "metric" ? "alert" : o.kind][0]}` }, opTag(o, P)), h("span", { class: "pw-optext" }, opText(o, P)), extLink(o.url, o.path ? `${o.path}${o.line ? `:${o.line}` : ""}` : P(`${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`, `${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`), { class: "mono faint pw-small" })))) : null); })); };
   draw();
   const warns = [...got.batches.flatMap((b) => b.added.map((a) => T(`${a.for} depends on ${a.id}: it was added to batch ${b.n}.`, `${a.for} 依賴 ${a.id}，已經替你把它列進第 ${b.n} 批。`))),
     ...got.notMerged.map((x) => T(`${x.id} depends on ${x.on}, which is not merged yet.`, `${x.id} 依賴的 ${x.on} 還沒合併。`))];
