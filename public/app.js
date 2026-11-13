@@ -254,7 +254,7 @@ const IB = { sel: null, order: [], recorded: null, recT: null, clickedCard: fals
 function inboxItems() {
   // a spec card names its Task by the spec's own title, in the page language (its zh-TW title, without the 核准規格： prefix)
   const named = (c) => c.spec && c.title?.["zh-TW"] ? T(c.runTitle || c.title.en, c.title["zh-TW"].replace(/^核准規格：/, "")) : c.runTitle || L(c.title);
-  const studio = (window.studioCards?.open() || []).map((c) => ({ source: "studio", id: c.id, kind: c.kind, task: named(c), workflow: c.workflow, run: c.run, ts: c.createdAt, data: c }));
+  const studio = (window.studioCards?.open() || []).map((c) => ({ source: "studio", id: c.id, kind: c.follow ? L(c.follow.kindLabel ? { en: c.follow.kindLabel.en, "zh-TW": c.follow.kindLabel.tw } : c.kind) : c.kind, task: named(c), workflow: c.workflow, run: c.run, ts: c.createdAt, data: c }));
   const fm = S.pending.map((c) => { const d = LD(c.details) || {};
     return { source: "firstmate", id: c.id, kind: c.purpose || c.kind || T("decision", "決定"), task: d.title || c.title, workflow: "code-firstmate", run: c.task, ts: c.ts, data: c }; });
   return [...studio, ...fm].sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")) || a.id.localeCompare(b.id, undefined, { numeric: true }));

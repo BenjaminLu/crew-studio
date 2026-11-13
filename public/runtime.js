@@ -1163,13 +1163,16 @@ live.listeners.add((t) => { if (t === "scard") { clearTimeout(SCX.t); SCX.t = se
 addEventListener("crew:live", () => loadOpenCards()); // the stream (re)connected: read the cards again
 addEventListener("hashchange", () => { if (location.hash.startsWith("#/inbox")) loadOpenCards(); }); // coming to the Inbox shows fresh cards
 loadOpenCards();
-window.studioCards = { count: () => SCX.open.length,
-  needRows: () => SCX.open.map((c) => h("div", { class: "need", "data-need-scard": c.id }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, c.kind === "merge" ? "⇢" : "?"),
+// a follow-through card the captain snoozed (docs/units/pr-watch.md) is left out until its time; a minute timer brings it back
+const awake = () => SCX.open.filter((c) => !(c.follow?.snoozeUntil && Date.parse(c.follow.snoozeUntil) > Date.now()));
+setInterval(() => { if (SCX.open.some((c) => c.follow?.snoozeUntil)) { updateNav(); if (S.route?.name === "inbox") afterPress(() => { if (S.route?.name === "inbox") render(); }); } }, 60000);
+window.studioCards = { count: () => awake().length,
+  needRows: () => awake().map((c) => h("div", { class: "need", "data-need-scard": c.id }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, c.kind === "merge" ? "⇢" : "?"),
     h("div", {}, h("div", { class: "need-t" }, L(c.title)), h("div", { class: "need-d" }, [c.run, wfName(c.workflow), c.node].join(" · "))),
     h("div", { class: "need-r" }, h("a", { class: "btn", href: `#/inbox/${encodeURIComponent(c.id)}` }, T("Open", "打開"))))),
   // the Inbox (public/app.js) lists these beside firstmate's and shows one at a time: the open cards, whether they were
   // read yet, and the one selected card, its primary button naming the Task it answers
-  open: () => SCX.open, ready: () => SCX.loaded,
+  open: awake, ready: () => SCX.loaded,
   card: (c, target) => cardView(c, { inbox: true, target }) };
 
 // ---------- Studio tasks' live agent node runs on the Crew page, beside firstmate's rounds ----------

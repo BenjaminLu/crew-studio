@@ -150,9 +150,10 @@ export function prWatchGitHub(data = fixtureData()) {
       if (method === "PATCH") { if (typeof body?.body === "string") pr.body = knobs.tamper ? `${body.body}\nedited meanwhile` : knobs.normalizeOnPatch ? body.body.replace(/\r\n/g, "\n").split("\n").map((l: string) => l.trimEnd()).join("\n") : body.body; return json(pullJson(pr)); }
       if (method === "GET") { if (knobs.slowPull?.path === p) await new Promise((r) => setTimeout(r, knobs.slowPull!.ms)); return json(pullJson(pr)); } }
     if (method !== "GET") { unknown.push(`${method} ${p}`); return json({ message: "Not Found" }, 404); }
-    if ((k = /^\/pulls\/(\d+)\/(reviews|commits|files)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
+    if ((k = /^\/pulls\/(\d+)\/(reviews|commits|files|comments)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
       if (k[2] === "reviews" && knobs.reviewsFail === pr.number) return json({ message: "Server Error" }, 500);
-      if (k[2] === "reviews") return json(page((pr.reviews ?? []).map((r, i) => ({ id: i + 1, user: { login: r.user }, state: r.state, commit_id: r.commit, submitted_at: r.at })), q));
+      if (k[2] === "reviews") return json(page((pr.reviews ?? []).map((r, i) => ({ id: i + 1, user: { login: r.user }, state: r.state, commit_id: r.commit, submitted_at: r.at, body: (r as any).body ?? "", html_url: `https://github.com/${repo}/pull/${pr.number}#pullrequestreview-${i + 1}` })), q));
+      if (k[2] === "comments") return json(page(((pr as any).inline ?? []).map((c: any, i: number) => ({ id: i + 1, user: { login: c.user }, body: c.body, pull_request_review_id: c.review, path: c.path, line: c.line })), q));
       if (k[2] === "commits") return json(page(pr.commits.map((c: any) => ({ sha: c.sha, commit: { committer: { date: c.at } }, author: { login: c.login }, committer: { login: c.committer ?? c.login } })), q));
       return json(page((pr.files ?? []).map((filename) => ({ filename, status: "modified", ...(pr.patches?.[filename] ? { patch: pr.patches[filename] } : {}) })), q)); }
     if ((k = /^\/issues\/(\d+)\/(comments|timeline)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();

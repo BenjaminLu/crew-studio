@@ -102,3 +102,7 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 [data-prs-brief-bar]{margin:0 0 12px}
 .pw-target .pw-check a{overflow-wrap:anywhere}
 .pw-unit{overflow-wrap:anywhere}
+.pw-envrow.pw-sendrow{grid-template-columns:minmax(90px,140px) 130px minmax(160px,1fr) minmax(120px,150px) auto auto}
+.pw-envrow.pw-contactrow{grid-template-columns:minmax(120px,1fr) 140px minmax(180px,1.4fr) auto}
+@media (max-width:760px){.pw-envrow.pw-sendrow,.pw-envrow.pw-contactrow{grid-template-columns:minmax(0,1fr)}}
+.pw-next .pw-followcta{margin-top:4px;width:max-content;text-decoration:none}

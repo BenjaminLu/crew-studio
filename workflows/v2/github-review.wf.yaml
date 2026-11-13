@@ -3,7 +3,7 @@
   "name": "GitHub coding and external review (draft)",
   "kind": "code",
   "version": 1,
-  "description": "Editable coding pipeline draft with external reviewer identity confirmation; no automatic merge. Runtime activation is pending.",
+  "description": "Editable coding pipeline draft with external reviewer identity confirmation; no automatic merge. After the PR opens, PR follow-through branches by the reviewer's comment and the repository's own rules; merged, it is followed to production. Runtime activation is pending.",
   "intent": {
     "keywords": [
       "github review workflow"
@@ -535,14 +535,6 @@
       "y": 400
     },
     {
-      "id": "external-review",
-      "kind": "hook",
-      "label": "Wait for exact-head external reviewers",
-      "do": "github.review.wait",
-      "x": 2240,
-      "y": 220
-    },
-    {
       "id": "captain-ready",
       "kind": "card",
       "label": "Captain ready — no automatic merge",
@@ -572,6 +564,153 @@
       "label": "Ready for captain",
       "x": 2750,
       "y": 220
+    },
+    {
+      "id": "shepherd",
+      "kind": "hook",
+      "do": "pr.shepherd",
+      "label": "PR follow-through",
+      "detail": "reads the PR on every PR-list refresh; branches by rules and the reviewer's quoted comment",
+      "x": 2240,
+      "y": 220
+    },
+    {
+      "id": "qa-card",
+      "kind": "card",
+      "label": "Ask QA to test",
+      "x": 2500,
+      "y": 40,
+      "card": {
+        "title": {
+          "en": "Ask QA to test the current head?",
+          "zh-TW": "請 QA 測目前的 head？"
+        },
+        "body": {
+          "en": "The reviewer asked for evidence, not a code change: send QA the request (only the routes the diff has), then wait for the evidence on the pull request.",
+          "zh-TW": "reviewer 要的是外部證據，不是代碼問題：把測試請求轉給 QA（只寫 diff 裡真的有的路由），再等證據貼回 PR。"
+        },
+        "options": [
+          {
+            "id": "sent",
+            "label": "I sent it to QA; waiting for the evidence",
+            "labelZh": "我已轉給 QA，等證據"
+          },
+          {
+            "id": "skip",
+            "label": "No test this time",
+            "labelZh": "這次不做實測",
+            "note": true,
+            "noteLabel": "Why",
+            "noteLabelZh": "理由"
+          },
+          {
+            "id": "code",
+            "label": "It is a code problem: back to the worker",
+            "labelZh": "其實是代碼問題，回 Worker"
+          }
+        ]
+      }
+    },
+    {
+      "id": "nudge-card",
+      "kind": "card",
+      "label": "Ask reviewers to look again",
+      "x": 2500,
+      "y": 130,
+      "card": {
+        "title": {
+          "en": "The evidence covers the head: ask the reviewers to look again?",
+          "zh-TW": "證據已覆蓋 head：請 reviewer 重驗？"
+        },
+        "body": {
+          "en": "The evidence covers the current head while the reviewers' verdicts are on an older one. Send them the evidence and their last comments.",
+          "zh-TW": "證據覆蓋目前的 head，reviewer 的意見還停在舊 head。把證據和他們上次的意見發給他們。"
+        },
+        "options": [
+          {
+            "id": "sent",
+            "label": "I sent it; waiting for the reviews",
+            "labelZh": "我已發出，等重驗"
+          },
+          {
+            "id": "more",
+            "label": "Not enough evidence: ask QA again",
+            "labelZh": "證據還不夠，再請 QA 補"
+          },
+          {
+            "id": "later",
+            "label": "Not now",
+            "labelZh": "先不催"
+          }
+        ]
+      }
+    },
+    {
+      "id": "approve-card",
+      "kind": "card",
+      "label": "Ask for approval",
+      "x": 2500,
+      "y": 330,
+      "card": {
+        "title": {
+          "en": "The branch rules still miss approvals: ask for them?",
+          "zh-TW": "分支規則還缺 approve：去請人？"
+        },
+        "body": {
+          "en": "Everything machines can do is done; the base branch's own rules still ask for people's approvals (per required team or code owners).",
+          "zh-TW": "機器能做的都好了；base branch 自己的規則還要求人工 approve（每個必須的 team 或 code owner）。"
+        },
+        "options": [
+          {
+            "id": "sent",
+            "label": "I sent it; waiting for the approval",
+            "labelZh": "我已發出，等 approve"
+          },
+          {
+            "id": "switch",
+            "label": "Ask someone else",
+            "labelZh": "換人"
+          },
+          {
+            "id": "hold",
+            "label": "Not merging yet",
+            "labelZh": "先不合併"
+          }
+        ]
+      }
+    },
+    {
+      "id": "track",
+      "kind": "hook",
+      "do": "pr.track-deploy",
+      "label": "Follow to production",
+      "detail": "the merge commit in each environment; done in every production one",
+      "x": 2750,
+      "y": 330
+    },
+    {
+      "id": "brief",
+      "kind": "card",
+      "label": "Release brief",
+      "x": 2750,
+      "y": 440,
+      "card": {
+        "title": {
+          "en": "Release it with a brief?",
+          "zh-TW": "用上線 brief 上線？"
+        },
+        "body": {
+          "en": "Pick it on the Pull requests page (Merged, not live) with the others to release: Studio splits them into batches by dependency, one deploy pull request and one brief each.",
+          "zh-TW": "到 Pull requests 頁「已合併未上線」和要一起上線的 PR 勾選：Studio 依依賴分批，每批一個部署 PR、一份 brief。"
+        },
+        "options": [
+          {
+            "id": "done",
+            "label": "Released",
+            "labelZh": "已上線"
+          }
+        ]
+      }
     }
   ],
   "edges": [
@@ -744,7 +883,7 @@
     ],
     [
       "remote-ready",
-      "external-review",
+      "shepherd",
       "ok",
       {
         "checks": [
@@ -865,19 +1004,74 @@
       "park"
     ],
     [
-      "external-review",
       "captain-ready",
-      "pass"
-    ],
-    [
-      "external-review",
-      "fix",
-      "fail"
-    ],
-    [
-      "captain-ready",
-      "ready-done",
+      "track",
       "close"
+    ],
+    [
+      "shepherd",
+      "build",
+      "code-change"
+    ],
+    [
+      "shepherd",
+      "qa-card",
+      "needs-evidence"
+    ],
+    [
+      "shepherd",
+      "nudge-card",
+      "evidence-covers-head"
+    ],
+    [
+      "shepherd",
+      "approve-card",
+      "missing-approvals"
+    ],
+    [
+      "shepherd",
+      "captain-ready",
+      "mergeable"
+    ],
+    [
+      "shepherd",
+      "closed",
+      "close"
+    ],
+    [
+      "qa-card",
+      "shepherd",
+      "sent|skip"
+    ],
+    [
+      "qa-card",
+      "build",
+      "code"
+    ],
+    [
+      "nudge-card",
+      "shepherd",
+      "sent|later"
+    ],
+    [
+      "nudge-card",
+      "qa-card",
+      "more"
+    ],
+    [
+      "approve-card",
+      "shepherd",
+      "sent|switch|hold"
+    ],
+    [
+      "track",
+      "brief",
+      "ok"
+    ],
+    [
+      "brief",
+      "ready-done",
+      "done"
     ]
   ]
 }

@@ -166,6 +166,7 @@ export type Body = { crew?: import("./cards").CardCrew | null; spec?: import("./
   direct?: boolean;
   captures?: SCard["captures"];
   pullRequest?: SCard["pullRequest"];
+  follow?: SCard["follow"];
   /** the typed failure the card is about (a domain's own recovery card shows its class, message and log) */
   failure?: Failure | null;
   /** a statement the captain ticks before answering with its option (cards.ts Acknowledge) */
@@ -1986,7 +1987,7 @@ export class Engine {
     const zh = sec({ intent: `原始需求（保留原文）：「${originalIntent}」`, ...b.zh });
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
       options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", labelZh: "核准", primary: true }, { id: "reject", label: "Reject", labelZh: "不採用" }],
-      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}), ...(b.crew ? { crew: b.crew } : {}), ...(b.spec ? { spec: b.spec } : {}), ...(b.acknowledge ? { acknowledge: b.acknowledge } : {}) });
+      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.follow ? { follow: b.follow } : {}), ...(b.failure ? { failure: b.failure } : {}), ...(b.crew ? { crew: b.crew } : {}), ...(b.spec ? { spec: b.spec } : {}), ...(b.acknowledge ? { acknowledge: b.acknowledge } : {}) });
     // the card contract (card-contract.ts): a card that cannot answer its question is refused in tests and logged on the run otherwise
     const broken = cardContract(c);
     if (broken.length) { this.emit(x.run, "log", `card contract: ${c.id} (${kind}): ${broken.join("; ").slice(0, 600)}`);

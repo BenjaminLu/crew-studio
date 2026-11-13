@@ -193,6 +193,55 @@ times, writes nothing). The dialog shows one card per batch, each with its own C
   section quoted as written ("PR text"). The rows show these as badges. None: "Before going live: none". The brief
   ends by saying these come from the diffs and the pull requests: the release agent may arrange them, never add any.
 
+## Follow-through (PR 跟進)
+
+Off by default (settings: "Follow-through"); on, after every refresh each watched open pull request is read again by
+`src/pr-watch-follow.ts` `shepherd` and its branch decides one Inbox card, a Task of the internal workflow `pr-follow`:
+
+- **Branches**, by rules: `code-change` (a reviewer's change request read as a code change, failing evidence, failing
+  CI: back to the author, no card), `needs-evidence` → **Ask QA to test**, `evidence-covers-head` → **Ask reviewers to
+  look again** (as soon as evidence covers the head while a reviewer's verdict is on an older head, or predates the
+  evidence they asked for; no "stalled N hours" setting), `missing-approvals` → **Ask for approval**, `mergeable` →
+  **Ready to merge**, `ask` → a card asking the captain. Draft, unread, required reviewer, dependency, environment,
+  CI running: wait, no card.
+- **A reviewer's comment** (the latest review's body and its inline comments) is classified by rules into code change,
+  needs evidence, question or not blocking, always with the sentence quoted. No quote, two kinds, or a question → the
+  captain is asked, and the answer is kept for that comment. *Deviation from the design*: Studio has no one-shot model
+  step behind a card today, so the classifier is rules with quotes, not a model; a model classifier can replace
+  `classifyNote` without changing anything else.
+- **Mergeable is not built in**: the next step "ready" (the base branch's rulesets and branch protection all met —
+  count, required teams, code owners, approval after the last push, stale dismissal — the required reviewers, the
+  evidence when a source is set) and CI passing (or none configured). Rules that cannot be read ask; never satisfied.
+- **The cards** (public/pr-follow.js, the Inbox's own layout): title, lead quoting the reviewer, done / missing, who to
+  send to (a GitHub team's members read from GitHub, pick one, remembered per team), the editable message (QA requests
+  cite only routes the diff adds, `<placeholders>` for the rest), Copy, Copy and DM, Send to a channel, the history
+  (what was sent to whom and when, what happened on GitHub), Nudge again (the short version for the same person),
+  Snooze until (the card leaves the Inbox until then), and the options. An option that waits (A: "I sent it") is
+  recorded and keeps the card; the others answer it. A card closes by itself when GitHub shows what it waits for
+  (Studio answers it as `studio (GitHub)`); an approve card that is partly met keeps only the groups still missing.
+  The row on the page links to its open card. Firstmate cannot answer one.
+- **Push before voiding approvals**: `POST /api/prs/push-check {pr, quote?}` (for a worker round about to push): when the
+  rules dismiss stale approvals (or ask for one after the last push) and approvals exist, a card "this push voids N
+  approvals" with push / don't push (with a reason) / follow-up pull request.
+- **Studio never** @-mentions on GitHub, re-requests a review, merges a pull request it did not open, or sends anything
+  without the captain's click. It writes nothing to GitHub here.
+- **The github-review workflow** shows the same nodes (PR follow-through `pr.shepherd`, the three cards, Follow to
+  production `pr.track-deploy`, Release brief). That workflow is held (draft-only, docs/retro/2026-10-17-github-review-held.md):
+  its runtime activation (rebuilt from code-firstmate) is what runs these nodes inside Studio's own coding Tasks; until
+  then the follow-through runs for watched pull requests through `pr-follow`.
+
+## Sending
+
+Settings: **send targets** (name, tool — Slack, Lark, DingTalk, Microsoft Teams, Discord, generic JSON —, incoming
+webhook, what it is used for by default, Send a test). The webhook is a secret: it lives in `state.json` (0600) under
+`hooks`, never in a repository, and the page sees it masked; typing a new one replaces it. https on the tool's own host
+only (`CREW_WEBHOOK_LOOPBACK=1` lets tests use a loopback stub). Sending posts the text once, the GitHub logins of
+contacts turned into Slack mentions. **Contacts**: GitHub account → Slack member id, Microsoft Teams or email address.
+**DM** (copy and open): the message is copied (Clipboard API, `execCommand` fallback) and the server builds the link from
+the contact only — `slack://user?team=<workspace>&id=<member>` (paste needed), a Teams chat with the message filled in,
+or `mailto:` with subject and body; no contact, copy only. The page opens only those three kinds of address, never one
+from a pull request, comment or message. A bot that sends DMs itself is not in this version.
+
 ## Next step and who it waits on
 
 The first matching rule, top to bottom; deterministic, no model:

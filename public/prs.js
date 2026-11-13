@@ -203,7 +203,10 @@ function rowView(r, d) {
       h("small", { class: "pw-title" }, r.title),
       c ? h("small", { class: "pw-chg", "data-prs-changed": "" }, T(`changed ${ago(c.at)}: `, `${ago(c.at)}變更：`), c.what.map(changeWord).filter(Boolean).join(T("; ", "；"))) : null),
     h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${TONE[n.kind] || ""}`, "data-prs-next": n.rule }, nextWord(n)),
-      n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、")))),
+      n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、"))),
+      // its open follow-through card (docs/units/pr-watch.md "Follow-through"), one click away in the Inbox
+      r.followCard ? h("a", { class: "badge human pw-cta pw-followcta", href: `#/inbox/${encodeURIComponent(r.followCard.card)}`, "data-prs-follow-card": r.followCard.kind },
+        h("span", { class: "pw-ctat" }, ({ qa: T("Ask QA to test", "請 QA 測試"), nudge: T("Ask to review again", "請重驗"), approve: T("Ask for approval", "請 approve"), merge: T("Ready to merge", "可合併"), ask: T("Your call", "等你決定"), push: T("Confirm the push", "push 前確認") })[r.followCard.kind] || r.followCard.kind)) : null),
     h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { // compact in the cell: "+n" for the count, and a team of the row's own organisation without it (full names in the title)
       const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.toLowerCase().startsWith(own) ? `@${w.slice(own.length)}` : w;
       const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.length === 1 && miss[0].kind === "count" ? T(`+${miss[0].n} approval${miss[0].n === 1 ? "" : "s"}`, `還要 ${miss[0].n} 個`) : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
@@ -296,11 +299,12 @@ async function openBrief(ids) {
   let lang = langs.includes(start) ? start : "en";
   const unitsOf = (b) => [...new Set(b.units.map((u) => u.unit))].join(" + ");
   for (const b of got.batches) for (const o of b.ops) o.job = (b.units.find((u) => o.pr.startsWith(`${u.repo}#`)) || b.units[0])?.unit || "app";
-  const box = h("div", { class: "pw-targets" });
+  const box = h("div", { class: "pw-targets" }), ts = (PW.data?.sending?.targets || []).filter((t) => t.masked), briefTarget = ts.find((t) => t.use === "brief") || ts.find((t) => t.use === "any") || null;
   const draw = () => { const P = (en, tw) => window.crewI18n.pick(lang, en, tw);
     box.replaceChildren(...got.batches.map((b) => { const text = briefText(b, P);
       return h("div", { class: "card x-pad pw-target", "data-prs-batch": String(b.n) },
         h("div", { class: "pw-check" }, h("span", { class: "badge run" }, String(b.n)), h("b", {}, P(`Batch ${b.n}/${b.of} · ${unitsOf(b)}`, `第 ${b.n}/${b.of} 批 · ${unitsOf(b)}`)), h("span", { class: "faint" }, b.n === 1 ? P("goes first", "先上") : P(`after batch ${b.n - 1} is in production`, `等第 ${b.n - 1} 批上 production`)), h("span", { class: "x-grow" }),
+          briefTarget ? h("button", { class: "btn sm", "data-prs-batch-send": String(b.n), onclick: async (e) => { const btn = e.currentTarget; try { await postJ("/api/prs/send", { target: briefTarget.id, text }); btn.textContent = T(`Sent to ${briefTarget.name}`, `已發到 ${briefTarget.name}`); } catch (err) { flash(err.message); } } }, T(`Send to ${briefTarget.name}`, `發到 ${briefTarget.name}`)) : null,
           h("button", { class: "btn sm", "data-prs-batch-copy": String(b.n), onclick: async (e) => { const ok = await copy(text); e.currentTarget.textContent = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); } }, T("Copy this one", "複製這張"))),
         h("pre", { class: "pw-pre", "data-prs-batch-text": String(b.n) }, text),
         b.ops.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, P("Before going live", "上線前要處理")),
@@ -507,6 +511,42 @@ function driftModal(r) {
     foot(h("span", { class: "x-grow" }), h("button", { class: "btn", "data-prs-drift-take": "", onclick: () => { close(); act("/api/prs/drift/take", { pr: r.id }, T("Studio's record now follows GitHub", "Studio 的紀錄改以 GitHub 為準")); } }, T("Take GitHub's version", "以 GitHub 上的為準")),
       h("button", { class: "btn primary", "data-prs-drift-reapply": "", onclick: () => { close(); applyModal([r.id]); } }, T("Apply Studio's record again…", "重新套用 Studio 的紀錄…")))], { id: "drift" });
 }
+// where cards and briefs may be sent (docs/units/pr-watch.md "Sending"): the webhook is a secret, shown masked; typing a
+// new one replaces it. Contacts say who a GitHub account is in Slack, Microsoft Teams or email, for a DM.
+const TOOLS = () => [["slack", "Slack"], ["lark", "飛書 / Lark"], ["dingtalk", "釘釘 / DingTalk"], ["teams", "Microsoft Teams"], ["discord", "Discord"], ["json", T("Generic JSON", "通用 JSON")]];
+const USES = () => [["qa", T("Ask QA to test", "請 QA 測試")], ["nudge", T("Ask reviewers again", "請 reviewer 重驗")], ["approve", T("Ask for approval", "請 approve")], ["brief", T("Release brief", "上線 brief")], ["any", T("Anything", "全部")]];
+const CTOOLS = [["slack", "Slack"], ["teams", "Microsoft Teams"], ["email", "Email"]];
+function sendingSection(s) {
+  s.sending ??= { targets: [], contacts: [], slackTeam: null };
+  const masked = Object.fromEntries((PW.data?.sending?.targets || []).map((t) => [t.id, t.masked]));
+  const tbox = h("div", { class: "pw-envset", "data-prs-targets": "" }), cbox = h("div", { class: "pw-envset", "data-prs-contacts": "" });
+  const sel = (opts, v, on, label) => h("select", { class: "pw-lang", "aria-label": label, onchange: (e) => on(e.target.value) }, opts.map(([k, l]) => h("option", { value: k, selected: k === v }, l)));
+  const drawT = () => tbox.replaceChildren(...s.sending.targets.map((t, i) => h("div", { class: "pw-envrow pw-sendrow", "data-prs-target-row": t.id },
+      h("input", { class: "input", "aria-label": T("Name", "名稱"), value: t.name || "", placeholder: "#qa-requests", oninput: (e) => { t.name = e.target.value; } }),
+      sel(TOOLS(), t.tool, (v) => { t.tool = v; }, T("Tool", "工具")),
+      h("input", { class: "input mono", "aria-label": T("Webhook URL", "Webhook URL"), "data-prs-hook": t.id, value: t.url ?? masked[t.id] ?? "", placeholder: "https://hooks.slack.com/services/…", oninput: (e) => { t.url = e.target.value; } }),
+      sel(USES(), t.use, (v) => { t.use = v; }, T("Used for", "預設用於")),
+      h("button", { class: "btn sm", "data-prs-hook-test": t.id, disabled: !masked[t.id], title: masked[t.id] ? "" : T("Save first", "先儲存"), onclick: async (e) => { const b = e.currentTarget; try { await postJ("/api/prs/sending/test", { target: t.id }); b.textContent = T("Test sent", "已發出測試"); } catch (err) { flash(err.message); } } }, T("Send a test", "發測試")),
+      h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.targets.splice(i, 1); drawT(); } }, icon("x")))),
+    h("div", {}, h("button", { class: "btn", "data-prs-target-add": "", onclick: () => { s.sending.targets.push({ id: `t${Date.now().toString(36)}`, name: "", tool: "slack", use: "any", url: "" }); drawT(); } }, T("+ Add a target", "＋ 加一個目標"))));
+  const drawC = () => cbox.replaceChildren(...s.sending.contacts.map((c, i) => h("div", { class: "pw-envrow pw-contactrow", "data-prs-contact": c.gh },
+      h("input", { class: "input mono", "aria-label": "GitHub", value: c.gh || "", placeholder: "qa-lead", oninput: (e) => { c.gh = e.target.value; } }),
+      sel(CTOOLS, c.tool, (v) => { c.tool = v; }, T("Tool", "工具")),
+      h("input", { class: "input mono", "aria-label": T("Their id or address in the chat tool", "對方在聊天工具裡的 ID 或地址"), value: c.id || "", placeholder: T("Slack member id U0…, or an email", "Slack 成員 ID U0…，或 email"), oninput: (e) => { c.id = e.target.value; } }),
+      h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.contacts.splice(i, 1); drawC(); } }, icon("x")))),
+    h("div", {}, h("button", { class: "btn", "data-prs-contact-add": "", onclick: () => { s.sending.contacts.push({ gh: "", tool: "slack", id: "" }); drawC(); } }, T("+ Add a contact", "＋ 加聯絡人"))));
+  drawT(); drawC();
+  return [h("h3", {}, T("Send targets", "發送目標")),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("Paste a chat tool's incoming webhook. Message cards and release briefs get a Send button, which sends only when pressed; without one, Copy still works.", "貼上聊天工具的 incoming webhook。訊息卡和上線 brief 會多一個「發到」按鈕，按了才發；沒設也照樣能複製。")), tbox,
+    h("h3", {}, T("Contacts: GitHub account → chat tool", "聯絡人：GitHub 帳號 → 聊天工具")),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("To DM someone, and to turn a GitHub account in a message into the chat's @. A GitHub team needs nothing here: its members are read from GitHub and picked on the card.", "用來 DM 某個人，也用來把訊息裡的 GitHub 帳號換成聊天裡的 @。GitHub team 不用填：成員從 GitHub 讀，卡片上選人。")), cbox,
+    h("h3", {}, T("How a DM is sent", "DM 怎麼發")),
+    h("div", { class: "pw-envset" },
+      h("label", { class: "pw-check" }, h("input", { type: "radio", name: "pwdm", checked: true }), T(" Copy and open the chat (default, nothing to install: Studio copies the message and opens the DM; you paste and send)", " 複製並打開對話（預設，不用裝任何東西：複製訊息，再打開和對方的 DM，你貼上按送出）")),
+      h("label", { class: "pw-check faint" }, h("input", { type: "radio", name: "pwdm", disabled: true }), T(" Send through a bot (not in this version)", " 用 bot 直接發（這一版還沒有）")),
+      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Slack workspace id (for Slack DMs)", "Slack workspace ID（Slack DM 用）")), h("input", { class: "input mono", "data-prs-slack-team": "", value: s.sending.slackTeam || "", placeholder: "T0123ABCD", oninput: (e) => { s.sending.slackTeam = e.target.value.trim() || null; } }))),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("A webhook address is a secret: it stays in this Studio's own state (0600), never in a repository, and the browser sees it only masked.", "Webhook URL 等同密鑰：只存在本機 Studio 的 state（0600），不進 repo，瀏覽器只看到遮住的樣子。"))];
+}
 function settingsModal() {
   const s = structuredClone(PW.data?.settings || {}), base = structuredClone(PW.data?.settings || {}), envs = s.environments || [];
   const cb = (k, en, tw) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-which": k, checked: !!s.which?.[k], onchange: (e) => { s.which[k] = e.target.checked; } }), " ", T(en, tw));
@@ -544,6 +584,10 @@ function settingsModal() {
       csv("ops-migration", T("Database migrations", "DB migration"), () => s.opsRules.migration, (v) => { s.opsRules.migration = v; }),
       csv("ops-config", T("Configuration", "設定"), () => s.opsRules.config, (v) => { s.opsRules.config = v; }),
       csv("ops-secret", T("Secrets", "Secret"), () => s.opsRules.secret, (v) => { s.opsRules.secret = v; }),
+      h("h3", {}, T("Follow-through", "PR 跟進")),
+      h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-follow": "", checked: !!s.follow?.enabled, onchange: (e) => { s.follow = { enabled: e.target.checked }; } }),
+        T(" Raise Inbox cards for these pull requests: ask QA to test, ask reviewers to look again, ask for the approvals the rules miss, ready to merge. Studio sends nothing by itself.", " 為這些 PR 在收件匣出卡：請 QA 測試、請 reviewer 重驗、請 approve、可合併。Studio 不會自己送出任何東西。")),
+      sendingSection(s),
       h("h3", {}, T("Release groups", "上線分組")), csv("groups", T("Group names (comma separated)", "分組名稱（逗號分隔）"), () => s.groups, (v) => { s.groups = v; }),
       h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!s.shortForm, onchange: (e) => { s.shortForm = e.target.checked; } }), T(" Also write the short same-repository form Depends-on: #N", " 另外寫同 repo 簡寫 Depends-on: #N"))),
     err,
