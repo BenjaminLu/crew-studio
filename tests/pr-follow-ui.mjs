@@ -93,11 +93,14 @@ try {
   ok(await p.locator(`[data-prs-row="${gw}#212"] [data-prs-follow-card="qa"]`).getAttribute('href') === `#/inbox/${encodeURIComponent(qa.id)}`, 'the row links to its open card');
   ok(await p.locator('[data-prs-tab="nudge"]').count() === 1 && (await p.locator('[data-prs-tab] ').allInnerTexts()).map((t) => t.replace(/\s*\d+.*$/s, '')).slice(0, 5).join() === '全部,等 approve,等測試,等修正,等重驗', 'the tabs follow the design: 等重驗 after 等修正', JSON.stringify(await p.locator('[data-prs-tab]').allInnerTexts()));
   ok(await p.locator(`[data-prs-row="${gw}#212"] [data-prs-next]`).innerText() === '等 QA 實測' && await p.locator(`[data-prs-row="${gw}#212"]`).getAttribute('data-next') === 'test', '212 reads 等 QA 實測, under the test tab, like its card');
-  { const spill = await p.evaluate(() => [...document.querySelectorAll('[data-prs-row] .pw-next')].flatMap((c) => { const r = { right: Math.min(c.getBoundingClientRect().right, c.nextElementSibling.getBoundingClientRect().left) }; return [c, ...c.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > r.right + 1 || e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent.slice(0, 30)); }));
-    ok(!spill.length, 'at 1440 (zh) the next step and its card button stay inside their column', JSON.stringify(spill)); }
   await p.evaluate(() => localStorage.setItem('crew.lang', 'en')); await p.addInitScript(() => { try { localStorage.setItem('crew.lang', 'en'); } catch {} }); await p.reload(); await p.waitForSelector(`[data-prs-row]`); await p.waitForTimeout(800);
   { const spill = await p.evaluate(() => [...document.querySelectorAll('[data-prs-row] .pw-next')].flatMap((c) => { const r = { right: Math.min(c.getBoundingClientRect().right, c.nextElementSibling.getBoundingClientRect().left) }; return [c, ...c.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > r.right + 1 || e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent.slice(0, 30)); }));
     ok(!spill.length, 'at 1440 (English) the next step and its card button stay inside their column', JSON.stringify(spill)); }
+  // a cramped column (the reviewer's 1440 page had one): squeeze the card button and check its mark
+  await p.addStyleTag({ content: '.pw-next .pw-followcta{max-width:96px!important}' });
+  for (const w of [1440, 1280, 1180]) { await p.setViewportSize({ width: w, height: 1000 }); await p.waitForTimeout(200);
+    ok(await p.evaluate(() => [...document.querySelectorAll('[data-prs-follow-card] .pw-new')].every((e) => { const g = document.createRange(); g.selectNodeContents(e); return new Set([...g.getClientRects()].map((x) => Math.round(x.top))).size === 1; }) && document.querySelectorAll('[data-prs-follow-card] .pw-new').length > 0), `at ${w} the card button's "new" mark stays on one line`); }
+  await p.setViewportSize({ width: 1440, height: 1000 });
   await p.addInitScript(() => { try { localStorage.setItem('crew.lang', 'zh-TW'); } catch {} }); await p.evaluate(() => localStorage.setItem('crew.lang', 'zh-TW')); await p.reload(); await p.waitForSelector(`[data-prs-row]`);
   await p.screenshot({ path: join(shots, 'prs-open-1440.png'), fullPage: true });
   await p.click(`[data-prs-row="${gw}#212"] .pw-title`); await p.waitForSelector('[data-prs-flow="needs-evidence"]'); await p.waitForSelector('[data-prs-detail-card] [data-follow-card]');

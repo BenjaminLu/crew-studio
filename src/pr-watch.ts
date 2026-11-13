@@ -855,6 +855,8 @@ export function createPrWatch(d: PrWatchDeps) {
       return { ...base, heading: { en: `Still missing: ${miss.map((x) => x.who).join(", ")}`, tw: [named.length ? `還缺 ${named.map((x) => x.who).join("、")} 的 approve` : "", cnt ? cnt.whoTw : ""].filter(Boolean).join("，") },
         lead: { en: `What the machines can do is done; the base branch's rules still ask for people's approval${a.lastPush ? ", after the last push" : ""}.`, tw: `機器能做的都好了，分支規則還要求人工 approve${a.lastPush ? "，而且要在最後一次 push 之後" : ""}。` },
         done: doneA, missing: miss.map((x) => ({ en: `✕ ${x.who}${(x as any).authorOnly ? " (only the author owns these files: GitHub needs another owner or an admin)" : ""}`, tw: `✕ ${(x as any).whoTw ?? x.who}${(x as any).authorOnly ? "（只有作者是這些檔案的 owner：GitHub 需要別的 owner 或 admin）" : ""}` })), groupsMissing: named.map((x) => x.who), countGap: count?.n ?? 0,
+        // the rules and head this card last saw: a later change is told from what actually changed, never guessed
+        seen: { head: r.head, required: a.required, dismissStale: a.dismissStale, lastPush: a.lastPush, groups: (a.groups ?? []).map((g) => g.who) },
         approvedBy: [...(a.approvers ?? [])],
         msgHead: { en: "Ask for approval", tw: "請 approve" }, recipients: recips, message: m.msg, short: m.short,
         opts: [OPT("sent", "A", "I sent it; waiting for the approval", "我已發出，等 approve", true, { en: "an approval updates or closes the card", tw: "有人 approve 卡就更新或關掉" }),
@@ -935,15 +937,16 @@ export function createPrWatch(d: PrWatchDeps) {
       const sh = shepherdOf(r), want = KIND_OF[sh.branch];
       if (want !== o.kind || (o.kind !== "approve" && o.kind !== "merge" && o.head !== r.head)) {
         const why = closeReason(o, r, sh); await closeFollow(key, why.en, why.tw); changed = true; continue; }
-      if (o.kind === "approve") { const fresh = followPayload("approve", r, sh) as any;
+      if (o.kind === "approve") { if (o.head !== r.head) { o.head = r.head; changed = true; } // an approve card lives across pushes: it follows the head
+        const fresh = followPayload("approve", r, sh) as any;
         patchCard(o, (p) => {
           // the named groups (a team, a code-owner set) and the approval count are followed apart: a count that drops is
           // someone's approval, never a group that "left"
           const was: string[] = (p.groupsMissing ?? []).filter((g: string) => !/more approvals?$/.test(g)), now: string[] = fresh.groupsMissing;
           const gone = was.filter((g) => !now.includes(g)), added = now.some((g) => !was.includes(g)), gap0 = Number(p.countGap ?? 0), gap1 = Number(fresh.countGap ?? 0);
           // a card raised before the count was followed: take this refresh's count as where it starts, without a line
-          if (p.countGap === undefined) { Object.assign(p, { groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy }); return; }
-          if (!gone.length && !added && gap0 === gap1) return;
+          if (p.countGap === undefined || p.seen === undefined) { Object.assign(p, { groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, seen: fresh.seen }); return; }
+          if (!gone.length && !added && gap0 === gap1) { p.seen = fresh.seen; return; } // a new head or rule that changes nothing here: seen, no line
           const ok = (r.approvals.groups ?? []).filter((g) => g.ok && gone.includes(g.who)), dropped = gone.filter((g) => !ok.some((x) => x.who === g));
           const newApprovers = (fresh.approvedBy ?? []).filter((l: string) => !(p.approvedBy ?? []).some((x: string) => eq(x, l)) && !ok.some((g) => g.by.some((b) => eq(b, l))));
           const en: string[] = [], tw: string[] = [];
@@ -952,16 +955,26 @@ export function createPrWatch(d: PrWatchDeps) {
           if (dropped.length) { en.push(`${dropped.join(", ")} is no longer required (GitHub ignores an owner it reports as unknown, or the branch rules changed)`); tw.push(`${dropped.join("、")} 不再需要（GitHub 會略過它判定為 unknown 的 owner，或分支規則改了）`); }
           // (a smaller gap is in what the card still asks for, below; a gap that closes is said here)
           if (gap0 && !gap1) { en.push("the approval count is met"); tw.push("approve 人數已夠"); }
-          // the card grows: an approval no longer counts (new commits, or the rules now dismiss stale approvals), or the rules
-          // ask for a new group; said with its cause
+          // the card grows: said with what changed since it last looked (its head, the rules' count, stale dismissal, the
+          // approval after the last push, a group the rules now ask for, an approval dismissed on GitHub); nothing found: said plainly
           const grows = added || gap1 > gap0, lost = (p.approvedBy ?? []).filter((l: string) => !(fresh.approvedBy ?? []).some((x: string) => eq(x, l)));
-          if (grows) { const cause = r.head !== o.head ? { en: "after new commits", tw: "有新 commit 之後" } : r.approvals.dismissStale || r.approvals.lastPush ? { en: "the rules now dismiss approvals given before the last push", tw: "分支規則改為舊 approve 不算" } : { en: "the branch rules changed", tw: "分支規則改了" };
-            if (lost.length) { en.push(`${lost.join(", ")}'s approval no longer counts (${cause.en})`); tw.push(`${lost.join("、")} 的 approve 不再算數（${cause.tw}）`); }
-            else { en.push(`the branch rules now ask for more (${cause.en})`); tw.push(`分支規則現在要求更多（${cause.tw}）`); } }
+          if (grows) { const was0 = p.seen, now0 = fresh.seen, ce: string[] = [], ct: string[] = [];
+            if (now0.head !== was0.head) { ce.push(`new commits (head ${now0.head.slice(0, 7)})`); ct.push(`有新 commit（head ${now0.head.slice(0, 7)}）`); }
+            if (now0.required > was0.required) { ce.push(`the rules now ask for ${now0.required} approvals, not ${was0.required}`); ct.push(`分支規則要求的 approve 從 ${was0.required} 個改為 ${now0.required} 個`); }
+            if (now0.dismissStale && !was0.dismissStale) { ce.push("the rules now dismiss stale approvals"); ct.push("分支規則改為舊 approve 不算"); }
+            if (now0.lastPush && !was0.lastPush) { ce.push("the rules now ask for an approval after the last push"); ct.push("分支規則改為要最後一次 push 之後的 approve"); }
+            const newGroups = now0.groups.filter((g: string) => !was0.groups.includes(g)); if (newGroups.length) { ce.push(`the rules now also ask for ${newGroups.join(", ")}`); ct.push(`分支規則現在也要 ${newGroups.join("、")}`); }
+            const dismissed = lost.filter((l: string) => r.reviews.some((v) => eq(v.login, l) && v.state === "DISMISSED")), gonePeople = lost.filter((l: string) => !r.reviews.some((v) => eq(v.login, l)));
+            if (!ce.length && dismissed.length) { ce.push(`dismissed on GitHub`); ct.push("在 GitHub 上被 dismiss"); }
+            else if (!ce.length && gonePeople.length && gonePeople.length === lost.length) { ce.push("no longer on GitHub"); ct.push("GitHub 上已經沒有"); }
+            const names = (xs: string[]) => xs.length === 1 ? `${xs[0]}'s approval` : `the approvals of ${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`;
+            if (lost.length) { en.push(`${names(lost)} no longer count${lost.length === 1 ? "s" : ""}${ce.length ? ` (${ce.join("; ")})` : ""}`); tw.push(`${lost.join("、")} 的 approve 不再算數${ct.length ? `（${ct.join("；")}）` : ""}`); }
+            else if (ce.length) { en.push(ce.join("; ")); tw.push(ct.join("；")); }
+            else { en.push("the counted approvals changed"); tw.push("算數的 approve 變了"); } }
           const left = (fresh.missing ?? []).map((m: F.L) => ({ en: m.en.replace(/^✕ /, ""), tw: m.tw.replace(/^✕ /, "") }));
           if (left.length) { en.push(`the card now asks for: ${left.map((m: F.L) => m.en).join(", ")}`); tw.push(`${grows ? "卡片現在要" : "卡裡只留"}：${left.map((m: F.L) => m.tw).join("、")}`); }
           p.history.push(hist(`${en.join("; ")}.`, `${tw.join("；")}。`));
-          Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); }); }
+          Object.assign(p, { heading: fresh.heading, done: fresh.done, missing: fresh.missing, groupsMissing: fresh.groupsMissing, countGap: fresh.countGap, approvedBy: fresh.approvedBy, seen: fresh.seen, recipients: fresh.recipients, message: fresh.message, short: fresh.short }); }); }
     }
     for (const r of rows) {
       const sh = shepherdOf(r), kind = KIND_OF[sh.branch]; if (!kind) continue;

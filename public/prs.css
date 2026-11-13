@@ -123,3 +123,5 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-followcard .actions{flex-wrap:wrap}.pw-followcard .opts{grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr))}
 /* the next-step cell never runs under the next column: its words and its card button wrap inside it */
 .pw-next b{overflow-wrap:anywhere}.pw-next .pw-followcta{max-width:100%;width:auto!important;white-space:normal!important}.pw-row>[role="cell"]{min-width:0}
+/* the card button's "new" mark stays one word on one line */
+.pw-next .pw-followcta .pw-new{white-space:nowrap;flex:none}
