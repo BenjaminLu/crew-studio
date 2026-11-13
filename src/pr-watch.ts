@@ -28,7 +28,7 @@ import { normalize } from "./runtime/defs";
 import { Projects } from "./doors";
 import type { Engine, X } from "./runtime/engine";
 import * as R from "./pr-watch-rules";
-import * as X from "./pr-watch-release";
+import * as Rel from "./pr-watch-release";
 
 export const APPLY_WORKFLOW = "pr-watch-apply-depends";
 export const INTERVAL_MS = 5 * 60_000;
@@ -110,9 +110,9 @@ export type Settings = {
   evidence: R.EvidenceSources; requiredReviewers: string[]; environments: R.EnvSetting[]; groups: string[]; shortForm: boolean;
   messageLang: "en" | "zh-TW" | "zh-CN" | null;
   /** the paths that mean a migration, configuration or a secret, for the release brief (CODEOWNERS-style patterns) */
-  opsRules: X.OpsRules;
+  opsRules: Rel.OpsRules;
 };
-export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: [], checks: [], labels: [] }, requiredReviewers: [], environments: [], groups: [], shortForm: false, messageLang: null, opsRules: structuredClone(X.DEFAULT_OPS_RULES) };
+export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: [], checks: [], labels: [] }, requiredReviewers: [], environments: [], groups: [], shortForm: false, messageLang: null, opsRules: structuredClone(Rel.DEFAULT_OPS_RULES) };
 /** by: who set it. external-cli: a pull request list grant's prs_deps (grant names which), shown as such until the captain sets it again */
 type Dep = { on: string[]; by: "captain" | "accepted" | "github" | "external-cli"; grant?: string; at: string };
 export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string>;
@@ -132,7 +132,7 @@ export type RawRow = {
 export type MergedRow = { id: string; repo: string; number: number; url: string; title: string; author: string; single: boolean; base: string; mergedAt: string; mergeSha: string;
   envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[]; deps: string[]; body: string; partial: string[];
   /** what it asks for before it goes live (src/pr-watch-release.ts), each with the address it came from */
-  ops: X.Op[] };
+  ops: Rel.Op[] };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
   depState: Record<string, string>; proposal: { deps: R.Signal[]; hints: R.Hint[] }; changed: Record<string, { at: string; what: Change[] }>; finger: Record<string, any>;
   /** each row's head and when Studio first saw it: a comment that names no commit covers a head seen before it */
@@ -168,7 +168,7 @@ export function cleanSettings(v: any): Settings {
     return { name, production: !!e?.production, repos, detect };
   });
   const lang = ["en", "zh-TW", "zh-CN"].includes(s.messageLang) ? s.messageLang : null;
-  const rules = (k: keyof X.OpsRules) => { const v = s.opsRules?.[k]; if (v === undefined) return [...X.DEFAULT_OPS_RULES[k]];
+  const rules = (k: keyof Rel.OpsRules) => { const v = s.opsRules?.[k]; if (v === undefined) return [...Rel.DEFAULT_OPS_RULES[k]];
     const l = list(v, 30, 256); for (const p of l) if (/[\u0000-\u001f]/.test(p) || p.split("/").length > 32) throw new Error(`"${p}" is not a path pattern`); return l; };
   const opsRules = { migration: rules("migration"), config: rules("config"), secret: rules("secret") };
   return { which: { mine: w.mine !== false, assigned: w.assigned !== false, reviewRequested: !!w.reviewRequested },
@@ -479,8 +479,8 @@ export function createPrWatch(d: PrWatchDeps) {
       const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: SHA.test(mergeSha) ? await envOn(e, repo, mergeSha, checks, true) : null, ...(auto ? { auto: true } : {}) })));
       if (!SHA.test(mergeSha)) partial.push("merge commit");
       // the changed files with their patches: what the diff adds is scanned for the release brief's items
-      const files = SHA.test(mergeSha) ? await soft(async () => (await g.pages(`${repoPath(repo)}/pulls/${n}/files`, 3)).map((f: any) => ({ filename: String(f.filename ?? ""), status: String(f.status ?? ""), patch: typeof f.patch === "string" ? f.patch.slice(0, 200_000) : null })), [] as X.ChangedFile[], partial, "files") : [];
-      const ops = SHA.test(mergeSha) ? X.opsOf({ id: R.prId(repo, n), repo, number: n, mergeSha: mergeSha.toLowerCase(), body, files }, s.settings.opsRules ?? X.DEFAULT_OPS_RULES).slice(0, 40) : [];
+      const files = SHA.test(mergeSha) ? await soft(async () => (await g.pages(`${repoPath(repo)}/pulls/${n}/files`, 3)).map((f: any) => ({ filename: String(f.filename ?? ""), status: String(f.status ?? ""), patch: typeof f.patch === "string" ? f.patch.slice(0, 200_000) : null })), [] as Rel.ChangedFile[], partial, "files") : [];
+      const ops = SHA.test(mergeSha) ? Rel.opsOf({ id: R.prId(repo, n), repo, number: n, mergeSha: mergeSha.toLowerCase(), body, files }, s.settings.opsRules ?? Rel.DEFAULT_OPS_RULES).slice(0, 40) : [];
       return { id: R.prId(repo, n), repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author: String(p.user?.login ?? ""), single, base: String(p.base?.ref ?? ""),
         mergedAt: String(p.merged_at), mergeSha: SHA.test(mergeSha) ? mergeSha.toLowerCase() : "", envs, deps: [...new Set([...(R.blockDeps(body, repo) ?? []), ...R.dependsOnLines(body, repo)])], body, partial, ops };
     })).sort((a, b) => a.mergedAt.localeCompare(b.mergedAt) || a.id.localeCompare(b.id));
@@ -709,7 +709,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const token = tokenNow(); if (!token) throw new Error("GitHub is not connected: Studio has no token");
     const rows = mergedRows(snap, state), waiting = rows.filter((r) => r.tab === "merged");
     for (const id of ids) if (!waiting.some((r) => eq(r.id, id))) throw new Error(`${id} is not a merged pull request waiting to go live`);
-    const plan = X.batchesOf(ids, waiting.map((r) => ({ id: r.id, deps: r.deps })));
+    const plan = Rel.batchesOf(ids, waiting.map((r) => ({ id: r.id, deps: r.deps })));
     const g = reader(apiBase(), token, undefined, null, null, { budget: { left: 300 } });
     const row = (id: string) => waiting.find((r) => eq(r.id, id))!;
     const tagsCache = new Map<string, Promise<{ name: string; sha: string }[]>>(), fileCache = new Map<string, Promise<string | null>>(), cmpCache = new Map<string, Promise<boolean | null>>(), ciCache = new Map<string, Promise<"green" | "red" | "none">>();
