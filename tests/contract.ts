@@ -25,7 +25,7 @@ const tools = Bun.serve({
     calls.push(name);
     const body = name === "runs_list" ? [{ id: "T-1", status: "done", link: "#/task/T-1" }, { id: "T-2", status: "running", link: "#/task/T-2" }]
       : name === "task_get" ? { id: "T-1", merged: { link: "#/event/7" }, lastEvents: [{ link: "#/event/7" }] }
-      : name === "intent_capture" ? { id: "I-009", status: "received", link: "#/intents/I-009" } : { error: "unknown" };
+      : name === "intent_capture" ? { id: "I-009", status: "received" } : { error: "unknown" };
     return Response.json(body);
   },
 });

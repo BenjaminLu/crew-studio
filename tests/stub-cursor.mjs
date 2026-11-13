@@ -42,7 +42,7 @@ if (msg.includes("STUB_LOGIN")) { process.stderr.write("Authentication required.
 if (msg.includes("STUB_MANY")) { for (let i = 0; i < 10; i++) { await tool("runs_list", {}); await sleep(50); } say("done"); done("done"); process.exit(0); }
 if (msg.includes("STUB_INTENT")) {
   const i = await tool("intent_capture", { goal: "Add a dark mode to the docs site", details: "from the stub" });
-  const text = `Recorded as intent [${i.id}](#/intents/${i.id}). firstmate will draft a spec and raise a dispatch card.`;
+  const text = `Recorded as intent ${i.id}. firstmate will draft a spec and raise a dispatch card.`;
   say(text); done(text); process.exit(0);
 }
 const runs = await tool("runs_list", {});

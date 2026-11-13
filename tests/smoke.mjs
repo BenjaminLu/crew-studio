@@ -95,7 +95,7 @@ try {
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme);
     for (const [view, sel] of [["board", "[data-task]"], ["inbox", "[data-inbox-row]"], ["crew", ".tk-round"], ["activity", "#evlist .ev"], ["workflow", "svg.graph .gn"],
-      ["intents", ".ilist"], ["library", "[data-pr]"], ["task/T-304", "[data-lineage]"], ["event/0", ".ev.hl"]]) {
+      ["library", "[data-pr]"], ["task/T-304", "[data-lineage]"], ["event/0", ".ev.hl"]]) {
       await p.goto(`${base}/#/${view}`);
       const found = await p.waitForSelector(sel, { timeout: 8000 }).then(() => true).catch(() => false);
       ok(found, `${view} renders at ${width} ${scheme}`);
@@ -175,7 +175,7 @@ try {
   await p.close();
 
 
-  // ---------- M2: chat, intents, library ----------
+  // ---------- M2: chat, intent capture, library ----------
   // Since acc5b89 the chat panel is the one primary Firstmate conversation (public/m25.js:
   // chatMode is always "main"); the read-only status agent has no panel of its own any more.
   // Its server side (/api/chat, the question-token tools, intent capture) is still served,
@@ -216,14 +216,15 @@ try {
     ok(await q.waitForFunction(() => { const t = document.querySelector("#chatSub")?.textContent ?? ""; return t && t !== "…"; }, null, { timeout: 6000 }).then(() => true).catch(() => false), `the chat header says where the Firstmate conversation stands at ${width} ${scheme}`);
     ok(await q.locator("#chatClear").isHidden() && await q.locator("#chatProv").isHidden(), `the primary conversation offers no clear button and no status-provider picker at ${width} ${scheme}`);
     if (width === 1440 && scheme === "light") {
-      // the Intents page, a linked task and the Library
+      // the Intents page was removed (unused): its route falls back to the Board and no nav item names it
       await q.goto(`${base}/#/intents`);
-      ok(await q.waitForSelector('[data-intent-row="I-001"] [data-step="received"]', { timeout: 6000 }).then(() => true).catch(() => false), "the Intents page lists the intent at Received");
-      // firstmate links the intent to a task; the trail follows that task's events to its merge
+      ok(await q.waitForSelector("[data-task]", { timeout: 6000 }).then(() => true).catch(() => false) && (await q.locator(".ilist, [data-intent-row]").count()) === 0
+        && (await q.locator('.nav-item[data-view="intents"], #navIntents').count()) === 0, "the removed Intents page falls back to the Board and has no nav item");
+      // firstmate's link from an intent to a task still names the intent on the task page, as text, not a link to the removed page
       appendFileSync(join(data, "intent-links.jsonl"), JSON.stringify({ intent: "I-001", task: "T-304", by: "firstmate" }) + "\n");
-      ok(await q.waitForSelector('[data-intent-row="I-001"] .s.fin[data-step="merged"]', { timeout: 6000 }).then(() => true).catch(() => false), "a linked intent advances along its task's events to Merged, live");
-      await q.goto(`${base}/#/intents/I-001`);
-      ok(await q.waitForSelector('[data-lineage="T-304"]', { timeout: 6000 }).then(() => true).catch(() => false), "the intent page shows its task's lineage");
+      await q.goto(`${base}/#/task/T-304`);
+      ok(await q.waitForFunction(() => [...document.querySelectorAll(".phead .iid")].some((e) => e.textContent === "I-001"), null, { timeout: 6000 }).then(() => true).catch(() => false)
+        && (await q.locator('a[href^="#/intents"]').count()) === 0, "the task page names its intent without linking to the removed Intents page");
       // the library: lineage from the event log, CI and the commit from GitHub, and a video that plays
       await q.goto(`${base}/#/library`);
       await q.waitForSelector('[data-pr="287"]');

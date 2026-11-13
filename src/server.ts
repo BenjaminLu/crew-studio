@@ -206,10 +206,6 @@ setInterval(() => {
 gh.onChange = s => send("github", s);
 // Pull requests (#/prs, docs/units/pr-watch.md): every pull request the captain is on, read on the shared poller under its own key
 const prWatch = createPrWatch({ dataDir: DATA, poller: githubPoller, notify: (t, d) => send(t, d) });
-// Studio's own intents and firstmate's links to them
-const dataSig = () => ["intents.jsonl", "intent-links.jsonl", "artifacts.json"].map(f => { try { return statSync(join(DATA, f)).mtimeMs; } catch { return 0; } }).join("|");
-let lastData = dataSig();
-setInterval(() => { const d = dataSig(); if (d !== lastData) { lastData = d; send("intents", store.intentView(fm)); } }, 1500);
 setInterval(() => send("ping", Date.now()), 20_000);
 
 // --- the firstmate MAIN session (M2.5): Studio drives it, one input at a time ---
@@ -952,7 +948,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (++tk.calls > MAX_TOOL_CALLS) return json({ error: `tool limit reached (${MAX_TOOL_CALLS} per question)` });
       let args: any = {};
       try { args = await req.json(); } catch {}
-      try { const r = tool.run(ctx, args); if (tool.write) send("intents", store.intentView(fm)); return json(r); }
+      try { return json(tool.run(ctx, args)); }
       catch (e: any) { return json({ error: String(e?.message ?? e) }); }
     }
     if (p === "/api/chat" && req.method === "POST") {
@@ -992,7 +988,6 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       }
       return json(chatInfo());
     }
-    if (p === "/api/intents") return json(store.intentView(fm));
     if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
     if (p.startsWith("/api/task/")) {
       const id = decodeURIComponent(p.slice("/api/task/".length)).toUpperCase();
