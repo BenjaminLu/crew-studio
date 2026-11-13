@@ -124,7 +124,8 @@ function render() {
   // a field the captain is typing in that the new view keeps (a mounted card is reused, unit inbox-live) keeps its focus and caret
   // a field the view draws anew (the Start form's request field) is found again by its stable key (id, else its first data-
   // attribute) on the same page, and takes the focus and caret, so the next keys land in it
-  const a = document.activeElement; const inboxFocus = S.route.name === "inbox" && a && root.contains(a) && a.matches("[data-inbox-row]") ? a.dataset.inboxRow : null; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
+  const a = document.activeElement; const restore = render.restore && a && root.contains(a) ? (() => { const key = fieldKey(a) || (a.getAttribute("href") ? `${a.tagName.toLowerCase()}[href="${CSS.escape(a.getAttribute("href"))}"]` : null);
+    return key ? { key, tag: a.tagName, at: [...root.querySelectorAll(key)].indexOf(a) } : null; })() : null; render.restore = false; const inboxFocus = S.route.name === "inbox" && a && root.contains(a) && a.matches("[data-inbox-row]") ? a.dataset.inboxRow : null; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
   // Live refresh detaches even reused cards. Keep only the exact still-valid card action;
   // never transfer focus to a replacement, a different page, or over another focus target.
   const card = a?.closest('[data-scard][data-card-status="open"]');
@@ -135,6 +136,11 @@ function render() {
   // what was typed into a field the view draws anew, empty, is carried into it rather than lost to the redraw
   if (again && again !== keep.a && !again.value && keep.a.value && again.type !== "file" && again.type !== "password") again.value = keep.a.value;
   if (again && document.activeElement !== again) { try { again.focus({ preventScroll: true }); const n = again.value.length; again.setSelectionRange(Math.min(keep.s ?? n, n), Math.min(keep.e ?? n, n)); } catch {} }
+  // a redraw that waited for the focus to leave a list toolbar (Tab to a facet, a row): the focus goes to the same control or
+  // row drawn anew, found by its stable key, so the next Tab and Enter go on from there
+  if (restore && !keep && (document.activeElement === document.body || !root.contains(document.activeElement))) {
+    // its key (an id, its first data- attribute, else its link), the same one of several (the row's place)
+    const m = root.querySelectorAll(restore.key), el = m.length === 1 ? m[0] : m[restore.at]; if (el && el.tagName === restore.tag) el.focus({ preventScroll: true }); }
   // A retained card may rebuild its controls while the route renders. Bind to
   // that same card element and unique action, rather than the detached old button.
   if (action && action.page === render.at && action.hash === location.hash && root.contains(action.card) && action.card.matches('[data-card-status="open"]') && action.card.dataset.scard === action.id && document.activeElement === document.body) {
@@ -158,12 +164,12 @@ function renderAfterBar(bar) {
   const out = (e) => { if (e.relatedTarget && bar.contains(e.relatedTarget) && !e.relatedTarget.closest(".lt-extra")) return; bar.removeEventListener("focusout", out);
     afterPress(() => setTimeout(() => { if (renderAfterBar.on === bar) renderAfterBar.on = null;
       const again = ltFocus(); if (again) return renderAfterBar(again); // focus put back (a redrawn checkbox)
-      if (S.route && hashRoute().v === S.route.name) render(); }, 0)); };
+      if (S.route && hashRoute().v === S.route.name) { render.restore = true; render(); } }, 0)); };
   bar.addEventListener("focusout", out);
 }
 /** the toolbar the focus is in, when it is in the toolbar's own controls (the box, a suggestion, a facet popover); a page's
  *  own control placed in the toolbar's row (Tasks' Show archived) redraws its page as usual */
-const ltFocus = () => { const a = document.activeElement; return a?.matches?.("#view [data-lt-q], #view [data-lt-fq], #view [data-lt-sug], #view .lt-pop *") ? a.closest("[data-lt-bar]") : null; };
+const ltFocus = () => { const a = document.activeElement, bar = a?.closest?.("#view [data-lt-bar]"); return bar && !a.closest(".lt-extra") ? bar : null; };
 // a live update never yanks focus out of a field being typed in; it renders once the field is left
 let deferred = false;
 // a pointer press in progress: a render now would replace the pressed button before its click (mouseup on a new
@@ -187,7 +193,7 @@ function soft() {
   if (a && $("#view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
     deferred = true; deferredOn = a;
     // drawn once the new focus has landed (during blur it is nowhere): a focus moving within a list toolbar keeps waiting (render)
-    a.addEventListener("blur", () => afterPress(() => setTimeout(() => { if (deferredOn !== a) return; deferred = false; deferredOn = null; render(); }, 0)), { once: true });
+    a.addEventListener("blur", () => afterPress(() => setTimeout(() => { if (deferredOn !== a) return; deferred = false; deferredOn = null; render.restore = !!a.closest("[data-lt-bar]"); render(); }, 0)), { once: true });
     return updateNav();
   }
   if (pressing) { deferred = true; deferredOn = null; afterPress(() => { deferred = false; render(); }); return updateNav(); }
@@ -551,6 +557,7 @@ function viewActivity(task) {
       placeholder: T("Search what happened…  or type type:node_failed", "搜尋事件內容…  也可以打 type:node_failed"),
       facets: [{ key: "type", name: "Type" }, { key: "actor", name: "Actor" }, { key: "task", name: "Task", show: taskName }],
       sorts: [{ key: "new", label: T("Newest first", "最新的在上") }, { key: "old", label: T("Oldest first", "最舊的在上") }],
+      emptyAttrs: { id: "evlist" }, // #evlist is the log's list whether it holds events or says none match
       server: async (st) => { const q = new URLSearchParams({ page: String(st.page), size: String(st.size) });
         if (st.sort === "old") q.set("sort", "old"); if (st.free.length) q.set("q", st.free.map((w) => (/\s/.test(w) ? `"${w}"` : w)).join(" "));
         for (const k of ["type", "actor", "task"]) { for (const v of st.f[k] || []) q.append(k, v); for (const v of st.tok[k] || []) q.append(`tok.${k}`, v); }

@@ -365,6 +365,22 @@ try {
     const first = await p.$eval("[data-lt-sug]", (e) => e.dataset.ltSug); await p.keyboard.press("ArrowDown"); await p.waitForTimeout(250); await p.keyboard.press("Enter"); await p.waitForTimeout(list === "activity" ? 600 : 250);
     const v = await p.$eval(`[data-lt-q="${list}"]`, (e) => e.value);
     ok(new RegExp(`^${key}:\\S+ $`).test(v) && await p.evaluate((l) => document.activeElement === document.querySelector(`[data-lt-q="${l}"]`), list) && (await hashQ(p)).get("q") === v, `${list}: ↓ then Enter picks ${first} from the keyboard, the box keeps the focus`, `${v} focus=${await p.evaluate(() => document.activeElement?.tagName)}`);
+    // 5. Tab and Shift+Tab from the box with a live redraw waiting: the focus moves to the next control, never to <body>
+    await p.fill(`[data-lt-q="${list}"]`, ""); await p.waitForTimeout(list === "activity" ? 500 : 150);
+    await p.focus(`[data-lt-q="${list}"]`); await p.evaluate(() => soft()); await p.keyboard.press("Tab"); await p.waitForTimeout(250);
+    const tab1 = await p.evaluate((l) => { const a = document.activeElement; return { inBar: !!a?.closest(`[data-lt-bar="${l}"]`), tag: a?.tagName, connected: !!a?.isConnected }; }, list);
+    ok(tab1.inBar && tab1.connected && tab1.tag !== "BODY", `${list}: Tab from the box (a live redraw waiting) lands on the next toolbar control`, JSON.stringify(tab1));
+    await p.keyboard.press("Shift+Tab"); await p.waitForTimeout(150);
+    ok(await p.evaluate((l) => document.activeElement?.matches(`[data-lt-q="${l}"]`), list), `${list}: Shift+Tab goes back to the box`);
+    // the toolbar's last control, a live redraw waiting, Tab into the page: the focus is on a control of the redrawn page, and Enter opens a row link
+    await p.evaluate((l) => { const els = [...document.querySelectorAll(`[data-lt-bar="${l}"] :is(button, select, input, a[href])`)].filter((e) => !e.disabled && e.getClientRects().length && !e.closest(".lt-sug, .lt-pop")); els.at(-1).focus(); }, list);
+    await p.evaluate(() => soft()); await p.keyboard.press("Tab"); await p.waitForTimeout(300);
+    const out = await p.evaluate(() => { const a = document.activeElement; return { tag: a?.tagName, href: a?.getAttribute?.("href") || null, connected: !!a?.isConnected }; });
+    ok(out.tag !== "BODY" && out.connected, `${list}: Tab out of the toolbar (a live redraw waiting) keeps the focus on the redrawn page`, JSON.stringify(out));
+    if (out.tag === "A" && out.href?.startsWith("#/")) { const h0 = await p.evaluate(() => location.hash); await p.keyboard.press("Enter"); await p.waitForTimeout(300);
+      ok(await p.evaluate((h) => location.hash !== h, h0), `${list}: Enter on that row opens it`, `${out.href}`); await p.goBack(); await p.waitForTimeout(300);
+      await p.goto(`${base}/${hash}?`); if (list === "terminals") { await p.waitForSelector("[data-term-new]"); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+      await p.waitForSelector(`[data-lt-count="${list}"]`); await p.waitForTimeout(list === "activity" ? 400 : 100); }
     // 4. a popover open through a redraw of its list (a box ticked) stays inside the page
     await p.fill(`[data-lt-q="${list}"]`, ""); await p.waitForTimeout(list === "activity" ? 500 : 100);
     const last = await p.$$eval(`[data-lt-bar="${list}"] .lt-facet:not([hidden]) [data-lt-facet]`, (es) => es.at(-1)?.dataset.ltFacet);
@@ -372,6 +388,10 @@ try {
     await p.click(`[data-lt-pop="${last}"] label input`); await p.waitForTimeout(list === "activity" ? 600 : 250);
     const box = await p.$eval(`[data-lt-pop="${last}"]`, (e) => { const r = e.getBoundingClientRect(), m = document.querySelector("#main").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(Math.max(0, m.left)), Math.round(Math.min(innerWidth, m.right))]; }).catch(() => null);
     ok(box && box[0] >= box[2] && box[1] <= box[3], `${list}: the ${last} popover stays inside the page through a redraw`, JSON.stringify(box));
+    // and through a window resize (390 wide)
+    await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(300);
+    const rbox = await p.$eval(`[data-lt-pop="${last}"]`, (e) => { const r = e.getBoundingClientRect(), m = document.querySelector("#main").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(Math.max(0, m.left)), Math.round(Math.min(innerWidth, m.right))]; }).catch(() => null);
+    ok(!rbox || (rbox[0] >= rbox[2] && rbox[1] <= rbox[3]), `${list}: an open ${last} popover stays inside the page when the window shrinks to 390`, JSON.stringify(rbox));
     await ctx.close();
   }
   // the search that started on Tasks never follows a hop to the Inbox (the review's case), with or without a pending live redraw
