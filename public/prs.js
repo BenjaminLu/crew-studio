@@ -48,6 +48,10 @@ function nextWord(n) {
   return n.rule === "ready" ? T("Ready to merge", "可合併") : n.rule; // a rule this page does not know is named, never "ready"
 }
 const TABS = [["all", "All", "全部"], ["approve", "Approve", "等 approve"], ["test", "Test", "等測試"], ["fix", "Fix", "等修正"], ["dependency", "Dependency", "等依賴"], ["merge", "Mergeable", "可合併"], ["hold", "On hold", "暫緩"]];
+// merged pull requests, followed until production: their own two tabs after the open ones
+const SHIP_TABS = [["merged", "Merged, not live", "已合併未上線"], ["live", "Live", "已上線"]];
+const isShip = (tab) => tab === "merged" || tab === "live";
+const span = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); return h < 24 ? T(`${h} h`, `${h} 小時`) : T(`${Math.round(h / 24)} d`, `${Math.round(h / 24)} 天`); };
 const reviewWord = (s) => s === "APPROVED" ? T("approved", "approve") : s === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : s === "DISMISSED" ? T("dismissed", "撤銷") : T("commented", "留言");
 const verdictWord = (v) => ({ pass: T("pass", "通過"), conditional: T("conditional pass", "有條件通過"), fail: T("fail", "不通過"), "code-only": T("code review only", "只審 code"), unclassified: T("unclassified", "無法分類") })[v] || v;
 function changeWord(w) {
@@ -107,17 +111,21 @@ function view() {
       h("div", { class: "sec-head" }, h("h2", { id: "pwListH", class: "sr" }, T("The list", "清單")), h("span", { class: "x-grow" }),
         h("span", { class: "faint", "data-prs-refreshed": "" }, PW.busy || d.refreshing ? T("reading GitHub…", "讀取 GitHub 中…") : refreshedText(d)),
         h("button", { class: "btn", "data-prs-refresh": "", disabled: PW.busy, onclick: refresh }, icon("refresh"), PW.busy ? T("Reading…", "讀取中…") : T("Refresh", "重新整理")),
-        h("button", { class: "btn ghost", "data-prs-md": "", title: T("Copy the rows this tab shows as Markdown", "把這個分頁的列複製成 Markdown"), onclick: async () => { flash(await copy(markdown(visibleRows())) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); } }, icon("copy"), T("Copy as Markdown", "複製成 Markdown")),
+        h("button", { class: "btn ghost", "data-prs-md": "", title: T("Copy the rows this tab shows as Markdown", "把這個分頁的列複製成 Markdown"), onclick: async () => { flash(await copy(isShip(PW.tab) ? shipMarkdown(shipRows()) : markdown(visibleRows())) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); } }, icon("copy"), T("Copy as Markdown", "複製成 Markdown")),
         h("button", { class: "btn ghost icon", "data-prs-settings": "", "aria-label": T("Settings", "設定"), title: T("Settings", "設定"), onclick: settingsModal }, icon("tool"))),
       statusLine(d),
       watchCard(d),
       proposalCard(d),
       h("div", { class: "tb-tabs pw-tabs", role: "group", "aria-label": T("Filter by next step", "依下一步篩選") }, TABS.map(([k, en, tw]) =>
-        h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0))))),
-      h("div", { class: "card pw-tbl", role: "table", "aria-label": T("Pull requests", "Pull requests"), "data-prs-table": "" },
+        h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0)))),
+        h("span", { class: "pw-sep", "aria-hidden": "true" }),
+        SHIP_TABS.map(([k, en, tw]) => h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw),
+          h("span", { class: "tb-count num" }, String((d.merged || []).filter((r) => r.tab === k).length)), h("span", { class: "pw-new" }, T("new", "新"))))),
+      isShip(PW.tab) ? shipTable(d) : h("div", { class: "card pw-tbl", role: "table", "aria-label": T("Pull requests", "Pull requests"), "data-prs-table": "" },
         h("div", { class: "pw-row h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Next step · waits on", "下一步 · 等誰"), T("Missing", "還缺"), T("CI", "CI"), T("Depends on", "依賴"), T("Test evidence", "測試證據"), T("Environments", "環境"), T("Reviews", "Reviews"), T("Issues", "Issue"), T("Group", "組")].map((t) => h("span", { role: "columnheader" }, t))),
         shown.length ? shown.map((r) => rowView(r, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, rows.length ? T("No pull request under this filter.", "這個篩選下沒有 pull request。") : T("Nothing watched yet, or nothing open: paste a repository or pull request address above.", "還沒有追蹤任何東西，或沒有開著的 PR：在上方貼上 repo 或 PR 網址。"))),
-      h("p", { class: "pw-foot faint" }, T("Hover a row and press × to drop it (a pull request that came in through its repository is recorded as excluded, and can be restored). Drag the handle (or Alt+↑/↓) to reorder; click a row for its details. The next step is the first matching rule, top to bottom; no model decides it.",
+      isShip(PW.tab) ? h("p", { class: "pw-foot faint", "data-prs-ship-foot": "" }, T("After the merge Studio keeps following: the environment settings say whether each environment has the merge commit. A row in every production environment moves to Live and is dropped 14 days later.",
+        "合併之後繼續追蹤：用環境設定判斷 merge commit 有沒有進到每個環境；進到所有 production 環境就移到「已上線」，14 天後收起。")) : h("p", { class: "pw-foot faint" }, T("Hover a row and press × to drop it (a pull request that came in through its repository is recorded as excluded, and can be restored). Drag the handle (or Alt+↑/↓) to reorder; click a row for its details. The next step is the first matching rule, top to bottom; no model decides it.",
         "滑過一列按 × 從清單移除（從 repo 帶進來的 PR 會記成「已排除」，可還原）。拖拉把手（或 Alt+↑/↓）調整順序；點一列看細節。下一步由固定規則從上往下取第一條符合的，不靠模型。"))));
 }
 function statusLine(d) {
@@ -210,6 +218,37 @@ function rowView(r, d) {
     h("span", { class: "pw-iss", role: "cell" }, r.issues.length ? r.issues.map((i) => h("span", { class: "pw-iss1" }, extLink(ghIssue(i.ref), short(i.ref, null), { title: `${i.ref} ${i.title || ""}${i.state ? ` (${i.state})` : ""}${i.external ? T(" · outside the watched repositories, read only", " · 不在監控的 repo，只讀") : ""}` }), i.external ? h("small", {}, T("external", "外部")) : null)) : h("span", { class: "faint" }, "—")),
     h("span", { role: "cell" }, groupCell(r, d)));
   return el;
+}
+// ---------- merged pull requests, followed until production ----------
+const shipRows = () => (PW.data?.merged || []).filter((r) => r.tab === PW.tab);
+function shipNext(r) {
+  const now = Date.now(), s = r.ship;
+  if (s.live) { const left = Date.parse(s.dropAt) - now;
+    return { tone: "ok", next: T("In production", "已上 production"), waits: T(`live ${span(now - Date.parse(s.liveAt))} ago · hidden in ${span(left)}`, `${span(now - Date.parse(s.liveAt))}前上線 · ${span(left)}後收起`) }; }
+  return { tone: "warn", next: T(`Waiting to go live · ${span(now - Date.parse(r.mergedAt))}`, `等上線 ${span(now - Date.parse(r.mergedAt))}`),
+    waits: s.noProduction ? T("no production environment set", "沒有設定 production 環境") : T(`waits on ${s.waits}`, `等 ${s.waits}`) };
+}
+function shipTable(d) {
+  const rows = shipRows();
+  return h("div", { class: "card pw-tbl", role: "table", "aria-label": PW.tab === "live" ? T("Live pull requests", "已上線的 Pull requests") : T("Merged pull requests", "已合併的 Pull requests"), "data-prs-ship": PW.tab },
+    h("div", { class: "pw-row pw-ship h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Going live · waits on", "上線 · 等誰"), T("Merged", "合併"), T("Deploy unit", "部署單元"), T("Environments", "環境")].map((t) => h("span", { role: "columnheader" }, t))),
+    rows.length ? rows.map((r, i) => shipRow(r, i, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, PW.tab === "live" ? T("No merged pull request is in production now.", "目前沒有已上 production 的 PR。") : T("No merged pull request is waiting to go live.", "沒有等上線的已合併 PR。")));
+}
+function shipRow(r, i) {
+  const n = shipNext(r);
+  return h("div", { class: "pw-row pw-ship", role: "row", "data-prs-merged": r.id, "data-ship": r.ship.live ? "live" : "merged" },
+    h("span", { role: "cell" }),
+    h("span", { class: "tid" }, String(i + 1)),
+    h("span", { class: "pw-pr", role: "cell" }, h("span", { class: "pw-pid" }, pmark(r.project), extLink(ghPr(r.id), short(r.id, null), { title: r.id }), r.single ? h("span", { class: "badge" }, T("single", "單獨")) : null), h("small", { class: "pw-title" }, r.title)),
+    h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${n.tone}`, "data-prs-ship-next": "" }, n.next), h("small", {}, n.waits)),
+    h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono", title: r.mergeSha || "" }, (r.mergeSha || "—").slice(0, 7)), h("small", {}, T(`merged ${span(Date.now() - Date.parse(r.mergedAt))} ago`, `${span(Date.now() - Date.parse(r.mergedAt))}前合併`))),
+    h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono pw-unit" }, r.unit), r.deps.length ? h("small", { "data-prs-ship-deps": "" }, T("depends on ", "依賴 "), r.deps.map((x) => short(x.id, r.repo)).join(", ")) : null),
+    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name} has the merge commit`, `${e.name} 已有這個 merge commit`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name} does not have it yet`, `${e.name} 還沒有`) }, e.name)) : h("span", { class: "faint" }, "—")));
+}
+function shipMarkdown(rows) {
+  const esc = (s) => String(s ?? "").replace(/[\\`*_[\]()<>!|]/g, (c) => `\\${c}`).replace(/[\r\n]+/g, " ");
+  return [`| # | ${T("Pull request", "Pull request")} | ${T("Going live", "上線")} | ${T("Merged", "合併")} | ${T("Environments", "環境")} |`, "|---|---|---|---|---|",
+    ...rows.map((r, i) => { const n = shipNext(r); return `| ${i + 1} | [${r.id}](${ghPr(r.id)}) ${esc(r.title)} | ${esc(`${n.next} · ${n.waits}`)} | ${esc((r.mergeSha || "").slice(0, 7))} | ${esc(r.envs.filter((e) => e.on).map((e) => e.name).join(", ") || "—")} |`; })].join("\n");
 }
 const waitsOn = (r) => r.next.rule === "dependency" ? r.next.who.map((x) => short(x, r.repo)) : r.next.rule === "approvals" && r.approvals?.readable ? r.approvals.missing.map(missWord) : r.next.who.map(whoWord);
 const noEvidenceSource = (d) => { const ev = d?.settings?.evidence; return !!ev && !ev.accounts.length && !ev.checks.length && !ev.labels.length; };

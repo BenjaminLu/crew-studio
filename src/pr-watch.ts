@@ -1,5 +1,5 @@
 // Pull requests (docs/units/pr-watch.md): every open pull request the captain is on, across repositories, what it waits
-// for and who. One list, on the top-level page #/prs.
+// for and who, and each merged one until it runs in production. One list, on the top-level page #/prs.
 //   GET  /api/prs                  the list (from the last snapshot; never calls GitHub)
 //   GET  /api/prs/count            the sidebar count: rows whose next step is approve or merge
 //   POST /api/prs/refresh          read GitHub now (the page asks on open; a 5-minute timer asks too)
@@ -83,7 +83,7 @@ async function call(api: string, token: string, method: "GET" | "POST" | "PATCH"
   return data;
 }
 /** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
-export const READ_BUDGET = 1500, MAX_ROWS = 60;
+export const READ_BUDGET = 1500, MAX_ROWS = 60, MAX_MERGED = 40;
 export class OverBudget extends Error { constructor() { super(`a refresh would read GitHub more than ${READ_BUDGET} times: watch fewer repositories or pull requests`); } }
 /** pages: up to max pages of 100; the list carries capped: true when GitHub has more past the last page read */
 type Reader = { get(path: string): Promise<any>; pages(path: string, max: number): Promise<any[] & { capped?: boolean }>; graphql(query: string, variables: Record<string, unknown>): Promise<any> };
@@ -112,8 +112,11 @@ export type Settings = {
 export const DEFAULT_SETTINGS: Settings = { which: { mine: true, assigned: true, reviewRequested: false }, evidence: { accounts: [], checks: [], labels: [] }, requiredReviewers: [], environments: [], groups: [], shortForm: false, messageLang: null };
 /** by: who set it. external-cli: a pull request list grant's prs_deps (grant names which), shown as such until the captain sets it again */
 type Dep = { on: string[]; by: "captain" | "accepted" | "github" | "external-cli"; grant?: string; at: string };
-export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string> };
-const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {} });
+export type State = { schema: 1; settings: Settings; watch: { repos: string[]; prs: string[]; excluded: string[] }; order: string[] | null; deps: Record<string, Dep>; applied: Record<string, { block: string; on: string[]; at: string }>; groups: Record<string, string>;
+  /** merged pull requests followed until production (key: the id in lower case): when Studio first saw each in every
+   *  production environment; and the ones dropped 14 days after that, so they never come back */
+  shipped: Record<string, { id: string; mergedAt: string; liveAt: string | null }>; retired: string[] };
+const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {}, shipped: {}, retired: [] });
 type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" } | { k: "ci"; state: string };
 export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
@@ -122,13 +125,18 @@ export type RawRow = {
   reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[];
   facts: R.PrFacts; partial: string[];
 };
+/** A merged pull request on its way to production: each environment is on when its commit contains the merge commit. */
+export type MergedRow = { id: string; repo: string; number: number; url: string; title: string; author: string; single: boolean; base: string; mergedAt: string; mergeSha: string;
+  envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[]; deps: string[]; body: string; partial: string[] };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
   depState: Record<string, string>; proposal: { deps: R.Signal[]; hints: R.Hint[] }; changed: Record<string, { at: string; what: Change[] }>; finger: Record<string, any>;
   /** each row's head and when Studio first saw it: a comment that names no commit covers a head seen before it */
   heads: Record<string, { sha: string; at: string }>;
   /** accounts that may post test evidence, offered when none is set: people who commented on a row's pull request but
    *  are not its author, did not review it, and are not a bot account */
-  suggest?: { evidenceAccounts: { login: string; prs: number }[] } };
+  suggest?: { evidenceAccounts: { login: string; prs: number }[] };
+  /** merged pull requests still followed (until 14 days after production) */
+  merged?: MergedRow[] };
 const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {}, heads: {} });
 
 const list = (v: unknown, max = 50, each = 100) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : []).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => s.length <= each).slice(0, max);
@@ -160,7 +168,7 @@ export function cleanSettings(v: any): Settings {
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
-  /** tests lower the caps; production uses MAX_ROWS and READ_BUDGET */ limits?: { rows?: number; reads?: number; autoReads?: number } };
+  /** tests lower the caps; production uses MAX_ROWS, MAX_MERGED and READ_BUDGET */ limits?: { rows?: number; reads?: number; autoReads?: number; merged?: number } };
 /** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
 class OverAuto extends Error {}
 
@@ -222,14 +230,28 @@ export function createPrWatch(d: PrWatchDeps) {
       const next = await collect(g, signal);
       signal.throwIfAborted();
       // the watch list may have changed while GitHub answered: what was removed meanwhile stays removed
-      const w = state.watch; next.rows = next.rows.filter((r) => r.single ? has(w.prs, r.id) : has(w.repos, r.repo) && !has(w.excluded, r.id));
-      snap = next; write(snapFile, snap); live.error = null; live.backoffUntil = null; live.failures = 0;
+      const w = state.watch, watched = (r: { id: string; repo: string; single: boolean }) => r.single ? has(w.prs, r.id) : has(w.repos, r.repo) && !has(w.excluded, r.id);
+      next.rows = next.rows.filter(watched); next.merged = (next.merged ?? []).filter(watched);
+      snap = next; write(snapFile, snap); followShipped(next); live.error = null; live.backoffUntil = null; live.failures = 0;
     } catch (e: any) {
       if (signal.aborted) return;
       live.failures++; live.backoffUntil = new Date(now() + Math.min(15 * 60_000, interval() * 2 ** Math.min(live.failures, 20))).toISOString();
       live.error = e instanceof RateLimited ? { en: e.message, tw: "GitHub 限流：Studio 會等一下再讀" } : e instanceof OverBudget ? { en: e.message, tw: `一次刷新要讀 GitHub 超過 ${READ_BUDGET} 次：請少追蹤一些 repo 或 PR` } : e instanceof HttpError ? why(e) : { en: "the refresh failed; Studio tries again later", tw: "刷新失敗；Studio 稍後再試" };
       throw e;
     } finally { live.refreshing = false; d.notify?.("prs", { count: count(), at: snap.at }); }
+  }
+
+  /** Studio's record of where each merged pull request got to: when it was first seen in every production environment, and
+   *  the ones dropped 14 days after that (never picked up again). Written without counting as a change of the watch list. */
+  function followShipped(sn: Snapshot) {
+    let changed = false;
+    for (const r of sn.merged ?? []) { const k = r.id.toLowerCase(), cur = state.shipped[k], st = R.shipState(r.envs), liveAt = st.live ? cur?.liveAt ?? sn.at : null;
+      if (!cur || cur.liveAt !== liveAt || cur.mergedAt !== r.mergedAt) { state.shipped[k] = { id: r.id, mergedAt: r.mergedAt, liveAt }; changed = true; } }
+    for (const [k, v] of Object.entries(state.shipped)) {
+      const sp = R.splitId(v.id), followed = (sn.merged ?? []).some((r) => r.id.toLowerCase() === k) || (!!sp && (has(state.watch.repos, sp.repo) || has(state.watch.prs, v.id)));
+      if (v.liveAt && now() - Date.parse(v.liveAt) > R.LIVE_KEEP_MS) { delete state.shipped[k]; state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000); changed = true; }
+      else if (!followed) { delete state.shipped[k]; changed = true; } }
+    if (changed) write(stateFile, state);
   }
 
   async function pool<T, U>(xs: T[], n: number, f: (x: T) => Promise<U>): Promise<U[]> {
@@ -250,10 +272,25 @@ export function createPrWatch(d: PrWatchDeps) {
       try { for (const p of await g.pages(`${repoPath(repo)}/pulls?state=open`, 3)) { const id = R.prId(repo, Number(p.number)); if (Number.isSafeInteger(p.number) && keep(p) && !has(s.watch.excluded, id)) found.set(id.toLowerCase(), { pr: p, repo, single: false }); } }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: repo, ...why(e) }); }
     }
+    // merged pull requests followed until production: a watched repository's (opened by or assigned to the captain) and
+    // the single ones, merged in the last 30 days or already followed, never one dropped after its 14 days in production
+    const mergedFound = new Map<string, { pr: any; repo: string; single: boolean }>(), retired = new Set(s.retired.map((x) => x.toLowerCase()));
+    const followMerged = (p: any, repo: string, single: boolean) => { const id = R.prId(repo, Number(p?.number)), k = id.toLowerCase();
+      if (Number.isSafeInteger(p?.number) && p.merged_at && !retired.has(k) && (s.shipped[k] || Date.parse(String(p.merged_at)) > now() - R.MERGED_WINDOW_MS)) mergedFound.set(k, { pr: p, repo, single }); };
     for (const id of s.watch.prs) { const sp = R.splitId(id); if (!sp) continue;
-      try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.state === "open") found.set(id.toLowerCase(), { pr: p, repo: sp.repo, single: true }); else out.single[id] = p?.merged_at ? "merged" : "closed"; }
+      try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.state === "open") found.set(id.toLowerCase(), { pr: p, repo: sp.repo, single: true }); else { out.single[id] = p?.merged_at ? "merged" : "closed"; if (p?.merged_at) followMerged(p, sp.repo, true); } }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: id, ...why(e) }); }
     }
+    for (const repo of s.watch.repos) {
+      try { const list = await g.get(`${repoPath(repo)}/pulls?state=closed&sort=updated&direction=desc&per_page=100`);
+        for (const p of Array.isArray(list) ? list : []) if (keep(p) && !has(s.watch.excluded, R.prId(repo, Number(p.number)))) followMerged(p, repo, false); }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: repo, ...why(e) }); }
+    }
+    // a followed one GitHub's first page of closed pull requests no longer shows: read on its own (at most 30 a refresh)
+    let followReads = 0;
+    for (const [k, v] of Object.entries(s.shipped)) { if (mergedFound.has(k) || retired.has(k)) continue; const sp = R.splitId(v.id); if (!sp || !has(s.watch.repos, sp.repo) || ++followReads > 30) continue;
+      try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.merged_at && !has(s.watch.excluded, v.id)) followMerged(p, sp.repo, false); }
+      catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; } }
     signal.throwIfAborted();
     const rulesCache = new Map<string, Promise<R.Rules>>(), ownersCache = new Map<string, Promise<{ pattern: string; owners: string[] }[] | null | "unreadable">>(), teamCache = new Map<string, Promise<string[] | null>>();
     const issueCache = new Map<string, Promise<{ title: string | null; state: string | null }>>(), fileCache = new Map<string, Promise<string | "missing" | "unreadable">>(), compareCache = new Map<string, Promise<boolean | null>>(), deployCache = new Map<string, Promise<any>>();
@@ -296,9 +333,19 @@ export function createPrWatch(d: PrWatchDeps) {
       if (!SHA.test(head) || !SHA.test(deployed)) return null; if (head.toLowerCase().startsWith(deployed.toLowerCase()) || deployed.toLowerCase().startsWith(head.toLowerCase())) return true;
       try { const c = await g.get(`${repoPath(repo)}/compare/${head}...${deployed}`); return c?.status === "ahead" || c?.status === "identical"; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } });
     const latestDeploy = (repo: string, q: string) => once(deployCache, `${repo}|${q}`.toLowerCase(), async () => { const l = await g.get(`${repoPath(repo)}/deployments?${q}&per_page=5`); return Array.isArray(l) ? l[0] ?? null : null; });
-    const envOn = async (e: R.EnvSetting, repo: string, head: string, checks: any[]): Promise<boolean | null> => {
+    // the newest of a query's last five deployments whose latest status is success (or active): its commit
+    const successfulCache = new Map<string, Promise<string | null>>();
+    const successful = (repo: string, q: string) => once(successfulCache, `${repo}|${q}`.toLowerCase(), async () => {
+      const l = await g.get(`${repoPath(repo)}/deployments?${q}&per_page=5`);
+      for (const dep of Array.isArray(l) ? l : []) { if (!Number.isSafeInteger(dep?.id) || !SHA.test(String(dep?.sha ?? ""))) continue;
+        const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return String(dep.sha); }
+      return null; });
+    /** whether an environment runs `head`; for a merged pull request (`merged`) `head` is its merge commit, and an environment
+     *  has it when the commit it runs contains it (a later deployment carries every earlier merge) */
+    const envOn = async (e: R.EnvSetting, repo: string, head: string, checks: any[], merged = false): Promise<boolean | null> => {
       try {
         const dt = e.detect;
+        if (merged && dt.kind === "deployment") { const dep = await successful(repo, `environment=${enc(dt.environment)}`); return dep ? await contains(repo, head, dep) : false; }
         if (dt.kind === "check") return checks.some((c) => eq(String(c.name), dt.name) && c.status === "completed" && ["success", "neutral"].includes(String(c.conclusion)));
         if (dt.kind === "deployed") { const dep = await deployedOn(repo, dt.environment); if (!dep) return false;
           if (++autoCompares > AUTO_COMPARES) return null; // past the cap a refresh reads no more: shown as not read, never as off
@@ -413,6 +460,19 @@ export function createPrWatch(d: PrWatchDeps) {
     rows.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id));
     out.rows = rows;
     out.proposal = R.signals(rows.map((r) => r.facts));
+    // merged pull requests: each environment from the settings (or the repository's own), on when it has the merge commit
+    let mergedList = [...mergedFound.values()].sort((a, b) => String(b.pr.merged_at).localeCompare(String(a.pr.merged_at)));
+    const maxMerged = d.limits?.merged ?? MAX_MERGED;
+    if (mergedList.length > maxMerged) { out.errors.push({ target: "", en: `${mergedList.length} merged pull requests are followed: only the ${maxMerged} merged last are read per refresh`, tw: `追蹤中的已合併 PR 有 ${mergedList.length} 個：每次刷新只讀最近合併的 ${maxMerged} 個` }); mergedList = mergedList.slice(0, maxMerged); }
+    out.merged = (await pool(mergedList, 2, async ({ pr: p, repo, single }): Promise<MergedRow> => {
+      const n = Number(p.number), mergeSha = String(p.merge_commit_sha ?? ""), partial: string[] = [], body = String(p.body ?? "").slice(0, 65536);
+      const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : s.settings.environments.filter((e) => R.envApplies(e, repo));
+      const checks = SHA.test(mergeSha) && envList.some((e) => e.detect.kind === "check") ? await soft(async () => (await g.get(`${repoPath(repo)}/commits/${mergeSha}/check-runs?per_page=100`))?.check_runs ?? [], [] as any[], partial, "checks") : [];
+      const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: SHA.test(mergeSha) ? await envOn(e, repo, mergeSha, checks, true) : null, ...(auto ? { auto: true } : {}) })));
+      if (!SHA.test(mergeSha)) partial.push("merge commit");
+      return { id: R.prId(repo, n), repo, number: n, url: `https://github.com/${repo}/pull/${n}`, title: String(p.title ?? "").slice(0, 300), author: String(p.user?.login ?? ""), single, base: String(p.base?.ref ?? ""),
+        mergedAt: String(p.merged_at), mergeSha: SHA.test(mergeSha) ? mergeSha.toLowerCase() : "", envs, deps: [...new Set([...(R.blockDeps(body, repo) ?? []), ...R.dependsOnLines(body, repo)])], body, partial };
+    })).sort((a, b) => a.mergedAt.localeCompare(b.mergedAt) || a.id.localeCompare(b.id));
     out.suggest = { evidenceAccounts: [...commenters.values()].map((c) => ({ login: c.login, prs: c.prs.size })).sort((a, b) => b.prs - a.prs || a.login.localeCompare(b.login)).slice(0, 6) };
     // the state of every pull request a row may depend on that is not itself a row
     const want = new Set<string>([...out.proposal.deps.map((x) => x.on), ...Object.values(s.deps).flatMap((x) => x.on), ...rows.flatMap((r) => r.githubDeps ?? [])]);
@@ -475,6 +535,21 @@ export function createPrWatch(d: PrWatchDeps) {
     const rest = rows.filter((r) => !fixed.includes(r)).sort((a, b) => pos(a.id) - pos(b.id));
     return { rows: [...fixed, ...rest].map((r, i) => ({ ...r, position: i + 1, proposedPosition: !fixed.includes(r), orderWhy: prop.find((p) => eq(p.id, r.id))?.why ?? [] })), proposal: prop };
   }
+  /** The merged pull requests as the page shows them: "merged" (not in every production environment yet) or "live" (in
+   *  production, dropped 14 days later), oldest merge first. Each waits on the next environment that does not have it. */
+  function mergedRows(sn: Snapshot, s: State) {
+    const projects = (() => { try { return new Projects(d.dataDir).nativeSnapshot().records; } catch { return []; } })();
+    const projectOf = (repo: string) => { const p = projects.find((x) => x.github?.repository && eq(x.github.repository, repo)); return p ? { id: p.id, name: p.name || p.id } : null; };
+    const retired = new Set(s.retired);
+    return (sn.merged ?? []).filter((r) => !retired.has(r.id.toLowerCase())).map((r) => {
+      const st = R.shipState(r.envs), liveAt = st.live ? s.shipped[r.id.toLowerCase()]?.liveAt ?? sn.at : null;
+      const key = Object.keys(s.deps).find((k) => eq(k, r.id)), on = key ? s.deps[key].on : r.deps;
+      const { body: _b, ...rest } = r;
+      return { ...rest, project: projectOf(r.repo), tab: (st.live ? "live" : "merged") as "live" | "merged", unit: r.repo.split("/")[1],
+        ship: { ...st, liveAt, dropAt: liveAt ? new Date(Date.parse(liveAt) + R.LIVE_KEEP_MS).toISOString() : null },
+        deps: on.map((id) => { const m = (sn.merged ?? []).find((x) => eq(x.id, id)); return { id, state: m ? (R.shipState(m.envs).live ? "live" : "merged") : rowIdsNow().some((x) => eq(x, id)) ? "open" : "other" }; }) };
+    }).filter((r) => !r.ship.dropAt || Date.parse(r.ship.dropAt) > now());
+  }
   const count = () => viewRows(snap, state).filter((r) => r.next.kind === "approve" || r.next.kind === "merge").length;
   function view() {
     const tok = { token: tokenNow() };
@@ -487,7 +562,7 @@ export function createPrWatch(d: PrWatchDeps) {
       settings: state.settings, suggest: snap.suggest ?? { evidenceAccounts: [] },
       watch: { repos: state.watch.repos.map((repo) => { const p = projects.find((x) => x.github?.repository && eq(x.github.repository, repo)); return { repo, count: repoCount(repo), project: p ? { id: p.id, name: p.name || p.id } : null }; }),
         prs: state.watch.prs.map((id) => ({ id, state: snap.single[id] ?? (rows.some((r) => eq(r.id, id)) ? "open" : null) })), excluded: state.watch.excluded },
-      rows, rules: R.RULES, count: rows.filter((r) => r.next.kind === "approve" || r.next.kind === "merge").length,
+      rows, rules: R.RULES, count: rows.filter((r) => r.next.kind === "approve" || r.next.kind === "merge").length, merged: mergedRows(snap, state),
       proposal: { pending: pendingDeps.length > 0 || rows.some((r) => r.proposedPosition) && !!rows.length, deps: pendingDeps, order: proposal, accepted: !!state.order },
       connector: { available: false, en: "No messaging connector is connected to Studio: copy the message and send it yourself.", tw: "Studio 沒有接上任何訊息 connector：複製訊息後自己送出。" },
     };
@@ -503,11 +578,11 @@ export function createPrWatch(d: PrWatchDeps) {
   }
   function unwatch(b: any) {
     if (typeof b?.repo === "string") { if (!R.repoOk(b.repo)) throw new Error("Name a watched repository"); state.watch.repos = state.watch.repos.filter((r) => !eq(r, b.repo)); state.watch.excluded = state.watch.excluded.filter((x) => !eq(R.splitId(x)?.repo ?? "", b.repo));
-      snap.rows = snap.rows.filter((r) => !eq(r.repo, b.repo) || has(state.watch.prs, r.id)); write(snapFile, snap); }
+      snap.rows = snap.rows.filter((r) => !eq(r.repo, b.repo) || has(state.watch.prs, r.id)); snap.merged = (snap.merged ?? []).filter((r) => !eq(r.repo, b.repo) || has(state.watch.prs, r.id)); write(snapFile, snap); }
     else if (typeof b?.pr === "string" && R.splitId(b.pr)) { const id = b.pr;
       if (has(state.watch.prs, id)) state.watch.prs = state.watch.prs.filter((x) => !eq(x, id));
       else if (!has(state.watch.excluded, id)) state.watch.excluded.push(id);
-      snap.rows = snap.rows.filter((r) => !eq(r.id, id)); write(snapFile, snap); }
+      snap.rows = snap.rows.filter((r) => !eq(r.id, id)); snap.merged = (snap.merged ?? []).filter((r) => !eq(r.id, id)); write(snapFile, snap); }
     else throw new Error("Name a repository or a pull request");
     save();
   }
@@ -668,7 +743,7 @@ export function createPrWatch(d: PrWatchDeps) {
     reviews: r.reviews.map((x) => ({ login: x.login, state: x.state, stale: x.stale })), evidence: r.evidence, envs: r.envs, deps: r.deps.on,
     issues: (r.issues ?? []).map((i: any) => ({ ref: i.ref, url: i.url, title: i.title })), changed: r.changed });
   const listView = () => { const v = view(); return { enabled: v.enabled, connected: v.connected, refreshedAt: v.refreshedAt, refreshing: v.refreshing, refreshError: v.error, errors: v.errors,
-    watch: v.watch, settings: v.settings, suggest: v.suggest, proposal: { pending: v.proposal.pending, accepted: v.proposal.accepted }, rows: v.rows.map(brief),
+    watch: v.watch, settings: v.settings, suggest: v.suggest, proposal: { pending: v.proposal.pending, accepted: v.proposal.accepted }, rows: v.rows.map(brief), merged: v.merged.map((r) => ({ pr: r.id, url: r.url, title: r.title, tab: r.tab, mergeSha: r.mergeSha, mergedAt: r.mergedAt, envs: r.envs, ship: r.ship, deps: r.deps })),
     board: "#/prs", note: "Studio's own list. No tool here writes to GitHub (merge, review, comment, label, the dependency block)." }; };
   const str = (v: unknown) => typeof v === "string" && v.trim() ? v.trim() : null;
   const ids = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
@@ -685,7 +760,7 @@ export function createPrWatch(d: PrWatchDeps) {
   const REFRESH_GAP = 60_000; let toolRefreshAt = 0;
   const MAX_ARGS = 16_384;
   const TOOLS = [
-    { name: "prs_list", description: "Studio's pull request list: every watched open pull request in the captain's order, with CI, approvals (what is still missing, per required team), reviews, test evidence, environments, dependencies, linked issues and the next step. Also the watch list and the settings.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    { name: "prs_list", description: "Studio's pull request list: every watched open pull request in the captain's order, with CI, approvals (what is still missing, per required team), reviews, test evidence, environments, dependencies, linked issues and the next step; the merged ones followed until production (merged or live, with each environment). Also the watch list and the settings.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "prs_get", description: "One pull request of the list in full: everything prs_list has plus the merge-box facts Studio read.", inputSchema: { type: "object", required: ["pr"], additionalProperties: false, properties: { pr: { type: "string", description: "owner/repo#number" } } } },
     { name: "prs_refresh", description: "Read GitHub again now (Studio also refreshes every 5 minutes), then return the list.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "prs_watch", description: "Watch a repository (its open pull requests the captain opened or is assigned to) or one pull request, by its GitHub address.", inputSchema: { type: "object", required: ["url"], additionalProperties: false, properties: { url: { type: "string", description: "https://github.com/<owner>/<repo> or …/pull/<n>" } } } },

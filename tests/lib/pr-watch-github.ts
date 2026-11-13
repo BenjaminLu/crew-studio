@@ -13,7 +13,7 @@ const at = (h: number) => new Date(T0 + h * 3600_000).toISOString();
 type Pr = { repo: string; number: number; title: string; user: string; assignees?: string[]; draft?: boolean; state?: "open" | "closed"; merged?: boolean; base?: string; headRef?: string;
   body?: string; commits: { sha: string; at: string; login: string }[]; reviews?: { user: string; state: string; commit: string; at: string }[];
   comments?: { user: string; body: string; at: string }[]; files?: string[]; checks?: { name: string; conclusion: string; at: string }[]; labels?: string[];
-  closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string;
+  closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string; mergedAt?: string;
   github?: { reviewDecision?: string | null; mergeState?: string; requested?: string[]; ci?: string; ciOnOlderHead?: boolean } };
 const two = (n: string, h = 0) => [{ sha: sha(`${n}-1`), at: at(h), login: ME }, { sha: sha(`${n}-2`), at: at(h + 1), login: ME }];
 const head = (p: Pr) => p.commits.at(-1)!.sha;
@@ -64,6 +64,13 @@ export function fixtureData() {
     comments: [{ user: "qa-lin", body: `### PASS\non ${c[1].sha.slice(0, 7)}`, at: at(29) }] }); }
   // a single watched pull request by someone else, outside the watched repositories
   { const c = two("mb5"); add({ repo: "northwind/mobile", number: 5, title: "App checkout uses the new retry API", user: "lee", commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["app/checkout.ts"] }); }
+  // merged pull requests, followed until production. Merge dates are relative to the real clock (the server reads them
+  // against it): 21 is on staging, 22 (depends on 21) nowhere yet, 23 on staging and in production, 24 is someone else's
+  const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOString();
+  { const c = two("ca21"); add({ repo: ca, number: 21, title: "Remove the minimum trade amount", user: ME, state: "closed", merged: true, mergedAt: ago(2), commits: c, files: ["src/limits.ts"] }); }
+  { const c = two("ca22"); add({ repo: ca, number: 22, title: "Orders gain a cas_version field", user: ME, state: "closed", merged: true, mergedAt: ago(1), commits: c, files: ["migrations/0042_orders_cas.sql", "src/orders.ts"], body: "Adds the column.\n\nDepends-on: #21" }); }
+  { const c = two("ca23"); add({ repo: ca, number: 23, title: "Quote precision fix", user: ME, state: "closed", merged: true, mergedAt: ago(5), commits: c, files: ["src/quote.ts"] }); }
+  { const c = two("ca24"); add({ repo: ca, number: 24, title: "Someone else's merged change", user: "lee", state: "closed", merged: true, mergedAt: ago(1), commits: c }); }
 
   const issues: Record<string, { title: string; state: string }> = { "northwind/platform-issues#7": { title: "Capture retries double-charge", state: "open" }, "northwind/web-app#2": { title: "Retries hammer the API", state: "open" } };
   const rules: Record<string, any> = {
@@ -87,11 +94,12 @@ export function fixtureData() {
     { id: 504, repo: ca, environment: "preproduction", ref: "preprod", sha: sha("preprod-tip"), state: "success" },
   ];
   // the staging branch's tip contains #17's head (it was merged into staging)
-  const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!)] };
+  const merge = (p: Pr) => sha(`${p.repo}#${p.number}-merge`);
+  const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!), merge(find(ca, 21)!), merge(find(ca, 23)!)], [head(find(ca, 18)!)]: [merge(find(ca, 23)!)] };
   const files: Record<string, string> = { "northwind/infra/deploy/prod.yaml": `app:\n  image: registry.example/checkout:${head(find(ca, 18)!).slice(0, 12)}\n` };
   // the repositories' own GitHub environments (used when the settings name none)
   const envs: Record<string, string[]> = { [ca]: ["production", "dev", "staging", "preproduction"] };
-  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs };
+  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge };
 }
 
 export function prWatchGitHub(data = fixtureData()) {
@@ -99,7 +107,7 @@ export function prWatchGitHub(data = fixtureData()) {
   let rateLimited = false;
   const json = (v: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", ...headers } });
   const nf = () => json({ message: "Not Found" }, 404);
-  const pullJson = (p: Pr) => ({ number: p.number, title: p.title, body: p.body ?? "", state: p.state ?? "open", draft: !!p.draft, merged_at: p.merged ? at(40) : null, user: { login: p.user }, assignees: (p.assignees ?? []).map((l) => ({ login: l })),
+  const pullJson = (p: Pr) => ({ number: p.number, title: p.title, body: p.body ?? "", state: p.state ?? "open", draft: !!p.draft, merged_at: p.merged ? p.mergedAt ?? at(40) : null, merge_commit_sha: p.merged ? data.merge(p) : null, user: { login: p.user }, assignees: (p.assignees ?? []).map((l) => ({ login: l })),
     requested_reviewers: [], labels: (p.labels ?? []).map((name) => ({ name })), base: { ref: p.base ?? "main", repo: { full_name: p.repo } }, head: { ref: p.headRef, sha: data.head(p) }, created_at: p.created, changed_files: (p.files ?? []).length, html_url: `https://github.com/${p.repo}/pull/${p.number}` });
   const page = (list: any[], q: URLSearchParams) => { const per = Number(q.get("per_page") ?? 30), pg = Number(q.get("page") ?? 1); return list.slice((pg - 1) * per, pg * per); };
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
