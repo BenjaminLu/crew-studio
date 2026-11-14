@@ -32,10 +32,12 @@ async function copy(text) { try { await navigator.clipboard.writeText(text); ret
 
 // ---------- words ----------
 const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(GitHub blocks the merge)" ? T("the merge box on GitHub", "GitHub 的 merge 區塊") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
-const missWord = (m) => m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `還要 ${m.n} 個 approve`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
-const TONE = { hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
+const missWord = (m) => m.kind === "lastpush" ? T("an approval of the latest push (not by the pusher)", "最後一次 push 的 approve（不能是推的人）") : m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `approve（還要 ${m.n} 個）`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
+const TONE = { nudge: "human", hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
 function nextWord(n) {
   if (n.rule === "draft") return T("On hold (draft)", "暫緩（draft）");
+  if (n.rule === "evidence-asked") return T("Waits for the QA test", "等 QA 實測");
+  if (n.rule === "re-review") return T("Ask the reviewers to look again", "請 reviewer 重驗");
   if (n.rule === "changes") return T("Fix the review comments", "修正 reviewer 意見");
   if (n.rule === "failed") return T("Fix the failing tests", "修正失敗的測試");
   if (n.rule === "required") return T("Wait for the review", "等 review");
@@ -48,10 +50,12 @@ function nextWord(n) {
   return n.rule === "ready" ? T("Ready to merge", "可合併") : n.rule; // a rule this page does not know is named, never "ready"
 }
 const TABS = [["all", "All", "全部"], ["approve", "Approve", "等 approve"], ["test", "Test", "等測試"], ["fix", "Fix", "等修正"], ["dependency", "Dependency", "等依賴"], ["merge", "Mergeable", "可合併"], ["hold", "On hold", "暫緩"]];
+// "look again" (the follow-through): after Fix, as in the design; Dependency stays (rows can wait on another pull request)
+TABS.splice(4, 0, ["nudge", "Re-review", "等重驗"]);
 // merged pull requests, followed until production: their own two tabs after the open ones
 const SHIP_TABS = [["merged", "Merged, not live", "已合併未上線"], ["live", "Live", "已上線"]];
 const isShip = (tab) => tab === "merged" || tab === "live";
-const span = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); return h < 24 ? T(`${h} h`, `${h} 小時`) : T(`${Math.round(h / 24)} d`, `${Math.round(h / 24)} 天`); };
+const span = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); if (ms < 3600000) { const m = Math.max(1, Math.round(ms / 60000)); return T(`${m} min`, `${m} 分鐘`); } return h < 24 ? T(`${h} h`, `${h} 小時`) : T(`${Math.round(h / 24)} d`, `${Math.round(h / 24)} 天`); };
 const reviewWord = (s) => s === "APPROVED" ? T("approved", "approve") : s === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : s === "DISMISSED" ? T("dismissed", "撤銷") : T("commented", "留言");
 const verdictWord = (v) => ({ pass: T("pass", "通過"), conditional: T("conditional pass", "有條件通過"), fail: T("fail", "不通過"), "code-only": T("code review only", "只審 code"), unclassified: T("unclassified", "無法分類") })[v] || v;
 function changeWord(w) {
@@ -203,7 +207,10 @@ function rowView(r, d) {
       h("small", { class: "pw-title" }, r.title),
       c ? h("small", { class: "pw-chg", "data-prs-changed": "" }, T(`changed ${ago(c.at)}: `, `${ago(c.at)}變更：`), c.what.map(changeWord).filter(Boolean).join(T("; ", "；"))) : null),
     h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${TONE[n.kind] || ""}`, "data-prs-next": n.rule }, nextWord(n)),
-      n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、")))),
+      n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、"))),
+      // its open follow-through card (docs/units/pr-watch.md "Follow-through"), one click away in the Inbox
+      r.followCard ? h("a", { class: "badge human pw-cta pw-followcta", href: `#/inbox/${encodeURIComponent(r.followCard.card)}`, "data-prs-follow-card": r.followCard.kind },
+        h("span", { class: "pw-ctat" }, ({ qa: T("Ask QA to test", "請 QA 測試"), nudge: T("Ask to review again", "請重驗"), approve: T("Ask for approval", "請 approve"), merge: T("Ready to merge", "可合併"), ask: T("Your call", "等你決定"), push: T("Confirm the push", "push 前確認") })[r.followCard.kind] || r.followCard.kind), h("span", { class: "pw-new" }, T("new", "新"))) : null),
     h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { // compact in the cell: "+n" for the count, and a team of the row's own organisation without it (full names in the title)
       const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.toLowerCase().startsWith(own) ? `@${w.slice(own.length)}` : w;
       const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.length === 1 && miss[0].kind === "count" ? T(`+${miss[0].n} approval${miss[0].n === 1 ? "" : "s"}`, `還要 ${miss[0].n} 個`) : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
@@ -302,11 +309,12 @@ async function openBrief(ids) {
   let lang = langs.includes(start) ? start : "en";
   const unitsOf = (b) => [...new Set(b.units.map((u) => u.unit))].join(" + ");
   for (const b of got.batches) for (const o of b.ops) o.job = (b.units.find((u) => o.pr.startsWith(`${u.repo}#`)) || b.units[0])?.unit || "app";
-  const box = h("div", { class: "pw-targets" });
+  const box = h("div", { class: "pw-targets" }), ts = (PW.data?.sending?.targets || []).filter((t) => t.masked), briefTarget = ts.find((t) => t.use === "brief") || ts.find((t) => t.use === "any") || null;
   const draw = () => { const P = (en, tw) => window.crewI18n.pick(lang, en, tw);
     box.replaceChildren(...got.batches.map((b) => { const text = briefText(b, P);
       return h("div", { class: "card x-pad pw-target", "data-prs-batch": String(b.n) },
         h("div", { class: "pw-check" }, h("span", { class: "badge run" }, String(b.n)), h("b", {}, P(`Batch ${b.n}/${b.of} · ${unitsOf(b)}`, `第 ${b.n}/${b.of} 批 · ${unitsOf(b)}`)), h("span", { class: "faint" }, b.n === 1 ? P("goes first", "先上") : P(`after batch ${b.n - 1} is in production`, `等第 ${b.n - 1} 批上 production`)), h("span", { class: "x-grow" }),
+          briefTarget ? h("button", { class: "btn sm", "data-prs-batch-send": String(b.n), onclick: async (e) => { const btn = e.currentTarget; try { await postJ("/api/prs/send", { target: briefTarget.id, text }); btn.textContent = T(`Sent to ${briefTarget.name}`, `已發到 ${briefTarget.name}`); } catch (err) { flash(err.message); } } }, T(`Send to ${briefTarget.name}`, `發到 ${briefTarget.name}`)) : null,
           h("button", { class: "btn sm", "data-prs-batch-copy": String(b.n), ...(b.n === 1 ? { autofocus: true } : {}), onclick: async (e) => { const ok = await copy(text); e.currentTarget.textContent = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); } }, T("Copy this one", "複製這張"))),
         h("pre", { class: "pw-pre", "data-prs-batch-text": String(b.n) }, text),
         b.ops.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, P("Before going live", "上線前要處理")),
@@ -377,10 +385,30 @@ function pwModal(title, kids, o = {}) {
   root.replaceChildren(back); hydrateIcons(back); (box.querySelector("[autofocus]") || box.querySelector("button.primary") || box.querySelector("button"))?.focus(); return close;
 }
 const foot = (...kids) => h("div", { class: "pw-mf" }, ...kids);
+// where the pull request is in its follow-through (docs/units/pr-watch.md "Follow-through"), why it took that branch, and
+// its open card's message (the same card as in the Inbox)
+const unq = (q) => String(q ?? "").replace(/[.。]+\s*$/, ""); // a quoted sentence without its own final full stop
+const STAGE_AT = { "code-change": 0, "needs-evidence": 1, "evidence-covers-head": 2, "missing-approvals": 3, mergeable: 4 };
+function flowSection(r) {
+  const f = r.follow; if (!f) return null;
+  const at = STAGE_AT[f.branch] ?? -1, ev = r.evidence, miss = (r.approvals?.missing || []).map(missWord).join(T(", ", "、"));
+  const stages = [[T("Reviews", "Review"), f.quote && at === 0 ? T(`${f.by}: “${unq(f.quote)}”`, `${f.by}：「${unq(f.quote)}」`) : r.reviews.length ? r.reviews.map((x) => `${x.login} ${reviewWord(x.state)}`).join(T(", ", "、")) : ""],
+    [T("QA test", "QA 實測"), ev ? T(`${ev.by}: ${verdictWord(ev.verdict)}`, `${ev.by}：${verdictWord(ev.verdict)}`) + (ev.covers === "head" ? T(" · current head", " · 目前 head") : "") : at === 1 && f.quote ? T(`${f.by} asked: “${unq(f.quote)}”`, `${f.by} 要求：「${unq(f.quote)}」`) : ""],
+    [T("Ask the reviewers again", "請 reviewer 重驗"), at === 2 ? T(`the evidence covers the head; ${f.stale.join(", ")} gave their verdict on an older one`, `證據覆蓋目前 head；${f.stale.join("、")} 的意見還停在舊 head`) : ""],
+    [T("Approvals the rules ask for", "分支規則要的 approve"), miss], [T("Mergeable (the branch rules all met)", "可合併（分支規則全滿足）"), ""]];
+  const box = h("div", { class: "pw-followcard", "data-prs-detail-card": r.followCard?.card || "" });
+  if (r.followCard && window.crewFollowCard) fetch("/api/scards?open=1").then((x) => x.json()).then((j) => { const c = (j.cards || []).find((x) => x.id === r.followCard.card); if (c && box.isConnected) window.crewFollowCard.mount(box, c, { marks: true }); }).catch(() => {});
+  return h("div", { class: "pw-cols", "data-prs-flow": f.branch },
+    h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Where the flow is", "流程走到哪")),
+      h("ol", { class: "pw-rules" }, stages.map(([label, note], i) => h("li", { class: i < at ? "no" : i === at ? "hit" : "" }, label, i === at ? T(" ← now", " ← 現在") : "", note ? h("div", { class: "faint pw-small", style: "font-weight:400" }, note) : null))),
+      h("h3", {}, T("Why this branch", "為什麼走這條岔路")), h("div", { class: "pw-small muted" }, LX(f.why), f.quote ? T(` — ${f.by}: “${unq(f.quote)}”`, `——${f.by}：「${unq(f.quote)}」`) : "")),
+    r.followCard ? h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Its card", "它的卡片")), box) : null);
+}
 function detail(r) {
   const n = r.next, rules = PW.data?.rules || [];
   pwModal(r.id, [
     h("p", { class: "muted pw-dtitle" }, r.title || "", " · ", extLink(ghPr(r.id), T("on GitHub", "在 GitHub 上看"))),
+    flowSection(r),
     h("div", { class: "pw-cols" },
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("Issues", "Issue")), r.issues.length ? r.issues.map((i) => h("div", { class: "kv" }, h("span", {}, extLink(ghIssue(i.ref), i.ref), i.title ? ` ${i.title}` : "", i.external ? T(" (external, read only)", "（外部，只讀）") : ""), h("span", {}, i.state || "?"))) : h("span", { class: "faint" }, T("none", "無")),
@@ -399,8 +427,8 @@ function detail(r) {
         ...(r.approvals?.unread || []).map((u) => h("p", { class: "faint pw-small", "data-prs-unread": "" }, LX(u))),
         r.approvals?.unread && r.approvals.github ? h("p", { class: "faint pw-small", "data-prs-github": "" }, T(`GitHub's merge box: review ${(r.approvals.github.reviewDecision || "no decision").toLowerCase().replace(/_/g, " ")}, merge ${(r.approvals.github.mergeState || "unknown").toLowerCase()}${r.approvals.github.requested.length ? `; review requested from ${r.approvals.github.requested.join(", ")}` : ""}.`,
           `GitHub merge 區塊：review ${r.approvals.github.reviewDecision || "沒有判定"}、merge ${r.approvals.github.mergeState || "不明"}${r.approvals.github.requested.length ? `；已請求 ${r.approvals.github.requested.join("、")} review` : ""}。`)) : null,
-        r.approvals?.inferredPusher ? h("p", { class: "faint pw-small", "data-prs-inferred": "" }, T(`Approval after the last push: the pusher is inferred from the author and the head commit (${r.approvals.inferredPusher.join(", ") || "none known"}); GitHub does not expose it. Only approvals on the current head by someone else count.`,
-          `最後一次 push 之後的 approve：push 的人是從作者和 head commit 推斷的（${r.approvals.inferredPusher.join("、") || "不明"}）；GitHub 不提供這項資訊。只有其他人在目前 head 上的 approve 才算。`)) : null,
+        r.approvals?.inferredPusher ? h("p", { class: "faint pw-small", "data-prs-inferred": "" }, T(`Approval after the last push: the pusher is inferred from the author and the head commit (${r.approvals.inferredPusher.join(", ") || "none known"}); GitHub does not expose it. The latest push needs an approval on the current head from someone else; older approvals still count toward the number unless stale approvals are dismissed.`,
+          `最後一次 push 之後的 approve：push 的人是從作者和 head commit 推斷的（${r.approvals.inferredPusher.join("、") || "不明"}）；GitHub 不提供這項資訊。最後一次 push 要由其他人在目前 head 上 approve；舊的 approve 仍算進數量，除非分支規則讓舊 approve 失效。`)) : null,
         h("h3", {}, T("Order", "順序")), h("ul", { class: "pw-why" }, (r.orderWhy || []).map((w) => h("li", {}, w))),
         r.partial?.length ? h("p", { class: "faint pw-small" }, T(`Not read this time: ${r.partial.join(", ")}.`, `這次沒讀到：${r.partial.join("、")}。`)) : null)),
   ], { wide: true, id: "detail" });
@@ -513,6 +541,42 @@ function driftModal(r) {
     foot(h("span", { class: "x-grow" }), h("button", { class: "btn", "data-prs-drift-take": "", onclick: () => { close(); act("/api/prs/drift/take", { pr: r.id }, T("Studio's record now follows GitHub", "Studio 的紀錄改以 GitHub 為準")); } }, T("Take GitHub's version", "以 GitHub 上的為準")),
       h("button", { class: "btn primary", "data-prs-drift-reapply": "", onclick: () => { close(); applyModal([r.id]); } }, T("Apply Studio's record again…", "重新套用 Studio 的紀錄…")))], { id: "drift" });
 }
+// where cards and briefs may be sent (docs/units/pr-watch.md "Sending"): the webhook is a secret, shown masked; typing a
+// new one replaces it. Contacts say who a GitHub account is in Slack, Microsoft Teams or email, for a DM.
+const TOOLS = () => [["slack", "Slack"], ["lark", T("Lark / Feishu", "飛書 / Lark")], ["dingtalk", T("DingTalk", "釘釘 / DingTalk")], ["teams", "Microsoft Teams"], ["discord", "Discord"], ["json", T("Generic JSON", "通用 JSON")]];
+const USES = () => [["qa", T("Ask QA to test", "請 QA 測試")], ["nudge", T("Ask reviewers again", "請 reviewer 重驗")], ["approve", T("Ask for approval", "請 approve")], ["brief", T("Release brief", "上線 brief")], ["any", T("Anything", "全部")]];
+const CTOOLS = [["slack", "Slack"], ["teams", "Microsoft Teams"], ["email", "Email"]];
+function sendingSection(s) {
+  s.sending ??= { targets: [], contacts: [], slackTeam: null };
+  const masked = Object.fromEntries((PW.data?.sending?.targets || []).map((t) => [t.id, t.masked]));
+  const tbox = h("div", { class: "pw-envset", "data-prs-targets": "" }), cbox = h("div", { class: "pw-envset", "data-prs-contacts": "" });
+  const sel = (opts, v, on, label) => h("select", { class: "pw-lang", "aria-label": label, onchange: (e) => on(e.target.value) }, opts.map(([k, l]) => h("option", { value: k, selected: k === v }, l)));
+  const drawT = () => tbox.replaceChildren(...s.sending.targets.map((t, i) => h("div", { class: "pw-envrow pw-sendrow", "data-prs-target-row": t.id },
+      h("input", { class: "input", "aria-label": T("Name", "名稱"), value: t.name || "", placeholder: "#qa-requests", oninput: (e) => { t.name = e.target.value; } }),
+      sel(TOOLS(), t.tool, (v) => { t.tool = v; }, T("Tool", "工具")),
+      h("input", { class: "input mono", "aria-label": T("Webhook URL", "Webhook URL"), "data-prs-hook": t.id, value: t.url ?? masked[t.id] ?? "", placeholder: "https://hooks.slack.com/services/…", oninput: (e) => { t.url = e.target.value; } }),
+      sel(USES(), t.use, (v) => { t.use = v; }, T("Used for", "預設用於")),
+      h("button", { class: "btn sm", "data-prs-hook-test": t.id, disabled: !masked[t.id], title: masked[t.id] ? "" : T("Save first", "先儲存"), onclick: async (e) => { const b = e.currentTarget; try { await postJ("/api/prs/sending/test", { target: t.id }); b.textContent = T("Test sent", "已發出測試"); } catch (err) { flash(err.message); } } }, T("Send a test", "發測試")),
+      h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.targets.splice(i, 1); drawT(); } }, icon("x")))),
+    h("div", {}, h("button", { class: "btn", "data-prs-target-add": "", onclick: () => { s.sending.targets.push({ id: `t${Date.now().toString(36)}`, name: "", tool: "slack", use: "any", url: "" }); drawT(); } }, T("+ Add a target", "＋ 加一個目標"))));
+  const drawC = () => cbox.replaceChildren(...s.sending.contacts.map((c, i) => h("div", { class: "pw-envrow pw-contactrow", "data-prs-contact": c.gh },
+      h("input", { class: "input mono", "aria-label": "GitHub", value: c.gh || "", placeholder: "qa-lead", oninput: (e) => { c.gh = e.target.value; } }),
+      sel(CTOOLS, c.tool, (v) => { c.tool = v; }, T("Tool", "工具")),
+      h("input", { class: "input mono", "aria-label": T("Their id or address in the chat tool", "對方在聊天工具裡的 ID 或地址"), value: c.id || "", placeholder: T("Slack member id U0…, or an email", "Slack 成員 ID U0…，或 email"), oninput: (e) => { c.id = e.target.value; } }),
+      h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.contacts.splice(i, 1); drawC(); } }, icon("x")))),
+    h("div", {}, h("button", { class: "btn", "data-prs-contact-add": "", onclick: () => { s.sending.contacts.push({ gh: "", tool: "slack", id: "" }); drawC(); } }, T("+ Add a contact", "＋ 加聯絡人"))));
+  drawT(); drawC();
+  return [h("h3", {}, T("Send targets", "發送目標"), h("span", { class: "pw-new" }, T("new", "新"))),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("Paste a chat tool's incoming webhook. Message cards and release briefs get a Send button, which sends only when pressed; without one, Copy still works.", "貼上聊天工具的 incoming webhook。訊息卡和上線 brief 會多一個「發到」按鈕，按了才發；沒設也照樣能複製。")), tbox,
+    h("h3", {}, T("Contacts: GitHub account → chat tool", "聯絡人：GitHub 帳號 → 聊天工具"), h("span", { class: "pw-new" }, T("new", "新"))),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("To DM someone, and to turn a GitHub account in a message into the chat's @. A GitHub team needs nothing here: its members are read from GitHub and picked on the card.", "用來 DM 某個人，也用來把訊息裡的 GitHub 帳號換成聊天裡的 @。GitHub team 不用填：成員從 GitHub 讀，卡片上選人。")), cbox,
+    h("h3", {}, T("How a DM is sent", "DM 怎麼發"), h("span", { class: "pw-new" }, T("new", "新"))),
+    h("div", { class: "pw-envset" },
+      h("label", { class: "pw-check" }, h("input", { type: "radio", name: "pwdm", checked: true }), T(" Copy and open the chat (default, nothing to install: Studio copies the message and opens the DM; you paste and send)", " 複製並打開對話（預設，不用裝任何東西：複製訊息，再打開和對方的 DM，你貼上按送出）")),
+      h("label", { class: "pw-check faint" }, h("input", { type: "radio", name: "pwdm", disabled: true }), T(" Send through a bot (not in this version)", " 用 bot 直接發（這一版還沒有）")),
+      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Slack workspace id (for Slack DMs)", "Slack workspace ID（Slack DM 用）")), h("input", { class: "input mono", "data-prs-slack-team": "", value: s.sending.slackTeam || "", placeholder: "T0123ABCD", oninput: (e) => { s.sending.slackTeam = e.target.value.trim() || null; } }))),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("A webhook address is a secret: it stays in this Studio's own state (0600), never in a repository, and the browser sees it only masked.", "Webhook URL 等同密鑰：只存在本機 Studio 的 state（0600），不進 repo，瀏覽器只看到遮住的樣子。"))];
+}
 function settingsModal() {
   const s = structuredClone(PW.data?.settings || {}), base = structuredClone(PW.data?.settings || {}), envs = s.environments || [];
   const cb = (k, en, tw) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-which": k, checked: !!s.which?.[k], onchange: (e) => { s.which[k] = e.target.checked; } }), " ", T(en, tw));
@@ -550,6 +614,10 @@ function settingsModal() {
       csv("ops-migration", T("Database migrations", "DB migration"), () => s.opsRules.migration, (v) => { s.opsRules.migration = v; }),
       csv("ops-config", T("Configuration", "設定"), () => s.opsRules.config, (v) => { s.opsRules.config = v; }),
       csv("ops-secret", T("Secrets", "Secret"), () => s.opsRules.secret, (v) => { s.opsRules.secret = v; }),
+      h("h3", {}, T("Follow-through", "PR 跟進"), h("span", { class: "pw-new" }, T("new", "新"))),
+      h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-follow": "", checked: !!s.follow?.enabled, onchange: (e) => { s.follow = { enabled: e.target.checked }; } }),
+        T(" Raise Inbox cards for these pull requests: ask QA to test, ask reviewers to look again, ask for the approvals the rules miss, ready to merge. Studio sends nothing by itself.", " 為這些 PR 在收件匣出卡：請 QA 測試、請 reviewer 重驗、請 approve、可合併。Studio 不會自己送出任何東西。")),
+      sendingSection(s),
       h("h3", {}, T("Release groups", "上線分組")), csv("groups", T("Group names (comma separated)", "分組名稱（逗號分隔）"), () => s.groups, (v) => { s.groups = v; }),
       h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!s.shortForm, onchange: (e) => { s.shortForm = e.target.checked; } }), T(" Also write the short same-repository form Depends-on: #N", " 另外寫同 repo 簡寫 Depends-on: #N"))),
     err,

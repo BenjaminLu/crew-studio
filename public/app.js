@@ -23,7 +23,7 @@ const T = (en, tw, cn) => I18N.pick(lang, en, tw, cn);
 // a workflow's display name: the captain's rename, else Studio's default (code-firstmate shows as "coding"), else the
 // fallback given (the definition's own name), else its id. Served by /api/workflow-names and /api/wf; always rendered as text
 const WFN = { names: {} };
-const wfName = (id, fallback) => (id && Object.hasOwn(WFN.names, id) ? WFN.names[id] : null) || fallback || id || "";
+const wfName = (id, fallback) => (id && Object.hasOwn(WFN.names, id) ? WFN.names[id] : null) || (id === "pr-follow" ? T("PR follow-through", "PR 跟進") : null) || fallback || id || ""; // an internal workflow has no listed name
 const setWorkflowNames = (names) => { if (names && typeof names === "object" && !Array.isArray(names)) WFN.names = Object.fromEntries(Object.entries(names).filter(([, v]) => typeof v === "string")); };
 const loadWorkflowNames = () => fetch("/api/workflow-names").then((r) => (r.ok ? r.json() : null)).then((j) => setWorkflowNames(j?.names)).catch(() => {});
 
@@ -287,7 +287,7 @@ const IB = { sel: null, order: [], recorded: null, recT: null, clickedCard: fals
 function inboxItems() {
   // a spec card names its Task by the spec's own title, in the page language (its zh-TW title, without the 核准規格： prefix)
   const named = (c) => c.spec && c.title?.["zh-TW"] ? T(c.runTitle || c.title.en, c.title["zh-TW"].replace(/^核准規格：/, "")) : c.runTitle || L(c.title);
-  const studio = (window.studioCards?.open() || []).map((c) => ({ source: "studio", id: c.id, kind: c.kind, task: named(c), workflow: c.workflow, run: c.run, ts: c.createdAt, data: c }));
+  const studio = (window.studioCards?.open() || []).map((c) => ({ source: "studio", id: c.id, kind: c.follow ? L(c.follow.kindLabel ? { en: c.follow.kindLabel.en, "zh-TW": c.follow.kindLabel.tw } : c.kind) : c.kind, task: c.follow?.heading ? L({ en: c.follow.heading.en, "zh-TW": c.follow.heading.tw }) : named(c), workflow: c.workflow, run: c.run, ts: c.createdAt, data: c }));
   const fm = S.pending.map((c) => { const d = LD(c.details) || {};
     return { source: "firstmate", id: c.id, kind: c.purpose || c.kind || T("decision", "決定"), task: d.title || c.title, workflow: "code-firstmate", run: c.task, ts: c.ts, data: c }; });
   return [...studio, ...fm].sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")) || a.id.localeCompare(b.id, undefined, { numeric: true }));

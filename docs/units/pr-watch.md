@@ -118,13 +118,15 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   unreadable, never a silent non-match; owners found for a path are shared by the rows of one repository and base;
   a CODEOWNERS that cannot be read, or changed files that could not all be read, make the approvals unreadable, never
   "no owner"), approval after
-  the last push (an approval counts only when given on the current head, by someone other than the pusher; GitHub does not
-  say who pushed, so the pusher is inferred as the pull request's author and the head commit's author and committer, and
-  the row's detail says it is inferred; the rule asks for one such approval even when the approval count is 0; only when
-  the head commit cannot be read are the approvals unreadable), stale
+  the last push (GitHub: "the most recent reviewable push must be approved by someone other than the person who pushed
+  it"; it dismisses nothing, so older approvals keep counting toward the number unless stale approvals are dismissed, and
+  the latest push needs, in addition, one approval on the current head by someone other than the pusher, even when the
+  approval count is 0; GitHub does not say who pushed, so the pusher is inferred as the pull request's author and the head
+  commit's author and committer, and the row's detail says it is inferred; only when the head commit cannot be read are
+  the approvals unreadable), stale
   approvals dismissed, required reviewer teams (members from the teams API). The author's own approval
-  never counts; an approval given on an older head shows stale and counts only when the rules keep stale approvals (then not
-  the last pusher's own either). Classic protection needs admin access to read; rulesets, CODEOWNERS and team
+  never counts; an approval given on an older head shows stale and counts unless the rules dismiss stale approvals (the
+  pusher's own approval counts toward the number too, but never as the approval of the latest push). Classic protection needs admin access to read; rulesets, CODEOWNERS and team
   members need only read access. When GitHub refuses the protection (403, or 404 without "not protected") the rulesets
   decide, a required team named only by id is looked up by name (`GET /teams/<id>`), and the row's detail shows that the
   protection was not read beside GitHub's own merge box (GraphQL `reviewDecision`, `mergeStateStatus`, review requests).
@@ -192,6 +194,64 @@ times, writes nothing). The dialog shows one card per batch, each with its own C
   `up == 0`), said to be a suggestion since Studio cannot read the team's alert configuration; and the body's rollout
   section quoted as written ("PR text"). The rows show these as badges. None: "Before going live: none". The brief
   ends by saying these come from the diffs and the pull requests: the release agent may arrange them, never add any.
+
+## Follow-through (PR 跟進)
+
+Off by default (settings: "Follow-through"); on, after every refresh each watched open pull request is read again by
+`src/pr-watch-follow.ts` `shepherd` and its branch decides one Inbox card, a Task of the internal workflow `pr-follow`:
+
+- **Branches**, by rules: `code-change` (a reviewer's change request read as a code change, failing evidence, failing
+  CI: back to the author, no card), `needs-evidence` → **Ask QA to test**, `evidence-covers-head` → **Ask reviewers to
+  look again** (as soon as evidence covers the head while a reviewer's verdict is on an older head, or predates the
+  evidence they asked for; no "stalled N hours" setting), `missing-approvals` → **Ask for approval**, `mergeable` →
+  **Ready to merge**, `ask` → a card asking the captain. Draft, unread, required reviewer, dependency, environment,
+  CI running: wait, no card.
+- **A reviewer's comment** (the latest review's body and its inline comments) is classified by rules into code change,
+  needs evidence, question or not blocking, always with the sentence quoted. No quote, two kinds, or a question → the
+  captain is asked, and the answer is kept for that comment. *Deviation from the design*: Studio has no one-shot model
+  step behind a card today, so the classifier is rules with quotes, not a model; a model classifier can replace
+  `classifyNote` without changing anything else.
+- **Mergeable is not built in**: the next step "ready" (the base branch's rulesets and branch protection all met —
+  count, required teams, code owners, approval after the last push, stale dismissal — the required reviewers, the
+  evidence when a source is set) and CI passing (or none configured). Rules that cannot be read ask; never satisfied.
+- **The cards** (public/pr-follow.js, the Inbox's own layout): title, lead quoting the reviewer, done / missing, who to
+  send to (a GitHub team's members read from GitHub, pick one, remembered per team), the editable message (QA requests
+  cite only routes the diff adds, `<placeholders>` for the rest), Copy, Copy and DM, Send to a channel, the history
+  (what was sent to whom and when, what happened on GitHub), Nudge again (the short version for the same person),
+  Snooze until (the card leaves the Inbox until then), and the options. An option that waits (A: "I sent it") is
+  recorded and keeps the card; the others answer it. A card closes by itself when GitHub shows what it waits for
+  (Studio answers it as `studio (GitHub)`); an approve card that is partly met keeps only the groups still missing.
+  The row on the page links to its open card. Firstmate cannot answer one.
+- **Push before voiding approvals**: `POST /api/prs/push-check {pr, quote?, by?, tests?}` (for a worker round about to
+  push): when the rules dismiss stale approvals and approvals exist, a card "this push voids N approvals"; when the
+  rules ask for an approval of the latest push (none voided), a card "this push needs a new approval of its head"
+  (with both rules on, the voids card adds that the new head needs an approval by someone other than the pusher);
+  either with push / don't push (with a reason) / follow-up pull request. `quote` and `by` are the
+  comment the change answers and who wrote it; without them Studio takes the latest reviewer comment it read as a code
+  change, and its author. `tests: true` is the round's own result (its tests passed), shown under done; Studio does not
+  guess it. One push card per pull request and head: asking again returns the one waiting.
+- **Why PR follow-through is a hook node**: a check node can route by a check's outcome (`args.route_from`), but its
+  outcome comes from checks that judge a round's work; the follow-through reads the Pull requests page's row (no check
+  produces it) and picks one of five branches, which is what a hook action's outcome is. A deliberate deviation from the
+  design's "check · pr.shepherd".
+- **Studio never** @-mentions on GitHub, re-requests a review, merges a pull request it did not open, or sends anything
+  without the captain's click. It writes nothing to GitHub here.
+- **The github-review workflow** shows the same nodes (PR follow-through `pr.shepherd`, the three cards, Follow to
+  production `pr.track-deploy`, Release brief). That workflow is held (draft-only, docs/retro/2026-10-17-github-review-held.md):
+  its runtime activation (rebuilt from code-firstmate) is what runs these nodes inside Studio's own coding Tasks; until
+  then the follow-through runs for watched pull requests through `pr-follow`.
+
+## Sending
+
+Settings: **send targets** (name, tool — Slack, Lark, DingTalk, Microsoft Teams, Discord, generic JSON —, incoming
+webhook, what it is used for by default, Send a test). The webhook is a secret: it lives in `state.json` (0600) under
+`hooks`, never in a repository, and the page sees it masked; typing a new one replaces it. https on the tool's own host
+only (`CREW_WEBHOOK_LOOPBACK=1` lets tests use a loopback stub). Sending posts the text once, the GitHub logins of
+contacts turned into Slack mentions. **Contacts**: GitHub account → Slack member id, Microsoft Teams or email address.
+**DM** (copy and open): the message is copied (Clipboard API, `execCommand` fallback) and the server builds the link from
+the contact only — `slack://user?team=<workspace>&id=<member>` (paste needed), a Teams chat with the message filled in,
+or `mailto:` with subject and body; no contact, copy only. The page opens only those three kinds of address, never one
+from a pull request, comment or message. A bot that sends DMs itself is not in this version.
 
 ## Next step and who it waits on
 
@@ -319,7 +379,9 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     the × on touch screens, Try again after a failed load, focus kept across a live update, the row menu copying one row.
 14. Review round 3 (tests/pr-watch.ts "round 3"): CODEOWNERS past the caps reads unreadable; removing the block keeps
     paragraph breaks (LF and CRLF) and round-trips an appended block byte for byte; after the last push, an older-commit
-    approval, the author's and the head committer's do not count and someone else's on the head does.
+    approval counts toward the number unless stale approvals are dismissed, the head committer's (the inferred pusher)
+    counts toward the number but never meets the latest-push requirement, the author's never counts, and someone else's on
+    the head meets it (corrected in review round 8).
 15. Review round 4 (tests/pr-watch.ts "round 4", the UI suite): after the last push with a count of 0 still needs one
     approval; CODEOWNERS work bounded per row; the ETag cache bounded by bytes; the environment template matched as
     literal text; the block on GitHub refused unless Depends-on lines naming pull requests; a normalised body still a

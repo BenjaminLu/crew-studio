@@ -102,8 +102,26 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 [data-prs-brief-bar]{margin:0 0 12px}
 .pw-target .pw-check a{overflow-wrap:anywhere}
 .pw-unit{overflow-wrap:anywhere}
+.pw-envrow.pw-sendrow{grid-template-columns:minmax(90px,140px) 130px minmax(160px,1fr) minmax(120px,150px) auto auto}
+.pw-envrow.pw-contactrow{grid-template-columns:minmax(120px,1fr) 140px minmax(180px,1.4fr) auto}
+@media (max-width:760px){.pw-envrow.pw-sendrow,.pw-envrow.pw-contactrow{grid-template-columns:minmax(0,1fr)}}
+.pw-next .pw-followcta{margin-top:4px;width:max-content;text-decoration:none}
 /* on a narrow screen the tabs wrap: the separator would dangle at a line end, so the two merged tabs start a line instead */
 @media (max-width:760px){.pw-sep{flex-basis:100%;height:0;width:auto;margin:0;background:none}}
 /* a release-brief item: badge, text and source on one line (the text takes the room, the source stays beside it) */
 .pw-propbox .pw-check{flex-wrap:nowrap;align-items:baseline}.pw-optext{flex:1 1 auto;min-width:0}.pw-propbox .pw-check>a{flex:none;max-width:40%}
 @media (max-width:760px){.pw-propbox .pw-check{flex-wrap:wrap}.pw-propbox .pw-check>a{max-width:100%}}
+/* the settings rows: at phone width the × stays at the row's top right instead of wrapping onto its own line */
+@media (max-width:760px){.pw-envrow{position:relative;padding-right:34px}.pw-envrow>.pw-x{position:absolute;top:8px;right:6px}}
+/* the row detail's follow-through: its columns start at the top (a list is not stretched to the card next to it) */
+[data-prs-flow]{align-items:start}[data-prs-flow]>.card{align-content:start}
+/* the card inside the row dialog: no second padding at phone width */
+@media (max-width:760px){[data-prs-flow]>.card{padding:10px}.pw-followcard .icard{padding:0}}
+/* the card inside the row dialog stays inside its column at any width: its rows wrap instead of pushing out */
+[data-prs-flow]>.card,.pw-followcard,.pw-followcard .icard{min-width:0;max-width:100%}
+.pw-followcard .pw-check{flex-wrap:wrap}.pw-followcard .pw-check .x-grow{flex:1 0 0}.pw-followcard .ba{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))}
+.pw-followcard .actions{flex-wrap:wrap}.pw-followcard .opts{grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr))}
+/* the next-step cell never runs under the next column: its words and its card button wrap inside it */
+.pw-next b{overflow-wrap:anywhere}.pw-next .pw-followcta{max-width:100%;width:auto!important;white-space:normal!important}.pw-row>[role="cell"]{min-width:0}
+/* the card button's "new" mark stays one word on one line */
+.pw-next .pw-followcta .pw-new{white-space:nowrap;flex:none}

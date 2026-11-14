@@ -64,11 +64,13 @@ try {
     ok(!firstIs17 && await p.evaluate(() => !!document.activeElement?.closest('[data-prs-row="northwind/checkout-api#17"]') && document.activeElement?.hasAttribute('data-prs-ev-setup')), 'closing settings after a live update focuses the Set up of the row that opened it, not the first one alike', await p.evaluate(() => document.activeElement?.closest('[data-prs-row]')?.dataset.prsRow)); }
   ok((await api('/api/prs/settings', { settings: fixtureSettings })).status === 200, 'settings saved (evidence source, required reviewer, four environments, groups)');
   await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
+  // twelve rows may already be on screen from before the settings: wait for the read that uses them (the evidence source)
+  await p.waitForSelector(`[data-prs-row="northwind/checkout-api#16"] [data-prs-next="failed"]`, { timeout: 20000 }).catch(() => {});
   ok(await p.locator('[data-prs-row]').count() === 12, 'the refresh button reads GitHub: twelve rows');
   const cols = await p.locator('.pw-row.h [role="columnheader"]').allInnerTexts();
   ok(JSON.stringify(cols.slice(1)) === JSON.stringify(['#', 'Pull request', 'Next step · waits on', 'Missing', 'CI', 'Depends on', 'Test evidence', 'Environments', 'Reviews', 'Issues', 'Group']), 'the columns, in order', JSON.stringify(cols));
   const next = async (id) => p.locator(`[data-prs-row="${id}"] [data-prs-next]`).getAttribute('data-prs-next');
-  ok(await next('northwind/checkout-api#16') === 'failed' && await next('northwind/checkout-api#19') === 'ready' && await next('northwind/checkout-api#11') === 'draft', 'the next step per row (failed evidence is a fix, never ready)');
+  ok(await next('northwind/checkout-api#16') === 'failed' && await next('northwind/checkout-api#19') === 'ready' && await next('northwind/checkout-api#11') === 'draft', 'the next step per row (failed evidence is a fix, never ready)', JSON.stringify([await next('northwind/checkout-api#16'), await next('northwind/checkout-api#19'), await next('northwind/checkout-api#11'), await next('northwind/checkout-api#17')]));
   ok((await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-next]').innerText()).startsWith('Test only the change since '), 'evidence for an older head: test only the change since');
   ok(await p.locator('#navPrs').innerText() === '3', 'the sidebar count: rows waiting on approval or ready to merge', await p.locator('#navPrs').innerText());
   const tab = async (k) => (await p.locator(`[data-prs-tab="${k}"] .tb-count`).innerText()).trim();
@@ -154,6 +156,8 @@ try {
   ok(/^On hold: not all reviews or comments read/.test(held) && !/Ready/.test(held), 'a row held because its reviews could not be read says on hold, never ready', held);
   gh.knobs.reviewsFail = null; await p.click('[data-prs-refresh]');
   await p.waitForFunction(() => document.querySelector('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]')?.dataset.prsNext === 'failed', null, { timeout: 20000 });
+  { const spill = await p.evaluate(() => [...document.querySelectorAll('[data-prs-row] .pw-next')].flatMap((c) => { const r = { right: Math.min(c.getBoundingClientRect().right, c.nextElementSibling.getBoundingClientRect().left) }; return [c, ...c.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > r.right + 1 || e.scrollWidth > e.clientWidth + 1).map((e) => `${c.closest('[data-prs-row]').dataset.prsRow}: ${e.textContent.slice(0, 30)}`); }));
+    ok(!spill.length, 'at 1440 the next step and its card button stay inside their column (never under Missing)', JSON.stringify(spill)); }
   const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
   ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all twelve columns fit without scrolling', JSON.stringify(fit));
   ok(await p.locator('[data-prs-tab][role="tab"], [data-prs-tab][aria-selected]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
