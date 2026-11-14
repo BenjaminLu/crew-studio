@@ -5,6 +5,7 @@
 //   POST /api/prs/refresh          read GitHub now (the page asks on open; a 5-minute timer asks too)
 //   POST /api/prs/watch {url}      a github.com repository or pull request address; POST /api/prs/unwatch {repo}|{pr}
 //   POST /api/prs/restore {pr?}    bring excluded pull requests back
+//   POST /api/prs/ship/mark {prs}  mark merged pull requests as in production by hand; POST /api/prs/ship/undo {pr} takes one back
 //   POST /api/prs/settings         which pull requests, evidence sources, required reviewers, environments, groups
 //   POST /api/prs/order {order}    the captain's order; POST /api/prs/deps {pr,on}; POST /api/prs/group {pr,group}
 //   POST /api/prs/accept           take the proposal (order and dependencies) as Studio's record
@@ -132,6 +133,9 @@ export type State = { schema: 1; settings: Settings; watch: { repos: string[]; p
   shipped: Record<string, { id: string; mergedAt: string; liveAt: string | null }>; retired: string[];
   /** the retired ones a merged revert cancelled (key: the id in lower case) → the reverting pull request's id */
   reverted?: Record<string, string>;
+  /** merged pull requests the captain marked as in production by hand (key: the id in lower case), for teams whose
+   *  production version Studio cannot read; dropped when the environments confirm production. Absent in older files. */
+  manual?: Record<string, { id: string; at: string }>;
   /** the follow-through: each open card (by run), the team member picked for a team, the heads the captain said not to
    *  test or not to merge yet, and the comments the captain classified */
   follow: { open: Record<string, FollowOpen>; picks: Record<string, string>; skip: Record<string, string>; hold: Record<string, string>; classified: Record<string, F.NoteKind> };
@@ -143,7 +147,7 @@ export type State = { schema: 1; settings: Settings; watch: { repos: string[]; p
 type SlackCheck = { id: string; team: string | null; name: string; ok: boolean; problem: F.L | null; at: string };
 type FollowOpen = { run: string; card: string | null; pr: string; kind: FollowKind; head: string; at: string };
 export type FollowKind = "qa" | "nudge" | "approve" | "merge" | "ask" | "push";
-const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {}, shipped: {}, retired: [], follow: { open: {}, picks: {}, skip: {}, hold: {}, classified: {} }, hooks: {}, botToken: null, slackChecks: {} });
+const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {}, shipped: {}, retired: [], manual: {}, follow: { open: {}, picks: {}, skip: {}, hold: {}, classified: {} }, hooks: {}, botToken: null, slackChecks: {} });
 type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" } | { k: "ci"; state: string };
 export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
@@ -298,12 +302,17 @@ export function createPrWatch(d: PrWatchDeps) {
       if (state.reverted?.[k] === by && state.retired.includes(k)) continue;
       delete state.shipped[k]; state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000);
       state.reverted = Object.fromEntries([...Object.entries(state.reverted ?? {}).filter(([x]) => x !== k), [k, by]].slice(-500)); changed = true; }
-    for (const r of sn.merged ?? []) { const k = r.id.toLowerCase(), cur = state.shipped[k], st = R.shipState(r.envs), liveAt = st.live ? cur?.liveAt ?? sn.at : null;
+    const manual = state.manual ??= {};
+    for (const r of sn.merged ?? []) { const k = r.id.toLowerCase(), cur = state.shipped[k], st = R.shipState(r.envs), mk = manual[k];
+      // marked by hand and now confirmed by the environments: an ordinary live row, still counted from the (earlier) mark
+      if (st.live && mk) { delete manual[k]; changed = true; }
+      const liveAt = st.live || mk ? cur?.liveAt ?? mk?.at ?? sn.at : null;
       if (!cur || cur.liveAt !== liveAt || cur.mergedAt !== r.mergedAt) { state.shipped[k] = { id: r.id, mergedAt: r.mergedAt, liveAt }; changed = true; } }
     for (const [k, v] of Object.entries(state.shipped)) {
       const sp = R.splitId(v.id), followed = (sn.merged ?? []).some((r) => r.id.toLowerCase() === k) || (!!sp && (has(state.watch.repos, sp.repo) || has(state.watch.prs, v.id)));
       if (v.liveAt && now() - Date.parse(v.liveAt) > R.LIVE_KEEP_MS) { delete state.shipped[k]; state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000); changed = true; }
       else if (!followed) { delete state.shipped[k]; changed = true; } }
+    for (const k of Object.keys(manual)) if (!state.shipped[k]) { delete manual[k]; changed = true; } // dropped or no longer followed
     if (changed) write(stateFile, state);
   }
 
@@ -646,13 +655,16 @@ export function createPrWatch(d: PrWatchDeps) {
     const projects = (() => { try { return new Projects(d.dataDir).nativeSnapshot().records; } catch { return []; } })();
     const projectOf = (repo: string) => { const p = projects.find((x) => x.github?.repository && eq(x.github.repository, repo)); return p ? { id: p.id, name: p.name || p.id } : null; };
     const retired = new Set(s.retired);
+    const liveOf = (m: MergedRow) => R.shipState(m.envs).live || !!s.manual?.[m.id.toLowerCase()];
     return (sn.merged ?? []).filter((r) => !retired.has(r.id.toLowerCase())).map((r) => {
-      const st = R.shipState(r.envs), liveAt = st.live ? s.shipped[r.id.toLowerCase()]?.liveAt ?? sn.at : null;
+      // a row the captain marked by hand is live until the environments say so themselves (then the mark is dropped)
+      const k = r.id.toLowerCase(), auto = R.shipState(r.envs), mk = auto.live ? undefined : s.manual?.[k];
+      const st = mk ? { ...auto, live: true, waits: null } : auto, liveAt = mk ? mk.at : st.live ? s.shipped[k]?.liveAt ?? sn.at : null;
       const key = Object.keys(s.deps).find((k) => eq(k, r.id)), on = key ? s.deps[key].on : r.deps;
       const { body: _b, ...rest } = r;
       return { ...rest, project: projectOf(r.repo), tab: (st.live ? "live" : "merged") as "live" | "merged", unit: r.repo.split("/")[1],
-        ship: { ...st, liveAt, dropAt: liveAt ? new Date(Date.parse(liveAt) + R.LIVE_KEEP_MS).toISOString() : null },
-        deps: on.map((id) => { const m = (sn.merged ?? []).find((x) => eq(x.id, id)); return { id, state: m ? (R.shipState(m.envs).live ? "live" : "merged") : rowIdsNow().some((x) => eq(x, id)) ? "open" : "other" }; }) };
+        ship: { ...st, liveAt, dropAt: liveAt ? new Date(Date.parse(liveAt) + R.LIVE_KEEP_MS).toISOString() : null, manual: mk ? { at: mk.at } : null },
+        deps: on.map((id) => { const m = (sn.merged ?? []).find((x) => eq(x.id, id)); return { id, state: m ? (liveOf(m) ? "live" : "merged") : rowIdsNow().some((x) => eq(x, id)) ? "open" : "other" }; }) };
     }).filter((r) => !r.ship.dropAt || Date.parse(r.ship.dropAt) > now());
   }
   /** a Slack contact's last check, and whether it still stands: passed, for the member id and workspace set now */
@@ -1305,6 +1317,14 @@ export function createPrWatch(d: PrWatchDeps) {
         if (r.bodyBlock) { state.applied[ak] = { block: r.bodyBlock, on: r.githubDeps ?? [], at: iso() }; state.deps[dk] = { on: r.githubDeps ?? [], by: "github", at: iso() }; }
         else { delete state.applied[ak]; state.deps[dk] = { on: [], by: "github", at: iso() }; }
         save(); return view(); }
+      case "ship/mark": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the merged pull requests to mark as in production");
+        const rows = mergedRows(snap, state), at = iso(), manual = state.manual ??= {};
+        const picked = ids.map((id) => { const r = rows.find((x) => eq(x.id, id)); if (!r || r.tab !== "merged") throw new Error(`${id} is not a merged pull request waiting to go live`); return r; });
+        for (const r of picked) { const k = r.id.toLowerCase(); delete manual[k]; manual[k] = { id: r.id, at }; state.shipped[k] = { id: r.id, mergedAt: r.mergedAt, liveAt: at }; }
+        state.manual = Object.fromEntries(Object.entries(manual).slice(-500)); write(stateFile, state); return view(); }
+      case "ship/undo": { const id = String(b?.pr ?? ""), k = id.toLowerCase(); if (!R.splitId(id)) throw new Error("A pull request is owner/repo#number");
+        if (!state.manual?.[k]) throw new Error(`${id} was not marked as in production by hand (or production now confirms it)`);
+        delete state.manual[k]; if (state.shipped[k]) state.shipped[k].liveAt = null; write(stateFile, state); return view(); }
       case "brief": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the merged pull requests to release"); return await buildBrief(ids); }
       case "apply": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the pull requests to apply");
         const run = await startApply(ids, b?.shortForm === undefined ? state.settings.shortForm : !!b.shortForm); return ({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
