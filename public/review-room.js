@@ -1676,9 +1676,10 @@ const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, 
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
   stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual });
 const onList = () => S.route?.name === "room" && !S.route.arg;
-/** the list read again. Only the zones are drawn again when they are there: the search box stays the same element, a composition in it unbroken */
+/** the list read again. Only the rows are drawn again when they are there (public/list-tools.js ltItems): the search box stays the
+ *  same element, a composition in it unbroken */
 function readList() { if (!RR.list) return; RR.list.fresh = true; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], providers: j.providers || [], fresh: true }; if (!onList()) return;
-  const zones = document.querySelector("[data-room-zones]"); if (!zones || !RR.list.rooms.length) return render(); zones.replaceWith(zonesView(RR.list.rooms)); document.querySelector("[data-room-list]")?.setAttribute("data-room-list", RR.list.rooms.length); }).catch(() => {}); }
+  const list = document.querySelector('[data-lt="room"]'); if (!list?.ltItems || !RR.list.rooms.length) return render(); list.ltItems(RR.list.rooms); document.querySelector("[data-room-list]")?.setAttribute("data-room-list", RR.list.rooms.length); }).catch(() => {}); }
 /** the room list's zones, in order (src/domain/review-room.ts ROOM_ZONES decides which one a room is in) */
 const ZONES = [["waiting", "Waiting for me", "等我看"], ["reviewing", "In review", "審查中"], ["concluded", "Concluded", "已結論"], ["archived", "Archived", "封存"]];
 /** a row's archive or restore button: the captain, on this Mac (a phone reads the list) */
@@ -1691,24 +1692,42 @@ async function setArchived(id, on) { RR.posting.add(`${id}/archive`); rerender()
     if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; if (onList()) readList(); else RR.list.fresh = false; } }
   catch (e) { if (onRoom(id)) RR.err.set(id, e.message); else if (RR.list) RR.list.err = e.message; }
   finally { RR.posting.delete(`${id}/archive`); rerender(); } }
-const roomRow = (x) => h("li", { "data-room-row": x.id },
-  h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, T(x.title, x.titleZh || x.title))), " ",
+const roomRow = (x, mark = (t) => t) => h("li", { "data-room-row": x.id },
+  h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, mark(T(x.title, x.titleZh || x.title)))), " ",
   h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("a turn is running", "有一回合在跑") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
   h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`), archiveBtn(x));
 /** a zone's rooms under their repositories, by name; rooms with none last. A repository's letter case does not split it */
-function repoGroups(rooms) { const by = new Map(); for (const x of rooms) { const k = String(x.repository || "").toLowerCase(); if (!by.has(k)) by.set(k, { name: x.repository, rooms: [] }); by.get(k).rooms.push(x); }
+function repoGroups(rooms, mark) { const by = new Map(); for (const x of rooms) { const k = String(x.repository || "").toLowerCase(); if (!by.has(k)) by.set(k, { name: x.repository, rooms: [] }); by.get(k).rooms.push(x); }
   return [...by.entries()].sort(([a], [b]) => !a - !b || a.localeCompare(b)).map(([k, g]) => h("div", { class: "rr-repo", "data-room-repo": k },
-    h("h4", {}, g.name || T("No repository", "沒有儲存庫")), h("ul", { class: "rr-roomlist" }, g.rooms.map(roomRow)))); }
-/** what the search reads of a room, the same way in both Chinese scripts (i18n.js: opencc-js) */
-const searchable = (s) => (window.crewI18n?.toCN?.(String(s)) ?? String(s)).toLowerCase();
-const matches = (x, q) => { const hay = searchable([x.title, x.titleZh, x.repository, x.id].filter(Boolean).join("\n")); return q.every((w) => hay.includes(w)); };
-/** the zones. Search covers all four, 封存 included (it opens for a search); a zone with no match is left out while searching */
-function zonesView(rooms) { const q = searchable(RR.listQ || "").split(/\s+/).filter(Boolean), shown = q.length ? rooms.filter((x) => matches(x, q)) : rooms;
-  const zones = ZONES.map(([id, en, zh]) => { const inZone = shown.filter((x) => (x.zone || "reviewing") === id), head = [T(en, zh), h("span", { class: "rr-zonecount" }, String(inZone.length))]; if (q.length && !inZone.length) return null;
-    const body = inZone.length ? repoGroups(inZone) : h("p", { class: "faint" }, T("Nothing here.", "這裡沒有審查室。"));
-    if (id !== "archived") return h("section", { class: "rr-zone", "data-room-zone": id }, h("h3", {}, head), body);
-    return h("details", { class: "rr-zone", "data-room-zone": id, open: !!q.length || !!RR.listArchived, ontoggle: (e) => { if (!q.length) RR.listArchived = e.target.open; } }, h("summary", {}, h("h3", {}, head)), body); });
-  return h("div", { "data-room-zones": "" }, q.length && !shown.length ? h("p", { class: "faint", "data-room-nomatch": "" }, T("No room matches.", "沒有符合的審查室。")) : zones); }
+    h("h4", {}, g.name || T("No repository", "沒有儲存庫")), h("ul", { class: "rr-roomlist" }, g.rooms.map((x) => roomRow(x, mark))))); }
+const zoneOf = (x) => x.zone || "reviewing";
+const repoKey = (x) => String(x.repository || "").toLowerCase();
+/** the rooms under the list toolbar (public/list-tools.js). Its search covers all four zones, 封存 included (it opens while
+ *  filtering). Sorted by zone (the default), a page of rooms is drawn in its zones and repositories, each zone counting
+ *  all its matching rooms; sorted by time, as one list */
+function roomsList(rooms) {
+  const zi = (x) => ZONES.findIndex(([id]) => id === zoneOf(x));
+  return window.crewListTools.list({ id: "room", route: "room", title: T("review rooms", "審查室"), noun: ["review room", "審查室"], items: rooms,
+    placeholder: T("Search every zone: title, repository, room…  or type zone:waiting", "搜尋所有區：標題、儲存庫、審查室…  也可以打 zone:等我看"),
+    inputAttrs: { "data-room-search": "", "aria-label": T("Search the review rooms", "搜尋審查室") }, emptyAttrs: { "data-room-nomatch": "" },
+    text: (x) => [x.title, x.titleZh, x.repository, x.id],
+    facets: [{ key: "zone", name: T("Zone", "區"), value: zoneOf, show: (z) => { const r = ZONES.find(([id]) => id === z); return r ? T(r[1], r[2]) : z; } },
+      { key: "repo", name: T("Repository", "儲存庫"), value: (x) => x.repository || null },
+      { key: "state", name: T("State", "狀態"), value: (x) => (x.running ? "running" : x.open ? "open" : "readonly"), show: (k) => ({ running: T("a turn is running", "有一回合在跑"), open: T("open", "開啟中"), readonly: T("read-only", "唯讀") })[k] || k }],
+    sorts: [{ key: "zone", label: T("By zone", "按區"), cmp: (a, b) => zi(a) - zi(b) || (!repoKey(a) - !repoKey(b)) || repoKey(a).localeCompare(repoKey(b)) || String(b.updatedAt).localeCompare(String(a.updatedAt)) },
+      { key: "new", label: T("Newest first", "最新的在上"), cmp: (a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) }],
+    rows: (page, ctx) => {
+      if (ctx.sort !== "zone") return h("div", { "data-room-zones": "" }, h("ul", { class: "rr-roomlist" }, page.map((x) => roomRow(x, ctx.mark))));
+      const zones = ZONES.map(([id, en, zh]) => { const inPage = page.filter((x) => zoneOf(x) === id), all = ctx.matched.filter((x) => zoneOf(x) === id).length;
+        // a zone with nothing in it says so, on the first page of the unfiltered list; otherwise only the zones this page holds
+        if (!inPage.length && (ctx.filtered || ctx.page > 1 || all)) return null;
+        const head = [T(en, zh), h("span", { class: "rr-zonecount" }, String(all))];
+        const body = inPage.length ? repoGroups(inPage, ctx.mark) : h("p", { class: "faint" }, T("Nothing here.", "這裡沒有審查室。"));
+        if (id !== "archived") return h("section", { class: "rr-zone", "data-room-zone": id }, h("h3", {}, head), body);
+        return h("details", { class: "rr-zone", "data-room-zone": id, open: ctx.filtered || !!RR.listArchived, ontoggle: (e) => { if (!ctx.filtered) RR.listArchived = e.target.open; } }, h("summary", {}, h("h3", {}, head)), body); });
+      return h("div", { "data-room-zones": "" }, zones);
+    } });
+}
 routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], providers: j.providers || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (onList()) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) readList();
@@ -1716,9 +1735,7 @@ routes.room = (arg) => {
     return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL or a GitHub directory's.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 或 GitHub 目錄的網址。"),
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
         RR.list.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : rooms.length ? [
-          h("input", { class: "input rr-roomsearch", type: "search", "data-room-search": "", value: RR.listQ || "", placeholder: T("Search every zone: title, repository, room", "搜尋所有區：標題、儲存庫、審查室"), "aria-label": T("Search the review rooms", "搜尋審查室"),
-            oninput: (e) => { RR.listQ = e.target.value; document.querySelector("[data-room-zones]")?.replaceWith(zonesView(RR.list.rooms)); } }),
-          RR.list.err ? h("p", { class: "rr-err", role: "alert", "data-room-list-err": "" }, RR.list.err) : null, zonesView(rooms)] : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
+          RR.list.err ? h("p", { class: "rr-err", role: "alert", "data-room-list-err": "" }, RR.list.err) : null, roomsList(rooms)] : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
       h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null), tutorDefault(),
         h("label", { class: "rr-imgopt" }, h("input", { type: "checkbox", "data-auto-global": "", checked: RR.list?.settings?.autoTeach !== false, onchange: async (e) => { const on = e.target.checked; try { const st = await postJ("/api/review-room/settings", { autoTeach: on }); dropPasteOffers(); if (RR.list) RR.list.settings = st; } catch (er) { PR.err.set("home", er.message); } rerenderAny(); } }),
           h("span", {}, T("Analyse a room by itself when you arrive: opening any review room (from a merge card, a Task, this list) or pasting a pull request starts its full analysis (one paid round on the room's tutor" + LESSON_ROUNDS() + ", with the room's pictures setting; the room and the paste box say which), once per head.", "一進審查室就自動完整分析：從合併卡、任務或這個清單打開任何審查室，或貼上 pull request，都會開始完整分析（用房間的導師付費一回合" + LESSON_ROUNDS() + "，圖片依房間設定；審查室和貼上框會先說明），每個 head 只一次。"))))); }

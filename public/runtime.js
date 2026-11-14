@@ -271,8 +271,8 @@ function workflowRenameDialog(w,done){
   dlg.addEventListener("cancel",event=>{if(pending){event.preventDefault();return;}dlg.remove();});document.body.append(dlg);dlg.showModal();input.select();
 }
 function workflowRenameButton(w,done){const at=()=>typeof w==="function"?w():w;return h("button",{class:"btn sm","data-workflow-rename":at().id,onclick:e=>{e.preventDefault();e.stopPropagation();workflowRenameDialog(at(),done);}},T("Rename","改名"));}
-function workflowCatalogCard(w,held=false){
-  const link=h("a",{class:"rt-wf-link",href:`#/workflows/${w.id}`,[held?"data-wf-held":"data-wf"]:w.id},h("div",{class:"rt-wf-h"},h("b",{"data-wf-name":w.id},w.displayName||w.name),h("span",{class:"vbadge"},`v${w.version}`)),h("p",{class:"faint"},(w.description||"").slice(0,220)),held?h("span",{class:"badge neutral","data-wf-held-reason":w.id},T(w.held.en,w.held.zh)):h("span",{class:"faint"},T(`${w.nodes} nodes · ${w.versions} versions`,`${w.nodes} 個節點 · ${w.versions} 個版本`)));
+function workflowCatalogCard(w,held=false,mark=(t)=>t){
+  const link=h("a",{class:"rt-wf-link",href:`#/workflows/${w.id}`,[held?"data-wf-held":"data-wf"]:w.id},h("div",{class:"rt-wf-h"},h("b",{"data-wf-name":w.id},mark(w.displayName||w.name)),h("span",{class:"vbadge"},`v${w.version}`)),h("p",{class:"faint"},(w.description||"").slice(0,220)),held?h("span",{class:"badge neutral","data-wf-held-reason":w.id},T(w.held.en,w.held.zh)):h("span",{class:"faint"},T(`${w.nodes} nodes · ${w.versions} versions`,`${w.nodes} 個節點 · ${w.versions} 個版本`)));
   return h("div",{class:"card rt-wf"},link,h("div",{class:"actions"},workflowRenameButton(w),w.personal?workflowTrashButton(w):null));
 }
 
@@ -304,10 +304,23 @@ function viewWorkflows(arg) {
   const list = Array.isArray(WF.list) ? WF.list : [];
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Workflows", "流程")), h("p", {}, T("Studio's workflows. Open one to see and edit its graph; every save is a new version, and tasks keep the version they started on.", "Studio 的流程。打開一個就能看到並編輯它的流程圖；每次儲存都是新版本，進行中的任務維持它開始時的版本。"))), h("a",{class:"btn",href:"#/first-workflow","data-first-workflow-open":""},T("First workflow tutorial","第一個流程教學")),h("button",{class:"btn","data-package-import":"",onclick:()=>packageDialog()},T("Import package","匯入套件")),h("button",{class:"btn primary","data-wf-new":"1",onclick:newWorkflow},T("New workflow","新增流程"))),
     WF.list === "loading" || WF.list === null ? h("div", { class: "skel", style: "height:160px" }) :
-    h("div", { class: "rt-cards" },list.map(w=>workflowCatalogCard(w))),
+    workflowsList(list),
     Array.isArray(WF.list)&&(WF.held||[]).length?h("div",{class:"rt-cards","data-wf-held-list":"1"},WF.held.map(w=>workflowCatalogCard(w,true))):null,
     savedPackages(),
     h("details",{"data-workflow-trash-list":"",class:"card x-pad",open:WF.trashOpen||null,ontoggle:e=>{WF.trashOpen=e.target.open;}},h("summary",{},T("Trash","垃圾桶")+` (${(WF.trash||[]).length})`),...(WF.trash||[]).map(w=>h("div",{class:"rt-row","data-trashed-workflow":w.id},h("a",{href:`#/workflows/${w.id}`},(w.displayName||w.name)+` · v${w.version}`),workflowTrashButton(w,true)))));
+}
+
+/** the catalog under the list toolbar (public/list-tools.js): name and description, built in or yours */
+function workflowsList(list) {
+  const kind = (w) => (w.personal ? "mine" : "builtin");
+  return window.crewListTools.list({ id: "workflows", route: "workflows", title: T("workflows", "流程"), noun: ["workflow", "流程"], items: list,
+    placeholder: T("Search names, descriptions…  or type kind:mine", "搜尋名稱、說明…  也可以打 kind:我的"),
+    text: (w) => [w.displayName, w.name, w.id, w.description],
+    facets: [{ key: "kind", name: T("Source", "來源"), value: kind, show: (v) => (v === "mine" ? T("Mine", "我的") : T("Built in", "內建")) }],
+    sorts: [{ key: "title", label: T("Name", "名稱"), cmp: (a, b) => String(a.displayName || a.name).localeCompare(String(b.displayName || b.name), lang) },
+      { key: "new", label: T("Recently changed", "最近改過"), cmp: (a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) }],
+    none: () => h("div", { class: "card x-pad faint" }, T("No workflows yet.", "還沒有流程。")),
+    rows: (page, ctx) => h("div", { class: "rt-cards" }, page.map((w) => workflowCatalogCard(w, false, ctx.mark))) });
 }
 
 function viewEditor(arg) {
@@ -859,14 +872,11 @@ window.crewPrefillFirstTask = () => {
 };
 function viewRuns() {
   if (!RN.list) { RN.list = "loading"; RN.startOptions = {}; Promise.all([api(`/api/wruns${RN.archived ? "?archived=1" : ""}`), api("/api/wf")]).then(([r, w]) => { setWorkflowNames(w.names); RN.list = r.runs; RN.cards = r.cards; RN.wfs = w.workflows; rerender(); }).catch(() => { RN.list = []; rerender(); }); }
-  // #/runs?project=<id>: only that project's Tasks (studio: the Tasks in no project), as /api/tasks?project= lists them
-  const pf = S.route?.query?.get("project") || null;
-  if (pf && (RN.pf !== pf || RN.pfArchived !== !!RN.archived || RN.pIds === undefined)) { RN.pf = pf; RN.pfArchived = !!RN.archived; RN.pIds = null;
-    api(`/api/tasks?project=${encodeURIComponent(pf)}${RN.archived ? "&archived=1" : ""}`).then((x) => { if (RN.pf === pf) { RN.pIds = new Set((x.tasks || []).map((t) => t.id)); rerender(); } }).catch(() => { RN.pIds = new Set(); rerender(); }); }
-  if (!pf) { RN.pf = null; RN.pIds = undefined; }
-  // the Agent rounds panel below (public/transcripts.js) follows the same filter
-  window.crewTaskFilter = () => (RN.pf ? RN.pIds || null : null); // null while the project's Task ids load
-  const runs = (Array.isArray(RN.list) ? RN.list.slice().reverse() : []).filter((r) => !pf || (RN.pIds && RN.pIds.has(r.id)));
+  // the toolbar's filter (public/list-tools.js; #/runs?project=<id> is its project facet). The Agent rounds panel below
+  // (public/transcripts.js) follows it: undefined, no filter; null, the list is still loading; else the matching Task ids
+  window.crewTaskFilter = () => (RN.filterIds === undefined ? undefined : Array.isArray(RN.list) ? RN.filterIds : null);
+  if (!Array.isArray(RN.list)) RN.filterIds = runsFiltered() ? null : undefined;
+  const runs = Array.isArray(RN.list) ? RN.list.slice().reverse() : [];
   // the form keeps what was typed across re-renders (the list loads, a run moves)
   const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", "data-unsent-owner": "start-form", oninput: (e) => { RN.draft = e.target.value; } });
   text.value = RN.draft || "";
@@ -886,17 +896,49 @@ function viewRuns() {
         }
         const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); window.pageDirty?.clean(); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
       catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), startParamInputs(wf.value), msg),
-    // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
-    h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
-    pf ? h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${pf}`, `專案：${pf}`)),
-      pf === "studio" ? null : h("a", { href: `#/project/${encodeURIComponent(pf)}` }, T("Open the project", "開啟專案")), h("a", { href: "#/runs" }, T("Show all tasks", "顯示全部任務"))) : null,
-    RN.list === "loading" || RN.list === null || (pf && !RN.pIds) ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
-      h("span", { class: "mono" }, r.id), h("b", { "data-task-title": r.id }, window.crewLan?.shownTitle?.(r.id, r.title) ?? r.title), h("span", { class: "vbadge" }, `${wfName(r.workflow)} v${r.version}`),
+    // one word per state (public/runstate.js); archived runs only with "Show archived" (in the toolbar's row, right above the list), each with Unarchive
+    RN.list === "loading" || RN.list === null ? [archivedToggle(), h("div", { class: "skel", style: "height:120px" })] : runsList(runs));
+}
+const runProjectName = (v) => v === "studio" ? T("No project (Studio)", "無專案（Studio）") : (window.crewProjects?.state?.side?.projects || []).find((p) => p.id === v)?.name || v;
+/** a toolbar filter in the URL: a search or a facet (the default 30-day window is not a filter) */
+const runsFiltered = () => { const q = S.route?.query; return !!q && ["q", "status", "workflow", "project", "old"].some((k) => q.has(k)); };
+/** a Task still in flight is never hidden by the 30-day window */
+const runLive = (r) => ["queued", "running", "waiting", "paused"].includes(r.status);
+const projectFilterRow = (pf) => !pf ? null : h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${runProjectName(pf)}`, `專案：${runProjectName(pf)}`)),
+  pf === "studio" ? null : h("a", { href: `#/project/${encodeURIComponent(pf)}` }, T("Open the project", "開啟專案")), h("a", { href: "#/runs?" }, T("Show all tasks", "顯示全部任務")));
+const archivedToggle = () => h("label", { class: "lt-check rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存"));
+function runsList(runs) {
+  const words = {}, pfBox = h("div", { "data-project-filter-box": "" });
+  const list = window.crewListTools.list({ id: "runs", route: "runs", title: T("tasks", "任務"), noun: ["task", "任務"], items: runs, extra: archivedToggle(),
+    placeholder: T("Search titles, task ids, workflows, projects…  or type status:waiting", "搜尋標題、任務 id、流程、專案…  也可以打 status:等你處理"),
+    text: (r) => [r.title, window.crewLan?.shownTitle?.(r.id, r.title), r.id, r.workflow, wfName(r.workflow), String(r.request || "").slice(0, 400), runProjectName(r.project || "studio")],
+    facets: [{ key: "status", name: T("Status", "狀態"), value: (r) => { const st = window.runState(r); words[st.key] = T(st.en, st.tw); return st.key; }, show: (k) => words[k] || k },
+      { key: "workflow", name: T("Workflow", "流程"), value: (r) => r.workflow, show: (v) => wfName(v) },
+      { key: "project", name: T("Project", "專案"), value: (r) => r.project || "studio", show: runProjectName }],
+    sorts: [{ key: "new", label: T("Newest first", "最新的在上"), cmp: (a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) },
+      { key: "old", label: T("Oldest first", "最舊的在上"), cmp: (a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) },
+      { key: "title", label: T("Title", "標題"), cmp: (a, b) => String(a.title || "").localeCompare(String(b.title || ""), lang) }],
+    recent: { days: 30, at: (r) => (runLive(r) ? new Date().toISOString() : r.updatedAt || r.endedAt || r.createdAt) },
+    none: () => h("div", { class: "card x-pad faint", id: "runsEmpty" }, T("No tasks yet.", "還沒有任務。")),
+    rows: (page, ctx) => h("div", { class: "card rt-runs" }, page.map((r) => runRow(r, ctx.mark)), ctx.older),
+    onChange: (v, st) => {
+      const pf = (st.f.project || []).length === 1 && !st.q.trim() ? st.f.project[0] : null;
+      if (pfBox.dataset.pf !== String(pf)) { pfBox.dataset.pf = String(pf); pfBox.hidden = !pf; pfBox.replaceChildren(...[projectFilterRow(pf)].filter(Boolean)); } // an empty box would leave a gap above the toolbar
+      const filtered = !!(st.q.trim() || Object.values(st.f).some((x) => x.length) || st.old);
+      const ids = filtered ? new Set(v.matched.map((r) => r.id)) : undefined;
+      const same = ids === RN.filterIds || (ids && RN.filterIds && ids.size === RN.filterIds.size && [...ids].every((x) => RN.filterIds.has(x)));
+      RN.filterIds = ids; if (!same) window.crewNodesFilterChanged?.();
+    } });
+  return [pfBox, list];
+}
+function runRow(r, mark) {
+  return h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
+      h("span", { class: "mono" }, r.id), h("b", { "data-task-title": r.id }, mark(window.crewLan?.shownTitle?.(r.id, r.title) ?? r.title)), h("span", { class: "vbadge" }, `${wfName(r.workflow)} v${r.version}`),
       // the state and the archived marker read together; the foot says where the run is and holds Unarchive
       h("span", { class: "rt-state" }, window.runStateBadge(r), r.childRun ? h("span", {class:"faint"}, T(`Execution: ${r.childRun}`,`執行任務：${r.childRun}`)) : null, r.origin?.kind === "external-cli" ? h("span", { class: "badge neutral", "data-run-origin": r.origin.grant }, T(`External CLI ${r.origin.grant}`, `外部 CLI ${r.origin.grant}`)) : null, r.archived ? h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存")) : null,
       r.archived ? h("button", { class: "btn rt-unarchive", type: "button", "data-run-unarchive": r.id, onclick: async (e) => { e.preventDefault(); e.stopPropagation();
         try { await api(`/api/wruns/${r.id}/archive`, { archived: false }); } catch (err) { alert(err.message); } RN.list = null; rerender(); } }, T("Unarchive", "取消封存")) : null),
-      h("div", { class: "rt-foot" }, h("span", { class: "faint rt-where" }, r.current.map((c) => c.waiting === "card" ? T(`Waiting for you at ${c.label || c.node}`, `在「${c.label || c.node}」等你`) : T(`Now: ${c.label || c.node}`, `目前：${c.label || c.node}`)).join(" · ")))))) : h("div", { class: "card x-pad faint", id: "runsEmpty" }, T("No tasks yet.", "還沒有任務。")));
+      h("div", { class: "rt-foot" }, h("span", { class: "faint rt-where" }, r.current.map((c) => c.waiting === "card" ? T(`Waiting for you at ${c.label || c.node}`, `在「${c.label || c.node}」等你`) : T(`Now: ${c.label || c.node}`, `目前：${c.label || c.node}`)).join(" · "))));
 }
 // a timeline line in the captain's words (Simple view): run states as public/runstate.js names them, node steps as plain verbs
 // with the run, a timeline line names a state exactly as the run's own status pill does (an artifact task "Closed without approval")
@@ -1124,7 +1166,9 @@ async function loadRun(v) { if (!v) return; try { v.r = await api(`/api/tasks/${
 live.listeners.add((t, d) => {
   if (t === "wrun" && d.deleted) { RN.list = null; if (S.route?.name === "run" && RN.view?.id === d.id) { RN.view = null; location.hash = "#/runs"; return; } }
   if (S.route?.name === "run" && RN.view && (d.id === RN.view.id || d.run === RN.view.id)) { clearTimeout(RN.t); RN.t = setTimeout(() => loadRun(RN.view), 150); }
-  if (S.route?.name === "runs" && t === "wrun") { clearTimeout(RN.lt); RN.lt = setTimeout(() => { RN.list = null; render(); }, 300); }
+  // the list is read again behind the page and drawn when the captain is not typing (app.js soft): the toolbar's search
+  // box is never replaced under a composition, and the page never flashes back to its skeleton
+  if (S.route?.name === "runs" && t === "wrun") { clearTimeout(RN.lt); RN.lt = setTimeout(() => { const archived = !!RN.archived; api(`/api/wruns${archived ? "?archived=1" : ""}`).then((r) => { if (!Array.isArray(RN.list) || archived !== !!RN.archived) return; RN.list = r.runs; RN.cards = r.cards; if (S.route?.name === "runs" && !window.crewListTools?.feed("runs", r.runs.slice().reverse())) soft(); }).catch(() => {}); }, 300); }
 });
 // leaving a page drops what it loaded, so coming back shows fresh data
 addEventListener("hashchange", () => { if (!/^#\/(runs|tasks)(\/|$)/.test(location.hash)) RN.list = null; if (!/^#\/(run\/|tasks\/R-\d+)/.test(location.hash)) RN.view = null;

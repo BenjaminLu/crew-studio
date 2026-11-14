@@ -1,0 +1,36 @@
+/* the list toolbar (public/list-tools.js): search, facets, sort, active filters, paging. Made of the shared .input / .btn /
+   .chip / .select; these rules are its only own styles (the frozen prototype's). */
+.lt{display:grid;gap:8px;margin:0 0 10px}
+.lt-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0}
+.lt-q{position:relative;flex:1 1 320px;min-width:0;display:flex;align-items:center}
+.lt-q>.ic{position:absolute;left:10px;color:var(--text-3);pointer-events:none}
+.lt-q input{width:100%;padding-left:32px;padding-right:34px}
+.lt-kbd{position:absolute;right:8px;font:500 11px var(--f-mono);color:var(--text-3);border:1px solid var(--border-strong);border-radius:4px;padding:0 5px;background:var(--surface-2)}
+.lt-sug{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:20;padding:6px;display:grid;gap:2px}
+.lt-sug[hidden]{display:none}
+.lt-facet[hidden]{display:none}
+/* the "/" hint makes room for the search field's own clear button once something is typed */
+.lt-q input:not(:placeholder-shown)~.lt-kbd{display:none}
+.lt-sug button{display:flex;justify-content:space-between;gap:8px;border:0;background:none;text-align:left;padding:6px 8px;border-radius:6px;font-size:13px;color:var(--text);cursor:pointer}
+.lt-sug button:hover,.lt-sug button:focus-visible{background:var(--surface-2)}
+.lt-facet{position:relative}
+.lt-pop{position:absolute;top:calc(100% + 4px);left:0;z-index:20;width:260px;max-width:calc(100vw - 32px);padding:8px;display:grid;gap:6px;max-height:320px;overflow:auto}
+.lt-pop input[type=search][hidden]{display:none}
+.lt-opts{display:grid;gap:2px}
+.lt-pop label{display:flex;gap:8px;align-items:center;font-size:13px;padding:3px 4px;border-radius:6px;min-width:0}
+.lt-pop label>span:not(.num){min-width:0;overflow-wrap:anywhere}
+.lt-pop label:hover{background:var(--surface-2)}
+.lt-pop .num{margin-left:auto;color:var(--text-3);font-size:12px}
+.lt-active{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px}
+.lt-active .chip{display:inline-flex;gap:6px;align-items:center}
+.lt-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-top:10px;font-size:13px}
+.lt-foot[hidden]{display:none}
+.lt-pages{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.lt-pages button{min-width:34px}
+.lt-pages button[aria-current="page"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-text)}
+.lt-hidden{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:var(--text-2);padding:8px 14px;border-top:1px solid var(--border);background:var(--surface-2)}
+.lt-mark{background:color-mix(in srgb,var(--warn) 22%,transparent);color:inherit;border-radius:3px;padding:0 1px}
+.lt-x{display:inline-grid;place-items:center;width:22px;height:22px;border:0;border-radius:5px;background:none;color:var(--text-3);padding:0;cursor:pointer;flex:none}
+.lt-x:hover,.lt-x:focus-visible{background:var(--surface-3);color:var(--text)}.lt-x .ic{width:13px;height:13px}
+.lt-check{display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap}
+.lt-small{font-size:12px}
