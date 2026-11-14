@@ -53,6 +53,32 @@ try {
   ok(!gh.calls.some((c) => c.path.includes("/commits/") && c.path.includes(gh.data.head(gh.data.find("northwind/checkout-api", 21)!))), "a merged row's environments are read at its merge commit, never its old head");
   ok(gh.calls.some((c) => c.path.startsWith("/repos/northwind/checkout-api/pulls?state=closed")), "the closed pull requests are read from GitHub's first page");
   ok(!gh.unknown.length, "every GitHub request was one the fixture knows", JSON.stringify(gh.unknown));
+  // ---------- what each asks for before it goes live, and the release brief ----------
+  const kinds = (r: any) => r.ops.map((o: any) => `${o.kind}${o.names?.length ? `:${o.names.join("|")}` : ""}${o.metric ? `:${o.metric.name}` : ""}`).join();
+  ok(kinds(r21) === "secret:LIMITS_SECRET,metric:trades_rejected_total,rollout" && kinds(r22) === "migration", "a merged row carries its items: a newly read secret, a metric, its rollout section; a migration", `${kinds(r21)} / ${kinds(r22)}`);
+  ok(r21.ops.every((o: any) => o.url.startsWith("https://github.com/northwind/checkout-api/")) && r21.ops.find((o: any) => o.kind === "metric").url.endsWith(`/blob/${r21.mergeSha}/src/metrics.go#L11`), "each item links to its file and line at the merge commit");
+  let br = await call("/api/prs/brief", { prs: ["northwind/checkout-api#22"] });
+  const tag18 = gh.data.head(gh.data.find("northwind/checkout-api", 18)!).slice(0, 12);
+  ok(br.status === 200 && br.body.batches.length === 2 && br.body.batches[0].prs.map((p: any) => p.id).join() === "northwind/checkout-api#21" && br.body.batches[0].added[0]?.id === "northwind/checkout-api#21" && br.body.batches[0].added[0].for === "northwind/checkout-api#22", "selecting 22 alone: 21, which it depends on, is added to a first batch with the reason", JSON.stringify(br.body).slice(0, 400));
+  const l1 = br.body.batches[0].units[0].lines[0], l2 = br.body.batches[1].units[0].lines[0];
+  ok(l1.repository === "northwind/infra" && l1.path === "deploy/prod.yaml" && l1.before === `image: registry.example/checkout:${tag18}` && l1.after === "image: registry.example/checkout:v1.3.0", "batch 1: the line in the production file, old tag → the newest tag that has 21 and not 22 (22 goes later)", JSON.stringify(l1));
+  ok(l2.before === "image: registry.example/checkout:v1.3.0" && l2.after === "image: registry.example/checkout:v1.4.0" && br.body.batches[1].forced[0]?.on === "northwind/checkout-api#21", "batch 2 starts from batch 1's tag; v1.4.1 is newer but its CI failed, so v1.4.0", JSON.stringify(l2));
+  ok(br.body.batches[1].ops.some((o: any) => o.kind === "migration") && br.body.batches[0].ops.some((o: any) => o.kind === "metric"), "each batch carries its own pull requests' items");
+  br = await call("/api/prs/brief", { prs: ["northwind/checkout-api#21"] });
+  ok(br.body.batches.length === 1 && br.body.batches[0].units[0].lines[0].after.endsWith(":v1.4.0") && br.body.batches[0].units[0].carries.join() === "northwind/checkout-api#22", "21 alone: the newest green tag with 21 also carries 22, which was not selected: the brief says so", JSON.stringify(br.body.batches[0].units[0]));
+  { // a pull request production already runs is not "carried": only what is new beside the old tag
+    const prodHead = gh.data.head(gh.data.find("northwind/checkout-api", 18)!), m22 = gh.data.merge(gh.data.find("northwind/checkout-api", 22)!);
+    gh.data.contains[prodHead].push(m22); const b = await call("/api/prs/brief", { prs: ["northwind/checkout-api#21"] }); gh.data.contains[prodHead].pop();
+    ok(b.body.batches[0].units[0].carries.length === 0, "a tag's unselected pull request that production already runs is not listed as carried", JSON.stringify(b.body.batches[0].units[0])); }
+  { // no tag between 21 and 22: the reason is the merge order, and batch 2 starts from "none built", never the old file tag
+    const tags = gh.data.tags["northwind/checkout-api"], v130 = tags.pop()!; const b = await call("/api/prs/brief", { prs: ["northwind/checkout-api#22"] }); tags.push(v130);
+    const l1 = b.body.batches[0].units[0].lines[0], l2 = b.body.batches[1].units[0].lines[0];
+    ok(l1.after === null && l1.problem === "order" && l1.laterBy.join() === "northwind/checkout-api#22", "no tag for batch 1 because every tag with 21 also has 22: said as the merge order", JSON.stringify(l1));
+    ok(l2.before === null && l2.problem === "previous" && l2.newTag === "v1.4.0", "batch 2's old tag is batch 1's (none built), not the file's", JSON.stringify(l2)); }
+  { const b = await call("/api/prs/brief", { prs: ["northwind/checkout-api#21"] });
+    ok(b.body.batches[0].units[0].lines[0].ci === "green", "a tag's CI is reported with its line (none ran: said in the brief)"); }
+  ok((await call("/api/prs/brief", { prs: ["northwind/checkout-api#23"] })).status === 400 && (await call("/api/prs/brief", { prs: [] })).status === 400, "a live pull request, or none, is refused");
+  ok(!gh.calls.some((c) => c.method !== "GET" && c.path !== "/graphql"), "a brief writes nothing to GitHub");
   // later: 23 stays live with the day Studio first saw it; 21 reaches production
   const firstLive = r23.ship.liveAt;
   gh.data.contains[gh.data.head(gh.data.find("northwind/checkout-api", 18)!)].push(gh.data.merge(gh.data.find("northwind/checkout-api", 21)!));

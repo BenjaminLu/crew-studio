@@ -165,6 +165,34 @@ A merged pull request stays on the page until it runs in production. Two more ta
   unit (the repository) with its dependencies (Studio's record, else the body's `Depends-on:` lines or block), the
   environments.
 
+## Release brief
+
+On "Merged, not live", tick rows and press "Release brief (n)" (`POST /api/prs/brief {prs}`; reads GitHub at most 300
+times, writes nothing). The dialog shows one card per batch, each with its own Copy, and a language picker.
+
+- **Batches** (`src/pr-watch-release.ts` batchesOf): pull requests that depend on each other (Studio's record, else the
+  body's `Depends-on:` lines or block) go in different batches; independent ones, of any repository, share one. A batch
+  is one deploy pull request and one brief; its first line says which batch it is and that it waits for the one before
+  to run in production, naming the dependency that forces it. A dependency the captain did not select (merged, not live)
+  is added to the batch before, with the reason; one not merged yet is a warning.
+- **The line to change**, per deploy unit (the repository) and per production environment that reads an image tag from
+  a file: `repository · path`, the line with the old tag and with the new one, built from that environment's template.
+  The old tag is the file's (or the batch before's new tag). The new tag is the newest of the repository's tags (as
+  GitHub lists them, first 20) whose commit contains every selected merge commit of the unit up to this batch, none of a
+  later batch's, and whose CI is green (no failing or running check run or status; no CI at all is allowed). The image
+  tag is taken to be the git tag's name. When that tag also carries a merged pull request that was not selected, the
+  brief says so. No such tag, or no file environment: the line says what is missing instead.
+- **Before going live** (上線前要處理), each item with the address of its file and line at the merge commit (the body's:
+  the pull request) — no address, no item: files matching the captain's path rules (settings: migrations, configuration,
+  secrets; CODEOWNERS-style patterns, by default `migrations/`, `migrate/`, `*.sql`); configuration and secrets the added
+  lines newly read (environment variables in Node, Go, Python, Java, Ruby, Rust; Spring `@Value`; a name that only moved
+  is not new; a name like `*_SECRET`, `*_TOKEN`, `*_KEY` is a secret); Kubernetes ConfigMaps and Secrets added; metrics
+  the added lines create (Prometheus clients for Go, Node and Python, Micrometer): name, labels, type and whether the
+  series start at 0, with a **suggested** rule (`increase(…[5m]) > 0` for a counter, `for`, noData = Alerting, and
+  `up == 0`), said to be a suggestion since Studio cannot read the team's alert configuration; and the body's rollout
+  section quoted as written ("PR text"). The rows show these as badges. None: "Before going live: none". The brief
+  ends by saying these come from the diffs and the pull requests: the release agent may arrange them, never add any.
+
 ## Next step and who it waits on
 
 The first matching rule, top to bottom; deterministic, no model:
@@ -307,6 +335,11 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     each environment read at the merge commit, the merged and live tabs, live from the first refresh that saw it, dropped
     14 days later and never back, unwatching drops them; in the page the two tabs, their columns and Markdown —
     pr-watch-ui.mjs "the merged and live tabs …", "a merged row: on staging …", "the live tab …".
+19. The release brief (`bun tests/pr-watch-release.ts`, pr-watch-merged.ts "selecting 22 alone …", the UI suite): the
+    items from path rules and added lines, each with its address; the suggested alert rule; the rollout section quoted;
+    dependent pull requests in different batches, an unselected dependency added before with its reason; old → new tag
+    skipping a later batch's tag and a red CI; a tag carrying an unselected pull request said; in the page the badges,
+    the button, one card and one Copy per batch, Simplified Chinese.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the

@@ -228,22 +228,98 @@ function shipNext(r) {
   return { tone: "warn", next: T(`Waiting to go live · ${span(now - Date.parse(r.mergedAt))}`, `等上線 ${span(now - Date.parse(r.mergedAt))}`),
     waits: s.noProduction ? T("no production environment set", "沒有設定 production 環境") : T(`waits on ${s.waits}`, `等 ${s.waits}`) };
 }
+// what a merged pull request asks for before it goes live (src/pr-watch-release.ts): a badge each, the alert suggestion
+// beside a new metric
+const OPS = { migration: ["run", "DB migration", "DB migration"], config: ["warn", "Config", "設定"], secret: ["bad", "Secret", "Secret"], "k8s-configmap": ["warn", "ConfigMap", "ConfigMap"], "k8s-secret": ["bad", "K8s Secret", "K8s Secret"], metric: ["warn", "New metric", "新 metric"], alert: ["warn", "Alert suggestion", "告警建議"], rollout: ["human", "PR text", "PR 原文"] };
+const opBadges = (ops) => [...new Set((ops || []).flatMap((o) => o.kind === "metric" ? ["metric", "alert"] : [o.kind]))].map((k) => h("span", { class: `badge ${OPS[k][0]}`, "data-prs-op": k }, T(OPS[k][1], OPS[k][2])));
+PW.checked = PW.checked || new Set();
 function shipTable(d) {
-  const rows = shipRows();
-  return h("div", { class: "card pw-tbl", role: "table", "aria-label": PW.tab === "live" ? T("Live pull requests", "已上線的 Pull requests") : T("Merged pull requests", "已合併的 Pull requests"), "data-prs-ship": PW.tab },
-    h("div", { class: "pw-row pw-ship h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Going live · waits on", "上線 · 等誰"), T("Merged", "合併"), T("Deploy unit", "部署單元"), T("Environments", "環境")].map((t) => h("span", { role: "columnheader" }, t))),
-    rows.length ? rows.map((r, i) => shipRow(r, i, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, PW.tab === "live" ? T("No merged pull request is in production now.", "目前沒有已上 production 的 PR。") : T("No merged pull request is waiting to go live.", "沒有等上線的已合併 PR。")));
+  const rows = shipRows(), merged = PW.tab === "merged", picked = rows.filter((r) => PW.checked.has(r.id));
+  return [merged ? h("div", { class: "card pw-prop", "data-prs-brief-bar": "" }, h("span", { class: "pmark pw-prop-ic" }, icon("send", "ic sm")),
+      h("div", {}, h("b", {}, T("Tick the pull requests to release together", "勾選要一起上線的 PR")), h("div", { class: "muted pw-small" }, T("Studio orders them by dependency and writes a brief for the release AI: per deploy unit the tag from → to, the pull requests it carries, and what to handle first (migration, alert, config, secret).", "按依賴排好順序，生成給上線 AI 的 brief：每個部署單元的 tag 從哪個換到哪個、包含哪些 PR、上線前要處理的 migration / 告警 / config / secret。"))),
+      h("div", { class: "pw-acts" }, h("button", { class: "btn primary", "data-prs-brief": "", disabled: !picked.length || PW.briefBusy, onclick: () => openBrief(picked.map((r) => r.id)) }, PW.briefBusy ? T("Reading GitHub…", "讀取 GitHub 中…") : T(`Release brief (${picked.length})`, `生成上線 brief（${picked.length}）`)))) : null,
+    h("div", { class: "card pw-tbl", role: "table", "aria-label": PW.tab === "live" ? T("Live pull requests", "已上線的 Pull requests") : T("Merged pull requests", "已合併的 Pull requests"), "data-prs-ship": PW.tab },
+    h("div", { class: "pw-row pw-ship h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Going live · waits on", "上線 · 等誰"), T("Merged", "合併"), T("Deploy unit", "部署單元"), T("Environments", "環境"), T("Before going live", "上線前要處理")].map((t) => h("span", { role: "columnheader" }, t))),
+    rows.length ? rows.map((r, i) => shipRow(r, i, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, PW.tab === "live" ? T("No merged pull request is in production now.", "目前沒有已上 production 的 PR。") : T("No merged pull request is waiting to go live.", "沒有等上線的已合併 PR。")))];
 }
 function shipRow(r, i) {
   const n = shipNext(r);
   return h("div", { class: "pw-row pw-ship", role: "row", "data-prs-merged": r.id, "data-ship": r.ship.live ? "live" : "merged" },
-    h("span", { role: "cell" }),
+    h("span", { role: "cell" }, r.tab === "merged" ? h("input", { type: "checkbox", "data-prs-pick": r.id, "aria-label": T(`Select ${r.id}`, `選擇 ${r.id}`), checked: PW.checked.has(r.id), onchange: (e) => { e.target.checked ? PW.checked.add(r.id) : PW.checked.delete(r.id); render(); } }) : null),
     h("span", { class: "tid" }, String(i + 1)),
     h("span", { class: "pw-pr", role: "cell" }, h("span", { class: "pw-pid" }, pmark(r.project), extLink(ghPr(r.id), short(r.id, null), { title: r.id }), r.single ? h("span", { class: "badge" }, T("single", "單獨")) : null), h("small", { class: "pw-title" }, r.title)),
     h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${n.tone}`, "data-prs-ship-next": "" }, n.next), h("small", {}, n.waits)),
     h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono", title: r.mergeSha || "" }, (r.mergeSha || "—").slice(0, 7)), h("small", {}, T(`merged ${span(Date.now() - Date.parse(r.mergedAt))} ago`, `${span(Date.now() - Date.parse(r.mergedAt))}前合併`))),
     h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono pw-unit" }, r.unit), r.deps.length ? h("small", { "data-prs-ship-deps": "" }, T("depends on ", "依賴 "), r.deps.map((x) => short(x.id, r.repo)).join(", ")) : null),
-    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name} has the merge commit`, `${e.name} 已有這個 merge commit`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name} does not have it yet`, `${e.name} 還沒有`) }, e.name)) : h("span", { class: "faint" }, "—")));
+    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name} has the merge commit`, `${e.name} 已有這個 merge commit`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name} does not have it yet`, `${e.name} 還沒有`) }, e.name)) : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-revs", role: "cell", "data-prs-ops": r.id }, r.ops?.length ? opBadges(r.ops) : h("span", { class: "faint" }, "—")));
+}
+// ---------- the release brief ----------
+function opText(o, P) {
+  const names = (o.names || []).join(", ");
+  switch (o.kind) {
+    case "migration": return P(`New migration ${o.path}: run it before the new image`, `新的 migration ${o.path}：要先於新 image 執行`);
+    case "config": return o.names?.length ? P(`Reads new configuration ${names}: set it in production first`, `新讀取設定 ${names}：先在 production 設好`) : P(`Configuration file ${o.path} changed: check production's copy`, `設定檔 ${o.path} 改了：確認 production 的版本`);
+    case "secret": return o.names?.length ? P(`Reads secrets ${names}: make sure production has them, and not a default value`, `新讀取 secret ${names}：確認 prod 已注入，且不是預設值`) : P(`Secret file ${o.path} changed: update production's secret store first`, `secret 檔 ${o.path} 改了：先更新 production 的 secret`);
+    case "k8s-configmap": return P(`Kubernetes ConfigMap ${names || o.path}: apply it with the release`, `Kubernetes ConfigMap ${names || o.path}：隨這次上線套用`);
+    case "k8s-secret": return P(`Kubernetes Secret ${names || o.path}: create or update it in production first`, `Kubernetes Secret ${names || o.path}：先在 production 建好或更新`);
+    case "metric": { const m = o.metric, s = suggest(m, o.job), lab = m.labels.length ? `{${m.labels.join(",")}}` : "";
+      return P(`The diff adds metric ${m.name}${lab} (${m.type}, ${m.zero ? "starts at 0" : `each label set appears only on its first ${m.type === "gauge" ? "set" : m.type === "counter" ? "increment" : "observation"}`}). Suggested: ${s.expr}; for ${s.for}; noData = Alerting; also ${s.up}. Studio cannot read your alert configuration: this is a suggestion worked out from the metric.`,
+        `diff 新增 metric ${m.name}${lab}（${m.type}，${m.zero ? "啟動即為 0" : `每組 label 要第一次${m.type === "gauge" ? "設值" : m.type === "counter" ? "遞增" : "記錄"}才會出現`}）。建議：${s.expr}；for ${s.for}；noData = Alerting；另配 ${s.up}。Studio 讀不到你們的告警設定，這是照 metric 推的建議。`); }
+    case "rollout": return P(`「${o.quote}」`, `「${o.quote}」`);
+  }
+  return o.kind;
+}
+// the same rule as src/pr-watch-release.ts suggestRule (the page words it; the server found the metric)
+function suggest(m, job) {
+  const sel = `${m.name}{job="${job}"}`, by = m.labels.length ? `sum by (${m.labels.join(", ")}) ` : "sum ";
+  const expr = m.type === "counter" ? `${by}(increase(${sel}[5m])) > 0` : m.type === "histogram" ? `histogram_quantile(0.99, sum by (le${m.labels.length ? `, ${m.labels.join(", ")}` : ""}) (rate(${m.name}_bucket{job="${job}"}[5m]))) > <threshold>` : m.type === "summary" ? `${by}(rate(${m.name}_count{job="${job}"}[5m])) > <threshold>` : `${sel} > <threshold>`;
+  return { expr, for: m.type === "counter" ? "0m" : "5m", up: `up{job="${job}"} == 0` };
+}
+const opTag = (o, P) => o.kind === "metric" ? P("Alert suggestion", "告警建議") : P(OPS[o.kind][1], OPS[o.kind][2]);
+// why a batch has no new tag: none has these merges yet; every tag that has them also carries a later batch (the merge
+// order: they ship together, or a tag must be cut between them); or CI failed on each
+const noTag = (l, P) => { const ids = (l.laterBy || []).map((x) => `#${String(x).split("#")[1]}`).join(", ");
+  return l.problem === "order" ? P(`(every tag with these merges also carries ${ids}, of a later batch: they were merged in this order, so ship them together or cut a tag between them)`, `（每個包含這些合併的 tag 也帶了後一批的 ${ids}：它們是依這個順序合併的，要一起上，或在兩者之間另打一個 tag）`)
+    : l.problem === "ci" ? P("(every tag with these merges failed CI: fix it and build one)", "（包含這些合併的 tag CI 都失敗：修好再建一個）")
+    : l.problem === "previous" ? P("(the batch before has no tag yet)", "（前一批還沒有 tag）") : P("(no tag has these merges yet: build one)", "（還沒有包含這些合併的 tag：先建一個）"); };
+function briefText(b, P) {
+  const N = b.of, hash = (id) => `#${String(id).split("#")[1]}`, title = (id) => { const p = b.prs.find((x) => x.id === id); return `${hash(id)} ${p?.title || ""}`.trim(); };
+  const forced = b.forced.map((f) => P(`${hash(f.pr)} depends on ${hash(f.on)}`, `${hash(f.pr)} 依賴 ${hash(f.on)}`)).join(P(", ", "，"));
+  const order = N === 1 ? "" : b.n === 1 ? P(` (batch 1 of ${N}; batch 2 opens only after this one runs in production)`, `（第 1/${N} 批；第 2 批要等這批上到 production 才開）`) : P(` (batch ${b.n} of ${N}; open it after batch ${b.n - 1} runs in production. ${forced})`, `（第 ${b.n}/${N} 批；等第 ${b.n - 1} 批上到 production 之後再開。${forced}）`);
+  const lines = b.units.flatMap((u) => u.noFile ? [P(`${u.repo}: no production environment reads its image tag from a file; write this change by hand.`, `${u.repo}：沒有 production 環境從檔案讀它的 image tag，這一行請自己寫。`)]
+    : u.lines.map((l) => `${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
+  const added = b.added.map((a) => P(`${hash(a.id)} was added: ${hash(a.for)} depends on it`, `${hash(a.id)} 是補進來的：${hash(a.for)} 依賴它`));
+  const ops = b.ops.map((o) => `- [${opTag(o, P)}] ${opText(o, P)} (${o.url})`);
+  return [P("Please open a deploy pull request following the team's rules", "請照團隊規範開一個部署 PR") + order, "", lines.join("\n\n"), "", P("Includes: ", "包含：") + b.prs.map((p) => title(p.id)).join(P("; ", "；")),
+    ...(added.length ? [added.join("\n")] : []), "", ops.length ? `${P("Before going live:", "上線前要處理：")}\n${ops.join("\n")}` : P("Before going live: none", "上線前要處理：無"),
+    "", P("These items are what Studio found in the diffs and the pull requests' own text: arrange them, add none.", "上線前要處理只列 Studio 從 diff 和 PR 原文找到的項目：可以調整順序，不要自行增加。")].join("\n");
+}
+async function openBrief(ids) {
+  PW.briefBusy = true; render(); let got;
+  try { got = await postJ("/api/prs/brief", { prs: ids }); } catch (e) { flash(e.message); return; } finally { PW.briefBusy = false; render(); }
+  const langs = window.crewI18n.LANGS, start = PW.data?.settings?.messageLang || document.documentElement.lang || "en";
+  let lang = langs.includes(start) ? start : "en";
+  const unitsOf = (b) => [...new Set(b.units.map((u) => u.unit))].join(" + ");
+  for (const b of got.batches) for (const o of b.ops) o.job = (b.units.find((u) => o.pr.startsWith(`${u.repo}#`)) || b.units[0])?.unit || "app";
+  const box = h("div", { class: "pw-targets" });
+  const draw = () => { const P = (en, tw) => window.crewI18n.pick(lang, en, tw);
+    box.replaceChildren(...got.batches.map((b) => { const text = briefText(b, P);
+      return h("div", { class: "card x-pad pw-target", "data-prs-batch": String(b.n) },
+        h("div", { class: "pw-check" }, h("span", { class: "badge run" }, String(b.n)), h("b", {}, P(`Batch ${b.n}/${b.of} · ${unitsOf(b)}`, `第 ${b.n}/${b.of} 批 · ${unitsOf(b)}`)), h("span", { class: "faint" }, b.n === 1 ? P("goes first", "先上") : P(`after batch ${b.n - 1} is in production`, `等第 ${b.n - 1} 批上 production`)), h("span", { class: "x-grow" }),
+          h("button", { class: "btn sm", "data-prs-batch-copy": String(b.n), ...(b.n === 1 ? { autofocus: true } : {}), onclick: async (e) => { const ok = await copy(text); e.currentTarget.textContent = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); } }, T("Copy this one", "複製這張"))),
+        h("pre", { class: "pw-pre", "data-prs-batch-text": String(b.n) }, text),
+        b.ops.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, P("Before going live", "上線前要處理")),
+          b.ops.map((o) => h("div", { class: "pw-check", "data-prs-brief-op": o.kind }, h("span", { class: `badge ${OPS[o.kind === "metric" ? "alert" : o.kind][0]}` }, opTag(o, P)), h("span", { class: "pw-optext" }, opText(o, P)), extLink(o.url, o.path ? `${o.path}${o.line ? `:${o.line}` : ""}` : P(`${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`, `${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`), { class: "mono faint pw-small" })))) : null); })); };
+  draw();
+  const warns = [...got.batches.flatMap((b) => b.added.map((a) => T(`${a.for} depends on ${a.id}: it was added to batch ${b.n}.`, `${a.for} 依賴 ${a.id}，已經替你把它列進第 ${b.n} 批。`))),
+    ...got.notMerged.map((x) => T(`${x.id} depends on ${x.on}, which is not merged yet.`, `${x.id} 依賴的 ${x.on} 還沒合併。`))];
+  const sel = h("select", { class: "pw-lang", "aria-label": T("Language", "語言"), "data-prs-brief-lang": "", onchange: (e) => { lang = e.target.value; draw(); } }, langs.map((l) => h("option", { value: l, selected: l === lang }, window.crewI18n.NAMES[l])));
+  const close = pwModal(T("Release brief", "上線 brief"), [
+    h("p", { class: "faint pw-small", style: "margin:0" }, T(`${got.batches.length} batch${got.batches.length === 1 ? "" : "es"} · ${got.batches.reduce((n, b) => n + b.prs.length, 0)} pull requests · dependent pull requests go in different batches, one deploy pull request each`, `${got.batches.length} 批 · ${got.batches.reduce((n, b) => n + b.prs.length, 0)} 個 PR · 有依賴的 PR 分在不同批，一批一個部署 PR`)),
+    box, warns.length ? h("div", { class: "pw-status", "data-prs-brief-warn": "" }, warns.map((w) => h("div", {}, w))) : null,
+    foot(h("span", { class: "faint pw-small" }, T("Dependent pull requests go in different batches, one brief and one deploy pull request each; the order is on each one's first line.", "有依賴的 PR 分在不同批，每批一份 brief、一個部署 PR；順序寫在每份的第一行。")), h("span", { class: "x-grow" }), sel,
+      h("button", { class: "btn primary", onclick: () => close() }, T("Done", "完成")))], { wide: true, id: "brief" });
 }
 function shipMarkdown(rows) {
   const esc = (s) => String(s ?? "").replace(/[\\`*_[\]()<>!|]/g, (c) => `\\${c}`).replace(/[\r\n]+/g, " ");
@@ -469,6 +545,11 @@ function settingsModal() {
       csv("required", T("Reviewers who must review every pull request (for example a review bot)", "每個 PR 都要 review 的人（例如 review bot）"), () => s.requiredReviewers, (v) => { s.requiredReviewers = v; }),
       h("h3", {}, T("Environments, in order", "環境（依順序）")), envs.length ? null : h("p", { class: "faint pw-small", "data-prs-envs-auto": "" }, T("None set: each repository's own GitHub environments that have a successful deployment are shown, on when the newest one contains the head. They are shown only; set environments here to make “deploy for testing” a step.", "沒有設定：顯示每個 repo 自己有成功部署過的 GitHub 環境，最新一次成功的 deployment 包含 head 就算在上面。這些只供顯示；要讓「部署去測」成為下一步，請在這裡設定環境。")), envBox,
       h("button", { class: "btn", "data-prs-env-add": "", onclick: () => { envs.push({ name: "", production: false, repos: [], detect: { kind: "deployment", environment: "" } }); drawEnvs(); } }, icon("plus"), T("Add an environment", "加入環境")),
+      h("h3", {}, T("Release brief: paths that need handling before going live", "上線 brief：哪些路徑要在上線前處理")),
+      h("p", { class: "faint pw-small", style: "margin:0" }, T("CODEOWNERS-style patterns, comma separated. Studio also scans what each diff adds: configuration and secrets newly read, Kubernetes ConfigMaps and Secrets, new metrics, and the body's rollout section.", "CODEOWNERS 格式，逗號分隔。Studio 另外會掃 diff 新增的內容：新讀取的設定和 secret、Kubernetes ConfigMap / Secret、新 metric，以及 PR body 的 rollout 段落。")),
+      csv("ops-migration", T("Database migrations", "DB migration"), () => s.opsRules.migration, (v) => { s.opsRules.migration = v; }),
+      csv("ops-config", T("Configuration", "設定"), () => s.opsRules.config, (v) => { s.opsRules.config = v; }),
+      csv("ops-secret", T("Secrets", "Secret"), () => s.opsRules.secret, (v) => { s.opsRules.secret = v; }),
       h("h3", {}, T("Release groups", "上線分組")), csv("groups", T("Group names (comma separated)", "分組名稱（逗號分隔）"), () => s.groups, (v) => { s.groups = v; }),
       h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!s.shortForm, onchange: (e) => { s.shortForm = e.target.checked; } }), T(" Also write the short same-repository form Depends-on: #N", " 另外寫同 repo 簡寫 Depends-on: #N"))),
     err,
