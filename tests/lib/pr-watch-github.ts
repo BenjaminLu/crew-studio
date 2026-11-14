@@ -13,7 +13,8 @@ const at = (h: number) => new Date(T0 + h * 3600_000).toISOString();
 type Pr = { repo: string; number: number; title: string; user: string; assignees?: string[]; draft?: boolean; state?: "open" | "closed"; merged?: boolean; base?: string; headRef?: string;
   body?: string; commits: { sha: string; at: string; login: string }[]; reviews?: { user: string; state: string; commit: string; at: string }[];
   comments?: { user: string; body: string; at: string }[]; files?: string[]; checks?: { name: string; conclusion: string; at: string }[]; labels?: string[];
-  closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string;
+  closing?: { repo: string; number: number; title: string; state: string }[]; timeline?: any[]; created: string; mergedAt?: string;
+  /** a merged pull request's patches by file (what the release brief scans) */ patches?: Record<string, string>;
   github?: { reviewDecision?: string | null; mergeState?: string; requested?: string[]; ci?: string; ciOnOlderHead?: boolean } };
 const two = (n: string, h = 0) => [{ sha: sha(`${n}-1`), at: at(h), login: ME }, { sha: sha(`${n}-2`), at: at(h + 1), login: ME }];
 const head = (p: Pr) => p.commits.at(-1)!.sha;
@@ -64,6 +65,16 @@ export function fixtureData() {
     comments: [{ user: "qa-lin", body: `### PASS\non ${c[1].sha.slice(0, 7)}`, at: at(29) }] }); }
   // a single watched pull request by someone else, outside the watched repositories
   { const c = two("mb5"); add({ repo: "northwind/mobile", number: 5, title: "App checkout uses the new retry API", user: "lee", commits: c, reviews: [bot(c[1].sha)], checks: [qa(c[1].sha)], files: ["app/checkout.ts"] }); }
+  // merged pull requests, followed until production. Merge dates are relative to the real clock (the server reads them
+  // against it): 21 is on staging, 22 (depends on 21) nowhere yet, 23 on staging and in production, 24 is someone else's
+  const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOString();
+  { const c = two("ca21"); add({ repo: ca, number: 21, title: "Remove the minimum trade amount", user: ME, state: "closed", merged: true, mergedAt: ago(2), commits: c, files: ["src/limits.ts", "src/metrics.go"],
+    body: "Drops the floor.\n\n## Rollout\nSet LIMITS_SECRET in production before the new image starts.\n\n## Tests\nunit",
+    patches: { "src/limits.ts": "@@ -1,1 +1,2 @@\n const a = 1;\n+const s = process.env.LIMITS_SECRET;", "src/metrics.go": "@@ -10,0 +11,1 @@\n+var rejected = promauto.NewCounterVec(prometheus.CounterOpts{Name: \"trades_rejected_total\"}, []string{\"reason\"})" } }); }
+  { const c = two("ca22"); add({ repo: ca, number: 22, title: "Orders gain a cas_version field", user: ME, state: "closed", merged: true, mergedAt: ago(1), commits: c, files: ["migrations/0042_orders_cas.sql", "src/orders.ts"], body: "Adds the column.\n\nDepends-on: #21",
+    patches: { "migrations/0042_orders_cas.sql": "@@ -0,0 +1,1 @@\n+ALTER TABLE orders ADD COLUMN cas_version int;" } }); }
+  { const c = two("ca23"); add({ repo: ca, number: 23, title: "Quote precision fix", user: ME, state: "closed", merged: true, mergedAt: ago(5), commits: c, files: ["src/quote.ts"] }); }
+  { const c = two("ca24"); add({ repo: ca, number: 24, title: "Someone else's merged change", user: "lee", state: "closed", merged: true, mergedAt: ago(1), commits: c }); }
 
   const issues: Record<string, { title: string; state: string }> = { "northwind/platform-issues#7": { title: "Capture retries double-charge", state: "open" }, "northwind/web-app#2": { title: "Retries hammer the API", state: "open" } };
   const rules: Record<string, any> = {
@@ -87,11 +98,17 @@ export function fixtureData() {
     { id: 504, repo: ca, environment: "preproduction", ref: "preprod", sha: sha("preprod-tip"), state: "success" },
   ];
   // the staging branch's tip contains #17's head (it was merged into staging)
-  const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!)] };
+  const merge = (p: Pr) => sha(`${p.repo}#${p.number}-merge`);
+  // the repository's tags, newest first as GitHub lists them: v1.4.1 carries 21 and 22 but its CI failed, v1.4.0 carries
+  // both, v1.3.0 only 21
+  const tags: Record<string, { name: string; sha: string }[]> = { [ca]: [{ name: "v1.4.1", sha: sha("tag-v1.4.1") }, { name: "v1.4.0", sha: sha("tag-v1.4.0") }, { name: "v1.3.0", sha: sha("tag-v1.3.0") }] };
+  const redCi = [sha("tag-v1.4.1")];
+  const contains: Record<string, string[]> = { [sha("staging-tip")]: [head(find(ca, 17)!), merge(find(ca, 21)!), merge(find(ca, 23)!)], [head(find(ca, 18)!)]: [merge(find(ca, 23)!)] };
   const files: Record<string, string> = { "northwind/infra/deploy/prod.yaml": `app:\n  image: registry.example/checkout:${head(find(ca, 18)!).slice(0, 12)}\n` };
   // the repositories' own GitHub environments (used when the settings name none)
   const envs: Record<string, string[]> = { [ca]: ["production", "dev", "staging", "preproduction"] };
-  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs };
+  Object.assign(contains, { [sha("tag-v1.4.1")]: [merge(find(ca, 21)!), merge(find(ca, 22)!)], [sha("tag-v1.4.0")]: [merge(find(ca, 21)!), merge(find(ca, 22)!)], [sha("tag-v1.3.0")]: [merge(find(ca, 21)!)] });
+  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi };
 }
 
 export function prWatchGitHub(data = fixtureData()) {
@@ -99,7 +116,7 @@ export function prWatchGitHub(data = fixtureData()) {
   let rateLimited = false;
   const json = (v: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", ...headers } });
   const nf = () => json({ message: "Not Found" }, 404);
-  const pullJson = (p: Pr) => ({ number: p.number, title: p.title, body: p.body ?? "", state: p.state ?? "open", draft: !!p.draft, merged_at: p.merged ? at(40) : null, user: { login: p.user }, assignees: (p.assignees ?? []).map((l) => ({ login: l })),
+  const pullJson = (p: Pr) => ({ number: p.number, title: p.title, body: p.body ?? "", state: p.state ?? "open", draft: !!p.draft, merged_at: p.merged ? p.mergedAt ?? at(40) : null, merge_commit_sha: p.merged ? data.merge(p) : null, user: { login: p.user }, assignees: (p.assignees ?? []).map((l) => ({ login: l })),
     requested_reviewers: [], labels: (p.labels ?? []).map((name) => ({ name })), base: { ref: p.base ?? "main", repo: { full_name: p.repo } }, head: { ref: p.headRef, sha: data.head(p) }, created_at: p.created, changed_files: (p.files ?? []).length, html_url: `https://github.com/${p.repo}/pull/${p.number}` });
   const page = (list: any[], q: URLSearchParams) => { const per = Number(q.get("per_page") ?? 30), pg = Number(q.get("page") ?? 1); return list.slice((pg - 1) * per, pg * per); };
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
@@ -133,11 +150,12 @@ export function prWatchGitHub(data = fixtureData()) {
       if (method === "PATCH") { if (typeof body?.body === "string") pr.body = knobs.tamper ? `${body.body}\nedited meanwhile` : knobs.normalizeOnPatch ? body.body.replace(/\r\n/g, "\n").split("\n").map((l: string) => l.trimEnd()).join("\n") : body.body; return json(pullJson(pr)); }
       if (method === "GET") { if (knobs.slowPull?.path === p) await new Promise((r) => setTimeout(r, knobs.slowPull!.ms)); return json(pullJson(pr)); } }
     if (method !== "GET") { unknown.push(`${method} ${p}`); return json({ message: "Not Found" }, 404); }
-    if ((k = /^\/pulls\/(\d+)\/(reviews|commits|files)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
+    if ((k = /^\/pulls\/(\d+)\/(reviews|commits|files|comments)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
       if (k[2] === "reviews" && knobs.reviewsFail === pr.number) return json({ message: "Server Error" }, 500);
-      if (k[2] === "reviews") return json(page((pr.reviews ?? []).map((r, i) => ({ id: i + 1, user: { login: r.user }, state: r.state, commit_id: r.commit, submitted_at: r.at })), q));
+      if (k[2] === "reviews") return json(page((pr.reviews ?? []).map((r, i) => ({ id: i + 1, user: { login: r.user }, state: r.state, commit_id: r.commit, submitted_at: r.at, body: (r as any).body ?? "", html_url: `https://github.com/${repo}/pull/${pr.number}#pullrequestreview-${i + 1}` })), q));
+      if (k[2] === "comments") return json(page(((pr as any).inline ?? []).map((c: any, i: number) => ({ id: i + 1, user: { login: c.user }, body: c.body, pull_request_review_id: c.review, path: c.path, line: c.line })), q));
       if (k[2] === "commits") return json(page(pr.commits.map((c: any) => ({ sha: c.sha, commit: { committer: { date: c.at } }, author: { login: c.login }, committer: { login: c.committer ?? c.login } })), q));
-      return json(page((pr.files ?? []).map((filename) => ({ filename })), q)); }
+      return json(page((pr.files ?? []).map((filename) => ({ filename, status: "modified", ...(pr.patches?.[filename] ? { patch: pr.patches[filename] } : {}) })), q)); }
     if ((k = /^\/issues\/(\d+)\/(comments|timeline)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
       if (k[2] === "comments") return json(page((pr.comments ?? []).map((c, i) => ({ id: i + 1, user: { login: c.user }, body: c.body, created_at: c.at, html_url: `https://github.com/${repo}/pull/${pr.number}#issuecomment-${i + 1}` })), q));
       return json(page(pr.timeline ?? [], q)); }
@@ -146,10 +164,13 @@ export function prWatchGitHub(data = fixtureData()) {
       return json({ total_count: pr?.checks?.length ?? 0, check_runs: (pr?.checks ?? []).map((c, i) => ({ id: i + 1, name: c.name, status: "completed", conclusion: c.conclusion, completed_at: c.at, html_url: `https://github.com/${repo}/runs/${i + 1}` })) }); }
     if ((k = /^\/rules\/branches\/(.+)$/.exec(rest))) { const r = data.rules[repo]; return r ? json(r.rulesets) : nf(); }
     if ((k = /^\/branches\/(.+)\/protection$/.exec(rest))) { const r = data.rules[repo]; return r ? json(r.protection.body, r.protection.status) : nf(); }
+    if (rest === "/codeowners/errors") return json({ errors: data.rules[repo]?.codeownersErrors ?? [] });
     if ((k = /^\/contents\/(.+)$/.exec(rest))) { const path = decodeURIComponent(k[1]);
       if (path.endsWith("CODEOWNERS") && knobs.codeownersFail) return json({ message: "Server Error" }, 500);
       const text = path.endsWith("CODEOWNERS") ? (path === ".github/CODEOWNERS" ? data.rules[repo]?.codeowners : undefined) : data.files[`${repo}/${path}`];
       return text == null ? nf() : json({ type: "file", encoding: "base64", size: text.length, content: Buffer.from(text).toString("base64") }); }
+    if (rest === "/tags") return json((data.tags[repo] ?? []).map((t) => ({ name: t.name, commit: { sha: t.sha } })));
+    if ((k = /^\/commits\/([0-9a-f]{40})\/status$/.exec(rest))) return json({ state: data.redCi.includes(k[1]) ? "failure" : "success", total_count: 1 });
     if (rest === "/environments") return json({ environments: (data.envs[repo] ?? []).map((name) => ({ name })) });
     if (rest === "/deployments") { const list = data.deployments.filter((d) => d.repo === repo && (!q.get("environment") || d.environment === q.get("environment")) && (!q.get("ref") || d.ref === q.get("ref"))).reverse();
       return json(list.map((d) => ({ id: d.id, sha: d.sha, ref: d.ref, environment: d.environment }))); }

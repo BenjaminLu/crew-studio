@@ -20,6 +20,10 @@
 const SVGNS = "http://www.w3.org/2000/svg";
 const s = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null && v !== false) e.setAttribute(k, v === true ? "" : v); } for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); return e; };
 const api = async (u, body, method, signal) => { const r = await fetch(u, { signal, ...(body === undefined && !method ? {} : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.problems = j.problems; e.code=j.code; e.status=r.status; e.staffing=j.staffing; throw e; } return j; };
+const PR_PRESETS = [["PR follow-through", "PR 跟進", { kind: "hook", do: "pr.shepherd", new: true }], ["Ask QA to test (card)", "請 QA 測試（卡片）", { kind: "card", new: true, card: { options: [{ id: "sent", label: "Sent", labelZh: "已轉給 QA" }] } }],
+  ["Ask reviewers again (card)", "請 reviewer 重驗（卡片）", { kind: "card", new: true, card: { options: [{ id: "sent", label: "Sent", labelZh: "已發出" }] } }],
+  ["Ask for approval (card)", "請 approve（卡片）", { kind: "card", new: true, card: { options: [{ id: "sent", label: "Sent", labelZh: "已發出" }] } }], ["Follow to production", "跟到上線", { kind: "hook", do: "pr.track-deploy", new: true }],
+  ["Release brief (card)", "上線 brief（卡片）", { kind: "card", new: true, card: { options: [{ id: "done", label: "Released", labelZh: "已上線" }] } }]];
 const KINDS = [["agent", "Agent", "代理"], ["check", "Check", "檢查"], ["card", "Card", "卡片"], ["loop", "Refine loop", "精修迴圈"], ["hook", "Hook", "掛勾"]];
 const NW = 150, NH = 52;
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -129,6 +133,8 @@ function graph(def, o = {}) {
     g.append(s("rect", { width: vn.w, height: vn.h, rx: 10, class: "rt-box" }), s("text", { x: 12, y: 21, class: "rt-label" }, fitText(n.label, n.checks?.length ? 13 : 20)),
       s("text", { x: 12, y: 39, class: "rt-kind" }, fitText(`${n.kind}${n.mode ? ` · ${n.mode}` : n.do ? ` · ${n.do}` : ""}`, 20)));
     if (st) g.setAttribute("data-state", st);
+    // a node the definition marks new (the PR follow-through nodes): the small "new" badge of the design
+    if (n.new) g.append(s("rect", { x: vn.w - 32, y: -8, width: 28, height: 16, rx: 8, class: "rt-badge" }), s("text", { x: vn.w - 18, y: 4, class: "rt-badge-t", "text-anchor": "middle", "data-node-new": n.id }, T("new", "新")));
     if (o.editable && !o.simple) g.append(s("circle", { cx: vn.w, cy: vn.h / 2, r: 7, class: "rt-port", "data-port": n.id }));
     g.addEventListener("focus", () => { const v = view; if (vn.x < v.x || vn.y < v.y || vn.x + vn.w > v.x + v.w || vn.y + vn.h > v.y + v.h) { v.x = vn.x + vn.w / 2 - v.w / 2; v.y = vn.y + vn.h / 2 - v.h / 2; svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); o.onView?.(v); } });
     if (o.onSelect) {
@@ -271,8 +277,8 @@ function workflowRenameDialog(w,done){
   dlg.addEventListener("cancel",event=>{if(pending){event.preventDefault();return;}dlg.remove();});document.body.append(dlg);dlg.showModal();input.select();
 }
 function workflowRenameButton(w,done){const at=()=>typeof w==="function"?w():w;return h("button",{class:"btn sm","data-workflow-rename":at().id,onclick:e=>{e.preventDefault();e.stopPropagation();workflowRenameDialog(at(),done);}},T("Rename","改名"));}
-function workflowCatalogCard(w,held=false){
-  const link=h("a",{class:"rt-wf-link",href:`#/workflows/${w.id}`,[held?"data-wf-held":"data-wf"]:w.id},h("div",{class:"rt-wf-h"},h("b",{"data-wf-name":w.id},w.displayName||w.name),h("span",{class:"vbadge"},`v${w.version}`)),h("p",{class:"faint"},(w.description||"").slice(0,220)),held?h("span",{class:"badge neutral","data-wf-held-reason":w.id},T(w.held.en,w.held.zh)):h("span",{class:"faint"},T(`${w.nodes} nodes · ${w.versions} versions`,`${w.nodes} 個節點 · ${w.versions} 個版本`)));
+function workflowCatalogCard(w,held=false,mark=(t)=>t){
+  const link=h("a",{class:"rt-wf-link",href:`#/workflows/${w.id}`,[held?"data-wf-held":"data-wf"]:w.id},h("div",{class:"rt-wf-h"},h("b",{"data-wf-name":w.id},mark(w.displayName||w.name)),h("span",{class:"vbadge"},`v${w.version}`)),h("p",{class:"faint"},(w.description||"").slice(0,220)),held?h("span",{class:"badge neutral","data-wf-held-reason":w.id},T(w.held.en,w.held.zh)):h("span",{class:"faint"},T(`${w.nodes} nodes · ${w.versions} versions`,`${w.nodes} 個節點 · ${w.versions} 個版本`)));
   return h("div",{class:"card rt-wf"},link,h("div",{class:"actions"},workflowRenameButton(w),w.personal?workflowTrashButton(w):null));
 }
 
@@ -304,10 +310,23 @@ function viewWorkflows(arg) {
   const list = Array.isArray(WF.list) ? WF.list : [];
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Workflows", "流程")), h("p", {}, T("Studio's workflows. Open one to see and edit its graph; every save is a new version, and tasks keep the version they started on.", "Studio 的流程。打開一個就能看到並編輯它的流程圖；每次儲存都是新版本，進行中的任務維持它開始時的版本。"))), h("a",{class:"btn",href:"#/first-workflow","data-first-workflow-open":""},T("First workflow tutorial","第一個流程教學")),h("button",{class:"btn","data-package-import":"",onclick:()=>packageDialog()},T("Import package","匯入套件")),h("button",{class:"btn primary","data-wf-new":"1",onclick:newWorkflow},T("New workflow","新增流程"))),
     WF.list === "loading" || WF.list === null ? h("div", { class: "skel", style: "height:160px" }) :
-    h("div", { class: "rt-cards" },list.map(w=>workflowCatalogCard(w))),
+    workflowsList(list),
     Array.isArray(WF.list)&&(WF.held||[]).length?h("div",{class:"rt-cards","data-wf-held-list":"1"},WF.held.map(w=>workflowCatalogCard(w,true))):null,
     savedPackages(),
     h("details",{"data-workflow-trash-list":"",class:"card x-pad",open:WF.trashOpen||null,ontoggle:e=>{WF.trashOpen=e.target.open;}},h("summary",{},T("Trash","垃圾桶")+` (${(WF.trash||[]).length})`),...(WF.trash||[]).map(w=>h("div",{class:"rt-row","data-trashed-workflow":w.id},h("a",{href:`#/workflows/${w.id}`},(w.displayName||w.name)+` · v${w.version}`),workflowTrashButton(w,true)))));
+}
+
+/** the catalog under the list toolbar (public/list-tools.js): name and description, built in or yours */
+function workflowsList(list) {
+  const kind = (w) => (w.personal ? "mine" : "builtin");
+  return window.crewListTools.list({ id: "workflows", route: "workflows", title: T("workflows", "流程"), noun: ["workflow", "流程"], items: list,
+    placeholder: T("Search names, descriptions…  or type kind:mine", "搜尋名稱、說明…  也可以打 kind:我的"),
+    text: (w) => [w.displayName, w.name, w.id, w.description],
+    facets: [{ key: "kind", name: T("Source", "來源"), value: kind, show: (v) => (v === "mine" ? T("Mine", "我的") : T("Built in", "內建")) }],
+    sorts: [{ key: "title", label: T("Name", "名稱"), cmp: (a, b) => String(a.displayName || a.name).localeCompare(String(b.displayName || b.name), lang) },
+      { key: "new", label: T("Recently changed", "最近改過"), cmp: (a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) }],
+    none: () => h("div", { class: "card x-pad faint" }, T("No workflows yet.", "還沒有流程。")),
+    rows: (page, ctx) => h("div", { class: "rt-cards" }, page.map((w) => workflowCatalogCard(w, false, ctx.mark))) });
 }
 
 function viewEditor(arg) {
@@ -490,10 +509,11 @@ function buildEditor(ed) {
       ...[...errs, ...warns].slice(0, 12).map((p) => h("div", { class: `rt-prob ${p.level}`, "data-problem": p.node || p.edge || "" }, `${p.level === "error" ? "✗" : "!"} ${p.text}`))); };
   const persistLayout = nid => queueLayout(snapshot(), T(`Position saved for v${ed.def.version}`, `位置已儲存於 v${ed.def.version}`));
   const uniq = (base) => { let i = 1, idv = base; while (ed.def.nodes.some((n) => n.id === idv)) idv = `${base}-${++i}`; return idv; };
-  const addNode = (kind, at) => {
+  const addNode = (kind, at, preset = null) => {
     const c = at || (view ? { x: view.x + view.w / 2 - NW / 2, y: view.y + view.h / 2 - NH / 2 } : { x: 40, y: 40 });
     const idv = uniq(kind); const n = { id: idv, kind, label: `${KINDS.find((k) => k[0] === kind)[1]} ${idv.split("-").at(-1) === kind ? "" : idv.split("-").at(-1)}`.trim(), x: Math.round(c.x), y: Math.round(c.y) };
     if (kind === "agent") { n.role = ed.def.roles[0]?.id; n.mode = "test"; } if (kind === "hook") { n.do = "note"; n.args = { text: "" }; } if (kind === "card") n.card = { options: [{ id: "ok", label: "OK" }] }; if (kind === "loop") n.args = { producer: ed.def.nodes.find((x) => x.kind === "agent")?.id ?? "" };
+    if (preset) { const { id: _i, ...rest } = structuredClone(preset); Object.assign(n, rest); }
     ed.def.nodes.push(n); ed.sel = { node: idv }; dirty(); say(T(`added ${kind} node ${idv}`, `已加入 ${kind} 節點 ${idv}`)); focusNode(idv);
   };
   const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`Removed ${nid} and its connections; ${ed.def.nodes.length} other nodes remain. Disconnected steps stay available to reconnect.`, `已移除 ${nid} 與其連線；其餘 ${ed.def.nodes.length} 個節點仍保留，斷線步驟可重新接回。`)); };
@@ -663,7 +683,13 @@ function buildEditor(ed) {
       const target = h("select", { class: "select", "aria-label": T("Connect to", "連到") }, ed.def.nodes.filter((x) => x.id !== n.id).map((x) => h("option", { value: x.id }, x.id)));
       const when = h("input", { class: "input", placeholder: T("when (outcome, optional)", "條件（結果，可留空）"), "aria-label": T("Edge outcome", "邊的結果") });
       // (fields a node kind does not have are null: left out, never shown as the text "null")
-      panel.replaceChildren(...[h("h3", {}, n.label), h("p", { class: "faint" }, `${n.id} · ${n.kind}`),
+      // a node that explains itself (the PR follow-through nodes): what it reads and does, its branches, and where its card shows
+      const out = ed.def.edges.filter((e) => e.from === n.id), lab = (id) => ed.def.nodes.find((x) => x.id === id)?.label || id;
+      const EH = "font-size:12px;color:var(--text-3);font-weight:600;margin:8px 0 2px;letter-spacing:.04em";
+      const explain = Array.isArray(n.explain) ? h("div", { class: "rt-explain", "data-node-explain": n.id }, n.explain.map((x) => h("div", { class: "pw-dl" }, h("div", { style: EH }, L(x.h)), h("div", { style: "font-size:13px;white-space:pre-line" }, L(x.v)))),
+        out.length > 1 ? h("div", { class: "pw-dl", "data-node-branches": n.id }, h("div", { style: EH }, T("Branches (when → where)", "分支（when → 去哪）")), out.map((e) => h("div", { class: "kv" }, h("span", { class: "mono" }, e.when || "—"), h("b", {}, lab(e.to))))) : null,
+        n.preview === "inbox" ? h("a", { class: "btn", href: "#/inbox", "data-node-preview": n.id }, T("See this card in the Inbox →", "看這張船長卡在 Inbox 長什麼樣 →")) : null) : null;
+      panel.replaceChildren(...[h("h3", {}, n.label, n.new ? h("span", { class: "pw-new" }, T("new", "新")) : null), h("p", { class: "faint" }, `${n.id} · ${n.kind}`), explain,
         txt("label", T("Label", "名稱")), txt("detail", T("Detail", "說明")),
         n.kind === "agent" ? field(T("Role", "角色"), h("select", { class: "select", onchange: (e) => { n.role = e.target.value; dirty(); } }, ed.def.roles.map((r) => h("option", { value: r.id, selected: r.id === n.role || null }, r.label)))) : null,
         n.kind === "agent" ? txt("mode", T("Mode", "模式")) : null,
@@ -691,6 +717,8 @@ function buildEditor(ed) {
     h("button", { class: "btn sm", "data-edit-detail": "1", onclick: () => setView("detail") }, T("Edit in Detail view", "到詳細檢視編輯")));
   const palette = h("aside", { class: "rt-palette card", "aria-label": T("Palette", "調色盤") }, h("h4", {}, T("Add a node", "加節點")),
     ...KINDS.map(([k, en, tw]) => h("button", { class: `btn sm rt-pal k-${k}`, draggable: "true", "data-add": k, onclick: () => { addNode(k); drawPanel(); }, ondragstart: (e) => { e.dataTransfer.setData("text/x-kind", k); } }, T(en, tw))),
+    // the pull request follow-through nodes (docs/units/pr-watch.md "Follow-through"), ready to place
+    h("h4", {}, "PR"), ...PR_PRESETS.map(([en, tw, p]) => h("button", { class: `btn sm rt-pal k-${p.kind}`, "data-add-preset": p.do || en, onclick: () => { addNode(p.kind, null, { ...p, label: T(en, tw) }); drawPanel(); } }, T(en, tw), h("span", { class: "pw-new" }, T("new", "新")))),
     h("h4", {}, T("Checks", "檢查")), h("p", { class: "faint" }, T("Drag one onto a node or an edge.", "拖到節點或邊上。")),
     h("div", { class: "rt-pal-checks" }, ed.checks.map((c) => h("div", { class: "rt-pal-check", draggable: "true", tabindex: 0, "data-pal-check": c.ref, title: c.description || c.ref, ondragstart: (e) => { e.dataTransfer.setData("text/x-check", c.ref); e.dataTransfer.effectAllowed = "copy"; } }, c.ref))));
   canvas.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("text/x-kind")) e.preventDefault(); });
@@ -859,14 +887,11 @@ window.crewPrefillFirstTask = () => {
 };
 function viewRuns() {
   if (!RN.list) { RN.list = "loading"; RN.startOptions = {}; Promise.all([api(`/api/wruns${RN.archived ? "?archived=1" : ""}`), api("/api/wf")]).then(([r, w]) => { setWorkflowNames(w.names); RN.list = r.runs; RN.cards = r.cards; RN.wfs = w.workflows; rerender(); }).catch(() => { RN.list = []; rerender(); }); }
-  // #/runs?project=<id>: only that project's Tasks (studio: the Tasks in no project), as /api/tasks?project= lists them
-  const pf = S.route?.query?.get("project") || null;
-  if (pf && (RN.pf !== pf || RN.pfArchived !== !!RN.archived || RN.pIds === undefined)) { RN.pf = pf; RN.pfArchived = !!RN.archived; RN.pIds = null;
-    api(`/api/tasks?project=${encodeURIComponent(pf)}${RN.archived ? "&archived=1" : ""}`).then((x) => { if (RN.pf === pf) { RN.pIds = new Set((x.tasks || []).map((t) => t.id)); rerender(); } }).catch(() => { RN.pIds = new Set(); rerender(); }); }
-  if (!pf) { RN.pf = null; RN.pIds = undefined; }
-  // the Agent rounds panel below (public/transcripts.js) follows the same filter
-  window.crewTaskFilter = () => (RN.pf ? RN.pIds || null : null); // null while the project's Task ids load
-  const runs = (Array.isArray(RN.list) ? RN.list.slice().reverse() : []).filter((r) => !pf || (RN.pIds && RN.pIds.has(r.id)));
+  // the toolbar's filter (public/list-tools.js; #/runs?project=<id> is its project facet). The Agent rounds panel below
+  // (public/transcripts.js) follows it: undefined, no filter; null, the list is still loading; else the matching Task ids
+  window.crewTaskFilter = () => (RN.filterIds === undefined ? undefined : Array.isArray(RN.list) ? RN.filterIds : null);
+  if (!Array.isArray(RN.list)) RN.filterIds = runsFiltered() ? null : undefined;
+  const runs = Array.isArray(RN.list) ? RN.list.slice().reverse() : [];
   // the form keeps what was typed across re-renders (the list loads, a run moves)
   const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", "data-unsent-owner": "start-form", oninput: (e) => { RN.draft = e.target.value; } });
   text.value = RN.draft || "";
@@ -886,17 +911,49 @@ function viewRuns() {
         }
         const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); window.pageDirty?.clean(); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
       catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), startParamInputs(wf.value), msg),
-    // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
-    h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
-    pf ? h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${pf}`, `專案：${pf}`)),
-      pf === "studio" ? null : h("a", { href: `#/project/${encodeURIComponent(pf)}` }, T("Open the project", "開啟專案")), h("a", { href: "#/runs" }, T("Show all tasks", "顯示全部任務"))) : null,
-    RN.list === "loading" || RN.list === null || (pf && !RN.pIds) ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
-      h("span", { class: "mono" }, r.id), h("b", { "data-task-title": r.id }, window.crewLan?.shownTitle?.(r.id, r.title) ?? r.title), h("span", { class: "vbadge" }, `${wfName(r.workflow)} v${r.version}`),
+    // one word per state (public/runstate.js); archived runs only with "Show archived" (in the toolbar's row, right above the list), each with Unarchive
+    RN.list === "loading" || RN.list === null ? [archivedToggle(), h("div", { class: "skel", style: "height:120px" })] : runsList(runs));
+}
+const runProjectName = (v) => v === "studio" ? T("No project (Studio)", "無專案（Studio）") : (window.crewProjects?.state?.side?.projects || []).find((p) => p.id === v)?.name || v;
+/** a toolbar filter in the URL: a search or a facet (the default 30-day window is not a filter) */
+const runsFiltered = () => { const q = S.route?.query; return !!q && ["q", "status", "workflow", "project", "old"].some((k) => q.has(k)); };
+/** a Task still in flight is never hidden by the 30-day window */
+const runLive = (r) => ["queued", "running", "waiting", "paused"].includes(r.status);
+const projectFilterRow = (pf) => !pf ? null : h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${runProjectName(pf)}`, `專案：${runProjectName(pf)}`)),
+  pf === "studio" ? null : h("a", { href: `#/project/${encodeURIComponent(pf)}` }, T("Open the project", "開啟專案")), h("a", { href: "#/runs?" }, T("Show all tasks", "顯示全部任務")));
+const archivedToggle = () => h("label", { class: "lt-check rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存"));
+function runsList(runs) {
+  const words = {}, pfBox = h("div", { "data-project-filter-box": "" });
+  const list = window.crewListTools.list({ id: "runs", route: "runs", title: T("tasks", "任務"), noun: ["task", "任務"], items: runs, extra: archivedToggle(),
+    placeholder: T("Search titles, task ids, workflows, projects…  or type status:waiting", "搜尋標題、任務 id、流程、專案…  也可以打 status:等你處理"),
+    text: (r) => [r.title, window.crewLan?.shownTitle?.(r.id, r.title), r.id, r.workflow, wfName(r.workflow), String(r.request || "").slice(0, 400), runProjectName(r.project || "studio")],
+    facets: [{ key: "status", name: T("Status", "狀態"), value: (r) => { const st = window.runState(r); words[st.key] = T(st.en, st.tw); return st.key; }, show: (k) => words[k] || k },
+      { key: "workflow", name: T("Workflow", "流程"), value: (r) => r.workflow, show: (v) => wfName(v) },
+      { key: "project", name: T("Project", "專案"), value: (r) => r.project || "studio", show: runProjectName }],
+    sorts: [{ key: "new", label: T("Newest first", "最新的在上"), cmp: (a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) },
+      { key: "old", label: T("Oldest first", "最舊的在上"), cmp: (a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) },
+      { key: "title", label: T("Title", "標題"), cmp: (a, b) => String(a.title || "").localeCompare(String(b.title || ""), lang) }],
+    recent: { days: 30, at: (r) => (runLive(r) ? new Date().toISOString() : r.updatedAt || r.endedAt || r.createdAt) },
+    none: () => h("div", { class: "card x-pad faint", id: "runsEmpty" }, T("No tasks yet.", "還沒有任務。")),
+    rows: (page, ctx) => h("div", { class: "card rt-runs" }, page.map((r) => runRow(r, ctx.mark)), ctx.older),
+    onChange: (v, st) => {
+      const pf = (st.f.project || []).length === 1 && !st.q.trim() ? st.f.project[0] : null;
+      if (pfBox.dataset.pf !== String(pf)) { pfBox.dataset.pf = String(pf); pfBox.hidden = !pf; pfBox.replaceChildren(...[projectFilterRow(pf)].filter(Boolean)); } // an empty box would leave a gap above the toolbar
+      const filtered = !!(st.q.trim() || Object.values(st.f).some((x) => x.length) || st.old);
+      const ids = filtered ? new Set(v.matched.map((r) => r.id)) : undefined;
+      const same = ids === RN.filterIds || (ids && RN.filterIds && ids.size === RN.filterIds.size && [...ids].every((x) => RN.filterIds.has(x)));
+      RN.filterIds = ids; if (!same) window.crewNodesFilterChanged?.();
+    } });
+  return [pfBox, list];
+}
+function runRow(r, mark) {
+  return h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
+      h("span", { class: "mono" }, r.id), h("b", { "data-task-title": r.id }, mark(window.crewLan?.shownTitle?.(r.id, r.title) ?? r.title)), h("span", { class: "vbadge" }, `${wfName(r.workflow)} v${r.version}`),
       // the state and the archived marker read together; the foot says where the run is and holds Unarchive
       h("span", { class: "rt-state" }, window.runStateBadge(r), r.childRun ? h("span", {class:"faint"}, T(`Execution: ${r.childRun}`,`執行任務：${r.childRun}`)) : null, r.origin?.kind === "external-cli" ? h("span", { class: "badge neutral", "data-run-origin": r.origin.grant }, T(`External CLI ${r.origin.grant}`, `外部 CLI ${r.origin.grant}`)) : null, r.archived ? h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存")) : null,
       r.archived ? h("button", { class: "btn rt-unarchive", type: "button", "data-run-unarchive": r.id, onclick: async (e) => { e.preventDefault(); e.stopPropagation();
         try { await api(`/api/wruns/${r.id}/archive`, { archived: false }); } catch (err) { alert(err.message); } RN.list = null; rerender(); } }, T("Unarchive", "取消封存")) : null),
-      h("div", { class: "rt-foot" }, h("span", { class: "faint rt-where" }, r.current.map((c) => c.waiting === "card" ? T(`Waiting for you at ${c.label || c.node}`, `在「${c.label || c.node}」等你`) : T(`Now: ${c.label || c.node}`, `目前：${c.label || c.node}`)).join(" · ")))))) : h("div", { class: "card x-pad faint", id: "runsEmpty" }, T("No tasks yet.", "還沒有任務。")));
+      h("div", { class: "rt-foot" }, h("span", { class: "faint rt-where" }, r.current.map((c) => c.waiting === "card" ? T(`Waiting for you at ${c.label || c.node}`, `在「${c.label || c.node}」等你`) : T(`Now: ${c.label || c.node}`, `目前：${c.label || c.node}`)).join(" · "))));
 }
 // a timeline line in the captain's words (Simple view): run states as public/runstate.js names them, node steps as plain verbs
 // with the run, a timeline line names a state exactly as the run's own status pill does (an artifact task "Closed without approval")
@@ -1124,7 +1181,9 @@ async function loadRun(v) { if (!v) return; try { v.r = await api(`/api/tasks/${
 live.listeners.add((t, d) => {
   if (t === "wrun" && d.deleted) { RN.list = null; if (S.route?.name === "run" && RN.view?.id === d.id) { RN.view = null; location.hash = "#/runs"; return; } }
   if (S.route?.name === "run" && RN.view && (d.id === RN.view.id || d.run === RN.view.id)) { clearTimeout(RN.t); RN.t = setTimeout(() => loadRun(RN.view), 150); }
-  if (S.route?.name === "runs" && t === "wrun") { clearTimeout(RN.lt); RN.lt = setTimeout(() => { RN.list = null; render(); }, 300); }
+  // the list is read again behind the page and drawn when the captain is not typing (app.js soft): the toolbar's search
+  // box is never replaced under a composition, and the page never flashes back to its skeleton
+  if (S.route?.name === "runs" && t === "wrun") { clearTimeout(RN.lt); RN.lt = setTimeout(() => { const archived = !!RN.archived; api(`/api/wruns${archived ? "?archived=1" : ""}`).then((r) => { if (!Array.isArray(RN.list) || archived !== !!RN.archived) return; RN.list = r.runs; RN.cards = r.cards; if (S.route?.name === "runs" && !window.crewListTools?.feed("runs", r.runs.slice().reverse())) soft(); }).catch(() => {}); }, 300); }
 });
 // leaving a page drops what it loaded, so coming back shows fresh data
 addEventListener("hashchange", () => { if (!/^#\/(runs|tasks)(\/|$)/.test(location.hash)) RN.list = null; if (!/^#\/(run\/|tasks\/R-\d+)/.test(location.hash)) RN.view = null;
@@ -1163,13 +1222,16 @@ live.listeners.add((t) => { if (t === "scard") { clearTimeout(SCX.t); SCX.t = se
 addEventListener("crew:live", () => loadOpenCards()); // the stream (re)connected: read the cards again
 addEventListener("hashchange", () => { if (location.hash.startsWith("#/inbox")) loadOpenCards(); }); // coming to the Inbox shows fresh cards
 loadOpenCards();
-window.studioCards = { count: () => SCX.open.length,
-  needRows: () => SCX.open.map((c) => h("div", { class: "need", "data-need-scard": c.id }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, c.kind === "merge" ? "⇢" : "?"),
+// a follow-through card the captain snoozed (docs/units/pr-watch.md) is left out until its time; a minute timer brings it back
+const awake = () => SCX.open.filter((c) => !(c.follow?.snoozeUntil && Date.parse(c.follow.snoozeUntil) > Date.now()));
+setInterval(() => { if (SCX.open.some((c) => c.follow?.snoozeUntil)) { updateNav(); if (S.route?.name === "inbox") afterPress(() => { if (S.route?.name === "inbox") render(); }); } }, 60000);
+window.studioCards = { count: () => awake().length,
+  needRows: () => awake().map((c) => h("div", { class: "need", "data-need-scard": c.id }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, c.kind === "merge" ? "⇢" : "?"),
     h("div", {}, h("div", { class: "need-t" }, L(c.title)), h("div", { class: "need-d" }, [c.run, wfName(c.workflow), c.node].join(" · "))),
     h("div", { class: "need-r" }, h("a", { class: "btn", href: `#/inbox/${encodeURIComponent(c.id)}` }, T("Open", "打開"))))),
   // the Inbox (public/app.js) lists these beside firstmate's and shows one at a time: the open cards, whether they were
   // read yet, and the one selected card, its primary button naming the Task it answers
-  open: () => SCX.open, ready: () => SCX.loaded,
+  open: awake, ready: () => SCX.loaded,
   card: (c, target) => cardView(c, { inbox: true, target }) };
 
 // ---------- Studio tasks' live agent node runs on the Crew page, beside firstmate's rounds ----------

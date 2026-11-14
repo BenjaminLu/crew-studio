@@ -58,23 +58,39 @@ function navCount() { const n = (A.lane?.cards || []).filter((c) => c.state === 
 function viewLibrary3() {
   if (!A.list) { loadList(); return h("div", { class: "page media-library" }, h("div", { class: "skel", style: "height:240px" })); }
   if (!LB.data) loadLibrary();
-  const kind = LB.kind;
-  const arts = A.list.filter((a) => kind === "all" || a.type === kind || (kind === "web" && a.type === "image"));
-  const code = kind === "all" || kind === "code" ? (LB.data?.code || []).filter((x) => LB.range === "all" || (x.ts || "") >= new Date(Date.now() - Number(LB.range) * 86400e3).toISOString()) : [];
-  const seg = (vals, cur, set) => h("div", { class: "seg media-filters", role: "group" }, vals.map(([v, en, tw]) => h("button", { "aria-pressed": String(cur === v), "data-filter": v, onclick: () => set(v) }, h("span", {}, T(en, tw)))));
   return h("div", { class: "page media-library" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Library", "成品庫")),
       h("p", {}, T("Deliverables with their versions, notes and approvals, and merged code with its lineage.", "成品和它的版本、標註與核准，以及已合併的程式碼和來歷。"))),
       h("div", { class: "actions" }, h("button", { class: "btn", onclick: newWebArtifact }, icon("plus", "ic sm"), T("New web page", "新增網頁")),
         h("button", { class: "btn ghost", onclick: () => { A.list = null; LB.data = null; render(); } }, icon("refresh", "ic sm"), T("Refresh", "重新整理")))),
-    h("div", { class: "filters" },
-      seg([["all", "All", "全部"], ["code", "Code", "程式碼"], ["video", "Video", "影片"], ["audio", "Audio", "音訊"], ["web", "Web & images", "網頁與圖片"]], kind, (v) => { LB.kind = v; store.set("crew.libKind", v); render(); }),
-      seg([["7", "7 days", "7 天"], ["30", "30 days", "30 天"], ["all", "All time", "全部"]], LB.range, (v) => { LB.range = v; store.set("crew.libRange", v); render(); })),
-    arts.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Artifacts", "成品")), h("span", { class: "faint" }, String(arts.length))),
-      libGrid(arts.map(artCard))) : null,
-    code.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Merged code", "已合併的程式碼")), h("span", { class: "faint" }, String(code.length))),
-      h("div", { class: "card", style: "display:grid" }, code.map(codeRow))) : null,
-    !arts.length && !code.length ? h("div", { class: "card" }, h("div", { class: "empty" }, icon("library"), h("b", {}, T("Nothing matches", "沒有符合的成品")), T("Try another type or a longer time range.", "換個類型或拉長時間範圍。"))) : null);
+    libraryList());
+}
+// The Library under the list toolbar (public/list-tools.js): artifacts and merged code in one list; what were the type and
+// time switches are the Type and Time facets, with a text search over titles, projects and tasks. A page of the list is
+// drawn as before: its artifacts as cards, its merged code as rows.
+const LIB_TYPE = { code: ["Code", "程式碼"], video: ["Video", "影片"], audio: ["Audio", "音訊"], web: ["Web", "網頁"], image: ["Image", "圖片"], doc: ["Document", "文件"], md: ["Document", "文件"] };
+const LIB_RANGE = { d7: ["Last 7 days", "近 7 天"], d30: ["Last 30 days", "近 30 天"], older: ["Older", "更早"] };
+const libTs = (x) => (x.code ? x.code.ts : x.art.versions?.at(-1)?.createdAt || x.art.created) || "";
+const libRange = (x) => { const t = Date.parse(libTs(x)); if (!(t > 0)) return "older"; const d = (Date.now() - t) / 86400e3; return d <= 7 ? "d7" : d <= 30 ? "d30" : "older"; };
+/** the merged code is what the GitHub sync keeps, its newest N: the list says so when it holds that many, never silently */
+const codeCapped = () => { const n = LB.data?.mergedKept, have = (LB.data?.code || []).length; return n && have >= n ? h("div", { class: "lt-hidden", "data-lib-code-capped": String(n) },
+  T(`Merged code shows the newest ${n} pull requests only: that is what the GitHub sync keeps.`, `已合併的程式碼只顯示最近 ${n} 個 pull request：GitHub 同步只保留這些。`)) : null; };
+function libraryList() {
+  const items = [...A.list.map((a) => ({ id: a.id, art: a })), ...(LB.data?.code || []).map((x) => ({ id: x.id, code: x }))];
+  return window.crewListTools.list({ id: "library", route: "library", title: T("the Library", "成品庫"), noun: ["item", "成品"], items,
+    placeholder: T("Search titles, projects, tasks…  or type type:video", "搜尋標題、專案、任務…  也可以打 type:video"),
+    text: (x) => (x.code ? [x.code.title, x.code.id, x.code.task, x.code.branch, `#${x.code.pr}`] : [x.art.title, x.art.id, x.art.project, x.art.type, x.art.note, x.art.versions?.at(-1)?.media?.task]),
+    facets: [{ key: "type", name: T("Type", "類型"), value: (x) => (x.code ? "code" : x.art.type), show: (k) => T(...(LIB_TYPE[k] || [k, k])) },
+      { key: "range", name: T("Time", "時間"), value: libRange, show: (k) => T(...LIB_RANGE[k]) },
+      { key: "status", name: T("Status", "狀態"), value: (x) => (x.code ? "merged" : x.art.versions?.at(-1)?.status || "draft"), show: (k) => (k === "merged" ? T("Merged", "已合併") : (VST[k] || VST.draft)[1]()) },
+      { key: "project", name: T("Project", "專案"), value: (x) => (x.code ? null : x.art.project) }],
+    sorts: [{ key: "new", label: T("Newest first", "最新的在上"), cmp: (a, b) => libTs(b).localeCompare(libTs(a)) },
+      { key: "title", label: T("Title", "標題"), cmp: (a, b) => String((a.code || a.art).title).localeCompare(String((b.code || b.art).title), lang) }],
+    none: () => h("div", { class: "card" }, h("div", { class: "empty" }, icon("library"), h("b", {}, T("Nothing here yet", "還沒有成品")), T("Artifacts and merged code show up here.", "成品和已合併的程式碼會出現在這裡。"))),
+    rows: (page, ctx) => { const arts = page.filter((x) => x.art), code = page.filter((x) => x.code);
+      return [arts.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Artifacts", "成品")), h("span", { class: "faint" }, String(ctx.matched.filter((x) => x.art).length))), libGrid(arts.map((x) => artCard(x.art, ctx.mark)))) : null,
+        code.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Merged code", "已合併的程式碼")), h("span", { class: "faint" }, String(ctx.matched.filter((x) => x.code).length))),
+          h("div", { class: "card", style: "display:grid" }, code.map((x) => codeRow(x.code)), codeCapped())) : null]; } });
 }
 // List previews are read-only, scripts-off. A successful iframe load alone does not mean
 // the source exists (browsers also fire load for error documents), so check the actual response.
@@ -154,12 +170,12 @@ function artPreview(a, v, big) {
   }
   return previewBox("missing", T("Open artifact to view this file", "開啟成品查看此類檔案"));
 }
-function artCard(a) {
+function artCard(a, mark = (t) => t) {
   const last = a.versions.at(-1);
   return h(a.type==="audio"?"div":"a", { class: "card lib a3-card", href: `#/artifact/${a.id}`, "data-artifact": a.id, "data-file": a.legacy || a.id },
     artPreview(a, last),
     h("div", { class: "lbody" },
-      h(a.type==="audio"?"a":"div", { class: "t",...(a.type==="audio"?{href:`#/artifact/${a.id}`}:{}) }, a.title),
+      h(a.type==="audio"?"a":"div", { class: "t",...(a.type==="audio"?{href:`#/artifact/${a.id}`}:{}) }, mark(a.title)),
       h("div", { class: "run-s" }, h("span", { class: "vbadge" }, a.type), h("span", { class: "vbadge" }, `v${a.latest}`), last ? vBadge(last.status) : null,
         a.approved ? h("span", { class: "faint" }, T(`v${a.approved} approved`, `v${a.approved} 已核准`)) : null),
       last?.media?h("div",{class:"faint media-provenance"},`${last.media.origin} · ${last.media.provider||"import"}${last.media.model?" / "+last.media.model:""} · Task ${last.media.task} · g${last.media.generation}`):null,
