@@ -30,7 +30,7 @@ if (msg.includes("STUB_LOGIN")) { out({ type: "result", subtype: "success", is_e
 if (msg.includes("STUB_MANY")) { for (let i = 0; i < 10; i++) { await tool("runs_list", {}); await sleep(50); } await say("done"); out({ type: "result", subtype: "success", is_error: false, result: "done" }); process.exit(0); }
 if (msg.includes("STUB_INTENT")) {
   const i = await tool("intent_capture", { goal: "Add a dark mode to the docs site", details: "from the stub", deadline: "Friday" });
-  await say(`Recorded as intent [${i.id}](#/intents/${i.id}). firstmate will draft a spec and raise a dispatch card.`);
+  await say(`Recorded as intent ${i.id}. firstmate will draft a spec and raise a dispatch card.`);
   out({ type: "result", subtype: "success", is_error: false, result: "" });
   process.exit(0);
 }

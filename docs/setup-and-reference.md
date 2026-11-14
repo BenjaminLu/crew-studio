@@ -228,7 +228,7 @@ in a checkout (`CREW_DATA` overrides both).
 
 A window onto a running firstmate: the board, the inbox of captain cards, the
 crew working right now with their live logs, the event log, and today's code
-workflow as a graph, plus a chat with firstmate, the captain's intents and a
+workflow as a graph, plus a chat with firstmate and a
 Library of delivered work; self-improvement (retros, skill edits, replay evals), doors and script gates, domain packs (file organization, documents) and skins.
 
 It reads a firstmate state directory and never writes to it. The one action it
@@ -389,7 +389,7 @@ check, a retrospective card) show a link to the board instead of options.
 - **Activity**: the event log, filtered by task, type or actor, updating live.
 - **Workflow**: `workflows/code.flow.yaml` drawn as a graph, with each active task placed on its step.
 - **Chat** (every page): ask firstmate how things stand. Answers come only from Studio's read-only tools over the event log, with links to the task, event, card or PR they came from; each lookup shows as a chip. Saying what you want done records an intent.
-- **Intents**: what you asked for, with a trail Received → Spec drafted → Dispatch card → Running → Merged.
+- **Intents** (removed): the page that listed captured intents with a Received → Merged trail was removed because it was unused. Intents are still captured from the chat and linked by firstmate; the task page and the Library's merged-code rows name a task's intent id as plain text.
 - **Library**: artifacts (web pages, films, images, links) with their versions and approvals, and merged PRs with their lineage (dispatch card → rounds and reviews → CI → merge card → commit).
 - **Artifact** page: every version with who made it (captain, an agent with its provider and model, or an import), its parent, the notes behind it, the spend the agent reported, the sha256, the render state, the approval; the lineage v1 → notes → v2; the agent rounds; where it went in repositories.
 - **Review** (`#/review/<id>/<n>`): web pages pin-review (click an element, comment); films timeline-review (drag a range, optionally draw a box, comment). "Request changes" runs a designer or film-editor agent; "Feedback brief" shows what the agent gets; "Approve" pins the version.
@@ -426,7 +426,7 @@ Studio never writes specs or cards. It records intents; firstmate (the main sess
 - `data/intent-links.jsonl`: firstmate appends one line when it drafts a spec for an intent:
   `{"intent":"I-001","task":"T-307","ts":"<ISO>","by":"firstmate"}`. To decline one, it writes
   `{"intent":"I-001","status":"declined","reason":"…","ts":"<ISO>","by":"firstmate"}`.
-- After the link, the task's own events drive the trail: a `decision_requested` dispatch card → **Dispatch card**; the captain's A on it → **Running**; `merged` → **Merged**.
+- After the link, the task page and the Library's merged-code rows name the intent id. Studio no longer serves `/api/intents` or the `intents` live event: they existed only for the removed Intents page.
 
 ## Artifacts and review loops (M3)
 

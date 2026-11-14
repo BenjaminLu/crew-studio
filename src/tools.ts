@@ -82,7 +82,7 @@ export const TOOLS: Tool[] = [
     description: "Record a NEW piece of work the captain asks for, so firstmate can draft its spec and dispatch card. Call once per new request, only when the captain states work to be done. This does not dispatch anything.",
     schema: { type: "object", properties: { goal: { type: "string", description: "one sentence: what should exist when done" }, details: { type: "string" },
       constraints: { type: "string" }, deadline: { type: "string" }, budget: { type: "string" } }, required: ["goal"] },
-    run: (c, a) => { const i = c.store.capture({ ...a, source: "chat" }); return { id: i.id, goal: i.goal, status: "received", link: `#/intents/${i.id}`,
+    run: (c, a) => { const i = c.store.capture({ ...a, source: "chat" }); return { id: i.id, goal: i.goal, status: "received",
       next: "firstmate (the main session) drafts a spec and raises a dispatch card; the captain answers it on the board." }; } },
   { name: "skill_edit", label: "skill.edit", write: true,
     description: "Ask Studio's skill editor to change one workflow role's skill (for example the code workflow's worker). It edits Studio's own copy, runs replay evals, and offers the result to the captain on the Improve page; nothing is adopted without the captain. Call only when the captain asks to change how a role works.",

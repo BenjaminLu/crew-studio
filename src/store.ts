@@ -17,8 +17,6 @@ export type Intent = {
 export type IntentLink = { intent: string; task?: string; status?: "declined"; reason?: string; ts?: string; by?: string };
 export type Artifact = { id: string; type: "video" | "web" | "code" | "doc"; title: string; path?: string; url?: string;
   created?: string; approvedBy?: string | null; approvedAt?: string | null; note?: string; intent?: string | null };
-export type Step = "received" | "spec" | "dispatch" | "running" | "merged";
-export const STEPS: Step[] = ["received", "spec", "dispatch", "running", "merged"];
 
 const readLines = (file: string): any[] => {
   if (!existsSync(file)) return [];
@@ -46,19 +44,6 @@ export class Store {
     appendFileSync(join(this.dir, "intents.jsonl"), JSON.stringify(rec) + "\n");
     return rec;
     });
-  }
-
-  /** Each intent with its trail: links say which task firstmate drafted; the task's events say the rest. */
-  intentView(fm: FmState) {
-    const links = this.links();
-    return this.intents().map((i) => {
-      const mine = links.filter((l) => l.intent === i.id);
-      const declined = mine.find((l) => l.status === "declined") ?? null;
-      const tasks = [...new Set(mine.map((l) => l.task).filter((t): t is string => !!t && /^T-\d+$/.test(t)))];
-      const per = tasks.map((t) => ({ task: t, title: fm.title(t), step: stepOf(fm.lineage(t), fm.known(t)), lineage: fm.lineage(t) }));
-      const step: Step = per.length ? per.map((p) => p.step).sort((a, b) => STEPS.indexOf(b) - STEPS.indexOf(a))[0] : "received";
-      return { ...i, step, tasks: per, declined };
-    }).reverse();
   }
 
   artifacts(): Artifact[] {
@@ -94,10 +79,3 @@ export class Store {
   }
 }
 
-/** A linked task is at least "spec drafted"; its dispatch card, the captain's A on it, and the merge move it on. */
-export function stepOf(l: Lineage, _known: boolean): Step {
-  if (l.merged) return "merged";
-  if (l.dispatch) return "running";
-  if (l.dispatchAsked) return "dispatch";
-  return "spec";
-}
