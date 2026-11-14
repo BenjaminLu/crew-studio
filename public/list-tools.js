@@ -269,6 +269,8 @@ function list(cfg) {
   const goPage = (p) => { if (typeof p !== "number") return; set({ page: p }); root.scrollIntoView?.({ block: "start", behavior: "instant" }); };
   const clearAll = () => { input.value = ""; u.open = null; set({ q: "", f: {}, old: false }); };
   root.ltRefresh = () => draw(); // a server list asks again (a live event)
+  // the page that holds the first matching row that passes test is shown (no redraw when it already is)
+  root.ltReveal = (test) => { if (cfg.server || !view) return; const i = view.matched.findIndex(test); if (i < 0) return; const p = Math.floor(i / view.size) + 1; if (p !== view.page) set({ page: p }); };
   root.ltItems = (items) => { cfg.items = items; cfg._hay = null; draw(); }; // new rows in place: the search box stays the same element
   draw();
   return root;

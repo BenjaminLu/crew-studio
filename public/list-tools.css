@@ -34,3 +34,7 @@
 .lt-x:hover,.lt-x:focus-visible{background:var(--surface-3);color:var(--text)}.lt-x .ic{width:13px;height:13px}
 .lt-check{display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap}
 .lt-small{font-size:12px}
+/* the Inbox: the toolbar spans the list and the card; on a phone showing a card, the list's column and toolbar step aside */
+.ib>.lt{grid-column:1/-1;margin:0}
+.ib-col{min-width:0}
+@container main (max-width:519px){.ib[data-ib-mode="card"]>.lt,.ib[data-ib-mode="card"] .ib-col{display:none}}

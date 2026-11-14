@@ -7,7 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // page size, the state in the URL (reload and back keep it), the empty state, "/" and Escape, at 1440 and 390, and takes
 // the screenshots the review reads.        node tests/list-tools-ui.mjs   (LT_SHOTS=<dir> to keep them elsewhere)
 import { spawn } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,8 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
 process.env.CREW_SESSION_TOKEN ??= "test-session";
 const tmp = mkdtempSync(join(tmpdir(), "crew-list-tools-ui-")), state = join(tmp, "state"), data = join(tmp, "data");
 cpSync(join(here, "fixture/state"), state, { recursive: true }); mkdirSync(data, { recursive: true });
+// the Inbox reads only the test's Studio cards: the fixture's firstmate cards are left out of this copy
+for (const f of readdirSync(join(state, "pending"))) rmSync(join(state, "pending", f), { force: true });
 // Studio's own agent rounds: 3 runs × 80 rounds, more than the 200 the list keeps
 const ROUND_RUNS = ["R-9001", "R-9002", "R-9003"];
 for (const r of ROUND_RUNS) for (let i = 0; i < 80; i++) mkdirSync(join(data, "runs", r, "nodes", "worker", `r${i}`), { recursive: true });
@@ -45,12 +47,16 @@ const terms = Array.from({ length: 52 }, (_, i) => ({ id: `t${i}`, project: { id
 const arts = Array.from({ length: 150 }, (_, i) => ({ id: `art-${i}`, title: `${pick(["Home page", "Launch page", "Product shot", "Intro film", "Voice-over", "Guide"])} ${i + 1}`, type: pick(["web", "image", "video", "audio"]), project: pick(["api-gateway", "docs-site"]), source: "url", created: ago(Math.floor(i / 3)), note: null, entry: null,
   versions: [{ n: 1, status: pick(["draft", "approved", "in-review"]), createdAt: ago(Math.floor(i / 3)), url: "https://example.com", files: [] }], latest: 1, approved: null }));
 const code = Array.from({ length: 50 }, (_, i) => ({ kind: "code", id: `PR-${500 + i}`, title: `${pick(verbs)} ${pick(things)}`, ts: ago(i * 2), pr: 500 + i, url: `https://example.com/pull/${500 + i}`, commit: null, branch: `feat/x-${i}`, checks: { pass: 3, fail: 0 }, task: null, intent: null, door: null, lineage: null }));
+const kinds = ["question", "approve", "merge", "spec"];
+const scards = Array.from({ length: 46 }, (_, i) => ({ id: `SC-${900 + i}`, run: `R-${4200 - i}`, node: "ask", visit: 1, kind: kinds[i % 4], status: "open", workflow: wfs[i % 3],
+  title: { en: i === 5 ? "Approve the 軟體 release" : `${pick(verbs)} ${pick(things)}`, "zh-TW": i === 5 ? "核准軟體發行" : `${pick(verbs)} ${pick(things)}` }, body: "Pick one",
+  options: [{ id: "a", label: "A", primary: true }, { id: "b", label: "B", note: true }], createdAt: ago(46 - i), answer: null }));
 const ZONES = ["waiting", "reviewing", "concluded", "archived"];
 const rooms = Array.from({ length: 96 }, (_, i) => ({ id: `PR-${String(i).padStart(4, "0")}`, title: `${pick(verbs)} ${pick(things)} #${100 + i}`, titleZh: null, repository: pick(["owner/api-gateway", "owner/docs-site", "owner/mobile-app"]), zone: pick(ZONES), open: rnd() > 0.3, running: false, turns: Math.floor(rnd() * 9), updatedAt: ago(Math.floor(i / 4)) }));
 const projects = Array.from({ length: 36 }, (_, i) => ({ id: `proj-${i}`, name: `owner/${pick(["billing", "search", "auth", "infra", "sdk-js", "status-page"])}-${i}`, kind: i === 0 ? "studio" : pick(["local", "local", "external", "builtin"]), enabled: rnd() > 0.15, attention: rnd() > 0.8 ? 1 : 0, running: rnd() > 0.6 ? 2 : 0, held: 0, failed24h: rnd() > 0.85 ? 1 : 0, mini: [], connected: false }));
 const API = { "/api/wruns": { runs, cards: [] }, "/api/wf": { workflows: wfList, held: [], trash: [], names: {}, checks: [] }, "/api/skills": { skills, roles: [], caps: {} }, "/api/skills/homes": { homes: [] },
   "/api/crew/live": crew, "/api/terminals": { terminals: terms, presets: [], projects: [], canWrite: true }, "/api/artifacts": { artifacts: arts, runs: [], render: {} }, "/api/library": { code, files: [], artifacts: arts, mergedKept: 50 },
-  "/api/review-room": { rooms, settings: { autoTeach: false }, tutors: [], providers: [] }, "/api/projects/overview": { projects } };
+  "/api/review-room": { rooms, settings: { autoTeach: false }, tutors: [], providers: [] }, "/api/projects/overview": { projects }, "/api/scards": { cards: scards } };
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`, env = { ...process.env };
 for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
@@ -70,8 +76,8 @@ const open = async (lang, width = 1440) => {
 const go = async (p, hash, list) => { await p.goto(`${base}/${hash}`);
   // the terminals page shows the running terminals' tabs; its list is under Launch…
   if (list === "terminals") { await p.waitForSelector("[data-term-new]", { timeout: 20000 }); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
-  await p.waitForSelector(`[data-lt="${list}"] [data-lt-count]`, { timeout: 20000 }); await p.waitForTimeout(150); };
-const count = (p, list) => p.$eval(`[data-lt="${list}"] [data-lt-count]`, (e) => e.textContent);
+  await p.waitForSelector(`[data-lt-count="${list}"]`, { timeout: 20000 }); await p.waitForTimeout(150); };
+const count = (p, list) => p.$eval(`[data-lt-count="${list}"]`, (e) => e.textContent);
 const range = (p, list) => p.$eval(`[data-lt-range="${list}"]`, (e) => e.textContent).catch(() => null);
 const hashQ = async (p) => new URLSearchParams(await p.evaluate(() => location.hash.split("?")[1] || ""));
 const type = async (p, list, text) => { await p.fill(`[data-lt-q="${list}"]`, text); await p.waitForTimeout(120); };
@@ -231,6 +237,43 @@ try {
     ok(await p.$$eval('[data-room-zone="archived"]', (es) => es.every((e) => e.open)), "while filtering, 封存 is open");
     await p.selectOption('[data-lt-sort="room"]', "new"); await p.waitForTimeout(100); ok(!await p.$("[data-room-zone]") && (await p.$$("[data-room-row]")).length > 0, "sorted by time: one list, no zones"); await ctx.close(); }
 
+  // ======== Inbox: the toolbar filters the left list; j/k move among the matches ========
+  { const { p, ctx } = await open("en"); await go(p, "#/inbox", "inbox");
+    const studioRows = async () => p.$$eval('[data-inbox-row][data-inbox-source="studio"]', (es) => es.map((e) => e.dataset.inboxRow));
+    ok((await studioRows()).length === 25 && /of \d+$/.test(await range(p, "inbox")), "Inbox: 25 cards a page under the toolbar", await range(p, "inbox"));
+    await shot(p, "inbox-toolbar-1440-en");
+    await p.click('[data-lt-facet="kind"]'); await p.waitForSelector('[data-lt-pop="kind"]'); await shot(p, "inbox-facet-1440-en");
+    await p.click('[data-lt-opt="kind=merge"]'); await p.waitForTimeout(150); await p.keyboard.press("Escape"); await p.waitForTimeout(80);
+    ok(!await p.$("[data-lt-pop]"), "Escape closes the Inbox's popover (its toolbar sits above the list)");
+    const merges = scards.filter((c) => c.kind === "merge").map((c) => c.id);
+    const rows = await studioRows();
+    ok(rows.length === merges.length && rows.every((id) => merges.includes(id)), "a kind ticked: only those cards in the list", JSON.stringify(rows));
+    const shown = await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead);
+    ok(merges.includes(shown) && (await p.evaluate(() => location.hash)).includes("kind=merge"), "the card shown is a match (the first one), and the URL keeps the filter", shown);
+    ok(await p.$eval("[data-inbox-pos]", (e) => e.textContent) === `1 of ${merges.length} (46 in all)`, "its header counts it among the matches, and says how many wait in all", await p.$eval("[data-inbox-pos]", (e) => e.textContent));
+    ok(await p.$eval("[data-inbox-count]", (e) => e.textContent) === `${merges.length} of 46`, "the list's badge says the matches and the total", await p.$eval("[data-inbox-count]", (e) => e.textContent));
+    { // the shown card stays a match while the filter changes: its place follows in place (focus kept in the box)
+      const shownNow = await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead);
+      await p.focus('[data-lt-q="inbox"]'); await p.keyboard.type(shownNow); await p.waitForTimeout(200);
+      ok(await p.$eval("[data-inbox-pos]", (e) => e.textContent) === "1 of 1 (46 in all)" && await p.evaluate(() => document.activeElement?.matches('[data-lt-q="inbox"]')), "narrowed to the shown card, its header says 1 of 1 at once, while the box keeps the focus", await p.$eval("[data-inbox-pos]", (e) => e.textContent));
+      await p.fill('[data-lt-q="inbox"]', ""); await p.waitForTimeout(200);
+      ok(await p.$eval("[data-inbox-pos]", (e) => e.textContent) === `${merges.indexOf(shownNow) + 1} of ${merges.length} (46 in all)`, "widened again, it follows back", await p.$eval("[data-inbox-pos]", (e) => e.textContent)); }
+    ok(!!await p.$('[data-lt-facet="kind"]') && await p.$eval('[data-lt-facet="project"]', (e) => e.closest(".lt-facet").hidden), "a facet no card has a value for (Project) is not offered");
+    await p.focus(`[data-inbox-row="${shown}"]`); await p.keyboard.press("j"); await p.waitForTimeout(150);
+    const next = await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead);
+    ok(next === merges[merges.indexOf(shown) + 1], "j moves to the next match, skipping the cards filtered out", `${shown} -> ${next}`);
+    ok((await p.evaluate(() => location.hash)).startsWith(`#/inbox/${next}?`) && (await p.evaluate(() => location.hash)).includes("kind=merge"), "the card's address keeps the toolbar's query");
+    await shot(p, "inbox-filtered-1440-en");
+    await p.click(`[data-lt-chip="kind=merge"] button`); await p.waitForTimeout(120);
+    await type(p, "inbox", "软件"); ok(JSON.stringify(await studioRows()) === '["SC-905"]' && await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead) === "SC-905", "a Simplified word finds a card with a Traditional title, and it is the one shown");
+    await type(p, "inbox", "nothing like this"); ok(!!await p.$('[data-lt-empty="inbox"]') && !await p.$("[data-inbox-head]"), "nothing matches: the empty card, no card shown"); await shot(p, "inbox-empty-1440-en");
+    await p.focus('[data-lt-q="inbox"]'); await p.fill('[data-lt-q="inbox"]', ""); await p.keyboard.type("kind:"); await p.waitForTimeout(150);
+    ok((await p.$$("[data-lt-sug]")).length === 4, "kind: suggests the four kinds"); await shot(p, "inbox-suggest-1440-en");
+    await p.keyboard.press("Escape"); await p.keyboard.press("Escape");
+    await p.goto(`${base}/#/inbox/SC-940`); await p.waitForSelector("[data-inbox-head]"); await p.waitForTimeout(200);
+    ok(await p.$eval("[data-inbox-head]", (e) => e.dataset.inboxHead) === "SC-940" && /^26–/.test(await range(p, "inbox")) && !!await p.$('[data-inbox-row="SC-940"].on'), "a link to a card deep in the list opens the page that holds it", await range(p, "inbox"));
+    await shot(p, "inbox-paging-1440-en"); await ctx.close(); }
+
   // ======== Activity: the server pages and counts the whole log ========
   { const { p, ctx } = await open("en"); await go(p, "#/activity", "activity");
     const total = await p.evaluate(() => fetch("/api/activity?page=1&size=25").then((r) => r.json()).then((j) => j.total));
@@ -262,6 +305,7 @@ try {
   for (const [list, hash, steps, commit, expect] of [
     ["runs", "#/runs", ["r", "ru", "rua", "ruan"], "软", (n) => n >= 1],
     ["runs", "#/runs", ["ㄖ", "ㄖㄨ", "ㄖㄨㄢ", "ㄖㄨㄢˇ"], "軟", (n) => n >= 1],
+    ["inbox", "#/inbox", ["r", "ru", "rua", "ruan"], "软", (n) => n === 1],
     ["terminals", "#/terminals", ["d", "de", "dev"], "dev", (n) => n >= 1],
     ["activity", "#/activity", ["x", "xu", "xuy", "xuyao"], "需要", () => true]]) {
     const { p, ctx } = await open("zh-TW"); await go(p, hash, list); const cdp = await ctx.newCDPSession(p);
@@ -358,7 +402,7 @@ try {
     await ctx.close(); }
 
   // ======== right after load, typing goes into one search box that is never replaced ========
-  for (const [list, hash] of [["runs", "#/runs"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
+  for (const [list, hash] of [["runs", "#/runs"], ["inbox", "#/inbox"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
     const { p, ctx } = await open("en");
     await p.goto(`${base}/${hash}`);
     if (list === "terminals") { await p.waitForSelector("[data-term-new]", { timeout: 20000 }); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
@@ -372,7 +416,7 @@ try {
     await ctx.close();
   }
   // ======== every page's last facet: its popover stays inside the window, at 1440 and 390 ========
-  for (const width of [1440, 390]) for (const [list, hash] of [["runs", "#/runs"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
+  for (const width of [1440, 390]) for (const [list, hash] of [["runs", "#/runs"], ["inbox", "#/inbox"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
     const { p, ctx } = await open("zh-TW", width); await go(p, hash, list);
     const last = await p.$$eval(`[data-lt-bar="${list}"] .lt-facet:not([hidden]) [data-lt-facet]`, (es) => es.at(-1)?.dataset.ltFacet);
     await p.click(`[data-lt-bar="${list}"] [data-lt-facet="${last}"]`); await p.waitForSelector(`[data-lt-pop="${last}"]`);

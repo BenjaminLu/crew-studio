@@ -298,7 +298,8 @@ window.inboxRecorded = (id) => {
   IB.recorded = { id, task: x.task, at: Date.now() }; clearTimeout(IB.recT);
   IB.recT = setTimeout(() => { IB.recorded = null; document.querySelector("[data-inbox-recorded]")?.remove(); }, 8000);
 };
-const ibHash = (id) => (id ? `#/inbox/${encodeURIComponent(id)}` : "#/inbox");
+const ibQuery = () => { const i = location.hash.indexOf("?"); return S.route?.name === "inbox" && i >= 0 ? location.hash.slice(i) : ""; };
+const ibHash = (id) => (id ? `#/inbox/${encodeURIComponent(id)}` : "#/inbox") + ibQuery();
 function viewInbox(id) {
   const items = inboxItems(), ids = items.map((x) => x.id);
   const ready = window.studioCards?.ready?.() !== false; // Studio's cards are read: a card missing now is really gone
@@ -336,22 +337,63 @@ function viewInbox(id) {
           : T(`Firstmate board cards are read-only here (${S.board?.readonlyReason || "board unavailable"}).`, `firstmate 看板的卡片在這裡唯讀（${S.board?.readonlyReason || "看板無法連線"}）。`))))),
     rec ? h("p", { class: "ib-recorded", "data-inbox-recorded": rec.id }, icon("check", "ic sm"), h("span", {}, said)) : null,
     gone ? h("p", { class: "faint", "data-inbox-gone": gone }, items.length ? T(`${gone} is no longer waiting. The cards below still are.`, `${gone} 已經不在等待中。下面這些還在等。`) : T(`${gone} is no longer waiting.`, `${gone} 已經不在等待中。`)) : null,
-    items.length ? h("section", { class: "ib", "data-inbox-studio": "1", "data-ib-mode": mode },
-      h("div", { class: "ib-list card" },
-        h("div", { class: "ib-list-h" }, h("b", {}, T("Waiting on you", "等你處理")), h("span", { class: "badge human" }, String(items.length)), h("span", { class: "faint" }, T("oldest first", "最久的在上"))),
-        h("div", { role: "listbox", "aria-label": T("Open cards, oldest first", "待處理的卡，最久的在上") }, items.map((x, i) => inboxRow(x, i, x === cur)))),
-      h("div", { class: "ib-detail" }, inboxHead(cur, items), inboxCard(cur)))
+    items.length ? inboxSection(items, cur, mode)
     : h("div", { class: "card" }, h("div", { class: "empty" }, icon("inbox"), h("b", {}, T("Inbox zero", "沒有待處理的卡")), T("Cards show up here live.", "新卡會即時出現。"))));
 }
-const inboxRow = (x, i, on) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), title: x.task, "aria-label": [x.task, x.kind, x.workflow ? wfName(x.workflow) : null, x.run, ago(x.ts)].filter(Boolean).join(" · "), "data-inbox-row": x.id, "data-inbox-source": x.source },
+// The list under the shared toolbar (public/list-tools.js): search and facets filter the left list only; j/k move among the
+// cards that match, and the selected card is always one of them (a filter that leaves it out selects the first match)
+function inboxSection(items, cur, mode) {
+  let detail = null;
+  const list = window.crewListTools.list({ id: "inbox", route: "inbox", title: T("the Inbox", "收件匣"), noun: ["card", "卡"], items,
+    placeholder: T("Search card titles, tasks, workflows…  or type kind:merge", "搜尋卡的標題、任務、流程…  也可以打 kind:合併"),
+    text: (x) => [x.task, x.kind, x.id, x.run, x.workflow, x.workflow ? wfName(x.workflow) : null],
+    facets: [{ key: "kind", name: T("Kind", "種類"), value: (x) => x.kind },
+      { key: "workflow", name: T("Workflow", "流程"), value: (x) => x.workflow, show: (v) => wfName(v) },
+      { key: "project", name: T("Project", "專案"), value: (x) => x.data?.project || null }],
+    sorts: [{ key: "old", label: T("Oldest first", "最久的在上"), cmp: (a, b) => String(a.ts || "").localeCompare(String(b.ts || "")) || a.id.localeCompare(b.id, undefined, { numeric: true }) },
+      { key: "new", label: T("Newest first", "最新的在上"), cmp: (a, b) => String(b.ts || "").localeCompare(String(a.ts || "")) || b.id.localeCompare(a.id, undefined, { numeric: true }) }],
+    rows: (page, ctx) => {
+      // j/k and the selection follow the matches, in the list's order
+      IB.order = ctx.matched.map((x) => x.id);
+      if (!IB.order.includes(IB.sel)) IB.sel = IB.order[0] || null;
+      const word = T(ctx.sort === "new" ? "newest first" : "oldest first", ctx.sort === "new" ? "最新的在上" : "最久的在上");
+      return h("div", { class: "ib-list card" },
+        h("div", { class: "ib-list-h" }, h("b", {}, T("Waiting on you", "等你處理")), h("span", { class: "badge human", "data-inbox-count": "" }, IB.order.length < items.length ? T(`${IB.order.length} of ${items.length}`, `${IB.order.length} / ${items.length}`) : String(items.length)), h("span", { class: "faint" }, word)),
+        h("div", { role: "listbox", "aria-label": T(`Open cards, ${word}`, `待處理的卡，${word}`) }, page.map((x) => inboxRow(x, IB.order.indexOf(x.id), x.id === IB.sel, ctx.mark))));
+    },
+    onChange: (v) => {
+      IB.order = v.matched.map((x) => x.id); if (!IB.order.includes(IB.sel)) IB.sel = IB.order[0] || null; // no match draws no rows
+      // the shown card's place among the matches follows every filter change
+      const pos = detail?.querySelector("[data-inbox-pos]"), cur = items.find((y) => y.id === detail?.dataset.inboxShows); if (pos && cur) pos.textContent = inboxPos(cur, items);
+      // a filter took the shown card out of the list: the first match is shown (or none), and the address follows
+      if (!detail || detail.dataset.inboxShows === (IB.sel || "")) return;
+      const x = items.find((y) => y.id === IB.sel) || null;
+      detail.dataset.inboxShows = x?.id || ""; detail.replaceChildren(...(x ? [inboxHead(x, items), inboxCard(x)] : []));
+      if (S.route?.name === "inbox" && S.route.arg) { history.replaceState(null, "", ibHash(x?.id || null)); S.route.arg = x?.id || null; }
+      hydrateIcons(detail);
+    } });
+  // the selected card's page is the one shown (a link to a card deep in the list, a j/k step past the page)
+  if (IB.sel) list.ltReveal?.((x) => x.id === IB.sel);
+  // the card shown is the selected match (the toolbar may have left the asked-for card out)
+  const shown = items.find((y) => y.id === IB.sel) || null;
+  detail = h("div", { class: "ib-detail" }, ...(shown ? [inboxHead(shown, items), inboxCard(shown)] : []));
+  detail.dataset.inboxShows = shown?.id || "";
+  if (shown?.id !== cur?.id && S.route?.name === "inbox" && S.route.arg) { history.replaceState(null, "", ibHash(shown?.id || null)); S.route.arg = shown?.id || null; }
+  const bar = list.querySelector(".lt");
+  return h("section", { class: "ib", "data-inbox-studio": "1", "data-ib-mode": mode }, bar, h("div", { class: "ib-col" }, list), detail);
+}
+const inboxRow = (x, i, on, mark = (t) => t) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), title: x.task, "aria-label": [x.task, x.kind, x.workflow ? wfName(x.workflow) : null, x.run, ago(x.ts)].filter(Boolean).join(" · "), "data-inbox-row": x.id, "data-inbox-source": x.source },
   h("span", { class: "ib-n num", "aria-hidden": "true" }, String(i + 1)),
-  h("span", { class: "ib-row-main" }, h("span", { class: "ib-row-t", title: x.task }, x.task),
+  h("span", { class: "ib-row-main" }, h("span", { class: "ib-row-t", title: x.task }, mark(x.task)),
     h("span", { class: "ib-row-d" }, h("span", { class: "vbadge ib-kind", "data-kind": x.kind }, x.kind), x.workflow ? h("span", { class: "ib-wf" }, icon("workflow", "ic sm"), wfName(x.workflow)) : null, x.run ? h("span", { class: "mono" }, x.run) : null)),
   h("span", { class: "ib-age faint num", title: x.ts || "" }, ago(x.ts)));
+/** where the card is: among the cards the toolbar lets through (and how many wait in all, when that is fewer) */
+function inboxPos(x, items) { const shown = IB.order.length && IB.order.includes(x.id) ? IB.order : items.map((y) => y.id), i = shown.indexOf(x.id) + 1, n = shown.length;
+  return n < items.length ? T(`${i} of ${n} (${items.length} in all)`, `第 ${i} / ${n} 張（共 ${items.length}）`) : T(`${i} of ${n}`, `第 ${i} / ${n} 張`); }
 // the selected card's header: which Task this is, kept on screen while the card scrolls (Back returns to the list when narrow)
 const inboxHead = (x, items) => h("div", { class: "ib-head", tabindex: "-1", "aria-label": T(`${x.task}, ${x.kind}`, `${x.task}，${x.kind}`), "data-inbox-head": x.id },
   h("a", { class: "btn ghost ib-back", href: "#/inbox", "data-inbox-back": "" }, "← ", T("Back to list", "回到列表")),
-  h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num" }, T(`${items.indexOf(x) + 1} of ${items.length}`, `第 ${items.indexOf(x) + 1} / ${items.length} 張`))),
+  h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num", "data-inbox-pos": "" }, inboxPos(x, items))),
   h("div", { class: "ib-head-d" }, h("span", { class: "vbadge" }, x.kind), x.workflow ? h("span", {}, wfName(x.workflow)) : null,
     x.run ? h("a", { class: "mono", href: x.source === "studio" ? `#/run/${encodeURIComponent(x.run)}` : `#/activity/${encodeURIComponent(x.run)}` }, x.run) : null, h("span", { class: "mono" }, x.id)));
 const inboxCard = (x) => (x.source === "studio" ? window.studioCards.card(x.data, x.task) : cardView(x.data));
@@ -374,7 +416,7 @@ addEventListener("keydown", (e) => {
   if (e.key.startsWith("Arrow") ? !t?.closest("[data-inbox-row]") : inCard) return;
   const box = document.querySelector("[data-inbox-studio]"); if (!box || !box.querySelector(".ib-list").getClientRects().length || !box.querySelector(".ib-detail").getClientRects().length) return;
   const to = IB.order[IB.order.indexOf(IB.sel) + (e.key === "ArrowDown" || e.key === "j" ? 1 : -1)]; e.preventDefault(); if (!to) return;
-  history.replaceState(null, "", ibHash(to)); S.route.arg = to; render();
+  history.replaceState(null, "", ibHash(to)); S.route.arg = to; IB.sel = to; render();
   const row = document.querySelector(`[data-inbox-row="${CSS.escape(to)}"]`); row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: "nearest" });
 });
 const sel = new Map(); // card id -> { chosen, answers: Map(index -> {ok,text}) }
