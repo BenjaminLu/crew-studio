@@ -21,7 +21,7 @@ const ROADMAP = [
   { id: "remote", routes: ["remote"], m: "M2.5", en: "Phone pairing: Studio on your phone over Wi-Fi or Tailscale.", tw: "手機配對：透過 Wi-Fi 或 Tailscale 在手機上用 Studio。" },
 ];
 const LABS = new Map(ROADMAP.flatMap((r) => r.routes.map((x) => [x, r])));
-const OWNED = { project: "projects", activity: "crew", team: "crew", intents: "inbox", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
+const OWNED = { project: "projects", activity: "crew", team: "crew", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} } };
 if (/[?&]labs=1\b/.test(location.search)) store.set("crew.labs", "1");
 const labsOn = () => store.get("crew.labs") === "1";
@@ -54,7 +54,7 @@ function arrange() {
   const keep = BACKBONE.map(([v, ic, en, tw]) => item(v, ic, en, tw));
   const others = [...nav.querySelectorAll(".nav-item")].filter((b) => !b.dataset.backbone);
   nav.replaceChildren(...keep, labsGroup);
-  for (const b of others) { if (["activity", "intents", "workflow", "doctor"].includes(b.dataset.view)) { b.hidden = true; labsGroup.after(b); continue; } b.dataset.lab = "1"; labsBody.append(b); }
+  for (const b of others) { if (["activity", "workflow", "doctor"].includes(b.dataset.view)) { b.hidden = true; labsGroup.after(b); continue; } b.dataset.lab = "1"; labsBody.append(b); }
   showLabs();
   // attention counts live on backbone items: Board and Inbox carry the decisions (the Inbox is decisions only), the gear the Doctor's
   const doc = document.getElementById("navDoctor"); if (doc && doc.parentElement !== gear) gear.append(doc);
@@ -69,7 +69,7 @@ navObs.observe(nav, { childList: true, subtree: true });
 $(".side-foot").prepend(gear);
 // every label follows the language switch: nothing is computed once at load
 const relabel = () => { for (const [v, ic, en, tw] of BACKBONE) item(v, ic, en, tw); gear.setAttribute("aria-label", T("Settings", "設定")); gear.title = T("Settings", "設定");
-  labsToggle.textContent = T("Labs", "實驗中"); const ints = document.getElementById("navIntents"); if (ints) ints.title = T("Open intents", "進行中的意圖"); };
+  labsToggle.textContent = T("Labs", "實驗中"); };
 relabel();
 { const prev = window.onLang; window.onLang = () => { prev?.(); relabel(); }; }
 

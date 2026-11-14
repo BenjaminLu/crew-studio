@@ -38,7 +38,7 @@ try {
   const by = Object.fromEntries(d.items.map((i: any) => [i.id, i]));
   ok(d.compiled === true && by.assets.detail.includes("embedded"), "the Doctor knows it is the binary");
   ok(by.state.status === "ok" && by.claude.status === "missing" && by.github.status === "info", "with nothing installed: state ok, CLI missing, GitHub off", JSON.stringify([by.state.status, by.claude.status, by.github.status]));
-  for (const view of ["board", "inbox", "crew", "activity", "workflow", "intents", "library", "doctor", "remote"]) ok((await fetch(`${base}/#/${view}`)).ok, `page ${view} loads`);
+  for (const view of ["board", "inbox", "crew", "activity", "workflow", "library", "doctor", "remote"]) ok((await fetch(`${base}/#/${view}`)).ok, `page ${view} loads`);
   // the helper subcommands the agent CLIs start: an MCP server answers initialize
   const mcp = Bun.spawn([bin, "mcp"], { cwd: tmp, env: { PATH, HOME: tmp, CREW_STUDIO_URL: base, CREW_TOOL_TOKEN: "x" }, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }) + "\n"); mcp.stdin.flush();

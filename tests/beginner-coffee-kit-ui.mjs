@@ -47,7 +47,7 @@ if(process.argv.includes('--fixture-server')){
   const r=await rt.handle(req.clone(),target,{kind:'desktop'},writing);if(r)return r;
   const artifact=await m3.handle(req,url,{kind:'desktop'},writing);if(artifact)return artifact;
   if(p==='/api/summary')return Response.json({tasks:[],pending:[],crew:[],github:null,board:null,flow:null,events:0,state:'offline-fixture'});
-  if(p==='/api/types'||p==='/api/intents')return Response.json([]);
+  if(p==='/api/types')return Response.json([]);
   if(p==='/api/doctor')return Response.json({items:[]});
   if(p==='/api/improve')return Response.json({edits:[],retros:[]});
   if(p==='/api/changes')return Response.json({changes:[],projects:[]});

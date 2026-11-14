@@ -83,7 +83,7 @@ function stubSession(ctx: ProviderCtx, sys = "", request: StubRequest = fetch): 
       }
       else if (text.includes("STUB_INTENT")) {
         const i = yield* call("intent_capture", { goal: "Add a dark mode to the docs site", details: "from the stub", deadline: "Friday" });
-        if (!(yield* say(`Recorded as intent [${i?.id}](#/intents/${i?.id}). firstmate will draft a spec and raise a dispatch card.`))) { yield { type: "turnEnd", status: "interrupted" }; return; }
+        if (!(yield* say(`Recorded as intent ${i?.id}. firstmate will draft a spec and raise a dispatch card.`))) { yield { type: "turnEnd", status: "interrupted" }; return; }
       } else {
         const runs = (yield* call("runs_list", {})) ?? [];
         if (interrupted) { yield { type: "turnEnd", status: "interrupted" }; return; }

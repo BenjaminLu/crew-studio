@@ -19,3 +19,5 @@ Note for the takeover branch: public/index.html gains one stylesheet and one scr
 Later (2026-10-29, feat/terminal-focus): the sidebar gained Terminals right after Firstmate (its own icon, in the full sidebar and the 64 px rail), so the backbone is Board, Firstmate, Terminals, Inbox, Crew, Tasks, Workflows, Skills, Library. `#/terminals` no longer lights Firstmate; its "waiting for you" count moved to the Terminals item (docs/units/web-terminal.md, "Focus mode").
 
 Later (2026-11-12, pr-watch): the sidebar gained Pull requests right after Inbox, with a count of the rows that wait on an approval or are ready to merge (docs/units/pr-watch.md).
+
+Later (2026-11-13, chore/remove-intents-page): the hidden Intents page (`#/intents`, `#/intents/<id>`, its nav item and `#navIntents` count, `/api/intents` and the `intents` live event) was removed because it was unused. Captured intents stay in `data/intents.jsonl`; the task page and the Library name a task's intent id as plain text.
