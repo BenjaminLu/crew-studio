@@ -176,6 +176,17 @@ A merged pull request stays on the page until it runs in production. Two more ta
 - **Dropped by hand**: × on a merged row (either tab) drops it like an open row's: one that came in through its
   repository is recorded as excluded (`watch.excluded`, not followed again) and the "excluded · restore" chip brings it
   back; a single watched pull request stops being watched.
+- **Marked in production by hand**: for a captain who cannot read production's version (no access to the deploy
+  repository or environment), each row on "Merged, not live" has "Mark in production" (標記已上線), and the ticked rows
+  can be marked at once ("Mark in production (n)" beside the release brief; `POST /api/prs/ship/mark {prs}`, at most 50,
+  each one on "Merged, not live" or the whole request is refused). A marked row moves to "Live" with a "Marked by hand ·
+  <day>" badge and is dropped 14 days after the mark, like a row production shows (`state.json`: `manual`, the row → the
+  mark time, the last 500; also written into `shipped` as the live time). It stays live on every refresh although the
+  environments still do not show it: the release brief no longer offers it, nor warns that a tag carries it, and
+  `pr.track-deploy` reads it as in production. On "Live" only a marked row has "Undo" (撤銷, `POST /api/prs/ship/undo
+  {pr}`): it goes back to "Merged, not live". When the environments later show it in every production environment, the
+  mark is dropped and it is an ordinary live row with no Undo, **keeping the mark time** as its live time (the earlier
+  of the two, so the 14 days are not restarted). A `state.json` written before marks existed loads with none.
 - **Columns**: #, the pull request, going live · waits on (how long since the merge), the merge commit and when, the deploy
   unit (the repository) with its dependencies (Studio's record, else the body's `Depends-on:` lines or block), the
   environments.
@@ -350,7 +361,8 @@ and make the same edits over MCP (`tools` in `src/pr-watch.ts`, the board's `act
 
 `GET /api/prs` (the list from the last snapshot; never calls GitHub), `GET /api/prs/count`; and, desktop only, through the
 CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}`, `/restore {pr?}`, `/settings`,
-`/order {order}`, `/deps {pr,on}`, `/group {pr,group}`, `/accept`, `/drift/take {pr}`, `/apply {prs,shortForm}`.
+`/order {order}`, `/deps {pr,on}`, `/group {pr,group}`, `/accept`, `/drift/take {pr}`, `/apply {prs,shortForm}`,
+`/ship/mark {prs}`, `/ship/undo {pr}`.
 
 ## Done when (`bun tests/pr-watch.ts`, `bun tests/pr-watch-ui.mjs` (run with bun: it imports the TypeScript fixture), `bun run test:pr-watch` for both; a fictional GitHub, tests/lib/pr-watch-github.ts: three watched repositories, an issues-only one outside the set, an infrastructure repository and a single pull request elsewhere)
 
@@ -417,6 +429,12 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     dependent pull requests in different batches, an unselected dependency added before with its reason; old → new tag
     skipping a later batch's tag and a red CI; a tag carrying an unselected pull request said; in the page the badges,
     the button, one card and one Copy per batch, Simplified Chinese.
+20. Marked in production by hand (pr-watch-merged.ts "marked in production by hand", the UI suite): a row marked moves
+    to Live with the mark time and stays there after a refresh and a restart; the brief no longer offers it or warns it is
+    carried; Undo returns it; the ticked rows are marked in one action; a live, unlisted or empty mark and an Undo of a
+    row not marked by hand are refused; production confirming a marked row drops the mark and keeps the mark time; a
+    marked row is dropped 14 days after the mark; a `state.json` without marks loads; in the page the row button, the
+    badge, Undo only on a marked row, and the button for the ticked rows.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the

@@ -125,3 +125,5 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-next b{overflow-wrap:anywhere}.pw-next .pw-followcta{max-width:100%;width:auto!important;white-space:normal!important}.pw-row>[role="cell"]{min-width:0}
 /* the card button's "new" mark stays one word on one line */
 .pw-next .pw-followcta .pw-new{white-space:nowrap;flex:none}
+/* a merged row marked as in production by hand: its button, or its badge and Undo, under the going-live words */
+.pw-next .pw-shipby{margin-top:4px;width:auto;max-width:100%;justify-self:start;display:flex;flex-wrap:wrap;gap:4px;align-items:center}.pw-next button.pw-shipby{display:inline-flex}

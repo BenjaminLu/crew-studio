@@ -106,6 +106,29 @@ try {
   ok(await p.locator('[data-prs-merged]').count() === 1 && await p.locator('[data-prs-merged="northwind/checkout-api#23"] [data-prs-ship-next]').innerText() === 'In production' && /hidden in 14 d/.test(await p.locator('[data-prs-merged="northwind/checkout-api#23"] .pw-next small').first().innerText()), 'the live tab: in production, hidden 14 days later');
   await p.click('[data-prs-md]'); ok((await p.evaluate(() => navigator.clipboard.readText())).includes('[northwind/checkout-api#23]'), 'Copy as Markdown on the live tab copies its rows');
   await p.screenshot({ path: join(shots, 'live-1440-light.png'), fullPage: true });
+  // marked in production by hand: one row from its button, undone on Live, then the ticked rows at once
+  ok(await p.locator('[data-prs-undo-live]').count() === 0 && await p.locator('[data-prs-manual]').count() === 0, 'a row production shows on its own has no hand mark and no Undo');
+  await p.click('[data-prs-tab="merged"]'); await p.waitForSelector('[data-prs-ship="merged"]');
+  ok(await p.locator('[data-prs-mark-live]').count() === 2 && await p.locator('[data-prs-mark-live="northwind/checkout-api#21"]').innerText() === 'Mark in production', 'each merged row offers Mark in production');
+  await p.click('[data-prs-mark-live="northwind/checkout-api#21"]'); await p.waitForSelector('[data-prs-merged="northwind/checkout-api#21"]', { state: 'detached' });
+  ok(await tab('merged') === '1' && await tab('live') === '2', 'the marked row leaves Merged, not live and counts on Live', JSON.stringify([await tab('merged'), await tab('live')]));
+  await p.click('[data-prs-tab="live"]'); await p.waitForSelector('[data-prs-manual="northwind/checkout-api#21"]');
+  ok(/^Marked by hand · \d+-\d\d$/.test(await p.locator('[data-prs-manual="northwind/checkout-api#21"]').innerText()) && await p.locator('[data-prs-merged="northwind/checkout-api#21"] [data-prs-ship-next]').innerText() === 'In production'
+    && /hidden in 14 d/.test(await p.locator('[data-prs-merged="northwind/checkout-api#21"] .pw-next small').first().innerText()), 'on Live the row carries the hand mark with its day, hidden 14 days after the mark');
+  ok(await p.locator('[data-prs-undo-live]').count() === 1 && await p.locator('[data-prs-undo-live="northwind/checkout-api#21"]').innerText() === 'Undo', 'only the row marked by hand has Undo');
+  await p.screenshot({ path: join(shots, 'live-manual-1440-light.png'), fullPage: true });
+  await p.click('[data-prs-undo-live="northwind/checkout-api#21"]'); await p.waitForSelector('[data-prs-merged="northwind/checkout-api#21"]', { state: 'detached' });
+  await p.click('[data-prs-tab="merged"]'); await p.waitForSelector('[data-prs-merged="northwind/checkout-api#21"] [data-prs-mark-live]');
+  ok(await tab('merged') === '2' && await tab('live') === '1', 'Undo puts it back on Merged, not live');
+  if (await p.isChecked('[data-prs-pick="northwind/checkout-api#22"]')) await p.uncheck('[data-prs-pick="northwind/checkout-api#22"]'); // ticked for the brief above
+  ok(await p.locator('[data-prs-mark-picked]').isDisabled(), 'Mark in production for the ticked rows waits for a selection');
+  await p.check('[data-prs-pick="northwind/checkout-api#22"]'); await p.check('[data-prs-pick="northwind/checkout-api#21"]');
+  ok(await p.locator('[data-prs-mark-picked]').innerText() === 'Mark in production (2)', 'the button counts the ticked rows', await p.locator('[data-prs-mark-picked]').innerText());
+  await p.click('[data-prs-mark-picked]'); await p.waitForSelector('[data-prs-ship="merged"] [data-prs-empty]');
+  ok(await tab('merged') === '0' && await tab('live') === '3' && Object.keys((await api('/api/prs')).body.merged.filter((r) => r.ship.manual)).length === 2, 'both ticked rows move to Live in one action');
+  for (const id of ['northwind/checkout-api#21', 'northwind/checkout-api#22']) await api('/api/prs/ship/undo', { pr: id });
+  await p.evaluate(() => window.crewPrs.reload()); await p.waitForSelector('[data-prs-merged="northwind/checkout-api#21"]');
+  await p.click('[data-prs-tab="live"]'); await p.waitForSelector('[data-prs-ship="live"]');
   // × on a merged row drops it like an open row's: recorded as excluded, and the restore chip brings it back
   await p.hover('[data-prs-merged="northwind/checkout-api#23"]'); await p.click('[data-prs-drop="northwind/checkout-api#23"]');
   await p.waitForSelector('[data-prs-restore]');
