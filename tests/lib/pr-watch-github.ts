@@ -122,7 +122,7 @@ export function prWatchGitHub(data = fixtureData()) {
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
   let notModified = 0;
   // knobs: a PATCH whose kept body differs from what was sent, a slow GET of one pull request, an unreadable CODEOWNERS
-  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number };
+  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false };
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const res = await answer(req);
     if (req.method !== "GET" || res.status !== 200) return res;
@@ -144,7 +144,9 @@ export function prWatchGitHub(data = fixtureData()) {
     let m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p); if (!m) { if ((m = /^\/teams\/(\d+)$/.exec(p))) { const t = data.teamIds[m[1]]; return t ? json({ slug: t.split("/")[1], organization: { login: t.split("/")[0] } }) : nf(); }
       if ((m = /^\/orgs\/([^/]+)\/teams\/([^/]+)\/members$/.exec(p))) { const t = data.teams[`${m[1]}/${m[2]}`]; return t ? json(page(t.map((login) => ({ login })), q)) : nf(); } unknown.push(`${method} ${p}`); return nf(); }
     const repo = `${m[1]}/${m[2]}`, rest = m[3] ?? "";
-    if (method === "GET" && rest === "/pulls") return json(page(data.prs.filter((x) => x.repo === repo && (x.state ?? "open") === (q.get("state") ?? "open")).map(pullJson), q));
+    if (method === "GET" && rest === "/pulls") { const list = page(data.prs.filter((x) => x.repo === repo && (x.state ?? "open") === (q.get("state") ?? "open")).map(pullJson), q);
+      // hugeClosed: closed pull requests with long bodies, so a page of more than 5 passes the 1 MB Studio reads
+      return json(knobs.hugeClosed && q.get("state") === "closed" && Number(q.get("per_page")) > 5 ? list.map((p) => ({ ...p, body: `${p.body}${"x".repeat(Math.ceil(1_100_000 / list.length))}` })) : list); }
     let k: RegExpExecArray | null;
     if ((k = /^\/pulls\/(\d+)$/.exec(rest))) { const pr = data.find(repo, Number(k[1])); if (!pr) return nf();
       if (method === "PATCH") { if (typeof body?.body === "string") pr.body = knobs.tamper ? `${body.body}\nedited meanwhile` : knobs.normalizeOnPatch ? body.body.replace(/\r\n/g, "\n").split("\n").map((l: string) => l.trimEnd()).join("\n") : body.body; return json(pullJson(pr)); }

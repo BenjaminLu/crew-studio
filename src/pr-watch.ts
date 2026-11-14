@@ -21,7 +21,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boundedGitHubJSON, readAuthority, type GitHubPoller, type ReadAuthority } from "./github-poller";
+import { boundedGitHubJSON, GitHubTooLarge, readAuthority, type GitHubPoller, type ReadAuthority } from "./github-poller";
 import { findToken, githubHeaders } from "./github";
 import { bundledText } from "./bundled";
 import { normalize } from "./runtime/defs";
@@ -87,6 +87,7 @@ async function call(api: string, token: string, method: "GET" | "POST" | "PATCH"
 /** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
 export const READ_BUDGET = 1500, MAX_ROWS = 60, MAX_MERGED = 40;
 export class OverBudget extends Error { constructor() { super(`a refresh would read GitHub more than ${READ_BUDGET} times: watch fewer repositories or pull requests`); } }
+const CLOSED_PER = 20, CLOSED_PAGES = 5; // closed pull requests read a refresh: at most 100, in pages small enough for 1 MB
 /** pages: up to max pages of 100; the list carries capped: true when GitHub has more past the last page read */
 type Reader = { get(path: string): Promise<any>; pages(path: string, max: number): Promise<any[] & { capped?: boolean }>; graphql(query: string, variables: Record<string, unknown>): Promise<any> };
 function reader(api: string, token: string, signal: AbortSignal | undefined, poller: GitHubPoller | null, authority: ReadAuthority | null, o: { etags?: EtagCache; budget?: { left: number } } = {}): Reader {
@@ -103,6 +104,7 @@ function reader(api: string, token: string, signal: AbortSignal | undefined, pol
   };
 }
 const why = (e: any): { en: string; tw: string } => e instanceof HttpError ? (e.status === 404 ? { en: "GitHub shows nothing there to this token (404)", tw: "GitHub 沒有讓這個權杖看到它（404）" } : e.status === 401 ? { en: "GitHub refused the token (401)", tw: "GitHub 拒絕了權杖（401）" } : e.status === 403 ? { en: "the token may not read it (403)", tw: "權杖沒有讀取權限（403）" } : { en: `GitHub answered ${e.status}`, tw: `GitHub 回覆 ${e.status}` })
+  : e instanceof GitHubTooLarge ? { en: "GitHub's answer was larger than Studio reads (1 MB)", tw: "GitHub 的回覆超過 Studio 讀取的上限（1 MB）" }
   : { en: "GitHub could not be reached", tw: "連不上 GitHub" };
 
 // ---------- state ----------
@@ -313,13 +315,26 @@ export function createPrWatch(d: PrWatchDeps) {
     const mergedFound = new Map<string, { pr: any; repo: string; single: boolean }>(), retired = new Set(s.retired.map((x) => x.toLowerCase()));
     const followMerged = (p: any, repo: string, single: boolean) => { const id = R.prId(repo, Number(p?.number)), k = id.toLowerCase();
       if (Number.isSafeInteger(p?.number) && p.merged_at && !retired.has(k) && (s.shipped[k] || Date.parse(String(p.merged_at)) > now() - R.MERGED_WINDOW_MS)) mergedFound.set(k, { pr: p, repo, single }); };
+    // the recently closed pull requests, most recently updated first, until one older than the merged window: pages of
+    // 20, as a page of 100 with full bodies passes the 1 MB a GitHub answer may take; a page still too large is read as
+    // four pages of 5
+    const closedPulls = async (repo: string) => { const out: any[] = [], since = now() - R.MERGED_WINDOW_MS, q = (per: number, page: number) => `${repoPath(repo)}/pulls?state=closed&sort=updated&direction=desc&per_page=${per}&page=${page}`;
+      for (let page = 1; page <= CLOSED_PAGES; page++) {
+        let list: any[];
+        try { const l = await g.get(q(CLOSED_PER, page)); list = Array.isArray(l) ? l : []; }
+        catch (e) { if (!(e instanceof GitHubTooLarge)) throw e; list = [];
+          for (let i = 1; i <= CLOSED_PER / 5; i++) { const l = await g.get(q(5, (page - 1) * (CLOSED_PER / 5) + i)); const part = Array.isArray(l) ? l : []; list.push(...part); if (part.length < 5) break; } }
+        out.push(...list);
+        const last = list.at(-1);
+        if (list.length < CLOSED_PER || !last || Date.parse(String(last.updated_at ?? "")) < since) break;
+      }
+      return out; };
     for (const id of s.watch.prs) { const sp = R.splitId(id); if (!sp) continue;
       try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.state === "open") found.set(id.toLowerCase(), { pr: p, repo: sp.repo, single: true }); else { out.single[id] = p?.merged_at ? "merged" : "closed"; if (p?.merged_at) followMerged(p, sp.repo, true); } }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: id, ...why(e) }); }
     }
     for (const repo of s.watch.repos) {
-      try { const list = await g.get(`${repoPath(repo)}/pulls?state=closed&sort=updated&direction=desc&per_page=100`);
-        for (const p of Array.isArray(list) ? list : []) if (keep(p) && !has(s.watch.excluded, R.prId(repo, Number(p.number)))) followMerged(p, repo, false); }
+      try { for (const p of await closedPulls(repo)) if (keep(p) && !has(s.watch.excluded, R.prId(repo, Number(p.number)))) followMerged(p, repo, false); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: repo, ...why(e) }); }
     }
     // a followed one GitHub's first page of closed pull requests no longer shows: read on its own (at most 30 a refresh)

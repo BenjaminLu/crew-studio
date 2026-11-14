@@ -53,6 +53,11 @@ try {
   ok(!gh.calls.some((c) => c.path.includes("/commits/") && c.path.includes(gh.data.head(gh.data.find("northwind/checkout-api", 21)!))), "a merged row's environments are read at its merge commit, never its old head");
   ok(gh.calls.some((c) => c.path.startsWith("/repos/northwind/checkout-api/pulls?state=closed")), "the closed pull requests are read from GitHub's first page");
   ok(!gh.unknown.length, "every GitHub request was one the fixture knows", JSON.stringify(gh.unknown));
+  { // a page of closed pull requests larger than the 1 MB Studio reads: read again in pages of 5, never "could not be reached"
+    gh.knobs.hugeClosed = true; const before = gh.calls.length; await call("/api/prs/refresh", {}); const h = (await call("/api/prs")).body; gh.knobs.hugeClosed = false;
+    const fresh = gh.calls.slice(before).map((c) => c.path).filter((x) => x.startsWith("/repos/northwind/checkout-api/pulls?state=closed"));
+    ok(h.merged.map((r: any) => r.id).join() === ids.join() && !W.snapshot.errors.some((e: any) => e.target === "northwind/checkout-api"), "a closed page over 1 MB: the merged rows are still read, no error for the repository", JSON.stringify(W.snapshot.errors));
+    ok(fresh.some((x) => x.includes("per_page=20&page=1")) && fresh.some((x) => x.includes("per_page=5&page=1")), "the closed pull requests are asked in pages of 20, then of 5 when one is too large", fresh.join()); }
   // ---------- what each asks for before it goes live, and the release brief ----------
   const kinds = (r: any) => r.ops.map((o: any) => `${o.kind}${o.names?.length ? `:${o.names.join("|")}` : ""}${o.metric ? `:${o.metric.name}` : ""}`).join();
   ok(kinds(r21) === "secret:LIMITS_SECRET,metric:trades_rejected_total,rollout" && kinds(r22) === "migration", "a merged row carries its items: a newly read secret, a metric, its rollout section; a migration", `${kinds(r21)} / ${kinds(r22)}`);
