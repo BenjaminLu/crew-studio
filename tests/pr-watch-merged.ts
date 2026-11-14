@@ -4,7 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // merged pull requests are followed, each environment read against the merge commit (it is on when the commit it runs
 // contains the merge commit), the merged and live tabs, the day a pull request is dropped, and that it never comes back.
 //   bun tests/pr-watch-merged.ts
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { until, suite } from "./rt-harness";
@@ -90,6 +90,40 @@ try {
     ok(b.body.batches[0].units[0].lines[0].ci === "green", "a tag's CI is reported with its line (none ran: said in the brief)"); }
   ok((await call("/api/prs/brief", { prs: ["northwind/checkout-api#23"] })).status === 400 && (await call("/api/prs/brief", { prs: [] })).status === 400, "a live pull request, or none, is refused");
   ok(!gh.calls.some((c) => c.method !== "GET" && c.path !== "/graphql"), "a brief writes nothing to GitHub");
+  // ---------- marked in production by hand (a captain who cannot read production's version) ----------
+  { const id21 = "northwind/checkout-api#21", id22 = "northwind/checkout-api#22", k22 = id22.toLowerCase();
+    ok((await call("/api/prs/ship/mark", { prs: ["northwind/checkout-api#23"] })).status === 400 && (await call("/api/prs/ship/mark", { prs: [] })).status === 400 && (await call("/api/prs/ship/mark", { prs: ["northwind/checkout-api#999"] })).status === 400, "marking a live row, none, or one not on the list is refused");
+    const markedAt = new Date(clock).toISOString();
+    let m = await call("/api/prs/ship/mark", { prs: [id22] }), r = merged(m.body, id22);
+    ok(m.status === 200 && r.tab === "live" && r.ship.live && r.ship.waits === null && r.ship.manual?.at === markedAt && r.ship.liveAt === markedAt, "mark: 22 moves to Live, marked by hand at the mark time", JSON.stringify(r?.ship));
+    ok(Date.parse(r.ship.dropAt) - Date.parse(markedAt) === 14 * 86400_000 && W.state.manual?.[k22]?.at === markedAt && W.state.shipped[k22]?.liveAt === markedAt, "a marked row is dropped 14 days after the mark, and the mark is in state.json", JSON.stringify(W.state.manual));
+    ok(merged(m.body, id21).tab === "merged" && !merged(m.body, id21).ship.manual, "the other rows stay where they are");
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; r = merged(v, id22);
+    ok(r.tab === "live" && r.ship.manual?.at === markedAt && r.ship.liveAt === markedAt && W.state.shipped[k22]?.liveAt === markedAt, "a marked row stays Live after a refresh, although production still does not show it", JSON.stringify(r.ship));
+    ok((await call("/api/prs/brief", { prs: [id22] })).status === 400, "the release brief no longer offers a marked row as waiting to go live");
+    { const b = await call("/api/prs/brief", { prs: [id21] });
+      ok(b.status === 200 && b.body.batches.length === 1 && b.body.batches[0].units[0].carries.length === 0, "21 alone: 22 was marked as in production, so the brief no longer warns that the tag carries it", JSON.stringify(b.body.batches?.[0]?.units?.[0])); }
+    { const W2 = createPrWatch({ dataDir: dir, poller, now: () => clock }); const r2 = W2.view().merged.find((x: any) => x.id === id22);
+      ok(r2?.tab === "live" && r2.ship.manual?.at === markedAt, "the mark survives a restart (read back from state.json)", JSON.stringify(r2?.ship)); W2.stop(); }
+    // undo: back to merged, also after a refresh; only a row marked by hand has an undo
+    m = await call("/api/prs/ship/undo", { pr: id22 }); r = merged(m.body, id22);
+    ok(m.status === 200 && r.tab === "merged" && !r.ship.manual && r.ship.waits === "dev" && !W.state.manual?.[k22] && W.state.shipped[k22]?.liveAt === null, "undo: 22 is back on Merged, not live, waiting on dev", JSON.stringify({ ship: r?.ship, manual: W.state.manual }));
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(merged(v, id22).tab === "merged", "an undone row stays on Merged after a refresh");
+    ok((await call("/api/prs/ship/undo", { pr: id22 })).status === 400 && (await call("/api/prs/ship/undo", { pr: "northwind/checkout-api#23" })).status === 400, "undo on a row not marked by hand, or one production shows, is refused");
+    // the selected rows at once
+    m = await call("/api/prs/ship/mark", { prs: [id21, id22] });
+    ok(m.status === 200 && [id21, id22].every((id) => merged(m.body, id).tab === "live" && merged(m.body, id).ship.manual) && Object.keys(W.state.manual ?? {}).length === 2, "the selected rows are marked in one action", JSON.stringify(W.state.manual));
+    ok(merged(m.body, id22).deps[0]?.state === "live", "a dependency marked by hand reads live on the row that depends on it", JSON.stringify(merged(m.body, id22).deps));
+    for (const id of [id21, id22]) await call("/api/prs/ship/undo", { pr: id });
+    // production confirms a marked row: an ordinary live row, still counted from the earlier mark time
+    const prodHead = gh.data.head(gh.data.find("northwind/checkout-api", 18)!), m22 = gh.data.merge(gh.data.find("northwind/checkout-api", 22)!);
+    clock += 3600_000; const markedAgain = new Date(clock).toISOString(); await call("/api/prs/ship/mark", { prs: [id22] });
+    clock += 3600_000; gh.data.contains[prodHead].push(m22); await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; r = merged(v, id22);
+    ok(r.tab === "live" && !r.ship.manual && r.ship.liveAt === markedAgain && !W.state.manual?.[k22] && W.state.shipped[k22]?.liveAt === markedAgain, "production confirms a marked row: the mark is dropped, and Live keeps the mark time (the earlier one)", JSON.stringify({ ship: r.ship, manual: W.state.manual }));
+    ok((await call("/api/prs/ship/undo", { pr: id22 })).status === 400, "a row production confirms has no undo");
+    gh.data.contains[prodHead].pop(); clock -= 2 * 3600_000; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(merged(v, id22).tab === "merged" && W.state.shipped[k22]?.liveAt === null, "production no longer shows it: back on Merged (nothing left from the mark)"); }
   // later: 23 stays live with the day Studio first saw it; 21 reaches production
   const firstLive = r23.ship.liveAt;
   gh.data.contains[gh.data.head(gh.data.find("northwind/checkout-api", 18)!)].push(gh.data.merge(gh.data.find("northwind/checkout-api", 21)!));
@@ -137,6 +171,26 @@ try {
     ok(!merged(v, id), "an excluded merged row is not followed again on the next refresh");
     await call("/api/prs/restore", { pr: id }); await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
     ok(!!merged(v, id) && !v.watch.excluded.length, "restore brings the merged row back", JSON.stringify(v.merged.map((r: any) => r.id))); }
+  // ---------- a row marked by hand is dropped 14 days after the mark ----------
+  { const id = "northwind/checkout-api#22", k = id.toLowerCase(), at = new Date(clock).toISOString();
+    await call("/api/prs/ship/mark", { prs: [id] });
+    clock += 14 * 86400_000 - 60_000; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(merged(v, id)?.ship.manual?.at === at, "13 days 23 hours after the mark it is still on Live", JSON.stringify(merged(v, id)?.ship));
+    clock += 2 * 60_000; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(!merged(v, id) && W.state.retired.includes(k) && !W.state.shipped[k] && !W.state.manual?.[k], "14 days after the mark it is dropped and recorded, and the mark is gone", JSON.stringify(W.state.manual));
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(!merged(v, id), "a dropped marked row does not come back on the next refresh"); }
+  // ---------- a state.json written before marks existed loads ----------
+  { const old = mkdtempSync(join(tmpdir(), "pr-watch-merged-old-")); mkdirSync(join(old, "pr-watch"));
+    const st = JSON.parse(readFileSync(join(dir, "pr-watch", "state.json"), "utf8")); delete st.manual; delete st.reverted;
+    writeFileSync(join(old, "pr-watch", "state.json"), JSON.stringify(st)); copyFileSync(join(dir, "pr-watch", "snapshot.json"), join(old, "pr-watch", "snapshot.json"));
+    const W3 = createPrWatch({ dataDir: old, poller, now: () => clock });
+    try { const before = W3.view().merged.map((r: any) => `${r.id}:${r.tab}`).join();
+      ok(!!before && JSON.stringify(W3.state.manual) === "{}" && W3.view().merged.every((r: any) => r.ship.manual === null), "a state.json without marks loads: no row is marked", before);
+      const id = W3.view().merged.find((r: any) => r.tab === "merged")?.id; const u = new URL("http://127.0.0.1/api/prs/ship/mark");
+      const res = await W3.handle(new Request(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prs: [id] }) }), u, { kind: "desktop" }, true);
+      ok(res!.status === 200 && W3.view().merged.find((r: any) => r.id === id)?.ship.manual && JSON.parse(readFileSync(join(old, "pr-watch", "state.json"), "utf8")).manual?.[String(id).toLowerCase()], "and a row can be marked there", String(id)); }
+    finally { W3.stop(); rmSync(old, { recursive: true, force: true }); } }
   // unwatching the repository drops its merged rows too
   await call("/api/prs/unwatch", { repo: "northwind/checkout-api" }); v = (await call("/api/prs")).body;
   ok(!v.merged.length, "unwatching a repository drops its merged rows");
