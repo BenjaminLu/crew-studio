@@ -151,10 +151,12 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 A merged pull request stays on the page until it runs in production. Two more tabs, after a separator and marked new:
 "Merged, not live" and "Live", each with its count.
 
-- **Which**: a watched repository's merged pull requests opened by or assigned to the captain (GitHub's first page of
-  closed pull requests, `GET …/pulls?state=closed&sort=updated&direction=desc&per_page=100`), and a single watched pull
-  request once merged; merged in the last 30 days, or already followed. One followed that GitHub's first page no longer
-  shows is read on its own (at most 30 a refresh). At most 40 merged rows a refresh, the ones merged last.
+- **Which**: a watched repository's merged pull requests opened by or assigned to the captain (the recently closed pull
+  requests, `GET …/pulls?state=closed&sort=updated&direction=desc&per_page=20`, up to 5 pages, stopping at one updated
+  before the 30 days; a page larger than the 1 MB Studio reads from GitHub is read again as four pages of 5, and a
+  page still too large is reported as such, never as "could not be reached"), and a single watched pull request once
+  merged; merged in the last 30 days, or already followed. One followed that those pages no longer show is read on its
+  own (at most 30 a refresh). At most 40 merged rows a refresh, the ones merged last.
 - **Environments**: the same settings as the open rows (or the repository's own GitHub environments), read against the
   **merge commit** (squash or merge), never the old head: an environment has the pull request when the commit it runs
   contains the merge commit (`compare`). A GitHub Deployment environment: its newest successful deployment of the last
@@ -394,7 +396,7 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
 17. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
     inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
 18. Merged pull requests are followed until production (`bun tests/pr-watch-merged.ts`): the captain's merged ones only,
-    each environment read at the merge commit, the merged and live tabs, live from the first refresh that saw it, dropped
+    each environment read at the merge commit, a closed page over 1 MB read again in pages of 5, the merged and live tabs, live from the first refresh that saw it, dropped
     14 days later and never back, unwatching drops them; in the page the two tabs, their columns and Markdown —
     pr-watch-ui.mjs "the merged and live tabs …", "a merged row: on staging …", "the live tab …".
 19. The release brief (`bun tests/pr-watch-release.ts`, pr-watch-merged.ts "selecting 22 alone …", the UI suite): the
