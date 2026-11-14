@@ -24,6 +24,12 @@ const { ok, end } = suite("pr-watch-merged");
   ok(R.shipState([e("dev", false), e("staging", false), e("prod", false, true)]).waits === "dev", "nowhere yet: it waits on the first environment");
   ok(R.shipState([e("staging", null), e("prod", null, true)]).waits === "staging" && !R.shipState([e("prod", null, true)]).live, "an environment that could not be read is not on");
   ok(R.shipState([e("staging", true)]).noProduction && !R.shipState([e("staging", true)]).live, "no production environment set: never live, and it says so");
+  // reverts: the newest merged revert of a chain decides
+  const m = "2026-11-02T00:00:00Z", rv = (pulls: any[]) => JSON.stringify([...R.revertedBy("northwind/checkout-api", pulls)]);
+  const a = { number: 1, title: "A", merged_at: m }, r1 = { number: 2, title: 'Revert "A"', body: "Reverts northwind/checkout-api#1", merged_at: m }, r2 = { number: 3, title: 'Revert "Revert "A""', merged_at: m };
+  ok(rv([a, r1]) === "[[1,2]]" && rv([a, r1, r2]) === "[[2,3]]", "a revert drops its target; a merged revert of the revert gives it back (title only)", rv([a, r1, r2]));
+  ok(rv([a, r1, r2, { number: 4, title: 'Revert "A"', merged_at: m }]) === "[[1,4],[2,3]]", "reverted again by a newer merged revert: dropped again");
+  ok(rv([a, { ...r1, merged_at: null }]) === "[]" && rv([a, { ...r1, body: "Reverts northwind/web-app#1", title: "x" }]) === "[]", "an unmerged revert, or one naming another repository, cancels nothing");
 }
 
 // ---------- the module against the fictional GitHub ----------
@@ -95,6 +101,42 @@ try {
   ok(!!merged(v, "northwind/checkout-api#21"), "a row that went live later stays until its own 14 days");
   await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
   ok(!merged(v, "northwind/checkout-api#23"), "a dropped row does not come back on the next refresh");
+  // ---------- a merged row a merged revert cancels is dropped (by anyone, GitHub's own Revert output) ----------
+  { const ca = "northwind/checkout-api", id = (n: number) => `${ca}#${n}`, more = gh.data.more;
+    more(ca, 50, "Cache quotes for a minute", "skipper", { merged: true });
+    more(ca, 52, "Tighter rate limit", "skipper", { merged: true });
+    more(ca, 54, "Longer session timeout", "skipper", { merged: true });
+    more(ca, 57, "Webhook signature v2", "skipper", { merged: true });
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok([50, 52, 54, 57].every((n) => !!merged(v, id(n))), "four more merged rows are followed before any revert", JSON.stringify(v.merged.map((r: any) => r.id)));
+    // 50: someone else's merged pull request whose body says "Reverts <owner>/<repo>#50" (any case); 52: only the title
+    more(ca, 51, "Undo the quote cache", "lee", { merged: true, body: "Reverts Northwind/Checkout-API#50\n\nIt served stale prices." });
+    more(ca, 53, 'Revert "Tighter rate limit"', "lee", { merged: true });
+    // 54: an open revert, a closed unmerged one, and a merged one naming the same number in another repository: nothing
+    more(ca, 55, 'Revert "Longer session timeout"', "lee", { body: `Reverts ${ca}#54` });
+    more(ca, 56, 'Revert "Longer session timeout"', "lee", { state: "closed", body: `Reverts ${ca}#54` });
+    more(ca, 60, "Unrelated revert", "lee", { merged: true, body: "Reverts northwind/web-app#54" });
+    // 57: reverted, and the revert reverted in turn (merged): the original stands
+    more(ca, 58, 'Revert "Webhook signature v2"', "lee", { merged: true, body: `Reverts ${ca}#57` });
+    more(ca, 59, 'Revert "Revert "Webhook signature v2""', "lee", { merged: true, body: `Reverts ${ca}#58` });
+    const before = gh.calls.length;
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(!merged(v, id(50)) && W.state.retired.includes(id(50)) && W.state.reverted?.[id(50)] === id(51) && !W.state.shipped[id(50)], "a row someone else's merged \"Reverts …#50\" cancels is dropped and recorded with the revert", JSON.stringify({ merged: v.merged.map((r: any) => r.id), reverted: W.state.reverted }));
+    ok(!merged(v, id(52)) && W.state.reverted?.[id(52)] === id(53), "a merged revert with only the title Revert \"<exact title>\" drops the row", JSON.stringify(W.state.reverted));
+    ok(!!merged(v, id(54)) && !W.state.retired.includes(id(54)), "an open or closed-unmerged revert, or one naming another repository, leaves the row");
+    ok(!!merged(v, id(57)) && !W.state.retired.includes(id(57)), "a row whose revert was itself reverted by a merged pull request stays", JSON.stringify(W.state.reverted));
+    ok(!gh.calls.slice(before).some((c) => /\/pulls\/(5[0-9]|60)$/.test(c.path)), "reverts are read from the closed pull requests already listed: no read of their own");
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(!merged(v, id(50)) && !merged(v, id(52)) && !!merged(v, id(57)), "a reverted row does not come back on the next refresh"); }
+  // ---------- × on a merged row: excluded, not followed again, restored on request ----------
+  { const id = "northwind/checkout-api#21";
+    ok((await call("/api/prs/unwatch", { pr: id })).status === 200, "× on a merged row");
+    v = (await call("/api/prs")).body;
+    ok(!merged(v, id) && v.watch.excluded.includes(id), "the merged row is dropped and recorded as excluded", JSON.stringify(v.watch.excluded));
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(!merged(v, id), "an excluded merged row is not followed again on the next refresh");
+    await call("/api/prs/restore", { pr: id }); await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(!!merged(v, id) && !v.watch.excluded.length, "restore brings the merged row back", JSON.stringify(v.merged.map((r: any) => r.id))); }
   // unwatching the repository drops its merged rows too
   await call("/api/prs/unwatch", { repo: "northwind/checkout-api" }); v = (await call("/api/prs")).body;
   ok(!v.merged.length, "unwatching a repository drops its merged rows");
