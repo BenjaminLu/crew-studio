@@ -57,7 +57,7 @@ export function createTakeover(d: Deps) {
       const phase = c.alive ? (c.role === "reviewer" ? "reviewing" : "building") : c.result ? (c.result.status === "completed" && !c.result.exitCode ? "finished" : `ended: ${c.result.status}`) : "stopped";
       const last = c.lines.at(-1)?.text ?? null;
       return { actor: c.actor, name: c.name, role: c.role, task: c.task, title: c.task ? d.fm.title(c.task) : "", vendor: c.vendor, model: c.model,
-        round: c.round, attempt: c.attempt, alive: c.alive, phase, taskPhase: t?.node ?? null, taskStatus: t?.status ?? null,
+        round: c.round, attempt: c.attempt, alive: c.alive, phase, taskPhase: t?.node ?? null, taskStatus: t?.status ?? null, project: t?.project ?? null,
         started: c.started, elapsedMs: Math.max(0, end - start), lastWrite: c.lastWrite,
         activity: c.activity?.en && !/^Work description unavailable/.test(c.activity.en) ? c.activity : last ? { en: last, "zh-TW": last } : null,
         pr, merged: t?.mergedTs ?? null, ci, report: c.report, result: c.result, lines: c.alive ? c.lines.slice(-5) : [] };

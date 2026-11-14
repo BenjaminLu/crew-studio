@@ -234,9 +234,9 @@ try {
       ok((await q.locator('[data-file="A-outside"] video').count()) === 0 && (await fetch(base + "/files/A-outside")).status === 404, "a file outside the allowed folder is not served");
       const rng = await fetch(base + "/files/A-clip", { headers: { range: "bytes=0-99" } });
       ok(rng.status === 206 && (await rng.arrayBuffer()).byteLength === 100, "video files are served with byte ranges");
-      await q.locator('[data-filter="video"]').click();
+      await q.fill('[data-lt-q="library"]', "type:video"); await q.waitForTimeout(150); // the Type facet (public/list-tools.js)
       ok((await q.locator("[data-pr]").count()) === 0 && (await q.locator("[data-file]").count()) === 2, "the type filter narrows the Library");
-      await q.locator('[data-filter="all"]').first().click();
+      await q.fill('[data-lt-q="library"]', ""); await q.waitForTimeout(150);
     }
     ok(await noHScroll(q), `no sideways scroll with the chat open at ${width} ${scheme}`);
     await q.screenshot({ path: join(shots, `smoke-chat-${width}-${scheme}.png`) });

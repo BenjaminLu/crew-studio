@@ -64,16 +64,49 @@ try {
     ok(!firstIs17 && await p.evaluate(() => !!document.activeElement?.closest('[data-prs-row="northwind/checkout-api#17"]') && document.activeElement?.hasAttribute('data-prs-ev-setup')), 'closing settings after a live update focuses the Set up of the row that opened it, not the first one alike', await p.evaluate(() => document.activeElement?.closest('[data-prs-row]')?.dataset.prsRow)); }
   ok((await api('/api/prs/settings', { settings: fixtureSettings })).status === 200, 'settings saved (evidence source, required reviewer, four environments, groups)');
   await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
+  // twelve rows may already be on screen from before the settings: wait for the read that uses them (the evidence source)
+  await p.waitForSelector(`[data-prs-row="northwind/checkout-api#16"] [data-prs-next="failed"]`, { timeout: 20000 }).catch(() => {});
   ok(await p.locator('[data-prs-row]').count() === 12, 'the refresh button reads GitHub: twelve rows');
   const cols = await p.locator('.pw-row.h [role="columnheader"]').allInnerTexts();
   ok(JSON.stringify(cols.slice(1)) === JSON.stringify(['#', 'Pull request', 'Next step · waits on', 'Missing', 'CI', 'Depends on', 'Test evidence', 'Environments', 'Reviews', 'Issues', 'Group']), 'the columns, in order', JSON.stringify(cols));
   const next = async (id) => p.locator(`[data-prs-row="${id}"] [data-prs-next]`).getAttribute('data-prs-next');
-  ok(await next('northwind/checkout-api#16') === 'failed' && await next('northwind/checkout-api#19') === 'ready' && await next('northwind/checkout-api#11') === 'draft', 'the next step per row (failed evidence is a fix, never ready)');
+  ok(await next('northwind/checkout-api#16') === 'failed' && await next('northwind/checkout-api#19') === 'ready' && await next('northwind/checkout-api#11') === 'draft', 'the next step per row (failed evidence is a fix, never ready)', JSON.stringify([await next('northwind/checkout-api#16'), await next('northwind/checkout-api#19'), await next('northwind/checkout-api#11'), await next('northwind/checkout-api#17')]));
   ok((await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-next]').innerText()).startsWith('Test only the change since '), 'evidence for an older head: test only the change since');
   ok(await p.locator('#navPrs').innerText() === '3', 'the sidebar count: rows waiting on approval or ready to merge', await p.locator('#navPrs').innerText());
   const tab = async (k) => (await p.locator(`[data-prs-tab="${k}"] .tb-count`).innerText()).trim();
   ok(await tab('all') === '12' && await tab('approve') === '2' && await tab('merge') === '1' && await tab('fix') === '2' && await tab('test') === '3' && await tab('hold') === '1' && await tab('dependency') === '1', 'tab counts by next-step kind', JSON.stringify(await Promise.all(['all', 'approve', 'test', 'fix', 'dependency', 'merge', 'hold'].map(tab))));
   await p.click('[data-prs-tab="approve"]'); ok(await p.locator('[data-prs-row]').count() === 2, 'a tab filters the rows'); await p.click('[data-prs-tab="all"]');
+  // merged pull requests, followed until production: their own two tabs, after a separator, marked new
+  ok(await tab('merged') === '2' && await tab('live') === '1' && await p.locator('.pw-sep + [data-prs-tab="merged"] .pw-new').count() === 1, 'the merged and live tabs count the merged pull requests, after a separator, marked new');
+  await p.click('[data-prs-tab="merged"]'); await p.waitForSelector('[data-prs-ship="merged"]');
+  const shipCols = await p.locator('[data-prs-ship] .pw-row.h [role="columnheader"]').allInnerTexts();
+  ok(JSON.stringify(shipCols.slice(1)) === JSON.stringify(['#', 'Pull request', 'Going live · waits on', 'Merged', 'Deploy unit', 'Environments', 'Before going live']), 'the merged tab\'s columns', JSON.stringify(shipCols));
+  ok(JSON.stringify(await p.locator('[data-prs-merged="northwind/checkout-api#21"] .pw-env.on').allInnerTexts()) === '["staging"]' && /waits on prod/.test(await p.locator('[data-prs-merged="northwind/checkout-api#21"] .pw-next small').first().innerText())
+    && /^Waiting to go live · 2 d$/.test(await p.locator('[data-prs-merged="northwind/checkout-api#21"] [data-prs-ship-next]').innerText()), 'a merged row: on staging (it has the merge commit), waiting on prod for 2 days');
+  ok(await p.locator('[data-prs-merged="northwind/checkout-api#22"] [data-prs-ship-deps]').innerText() === 'depends on #21' && await p.locator('[data-prs-merged="northwind/checkout-api#21"] .mono').first().innerText() === gh.data.merge(gh.data.find('northwind/checkout-api', 21)).slice(0, 7), 'the merge commit and the dependency show on the row');
+  ok(await p.locator('[data-prs-ship-foot]').isVisible() && await p.locator('[data-prs-row]').count() === 0, 'the merged tab shows only merged rows, with its own note');
+  ok(JSON.stringify(await p.locator('[data-prs-ops="northwind/checkout-api#21"] [data-prs-op]').evaluateAll((es) => es.map((e) => e.dataset.prsOp))) === '["secret","metric","alert","rollout"]' && await p.locator('[data-prs-ops="northwind/checkout-api#22"] [data-prs-op="migration"]').count() === 1, 'the before-going-live badges: a secret, a new metric and its alert suggestion, the body\'s rollout text; a migration');
+  ok(await p.locator('[data-prs-brief]').isDisabled(), 'the brief button waits for a selection');
+  await p.check('[data-prs-pick="northwind/checkout-api#22"]'); ok(/\(1\)/.test(await p.locator('[data-prs-brief]').innerText()), 'ticking a row counts it on the button');
+  await p.screenshot({ path: join(shots, 'merged-1440-light.png'), fullPage: true });
+  await p.click('[data-prs-brief]'); await p.waitForSelector('[data-prs-dialog="brief"]');
+  ok(await p.evaluate(() => document.activeElement?.dataset?.prsBatchCopy === '1' && document.querySelector('[data-prs-batch="1"]').getBoundingClientRect().top < innerHeight), 'the brief opens at batch 1 (its Copy has the focus), not scrolled to the bottom');
+  { const r = await p.locator('[data-prs-batch="1"] [data-prs-brief-op="metric"]').evaluate((e) => { const [b, t, a] = [...e.children].map((c) => c.getBoundingClientRect()); return Math.abs(b.top - t.top) < 6 && Math.abs(a.top - t.top) < 6; }); ok(r, 'an alert suggestion item: tag, text and source on one line'); }
+  const b1 = await p.locator('[data-prs-batch-text="1"]').innerText(), b2 = await p.locator('[data-prs-batch-text="2"]').innerText();
+  ok(/^Please open a deploy pull request following the team's rules \(batch 1 of 2; batch 2 opens only after this one runs in production\)/.test(b1) && b1.includes('- image: registry.example/checkout:') && b1.includes('+ image: registry.example/checkout:v1.3.0') && b1.includes('#21 was added: #22 depends on it'), 'batch 1: its order line, the image line old → new, and why 21 was added', b1);
+  ok(/\(batch 2 of 2; open it after batch 1 runs in production\. #22 depends on #21\)/.test(b2) && b2.includes('- image: registry.example/checkout:v1.3.0\n+ image: registry.example/checkout:v1.4.0') && /\[DB migration\] New migration migrations\/0042_orders_cas\.sql/.test(b2), 'batch 2: waits on batch 1 and names the dependency; starts from batch 1\'s tag; its migration', b2);
+  ok(/\[Alert suggestion\] The diff adds metric trades_rejected_total\{reason\} \(counter, each label set appears only on its first increment\)\. Suggested: sum by \(reason\) \(increase\(trades_rejected_total\{job="checkout-api"\}\[5m\]\)\) > 0; for 0m; noData = Alerting; also up\{job="checkout-api"\} == 0/.test(b1) && b1.includes('[PR text] 「Set LIMITS_SECRET in production before the new image starts.」'), 'the alert suggestion (stated as a suggestion) and the body\'s rollout text quoted', b1);
+  ok(await p.locator('[data-prs-batch="1"] [data-prs-brief-op] a').count() === 3 && /depends on northwind\/checkout-api#21: it was added to batch 1/.test(await p.locator('[data-prs-brief-warn]').innerText()), 'every item links to where it came from; the dialog says what it added');
+  await p.click('[data-prs-batch-copy="2"]'); ok((await p.evaluate(() => navigator.clipboard.readText())).startsWith('Please open a deploy pull request following the team\'s rules (batch 2 of 2'), 'each batch copies on its own');
+  await p.screenshot({ path: join(shots, 'brief-1440-light.png'), fullPage: true });
+  await p.selectOption('[data-prs-brief-lang]', 'zh-CN'); ok((await p.locator('[data-prs-batch-text="1"]').innerText()).startsWith('请照团队规范开一个部署 PR（第 1/2 批'), 'the brief in Simplified Chinese', (await p.locator('[data-prs-batch-text="1"]').innerText()).slice(0, 60));
+  await p.screenshot({ path: join(shots, 'brief-1440-light-zh-cn.png'), fullPage: true });
+  await p.getByRole('button', { name: 'Done' }).click(); await p.waitForSelector('[data-prs-dialog="brief"]', { state: 'detached' });
+  await p.click('[data-prs-tab="live"]'); await p.waitForSelector('[data-prs-ship="live"]');
+  ok(await p.locator('[data-prs-merged]').count() === 1 && await p.locator('[data-prs-merged="northwind/checkout-api#23"] [data-prs-ship-next]').innerText() === 'In production' && /hidden in 14 d/.test(await p.locator('[data-prs-merged="northwind/checkout-api#23"] .pw-next small').first().innerText()), 'the live tab: in production, hidden 14 days later');
+  await p.click('[data-prs-md]'); ok((await p.evaluate(() => navigator.clipboard.readText())).includes('[northwind/checkout-api#23]'), 'Copy as Markdown on the live tab copies its rows');
+  await p.screenshot({ path: join(shots, 'live-1440-light.png'), fullPage: true });
+  await p.click('[data-prs-tab="all"]');
   // text from GitHub is text
   ok(await p.evaluate(() => window.__xss === undefined && !document.querySelector('[data-prs-row="northwind/mobile#5"] img')) && (await p.locator('[data-prs-row="northwind/mobile#5"] .pw-title').innerText()).includes('<img src=x'), 'a title with HTML is shown as text, never run');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#12"] .pw-iss small').innerText() === 'external' && await p.locator('[data-prs-single="northwind/mobile#5"]').count() === 1 && await p.locator('[data-prs-row="northwind/mobile#5"] .badge', { hasText: 'single' }).count() === 1, 'an issue outside the watched repositories is marked external; the single pull request is marked single');
@@ -123,6 +156,8 @@ try {
   ok(/^On hold: not all reviews or comments read/.test(held) && !/Ready/.test(held), 'a row held because its reviews could not be read says on hold, never ready', held);
   gh.knobs.reviewsFail = null; await p.click('[data-prs-refresh]');
   await p.waitForFunction(() => document.querySelector('[data-prs-row="northwind/checkout-api#16"] [data-prs-next]')?.dataset.prsNext === 'failed', null, { timeout: 20000 });
+  { const spill = await p.evaluate(() => [...document.querySelectorAll('[data-prs-row] .pw-next')].flatMap((c) => { const r = { right: Math.min(c.getBoundingClientRect().right, c.nextElementSibling.getBoundingClientRect().left) }; return [c, ...c.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > r.right + 1 || e.scrollWidth > e.clientWidth + 1).map((e) => `${c.closest('[data-prs-row]').dataset.prsRow}: ${e.textContent.slice(0, 30)}`); }));
+    ok(!spill.length, 'at 1440 the next step and its card button stay inside their column (never under Missing)', JSON.stringify(spill)); }
   const fit = await p.evaluate(() => { const t = document.querySelector('[data-prs-table]'); return { sw: t.scrollWidth, cw: t.clientWidth }; });
   ok(fit.sw <= fit.cw + 1, 'at 1440 with the sidebar open all twelve columns fit without scrolling', JSON.stringify(fit));
   ok(await p.locator('[data-prs-tab][role="tab"], [data-prs-tab][aria-selected]').count() === 0 && await p.locator('[data-prs-tab="all"]').getAttribute('aria-pressed') === 'true' && await p.locator('[data-prs-page] [role="tablist"], [data-prs-page] [role="tab"], .pw-menu [role="menuitem"], .pw-menu[role="menu"]').count() === 0, 'filters are pressed buttons (no tab or menu roles without their keys)');
@@ -212,6 +247,7 @@ try {
     const sx = await o.p.evaluate(() => ({ doc: document.documentElement.scrollWidth, main: document.querySelector('#main').scrollWidth, mainW: document.querySelector('#main').clientWidth, w: innerWidth, tbl: document.querySelector('[data-prs-table]').scrollWidth > document.querySelector('[data-prs-table]').clientWidth }));
     ok(sx.doc <= sx.w && sx.main <= sx.mainW + 1, `no sideways page scroll at ${w} ${theme}${w === 390 ? ' (the table scrolls inside its card)' : ''}`, JSON.stringify(sx));
     if (w === 390) ok(sx.tbl, `at ${w} the table scrolls inside its card`);
+    if (w === 390) ok(await o.p.evaluate(() => { const m = document.querySelector('[data-prs-tab="merged"]').getBoundingClientRect(), a = document.querySelector('[data-prs-tab="all"]').getBoundingClientRect(); return Math.abs(m.left - a.left) < 2; }), `at ${w} ${theme} the merged tabs start their own line (no separator left at a line end)`);
     if (w === 390) { const tc = await browser.newContext({ viewport: { width: 390, height: 900 }, isMobile: true, hasTouch: true }); const tp = await tc.newPage(); await tp.goto(`${base}/#/prs`); await tp.waitForSelector('[data-prs-row]');
       // read on the element on the page now (a live redraw may replace the row between finding it and reading it)
       const touchOpacity = async () => tp.evaluate(() => { const e = document.querySelector('[data-prs-drop]'); return e ? getComputedStyle(e).opacity : null; });

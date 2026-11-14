@@ -211,6 +211,8 @@ window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
  */
 let mountSeq = 0;
 function mountCard(el, card, opts = {}) {
+  // a pull request follow-through card has its own layout (public/pr-follow.js)
+  if (card.follow && window.crewFollowCard) return window.crewFollowCard.mount(el, card, opts);
   css();
   const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), folds: new Map(), confirm: false, ack: false, note: "", notes: {}, msg: "", ok: false, busy: false };
   const st = opts.state || {}; for (const [k, v] of Object.entries(fresh)) if (!(k in st)) st[k] = v;

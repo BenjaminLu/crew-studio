@@ -227,12 +227,13 @@ try {
       ok(await p.evaluate((id) => { const r = document.querySelector(`[data-scard="${id}"]`).getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; }, cardId), 'the linked card is in view');
       ok(await p.evaluate((id) => { const a = document.activeElement; return !!a?.dataset?.option && !!a.closest(`[data-scard="${id}"]`) && a === document.querySelector(`[data-scard="${id}"] [data-option]:not([disabled])`); }, cardId), 'the deep link focuses the card\'s first answer option', await p.evaluate(() => document.activeElement?.outerHTML?.slice(0, 120)));
       // the Studio row: Tasks filtered to no project
-      await p.route('**/api/tasks?project=*', async (r) => { await new Promise((x) => setTimeout(x, 1500)); await r.continue(); });
+      // the project filter is the Tasks toolbar's project facet (public/list-tools.js): while its filtered rounds load (read on the server), the Agent rounds panel says loading
+      await p.route('**/api/node-runs*', async (r) => { await new Promise((x) => setTimeout(x, 1500)); await r.continue(); });
       await p.click('[data-projects-nav] [data-project-row="studio"]');
       await p.waitForSelector('[data-project-filter="studio"]');
       const loadingPanel = await p.waitForSelector('[data-section="node-runs"][data-loading]', { timeout: 1200 }).then(() => true).catch(() => false);
-      ok(loadingPanel && !(await p.locator('[data-section="node-runs"]').innerText()).includes('No agent rounds yet'), 'while the project\'s Task ids load, the Agent rounds panel shows loading');
-      await p.unroute('**/api/tasks?project=*');
+      ok(loadingPanel && !(await p.locator('[data-section="node-runs"]').innerText()).includes('No agent rounds yet'), 'while the filtered rounds load, the Agent rounds panel shows loading');
+      await p.unroute('**/api/node-runs*');
       await p.waitForFunction(() => document.querySelectorAll('[data-run]').length > 0, null, { timeout: 8000 }).catch(() => {});
       const runs = await p.locator('[data-run]').evaluateAll((es) => es.map((e) => e.dataset.run));
       ok(runs.join() === seed.runs.loose, 'the Studio row opens Tasks filtered to the Tasks in no project', JSON.stringify(runs));

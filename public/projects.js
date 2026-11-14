@@ -116,7 +116,7 @@ function viewIndex() {
   if (PJ.sideErr && !PJ.side) return h("div", { class: "page", "data-projects-index": "1" }, head, h("div", { class: "card x-pad x-stack" }, h("div", { class: "err" }, icon("alert", "ic sm"), h("span", {}, T("The project registry cannot be read. Nothing was changed.", "無法讀取專案登錄資料。沒有任何變更。"))), h("div", {}, h("button", { class: "btn", onclick: () => loadSide(true) }, T("Try again", "重試")))));
   const list = PJ.side.projects || [];
   const real = list.filter((p) => p.kind !== "studio");
-  const cardOf = (p) => {
+  const cardOf = (p, mark = (t) => t) => {
     const badge = p.kind === "external" ? h("span", { class: "badge warn" }, h("span", { class: "d" }), T("External", "外部"))
       : p.enabled === false ? h("span", { class: "badge" }, T("Disabled", "已停用"))
       : p.folderMissing ? h("span", { class: "badge warn" }, h("span", { class: "d" }), T("Folder missing", "資料夾不存在"))
@@ -139,13 +139,28 @@ function viewIndex() {
       : counts ? T(counts.en, counts.tw) + (p.failed24h ? T(` · ${p.failed24h} failed in the last 24 h`, ` · 近 24 小時 ${p.failed24h} 個失敗`) : "")
       : p.failed24h ? LX(p.status) : T("No tasks running.", "目前沒有進行中的任務。");
     return h("a", { class: "card x-pad x-stack", href: hrefOf(p), "data-project-card": p.id },
-      h("div", { class: "x-row" }, markOf(p), h("b", {}, nameOf(p)), h("span", { class: "x-grow" }), badge),
+      h("div", { class: "x-row" }, markOf(p), h("b", {}, mark(nameOf(p))), h("span", { class: "x-grow" }), badge),
       h("div", { class: "faint", style: "font-size:13px" }, line), (p.mini || []).length ? pipe(p.mini) : null);
   };
   return h("div", { class: "page", "data-projects-index": "1" }, head, localProjectForm(),
     PJ.side.error ? h("div", { class: "err" }, icon("alert", "ic sm"), h("span", {}, T("The project registry cannot be read. Nothing was changed.", "無法讀取專案登錄資料。沒有任何變更。"))) : null,
     !real.length && !PJ.side.error ? h("div", { class: "card" }, h("div", { class: "empty", "data-projects-empty": "1" }, icon("folder"), h("b", {}, T("No project yet", "還沒有專案")), h("span", {}, T("Add an existing local Git repository to get started.", "新增已有的本機 Git 儲存庫即可開始。")))) : null,
-    h("div", { class: "pj-states" }, list.map(cardOf)));
+    projectsList(list, cardOf));
+}
+/** the projects index under the list toolbar (public/list-tools.js): kind and what is happening there */
+const PJ_KIND = { local: ["Local", "本機"], external: ["External", "外部"], builtin: ["Built-in", "內建"], studio: ["Studio (no project)", "Studio（無專案）"], disabled: ["Disabled", "已停用"] };
+const PJ_STATUS = { waiting: ["Waiting for you", "等你處理"], running: ["Tasks running", "有任務在跑"], failed: ["Failed in the last 24 h", "近 24 小時有失敗"], idle: ["Nothing running", "沒有進行中的任務"] };
+const pjKind = (p) => (p.enabled === false ? "disabled" : p.kind || "local");
+const pjStatus = (p) => (p.attention ? "waiting" : p.running ? "running" : p.failed24h ? "failed" : "idle");
+function projectsList(list, cardOf) {
+  return window.crewListTools.list({ id: "projects", route: "projects", title: T("projects", "專案"), noun: ["project", "專案"], items: list,
+    placeholder: T("Search project names…  or type kind:external", "搜尋專案名稱…  也可以打 kind:外部"),
+    text: (p) => [nameOf(p), p.name, p.id, p.base],
+    facets: [{ key: "kind", name: T("Kind", "類型"), value: pjKind, show: (k) => T(...(PJ_KIND[k] || [k, k])) },
+      { key: "status", name: T("Status", "狀態"), value: pjStatus, show: (k) => T(...(PJ_STATUS[k] || [k, k])) }],
+    sorts: [{ key: "title", label: T("Name", "名稱"), cmp: (a, b) => (a.kind === "studio") - (b.kind === "studio") || String(nameOf(a)).localeCompare(String(nameOf(b)), lang) },
+      { key: "busy", label: T("Busiest first", "最忙的在上"), cmp: (a, b) => (b.attention || 0) + (b.running || 0) - (a.attention || 0) - (a.running || 0) || String(nameOf(a)).localeCompare(String(nameOf(b)), lang) }],
+    rows: (page, ctx) => h("div", { class: "pj-states" }, page.map((p) => cardOf(p, ctx.mark))) });
 }
 
 // ---------- one project's page ----------

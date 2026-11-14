@@ -300,7 +300,10 @@ export function ownersOf(path: string, rules: { pattern: string; owners: string[
 }
 export type Missing = { kind: "count"; n: number } | { kind: "owner"; who: string[] } | { kind: "team"; who: string } | { kind: "unreadable"; reason: string; tw: string }
   /** GitHub's merge box says a review is still required, for a rule Studio could not read; `who` are the pending review requests */
-  | { kind: "github"; who: string[] };
+  | { kind: "github"; who: string[] }
+  /** "require approval of the most recent reviewable push": the latest push still needs an approval from someone other
+   *  than the pusher (older approvals keep counting toward the number unless stale ones are dismissed) */
+  | { kind: "lastpush"; pusher: string[] };
 /** What GitHub itself says about a pull request's merge (GraphQL reviewDecision, mergeStateStatus, review requests). */
 export type GitHubMerge = { reviewDecision: string | null; mergeState: string | null; requested: string[] };
 export type Approvals = { readable: boolean; required: number; counted: number; codeOwners: boolean; lastPush: boolean; dismissStale: boolean; missing: Missing[]; sources: string[];
@@ -310,13 +313,18 @@ export type Approvals = { readable: boolean; required: number; counted: number; 
    *  check, a rule Studio cannot see): not a missing approval, and never ready */
   blocked?: boolean;
   /** each group the rules ask an approval from (a required team, a set of code owners): met or not, and by whom */
-  groups?: { who: string; kind: "team" | "owner"; ok: boolean; by: string[] }[];
+  groups?: { who: string; kind: "team" | "owner"; ok: boolean; by: string[];
+    /** a code-owner group: the changed files it owns (at most 20) */ files?: string[];
+    /** a code-owner group no one but the author can approve (the author's own approval never counts): GitHub cannot be
+     *  satisfied by the people here; another owner, or an admin, has to act */ authorOnly?: boolean }[];
+  /** the approvals the rules count (the same ones the row counts): what a card and a push check read */
+  approvers?: string[];
   /** with "approval after the last push": the logins treated as the pusher (inferred: GitHub does not expose who pushed) */
   inferredPusher?: string[] };
 /**
  * What the base branch's rules still miss. The author's own approval never counts; an approval given on another head is
- * stale and counts only when neither the rules dismiss stale approvals nor ask for an approval after the last push (then
- * the inferred pusher's own approval does not count either). Code owners: every changed file's owners need one approval from
+ * stale and counts unless the rules dismiss stale approvals. An approval of the latest push, when the rules ask for one,
+ * is its own missing item: one approval on the head by someone other than the inferred pusher. Code owners: every changed file's owners need one approval from
  * an owner (a user, or a member of an owner team). Required teams: one approval from a member each.
  */
 export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: string[]; codeowners: { pattern: string; owners: string[] }[] | null; teamMembers: Map<string, string[] | null>;
@@ -330,28 +338,36 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
    *  do not explain is a missing review (who: the pending review requests) */
   github?: GitHubMerge | null }): Approvals {
   if (!rules.readable) return { readable: false, required: 0, counted: 0, codeOwners: false, lastPush: false, dismissStale: false, missing: [{ kind: "unreadable", reason: rules.reason, tw: rules.tw }], sources: [] };
-  // "approval after the last push": an approval counts when it was given on the current head, by someone other than the
-  // pusher. GitHub does not say who pushed, so the pusher is inferred: the pull request's author and the head commit's
-  // author and committer. Without the head commit the rule cannot be applied: unreadable.
+  // "approval of the most recent push" needs to know who pushed. GitHub does not say, so the pusher is inferred: the pull
+  // request's author and the head commit's author and committer. Without the head commit the rule cannot be applied:
+  // unreadable.
   if (rules.lastPush && !o.headCommit) return { readable: false, required: rules.required, counted: 0, codeOwners: rules.codeOwners, lastPush: true, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: "the branch rules ask for an approval after the last push, and the head commit could not be read", tw: "分支規則要求最後一次 push 之後的 approve，但讀不到 head commit" }], sources: rules.sources };
   const pusher = rules.lastPush ? [...new Set([o.author, o.headCommit?.author, o.headCommit?.committer].filter((x): x is string => !!x).map((x) => x.toLowerCase()))] : [];
   if (rules.codeOwners && o.ownersUnreadable) return { readable: false, required: rules.required, counted: 0, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing: [{ kind: "unreadable", reason: o.ownersUnreadable.en, tw: o.ownersUnreadable.tw }], sources: rules.sources };
-  const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || (!rules.dismissStale && !rules.lastPush)) && !pusher.includes(r.login.toLowerCase()));
+  // GitHub keeps an approval given on an older head unless the rules dismiss stale approvals; "approval of the most recent
+  // push" does not dismiss anything, it asks in addition that someone other than the pusher approves the head
+  // (docs: "the most recent reviewable push must be approved by someone other than the person who pushed it")
+  const valid = reviews.filter((r) => r.state === "APPROVED" && !r.author && (!r.stale || !rules.dismissStale));
   const approvers = new Set(valid.map((r) => r.login.toLowerCase())), missing: Missing[] = [], groups: NonNullable<Approvals["groups"]> = [];
-  // "approval after the last push" asks for one approval on the head by someone other than the pusher, even when the
-  // rules ask for no approval count
-  const needed = Math.max(rules.required, rules.lastPush ? 1 : 0);
-  if (valid.length < needed) missing.push({ kind: "count", n: needed - valid.length });
+  if (valid.length < rules.required) missing.push({ kind: "count", n: rules.required - valid.length });
+  if (rules.lastPush && !valid.some((r) => !r.stale && !pusher.includes(r.login.toLowerCase()))) missing.push({ kind: "lastpush", pusher });
   const memberOf = (team: string) => (o.teamMembers.get(team.toLowerCase()) ?? []).map((m) => m.toLowerCase());
   if (rules.codeOwners && o.codeowners) {
-    const sets = new Map<string, string[]>();
+    const sets = new Map<string, { ow: string[]; files: string[] }>();
     const budget: StepBudget = { left: CODEOWNERS_LIMITS.steps };
     for (const f of o.files) { let ow = o.ownersCache?.get(f); if (ow === undefined) { ow = ownersOf(f, o.codeowners, budget); if (ow !== "limit") o.ownersCache?.set(f, ow); }
       if (ow === "limit") return { readable: false, required: rules.required, counted: valid.length, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources,
         missing: [{ kind: "unreadable", reason: "a CODEOWNERS line or a changed file's path is past Studio's limits, so the code owners cannot be checked", tw: "CODEOWNERS 的某一行或某個改動檔案的路徑超過 Studio 的上限，無法檢查 code owner" }] };
-      if (ow.length) sets.set(ow.map((x) => x.toLowerCase()).sort().join(" "), ow); }
-    for (const ow of sets.values()) { const by = valid.filter((r) => ow.some((x) => x.includes("/") ? memberOf(x.replace(/^@/, "")).includes(r.login.toLowerCase()) : x.replace(/^@/, "").toLowerCase() === r.login.toLowerCase())).map((r) => r.login);
-      groups.push({ who: ow.join(" | "), kind: "owner", ok: by.length > 0, by }); if (!by.length) missing.push({ kind: "owner", who: ow }); }
+      if (ow.length) { const k = ow.map((x) => x.toLowerCase()).sort().join(" "), cur = sets.get(k) ?? { ow, files: [] }; if (cur.files.length < 20) cur.files.push(f); sets.set(k, cur); } }
+    // a team owner whose members could not be read: Studio cannot tell who may approve, so it stops and asks
+    const unreadTeam = [...sets.values()].flatMap((x) => x.ow).find((x) => x.includes("/") && o.teamMembers.get(x.replace(/^@/, "").toLowerCase()) == null);
+    if (unreadTeam) return { readable: false, required: rules.required, counted: valid.length, codeOwners: true, lastPush: rules.lastPush, dismissStale: rules.dismissStale, sources: rules.sources,
+      missing: [{ kind: "unreadable", reason: `the members of the code-owner team ${unreadTeam} could not be read`, tw: `讀不到 code owner team ${unreadTeam} 的成員` }] };
+    for (const { ow, files } of sets.values()) {
+      // who can approve this group: users other than the author, and members of the owner teams (an empty team counts no one)
+      const author = String(o.author ?? "").toLowerCase(), can = [...ow.filter((x) => !x.includes("/")).map((x) => x.replace(/^@/, "").toLowerCase()), ...ow.filter((x) => x.includes("/")).flatMap((x) => memberOf(x.replace(/^@/, "")))].filter((x) => x && x !== author);
+      const by = valid.filter((r) => ow.some((x) => x.includes("/") ? memberOf(x.replace(/^@/, "")).includes(r.login.toLowerCase()) : x.replace(/^@/, "").toLowerCase() === r.login.toLowerCase())).map((r) => r.login);
+      groups.push({ who: ow.join(" | "), kind: "owner", ok: by.length > 0, by, files, ...(!by.length && !can.length ? { authorOnly: true } : {}) }); if (!by.length) missing.push({ kind: "owner", who: ow }); }
   }
   for (const t of rules.teams) { const by = valid.filter((r) => memberOf(t.key).includes(r.login.toLowerCase())).map((r) => r.login);
     groups.push({ who: t.label, kind: "team", ok: by.length > 0, by }); if (!by.length) missing.push({ kind: "team", who: t.label }); }
@@ -365,16 +381,18 @@ export function approvalsOf(rules: Rules, reviews: ReviewView[], o: { files: str
   }
   // UNKNOWN: GitHub is still computing the merge state (just after a push); with the protection unread that is not ready either
   const blocked = !!rules.unread?.length && !missing.length && (o.github?.mergeState === "BLOCKED" || o.github?.mergeState === "UNKNOWN");
-  return { readable: true, required: rules.required, counted: valid.length, codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources, groups,
+  return { readable: true, required: rules.required, counted: valid.length, approvers: valid.map((v) => v.login), codeOwners: rules.codeOwners, lastPush: rules.lastPush, dismissStale: rules.dismissStale, missing, sources: rules.sources, groups,
     ...(rules.lastPush ? { inferredPusher: pusher } : {}), ...(rules.unread?.length ? { unread: rules.unread, github: o.github ?? null } : {}), ...(blocked ? { blocked } : {}) };
 }
-export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : []);
+export const missingWho = (m: Missing[]): string[] => m.flatMap((x) => x.kind === "count" ? [`${x.n} more approval${x.n === 1 ? "" : "s"}`] : x.kind === "owner" ? [x.who.join(" | ")] : x.kind === "team" ? [x.who] : x.kind === "github" ? [x.who.length ? x.who.join(" | ") : "a review GitHub still requires"] : x.kind === "lastpush" ? ["an approval of the latest push by someone other than the pusher"] : []);
 
 // ---------- the next step ----------
-export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "test" | "approve" | "merge";
+export type StepKind = "hold" | "fix" | "review" | "dependency" | "deploy" | "nudge" | "test" | "approve" | "merge";
 export const RULES: { id: string; kind: StepKind; en: string; tw: string }[] = [
   { id: "draft", kind: "hold", en: "draft → on hold", tw: "draft → 暫緩" },
   { id: "unread", kind: "hold", en: "Studio could not read every review or comment (a read failed, or there are more than it reads) → on hold (see GitHub)", tw: "Studio 沒讀到全部的 review 或留言（讀取失敗，或超過它讀的數量）→ 暫緩（看 GitHub）" },
+  { id: "evidence-asked", kind: "test", en: "a reviewer asked for evidence, not a code change (their comment, quoted) → test (QA)", tw: "reviewer 要的是外部證據，不是改代碼（引用原句）→ 測試（QA）" },
+  { id: "re-review", kind: "nudge", en: "the evidence covers the current head while a reviewer's verdict is on an older head → ask them to look again", tw: "證據已覆蓋目前 head，reviewer 的意見還停在舊 head → 請 reviewer 重驗" },
   { id: "changes", kind: "fix", en: "a reviewer asked for changes → fix (the author)", tw: "有人要求修改 → 修正（作者）" },
   { id: "required", kind: "review", en: "a required reviewer has not reviewed → wait for them", tw: "必要 reviewer 還沒 review → 等他" },
   { id: "dependency", kind: "dependency", en: "a dependency is not merged → wait for it", tw: "依賴還沒合併 → 等依賴" },
@@ -391,6 +409,9 @@ export type StepInput = {
   evidence: Evidence | null; evidenceSources: EvidenceSources; approvals: Approvals;
   /** what Studio could not read in full (a read failed, or past its page cap): "reviews", "comments" */
   incomplete?: string[];
+  /** the follow-through's reading of the reviewers (src/pr-watch-follow.ts shepherd): a change request that asked for
+   *  evidence, or evidence that now covers the head, is not a fix */
+  follow?: { branch: string; who: string[]; quote?: string | null } | null;
 };
 export type Step = { rule: string; kind: StepKind; who: string[]; reason?: string; since?: string | null; matched: boolean[] };
 /** The first matching rule, top to bottom (RULES). `matched` says which rules match at all, for the detail view. */
@@ -407,6 +428,8 @@ export function nextStep(p: StepInput): Step {
     [p.draft, () => ({ rule: "draft", kind: "hold", who: [p.author] })],
     // without every review and comment, a change request or a later failing verdict may be among the unread ones
     [!!p.incomplete?.some((x) => x === "reviews" || x === "comments"), () => ({ rule: "unread", kind: "hold", who: ["(see GitHub)"], reason: p.incomplete!.filter((x) => x === "reviews" || x === "comments").join(", ") })],
+    [p.follow?.branch === "needs-evidence" && changes.length > 0, () => ({ rule: "evidence-asked", kind: "test", who: p.follow!.who, reason: p.follow!.quote ?? undefined })],
+    [p.follow?.branch === "evidence-covers-head", () => ({ rule: "re-review", kind: "nudge", who: p.follow!.who })],
     [changes.length > 0, () => ({ rule: "changes", kind: "fix", who: [p.author], reason: changes.map((c) => c.login).join(", ") })],
     [pendingRequired.length > 0, () => ({ rule: "required", kind: "review", who: pendingRequired })],
     [open.length > 0, () => ({ rule: "dependency", kind: "dependency", who: open.map((d) => d.id) })],
@@ -451,7 +474,9 @@ export function commitOfTag(tag: string): string | null {
  * matches). With nothing after {tag}, the tag ends at the end of the line or the first other character, and a longer
  * run is no tag. Each line is scanned forward once per occurrence of the prefix: linear in the line's length.
  */
-export function tagCommit(text: string, template: string): string | null {
+export function tagCommit(text: string, template: string): string | null { const t = tagOf(text, template); return t ? commitOfTag(t) : null; }
+/** The tag itself (as tagCommit finds it), or null: what a release brief replaces on that line. */
+export function tagOf(text: string, template: string): string | null {
   if (templateProblem(template)) return null;
   const [pre, post] = template.split("{tag}");
   for (const line of String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000)) {
@@ -462,11 +487,32 @@ export function tagCommit(text: string, template: string): string | null {
       if (post) { j = line.indexOf(post, i); if (j < 0) break; }
       else { j = i; while (j < line.length && TAG_CHAR.test(line[j])) j++; }
       const tag = line.slice(i, j);
-      if (isTag(tag)) return commitOfTag(tag);
+      if (isTag(tag)) return tag;
       from = at + 1;
     }
   }
   return null;
+}
+
+// ---------- merged pull requests, followed until production ----------
+/** A merged pull request stays on the list this long after it reached every production environment. */
+export const LIVE_KEEP_MS = 14 * 86400_000;
+/** How far back a watched repository's merged pull requests are picked up (a tracked one stays until production). */
+export const MERGED_WINDOW_MS = 30 * 86400_000;
+export type ShipEnv = { name: string; on: boolean | null; production: boolean };
+/**
+ * Where a merged pull request is on its way to production, from its environments (in the settings' order), each on when
+ * its commit contains the merge commit. Live: every production environment has it. Otherwise it waits on the first
+ * environment after the furthest one that has it (the first environment when none has it). No production environment
+ * set: it can never be live, and the row says so.
+ */
+export function shipState(envs: ShipEnv[]): { live: boolean; waits: string | null; noProduction: boolean } {
+  const prod = envs.filter((e) => e.production);
+  if (!prod.length) return { live: false, waits: null, noProduction: true };
+  if (prod.every((e) => e.on === true)) return { live: true, waits: null, noProduction: false };
+  const furthest = envs.map((e) => e.on === true).lastIndexOf(true);
+  const next = envs.slice(furthest + 1).find((e) => e.on !== true) ?? envs.find((e) => e.on !== true)!;
+  return { live: false, waits: next.name, noProduction: false };
 }
 
 // ---------- order and dependencies ----------
@@ -507,4 +553,24 @@ export function proposeOrder(prs: PrFacts[], deps: { pr: string; on: string }[],
     out.push(pool[0]); left.delete(pool[0]);
   }
   return out.map((id) => ({ id, why: why.get(id)!.length ? why.get(id)! : ["opened earlier than the ones after it"] }));
+}
+
+/** Each rule as one plain sentence: what is true, and what follows from it (the card's record, a closed card's note). */
+const SENTENCES: Record<string, { en: string; tw: string }> = {
+  draft: { en: "It is a draft, so it is on hold.", tw: "這是 draft，所以暫緩。" },
+  unread: { en: "Studio could not read every review or comment, so it is on hold (see GitHub).", tw: "Studio 沒讀到全部的 review 或留言，所以暫緩（看 GitHub）。" },
+  "evidence-asked": { en: "A reviewer asked for evidence, not a code change, so it waits for the QA test.", tw: "reviewer 要的是外部證據，不是改代碼，所以等 QA 實測。" },
+  "re-review": { en: "The evidence covers the current head while a reviewer's verdict is older, so the reviewers are asked to look again.", tw: "證據已覆蓋目前 head，reviewer 的意見還停在舊的，所以請 reviewer 重驗。" },
+  changes: { en: "A reviewer asked for changes, so the author fixes them.", tw: "有人要求修改，所以由作者修正。" },
+  required: { en: "A required reviewer has not reviewed yet, so it waits for them.", tw: "必要 reviewer 還沒 review，所以等他。" },
+  dependency: { en: "A pull request it depends on is not merged yet, so it waits for it.", tw: "依賴的 PR 還沒合併，所以等它。" },
+  environment: { en: "The head runs in no pre-production environment, so it waits to be deployed for testing.", tw: "head 沒在任何測試環境，所以等部署去測。" },
+  failed: { en: "The test evidence says fail, so the author fixes it.", tw: "測試證據是不通過，所以由作者修正。" },
+  evidence: { en: "There is no test evidence for the current head, so it waits for a test.", tw: "目前 head 還沒有測試證據，所以等測試。" },
+  approvals: { en: "Approvals are missing (or the rules cannot be read), so it waits for them.", tw: "approve 不夠（或讀不到規則），所以等 approve。" },
+  blocked: { en: "GitHub blocks the merge for a reason the readable rules do not show, so it is on hold.", tw: "GitHub 因為讀得到的規則看不出的原因擋住 merge，所以暫緩。" },
+  ready: { en: "Everything is satisfied, so it is ready to merge.", tw: "條件都滿足，所以可以合併。" },
+};
+export function ruleSentence(rule: { id?: string; en: string; tw: string }): { en: string; tw: string } {
+  return (rule.id && SENTENCES[rule.id]) || { en: rule.en.replace(/\s*→\s*/g, ": "), tw: rule.tw.replace(/\s*→\s*/g, "：") };
 }

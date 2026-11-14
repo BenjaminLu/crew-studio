@@ -231,7 +231,7 @@ export function diff(a: WDef, b: WDef): DefDiff {
 export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved.length && !d.nodesChanged.length && !d.nodesMoved.length && !d.edgesAdded.length && !d.edgesRemoved.length && !(d.edgesChanged ?? []).length && !d.meta.length;
 
 const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
-const INTERNAL_WORKFLOWS=new Set(["local-project-register","firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github","firstmate-grant-merge","crew-change","issue-triage","issue-categories","review-room-host","review-room-dir-host","pr-watch-apply-depends"]);
+const INTERNAL_WORKFLOWS=new Set(["local-project-register","firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github","firstmate-grant-merge","crew-change","issue-triage","issue-categories","review-room-host","review-room-dir-host","pr-watch-apply-depends","pr-follow"]);
 /** Kept and editable, but no new Task starts until its runtime is activated. The reason is shown in the catalog. */
 const HELD_REASON={en:"held: GitHub review does not run end to end until it is rebuilt from code-firstmate",zh:"暫停：GitHub 審查改由 code-firstmate 重建前無法端到端執行"};
 /**
@@ -346,7 +346,7 @@ export class WorkflowDefs {
   heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!this.trashed(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
   /** An empty folder, or a package-import (imp-*) folder that cannot be read, is left out instead of breaking the whole catalog. */
   private listable(id: string): WDef[] { try { return this.versions(id); } catch (e) { if (id.startsWith("imp-")) { console.error(`workflow ${id}: unreadable, left out of the catalog: ${(e as Error).message}`); return []; } throw e; } }
-  list() { const shown = this.names.map(), renamed = this.names.overrides(); return this.ids().flatMap((id) => { const vs = this.listable(id); const l = vs.at(-1); if (!l) return []; return [{ id, name: l.name, displayName: shown[id] ?? l.name, renamed: Object.hasOwn(renamed, id), description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }]; }); }
+  list() { const shown = this.names.map(), renamed = this.names.overrides(); return this.ids().flatMap((id) => { const vs = this.listable(id); const l = vs.at(-1); if (!l) return []; return [{ id, name: l.name, displayName: shown[id] ?? l.name, renamed: Object.hasOwn(renamed, id), description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, updatedAt: l.createdAt ?? null, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }]; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
   setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {

@@ -89,12 +89,12 @@ try {
         const all = await p.evaluate(() => fetch("/api/activity?limit=25").then((r) => r.json()));
         const type = "nobody-by-this-name"; // an actor filter that matches nothing
         await p.goto(`${base}/#/activity`); await p.waitForSelector("#evlist", { timeout: 5000 }).catch(() => {}); await p.waitForTimeout(400);
-        await p.fill(".filters input", type); await p.press(".filters input", "Enter"); await p.waitForTimeout(600);
+        await p.fill('[data-lt-q="activity"]', `actor:${type}`); await p.waitForTimeout(600); // the Actor facet as a key:value word (public/list-tools.js)
         const filtered = await p.locator("#evlist .ev").count();
         await p.goto(`${base}/#/crew`); await p.waitForSelector("[data-crew-activity] .ev"); await p.waitForTimeout(300);
         const shown = await p.$$eval("[data-crew-activity] .ev", (es) => es.length);
         await p.goto(`${base}/#/activity`); await p.waitForSelector("#evlist", { timeout: 5000 }).catch(() => {}); await p.waitForTimeout(600);
-        ok(!!type && filtered < all.length && shown === Math.min(25, all.length) && (await p.locator("#evlist .ev").count()) === filtered && (await p.inputValue(".filters input")) === type,
+        ok(!!type && filtered < all.length && shown === Math.min(25, all.length) && (await p.locator("#evlist .ev").count()) === filtered && (await p.inputValue('[data-lt-q="activity"]')) === `actor:${type}`,
           "Crew's activity is the unfiltered log after a filtered #/activity visit, and the filter is still there when you go back", JSON.stringify({ type, shown, all: all.length, filtered })); }
       { // a Crew re-render after the list is older than 3 s (an SSE crew event, a language switch) keeps the activity block and its items
         await p.goto(`${base}/#/crew`); await p.waitForSelector("[data-crew-activity] .ev");

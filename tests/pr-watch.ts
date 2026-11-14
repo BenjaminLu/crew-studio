@@ -153,9 +153,14 @@ const { ok, end } = suite("pr-watch");
   const lpRules = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true } }], "none", null, "o");
   const head = { author: "hana", committer: "cody" }, ap1 = (rv: R.ReviewView[]) => R.approvalsOf(lpRules, rv, { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: head });
   const rvw = (login: string, stale = false, author = false): R.ReviewView => ({ login, state: "APPROVED", stale, at: "", author });
-  ok(ap1([rvw("zoe", true)]).counted === 0 && ap1([rvw("zoe", true)]).missing[0].kind === "count", "after the last push: an approval on an older commit is stale and does not count");
+  // GitHub: "the most recent reviewable push must be approved by someone other than the person who pushed it"; it dismisses
+  // nothing (stale approvals go only with "dismiss stale approvals")
+  ok(ap1([rvw("zoe", true)]).counted === 1 && ap1([rvw("zoe", true)]).missing.map((m) => m.kind).join() === "lastpush", "after the last push, stale approvals kept: an older approval still counts toward the number, and the latest push still needs one");
+  { const both = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 1, require_last_push_approval: true, dismiss_stale_reviews_on_push: true } }], "none", null, "o");
+    const a = R.approvalsOf(both, [rvw("zoe", true)], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: head });
+    ok(a.counted === 0 && a.missing.map((m) => m.kind).join() === "count,lastpush", "after the last push with stale approvals dismissed: the older approval does not count, and the latest push needs one", JSON.stringify(a.missing)); }
   ok(ap1([rvw("pat", false, true)]).counted === 0, "after the last push: the pull request author's approval on the head does not count");
-  ok(ap1([rvw("cody")]).counted === 0 && ap1([rvw("hana")]).counted === 0, "after the last push: the head commit's committer or author does not count (the inferred pusher)");
+  ok(ap1([rvw("cody")]).counted === 1 && ap1([rvw("cody")]).missing.map((m) => m.kind).join() === "lastpush" && ap1([rvw("hana")]).missing.map((m) => m.kind).join() === "lastpush", "after the last push: the pusher's own approval (the head commit's committer or author) never approves the latest push");
   const other = ap1([rvw("zoe")]);
   ok(other.readable && other.counted === 1 && !other.missing.length && other.inferredPusher!.join() === "pat,hana,cody", "after the last push: someone else's approval on the head counts; the inferred pusher is shown", JSON.stringify(other));
   const noHead = R.approvalsOf(lpRules, [rvw("zoe")], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: null });
@@ -190,7 +195,7 @@ const { ok, end } = suite("pr-watch");
     const none = R.approvalsOf(lp0, [], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: { author: "pat", committer: "pat" } });
     const byPusher = R.approvalsOf(lp0, [{ login: "pat", state: "APPROVED", stale: false, at: "", author: true }], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: { author: "pat", committer: "pat" } });
     const byOther = R.approvalsOf(lp0, [{ login: "zoe", state: "APPROVED", stale: false, at: "", author: false }], { files: [], codeowners: null, teamMembers: new Map(), author: "pat", headCommit: { author: "pat", committer: "pat" } });
-    ok(none.missing[0]?.kind === "count" && byPusher.missing.length === 1 && !byOther.missing.length, "after the last push with no approval count: one approval on the head by someone other than the pusher is still needed"); }
+    ok(none.missing.map((m) => m.kind).join() === "lastpush" && byPusher.missing.map((m) => m.kind).join() === "lastpush" && !byOther.missing.length, "after the last push with no approval count: one approval on the head by someone other than the pusher is still needed"); }
   { const rules = Array.from({ length: 2000 }, (_, i) => ({ pattern: `**/a/**/a/**/a/**/a/**/a/**/b${i}`, owners: ["@x"] })), files = Array.from({ length: 300 }, (_, i) => `${"a/".repeat(30)}f${i}`);
     const co4 = R.mergeRules([{ type: "pull_request", parameters: { required_approving_review_count: 0, require_code_owner_review: true } }], "none", null, "o");
     const t0 = performance.now(), got = R.approvalsOf(co4, [], { files, codeowners: rules, teamMembers: new Map() }), ms = performance.now() - t0;

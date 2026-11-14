@@ -95,10 +95,10 @@ function importCard(redraw = render) {
     body);
 }
 
-function skillRow(s) {
+function skillRow(s, mark = (t) => t) {
   const used = s.usedBy || [];
   return h("article", { class: "sk-row", "data-skill": s.id },
-    h("div", { class: "sk-row-h" }, h("b", { class: "sk-name" }, s.name), h("span", { class: "vbadge", "data-skill-version": "1" }, `v${s.current}`),
+    h("div", { class: "sk-row-h" }, h("b", { class: "sk-name" }, mark(s.name)), h("span", { class: "vbadge", "data-skill-version": "1" }, `v${s.current}`),
       h("span", { class: `badge ${s.sourceKind === "builtin" ? "run" : ""}`, "data-skill-source": "1" }, kindLabel(s.sourceKind)),
       skillButton({ kind: "lib", id: s.id, v: null, pinned: null, name: s.name }, s.name, { class: "btn sm sk-read", verb: ["Read", "查看內容"] }, icon("eye", "ic sm"), T("Read", "查看內容"))),
     s.description ? h("p", { class: "sk-desc" }, s.description) : null,
@@ -109,6 +109,20 @@ function skillRow(s) {
       h("dt", {}, T("Size", "大小")), h("dd", { "data-skill-size": "1" }, `${sizeWords(s.bytes)}${s.files?.length ? T(` · ${count(s.files.length, "supporting file")}`, ` · ${s.files.length} 個附加檔`) : ""}`),
       h("dt", {}, T("Used by", "使用中")), h("dd", {}, used.length ? used.map((u) => h("a", { class: "vbadge sk-use", href: `#/workflows/${u.workflow}` }, `${wfName(u.workflow)} · ${u.node} · v${u.v}`)) : h("span", { class: "faint" }, T("no node yet", "還沒有節點")))),
     s.ignored?.length ? h("p", { class: "sk-ignored", "data-skill-ignored": "1" }, icon("shield", "ic sm"), h("span", {}, ignoredText(s.ignored))) : null);
+}
+/** the skill library under the list toolbar (public/list-tools.js): source, whether a node uses it, which workflow */
+function libraryList(lib) {
+  const added = (s) => s.versions?.[0]?.createdAt || "";
+  return window.crewListTools.list({ id: "skills", route: "skills", title: T("skills", "技能"), noun: ["skill", "技能"], items: lib,
+    placeholder: T("Search names, descriptions, the workflow that uses it…  or type source:folder", "搜尋名稱、說明、被哪個流程使用…  也可以打 source:資料夾"),
+    text: (s) => [s.name, s.id, s.description, s.source, ...(s.usedBy || []).flatMap((u) => [u.workflow, wfName(u.workflow), u.node])],
+    facets: [{ key: "source", name: T("Source", "來源"), value: (s) => s.sourceKind, show: (k) => kindLabel(k) },
+      { key: "used", name: T("Used by", "使用中"), value: (s) => ((s.usedBy || []).length ? "yes" : "no"), show: (v) => (v === "yes" ? T("A node uses it", "有節點在用") : T("No node uses it", "沒有節點用")) },
+      { key: "wf", name: T("Workflow", "流程"), value: (s) => [...new Set((s.usedBy || []).map((u) => u.workflow))], show: (v) => wfName(v) }],
+    sorts: [{ key: "title", label: T("Name", "名稱"), cmp: (a, b) => String(a.name).localeCompare(String(b.name), lang) },
+      { key: "new", label: T("Recently added", "最近加入"), cmp: (a, b) => added(b).localeCompare(added(a)) }],
+    none: () => h("div", { class: "card" }, h("div", { class: "empty" }, icon("library"), h("b", {}, T("No skills yet", "還沒有技能")), T("Import one above.", "從上面匯入一個。"))),
+    rows: (page, ctx) => h("div", { class: "card sk-list" }, page.map((s) => skillRow(s, ctx.mark))) });
 }
 function roleRow(r) {
   return h("div", { class: "sk-role", "data-role-skill": r.id },
@@ -126,7 +140,7 @@ function viewSkills() {
   const lib = SK.data.skills || [], roles = SK.data.roles || [];
   return h("div", { class: "page sk-page", "data-skills-page": "1" }, head, importCard(),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Skill library", "技能庫")), h("span", { class: "faint" }, String(lib.length))),
-      lib.length ? h("div", { class: "card sk-list" }, lib.map(skillRow)) : h("div", { class: "card" }, h("div", { class: "empty" }, icon("library"), h("b", {}, T("No skills yet", "還沒有技能")), T("Import one above.", "從上面匯入一個。")))),
+      libraryList(lib)),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Role skills", "角色技能")), h("span", { class: "faint" }, String(roles.length))),
       h("p", { class: "faint sk-note" }, T("Each workflow role's own skill. It always comes first in the agent's instructions, before the skills a node turns on.", "每個流程角色自己的技能。它在 agent 指示裡永遠排在節點開啟的技能之前。")),
       h("div", { class: "card sk-list" }, roles.map(roleRow))));

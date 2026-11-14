@@ -46,7 +46,7 @@ import { homedir } from "node:os";
 import { extname, join, normalize } from "node:path";
 import { Board } from "./board";
 import { FmState, type Card, type Ev } from "./fm";
-import { GitHub } from "./github";
+import { GitHub, MERGED_KEPT } from "./github";
 import { Store } from "./store";
 import { TOOLS, toolByName, type ToolCtx } from "./tools";
 import { manualFor } from "./manual";
@@ -127,6 +127,7 @@ import { staffingVerify } from "./providers/staffing-verify";
 import { cursorKeyCheck, cursorModel, probeCursor, probeCursorChecked, verifyCursor } from "./providers/cursor";
 import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,admitSignedInClaude,validClaudePair,claudeEfforts,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
 import { ProviderRefusal, nativeChain, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
+import { activityPage, activityQuery } from "./activity-list";
 
 const ROOT = SRC_ROOT;
 const DATA = process.env.CREW_DATA ?? DEFAULT_DATA;
@@ -915,6 +916,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     }
     if (p === "/api/activity") {
       const q = url.searchParams;
+      // the Activity page's toolbar: filtered, counted and paged over the whole log (src/activity-list.ts)
+      if (q.has("page")) return json(activityPage(fm.events, activityQuery(q)));
       return json(fm.activity({ task: q.get("task") || undefined, type: q.get("type") || undefined, actor: q.get("actor") || undefined,
         limit: Number(q.get("limit") || 150), before: q.get("before") ? Number(q.get("before")) : undefined }));
     }
@@ -988,7 +991,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       }
       return json(chatInfo());
     }
-    if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
+    if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, mergedKept: MERGED_KEPT, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
     if (p.startsWith("/api/task/")) {
       const id = decodeURIComponent(p.slice("/api/task/".length)).toUpperCase();
       if (!fm.known(id)) return json({ error: "not in the log" }, 404);
