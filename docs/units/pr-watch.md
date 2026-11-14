@@ -275,7 +275,29 @@ contacts turned into Slack mentions. **Contacts**: GitHub account → Slack memb
 **DM** (copy and open): the message is copied (Clipboard API, `execCommand` fallback) and the server builds the link from
 the contact only — `slack://user?team=<workspace>&id=<member>` (paste needed), a Teams chat with the message filled in,
 or `mailto:` with subject and body; no contact, copy only. The page opens only those three kinds of address, never one
-from a pull request, comment or message. A bot that sends DMs itself is not in this version.
+from a pull request, comment or message.
+
+**Slack bot (optional)**: a bot token (scopes `users:read`, `im:write`, `chat:write`) is kept like a webhook — in
+`state.json` (0600) under `botToken`, never in a repository, never in `settings`, the page sees only that it is set and
+a masked form; a new value replaces it, the masked form keeps it, an empty field clears it; an agent CLI's settings never
+touch it. Studio talks to Slack only on a click, with three Web API methods (`users.info`, `conversations.open`,
+`chat.postMessage`), the token in the `Authorization` header, never in an address, on Slack's own host (`CREW_SLACK_API`
+may name a loopback test server only while Studio runs under its tests, `CREW_TEST_ENV_ISOLATED`; otherwise it is
+refused). **Check contacts** (校驗聯絡人) asks `users.info` for each Slack contact and keeps, per contact, the member id
+and workspace checked, the name Slack reports (real name, then the display name when it differs), the time and the
+verdict. A contact fails when its `team_id` is not the workspace id set, it is deactivated (`deleted`), a bot
+(`is_bot`), external (`is_stranger`, Slack Connect), or Slack answers an error. Nothing is corrected: the captain edits
+the table; a contact whose member id or the workspace id changed since its check needs checking again. On a card, for a
+recipient whose check stands, **DM <name> via Slack** opens a confirm step showing the GitHub login → the Slack name as
+last verified → the member id, and the full message; only its Send button sends (`follow/slack-dm`). The recipient is
+resolved from the contact settings by the GitHub login alone, which must be someone the card is for — never from the
+message, the pull request, a comment, or any other field of the request. Before sending Studio asks `users.info` again
+and sends nothing when any fail rule holds or the name differs from the one the confirm showed; then it opens the DM and
+posts the message once. The card's history records who it went to (login, name, member id) or why it was not sent.
+
+**Message guard**: Copy and DM, a Slack DM and a channel send refuse a message with a link that is not https (any
+`scheme://`, the bare `javascript:`, `data:`, `mailto:`, `slack:` … forms, and Slack's `<scheme:…>` links) or a URL with a
+user name or password before its host (`https://user:pass@…`). The wording is never judged.
 
 ## Next step and who it waits on
 
@@ -362,7 +384,8 @@ and make the same edits over MCP (`tools` in `src/pr-watch.ts`, the board's `act
 `GET /api/prs` (the list from the last snapshot; never calls GitHub), `GET /api/prs/count`; and, desktop only, through the
 CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}`, `/restore {pr?}`, `/settings`,
 `/order {order}`, `/deps {pr,on}`, `/group {pr,group}`, `/accept`, `/drift/take {pr}`, `/apply {prs,shortForm}`,
-`/ship/mark {prs}`, `/ship/undo {pr}`.
+`/ship/mark {prs}`, `/ship/undo {pr}`, `/sending/check` (Check contacts), `/follow/dm-preview {card,login,text}` (the confirm step:
+sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slack DM).
 
 ## Done when (`bun tests/pr-watch.ts`, `bun tests/pr-watch-ui.mjs` (run with bun: it imports the TypeScript fixture), `bun run test:pr-watch` for both; a fictional GitHub, tests/lib/pr-watch-github.ts: three watched repositories, an issues-only one outside the set, an infrastructure repository and a single pull request elsewhere)
 
@@ -435,6 +458,15 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     row not marked by hand are refused; production confirming a marked row drops the mark and keeps the mark time; a
     marked row is dropped 14 days after the mark; a `state.json` without marks loads; in the page the row button, the
     badge, Undo only on a marked row, and the button for the ticked rows.
+21. The Slack bot (`bun tests/pr-watch-slack-dm.ts`, against a fake Slack Web API in the test; pr-follow-ui.mjs "a
+    Slack DM …"): the token is kept, masked, kept on the masked form, cleared on an empty field, never in the list's or
+    the sending view and never set by an agent CLI's settings; Check contacts passes a member of the workspace and fails
+    another workspace, a deactivated account, a bot, an external account and an API error, each with its reason; a DM
+    is offered only for a contact that passed; the confirm step (dm-preview) sends nothing; a DM without the confirmed
+    name, or after the name changed or the account was deactivated since the check, is refused with the reason in the
+    history and nothing posted; the member id comes from the contacts only (ids, channels or users in the request are
+    ignored); a confirmed DM opens the DM and posts once, the token only in the Authorization header; a message with an
+    http, `javascript:` or `user:pass@` link is refused for the Slack DM, Copy and DM and a channel send.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the

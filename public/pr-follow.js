@@ -1,13 +1,14 @@
 // A watched pull request's follow-through card in the Inbox (docs/units/pr-watch.md "Follow-through"): why (quoting the
 // reviewer), what is done and what is missing, who to send it to (a GitHub team's members to pick from, remembered), the
-// editable message, Copy / copy and DM / send to a channel, the history of what was sent and what happened on GitHub,
+// editable message, Copy / copy and DM / a Slack DM through the bot (after a confirm step that shows who) / send to a channel, the history of what was sent and what happened on GitHub,
 // nudge again (the short version) and snooze, and the options. Studio never sends anything without a click here; the
 // card closes by itself when GitHub shows what it waits for. Every text from GitHub is set as text. Loaded before
 // scard.js, which hands it any card that carries `follow`.
 (() => {
 const ST = new Map(); // per card: the edited message, the chosen option, the note; kept across live updates
 const pj = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || typeof j.error === "string") throw new Error(j.error || `HTTP ${r.status}`); return j; };
-let targets = null; const loadTargets = async () => { try { const r = await fetch("/api/prs/sending"); targets = (await r.json()).targets || []; } catch { targets = []; } return targets; };
+// the send targets, whether a Slack bot token is set, and each Slack contact's last check (read again on each mount)
+let targets = null, sending = null; const loadTargets = async () => { try { const r = await fetch("/api/prs/sending"); sending = await r.json(); targets = sending.targets || []; } catch { targets = []; sending = null; } return targets; };
 const L = (o) => (o ? T(o.en ?? "", o.tw ?? o.en ?? "") : "");
 const when = (iso) => { const d = new Date(iso || ""); if (isNaN(d)) return ""; const p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 async function copyText(text) { try { await navigator.clipboard.writeText(text); return true; } catch {
@@ -32,8 +33,22 @@ function mount(el, card, opts = {}) {
           onchange: async (e) => { await act("pick", { who: r.who, member: e.target.value }); } }, r.members.map((m) => h("option", { value: m, selected: m === r.pick }, m))),
           r.last ? h("span", { class: "faint pw-small" }, T(`last time: ${r.last}`, `上次找的是 ${r.last}`)) : null] : null,
         h("span", { class: "faint pw-small" }, L(r.via)), h("span", { class: "x-grow" }),
-        h("button", { class: "btn sm", "data-follow-dm": pick, disabled: !open || !pick, onclick: async () => { const ok = await copyText(text()); const got = await act("dm", { login: pick, text: text() }); if (!got) return;
-          st.flash[k] = got.href && openSafe(got.href) ? T("Copied, DM opened", "已複製，DM 已打開") : ok ? T("Copied (no contact: paste it yourself)", "已複製（沒有聯絡人：自己貼上）") : T("Could not copy", "無法複製"); draw(); } }, st.flash[k] || T(`Copy and DM ${pick}`, `複製並 DM ${pick}`))); };
+        h("button", { class: "btn sm", "data-follow-dm": pick, disabled: !open || !pick, onclick: async () => { const got = await act("dm", { login: pick, text: text() }); if (!got) return; const ok = await copyText(text());
+          st.flash[k] = got.href && openSafe(got.href) ? T("Copied, DM opened", "已複製，DM 已打開") : ok ? T("Copied (no contact: paste it yourself)", "已複製（沒有聯絡人：自己貼上）") : T("Could not copy", "無法複製"); draw(); } }, st.flash[k] || T(`Copy and DM ${pick}`, `複製並 DM ${pick}`)),
+        // through the bot: only for a contact whose Slack check passed; the click opens the confirm step, which sends
+        (() => { const ck = pick && sending?.bot?.set ? sending.checks?.[pick.toLowerCase()] : null; if (!ck?.ready) return null;
+          return h("button", { class: "btn sm", "data-follow-slackdm": pick, disabled: !open, onclick: async () => { const t = text(), got = await act("dm-preview", { login: pick, text: t }); if (!got) return; st.confirm = { login: got.login, name: got.name, id: got.id, at: got.at, text: t }; st.msgLine = ""; draw(); } },
+            st.flash[`slack:${pick}`] || T(`DM ${ck.name} via Slack`, `用 Slack DM ${ck.name}`)); })()); };
+    // the confirm step: exactly who (GitHub login → the Slack name last verified → member id) and the full message
+    const confirm = st.confirm && open ? h("div", { class: "pw-propbox", "data-follow-confirm": st.confirm.login },
+      h("b", { class: "pw-small" }, T("Send this Slack DM?", "要發這則 Slack DM 嗎？")),
+      h("div", { class: "mono", "data-follow-confirm-to": "" }, `${st.confirm.login} → ${st.confirm.name} → ${st.confirm.id}`),
+      h("span", { class: "faint pw-small" }, T(`Slack name as last verified ${when(st.confirm.at)}; Slack is asked again before it sends, and nothing is sent if anything changed.`, `Slack 名字是 ${when(st.confirm.at)} 校驗的；發送前會再問一次 Slack，有任何變動就不發。`)),
+      h("pre", { class: "pw-pre", "data-follow-confirm-text": "" }, st.confirm.text),
+      h("div", { class: "actions" }, h("button", { class: "btn primary sm", "data-follow-confirm-send": "", disabled: st.busy, onclick: async () => { const cf = st.confirm; st.busy = true; draw();
+          const got = await act("slack-dm", { login: cf.login, text: cf.text, name: cf.name }); st.busy = false; st.confirm = null;
+          if (got) st.flash[`slack:${cf.login}`] = T(`Sent to ${got.name}`, `已發給 ${got.name}`); draw(); } }, T(`Send to ${st.confirm.name}`, `發給 ${st.confirm.name}`)),
+        h("button", { class: "btn sm", "data-follow-confirm-cancel": "", onclick: () => { st.confirm = null; draw(); } }, T("Cancel", "取消")))) : null;
     const tsel = h("select", { class: "pw-lang", "aria-label": T("Channel", "頻道"), "data-follow-target": "" }, (targets || []).length ? [f.channel ? null : h("option", { value: "", selected: true }, T("choose a channel", "選頻道")), ...targets.map((t) => h("option", { value: t.id, selected: t.id === f.channel }, t.name))] : h("option", { value: "" }, T("no channel set", "沒有設定頻道")));
     const picked = (f.opts || []).find((o) => o.id === st.pick);
     const kids = [
@@ -43,7 +58,7 @@ function mount(el, card, opts = {}) {
       h("div", { class: "ba" }, h("div", {}, h("b", {}, T("Done", "已經好了")), (f.done || []).map((d) => h("div", {}, "✓ ", L(d))), !(f.done || []).length ? h("div", { class: "faint" }, "—") : null),
         h("div", { "data-follow-missing": "" }, h("b", {}, T("Missing", "還缺")), (f.missing || []).map((d) => h("div", {}, L(d))))),
       f.message ? h("div", { style: "display:grid;gap:8px" }, h("h2", { style: "margin:0;font-size:15px" }, L(f.msgHead)),
-        f.recipients?.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, T("To", "發給誰"), opts.marks ? h("span", { class: "pw-new" }, T("new", "新")) : null), f.recipients.map(rcpt)) : null, ta,
+        f.recipients?.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, T("To", "發給誰"), opts.marks ? h("span", { class: "pw-new" }, T("new", "新")) : null), f.recipients.map(rcpt)) : null, confirm, ta,
         h("div", { class: "actions" }, h("button", { class: "btn sm", "data-follow-copy": "", disabled: !open, onclick: async () => { const ok = await copyText(text()); await act("copy", {}); st.flash.copy = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); draw(); } }, st.flash.copy || T("Copy", "複製")),
           h("span", { class: "faint pw-small" }, T("or send to a channel", "或發到頻道")), tsel,
           h("button", { class: "btn sm", "data-follow-send": "", disabled: !open || !(targets || []).length, onclick: async () => { if (!tsel.value) { say(T("Choose a channel first", "先選頻道")); return; } const got = await act("send", { target: tsel.value, text: text() }); if (got) { st.flash.send = T(`Sent to ${got.target}`, `已發到 ${got.target}`); draw(); } } }, st.flash.send || T("Send", "發送")), opts.marks ? h("span", { class: "pw-new" }, T("new", "新")) : null)) : null,
@@ -70,7 +85,7 @@ function mount(el, card, opts = {}) {
       st.msgLine = o.keep ? T(`Recorded: ${L(o.label)}. The card stays until GitHub shows it.`, `已記下：${L(o.label)}。卡會留著，直到 GitHub 上有動靜。`) : ""; }
     catch (e) { st.msgLine = e.message; } finally { st.busy = false; draw(); }
   }
-  if (!targets) loadTargets().then(draw);
+  loadTargets().then(draw);
   draw();
   return { el, update(n) { c = n; draw(); } };
 }

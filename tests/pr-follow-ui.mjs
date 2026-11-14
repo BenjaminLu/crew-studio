@@ -13,16 +13,18 @@ import { join } from 'node:path';
 import { freePort, waitUp, withSession } from './boot.mjs';
 import { prWatchGitHub } from './lib/pr-watch-github.ts';
 import { followFixture } from './lib/pr-follow-github.ts';
+import { fakeSlack } from './lib/fake-slack.ts';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 let pass = 0, fail = 0; const ok = (v, n, e = '') => { console.log(`${v ? 'ok' : 'FAIL'} ${n} ${v ? '' : e}`); v ? pass++ : fail++; };
 
 const fx = followFixture(), gh = prWatchGitHub(fx.data), gw = fx.gw;
+const slack = fakeSlack('fake-bot-token-0001'); slack.users.set('U04QALEAD', { id: 'U04QALEAD', team_id: 'T0TEAM', name: 'qlead', real_name: 'Quinn Lead', profile: { real_name: 'Quinn Lead', display_name: 'qlead' } });
 const posted = []; const hook = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) { posted.push(await req.json()); return new Response('ok'); } });
 const root = join(import.meta.dir, '..'), port = await freePort(), base = `http://127.0.0.1:${port}`, data = mkdtempSync(join(tmpdir(), 'crew-prfollow-ui-'));
 mkdirSync(join(data, 'fm', 'state'), { recursive: true });
 process.env.CREW_SESSION_TOKEN = 'test-session';
 const app = spawn('bun', ['src/server.ts'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CREW_DATA: data, CREW_PORT: String(port), CREW_CHAT_PROVIDER: 'stub', CREW_GH: '0', CREW_PR_WATCH: '',
-  CREW_GITHUB_API: gh.origin, CREW_GITHUB_TOKEN: 'fixture-token', CREW_GH_NO_CLI: '1', CREW_PR_WATCH_INTERVAL_MS: '600000', CREW_RETRO_AUTO: '0', CREW_SESSION_TOKEN: 'test-session', CREW_WEBHOOK_LOOPBACK: '1',
+  CREW_GITHUB_API: gh.origin, CREW_GITHUB_TOKEN: 'fixture-token', CREW_GH_NO_CLI: '1', CREW_PR_WATCH_INTERVAL_MS: '600000', CREW_RETRO_AUTO: '0', CREW_SESSION_TOKEN: 'test-session', CREW_WEBHOOK_LOOPBACK: '1', CREW_SLACK_API: slack.origin,
   CREW_FM_STATE: join(data, 'fm', 'state'), CREW_CLAUDE_BIN: '/nonexistent', CREW_CODEX_BIN: '/nonexistent', CREW_CODEX_MODEL: '', CODEX_HOME: join(data, 'codex-config'), CREW_TEAM_SEED: '0' } });
 const shots = join(root, 'tests/out/pr-follow'); mkdirSync(shots, { recursive: true });
 const api = async (path, body) => { const r = await fetch(`${base}${path}`, body === undefined ? { headers: { 'x-crew-session': 'test-session' } } : { method: 'POST', headers: { 'x-crew-session': 'test-session', 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
@@ -54,6 +56,18 @@ try {
   ok(await p.evaluate(() => window.__opened[0]) === 'slack://user?team=T0TEAM&id=U04QALEAD' && (await p.evaluate(() => navigator.clipboard.readText())).includes('POST /v1/orders'), 'copy and DM: the message copied, the Slack DM opened from the contact');
   await box.locator('[data-follow-send]').click(); await until(() => posted.length === 1);
   ok(posted.length === 1 && posted[0].text.includes('/v1/orders'), 'send to the channel: one post through the webhook');
+  // a Slack DM through the bot: token set, contacts checked, the confirm step shows who, only its button sends
+  ok(await box.locator('[data-follow-slackdm]').count() === 0, 'no Slack DM button without a bot token');
+  ok((await api('/api/prs/settings', { settings: { ...settings, sending: { ...settings.sending, targets: settings.sending.targets.map(({ url, ...t }) => ({ ...t, url: '••••' })), botToken: 'fake-bot-token-0001' } } })).status === 200
+    && (await api('/api/prs/sending/check', {})).body.checks['qa-lead']?.ready, 'with a bot token set, Check contacts passes qa-lead');
+  await p.reload(); await p.waitForSelector(`[data-follow-card="${qa.id}"] [data-follow-slackdm="qa-lead"]`);
+  ok((await box.locator('[data-follow-slackdm="qa-lead"]').innerText()).includes('Quinn Lead (qlead)'), 'a Slack DM: the card offers it named as Slack reports the person');
+  await box.locator('[data-follow-slackdm="qa-lead"]').click(); await p.waitForSelector(`[data-follow-card="${qa.id}"] [data-follow-confirm]`);
+  ok(await box.locator('[data-follow-confirm-to]').innerText() === 'qa-lead → Quinn Lead (qlead) → U04QALEAD' && (await box.locator('[data-follow-confirm-text]').innerText()).includes('POST /v1/orders') && slack.posted.length === 0, 'a Slack DM: the confirm step shows login → Slack name → member id and the full message; nothing sent yet');
+  await p.screenshot({ path: join(shots, 'card-qa-slack-confirm-1440.png'), fullPage: true });
+  await box.locator('[data-follow-confirm-send]').click(); await until(() => slack.posted.length === 1);
+  await p.waitForFunction((id) => document.querySelector(`[data-follow-card="${id}"] [data-follow-history]`)?.innerText.includes('U04QALEAD'), qa.id);
+  ok(slack.posted.length === 1 && slack.posted[0].channel === 'D04QALEAD' && slack.posted[0].text.includes('POST /v1/orders') && await box.locator('[data-follow-confirm]').count() === 0, 'a Slack DM: only the confirm button sends, once, recorded in the history', JSON.stringify(slack.posted));
   await p.waitForFunction((id) => document.querySelector(`[data-follow-card="${id}"] [data-follow-history]`)?.innerText.includes('已發到 #qa-requests'), qa.id);
   await box.locator('[data-follow-opt="sent"]').click(); await box.locator('[data-follow-submit]').click();
   await p.waitForFunction((id) => document.querySelector(`[data-follow-card="${id}"] [data-follow-history]`)?.innerText.includes('選了 A'), qa.id);
@@ -70,8 +84,8 @@ try {
   await p.goto(`${base}/#/inbox/${encodeURIComponent(ap.id)}`); await p.waitForSelector(`[data-follow-card="${ap.id}"]`);
   await p.selectOption(`[data-follow-card="${ap.id}"] [data-follow-pick="@northwind/security"]`, 'sec-bob');
   await p.waitForFunction((id) => document.querySelector(`[data-follow-card="${id}"] [data-follow-dm]`)?.dataset.followDm === 'sec-bob', ap.id);
-  await p.locator(`[data-follow-card="${ap.id}"] [data-follow-dm="sec-bob"]`).click(); await p.waitForFunction(() => window.__opened.length === 2);
-  ok((await p.evaluate(() => window.__opened[1])).startsWith('mailto:bob@example.com?subject=') && (await api('/api/prs')).body.settings && true, 'picking sec-bob from the team, copy and DM opens an email with the message');
+  await p.locator(`[data-follow-card="${ap.id}"] [data-follow-dm="sec-bob"]`).click(); await p.waitForFunction(() => window.__opened.some((x) => x.startsWith('mailto:')));
+  ok((await p.evaluate(() => window.__opened.find((x) => x.startsWith('mailto:')))).startsWith('mailto:bob@example.com?subject=') && (await api('/api/prs')).body.settings && true, 'picking sec-bob from the team, copy and DM opens an email with the message');
   ok((await p.locator(`[data-follow-card="${ap.id}"] [data-follow-missing]`).innerText()).includes('@northwind/security') && !(await p.locator(`[data-follow-card="${ap.id}"] [data-follow-missing]`).innerText()).includes('release-approvers'), 'only the group still missing');
   await p.waitForFunction((id) => document.querySelector(`[data-follow-card="${id}"] [data-follow-rcpt]`)?.innerText.includes('上次找的是 sec-bob'), ap.id).catch(() => {});
   ok((await p.locator(`[data-follow-card="${ap.id}"] [data-follow-rcpt]`).innerText()).includes('上次找的是 sec-bob') && await p.locator(`[data-follow-card="${ap.id}"] [data-follow-target]`).inputValue() === '', 'the approve card says who was asked last time, and offers no QA channel by default');
@@ -120,6 +134,8 @@ try {
   await p.click('[data-prs-settings]'); await p.waitForSelector('[data-prs-targets]');
   const hookShown = await p.locator('[data-prs-hook="qa"]').inputValue();
   ok(hookShown.includes('••••') && !hookShown.includes('services/T0') && await p.locator('[data-prs-contact]').count() === 3, 'the settings show the webhook masked and the contacts', hookShown);
+  { const tok = await p.locator('[data-prs-bot-token]').inputValue();
+    ok(tok.startsWith('••••') && !tok.includes('fake-bot') && await p.locator('[data-prs-slack-check-row="qa-lead"]').getAttribute('data-ok') === 'true' && (await p.locator('[data-prs-slack-check-row="qa-lead"]').innerText()).includes('Quinn Lead (qlead)'), 'the settings show the bot token masked and each Slack contact as last checked', tok); }
   await p.locator('[data-prs-targets]').scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, 'settings-1440.png') });
   await p.setViewportSize({ width: 390, height: 900 }); await p.locator('[data-prs-contacts]').scrollIntoViewIfNeeded();
   ok(await p.evaluate(() => [...document.querySelectorAll('[data-prs-contact]')].every((row) => { const x = row.querySelector('.pw-x').getBoundingClientRect(), r = row.getBoundingClientRect(); return x.top - r.top < 20; })), 'at 390 each settings row keeps its × at the top, not on a line of its own');
@@ -137,6 +153,6 @@ try {
   ok(!gh.calls.some((c) => c.method !== 'GET' && c.path !== '/graphql') && !gh.unknown.length, 'nothing was written to GitHub', JSON.stringify(gh.unknown));
   await ctx.close();
 } catch (e) { ok(false, 'the suite ran to its end', String(e?.stack || e)); }
-finally { await browser?.close().catch(() => {}); app.kill(); gh.stop(); hook.stop(true); }
+finally { await browser?.close().catch(() => {}); app.kill(); gh.stop(); hook.stop(true); slack.stop(); }
 console.log(`\npr-follow-ui: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
