@@ -127,6 +127,8 @@ export type State = { schema: 1; settings: Settings; watch: { repos: string[]; p
   /** merged pull requests followed until production (key: the id in lower case): when Studio first saw each in every
    *  production environment; and the ones dropped 14 days after that, so they never come back */
   shipped: Record<string, { id: string; mergedAt: string; liveAt: string | null }>; retired: string[];
+  /** the retired ones a merged revert cancelled (key: the id in lower case) → the reverting pull request's id */
+  reverted?: Record<string, string>;
   /** the follow-through: each open card (by run), the team member picked for a team, the heads the captain said not to
    *  test or not to merge yet, and the comments the captain classified */
   follow: { open: Record<string, FollowOpen>; picks: Record<string, string>; skip: Record<string, string>; hold: Record<string, string>; classified: Record<string, F.NoteKind> };
@@ -161,7 +163,9 @@ export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: 
    *  are not its author, did not review it, and are not a bot account */
   suggest?: { evidenceAccounts: { login: string; prs: number }[] };
   /** merged pull requests still followed (until 14 days after production) */
-  merged?: MergedRow[] };
+  merged?: MergedRow[];
+  /** followed merged pull requests this refresh found cancelled by a merged revert: id → the reverting pull request */
+  reverted?: Record<string, string> };
 const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {}, heads: {} });
 
 const list = (v: unknown, max = 50, each = 100) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : []).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => s.length <= each).slice(0, max);
@@ -283,6 +287,10 @@ export function createPrWatch(d: PrWatchDeps) {
    *  the ones dropped 14 days after that (never picked up again). Written without counting as a change of the watch list. */
   function followShipped(sn: Snapshot) {
     let changed = false;
+    for (const [id, by] of Object.entries(sn.reverted ?? {})) { const k = id.toLowerCase();
+      if (state.reverted?.[k] === by && state.retired.includes(k)) continue;
+      delete state.shipped[k]; state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000);
+      state.reverted = Object.fromEntries([...Object.entries(state.reverted ?? {}).filter(([x]) => x !== k), [k, by]].slice(-500)); changed = true; }
     for (const r of sn.merged ?? []) { const k = r.id.toLowerCase(), cur = state.shipped[k], st = R.shipState(r.envs), liveAt = st.live ? cur?.liveAt ?? sn.at : null;
       if (!cur || cur.liveAt !== liveAt || cur.mergedAt !== r.mergedAt) { state.shipped[k] = { id: r.id, mergedAt: r.mergedAt, liveAt }; changed = true; } }
     for (const [k, v] of Object.entries(state.shipped)) {
@@ -333,15 +341,24 @@ export function createPrWatch(d: PrWatchDeps) {
       try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.state === "open") found.set(id.toLowerCase(), { pr: p, repo: sp.repo, single: true }); else { out.single[id] = p?.merged_at ? "merged" : "closed"; if (p?.merged_at) followMerged(p, sp.repo, true); } }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: id, ...why(e) }); }
     }
+    const closedOf = new Map<string, any[]>();
     for (const repo of s.watch.repos) {
-      try { for (const p of await closedPulls(repo)) if (keep(p) && !has(s.watch.excluded, R.prId(repo, Number(p.number)))) followMerged(p, repo, false); }
+      try { const list = await closedPulls(repo); closedOf.set(repo.toLowerCase(), list); for (const p of list) if (keep(p) && !has(s.watch.excluded, R.prId(repo, Number(p.number)))) followMerged(p, repo, false); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; out.errors.push({ target: repo, ...why(e) }); }
     }
     // a followed one GitHub's first page of closed pull requests no longer shows: read on its own (at most 30 a refresh)
     let followReads = 0;
-    for (const [k, v] of Object.entries(s.shipped)) { if (mergedFound.has(k) || retired.has(k)) continue; const sp = R.splitId(v.id); if (!sp || !has(s.watch.repos, sp.repo) || ++followReads > 30) continue;
+    for (const [k, v] of Object.entries(s.shipped)) { if (mergedFound.has(k) || retired.has(k) || has(s.watch.excluded, v.id)) continue; const sp = R.splitId(v.id); if (!sp || !has(s.watch.repos, sp.repo) || ++followReads > 30) continue;
       try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.merged_at && !has(s.watch.excluded, v.id)) followMerged(p, sp.repo, false); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; } }
+    // a followed one a merged pull request in its repository reverts (by anyone, read from the closed pull requests above)
+    // never reaches production as itself: dropped, and recorded so it is not followed again
+    for (const [repo, list] of closedOf) {
+      const mine = [...mergedFound.values()].filter((m) => m.repo.toLowerCase() === repo);
+      if (!mine.length) continue;
+      const by = R.revertedBy(repo, [...list, ...mine.map((m) => m.pr)]);
+      for (const m of mine) { const n = Number(m.pr.number), r = by.get(n); if (r === undefined) continue;
+        const id = R.prId(m.repo, n); mergedFound.delete(id.toLowerCase()); (out.reverted ??= {})[id] = R.prId(m.repo, r); } }
     signal.throwIfAborted();
     const rulesCache = new Map<string, Promise<R.Rules>>(), ownersCache = new Map<string, Promise<{ pattern: string; owners: string[] }[] | null | "unreadable">>(), teamCache = new Map<string, Promise<string[] | null>>();
     const issueCache = new Map<string, Promise<{ title: string | null; state: string | null }>>(), fileCache = new Map<string, Promise<string | "missing" | "unreadable">>(), compareCache = new Map<string, Promise<boolean | null>>(), deployCache = new Map<string, Promise<any>>();

@@ -106,6 +106,12 @@ try {
   ok(await p.locator('[data-prs-merged]').count() === 1 && await p.locator('[data-prs-merged="northwind/checkout-api#23"] [data-prs-ship-next]').innerText() === 'In production' && /hidden in 14 d/.test(await p.locator('[data-prs-merged="northwind/checkout-api#23"] .pw-next small').first().innerText()), 'the live tab: in production, hidden 14 days later');
   await p.click('[data-prs-md]'); ok((await p.evaluate(() => navigator.clipboard.readText())).includes('[northwind/checkout-api#23]'), 'Copy as Markdown on the live tab copies its rows');
   await p.screenshot({ path: join(shots, 'live-1440-light.png'), fullPage: true });
+  // × on a merged row drops it like an open row's: recorded as excluded, and the restore chip brings it back
+  await p.hover('[data-prs-merged="northwind/checkout-api#23"]'); await p.click('[data-prs-drop="northwind/checkout-api#23"]');
+  await p.waitForSelector('[data-prs-restore]');
+  ok(await p.locator('[data-prs-merged="northwind/checkout-api#23"]').count() === 0 && /excluded 1/.test(await p.locator('[data-prs-restore]').innerText()) && (await api('/api/prs')).body.watch.excluded.includes('northwind/checkout-api#23'), 'the × on a merged row drops it and records it as excluded');
+  await p.click('[data-prs-restore]'); await p.waitForSelector('[data-prs-restore]', { state: 'detached' });
+  ok(await p.waitForSelector('[data-prs-merged="northwind/checkout-api#23"]', { timeout: 20000 }).then(() => true, () => false), 'restore brings the merged row back');
   await p.click('[data-prs-tab="all"]');
   // text from GitHub is text
   ok(await p.evaluate(() => window.__xss === undefined && !document.querySelector('[data-prs-row="northwind/mobile#5"] img')) && (await p.locator('[data-prs-row="northwind/mobile#5"] .pw-title').innerText()).includes('<img src=x'), 'a title with HTML is shown as text, never run');

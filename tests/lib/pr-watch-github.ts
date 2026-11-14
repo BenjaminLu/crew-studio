@@ -108,7 +108,10 @@ export function fixtureData() {
   // the repositories' own GitHub environments (used when the settings name none)
   const envs: Record<string, string[]> = { [ca]: ["production", "dev", "staging", "preproduction"] };
   Object.assign(contains, { [sha("tag-v1.4.1")]: [merge(find(ca, 21)!), merge(find(ca, 22)!)], [sha("tag-v1.4.0")]: [merge(find(ca, 21)!), merge(find(ca, 22)!)], [sha("tag-v1.3.0")]: [merge(find(ca, 21)!)] });
-  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi };
+  // a pull request a suite adds while it runs (the revert checks): two commits by its author, merged ones closed
+  const more = (repo: string, number: number, title: string, user: string, o: { state?: "open" | "closed"; merged?: boolean; body?: string } = {}) =>
+    add({ repo, number, title, user, commits: two(`${repo}#${number}`).map((c) => ({ ...c, login: user })), ...(o.merged ? { state: "closed", merged: true, mergedAt: ago(1) } : { state: o.state ?? "open" }), ...(o.body ? { body: o.body } : {}) });
+  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi, more };
 }
 
 export function prWatchGitHub(data = fixtureData()) {

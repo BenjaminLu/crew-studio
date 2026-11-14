@@ -499,6 +499,39 @@ export function tagOf(text: string, template: string): string | null {
 export const LIVE_KEEP_MS = 14 * 86400_000;
 /** How far back a watched repository's merged pull requests are picked up (a tracked one stays until production). */
 export const MERGED_WINDOW_MS = 30 * 86400_000;
+/** A pull request as GitHub lists it, the fields a revert is read from. */
+export type RevertPull = { number: number; title?: string | null; body?: string | null; merged_at?: string | null };
+/**
+ * Which pull requests of one repository a merged revert cancels, as GitHub's own Revert button writes it: a body line
+ * `Reverts <owner>/<repo>#<n>` naming this repository (any case), or else the title `Revert "<title>"` naming the exact
+ * title of an earlier pull request here (the newest such one). Only merged pull requests count, by anyone. A revert that
+ * is itself reverted by a merged one cancels nothing, so a chain ends where its newest merged revert leaves it.
+ * Returns each reverted pull request's number → the number of the merged pull request that reverted it.
+ */
+export function revertedBy(repo: string, pulls: RevertPull[]): Map<number, number> {
+  const byNum = new Map<number, RevertPull>();
+  for (const p of pulls) if (Number.isSafeInteger(p?.number) && p.number > 0 && !byNum.has(p.number)) byNum.set(p.number, p);
+  const target = (p: RevertPull): number | null => {
+    for (const line of String(p.body ?? "").split(/\r?\n/)) {
+      const m = /^\s*Reverts\s+([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9]\d{0,9})\s*$/i.exec(line);
+      if (m && sameRepo(m[1], repo)) { const n = Number(m[2]); return n !== p.number ? n : null; } }
+    const t = /^Revert "(.+)"$/.exec(String(p.title ?? "").trim()); if (!t) return null;
+    let best: number | null = null;
+    for (const q of byNum.values()) if (q.number < p.number && String(q.title ?? "").trim() === t[1] && (best === null || q.number > best)) best = q.number;
+    return best; };
+  const reverts = new Map<number, number[]>(); // target → merged pull requests that revert it
+  for (const p of byNum.values()) { if (!p.merged_at) continue; const t = target(p); if (t !== null) reverts.set(t, [...(reverts.get(t) ?? []), p.number]); }
+  const memo = new Map<number, number | null>(), seen = new Set<number>();
+  // the newest merged revert of n that is not itself cancelled, or null
+  const cancelledBy = (n: number): number | null => {
+    if (memo.has(n)) return memo.get(n)!; if (seen.has(n)) return null; seen.add(n);
+    let by: number | null = null;
+    for (const r of [...(reverts.get(n) ?? [])].sort((a, b) => b - a)) if (cancelledBy(r) === null) { by = r; break; }
+    memo.set(n, by); return by; };
+  const out = new Map<number, number>();
+  for (const n of reverts.keys()) { const by = cancelledBy(n); if (by !== null) out.set(n, by); }
+  return out;
+}
 export type ShipEnv = { name: string; on: boolean | null; production: boolean };
 /**
  * Where a merged pull request is on its way to production, from its environments (in the settings' order), each on when

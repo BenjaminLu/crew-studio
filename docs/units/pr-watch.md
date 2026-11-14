@@ -165,6 +165,17 @@ A merged pull request stays on the page until it runs in production. Two more ta
   furthest one that has it (the first when none does). In every production environment it moves to "Live", from the
   refresh Studio first saw it there, and is dropped 14 days later, recorded so it never comes back
   (`state.json`: `shipped`, `retired`). No production environment set: it says so and never goes live.
+- **Reverted**: a followed row that a merged pull request in the same watched repository reverts never reaches
+  production as itself, so it is dropped on the refresh that sees the revert, and recorded so it never comes back
+  (`retired`, and `reverted`: the row → the reverting pull request, the last 500). A revert is GitHub's own Revert
+  button output: a body line `Reverts <owner>/<repo>#<n>` naming the row's repository (any case), or else the title
+  `Revert "<the row's exact title>"` in the same repository. It may be by anyone (the mine/assigned filter does not
+  apply) and is read from the closed pull requests already read above, so it costs no extra GitHub read. A revert that is
+  open or closed unmerged does nothing; a revert that a merged revert itself cancels (`Revert "Revert "…""`, or
+  `Reverts …#<the revert>`) does not drop the row: the newest merged revert of a chain decides.
+- **Dropped by hand**: × on a merged row (either tab) drops it like an open row's: one that came in through its
+  repository is recorded as excluded (`watch.excluded`, not followed again) and the "excluded · restore" chip brings it
+  back; a single watched pull request stops being watched.
 - **Columns**: #, the pull request, going live · waits on (how long since the merge), the merge commit and when, the deploy
   unit (the repository) with its dependencies (Studio's record, else the body's `Depends-on:` lines or block), the
   environments.
@@ -397,7 +408,9 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
 18. Merged pull requests are followed until production (`bun tests/pr-watch-merged.ts`): the captain's merged ones only,
     each environment read at the merge commit, a closed page over 1 MB read again in pages of 5, the merged and live tabs, live from the first refresh that saw it, dropped
-    14 days later and never back, unwatching drops them; in the page the two tabs, their columns and Markdown —
+    14 days later and never back, unwatching drops them; a row a merged revert cancels (`Reverts …#n` by someone else,
+    or only the title `Revert "…"`) dropped and recorded, an open or unmerged revert or a reverted revert leaving it;
+    × on a merged row excludes it and restore brings it back; in the page the two tabs, their columns and Markdown —
     pr-watch-ui.mjs "the merged and live tabs …", "a merged row: on staging …", "the live tab …".
 19. The release brief (`bun tests/pr-watch-release.ts`, pr-watch-merged.ts "selecting 22 alone …", the UI suite): the
     items from path rules and added lines, each with its address; the suggested alert rule; the rollout section quoted;
