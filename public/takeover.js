@@ -564,34 +564,57 @@ function viewCrewLive(actor) {
   if (!TK.crew) loadCrewLive();
   if (!TK.crewTimer) TK.crewTimer = setTimeout(() => { TK.crewTimer = null; if (S.route?.name === "crew" && !S.route.arg) loadCrewLive(); }, 3000);
   const all = TK.crew || [];
-  const list = crewLiveOnly ? all.filter((c) => c.alive) : all;
-  const ci = (c) => !c.ci ? h("span", { class: "faint" }, "—") : c.ci.fail ? h("span", { class: "badge bad" }, `✗ ${c.ci.fail}`) : c.ci.pending ? h("span", { class: "badge warn" }, `… ${c.ci.pending}`) : h("span", { class: "badge ok" }, `✓ ${c.ci.pass}`);
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Crew", "船員")),
-      h("p", {}, TK.crew && !TK.crewError && window.studioAgents?.ready() ? T(`${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} working now · Studio agents and recent Firstmate rounds`, `目前 ${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} 位工作中 · Studio 的 agent 與近期 Firstmate 回合`) : TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"))),
-      h("div", { class: "seg", role: "group" },
-        h("button", { "aria-pressed": crewLiveOnly ? "false" : "true", onclick: () => { crewLiveOnly = false; store.set("crew.liveOnly", "0"); render(); } }, h("span", { class: "keep" }, T("Recent", "近期"))),
-        h("button", { "aria-pressed": crewLiveOnly ? "true" : "false", onclick: () => { crewLiveOnly = true; store.set("crew.liveOnly", "1"); render(); } }, h("span", { class: "keep" }, T("Working", "工作中"))))),
+      h("p", { "data-crew-head": "" }, crewHead())),
+      h("a", { class: "btn", href: "#/activity", "data-crew-activity-link": "" }, T("Activity (event log) →", "Activity（事件紀錄）→"))),
     window.studioAgents?.section() || null,
-    !TK.crew ? h("div", { class: "skel", style: "height:240px" }) : !list.length ? h("div", { class: "card" }, h("div", { class: "empty" }, icon("crew"), h("b", {}, TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : crewLiveOnly ? T("No Firstmate round is working right now", "目前沒有 Firstmate 回合在工作") : T("No recent Firstmate rounds", "近期沒有 Firstmate 回合"))))
-      : h("div", { class: "tk-crew", role: "list" }, list.slice(0, 40).map((c) => h("article", { class: `card tk-round${c.alive ? " is-live" : ""}`, role: "listitem", "data-actor": c.actor },
-        h("div", { class: "tk-row" }, avaFor(c.name, "ava"), h("a", { href: `#/crew/${encodeURIComponent(c.actor)}`, class: "tk-name" }, c.name), h("span", { class: "vbadge" }, c.role),
+    !TK.crew ? h("div", { class: "skel", style: "height:240px" }) : crewList(all),
+    null); // Firstmate history stays separate from Studio jobs
+}
+/** the header's line: how many work now, or why it cannot say */
+function crewHead() { const all = TK.crew || [];
+  return TK.crew && !TK.crewError && window.studioAgents?.ready() ? T(`${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} working now · Studio agents and recent Firstmate rounds`, `目前 ${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} 位工作中 · Studio 的 agent 與近期 Firstmate 回合`) : TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"); }
+const crewCi = (c) => !c.ci ? h("span", { class: "faint" }, "—") : c.ci.fail ? h("span", { class: "badge bad" }, `✗ ${c.ci.fail}`) : c.ci.pending ? h("span", { class: "badge warn" }, `… ${c.ci.pending}`) : h("span", { class: "badge ok" }, `✓ ${c.ci.pass}`);
+const crewPhase = (c) => (/^ended/.test(c.phase || "") ? "ended" : c.phase || "stopped");
+const crewModel = (c) => `${c.vendor || "?"}${c.model ? " · " + c.model : ""}`;
+/** Firstmate's rounds under the list toolbar (public/list-tools.js): what was the Recent / Working switch is the Status facet */
+function crewList(all) {
+  return window.crewListTools.list({ id: "crew", route: "crew", title: T("rounds", "回合"), noun: ["round", "回合"], items: all,
+    placeholder: T("Search names, tasks, titles…  or type role:reviewer", "搜尋名字、任務、標題…  也可以打 role:reviewer"),
+    text: (c) => [c.name, c.actor, c.task, c.title, c.role, crewModel(c), c.project, act(c.activity)],
+    facets: [{ key: "phase", name: T("Status", "狀態"), value: crewPhase, show: (p) => (p === "ended" ? T("ended", "已結束") : phaseLabel(p)) },
+      { key: "role", name: T("Role", "角色"), value: (c) => c.role },
+      { key: "model", name: T("Model", "模型"), value: crewModel },
+      { key: "project", name: T("Project", "專案"), value: (c) => c.project }],
+    sorts: [{ key: "new", label: T("Newest first", "最新的在上"), cmp: (a, b) => Number(b.alive) - Number(a.alive) || String(b.lastWrite || b.started || "").localeCompare(String(a.lastWrite || a.started || "")) },
+      { key: "old", label: T("Oldest first", "最舊的在上"), cmp: (a, b) => String(a.started || "").localeCompare(String(b.started || "")) }],
+    none: () => h("div", { class: "card" }, h("div", { class: "empty" }, icon("crew"), h("b", {}, TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : T("No recent Firstmate rounds", "近期沒有 Firstmate 回合")))),
+    rows: (page, ctx) => h("div", { class: "tk-crew", role: "list" }, page.map((c) => crewRound(c, ctx.mark))) });
+}
+function crewRound(c, mark) {
+  return h("article", { class: `card tk-round${c.alive ? " is-live" : ""}`, role: "listitem", "data-actor": c.actor },
+        h("div", { class: "tk-row" }, avaFor(c.name, "ava"), h("a", { href: `#/crew/${encodeURIComponent(c.actor)}`, class: "tk-name" }, mark(c.name)), h("span", { class: "vbadge" }, c.role),
           c.task ? h("a", { class: "mono", href: `#/activity/${c.task}` }, c.task) : null, c.round ? h("span", { class: "faint" }, T(`round ${c.round}`, `第 ${c.round} 回合`)) : null,
           h("span", { class: `badge ${c.alive ? "run" : /ended/.test(c.phase) ? "bad" : "ok"}`, "data-phase": c.phase }, h("span", { class: `d${c.alive ? " pulse" : ""}` }), phaseLabel(c.phase))),
         c.title ? h("div", { class: "tk-title" }, c.title) : null,
         h("div", { class: "tk-act" }, act(c.activity) || "—"),
         c.alive && c.lines?.length ? term(c.lines) : null,
         h("div", { class: "tk-meta" },
-          h("span", { class: "vbadge" }, `${c.vendor || "?"}${c.model ? " · " + c.model : ""}`),
+          h("span", { class: "vbadge" }, crewModel(c)),
           h("span", { title: c.started || "" }, icon("clock", "ic sm"), fmtDur(c.elapsedMs)),
           c.taskPhase ? h("span", { class: "faint" }, T("task: ", "任務："), nodeLabel(c.taskPhase)) : null,
           c.pr ? h("a", { href: prUrl(c.pr), target: "_blank", rel: "noopener" }, icon("pr", "ic sm"), `#${c.pr}`) : null,
-          c.pr ? h("span", { class: "tk-ci" }, "CI ", ci(c)) : null, c.merged ? h("span", { class: "badge ok" }, T("merged", "已合併")) : null,
-          c.report ? h("button", { class: "btn ghost", "data-report": c.actor, onclick: () => openReport(c.actor) }, icon("doc", "ic sm"), T("Final report", "最終報告")) : null)))),
-    null); // Firstmate history stays separate from Studio jobs
+          c.pr ? h("span", { class: "tk-ci" }, "CI ", crewCi(c)) : null, c.merged ? h("span", { class: "badge ok" }, T("merged", "已合併")) : null,
+          c.report ? h("button", { class: "btn ghost", "data-report": c.actor, onclick: () => openReport(c.actor) }, icon("doc", "ic sm"), T("Final report", "最終報告")) : null));
 }
 const phaseLabel = (p) => ({ building: T("building", "實作中"), reviewing: T("reviewing", "審查中"), finished: T("finished", "完成"), stopped: T("stopped", "已停止") })[p] || p;
-async function loadCrewLive() { const seq = TK.crewSeq = (TK.crewSeq || 0) + 1; let r = null; try { r = await getJ("/api/crew/live"); } catch {} if (seq !== TK.crewSeq) return; TK.crewError = !r; if (r) TK.crew = r; if (S.route?.name === "crew" && !S.route.arg) render(); }
+const crewPoll = () => { if (!TK.crewTimer) TK.crewTimer = setTimeout(() => { TK.crewTimer = null; if (S.route?.name === "crew" && !S.route.arg) loadCrewLive(); }, 3000); };
+async function loadCrewLive() { const seq = TK.crewSeq = (TK.crewSeq || 0) + 1; let r = null; try { r = await getJ("/api/crew/live"); } catch {} if (!Array.isArray(r)) r = null; /* an error answer is a failed read */ if (seq !== TK.crewSeq) return; TK.crewError = !r; if (r) TK.crew = r; if (S.route?.name !== "crew" || S.route.arg) return;
+  // typing in the search box (a field of the page has the focus): the rows and the header's count change in place and the
+  // poll goes on, a failed read included; a render would wait for the blur
+  if (TK.crew && window.crewListTools?.feed("crew", TK.crew)) { const head = document.querySelector("#view [data-crew-head]"); if (head) head.textContent = crewHead(); crewPoll(); return; }
+  soft(); }
 async function openReport(actor) {
   const seq = TK.reportSeq = (TK.reportSeq || 0) + 1;
   const r = await getJ(`/api/crew/report/${encodeURIComponent(actor)}`).catch((e) => ({ error: String(e) }));

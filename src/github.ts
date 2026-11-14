@@ -17,6 +17,8 @@ import { registerSecretValues } from "./secure";
 
 export type Check = { name: string; state: string; bucket: string; link: string };
 export type Pr = { number: number; title: string; branch: string; head: string; draft: boolean; mergeState: string; updatedAt: string; url: string; checks: Check[] };
+/** how many merged pull requests the sync keeps (the newest); the Library says so when it shows that many */
+export const MERGED_KEPT = 50;
 export type MergedPr = { number: number; title: string; mergedAt: string; commit: string | null; url: string; branch: string;
   checks: { pass: number; fail: number; other: number } };
 export type TokenSource = "env" | "settings" | "gh" | null;
@@ -151,7 +153,7 @@ export class GitHub {
   private async refreshMerged(signal?:AbortSignal) {
     if (Date.now() - this.mergedAt < 10 * 60_000) return;
     const list: any[] = await this.get(`/repos/${this.state.repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`,signal);
-    const merged = list.filter((p) => p.merged_at).sort((a, b) => String(b.merged_at).localeCompare(String(a.merged_at))).slice(0, 50);
+    const merged = list.filter((p) => p.merged_at).sort((a, b) => String(b.merged_at).localeCompare(String(a.merged_at))).slice(0, MERGED_KEPT);
     const out: MergedPr[] = [];
     for (const p of merged) {
       const sha = String(p.head?.sha ?? "");

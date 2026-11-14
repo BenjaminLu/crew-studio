@@ -69,16 +69,21 @@ function ciSummary(pr) {
 
 // ---------- routing ----------
 const routes = { board: viewBoard, inbox: viewInbox, crew: viewCrew, activity: viewActivity, workflow: viewWorkflow };
-function route() {
+/** the route the address names now (route() draws it): name, its path parts and its query */
+function hashRoute() {
   // a route may carry a query after "?" (#/run/R-1?card=SC-2, #/runs?project=studio): S.route.query
   const raw = location.hash.replace(/^#\/?/, "") || "board", qi = raw.indexOf("?");
   const [name, ...rest] = (qi < 0 ? raw : raw.slice(0, qi)).split("/");
   const query = new URLSearchParams(qi < 0 ? "" : raw.slice(qi + 1));
   const normalized = name === "tasks" ? (/^R-\d+$/.test(rest[0] || "") ? "run" : "runs") : name;
-  const v = routes[normalized] ? normalized : "board";
+  return { v: routes[normalized] ? normalized : "board", rest, query };
+}
+window.crewHashRoute = () => hashRoute().v;
+function route() {
+  const { v, rest, query } = hashRoute();
   $$(".nav-item").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
-  render();
+  render.nav = true; render();
 }
 // A focus page takes the whole screen: the terminal page (docs/units/web-terminal.md) and an open review room
 // (docs/units/review-room.md). A route's view says so with .focus: a name, or a function of the route's argument that
@@ -104,13 +109,23 @@ const focusOf = (r) => { const f = routes[r?.name]?.focus; return (typeof f === 
 const fieldKey = (el) => { if (el.id) return `#${CSS.escape(el.id)}`; const d = [...el.attributes].find((x) => x.name.startsWith("data-"));
   return d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : null; };
 function render() {
+  const nav = render.nav; render.nav = false;
+  // a draw that is not route()'s, asked for after the address moved on (a deferred redraw landing between a sidebar click
+  // and its hashchange): route() draws the new page; drawing the old one on the new address would carry its state there
+  if (!nav && S.route && hashRoute().v !== S.route.name) return;
+  // a list toolbar (public/list-tools.js) is never redrawn while the focus is in it, its search box, a suggestion or a
+  // facet's popover (an input method's composition, a keyboard pick): a redraw of the same page waits until the focus
+  // leaves the toolbar. A navigation, route(), always draws
+  const bar = !nav && ltFocus();
+  if (bar && String(render.at).split("/")[0] === S.route?.name) return renderAfterBar(bar);
   const root = $("#view");
   pageFocus(focusOf(S.route));
   const scroll = $("#main").scrollTop;
   // a field the captain is typing in that the new view keeps (a mounted card is reused, unit inbox-live) keeps its focus and caret
   // a field the view draws anew (the Start form's request field) is found again by its stable key (id, else its first data-
   // attribute) on the same page, and takes the focus and caret, so the next keys land in it
-  const a = document.activeElement; const inboxFocus = S.route.name === "inbox" && a && root.contains(a) && a.matches("[data-inbox-row]") ? a.dataset.inboxRow : null; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
+  const a = document.activeElement; const restore = render.restore && a && root.contains(a) ? (() => { const key = fieldKey(a) || (a.getAttribute("href") ? `${a.tagName.toLowerCase()}[href="${CSS.escape(a.getAttribute("href"))}"]` : null);
+    return key ? { key, tag: a.tagName, at: [...root.querySelectorAll(key)].indexOf(a) } : null; })() : null; render.restore = false; const inboxFocus = S.route.name === "inbox" && a && root.contains(a) && a.matches("[data-inbox-row]") ? a.dataset.inboxRow : null; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
   // Live refresh detaches even reused cards. Keep only the exact still-valid card action;
   // never transfer focus to a replacement, a different page, or over another focus target.
   const card = a?.closest('[data-scard][data-card-status="open"]');
@@ -121,6 +136,11 @@ function render() {
   // what was typed into a field the view draws anew, empty, is carried into it rather than lost to the redraw
   if (again && again !== keep.a && !again.value && keep.a.value && again.type !== "file" && again.type !== "password") again.value = keep.a.value;
   if (again && document.activeElement !== again) { try { again.focus({ preventScroll: true }); const n = again.value.length; again.setSelectionRange(Math.min(keep.s ?? n, n), Math.min(keep.e ?? n, n)); } catch {} }
+  // a redraw that waited for the focus to leave a list toolbar (Tab to a facet, a row): the focus goes to the same control or
+  // row drawn anew, found by its stable key, so the next Tab and Enter go on from there
+  if (restore && !keep && (document.activeElement === document.body || !root.contains(document.activeElement))) {
+    // its key (an id, its first data- attribute, else its link), the same one of several (the row's place)
+    const m = root.querySelectorAll(restore.key), el = m.length === 1 ? m[0] : m[restore.at]; if (el && el.tagName === restore.tag) el.focus({ preventScroll: true }); }
   // A retained card may rebuild its controls while the route renders. Bind to
   // that same card element and unique action, rather than the detached old button.
   if (action && action.page === render.at && action.hash === location.hash && root.contains(action.card) && action.card.matches('[data-card-status="open"]') && action.card.dataset.scard === action.id && document.activeElement === document.body) {
@@ -138,6 +158,18 @@ function render() {
   $("#main").scrollTop = scroll;
   updateNav();
 }
+/** one redraw when the focus leaves the toolbar (not when it moves within it: box → suggestion → popover); none if the page changed */
+function renderAfterBar(bar) {
+  if (renderAfterBar.on === bar) return; renderAfterBar.on = bar;
+  const out = (e) => { if (e.relatedTarget && bar.contains(e.relatedTarget) && !e.relatedTarget.closest(".lt-extra")) return; bar.removeEventListener("focusout", out);
+    afterPress(() => setTimeout(() => { if (renderAfterBar.on === bar) renderAfterBar.on = null;
+      const again = ltFocus(); if (again) return renderAfterBar(again); // focus put back (a redrawn checkbox)
+      if (S.route && hashRoute().v === S.route.name) { render.restore = true; render(); } }, 0)); };
+  bar.addEventListener("focusout", out);
+}
+/** the toolbar the focus is in, when it is in the toolbar's own controls (the box, a suggestion, a facet popover); a page's
+ *  own control placed in the toolbar's row (Tasks' Show archived) redraws its page as usual */
+const ltFocus = () => { const a = document.activeElement, bar = a?.closest?.("#view [data-lt-bar]"); return bar && !a.closest(".lt-extra") ? bar : null; };
 // a live update never yanks focus out of a field being typed in; it renders once the field is left
 let deferred = false;
 // a pointer press in progress: a render now would replace the pressed button before its click (mouseup on a new
@@ -160,7 +192,8 @@ function soft() {
   const a = document.activeElement;
   if (a && $("#view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
     deferred = true; deferredOn = a;
-    a.addEventListener("blur", () => afterPress(() => { if (deferredOn !== a) return; deferred = false; deferredOn = null; render(); }), { once: true });
+    // drawn once the new focus has landed (during blur it is nowhere): a focus moving within a list toolbar keeps waiting (render)
+    a.addEventListener("blur", () => afterPress(() => setTimeout(() => { if (deferredOn !== a) return; deferred = false; deferredOn = null; render.restore = !!a.closest("[data-lt-bar]"); render(); }, 0)), { once: true });
     return updateNav();
   }
   if (pressing) { deferred = true; deferredOn = null; afterPress(() => { deferred = false; render(); }); return updateNav(); }
@@ -265,7 +298,8 @@ window.inboxRecorded = (id) => {
   IB.recorded = { id, task: x.task, at: Date.now() }; clearTimeout(IB.recT);
   IB.recT = setTimeout(() => { IB.recorded = null; document.querySelector("[data-inbox-recorded]")?.remove(); }, 8000);
 };
-const ibHash = (id) => (id ? `#/inbox/${encodeURIComponent(id)}` : "#/inbox");
+const ibQuery = () => { const i = location.hash.indexOf("?"); return S.route?.name === "inbox" && i >= 0 ? location.hash.slice(i) : ""; };
+const ibHash = (id) => (id ? `#/inbox/${encodeURIComponent(id)}` : "#/inbox") + ibQuery();
 function viewInbox(id) {
   const items = inboxItems(), ids = items.map((x) => x.id);
   const ready = window.studioCards?.ready?.() !== false; // Studio's cards are read: a card missing now is really gone
@@ -303,22 +337,63 @@ function viewInbox(id) {
           : T(`Firstmate board cards are read-only here (${S.board?.readonlyReason || "board unavailable"}).`, `firstmate 看板的卡片在這裡唯讀（${S.board?.readonlyReason || "看板無法連線"}）。`))))),
     rec ? h("p", { class: "ib-recorded", "data-inbox-recorded": rec.id }, icon("check", "ic sm"), h("span", {}, said)) : null,
     gone ? h("p", { class: "faint", "data-inbox-gone": gone }, items.length ? T(`${gone} is no longer waiting. The cards below still are.`, `${gone} 已經不在等待中。下面這些還在等。`) : T(`${gone} is no longer waiting.`, `${gone} 已經不在等待中。`)) : null,
-    items.length ? h("section", { class: "ib", "data-inbox-studio": "1", "data-ib-mode": mode },
-      h("div", { class: "ib-list card" },
-        h("div", { class: "ib-list-h" }, h("b", {}, T("Waiting on you", "等你處理")), h("span", { class: "badge human" }, String(items.length)), h("span", { class: "faint" }, T("oldest first", "最久的在上"))),
-        h("div", { role: "listbox", "aria-label": T("Open cards, oldest first", "待處理的卡，最久的在上") }, items.map((x, i) => inboxRow(x, i, x === cur)))),
-      h("div", { class: "ib-detail" }, inboxHead(cur, items), inboxCard(cur)))
+    items.length ? inboxSection(items, cur, mode)
     : h("div", { class: "card" }, h("div", { class: "empty" }, icon("inbox"), h("b", {}, T("Inbox zero", "沒有待處理的卡")), T("Cards show up here live.", "新卡會即時出現。"))));
 }
-const inboxRow = (x, i, on) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), title: x.task, "aria-label": [x.task, x.kind, x.workflow ? wfName(x.workflow) : null, x.run, ago(x.ts)].filter(Boolean).join(" · "), "data-inbox-row": x.id, "data-inbox-source": x.source },
+// The list under the shared toolbar (public/list-tools.js): search and facets filter the left list only; j/k move among the
+// cards that match, and the selected card is always one of them (a filter that leaves it out selects the first match)
+function inboxSection(items, cur, mode) {
+  let detail = null;
+  const list = window.crewListTools.list({ id: "inbox", route: "inbox", title: T("the Inbox", "收件匣"), noun: ["card", "卡"], items,
+    placeholder: T("Search card titles, tasks, workflows…  or type kind:merge", "搜尋卡的標題、任務、流程…  也可以打 kind:合併"),
+    text: (x) => [x.task, x.kind, x.id, x.run, x.workflow, x.workflow ? wfName(x.workflow) : null],
+    facets: [{ key: "kind", name: T("Kind", "種類"), value: (x) => x.kind },
+      { key: "workflow", name: T("Workflow", "流程"), value: (x) => x.workflow, show: (v) => wfName(v) },
+      { key: "project", name: T("Project", "專案"), value: (x) => x.data?.project || null }],
+    sorts: [{ key: "old", label: T("Oldest first", "最久的在上"), cmp: (a, b) => String(a.ts || "").localeCompare(String(b.ts || "")) || a.id.localeCompare(b.id, undefined, { numeric: true }) },
+      { key: "new", label: T("Newest first", "最新的在上"), cmp: (a, b) => String(b.ts || "").localeCompare(String(a.ts || "")) || b.id.localeCompare(a.id, undefined, { numeric: true }) }],
+    rows: (page, ctx) => {
+      // j/k and the selection follow the matches, in the list's order
+      IB.order = ctx.matched.map((x) => x.id);
+      if (!IB.order.includes(IB.sel)) IB.sel = IB.order[0] || null;
+      const word = T(ctx.sort === "new" ? "newest first" : "oldest first", ctx.sort === "new" ? "最新的在上" : "最久的在上");
+      return h("div", { class: "ib-list card" },
+        h("div", { class: "ib-list-h" }, h("b", {}, T("Waiting on you", "等你處理")), h("span", { class: "badge human", "data-inbox-count": "" }, IB.order.length < items.length ? T(`${IB.order.length} of ${items.length}`, `${IB.order.length} / ${items.length}`) : String(items.length)), h("span", { class: "faint" }, word)),
+        h("div", { role: "listbox", "aria-label": T(`Open cards, ${word}`, `待處理的卡，${word}`) }, page.map((x) => inboxRow(x, IB.order.indexOf(x.id), x.id === IB.sel, ctx.mark))));
+    },
+    onChange: (v) => {
+      IB.order = v.matched.map((x) => x.id); if (!IB.order.includes(IB.sel)) IB.sel = IB.order[0] || null; // no match draws no rows
+      // the shown card's place among the matches follows every filter change
+      const pos = detail?.querySelector("[data-inbox-pos]"), cur = items.find((y) => y.id === detail?.dataset.inboxShows); if (pos && cur) pos.textContent = inboxPos(cur, items);
+      // a filter took the shown card out of the list: the first match is shown (or none), and the address follows
+      if (!detail || detail.dataset.inboxShows === (IB.sel || "")) return;
+      const x = items.find((y) => y.id === IB.sel) || null;
+      detail.dataset.inboxShows = x?.id || ""; detail.replaceChildren(...(x ? [inboxHead(x, items), inboxCard(x)] : []));
+      if (S.route?.name === "inbox" && S.route.arg) { history.replaceState(null, "", ibHash(x?.id || null)); S.route.arg = x?.id || null; }
+      hydrateIcons(detail);
+    } });
+  // the selected card's page is the one shown (a link to a card deep in the list, a j/k step past the page)
+  if (IB.sel) list.ltReveal?.((x) => x.id === IB.sel);
+  // the card shown is the selected match (the toolbar may have left the asked-for card out)
+  const shown = items.find((y) => y.id === IB.sel) || null;
+  detail = h("div", { class: "ib-detail" }, ...(shown ? [inboxHead(shown, items), inboxCard(shown)] : []));
+  detail.dataset.inboxShows = shown?.id || "";
+  if (shown?.id !== cur?.id && S.route?.name === "inbox" && S.route.arg) { history.replaceState(null, "", ibHash(shown?.id || null)); S.route.arg = shown?.id || null; }
+  const bar = list.querySelector(".lt");
+  return h("section", { class: "ib", "data-inbox-studio": "1", "data-ib-mode": mode }, bar, h("div", { class: "ib-col" }, list), detail);
+}
+const inboxRow = (x, i, on, mark = (t) => t) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), title: x.task, "aria-label": [x.task, x.kind, x.workflow ? wfName(x.workflow) : null, x.run, ago(x.ts)].filter(Boolean).join(" · "), "data-inbox-row": x.id, "data-inbox-source": x.source },
   h("span", { class: "ib-n num", "aria-hidden": "true" }, String(i + 1)),
-  h("span", { class: "ib-row-main" }, h("span", { class: "ib-row-t", title: x.task }, x.task),
+  h("span", { class: "ib-row-main" }, h("span", { class: "ib-row-t", title: x.task }, mark(x.task)),
     h("span", { class: "ib-row-d" }, h("span", { class: "vbadge ib-kind", "data-kind": x.kind }, x.kind), x.workflow ? h("span", { class: "ib-wf" }, icon("workflow", "ic sm"), wfName(x.workflow)) : null, x.run ? h("span", { class: "mono" }, x.run) : null)),
   h("span", { class: "ib-age faint num", title: x.ts || "" }, ago(x.ts)));
+/** where the card is: among the cards the toolbar lets through (and how many wait in all, when that is fewer) */
+function inboxPos(x, items) { const shown = IB.order.length && IB.order.includes(x.id) ? IB.order : items.map((y) => y.id), i = shown.indexOf(x.id) + 1, n = shown.length;
+  return n < items.length ? T(`${i} of ${n} (${items.length} in all)`, `第 ${i} / ${n} 張（共 ${items.length}）`) : T(`${i} of ${n}`, `第 ${i} / ${n} 張`); }
 // the selected card's header: which Task this is, kept on screen while the card scrolls (Back returns to the list when narrow)
 const inboxHead = (x, items) => h("div", { class: "ib-head", tabindex: "-1", "aria-label": T(`${x.task}, ${x.kind}`, `${x.task}，${x.kind}`), "data-inbox-head": x.id },
   h("a", { class: "btn ghost ib-back", href: "#/inbox", "data-inbox-back": "" }, "← ", T("Back to list", "回到列表")),
-  h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num" }, T(`${items.indexOf(x) + 1} of ${items.length}`, `第 ${items.indexOf(x) + 1} / ${items.length} 張`))),
+  h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num", "data-inbox-pos": "" }, inboxPos(x, items))),
   h("div", { class: "ib-head-d" }, h("span", { class: "vbadge" }, x.kind), x.workflow ? h("span", {}, wfName(x.workflow)) : null,
     x.run ? h("a", { class: "mono", href: x.source === "studio" ? `#/run/${encodeURIComponent(x.run)}` : `#/activity/${encodeURIComponent(x.run)}` }, x.run) : null, h("span", { class: "mono" }, x.id)));
 const inboxCard = (x) => (x.source === "studio" ? window.studioCards.card(x.data, x.task) : cardView(x.data));
@@ -341,7 +416,7 @@ addEventListener("keydown", (e) => {
   if (e.key.startsWith("Arrow") ? !t?.closest("[data-inbox-row]") : inCard) return;
   const box = document.querySelector("[data-inbox-studio]"); if (!box || !box.querySelector(".ib-list").getClientRects().length || !box.querySelector(".ib-detail").getClientRects().length) return;
   const to = IB.order[IB.order.indexOf(IB.sel) + (e.key === "ArrowDown" || e.key === "j" ? 1 : -1)]; e.preventDefault(); if (!to) return;
-  history.replaceState(null, "", ibHash(to)); S.route.arg = to; render();
+  history.replaceState(null, "", ibHash(to)); S.route.arg = to; IB.sel = to; render();
   const row = document.querySelector(`[data-inbox-row="${CSS.escape(to)}"]`); row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: "nearest" });
 });
 const sel = new Map(); // card id -> { chosen, answers: Map(index -> {ok,text}) }
@@ -465,43 +540,40 @@ async function loadFocus(actor) {
 }
 
 // ---------- activity ----------
-const AF = { task: "", type: "", actor: "", items: [], loaded: false, key: "" };
+// The event log under the list toolbar (public/list-tools.js), filtered and paged by the server (src/activity-list.ts): the
+// log has no cap, so a filter or a page always reads all of it. Task, type and actor are facets; a search reads the
+// summaries. #/activity/<task> is the task facet (the URL becomes #/activity?task=<task>).
+const AF = { shown: 0, mark: null, liveT: null };
 const evClass = (t) => /failed|crashed|lost|violation|unavailable/.test(t) ? "gate-fail" : /approved|merged|passed/.test(t) ? "gate-pass" : /decision/.test(t) ? "card" : t === "crew_status" ? "" : "fm";
 function viewActivity(task) {
-  if (task !== null && task !== undefined && AF.task !== task) { AF.task = task; AF.loaded = false; }
-  const key = `${AF.task}|${AF.type}|${AF.actor}`;
-  if (!AF.loaded || AF.key !== key) { AF.key = key; AF.loaded = true; loadActivity(); }
-  const taskIds = [...new Set([...S.tasks.map((t) => t.id), AF.task].filter(Boolean))];
+  if (task) { const q = new URLSearchParams(S.route.query); if (!q.getAll("task").includes(task)) q.append("task", task); q.delete("page");
+    history.replaceState(history.state, "", `#/activity?${q}`); S.route = { ...S.route, arg: null, query: q }; }
+  const taskName = (id) => { const t = S.tasks.find((x) => x.id === id); return t?.title ? `${id} · ${t.title}` : id; };
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Activity", "事件紀錄")),
-      h("p", {}, T(`firstmate's event log, ${S.events.toLocaleString()} events. Everything the crew does lands here first.`, `firstmate 的事件紀錄，共 ${S.events.toLocaleString()} 筆。船員做的每件事都先寫到這裡。`)))),
-    h("div", { class: "filters" },
-      h("select", { class: "select", "aria-label": T("Task", "任務"), onchange: (e) => { AF.task = e.target.value; location.hash = AF.task ? `#/activity/${AF.task}` : "#/activity"; } },
-        h("option", { value: "" }, T("All tasks", "全部任務")), taskIds.map((id) => h("option", { value: id, selected: id === AF.task || null }, id))),
-      h("select", { class: "select", "aria-label": T("Type", "類型"), onchange: (e) => { AF.type = e.target.value; render(); } },
-        h("option", { value: "" }, T("All types", "全部類型")), S.types.map((t) => h("option", { value: t, selected: t === AF.type || null }, t))),
-      h("input", { class: "input", placeholder: T("Actor contains…", "actor 包含…"), value: AF.actor, onchange: (e) => { AF.actor = e.target.value.trim(); render(); } })),
-    h("div", { class: "card evlist", id: "evlist" }, AF.items.length ? AF.items.map(evRow) : h("div", { class: "empty" }, h("b", {}, T("No events match", "沒有符合的事件")))),
-    AF.items.length >= 150 ? h("button", { class: "btn", onclick: () => loadActivity(AF.items.at(-1).seq) }, T("Load older", "載入更早的")) : null);
+      h("p", {}, T(`firstmate's event log, ${S.events.toLocaleString()} events. Everything the crew does lands here first.`, `firstmate 的事件紀錄，共 ${S.events.toLocaleString()} 筆。船員做的每件事都先寫到這裡。`))),
+      h("a", { class: "btn", href: "#/crew" }, T("← Back to Crew", "← 回 Crew"))),
+    window.crewListTools.list({ id: "activity", route: "activity", path: "#/activity", title: T("events", "事件"), noun: ["event", "事件"],
+      placeholder: T("Search what happened…  or type type:node_failed", "搜尋事件內容…  也可以打 type:node_failed"),
+      facets: [{ key: "type", name: "Type" }, { key: "actor", name: "Actor" }, { key: "task", name: "Task", show: taskName }],
+      sorts: [{ key: "new", label: T("Newest first", "最新的在上") }, { key: "old", label: T("Oldest first", "最舊的在上") }],
+      emptyAttrs: { id: "evlist" }, // #evlist is the log's list whether it holds events or says none match
+      server: async (st) => { const q = new URLSearchParams({ page: String(st.page), size: String(st.size) });
+        if (st.sort === "old") q.set("sort", "old"); if (st.free.length) q.set("q", st.free.map((w) => (/\s/.test(w) ? `"${w}"` : w)).join(" "));
+        for (const k of ["type", "actor", "task"]) { for (const v of st.f[k] || []) q.append(k, v); for (const v of st.tok[k] || []) q.append(`tok.${k}`, v); }
+        const r = await fetch(`/api/activity?${q}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); },
+      none: () => h("div", { class: "card evlist" }, h("div", { class: "empty" }, h("b", {}, T("No events yet", "還沒有事件")))),
+      // a live refresh (connect(), below) marks the rows newer than the newest one shown before it; any other draw marks none
+      rows: (page, ctx) => { const mark = AF.mark; AF.mark = null; AF.shown = Math.max(0, ...page.map((e) => e.seq));
+        return h("div", { class: "card evlist", id: "evlist" }, page.map((e) => evRow(e, mark != null && e.seq > mark, ctx.mark))); } }));
 }
-function evRow(e, fresh) {
+function evRow(e, fresh, mark = (t) => t) {
   return h("div", { class: `ev${fresh === true ? " new" : ""}`, "data-seq": e.seq },
     h("span", { class: "faint num", title: e.ts }, clock(e.ts)),
     h("span", { class: `evt ${evClass(e.type)}` }, e.type),
-    h("span", { style: "min-width:0;overflow-wrap:anywhere" }, L(e.summary), act(e.activity) && act(e.activity) !== L(e.summary) ? h("span", { class: "faint" }, ` — ${act(e.activity)}`) : null),
+    h("span", { style: "min-width:0;overflow-wrap:anywhere" }, mark(L(e.summary)), act(e.activity) && act(e.activity) !== L(e.summary) ? h("span", { class: "faint" }, ` — ${act(e.activity)}`) : null),
     h("span", { class: "evmeta" }, e.task ? h("a", { class: "vbadge", href: `#/activity/${e.task}` }, e.task) : null, h("span", { class: "vbadge" }, e.actor || "—")));
 }
-async function loadActivity(before) {
-  const q = new URLSearchParams({ limit: "150" });
-  if (AF.task) q.set("task", AF.task); if (AF.type) q.set("type", AF.type); if (AF.actor) q.set("actor", AF.actor);
-  if (before !== undefined) q.set("before", String(before));
-  try {
-    const items = await fetch(`/api/activity?${q}`).then((r) => r.json());
-    AF.items = before !== undefined ? AF.items.concat(items) : items;
-  } catch {}
-  if (S.route?.name === "activity") render();
-}
-const matchAF = (e) => (!AF.task || e.task === AF.task) && (!AF.type || e.type === AF.type) && (!AF.actor || e.actor.includes(AF.actor));
 
 // ---------- workflow ----------
 function viewWorkflow(taskId) {
@@ -638,11 +710,8 @@ function connect() {
   es.onerror = () => conn("down");
   es.addEventListener("events", (m) => {
     const d = JSON.parse(m.data); S.tasks = d.tasks; S.events += d.events.length;
-    if (S.route?.name === "activity") {
-      const fresh = d.events.filter(matchAF).reverse();
-      if (fresh.length) { AF.items = fresh.concat(AF.items).slice(0, 600); const list = $("#evlist");
-        if (list) { list.querySelector(".empty")?.remove(); for (const e of fresh.slice().reverse()) list.prepend(evRow(e, true)); return updateNav(); } }
-    }
+    // the Activity page asks its page again (the server filters): new events that match show up marked as new
+    if (S.route?.name === "activity") { clearTimeout(AF.liveT); AF.liveT = setTimeout(() => { AF.mark = AF.shown; $('#view [data-lt="activity"]')?.ltRefresh?.(); }, 250); return updateNav(); }
     if (S.route?.name === "board" || S.route?.name === "workflow") soft(); else updateNav();
   });
   es.addEventListener("pending", (m) => { const d = JSON.parse(m.data); S.pending = d.pending; S.tasks = d.tasks;
