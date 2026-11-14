@@ -544,7 +544,9 @@ function driftModal(r) {
       h("button", { class: "btn primary", "data-prs-drift-reapply": "", onclick: () => { close(); applyModal([r.id]); } }, T("Apply Studio's record again…", "重新套用 Studio 的紀錄…")))], { id: "drift" });
 }
 // where cards and briefs may be sent (docs/units/pr-watch.md "Sending"): the webhook is a secret, shown masked; typing a
-// new one replaces it. Contacts say who a GitHub account is in Slack, Microsoft Teams or email, for a DM.
+// new one replaces it. Contacts say who a GitHub account is in Slack, Microsoft Teams or email, for a DM. An optional Slack
+// bot token (a secret too, shown masked; an empty field clears it) lets Studio check the Slack contacts and send a DM the
+// captain confirms on a card.
 const TOOLS = () => [["slack", "Slack"], ["lark", T("Lark / Feishu", "飛書 / Lark")], ["dingtalk", T("DingTalk", "釘釘 / DingTalk")], ["teams", "Microsoft Teams"], ["discord", "Discord"], ["json", T("Generic JSON", "通用 JSON")]];
 const USES = () => [["qa", T("Ask QA to test", "請 QA 測試")], ["nudge", T("Ask reviewers again", "請 reviewer 重驗")], ["approve", T("Ask for approval", "請 approve")], ["brief", T("Release brief", "上線 brief")], ["any", T("Anything", "全部")]];
 const CTOOLS = [["slack", "Slack"], ["teams", "Microsoft Teams"], ["email", "Email"]];
@@ -574,10 +576,24 @@ function sendingSection(s) {
     h("p", { class: "faint pw-small", style: "margin:0" }, T("To DM someone, and to turn a GitHub account in a message into the chat's @. A GitHub team needs nothing here: its members are read from GitHub and picked on the card.", "用來 DM 某個人，也用來把訊息裡的 GitHub 帳號換成聊天裡的 @。GitHub team 不用填：成員從 GitHub 讀，卡片上選人。")), cbox,
     h("h3", {}, T("How a DM is sent", "DM 怎麼發"), h("span", { class: "pw-new" }, T("new", "新"))),
     h("div", { class: "pw-envset" },
-      h("label", { class: "pw-check" }, h("input", { type: "radio", name: "pwdm", checked: true }), T(" Copy and open the chat (default, nothing to install: Studio copies the message and opens the DM; you paste and send)", " 複製並打開對話（預設，不用裝任何東西：複製訊息，再打開和對方的 DM，你貼上按送出）")),
-      h("label", { class: "pw-check faint" }, h("input", { type: "radio", name: "pwdm", disabled: true }), T(" Send through a bot (not in this version)", " 用 bot 直接發（這一版還沒有）")),
-      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Slack workspace id (for Slack DMs)", "Slack workspace ID（Slack DM 用）")), h("input", { class: "input mono", "data-prs-slack-team": "", value: s.sending.slackTeam || "", placeholder: "T0123ABCD", oninput: (e) => { s.sending.slackTeam = e.target.value.trim() || null; } }))),
-    h("p", { class: "faint pw-small", style: "margin:0" }, T("A webhook address is a secret: it stays in this Studio's own state (0600), never in a repository, and the browser sees it only masked.", "Webhook URL 等同密鑰：只存在本機 Studio 的 state（0600），不進 repo，瀏覽器只看到遮住的樣子。"))];
+      h("p", { class: "faint pw-small", style: "margin:0" }, T("Copy and open the chat always works, with nothing to install: Studio copies the message and opens the DM; you paste and send. With a Slack bot token, a card can also send a Slack DM itself: one click per message, after a confirm step that shows who it goes to.", "「複製並打開對話」一直都能用，不用裝任何東西：複製訊息，再打開和對方的 DM，你貼上按送出。設了 Slack bot token 之後，卡片也能直接發 Slack DM：每則訊息按一次，先看確認畫面上寫的收件人才發。")),
+      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Slack workspace id (for Slack DMs)", "Slack workspace ID（Slack DM 用）")), h("input", { class: "input mono", "data-prs-slack-team": "", value: s.sending.slackTeam || "", placeholder: "T0123ABCD", oninput: (e) => { s.sending.slackTeam = e.target.value.trim() || null; } })),
+      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Slack bot token (optional; scopes users:read, im:write, chat:write)", "Slack bot token（可不填；權限 users:read、im:write、chat:write）")),
+        h("input", { class: "input mono", type: "password", autocomplete: "off", "data-prs-bot-token": "", value: s.sending.botToken ?? PW.data?.sending?.bot?.masked ?? "", placeholder: "xoxb-…", oninput: (e) => { s.sending.botToken = e.target.value; } })),
+      slackChecks()),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("A webhook address and the bot token are secrets: they stay in this Studio's own state (0600), never in a repository, and the browser sees them only masked. Empty the token field and save to remove it.", "Webhook URL 和 bot token 等同密鑰：只存在本機 Studio 的 state（0600），不進 repo，瀏覽器只看到遮住的樣子。清空 token 欄位再儲存就會刪掉。"))];
+}
+// "Check contacts": each Slack contact as Slack reports it (users.info), with the verdict; nothing is corrected
+function slackChecks() {
+  const box = h("div", { class: "pw-envset", "data-prs-slack-checks": "" }), set = !!PW.data?.sending?.bot?.set;
+  const draw = () => { const ck = PW.data?.sending?.checks || {}, rows = Object.values(ck);
+    box.replaceChildren(h("div", { class: "actions" }, h("button", { class: "btn sm", "data-prs-slack-check": "", disabled: !set, title: set ? "" : T("Save a bot token first", "先儲存 bot token"),
+        onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { const v = await postJ("/api/prs/sending/check", {}); PW.data = { ...PW.data, sending: v }; draw(); } catch (err) { flash(err.message); b.disabled = false; } } }, T("Check contacts", "校驗聯絡人")),
+        h("span", { class: "faint pw-small" }, T("Asks Slack who each Slack contact is. A contact fails in another workspace, deactivated, a bot or external; fix the table yourself.", "問 Slack 每個 Slack 聯絡人是誰。在別的 workspace、已停用、是 bot 或外部帳號就不通過；請自己改表格。"))),
+      ...rows.map((c) => h("div", { class: `pw-check ${c.ready ? "" : "pw-err"}`, "data-prs-slack-check-row": c.gh, "data-ok": String(!!c.ready) },
+        h("span", { class: "mono" }, `${c.gh} → ${c.id}`), h("span", {}, c.name || "—"), h("b", {}, c.ready ? "✓" : "✕"), c.problem ? h("span", { class: "pw-small" }, T(c.problem.en, c.problem.tw)) : !c.ready && c.ok ? h("span", { class: "pw-small" }, T("the contact or workspace changed: check again", "聯絡人或 workspace 改過：請重新校驗")) : null)));
+  };
+  draw(); return box;
 }
 function settingsModal() {
   const s = structuredClone(PW.data?.settings || {}), base = structuredClone(PW.data?.settings || {}), envs = s.environments || [];

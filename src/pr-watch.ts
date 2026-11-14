@@ -18,6 +18,8 @@
 // project grant or the dashboard), which backs off after a failed refresh. A rate limit (403/429) fails the refresh.
 // State: <data>/pr-watch/state.json (watch list, settings, the captain's order and dependencies, what Studio wrote) and
 // <data>/pr-watch/snapshot.json (the last refresh). Writes to GitHub: only the dependency block, only from the card.
+// Slack (src/pr-watch-slack.ts): only with the captain's optional bot token, only on a click: POST /api/prs/sending/check
+// reads each Slack contact (users.info); a follow card's confirmed DM (follow/slack-dm) checks the member again and sends.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,6 +32,7 @@ import type { Engine, X } from "./runtime/engine";
 import * as R from "./pr-watch-rules";
 import * as Rel from "./pr-watch-release";
 import * as F from "./pr-watch-follow";
+import * as S from "./pr-watch-slack";
 
 export const APPLY_WORKFLOW = "pr-watch-apply-depends", FOLLOW_WORKFLOW = "pr-follow";
 export const INTERVAL_MS = 5 * 60_000;
@@ -133,10 +136,14 @@ export type State = { schema: 1; settings: Settings; watch: { repos: string[]; p
    *  test or not to merge yet, and the comments the captain classified */
   follow: { open: Record<string, FollowOpen>; picks: Record<string, string>; skip: Record<string, string>; hold: Record<string, string>; classified: Record<string, F.NoteKind> };
   /** the send targets' incoming-webhook addresses (secrets: never sent to the browser unmasked) */
-  hooks: Record<string, string> };
+  hooks: Record<string, string>;
+  /** the optional Slack bot token (a secret like the webhooks: never sent to the browser) and each Slack contact's last
+   *  check (key: the GitHub login in lower case): the member id and workspace checked, the name Slack reported, the verdict */
+  botToken?: string | null; slackChecks?: Record<string, SlackCheck> };
+type SlackCheck = { id: string; team: string | null; name: string; ok: boolean; problem: F.L | null; at: string };
 type FollowOpen = { run: string; card: string | null; pr: string; kind: FollowKind; head: string; at: string };
 export type FollowKind = "qa" | "nudge" | "approve" | "merge" | "ask" | "push";
-const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {}, shipped: {}, retired: [], follow: { open: {}, picks: {}, skip: {}, hold: {}, classified: {} }, hooks: {} });
+const fresh = (): State => ({ schema: 1, settings: structuredClone(DEFAULT_SETTINGS), watch: { repos: [], prs: [], excluded: [] }, order: null, deps: {}, applied: {}, groups: {}, shipped: {}, retired: [], follow: { open: {}, picks: {}, skip: {}, hold: {}, classified: {} }, hooks: {}, botToken: null, slackChecks: {} });
 type Change = { k: "new" } | { k: "head"; sha: string } | { k: "next"; from: string; to: string } | { k: "review"; login: string; state: string } | { k: "evidence"; verdict: string } | { k: "env"; name: string; on: boolean } | { k: "draft"; draft: boolean } | { k: "title" } | { k: "ci"; state: string };
 export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
@@ -648,7 +655,12 @@ export function createPrWatch(d: PrWatchDeps) {
         deps: on.map((id) => { const m = (sn.merged ?? []).find((x) => eq(x.id, id)); return { id, state: m ? (R.shipState(m.envs).live ? "live" : "merged") : rowIdsNow().some((x) => eq(x, id)) ? "open" : "other" }; }) };
     }).filter((r) => !r.ship.dropAt || Date.parse(r.ship.dropAt) > now());
   }
-  const sendingView = () => ({ targets: state.settings.sending.targets.map((t) => ({ ...t, masked: state.hooks[t.id] ? F.maskHook(state.hooks[t.id]) : null })) });
+  /** a Slack contact's last check, and whether it still stands: passed, for the member id and workspace set now */
+  const slackCheckOf = (login: string) => { const c = contactOf(login), k = state.slackChecks?.[login.toLowerCase()];
+    return c?.tool === "slack" && k ? { ...k, ready: k.ok && k.id === c.id && k.team === state.settings.sending.slackTeam } : null; };
+  const sendingView = () => ({ targets: state.settings.sending.targets.map((t) => ({ ...t, masked: state.hooks[t.id] ? F.maskHook(state.hooks[t.id]) : null })),
+    bot: { set: !!state.botToken, masked: state.botToken ? F.maskToken(state.botToken) : null },
+    checks: Object.fromEntries(state.settings.sending.contacts.filter((c) => c.tool === "slack").flatMap((c) => { const k = slackCheckOf(c.gh); return k ? [[c.gh.toLowerCase(), { gh: c.gh, id: k.id, name: k.name, ok: k.ok, ready: k.ready, problem: k.problem, at: k.at }]] : []; })) });
   const count = () => viewRows(snap, state).filter((r) => r.next.kind === "approve" || r.next.kind === "merge").length;
   function view() {
     const tok = { token: tokenNow() };
@@ -1085,11 +1097,16 @@ export function createPrWatch(d: PrWatchDeps) {
         state.follow.picks[who.toLowerCase()] = m; patchCard(o, (q) => { const t = q.recipients.find((x: any) => x.team && eq(x.who, who)); t.pick = m; const cc = contactOf(m); t.via = cc ? TOOL_WORD[cc.tool] : { en: "members from GitHub", tw: "成員從 GitHub 讀" }; }); break; }
       case "copy": patchCard(o, (q) => q.history.push(hist("copied the message", "複製了訊息"))); break;
       case "dm": { const login = String(b?.login ?? ""), ok = (p.recipients ?? []).some((x: any) => eq(x.pick, login)); if (!ok) throw new Error("DM someone this card is for");
+        const bad = F.messageProblem(String(b?.text ?? "")); if (bad) throw new Error(bad);
         const cc = contactOf(login), link = F.dmLink(cc, String(b?.text ?? "").slice(0, 8000), `${p.pr}: ${p.title}`, state.settings.sending.slackTeam);
         patchCard(o, (q) => { for (const t of q.recipients ?? []) if (t.team && eq(t.pick, login)) t.last = login; // "last time: …" on the card
           q.history.push(link ? hist(`copied and opened a DM with ${login} (${cc!.tool})`, `複製並 DM ${login}（${cc!.tool}）`) : hist(`copied the message for ${login} (no contact set: copy only)`, `複製訊息給 ${login}（沒有聯絡人：只複製）`)); });
         out = { ok: true, href: link?.href ?? null, prefilled: link?.prefilled ?? false, tool: cc?.tool ?? null }; break; }
       case "send": { const t = await sendTo(String(b?.target ?? ""), String(b?.text ?? "")); patchCard(o, (q) => q.history.push(hist(`sent to ${t.name}`, `已發到 ${t.name}`))); out = { ok: true, target: t.name }; break; }
+      // the confirm step of a Slack DM: who it goes to, from the contact settings and its last check only (sends nothing)
+      case "dm-preview": { const r = slackRecipient(p, b); out = { ok: true, login: r.login, name: r.check.name, id: r.contact.id, at: r.check.at }; break; }
+      // the confirmed Slack DM: the member checked again, then one message
+      case "slack-dm": return await slackDm(o, p, b);
       case "chase": patchCard(o, (q) => { q.chased = (q.chased ?? 0) + 1; q.history.push(hist("nudged again with the short version", "再催一次：跟進版")); }); break;
       case "snooze": { const until = b?.until ? String(b.until) : null; if (until && !(Date.parse(until) > now())) throw new Error("Snooze to a time ahead");
         patchCard(o, (q) => { q.snoozeUntil = until; q.history.push(until ? hist(`snoozed until ${until}`, `暫緩到 ${until}`) : hist("snooze cleared", "取消暫緩")); }); break; }
@@ -1099,11 +1116,58 @@ export function createPrWatch(d: PrWatchDeps) {
     }
     write(stateFile, state); return out;
   }
+  /** Who a Slack DM goes to: a person the card is for (by GitHub login, the only field of the request that names them),
+   *  their Slack contact from the settings, and that contact's last check, which must have passed for this member id and
+   *  workspace. Nothing else in the request, the message, the pull request or a comment can name the recipient. */
+  function slackRecipient(p: any, b: any) {
+    if (!state.botToken) throw new Error("Set a Slack bot token in the settings first");
+    const login = String(b?.login ?? ""); if (!(p.recipients ?? []).some((x: any) => eq(x.pick, login))) throw new Error("DM someone this card is for");
+    const contact = contactOf(login); if (!contact || contact.tool !== "slack") throw new Error(`${login} has no Slack contact`);
+    const check = slackCheckOf(login); if (!check?.ready) throw new Error(`Check contacts first: ${login} has not passed the Slack check`);
+    const bad = F.messageProblem(String(b?.text ?? "")); if (bad) throw new Error(bad);
+    return { login: contact.gh, contact, check };
+  }
+  const dmBusy = new Set<string>(); // one Slack DM at a time per card: a second click while one is on its way is refused
+  async function slackDm(o: FollowOpen, p: any, b: any) {
+    const key = o.run; if (dmBusy.has(key)) throw new Error("A Slack DM from this card is already on its way");
+    dmBusy.add(key); try { return await slackDmOnce(o, p, b); } finally { dmBusy.delete(key); }
+  }
+  async function slackDmOnce(o: FollowOpen, p: any, b: any) {
+    const r = slackRecipient(p, b), text = String(b?.text ?? "").trim(), shown = String(b?.name ?? "");
+    if (!text) throw new Error("Nothing to send"); if (text.length > 8000) throw new Error("The message is too long to send");
+    const refuse = (why: F.L) => { patchCard(o, (q) => q.history.push(hist(`did not send the Slack DM to ${r.login} (${r.contact.id}): ${why.en}`, `沒有發 Slack DM 給 ${r.login}（${r.contact.id}）：${why.tw}`))); write(stateFile, state);
+      return Object.assign(new Error(`Not sent: ${why.en}`), { tw: `沒有發出：${why.tw}` }); };
+    if (shown !== r.check.name) throw refuse({ en: `the confirm showed "${shown}", the last check says "${r.check.name}": check contacts again`, tw: `確認畫面顯示「${shown}」，上次校驗是「${r.check.name}」：請重新校驗聯絡人` });
+    const token = state.botToken!, team = state.settings.sending.slackTeam;
+    let u: any; try { u = (await S.slackCall(token, "users.info", { user: r.contact.id })).user; } catch (e) { throw refuse(S.slackErrorText(e)); }
+    const v = S.slackVerdict(u, team, r.contact.id);
+    if (!v.ok || v.name !== shown) { state.slackChecks = { ...state.slackChecks, [r.login.toLowerCase()]: { id: r.contact.id, team, name: v.name, ok: v.ok, problem: v.problem, at: iso() } };
+      throw refuse(v.problem ?? { en: `the Slack name is now "${v.name}", not "${shown}" as confirmed`, tw: `Slack 名字現在是「${v.name}」，不是確認時的「${shown}」` }); }
+    try { const ch = (await S.slackCall(token, "conversations.open", { users: r.contact.id })).channel?.id;
+      if (typeof ch !== "string" || !/^D[A-Z0-9]{2,30}$/.test(ch)) throw new S.SlackError("no_dm_channel");
+      await S.slackCall(token, "chat.postMessage", { channel: ch, text }); }
+    catch (e) { throw refuse(S.slackErrorText(e)); }
+    patchCard(o, (q) => { for (const t of q.recipients ?? []) if (t.team && eq(t.pick, r.login)) t.last = r.login;
+      q.history.push(hist(`sent a Slack DM to ${r.login} → ${v.name} (${r.contact.id})`, `已發 Slack DM 給 ${r.login} → ${v.name}（${r.contact.id}）`)); });
+    write(stateFile, state); return { ok: true, login: r.login, name: v.name, id: r.contact.id };
+  }
+  /** each Slack contact checked against Slack (users.info), only on the captain's click; nothing is corrected */
+  async function checkContacts() {
+    const token = state.botToken; if (!token) throw new Error("Set a Slack bot token in the settings first");
+    const team = state.settings.sending.slackTeam, out: Record<string, SlackCheck> = {};
+    for (const c of state.settings.sending.contacts.filter((x) => x.tool === "slack")) {
+      let v: { ok: boolean; name: string; problem: F.L | null };
+      try { v = S.slackVerdict((await S.slackCall(token, "users.info", { user: c.id })).user, team, c.id); }
+      catch (e) { if (e instanceof Error && /CREW_SLACK_API/.test(e.message)) throw e; v = { ok: false, name: "", problem: S.slackErrorText(e) }; }
+      out[c.gh.toLowerCase()] = { id: c.id, team, name: v.name, ok: v.ok, problem: v.problem, at: iso() }; }
+    state.slackChecks = out; write(stateFile, state); return sendingView();
+  }
   /** send a text to a channel through its incoming webhook (only on the captain's click) */
   async function sendTo(id: string, text: string) {
     const t = state.settings.sending.targets.find((x) => x.id === id), url = state.hooks[id]; if (!t || !url) throw new Error("Choose a send target that has a webhook");
     const bad = F.webhookProblem(t.tool, url, process.env.CREW_WEBHOOK_LOOPBACK === "1"); if (bad) throw new Error(bad);
     const body = String(text ?? "").trim(); if (!body) throw new Error("Nothing to send"); if (body.length > 8000) throw new Error("The message is too long to send");
+    const unsafe = F.messageProblem(body); if (unsafe) throw new Error(unsafe);
     const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(F.webhookBody(t.tool, F.chatMentions(body, t.tool, state.settings.sending.contacts))), redirect: "manual", signal: AbortSignal.timeout(10_000) });
     await r.body?.cancel().catch(() => {}); if (!r.ok) throw new Error(`${t.name} answered ${r.status}`);
     return t;
@@ -1204,6 +1268,7 @@ export function createPrWatch(d: PrWatchDeps) {
     if (name.startsWith("follow/")) return followAction(name.slice("follow/".length), b);
     switch (name) {
       case "send": { const t = await sendTo(String(b?.target ?? ""), String(b?.text ?? "")); return { ok: true, target: t.name }; }
+      case "sending/check": return await checkContacts();
       case "sending/test": { const t = await sendTo(String(b?.target ?? ""), "Crew Studio: a test message from the Pull requests page. / Crew Studio：Pull requests 頁的測試訊息。"); return { ok: true, target: t.name }; }
       case "push-check": return await pushCheck(b);
       case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };
@@ -1218,7 +1283,11 @@ export function createPrWatch(d: PrWatchDeps) {
         for (const t of Array.isArray(b?.settings?.sending?.targets) ? b.settings.sending.targets : []) { const url = typeof t?.url === "string" ? t.url.trim() : "", tt = next.sending.targets.find((x) => x.id === t?.id);
           if (!tt || !url || url.includes("••••")) continue; const bad = F.webhookProblem(tt.tool, url, process.env.CREW_WEBHOOK_LOOPBACK === "1"); if (bad) throw new Error(`${tt.name}: ${bad}`); hooks[tt.id] = url; }
         for (const k of Object.keys(hooks)) if (!next.sending.targets.some((t) => t.id === k)) delete hooks[k];
-        state.settings = next; state.hooks = hooks; settingsWarning = null; save(); queueMicrotask(() => { void followUp().catch(() => {}); });
+        // the bot token, like a webhook: a new one typed is kept apart; the masked form keeps it; an empty field clears it.
+        // Only the page sets it (a grant's settings never carry it)
+        let botToken = state.botToken ?? null; const bt = b?.settings?.sending?.botToken;
+        if (!actor && typeof bt === "string" && !bt.includes("••••")) { const v = bt.trim(); if (!v) botToken = null; else { const bad = F.botTokenProblem(v); if (bad) throw new Error(bad); botToken = v; } }
+        state.settings = next; state.hooks = hooks; state.botToken = botToken; settingsWarning = null; save(); queueMicrotask(() => { void followUp().catch(() => {}); });
         // what the settings change (environments, evidence, which pull requests) is not a change on GitHub: start the marks afresh
         snap.finger = {}; snap.changed = {}; write(snapFile, snap); kick(); return view(); }
       case "order": { state.order = validIds(b?.order); save(); return view(); }

@@ -175,6 +175,25 @@ export const contactProblem = (c: { gh: string; tool: string; id: string }): str
   if (c.tool === "teams" || c.tool === "email") return /^[^\s@<>"',;]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/.test(c.id) ? null : `${c.gh}: write an email address`;
   return `${c.gh}: choose Slack, Microsoft Teams or Email`;
 };
+/** Why a message may not be sent (a Slack DM, copy and DM, a channel), or null: every link in it must be https, and none
+ *  may carry a user name or password before its host. Slack's own <…> forms count as links; its mentions (<@U…>, <#C…>,
+ *  <!here>) are not links. The wording is never judged. */
+export function messageProblem(text: string): string | null {
+  const t = String(text ?? "");
+  // scheme://… anywhere, and the schemes that run or embed something without "//"
+  for (const m of t.matchAll(/([A-Za-z][A-Za-z0-9+.-]{0,30}):\/\/([^\s/?#<>|"'`]*)/g)) {
+    if (m[1].toLowerCase() !== "https") return `the message has a ${m[1].toLowerCase()}: link; only https links are sent`;
+    if (m[2].includes("@")) return "the message has a link with a user name or password in it";
+  }
+  const bare = /(?<![A-Za-z])(javascript|vbscript|data|file|slack|mailto|tel|sms|ftp|ssh|blob):(?=[^\s])/i.exec(t);
+  if (bare) return `the message has a ${bare[1].toLowerCase()}: link; only https links are sent`;
+  for (const m of t.matchAll(/<([^<>\s|@#!][^<>|\s]*?)(?:\|[^<>]*)?>/g)) { const s = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(m[1]); if (s && s[1].toLowerCase() !== "https") return `the message has a ${s[1].toLowerCase()}: link; only https links are sent`; }
+  return null;
+}
+/** A Slack bot token as typed in the settings: one line of token characters (its value is never shown back). */
+export const botTokenProblem = (t: string): string | null => /^[A-Za-z0-9._-]{10,255}$/.test(t) ? null : "a Slack bot token is one line of letters, digits and dashes";
+/** What the browser sees of a bot token: that it is set, and its last four characters. */
+export const maskToken = (t: string) => `••••${t.length > 16 ? t.slice(-4) : ""}`;
 /** The address that opens a DM with a contact, built only from validated settings (never from a pull request, comment or
  *  message): Slack's app link (the message must be pasted), a Teams chat with the message filled in, or an email. */
 export function dmLink(c: { tool: ContactTool; id: string } | null, text: string, subject: string, slackTeam: string | null): { href: string; prefilled: boolean } | null {
