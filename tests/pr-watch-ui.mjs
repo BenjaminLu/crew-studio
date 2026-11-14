@@ -74,6 +74,21 @@ try {
   const tab = async (k) => (await p.locator(`[data-prs-tab="${k}"] .tb-count`).innerText()).trim();
   ok(await tab('all') === '12' && await tab('approve') === '2' && await tab('merge') === '1' && await tab('fix') === '2' && await tab('test') === '3' && await tab('hold') === '1' && await tab('dependency') === '1', 'tab counts by next-step kind', JSON.stringify(await Promise.all(['all', 'approve', 'test', 'fix', 'dependency', 'merge', 'hold'].map(tab))));
   await p.click('[data-prs-tab="approve"]'); ok(await p.locator('[data-prs-row]').count() === 2, 'a tab filters the rows'); await p.click('[data-prs-tab="all"]');
+  // merged pull requests, followed until production: their own two tabs, after a separator, marked new
+  ok(await tab('merged') === '2' && await tab('live') === '1' && await p.locator('.pw-sep + [data-prs-tab="merged"] .pw-new').count() === 1, 'the merged and live tabs count the merged pull requests, after a separator, marked new');
+  await p.click('[data-prs-tab="merged"]'); await p.waitForSelector('[data-prs-ship="merged"]');
+  const shipCols = await p.locator('[data-prs-ship] .pw-row.h [role="columnheader"]').allInnerTexts();
+  ok(JSON.stringify(shipCols.slice(1)) === JSON.stringify(['#', 'Pull request', 'Going live · waits on', 'Merged', 'Deploy unit', 'Environments']), 'the merged tab\'s columns', JSON.stringify(shipCols));
+  ok(JSON.stringify(await p.locator('[data-prs-merged="northwind/checkout-api#21"] .pw-env.on').allInnerTexts()) === '["staging"]' && /waits on prod/.test(await p.locator('[data-prs-merged="northwind/checkout-api#21"] .pw-next small').first().innerText())
+    && /^Waiting to go live · 2 d$/.test(await p.locator('[data-prs-merged="northwind/checkout-api#21"] [data-prs-ship-next]').innerText()), 'a merged row: on staging (it has the merge commit), waiting on prod for 2 days');
+  ok(await p.locator('[data-prs-merged="northwind/checkout-api#22"] [data-prs-ship-deps]').innerText() === 'depends on #21' && await p.locator('[data-prs-merged="northwind/checkout-api#21"] .mono').first().innerText() === gh.data.merge(gh.data.find('northwind/checkout-api', 21)).slice(0, 7), 'the merge commit and the dependency show on the row');
+  ok(await p.locator('[data-prs-ship-foot]').isVisible() && await p.locator('[data-prs-row]').count() === 0, 'the merged tab shows only merged rows, with its own note');
+  await p.screenshot({ path: join(shots, 'merged-1440-light.png'), fullPage: true });
+  await p.click('[data-prs-tab="live"]'); await p.waitForSelector('[data-prs-ship="live"]');
+  ok(await p.locator('[data-prs-merged]').count() === 1 && await p.locator('[data-prs-merged="northwind/checkout-api#23"] [data-prs-ship-next]').innerText() === 'In production' && /hidden in 14 d/.test(await p.locator('[data-prs-merged="northwind/checkout-api#23"] .pw-next small').first().innerText()), 'the live tab: in production, hidden 14 days later');
+  await p.click('[data-prs-md]'); ok((await p.evaluate(() => navigator.clipboard.readText())).includes('[northwind/checkout-api#23]'), 'Copy as Markdown on the live tab copies its rows');
+  await p.screenshot({ path: join(shots, 'live-1440-light.png'), fullPage: true });
+  await p.click('[data-prs-tab="all"]');
   // text from GitHub is text
   ok(await p.evaluate(() => window.__xss === undefined && !document.querySelector('[data-prs-row="northwind/mobile#5"] img')) && (await p.locator('[data-prs-row="northwind/mobile#5"] .pw-title').innerText()).includes('<img src=x'), 'a title with HTML is shown as text, never run');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#12"] .pw-iss small').innerText() === 'external' && await p.locator('[data-prs-single="northwind/mobile#5"]').count() === 1 && await p.locator('[data-prs-row="northwind/mobile#5"] .badge', { hasText: 'single' }).count() === 1, 'an issue outside the watched repositories is marked external; the single pull request is marked single');
@@ -212,6 +227,7 @@ try {
     const sx = await o.p.evaluate(() => ({ doc: document.documentElement.scrollWidth, main: document.querySelector('#main').scrollWidth, mainW: document.querySelector('#main').clientWidth, w: innerWidth, tbl: document.querySelector('[data-prs-table]').scrollWidth > document.querySelector('[data-prs-table]').clientWidth }));
     ok(sx.doc <= sx.w && sx.main <= sx.mainW + 1, `no sideways page scroll at ${w} ${theme}${w === 390 ? ' (the table scrolls inside its card)' : ''}`, JSON.stringify(sx));
     if (w === 390) ok(sx.tbl, `at ${w} the table scrolls inside its card`);
+    if (w === 390) ok(await o.p.evaluate(() => { const m = document.querySelector('[data-prs-tab="merged"]').getBoundingClientRect(), a = document.querySelector('[data-prs-tab="all"]').getBoundingClientRect(); return Math.abs(m.left - a.left) < 2; }), `at ${w} ${theme} the merged tabs start their own line (no separator left at a line end)`);
     if (w === 390) { const tc = await browser.newContext({ viewport: { width: 390, height: 900 }, isMobile: true, hasTouch: true }); const tp = await tc.newPage(); await tp.goto(`${base}/#/prs`); await tp.waitForSelector('[data-prs-row]');
       // read on the element on the page now (a live redraw may replace the row between finding it and reading it)
       const touchOpacity = async () => tp.evaluate(() => { const e = document.querySelector('[data-prs-drop]'); return e ? getComputedStyle(e).opacity : null; });

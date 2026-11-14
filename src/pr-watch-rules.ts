@@ -469,6 +469,27 @@ export function tagCommit(text: string, template: string): string | null {
   return null;
 }
 
+// ---------- merged pull requests, followed until production ----------
+/** A merged pull request stays on the list this long after it reached every production environment. */
+export const LIVE_KEEP_MS = 14 * 86400_000;
+/** How far back a watched repository's merged pull requests are picked up (a tracked one stays until production). */
+export const MERGED_WINDOW_MS = 30 * 86400_000;
+export type ShipEnv = { name: string; on: boolean | null; production: boolean };
+/**
+ * Where a merged pull request is on its way to production, from its environments (in the settings' order), each on when
+ * its commit contains the merge commit. Live: every production environment has it. Otherwise it waits on the first
+ * environment after the furthest one that has it (the first environment when none has it). No production environment
+ * set: it can never be live, and the row says so.
+ */
+export function shipState(envs: ShipEnv[]): { live: boolean; waits: string | null; noProduction: boolean } {
+  const prod = envs.filter((e) => e.production);
+  if (!prod.length) return { live: false, waits: null, noProduction: true };
+  if (prod.every((e) => e.on === true)) return { live: true, waits: null, noProduction: false };
+  const furthest = envs.map((e) => e.on === true).lastIndexOf(true);
+  const next = envs.slice(furthest + 1).find((e) => e.on !== true) ?? envs.find((e) => e.on !== true)!;
+  return { live: false, waits: next.name, noProduction: false };
+}
+
 // ---------- order and dependencies ----------
 /** A dependency proposed only where the merge order is forced: a Depends-on line, or a branch stacked on another's head. */
 export type Signal = { pr: string; on: string; kind: "depends-on" | "stacked"; why: string };

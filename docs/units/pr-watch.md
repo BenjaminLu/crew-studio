@@ -144,6 +144,27 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
 - **State**: `<data>/pr-watch/state.json` (watch list, settings, Studio's order and dependencies, what Studio wrote) and
   `<data>/pr-watch/snapshot.json` (the last refresh), 0600, never in a repository.
 
+## Merged, until production
+
+A merged pull request stays on the page until it runs in production. Two more tabs, after a separator and marked new:
+"Merged, not live" and "Live", each with its count.
+
+- **Which**: a watched repository's merged pull requests opened by or assigned to the captain (GitHub's first page of
+  closed pull requests, `GET …/pulls?state=closed&sort=updated&direction=desc&per_page=100`), and a single watched pull
+  request once merged; merged in the last 30 days, or already followed. One followed that GitHub's first page no longer
+  shows is read on its own (at most 30 a refresh). At most 40 merged rows a refresh, the ones merged last.
+- **Environments**: the same settings as the open rows (or the repository's own GitHub environments), read against the
+  **merge commit** (squash or merge), never the old head: an environment has the pull request when the commit it runs
+  contains the merge commit (`compare`). A GitHub Deployment environment: its newest successful deployment of the last
+  five; a check run: on the merge commit; a branch deployment and an image tag in a file: as for the open rows.
+- **State**: merged → each pre-production environment → in production. A row waits on the environment after the
+  furthest one that has it (the first when none does). In every production environment it moves to "Live", from the
+  refresh Studio first saw it there, and is dropped 14 days later, recorded so it never comes back
+  (`state.json`: `shipped`, `retired`). No production environment set: it says so and never goes live.
+- **Columns**: #, the pull request, going live · waits on (how long since the merge), the merge commit and when, the deploy
+  unit (the repository) with its dependencies (Studio's record, else the body's `Depends-on:` lines or block), the
+  environments.
+
 ## Next step and who it waits on
 
 The first matching rule, top to bottom; deterministic, no model:
@@ -282,6 +303,10 @@ CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}
     approval", and a second click closing the menu.
 17. Screenshots at 1440 and 390, light and dark, in tests/out/pr-watch/; no sideways page scroll at 390 (the table scrolls
     inside its card); a title with HTML is shown as text — pr-watch-ui.mjs.
+18. Merged pull requests are followed until production (`bun tests/pr-watch-merged.ts`): the captain's merged ones only,
+    each environment read at the merge commit, the merged and live tabs, live from the first refresh that saw it, dropped
+    14 days later and never back, unwatching drops them; in the page the two tabs, their columns and Markdown —
+    pr-watch-ui.mjs "the merged and live tabs …", "a merged row: on staging …", "the live tab …".
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the
