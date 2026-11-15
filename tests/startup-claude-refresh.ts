@@ -68,7 +68,7 @@ for(const mode of ['failed','concurrent','replay','owner-ended','wrong-model','w
 {
  const {ClaudeNative,isClaudeExecutionAdmission}=await import('../src/providers/claude-native');const {mkdtempSync,copyFileSync,readFileSync,rmSync}=await import('node:fs');const {join}=await import('node:path');
  const dir=mkdtempSync('/private/tmp/crew-startup-claude-pair-'),bin=join(dir,'success.mjs');copyFileSync(join(import.meta.dirname,'fixture/claude-native.mjs'),bin);
- const native=new ClaudeNative({bin,login:()=>({ok:true,env:{CLAUDE_CODE_OAUTH_TOKEN:'sk-ant-oat01-'+'x'.repeat(48)},source:'offline fixture only',warn:null})});
+ const native=new ClaudeNative({bin,login:()=>({ok:true,env:{},source:'offline fixture only (own account)',warn:null,kind:'account'})});
  const A=await fixture(),B=await fixture();try{
   for(const F of [A,B])F.deps={verify:(p:any,o:any)=>native.verify(p,o),admitted:isClaudeExecutionAdmission};
   const [a,b]=await Promise.all([refreshStartupClaude(A.x,input,pair,cap,A.deps),refreshStartupClaude(B.x,input,pair,cap,B.deps)]);

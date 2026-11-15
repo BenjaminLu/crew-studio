@@ -2,15 +2,16 @@
 // and final for that request: Studio never falls back to Codex.
 //   signed in   the official read-only `claude auth status` of the ordinary account (the Claude account card)
 //   quota       a quota refusal Studio has seen and not yet seen reset
-//   crew token  the session signs in with the crew's long-lived token (or the captain's chosen API key),
-//               never the access token of the captain's interactive login, which dies when that login refreshes
-// The session runs in Studio's own Claude config folder, so the captain's ~/.claude settings, hooks,
-// plugins and MCP servers never load into it and its transcript stays apart from terminal sessions.
+//   login       the captain's own Claude sign-in, which the CLI reads and refreshes itself (Studio never reads
+//               it), or, under API billing, the captain's chosen API key
+// On the captain's own account the session runs in that account context but loads none of its settings
+// (--setting-sources "" and Studio's own settings file), so the captain's ~/.claude settings, CLAUDE.md
+// memory, hooks, plugins and MCP servers never load into it. On an API key it runs in Studio's own config folder.
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Login, LoginKind } from "../providers/login";
+import { claudeAccountContext, type Login, type LoginKind } from "../providers/login";
 import type { ClaudeCapability, ClaudePair } from "../providers/claude-native";
 import { validClaudePair } from "../providers/claude-native";
 import type { HostRefusalCode } from "./types";
@@ -23,8 +24,8 @@ export type ClaudePrimaryReady =
   | { ok: false; code: HostRefusalCode; reason: string; en: string; zh: string };
 
 const no = (code: HostRefusalCode, en: string, zh: string): ClaudePrimaryReady => ({ ok: false, code, reason: `${en} / ${zh}`, en, zh });
-/** The credentials a Claude primary may run on: the crew token, an explicit OAuth token in Studio's environment, or the captain's chosen API key. */
-const PRIMARY_KINDS: LoginKind[] = ["crew", "env-oauth", "api-key"];
+/** The logins a Claude primary may run on: the captain's own account (the CLI's own sign-in), or the captain's chosen API key. */
+const PRIMARY_KINDS: LoginKind[] = ["account", "api-key"];
 
 /** The fresh primary's Claude permission mode. Auto by default: Claude's classifier approves or denies tool calls, and whatever
  *  it escalates still goes to Studio's permission bridge. Only the operator picks another, through CREW_CLAUDE_PERMISSION_MODE
@@ -69,10 +70,9 @@ function writePrimarySettings(configDir: string, am: CaptainAutoMode) {
   closeSync(fd); renameSync(tmp, file); try { chmodSync(file, 0o600); } catch {}
 }
 
-/** `dry`: the preflight the cards use to enable Start and Switch. It reads the crew login by existence only (`probe`, no
- *  keychain decrypt), creates no Claude config folder and returns no environment. Its sign-in status read (`status`) does
- *  run `claude auth status` in a temporary folder and may record a refusal. An existing but empty or malformed crew item
- *  passes here; Start and the server-side Switch decide with the full read. */
+/** `dry`: the preflight the cards use to enable Start and Switch. It reads which login a start would use (`probe`, no
+ *  secret), creates no Claude config folder and returns no environment. Its sign-in status read (`status`) does run
+ *  `claude auth status` and may record a refusal. Start and the server-side Switch decide with the full read. */
 export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () => Promise<ClaudeCapability>; login: () => Login; probe?: () => { ok: boolean; kind?: LoginKind }; configDir: string; signInPending: boolean; dry?: boolean; permissionMode?: string; captainSettings?: string }): Promise<ClaudePrimaryReady> {
   const pm = claudePermissionMode(o.permissionMode);
   if (!pm.ok) return no("claudeUnavailable", pm.en, pm.zh);
@@ -87,7 +87,7 @@ export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () =
   if (!st.available) return no("claudeUnavailable", "The Claude CLI is not available to Studio.", "Studio 找不到可用的 Claude CLI。");
   if (st.loginState !== "logged-in") // what the Claude account card shows as signed in
     return no("claudeNotSignedIn", "Sign in to Claude on this card first. Studio does not switch to Codex.", "請先在這張卡片登入 Claude。Studio 不會改用 Codex。");
-  const crewMissing = () => no("claudeCrewTokenMissing", "Firstmate on Claude signs in with the crew token, and none is set up. Run `claude setup-token` once and keep it in the keychain item crew-studio-claude-token (Doctor shows how).", "Claude 上的 Firstmate 使用 crew token 登入，但尚未設定。請執行一次 `claude setup-token`，並存進鑰匙圈項目 crew-studio-claude-token（Doctor 有說明）。");
+  const crewMissing = () => no("claudeCrewTokenMissing", "Claude API billing is chosen, and Studio has no Anthropic API key. Add one in Doctor → API keys, or switch Claude back to your subscription.", "已選擇 Claude API 計費，但 Studio 沒有 Anthropic API key。請在 Doctor → API keys 加入一把，或把 Claude 改回使用你的訂閱。");
   if (o.dry) {
     let p: { ok: boolean; kind?: LoginKind } = { ok: false };
     try { p = o.probe ? o.probe() : { ok: false }; } catch {}
@@ -98,6 +98,9 @@ export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () =
   if (!login.ok || !login.kind || !PRIMARY_KINDS.includes(login.kind)) return crewMissing();
   mkdirSync(o.configDir, { recursive: true, mode: 0o700 }); try { chmodSync(o.configDir, 0o700); } catch {}
   writePrimarySettings(o.configDir, am);
+  // the captain's own account: its context (where the CLI finds its own sign-in), with Studio's settings file as the only settings;
+  // an API key: Studio's own config folder, whose settings.json is that same file
+  const identity: Record<string, string> = login.kind === "account" ? { ...claudeAccountContext().env, CREW_PRIMARY_SETTINGS_FILE: join(o.configDir, "settings.json") } : { CLAUDE_CONFIG_DIR: o.configDir };
   return { ok: true, model: o.pair.model, effort: o.pair.effort, source: login.source, permissionMode: pm.mode, autoMode,
-    env: { CLAUDE_CONFIG_DIR: o.configDir, DISABLE_AUTOUPDATER: "1", ...(o.pair.effort ? { CLAUDE_CODE_EFFORT_LEVEL: o.pair.effort } : {}), ...login.env } };
+    env: { ...identity, DISABLE_AUTOUPDATER: "1", ...(o.pair.effort ? { CLAUDE_CODE_EFFORT_LEVEL: o.pair.effort } : {}), ...login.env } };
 }

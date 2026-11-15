@@ -16,6 +16,8 @@ codexAuth(false);
 const CREW = "sk-ant-" + "oat01-" + "u".repeat(64); // fixture shape only
 const keychain = join(kc, "security");
 const kcMode = join(kc, "mode"), setKeychain = (m) => writeFileSync(kcMode, m); setKeychain("crew");
+// the captain's Claude billing choice (data/claude-billing.json, read on every login): "api-key", or null for the subscription
+const billing = (b) => b ? writeFileSync(join(data, "claude-billing.json"), JSON.stringify({ billing: b })) : rmSync(join(data, "claude-billing.json"), { force: true });
 // crew: the crew item holds a token; empty: the item exists but is empty; none: no item
 writeFileSync(keychain, `#!/bin/sh\nm=$(cat ${kcMode})\nfor a in "$@"; do [ "$a" = crew-studio-claude-token ] && [ "$m" = crew ] && { echo ${CREW}; exit 0; }; [ "$a" = crew-studio-claude-token ] && [ "$m" = empty ] && exit 0; done\nexit 44\n`, { mode: 0o755 });
 writeFileSync(join(home, ".claude-login-mode"), "success");
@@ -106,10 +108,10 @@ try {
   ok(await seen(p, ':text("Claude permission mode: auto")'), "Doctor shows Claude permission mode: auto");
   ok(await seen(p, '[data-claude-account="signed-in"] [data-claude-start]') && (await p.locator("[data-claude-start]").first().innerText()).includes("Start on Claude") && (await api("/api/main")).state === "detached", "on Doctor the signed-in Claude card offers Start on Claude, and starts nothing by itself");
   await p.locator("[data-claude-account] [data-claude-start]").first().scrollIntoViewIfNeeded(); await shot(p, "claude-card-next-step");
-  // missing crew token: no Claude start anywhere, the crew-token step instead
-  setKeychain("none"); await p.goto(base + "/#/firstmate"); await p.evaluate(() => window.dispatchEvent(new Event("crew:live")));
-  ok(await seen(p, '[data-claude-start-why="claudeCrewTokenMissing"]') && /claude setup-token/.test(await p.locator('[data-claude-start-why="claudeCrewTokenMissing"]').first().innerText()) && await p.locator("#startClaudeBtn").isDisabled(), "without a crew token the Claude card shows the crew-token step and cannot start");
-  setKeychain("crew");
+  // API billing without a key: no Claude start anywhere, the API-key step instead
+  billing("api-key"); await p.goto(base + "/#/firstmate"); await p.evaluate(() => window.dispatchEvent(new Event("crew:live")));
+  ok(await seen(p, '[data-claude-start-why="claudeCrewTokenMissing"]') && /Anthropic API key/.test(await p.locator('[data-claude-start-why="claudeCrewTokenMissing"]').first().innerText()) && await p.locator("#startClaudeBtn").isDisabled(), "API billing without a key: the Claude card shows the API-key step and cannot start");
+  billing(null);
   rmSync(join(home, ".claude-login-marker"), { force: true }); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, '[data-section="start-claude"][data-claude-account="signed-out"]');
   // signing in to Claude here continues into a fresh Claude Firstmate, which greets in the right-side chat
   await p.locator("[data-claude-signin]").first().click();
@@ -152,22 +154,15 @@ try {
   // A live account refresh can replace the card; trial action retries detachment without switching hosts.
   await p.locator('[data-claude-switch]').click({ trial: true }); await shot(p, "claude-card-switch");
   await p.waitForTimeout(500); ok((await api("/api/main")).host === "codex", "nothing replaced Codex silently");
-  // the crew token disappears after the page last checked: Switch asks the preflight first and keeps Codex
-  setKeychain("none");
+  // API billing without a key is chosen after the page last checked: Switch asks the preflight first and keeps Codex
+  billing("api-key");
   await p.locator("[data-claude-switch]").click();
   await p.waitForTimeout(800);
   const still = await api("/api/main");
-  ok(still.state === "attached" && still.host === "codex" && await p.locator("[data-claude-switch-confirm]").count() === 0, "Switch with a missing crew token keeps the Codex Firstmate running");
-  ok(await seen(p, '[data-claude-next="switch"] [data-claude-start-why="claudeCrewTokenMissing"]') && await p.locator("[data-claude-switch]").isDisabled(), "the card then shows the crew-token step and disables Switch");
-  // an empty crew item passes the presence preflight; the server's switch reads it in full, refuses, and keeps Codex
-  setKeychain("empty"); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, "[data-claude-switch]:enabled");
-  await p.locator("[data-claude-switch]").click(); await seen(p, "[data-claude-switch-confirm]"); await p.locator("[data-claude-switch-confirm]").click();
-  await p.waitForTimeout(1200);
-  const kept = await api("/api/main");
-  ok(kept.state === "attached" && kept.host === "codex", "Switch with an empty crew keychain item keeps the Codex Firstmate running");
-  ok(await seen(p, '[data-claude-start-why="claudeCrewTokenMissing"]'), "the card then shows the crew-token step");
+  ok(still.state === "attached" && still.host === "codex" && await p.locator("[data-claude-switch-confirm]").count() === 0, "Switch with API billing and no key keeps the Codex Firstmate running");
+  ok(await seen(p, '[data-claude-next="switch"] [data-claude-start-why="claudeCrewTokenMissing"]') && await p.locator("[data-claude-switch]").isDisabled(), "the card then shows the API-key step and disables Switch");
   await shot(p, "claude-switch-refused");
-  setKeychain("crew"); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, "[data-claude-switch]:enabled");
+  billing(null); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, "[data-claude-switch]:enabled");
   await p.locator("[data-claude-switch]").click(); await seen(p, "[data-claude-switch-confirm]");
   await p.locator("[data-claude-switch-confirm]").click();
   let switched = false; for (let i = 0; i < 200; i++) { const m = await api("/api/main"); if (m.state === "attached" && m.host === "claude") { switched = true; break; } await new Promise((r) => setTimeout(r, 50)); }

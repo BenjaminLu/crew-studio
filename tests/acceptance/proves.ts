@@ -50,8 +50,8 @@ export function probeProblems(r: any): string[] {
   if (!admitted(r.providerViaProxy)) bad.push(`the proxy did not let the round reach its provider's API host (${JSON.stringify(r.providerViaProxy)})`);
   if (r.otherViaProxy?.status !== 403) bad.push(`the proxy did not refuse a host off the round's list (${JSON.stringify(r.otherViaProxy)})`);
   if (!admitted(r.noCredentialViaProxy)) bad.push(`the round's admitted scoped relay required client credentials or refused its provider (${JSON.stringify(r.noCredentialViaProxy)})`);
-  if (!r.ownLogin) bad.push("the round could not read its own login");
-  if (r.ownLoginRefresh) bad.push("the round's login copy carries a refresh token");
+  if (!r.ownLogin) bad.push("the round could not reach its own login (the captain's own account, in place)");
+  if (r.loginCopy) bad.push(`the round got a copy of a login (${r.loginCopy}); a CLI signs in from the captain's own account in place`);
   if (r.otherCredentials?.length) bad.push(`the round's env carries other credentials: ${r.otherCredentials.join(", ")}`);
   for (const [p, v] of Object.entries(r.denied ?? {})) if (v) bad.push(`the round could read ${p}`);
   if (!r.tmpWritable) bad.push("the round could not write its own TMPDIR");

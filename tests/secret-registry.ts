@@ -103,160 +103,51 @@ ok(sec.redactText("call with tok-7f3a9c2e5b8d1f40aa here", ["tok-7f3a9c2e5b8d1f4
   for (const [k, v] of [["CREW_GITHUB_TOKEN", saved.a], ["GITHUB_TOKEN", saved.b], ["GH_TOKEN", saved.c], ["CREW_GH_NO_CLI", saved.n]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   ok(viaCli && viaFile && viaEnv, "Studio's GitHub token is registered where it is read: from `gh auth token`, from its settings file, from the environment", JSON.stringify([viaCli, viaFile, viaEnv])); }
 
-// ---------- the logins Studio hands a round (src/providers/login.ts, v1 option A) ----------
-{ const { codexLogin, claudeLogin } = await import("../src/providers/login"); const { statSync, readFileSync, existsSync } = await import("node:fs");
-  const saved = { home: process.env.CODEX_HOME, key: process.env.CODEX_API_KEY, oauth: process.env.CLAUDE_CODE_OAUTH_TOKEN, bill: process.env.CREW_CLAUDE_BILLING };
-  for (const k of ["CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING"]) delete process.env[k];
-  const ch = mkdtempSync(join(tmpdir(), "crew-codexhome-")); process.env.CODEX_HOME = ch;
-  writeFileSync(join(ch, "auth.json"), JSON.stringify({ OPENAI_API_KEY: null, tokens: { access_token: "eyJhbGciOiJub25lIn0.eyJjb2RleGZpeHR1cmUiOjEyMzR9.c2lnbmF0dXJlZml4dHVyZTEyMzQ", refresh_token: "codex-refresh-fixture-token-5678", id_token: "codex-id-fixture-token-9012", account_id: "acct" } }));
-  const round = mkdtempSync(join(tmpdir(), "crew-roundhome-")); const l = codexLogin(join(round, ".codex"));
-  const copy = join(round, ".codex", "auth.json"); const body = readFileSync(copy, "utf8");
-  const copiedLogin = JSON.parse(body);
-  ok(l.ok && copiedLogin.tokens.refresh_token === "" && !body.includes("codex-refresh-fixture-token-5678") && copiedLogin.tokens.access_token === "eyJhbGciOiJub25lIn0.eyJjb2RleGZpeHR1cmUiOjEyMzR9.c2lnbmF0dXJlZml4dHVyZTEyMzQ" && JSON.stringify(Object.keys(copiedLogin).sort()) === JSON.stringify(["tokens"]) && JSON.stringify(Object.keys(copiedLogin.tokens).sort()) === JSON.stringify(["access_token", "account_id", "id_token", "refresh_token"]) && (statSync(copy).mode & 0o777) === 0o600, "codex: the round gets only allowlisted login fields, an empty CLI-required refresh field without its original secret, mode 600");
-  ok(sec.redactText("x eyJhbGciOiJub25lIn0.eyJjb2RleGZpeHR1cmUiOjEyMzR9.c2lnbmF0dXJlZml4dHVyZTEyMzQ y codex-id-fixture-token-9012") === `x ${M} y ${M}`, "the login values Studio hands a round are registered with the redactor when it reads them");
-  writeFileSync(join(ch, "auth.json"), JSON.stringify({ tokens: { access_token: "a-token-abcdefgh", refresh_token: "r", other: { refresh_token_v2: "still here" } } }));
-  const l2 = codexLogin(join(round, ".codex2"));
-  ok(!l2.ok && /still holds a refresh token/.test((l2 as any).error), "codex: a login that still holds a refresh token after the drop is refused, nothing handed", JSON.stringify(l2));
-  process.env.CODEX_API_KEY = "   "; const l3 = codexLogin(join(round, ".codex3")); delete process.env.CODEX_API_KEY;
-  ok(!l3.ok && /no codex login for rounds works \(CODEX_API_KEY: it is set but empty; .*auth\.json: .*still holds a refresh token/.test((l3 as any).error),
-    "codex: refused only when every source fails, the refusal listing why each one did (an empty CODEX_API_KEY, a login file that keeps a refresh token)", JSON.stringify(l3));
-  // Timestamp metadata is compatibility data, never authority to refresh a token.
-  const stampDoc={auth_mode:"chatgpt",tokens:{access_token:"abcdefgh.abcdefgh.abcdefgh",refresh_token:"never-copy-refresh",id_token:"fixture-id",account_id:"fixture-account"},unknown:"never-copy-config",hooks:["never-copy-hook"]};
-  for(const [n,stamp] of ["2001-01-01T00:00:00Z","2024-02-29T23:59:59.123456789-05:30","2026-10-15T08:09:10+08:00"].entries()){
-    const source=JSON.stringify({...stampDoc,last_refresh:stamp});writeFileSync(join(ch,"auth.json"),source);const target=join(round,`valid-stamp-${n}`),login=codexLogin(target),copied=login.ok?JSON.parse(readFileSync(join(target,"auth.json"),"utf8")):null;
-    ok(login.ok&&copied.last_refresh===stamp&&copied.tokens.refresh_token===""&&Object.keys(copied).sort().join(',')==="auth_mode,last_refresh,tokens"&&!JSON.stringify(copied).includes("never-copy")&&readFileSync(join(ch,"auth.json"),"utf8")===source&&(statSync(join(target,"auth.json")).mode&0o777)===0o600,"codex timestamp: valid original calendar/offset metadata copied exactly without refresh/config or source mutation");
-  }
-  for(const [n,stamp] of ["2023-02-29T00:00:00Z","2024-04-31T00:00:00Z","2024-01-01T24:00:00Z","2024-01-01T00:00:00+24:00","2024-01-01T00:00:00+00:60","2024-01-01", "not-a-date", "2024-01-01T00:00:00Z\n", {value:"2024-01-01T00:00:00Z"},null].entries()){
-    const source=JSON.stringify({...stampDoc,last_refresh:stamp});writeFileSync(join(ch,"auth.json"),source);const target=join(round,`invalid-stamp-${n}`),login=codexLogin(target);
-    ok(!login.ok&&!existsSync(join(target,"auth.json"))&&readFileSync(join(ch,"auth.json"),"utf8")===source,"codex timestamp: malformed calendar/type/time/offset refused before disposable credential write");
-  }
-  process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-claude-oauth-fixture-3456-abcdefghijklmnopqrstuvwxyz"; const c = claudeLogin();
-  ok(c.ok && (c as any).env.CLAUDE_CODE_OAUTH_TOKEN === "sk-ant-oat01-claude-oauth-fixture-3456-abcdefghijklmnopqrstuvwxyz" && sec.redactText("t sk-ant-oat01-claude-oauth-fixture-3456-abcdefghijklmnopqrstuvwxyz t") === `t ${M} t`, "claude: a CLAUDE_CODE_OAUTH_TOKEN Studio holds is handed as is and redacted everywhere");
-  for (const [k, v] of [["CODEX_HOME", saved.home], ["CODEX_API_KEY", saved.key], ["CLAUDE_CODE_OAUTH_TOKEN", saved.oauth], ["CREW_CLAUDE_BILLING", saved.bill]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
-
-// ---------- claudeLoginStatus mirrors claudeLogin (one resolver) ----------
-{ const { claudeLogin, claudeLoginStatus } = await import("../src/providers/login"); const { chmodSync: ch } = await import("node:fs");
-  const saved = { home: process.env.HOME, oauth: process.env.CLAUDE_CODE_OAUTH_TOKEN, bill: process.env.CREW_CLAUDE_BILLING, tool: process.env.CREW_KEYCHAIN_TOOL };
-  for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING"]) delete process.env[k];
-  const home = mkdtempSync(join(tmpdir(), "crew-loginhome-")); process.env.HOME = home;
-  const kd = mkdtempSync(join(tmpdir(), "crew-kc2-")); const tool = join(kd, "security"); let ownJson = "";
-  const setTool = (own: string | null) => { writeFileSync(tool, `#!/bin/sh\ncase "$*" in *Claude\\ Code-credentials*) ${own === null ? "exit 44" : `case "$*" in *-w*) printf '%s' '${own}';; esac; exit 0`};; esac\nexit 44\n`); ch(tool, 0o755); };
-  process.env.CREW_KEYCHAIN_TOOL = tool; setTool(null);
-  // an empty crew token file: both say so
-  mkdirSync(join(home, ".config", "crew-studio"), { recursive: true }); writeFileSync(join(home, ".config", "crew-studio", "claude-token"), "", { mode: 0o600 });
-  const a = claudeLogin(), b = claudeLoginStatus();
-  ok(!a.ok && !b.ok && /is empty/.test((a as any).error) && (a as any).error === b.error, "an empty crew token file: the round's login and the Doctor's status report the same problem", JSON.stringify([a, b]));
-  writeFileSync(join(home, ".config", "crew-studio", "claude-token"), "sk-ant-oat01-crew-file-fixture-12-abcdefghijklmnopqrstuvwxyz0123456789", { mode: 0o600 });
-  const c = claudeLogin(), d = claudeLoginStatus();
-  ok(c.ok && d.ok && (c as any).source === d.source, "a crew token file: both name the same source", JSON.stringify([(c as any).source, d.source]));
-  (await import("node:fs")).rmSync(join(home, ".config", "crew-studio", "claude-token"));
-  // the captain's own login: expired (the round reads it and refuses; the Doctor cannot decrypt it and says its expiry is checked when a round starts)
-  setTool(JSON.stringify({ claudeAiOauth: { accessToken: "own-access-fixture-token-77", expiresAt: Date.now() - 60_000 } }));
-  const e = claudeLogin(), f = claudeLoginStatus();
-  ok(!e.ok && /has expired/.test((e as any).error) && f.ok && /expiry is checked when a round starts/.test(f.warn ?? ""), "the captain's own keychain login: the round refuses an expired token; the Doctor, which never decrypts it, says its expiry is checked when a round starts", JSON.stringify([e, f]));
-  setTool(JSON.stringify({ claudeAiOauth: {} }));
-  const g = claudeLogin(); ok(!g.ok && /holds no access token/.test((g as any).error), "an own login with no access token is refused", JSON.stringify(g));
-  setTool(null); const h = claudeLogin(), i = claudeLoginStatus();
-  ok(!h.ok && !i.ok && (h as any).error === i.error, "no login at all: both report the same problem", JSON.stringify([h, i]));
-  // an error at one source moves on to the next: a crew keychain item that cannot be read (prompt denied) or is empty, then a valid file
-  const tokFile = join(home, ".config", "crew-studio", "claude-token");
-  for (const [how, body] of [["a denied keychain prompt", `echo "User interaction is not allowed." >&2; exit 51`], ["an empty keychain item", `printf ''; exit 0`]] as const) {
-    writeFileSync(tool, `#!/bin/sh\ncase "$*" in *crew-studio-claude-token*-w*) ${body};; *crew-studio-claude-token*) exit 0;; esac\nexit 44\n`); ch(tool, 0o755);
-    writeFileSync(tokFile, "sk-ant-oat01-crew-file-fixture-34-abcdefghijklmnopqrstuvwxyz0123456789", { mode: 0o600 });
-    const j = claudeLogin();
-    ok(j.ok && (j as any).env.CLAUDE_CODE_OAUTH_TOKEN === "sk-ant-oat01-crew-file-fixture-34-abcdefghijklmnopqrstuvwxyz0123456789" && /claude-token\)/.test((j as any).source) && /crew-studio-claude-token/.test((j as any).warn ?? ""),
-      `${how} on the crew keychain item moves on: the valid crew token file is used (the failure named in a warning)`, JSON.stringify(j));
-    (await import("node:fs")).rmSync(tokFile);
-    writeFileSync(tool, `#!/bin/sh\ncase "$*" in *crew-studio-claude-token*-w*) ${body};; *crew-studio-claude-token*) exit 0;; *Claude\\ Code-credentials*-w*) printf '%s' '{"claudeAiOauth":{"accessToken":"own-access-fixture-token-88","expiresAt":1}}'; exit 0;; *Claude\\ Code-credentials*) exit 0;; esac\nexit 44\n`); ch(tool, 0o755);
-    const k = claudeLogin();
-    ok(!k.ok && /crew-studio-claude-token: .*(could not be read|is empty)/.test((k as any).error) && /Claude Code-credentials\): .*has expired/.test((k as any).error),
-      `${how}, then an expired own login: refused only when every source fails, listing why each one failed`, JSON.stringify(k)); }
-  // the Doctor never decrypts the crew keychain item: present is not OK; it says the content is checked when a round starts,
-  // and once a round has tried it, shows that round's outcome (persisted per source, names and errors only)
-  { const { setLoginOutcomeFile } = await import("../src/providers/login"); const of = join(home, "login-outcomes.json"); setLoginOutcomeFile(of);
-    writeFileSync(tool, `#!/bin/sh\ncase "$*" in *crew-studio-claude-token*-w*) printf ''; exit 0;; *crew-studio-claude-token*) exit 0;; esac\nexit 44\n`); ch(tool, 0o755);
-    const before = claudeLoginStatus();
-    ok(before.ok && before.verified === false && /crew keychain item present, but its content is checked when a round starts/.test(before.warn ?? ""), "an untried crew keychain item: the Doctor says it is present but its content is checked when a round starts (never a plain OK)", JSON.stringify(before));
-    const round = claudeLogin(); const after = claudeLoginStatus();
-    ok(!round.ok && !after.ok && /crew-studio-claude-token' is empty \(the last round, /.test(after.error ?? "") && !(await import("node:fs")).readFileSync(of, "utf8").includes("sk-ant"),
-      "after a round found the crew keychain item empty (and no later source works), the Doctor shows that failure instead of OK; the outcome file holds no value", JSON.stringify([round, after]));
-    writeFileSync(tokFile, "sk-ant-oat01-crew-file-fixture-56-abcdefghijklmnopqrstuvwxyz0123456789", { mode: 0o600 });
-    const later = claudeLoginStatus();
-    ok(later.ok && /claude-token\)/.test(later.source ?? ""), "with the keychain item's last round failed and a valid crew token file, the Doctor names the file (as the round would use it)", JSON.stringify(later));
-    // a value that is not a setup-token result (92 characters, the shape of a one-time browser code): that source fails, the next is tried;
-    // with none left the round is refused with what was expected, and not one character of the value appears anywhere
-    const FAKE = "Q".repeat(40) + "z9".repeat(26); (await import("node:fs")).rmSync(tokFile); (await import("node:fs")).rmSync(of, { force: true });
-    writeFileSync(tool, `#!/bin/sh\ncase "$*" in *crew-studio-claude-token*-w*) printf '%s' '${FAKE}'; exit 0;; *crew-studio-claude-token*) exit 0;; esac\nexit 44\n`); ch(tool, 0o755);
-    const bad = claudeLogin(); const badSt = claudeLoginStatus(); const seenAll = JSON.stringify([bad, badSt]) + (await import("node:fs")).readFileSync(of, "utf8");
-    ok(FAKE.length === 92 && !bad.ok && /crew token is not a claude setup-token result \(expected sk-ant-oat01-…\)/.test((bad as any).error) && !badSt.ok && /not a claude setup-token result/.test(badSt.error ?? "")
-      && !seenAll.includes("QQQQ") && !seenAll.includes("z9z9"), "a 92-character crew token that is no setup-token result is refused before the round starts, the Doctor shows the same from the last round, and no character of it is shown", seenAll.slice(0, 400));
-    writeFileSync(tokFile, FAKE, { mode: 0o600 }); const fst = claudeLoginStatus();
-    ok(!fst.ok && /claude-token: crew token is not a claude setup-token result/.test(fst.error ?? "") && !JSON.stringify(fst).includes("QQQQ"), "a crew token file of the wrong shape: the Doctor reads the file (it asks no one) and shows the shape failure", JSON.stringify(fst));
-    writeFileSync(tokFile, "sk-ant-oat01-crew-file-fixture-78-abcdefghijklmnopqrstuvwxyz0123456789", { mode: 0o600 }); const good = claudeLogin();
-    ok(good.ok && /claude-token\)/.test((good as any).source) && /not a claude setup-token result/.test((good as any).warn ?? ""), "a wrong-shape keychain token moves on to a well-formed crew token file", JSON.stringify(good).replace(/sk-ant-oat01-[\w-]+/g, "<tok>"));
-    // a round signs in with the crew keychain item: from then on the Doctor calls it verified
-    (await import("node:fs")).rmSync(tokFile); (await import("node:fs")).rmSync(of, { force: true });
-    writeFileSync(tool, `#!/bin/sh\ncase "$*" in *crew-studio-claude-token*-w*) printf '%s' 'sk-ant-oat01-crew-keychain-fixture-90-abcdefghijklmnopqrstuvwxyz0123456789'; exit 0;; *crew-studio-claude-token*) exit 0;; esac\nexit 44\n`); ch(tool, 0o755);
-    const pre = claudeLoginStatus(); const signed = claudeLogin(); const post = claudeLoginStatus();
-    ok(pre.ok && pre.verified === false && signed.ok && post.ok && post.verified === true && !post.warn, "a crew keychain item is unverified until a round signs in with it, verified after", JSON.stringify([pre, post]));
-    setLoginOutcomeFile(null); }
-  for (const [k, v] of [["HOME", saved.home], ["CLAUDE_CODE_OAUTH_TOKEN", saved.oauth], ["CREW_CLAUDE_BILLING", saved.bill], ["CREW_KEYCHAIN_TOOL", saved.tool]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
-
-// ---------- every shape check outside the crew keychain token: a wrong shape fails that source, the next is tried, no character shown ----------
-{ const { claudeLogin, codexLogin, setLoginOutcomeFile } = await import("../src/providers/login"); const { setKeysDir } = await import("../src/keys"); const fs = await import("node:fs");
-  const keep = ["HOME", "CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING", "CREW_KEYCHAIN_TOOL", "ANTHROPIC_API_KEY", "CODEX_API_KEY", "CODEX_HOME"]; const saved = Object.fromEntries(keep.map((k) => [k, process.env[k]]));
-  for (const k of keep) delete process.env[k]; setLoginOutcomeFile(null);
-  const home = mkdtempSync(join(tmpdir(), "crew-shapes-")); process.env.HOME = home; const BAD = "Q".repeat(40) + "z9".repeat(26); const shown: string[] = [];
-  const GOOD = "sk-ant-oat01-shape-fixture-abcdefghijklmnopqrstuvwxyz0123456789", GOODKEY = "sk-ant-api03-shape-fixture-abcdefghijklmnopqrstuvwxyz";
-  const kd = mkdtempSync(join(tmpdir(), "crew-kc3-")); const tool = join(kd, "security");
-  const own = (tok: string) => { writeFileSync(tool, `#!/bin/sh\ncase "$*" in *Claude\\ Code-credentials*-w*) printf '%s' '${JSON.stringify({ claudeAiOauth: { accessToken: tok, expiresAt: Date.now() + 3_600_000 } })}'; exit 0;; *Claude\\ Code-credentials*) exit 0;; esac\nexit 44\n`); fs.chmodSync(tool, 0o755); };
+// ---------- the logins a round gets (src/providers/login.ts): Studio never reads a subscription login ----------
+{ const { codexLogin, claudeLogin, claudeLoginStatus, claudeLoginPresence } = await import("../src/providers/login"); const { setKeysDir } = await import("../src/keys"); const fs = await import("node:fs");
+  const keep = ["HOME", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CREW_CLAUDE_BILLING", "CREW_KEYCHAIN_TOOL", "ANTHROPIC_API_KEY", "CODEX_API_KEY", "CODEX_HOME"]; const saved = Object.fromEntries(keep.map((k) => [k, process.env[k]]));
+  for (const k of keep) delete process.env[k];
+  const home = mkdtempSync(join(tmpdir(), "crew-logins-")); process.env.HOME = home; const BAD = "Q".repeat(40) + "z9".repeat(26); const shown: string[] = [];
   const L = (x: any) => { shown.push(JSON.stringify(x)); return x; };
-  // the crew token file
-  process.env.CREW_KEYCHAIN_TOOL = tool; own(BAD); fs.mkdirSync(join(home, ".config", "crew-studio"), { recursive: true }); const tf = join(home, ".config", "crew-studio", "claude-token");
-  writeFileSync(tf, BAD, { mode: 0o600 }); const a = L(claudeLogin());
-  ok(!a.ok && /claude-token: crew token is not a claude setup-token result/.test(a.error) && /Claude Code-credentials\): your claude login's access token is not a claude OAuth token/.test(a.error),
-    "shape: a crew token file of the wrong shape fails, the next source (own keychain login) is tried, and a wrong-shape own keychain token fails too: both reasons listed", a.error ?? "");
-  own(GOOD); const b = L(claudeLogin());
-  ok(b.ok && b.env.CLAUDE_CODE_OAUTH_TOKEN === GOOD && /own claude login/.test(b.source) && /claude-token: crew token is not/.test(b.warn ?? ""), "shape: past a wrong-shape crew file, a well-formed own keychain login is used", JSON.stringify(b.source));
-  fs.rmSync(tf);
-  // the own credentials file (where there is no keychain)
-  process.env.CREW_KEYCHAIN_TOOL = "none"; fs.mkdirSync(join(home, ".claude"), { recursive: true }); const cf = join(home, ".claude", ".credentials.json");
-  writeFileSync(cf, JSON.stringify({ claudeAiOauth: { accessToken: BAD, expiresAt: Date.now() + 3_600_000 } }), { mode: 0o600 }); const c = L(claudeLogin());
-  ok(!c.ok && /\.credentials\.json\): your claude login's access token is not a claude OAuth token/.test(c.error), "shape: a wrong-shape token in the own credentials file is refused", c.error ?? "");
-  writeFileSync(cf, JSON.stringify({ claudeAiOauth: { accessToken: GOOD, expiresAt: Date.now() + 3_600_000 } }), { mode: 0o600 }); const d = L(claudeLogin());
-  ok(d.ok && d.env.CLAUDE_CODE_OAUTH_TOKEN === GOOD, "shape: a well-formed own credentials file is used", JSON.stringify(d.source));
-  fs.rmSync(cf);
-  // CLAUDE_CODE_OAUTH_TOKEN in Studio's environment
-  process.env.CLAUDE_CODE_OAUTH_TOKEN = BAD; writeFileSync(tf, GOOD, { mode: 0o600 }); const e = L(claudeLogin()); delete process.env.CLAUDE_CODE_OAUTH_TOKEN; fs.rmSync(tf);
-  ok(e.ok && e.env.CLAUDE_CODE_OAUTH_TOKEN === GOOD && /CLAUDE_CODE_OAUTH_TOKEN in Studio's environment: it is not a claude OAuth token/.test(e.warn ?? ""), "shape: a wrong-shape CLAUDE_CODE_OAUTH_TOKEN moves on to the crew file", JSON.stringify(e.warn));
-  // API billing: Studio's environment, then the key Studio keeps
+  // claude, subscription: the captain's own account, whatever lies around: no keychain call, no file read, no value handed on
+  const kd = mkdtempSync(join(tmpdir(), "crew-kc-")), tool = join(kd, "security"), calls = join(kd, "calls");
+  writeFileSync(tool, `#!/bin/sh\necho "$@" >> ${calls}\nprintf '%s' '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-never-read-abcdefghijklmnopqrstuvwxyz0123456789"}}'\n`); fs.chmodSync(tool, 0o755);
+  process.env.CREW_KEYCHAIN_TOOL = tool; process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-env-token-never-handed-abcdefghijklmnopqrstuvwxyz";
+  fs.mkdirSync(join(home, ".claude"), { recursive: true }); writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat01-file-never-read-abcdefghijklmnopqrstuvwxyz" } }), { mode: 0o600 });
+  fs.mkdirSync(join(home, ".config", "crew-studio"), { recursive: true }); writeFileSync(join(home, ".config", "crew-studio", "claude-token"), "sk-ant-oat01-crew-file-never-read-abcdefghijklmnopqrstuvwxyz0123", { mode: 0o600 });
+  const c = L(claudeLogin()), st = L(claudeLoginStatus()), pr = claudeLoginPresence();
+  ok(c.ok && c.kind === "account" && JSON.stringify(c.env) === "{}" && /your own Claude sign-in/.test(c.source) && st.ok && st.kind === "account" && pr.ok && pr.kind === "account" && !fs.existsSync(calls) && !/sk-ant-oat01/.test(JSON.stringify([c, st])),
+    "claude: the subscription is the captain's own account: no keychain item, credentials file, crew token or CLAUDE_CODE_OAUTH_TOKEN is read or handed on", JSON.stringify([c, st]));
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN; delete process.env.CREW_KEYCHAIN_TOOL;
+  // API billing: Studio's environment, then the key Studio keeps; a wrong shape fails that source, the next is tried, no character shown
+  const GOODKEY = "sk-ant-api03-shape-fixture-abcdefghijklmnopqrstuvwxyz";
   process.env.CREW_CLAUDE_BILLING = "api-key"; const kdir = mkdtempSync(join(tmpdir(), "crew-keys-")); setKeysDir(kdir); writeFileSync(join(kdir, "keys.json"), JSON.stringify({ anthropic: GOODKEY }));
   process.env.ANTHROPIC_API_KEY = BAD; const f = L(claudeLogin());
-  ok(f.ok && f.env.ANTHROPIC_API_KEY === GOODKEY && /ANTHROPIC_API_KEY in Studio's environment: it is not an Anthropic API key/.test(f.warn ?? ""), "shape: under API billing a wrong-shape ANTHROPIC_API_KEY moves on to the key Studio keeps", JSON.stringify(f.warn));
-  writeFileSync(join(kdir, "keys.json"), JSON.stringify({ anthropic: BAD + "kept" })); const g = L(claudeLogin());
-  ok(!g.ok && /no Anthropic API key works \(ANTHROPIC_API_KEY in Studio's environment: .*; the Anthropic key Studio keeps .*: it is not an Anthropic API key/.test(g.error), "shape: under API billing both keys of the wrong shape refuse the round, listing both reasons", g.error ?? "");
+  ok(f.ok && f.kind === "api-key" && f.env.ANTHROPIC_API_KEY === GOODKEY && /ANTHROPIC_API_KEY in Studio's environment: it is not an Anthropic API key/.test(f.warn ?? ""), "shape: under API billing a wrong-shape ANTHROPIC_API_KEY moves on to the key Studio keeps", JSON.stringify(f.warn));
+  ok(sec.redactText(`t ${GOODKEY} t`) === `t ${M} t`, "the API key Studio hands a round is registered with the redactor");
+  writeFileSync(join(kdir, "keys.json"), JSON.stringify({ anthropic: BAD + "kept" })); const g = L(claudeLogin()), gs = L(claudeLoginStatus());
+  ok(!g.ok && !gs.ok && g.error === gs.error && /no Anthropic API key works \(ANTHROPIC_API_KEY in Studio's environment: .*; the Anthropic key Studio keeps .*: it is not an Anthropic API key/.test(g.error), "shape: under API billing both keys of the wrong shape refuse the round, listing both reasons; the Doctor reports the same", g.error ?? "");
   delete process.env.ANTHROPIC_API_KEY; writeFileSync(join(kdir, "keys.json"), JSON.stringify({ anthropic: GOODKEY })); const h = L(claudeLogin());
   ok(h.ok && h.env.ANTHROPIC_API_KEY === GOODKEY && !h.warn, "shape: under API billing a well-formed kept key alone is used", JSON.stringify(h.source));
   setKeysDir(""); delete process.env.CREW_CLAUDE_BILLING;
-  // codex: CODEX_API_KEY, then auth.json (its access token a JWT, its OPENAI_API_KEY sk-…)
-  const ch = join(home, ".codex"); fs.mkdirSync(ch, { recursive: true }); process.env.CODEX_HOME = ch; const JWT = "eyJhbGciOiJub25lIn0.eyJzaGFwZWZpeHR1cmUiOjF9.c2hhcGVzaWduYXR1cmUx";
-  process.env.CODEX_API_KEY = BAD; writeFileSync(join(ch, "auth.json"), JSON.stringify({ tokens: { access_token: JWT } })); const i = L(codexLogin(join(home, "r1")));
-  ok(i.ok && i.env.CODEX_HOME, "shape: a wrong-shape CODEX_API_KEY moves on to a well-formed codex login file", JSON.stringify(i));
-  writeFileSync(join(ch, "auth.json"), JSON.stringify({ tokens: { access_token: BAD } })); const j = L(codexLogin(join(home, "r2")));
-  ok(!j.ok && /CODEX_API_KEY: it is not an OpenAI API key .*auth\.json: its access token is not a codex login token/.test(j.error), "shape: a wrong-shape CODEX_API_KEY and a login file whose access token is no JWT refuse the round, listing both", j.error ?? "");
-  delete process.env.CODEX_API_KEY; writeFileSync(join(ch, "auth.json"), JSON.stringify({ OPENAI_API_KEY: BAD })); const k = L(codexLogin(join(home, "r3")));
-  ok(!k.ok && /its OPENAI_API_KEY is not an OpenAI API key/.test(k.error), "shape: a codex login file whose OPENAI_API_KEY is not one is refused", k.error ?? "");
-  writeFileSync(join(ch, "auth.json"), JSON.stringify({ tokens: { id_token: JWT }, OPENAI_API_KEY: null })); const k2 = L(codexLogin(join(home, "r4")));
-  ok(!k2.ok && /auth\.json: it holds no access token and no API key/.test(k2.error) && !fs.existsSync(join(home, "r4", "auth.json")), "codex: a login file with neither an access token nor an OPENAI_API_KEY is refused, nothing copied", k2.error ?? "");
-  // the Doctor's probe of the captain's own keychain login: present and unverified, verified after a round signed in, failed after a round was refused
-  delete process.env.CODEX_HOME; process.env.CREW_KEYCHAIN_TOOL = tool; const { claudeLoginStatus } = await import("../src/providers/login"); const of = join(home, "outcomes.json"); setLoginOutcomeFile(of);
-  own(GOOD); const s1 = L(claudeLoginStatus());
-  ok(s1.ok && s1.verified === false && /own claude login/.test(s1.source ?? "") && /its expiry is checked when a round starts/.test(s1.warn ?? ""), "Doctor, own keychain login: a present item no round has used is unverified (warn), its expiry checked when a round starts", JSON.stringify(s1));
-  const r1 = claudeLogin(); const s2 = L(claudeLoginStatus());
-  ok(r1.ok && s2.ok && s2.verified === true && !/expiry is checked/.test(s2.warn ?? ""), "Doctor, own keychain login: verified once a round signed in with it", JSON.stringify(s2));
-  own(BAD); const r2 = L(claudeLogin()); const s3 = L(claudeLoginStatus());
-  ok(!r2.ok && !s3.ok && /your claude login's access token is not a claude OAuth token \(expected sk-ant-oat01-…\) \(the last round, /.test(s3.error ?? ""), "Doctor, own keychain login: failed when the last round was refused (here a wrong-shape token) and nothing later works", JSON.stringify(s3));
-  setLoginOutcomeFile(null);
+  // codex: Studio's own CODEX_API_KEY in a private auth.json; else the captain's own codex home, which Studio never reads or copies
+  const ch = join(home, ".codex"); fs.mkdirSync(ch, { recursive: true }); process.env.CODEX_HOME = ch;
+  const own = JSON.stringify({ tokens: { access_token: "own-access-never-read", refresh_token: "own-refresh-never-read" } }); writeFileSync(join(ch, "auth.json"), own, { mode: 0o600 });
+  const i = L(codexLogin(join(home, "r1")));
+  ok(i.ok && i.kind === "account" && i.env.CODEX_HOME === join(home, "r1") && JSON.stringify(Object.keys(i.env)) === '["CODEX_HOME"]' && fs.lstatSync(join(home, "r1", "auth.json")).isSymbolicLink() && fs.realpathSync(join(home, "r1", "auth.json")) === fs.realpathSync(join(ch, "auth.json")) && fs.readFileSync(join(ch, "auth.json"), "utf8") === own && !JSON.stringify(i).includes("never-read"),
+    "codex: the round's private home links the captain's own login in place: nothing read, copied or written", JSON.stringify(i));
+  process.env.CODEX_API_KEY = BAD; const j = L(codexLogin(join(home, "r2"))); delete process.env.CODEX_API_KEY;
+  ok(j.ok && j.kind === "account" && /CODEX_API_KEY: it is not an OpenAI API key/.test(j.warn ?? "") && fs.lstatSync(join(home, "r2", "auth.json")).isSymbolicLink(), "shape: a wrong-shape CODEX_API_KEY moves on to the captain's own codex login", JSON.stringify(j));
+  process.env.CODEX_API_KEY = "sk-codex-studio-key-fixture-0123456789"; const k = L(codexLogin(join(home, "r3"))); delete process.env.CODEX_API_KEY;
+  const kf = join(home, "r3", "auth.json");
+  ok(k.ok && k.kind === "api-key" && k.env.CODEX_HOME === join(home, "r3") && JSON.parse(fs.readFileSync(kf, "utf8")).OPENAI_API_KEY === "sk-codex-studio-key-fixture-0123456789" && (fs.statSync(kf).mode & 0o777) === 0o600 && sec.redactText("x sk-codex-studio-key-fixture-0123456789 y") === `x ${M} y`,
+    "codex: Studio's own CODEX_API_KEY goes in a private auth.json (0600) of the round's own home, and is redacted", JSON.stringify(k));
+  // a linked login file (dotfiles) is followed to the real file; a dangling link or no file at all is no login
+  const dot = join(home, "dotfiles-auth.json"); fs.renameSync(join(ch, "auth.json"), dot); fs.symlinkSync(dot, join(ch, "auth.json")); const sl = L(codexLogin(join(home, "r4")));
+  ok(sl.ok && fs.realpathSync(join(home, "r4", "auth.json")) === fs.realpathSync(dot) && sl.account === fs.realpathSync(dot), "codex: a captain's login file that is itself a link is reached at its real file", JSON.stringify(sl));
+  fs.rmSync(dot); process.env.CODEX_API_KEY = "   "; const none = L(codexLogin(join(home, "r5"))); delete process.env.CODEX_API_KEY;
+  ok(!none.ok && /no codex login for rounds works \(CODEX_API_KEY: it is set but empty; .*auth\.json is missing\)/.test(none.error) && /codex login/.test(none.error) && !fs.existsSync(join(home, "r5")),
+    "codex: refused when there is no login file (a dangling link is none) and no key, saying why, with nothing made", JSON.stringify(none));
   const all = shown.join("\n");
   ok(!all.includes("QQQQ") && !all.includes("z9z9"), "shape: across every branch, no character of a wrong-shape value appears in any error or warning", all.match(/.{20}(QQQQ|z9z9).{20}/)?.[0] ?? "");
   for (const kk of keep) { if (saved[kk] === undefined) delete process.env[kk]; else process.env[kk] = saved[kk]; } }

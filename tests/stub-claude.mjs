@@ -9,6 +9,8 @@ const msg = /Captain's new message: ([^\n]*)/.exec(prompt)?.[1] ?? prompt;
 const URL_ = process.env.CREW_STUDIO_URL, TOKEN = process.env.CREW_TOOL_TOKEN_FILE ? (await import("node:fs")).readFileSync(process.env.CREW_TOOL_TOKEN_FILE, "utf8").trim() : process.env.CREW_TOOL_TOKEN;
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// like the CLI, it first says what the model may use: Studio's tools only (src/providers/claude.ts refuses a round without this)
+out({ type: "system", subtype: "init", model: argv[argv.indexOf("--model") + 1] ?? "stub-model", tools: (argv[argv.indexOf("--allowedTools") + 1] ?? "").split(",").filter(Boolean), mcp_servers: [{ name: "studio", status: "connected" }] });
 let n = 0;
 const tool = async (name, input) => {
   const id = `toolu_stub_${++n}`;

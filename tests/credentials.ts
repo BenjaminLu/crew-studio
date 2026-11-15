@@ -3,7 +3,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // round's environment is an allowlist (the login basics) plus only the keys its own
 // provider declares; chats, work runs, checks and child tools (git, the renderer)
 // get no credential either.     bun tests/credentials.ts
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 let pass = 0, fail = 0;
@@ -45,9 +45,13 @@ const leaked = (env: Record<string, string> | undefined, allow: string[] = []) =
   const keychainEnv = join(tmp, "keychain-env.txt"), keychainTool = join(tmp, "keychain-fixture.sh");
   writeFileSync(keychainTool, `#!/bin/sh\nenv >> "${keychainEnv}"\nexit 44\n`, { mode: 0o755 });
   const loginModule = join(import.meta.dir, "../src/providers/login.ts");
-  const keychainProbe = Bun.spawnSync([process.execPath, "--no-env-file", "-e", `const m = await import(${JSON.stringify(loginModule)}); m.claudeLogin(); m.claudeLoginStatus(); await m.claudeLoginPresenceAsync();`], { env: { PATH: process.env.PATH ?? "/bin", HOME: join(tmp, "empty-home"), CREW_KEYCHAIN_TOOL: keychainTool, GITHUB_TOKEN: "dummy-keychain-child-secret", HTTPS_PROXY: `http://round:${proxySecret}@127.0.0.1:1234` }, stdout: "pipe", stderr: "pipe" });
+  const keychainProbe = Bun.spawnSync([process.execPath, "--no-env-file", "-e", `const m = await import(${JSON.stringify(loginModule)}); m.cursorLogin(); m.cursorLogin({ probe: true });`], { env: { PATH: process.env.PATH ?? "/bin", HOME: join(tmp, "empty-home"), CREW_KEYCHAIN_TOOL: keychainTool, GITHUB_TOKEN: "dummy-keychain-child-secret", HTTPS_PROXY: `http://round:${proxySecret}@127.0.0.1:1234` }, stdout: "pipe", stderr: "pipe" });
   const keychainOutput = existsSync(keychainEnv) ? readFileSync(keychainEnv, "utf8") : "";
-  ok(keychainProbe.success && keychainOutput.includes("PATH=") && !keychainOutput.includes("dummy-keychain-child-secret") && !keychainOutput.includes(proxySecret), "sync and async keychain helpers receive an explicit credential-free environment");
+  ok(keychainProbe.success && keychainOutput.includes("PATH=") && !keychainOutput.includes("dummy-keychain-child-secret") && !keychainOutput.includes(proxySecret), "the keychain helpers (the crew's Cursor key) receive an explicit credential-free environment");
+  { if (existsSync(keychainEnv)) rmSync(keychainEnv, { force: true });
+    const claudeProbe = Bun.spawnSync([process.execPath, "--no-env-file", "-e", `const m = await import(${JSON.stringify(loginModule)}); const r = [m.claudeLogin(), m.claudeLoginStatus(), await m.claudeLoginPresenceAsync()]; console.log(JSON.stringify(r));`], { env: { PATH: process.env.PATH ?? "/bin", HOME: join(tmp, "empty-home"), CREW_KEYCHAIN_TOOL: keychainTool }, stdout: "pipe", stderr: "pipe" });
+    const r = JSON.parse(claudeProbe.stdout.toString() || "null");
+    ok(claudeProbe.success && !existsSync(keychainEnv) && r?.[0]?.ok === true && r[0].kind === "account" && JSON.stringify(r[0].env) === "{}" && r[1].kind === "account" && r[2].kind === "account", "a Claude subscription login reads no keychain item and hands no value: the CLI signs in from the captain's own account", claudeProbe.stderr.toString()); }
   const { codexLogin } = await import("../src/providers/login");
   const codexKey = "sk-" + "dummy-credential".repeat(3), codexHome = join(tmp, "codex-key-home");
   process.env.CODEX_API_KEY = codexKey;

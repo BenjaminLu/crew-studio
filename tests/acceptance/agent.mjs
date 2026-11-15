@@ -13,7 +13,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { connect as tcp } from "node:net";
-import { openSync, readFileSync, closeSync, writeFileSync, rmSync } from "node:fs";
+import { openSync, readFileSync, closeSync, writeFileSync, rmSync, lstatSync, realpathSync } from "node:fs";
 import { join as joinPath } from "node:path";
 
 /** One stdio MCP session with the server the CLI was told to start. */
@@ -109,6 +109,9 @@ const viaProxy = (target, auth = true, ms = 4000) => new Promise((resolve) => {
 });
 // open() is where the sandbox checks a read: nothing of the file itself is read
 const readable = (p) => { try { closeSync(openSync(p, "r")); return true; } catch { return false; } };
+const real = (p) => { try { return realpathSync(p); } catch { return p; } };
+/** The captain's own codex login a codex round's private CODEX_HOME links to, by its real path (null: no such link). */
+const ownCodexLogin = () => { const f = process.env.CODEX_HOME ? joinPath(process.env.CODEX_HOME, "auth.json") : ""; try { return f && lstatSync(f).isSymbolicLink() ? realpathSync(f) : null; } catch { return null; } };
 const writable = (dir) => { const f = joinPath(dir, `.acceptance-probe-${process.pid}`); try { writeFileSync(f, "x"); rmSync(f, { force: true }); return true; } catch { return false; } };
 async function sandboxProbe(prompt) {
   const arg = (k) => (new RegExp(`ACCEPT_PROBE[^\\n]*\\b${k}=(\\S+)`).exec(prompt)?.[1] ?? "");
@@ -129,12 +132,18 @@ async function sandboxProbe(prompt) {
     // extra=<host>: a host the Studio's egress.allow policy grants (the LAN relay's restricted profile drops that grant)
     extraViaProxy: arg("extra") ? await viaProxy(`${arg("extra")}:443`) : null,
     noCredentialViaProxy: await viaProxy(`${host || "example.com"}:443`, false),
-    // its own login (what Studio handed the round), and nothing else
-    ownLogin: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")) ? "file:$HOME/.codex/auth.json" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : null,
-    ownLoginRefresh: (() => { try { return JSON.parse(readFileSync(joinPath(process.env.HOME, ".codex", "auth.json"), "utf8")).tokens?.refresh_token ?? null; } catch { return null; } })(),
+    // its own login: the captain's own account the vendor's CLI signs in from, in place (a Claude folder, a codex home), or a
+    // Cursor round's API key; and never a copy of a login in the round's own home
+    // (a claude round, the one that names CLAUDE_CODE_TMPDIR: its own sign-in is its keychain item, named for the login user, so
+    // it has USER and nothing of the captain's)
+    ownLogin: process.env.CODEX_HOME && readable(joinPath(process.env.CODEX_HOME, "auth.json")) ? "account:codex" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : process.env.CLAUDE_CODE_TMPDIR && process.env.USER && !process.env.CLAUDE_CODE_OAUTH_TOKEN ? "account:claude" : null,
+    // a codex round's private CODEX_HOME links the captain's auth.json (the harness uses no API key): a plain file there is a copy
+    loginCopy: process.env.CODEX_HOME && (() => { try { return !lstatSync(joinPath(process.env.CODEX_HOME, "auth.json")).isSymbolicLink(); } catch { return false; } })() ? "$CODEX_HOME/auth.json" : process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : null,
     // a Cursor round's own key is its login; in any other round it is someone else's credential
-    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CURSOR_API_KEY"].filter((k) => process.env[k] && !(k === "CURSOR_API_KEY" && !process.env.CLAUDE_CODE_OAUTH_TOKEN && !readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")))),
-    denied: Object.fromEntries(list("deny").map((p) => [p, readable(p)])),
+    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CURSOR_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"].filter((k) => process.env[k] && !(k === "CURSOR_API_KEY" && !process.env.CODEX_HOME && !process.env.CLAUDE_CODE_TMPDIR)),
+    // a codex round on the captain's own sign-in reads the one login file its private CODEX_HOME links to (its credential, opened
+    // by design); every other denied file stays closed to it
+    denied: Object.fromEntries(list("deny").filter((p) => !ownCodexLogin() || real(p) !== ownCodexLogin()).map((p) => [p, readable(p)])),
     tmpWritable: writable(process.env.TMPDIR ?? "/nonexistent"),
     nowrite: Object.fromEntries(list("nowrite").map((p) => [p, writable(p)])),
   };

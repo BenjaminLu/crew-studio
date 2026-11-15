@@ -5,8 +5,8 @@
 // MCP server that asks Studio over a private socket; any failure denies).
 // Never --dangerously-skip-permissions, never a bypass mode.
 // A FRESH primary (opts.fresh) is a new session: Studio picks its UUID (--session-id),
-// runs it in the config identity the caller passes (CLAUDE_CONFIG_DIR + the crew token
-// in opts.env), and hands it Studio's native tools through Studio's own MCP helper
+// runs it in the identity the caller passes in opts.env (the captain's own account context, or
+// Studio's own config folder with an API key), and hands it Studio's native tools through Studio's own MCP helper
 // (src/mcp.ts) over owned stdio. That helper reaches back to this session over a
 // private unix socket (0700 dir, random token); only the native tool names are
 // pre-allowed. In the default (manual) mode every other tool asks the permission bridge;
@@ -176,6 +176,10 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
           return { error: failure.reason.en, failure };
         }
       }) : null;
+      // CREW_PRIMARY_SETTINGS_FILE (src/host/claude-primary.ts) names Studio's settings file for a primary on the captain's own
+      // account; it is an instruction to Studio, never passed on to the CLI
+      const { CREW_PRIMARY_SETTINGS_FILE: settingsFile, ...passEnv } = opts.env ?? {};
+      const childEnv = { ...cleanEnv(), ...passEnv };
       const spawn = () => {
         const args = ["-p", ...(named ? ["--resume", id] : ["--session-id", id]), "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
         if (forkPending) args.push("--fork-session");
@@ -194,13 +198,15 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         // the config lives in the private folder: argv names a file, never a token or the socket
         if (Object.keys(servers).length) args.push("--mcp-config", secretFile(priv, "mcp.json", JSON.stringify({ mcpServers: servers })));
         if (fresh) args.push("--strict-mcp-config"); // Studio's servers only, never ones from a config the primary did not choose
-        // user scope is Studio's own config folder (CLAUDE_CONFIG_DIR): the workspace's .claude/settings*.json and hooks never load
-        if (fresh) args.push("--setting-sources", "user");
+        // the captain's own account context loads none of its settings: only Studio's settings file for the primary (no user,
+        // project or local scope, so no CLAUDE.md memory, hooks or plugins); a primary on an API key keeps Studio's own config
+        // folder as its user scope (CLAUDE_CONFIG_DIR), where the workspace's .claude/settings*.json and hooks never load
+        if (fresh) args.push(...(settingsFile ? ["--setting-sources", "", "--settings", settingsFile] : ["--setting-sources", "user"]));
         // Studio's own native tools carry their own captain authority (cards, staffing, ledger): pre-allowed by exact name only
         if (native) args.push("--allowedTools", native.specs.map((t) => `mcp__${studioName}__${t.name}`).join(","));
         // edit-tool deny rules hold even in auto mode: Edit(//abs/path) covers every built-in file-editing tool and shell redirects
         if (fresh && opts.denyEdits?.length) args.push("--disallowedTools", opts.denyEdits.filter((x) => x.startsWith("/") && !x.includes(",")).map((x) => `Edit(/${x})`).join(","));
-        const p = spawnJsonl(binArgv(bin, args), opts.cwd, { ...cleanEnv(), ...(opts.env ?? {}) }, (m) => {
+        const p = spawnJsonl(binArgv(bin, args), opts.cwd, childEnv, (m) => {
           if (m.parent_tool_use_id) return; // subagent traffic stays inside the session
           if (m.type === "system" && m.subtype === "task_notification") notified = true;
           if (m.type === "system" && m.subtype === "compact_boundary") emit({ type: "compacted" });
