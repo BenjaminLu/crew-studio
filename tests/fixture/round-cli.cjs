@@ -41,5 +41,8 @@ const viaProxy = (host, withCred = true) => new Promise((res) => { const u = new
   r.accountReads = Object.fromEntries((p.accountReads || []).map((f) => { try { fs.readFileSync(f); return [f, true]; } catch { return [f, false]; } }));
   r.exec = Object.fromEntries((p.exec || []).map((c) => { const x = require("child_process").spawnSync(c, ["/dev/null"], { stdio: "ignore" }); return [c, !x.error && x.status !== null]; }));
   r.claudeTmp = process.env.CLAUDE_CODE_TMPDIR || null; r.tmpdir = process.env.TMPDIR || null; r.home = process.env.HOME || null;
+  // what the throwaway home's Library holds, and where its keychain link leads (never anything read through it)
+  { const lib = require("path").join(process.env.HOME || "/nonexistent", "Library"); try { r.homeLibrary = fs.readdirSync(lib); } catch { r.homeLibrary = null; }
+    try { r.keychainLink = fs.readlinkSync(require("path").join(lib, "Keychains")); } catch { r.keychainLink = null; } }
   out(r);
 })();

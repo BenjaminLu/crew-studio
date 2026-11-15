@@ -175,7 +175,10 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     ""`; a CLI that does not first list exactly those, or announces any other tool or MCP server, stops the round), and
     every tool runs in its own sandbox without credentials. So on the captain's own sign-in the round opens to the CLI
     only its credential: on macOS the login keychain database where claude keeps its sign-in (its item is named for the
-    login user, so a throwaway HOME finds it), or for codex one link to the captain's `auth.json` in a private
+    login user, but `security` builds the keychain search list from `$HOME/Library`, so the throwaway HOME holds one link,
+    `Library/Keychains`, to the captain's keychain folder and nothing else of the captain's home; the profile opens only
+    the login keychain database and the files written beside it, by the real path the link leads to), or for codex one
+    link to the captain's `auth.json` in a private
     `CODEX_HOME`. It reaches no folder of the captain's and not the worktree (it runs in the round's tmp), and may execute
     only itself, Studio's runtime and the keychain command. Inside one login keychain the OS sandbox cannot tell items
     apart: that boundary is that nothing model-chosen ever runs in the CLI's process. On API billing Studio hands its own

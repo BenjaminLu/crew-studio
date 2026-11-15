@@ -445,7 +445,11 @@ function accountRules(a: AccountContext | null | undefined, closed: string[]): s
   if (!a) return "";
   const inside = (p: string, root: string) => p === root || p.startsWith(root.replace(/\/$/, "") + "/");
   const R = (p: string) => realIf(p) ?? p;
-  const files = (a.writeFiles ?? []).filter((f) => isAbsolute(f)).map(R).filter((f) => !closed.some((c) => inside(f, c)));
+  // a file that does not exist yet resolves through its nearest existing folder (/var → /private/var on macOS), so a login
+  // file named inside Studio's data is caught however it is spelled
+  const resolved = (p: string): string => { const r = realIf(p); if (r) return r; const d = dirname(p); return d === p ? p : join(resolved(d), p.slice(d.length + 1)); };
+  const shut = closed.flatMap((c) => [c, resolved(c)]);
+  const files = (a.writeFiles ?? []).filter((f) => isAbsolute(f)).map(resolved).filter((f) => !shut.some((c) => inside(f, c)));
   const rw = [...files.map((f) => `(literal ${q(f)})`), ...(a.writeRegex ?? []).map(sbplRegex)];
   const deny = (a.deny ?? []).filter((d) => isAbsolute(d)).map(R);
   return `${rw.length ? `(allow file-read* file-write* ${rw.join(" ")})\n` : ""}${deny.length ? `(deny file-read* file-write* ${deny.map((d) => `(subpath ${q(d)})`).join(" ")})\n` : ""}`;

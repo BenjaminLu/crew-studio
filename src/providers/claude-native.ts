@@ -3,7 +3,7 @@
 import {existsSync,mkdtempSync,mkdirSync,readFileSync,rmSync,realpathSync,statSync} from 'node:fs';
 import {join,dirname} from 'node:path';import{tmpdir,homedir}from'node:os';
 import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,claudeAccountContext,CLAUDE_API_KEY_SHAPE,type Login}from'./login';
-import{claudeProvider}from'./claude';import{claudeSettings,KEYCHAIN}from'./needs';
+import{claudeProvider}from'./claude';import{claudeSettings,KEYCHAIN,linkClaudeKeychain}from'./needs';
 import type{ProviderCapability}from'./policy';
 import { claudeBilling as claudeAuthBilling, noteBilling } from '../lan/billing';
 export type ClaudePair={model:string;effort:string|null};
@@ -148,9 +148,10 @@ export class ClaudeNative{
   try{
    if(signal.aborted)throw 0;const binary=this.currentBinary();if(!binary)throw 0;
    // on the captain's own sign-in the verification runs like a round: a private home, the CLI reading its own keychain item (named
-   // for the login user, and the captain's CLAUDE_CONFIG_DIR only when set), none of the captain's files
+   // for the login user, and the captain's CLAUDE_CONFIG_DIR only when set), found through the one link to the captain's keychain
+   // folder in that home (security searches $HOME/Library/Keychains), none of the captain's files
    // (off macOS the CLI keeps its sign-in in a file of the captain's config folder: there it runs in the captain's own context)
-   const own=process.env.CLAUDE_CONFIG_DIR?.trim();
+   const own=process.env.CLAUDE_CONFIG_DIR?.trim();if(account&&KEYCHAIN())linkClaudeKeychain(home);
    const env={PATH:process.env.PATH||'/usr/bin:/bin',...(account?(KEYCHAIN()?{HOME:home,...(own?{CLAUDE_CONFIG_DIR:own}:{})}:claudeAccountContext().env):{HOME:home,CLAUDE_CONFIG_DIR:config}),...loginUser(),TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
    let init=false,result=false,assistant=false,invalid=false;
    const args=['-p','Reply with OK only. Do not use any tools.','--output-format','stream-json','--verbose','--include-partial-messages','--model',p.model,...p.effort?['--effort',p.effort]:[],'--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--permission-mode','dontAsk','--permission-prompts','none','--setting-sources','','--settings',JSON.stringify(claudeSettings(p)),'--safe-mode','--no-chrome','--disable-slash-commands','--no-session-persistence','--restricted','--max-turns','1','--max-budget-usd','0.05'];

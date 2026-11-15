@@ -8,7 +8,8 @@
 //   otherwise "account": the claude CLI reads its own sign-in, the keychain item it named for the
 //   login user (and the captain's CLAUDE_CONFIG_DIR only when one is set). Whether the captain is
 //   signed in is the CLI's own `claude auth status` (src/providers/claude-native.ts); this resolver
-//   reads nothing. A round runs the CLI in a throwaway home and opens to it only the login keychain
+//   reads nothing. A round runs the CLI in a throwaway home (holding only a link to the captain's keychain
+//   folder, where security finds the login keychain) and opens to it only the login keychain
 //   database (src/providers/needs.ts): the model in it has no tool of its own, only Studio's MCP
 //   tools, which run in their own sandbox without credentials.
 // codex: CODEX_API_KEY in a private auth.json of the round's own CODEX_HOME (Studio's own key);

@@ -12,7 +12,7 @@
 //   (`account`: the login keychain database, or one linked login file), never a folder of the
 //   captain's and never the repository (`noWorkspace`), and runs only what signing in needs (`exec`);
 // - the variables that name the CLI's own temporary folder (set to the round's tmp).
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { claudeAccountContext, claudeBilling, claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
 import { dirname, join } from "node:path";
@@ -74,14 +74,36 @@ export const loginUserEnv = (): Record<string, string> => { let u = process.env.
  *  files written beside it when the CLI refreshes its item), where the CLI keeps its sign-in; and a captain's own
  *  CLAUDE_CONFIG_DIR, named only so the CLI finds its keychain item (it names the item after that folder), kept closed. */
 export function claudeAccountRules(): AccountContext {
-  const kc = join(accountHomeDir(), "Library", "Keychains"), own = process.env.CLAUDE_CONFIG_DIR?.trim();
-  return { writeRegex: KEYCHAIN() ? [`^${regexQuote(kc)}/login\\.keychain(-db)?([.-][^/]*)?$`, `^${regexQuote(kc)}/\\.fl[0-9A-Fa-f]+$`] : [], deny: own ? [own] : [] };
+  const own = process.env.CLAUDE_CONFIG_DIR?.trim();
+  return { writeRegex: KEYCHAIN() ? keychainRules(claudeKeychainDir()) : [], deny: own ? [own] : [] };
+}
+/** SBPL patterns for the login keychain database in a keychain folder and the files written beside it. The sandbox checks the
+ *  path a file resolves to, so they name the folder by its real path (where the link in the round's home leads) and, when
+ *  that differs, as written. */
+export function keychainRules(kc: string): string[] {
+  let real = kc; try { real = realpathSync(kc); } catch {}
+  const rules = (d: string) => [`^${regexQuote(d)}/login\\.keychain(-db)?([.-][^/]*)?$`, `^${regexQuote(d)}/\\.fl[0-9A-Fa-f]+$`];
+  return [...rules(kc), ...(real !== kc ? rules(real) : [])];
+}
+/** The captain's own keychain folder, where the login keychain lives. */
+export const claudeKeychainDir = () => join(accountHomeDir(), "Library", "Keychains");
+/** The CLI finds the login keychain through HOME: `security` builds the user's keychain search list from $HOME/Library, so
+ *  under a bare throwaway HOME it finds no item at all. The round's home gets Library/Keychains as a link to the captain's own
+ *  keychain folder, and nothing else of the captain's home; the profile opens only the login keychain database through it. */
+export function linkClaudeKeychain(home: string): string {
+  const lib = join(home, "Library"), link = join(lib, "Keychains");
+  const target = claudeKeychainDir();
+  mkdirSync(lib, { recursive: true });
+  try { if (lstatSync(link).isSymbolicLink() && readlinkSync(link) === target) return link; rmSync(link, { recursive: true, force: true }); } catch {}
+  symlinkSync(target, link);
+  return link;
 }
 export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedClaudeConfig): SandboxNeeds {
   // claude's config, sessions and caches live in the round's own throwaway home in every case (v1 bin/adapters/claude.sh).
   // Under API billing Studio hands its key through a descriptor. On the captain's own sign-in the CLI reads its keychain item
-  // itself: that item is named for the login user (USER) and, only when the captain set one, the CLAUDE_CONFIG_DIR path, never
-  // for HOME, so a throwaway HOME finds it; the round reaches that keychain database and nothing else of the captain's.
+  // itself: that item is named for the login user (USER) and, only when the captain set one, the CLAUDE_CONFIG_DIR path. The
+  // keychain it searches is found through HOME ($HOME/Library/Keychains), so the throwaway HOME holds one link to the captain's
+  // keychain folder (linkClaudeKeychain); the round reaches the login keychain database through it and nothing else of the captain's.
   // One decision per round: the login a verified receipt was made with, else the billing choice now; a receipt whose login no
   // longer matches the billing choice is invalidated (Studio verifies again).
   const now = claudeBilling() === "api-key" ? "api-key" : "account";
@@ -97,6 +119,7 @@ export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedCla
       // profile keeps it closed (claudeAccountRules), so the CLI runs with an empty config there
       // (without one, CLAUDE_CONFIG_DIR stays unset: a set folder renames the item, and the CLI keeps its config in HOME/.claude)
       const config = own ? (captain ? { CLAUDE_CONFIG_DIR: captain } : {}) : { CLAUDE_CONFIG_DIR: cfg };
+      if (own) linkClaudeKeychain(dir);
       return { HOME: dir, ...config, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ...(own ? loginUserEnv() : {}) };
     },
     login: () => {

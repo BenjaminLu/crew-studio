@@ -6,7 +6,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // itself, Studio's runtime and the keychain command. Its model has Studio's tools and nothing else: a CLI that does not first
 // list exactly those, or announces any other tool or MCP server, stops the round.
 // Offline: profiles are checked as text, the CLIs are stubs.            bun tests/own-account-rounds.ts
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { suite } from "./rt-harness";
@@ -26,6 +26,14 @@ const { codexProvider } = await import("../src/providers/codex");
   ok(login.ok && login.kind === "account" && JSON.stringify(login.env) === "{}", "subscription: the login is the captain's own sign-in, with no value handed in", JSON.stringify(login));
   ok(env.HOME === dir && !("CLAUDE_CONFIG_DIR" in env) && !!env.USER, "subscription: a throwaway HOME, no CLAUDE_CONFIG_DIR (a set folder would rename the keychain item) and the login user the item is named for", JSON.stringify(env));
   ok(n.noWorkspace!() === true, "subscription: the CLI never reaches the worktree");
+  // security(1) builds the user's keychain search list from $HOME/Library: under a bare throwaway HOME it finds no item, so the
+  // round's home holds one link to the captain's keychain folder and nothing else of the captain's home
+  { const { accountHomeDir } = await import("../src/runtime/checks"), link = join(dir, "Library", "Keychains");
+    let target = ""; try { target = lstatSync(link).isSymbolicLink() ? readlinkSync(link) : "(not a link)"; } catch { target = "(missing)"; }
+    ok(target === join(accountHomeDir(), "Library", "Keychains") && JSON.stringify(existsSync(join(dir, "Library")) ? readdirSync(join(dir, "Library")) : null) === JSON.stringify(["Keychains"]),
+      "subscription on macOS: the throwaway HOME has Library/Keychains as a link to the captain's own keychain folder, and nothing else under Library", target);
+    ok(readdirSync(dir).every((x) => x === "Library" || x === ".claude-config"), "subscription: nothing else of the captain's home is placed in the round's home", JSON.stringify(readdirSync(dir)));
+    n.home(dir); ok(existsSync(link) && lstatSync(link).isSymbolicLink() && readlinkSync(link) === target, "setting up the same home again keeps the one link"); }
   ok(!("dirs" in acct!) && !("files" in acct!) && (acct!.writeRegex ?? []).length === 2 && (acct!.deny ?? []).length === 0, "subscription: the round opens no folder or file of the captain's, only (on macOS) the login keychain database", JSON.stringify(acct));
   { const kc = join("/Users/someone", "Library/Keychains"), re = new RegExp(`^${kc}/login\\.keychain(-db)?([.-][^/]*)?$`);
     ok(re.test(join(kc, "login.keychain-db")) && re.test(join(kc, "login.keychain-db.sb-1a2b")) && !re.test(join(kc, "metadata.keychain-db")) && !re.test(join(kc, "ABC/keychain-2.db")), "on macOS the keychain rule names only the login keychain database and what is written beside it (the pattern Studio writes)"); }
@@ -35,6 +43,8 @@ const { codexProvider } = await import("../src/providers/codex");
   ok(e2.HOME === dir && e2.CLAUDE_CONFIG_DIR === join(root, "own-claude") && JSON.stringify(a2!.deny) === JSON.stringify([join(root, "own-claude")]), "a captain's own CLAUDE_CONFIG_DIR is named (the CLI names its keychain item after it) and kept closed", JSON.stringify([e2, a2]));
   delete process.env.CLAUDE_CONFIG_DIR;
   process.env.CREW_CLAUDE_BILLING = "api-key"; process.env.ANTHROPIC_API_KEY = "sk-ant-api03-own-account-test-0123456789abcdef";
+  { const apiHome = join(root, "api-home"); claudeNeeds("claude", []).home(apiHome);
+    ok(!existsSync(join(apiHome, "Library")), "API billing: the round's home gets no keychain link"); }
   const n3 = claudeNeeds("claude", []), e3 = n3.home(dir), l3 = n3.login(dir);
   ok(e3.HOME === dir && e3.CLAUDE_CONFIG_DIR === join(dir, ".claude-config") && !e3.USER && l3.ok && l3.kind === "api-key" && n3.account!() === null && n3.exec!() === null && n3.noWorkspace!() === false, "API billing: a throwaway home, the key Studio keeps, and nothing of the captain's opened", JSON.stringify([e3, l3.ok && l3.kind]));
   delete process.env.CREW_CLAUDE_BILLING;
@@ -59,6 +69,13 @@ const { codexProvider } = await import("../src/providers/codex");
   ok(!/\(allow file-read\* file-write\* \(subpath[^)]*\.claude/.test(prof) && !prof.includes("(literal " + JSON.stringify(join(home, ".claude.json"))), "no folder or file of the captain's Claude account opens (not ~/.claude, not ~/.claude.json)");
   ok(lastDeny > at(`(regex #"${kcRule}")`) && prof.slice(lastDeny).includes(join(root, "own-claude")), "a captain's own CLAUDE_CONFIG_DIR is denied after everything", prof.slice(lastDeny));
   ok(at("(deny process-exec)") > at("(allow process-exec)") && prof.includes(`(literal ${JSON.stringify(realpathSync(process.execPath))})`) && prof.includes('(literal "/usr/bin/security")') && !prof.slice(at("(deny process-exec)")).includes("/usr/bin/curl"), "exec is narrowed to the allowed programs (files as literals), after the general allow");
+  // the sandbox matches the path a file resolves to: through the round's link the CLI reaches the keychain folder's real path,
+  // so the rules name that path (and the folder as written, when it differs)
+  { const { keychainRules } = await import("../src/providers/needs");
+    const realKc = join(root, "real-kc"), alias = join(root, "alias-kc"); mkdirSync(realKc); symlinkSync(realKc, alias);
+    const rs = keychainRules(alias).map((r) => new RegExp(r)), hit = (p: string) => rs.some((r) => r.test(p)), real = realpathSync(realKc);
+    ok(hit(join(real, "login.keychain-db")) && hit(join(real, "login.keychain-db.sb-1a2b")) && hit(join(alias, "login.keychain-db")) && !hit(join(real, "metadata.keychain-db")) && !hit(join(real, "x", "login.keychain-db")),
+      "the keychain rules match the login keychain database at the folder's real path, where a link leads, and nothing else there", JSON.stringify(keychainRules(alias))); }
   const none = roundProfile({ cwd, tmp: cwd, writes: [], reads: [], proxyPort: 1, toolPort: 2, dataDir: data });
   ok(!none.includes("(deny process-exec)") && !none.includes("keychain"), "without an account (API billing, other providers) nothing is reopened and exec is not narrowed");
   const bad = roundProfile({ cwd, tmp: cwd, writes: [], reads: [], proxyPort: 1, toolPort: 2, dataDir: data, account: { writeFiles: [join(data, "keys.json"), join(data, "x", "y")] } });

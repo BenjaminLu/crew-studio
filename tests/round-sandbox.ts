@@ -80,7 +80,7 @@ ok(r.proxyNoCred !== undefined && r.proxyNoCred !== 407, "the admitted round's s
   ok(/^HTTP\/1.1 407/.test(reply), "the central trusted proxy still rejects a request without its upstream credential");
 }
 { const { isCredentialName } = await import("../src/secure");
-  const creds = (r.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
+  const creds = (r.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY|TOKEN|SECRET/.test(k)).sort();
   ok(JSON.stringify(creds) === JSON.stringify(["CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CREW_TOOL_TOKEN_FILE"]) && r.apiKey === API_KEY && r.oauth === null && /^http:\/\/127\.0\.0\.1:\d+$/.test(r.proxyEnv ?? ""),
     "the round's env holds only its API key's descriptor and a PATH to its tool token (never either value itself, which KERN_PROCARGS2 would expose): no GitHub token, no other key from Studio's environment; its traffic goes to the proxy", JSON.stringify([creds, r.apiKey === API_KEY]));
   ok(!(r.envKeys ?? []).includes("CREW_TOOL_TOKEN") && r.toolTokenEnv == null && r.toolTokenFileIsPath === true, "the tool token is not anywhere in the round's environment; CREW_TOOL_TOKEN_FILE names a 0600 file, and the token lives only there", JSON.stringify([r.toolTokenEnv, r.toolTokenFileIsPath])); }
@@ -126,9 +126,29 @@ ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds =
   ok(a.status === "done" && o.home !== realHome && /\/rounds\/J\w+\/home$/.test(o.home ?? "") && JSON.stringify(creds) === JSON.stringify(["CREW_TOOL_TOKEN_FILE"]) && o.oauth === null && o.apiKey === null && !o.envKeys.includes("CLAUDE_CONFIG_DIR") && o.envKeys.includes("USER"),
     "on the captain's own sign-in the round runs in a throwaway home with no CLAUDE_CONFIG_DIR and the login user (the CLI finds its own keychain item), and Studio hands it no credential", JSON.stringify([a.error, o.home, creds]));
   ok(Object.values(o.accountWrites ?? { x: true }).every((v) => v === false) && Object.values(o.accountReads ?? { x: true }).every((v) => v === false) && !existsSync(join(C, "settings.json")), "none of the captain's Claude files is readable or writable (not ~/.claude, not ~/.claude.json), and no other keychain", JSON.stringify([o.accountWrites, o.accountReads]));
+  { const { accountHomeDir } = await import("../src/runtime/checks");
+    ok(JSON.stringify(o.homeLibrary) === JSON.stringify(["Keychains"]) && o.keychainLink === join(accountHomeDir(), "Library", "Keychains"),
+      "its throwaway home holds Library/Keychains as a link to the captain's keychain folder (security finds the login keychain through HOME), and nothing else of the captain's home", JSON.stringify([o.homeLibrary, o.keychainLink])); }
   ok(o.wroteInside === false && !existsSync(join(wt, "own-account-inside.txt")), "the credentialed CLI never reaches the worktree (its model works on files through Studio's tools)", String(o.wroteInside));
   ok(Array.isArray(o.secretReads) && o.secretReads.length === 0 && o.key === null, "every entry of the deny list stays closed", JSON.stringify(o.secretReads));
   ok(o.exec?.["/bin/cat"] === false && o.exec?.["/usr/bin/curl"] === false && o.exec?.["/usr/bin/git"] === false && o.exec?.[process.execPath] === true, "the round may run only the CLI, Studio's runtime and the keychain command: no other program starts", JSON.stringify(o.exec)); }
+// the keychain link under the real seatbelt, with a stand-in keychain folder (never the captain's): the sandbox checks the path
+// a file resolves to, so through the round home's link only the login keychain database and what is written beside it open
+if (process.platform === "darwin") {
+  const { roundProfile } = await import("../src/runtime/checks"); const { keychainRules } = await import("../src/providers/needs");
+  const acct = mkdtempSync(join(tmpdir(), "crew-kcacct-")), kc = join(acct, "Library", "Keychains"); mkdirSync(kc, { recursive: true });
+  writeFileSync(join(kc, "login.keychain-db"), "LOGIN-DB"); writeFileSync(join(kc, "metadata.keychain-db"), "OTHER");
+  const box = join(data, "rounds", "Jkclink"), h = join(box, "home"), t = join(box, "tmp"); mkdirSync(join(h, "Library"), { recursive: true }); mkdirSync(t, { recursive: true });
+  const { symlinkSync } = await import("node:fs"); symlinkSync(kc, join(h, "Library", "Keychains")); // as written (under /var/folders, a link to /private/var)
+  const prof = join(box, "round.sb"); writeFileSync(prof, roundProfile({ cwd: t, tmp: t, writes: [h], reads: [], proxyPort: 1, toolPort: 2, dataDir: data, protect: [acct], account: { writeRegex: keychainRules(kc) } }));
+  const sh = (cmd: string) => Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", prof, "/bin/sh", "-c", cmd], { env: { PATH: "/usr/bin:/bin", HOME: h }, stdout: "pipe", stderr: "pipe" });
+  const via = join(h, "Library", "Keychains");
+  const read = sh(`cat ${JSON.stringify(join(via, "login.keychain-db"))}`), other = sh(`cat ${JSON.stringify(join(via, "metadata.keychain-db"))}`);
+  const refresh = sh(`echo x > ${JSON.stringify(join(via, "login.keychain-db.sb-1a2b"))}`), stray = sh(`echo x > ${JSON.stringify(join(via, "stray.txt"))}`);
+  ok(read.exitCode === 0 && read.stdout.toString() === "LOGIN-DB" && refresh.exitCode === 0, "through the round home's link the login keychain database opens, and the CLI can write its refresh beside it", JSON.stringify([read.exitCode, read.stderr.toString(), refresh.exitCode]));
+  ok(other.exitCode !== 0 && stray.exitCode !== 0 && !existsSync(join(kc, "stray.txt")), "through the same link nothing else in the keychain folder opens or can be written", JSON.stringify([other.exitCode, stray.exitCode]));
+  const { rmSync } = await import("node:fs"); rmSync(box, { recursive: true, force: true }); // removes the link, never the folder it leads to
+}
 // a provider that cannot be sandboxed is refused; only the stub is sandbox-free
 { const fake = { id: "fake", model: "m", start: () => { throw new Error("must not start"); } } as any;
   const f = await agents.run({ kind: "t", title: "fake", system: "s", text: "x", tools: [], provider: fake, timeoutMs: 5000, sandbox: { writes: [] } });
@@ -156,7 +176,7 @@ ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds =
   saveKeys({ compatBaseUrl: `http://127.0.0.1:${api.port}/v1` });
   const seen: any[] = []; egress.onEvent = (e) => seen.push(e);
   const { compatProvider } = await import("../src/providers/http");
-  const { harness, until, Y } = await import("./rt-harness");
+  const { harness, until, Y } = await import("./rt-harness"); process.env.ANTHROPIC_API_KEY = API_KEY; // the harness clears provider keys on import; the rounds below run on API billing
   const H = await harness([Y({ id: "http", name: "http", roles: [{ id: "w", label: "W", skill: "x" }], nodes: [{ id: "a", kind: "agent", label: "A", role: "w", mode: "test", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["a", "e"]] })]);
   H.agents.egress = egress; H.agents.toolUrl = () => H.toolUrl; (H.engine as any).deps.provider = () => compatProvider("m");
   const run = H.engine.start({ workflow: "http", text: "x" }); await until(() => ["succeeded", "failed"].includes(H.engine.get(run.id)!.status), 20000);
