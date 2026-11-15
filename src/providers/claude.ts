@@ -3,7 +3,7 @@
 //   CREW_CLAUDE_BIN   executable (default "claude"); a .mjs/.ts path runs under bun (test stub)
 //   CREW_CLAUDE_MODEL model (default claude-sonnet-5-5)
 import { blocksText } from "../tool-content";
-import { claudeNeeds,claudeSettings,type ApprovedClaudeConfig } from "./needs";
+import { claudeNeeds,claudeOnPath,claudeSettings,type ApprovedClaudeConfig } from "./needs";
 import {claudeFailureCode,nativeClaude} from './claude-native';
 import { processSession, type LineParser } from "./proc";
 import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec, type Usage } from "./types";
@@ -15,9 +15,11 @@ export function claudeUsage(m: any): Usage {
     outTokens: typeof u.output_tokens === "number" ? u.output_tokens : null, cacheReadTokens: typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : null };
 }
 export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-sonnet-5-5", bin = process.env.CREW_CLAUDE_BIN ?? "claude", approved?:ApprovedClaudeConfig): Provider {
+  // the CLI itself, never a shell launcher named claude on PATH (claudeOnPath): the round's exec allowlist is made for what runs
+  const exe = () => claudeOnPath(bin) ?? bin;
   return {
     id: "claude", model, reasoningEffort:approved?.effort,envKeys: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR"],
-    sandboxNeeds: () => claudeNeeds(bin, ["api.anthropic.com", "console.anthropic.com", "claude.ai", "statsig.anthropic.com", "mcp-proxy.anthropic.com"],approved),
+    sandboxNeeds: () => claudeNeeds(exe(), ["api.anthropic.com", "console.anthropic.com", "claude.ai", "statsig.anthropic.com", "mcp-proxy.anthropic.com"],approved),
     start(systemPrompt: string, tools: ToolSpec[], ctx: ProviderCtx) {
       if (!ctx.tokenFile) throw new Error("Claude provider requires a private tool-token file");
       if(approved&&!approved.live())throw new Error('Claude native verification expired or was revoked');
@@ -31,14 +33,19 @@ export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-
         // settings, so none of its CLAUDE.md memory, hooks, plugins or permission rules load (src/providers/needs.ts)
         "--setting-sources", "", "--settings", JSON.stringify(claudeSettings(approved ?? { model, effort: null }))];
       if(approved)args.push('--permission-mode','dontAsk','--permission-prompts','none','--no-chrome',...(approved.effort?['--effort',approved.effort]:[]));
-      const cmd = () => (/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
+      const run = exe(), cmd = () => (/\.(mjs|js|ts)$/.test(run) ? [process.execPath, run, ...args] : [run, ...args]);
       const env={...ctx.env};if(approved){for(const k of['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_EFFORT_LEVEL'])delete env[k];const login=approved.login();if(!login.ok)throw new Error('Claude isolated login unavailable');Object.assign(env,login.env,approved.effort?{CLAUDE_CODE_EFFORT_LEVEL:approved.effort}:{});}
-      const session=processSession(cmd, ctx.cwd, env,()=>parser(approved,tools),ctx.sandbox,{requireSuccessfulExit:!!approved,credentialFds:true});
+      // the CLI announces itself (its init) within seconds; one that has not within the bound never will (a launcher looping, a
+      // start blocked by the round's sandbox): the round fails then, with what the CLI wrote to stderr, never at the round's limit
+      const session=processSession(cmd, ctx.cwd, env,()=>parser(approved,tools),ctx.sandbox,{requireSuccessfulExit:!!approved,credentialFds:true,
+        startDeadline:{ms:claudeInitTimeoutMs(),started:(m)=>m?.type==='system'&&m.subtype==='init',what:'The Claude CLI'}});
       return {interrupt:()=>session.interrupt(),async *send(text:string){try{yield* session.send(text);}finally{session.interrupt();}}};
     },
   };
 }
 
+/** How long a round waits for the CLI's init before it fails: 90 s (CREW_CLAUDE_INIT_TIMEOUT_MS, 1 s to 10 min, for tests). */
+export const claudeInitTimeoutMs = () => { const v = Number(process.env.CREW_CLAUDE_INIT_TIMEOUT_MS); return Number.isFinite(v) && v >= 1000 && v <= 600_000 ? v : 90_000; };
 const short = (n: string) => n.replace(/^mcp__studio__/, "");
 function parser(approved?:ApprovedClaudeConfig,tools:ToolSpec[]=[]): LineParser {
   let sawDelta = false, text = "",init=false,failed=false,resultSeen=false,locked=false;
