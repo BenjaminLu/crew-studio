@@ -35,7 +35,7 @@ const { codexProvider } = await import("../src/providers/codex");
     ok(readdirSync(dir).every((x) => x === "Library" || x === ".claude-config"), "subscription: nothing else of the captain's home is placed in the round's home", JSON.stringify(readdirSync(dir)));
     n.home(dir); ok(existsSync(link) && lstatSync(link).isSymbolicLink() && readlinkSync(link) === target, "setting up the same home again keeps the one link"); }
   ok(!("dirs" in acct!) && !("files" in acct!) && (acct!.writeRegex ?? []).length === 2 && (acct!.deny ?? []).length === 0, "subscription: the round opens no folder or file of the captain's, only (on macOS) the login keychain database", JSON.stringify(acct));
-  { const kc = join("/Users/someone", "Library/Keychains"), re = new RegExp(`^${kc}/login\\.keychain(-db)?([.-][^/]*)?$`);
+  { const kc = join(root, "someone", "Library/Keychains"), re = new RegExp(`^${kc}/login\\.keychain(-db)?([.-][^/]*)?$`);
     ok(re.test(join(kc, "login.keychain-db")) && re.test(join(kc, "login.keychain-db.sb-1a2b")) && !re.test(join(kc, "metadata.keychain-db")) && !re.test(join(kc, "ABC/keychain-2.db")), "on macOS the keychain rule names only the login keychain database and what is written beside it (the pattern Studio writes)"); }
   ok(JSON.stringify(exec.slice(-3)) === JSON.stringify([process.execPath, "/bin/sh", "/usr/bin/security"]) && !exec.includes("/usr/bin/git") && !exec.includes("/bin/bash"), "subscription: the round may run only the CLI, Studio's runtime and the keychain command (through /bin/sh)", JSON.stringify(exec));
   process.env.CLAUDE_CONFIG_DIR = join(root, "own-claude");
