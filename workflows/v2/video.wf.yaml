@@ -3,6 +3,7 @@
   "name": "Video",
   "kind": "video",
   "version": 1,
+  "lan": {"refuse": "a film is binary output (MP4), which a hand-back does not carry, and its render runs a browser over the agent's page"},
   "description": "A short film: an editor writes it as HTML, Studio renders the MP4 (the renderer is an optional install), checks it, and you accept it into the Library.",
   "intent": {
     "keywords": [

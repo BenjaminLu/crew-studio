@@ -5,20 +5,28 @@
 //   CREW_TOOL_TOKEN   token the Studio server issued for this question
 //   CREW_STUDIO_SOCKET  instead of the URL: a private unix socket a Studio-owned session listens on
 //                       (a fresh Claude Firstmate's native tools), same token header
+//   --grant-file <path>  an external CLI grant the captain issued on the board (docs/units/cli-mcp-grant.md): the token is
+//                        read from that 0600 file, never from the command line; --url <studio> when Studio is not on 4210
+//   `claude mcp add studio -- crew-studio mcp --grant-file <path>` (from source: bun src/mcp.ts --grant-file <path>)
 import { mcpContent } from "./tool-content";
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 
-const URL_ = process.env.CREW_STUDIO_URL ?? "http://127.0.0.1:4210";
-// a Studio-owned session hands the token as a 0600 file (CREW_TOOL_TOKEN_FILE), so it is never on a command line
-const TOKEN = process.env.CREW_TOOL_TOKEN_FILE ? (() => { try { return readFileSync(process.env.CREW_TOOL_TOKEN_FILE!, "utf8").trim(); } catch { return ""; } })() : process.env.CREW_TOOL_TOKEN ?? "";
+const flag = (name: string) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] ?? "" : null; };
+const GRANT_FILE = flag("--grant-file");
+if (GRANT_FILE === "") { process.stderr.write("crew-studio mcp: --grant-file needs a path\n"); process.exit(2); }
+const URL_ = flag("--url") || process.env.CREW_STUDIO_URL || "http://127.0.0.1:4210";
+const readToken = (f: string) => { try { return readFileSync(f, "utf8").trim(); } catch { return ""; } };
+// a Studio-owned session hands the token as a 0600 file (CREW_TOOL_TOKEN_FILE), so it is never on a command line; so does a grant
+const TOKEN = GRANT_FILE ? readToken(GRANT_FILE) : process.env.CREW_TOOL_TOKEN_FILE ? readToken(process.env.CREW_TOOL_TOKEN_FILE) : process.env.CREW_TOOL_TOKEN ?? "";
+if (GRANT_FILE && !TOKEN) { process.stderr.write(`crew-studio mcp: cannot read the grant file ${GRANT_FILE} (revoked, or never issued)\n`); process.exit(2); }
 const SOCKET = process.env.CREW_STUDIO_SOCKET ?? "";
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 const call = async (path: string, body?: unknown) => {
   const r = await fetch((SOCKET ? "http://localhost" : URL_) + path, { ...(SOCKET ? { unix: SOCKET } : {}), method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-tool-token": TOKEN },
     body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await r.text();
-  if (!r.ok) throw new Error(text.slice(0, 500) || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error(GRANT_FILE ? `HTTP ${r.status} ${text.slice(0, 500)}` : text.slice(0, 500) || `HTTP ${r.status}`);
   return JSON.parse(text);
 };
 

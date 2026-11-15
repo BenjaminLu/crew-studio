@@ -44,6 +44,9 @@ export type SCard = {
   competition?: import("../domain/startup-recursion").StartupCompetition | { untrusted: true };
   /** "Open this pull request?" (domain/code-publish.ts): the exact title and body Studio will open, and where */
   pullRequest?: PullRequestPreview | null;
+  /** a watched pull request's follow-through card (src/pr-watch-follow.ts, docs/units/pr-watch.md "Follow-through"): who to
+   *  send it to, the drafted message, what was sent and what happened on GitHub; the Inbox shows it in its own layout */
+  follow?: Record<string, any> | null;
   /** a merge card's review room, as the card shows it (a view only, never stored, never readiness): src/domain/review-room.ts */
   reviewRoom?: Record<string, any> | null;
   /** a dispatch card's crew (docs/design/crew-seats.md): who runs each node, and the efforts the captain may change for this run only */

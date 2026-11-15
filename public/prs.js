@@ -1,0 +1,657 @@
+// Pull requests (#/prs, docs/units/pr-watch.md): one list of every open pull request the captain is on, across projects
+// and repositories, what each waits for and who. Data from GET /api/prs (the last refresh; the server reads GitHub, never
+// this page). The page asks for a refresh when it opens and on Refresh; the server also refreshes every 5 minutes and
+// tells the page (live event "prs"). No read/unread state: a row that changed in the latest refresh carries a left bar
+// and what changed until it changes again. Every text from GitHub is set as text (h() text nodes), never as HTML.
+// Writes: the watch list, settings, order, dependencies and groups (Studio's own record); the dependency block on GitHub
+// only through the captain-only card POST /api/prs/apply starts. Loaded before backbone.js.
+(() => {
+P.grip ??= '<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>';
+const PW = { data: null, err: null, busy: false, tab: "all", onPage: false, adding: false, addErr: null, addDraft: "", drag: null };
+const getJ = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(T(j.error || `HTTP ${r.status}`, j.tw || j.error || `HTTP ${r.status}`)); return j; };
+const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error && typeof j.error === "string") throw new Error(T(j.error || `HTTP ${r.status}`, j.tw || j.error || `HTTP ${r.status}`)); return j; };
+const LX = (o) => (o ? T(o.en ?? "", o.tw ?? o.en ?? "") : "");
+const ID = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#([1-9]\d{0,9})$/;
+// addresses are built here from validated parts; nothing GitHub returned is used as an address
+const ghPr = (id) => { const m = ID.exec(String(id || "")); return m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : null; };
+const ghIssue = (ref) => { const m = ID.exec(String(ref || "")); return m ? `https://github.com/${m[1]}/${m[2]}/issues/${m[3]}` : null; };
+const ghRepo = (repo) => (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo || "")) ? `https://github.com/${repo}` : null);
+// a pull request named compactly: "#n" in the row's own repository, "repo#n" elsewhere (the full name is the title)
+const short = (id, repo) => { const m = ID.exec(String(id || "")); if (!m) return String(id || ""); return repo && `${m[1]}/${m[2]}`.toLowerCase() === String(repo).toLowerCase() ? `#${m[3]}` : `${m[2]}#${m[3]}`; };
+const extLink = (href, text, attrs = {}) => href ? h("a", { href, target: "_blank", rel: "noopener noreferrer", ...attrs }, text) : h("span", attrs, text);
+const MARKS = ["", "p2", "p3", "p6"];
+const markClass = (s) => { let x = 0; for (const c of String(s)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return MARKS[x % MARKS.length]; };
+const pmark = (project) => project ? h("span", { class: `pmark ${markClass(project.id)}`.trim(), title: T(`Project ${project.name}`, `專案 ${project.name}`) }, String(project.name || project.id).slice(0, 1).toUpperCase())
+  : h("span", { class: "pmark pw-unreg", title: T("Not a registered Studio project", "沒有註冊成 Studio 專案的 repo") }, "·");
+const ago = (iso) => { const t = Date.parse(iso || ""); if (!t) return ""; const m = Math.max(0, Math.round((Date.now() - t) / 60000)); return m === 0 ? T("just now", "剛剛") : m < 60 ? T(`${m} min ago`, `${m} 分鐘前`) : T(`${Math.round(m / 60)} h ago`, `${Math.round(m / 60)} 小時前`); };
+const day = (iso) => { const d = new Date(iso || ""); return isNaN(d) ? "" : `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, "0")}`; };
+// one toast at a time: a new one replaces the last instead of stacking on it
+function flash(msg, link) { document.querySelectorAll("body > .toast").forEach((t) => t.remove()); toast(link ? h("span", {}, msg, " ", h("a", { href: link.href, class: "pw-toastlink" }, link.text)) : msg); }
+async function copy(text) { try { await navigator.clipboard.writeText(text); return true; } catch {
+  const ta = h("textarea", { style: "position:fixed;left:-9999px" }); ta.value = text; document.body.append(ta); ta.select(); let ok = false; try { ok = document.execCommand("copy"); } catch {} ta.remove(); return ok; } }
+
+// ---------- words ----------
+const whoWord = (w) => w === "captain" ? T("you", "你") : w === "(rules unreadable)" ? T("rules unreadable", "讀不到規則") : w === "(GitHub blocks the merge)" ? T("the merge box on GitHub", "GitHub 的 merge 區塊") : w === "(no evidence source set)" ? T("no evidence source set", "未設定證據來源") : w;
+const missWord = (m) => m.kind === "lastpush" ? T("an approval of the latest push (not by the pusher)", "最後一次 push 的 approve（不能是推的人）") : m.kind === "count" ? T(`${m.n} more approval${m.n === 1 ? "" : "s"}`, `approve（還要 ${m.n} 個）`) : m.kind === "owner" ? m.who.join(T(" or ", " 或 ")) : m.kind === "team" ? m.who : m.kind === "github" ? (m.who.length ? m.who.join(T(" or ", " 或 ")) : T("a review GitHub still requires", "GitHub 還要求的 review")) : T("rules unreadable", "讀不到規則");
+const TONE = { nudge: "human", hold: "", fix: "bad", review: "", dependency: "warn", deploy: "warn", test: "warn", approve: "human", merge: "ok" };
+function nextWord(n) {
+  if (n.rule === "draft") return T("On hold (draft)", "暫緩（draft）");
+  if (n.rule === "evidence-asked") return T("Waits for the QA test", "等 QA 實測");
+  if (n.rule === "re-review") return T("Ask the reviewers to look again", "請 reviewer 重驗");
+  if (n.rule === "changes") return T("Fix the review comments", "修正 reviewer 意見");
+  if (n.rule === "failed") return T("Fix the failing tests", "修正失敗的測試");
+  if (n.rule === "required") return T("Wait for the review", "等 review");
+  if (n.rule === "dependency") return T("Wait for the dependency", "等依賴");
+  if (n.rule === "environment") return T("Deploy for testing", "部署去測");
+  if (n.rule === "evidence") return n.reason === "unknown-commit" ? T("Test (commit not named)", "測試（沒指明 commit）") : n.since ? T(`Test only the change since ${n.since}`, `只驗 ${n.since} 之後的改動`) : n.reason === "unclassified" ? T("Confirm the test verdict", "確認測試結論") : n.reason === "code-only" ? T("Test (code review only so far)", "測試（目前只審了 code）") : T("Test", "測試");
+  if (n.rule === "approvals") return T("Approve", "等 approve");
+  if (n.rule === "blocked") return T("Blocked on GitHub", "GitHub 擋住 merge");
+  if (n.rule === "unread") return T("On hold: not all reviews or comments read (see GitHub)", "暫緩：沒讀到全部 review 或留言（看 GitHub）");
+  return n.rule === "ready" ? T("Ready to merge", "可合併") : n.rule; // a rule this page does not know is named, never "ready"
+}
+const TABS = [["all", "All", "全部"], ["approve", "Approve", "等 approve"], ["test", "Test", "等測試"], ["fix", "Fix", "等修正"], ["dependency", "Dependency", "等依賴"], ["merge", "Mergeable", "可合併"], ["hold", "On hold", "暫緩"]];
+// "look again" (the follow-through): after Fix, as in the design; Dependency stays (rows can wait on another pull request)
+TABS.splice(4, 0, ["nudge", "Re-review", "等重驗"]);
+// merged pull requests, followed until production: their own two tabs after the open ones
+const SHIP_TABS = [["merged", "Merged, not live", "已合併未上線"], ["live", "Live", "已上線"]];
+const isShip = (tab) => tab === "merged" || tab === "live";
+const span = (ms) => { const h = Math.max(0, Math.round(ms / 3600000)); if (ms < 3600000) { const m = Math.max(1, Math.round(ms / 60000)); return T(`${m} min`, `${m} 分鐘`); } return h < 24 ? T(`${h} h`, `${h} 小時`) : T(`${Math.round(h / 24)} d`, `${Math.round(h / 24)} 天`); };
+const reviewWord = (s) => s === "APPROVED" ? T("approved", "approve") : s === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : s === "DISMISSED" ? T("dismissed", "撤銷") : T("commented", "留言");
+const verdictWord = (v) => ({ pass: T("pass", "通過"), conditional: T("conditional pass", "有條件通過"), fail: T("fail", "不通過"), "code-only": T("code review only", "只審 code"), unclassified: T("unclassified", "無法分類") })[v] || v;
+function changeWord(w) {
+  switch (w.k) {
+    case "new": return T("joined the list", "加入清單");
+    case "head": return T(`new commits (head ${w.sha})`, `有新 commit（head ${w.sha}）`);
+    case "title": return T("title changed", "標題改了");
+    case "draft": return w.draft ? T("back to draft", "改回 draft") : T("ready for review", "轉為 ready");
+    case "review": return T(`${w.login} ${reviewWord(w.state.split(":")[0])}`, `${w.login} ${reviewWord(w.state.split(":")[0])}`);
+    case "evidence": return T(`test evidence: ${verdictWord(String(w.verdict).split(":")[0])}`, `測試證據：${verdictWord(String(w.verdict).split(":")[0])}`);
+    case "env": return w.on ? T(`runs on ${w.name}`, `${w.name} 跑著它`) : T(`left ${w.name}`, `${w.name} 不再跑它`);
+    case "next": return T(`next step ${w.from} → ${w.to}`, `下一步 ${w.from} → ${w.to}`);
+    case "ci": return CI[w.state] ? T(`CI ${CI[w.state][1]}`, `CI ${CI[w.state][2]}`) : "";
+  }
+  return "";
+}
+
+// ---------- data ----------
+function setCount(n) { const c = document.getElementById("navPrs"); if (!c) return; c.hidden = !n; c.textContent = n ? String(n) : ""; }
+// a live update never redraws the list under a drag: it waits for the drop
+// a live update never redraws the list under a drag, and gives the keyboard focus back to the row that had it
+// a refresh that lands while a row is dragged or its actions menu is open waits: redrawing would orphan them
+const redraw = () => { if (S.route?.name !== "prs") return; if (PW.drag || closeMenu) { PW.later = true; return; }
+  const had = document.activeElement?.closest?.("[data-prs-row]")?.dataset.prsRow; render();
+  if (had && document.activeElement === document.body) document.querySelector(`[data-prs-row="${CSS.escape(had)}"]`)?.focus({ preventScroll: true }); };
+async function load() {
+  try { PW.data = await getJ("/api/prs"); PW.err = null; setCount(PW.data.count); } catch (e) { PW.err = e.message; }
+  redraw();
+}
+async function refresh() {
+  if (PW.busy) return; PW.busy = true; redraw();
+  try { PW.data = await postJ("/api/prs/refresh", {}); PW.err = null; setCount(PW.data.count); } catch (e) { PW.err = e.message; } finally { PW.busy = false; }
+  redraw();
+}
+async function act(u, b, done) {
+  try { PW.data = await postJ(u, b); setCount(PW.data.count); if (done) flash(done); } catch (e) { flash(e.message); }
+  redraw();
+}
+const enter = () => { const on = S.route?.name === "prs"; if (on && !PW.onPage) { PW.onPage = true; load().then(refresh); } else if (!on) { PW.onPage = false; closeMenu?.(); } }; // leaving the page closes an open actions menu (it would float over the next page and hold redraws back)
+addEventListener("hashchange", () => setTimeout(enter, 0)); setTimeout(enter, 0);
+fetch("/api/prs/count").then((r) => (r.ok ? r.json() : null)).then((j) => j && setCount(j.count)).catch(() => {});
+window.liveListen?.("prs", (m) => { let d = {}; try { d = JSON.parse(m.data); } catch {} if (typeof d.count === "number") setCount(d.count); if (S.route?.name === "prs" && !d.refreshing) load(); });
+setInterval(() => { const el = document.querySelector("[data-prs-refreshed]"); if (el && PW.data) el.textContent = refreshedText(PW.data); }, 30000);
+const refreshedText = (d) => d.refreshedAt ? T(`refreshed ${ago(d.refreshedAt)} · every ${Math.round(d.intervalMs / 60000) || 1} min`, `${ago(d.refreshedAt)}刷新 · 每 ${Math.round(d.intervalMs / 60000) || 1} 分鐘`) : T("not refreshed yet", "還沒刷新");
+
+// ---------- the page ----------
+function view() {
+  const d = PW.data;
+  const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Pull requests", "Pull requests")),
+    h("p", {}, T("One list across projects and repositories. Paste a repository address to watch the pull requests you opened or are assigned to there; paste a pull request address to watch just that one.", "一份清單，跨專案、跨 repo。貼上 repo 網址就追蹤你在那個 repo 開的或被指派的 PR；貼上 PR 網址就只追蹤那一個。"))));
+  if (!d) return h("div", { class: "page pw-page", "data-prs-page": "", "data-loading": "1" }, head, PW.err ? h("div", { class: "card x-pad pw-loaderr", role: "alert", "data-prs-load-error": "" }, h("span", {}, PW.err),
+    h("button", { class: "btn", "data-prs-retry": "", onclick: () => { PW.err = null; render(); load().then(refresh); } }, icon("refresh"), T("Try again", "再試一次"))) : h("div", { class: "skel", style: "height:180px" }));
+  const rows = d.rows || [], counts = {}; for (const r of rows) counts[r.next.kind] = (counts[r.next.kind] || 0) + 1;
+  const shown = rows.filter((r) => PW.tab === "all" || r.next.kind === PW.tab);
+  return h("div", { class: "page pw-page", "data-prs-page": "" }, head,
+    h("section", { "aria-labelledby": "pwListH" },
+      h("div", { class: "sec-head" }, h("h2", { id: "pwListH", class: "sr" }, T("The list", "清單")), h("span", { class: "x-grow" }),
+        h("span", { class: "faint", "data-prs-refreshed": "" }, PW.busy || d.refreshing ? T("reading GitHub…", "讀取 GitHub 中…") : refreshedText(d)),
+        h("button", { class: "btn", "data-prs-refresh": "", disabled: PW.busy, onclick: refresh }, icon("refresh"), PW.busy ? T("Reading…", "讀取中…") : T("Refresh", "重新整理")),
+        h("button", { class: "btn ghost", "data-prs-md": "", title: T("Copy the rows this tab shows as Markdown", "把這個分頁的列複製成 Markdown"), onclick: async () => { flash(await copy(isShip(PW.tab) ? shipMarkdown(shipRows()) : markdown(visibleRows())) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); } }, icon("copy"), T("Copy as Markdown", "複製成 Markdown")),
+        h("button", { class: "btn ghost icon", "data-prs-settings": "", "aria-label": T("Settings", "設定"), title: T("Settings", "設定"), onclick: settingsModal }, icon("tool"))),
+      statusLine(d),
+      watchCard(d),
+      proposalCard(d),
+      h("div", { class: "tb-tabs pw-tabs", role: "group", "aria-label": T("Filter by next step", "依下一步篩選") }, TABS.map(([k, en, tw]) =>
+        h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw), h("span", { class: "tb-count num" }, String(k === "all" ? rows.length : counts[k] || 0)))),
+        h("span", { class: "pw-sep", "aria-hidden": "true" }),
+        SHIP_TABS.map(([k, en, tw]) => h("button", { class: "tb-tab", "aria-pressed": String(PW.tab === k), "data-prs-tab": k, onclick: () => { PW.tab = k; render(); } }, T(en, tw),
+          h("span", { class: "tb-count num" }, String((d.merged || []).filter((r) => r.tab === k).length)), h("span", { class: "pw-new" }, T("new", "新"))))),
+      isShip(PW.tab) ? shipTable(d) : h("div", { class: "card pw-tbl", role: "table", "aria-label": T("Pull requests", "Pull requests"), "data-prs-table": "" },
+        h("div", { class: "pw-row h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Next step · waits on", "下一步 · 等誰"), T("Missing", "還缺"), T("CI", "CI"), T("Depends on", "依賴"), T("Test evidence", "測試證據"), T("Environments", "環境"), T("Reviews", "Reviews"), T("Issues", "Issue"), T("Group", "組")].map((t) => h("span", { role: "columnheader" }, t))),
+        shown.length ? shown.map((r) => rowView(r, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, rows.length ? T("No pull request under this filter.", "這個篩選下沒有 pull request。") : T("Nothing watched yet, or nothing open: paste a repository or pull request address above.", "還沒有追蹤任何東西，或沒有開著的 PR：在上方貼上 repo 或 PR 網址。"))),
+      isShip(PW.tab) ? h("p", { class: "pw-foot faint", "data-prs-ship-foot": "" }, T("After the merge Studio keeps following: the environment settings say whether each environment has the merge commit. A row in every production environment moves to Live and is dropped 14 days later. A row a merged revert pull request cancels is dropped; press × to drop one yourself (recorded as excluded, and can be restored). When Studio cannot read production's version, Mark in production moves a row to Live by hand (also hidden 14 days later; Undo on Live takes it back).",
+        "合併之後繼續追蹤：用環境設定判斷 merge commit 有沒有進到每個環境；進到所有 production 環境就移到「已上線」，14 天後收起。被已合併的 revert PR 撤回的會收起；也可以按 × 自己移除（記成「已排除」，可還原）。看不到 production 版本時，按「標記已上線」手動移到「已上線」（同樣 14 天後收起；在「已上線」按「撤銷」可移回）。")) : h("p", { class: "pw-foot faint" }, T("Hover a row and press × to drop it (a pull request that came in through its repository is recorded as excluded, and can be restored). Drag the handle (or Alt+↑/↓) to reorder; click a row for its details. The next step is the first matching rule, top to bottom; no model decides it.",
+        "滑過一列按 × 從清單移除（從 repo 帶進來的 PR 會記成「已排除」，可還原）。拖拉把手（或 Alt+↑/↓）調整順序；點一列看細節。下一步由固定規則從上往下取第一條符合的，不靠模型。"))));
+}
+function statusLine(d) {
+  const lines = [];
+  if (!d.enabled) lines.push(T("The pull request list is off in this Studio (CREW_PR_WATCH=0).", "這個 Studio 關閉了 PR 列表（CREW_PR_WATCH=0）。"));
+  else if (!d.connected && (d.watch.repos.length || d.watch.prs.length)) lines.push(T("GitHub is not connected: Studio has no token (CREW_GITHUB_TOKEN, a token saved in Studio, or gh auth token).", "GitHub 尚未連線：Studio 沒有權杖（CREW_GITHUB_TOKEN、存在 Studio 的權杖，或 gh auth token）。"));
+  if (d.settingsWarning) lines.push(LX(d.settingsWarning));
+  if (d.error) lines.push(LX(d.error) + (d.backoffUntil ? T(` Next try after ${new Date(d.backoffUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`, ` ${new Date(d.backoffUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} 之後再試。`) : ""));
+  for (const e of d.errors || []) lines.push(`${e.target}: ${LX(e)}`);
+  if (PW.err) lines.push(PW.err);
+  return lines.length ? h("div", { class: "pw-status", role: "status", "data-prs-status": "" }, lines.map((l) => h("div", {}, icon("alert", "ic sm"), h("span", {}, l)))) : null;
+}
+function watchCard(d) {
+  // the address being typed lives in PW, so a redraw (Refresh, a filter, a live update) never clears it before it is sent
+  const input = h("input", { class: "input", id: "pwAdd", type: "url", maxlength: 300, autocomplete: "off", value: PW.addDraft || "", oninput: (e) => { PW.addDraft = e.target.value; }, "aria-label": T("GitHub repository or pull request address", "GitHub repo 或 pull request 網址"),
+    placeholder: T("Paste a GitHub repository or pull request address: https://github.com/<owner>/<repo> or …/pull/<n>", "貼上 GitHub repo 或 PR 網址：https://github.com/<owner>/<repo> 或 …/pull/<n>") });
+  const add = async (e) => { e.preventDefault(); const url = input.value.trim(); if (!url || PW.adding) return; PW.adding = true; PW.addErr = null; let added = false;
+    try { PW.data = await postJ("/api/prs/watch", { url }); setCount(PW.data.count); const a = PW.data.added;
+      flash(a?.kind === "pr" ? T(`Watching ${a.repo}#${a.number}`, `開始追蹤 ${a.repo}#${a.number}`) : T(`Watching ${a?.repo}: the pull requests you opened or are assigned to, read on the next refresh`, `開始追蹤 ${a?.repo}：你開的或被指派的 PR，下一次刷新讀取`));
+      input.value = ""; PW.addDraft = ""; added = true; setTimeout(load, 1500); }
+    catch (err) { PW.addErr = err.message; } finally { PW.adding = false; render();
+      // a live redraw while the request ran may have carried the address into a new field: clear the one on the page now
+      if (added) { const cur = document.getElementById("pwAdd"); if (cur) cur.value = ""; } } };
+  const chips = [
+    ...d.watch.repos.map((w) => h("span", { class: "chip", "data-prs-repo": w.repo }, pmark(w.project), extLink(ghRepo(w.repo), w.repo), h("span", { class: "faint num" }, String(w.count)),
+      h("button", { class: "pw-x", "data-prs-unwatch-repo": w.repo, "aria-label": T(`Stop watching ${w.repo}`, `不再追蹤 ${w.repo}`), title: T("Stop watching this repository", "不再追蹤這個 repo"), onclick: () => act("/api/prs/unwatch", { repo: w.repo }, T(`Stopped watching ${w.repo}`, `不再追蹤 ${w.repo}`)) }, icon("x")))),
+    ...d.watch.prs.map((w) => h("span", { class: "chip", "data-prs-single": w.id }, icon("pr", "ic sm"), extLink(ghPr(w.id), w.id), w.state && w.state !== "open" ? h("span", { class: "faint" }, w.state === "merged" ? T("merged", "已合併") : T("closed", "已關閉")) : null,
+      h("button", { class: "pw-x", "data-prs-unwatch-pr": w.id, "aria-label": T(`Stop watching ${w.id}`, `不再追蹤 ${w.id}`), title: T("Stop watching this pull request", "不再追蹤這個 PR"), onclick: () => act("/api/prs/unwatch", { pr: w.id }, T(`Stopped watching ${w.id}`, `不再追蹤 ${w.id}`)) }, icon("x")))),
+    d.watch.excluded.length ? h("button", { class: "chip", "data-prs-restore": "", title: d.watch.excluded.join(", "), onclick: () => act("/api/prs/restore", {}, T("Excluded pull requests restored", "已還原排除的 PR")) },
+      T(`excluded ${d.watch.excluded.length} · restore`, `已排除 ${d.watch.excluded.length} 個 · 還原`)) : null];
+  return h("div", { class: "card pw-watch" },
+    h("form", { class: "pw-add", "data-prs-add": "", onsubmit: add }, icon("link"), input, h("button", { class: "btn primary", type: "submit", disabled: PW.adding }, PW.adding ? T("Adding…", "加入中…") : T("Add", "加入"))),
+    PW.addErr ? h("p", { class: "pw-err", role: "alert", "data-prs-add-error": "" }, PW.addErr) : null,
+    chips.filter(Boolean).length ? h("div", { class: "chips" }, chips) : null);
+}
+function proposalCard(d) {
+  const p = d.proposal; if (!p?.pending || !d.rows.length) return null;
+  const deps = p.deps.flatMap((x) => x.on.map((o) => ({ pr: x.pr, on: o.on, why: o.why })));
+  return h("div", { class: "card pw-prop", "data-prs-proposal": "" },
+    h("span", { class: "need-ic pw-prop-ic" }, icon("wand")),
+    h("div", {}, h("b", {}, deps.length ? T(`Proposed order and ${deps.length} dependenc${deps.length === 1 ? "y" : "ies"}, not accepted yet`, `建議的順序與 ${deps.length} 個依賴，尚未確認`) : T("Proposed order, not accepted yet", "建議的順序，尚未確認")),
+      h("ul", { class: "pw-why" }, deps.map((x) => h("li", { "data-prs-proposed-dep": `${x.pr}>${x.on}` }, h("b", {}, x.pr), T(" depends on ", " 依賴 "), h("b", {}, x.on), ": ", x.why)),
+        h("li", { class: "faint" }, T("The order puts every dependency first, then pull requests that change the same files or link the same issue, older first. These come from the pull requests themselves, not from a model.", "順序先排依賴，再排改到同樣檔案或連到同一個 issue 的，舊的先。這些都來自 PR 本身，不是模型猜的。")))),
+    h("div", { class: "pw-acts" }, h("button", { class: "btn primary", "data-prs-accept": "", onclick: () => act("/api/prs/accept", {}, T("Accepted: the order and dependencies are Studio's record; nothing was written to GitHub", "已接受：順序與依賴存在 Studio，尚未寫入 GitHub")) }, T("Accept", "接受")),
+      deps.length ? h("button", { class: "btn", "data-prs-accept-apply": "", onclick: async () => { await act("/api/prs/accept", {}); const ids = [...new Set(deps.map((x) => x.pr))]; applyModal(ids); } }, T("Accept and apply to the pull requests…", "接受並套用到 PR…")) : null));
+}
+// CI: GitHub's combined state of the head's checks and statuses
+const CI = { SUCCESS: ["ok", "passing", "通過"], FAILURE: ["bad", "failing", "失敗"], ERROR: ["bad", "error", "錯誤"], PENDING: ["", "running", "執行中"], EXPECTED: ["", "waiting", "等待中"] };
+function ciBadge(ci) {
+  const c = CI[ci]; if (!c) return h("span", { class: "faint", title: ci === "NONE" ? T("No checks on this head", "這個 head 沒有 check") : T("Not read", "沒讀到") }, "—");
+  return h("span", { class: `badge ${c[0]}`, "data-prs-ci": ci, title: T(`CI on the head: ${c[1]}`, `head 的 CI：${c[2]}`) }, T(c[1], c[2]));
+}
+// each group the rules ask an approval from (required team, code owners): ✓ with who approved, or ✕
+function groupChips(r) {
+  const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.split(" | ").map((x) => x.toLowerCase().startsWith(own) ? `@${x.slice(own.length)}` : x).join(T(" or ", " 或 "));
+  return (r.approvals?.groups || []).map((g) => h("span", { class: `badge pw-agrp ${g.ok ? "ok" : "bad"}`, "data-prs-approval-group": g.who,
+    title: g.ok ? T(`${g.kind === "team" ? "Required team" : "Code owners"} ${g.who}: approved by ${g.by.join(", ")}`, `${g.kind === "team" ? "必要 team" : "Code owner"} ${g.who}：${g.by.join("、")} 已 approve`) : T(`${g.kind === "team" ? "Required team" : "Code owners"} ${g.who}: no approval yet`, `${g.kind === "team" ? "必要 team" : "Code owner"} ${g.who}：還沒有 approve`) },
+    g.ok ? "✓ " : "✕ ", compact(g.who)));
+}
+function rowView(r, d) {
+  const c = r.changed, n = r.next, miss = r.approvals?.missing || [];
+  const el = h("div", { class: `pw-row${c ? " chg" : ""}`, role: "row", tabindex: "0", draggable: "true", "data-prs-row": r.id, "data-next": n.kind, "aria-label": `${r.id} ${r.title}`,
+    onclick: (e) => { if (e.target.closest("button,a,select,input")) return; detail(r); },
+    onkeydown: (e) => { if (e.target !== el) return; if (e.key === "Enter") { e.preventDefault(); detail(r); } else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); move(r.id, e.key === "ArrowUp" ? -1 : 1); } },
+    ondragstart: (e) => { PW.drag = r.id; e.dataTransfer.setData("text/plain", r.id); el.classList.add("dragging"); },
+    ondragend: () => { PW.drag = null; el.classList.remove("dragging"); if (PW.later) { PW.later = false; redraw(); } },
+    ondragover: (e) => { if (!PW.drag) return; e.preventDefault(); el.classList.add("over"); },
+    ondragleave: () => el.classList.remove("over"),
+    ondrop: (e) => { e.preventDefault(); el.classList.remove("over"); const from = PW.drag || e.dataTransfer.getData("text/plain"); PW.drag = null; PW.later = false; if (from && from !== r.id) dropOn(from, r.id); } },
+    h("span", { class: "pw-grip", title: T("Drag to reorder", "拖拉排序"), "aria-hidden": "true" }, icon("grip")),
+    h("span", { class: `tid${r.proposedPosition ? " pw-proposed-pos" : ""}`, title: r.proposedPosition ? T("Proposed position", "建議的位置") : "" }, String(r.position)),
+    h("span", { class: "pw-pr", role: "cell" },
+      h("button", { class: "pw-x pw-unw", "data-prs-drop": r.id, title: T("Remove from the list", "從清單移除"), "aria-label": T(`Remove ${r.id} from the list`, `從清單移除 ${r.id}`), onclick: () => act("/api/prs/unwatch", { pr: r.id }, T(`${r.id} removed from the list`, `${r.id} 已從清單移除`)) }, icon("x")),
+      h("span", { class: "pw-pid" }, pmark(r.project), extLink(ghPr(r.id), short(r.id, null), { "data-prs-link": "", title: r.id }), r.single ? h("span", { class: "badge", title: T("Added by its own address", "用 PR 網址單獨加入") }, T("single", "單獨")) : null, r.draft ? h("span", { class: "badge" }, "draft") : null),
+      h("small", { class: "pw-title" }, r.title),
+      c ? h("small", { class: "pw-chg", "data-prs-changed": "" }, T(`changed ${ago(c.at)}: `, `${ago(c.at)}變更：`), c.what.map(changeWord).filter(Boolean).join(T("; ", "；"))) : null),
+    h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${TONE[n.kind] || ""}`, "data-prs-next": n.rule }, nextWord(n)),
+      n.rule === "approvals" && !r.approvals?.readable ? h("small", {}, T("approval rules could not be read", "讀不到 approve 規則")) : h("small", {}, T("waits on ", "等 "), waitsOn(r).join(T(", ", "、"))),
+      // its open follow-through card (docs/units/pr-watch.md "Follow-through"), one click away in the Inbox
+      r.followCard ? h("a", { class: "badge human pw-cta pw-followcta", href: `#/inbox/${encodeURIComponent(r.followCard.card)}`, "data-prs-follow-card": r.followCard.kind },
+        h("span", { class: "pw-ctat" }, ({ qa: T("Ask QA to test", "請 QA 測試"), nudge: T("Ask to review again", "請重驗"), approve: T("Ask for approval", "請 approve"), merge: T("Ready to merge", "可合併"), ask: T("Your call", "等你決定"), push: T("Confirm the push", "push 前確認") })[r.followCard.kind] || r.followCard.kind), h("span", { class: "pw-new" }, T("new", "新"))) : null),
+    h("span", { role: "cell", class: "pw-misscell" }, miss.length && !r.draft ? (() => { // compact in the cell: "+n" for the count, and a team of the row's own organisation without it (full names in the title)
+      const own = `@${r.repo.split("/")[0]}/`.toLowerCase(), compact = (w) => w.toLowerCase().startsWith(own) ? `@${w.slice(own.length)}` : w;
+      const full = miss.map(missWord).join(" · "), label = miss[0].kind === "unreadable" ? T("rules unreadable", "讀不到規則") : miss.length === 1 && miss[0].kind === "count" ? T(`+${miss[0].n} approval${miss[0].n === 1 ? "" : "s"}`, `還要 ${miss[0].n} 個`) : miss.map((m) => m.kind === "count" ? `+${m.n}` : m.kind === "team" ? compact(m.who) : m.kind === "owner" ? m.who.map(compact).join(T(" or ", " 或 ")) : missWord(m)).join(" · ");
+      return h("button", { class: "badge human pw-cta", "data-prs-cta": r.id, "aria-expanded": "false", title: miss[0].kind === "unreadable" ? LX({ en: miss[0].reason, tw: miss[0].tw }) : full, onclick: (e) => { e.stopPropagation(); ctaMenu(e.currentTarget, r); } },
+        h("span", { class: "pw-ctat" }, label), h("span", { "aria-hidden": "true" }, " ▾")); })() : h("span", { class: "faint" }, "—")),
+    h("span", { role: "cell", class: "pw-ci" }, ciBadge(r.ci)),
+    h("span", { role: "cell" }, depCell(r)),
+    h("span", { role: "cell" }, evBadge(r.evidence, d)),
+    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, "data-prs-env-auto": e.auto ? e.name : null, title: (e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`)) + (e.auto ? T(" (a GitHub environment of this repository: its latest successful deployment contains the head or not; set environments in Settings to choose)", "（這個 repo 的 GitHub 環境：看它最近一次成功的 deployment 有沒有包含這個 head；要自己挑環境請到設定）") : "") }, e.name)) : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-revs", role: "cell" }, groupChips(r), r.reviews.length || !(r.approvals?.groups || []).length ? (r.reviews.length ? r.reviews.map((x) => h("span", { class: `badge ${x.state === "APPROVED" && !x.stale ? "ok" : x.state === "CHANGES_REQUESTED" ? "bad" : ""}`, title: `${reviewWord(x.state)}${x.stale ? T(" (an older head)", "（較舊的 head）") : ""}${x.author ? T(" (the author: does not count)", "（作者本人：不算）") : ""}` },
+      x.login, x.state === "CHANGES_REQUESTED" ? " ✕" : x.stale ? T(" (stale)", "（舊）") : "")) : h("span", { class: "faint" }, "—")) : null),
+    h("span", { class: "pw-iss", role: "cell" }, r.issues.length ? r.issues.map((i) => h("span", { class: "pw-iss1" }, extLink(ghIssue(i.ref), short(i.ref, null), { title: `${i.ref} ${i.title || ""}${i.state ? ` (${i.state})` : ""}${i.external ? T(" · outside the watched repositories, read only", " · 不在監控的 repo，只讀") : ""}` }), i.external ? h("small", {}, T("external", "外部")) : null)) : h("span", { class: "faint" }, "—")),
+    h("span", { role: "cell" }, groupCell(r, d)));
+  return el;
+}
+// ---------- merged pull requests, followed until production ----------
+const shipRows = () => (PW.data?.merged || []).filter((r) => r.tab === PW.tab);
+function shipNext(r) {
+  const now = Date.now(), s = r.ship;
+  if (s.live) { const left = Date.parse(s.dropAt) - now;
+    if (s.manual) return { tone: "ok", next: T("In production", "已上 production"), waits: T(`marked ${span(now - Date.parse(s.manual.at))} ago · hidden in ${span(left)}`, `${span(now - Date.parse(s.manual.at))}前手動標記 · ${span(left)}後收起`) };
+    return { tone: "ok", next: T("In production", "已上 production"), waits: T(`live ${span(now - Date.parse(s.liveAt))} ago · hidden in ${span(left)}`, `${span(now - Date.parse(s.liveAt))}前上線 · ${span(left)}後收起`) }; }
+  return { tone: "warn", next: T(`Waiting to go live · ${span(now - Date.parse(r.mergedAt))}`, `等上線 ${span(now - Date.parse(r.mergedAt))}`),
+    waits: s.noProduction ? T("no production environment set", "沒有設定 production 環境") : T(`waits on ${s.waits}`, `等 ${s.waits}`) };
+}
+// what a merged pull request asks for before it goes live (src/pr-watch-release.ts): a badge each, the alert suggestion
+// beside a new metric
+const OPS = { migration: ["run", "DB migration", "DB migration"], config: ["warn", "Config", "設定"], secret: ["bad", "Secret", "Secret"], "k8s-configmap": ["warn", "ConfigMap", "ConfigMap"], "k8s-secret": ["bad", "K8s Secret", "K8s Secret"], metric: ["warn", "New metric", "新 metric"], alert: ["warn", "Alert suggestion", "告警建議"], rollout: ["human", "PR text", "PR 原文"] };
+const opBadges = (ops) => [...new Set((ops || []).flatMap((o) => o.kind === "metric" ? ["metric", "alert"] : [o.kind]))].map((k) => h("span", { class: `badge ${OPS[k][0]}`, "data-prs-op": k }, T(OPS[k][1], OPS[k][2])));
+PW.checked = PW.checked || new Set();
+function shipTable(d) {
+  const rows = shipRows(), merged = PW.tab === "merged", picked = rows.filter((r) => PW.checked.has(r.id));
+  return [merged ? h("div", { class: "card pw-prop", "data-prs-brief-bar": "" }, h("span", { class: "pmark pw-prop-ic" }, icon("send", "ic sm")),
+      h("div", {}, h("b", {}, T("Tick the pull requests to release together", "勾選要一起上線的 PR")), h("div", { class: "muted pw-small" }, T("Studio orders them by dependency and writes a brief for the release AI: per deploy unit the tag from → to, the pull requests it carries, and what to handle first (migration, alert, config, secret).", "按依賴排好順序，生成給上線 AI 的 brief：每個部署單元的 tag 從哪個換到哪個、包含哪些 PR、上線前要處理的 migration / 告警 / config / secret。"))),
+      h("div", { class: "pw-acts" }, h("button", { class: "btn primary", "data-prs-brief": "", disabled: !picked.length || PW.briefBusy, onclick: () => openBrief(picked.map((r) => r.id)) }, PW.briefBusy ? T("Reading GitHub…", "讀取 GitHub 中…") : T(`Release brief (${picked.length})`, `生成上線 brief（${picked.length}）`)),
+        h("button", { class: "btn", "data-prs-mark-picked": "", disabled: !picked.length, title: T("For a team whose production version Studio cannot read: move the ticked rows to Live by hand", "看不到 production 版本時用：把勾選的列手動移到「已上線」"), onclick: () => markLive(picked.map((r) => r.id)) }, T(`Mark in production (${picked.length})`, `標記已上線（${picked.length}）`)))) : null,
+    h("div", { class: "card pw-tbl", role: "table", "aria-label": PW.tab === "live" ? T("Live pull requests", "已上線的 Pull requests") : T("Merged pull requests", "已合併的 Pull requests"), "data-prs-ship": PW.tab },
+    h("div", { class: "pw-row pw-ship h", role: "row" }, ...["", "#", T("Pull request", "Pull request"), T("Going live · waits on", "上線 · 等誰"), T("Merged", "合併"), T("Deploy unit", "部署單元"), T("Environments", "環境"), T("Before going live", "上線前要處理")].map((t) => h("span", { role: "columnheader" }, t))),
+    rows.length ? rows.map((r, i) => shipRow(r, i, d)) : h("div", { class: "pj-empty-row", "data-prs-empty": "" }, PW.tab === "live" ? T("No merged pull request is in production now.", "目前沒有已上 production 的 PR。") : T("No merged pull request is waiting to go live.", "沒有等上線的已合併 PR。")))];
+}
+// marking by hand (docs/units/pr-watch.md "Merged, until production"): for a captain who cannot see production's version
+const markLive = (ids) => { ids.forEach((id) => PW.checked.delete(id)); return act("/api/prs/ship/mark", { prs: ids }, ids.length === 1 ? T(`${ids[0]} marked as in production`, `${ids[0]} 已標記為已上線`) : T(`${ids.length} pull requests marked as in production`, `${ids.length} 個 PR 已標記為已上線`)); };
+function shipRow(r, i) {
+  const n = shipNext(r);
+  return h("div", { class: "pw-row pw-ship", role: "row", "data-prs-merged": r.id, "data-ship": r.ship.live ? "live" : "merged" },
+    h("span", { role: "cell" }, r.tab === "merged" ? h("input", { type: "checkbox", "data-prs-pick": r.id, "aria-label": T(`Select ${r.id}`, `選擇 ${r.id}`), checked: PW.checked.has(r.id), onchange: (e) => { e.target.checked ? PW.checked.add(r.id) : PW.checked.delete(r.id); render(); } }) : null),
+    h("span", { class: "tid" }, String(i + 1)),
+    h("span", { class: "pw-pr", role: "cell" },
+      h("button", { class: "pw-x pw-unw", "data-prs-drop": r.id, title: T("Stop following this merged pull request", "不再追蹤這個已合併 PR"), "aria-label": T(`Remove ${r.id} from the list`, `從清單移除 ${r.id}`), onclick: () => { PW.checked.delete(r.id); act("/api/prs/unwatch", { pr: r.id }, T(`${r.id} removed from the list`, `${r.id} 已從清單移除`)); } }, icon("x")),
+      h("span", { class: "pw-pid" }, pmark(r.project), extLink(ghPr(r.id), short(r.id, null), { title: r.id }), r.single ? h("span", { class: "badge" }, T("single", "單獨")) : null), h("small", { class: "pw-title" }, r.title)),
+    h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${n.tone}`, "data-prs-ship-next": "" }, n.next), h("small", {}, n.waits),
+      r.ship.manual ? h("span", { class: "pw-shipby" }, h("span", { class: "badge human", "data-prs-manual": r.id, title: new Date(r.ship.manual.at).toLocaleString() }, T(`Marked by hand · ${day(r.ship.manual.at)}`, `手動標記 · ${day(r.ship.manual.at)}`)),
+        h("button", { class: "btn sm", "data-prs-undo-live": r.id, onclick: () => act("/api/prs/ship/undo", { pr: r.id }, T(`${r.id} is back in Merged, not live`, `${r.id} 已回到「已合併未上線」`)) }, T("Undo", "撤銷")))
+      : r.tab === "merged" ? h("button", { class: "btn sm pw-shipby", "data-prs-mark-live": r.id, title: T("Studio cannot see it in production? Move it to Live by hand (can be undone)", "Studio 看不到它上線？手動移到「已上線」（可撤銷）"), onclick: () => markLive([r.id]) }, T("Mark in production", "標記已上線")) : null),
+    h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono", title: r.mergeSha || "" }, (r.mergeSha || "—").slice(0, 7)), h("small", {}, T(`merged ${span(Date.now() - Date.parse(r.mergedAt))} ago`, `${span(Date.now() - Date.parse(r.mergedAt))}前合併`))),
+    h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono pw-unit" }, r.unit), r.deps.length ? h("small", { "data-prs-ship-deps": "" }, T("depends on ", "依賴 "), r.deps.map((x) => short(x.id, r.repo)).join(", ")) : null),
+    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name} has the merge commit`, `${e.name} 已有這個 merge commit`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name} does not have it yet`, `${e.name} 還沒有`) }, e.name)) : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-revs", role: "cell", "data-prs-ops": r.id }, r.ops?.length ? opBadges(r.ops) : h("span", { class: "faint" }, "—")));
+}
+// ---------- the release brief ----------
+function opText(o, P) {
+  const names = (o.names || []).join(", ");
+  switch (o.kind) {
+    case "migration": return P(`New migration ${o.path}: run it before the new image`, `新的 migration ${o.path}：要先於新 image 執行`);
+    case "config": return o.names?.length ? P(`Reads new configuration ${names}: set it in production first`, `新讀取設定 ${names}：先在 production 設好`) : P(`Configuration file ${o.path} changed: check production's copy`, `設定檔 ${o.path} 改了：確認 production 的版本`);
+    case "secret": return o.names?.length ? P(`Reads secrets ${names}: make sure production has them, and not a default value`, `新讀取 secret ${names}：確認 prod 已注入，且不是預設值`) : P(`Secret file ${o.path} changed: update production's secret store first`, `secret 檔 ${o.path} 改了：先更新 production 的 secret`);
+    case "k8s-configmap": return P(`Kubernetes ConfigMap ${names || o.path}: apply it with the release`, `Kubernetes ConfigMap ${names || o.path}：隨這次上線套用`);
+    case "k8s-secret": return P(`Kubernetes Secret ${names || o.path}: create or update it in production first`, `Kubernetes Secret ${names || o.path}：先在 production 建好或更新`);
+    case "metric": { const m = o.metric, s = suggest(m, o.job), lab = m.labels.length ? `{${m.labels.join(",")}}` : "";
+      return P(`The diff adds metric ${m.name}${lab} (${m.type}, ${m.zero ? "starts at 0" : `each label set appears only on its first ${m.type === "gauge" ? "set" : m.type === "counter" ? "increment" : "observation"}`}). Suggested: ${s.expr}; for ${s.for}; noData = Alerting; also ${s.up}. Studio cannot read your alert configuration: this is a suggestion worked out from the metric.`,
+        `diff 新增 metric ${m.name}${lab}（${m.type}，${m.zero ? "啟動即為 0" : `每組 label 要第一次${m.type === "gauge" ? "設值" : m.type === "counter" ? "遞增" : "記錄"}才會出現`}）。建議：${s.expr}；for ${s.for}；noData = Alerting；另配 ${s.up}。Studio 讀不到你們的告警設定，這是照 metric 推的建議。`); }
+    case "rollout": return P(`「${o.quote}」`, `「${o.quote}」`);
+  }
+  return o.kind;
+}
+// the same rule as src/pr-watch-release.ts suggestRule (the page words it; the server found the metric)
+function suggest(m, job) {
+  const sel = `${m.name}{job="${job}"}`, by = m.labels.length ? `sum by (${m.labels.join(", ")}) ` : "sum ";
+  const expr = m.type === "counter" ? `${by}(increase(${sel}[5m])) > 0` : m.type === "histogram" ? `histogram_quantile(0.99, sum by (le${m.labels.length ? `, ${m.labels.join(", ")}` : ""}) (rate(${m.name}_bucket{job="${job}"}[5m]))) > <threshold>` : m.type === "summary" ? `${by}(rate(${m.name}_count{job="${job}"}[5m])) > <threshold>` : `${sel} > <threshold>`;
+  return { expr, for: m.type === "counter" ? "0m" : "5m", up: `up{job="${job}"} == 0` };
+}
+const opTag = (o, P) => o.kind === "metric" ? P("Alert suggestion", "告警建議") : P(OPS[o.kind][1], OPS[o.kind][2]);
+// why a batch has no new tag: none has these merges yet; every tag that has them also carries a later batch (the merge
+// order: they ship together, or a tag must be cut between them); or CI failed on each
+const noTag = (l, P) => { const ids = (l.laterBy || []).map((x) => `#${String(x).split("#")[1]}`).join(", ");
+  return l.problem === "order" ? P(`(every tag with these merges also carries ${ids}, of a later batch: they were merged in this order, so ship them together or cut a tag between them)`, `（每個包含這些合併的 tag 也帶了後一批的 ${ids}：它們是依這個順序合併的，要一起上，或在兩者之間另打一個 tag）`)
+    : l.problem === "ci" ? P("(every tag with these merges failed CI: fix it and build one)", "（包含這些合併的 tag CI 都失敗：修好再建一個）")
+    : l.problem === "previous" ? P("(the batch before has no tag yet)", "（前一批還沒有 tag）") : P("(no tag has these merges yet: build one)", "（還沒有包含這些合併的 tag：先建一個）"); };
+function briefText(b, P) {
+  const N = b.of, hash = (id) => `#${String(id).split("#")[1]}`, title = (id) => { const p = b.prs.find((x) => x.id === id); return `${hash(id)} ${p?.title || ""}`.trim(); };
+  const forced = b.forced.map((f) => P(`${hash(f.pr)} depends on ${hash(f.on)}`, `${hash(f.pr)} 依賴 ${hash(f.on)}`)).join(P(", ", "，"));
+  const order = N === 1 ? "" : b.n === 1 ? P(` (batch 1 of ${N}; batch 2 opens only after this one runs in production)`, `（第 1/${N} 批；第 2 批要等這批上到 production 才開）`) : P(` (batch ${b.n} of ${N}; open it after batch ${b.n - 1} runs in production. ${forced})`, `（第 ${b.n}/${N} 批；等第 ${b.n - 1} 批上到 production 之後再開。${forced}）`);
+  const lines = b.units.flatMap((u) => u.noFile ? [P(`${u.repo}: no production environment reads its image tag from a file; write this change by hand.`, `${u.repo}：沒有 production 環境從檔案讀它的 image tag，這一行請自己寫。`)]
+    : u.lines.map((l) => `${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
+  const added = b.added.map((a) => P(`${hash(a.id)} was added: ${hash(a.for)} depends on it`, `${hash(a.id)} 是補進來的：${hash(a.for)} 依賴它`));
+  const ops = b.ops.map((o) => `- [${opTag(o, P)}] ${opText(o, P)} (${o.url})`);
+  return [P("Please open a deploy pull request following the team's rules", "請照團隊規範開一個部署 PR") + order, "", lines.join("\n\n"), "", P("Includes: ", "包含：") + b.prs.map((p) => title(p.id)).join(P("; ", "；")),
+    ...(added.length ? [added.join("\n")] : []), "", ops.length ? `${P("Before going live:", "上線前要處理：")}\n${ops.join("\n")}` : P("Before going live: none", "上線前要處理：無"),
+    "", P("These items are what Studio found in the diffs and the pull requests' own text: arrange them, add none.", "上線前要處理只列 Studio 從 diff 和 PR 原文找到的項目：可以調整順序，不要自行增加。")].join("\n");
+}
+async function openBrief(ids) {
+  PW.briefBusy = true; render(); let got;
+  try { got = await postJ("/api/prs/brief", { prs: ids }); } catch (e) { flash(e.message); return; } finally { PW.briefBusy = false; render(); }
+  const langs = window.crewI18n.LANGS, start = PW.data?.settings?.messageLang || document.documentElement.lang || "en";
+  let lang = langs.includes(start) ? start : "en";
+  const unitsOf = (b) => [...new Set(b.units.map((u) => u.unit))].join(" + ");
+  for (const b of got.batches) for (const o of b.ops) o.job = (b.units.find((u) => o.pr.startsWith(`${u.repo}#`)) || b.units[0])?.unit || "app";
+  const box = h("div", { class: "pw-targets" }), ts = (PW.data?.sending?.targets || []).filter((t) => t.masked), briefTarget = ts.find((t) => t.use === "brief") || ts.find((t) => t.use === "any") || null;
+  const draw = () => { const P = (en, tw) => window.crewI18n.pick(lang, en, tw);
+    box.replaceChildren(...got.batches.map((b) => { const text = briefText(b, P);
+      return h("div", { class: "card x-pad pw-target", "data-prs-batch": String(b.n) },
+        h("div", { class: "pw-check" }, h("span", { class: "badge run" }, String(b.n)), h("b", {}, P(`Batch ${b.n}/${b.of} · ${unitsOf(b)}`, `第 ${b.n}/${b.of} 批 · ${unitsOf(b)}`)), h("span", { class: "faint" }, b.n === 1 ? P("goes first", "先上") : P(`after batch ${b.n - 1} is in production`, `等第 ${b.n - 1} 批上 production`)), h("span", { class: "x-grow" }),
+          briefTarget ? h("button", { class: "btn sm", "data-prs-batch-send": String(b.n), onclick: async (e) => { const btn = e.currentTarget; try { await postJ("/api/prs/send", { target: briefTarget.id, text }); btn.textContent = T(`Sent to ${briefTarget.name}`, `已發到 ${briefTarget.name}`); } catch (err) { flash(err.message); } } }, T(`Send to ${briefTarget.name}`, `發到 ${briefTarget.name}`)) : null,
+          h("button", { class: "btn sm", "data-prs-batch-copy": String(b.n), ...(b.n === 1 ? { autofocus: true } : {}), onclick: async (e) => { const ok = await copy(text); e.currentTarget.textContent = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); } }, T("Copy this one", "複製這張"))),
+        h("pre", { class: "pw-pre", "data-prs-batch-text": String(b.n) }, text),
+        b.ops.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, P("Before going live", "上線前要處理")),
+          b.ops.map((o) => h("div", { class: "pw-check", "data-prs-brief-op": o.kind }, h("span", { class: `badge ${OPS[o.kind === "metric" ? "alert" : o.kind][0]}` }, opTag(o, P)), h("span", { class: "pw-optext" }, opText(o, P)), extLink(o.url, o.path ? `${o.path}${o.line ? `:${o.line}` : ""}` : P(`${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`, `${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`), { class: "mono faint pw-small" })))) : null); })); };
+  draw();
+  const warns = [...got.batches.flatMap((b) => b.added.map((a) => T(`${a.for} depends on ${a.id}: it was added to batch ${b.n}.`, `${a.for} 依賴 ${a.id}，已經替你把它列進第 ${b.n} 批。`))),
+    ...got.notMerged.map((x) => T(`${x.id} depends on ${x.on}, which is not merged yet.`, `${x.id} 依賴的 ${x.on} 還沒合併。`))];
+  const sel = h("select", { class: "pw-lang", "aria-label": T("Language", "語言"), "data-prs-brief-lang": "", onchange: (e) => { lang = e.target.value; draw(); } }, langs.map((l) => h("option", { value: l, selected: l === lang }, window.crewI18n.NAMES[l])));
+  const close = pwModal(T("Release brief", "上線 brief"), [
+    h("p", { class: "faint pw-small", style: "margin:0" }, T(`${got.batches.length} batch${got.batches.length === 1 ? "" : "es"} · ${got.batches.reduce((n, b) => n + b.prs.length, 0)} pull requests · dependent pull requests go in different batches, one deploy pull request each`, `${got.batches.length} 批 · ${got.batches.reduce((n, b) => n + b.prs.length, 0)} 個 PR · 有依賴的 PR 分在不同批，一批一個部署 PR`)),
+    box, warns.length ? h("div", { class: "pw-status", "data-prs-brief-warn": "" }, warns.map((w) => h("div", {}, w))) : null,
+    foot(h("span", { class: "faint pw-small" }, T("Dependent pull requests go in different batches, one brief and one deploy pull request each; the order is on each one's first line.", "有依賴的 PR 分在不同批，每批一份 brief、一個部署 PR；順序寫在每份的第一行。")), h("span", { class: "x-grow" }), sel,
+      h("button", { class: "btn primary", onclick: () => close() }, T("Done", "完成")))], { wide: true, id: "brief" });
+}
+function shipMarkdown(rows) {
+  const esc = (s) => String(s ?? "").replace(/[\\`*_[\]()<>!|]/g, (c) => `\\${c}`).replace(/[\r\n]+/g, " ");
+  return [`| # | ${T("Pull request", "Pull request")} | ${T("Going live", "上線")} | ${T("Merged", "合併")} | ${T("Environments", "環境")} |`, "|---|---|---|---|---|",
+    ...rows.map((r, i) => { const n = shipNext(r); return `| ${i + 1} | [${r.id}](${ghPr(r.id)}) ${esc(r.title)} | ${esc(`${n.next} · ${n.waits}`)} | ${esc((r.mergeSha || "").slice(0, 7))} | ${esc(r.envs.filter((e) => e.on).map((e) => e.name).join(", ") || "—")} |`; })].join("\n");
+}
+const waitsOn = (r) => r.next.rule === "dependency" ? r.next.who.map((x) => short(x, r.repo)) : r.next.rule === "approvals" && r.approvals?.readable ? r.approvals.missing.map(missWord) : r.next.who.map(whoWord);
+const noEvidenceSource = (d) => { const ev = d?.settings?.evidence; return !!ev && !ev.accounts.length && !ev.checks.length && !ev.labels.length; };
+function evBadge(e, d) {
+  if (!e && noEvidenceSource(d)) return h("button", { class: "badge pw-evset", "data-prs-ev-setup": "", title: T("No evidence source is set: choose whose comments, which checks or labels count", "還沒設定證據來源：選擇誰的留言、哪些 check 或 label 算數"),
+    onclick: (ev) => { ev.stopPropagation(); settingsModal(); } }, T("Set up", "設定"));
+  if (!e) return h("span", { class: "faint", "data-prs-ev": "none" }, "—");
+  const when = e.at ? ` · ${day(e.at)}` : "";
+  if (e.verdict === "fail") return h("span", { class: "badge bad", "data-prs-ev": "fail" }, T("fail", "不通過"), when);
+  if (e.verdict === "unclassified") return h("span", { class: "badge", "data-prs-ev": "unclassified" }, T("unclassified", "無法分類"));
+  if (e.verdict === "code-only") return h("span", { class: "badge warn", "data-prs-ev": "code-only" }, T("code review only", "只審 code"));
+  if (e.covers === "unknown") return h("span", { class: "badge warn", "data-prs-ev": "unknown", title: T("The evidence names no commit, and Studio did not see this head before it", "證據沒指明 commit，Studio 也沒在它之前看過這個 head") }, T("commit not named", "沒指明 commit"));
+  if (e.covers === "older") return h("span", { class: "badge warn", "data-prs-ev": "older", title: e.since ? T(`tested ${e.since}`, `驗的是 ${e.since}`) : "" }, T("older head", "舊 head"));
+  return h("span", { class: "badge ok", "data-prs-ev": e.verdict }, e.verdict === "conditional" ? T("conditional", "有條件") : T("pass", "通過"), when);
+}
+function depCell(r) {
+  const dp = r.deps;
+  if (dp.drift) return h("button", { class: "badge warn pw-depbtn", "data-prs-drift": r.id, onclick: (e) => { e.stopPropagation(); driftModal(r); } }, icon("alert", "ic sm"), T("the hint on GitHub changed", "GitHub 上的提示被改了"));
+  const kids = [...dp.on.filter(() => dp.source !== "proposal").map((x) => h("span", { class: `badge ${x.done ? "ok" : ""}`, title: `${x.id} · ${x.state}` }, short(x.id, r.repo))),
+    ...dp.proposed.map((x) => h("span", { class: "pw-propdep", title: `${x.on}: ${x.why}` }, h("span", { class: "badge pw-dashed" }, short(x.on, r.repo)), h("span", { class: "pw-prop-tag" }, T("proposed", "建議"))))];
+  return h("button", { class: "pw-depbtn", "data-prs-deps": r.id, title: T("Edit the dependencies", "編輯依賴"), onclick: (e) => { e.stopPropagation(); depModal(r); } },
+    kids.length ? kids : h("span", { class: "faint" }, T("none", "無")), dp.applied ? h("span", { class: "pw-applied", title: T("Written into the pull request body", "已寫入 PR body") }, T("applied", "已套用")) : null);
+}
+function groupCell(r, d) {
+  const gs = d.settings.groups || [];
+  if (!gs.length) return r.group ? h("span", { class: "vbadge" }, r.group) : h("span", { class: "faint" }, "—");
+  return h("select", { class: "pw-grp", "data-prs-group": r.id, "aria-label": T(`Release group of ${r.id}`, `${r.id} 的上線分組`), onclick: (e) => e.stopPropagation(),
+    onchange: (e) => act("/api/prs/group", { pr: r.id, group: e.target.value }) }, h("option", { value: "" }, "—"), gs.map((g) => h("option", { value: g, selected: r.group === g }, g)));
+}
+// ---------- order ----------
+const allIds = () => (PW.data?.rows || []).map((r) => r.id);
+function dropOn(from, to) { const ids = allIds().filter((x) => x !== from), i = ids.indexOf(to); ids.splice(i < 0 ? ids.length : i, 0, from); act("/api/prs/order", { order: ids }, T("Order saved in Studio (not written to GitHub)", "順序已存在 Studio（沒有寫入 GitHub）")); }
+function move(id, by) { const ids = allIds(), i = ids.indexOf(id), j = i + by; if (i < 0 || j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]];
+  act("/api/prs/order", { order: ids }).then(() => document.querySelector(`[data-prs-row="${CSS.escape(id)}"]`)?.focus()); }
+
+// ---------- dialogs ----------
+function pwModal(title, kids, o = {}) {
+  // a live update may replace the row or control that opened the dialog: remember how to find it again, not the element
+  const root = document.getElementById("modalRoot"), prev = document.activeElement;
+  const prevRow = prev?.closest?.("[data-prs-row]")?.dataset.prsRow ?? null, mark = prev?.getAttributeNames?.().find((n) => n.startsWith("data-prs-")) ?? null;
+  const prevSel = prev?.id ? `#${CSS.escape(prev.id)}` : mark ? `[${mark}="${CSS.escape(prev.getAttribute(mark) || "")}"]` : null;
+  const refocus = () => { if (prev?.isConnected) return prev.focus?.();
+    // the same control in the same row first (several rows have one alike), then that row, then the control on the page
+    const row = prevRow ? document.querySelector(`[data-prs-row="${CSS.escape(prevRow)}"]`) : null;
+    const el = row ? (prevSel && row.querySelector(prevSel)) || row : prevSel && document.querySelector(prevSel); el?.focus?.(); };
+  const close = () => { root.replaceChildren(); refocus(); };
+  const box = h("div", { class: `modal pw-modal${o.wide ? " wide" : ""}`, role: "dialog", "aria-modal": "true", "aria-label": title, "data-prs-dialog": o.id || "" },
+    h("div", { class: "pw-mh" }, h("h2", {}, title), h("span", { class: "x-grow" }), h("button", { class: "btn ghost icon", "aria-label": T("Close", "關閉"), "data-prs-close": "", onclick: close }, icon("x"))), ...kids);
+  const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); }, onkeydown: (e) => { if (e.key === "Escape") close(); } }, box);
+  root.replaceChildren(back); hydrateIcons(back); (box.querySelector("[autofocus]") || box.querySelector("button.primary") || box.querySelector("button"))?.focus(); return close;
+}
+const foot = (...kids) => h("div", { class: "pw-mf" }, ...kids);
+// where the pull request is in its follow-through (docs/units/pr-watch.md "Follow-through"), why it took that branch, and
+// its open card's message (the same card as in the Inbox)
+const unq = (q) => String(q ?? "").replace(/[.。]+\s*$/, ""); // a quoted sentence without its own final full stop
+const STAGE_AT = { "code-change": 0, "needs-evidence": 1, "evidence-covers-head": 2, "missing-approvals": 3, mergeable: 4 };
+function flowSection(r) {
+  const f = r.follow; if (!f) return null;
+  const at = STAGE_AT[f.branch] ?? -1, ev = r.evidence, miss = (r.approvals?.missing || []).map(missWord).join(T(", ", "、"));
+  const stages = [[T("Reviews", "Review"), f.quote && at === 0 ? T(`${f.by}: “${unq(f.quote)}”`, `${f.by}：「${unq(f.quote)}」`) : r.reviews.length ? r.reviews.map((x) => `${x.login} ${reviewWord(x.state)}`).join(T(", ", "、")) : ""],
+    [T("QA test", "QA 實測"), ev ? T(`${ev.by}: ${verdictWord(ev.verdict)}`, `${ev.by}：${verdictWord(ev.verdict)}`) + (ev.covers === "head" ? T(" · current head", " · 目前 head") : "") : at === 1 && f.quote ? T(`${f.by} asked: “${unq(f.quote)}”`, `${f.by} 要求：「${unq(f.quote)}」`) : ""],
+    [T("Ask the reviewers again", "請 reviewer 重驗"), at === 2 ? T(`the evidence covers the head; ${f.stale.join(", ")} gave their verdict on an older one`, `證據覆蓋目前 head；${f.stale.join("、")} 的意見還停在舊 head`) : ""],
+    [T("Approvals the rules ask for", "分支規則要的 approve"), miss], [T("Mergeable (the branch rules all met)", "可合併（分支規則全滿足）"), ""]];
+  const box = h("div", { class: "pw-followcard", "data-prs-detail-card": r.followCard?.card || "" });
+  if (r.followCard && window.crewFollowCard) fetch("/api/scards?open=1").then((x) => x.json()).then((j) => { const c = (j.cards || []).find((x) => x.id === r.followCard.card); if (c && box.isConnected) window.crewFollowCard.mount(box, c, { marks: true }); }).catch(() => {});
+  return h("div", { class: "pw-cols", "data-prs-flow": f.branch },
+    h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Where the flow is", "流程走到哪")),
+      h("ol", { class: "pw-rules" }, stages.map(([label, note], i) => h("li", { class: i < at ? "no" : i === at ? "hit" : "" }, label, i === at ? T(" ← now", " ← 現在") : "", note ? h("div", { class: "faint pw-small", style: "font-weight:400" }, note) : null))),
+      h("h3", {}, T("Why this branch", "為什麼走這條岔路")), h("div", { class: "pw-small muted" }, LX(f.why), f.quote ? T(` — ${f.by}: “${unq(f.quote)}”`, `——${f.by}：「${unq(f.quote)}」`) : "")),
+    r.followCard ? h("div", { class: "card x-pad pw-dl" }, h("h3", {}, T("Its card", "它的卡片")), box) : null);
+}
+function detail(r) {
+  const n = r.next, rules = PW.data?.rules || [];
+  pwModal(r.id, [
+    h("p", { class: "muted pw-dtitle" }, r.title || "", " · ", extLink(ghPr(r.id), T("on GitHub", "在 GitHub 上看"))),
+    flowSection(r),
+    h("div", { class: "pw-cols" },
+      h("div", { class: "card x-pad pw-dl" },
+        h("h3", {}, T("Issues", "Issue")), r.issues.length ? r.issues.map((i) => h("div", { class: "kv" }, h("span", {}, extLink(ghIssue(i.ref), i.ref), i.title ? ` ${i.title}` : "", i.external ? T(" (external, read only)", "（外部，只讀）") : ""), h("span", {}, i.state || "?"))) : h("span", { class: "faint" }, T("none", "無")),
+        h("h3", {}, T("Reviews", "Reviews")), r.reviews.length ? r.reviews.map((x) => h("div", { class: "kv" }, h("span", {}, x.login, x.author ? T(" (author)", "（作者）") : ""), h("span", {}, reviewWord(x.state), x.stale ? T(" · stale", " · 舊 head") : ""))) : h("span", { class: "faint" }, T("none", "無")),
+        h("h3", {}, T("Test evidence", "測試證據")), r.evidence ? [h("div", { class: "kv" }, h("span", {}, `${r.evidence.by}${r.evidence.at ? ` · ${day(r.evidence.at)}` : ""} (${r.evidence.source})`), h("span", {}, verdictWord(r.evidence.verdict))),
+          h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : r.evidence.covers === "unknown" ? T("unknown: commit not named", "不確定：沒指明 commit") : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
+        h("h3", {}, T("Environments", "環境")), r.envs.length ? r.envs.map((e) => h("div", { class: "kv" }, h("span", {}, e.name, e.production ? T(" (production)", "（正式）") : ""), h("span", {}, e.on ? T("runs this head", "跑著這個 head") : e.on === null ? T("could not be read", "讀不到") : T("no", "沒有")))) : h("span", { class: "faint" }, T("none set", "未設定"))),
+      h("div", { class: "card x-pad pw-dl" },
+        h("h3", {}, T("How the next step was found", "下一步怎麼算出來的")),
+        h("ol", { class: "pw-rules", "data-prs-rules": "" }, rules.map((x, i) => h("li", { class: x.id === n.rule ? "hit" : n.matched?.[i] ? "" : "no", "data-rule": x.id }, T(x.en, x.tw), x.id === n.rule ? T(" ← this one", " ← 這條") : ""))),
+        h("h3", {}, T("CI", "CI")), h("div", {}, ciBadge(r.ci)),
+        (r.approvals?.groups || []).length ? h("h3", {}, T("Approval groups", "要 approve 的群組")) : null, ...(r.approvals?.groups || []).map((g) => h("div", { class: "kv" }, h("span", {}, g.who), h("span", {}, g.ok ? T(`approved by ${g.by.join(", ")}`, `${g.by.join("、")} 已 approve`) : T("not yet", "還沒")))),
+        h("h3", {}, T("Missing approvals", "還缺的 approve")), h("div", {}, (r.approvals?.missing || []).length ? r.approvals.missing.map((m) => m.kind === "unreadable" ? LX({ en: m.reason, tw: m.tw }) : missWord(m)).join(T("; ", "；")) : "—"),
+        r.approvals?.readable ? h("p", { class: "faint pw-small" }, T(`Rules: ${r.approvals.required} approval${r.approvals.required === 1 ? "" : "s"}${r.approvals.codeOwners ? ", code owners" : ""}${r.approvals.lastPush ? ", approval after the last push" : ""}${r.approvals.dismissStale ? ", stale approvals dismissed" : ""} (${(r.approvals.sources || []).join(", ") || "no rule"}).`,
+          `規則：${r.approvals.required} 個 approve${r.approvals.codeOwners ? "、code owner" : ""}${r.approvals.lastPush ? "、最後一次 push 之後的 approve" : ""}${r.approvals.dismissStale ? "、舊 approve 失效" : ""}（${(r.approvals.sources || []).join("、") || "沒有規則"}）。`)) : null,
+        ...(r.approvals?.unread || []).map((u) => h("p", { class: "faint pw-small", "data-prs-unread": "" }, LX(u))),
+        r.approvals?.unread && r.approvals.github ? h("p", { class: "faint pw-small", "data-prs-github": "" }, T(`GitHub's merge box: review ${(r.approvals.github.reviewDecision || "no decision").toLowerCase().replace(/_/g, " ")}, merge ${(r.approvals.github.mergeState || "unknown").toLowerCase()}${r.approvals.github.requested.length ? `; review requested from ${r.approvals.github.requested.join(", ")}` : ""}.`,
+          `GitHub merge 區塊：review ${r.approvals.github.reviewDecision || "沒有判定"}、merge ${r.approvals.github.mergeState || "不明"}${r.approvals.github.requested.length ? `；已請求 ${r.approvals.github.requested.join("、")} review` : ""}。`)) : null,
+        r.approvals?.inferredPusher ? h("p", { class: "faint pw-small", "data-prs-inferred": "" }, T(`Approval after the last push: the pusher is inferred from the author and the head commit (${r.approvals.inferredPusher.join(", ") || "none known"}); GitHub does not expose it. The latest push needs an approval on the current head from someone else; older approvals still count toward the number unless stale approvals are dismissed.`,
+          `最後一次 push 之後的 approve：push 的人是從作者和 head commit 推斷的（${r.approvals.inferredPusher.join("、") || "不明"}）；GitHub 不提供這項資訊。最後一次 push 要由其他人在目前 head 上 approve；舊的 approve 仍算進數量，除非分支規則讓舊 approve 失效。`)) : null,
+        h("h3", {}, T("Order", "順序")), h("ul", { class: "pw-why" }, (r.orderWhy || []).map((w) => h("li", {}, w))),
+        r.partial?.length ? h("p", { class: "faint pw-small" }, T(`Not read this time: ${r.partial.join(", ")}.`, `這次沒讀到：${r.partial.join("、")}。`)) : null)),
+  ], { wide: true, id: "detail" });
+}
+let closeMenu = null; // the open missing-approval menu's close, so a new one (or a second click) closes it properly
+function ctaMenu(anchor, r) {
+  if (anchor.getAttribute("aria-expanded") === "true" && closeMenu) { closeMenu(); return; }
+  closeMenu?.(); document.querySelectorAll(".pw-menu").forEach((x) => x.remove());
+  const close = () => { if (closeMenu === close) closeMenu = null; m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true);
+    if (PW.later && !PW.drag && !closeMenu) { PW.later = false; queueMicrotask(redraw); } };
+  const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
+  const m = h("div", { class: "pop pw-menu", role: "group", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), "data-prs-menu": r.id },
+    h("div", { class: "tgt" }, `${r.id} · `, (r.approvals?.missing || []).map(missWord).join(", ")),
+    item("ask", "message", "Ask for review: draft a message", "請人審：產生訊息", () => askModal(r)),
+    item("room", "monitor", "Open in the review room", "在審查室打開", () => openRoom(r)),
+    item("report", "doc", "Handoff report…", "交接報告…", () => reportModal([r])),
+    item("md", "copy", "Copy this row as Markdown", "把這一列複製成 Markdown", async () => { flash(await copy(markdown([r])) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); }));
+  document.body.append(m); anchor.setAttribute("aria-expanded", "true"); closeMenu = close;
+  const b = anchor.getBoundingClientRect(); m.style.position = "fixed"; m.style.left = `${Math.max(8, Math.min(b.left, innerWidth - 290))}px`; m.style.top = `${Math.min(b.bottom + 6, innerHeight - 220)}px`;
+  const off = (e) => { if (!m.contains(e.target) && !anchor.contains(e.target)) close(); }, esc = (e) => { if (e.key === "Escape") { close(); anchor.focus(); } };
+  // the click that opened the menu has already passed the document's capture phase: listening now cannot catch it
+  document.addEventListener("click", off, true); document.addEventListener("keydown", esc, true);
+  m.querySelector("button")?.focus();
+}
+const visibleRows = () => (PW.data?.rows || []).filter((r) => PW.tab === "all" || r.next.kind === PW.tab);
+function draft(r, lang) {
+  const P = (en, tw) => window.crewI18n.pick(lang, en, tw), miss = (r.approvals?.missing || []).map(missWord).join(P(", ", "、"));
+  const ev = r.evidence ? (r.evidence.verdict === "pass" || r.evidence.verdict === "conditional") && (r.evidence.covers === "head" || r.evidence.covers === "unbound") ? P(`${r.evidence.by} passed it${r.evidence.at ? ` on ${day(r.evidence.at)}` : ""}, on the current head`, `${r.evidence.by}${r.evidence.at ? ` ${day(r.evidence.at)}` : ""} 驗過，驗的是目前的 head`)
+    : P(`${verdictWord(r.evidence.verdict)}${r.evidence.covers === "older" ? ` (an older head: ${r.evidence.since || ""})` : ""}`, `${verdictWord(r.evidence.verdict)}${r.evidence.covers === "older" ? `（舊 head：${r.evidence.since || ""}）` : ""}`) : P("not tested yet", "還沒測");
+  const envs = r.envs.filter((e) => e.on).map((e) => e.name).join(", ") || P("not deployed yet", "尚未部署");
+  const deps = r.deps.on.map((x) => `${x.id}${x.done ? P(" (merged)", "（已合併）") : ""}`).join(", ") || P("none", "無");
+  return [P(`Hi, could you review ${r.id} "${r.title}"?`, `嗨，想請你幫忙 review ${r.id}「${r.title}」。`),
+    `• ${P("Tests", "測試")}: ${ev}`, `• ${P("Environments", "環境")}: ${envs}`, `• ${P("Depends on", "依賴")}: ${deps}`,
+    P(`Still missing: ${miss} approval`, `還缺：${miss} approve`), ghPr(r.id) || ""].join("\n");
+}
+function askModal(r) {
+  const langs = window.crewI18n.LANGS, start = PW.data?.settings?.messageLang || document.documentElement.lang || "en";
+  let lang = langs.includes(start) ? start : "en";
+  const ta = h("textarea", { class: "pw-msg", rows: 9, "data-prs-message": "", "aria-label": T("Message", "訊息") }); ta.value = draft(r, lang);
+  const sel = h("select", { class: "pw-lang", "aria-label": T("Language", "語言"), onchange: (e) => { lang = e.target.value; ta.value = draft(r, lang); } }, langs.map((l) => h("option", { value: l, selected: l === lang }, window.crewI18n.NAMES[l])));
+  const con = PW.data?.connector || {};
+  const close = pwModal(T(`Ask for review: ${r.id}`, `請人審：${r.id}`), [
+    h("p", { class: "muted" }, T("Studio never sends this by itself. Copy it into your chat, or send it through a messaging connector with your own click.", "Studio 不會自己送出。複製後貼到你的聊天工具，或接上訊息 connector 後由你按送出。")),
+    ta,
+    foot(sel, h("span", { class: "x-grow" }), h("span", { class: "faint pw-small", "data-prs-connector": "" }, con.available ? "" : LX(con)),
+      h("button", { class: "btn", disabled: !con.available, title: con.available ? "" : LX(con), "data-prs-send": "" }, T("Send via connector", "透過 connector 送出")),
+      h("button", { class: "btn primary", "data-prs-copy": "", onclick: async () => { const ok = await copy(ta.value); close(); flash(ok ? T("Message copied", "訊息已複製") : T("Could not copy", "無法複製")); } }, T("Copy", "複製")))], { id: "ask" });
+}
+async function openRoom(r) {
+  const url = ghPr(r.id); if (!url) return;
+  try { const out = await postJ("/api/review-room/open-pr", { url, lang: ["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en" }); if (out.href) location.hash = out.href; }
+  catch (e) { flash(T(`The review room could not open it: ${e.message}`, `審查室打不開它：${e.message}`)); }
+}
+function markdown(rows) {
+  // table cells: a pipe, a line break, or Markdown that would turn text from GitHub into a link, image or HTML
+  const esc = (s) => String(s ?? "").replace(/[\\`*_[\]()<>!|]/g, (c) => `\\${c}`).replace(/[\r\n]+/g, " ");
+  return [`| # | ${T("Pull request", "Pull request")} | ${T("Next step", "下一步")} | ${T("Waits on", "等誰")} | ${T("Missing", "還缺")} | ${T("CI", "CI")} | ${T("Approvals", "Approve")} | ${T("Test evidence", "測試證據")} | ${T("Environments", "環境")} | ${T("Depends on", "依賴")} |`, "|---|---|---|---|---|---|---|---|---|---|",
+    ...rows.map((r) => `| ${r.position} | [${r.id}](${ghPr(r.id)}) ${esc(r.title)} | ${esc(nextWord(r.next))} | ${esc(r.next.who.map(whoWord).join(", "))} | ${esc((r.approvals?.missing || []).map(missWord).join(", ") || "—")} | ${esc(CI[r.ci] ? T(CI[r.ci][1], CI[r.ci][2]) : "—")} | ${esc([...(r.approvals?.groups || []).map((g) => `${g.who} ${g.ok ? "✓" : "✕"}`), ...r.reviews.filter((x) => !x.author).map((x) => `${x.login} ${x.state === "APPROVED" && !x.stale ? "✓" : x.state === "CHANGES_REQUESTED" ? "✕" : "💬"}`)].join(", ") || "—")} | ${esc(r.evidence ? verdictWord(r.evidence.verdict) + (r.evidence.covers === "older" ? ` (${r.evidence.since || "older"})` : "") : "—")} | ${esc(r.envs.filter((e) => e.on).map((e) => e.name).join(", ") || "—")} | ${esc(r.deps.on.map((x) => x.id).join(", ") || "—")} |`)].join("\n");
+}
+function reportModal(rows) {
+  const who = h("input", { class: "input", "data-prs-reader": "", value: T("the approvers", "approver"), "aria-label": T("For whom", "給誰看") });
+  const close = pwModal(T("Handoff report", "交接報告"), [
+    h("p", { class: "muted" }, T(`A one-page report of ${rows.map((r) => r.id).join(", ")}: the pull requests, their evidence, what is asked. Copy it as Markdown for the reader you name. (A Task that writes it from its dispatch card is a follow-up: docs/units/pr-watch.md.)`,
+      `${rows.map((r) => r.id).join("、")} 的一頁報告：PR、測試證據、要對方做什麼。複製成 Markdown 給你指定的讀者。（從派工卡開任務來寫是後續項目：docs/units/pr-watch.md。）`)),
+    h("label", { class: "field" }, h("span", { class: "lbl" }, T("For whom", "給誰看")), who),
+    foot(h("span", { class: "x-grow" }), h("button", { class: "btn primary", "data-prs-report-copy": "", onclick: async () => {
+      const text = [`# ${T("Handoff", "交接")}: ${rows.map((r) => r.id).join(", ")}`, `${T("For", "給")}: ${who.value.trim() || "—"}`, "", markdown(rows), "",
+        ...rows.flatMap((r) => [`## ${r.id} ${r.title}`, `- ${T("Next step", "下一步")}: ${nextWord(r.next)} (${r.next.who.map(whoWord).join(", ")})`, `- ${T("Asked", "請求")}: ${(r.approvals?.missing || []).length ? T(`approve (${r.approvals.missing.map(missWord).join(", ")})`, `approve（${r.approvals.missing.map(missWord).join("、")}）`) : "—"}`,
+          `- ${T("Issues", "Issue")}: ${r.issues.map((i) => i.external ? ghIssue(i.ref) || i.ref : `${i.ref}${i.title ? ` ${i.title}` : ""} (${i.state || "?"})`).join("; ") || "—"}`, ""])].join("\n");
+      const ok = await copy(text); close(); flash(ok ? T("Report copied as Markdown", "報告已複製成 Markdown") : T("Could not copy", "無法複製")); } }, T("Copy the report", "複製報告")))], { id: "report" });
+}
+function blockOf(on, repo, short) { const lines = ["<!-- crew-studio:depends -->", ...on.map((id) => `Depends-on: ${ghPr(id)}`)];
+  if (short) for (const id of on) { const m = ID.exec(id); if (m && `${m[1]}/${m[2]}`.toLowerCase() === String(repo).toLowerCase()) lines.push(`Depends-on: #${m[3]}`); }
+  return [...lines, "<!-- /crew-studio:depends -->"].join("\n"); }
+function applyModal(ids) {
+  // a row with no dependency left but a block on GitHub: the card removes the block
+  const rows = (PW.data?.rows || []).filter((r) => ids.includes(r.id) && (r.deps.on.length || r.bodyBlock));
+  if (!rows.length) { flash(T("No dependency to apply", "沒有依賴可以套用")); return; }
+  let short = !!PW.data?.settings?.shortForm;
+  const pres = () => rows.map((r) => h("div", { class: "card x-pad pw-target", "data-prs-target": r.id }, h("b", {}, r.id, " ", h("span", { class: "faint" }, r.title)), r.deps.on.length ? h("pre", { class: "pw-pre" }, blockOf(r.deps.on.map((x) => x.id), r.repo, short)) : h("p", { class: "muted", "data-prs-removes": "" }, T("No dependency left: the block on GitHub is removed.", "沒有依賴了：移除 GitHub 上的區塊。"))));
+  const list = h("div", { class: "pw-targets" }, pres());
+  const close = pwModal(T("Apply the dependencies to the pull requests", "套用依賴到 pull request"), [
+    h("p", { class: "muted" }, T("Studio adds one marked block at the end of each pull request body and changes nothing else. It writes only after you approve the card this sends to your Inbox; every refresh afterwards checks whether the block was edited.", "Studio 會在每個 PR 的 body 尾端寫入一段帶標記的區塊，其他內容不動。要等你核准這裡送到收件匣的卡片才會寫入；之後每次刷新都會比對它有沒有被改。")),
+    list,
+    h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-short": "", checked: short, onchange: (e) => { short = e.target.checked; list.replaceChildren(...pres()); } }), T(" Also write the same-repository short form ", " 另外寫同 repo 簡寫 "), h("code", {}, "Depends-on: #N"), T(" (for tools that read only that form)", "（給只讀這種格式的工具）")),
+    foot(h("span", { class: "x-grow" }), h("button", { class: "btn", "data-prs-close": "", onclick: () => close() }, T("Cancel", "取消")),
+      h("button", { class: "btn primary", "data-prs-apply-send": "", onclick: async (e) => { e.currentTarget.disabled = true;
+        try { const out = await postJ("/api/prs/apply", { prs: rows.map((r) => r.id), shortForm: short }); close(); flash(T("The card is in your Inbox: approve it there to write.", "卡片已送到收件匣：在那裡核准才會寫入。"), { href: "#/inbox", text: T("Open the Inbox", "打開收件匣") }); }
+        catch (err) { e.currentTarget.disabled = false; flash(err.message); } } }, T(`Send the card for ${rows.length} pull request${rows.length === 1 ? "" : "s"}`, `送出 ${rows.length} 個 PR 的卡片`)))], { id: "apply" });
+}
+function depModal(r) {
+  const cur = r.deps.source === "proposal" ? [] : r.deps.on.map((x) => x.id), others = (PW.data?.rows || []).map((x) => x.id).filter((x) => x !== r.id && !cur.includes(x));
+  const save = (on) => act("/api/prs/deps", { pr: r.id, on }, T("Dependencies saved in Studio (not written to GitHub)", "依賴已存在 Studio（沒有寫入 GitHub）")).then(() => { const nr = PW.data?.rows?.find((x) => x.id === r.id); if (nr) depModal(nr); });
+  const typed = h("input", { class: "input", placeholder: "owner/repo#123", "data-prs-dep-typed": "", "aria-label": T("Another pull request", "其他 pull request") });
+  pwModal(T(`Dependencies of ${r.id}`, `${r.id} 的依賴`), [
+    h("p", { class: "muted" }, r.title),
+    r.deps.proposed.length ? h("div", { class: "pw-propbox" }, h("b", {}, T("Proposed", "建議")), h("ul", { class: "pw-why" }, r.deps.proposed.map((p) => h("li", {}, h("b", {}, p.on), ": ", p.why))),
+      h("button", { class: "btn", "data-prs-take-proposed": "", onclick: () => save(r.deps.proposed.map((p) => p.on)) }, T("Take the proposal", "採用建議"))) : null,
+    h("div", { class: "chips", "data-prs-dep-list": "" }, cur.length ? cur.map((d) => h("span", { class: "chip" }, d, h("button", { class: "pw-x", "data-prs-dep-rm": d, "aria-label": T(`Remove ${d}`, `移除 ${d}`), onclick: () => save(cur.filter((x) => x !== d)) }, icon("x")))) : h("span", { class: "faint" }, T("No dependency recorded", "沒有記錄依賴"))),
+    h("div", { class: "pw-depadd" }, h("select", { class: "input", "data-prs-dep-add": "", "aria-label": T("Add a dependency", "加入依賴"), onchange: (e) => { if (e.target.value) save([...cur, e.target.value]); } }, h("option", { value: "" }, T("Add a dependency from the list…", "從清單加入依賴…")), others.map((x) => h("option", { value: x }, x))),
+      typed, h("button", { class: "btn", onclick: () => { const v = typed.value.trim(); if (!ID.test(v)) { flash(T("Write owner/repo#number", "請寫 owner/repo#number")); return; } save([...cur, v]); } }, T("Add", "加入"))),
+    foot(h("span", { class: "x-grow" }), h("button", { class: "btn primary", "data-prs-dep-apply": "", disabled: !cur.length && !r.bodyBlock, onclick: () => applyModal([r.id]) }, T("Apply to the pull request…", "套用到 PR…")))], { id: "deps" });
+}
+function driftModal(r) {
+  const dr = r.deps.drift;
+  const close = pwModal(T(`${r.id}: the dependency hint on GitHub changed`, `${r.id}：GitHub 上的依賴提示被改了`), [
+    h("p", { class: "muted" }, T("The latest refresh found the marked block in the pull request body different from Studio's record.", "最近一次刷新發現 PR body 裡的標記區塊和 Studio 的紀錄不同。")),
+    h("div", { class: "pw-cols" }, h("div", { class: "card x-pad" }, h("small", { class: "faint" }, T("Studio's record", "Studio 的紀錄")), h("pre", { class: "pw-pre", "data-prs-drift-studio": "" }, dr.studio)),
+      h("div", { class: "card x-pad pw-driftgh" }, h("small", { class: "faint" }, T("On GitHub now", "GitHub 上現在")), h("pre", { class: "pw-pre", "data-prs-drift-github": "" }, dr.github ?? T("(the block was removed)", "（區塊被移除了）")))),
+    foot(h("span", { class: "x-grow" }), h("button", { class: "btn", "data-prs-drift-take": "", onclick: () => { close(); act("/api/prs/drift/take", { pr: r.id }, T("Studio's record now follows GitHub", "Studio 的紀錄改以 GitHub 為準")); } }, T("Take GitHub's version", "以 GitHub 上的為準")),
+      h("button", { class: "btn primary", "data-prs-drift-reapply": "", onclick: () => { close(); applyModal([r.id]); } }, T("Apply Studio's record again…", "重新套用 Studio 的紀錄…")))], { id: "drift" });
+}
+// where cards and briefs may be sent (docs/units/pr-watch.md "Sending"): the webhook is a secret, shown masked; typing a
+// new one replaces it. Contacts say who a GitHub account is in Slack, Microsoft Teams or email, for a DM. An optional Slack
+// bot token (a secret too, shown masked; an empty field clears it) lets Studio check the Slack contacts and send a DM the
+// captain confirms on a card.
+const TOOLS = () => [["slack", "Slack"], ["lark", T("Lark / Feishu", "飛書 / Lark")], ["dingtalk", T("DingTalk", "釘釘 / DingTalk")], ["teams", "Microsoft Teams"], ["discord", "Discord"], ["json", T("Generic JSON", "通用 JSON")]];
+const USES = () => [["qa", T("Ask QA to test", "請 QA 測試")], ["nudge", T("Ask reviewers again", "請 reviewer 重驗")], ["approve", T("Ask for approval", "請 approve")], ["brief", T("Release brief", "上線 brief")], ["any", T("Anything", "全部")]];
+const CTOOLS = [["slack", "Slack"], ["teams", "Microsoft Teams"], ["email", "Email"]];
+function sendingSection(s) {
+  s.sending ??= { targets: [], contacts: [], slackTeam: null };
+  const masked = Object.fromEntries((PW.data?.sending?.targets || []).map((t) => [t.id, t.masked]));
+  const tbox = h("div", { class: "pw-envset", "data-prs-targets": "" }), cbox = h("div", { class: "pw-envset", "data-prs-contacts": "" });
+  const sel = (opts, v, on, label) => h("select", { class: "pw-lang", "aria-label": label, onchange: (e) => on(e.target.value) }, opts.map(([k, l]) => h("option", { value: k, selected: k === v }, l)));
+  const drawT = () => tbox.replaceChildren(...s.sending.targets.map((t, i) => h("div", { class: "pw-envrow pw-sendrow", "data-prs-target-row": t.id },
+      h("input", { class: "input", "aria-label": T("Name", "名稱"), value: t.name || "", placeholder: "#qa-requests", oninput: (e) => { t.name = e.target.value; } }),
+      sel(TOOLS(), t.tool, (v) => { t.tool = v; }, T("Tool", "工具")),
+      h("input", { class: "input mono", "aria-label": T("Webhook URL", "Webhook URL"), "data-prs-hook": t.id, value: t.url ?? masked[t.id] ?? "", placeholder: "https://hooks.slack.com/services/…", oninput: (e) => { t.url = e.target.value; } }),
+      sel(USES(), t.use, (v) => { t.use = v; }, T("Used for", "預設用於")),
+      h("button", { class: "btn sm", "data-prs-hook-test": t.id, disabled: !masked[t.id], title: masked[t.id] ? "" : T("Save first", "先儲存"), onclick: async (e) => { const b = e.currentTarget; try { await postJ("/api/prs/sending/test", { target: t.id }); b.textContent = T("Test sent", "已發出測試"); } catch (err) { flash(err.message); } } }, T("Send a test", "發測試")),
+      h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.targets.splice(i, 1); drawT(); } }, icon("x")))),
+    h("div", {}, h("button", { class: "btn", "data-prs-target-add": "", onclick: () => { s.sending.targets.push({ id: `t${Date.now().toString(36)}`, name: "", tool: "slack", use: "any", url: "" }); drawT(); } }, T("+ Add a target", "＋ 加一個目標"))));
+  const drawC = () => cbox.replaceChildren(...s.sending.contacts.map((c, i) => h("div", { class: "pw-envrow pw-contactrow", "data-prs-contact": c.gh },
+      h("input", { class: "input mono", "aria-label": "GitHub", value: c.gh || "", placeholder: "qa-lead", oninput: (e) => { c.gh = e.target.value; } }),
+      sel(CTOOLS, c.tool, (v) => { c.tool = v; }, T("Tool", "工具")),
+      h("input", { class: "input mono", "aria-label": T("Their id or address in the chat tool", "對方在聊天工具裡的 ID 或地址"), value: c.id || "", placeholder: T("Slack member id U0…, or an email", "Slack 成員 ID U0…，或 email"), oninput: (e) => { c.id = e.target.value; } }),
+      h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.contacts.splice(i, 1); drawC(); } }, icon("x")))),
+    h("div", {}, h("button", { class: "btn", "data-prs-contact-add": "", onclick: () => { s.sending.contacts.push({ gh: "", tool: "slack", id: "" }); drawC(); } }, T("+ Add a contact", "＋ 加聯絡人"))));
+  drawT(); drawC();
+  return [h("h3", {}, T("Send targets", "發送目標"), h("span", { class: "pw-new" }, T("new", "新"))),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("Paste a chat tool's incoming webhook. Message cards and release briefs get a Send button, which sends only when pressed; without one, Copy still works.", "貼上聊天工具的 incoming webhook。訊息卡和上線 brief 會多一個「發到」按鈕，按了才發；沒設也照樣能複製。")), tbox,
+    h("h3", {}, T("Contacts: GitHub account → chat tool", "聯絡人：GitHub 帳號 → 聊天工具"), h("span", { class: "pw-new" }, T("new", "新"))),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("To DM someone, and to turn a GitHub account in a message into the chat's @. A GitHub team needs nothing here: its members are read from GitHub and picked on the card.", "用來 DM 某個人，也用來把訊息裡的 GitHub 帳號換成聊天裡的 @。GitHub team 不用填：成員從 GitHub 讀，卡片上選人。")), cbox,
+    h("h3", {}, T("How a DM is sent", "DM 怎麼發"), h("span", { class: "pw-new" }, T("new", "新"))),
+    h("div", { class: "pw-envset" },
+      h("p", { class: "faint pw-small", style: "margin:0" }, T("Copy and open the chat always works, with nothing to install: Studio copies the message and opens the DM; you paste and send. With a Slack bot token, a card can also send a Slack DM itself: one click per message, after a confirm step that shows who it goes to.", "「複製並打開對話」一直都能用，不用裝任何東西：複製訊息，再打開和對方的 DM，你貼上按送出。設了 Slack bot token 之後，卡片也能直接發 Slack DM：每則訊息按一次，先看確認畫面上寫的收件人才發。")),
+      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Slack workspace id (for Slack DMs)", "Slack workspace ID（Slack DM 用）")), h("input", { class: "input mono", "data-prs-slack-team": "", value: s.sending.slackTeam || "", placeholder: "T0123ABCD", oninput: (e) => { s.sending.slackTeam = e.target.value.trim() || null; } })),
+      h("label", { class: "field" }, h("span", { class: "lbl" }, T("Slack bot token (optional; scopes users:read, im:write, chat:write)", "Slack bot token（可不填；權限 users:read、im:write、chat:write）")),
+        h("input", { class: "input mono", type: "password", autocomplete: "off", "data-prs-bot-token": "", value: s.sending.botToken ?? PW.data?.sending?.bot?.masked ?? "", placeholder: "xoxb-…", oninput: (e) => { s.sending.botToken = e.target.value; } })),
+      slackChecks()),
+    h("p", { class: "faint pw-small", style: "margin:0" }, T("A webhook address and the bot token are secrets: they stay in this Studio's own state (0600), never in a repository, and the browser sees them only masked. Empty the token field and save to remove it.", "Webhook URL 和 bot token 等同密鑰：只存在本機 Studio 的 state（0600），不進 repo，瀏覽器只看到遮住的樣子。清空 token 欄位再儲存就會刪掉。"))];
+}
+// "Check contacts": each Slack contact as Slack reports it (users.info), with the verdict; nothing is corrected
+function slackChecks() {
+  const box = h("div", { class: "pw-envset", "data-prs-slack-checks": "" }), set = !!PW.data?.sending?.bot?.set;
+  const draw = () => { const ck = PW.data?.sending?.checks || {}, rows = Object.values(ck);
+    box.replaceChildren(h("div", { class: "actions" }, h("button", { class: "btn sm", "data-prs-slack-check": "", disabled: !set, title: set ? "" : T("Save a bot token first", "先儲存 bot token"),
+        onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { const v = await postJ("/api/prs/sending/check", {}); PW.data = { ...PW.data, sending: v }; draw(); } catch (err) { flash(err.message); b.disabled = false; } } }, T("Check contacts", "校驗聯絡人")),
+        h("span", { class: "faint pw-small" }, T("Asks Slack who each Slack contact is. A contact fails in another workspace, deactivated, a bot or external; fix the table yourself.", "問 Slack 每個 Slack 聯絡人是誰。在別的 workspace、已停用、是 bot 或外部帳號就不通過；請自己改表格。"))),
+      ...rows.map((c) => h("div", { class: `pw-check ${c.ready ? "" : "pw-err"}`, "data-prs-slack-check-row": c.gh, "data-ok": String(!!c.ready) },
+        h("span", { class: "mono" }, `${c.gh} → ${c.id}`), h("span", {}, c.name || "—"), h("b", {}, c.ready ? "✓" : "✕"), c.problem ? h("span", { class: "pw-small" }, T(c.problem.en, c.problem.tw)) : !c.ready && c.ok ? h("span", { class: "pw-small" }, T("the contact or workspace changed: check again", "聯絡人或 workspace 改過：請重新校驗")) : null)));
+  };
+  draw(); return box;
+}
+function settingsModal() {
+  const s = structuredClone(PW.data?.settings || {}), base = structuredClone(PW.data?.settings || {}), envs = s.environments || [];
+  const cb = (k, en, tw) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-which": k, checked: !!s.which?.[k], onchange: (e) => { s.which[k] = e.target.checked; } }), " ", T(en, tw));
+  const csv = (key, label, get, set) => h("label", { class: "field" }, h("span", { class: "lbl" }, label), h("input", { class: "input", "data-prs-set": key, value: get().join(", "), oninput: (e) => set(e.target.value.split(",").map((x) => x.trim()).filter(Boolean)) }));
+  const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" });
+  const KINDS = [["deployment", T("GitHub Deployment to an environment", "GitHub Deployment 到某個環境")], ["check", T("A check run by name on the head", "head 上某個名稱的 check run")], ["branch", T("The latest deployment of a branch containing the head", "某個 branch 最新的部署包含這個 head")], ["file", T("An image tag in a file in a repository", "某個 repo 的檔案裡的 image tag")]];
+  const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", "image: registry/app:{tag}"], ["ref", T("ref (optional)", "ref（可省略）")]] };
+  const drawEnvs = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i) },
+    h("input", { class: "input pw-envname", value: e.name || "", placeholder: T("name", "名稱"), "aria-label": T("Environment name", "環境名稱"), oninput: (ev) => { e.name = ev.target.value; } }),
+    h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!e.production, onchange: (ev) => { e.production = ev.target.checked; } }), T(" production", " 正式")),
+    h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, KINDS.map(([k, l]) => h("option", { value: k, selected: e.detect?.kind === k }, l))),
+    ...(FIELDS[e.detect?.kind] || []).map(([f, l]) => h("input", { class: "input", value: e.detect?.[f] || "", placeholder: l, "aria-label": l, oninput: (ev) => { e.detect[f] = ev.target.value; } })),
+    h("input", { class: "input", value: (e.repos || []).join(", "), placeholder: T("only these repositories (optional)", "只用在這些 repo（可省略）"), "aria-label": T("Repositories", "repo"), oninput: (ev) => { e.repos = ev.target.value.split(",").map((x) => x.trim()).filter(Boolean); } }),
+    h("button", { class: "pw-x", "aria-label": T("Remove this environment", "移除這個環境"), onclick: () => { envs.splice(i, 1); drawEnvs(); } }, icon("x")),
+    e.detect?.kind === "file" ? h("p", { class: "faint pw-small pw-envhint", "data-prs-template-hint": "" }, T("Studio finds this line in the file and reads the tag at {tag}; the tag must end in the commit (7–40 hex characters), e.g. app:1.4.0-3f2a1c9.", "Studio 在檔案裡找這一行，讀 {tag} 位置的 tag；tag 結尾要是 commit（7–40 個十六進位字元），例如 app:1.4.0-3f2a1c9。")) : null)));
+  drawEnvs();
+  const err = h("p", { class: "pw-err", role: "alert", hidden: true });
+  const close = pwModal(T("Pull requests settings", "Pull requests 設定"), [
+    h("p", { class: "muted" }, T("Repositories and pull requests are added by pasting their address above the list, and removed with ×.", "要追蹤的 repo 和 PR 直接在清單上方貼網址加入、按 × 移除。")),
+    h("div", { class: "pw-dl" },
+      h("h3", {}, T("For a watched repository, which pull requests", "貼 repo 網址時，追蹤這個 repo 裡的哪些 PR")), cb("mine", "opened by me", "我開的"), cb("assigned", "assigned to me", "指派給我的"), cb("reviewRequested", "review requested from me", "請我 review 的"),
+      h("h3", {}, T("Test evidence", "測試證據來源")),
+      csv("accounts", T("Accounts whose comments count (comma separated)", "留言算數的帳號（逗號分隔）"), () => s.evidence.accounts, (v) => { s.evidence.accounts = v; }),
+      ...(() => { const sug = (PW.data?.suggest?.evidenceAccounts || []).filter((x) => !s.evidence.accounts.some((a) => a.toLowerCase() === x.login.toLowerCase()));
+        return sug.length ? [h("div", { class: "pw-sug", "data-prs-suggest": "" }, h("span", { class: "faint pw-small" }, T("Commented on these pull requests without authoring or reviewing them:", "在這些 PR 留過言、但不是作者也沒 review 的人：")),
+          ...sug.map((x) => h("button", { class: "badge", "data-prs-suggest-account": x.login, title: T(`Add ${x.login}: commented on ${x.prs} pull request${x.prs === 1 ? "" : "s"}`, `加入 ${x.login}：在 ${x.prs} 個 PR 留過言`),
+            onclick: (ev) => { if (!s.evidence.accounts.some((a) => a.toLowerCase() === x.login.toLowerCase())) s.evidence.accounts = [...s.evidence.accounts, x.login]; const inp = ev.currentTarget.closest(".pw-dl").querySelector('[data-prs-set="accounts"]'); if (inp) inp.value = s.evidence.accounts.join(", "); ev.currentTarget.remove(); } }, "+ ", x.login, h("span", { class: "faint" }, ` · ${x.prs}`))))] : []; })(),
+      csv("checks", T("Check runs that count", "算數的 check run"), () => s.evidence.checks, (v) => { s.evidence.checks = v; }),
+      csv("labels", T("Labels that count", "算數的 label"), () => s.evidence.labels, (v) => { s.evidence.labels = v; }),
+      csv("required", T("Reviewers who must review every pull request (for example a review bot)", "每個 PR 都要 review 的人（例如 review bot）"), () => s.requiredReviewers, (v) => { s.requiredReviewers = v; }),
+      h("h3", {}, T("Environments, in order", "環境（依順序）")), envs.length ? null : h("p", { class: "faint pw-small", "data-prs-envs-auto": "" }, T("None set: each repository's own GitHub environments that have a successful deployment are shown, on when the newest one contains the head. They are shown only; set environments here to make “deploy for testing” a step.", "沒有設定：顯示每個 repo 自己有成功部署過的 GitHub 環境，最新一次成功的 deployment 包含 head 就算在上面。這些只供顯示；要讓「部署去測」成為下一步，請在這裡設定環境。")), envBox,
+      h("button", { class: "btn", "data-prs-env-add": "", onclick: () => { envs.push({ name: "", production: false, repos: [], detect: { kind: "deployment", environment: "" } }); drawEnvs(); } }, icon("plus"), T("Add an environment", "加入環境")),
+      h("h3", {}, T("Release brief: paths that need handling before going live", "上線 brief：哪些路徑要在上線前處理")),
+      h("p", { class: "faint pw-small", style: "margin:0" }, T("CODEOWNERS-style patterns, comma separated. Studio also scans what each diff adds: configuration and secrets newly read, Kubernetes ConfigMaps and Secrets, new metrics, and the body's rollout section.", "CODEOWNERS 格式，逗號分隔。Studio 另外會掃 diff 新增的內容：新讀取的設定和 secret、Kubernetes ConfigMap / Secret、新 metric，以及 PR body 的 rollout 段落。")),
+      csv("ops-migration", T("Database migrations", "DB migration"), () => s.opsRules.migration, (v) => { s.opsRules.migration = v; }),
+      csv("ops-config", T("Configuration", "設定"), () => s.opsRules.config, (v) => { s.opsRules.config = v; }),
+      csv("ops-secret", T("Secrets", "Secret"), () => s.opsRules.secret, (v) => { s.opsRules.secret = v; }),
+      h("h3", {}, T("Follow-through", "PR 跟進"), h("span", { class: "pw-new" }, T("new", "新"))),
+      h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-follow": "", checked: !!s.follow?.enabled, onchange: (e) => { s.follow = { enabled: e.target.checked }; } }),
+        T(" Raise Inbox cards for these pull requests: ask QA to test, ask reviewers to look again, ask for the approvals the rules miss, ready to merge. Studio sends nothing by itself.", " 為這些 PR 在收件匣出卡：請 QA 測試、請 reviewer 重驗、請 approve、可合併。Studio 不會自己送出任何東西。")),
+      sendingSection(s),
+      h("h3", {}, T("Release groups", "上線分組")), csv("groups", T("Group names (comma separated)", "分組名稱（逗號分隔）"), () => s.groups, (v) => { s.groups = v; }),
+      h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!s.shortForm, onchange: (e) => { s.shortForm = e.target.checked; } }), T(" Also write the short same-repository form Depends-on: #N", " 另外寫同 repo 簡寫 Depends-on: #N"))),
+    err,
+    foot(h("span", { class: "x-grow" }), h("button", { class: "btn", onclick: () => close() }, T("Cancel", "取消")), h("button", { class: "btn primary", "data-prs-settings-save": "", onclick: async () => {
+      s.environments = envs;
+      try { PW.data = await postJ("/api/prs/settings", { settings: s, base }); setCount(PW.data.count); close(); render(); flash(T("Settings saved", "設定已儲存")); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings" });
+}
+
+// opening the page (a link, a reload, the sidebar) loads it and asks for a refresh; a redraw while it is open does not
+routes.prs = () => { if (!PW.onPage) setTimeout(enter, 0); return view(); };
+window.crewPrs = { reload: load, state: PW };
+})();

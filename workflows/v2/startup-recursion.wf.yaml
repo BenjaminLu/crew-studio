@@ -3,6 +3,7 @@
   "name": "創業 recursion",
   "kind": "startup-recursion",
   "version": 1,
+  "lan": {"refuse": "a two-vendor demonstration of founder and judge rounds, not work for a peer"},
   "description": "Claude pitches and revises; Codex critiques (either role can run on Claude, Codex or Cursor). Up to three rounds, then captain acceptance. Text only.",
   "intent": {
     "keywords": [

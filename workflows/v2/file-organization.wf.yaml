@@ -5,6 +5,7 @@ id: file-organization
 name: File organization
 kind: files
 version: 1
+lan: {"refuse": "it moves files outside its own folder"}
 description: "Tidy a folder: dry-run plan → gates → captain's card → apply (undo log). Leave the folder blank to try it on a sample folder."
 intent:
   keywords: [tidy, organize, organise, sort, folder, files, downloads, desktop, clean, cleanup]

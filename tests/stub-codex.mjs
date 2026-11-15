@@ -27,7 +27,7 @@ if (msg.includes("STUB_LOGIN")) { out({ type: "turn.failed", error: { message: "
 if (msg.includes("STUB_MANY")) { for (let i = 0; i < 10; i++) { await tool("runs_list", {}); await sleep(50); } say("done"); }
 else if (msg.includes("STUB_INTENT")) {
   const i = await tool("intent_capture", { goal: "Add a dark mode to the docs site", details: "from the stub" });
-  say(`Recorded as intent [${i.id}](#/intents/${i.id}). firstmate will draft a spec and raise a dispatch card.`);
+  say(`Recorded as intent ${i.id}. firstmate will draft a spec and raise a dispatch card.`);
 } else {
   const runs = await tool("runs_list", {});
   const t = runs.find((x) => x.status === "done") ?? runs[0];

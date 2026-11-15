@@ -31,6 +31,15 @@ export async function helper(argv: string[], o: { cwd?: string; timeoutMs?: numb
     const code = await p.exited; clearTimeout(timer); return code === 0 && n <= cap ? Buffer.concat(chunks) : null;
   } catch { return null; }
 }
+/** A helper's first maxBytes of output: cut says the rest was not read (the process stopped there); null when it failed. */
+export async function helperHead(argv: string[], o: { cwd?: string; timeoutMs?: number; maxBytes: number; env?: Record<string, string>; okCodes?: number[] }): Promise<{ out: Buffer; cut: boolean } | null> {
+  try {
+    const p = Bun.spawn(argv, { cwd: o.cwd, stdout: "pipe", stderr: "ignore", env: scrubEnv(o.env ?? process.env) }); const timer = setTimeout(() => { try { p.kill(9); } catch {} }, o.timeoutMs ?? HELPER_TIMEOUT_MS);
+    const chunks: Buffer[] = []; let n = 0, cut = false;
+    for await (const c of p.stdout as any) { const b = Buffer.from(c); if (n + b.length > o.maxBytes) { chunks.push(b.subarray(0, o.maxBytes - n)); n = o.maxBytes; cut = true; try { p.kill(9); } catch {} break; } chunks.push(b); n += b.length; }
+    const code = await p.exited; clearTimeout(timer); return cut || (o.okCodes ?? [0]).includes(code) ? { out: Buffer.concat(chunks), cut } : null;
+  } catch { return null; }
+}
 export type FileKind = "text" | "image" | "pdf" | "binary";
 
 /** A changed path as git prints it, made comparable: posix, no "./", no trailing slash; null when it leaves the repository. */

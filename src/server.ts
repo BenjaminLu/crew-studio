@@ -46,7 +46,7 @@ import { homedir } from "node:os";
 import { extname, join, normalize } from "node:path";
 import { Board } from "./board";
 import { FmState, type Card, type Ev } from "./fm";
-import { GitHub } from "./github";
+import { GitHub, MERGED_KEPT } from "./github";
 import { Store } from "./store";
 import { TOOLS, toolByName, type ToolCtx } from "./tools";
 import { manualFor } from "./manual";
@@ -66,6 +66,9 @@ import { LiveRunner, StubRunner, readStatus, serveCommand, serveOffCommand, type
 import { MemoryStore } from "./memory";
 import { createM3 } from "./m3";
 import { renderEnv, TOOLS_DIR } from "./render";
+import { kokoroSpeaker, localSynth, stopLocal, voiceDoctorInput, voiceStatus } from "./voice/kokoro";
+import { ensureScripts } from "./voice/runtime";
+import { macVoices } from "./voice/mac";
 import { dirname } from "node:path";
 import { Agents } from "./agent";
 import { RawLog, StudioLog } from "./rawlog";
@@ -73,6 +76,7 @@ import { Workflows } from "./workflows";
 import { createImprove } from "./improve";
 import { createChanges } from "./changes";
 import { createProjectOverview } from "./project-overview";
+import { createPrWatch } from "./pr-watch";
 import { createM7 } from "./m7";
 import { createDocs } from "./docs";
 import { Skins, snapshotFor, nativeSkinData } from "./skins";
@@ -80,6 +84,7 @@ import { bundledText } from "./bundled";
 import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
+import { CliGrants, createGrantTools, installGrantViews } from "./cli-grants";
 import { amendmentsNotice } from "./runtime/refine";
 import { Terminals, TermError, terminalRoutes } from "./terminals";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
@@ -97,6 +102,13 @@ import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-r
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
 import { createTranscripts } from "./transcripts";
 import { createTasksApi, taskAlias } from "./tasks-api";
+import { Lan } from "./lan/relay";
+import { lanRoutes } from "./lan/routes";
+import { openTaintList } from "./lan/taint";
+import { openSpendLedger } from "./lan/ledger";
+import { lanRunner } from "./lan/runner";
+import { lanApplier, baseOf as lanBaseOf, baseProblem as lanBaseProblem } from "./lan/apply";
+import { installLanProfile, dailyRefusal as lanDailyRefusal } from "./lan/profile";
 import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
 import { createSkillRoutes } from "./skill-routes";
@@ -115,6 +127,7 @@ import { staffingVerify } from "./providers/staffing-verify";
 import { cursorKeyCheck, cursorModel, probeCursor, probeCursorChecked, verifyCursor } from "./providers/cursor";
 import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,admitSignedInClaude,validClaudePair,claudeEfforts,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
 import { ProviderRefusal, nativeChain, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
+import { activityPage, activityQuery } from "./activity-list";
 
 const ROOT = SRC_ROOT;
 const DATA = process.env.CREW_DATA ?? DEFAULT_DATA;
@@ -192,10 +205,8 @@ setInterval(() => {
   if (sig !== crewSig) { crewSig = sig; send("crew", { crew: crewCache.slice(0, 40), tasks: tasks() }); }
 }, 3000);
 gh.onChange = s => send("github", s);
-// Studio's own intents and firstmate's links to them
-const dataSig = () => ["intents.jsonl", "intent-links.jsonl", "artifacts.json"].map(f => { try { return statSync(join(DATA, f)).mtimeMs; } catch { return 0; } }).join("|");
-let lastData = dataSig();
-setInterval(() => { const d = dataSig(); if (d !== lastData) { lastData = d; send("intents", store.intentView(fm)); } }, 1500);
+// Pull requests (#/prs, docs/units/pr-watch.md): every pull request the captain is on, read on the shared poller under its own key
+const prWatch = createPrWatch({ dataDir: DATA, poller: githubPoller, notify: (t, d) => send(t, d) });
 setInterval(() => send("ping", Date.now()), 20_000);
 
 // --- the firstmate MAIN session (M2.5): Studio drives it, one input at a time ---
@@ -236,7 +247,7 @@ main.onEvent = (e: HostEvent) => {
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>{const v=main.view();return v.state!=="detached"&&v.host!=="claude"&&v.host!=="cursor";},configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 // Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{try{terminals.shutdown();}catch{}void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{try{terminals.shutdown();}catch{}try{stopLocal();}catch{}void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
 // a fresh Claude primary: the model the Claude account card checks, Studio's own config folder, the crew token
 const claudePrimaryPair = () => { const model = chatSettings().models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5"; let effort: string | null = null; try { effort = configuredClaudeEffort(model); } catch {} return { model, effort }; };
 // a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone
@@ -322,10 +333,13 @@ const CURSOR_NO_TAKEOVER = "Studio does not take over a Cursor session from a te
 setInterval(() => { try { cursorAccount(true); } catch {} }, 60_000).unref();
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
-const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
+const doctor = () => (doctorCache = diagnose({ lanKeystore: (() => { try { return lan ? lan.keystore() : null; } catch { return null; } })(), state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), voice: voiceDoctorNow ?? undefined, roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
-installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
+// the local voice's rows: checked asynchronously (hashing a model never stalls Studio), the last answer shown
+let voiceDoctorNow: Awaited<ReturnType<typeof voiceDoctorInput>> | null = null;
+const refreshVoiceDoctor = () => Promise.race([macVoices().then((mac) => voiceDoctorInput(mac)).then((v) => { voiceDoctorNow = v; }), new Promise((r) => setTimeout(r, 10_000))]).catch(() => {});
+installs.onFinished = () => { refreshTs(); void refreshVoiceDoctor().then(() => send("doctor", doctor())); };
 
 // --- chat tools: callable only with a token issued for one question ---
 const ctx: ToolCtx = { fm, gh, store, tasks, pending: () => pending, crew: () => crewCache,
@@ -397,7 +411,7 @@ const terminals = new Terminals({ dataDir: DATA,
   secrets: () => { let lk: string | null = null; try { lk = readFileSync(join(DATA, "ledger.key"), "utf8"); } catch {} return [SESSION, lk]; },
   log: (type, summary, data) => { try { studioLog.emit({ type, workflow: "terminal", summary, data }); } catch {} },
   changed: (list) => send("terminals", { terminals: list }) });
-process.on("exit", () => { try { terminals.shutdown(); } catch {} });
+process.on("exit", () => { try { terminals.shutdown(); } catch {} try { stopLocal(); } catch {} });
 { const prev = remote.onRevoke; remote.onRevoke = (id) => { prev(id); terminals.cutDevice(id); }; }
 const flows = new Workflows(dirname(STATE));
 // A clean CLI home may omit model settings. Only a verified official catalog can supply them.
@@ -421,7 +435,7 @@ async function nativeSelection(input: ProviderSelection, x?: any): Promise<Provi
   if (x && x.engine.get(x.run.id)) { x.engine.record(x, "provider-selection", { data: selected.evidence }); const step = [...x.run.steps].reverse().find((s: any) => s.node === x.node.id && s.state === "running"); if (step) { step.provider = selected.provider.id; step.model = selected.provider.model; step.effort = selected.provider.reasoningEffort ?? null; } x.save(); }
   return selected.provider;
 }
-const nativePick = async (x: any, pick: any, context?: { role: string; explicit: boolean; adaptive?: boolean }): Promise<Provider> => {
+const nativePick = async (x: any, pick: any, context?: { role: string; explicit: boolean; adaptive?: boolean; picked?: boolean }): Promise<Provider> => {
   const settings = chatSettings(), config = runtimeCodexConfig(), hostView = main.view();
   const host = hostView.state === "attached" && hostView.driver.holder === "studio" ? hostView.host : null;
   const role = context?.role ?? (x.node.role === "worker" || x.node.mode === "deliver" ? "worker" : x.node.role ?? "coordinator");
@@ -440,7 +454,7 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
   const provider = fixture ? "stub" : !explicit && role === "reviewer" ? String(x.engine.policies.get("vendor_policy.reviewer", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value) : !explicit && role === "coordinator" && host ? host : pick.provider;
   // no attached host: Cursor's rules only when Cursor is the one vendor signed in; the reviewer's stand-ins only under Cursor
   const { chain, alternates } = nativeChain({ host, logins: host ? {} : await gateLogins(), role, explicit, fixture, fallback });
-  return nativeSelection({ role, host: chain, explicit: explicit || fixture || role === "reviewer", provider, alternates, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices] }, x);
+  return nativeSelection({ role, host: chain, explicit: explicit || fixture || role === "reviewer", provider, alternates, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices], ...(context?.adaptive && context?.picked ? { picked: true } : {}) }, x);
 
 };
 agents.providerAdmission = createNativeProviderAdmission({certified,engine:()=>nativeEngineForPolicy,select:nativeSelection,pick:nativePick});
@@ -505,11 +519,20 @@ const runtime = createRuntime({providerLogins:()=>gateLogins(),onboardingProvide
     return generateCodexImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model, effort: crew ? crew.effort : config.effort } });
   },
   // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
-  install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller, artifacts: m3.store }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
+  install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller, artifacts: m3.store }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); prWatch.install(engine); }], skills: improve.skills });
 nativeEngineForPolicy = runtime.engine;
+// external CLI grants (docs/units/cli-mcp-grant.md): issued and revoked on the board only; a grant token reaches four run tools, or the pull request list's
+const cliGrants = new CliGrants(DATA, (type, summary, data) => { try { studioLog.emit({ type, workflow: "cli-grant", actor: type === "cli_grant_issued" || type === "cli_grant_revoked" ? "captain" : "external-cli", summary, data }); } catch {} });
+installGrantViews(runtime.engine, cliGrants);
+const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants, firstmate: () => runtime.firstmate, prs: () => prWatch.tools });
+/** the line the board shows to copy: the MCP helper with the grant's token file (and Studio's URL when not the default port) */
+const grantCommand = (file: string) => { const port = server?.port ?? PORT; return helperCommand("mcp", ["--grant-file", file, ...(port !== 4210 ? ["--url", `http://127.0.0.1:${port}`] : [])]); };
+const shq = (a: string) => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
+const grantView = (g: ReturnType<CliGrants["view"]>) => g.file ? { ...g, command: grantCommand(g.file), claudeMcpAdd: ["claude", "mcp", "add", "studio", "--", ...grantCommand(g.file)].map(shq).join(" ") } : g;
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit, o) => {
   if (main.view().state === "detached") return false;
+  if (runtime.engine.redacted(r)) return false; // untrusted text (issue text, a peer's Studio) never reaches Firstmate: the captain's card
   // an escalation (step-back, no progress, round budget, scope blocked …): Firstmate decides within the spec or escalates with its diagnosis
   if (o?.escalation) { main.enqueue("wake", `Escalation in Task ${r.id}, step ${node.id} (${node.label}).\n${question}\nDecide with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, choice:"<option id>", answer:"<your reason, or the picked value>"}, or escalate {task:"${r.id}", node:"${node.id}", visit:${visit}, escalate:"<what is stuck and why, in plain words>", recommendation:"<what the captain should pick>"}. / Task ${r.id} 卡住了：能在 spec 內決定就自己決定；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長，並寫清楚卡在哪、為什麼、建議怎麼選。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native", undefined, undefined, escalationShown(r, node.label, question)); return true; }
   main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nRead the step's operating manual section first (studio_manual section ${manualFor(r.workflow, node.role ?? node.args?.coordinator)}). Answer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native", undefined, undefined, questionShown(r, node.label));
@@ -521,9 +544,42 @@ runtime.engine.modelChoices = () => { const s = chatSettings(); return choices.f
 runtime.engine.notifyFirstmate = (text, summary) => { if (main.view().state === "detached") return false; main.enqueue("wake", text, "studio-native", undefined, undefined, { en: summary.en, "zh-TW": summary.zh }); return true; };
 runtime.engine.resumeFirstmateQuestions(); // questions pending at the restart: their wake notices died with the old process
 gh.start();
-process.once("exit",()=>{gh.stop();githubPoller.stop();});
+prWatch.ensure(); // the 5-minute refresh of the watched pull requests, when anything is watched and GitHub is connected
+process.once("exit",()=>{gh.stop();prWatch.stop();githubPoller.stop();});
 const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }), projectOf: (r) => runtime.engine.projectRow(r),
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
+// board-to-board work (docs/units/lan-relay.md): the restricted profile on every Task a peer's work started, and this
+// Studio's relay; its peer listener is a separate server that is off until the captain turns it on (CREW_LAN=0: no relay at all)
+// what work from peers spent per local day (src/lan/ledger.ts): its own store, open whatever the relay does
+const lanLedger = openSpendLedger(DATA);
+if (lanLedger.broken) console.warn(`crew-studio: ${lanLedger.broken}: no paid round of a peer's Task runs until it can be read`);
+// the captain's ceilings are read from the ledger, relay open or not; a provider's subscription limit is audited by the relay
+installLanProfile(runtime.engine, { ledger: () => lanLedger, onLimit: (r, provider, why) => { try { lan?.noteLimit(r.id, provider, why); } catch {} } });
+// the taint list (commits applied from a peer's work) is open from here on, whatever the relay does: CREW_LAN=0, an identity
+// lost, a relay that does not open. A list that cannot be read refuses every trusted start and publish (src/lan/taint.ts)
+const lanTaint = openTaintList(DATA);
+if (lanTaint.broken) console.warn(`crew-studio: ${lanTaint.broken}: trusted starts and publishes are refused until it can be read`);
+let lan: Lan | null = null, lanOpening = false, lanOpenP: Promise<Lan> | null = null;
+// Board-to-board work is off until the captain turns it on (Peers page): nothing builds the Secure Enclave helper, makes
+// keys or asks for Touch ID before then. Once this Studio has an identity of its own, the relay opens at every start, in
+// the background (Studio answers meanwhile; the Peers page says it is starting). CREW_LAN=0: never. The taint list and
+// the spend ledger above are open either way.
+const lanAllowed = process.env.CREW_LAN !== "0";
+const openLan = (): Promise<Lan> => lan ? Promise.resolve(lan) : (lanOpenP ??= (async () => { lanOpening = true;
+  try {
+    const opened = await Lan.open({ dataDir: DATA, send, taint: lanTaint, spend: lanLedger,
+      repos: () => { try { return (runtime.projects.list() as any[]).filter((p) => p?.path && p.enabled !== false).map((p) => String(p.path)); } catch { return []; } }, dailyRefusal: (c) => lanDailyRefusal(lanLedger, c),
+      // the tokens a round of each provider uses here, on average (for the providers with a record)
+      estimates: () => { const out: Record<string, number> = {}; for (const id of choices.filter((x) => x !== "stub")) { try { const v = lanLedger.estimate(id, NaN); if (Number.isFinite(v)) out[id] = Math.round(v); } catch {} } return out; }, log: (summary, data) => { try { studioLog.emit({ type: "lan", workflow: "lan", summary, data }); } catch {} console.log(`crew-studio: ${summary}`); },
+      runner: lanRunner({ engine: runtime.engine, defs: runtime.defs, artifacts: m3.store as any, start: (o) => runtime.startLan(o), staffing: (def) => runtime.lanStaffing(def), providerProblem: (p) => runtime.lanProviderProblem(p), needsProject: (def) => runtime.lanNeedsProject(def) }),
+      apply: lanApplier({ dataDir: DATA, project: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? { path: p.path, base: p.base } : null; } }),
+      baseOf: (id) => { const p = runtime.projects.get(id) as any; return p?.path && p.enabled !== false ? lanBaseOf(p.path, p.base || "main") : null; },
+      baseProblem: (id, base) => { const p = runtime.projects.get(id) as any; return p?.path ? lanBaseProblem(p.path, base) : `no registered project ${id}`; },
+      privacyDenylist: () => { try { const v = runtime.engine.policies.get("privacy.denylist").value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; } } });
+    lan = opened; process.on("exit", () => { try { lan?.close(); } catch {} }); return opened;
+  } finally { lanOpening = false; lanOpenP = null; }
+})());
+if (lanAllowed && Lan.started(DATA)) void openLan().catch((e: any) => console.warn(`crew-studio: board-to-board work is unavailable: ${e?.message ?? e}`));
 const compareApi = createCompare({ dataDir: DATA, get: (id) => runtime.engine.get(id), current: (wf) => runtime.engine.defs.get(wf), phoneRaw: () => transcripts.settings().phoneRaw });
 // rounds of an earlier Studio left their throwaway homes and tmp behind (it stopped mid-round): no job is live at start, so they go
 try { const rd = join(DATA, "rounds"); if (existsSync(rd)) for (const d of readdirSync(rd)) for (const x of ["home", "tmp"]) { const p = join(rd, d, x); if (existsSync(p)) rmSync(p, { recursive: true, force: true }); }
@@ -611,7 +667,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // the one guard in front of every mutating route: same site, a Studio session (or a paired phone), JSON
     if (writing && !EXEMPT(p)) { const g = guardWrite(req, url, SESSION, who.kind === "phone"); if (g) return json({ error: g.error, code: g.code }, g.status); }
     if (who.kind === "phone" && writing) {
-      if (DESKTOP_ONLY.has(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (DESKTOP_ONLY.has(p) || p === "/api/lan" || p.startsWith("/api/lan/")) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (PHONE_DRIVE.has(p) && !remote.allowDrive) return json({ error: "this phone may read and interrupt only; allow phone driving on the Mac first", code: "noDrive" }, 403);
     }
     if(p==='/api/models'&&!writing){
@@ -651,6 +707,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if((p==='/api/claude/account/login'||p==='/api/claude/account/cancel')&&writing){if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);if(p.endsWith('/cancel'))return json(await claudeLogin.cancel());try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await terminalRoutes(terminals, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION)); if (rt) return rt; }
+    { const rl = await lanRoutes(lan, req, url, who as any, writing, who.kind === "desktop" && hasSessionCookie(req, SESSION), lanOpening, lanAllowed ? openLan : undefined); if (rl) return rl; }
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
     { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }
@@ -658,6 +715,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     { const rp = await packGenesis.handle(req, url, who, writing); if (rp) return rp; }
     { const r6 = await improve.handle(req, url, who, writing); if (r6) return r6; }
     { const ro = await projectOverview.handle(req, url, who as any, writing); if (ro) return ro; }
+    { const rp = await prWatch.handle(req, url, who as any, writing); if (rp) return rp; }
     { const rc = await changes.handle(req, url, who, writing); if (rc) return rc; }
     { const r7 = await m7.handle(req, url, who, writing); if (r7) return r7; }
     { const r8 = await docs.handle(req, url, who, writing); if (r8) return r8; }
@@ -704,6 +762,23 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       studioLog.emit({ type: "operating_rules_changed", workflow: "studio", actor: "captain", summary: project ? `operating rules changed for ${project}` : "Studio-wide operating rules changed", data: { project } });
       return json(view());
     }
+    // external CLI grants: the board lists, issues and revokes them; issuing and revoking need the captain's own page
+    // (its session cookie, same origin) on this Mac, never a tool token or a script's header
+    if (p === "/api/cli-grants" || /^\/api\/cli-grants\/g-[0-9a-f]{8}\/revoke$/.test(p)) {
+      if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (!hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
+      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], scopes: ["project", "prs"], projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
+      if (req.headers.get("x-crew-tool-token") || !hasSessionCookie(req, SESSION) || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin")
+        return json({ error: "Only the captain issues or revokes an external CLI grant, from Studio's page on this Mac / 只有船長能在這台 Mac 的 Studio 頁面發出或撤銷外部 CLI 授權", code: "captainOnly" }, 403);
+      let b: any; try { b = await req.json(); } catch { return json({ error: "json only" }, 400); }
+      if (p !== "/api/cli-grants") { try { return json({ grant: grantView(cliGrants.revoke(p.split("/")[3], "captain")) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 404); } }
+      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => k !== "project" && k !== "ttl" && k !== "scope")) return json({ error: "send {project, ttl} or {scope: \"prs\", ttl}" }, 400);
+      if (b.scope === "prs") { if (b.project !== undefined) return json({ error: "a pull request list grant has no project" }, 400);
+        try { const r = cliGrants.issue({ scope: "prs", ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
+      if (b.scope !== undefined && b.scope !== "project") return json({ error: "scope is project or prs" }, 400);
+      const project = runtime.projects.get(String(b.project ?? "")) as any; if (!project || project.enabled === false) return json({ error: "no such project" }, 404);
+      try { const r = cliGrants.issue({ project: project.id, ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); }
+    }
     if (p === "/api/remote/me") return json({ kind: who.kind, device: who.kind === "phone" ? { id: who.device.id, name: who.device.name } : null, allowDrive: remote.allowDrive });
     if (p === "/api/remote") return json({ devices: remote.devices(), allowDrive: remote.allowDrive, tailscale: ts, serveOn, live: tsRunner.live, lan: lanState(),
       command: serveCommand(PORT).join(" "), offCommand: serveOffCommand().join(" "), pairUrl: ts.url });
@@ -718,8 +793,19 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // --- Doctor ---
     // which process answers (tests check they reach the server they started)
     if (p === "/api/instance" && !writing) return json(launchAuthority.respond(url.searchParams.get("challenge")));
-    if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock", execution: executionMode(),
-      jobs: [...installs.jobs.values()].slice(-5) });
+    if (p === "/api/doctor") { await refreshVoiceDoctor(); return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock", execution: executionMode(),
+      jobs: [...installs.jobs.values()].slice(-5) }); }
+    // the review room's local voice: whether it can speak (the room's picker), and Doctor's test phrase (desktop only)
+    // the picker asks it; a phone gets only whether this Mac's voice is ready (the voice speaks on the Mac only), never a path
+    if (p === "/api/voice/status" && !writing) { const v = await voiceStatus(url.searchParams.get("fresh") === "1"); return json(who.kind === "desktop" ? v : { ready: false, engine: v.engine, desktopOnly: true }); }
+    if (p === "/api/voice/test" && writing) {
+      if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      let b: any = {}; try { b = await req.json(); } catch {}
+      const zh = /^zh/.test(String(b?.lang ?? "")), text = zh ? "這是審查室的本機神經語音：這個 PR 在 GitHub 上的 diff，會用英文聲音唸英文詞。" : "This is the review room's local neural voice. Nothing you hear left this Mac.";
+      try { const out = await kokoroSpeaker(await localSynth(), { lang: zh ? "zh" : "en", mode: "switch" })(text, req.signal);
+        return new Response(out.bytes, { headers: { "content-type": "audio/wav", "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
+      catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? "no_voice" }, 409); }
+    }
     if (p === "/api/doctor/methods") { const item = url.searchParams.get("item") ?? ""; return json({ item, methods: methodsFor(item), login: LOGINS[item] ?? null }); }
     if (p.startsWith("/api/doctor/job/")) { const j = installs.jobs.get(p.slice("/api/doctor/job/".length)); return j ? json(j) : json({ error: "no such job" }, 404); }
     if (p === "/api/doctor/install" && writing) {
@@ -729,6 +815,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (m.kind === "open") return json({ open: m.url });
       if (!m.usable) return json({ error: `this method needs ${m.needs.join(", ")}` }, 409);
       if (b?.confirm !== true) return json({ error: "confirm first", command: m.argv.join(" "), source: m.source, location: m.location }, 400);
+      // the local voice's download runs Studio's own script: it is put in place now, on the captain's click, never on a view
+      if (String(b.item).startsWith("voice-")) ensureScripts();
       try { return json(installs.start(String(b.item), m)); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
     }
     if(p==="/api/codex/account"&&!writing)return json(codexAccount.view());
@@ -836,6 +924,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     }
     if (p === "/api/activity") {
       const q = url.searchParams;
+      // the Activity page's toolbar: filtered, counted and paged over the whole log (src/activity-list.ts)
+      if (q.has("page")) return json(activityPage(fm.events, activityQuery(q)));
       return json(fm.activity({ task: q.get("task") || undefined, type: q.get("type") || undefined, actor: q.get("actor") || undefined,
         limit: Number(q.get("limit") || 150), before: q.get("before") ? Number(q.get("before")) : undefined }));
     }
@@ -851,6 +941,16 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
         let args: any = {}; try { args = await req.json(); } catch {}
         return json(m3.runs.callTool(wt, decodeURIComponent(p.slice("/api/tools/".length)), args));
       }
+      // an external CLI grant (src/cli-grants.ts): only the tools of its scope; revoked, expired or unknown is 403 on the next call
+      if (CliGrants.claims(wt)) {
+        const name = p === "/api/tools" ? "tools/list" : decodeURIComponent(p.slice("/api/tools/".length));
+        const u = cliGrants.use(wt, name); if (!u.ok) return json({ error: u.error }, u.status);
+        if (p === "/api/tools") return json(grantTools.list(u.grant));
+        if (!grantTools.list(u.grant).some((t) => t.name === name)) return json({ error: `no such tool: ${name} (studio exposes ${grantTools.list(u.grant).map((t) => t.name).join(", ")})` }, 404);
+        const raw = await req.text(); if (raw.length > 65_536) return json({ error: "arguments too large" }, 413);
+        let args: any = {}; try { args = raw ? JSON.parse(raw) : {}; } catch {}
+        try { return json(await grantTools.call(u.grant, name, args)); } catch (e: any) { return json({ error: String(e?.message ?? e) }); }
+      }
       const tk = tokens.get(req.headers.get("x-crew-tool-token") ?? "");
       if (!tk || tk.expires < Date.now()) return json({ error: "no valid tool token" }, 403);
       if (p === "/api/tools") return json(TOOLS.map(t => ({ name: t.name, description: t.description, inputSchema: t.schema })));
@@ -859,7 +959,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (++tk.calls > MAX_TOOL_CALLS) return json({ error: `tool limit reached (${MAX_TOOL_CALLS} per question)` });
       let args: any = {};
       try { args = await req.json(); } catch {}
-      try { const r = tool.run(ctx, args); if (tool.write) send("intents", store.intentView(fm)); return json(r); }
+      try { return json(tool.run(ctx, args)); }
       catch (e: any) { return json({ error: String(e?.message ?? e) }); }
     }
     if (p === "/api/chat" && req.method === "POST") {
@@ -899,8 +999,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       }
       return json(chatInfo());
     }
-    if (p === "/api/intents") return json(store.intentView(fm));
-    if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
+    if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, mergedKept: MERGED_KEPT, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
     if (p.startsWith("/api/task/")) {
       const id = decodeURIComponent(p.slice("/api/task/".length)).toUpperCase();
       if (!fm.known(id)) return json({ error: "not in the log" }, 404);

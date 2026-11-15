@@ -27,6 +27,17 @@ bun run launch
 
 This starts Studio (or finds the verified running instance) and requests its authenticated Board in your browser. Keep this process running. No second terminal or copied session link is required. A browser accepting the request does not prove a visible window; retry with `bun run launch --browser Safari` if your default browser has no normal window.
 
+**The captain's live board** runs from a fixed release, not from this checkout ([live release](docs/setup-and-reference.md#live-release)). Nothing starts it at login, so after the Mac restarts it is down. Start the same release again from the checkout:
+
+```sh
+bun scripts/live-release.ts status                                # "recorded pid … is not listening" means it is down
+bun scripts/live-release.ts deploy --ref <live SHA> --no-fetch    # reuses that release: verifies it, starts it, opens the Board
+```
+
+If `status` lists Tasks in flight after a restart, they are not running: nothing updated their `run.json` while Studio was down, and deploy refuses until you check them and add `--force`.
+
+Do not run `bun run launch` in the dev checkout to bring the live board back: while the live release is down, the checkout's Studio can take the live port and data dir with the checkout's code.
+
 What you see first:
 
 1. **The Board**, empty: no Tasks and no decisions waiting.

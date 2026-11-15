@@ -53,8 +53,9 @@ try {
     const views = await p.$$eval(".nav > .nav-item", (bs) => bs.filter((b) => !b.hidden && getComputedStyle(b).display !== "none").map((b) => b.dataset.view));
     // Projects (e0476a6): on a desktop it is the sidebar's own Projects section; the backbone item shows only on a phone
     // the Review room (its rooms, a way back into each) is a backbone item since the room became a whole screen of its own
-    const want = ["board", "firstmate", "terminals", "inbox", "crew", "runs", "workflows", "skills", "library", "room", ...(width < 760 ? ["projects"] : [])];
-    ok(JSON.stringify(views) === JSON.stringify(want), `the sidebar has exactly the ten backbone items${width < 760 ? " plus Projects" : ""} at ${width} ${scheme}`, JSON.stringify(views));
+    // Peers (board-to-board work, docs/units/lan-relay.md) is a backbone item: its inbox waits on the desktop captain
+    const want = ["board", "firstmate", "terminals", "inbox", "prs", "crew", "runs", "workflows", "skills", "library", "room", "lan", ...(width < 760 ? ["projects"] : [])];
+    ok(JSON.stringify(views) === JSON.stringify(want), `the sidebar has exactly the twelve backbone items${width < 760 ? " plus Projects" : ""} at ${width} ${scheme}`, JSON.stringify(views));
     ok(await p.locator(".side-foot #navSettings").isVisible(), `the gear is at the sidebar foot at ${width} ${scheme}`);
     ok(!(await p.locator(".nav-labs").isVisible()) && (await p.locator(".nav-labs .nav-item").count()) > 0, `labs items are out of the sidebar without the flag at ${width} ${scheme}`);
     ok((await p.locator('.nav-item[data-view="inbox"] .bb-intents').count()) === 0 && (await p.locator("#navSettings #navDoctor").count()) === 1, `the attention counts sit on the backbone: the Inbox counts decisions only, the Doctor's count is on the gear at ${width} ${scheme}`);
@@ -88,12 +89,12 @@ try {
         const all = await p.evaluate(() => fetch("/api/activity?limit=25").then((r) => r.json()));
         const type = "nobody-by-this-name"; // an actor filter that matches nothing
         await p.goto(`${base}/#/activity`); await p.waitForSelector("#evlist", { timeout: 5000 }).catch(() => {}); await p.waitForTimeout(400);
-        await p.fill(".filters input", type); await p.press(".filters input", "Enter"); await p.waitForTimeout(600);
+        await p.fill('[data-lt-q="activity"]', `actor:${type}`); await p.waitForTimeout(600); // the Actor facet as a key:value word (public/list-tools.js)
         const filtered = await p.locator("#evlist .ev").count();
         await p.goto(`${base}/#/crew`); await p.waitForSelector("[data-crew-activity] .ev"); await p.waitForTimeout(300);
         const shown = await p.$$eval("[data-crew-activity] .ev", (es) => es.length);
         await p.goto(`${base}/#/activity`); await p.waitForSelector("#evlist", { timeout: 5000 }).catch(() => {}); await p.waitForTimeout(600);
-        ok(!!type && filtered < all.length && shown === Math.min(25, all.length) && (await p.locator("#evlist .ev").count()) === filtered && (await p.inputValue(".filters input")) === type,
+        ok(!!type && filtered < all.length && shown === Math.min(25, all.length) && (await p.locator("#evlist .ev").count()) === filtered && (await p.inputValue('[data-lt-q="activity"]')) === `actor:${type}`,
           "Crew's activity is the unfiltered log after a filtered #/activity visit, and the filter is still there when you go back", JSON.stringify({ type, shown, all: all.length, filtered })); }
       { // a Crew re-render after the list is older than 3 s (an SSE crew event, a language switch) keeps the activity block and its items
         await p.goto(`${base}/#/crew`); await p.waitForSelector("[data-crew-activity] .ev");
@@ -117,7 +118,7 @@ try {
       ok(await Promise.race([p.evaluate(() => new Promise((r) => setTimeout(() => r(!!document.querySelector('.nav-labs .nav-item[data-view="late"]')), 50))), new Promise((r) => setTimeout(() => r(false), 2000))]), "an item added later lands in labs and the page stays responsive");
       await p.evaluate(() => setLang("zh-TW")); await p.waitForTimeout(200);
       const zh = await p.$$eval(".nav > .nav-item[data-backbone] .nl", (ns) => ns.map((n) => n.textContent));
-      ok(JSON.stringify(zh) === JSON.stringify(["看板", "Firstmate", "終端機", "收件匣", "船員", "任務", "流程", "技能", "成品庫", "審查室", "專案"]) && (await p.getAttribute("#navSettings", "aria-label")) === "設定", "switching to zh-TW relabels the backbone items and the gear", JSON.stringify(zh));
+      ok(JSON.stringify(zh) === JSON.stringify(["看板", "Firstmate", "終端機", "收件匣", "Pull requests", "船員", "任務", "流程", "技能", "成品庫", "審查室", "區網同事", "專案"]) && (await p.getAttribute("#navSettings", "aria-label")) === "設定", "switching to zh-TW relabels the backbone items and the gear", JSON.stringify(zh));
       await p.evaluate(() => setLang("en"));
     }
     if (width === 390 && scheme === "dark") {

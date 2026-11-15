@@ -31,7 +31,7 @@ try{
   ok(await p.locator('[data-agent-node="J-fixture"] a').first().getAttribute('href')==='#/run/R-fixture'&&await p.locator('[data-agent-node="J-fixture"] [data-agent-link]').count()===0,'nested coordinator has exact Task link without fabricated node receipt '+lang);
   firstmate=[{actor:'historic-fixture',name:'Prior round',alive:false,phase:'finished',role:'reviewer',elapsedMs:1000}];
   await p.waitForSelector('[data-actor="historic-fixture"]',{timeout:10000});
-  await p.getByRole('button',{name:lang==='en'?'Working':'工作中',exact:true}).click();
+  await p.fill('[data-lt-q="crew"]','phase:building');await p.waitForTimeout(150); // the Status facet (public/list-tools.js) is what Recent / Working was
   ok(await p.locator('[data-actor="historic-fixture"]').count()===0&&await p.locator('[data-agent-node="J-fixture"]').count()===1,'Firstmate history filter preserves working Studio agents '+lang);
   ok(errors.length===0,'no browser errors '+lang);await p.close();
  }

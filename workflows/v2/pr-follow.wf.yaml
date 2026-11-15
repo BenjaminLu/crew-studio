@@ -1,0 +1,9 @@
+{
+ "id":"pr-follow","name":"PR follow-through","kind":"pr-follow","version":1,
+ "description":"One card of a watched pull request's follow-through (ask QA to test, ask reviewers to look again, ask for the approvals the rules miss, confirm a push that voids approvals, or a question for the captain). Studio never sends anything without the captain's click; the card closes by itself when GitHub shows what it waits for.",
+ "params":{"follow":{"label":"Pinned: the pull request, the card's kind and the head it was made for"}},
+ "roles":[],"nodes":[
+  {"id":"card","kind":"hook","label":"PR follow-through card","do":"pr-follow.card","x":160,"y":140},
+  {"id":"done","kind":"hook","label":"Followed through","x":440,"y":140}
+ ],"edges":[["card","done","done"]]
+}

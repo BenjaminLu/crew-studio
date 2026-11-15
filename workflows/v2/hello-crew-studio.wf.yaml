@@ -1,5 +1,5 @@
 {
- "id":"hello-crew-studio","name":"Hello Crew Studio","version":1,"kind":"web",
+ "id":"hello-crew-studio","name":"Hello Crew Studio","version":1,"lan":{"refuse": "a guided tour of this Studio, not work for a peer"},"kind":"web",
  "description":"Build your first website: generate a local sample, open the preview, and approve the result. No model account needed.",
  "roles":[],"params":{"heading":{"label":"Website heading","default":"Hello Crew Studio"}},
  "nodes":[

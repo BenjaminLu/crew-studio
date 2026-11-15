@@ -150,7 +150,13 @@ try {
     await section(p,"team");await expand(p,"model-detection");
     const readsNow = claudeReads(); rmSync(join(home, ".claude-models-login"));
     const redetect = async (login) => { await p.locator("[data-redetect]:not([disabled])").click(); await p.waitForFunction((l) => document.querySelector('[data-provider-status="claude"]')?.dataset.login === l && document.querySelector("[data-model-detection]")?.getAttribute("aria-busy") === "false", login, { timeout: 30000 }); };
-    await redetect("not-logged-in");
+    // pressed while a plain reload of the page is under way (a "team" event, as after the model change above: on the CI runner
+    // that reload was still running at the press): the press waits for it and then detects, it is not dropped
+    let held = 0; const hold = async (route) => { const u = new URL(route.request().url()); if (route.request().method() === "GET" && !u.searchParams.has("facts")) { held++; await new Promise((r) => setTimeout(r, 1500)); } await route.continue(); };
+    await p.route("**/api/team*", hold);
+    await p.evaluate(() => LIVE.es.dispatchEvent(new MessageEvent("team", { data: "{}" }))); await p.waitForFunction(() => document.querySelector("[data-redetect]:not([disabled])")); await p.waitForTimeout(100);
+    await redetect("not-logged-in"); await p.unroute("**/api/team*", hold);
+    ok(held > 0, `the press came while a plain reload was held ${tag}`, String(held));
     ok(claudeReads() > readsNow && (await claudeStatus.innerText()).includes(lang === "en" ? "not signed in" : "未登入"), `重新偵測 detects again, and a provider without a login says so ${tag}`, await claudeStatus.innerText());
     writeFileSync(join(home, ".claude-models-login"), "1"); await redetect("logged-in");
     if (width === 390) ok(await p.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth + 1), `no horizontal scroll at 390 ${tag}`, String(await p.evaluate(() => document.scrollingElement.scrollWidth)));

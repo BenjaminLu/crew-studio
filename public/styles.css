@@ -382,27 +382,11 @@ body.chat-closed .fab{display:inline-flex}
   .main{padding:16px 16px 96px;overflow:visible}
 }
 
-/* intents, routing, activity, library */
+/* routing, activity, library */
 .new-intent{margin:0 4px 14px;justify-content:flex-start}
 .kbd{margin-left:auto;font:500 11px var(--f-sans);opacity:.8;border:1px solid currentColor;border-radius:4px;padding:0 4px}
 .card-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border)}
-.ilist .irow{display:grid;grid-template-columns:72px minmax(0,1.6fr) 120px minmax(0,1.6fr) 96px;gap:16px;align-items:center;padding:12px 16px;border-top:1px solid var(--border);cursor:pointer;text-align:left;background:none;border-left:0;border-right:0;border-bottom:0;width:100%;color:var(--text)}
-.ilist .irow:first-child{border-top:0}
-.ilist .irow:hover{background:var(--surface-2)}
-.ilist .irow.head{cursor:default;font-size:12px;color:var(--text-3);background:var(--surface-2);padding-block:8px}
 .iid{font:500 12px var(--f-mono);color:var(--text-2)}
-.trail{display:flex;align-items:center;gap:0;min-width:0}
-.trail .s{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3);white-space:nowrap}
-.trail .s .d{width:8px;height:8px;border-radius:50%;background:var(--surface-3);flex:none}
-.trail .s.done .d{background:var(--ok)}.trail .s.cur .d{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.trail .s.you .d{background:var(--human);box-shadow:0 0 0 3px var(--human-soft)}
-.trail .s.cur,.trail .s.you{color:var(--text);font-weight:500}
-.trail .ln{flex:1;min-width:6px;height:2px;background:var(--surface-3);margin:0 4px}
-.trail .ln.done{background:var(--ok)}
-.trail.compact .s:not(.cur):not(.you):not(.fin) span{display:none}
-.trail .s.fin{color:var(--ok);font-weight:500}
-.trail.big .s{flex-direction:column;gap:4px;font-size:12px}
-.trail.big .s small{font-size:11px;color:var(--text-3);font-weight:400}
-.trail.big .ln{margin-top:-18px}
 .link{color:var(--accent-text);text-decoration:none;background:none;border:0;padding:0;font:inherit;cursor:pointer}
 .link:hover{text-decoration:underline}
 .rcard .conf{display:flex;align-items:center;gap:10px}
@@ -475,9 +459,9 @@ details.tools[open] summary{border-bottom:1px solid var(--border)}
 .lane-e{display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px;align-items:center}
 .lchip{font-size:12px;border:1px solid var(--border);background:var(--surface);border-radius:6px;padding:2px 8px;color:var(--text)}
 .lchip i{font-style:normal;color:var(--text-3);font-family:var(--f-mono);margin-right:4px}
-@container main (max-width: 1000px){.wfgrid{grid-template-columns:minmax(0,1fr)}.ilist .irow{grid-template-columns:64px minmax(0,1fr) minmax(0,1.3fr) 90px}.ilist .irow .c-wf{display:none}}
-@container main (max-width: 640px){.ilist .irow{grid-template-columns:56px minmax(0,1fr)}.ilist .irow.head{display:none}.ilist .irow .c-trail{grid-column:1/-1}.ilist .irow .c-up{display:none}.evlist .ev{grid-template-columns:60px minmax(0,1fr)}.evlist .ev .evt{grid-column:2}.evlist .ev .evmeta{grid-column:1/-1;justify-content:flex-start}.wfrow{grid-template-columns:minmax(0,1fr) auto}.wfrow .c-o,.wfrow .c-l,.wfrow .c-r{display:none}.trail .s span{display:none}.trail .s.cur span,.trail .s.you span,.trail .s.fin span{display:inline}}
-@media (max-width: 640px){.opts3{grid-template-columns:minmax(0,1fr)}.form .row2{grid-template-columns:minmax(0,1fr)}.lane{grid-template-columns:minmax(0,1fr)}.lane-h{border-right:0;border-bottom:1px solid var(--border)}.trail.big{flex-wrap:wrap;gap:6px}.trail.big .ln{display:none}}
+@container main (max-width: 1000px){.wfgrid{grid-template-columns:minmax(0,1fr)}}
+@container main (max-width: 640px){.evlist .ev{grid-template-columns:60px minmax(0,1fr)}.evlist .ev .evt{grid-column:2}.evlist .ev .evmeta{grid-column:1/-1;justify-content:flex-start}.wfrow{grid-template-columns:minmax(0,1fr) auto}.wfrow .c-o,.wfrow .c-l,.wfrow .c-r{display:none}}
+@media (max-width: 640px){.opts3{grid-template-columns:minmax(0,1fr)}.form .row2{grid-template-columns:minmax(0,1fr)}.lane{grid-template-columns:minmax(0,1fr)}.lane-h{border-right:0;border-bottom:1px solid var(--border)}}
 @media (max-width: 760px){.new-intent{margin:0;order:1}.new-intent .kbd{display:none}}
 
 /* collapsible sidebar, spend meters, handoffs */

@@ -269,6 +269,28 @@ script.push([...LESSON]);
   const runs0 = runs.length, ea = await refused(() => room.start(id, { thread: { n: 2, node: "n1", chip: "why" }, lang: "en" }, "captain")); E.deps.selectProvider = sp;
   ok(ea?.code === "confirm_required" && runs.length === runs0 && !onDisk().followUps, "the agreement turned off while a follow-up was admitted: it is refused, nothing runs", JSON.stringify([ea?.code, ea?.message])); }
 
+// ---------- words selected anywhere on the board (an answer, the welcome, a chapter) are a place to ask about ----------
+{ script.push([["say", "Because invoices are in whole cents [diff:src/percent.ts]."]]);
+  const ans = await turn({ action: "ask", text: "Why round to the cent?" }), sel = "invoices are in whole cents";
+  ok(ans.status === "done" && !ans.thread, "fixture: an ordinary answer (not a lesson) on the board", JSON.stringify([ans.status, ans.error]));
+  script.push([["say", "Whole cents keep the invoice total exact [diff:src/percent.ts]."]]);
+  const t = await turn({ thread: { anchor: { scene: `t${ans.n}`, kind: "selection", part: "sel:1a2b3c", text: sel }, chip: "free", q: "Why does this matter?" } });
+  const p = prompts.at(-1)!.text, fence = /<untrusted-anchor-([0-9a-f]+)>\n([\s\S]*?)\n<\/untrusted-anchor-\1>/.exec(p), th = onDisk().lesson.threads.find((x: any) => x.anchor.kind === "selection");
+  ok(t.status === "done" && t.thread?.n === th?.n && th?.anchor.scene === `t${ans.n}` && th.anchor.chapter === "answer" && th.key === `answer/t${ans.n}/selection#sel:1a2b3c` && fence?.[2] === sel && /selected with the mouse/.test(p) && /Why does this matter\?/.test(p.slice(p.lastIndexOf("THE CAPTAIN'S NEW MESSAGE"))),
+    "words selected on an answer (not only a lesson) are a place: the question is a board turn anchored there, the words fenced for the tutor", JSON.stringify({ t: [t.status, t.thread], anchor: th?.anchor, key: th?.key, fence: fence?.[2] }));
+  const welcome = await refused(() => room.start(id, { thread: { anchor: { scene: "t0", kind: "selection", part: "sel:0f", text: "This room is only about" }, chip: "deeper" }, lang: "en" }, "captain"));
+  const lessonSel = await refused(() => room.start(id, { thread: { anchor: { scene: "t1-2", kind: "selection", part: "sel:0e", text: "rounds" }, chip: "deeper" }, lang: "en" }, "captain"));
+  const bad = await Promise.all([refused(() => room.start(id, { thread: { anchor: { scene: "t99", kind: "selection", text: "x y" }, chip: "deeper" }, confirm: offer.hash }, "captain")),
+    refused(() => room.start(id, { thread: { anchor: { scene: `t${t.n}`, kind: "selection", text: "whole cents" }, chip: "deeper" }, confirm: offer.hash }, "captain")),
+    refused(() => room.start(id, { thread: { anchor: { scene: `t${ans.n}`, kind: "selection", text: "  " }, chip: "deeper" }, confirm: offer.hash }, "captain"))]);
+  ok(welcome?.code === "confirm_required" && lessonSel?.code === "confirm_required" && bad.every((e) => e?.code === "bad_anchor"),
+    "the welcome's words and a chapter's words can be asked about too (each asks to confirm its paid round); a scene that is not there, an answer that is itself a card, or no words are refused", JSON.stringify([welcome?.code, lessonSel?.code, bad.map((e) => e?.code)]));
+  const f = room.findings(id).find((x: any) => x.check === `room-thread:${th?.n}`);
+  ok(f?.locator?.section === th?.key && /invoices are in whole cents/.test(f?.message ?? ""), "a selection's question reads as a finding at its place, like any board question", JSON.stringify(f));
+  // from the review: tidying folds questions into a lesson's chapters; one on an answer has no chapter to fold into, and stays
+  await room.lesson(id, { op: "tidy" }); const kept = onDisk().lesson.threads.find((x: any) => x.n === th?.n);
+  ok(kept && !kept.merged, "tidying the board leaves a question asked on an answer's words where it is (no chapter holds it)", JSON.stringify(kept?.merged)); }
+
 // ---------- the board's growth is capped: questions a room, cards a question, versions a card ----------
 { const { LESSON_LIMITS } = await import("../src/domain/review-room");
   for (let i = 0; i < 4; i++) { script.push([["say", `Another way ${i} [diff:src/percent.ts].`]]); await turn({ thread: { n: 1, node: "n1", chip: "rephrase" } }); }
@@ -300,4 +322,18 @@ const before = E.deps.refreshUsable; E.deps.refreshUsable = async () => { E.deps
   const runs0 = runs.length, e = await refused(() => room.start(id, { thread: { n: 1, node: "n1", chip: "why" }, confirm: offer.hash }, "captain"));
   ok(e?.code === "not_found" && runs.length === runs0 && !existsSync(file) && room.findings(id, true).length === 0, "a question whose room was started over while it was admitted is refused: no turn, no card on the fresh room", JSON.stringify([e?.code, e?.message]));
   ok(agreed0 && !(room.view(id) as any).followUps, "starting over clears the room's agreement to start follow-ups", JSON.stringify((room.view(id) as any).followUps)); }
+
+// ---------- a later lesson may show an earlier lesson's drawing (its scene's picture, a step's picture or [board:…]): asked there ----------
+{ script.push([...LESSON]); const t1 = await turn({ action: "teach" });
+  script.push([...LESSON.filter((x) => x[0] !== "board_draw").map((x) => x[0] === "scene_show" && x[1].chapter === "what" ? ["scene_show", { ...x[1], points: [{ text: "It adds percent [diff:src/percent.ts:L2-3] [board:B1-1].", cites: ["diff:src/percent.ts:L2-3", "board:B1-1"] }, x[1].points[1]] }] : x)]);
+  const t2 = await turn({ action: "teach" });
+  ok(t1.status === "done" && t2.status === "done" && t2.n === 2 && !(room.view(id) as any).board.some((b: any) => b.turn === 2), "fixture: a second lesson drawing nothing of its own, its scenes showing the first lesson's drawings", JSON.stringify([t1.status, t2.status, t2.error]));
+  script.push([["say", "Pricing rounds the total [diff:src/percent.ts:L2-3]."]]);
+  const a1 = await turn({ thread: { anchor: { scene: "t2-4", kind: "transition", item: "B1-2", part: "transition:0", text: "Draft → Priced · price" }, chip: "why" }, consent: true });
+  script.push([["say", "It rounds [diff:src/percent.ts:L2-3]."]]);
+  const a2 = await turn({ thread: { anchor: { scene: "t2", kind: "node", item: "B1-1", part: "node:percent", text: "percent()" }, chip: "why" }, consent: true });
+  const e = await refused(() => room.start(id, { thread: { anchor: { scene: "t2", kind: "node", item: "B1-2", part: "node:draft", text: "Draft" }, chip: "why" }, confirm: offer.hash }, "captain"));
+  const th = onDisk().lesson.threads;
+  ok(a1.status === "done" && a2.status === "done" && th.some((t: any) => t.anchor.scene === "t2-4" && t.anchor.item === "B1-2") && th.some((t: any) => t.anchor.scene === "t2" && t.anchor.item === "B1-1") && e?.code === "bad_anchor",
+    "a question on an earlier lesson's drawing shown in a later lesson (the scene's picture, a step's [board:…]) is asked there; a drawing the scene does not show is still refused", JSON.stringify([a1.status, a1.error, a2.status, a2.error, e?.code, e?.message])); }
 end();

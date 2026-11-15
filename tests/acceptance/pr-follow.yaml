@@ -1,0 +1,19 @@
+# A watched pull request's follow-through card (internal): made only by the Pull requests page after a refresh, when the
+# follow-through setting is on; its card sends nothing by itself and closes when GitHub shows what it waits for
+# (docs/units/pr-watch.md; driven end to end against a fixture GitHub by tests/pr-watch-follow-flow.ts).
+schema: 2
+workflow: pr-follow
+pin: { version: 1, sha256: "76a7e57372c42190e45ba4a2190bc9255bd761ae26544b4b91a82f6c122d4df9" }   # bun scripts/acceptance/pin.ts pr-follow
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: internal
+    covers: "the board's workflow list does not offer it and the start route refuses it: only the Pull requests page makes a follow-through Task"
+    how: internal
+    board_refusal: { status: 409, error: "internal or retired" }

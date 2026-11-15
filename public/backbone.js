@@ -1,12 +1,12 @@
-// The backbone sidebar (docs/architecture.md §2): exactly Board, Firstmate, Terminals, Inbox,
-// Crew, Runs, Workflows, Skills, Library, plus a gear for Settings. Everything else is a
+// The backbone sidebar (docs/architecture.md §2): exactly Board, Firstmate, Terminals, Inbox, Pull requests,
+// Crew, Runs, Workflows, Skills, Library, Review room, Peers, plus a gear for Settings. Everything else is a
 // lab: hidden from the sidebar and the home page unless "Show labs" is on
 // (Settings, or ?labs=1). A labs link without the flag shows a small roadmap
 // panel instead of a 404. Loaded last, so every module has registered its routes.
 (() => {
 const BACKBONE = [
-  ["board", "board", "Board", "看板"], ["firstmate", "message", "Firstmate", "Firstmate"], ["terminals", "terminal", "Terminals", "終端機"], ["inbox", "inbox", "Inbox", "收件匣"], ["crew", "crew", "Crew", "船員"],
-  ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["skills", "library", "Skills", "技能"], ["library", "library", "Library", "成品庫"], ["room", "monitor", "Review room", "審查室"],
+  ["board", "board", "Board", "看板"], ["firstmate", "message", "Firstmate", "Firstmate"], ["terminals", "terminal", "Terminals", "終端機"], ["inbox", "inbox", "Inbox", "收件匣"], ["prs", "pr", "Pull requests", "Pull requests"], ["crew", "crew", "Crew", "船員"],
+  ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["skills", "library", "Skills", "技能"], ["library", "library", "Library", "成品庫"], ["room", "monitor", "Review room", "審查室"], ["lan", "link", "Peers", "區網同事"],
   // Projects: on a desktop the sidebar's own Projects section (public/projects.js); this item shows only in the phone's top bar
   ["projects", "folder", "Projects", "專案"],
 ];
@@ -21,7 +21,7 @@ const ROADMAP = [
   { id: "remote", routes: ["remote"], m: "M2.5", en: "Phone pairing: Studio on your phone over Wi-Fi or Tailscale.", tw: "手機配對：透過 Wi-Fi 或 Tailscale 在手機上用 Studio。" },
 ];
 const LABS = new Map(ROADMAP.flatMap((r) => r.routes.map((x) => [x, r])));
-const OWNED = { project: "projects", activity: "crew", team: "crew", intents: "inbox", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
+const OWNED = { project: "projects", activity: "crew", team: "crew", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} } };
 if (/[?&]labs=1\b/.test(location.search)) store.set("crew.labs", "1");
 const labsOn = () => store.get("crew.labs") === "1";
@@ -31,7 +31,9 @@ window.crewLabs = labsOn;
 const nav = $(".nav");
 const item = (view, ic, en, tw) => {
   let b = nav.querySelector(`.nav-item[data-view="${view}"]`);
-  if (!b) { b = h("button", { class: view === "projects" ? "nav-item nav-proj-phone" : "nav-item", "data-view": view, "data-tip": T(en, tw) }, icon(ic), h("span", { class: "nl" }, T(en, tw))); b.addEventListener("click", () => { location.hash = `#/${view}`; }); }
+  if (!b) { b = h("button", { class: view === "projects" ? "nav-item nav-proj-phone" : "nav-item", "data-view": view, "data-tip": T(en, tw) }, icon(ic), h("span", { class: "nl" }, T(en, tw)),
+    // Pull requests carries how many rows wait on an approval or are ready to merge (public/prs.js sets it)
+    view === "prs" ? h("span", { class: "count attn", id: "navPrs", hidden: true }) : null); b.addEventListener("click", () => { location.hash = `#/${view}`; }); }
   else { b.dataset.tip = T(en, tw); const nl = b.querySelector(".nl"); if (nl) nl.textContent = T(en, tw); }
   b.dataset.backbone = "1"; return b;
 };
@@ -52,7 +54,7 @@ function arrange() {
   const keep = BACKBONE.map(([v, ic, en, tw]) => item(v, ic, en, tw));
   const others = [...nav.querySelectorAll(".nav-item")].filter((b) => !b.dataset.backbone);
   nav.replaceChildren(...keep, labsGroup);
-  for (const b of others) { if (["activity", "intents", "workflow", "doctor"].includes(b.dataset.view)) { b.hidden = true; labsGroup.after(b); continue; } b.dataset.lab = "1"; labsBody.append(b); }
+  for (const b of others) { if (["activity", "workflow", "doctor"].includes(b.dataset.view)) { b.hidden = true; labsGroup.after(b); continue; } b.dataset.lab = "1"; labsBody.append(b); }
   showLabs();
   // attention counts live on backbone items: Board and Inbox carry the decisions (the Inbox is decisions only), the gear the Doctor's
   const doc = document.getElementById("navDoctor"); if (doc && doc.parentElement !== gear) gear.append(doc);
@@ -67,7 +69,7 @@ navObs.observe(nav, { childList: true, subtree: true });
 $(".side-foot").prepend(gear);
 // every label follows the language switch: nothing is computed once at load
 const relabel = () => { for (const [v, ic, en, tw] of BACKBONE) item(v, ic, en, tw); gear.setAttribute("aria-label", T("Settings", "設定")); gear.title = T("Settings", "設定");
-  labsToggle.textContent = T("Labs", "實驗中"); const ints = document.getElementById("navIntents"); if (ints) ints.title = T("Open intents", "進行中的意圖"); };
+  labsToggle.textContent = T("Labs", "實驗中"); };
 relabel();
 { const prev = window.onLang; window.onLang = () => { prev?.(); relabel(); }; }
 
@@ -107,7 +109,46 @@ routes.settings = () => page(T("Settings", "設定"), T("Language, Doctor, keys 
     h("a", { class: "bb-set", href: "#/roadmap" }, icon("target"), h("span", {}, h("b", {}, T("Roadmap", "路線圖")), h("span", { class: "faint" }, T("What is planned next, by milestone.", "接下來的規劃，依里程碑。")))),
     h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "labsToggle", checked: labsOn(), onchange: (e) => { store.set("crew.labs", e.target.checked ? "1" : null); showLabs(); } }),
       h("span", {}, h("b", {}, T("Show labs", "顯示實驗功能")), h("span", { class: "faint" }, T("Adds the planned pages to the sidebar. They work, but they are not the backbone.", "把規劃中的頁面加回側邊欄；可以用，但不是主幹功能。"))))),
-  rulesEditor());
+  cliGrants(), rulesEditor());
+// External CLI grants (docs/units/cli-mcp-grant.md): the captain lets an agent CLI they opened themselves start and
+// follow runs in one project over MCP, or read and edit the pull request list. Issued and revoked here only (this Mac's page session); the CLI reaches four tools
+// and none of them answers a card, so every decision stays on the board.
+function cliGrants() {
+  const box = h("section", { class: "card x-pad bb-grants", id: "cliGrants", "data-cli-grants": "1" });
+  const req = async (u, b) => { const r = await fetch(u, b === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`); return j; };
+  const TTL = { "1h": T("1 hour", "1 小時"), "8h": T("8 hours", "8 小時"), eod: T("Until the end of today", "到今天結束") };
+  const STATE = { active: T("active", "有效"), expired: T("expired", "已過期"), revoked: T("revoked", "已撤銷") };
+  const when = (iso) => iso ? new Date(iso).toLocaleString(document.documentElement.lang || undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  let data = null, fresh = null, picked = "project";
+  const draw = () => {
+    const projects = data?.projects ?? [], grants = data?.grants ?? [];
+    const scope = h("select", { id: "grantScope", "aria-label": T("Reaches", "可以做"), onchange: () => { picked = scope.value; draw(); } },
+      h("option", { value: "project", selected: picked === "project" || null }, T("Runs in a project", "專案裡的 run")), h("option", { value: "prs", selected: picked === "prs" || null }, T("The pull request list", "PR 列表")));
+    const project = h("select", { id: "grantProject", "aria-label": T("Project", "專案") }, projects.map((p) => h("option", { value: p.id }, p.name || p.id)));
+    const projLabel = h("label", { hidden: picked === "prs" || null }, h("span", { class: "faint" }, T("Project", "專案")), project);
+    const ttl = h("select", { id: "grantTtl", "aria-label": T("Expires", "有效期") }, (data?.ttls ?? ["8h", "1h", "eod"]).map((k) => h("option", { value: k, selected: k === "8h" || null }, TTL[k] ?? k)));
+    const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: picked !== "prs" && !projects.length || null, onclick: async () => { issue.disabled = true;
+      try { fresh = (await req("/api/cli-grants", scope.value === "prs" ? { scope: "prs", ttl: ttl.value } : { project: project.value, ttl: ttl.value })).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
+    const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
+    box.replaceChildren(
+      h("h2", { style: "margin:0;font-size:16px" }, T("External CLI grants", "外部 CLI 授權")),
+      h("p", { class: "faint", style: "margin:4px 0 10px" }, T("Let a claude or codex you opened yourself list workflows, start runs (each waits for your approval), and read progress, cards and results, in one project. Or let it read and edit the pull request list: watch repositories, settings, order, dependencies, groups (Studio's own list; nothing is written to GitHub). Approving cards, staffing and merging stay here. The token goes into a 0600 file, never on a command line.",
+        "讓你自己開的 claude 或 codex 在一個專案裡列出 workflow、發起 run（每個都等你核准）、讀進度、卡片和結果；或讀取、編輯 PR 列表：追蹤的 repo、設定、順序、依賴、分組（只改 Studio 自己的清單，不寫 GitHub）。核准卡片、staffing、merge 都只能在這裡做。token 寫進 0600 檔案，不出現在指令列。")),
+      h("div", { class: "bb-grant-form" }, h("label", {}, h("span", { class: "faint" }, T("Reaches", "可以做")), scope), projLabel, h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
+        projects.length || picked === "prs" ? null : h("span", { class: "faint", "data-grant-need-project": "" }, T("Register a project first.", "請先登錄專案。"))),
+      grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
+        h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
+          h("span", { class: "faint", "data-grant-scope": g.scope || "project" }, `${g.scope === "prs" ? T("Pull request list", "PR 列表") : g.project} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)} · ${g.scope === "prs" ? T(`${g.calls} calls`, `${g.calls} 次呼叫`) : T(`${g.runs.length} runs`, `${g.runs.length} 個 run`)}`)),
+        g.state === "active" && g.claudeMcpAdd ? [h("span", { class: "faint" }, T("Add Studio's MCP in your terminal:", "在 terminal 加上 Studio 的 MCP：")),
+          h("pre", { class: "bb-grant-cmd mono", "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) }, g.claudeMcpAdd),
+          h("div", { class: "actions" }, h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(g.claudeMcpAdd) }, T("Copy command", "複製指令")),
+            h("button", { class: "btn danger", "data-grant-revoke": g.id, onclick: async () => { try { await req(`/api/cli-grants/${g.id}/revoke`, {}); await load(); } catch (e) { toast(String(e.message || e)); } } }, T("Revoke", "撤銷授權")))] : null)))
+        : h("div", { class: "empty" }, T("No external CLI grant yet.", "還沒有外部 CLI 授權。")));
+  };
+  const load = async () => { try { data = await req("/api/cli-grants"); } catch (e) { data = { grants: [], projects: [], error: String(e.message || e) }; } draw(); };
+  draw(); void load();
+  return box;
+}
 // The captain's operating rules: one Studio-wide text and one per project, sent to every
 // worker, reviewer, judge, media job and Firstmate. Edited here only (this Mac's page session).
 function rulesEditor() {

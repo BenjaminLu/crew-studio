@@ -6,7 +6,7 @@
 //   GET  /api/crew/<actor>/invocation            prompt (raw + sections + brief binding), identity, attempt
 //   GET  /api/crew/<actor>/transcript?after=N    stream entries after byte N, and the next offset
 //   GET  /api/firstmate/history?before=N         one page of the main session, newest last
-//   GET  /api/node-runs, /api/node-runs/<run>/<node>/<round>[/transcript?after=N]
+//   GET  /api/node-runs[?runs=R-1,R-2] (newest 200; X-Total-Count), /api/node-runs/<run>/<node>/<round>[/transcript?after=N]
 //   GET|POST /api/transcripts/settings           { phoneRaw }  (POST: desktop only)
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -355,15 +355,18 @@ export function createTranscripts(o: { stateDir: string; dataDir: string; sessio
       return json(raw(who) ? { ...page, file: file.split("/").pop() } : { entries: [], cursor: page.cursor, atStart: page.atStart, summary: { turns: page.entries.length, bytes: page.size }, phone: true });
     }
     if (p === "/api/node-runs") {
+      // ?runs=R-1,R-2: only those runs' rounds (the Tasks page's filter), filtered before the newest 200 are kept;
+      // X-Total-Count says how many there are in all
+      const only = url.searchParams.has("runs") ? new Set((url.searchParams.get("runs") ?? "").split(",").filter(Boolean)) : null;
       const root = join(o.dataDir, "runs"), out: any[] = [];
       try {
-        for (const run of readdirSync(root)) { if (!NAME.test(run)) continue; const nodes = join(root, run, "nodes"); if (!existsSync(nodes)) continue;
+        for (const run of readdirSync(root)) { if (!NAME.test(run) || (only && !only.has(run))) continue; const nodes = join(root, run, "nodes"); if (!existsSync(nodes)) continue;
           for (const node of readdirSync(nodes)) { if (!NAME.test(node)) continue;
             for (const round of readdirSync(join(nodes, node))) { if (!NAME.test(round)) continue; const d = join(nodes, node, round);
               let mtime = 0; try { mtime = statSync(d).mtimeMs; } catch {}
               out.push({ run, node, round, prompt: existsSync(join(d, "prompt.md")), stream: existsSync(join(d, "stream.jsonl")), report: ["report.md", "report.txt", "report.json"].some((f) => existsSync(join(d, f))), updated: new Date(mtime).toISOString() }); } } }
       } catch {}
-      return json(out.sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 200));
+      const res = json(out.sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 200)); res.headers.set("x-total-count", String(out.length)); return res;
     }
     m = /^\/api\/node-runs\/([^/]+)\/([^/]+)\/([^/]+)(\/transcript)?$/.exec(p);
     if (m) {

@@ -103,6 +103,7 @@ export const GATE_LOCAL_ACTIONS = new Set([
   "coffee.ready", "coffee.page-needed", "coffee.image-needed", "coffee.video-needed", "coffee.assemble", "coffee.library",
   "fileorg.plan", "fileorg.discard", "intent.capture", "pack-genesis-init",
   "github.review.wait", // reads review state; writes nothing
+  "pr.shepherd", "pr.track-deploy", "pr-follow.card", // read the Pull requests page; a follow card sends nothing by itself (docs/units/pr-watch.md)
   "hello.web", // writes the built-in sample page into its own run folder and the Library; no model, no network
 ]);
 /**

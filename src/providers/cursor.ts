@@ -17,7 +17,7 @@ import { cursorNeeds, cursorRoot } from "./needs";
 import { processSession, type LineParser } from "./proc";
 import { cursorEnv, cursorPrompt } from "../host/jsonl";
 import type { ProviderCapability } from "./policy";
-import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec } from "./types";
+import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec, type Usage } from "./types";
 
 export const CURSOR_HOSTS = ["api2.cursor.sh", "agentn.global.api5.cursor.sh"];
 
@@ -120,6 +120,12 @@ export function writeCursorConfig(root: string, systemPrompt: string, tools: Too
   writeFileSync(join(root, "w", "AGENTS.md"), systemPrompt, { mode: 0o600 });
 }
 
+/** Cursor's result usage: inTokens is input plus cache reads and writes, cache reads also apart */
+export function cursorUsage(u: any): Usage {
+  const n = (v: unknown) => (typeof v === "number" ? v : 0);
+  return { usd: null, inTokens: typeof u?.inputTokens === "number" ? n(u.inputTokens) + n(u.cacheReadTokens) + n(u.cacheWriteTokens) : null, outTokens: typeof u?.outputTokens === "number" ? u.outputTokens : null,
+    cacheReadTokens: typeof u?.cacheReadTokens === "number" ? u.cacheReadTokens : null };
+}
 export function cursorProvider(model = process.env.CREW_CURSOR_MODEL ?? "", bin = process.env.CREW_CURSOR_BIN ?? "cursor-agent"): Provider {
   return {
     // no envKeys: a turn never takes CURSOR_API_KEY straight from Studio's environment; cursorLogin picks the key, keychain first
@@ -170,7 +176,7 @@ function parser(): LineParser {
         if (m.is_error || m.subtype !== "success") return [{ type: "turnEnd", status: "error", code: LOGIN_RE.test(r) ? "notLoggedIn" : "cliError", message: r || "the model run failed" }];
         const u = m.usage ?? {}, n = (v: unknown) => (typeof v === "number" ? v : 0);
         return [...(!text.trim() && r ? [{ type: "delta", text: r } as NEvent, { type: "message", text: r } as NEvent] : []),
-          { type: "turnEnd", status: "ok", usage: { usd: null, inTokens: typeof u.inputTokens === "number" ? n(u.inputTokens) + n(u.cacheReadTokens) + n(u.cacheWriteTokens) : null, outTokens: typeof u.outputTokens === "number" ? u.outputTokens : null } }];
+          { type: "turnEnd", status: "ok", usage: cursorUsage(u) }]; void n;
       }
       return [];
     },

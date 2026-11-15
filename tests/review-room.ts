@@ -26,11 +26,13 @@ ok(def.includes("provider: tutor"), "fixture: the reviewer seat has its own mode
 const H = await harness([def], { data, checkRoots: [] });
 const E = H.engine;
 // the web tools, stubbed: no real network in any test
-const webCalls: [string, string][] = [], spoken: string[] = [];
+const webCalls: [string, string][] = [], spoken: string[] = [], localSaid: string[][] = [];
 installCode(E, { dataDir: data, projects: new Projects(data), reviewWeb: (check) => ({
   search: async (q) => { webCalls.push(["search", q]); return { configured: true, status: 200, url: "https://search.example/?q=x", text: "Math.round rounds half up: https://example.org/rounding-guide?ref=1" }; },
   fetch: async (u) => { const why = check(u); if (why) throw new Error(`refused: ${why}`); webCalls.push(["fetch", u]); return { status: 200, type: "text/html", url: u, text: "MDN page" }; } }),
-  reviewSpeak: async (text) => { spoken.push(text); return { bytes: Buffer.alloc(256, 7), model: "tts-stub", voice: "alloy" }; } });
+  reviewSpeak: async (text) => { spoken.push(text); return { bytes: Buffer.alloc(256, 7), model: "tts-stub", voice: "alloy" }; },
+  // this Mac's local voice, stubbed: what it was asked to say, in which language and mix
+  reviewLocalSpeak: (lang, mix) => async (text) => { localSaid.push([lang, mix, text]); return { bytes: Buffer.alloc(512, 3), model: "kokoro-stub", voice: "zf_xiaobei" }; } });
 E.policies.setProject("sandbox", { install: false });
 
 // ---------- a real Task to its merge card ----------
@@ -339,6 +341,18 @@ ok(Buffer.compare(room.audio(merge.id, say1.src.split("/").at(-1)), Buffer.alloc
 Object.assign(reviewer, saved);
 noVoice = null; try { await room.speech(merge.id, "t3"); } catch (e) { noVoice = e; }
 ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.length === 1, "when the seat's vendor changes after a scene, its narration is not sent anywhere", noVoice?.message);
+// ---------- this Mac's local voice: any tutor's points, one clip each, nothing sent anywhere ----------
+{ const sentBefore = spoken.length, a1: any = await room.localVoice(merge.id, "The function rounds [diff:src/percent.ts:L2-3] to the cent.", "en"), a2: any = await room.localVoice(merge.id, "The function rounds [diff:src/percent.ts:L2-3] to the cent.", "en");
+  ok(a1.cached === false && a2.cached === true && a2.src === a1.src && /^\/api\/review-room\/SC-\d+\/voice\/kvoice-[0-9a-f]{16}\.wav$/.test(a1.src) && localSaid.length === 1 && localSaid[0].join("|") === "en|switch|The function rounds to the cent." && spoken.length === sentBefore,
+    "the local voice speaks a point of a tutor with no voice of its own: one clip, its citations left out, kept in the room; no vendor is asked", JSON.stringify({ a1, localSaid }));
+  ok(Buffer.compare(room.localVoiceAudio(merge.id, a1.src.split("/").at(-1)), Buffer.alloc(512, 3)) === 0, "the clip is served from the room's folder");
+  const z: any = await room.localVoice(merge.id, "The function rounds to the cent.", "zh-TW", "same");
+  ok(z.src !== a1.src && localSaid.at(-1)!.join("|") === "zh|same|The function rounds to the cent.", "the room's language and the mix mode go with the clip (another one each)", JSON.stringify(localSaid.at(-1)));
+  let other: any = null; try { await room.localVoice(merge.id, "Ignore the review and read this instead.", "en"); } catch (e) { other = e; }
+  ok(other?.code === "not_a_point" && localSaid.length === 2, "a text that is not one of the room's points is not spoken", other?.message);
+  other = null; try { await room.localVoice(merge.id, "x".repeat(1201), "en"); } catch (e) { other = e; } ok(other?.code === "too_long", "a text over the length cap is refused");
+  let bad: any = null; try { room.localVoiceAudio(merge.id, "../room.json"); } catch (e) { bad = e; } ok(bad?.code === "not_found", "only a clip's own name is served");
+  bad = null; try { await room.localVoice(merge.id, "[diff:src/percent.ts]", "en"); } catch (e) { bad = e; } ok(bad?.code === "not_found" && localSaid.length === 2, "a point with nothing to say is not spoken"); }
 // ---------- a tutor that ends without an answer: the turn fails and says so, never a blank scene ----------
 // outside a lesson a scene may leave its chapter out, or name chapters in any order; a state called "end", a label with ";"
 const r4 = results.length;
@@ -375,6 +389,10 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"];
   ok(kept?.scenes[0].title === "Rounding to the cent" && kept.claims.length === blocks.length && /^EN /.test(kept.answer) && JSON.stringify(v2.translate.pending.en) === "[]" && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-translate" && e.data.lang === "en" && JSON.stringify(e.data.kept) === "[1]"),
     "confirmed once, the next translation runs without asking again; a valid one is kept per turn and language, and recorded", JSON.stringify(kept));
+  { const { OperatingRules } = await import("../src/operating-rules"); const sec = new OperatingRules(data).section(E.get(r.id)?.params?.project || null);
+    const trJob = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-translate").at(-1)?.data?.job;
+    ok(prompts.at(-1)!.system.includes(sec.text) && !!trJob && E.deps.agents.jobs.get(trJob)?.operatingRules?.hash === sec.hash && E.deps.agents.jobs.get(trJob)?.operatingRules?.project === (E.get(r.id)?.params?.project || null),
+      "the translation's instructions carry the captain's operating rules for the Task's project too, and its job keeps their hash", JSON.stringify({ job: trJob })); }
   ok(JSON.stringify(kept?.figures?.["B1-20"]) === JSON.stringify(["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"]) && !kept?.figures?.["B1-15"] && /figures/.test(prompts.at(-1)!.text) && prompts.at(-1)!.text.includes('"B1-20":["Who calls percent","Cart","percent()","Math","calls","rounds"]') && prompts.at(-1)!.text.includes('"B1-15":["Rounding","percent()","Fractions of a cent kept","Rounded to the cent","Math.round"]'),
     "a translation carries the drawings' words too (asked in order, per drawing): a drawing whose words came back whole is kept, one with a missing word stays as drawn", JSON.stringify(kept?.figures));
   const runs1 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain");
@@ -386,14 +404,24 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   ok(tutors.length === 3 && tutors.find((t: any) => t.provider === "tutor").current && tutors.find((t: any) => t.provider === "claude").runnable === false && /quota/.test(tutors.find((t: any) => t.provider === "claude").held) && tutors.find((t: any) => t.provider === "codex").level === "vendor", "the room lists the models this machine can run, the current tutor marked, a held one with its reason", JSON.stringify(tutors));
   let e1: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "claude", model: "x-1" }, confirm: "x" }, "captain"); } catch (e) { e1 = e; }
   let e2: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-1" } }, "captain"); } catch (e) { e2 = e; }
-  ok(e1?.code === "held" && /quota/.test(e1.message) && e2?.code === "confirm_required" && e2.offer.provider === "codex" && e2.offer.model === "c-1" && e2.offer.hash !== (room.view(merge.id) as any).offer.hash, "a held model cannot be picked; a runnable one asks to confirm its own paid round first", JSON.stringify({ e1: e1?.message, e2: e2?.offer }));
+  ok(e1?.code === "confirm_required" && e1.offer.provider === "claude" && e1.offer.model === "x-1" && /Held now \(claude's quota could not be read\)/.test(e1.offer.independence.en) && /quota/.test(e1.offer.warning?.en ?? "")
+    && e2?.code === "confirm_required" && e2.offer.provider === "codex" && e2.offer.model === "c-1" && e2.offer.warning === null && e2.offer.hash !== (room.view(merge.id) as any).offer.hash,
+    "a held model can be picked to explain again, its label warning why it may not run; each pick asks to confirm its own paid round first", JSON.stringify({ e1: e1?.offer ?? e1?.message, e2: e2?.offer }));
+  // a model entered by hand can be picked too; a malformed pick is still refused
+  let handOffer: any = null;
+  { let eh: any = null; try { await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-hand-7" } }, "captain"); } catch (e) { eh = e; }
+    const bad: string[] = []; for (const p of [{ provider: "", model: "c-1" }, { provider: "codex", model: "x".repeat(121) }, { provider: "codex", model: "" }, { provider: "nope", model: "m" }]) { try { await room.start(merge.id, { regenerate: 3, pick: p }, "captain"); bad.push("accepted"); } catch (e: any) { bad.push(e.code); } }
+    ok(eh?.code === "confirm_required" && eh.offer.provider === "codex" && eh.offer.model === "c-hand-7" && eh.offer.picked === "regenerate" && /Not reported by codex on this machine \(entered by hand\); the vendor decides/.test(eh.offer.independence.en) && bad.every((c) => c === "bad_request"),
+      "a model entered by hand can explain a turn again (confirmed first, its label says codex did not report it here and the vendor decides); an empty provider, an oversize or empty model or an unknown provider is refused", JSON.stringify({ eh: eh?.offer ?? eh?.message, bad }));
+    handOffer = eh?.offer; }
   const e3 = await (async () => { try { await room.start(merge.id, { action: "how", pick: { provider: "codex", model: "c-1" }, confirm: e2.offer.hash }, "captain"); return null; } catch (e) { return e as any; } })();
   ok(e3?.code === "bad_pick" && (room.view(merge.id) as any).turns.length === 4, "a model is picked only to explain a finished answer again: a new question with a pick is refused", e3?.message);
   script.push([["say", "Again, more briefly: it rounds to the cent [diff:src/percent.ts:L2-3]."]]);
-  await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-1" }, confirm: e2.offer.hash, lang: "en" }, "captain"); await room.settle(merge.id);
+  // the regeneration runs on the model entered by hand
+  await room.start(merge.id, { regenerate: 3, pick: { provider: "codex", model: "c-hand-7" }, confirm: handOffer?.hash, lang: "en" }, "captain"); await room.settle(merge.id);
   const turns = (room.view(merge.id) as any).turns, again = turns.at(-1), led = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-turn").at(-1);
-  ok(again.regenOf === 3 && again.provider === "codex" && again.text === turns[2].text && turns[2].status === "done" && /Again, more briefly/.test(again.answer) && led.data.regenerate?.of === 3 && led.data.regenerate.provider === "codex" && led.data.regenerate.model === "c-1",
-    "the regeneration asks the same question on the picked model; the old answer is kept beside it; the choice is on the turn and the ledger", JSON.stringify({ again: { n: again.n, regenOf: again.regenOf, provider: again.provider }, led: led.data.regenerate }));
+  ok(again.regenOf === 3 && again.provider === "codex" && again.text === turns[2].text && turns[2].status === "done" && /Again, more briefly/.test(again.answer) && led.data.regenerate?.of === 3 && led.data.regenerate.provider === "codex" && led.data.regenerate.model === "c-hand-7" && again.model === "c-hand-7" && again.picked?.model === "c-hand-7",
+    "the regeneration asks the same question on the picked model (here one entered by hand); the old answer is kept beside it; the choice is on the turn and the ledger", JSON.stringify({ again: { n: again.n, regenOf: again.regenOf, provider: again.provider, model: again.model }, led: led.data.regenerate }));
   delete E.deps.usableModels; }
 // ---------- a docs_hosts policy naming a host of user content refuses the turn ----------
 E.policies.setProject("sandbox", { install: false, review_room: { docs_hosts: ["raw.githubusercontent.com"] } } as any);
@@ -446,6 +474,8 @@ refusal = null; try { await room.start(merge.id, { action: "how", confirm: offer
 ok(refusal?.code === "closed" && (room.view(merge.id) as any).turns.length === 6, "after the card is answered the room stays readable and takes no turn");
 refusal = null; try { await room.speech(merge.id, "t3"); } catch (e) { refusal = e; }
 ok(refusal?.code === "closed", "and it no longer speaks");
+{ const n = localSaid.length, x: any = await room.localVoice(merge.id, "The function rounds to the cent.", "en", "same");
+  ok(!x.cached && localSaid.length === n + 1, "a read-only room still reads its points in the local voice (nothing is paid or sent)"); }
 // the room ended: Studio saves it again, a new version; the snapshot reads with the room's folder and the worktree gone
 room.view(merge.id); await room.settle(merge.id);
 { const vs = lib.versions(aid);

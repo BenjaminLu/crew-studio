@@ -31,6 +31,8 @@
 //    CREW_CURSOR_BIN, CREW_HOST_CLAUDE_BIN, CREW_HOST_CODEX_BIN and CREW_HOST_CURSOR_BIN to a path that does not exist
 //    (no CLI installed); a test that needs a CLI points them at its stub. When the run ends, any recorded call fails it (exit 1) and names it.
 // 7. Studio's session for the test's own reads: see below.
+// 8. An entry whose parent is gone stops itself (tests/lib/orphan-watchdog.mjs): a suite left behind by an agent or
+//    terminal that ended never spins on unattended. A restarted run watches the outer entry the same way, so it goes too.
 // Production (bun src/main.ts, bun run start) never imports this file.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,6 +40,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { constants as osConstants } from "node:os";
 import { scrubGitEnv, INHERITED_GIT_VARS } from "./git-hygiene.mjs";
+import { watchParent } from "./orphan-watchdog.mjs";
+
+// 8. before anything else: an entry whose parent is gone stops
+watchParent();
 
 const MARK = "CREW_TEST_ENV_ISOLATED";
 // The shell's own basics are never dropped, even when a .env repeats them.
@@ -128,6 +134,10 @@ if (ownRuntime) {
   env.CREW_RUNTIME_DIR = ownRuntime;
   process.on("exit", () => rmSync(ownRuntime, { recursive: true, force: true }));
 }
+// the review room's local voice (src/voice): no test reads this Mac's real model files or writes its tools folder;
+// a test that needs a voice folder sets these itself
+for (const [k, v] of [["CREW_VOICE_TOOLS", "voice-tools"], ["CREW_VOICE_MODELS", "voice-models"], ["CREW_VOICE_WARDROBE", null]])
+  if (env[k] === undefined) env[k] = v ? join(env.CREW_RUNTIME_DIR || tmpdir(), v) : "none";
 
 // 6. the real-CLI sentinel: installed once, by the outermost entry; nested entries share it (and its record)
 const SENTINEL = "CREW_TEST_CLI_SENTINEL";

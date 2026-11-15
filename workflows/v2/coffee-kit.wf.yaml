@@ -3,6 +3,7 @@
   "name": "Coffee Shop Kit",
   "kind": "coffee-kit",
   "version": 1,
+  "lan": {"refuse": "it publishes a website and makes images and a film"},
   "description": "A coffee shop's web page, image and short film from one approved design plan: each part is made, checked and reviewed together, then saved to the Library.",
   "intent": {
     "keywords": [

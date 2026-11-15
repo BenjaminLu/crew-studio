@@ -3,6 +3,8 @@ import {WorkflowPackages,snapshotPackage,packageSha} from '../workflow-package';
 import {workflowDefinitionExport} from '../workflow-definition-export';
 import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
+import {lanUntrusted,baseProblem,pinBase,commitPatch as lanCommitPatch} from '../lan/apply';
+import {taintRefusal} from '../lan/taint';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
 import { refusesRulesPatch } from "../operating-rules";
@@ -103,7 +105,7 @@ export type RuntimeDeps = {
   /** the captain approved a crew Firstmate proposed: tell Firstmate, so it proposes the work (still captain-approved) */
   staffingApproved?: (a: import('../firstmate-staffing').StaffingApproved) => void;
 
-  selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean }) => Promise<Provider>;
+  selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean; adaptive?: boolean; picked?: boolean }) => Promise<Provider>;
   /** the readiness gate (src/readiness): false inside the gate's own dry run */
   readiness?: false | { login?: (provider: string) => import("../readiness/stages").LoginState; knownProviders?: () => string[]; repoRoot?: string | null;
     /** send Firstmate a gate-repair turn; false when Firstmate is not running */ ask?: (text: string) => boolean; dryTimeoutMs?: number; smokePollMs?: number };
@@ -375,7 +377,7 @@ export function createRuntime(d: RuntimeDeps) {
     const continuable = who?.kind === "desktop" && engine.continuable(id);
     // Merged (reconciled) only while the ledger verifies and holds the entry it names
     const reconciled = r.reconciled && t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger) ? r.reconciled : null;
-    return { ...r, reconciled, logFault: engine.logFault(id), reconcilable: who?.kind === "desktop" && !!engine.reconcilable?.(r), reviewRoom: engine.reviewRoom?.taskEntry(r) ?? null, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    return { ...r, reconciled, origin: engine.externalOrigin?.(r) ?? null, logFault: engine.logFault(id), reconcilable: who?.kind === "desktop" && !!engine.reconcilable?.(r), reviewRoom: engine.reviewRoom?.taskEntry(r) ?? null, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -547,9 +549,9 @@ export function createRuntime(d: RuntimeDeps) {
         const providerAdvice=def.kind==="startup-recursion"&&d.providerLogins?startupCursorAdvice(await d.providerLogins().catch(()=>({}))):null;
         return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/team":null,...providerAdvice?{providerAdvice}:{},projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
       }
-      if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: taskTitle(r), request: r.text, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
+      if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: taskTitle(r), request: r.text, status: r.status, project: engine.projectRow(r), result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
-        archived: !!r.archived, merged: !!r.ctx?.merged, reconciled: r.reconciled && (() => { const t = engine.trusted(r.id); return t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger); })() ? r.reconciled : null, cancelReason: r.cancelReason ?? null,
+        archived: !!r.archived, origin: engine.externalOrigin?.(r) ?? null, merged: !!r.ctx?.merged, reconciled: r.reconciled && (() => { const t = engine.trusted(r.id); return t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger); })() ? r.reconciled : null, cancelReason: r.cancelReason ?? null,
         current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state, waiting: n.waiting ?? null, label: r.def.nodes.find((x) => x.id === k)?.label ?? k })), door: engine.cards.list({ run: r.id }).find((c) => c.door)?.door ?? null, recovered: r.recovered })),
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
@@ -759,7 +761,7 @@ export function createRuntime(d: RuntimeDeps) {
       // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
       // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
       // the Review Room's home: every room on this machine, open ones first (read on any authenticated page)
-      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null }); }
+      if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [], providers: rr ? rr.tutorProviders() : [] }); }
       // the review room's Studio-wide settings (auto-teach on paste): read anywhere, changed by the captain on this Mac
       if (p === "/api/review-room/settings") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing) return json(rr.settings());
@@ -767,6 +769,14 @@ export function createRuntime(d: RuntimeDeps) {
         try { return json(rr.setSettings(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
       // what pasting a pull request's address would start: auto-teach on or off, the tutor and the paid round (read only)
       if (p === "/api/review-room/paste-offer" && !writing) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); return json(rr.pasteOffer(url.searchParams.get("url"))); }
+      // POST /api/review-room/open-dir {url}: a GitHub directory (any repository; a private one through the captain's gh login),
+      // read at one pinned commit, and its room; the same desktop gate and auto-teach binding as a pasted pull request
+      if (p === "/api/review-room/open-dir") {
+        const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-dir {url}" }, 405);
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a directory's room / 只有這台 Mac 上的船長能開啟目錄的審查室", code: "desktopOnly" }, 403);
+        try { return json(await rr.openDir(b?.url, by, b?.lang, b?.auto, b?.plan)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
+      }
       if (p === "/api/review-room/open-pr") {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);
@@ -778,17 +788,25 @@ export function createRuntime(d: RuntimeDeps) {
       if (libRoom) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); if (writing) return json({ error: "a saved room is read-only" }, 405);
         try { if (libRoom[3]) return new Response(rr.libraryAsset(libRoom[1], Number(libRoom[2]), libRoom[3]), { headers: { "content-type": libRoom[4] === "png" ? "image/png" : "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); return json(rr.librarySnapshot(libRoom[1], url.searchParams.get("v"))); }
         catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); } }
-      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|auto|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
+      // a point in this Mac's local neural voice: POST {text, lang, mix} makes (or finds) its clip; GET …/voice/<clip>.wav plays it
+      const roomVoice = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/voice(?:\/(kvoice-[0-9a-f]{16}\.wav))?$/.exec(p);
+      if (roomVoice) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : e?.code === "no_voice" ? 409 : 400);
+        if (!writing && roomVoice[2]) { try { return new Response(rr.localVoiceAudio(roomVoice[1], roomVoice[2]), { headers: { "content-type": "audio/wav", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
+        if (!writing || roomVoice[2] || req.method !== "POST") return json({ error: "POST /api/review-room/<room>/voice {text, lang, mix}" }, 405);
+        if (who.kind !== "desktop") return json({ error: "The local voice speaks on this Mac", code: "desktopOnly" }, 403);
+        try { return json(await rr.localVoice(roomVoice[1], b?.text, b?.lang, b?.mix, req.signal)); } catch (e: any) { return fail(e); } }
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         if (!writing && room[2] === "audio") { try { return new Response(rr.audio(room[1], room[3] ?? ""), { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
-        if (!writing && (room[2] === "reset" || room[2] === "lesson")) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405);
+        if (!writing && (room[2] === "reset" || room[2] === "archive" || room[2] === "lesson" || room[2] === "arrive" || room[2] === "tutor")) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405);
         // the room's open questions on its lesson board, as findings of the shared locator schema (?all=1: every one)
         if (!writing && room[2] === "findings") { try { return json(rr.findings(room[1], url.searchParams.get("all") === "1")); } catch (e: any) { return fail(e); } }
         if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
-        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "auto" && room[2] !== "lesson") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
+        if ((room[2] !== "turn" && room[2] !== "speech" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "archive" && room[2] !== "auto" && room[2] !== "arrive" && room[2] !== "tutor" && room[2] !== "lesson") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
         // Check for new commits reads GitHub: at most once every few seconds per room, whatever the page sends
         if (room[2] === "check") { const last = roomChecks.get(room[1]) ?? 0; if (Date.now() - last < 5000) return json({ error: "Checked a moment ago; try again in a few seconds / 剛剛才檢查過，請稍候再試", code: "rate_limited" }, 429);
@@ -802,6 +820,12 @@ export function createRuntime(d: RuntimeDeps) {
         // generated pictures (paid image jobs) on or off for this room: off unless the captain turns them on
         // this room's own auto-teach switch
         if (room[2] === "auto") { try { return json(rr.autoTeachFor(room[1], b?.on)); } catch (e: any) { return fail(e); } }
+        // the captain arrived in the room: its full analysis starts by itself (auto-teach on, once per head), on the plan the page was shown
+        if (room[2] === "arrive") { try { return json(await rr.arrive(room[1], by, b?.lang, b?.plan)); } catch (e: any) { return fail(e); } }
+        // the room's tutor, picked by the captain ({pick: {provider, model}}; null: Studio's default)
+        if (room[2] === "tutor") { try { return json(rr.setTutor(room[1], b?.pick ?? null, by)); } catch (e: any) { return fail(e); } }
+        // archive a room or restore it ({archived: false}): the room list's 封存, kept in the room; nothing about the room is lost
+        if (room[2] === "archive") { try { return json(rr.archive(room[1], b?.archived ?? true, by)); } catch (e: any) { return fail(e); } }
         // start the room over: archived, never deleted; refused while a turn or a translation runs
         if (room[2] === "reset") { try { return json(rr.reset(room[1], by)); } catch (e: any) { return fail(e); } }
         if (room[2] === "images") { try { return json(rr.images(room[1], b?.on, by)); } catch (e: any) { return fail(e); } }
@@ -832,6 +856,9 @@ export function createRuntime(d: RuntimeDeps) {
     if (!/^[0-9a-f]{40,64}$/.test(o.commit)) throw Object.assign(new Error("no commit to review"), { code: "commit" });
     let params: Record<string, string> = { project: p.id, base: p.base }, autoVerified: string[] = [];
     const refuse = (x: StartRefusal) => Object.assign(new Error(String(x.body.error)), { code: x.body.code, staffing: x.body.staffing });
+    // work a peer's Studio sent (docs/units/lan-relay.md): read and diffed by people, never reviewed and merged as trusted work
+    if (lanUntrusted(p.path, o.commit, o.branch)) throw Object.assign(new Error(`${o.branch ?? o.commit.slice(0, 12)} holds work from a peer's Studio (a lan-untrusted/ branch): Studio does not send it for review; read its diff, and commit what you keep yourself`), { code: "lan_untrusted" });
+    { const why = taintRefusal(p.path, o.commit, "Send for review"); if (why) throw Object.assign(new Error(why), { code: "lan_untrusted" }); }
     if (boardStaffed(def)) {
       const g = await staffedStartGuard(def, p.id, { why: `Send for review of ${o.branch ?? o.commit.slice(0, 12)} on ${p.id}` });
       if (!g.ok) throw refuse(g);
@@ -844,6 +871,54 @@ export function createRuntime(d: RuntimeDeps) {
     if (!started.ok) throw refuse(started);
     return started.run;
   };
-  return { handle, engine, defs, projects, firstmate, startFromBranch, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  /**
+   * Work from an introduced peer's Studio (docs/units/lan-relay.md, src/lan/runner.ts): the taker's own workflow, approved
+   * on the desktop, started on the same path as the board's Run. Studio's marks `_lan` and `_tainted` come only from the
+   * caller in src/lan (never from a request). v1 starts only a workflow that needs no board staffing approval, no project
+   * and no coffee-kit crew; an own workflow's staffing is confirmed with the take (staffingConfirm, its plan's hash).
+   */
+  const lanStaffing = (def: any) => { if (!ownWorkflow(def)) return null; const s = ownStaffingPlan(def, defs.ownCrew); return s.plan.length ? { hash: s.hash, plan: s.plan, missing: s.missing } : null; };
+  const startLan = async (o: { workflow: string; text: string; title: string; params: Record<string, string>; profile: { name: "lan"; mark: { item: string; rounds: number; diffBase?: string } }; continuePatch?: string | null; by: string; staffingConfirm?: string | null; project?: string | null; base?: string | null }) => {
+    const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
+    const def = defs.get(o.workflow);
+    if (!def || !defs.selectable(o.workflow) || defs.held(o.workflow)) throw refuse("workflow_unavailable", "This workflow is not available for a new Task");
+    if (def.kind === "coffee-kit") throw refuse("staffing_required", "The coffee kit does not take work from a peer");
+    let staffed: Record<string, string> = {}, autoVerified: string[] = [];
+    // a code workflow: one of this Studio's registered projects, its approved crew, the same guard as the board's Run
+    if (boardStaffed(def)) {
+      const pid = String(o.project ?? ""); if (!pid || !projects.get(pid)?.path) throw refuse("project_required", "Choose one of this Studio's registered projects for this code workflow");
+      const g = await staffedStartGuard(def, pid, { why: `work from a peer on ${pid}` }); if (!g.ok) throw refuse(String(g.body.code ?? "staffing_not_ready"), String(g.body.error));
+      staffed = { project: pid, ...g.params }; autoVerified = g.autoVerified;
+      // code work on the dispatcher's base: a branch pinned at that commit in this project, so the worktree starts there
+      // and stays there (a build round's rebase onto it changes nothing), and the patch that goes back applies there
+      if (o.base) { if (!/^[0-9a-f]{40}$/.test(o.base)) throw refuse("base", "a bad base commit"); const why = baseProblem(projects.get(pid)!.path!, { root: o.base, sha: o.base }); if (why && !/root/.test(why)) throw refuse("base", `project ${pid} ${why}`); staffed.base = pinBase(projects.get(pid)!.path!, o.base);
+        // a refinement continues from the patch handed back last round, as sent: committed onto the dispatched base under the
+        // same rules a peer's result is applied under (no checkout, no hook, no protected path), the worktree starting there
+        if (o.continuePatch) { const repo = projects.get(pid)!.path!; let made: string;
+          try { made = lanCommitPatch(repo, o.base, o.continuePatch, "The previous round as handed back to the dispatcher").commit; } catch (e: any) { throw refuse("continue", `this refinement cannot continue from the patch handed back last round: ${String(e?.message ?? e).slice(0, 300)}`); }
+          staffed.base = pinBase(repo, made); } }
+    }
+    const missing = Object.entries(def.params ?? {}).filter(([, spec]: any) => spec.required && !String(spec.default ?? "").trim()).map(([k]) => k);
+    if (missing.length) throw refuse("param_required", `This workflow needs inputs work from a peer cannot give: ${missing.join(", ")}`);
+    if (o.profile?.name !== "lan" || !o.profile.mark?.item) throw refuse("internal", "a LAN start carries the runtime's LAN profile");
+    const params: Record<string, string> = { ...o.params, ...staffed };
+    const s = lanStaffing(def);
+    if (s) { if (s.missing.length) throw refuse("staffing_incomplete", "Choose a provider and model for every agent node of this workflow first"); if (o.staffingConfirm !== s.hash) throw refuse("staffing_confirmation_required", "Confirm who works on each node of this workflow with the take"); params._ownStaffing = s.hash; }
+    const started = staffedStartRun(def, () => ownClaude.start({ workflow: def.id, title: o.title, text: o.text, params, by: o.by, profile: o.profile }), autoVerified);
+    if (!started.ok) throw refuse(String(started.body.code ?? "start"), String(started.body.error));
+    return started.run;
+  };
+  /** why a provider (null: Studio's default) cannot run a peer's round on this Mac now, from the same capability facts
+   *  the board's Start reads (not installed, signed out, out of quota, quota unreadable), or null */
+  const lanProviderProblem = async (provider: string | null): Promise<string | null> => {
+    const id = provider ?? (() => { try { return engine.deps.defaultProvider().provider; } catch { return null; } })(); if (!id || id === "stub") return null;
+    const facts = await staffingFacts().catch(() => staffingCapabilities), cap = facts.find((c) => c.provider === id), r = cap?.reason ? ` (${cap.reason})` : "";
+    if (!cap || cap.support !== "supported") return `${id} is not available on this Mac${r}`;
+    if (cap.auth !== "verified" && (cap as any).login !== "logged-in") return `${id} is not signed in${r}`;
+    if (cap.quota === "exhausted") return `${id} is out of quota${r}`;
+    if (cap.quota !== "available" && id !== "claude") return `${id}'s quota could not be read just now${r}`;
+    return null;
+  };
+  return { handle, engine, defs, projects, firstmate, startFromBranch, startLan, lanProviderProblem, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

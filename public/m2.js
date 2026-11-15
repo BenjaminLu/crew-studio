@@ -1,5 +1,5 @@
 // M2: the firstmate chat (status answers from the event log, intent capture),
-// the Intents and Library pages, and the task and event pages answers link to.
+// the Library page, and the task and event pages answers link to.
 // Loaded after app.js and uses its helpers (h, icon, T, L, S, route, render…).
 
 // ---------- tiny safe markdown: links to Studio pages or GitHub, **bold**, `code`, and pipe tables ----------
@@ -76,8 +76,7 @@ function intentCard(i) {
     h("div", { class: "rk", style: "color:var(--accent-text)" }, icon("target", "ic sm"), T("Intent recorded", "已記錄意圖"), h("span", { class: "iid" }, i.id)),
     h("div", { class: "rt" }, i.goal),
     h("div", { class: "faint", style: "font-size:13px" }, T("firstmate drafts a spec and raises a dispatch card; you answer it on the board. Nothing has been dispatched yet.",
-      "firstmate 會寫 spec、開派工卡，由你在看板上點。目前還沒有派任何工作。")),
-    h("div", {}, h("a", { class: "btn", href: `#/intents/${i.id}` }, T("Open intent", "打開意圖"))));
+      "firstmate 會寫 spec、開派工卡，由你在看板上點。目前還沒有派任何工作。")));
 }
 
 function msgView(m, i) {
@@ -232,59 +231,9 @@ $("#chatProv").addEventListener("click", () => {
 });
 window.onLang = () => { renderChat(false); showChatInfo(); };
 
-// ---------- intents ----------
-const IN = { list: null };
-const STEP = [["received", "Received", "已收到"], ["spec", "Spec drafted", "已寫 spec"], ["dispatch", "Dispatch card", "派工卡"], ["running", "Running", "執行中"], ["merged", "Merged", "已合併"]];
-function trail(step, big) {
-  const at = STEP.findIndex((s) => s[0] === step);
-  const kids = [];
-  STEP.forEach((s, i) => {
-    if (i) kids.push(h("i", { class: `ln${i <= at ? " done" : ""}` }));
-    const cls = i < at ? "done" : i === at ? (step === "merged" ? "fin" : step === "dispatch" ? "you" : "cur") : "";
-    kids.push(h("span", { class: `s ${cls}`, "data-step": s[0] }, h("i", { class: "d" }), h("span", {}, T(s[1], s[2]))));
-  });
-  return h("div", { class: `trail${big ? " big" : " compact"}`, "aria-label": T(`Status: ${STEP[at]?.[1]}`, `狀態：${STEP[at]?.[2]}`) }, kids);
-}
-async function loadIntents() { try { IN.list = await fetch("/api/intents").then((r) => r.json()); } catch { IN.list = []; } if (["intents"].includes(S.route?.name)) render(); updateNav2(); }
-window.onIntents = (list) => { IN.list = list; if (S.route?.name === "intents") soft(); updateNav2(); };
-function updateNav2() { const n = (IN.list || []).filter((i) => i.step !== "merged" && !i.declined).length; const el = $("#navIntents"); if (el) el.textContent = n || ""; }
-function viewIntents(id) {
-  if (IN.list === null) { loadIntents(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:200px" })); }
-  if (id) return intentPage(id);
-  return h("div", { class: "page" },
-    h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Intents", "意圖")),
-      h("p", {}, T("What you asked for in the chat. firstmate turns each into a spec and a dispatch card; the trail follows the task through to its merge.",
-        "你在對話裡交代的事。firstmate 把每一件寫成 spec 和派工卡，軌跡會一路跟到合併。"))),
-      h("div", { class: "actions" }, h("button", { class: "btn primary", onclick: () => { openChat(true); $("#chatIn").value = T("I want ", "我想要"); $("#chatIn").focus(); } }, icon("plus", "ic sm"), T("New intent", "新意圖")))),
-    h("div", { class: "card ilist" },
-      h("div", { class: "irow head" }, h("div", {}, "ID"), h("div", {}, T("Goal", "目標")), h("div", {}, T("Task", "任務")), h("div", {}, T("Status", "狀態")), h("div", {}, T("Asked", "時間"))),
-      IN.list.length ? IN.list.map((i) => h("a", { class: "irow", href: `#/intents/${i.id}`, "data-intent-row": i.id, style: "text-decoration:none" },
-        h("span", { class: "iid" }, i.id), h("span", { style: "min-width:0;overflow-wrap:anywhere" }, i.goal),
-        h("span", {}, i.tasks.length ? i.tasks.map((t) => h("span", { class: "tid", style: "margin-right:6px" }, t.task)) : h("span", { class: "faint" }, i.declined ? T("declined", "未接") : T("not yet", "尚未"))),
-        trail(i.step), h("span", { class: "faint", style: "font-size:12px" }, ago(i.ts))))
-        : h("div", { class: "empty" }, icon("target"), h("b", {}, T("No intents yet", "還沒有意圖")), T("Tell firstmate in the chat what you want done.", "在對話裡告訴 firstmate 你想做什麼。"))));
-}
-function intentPage(id) {
-  const i = IN.list.find((x) => x.id === id);
-  if (!i) return h("div", { class: "page" }, h("div", { class: "card" }, h("div", { class: "empty" }, h("b", {}, T("No such intent", "找不到這個意圖")), h("a", { href: "#/intents" }, T("All intents", "全部意圖")))));
-  return h("div", { class: "page" },
-    h("div", { class: "phead" }, h("div", {}, h("h1", {}, h("span", { class: "iid", style: "font-size:15px;margin-right:8px" }, i.id), i.goal),
-      h("p", {}, T(`Asked ${ago(i.ts)} from the ${i.source}`, `${ago(i.ts)}從${i.source === "chat" ? "對話" : i.source}提出`))), h("a", { class: "btn", href: "#/intents" }, T("All intents", "全部意圖"))),
-    h("div", { class: "card", style: "padding:18px 20px;overflow-x:auto" }, trail(i.step, true)),
-    h("div", { class: "card", style: "padding:16px 20px;display:grid;gap:10px" },
-      i.details ? kv2(T("Details", "細節"), i.details) : null, i.constraints ? kv2(T("Constraints", "限制"), i.constraints) : null,
-      i.deadline ? kv2(T("Deadline", "期限"), i.deadline) : null, i.budget ? kv2(T("Budget", "預算"), i.budget) : null,
-      i.text && i.text !== i.goal ? kv2(T("Your words", "你的原話"), i.text) : null),
-    h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Tasks", "任務"))),
-      i.tasks.length ? h("div", { class: "card", style: "display:grid" }, i.tasks.map((t) => h("div", { class: "lib-row" },
-        h("div", { class: "run-t" }, h("a", { class: "tid", href: `#/task/${t.task}` }, t.task), h("span", {}, t.title || "")), trail(t.step), lineageChain(t.lineage))))
-        : h("div", { class: "card" }, h("div", { class: "empty" }, icon("clock"), h("b", {}, i.declined ? T("firstmate declined this intent", "firstmate 沒有接這個意圖") : T("Waiting for firstmate to draft a spec", "等 firstmate 寫 spec")),
-          i.declined ? i.declined.reason || "" : T("firstmate picks captured intents up from data/intents.jsonl, writes the spec, links it here and raises the dispatch card.",
-            "firstmate 從 data/intents.jsonl 讀取意圖，寫好 spec 後會連結到這裡並開派工卡。")))));
-}
 const kv2 = (k, v) => h("div", { style: "display:grid;grid-template-columns:120px minmax(0,1fr);gap:12px;font-size:14px" }, h("span", { class: "faint" }, k), h("span", { style: "white-space:pre-wrap;overflow-wrap:anywhere" }, v));
 
-// ---------- lineage chain, shared by the Library, task and intent pages ----------
+// ---------- lineage chain, shared by the Library and task pages ----------
 function lineageChain(l, merged) {
   if (!l) return h("span", { class: "faint", style: "font-size:12px" }, T("No lineage: the task is older than the event window.", "沒有來歷：任務早於事件紀錄的範圍。"));
   const repo = S.github?.repo || "unknown/unknown";
@@ -342,7 +291,7 @@ function codeRow(x) {
   return h("div", { class: "lib-row", "data-pr": x.pr },
     h("div", { class: "run-t" }, x.task ? h("a", { class: "tid", href: `#/task/${x.task}` }, x.task) : null, h("span", { style: "min-width:0;overflow-wrap:anywhere" }, x.title)),
     h("div", { class: "run-s" }, doorBadge(x.door), h("a", { href: x.url, target: "_blank", rel: "noopener" }, `#${x.pr}`), h("span", {}, T(`merged ${ago(x.ts)}`, `${ago(x.ts)}合併`)),
-      x.intent ? h("a", { href: `#/intents/${x.intent}` }, x.intent) : null),
+      x.intent ? h("span", { class: "iid" }, x.intent) : null),
     lineageChain(x.lineage, x));
 }
 
@@ -360,7 +309,7 @@ function viewTask(id) {
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, h("span", { class: "tid", style: "font-size:15px;margin-right:8px" }, d.id), d.title || ""),
       h("p", { class: "run-s", style: "font-size:13px" }, doorBadge(d.door?.door), t ? statusBadge(t.status) : null, t?.pr || d.lineage.merged?.pr ? h("a", { href: prUrl(t?.pr || d.lineage.merged.pr), target: "_blank", rel: "noopener" }, `#${t?.pr || d.lineage.merged.pr}`) : null,
         t?.round ? h("span", {}, T(`round ${t.round}`, `第 ${t.round} 回合`)) : null, t?.currentActor ? h("a", { href: `#/crew/${encodeURIComponent(t.currentActor)}` }, t.currentActor) : null,
-        d.intent ? h("a", { href: `#/intents/${d.intent}` }, d.intent) : null)),
+        d.intent ? h("span", { class: "iid" }, d.intent) : null)),
       h("div", { class: "actions" }, h("a", { class: "btn", href: `#/activity/${d.id}` }, icon("activity", "ic sm"), T("All events", "全部事件")), h("button", { class: "btn ghost", onclick: () => { TK.id = null; render(); } }, icon("refresh", "ic sm")))),
     d.door?.reason ? h("div", { class: "card", style: "padding:12px 16px;font-size:14px" }, h("b", {}, T("Change type: ", "改動類型：")), d.door.door || "—", " — ", d.door.reason) : null,
     d.pending.length ? h("div", { class: "card needs" }, d.pending.map((c) => h("div", { class: "need" }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, icon("human")),
@@ -387,6 +336,5 @@ function viewEvent(seq) {
       h("div", { class: "card evlist" }, d.around.map((x) => { const r = evRow(x); if (x.seq === e.seq) r.classList.add("hl"); return r; }))));
 }
 
-Object.assign(routes, { intents: viewIntents, library: viewLibrary, task: viewTask, event: (a) => viewEvent(Number(a)) });
-loadIntents();
+Object.assign(routes, { library: viewLibrary, task: viewTask, event: (a) => viewEvent(Number(a)) });
 addEventListener("hashchange", () => { if (S.route?.name === "library" && LB.data && Date.now() - (LB.t || 0) > 60_000) { LB.t = Date.now(); loadLibrary(); } });

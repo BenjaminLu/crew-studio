@@ -9,6 +9,7 @@
 //   CREW_DATA/lane/<card>.json  one card per recipe run
 //   CREW_DATA/repo-refs.jsonl   what a merged card put where (for update proposals)
 //   CREW_LANE_MAX_LINES  diff budget in text lines (default 20)
+import { taintRefusal } from "./lan/taint";
 import { addPaths, git, must } from "./git";
 import { assertSharedGitConfig } from "./git-config-health";
 import { randomBytes } from "node:crypto";
@@ -153,6 +154,7 @@ export class Lane {
       card.state = card.ok ? "ready" : "fallback";
       if (card.ok) card.pin = this.identity(repo, card);
       if (card.ok && repo.remote) {
+        const tw = taintRefusal(repo.path, branch, "Push"); if (tw) throw new Error(tw);
         const p = git(repo.path, ["push", "-q", repo.remote, `${branch}:${branch}`]);
         if (!p.ok) { card.checks.push({ id: "push", label: "Branch pushed", ok: false, detail: p.err.slice(0, 300) }); card.ok = false; card.state = "fallback"; }
         else card.checks.push({ id: "push", label: "Branch pushed", ok: true, detail: `${repo.remote}/${branch}` });
@@ -262,6 +264,8 @@ export class Lane {
     const again = this.check(repo, c);
     if (again.some((x) => x.ok === false)) { c.checks = again; c.ok = false; c.state = "fallback"; this.save(c); throw new Error("a check no longer passes; the card fell back to the normal path"); }
     const ci = c.checks.find((x) => x.id === "ci");
+    // work from a peer's Studio is never merged or pushed, on any path (GitHub, the checked-out base, update-ref)
+    { const tw = taintRefusal(repo.path, c.commit!, "Merge"); if (tw) throw new Error(tw); }
     if (repo.github) {
       if (ci?.ok === null && ci.detail.startsWith("running")) throw new Error("CI is still running");
       if (!c.pr) throw new Error("open the PR first");

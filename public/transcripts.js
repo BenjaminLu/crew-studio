@@ -235,19 +235,41 @@ function turnNode(e) {
 for (const name of ["firstmate", "takeover"]) { const base = routes[name]; if (base) routes[name] = (arg) => { const v = base(arg); if (v?.append) v.append(historyCard()); return v; }; }
 
 // Runs: Studio's own agent node runs, and their detail
-async function loadNodes() { const seq = TR.nodesSeq = (TR.nodesSeq || 0) + 1; let r = []; try { r = await getJ("/api/node-runs"); } catch {} if (seq !== TR.nodesSeq) return; TR.nodes = r; if (S.route?.name === "runs") render(); }
+// The panel follows the Tasks toolbar (public/runtime.js crewTaskFilter): the server filters the rounds to those Tasks before
+// it keeps the newest 200, and says how many there are, so a filter never reads only the first 200
+const nodesKey = (f) => (f ? `runs:${[...f].sort().join(",")}` : "all");
+async function loadNodes(key) {
+  const seq = TR.nodesSeq = (TR.nodesSeq || 0) + 1; let r = [], total = 0, err = null;
+  const get = async (q) => { const res = await fetch(`/api/node-runs${q}`); if (!res.ok) throw new Error(`HTTP ${res.status}`); const j = await res.json(); return { j: Array.isArray(j) ? j : [], n: Number(res.headers.get("x-total-count")) || 0 }; };
+  try {
+    if (!key.startsWith("runs:")) { const x = await get(""); r = x.j; total = x.n || r.length; }
+    else { const ids = key.slice(5).split(",").filter(Boolean);
+      // 200 ids a request (about 2 KB of URL); each answer is that chunk's newest 200 and its total: merged, the newest 200 overall
+      for (let i = 0; i < ids.length; i += 200) { const x = await get(`?runs=${encodeURIComponent(ids.slice(i, i + 200).join(","))}`); r = r.concat(x.j); total += x.n || x.j.length; }
+      r = r.sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 200); }
+  } catch (e) { err = String(e?.message || e); }
+  if (seq !== TR.nodesSeq) return; TR.nodes = r; TR.nodesFor = key; TR.nodesTotal = total; TR.nodesErr = err;
+  if (S.route?.name === "runs") redrawNodes();
+}
+function redrawNodes() { const el = document.querySelector('#view [data-section="node-runs"]'); if (el) { el.replaceWith(nodesCard()); return; } render(); }
+let nodesT = null;
+window.crewNodesFilterChanged = () => { clearTimeout(nodesT); nodesT = setTimeout(() => { if (S.route?.name === "runs" && document.querySelector('#view [data-section="node-runs"]')) redrawNodes(); }, 250); };
 function nodesCard() {
-  if (!TR.nodes) { loadNodes(); return h("section", { class: "card tr-pad", "data-section": "node-runs" }, h("div", { class: "skel", style: "height:60px" })); }
-  // #/runs?project=<id>: while that project's Task ids load, the panel shows it is loading (never "No agent rounds yet")
-  const projectFilter = S.route?.query?.get("project") ? window.crewTaskFilter?.() : null;
-  if (S.route?.query?.get("project") && !projectFilter) return h("section", { class: "card tr-pad", "data-section": "node-runs", "data-loading": "1" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")), h("div", { class: "skel", style: "height:60px" }));
-  return h("section", { class: "card tr-pad", "data-section": "node-runs" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")),
-    // #/runs?project=<id>: only that project's Tasks' rounds (public/runtime.js keeps the filter)
-    ...((nodes) => [nodes.length ? h("div", { class: "tr-list" }, nodes.map((n) => h("a", { class: "tr-e tr-link", href: `#/runs/node/${n.run}/${n.node}/${n.round}`, "data-node-run": `${n.run}/${n.node}/${n.round}` },
+  const f = window.crewTaskFilter?.();
+  // the Tasks list (and so the filter) is still loading: the panel says it is loading, never "No agent rounds yet"
+  if (f === null) return h("section", { class: "card tr-pad", "data-section": "node-runs", "data-loading": "1" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")), h("div", { class: "skel", style: "height:60px" }));
+  const key = nodesKey(f);
+  // each draw while the list is not this filter's asks again: the newest answer wins (loadNodes keeps only its last request)
+  if (TR.nodesFor !== key) { loadNodes(key); return h("section", { class: "card tr-pad", "data-section": "node-runs", "data-loading": "1" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")), h("div", { class: "skel", style: "height:60px" })); }
+  const nodes = TR.nodes || [], total = TR.nodesTotal ?? nodes.length;
+  return h("section", { class: "card tr-pad", "data-section": "node-runs", "data-node-runs-total": String(total) }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")),
+    TR.nodesErr ? h("div", { class: "err", role: "alert", "data-node-runs-error": "" }, T(`The agent rounds could not be read (${TR.nodesErr}).`, `無法讀取 agent 回合（${TR.nodesErr}）。`)) : null,
+    f ? h("div", { class: "faint", "data-node-runs-filtered": "" }, T(`Rounds of the ${f.size} task${f.size === 1 ? "" : "s"} the filter above shows.`, `上面篩選出的 ${f.size} 個任務的回合。`)) : null,
+    TR.nodesErr ? null : nodes.length ? h("div", { class: "tr-list" }, nodes.map((n) => h("a", { class: "tr-e tr-link", href: `#/runs/node/${n.run}/${n.node}/${n.round}`, "data-node-run": `${n.run}/${n.node}/${n.round}` },
       h("span", { class: "tr-t" }, fmtT(n.updated)), h("span", {}, h("b", {}, n.node), ` · ${n.run} · ${T(`Round ${n.round}`, `第 ${n.round} 回合`)}`),
       h("span", { class: "faint" }, [n.prompt && "prompt", n.stream && "stream", n.report && "report"].filter(Boolean).join(" · ")))))
-      : h("div", { class: "faint" }, T("No agent rounds yet. Each one keeps its prompt, stream and report.", "還沒有 agent 回合。每個回合都會保留提示詞、串流和報告。"))])(
-      projectFilter ? TR.nodes.filter((n) => projectFilter.has(n.run)) : TR.nodes));
+      : h("div", { class: "faint" }, f ? T("None of these tasks has an agent round yet.", "這些任務都還沒有 agent 回合。") : T("No agent rounds yet. Each one keeps its prompt, stream and report.", "還沒有 agent 回合。每個回合都會保留提示詞、串流和報告。")),
+    total > nodes.length ? h("div", { class: "faint", "data-node-runs-capped": String(total) }, T(`The newest ${nodes.length} of ${total} rounds. Narrow the tasks above to see others.`, `顯示 ${total} 個回合中最新的 ${nodes.length} 個；篩選上面的任務可以看到其他的。`)) : null);
 }
 const wrapRuns = () => {
   const base = routes.runs; if (!base || base.__tr) return;

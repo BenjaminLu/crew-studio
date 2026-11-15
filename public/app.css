@@ -71,7 +71,7 @@
 
 .seg button span.keep{display:inline!important}
 
-/* M2: chat, intents, library */
+/* M2: chat, library */
 .chat-log .empty{color:var(--text-2)}
 .chat-err{border-color:color-mix(in srgb,var(--bad) 40%,var(--border))}
 .bub a.cite{text-decoration:none}
@@ -84,9 +84,6 @@
 .lib-row:first-child{border-top:0}
 .lineage .lstep{text-decoration:none}
 .lineage .ic.sm{width:14px;height:14px}
-.ilist .irow{grid-template-columns:64px minmax(0,1.8fr) 110px minmax(0,1.6fr) 84px}
-@container main (max-width:820px){.ilist .irow{grid-template-columns:56px minmax(0,1fr)}.ilist .irow.head{display:none}.ilist .irow > :nth-child(n+3){grid-column:2}}
-.trail.big{min-width:520px}
 /* Doctor */
 .doc-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;padding:14px 16px;border-bottom:1px solid var(--border)}
 .doc-row:last-child{border-bottom:0}

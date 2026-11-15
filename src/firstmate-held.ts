@@ -9,7 +9,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export type Held = { args: any; owner: { key: string; text: string }; /** proposed from untrusted issue text: proposed again tainted */ tainted?: true };
+export type Held = { args: any; owner: { key: string; text: string; /** an external CLI grant's start_run (src/cli-grants.ts): proposed again under the same grant, only while it is active */ origin?: { grant: string; staffing?: Record<string, string> | null } }; /** proposed from untrusted issue text: proposed again tainted */ tainted?: true };
 type State = { held: Record<string, Held[]>; resuming: string[] };
 
 export class HeldProposals {

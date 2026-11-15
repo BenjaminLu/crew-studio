@@ -87,7 +87,8 @@ try {
     ok(JSON.stringify(await p.$$eval("[data-inbox-row]", (es) => es.map((e) => e.dataset.inboxRow))) === JSON.stringify(["SC-701", "SC-702", "SC-703", "SC-704"]), "rows are ordered oldest first");
     ok(await p.getAttribute('[data-inbox-row="SC-701"]', "aria-selected") === "true" && await p.locator('[data-inbox-row][aria-selected="true"]').count() === 1, "the selected row is marked, and only it");
     const row = await p.textContent('[data-inbox-row="SC-702"]');
-    ok(/dispatch/.test(row) && /code-firstmate/.test(row) && /R-702/.test(row) && /Add a percent helper/.test(row), "a row names the kind, the workflow, the Task and its run", row);
+    // the workflow by its display name: Studio ships code-firstmate renamed to "coding" (src/runtime/workflow-names.ts)
+    ok(/dispatch/.test(row) && /coding/.test(row) && /R-702/.test(row) && /Add a percent helper/.test(row), "a row names the kind, the workflow, the Task and its run", row);
     const head = await p.textContent("[data-inbox-head]");
     ok([VIDEO, "promo-video", "R-701", "SC-701"].every((x) => head.includes(x)), "the card's header names the Task, workflow, run and card", head);
     const approve = (await p.textContent('[data-scard="SC-701"] [data-option="approve"]')).trim();
@@ -149,7 +150,7 @@ try {
       `${width} with the panel open: the list rail and the oldest card show together at once`);
     const rail = await p.evaluate(() => { const l = document.querySelector(".ib-list").getBoundingClientRect(), c = document.querySelector(".ib-detail").getBoundingClientRect(); return { l: l.width, side: c.left >= l.right - 1 }; });
     const row = p.locator('[data-inbox-row="SC-702"]');
-    ok(rail.side && rail.l <= 240 && await visible(p, '[data-inbox-row="SC-702"] .ib-wf') === 0 && (await row.getAttribute("title")) === "Add a percent helper" && /Add a percent helper · dispatch · code-firstmate · R-702/.test(await row.getAttribute("aria-label")),
+    ok(rail.side && rail.l <= 240 && await visible(p, '[data-inbox-row="SC-702"] .ib-wf') === 0 && (await row.getAttribute("title")) === "Add a percent helper" && /Add a percent helper · dispatch · coding · R-702/.test(await row.getAttribute("aria-label")),
       `${width} with the panel open: the rail is narrow (kind, title, age) and the full title is on hover and in its label`, JSON.stringify(rail));
     await row.click(); await p.waitForTimeout(300);
     ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-702" && await visible(p, "[data-inbox-row]") === 4, `${width} with the panel open: a rail row selects its card, the rail stays`);

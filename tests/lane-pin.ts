@@ -42,4 +42,12 @@ const occupied = fixture(true), baseTree = join(data, "checked-out-base-tree"); 
 ok(occupiedRefused&&sh(occupied.repo,"git","rev-parse","main")===occupiedBefore&&refs()===recordsBefore,"other-branch CAS preserves Git's refusal to change a base checked out in another worktree");
 const legacy=fixture();delete legacy.c.pin;save(legacy.c);const before=sh(legacy.repo,"git","rev-parse","main");let refused=false;try{await lane.merge(legacy.c.id,"fixture captain")}catch{refused=true}
 ok(refused&&sh(legacy.repo,"git","rev-parse","main")===before&&!lane.card(legacy.c.id)?.pin,"historical unpinned ready recipe is refused without synthesizing identity or rewriting history");
+// a recipe whose commit holds work from a peer's Studio is never merged, on either local path (the base checked out, or
+// moved with update-ref while another branch is checked out), nor pushed
+{ const { setTaintSource } = await import("../src/lan/taint");
+  for (const other of [false, true]) { const { repo, c } = fixture(other), before = sh(repo, "git", "rev-parse", "main");
+    setTaintSource(() => [{ sha: c.commit!, repo, project: "p", peer: "k", thread: "t", round: 1, at: new Date().toISOString(), why: "applied from a peer", cleared: null, clearedBy: null }]);
+    let error = ""; try { await lane.merge(c.id, "fixture captain"); } catch (e) { error = String(e); }
+    setTaintSource(null);
+    ok(/holds work from a peer/.test(error) && sh(repo, "git", "rev-parse", "main") === before && lane.card(c.id)?.state !== "merged", `${other ? "other branch" : "checked-out base"}: a recipe commit tainted by a peer's work is not merged`, error); } }
 end();

@@ -17,13 +17,18 @@ const seatName = (id) => L(seatOf(id)?.label) || id;
 const SOURCE = { team: ["Team", "跟團隊"], project: ["◆ This project", "◆ 這個專案"], workflow: ["★ Custom here", "★ 這裡自訂"], definition: ["Workflow sets it", "流程設定"], run: ["This run", "這次"], missing: ["Missing", "缺人"] };
 // facts: true detects the models again unless the server did so within its reuse window (the page opening);
 // "force" detects again (重新偵測)
+// a load asked for while one runs is not dropped: the strongest one asked (a plain read, a detection, a forced one) runs
+// when it ends (Detect again pressed during a reload that a "team" event started was lost: the press did nothing)
+const loadRank = (f) => (f === "force" ? 2 : f ? 1 : 0);
 async function load(facts) {
-  if (TM.loading) return; TM.loading = true; TM.detecting = !!facts; if (facts && TM.data) soft();
+  if (TM.loading) { if (TM.queued === undefined || loadRank(facts) > loadRank(TM.queued)) TM.queued = facts ?? null; if (facts && !TM.detecting) { TM.detecting = true; soft(); } return; }
+  TM.loading = true; TM.detecting = !!facts; if (facts && TM.data) soft();
   const requestedProject=TM.project;let retry=false;
   const q = new URLSearchParams(); if (facts) q.set("facts", "1"); if (facts === "force") q.set("force", "1"); if (TM.project) q.set("project", TM.project);
   try { const data = await getJson(`/api/team${q.size ? `?${q}` : ""}`);if(requestedProject!==TM.project)retry=true;else{TM.data=data; TM.err = null; if (!TM.sel || !TM.data.workflows.some((w) => w.id === TM.sel)) TM.sel = TM.data.workflows.find((w) => w.badge.state !== "team")?.id ?? TM.data.workflows[0]?.id ?? null;} }
   catch (e) { if(requestedProject!==TM.project)retry=true;else TM.err = String(e.message || e); }
   finally { TM.loading = false; TM.detecting = false; }
+  if (TM.queued !== undefined) { const q = TM.queued; TM.queued = undefined; return load(q ?? undefined); }
   if(retry)return load();
   if (S.route?.name === "team") soft();
 }
