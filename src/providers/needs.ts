@@ -12,7 +12,7 @@
 //   (`account`: the login keychain database, or one linked login file), never a folder of the
 //   captain's and never the repository (`noWorkspace`), and runs only what signing in needs (`exec`);
 // - the variables that name the CLI's own temporary folder (set to the round's tmp).
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { claudeAccountContext, claudeBilling, claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
 import { dirname, join } from "node:path";
@@ -42,6 +42,27 @@ const which = (bin: string): string | null => {
   for (const d of (process.env.PATH ?? "").split(":")) { const p = join(d, bin); if (existsSync(p)) return p; }
   return null;
 };
+/** Whether a file is a shell launcher (#! sh, bash, zsh, dash, ksh, directly or through env): a script that finds and execs
+ *  the program it stands for, such as a terminal app's `claude` wrapper placed first on PATH. */
+export function shellLauncher(path: string): boolean {
+  try { const fd = openSync(path, "r"), buf = Buffer.alloc(200); let n = 0; try { n = readSync(fd, buf, 0, 200, 0); } finally { closeSync(fd); }
+    const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(buf.subarray(0, n).toString("latin1")); if (!m) return false;
+    const shell = (p?: string) => !!p && /^(?:sh|bash|zsh|dash|ksh)$/.test(p.split("/").pop()!);
+    return shell(m[1]) || /\/env$/.test(m[1]) && shell(m[2]); } catch { return false; }
+}
+/** The claude CLI a bare name finds on PATH, passing over shell launchers to the CLI they stand for (the next match that is not one).
+ *  A launcher cannot run under a round's exec allowlist (claudeExecAllow): it needs programs of its own (dirname, the CLI it
+ *  finds), and a wrapper that skips "its own folder" to find the real CLI cannot compute that folder without dirname, so it
+ *  finds itself and execs itself forever, silently. With no other match the first one is kept (and fails at start, never silently:
+ *  src/providers/claude.ts bounds the wait for the CLI's init). A path is taken as it is. */
+export function claudeOnPath(bin: string, path = process.env.PATH ?? ""): string | null {
+  if (bin.includes("/")) return existsSync(bin) ? bin : null;
+  let first: string | null = null;
+  for (const d of path.split(":")) { if (!d) continue; const p = join(d, bin); let real = p;
+    try { if (!statSync(p).isFile()) continue; real = realpathSync(p); } catch { continue; }
+    first ??= p; if (!shellLauncher(real)) return p; }
+  return first;
+}
 const installOf = (bin: string) => { const found = which(bin); if (!found) return []; let r = found; try { r = realpathSync(found); } catch {} return [dirname(r), dirname(dirname(r))]; };
 /** What a round may execute to start a CLI: its real binary, the folder it ships in (an npm package or a versioned install,
  *  never a shared folder), and the interpreter its #! line names (an npm launcher runs under node). */

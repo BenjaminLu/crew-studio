@@ -11,7 +11,7 @@ import { sessionCookie } from "../src/csrf.ts";
 // no live process; a provider that cannot be sandboxed is refused (only the stub is
 // sandbox-free); without an OS sandbox a round is refused; the engine sandboxes every
 // agent node, and only a signed captain grant turns that off.   bun tests/round-sandbox.ts
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { freePort, waitUp } from "./boot.mjs";
@@ -132,6 +132,23 @@ ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds =
   ok(o.wroteInside === false && !existsSync(join(wt, "own-account-inside.txt")), "the credentialed CLI never reaches the worktree (its model works on files through Studio's tools)", String(o.wroteInside));
   ok(Array.isArray(o.secretReads) && o.secretReads.length === 0 && o.key === null, "every entry of the deny list stays closed", JSON.stringify(o.secretReads));
   ok(o.exec?.["/bin/cat"] === false && o.exec?.["/usr/bin/curl"] === false && o.exec?.["/usr/bin/git"] === false && o.exec?.[process.execPath] === true, "the round may run only the CLI, Studio's runtime and the keychain command: no other program starts", JSON.stringify(o.exec)); }
+// a shell launcher named claude first on PATH (a terminal app's wrapper: it skips its own folder, found with dirname, and execs the
+// next claude): under the round's exec allowlist dirname is denied, so it finds itself and execs itself forever, printing nothing.
+// The round runs the CLI itself (the next claude on PATH), and a CLI that never prints its init fails within the start bound,
+// with its stderr, never silently at the round's limit
+{ delete process.env.CREW_CLAUDE_BILLING; const before = process.env.ANTHROPIC_API_KEY, path = process.env.PATH; delete process.env.ANTHROPIC_API_KEY;
+  const dirs = realpathSync(mkdtempSync(join(tmpdir(), "crew-launcher-"))), launch = join(dirs, "launch"), cli = join(dirs, "cli"); mkdirSync(launch); mkdirSync(cli);
+  writeFileSync(join(launch, "claude"), `#!/usr/bin/env bash\nself="$(cd "$(dirname "$0")" && pwd)"\nIFS=:\nfor d in $PATH; do [[ "$d" == "$self" ]] && continue; [[ -x "$d/claude" ]] && exec "$d/claude" "$@"; done\nexit 127\n`, { mode: 0o755 });
+  const { symlinkSync } = await import("node:fs"); symlinkSync(join(import.meta.dir, "fixture", "round-cli.cjs"), join(cli, "claude"));
+  const node = Bun.which("node"); process.env.PATH = [launch, cli, ...(node ? [join(node, "..")] : []), "/usr/bin", "/bin"].join(":");
+  try {
+    const t0 = Date.now(), r = await agents.run({ kind: "t", title: "launcher", system: "s", text: "PROBE {}", tools: [], provider: claudeProvider("test-model", "claude"), timeoutMs: 20000, sandbox: { writes: [wt], cwd: wt } });
+    ok(r.status === "done" && Date.now() - t0 < 15000, "with a shell launcher named claude first on PATH, the round runs the CLI itself (the next claude) and finishes", JSON.stringify([r.status, r.error]));
+    process.env.CREW_CLAUDE_INIT_TIMEOUT_MS = "3000";
+    const t1 = Date.now(), s = await agents.run({ kind: "t", title: "stalled", system: "s", text: "PROBE {}", tools: [], provider: claudeProvider("test-model", join(launch, "claude")), timeoutMs: 20000, sandbox: { writes: [wt], cwd: wt } });
+    ok(s.status === "failed" && s.errorCode === "cliStartTimeout" && /did not start within 3 s/.test(s.error ?? "") && /dirname: Operation not permitted/.test(s.error ?? "") && Date.now() - t1 < 12000,
+      "a CLI that prints no init (here the launcher, named by path, execing itself) fails within the start bound with its stderr, never at the round's limit", JSON.stringify([s.status, s.errorCode, s.error, Date.now() - t1]));
+  } finally { delete process.env.CREW_CLAUDE_INIT_TIMEOUT_MS; process.env.PATH = path; process.env.ANTHROPIC_API_KEY = before; process.env.CREW_CLAUDE_BILLING = "api-key"; } }
 // the keychain link under the real seatbelt, with a stand-in keychain folder (never the captain's): the sandbox checks the path
 // a file resolves to, so through the round home's link only the login keychain database and what is written beside it open
 if (process.platform === "darwin") {

@@ -93,7 +93,7 @@ const { codexProvider } = await import("../src/providers/codex");
 
 // ---------- claude.ts: no settings scope ever loads; a CLI offering any other tool or MCP server stops the round ----------
 { const bin = join(root, "claude-stub.mjs"), argvFile = join(root, "argv.json");
-  writeFileSync(bin, `import{writeFileSync}from'node:fs';const a=process.argv.slice(2);writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(a));const tools=process.env.STUB_TOOLS?JSON.parse(process.env.STUB_TOOLS):['mcp__studio__fs_read'],mcp=process.env.STUB_MCP?JSON.parse(process.env.STUB_MCP):[{name:'studio',status:'connected'}];
+  writeFileSync(bin, `import{writeFileSync}from'node:fs';const a=process.argv.slice(2);writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(a));if(process.env.STUB_HANG){process.stderr.write('stub: stalled before init\\n');await new Promise(()=>{});}const tools=process.env.STUB_TOOLS?JSON.parse(process.env.STUB_TOOLS):['mcp__studio__fs_read'],mcp=process.env.STUB_MCP?JSON.parse(process.env.STUB_MCP):[{name:'studio',status:'connected'}];
 const put=o=>process.stdout.write(JSON.stringify(o)+'\\n');if(!process.env.STUB_NO_INIT)put({type:'system',subtype:'init',model:'claude-sonnet-5-5',tools,mcp_servers:mcp});if(process.env.STUB_CALL)put({type:'assistant',message:{model:'claude-sonnet-5-5',content:[{type:'tool_use',id:'t1',name:process.env.STUB_CALL,input:{command:'id'}}]}});put({type:'assistant',message:{model:'claude-sonnet-5-5',content:[{type:'text',text:'done'}]}});put({type:'result',subtype:'success',is_error:false,result:'done',usage:{}});`);
   chmodSync(bin, 0o755); const tokenFile = join(root, "tool-token"); writeFileSync(tokenFile, "t", { mode: 0o600 });
   const run = async (env: Record<string, string>) => { const p = claudeProvider("claude-sonnet-5-5", bin); const out: any[] = [];
@@ -109,7 +109,35 @@ const put=o=>process.stdout.write(JSON.stringify(o)+'\\n');if(!process.env.STUB_
   const silent = await run({ STUB_NO_INIT: "1" });
   ok(silent.out.some((e) => e.type === "turnEnd" && e.status === "error" && e.code === "toolsNotLocked") && !silent.out.some((e) => e.type === "delta"), "fail closed: a CLI that never lists its tools (no init) is refused before any output is taken", JSON.stringify(silent.out));
   const call = await run({ STUB_CALL: "Bash" });
-  ok(call.out.some((e) => e.type === "turnEnd" && e.code === "toolsNotLocked") && !call.out.some((e) => e.type === "toolStart"), "a tool call to anything but a Studio tool stops the round, even after a clean init", JSON.stringify(call.out)); }
+  ok(call.out.some((e) => e.type === "turnEnd" && e.code === "toolsNotLocked") && !call.out.some((e) => e.type === "toolStart"), "a tool call to anything but a Studio tool stops the round, even after a clean init", JSON.stringify(call.out));
+  // a CLI that prints nothing at all (a launcher looping, a start the sandbox blocks) fails at the start bound with its stderr
+  process.env.CREW_CLAUDE_INIT_TIMEOUT_MS = "1000";
+  try {
+    const t0 = Date.now(), hung = await run({ STUB_HANG: "1" }), end = hung.out.at(-1);
+    ok(end?.type === "turnEnd" && end.status === "error" && end.code === "cliStartTimeout" && /did not start within 1 s/.test(end.message) && /stub: stalled before init/.test(end.message) && Date.now() - t0 < 5000,
+      "a CLI that prints no init within the start bound fails then, with its stderr in the error", JSON.stringify([hung.out, Date.now() - t0]));
+    let invalidated: string | null = null;
+    const p = claudeProvider("claude-sonnet-5-5", bin, { model: "claude-sonnet-5-5", effort: null, live: () => true, invalidate: (c?: string) => { invalidated = c ?? "?"; }, login: () => ({ ok: true, env: {}, source: "own", warn: null, kind: "account" }) });
+    const out: any[] = []; for await (const e of p.start("sys", [{ name: "fs_read", description: "", inputSchema: {} }], { cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, STUB_HANG: "1" }, studioUrl: "http://127.0.0.1:1", tokenFile, token: "t", mcpCommand: ["/usr/bin/true"], sandbox: null } as any).send("go")) out.push(e);
+    ok(out.at(-1)?.code === "cliStartTimeout" && invalidated === null, "on a verified receipt the stalled start fails the same way and is not taken for a refused login (the receipt stays)", JSON.stringify([out, invalidated]));
+    const fine = await run({}); ok(fine.out.some((e) => e.type === "turnEnd" && e.status === "ok"), "a CLI that prints its init within the bound runs as before", JSON.stringify(fine.out.at(-1)));
+  } finally { delete process.env.CREW_CLAUDE_INIT_TIMEOUT_MS; }
+  const { claudeInitTimeoutMs } = await import("../src/providers/claude");
+  ok(claudeInitTimeoutMs() === 90_000, "the start bound is 90 s by default, far below a round's limit"); }
+
+// ---------- claudeOnPath: a bare `claude` resolves to the CLI itself, never to a shell launcher in front of it ----------
+{ const { claudeOnPath, shellLauncher } = await import("../src/providers/needs");
+  const d = join(root, "path"), a = join(d, "a"), b = join(d, "b"), c = join(d, "c"); for (const x of [a, b, c]) mkdirSync(x, { recursive: true });
+  writeFileSync(join(a, "claude"), "#!/usr/bin/env bash\nexec claude \"$@\"\n", { mode: 0o755 });
+  writeFileSync(join(b, "claude"), "#!/bin/sh\nexec claude \"$@\"\n", { mode: 0o755 });
+  writeFileSync(join(c, "claude"), "\xcf\xfa\xed\xfe binary", { mode: 0o755 });
+  const nodeCli = join(root, "lib", "node_modules", "@x", "claude", "cli.js"); mkdirSync(join(nodeCli, ".."), { recursive: true }); writeFileSync(nodeCli, "#!/usr/bin/env node\n", { mode: 0o755 });
+  ok(shellLauncher(join(a, "claude")) && shellLauncher(join(b, "claude")) && !shellLauncher(join(c, "claude")) && !shellLauncher(nodeCli), "a shell launcher is #! sh, bash, zsh, dash or ksh (directly or through env); a binary or a node CLI is not");
+  ok(claudeOnPath("claude", [a, b, c].join(":")) === join(c, "claude"), "a bare claude passes over the shell launchers in front of it to the CLI itself", String(claudeOnPath("claude", [a, b, c].join(":"))));
+  const link = join(d, "l"); mkdirSync(link); symlinkSync(nodeCli, join(link, "claude"));
+  ok(claudeOnPath("claude", [a, link, c].join(":")) === join(link, "claude"), "an npm link to a node CLI is the CLI itself (the first such match wins)");
+  ok(claudeOnPath("claude", [a, b].join(":")) === join(a, "claude"), "with only launchers on PATH the first one is kept (it then fails at the start bound, never silently)");
+  ok(claudeOnPath(join(a, "claude"), [c].join(":")) === join(a, "claude") && claudeOnPath("claude", join(d, "none")) === null, "a path is taken as it is; nothing found is null"); }
 
 // ---------- codex: a private home linking the captain's own login; nothing else of the captain's codex home ----------
 { writeFileSync(join(home, ".codex", "auth.json"), "{}", { mode: 0o600 }); writeFileSync(join(home, ".codex", "config.toml"), 'notify=["/bin/touch","x"]\n');

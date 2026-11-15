@@ -180,7 +180,11 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     the login keychain database and the files written beside it, by the real path the link leads to), or for codex one
     link to the captain's `auth.json` in a private
     `CODEX_HOME`. It reaches no folder of the captain's and not the worktree (it runs in the round's tmp), and may execute
-    only itself, Studio's runtime and the keychain command. Inside one login keychain the OS sandbox cannot tell items
+    only itself, Studio's runtime and the keychain command. "Itself" is the CLI, never a shell launcher named `claude` in
+    front of it on PATH (a terminal app's wrapper): a bare `claude` resolves past such launchers to the next match, since a
+    launcher cannot run the programs it needs under that allowlist (one that finds its own folder with `dirname` finds
+    itself instead and execs itself forever). A CLI that prints no init within 90 s fails the round then, with its stderr,
+    never silently at the round's limit. Inside one login keychain the OS sandbox cannot tell items
     apart: that boundary is that nothing model-chosen ever runs in the CLI's process. On API billing Studio hands its own
     key through an inherited descriptor (Claude) or a private `auth.json` (Codex);
   - the network: only `localhost:<scoped relay>` (Studio retains the round's proxy credential and host list: its provider's API

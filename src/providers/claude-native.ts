@@ -3,7 +3,7 @@
 import {existsSync,mkdtempSync,mkdirSync,readFileSync,rmSync,realpathSync,statSync} from 'node:fs';
 import {join,dirname} from 'node:path';import{tmpdir,homedir}from'node:os';
 import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,claudeAccountContext,CLAUDE_API_KEY_SHAPE,type Login}from'./login';
-import{claudeProvider}from'./claude';import{claudeSettings,KEYCHAIN,linkClaudeKeychain}from'./needs';
+import{claudeProvider}from'./claude';import{claudeOnPath,claudeSettings,KEYCHAIN,linkClaudeKeychain}from'./needs';
 import type{ProviderCapability}from'./policy';
 import { claudeBilling as claudeAuthBilling, noteBilling } from '../lan/billing';
 export type ClaudePair={model:string;effort:string|null};
@@ -38,7 +38,8 @@ export function claudeFailureCode(m:any):'quotaExhausted'|'notLoggedIn'|'modelMi
  if(status===401||status===403||errorContext&&/not logged in|authentication|invalid.*(?:token|key)|unauthori[sz]ed|oauth|credential/i.test(text))return'notLoggedIn';
  if(status!==undefined&&status!==null||m?.error||Array.isArray(m?.errors)&&m.errors.length||m?.is_error||m?.type==='result'&&m.subtype!=='success')return'cliError';return null;
 }
-const resolveBin=(bin:string)=>{for(const p of bin.includes('/')?[bin]:(process.env.PATH||'/usr/bin:/bin').split(':').map(d=>join(d,bin)))try{if(statSync(p).isFile())return realpathSync(p);}catch{}return null;};
+// a bare name passes over shell launchers on PATH to the CLI itself (claudeOnPath): a round's exec allowlist runs the CLI, never a launcher
+const resolveBin=(bin:string)=>{const p=claudeOnPath(bin,process.env.PATH||'/usr/bin:/bin');if(p)try{if(statSync(p).isFile())return realpathSync(p);}catch{}return null;};
 // macOS: the CLI finds its login-Keychain credential by the login user; without USER/LOGNAME it reports no login.
 const loginUser=()=>{const e:Record<string,string>={};for(const k of['USER','LOGNAME'])if(process.env[k])e[k]=process.env[k]!;return e;};
 /** The ordinary account/config context the official `claude auth` commands run in: no copied secrets, only where the login lives. */
