@@ -102,6 +102,35 @@ try {
   await p.selectOption('[data-prs-brief-lang]', 'zh-CN'); ok((await p.locator('[data-prs-batch-text="1"]').innerText()).startsWith('请照团队规范开一个部署 PR（第 1/2 批'), 'the brief in Simplified Chinese', (await p.locator('[data-prs-batch-text="1"]').innerText()).slice(0, 60));
   await p.screenshot({ path: join(shots, 'brief-1440-light-zh-cn.png'), fullPage: true });
   await p.getByRole('button', { name: 'Done' }).click(); await p.waitForSelector('[data-prs-dialog="brief"]', { state: 'detached' });
+  // no production environment reads the tag from a file: the text carries a neutral note, the dialog one action that
+  // opens the settings with that environment begun; saving it opens the brief again with the line
+  { const envs = fixtureSettings.environments.filter((e) => !e.production).concat([{ name: 'canary', production: false, repos: [], detect: { kind: 'file', repository: 'northwind/infra', path: 'deploy/canary.yaml', template: 'image: registry.example/checkout:{tag}' } }]);
+    ok((await api('/api/prs/settings', { settings: { ...fixtureSettings, environments: envs } })).status === 200, 'settings without a production environment saved');
+    await p.evaluate(() => window.crewPrs.reload()); await p.waitForSelector('[data-prs-pick="northwind/checkout-api#22"]');
+    if (!(await p.isChecked('[data-prs-pick="northwind/checkout-api#22"]'))) await p.check('[data-prs-pick="northwind/checkout-api#22"]');
+    await p.click('[data-prs-brief]'); await p.waitForSelector('[data-prs-dialog="brief"] [data-prs-brief-setprod="northwind/checkout-api"]');
+    const t1 = await p.locator('[data-prs-batch-text="1"]').innerText();
+    ok(t1.includes('northwind/checkout-api · image tag: not tracked (no production environment reads it from a file)') && !/write this|by hand|^\{/m.test(t1), 'the text has a neutral note, no instruction to the reader', t1);
+    await p.click('[data-prs-batch-copy="1"]'); { const c = await p.evaluate(() => navigator.clipboard.readText()); ok(c === t1 && !/Set up production/.test(c), 'the copied text is the note, without the button'); }
+    ok(await p.locator('[data-prs-batch="1"] [data-prs-setprod="northwind/checkout-api"]').innerText() === 'Set up production' && await p.locator('[data-prs-batch="1"] .pw-setprod-ic[title]').count() === 1, 'beside it one action, Set up production, the reason on its icon');
+    await p.screenshot({ path: join(shots, 'brief-setprod-1440-light.png'), fullPage: true });
+    await p.selectOption('[data-prs-brief-lang]', 'zh-TW'); ok((await p.locator('[data-prs-batch-text="1"]').innerText()).includes('northwind/checkout-api · image tag：未追蹤（沒有 production 環境從檔案讀它）') && !(await p.locator('[data-prs-batch-text="1"]').innerText()).includes('這一行請自己寫'), 'the note in Chinese, without the old placeholder');
+    await p.click('[data-prs-batch="1"] [data-prs-setprod="northwind/checkout-api"]'); await p.waitForSelector('[data-prs-dialog="settings"] [data-prs-env-new]');
+    await p.keyboard.press('Escape'); await p.waitForSelector('[data-prs-dialog="brief"] [data-prs-brief-setprod="northwind/checkout-api"]');
+    ok(await p.locator('[data-prs-dialog="settings"]').count() === 0 && (await p.locator('[data-prs-batch-text="1"]').innerText()).includes('image tag：未追蹤'), 'closing the settings without saving goes back to the brief, in its language');
+    await p.click('[data-prs-batch="1"] [data-prs-setprod="northwind/checkout-api"]'); await p.waitForSelector('[data-prs-dialog="settings"] [data-prs-env-new]');
+    const row = p.locator('[data-prs-env-new]');
+    ok(await row.locator('.pw-check input[type=checkbox]').isChecked() && await row.locator('select').inputValue() === 'file' && await row.getByLabel('Repositories').inputValue() === 'northwind/checkout-api' && await row.getByLabel('Environment name').inputValue() === 'production', 'the settings open with a production environment begun: an image tag in a file, for this repository');
+    ok(await row.locator('[data-prs-env-field="repository"]').inputValue() === '' && await p.evaluate(() => document.activeElement?.dataset?.prsEnvField === 'repository') && await row.locator('[data-prs-env-suggest-repo="northwind/infra"]').count() === 1, 'the file repository is left empty with the focus, another environment\'s offered as a suggestion');
+    await p.screenshot({ path: join(shots, 'brief-setprod-settings-1440-light.png'), fullPage: true });
+    await row.locator('[data-prs-env-suggest-repo="northwind/infra"]').click();
+    ok(await row.locator('[data-prs-env-field="repository"]').inputValue() === 'northwind/infra' && await p.evaluate(() => document.activeElement?.dataset?.prsEnvField === 'path'), 'the suggestion fills the repository only when picked; the focus moves to the path');
+    await row.getByLabel('Environment name').fill('prod'); await row.locator('[data-prs-env-field="path"]').fill('deploy/prod.yaml'); await row.locator('[data-prs-env-field="template"]').fill('image: registry.example/checkout:{tag}');
+    await p.click('[data-prs-settings-save]'); await p.waitForSelector('[data-prs-dialog="brief"] [data-prs-batch-text="1"]');
+    const t2 = await p.locator('[data-prs-batch-text="1"]').innerText();
+    ok(t2.includes('northwind/infra · deploy/prod.yaml') && t2.includes('+ image: registry.example/checkout:v1.3.0') && await p.locator('[data-prs-brief-setprod]').count() === 0 && t2.startsWith('請照團隊規範'), 'saved: the brief opens again, in its language, with the image line old → new and no action left', t2);
+    await p.getByRole('button', { name: 'Done' }).click(); await p.waitForSelector('[data-prs-dialog="brief"]', { state: 'detached' });
+    ok((await api('/api/prs/settings', { settings: fixtureSettings })).status === 200, 'the fixture settings back'); await p.evaluate(() => window.crewPrs.reload()); }
   await p.click('[data-prs-tab="live"]'); await p.waitForSelector('[data-prs-ship="live"]');
   ok(await p.locator('[data-prs-merged]').count() === 1 && await p.locator('[data-prs-merged="northwind/checkout-api#23"] [data-prs-ship-next]').innerText() === 'In production' && /hidden in 14 d/.test(await p.locator('[data-prs-merged="northwind/checkout-api#23"] .pw-next small').first().innerText()), 'the live tab: in production, hidden 14 days later');
   await p.click('[data-prs-md]'); ok((await p.evaluate(() => navigator.clipboard.readText())).includes('[northwind/checkout-api#23]'), 'Copy as Markdown on the live tab copies its rows');

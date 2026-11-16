@@ -93,6 +93,7 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 
 .pw-sug{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-4px 0 8px}
 .pw-sug .badge{cursor:pointer}
+.pw-envrow .pw-sug{margin:0}.pw-setprod{margin:0}.pw-setprod>div{align-items:center}.pw-setprod-ic{display:inline-flex;cursor:help}.pw-setprod-ic .ic{margin-top:0}
 .pw-evset{cursor:pointer}
 
 /* merged pull requests, followed until production (docs/units/pr-watch.md "Merged, until production") */
