@@ -103,7 +103,8 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-target .pw-check a{overflow-wrap:anywhere}
 .pw-unit{overflow-wrap:anywhere}
 .pw-envrow.pw-sendrow{grid-template-columns:minmax(90px,140px) 130px minmax(160px,1fr) minmax(120px,150px) auto auto}
-.pw-envrow.pw-contactrow{grid-template-columns:minmax(120px,1fr) 140px minmax(180px,1.4fr) auto}
+.pw-envrow.pw-contactrow{grid-template-columns:minmax(120px,1fr) 140px minmax(180px,1.4fr) auto auto}
+.pw-sendres{grid-column:1/-1;font-size:12px;color:var(--text);overflow-wrap:anywhere}.pw-sendres:empty{display:none}.pw-sendres.ok{color:var(--ok)}.pw-sendres.bad{color:var(--bad)}
 @media (max-width:760px){.pw-envrow.pw-sendrow,.pw-envrow.pw-contactrow{grid-template-columns:minmax(0,1fr)}}
 .pw-next .pw-followcta{margin-top:4px;width:max-content;text-decoration:none}
 /* on a narrow screen the tabs wrap: the separator would dangle at a line end, so the two merged tabs start a line instead */

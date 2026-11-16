@@ -283,7 +283,11 @@ Off by default (settings: "Follow-through"); on, after every refresh each watche
 ## Sending
 
 Settings: **send targets** (name, tool — Slack, Lark, DingTalk, Microsoft Teams, Discord, generic JSON —, incoming
-webhook, what it is used for by default, Send a test). The webhook is a secret: it lives in `state.json` (0600) under
+webhook, what it is used for by default, Send test). **Send test** (or Enter in the webhook field) posts a fixed test
+text once to the webhook as it stands in the field — a saved one (the masked form) or one just typed and not saved; a
+typed one is used for that post only and kept only when the captain saves. The row says the result: sent, with the name
+the captain gave it to check, since an incoming webhook does not tell Studio its channel (and "not saved" when it was
+not), or why not (the host rule, the address, the status the webhook answered). The webhook is a secret: it lives in `state.json` (0600) under
 `hooks`, never in a repository, and the page sees it masked; typing a new one replaces it. https on the tool's own host
 only (`CREW_WEBHOOK_LOOPBACK=1` lets tests use a loopback stub). Sending posts the text once, the GitHub logins of
 contacts turned into Slack mentions. **Contacts**: GitHub account → Slack member id, Microsoft Teams or email address.
@@ -309,6 +313,10 @@ resolved from the contact settings by the GitHub login alone, which must be some
 message, the pull request, a comment, or any other field of the request. Before sending Studio asks `users.info` again
 and sends nothing when any fail rule holds or the name differs from the one the confirm showed; then it opens the DM and
 posts the message once. The card's history records who it went to (login, name, member id) or why it was not sent.
+**Send test DM** on a Slack contact row (or Enter in its id field) sends only the fixed test text, on that click, to the
+member id in the field, with the bot token and workspace id as they stand in the dialog (typed or saved; nothing is
+kept): `users.info` first, with the same fail rules as Check contacts, then `conversations.open` and one
+`chat.postMessage`. The row shows the DM channel Slack opened and the name it reports, or the reason it was not sent.
 
 **Message guard**: Copy and DM, a Slack DM and a channel send refuse a message with a link that is not https (any
 `scheme://`, the bare `javascript:`, `data:`, `mailto:`, `slack:` … forms, and Slack's `<scheme:…>` links) or a URL with a
@@ -399,7 +407,8 @@ and make the same edits over MCP (`tools` in `src/pr-watch.ts`, the board's `act
 `GET /api/prs` (the list from the last snapshot; never calls GitHub), `GET /api/prs/count`; and, desktop only, through the
 CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}`, `/restore {pr?}`, `/settings`,
 `/order {order}`, `/deps {pr,on}`, `/group {pr,group}`, `/accept`, `/drift/take {pr}`, `/apply {prs,shortForm}`,
-`/ship/mark {prs}`, `/ship/undo {pr}`, `/sending/check` (Check contacts), `/follow/dm-preview {card,login,text}` (the confirm step:
+`/ship/mark {prs}`, `/ship/undo {pr}`, `/sending/check` (Check contacts), `/sending/test {target,tool,url,name}` (Send
+test: the fixed text to the typed or saved webhook), `/sending/test-dm {id,token?,team?}` (Send test DM), `/follow/dm-preview {card,login,text}` (the confirm step:
 sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slack DM).
 
 ## Done when (`bun tests/pr-watch.ts`, `bun tests/pr-watch-ui.mjs` (run with bun: it imports the TypeScript fixture), `bun run test:pr-watch` for both; a fictional GitHub, tests/lib/pr-watch-github.ts: three watched repositories, an issues-only one outside the set, an infrastructure repository and a single pull request elsewhere)
@@ -484,7 +493,11 @@ sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slac
     name, or after the name changed or the account was deactivated since the check, is refused with the reason in the
     history and nothing posted; the member id comes from the contacts only (ids, channels or users in the request are
     ignored); a confirmed DM opens the DM and posts once, the token only in the Authorization header; a message with an
-    http, `javascript:` or `user:pass@` link is refused for the Slack DM, Copy and DM and a channel send.
+    http, `javascript:` or `user:pass@` link is refused for the Slack DM, Copy and DM and a channel send. Send test and
+    Send test DM (pr-watch-slack-dm.ts "Send test …", pr-follow-ui.mjs "Enter on an unsaved webhook …"): Enter on an
+    unsaved webhook posts the fixed text there and says so on the row; a 500 or a host that is not the tool's own shows
+    the reason inline and posts nothing; the typed webhook, token and contact are not kept unless saved; a test DM goes
+    to the DM Slack opened with the name it reports, and a deactivated, other-workspace, bot or unknown member is refused.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the

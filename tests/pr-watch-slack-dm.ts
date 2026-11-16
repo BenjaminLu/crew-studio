@@ -32,6 +32,7 @@ person("U0TEST0006", "Deploy Bot", "deploybot", { is_bot: true });        // sec
 person("U0TEST0007", "Ext Dev", "ext", { is_stranger: true });            // ext-dev: Slack Connect
 slack.errors.set("U0TEST0008", "ratelimited");                           // gone-dev: Slack answers an error
 const posted: any[] = []; const hook = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { posted.push(await req.json()); return new Response("ok"); } });
+const posted2: any[] = []; const hook2 = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { posted2.push(await req.json()); return new Response("ok"); } });
 process.env.CREW_GITHUB_API = gh.origin; process.env.CREW_GITHUB_TOKEN = "fixture-token"; process.env.CREW_GH_NO_CLI = "1"; process.env.CREW_GH = "0"; delete process.env.CREW_PR_WATCH; process.env.CREW_WEBHOOK_LOOPBACK = "1";
 process.env.CREW_SLACK_API = slack.origin;
 const H = await harness([bundledText(`workflows/v2/${APPLY_WORKFLOW}.wf.yaml`)!, bundledText(`workflows/v2/${FOLLOW_WORKFLOW}.wf.yaml`)!]), E = H.engine;
@@ -123,6 +124,28 @@ try {
   ok(r.status === 200 && W.state.botToken === null && r.body.sending.bot.set === false && /bot token/.test((await call("/api/prs/sending/check", {})).body.error), "an empty token field clears it; nothing can be checked or sent then");
   ok(slack.posted.length === 1, "one Slack message in all: the one confirmed");
   ok(!gh.calls.some((c) => c.method !== "GET" && c.path !== "/graphql"), "nothing was written to GitHub");
+  // ---------- Send test and Send test DM: the value in the field, saved or not, never kept ----------
+  { const hooksBefore = JSON.stringify(W.state.hooks), settingsBefore = JSON.stringify(W.state.settings), n = posted.length;
+    const typedHook = `http://127.0.0.1:${hook2.port}/services/T0/B9/typed`;
+    a = await call("/api/prs/sending/test", { target: "t-new", tool: "slack", url: typedHook, name: "#typed", text: "ignored https://example.com" });
+    ok(a.status === 200 && a.body.target === "#typed" && a.body.unsaved === true && posted2.length === 1 && posted2[0].text.startsWith("Crew Studio: a test message") && posted.length === n, "Send test on an unsaved webhook posts the fixed test text to that address only", JSON.stringify(a.body));
+    ok(JSON.stringify(W.state.hooks) === hooksBefore && JSON.stringify(W.state.settings) === settingsBefore && !readFileSync(join(H.data, "pr-watch", "state.json"), "utf8").includes("B9/typed"), "the typed webhook is not kept anywhere");
+    a = await call("/api/prs/sending/test", { target: "qa", tool: "slack", url: "••••" }); ok(a.status === 200 && a.body.unsaved === false && posted.length === n + 1, "the masked field tests the saved webhook");
+    for (const [url, why] of [["https://example.com/services/x", /not a slack webhook/], ["http://example.com/services/x", /must be https/], ["https://u:p@hooks.slack.com/services/x", /not accepted/], ["", /Paste the webhook/]] as const) {
+      a = await call("/api/prs/sending/test", { target: "qa", tool: "slack", url }); ok(a.status === 400 && why.test(a.body.error) && posted.length === n + 1 && posted2.length === 1, `Send test refuses "${url}" with the reason`, JSON.stringify(a.body)); }
+    const p0 = slack.posted.length;
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001" }); ok(a.status === 400 && /bot token/.test(a.body.error) && slack.posted.length === p0, "no test DM without a bot token, saved or typed");
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: TOKEN, team: TEAM, text: "injected", channel: "D0TEST0009" });
+    ok(a.status === 200 && a.body.channel === "D0TEST0001" && a.body.name === "Quinn Lead (qlead)" && slack.posted.length === p0 + 1 && slack.posted.at(-1)!.channel === "D0TEST0001" && slack.posted.at(-1)!.text.startsWith("Crew Studio: a test message"), "a test DM with a typed token: the fixed text, to the DM Slack opened, answered with who Slack says it is", JSON.stringify(a.body));
+    ok(W.state.botToken === null && !readFileSync(join(H.data, "pr-watch", "state.json"), "utf8").includes(TOKEN), "the typed token is used for the test only, never kept");
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: TOKEN, team: "nope" }); ok(a.status === 400 && /workspace id/.test(a.body.error) && slack.posted.length === p0 + 1, "a typed workspace id that is not one is refused");
+    settings.sending.botToken = TOKEN; await call("/api/prs/settings", { settings });
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: "" }); ok(a.status === 400 && /bot token/.test(a.body.error) && slack.posted.length === p0 + 1, "an emptied token field is empty: the saved token is not used behind it");
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", team: "" }); ok(a.status === 400 && /workspace id first/.test(a.body.error) && slack.posted.length === p0 + 1, "an emptied workspace id field is empty too");
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001" }); ok(a.status === 200 && slack.posted.length === p0 + 2, "an untouched token field uses the saved token");
+    const p1 = slack.posted.length;
+    for (const [id, why] of [["U0TEST0005", /deactivated/], ["U0TEST0004", /another Slack workspace/], ["U0TEST0006", /bot/], ["U0TEST0099", /user_not_found/], ["not-an-id", /member id/]] as const) {
+      a = await call("/api/prs/sending/test-dm", { id, token: TOKEN, team: TEAM }); ok(a.status === 400 && why.test(a.body.error) && slack.posted.length === p1, `a test DM to ${id} is refused with the reason, nothing posted`, JSON.stringify(a.body)); } }
 } catch (e: any) { ok(false, "the suite ran to its end", String(e?.stack || e)); }
-finally { W.stop(); poller.stop(); gh.stop(); slack.stop(); hook.stop(true); }
+finally { W.stop(); poller.stop(); gh.stop(); slack.stop(); hook.stop(true); hook2.stop(true); }
 end();

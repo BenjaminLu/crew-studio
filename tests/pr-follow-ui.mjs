@@ -7,7 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // webhook masked, the release brief's send, and the github-review graph with the new nodes. Screenshots in
 // tests/out/pr-follow/.        bun tests/pr-follow-ui.mjs        (PLAYWRIGHT_MODULE may point at a playwright install)
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { freePort, waitUp, withSession } from './boot.mjs';
@@ -20,6 +20,8 @@ let pass = 0, fail = 0; const ok = (v, n, e = '') => { console.log(`${v ? 'ok' :
 const fx = followFixture(), gh = prWatchGitHub(fx.data), gw = fx.gw;
 const slack = fakeSlack('fake-bot-token-0001'); slack.users.set('U04QALEAD', { id: 'U04QALEAD', team_id: 'T0TEAM', name: 'qlead', real_name: 'Quinn Lead', profile: { real_name: 'Quinn Lead', display_name: 'qlead' } });
 const posted = []; const hook = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) { posted.push(await req.json()); return new Response('ok'); } });
+const posted2 = []; const hook2 = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) { posted2.push(await req.json()); return new Response('ok'); } });
+const hookBad = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('no', { status: 500 }) });
 const root = join(import.meta.dir, '..'), port = await freePort(), base = `http://127.0.0.1:${port}`, data = mkdtempSync(join(tmpdir(), 'crew-prfollow-ui-'));
 mkdirSync(join(data, 'fm', 'state'), { recursive: true });
 process.env.CREW_SESSION_TOKEN = 'test-session';
@@ -141,7 +143,29 @@ try {
   ok(await p.evaluate(() => [...document.querySelectorAll('[data-prs-contact]')].every((row) => { const x = row.querySelector('.pw-x').getBoundingClientRect(), r = row.getBoundingClientRect(); return x.top - r.top < 20; })), 'at 390 each settings row keeps its × at the top, not on a line of its own');
   await p.screenshot({ path: join(shots, 'settings-390.png') }); await p.setViewportSize({ width: 1440, height: 1000 });
   await p.click('[data-prs-hook-test="qa"]'); await until(() => posted.length === 2); ok(posted.length === 2, 'Send a test posts once');
+  await p.waitForSelector('[data-prs-hook-result="qa"].ok'); ok((await p.locator('[data-prs-hook-result="qa"]').innerText()).includes('#qa-requests') && !(await p.locator('[data-prs-hook-result="qa"]').innerText()).includes('尚未儲存'), 'the saved target: the result on its row names the channel to check', await p.locator('[data-prs-hook-result="qa"]').innerText());
+  // an unsaved target: paste, press Enter, the result on the row; nothing kept until Save
+  await p.click('[data-prs-target-add]'); const row = p.locator('[data-prs-target-row]').last(), rid = await row.getAttribute('data-prs-target-row');
+  await row.locator('input').first().fill('#unsaved-test'); await row.locator('[data-prs-hook]').fill(`http://127.0.0.1:${hook2.port}/services/T0/B9/typed`); await row.locator('[data-prs-hook]').press('Enter');
+  await p.waitForSelector(`[data-prs-hook-result="${rid}"].ok`); { const t = await row.locator('[data-prs-hook-result]').innerText();
+    ok(posted2.length === 1 && posted2[0].text.startsWith('Crew Studio: a test message') && t.includes('#unsaved-test') && t.includes('webhook 不會告訴 Studio') && t.includes('尚未儲存') && posted.length === 2, 'Enter on an unsaved webhook sends the test there and says so on the row', t); }
+  await row.locator('[data-prs-hook]').fill(`http://127.0.0.1:${hookBad.port}/services/T0/B8/bad`); await row.locator('[data-prs-hook]').press('Enter');
+  await p.waitForSelector(`[data-prs-hook-result="${rid}"].bad`); ok((await row.locator('[data-prs-hook-result]').innerText()).includes('500'), 'a webhook that answers 500: the reason inline on the row', await row.locator('[data-prs-hook-result]').innerText());
+  await row.locator('[data-prs-hook]').fill('https://example.com/services/x'); await row.locator('[data-prs-hook-test]').click();
+  await p.waitForFunction((id) => document.querySelector(`[data-prs-hook-result="${id}"]`)?.innerText.includes('not a slack webhook'), rid); ok(posted2.length === 1, 'a host that is not the tool\'s own: refused inline, nothing posted');
+  await p.locator('[data-prs-targets]').scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, 'settings-send-test-1440.png') });
+  // Send test DM: the saved contact, then one typed and not saved
+  await p.click('[data-prs-contact-test="0"]'); await p.waitForSelector('[data-prs-contact-result="0"].ok');
+  { const t = await p.locator('[data-prs-contact-result="0"]').innerText(); ok(t.includes('D04QALEAD') && t.includes('Quinn Lead (qlead)') && slack.posted.at(-1).channel === 'D04QALEAD' && slack.posted.at(-1).text.startsWith('Crew Studio: a test message'), 'Send test DM: the fixed test text, the DM and the name Slack reports on the row', t); }
+  const dms = slack.posted.length; await p.click('[data-prs-contact-add]'); const ci = await p.locator('[data-prs-contact]').count() - 1;
+  await p.locator(`[data-prs-contact-id="${ci}"]`).fill('U04NOBODY'); await p.locator(`[data-prs-contact-id="${ci}"]`).press('Enter');
+  await p.waitForSelector(`[data-prs-contact-result="${ci}"].bad`); ok((await p.locator(`[data-prs-contact-result="${ci}"]`).innerText()).includes('user_not_found') && slack.posted.length === dms, 'Enter on an unknown member id: the reason inline, no DM', await p.locator(`[data-prs-contact-result="${ci}"]`).innerText());
+  await p.locator('[data-prs-contacts]').scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, 'settings-send-test-dm-1440.png') });
+  await p.locator('[data-prs-contact="sec-bob"] .pw-x').click();
+  ok((await p.locator(`[data-prs-contact-result="${ci - 1}"]`).innerText()).includes('user_not_found') && (await p.locator('[data-prs-contact-result="0"]').innerText()).includes('D04QALEAD'), 'removing a row above keeps each result on its own row');
+  await p.locator('[data-prs-contact-id="0"]').fill('U04OTHER'); ok(await p.locator('[data-prs-contact-result="0"]').innerText() === '', 'editing the value clears its old result');
   await p.keyboard.press('Escape');
+  { const v = (await api('/api/prs')).body; ok(v.settings.sending.targets.length === 2 && v.settings.sending.contacts.length === 3 && !JSON.stringify(v).includes('#unsaved-test') && !readdirSync(join(data, 'pr-watch')).some((f) => readFileSync(join(data, 'pr-watch', f), 'utf8').includes('B9/typed')), 'closed without saving: the tested target, webhook and contact were not kept'); }
   // the github-review graph with the new nodes
   await p.goto(`${base}/#/workflows/github-review/advanced`); await p.waitForSelector('svg .rt-node', { timeout: 20000 }).catch(() => {}); await p.getByRole('button', { name: '編輯流程' }).click().catch(() => {}); await p.waitForTimeout(800);
   const labels = await p.locator('svg .rt-node').evaluateAll((es) => es.map((e) => e.textContent || '')).catch(() => []);
@@ -153,6 +177,6 @@ try {
   ok(!gh.calls.some((c) => c.method !== 'GET' && c.path !== '/graphql') && !gh.unknown.length, 'nothing was written to GitHub', JSON.stringify(gh.unknown));
   await ctx.close();
 } catch (e) { ok(false, 'the suite ran to its end', String(e?.stack || e)); }
-finally { await browser?.close().catch(() => {}); app.kill(); gh.stop(); hook.stop(true); slack.stop(); }
+finally { await browser?.close().catch(() => {}); app.kill(); gh.stop(); hook.stop(true); hook2.stop(true); hookBad.stop(true); slack.stop(); }
 console.log(`\npr-follow-ui: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
