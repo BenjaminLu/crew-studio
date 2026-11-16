@@ -223,7 +223,8 @@ times, writes nothing). The dialog shows one card per batch, each with its own C
   its icon). It opens the settings with a new environment begun: named production, production ticked, an image tag in a
   file, only this repository, its file repository, path and template empty with the focus on the first. Repositories
   other file environments read are offered as suggestions and fill the field only when picked. Saving opens the brief
-  again, in the language it was in, with the line old → new.
+  again, in the language it was in, with the line old → new; closing without saving goes back to the brief too. With
+  12 environments already (the most kept) the save is refused with a message, never dropped silently.
 - **Before going live** (上線前要處理), each item with the address of its file and line at the merge commit (the body's:
   the pull request) — no address, no item: files matching the captain's path rules (settings: migrations, configuration,
   secrets; CODEOWNERS-style patterns, by default `migrations/`, `migrate/`, `*.sql`); configuration and secrets the added

@@ -319,7 +319,7 @@ function setupProd(repo, ids, lang) {
   return h("div", { class: "pw-status pw-setprod", "data-prs-brief-setprod": repo }, h("div", {},
     h("span", { class: "pw-setprod-ic", title: T("No production environment reads this repository's image tag from a file. Set one up and the brief writes the line old → new.", "沒有 production 環境從檔案讀這個 repo 的 image tag。設定好之後 brief 會寫出舊 → 新那一行。") }, icon("alert", "ic sm")),
     h("span", { class: "x-grow" }, T(`${repo}: image tag not tracked`, `${repo}：image tag 未追蹤`)),
-    h("button", { class: "btn sm primary", "data-prs-setprod": repo, onclick: () => settingsModal({ addEnv: { name: "production", production: true, repos: [repo], detect: { kind: "file", repository: "", path: "", template: "" } }, onSaved: () => openBrief(ids, { lang }) }) }, T("Set up production", "設定 production"))));
+    h("button", { class: "btn sm primary", "data-prs-setprod": repo, onclick: () => settingsModal({ addEnv: { name: "production", production: true, repos: [repo], detect: { kind: "file", repository: "", path: "", template: "" } }, onSaved: () => openBrief(ids, { lang }), onCancel: () => openBrief(ids, { lang }) }) }, T("Set up production", "設定 production"))));
 }
 async function openBrief(ids, o = {}) {
   PW.briefBusy = true; render(); let got;
@@ -398,7 +398,7 @@ function pwModal(title, kids, o = {}) {
     // the same control in the same row first (several rows have one alike), then that row, then the control on the page
     const row = prevRow ? document.querySelector(`[data-prs-row="${CSS.escape(prevRow)}"]`) : null;
     const el = row ? (prevSel && row.querySelector(prevSel)) || row : prevSel && document.querySelector(prevSel); el?.focus?.(); };
-  const close = () => { root.replaceChildren(); refocus(); };
+  const close = () => { root.replaceChildren(); refocus(); o.onClose?.(); };
   const box = h("div", { class: `modal pw-modal${o.wide ? " wide" : ""}`, role: "dialog", "aria-modal": "true", "aria-label": title, "data-prs-dialog": o.id || "" },
     h("div", { class: "pw-mh" }, h("h2", {}, title), h("span", { class: "x-grow" }), h("button", { class: "btn ghost icon", "aria-label": T("Close", "關閉"), "data-prs-close": "", onclick: close }, icon("x"))), ...kids);
   const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); }, onkeydown: (e) => { if (e.key === "Escape") close(); } }, box);
@@ -614,8 +614,9 @@ function slackChecks() {
   draw(); return box;
 }
 // o.addEnv: an environment begun elsewhere (the brief's Set up production), added at the end with the focus on its first
-// empty field; o.onSaved runs after a save
+// empty field; o.onSaved runs after a save, o.onCancel when it closes without one (Cancel, Escape, the backdrop)
 function settingsModal(o = {}) {
+  let saved = false;
   const s = structuredClone(PW.data?.settings || {}), base = structuredClone(PW.data?.settings || {}), envs = s.environments || [];
   const added = o.addEnv || null; if (added) envs.push(added);
   // repositories other file environments read: offered for the new one, never filled in by themselves
@@ -667,7 +668,9 @@ function settingsModal(o = {}) {
     err,
     foot(h("span", { class: "x-grow" }), h("button", { class: "btn", onclick: () => close() }, T("Cancel", "取消")), h("button", { class: "btn primary", "data-prs-settings-save": "", onclick: async () => {
       s.environments = envs;
-      try { PW.data = await postJ("/api/prs/settings", { settings: s, base }); setCount(PW.data.count); close(); render(); flash(T("Settings saved", "設定已儲存")); o.onSaved?.(); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings" });
+      // the server keeps the first 12: a new one past them would be dropped without a word
+      if (added && envs.length > 12) { err.hidden = false; err.textContent = T("At most 12 environments: remove one before adding production.", "最多 12 個環境：先移除一個再加 production。"); return; }
+      try { PW.data = await postJ("/api/prs/settings", { settings: s, base }); setCount(PW.data.count); saved = true; close(); render(); flash(T("Settings saved", "設定已儲存")); o.onSaved?.(); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings", onClose: () => { if (!saved) o.onCancel?.(); } });
 }
 
 // opening the page (a link, a reload, the sidebar) loads it and asks for a refresh; a redraw while it is open does not

@@ -116,6 +116,9 @@ try {
     await p.screenshot({ path: join(shots, 'brief-setprod-1440-light.png'), fullPage: true });
     await p.selectOption('[data-prs-brief-lang]', 'zh-TW'); ok((await p.locator('[data-prs-batch-text="1"]').innerText()).includes('northwind/checkout-api · image tag：未追蹤（沒有 production 環境從檔案讀它）') && !(await p.locator('[data-prs-batch-text="1"]').innerText()).includes('這一行請自己寫'), 'the note in Chinese, without the old placeholder');
     await p.click('[data-prs-batch="1"] [data-prs-setprod="northwind/checkout-api"]'); await p.waitForSelector('[data-prs-dialog="settings"] [data-prs-env-new]');
+    await p.keyboard.press('Escape'); await p.waitForSelector('[data-prs-dialog="brief"] [data-prs-brief-setprod="northwind/checkout-api"]');
+    ok(await p.locator('[data-prs-dialog="settings"]').count() === 0 && (await p.locator('[data-prs-batch-text="1"]').innerText()).includes('image tag：未追蹤'), 'closing the settings without saving goes back to the brief, in its language');
+    await p.click('[data-prs-batch="1"] [data-prs-setprod="northwind/checkout-api"]'); await p.waitForSelector('[data-prs-dialog="settings"] [data-prs-env-new]');
     const row = p.locator('[data-prs-env-new]');
     ok(await row.locator('.pw-check input[type=checkbox]').isChecked() && await row.locator('select').inputValue() === 'file' && await row.getByLabel('Repositories').inputValue() === 'northwind/checkout-api' && await row.getByLabel('Environment name').inputValue() === 'production', 'the settings open with a production environment begun: an image tag in a file, for this repository');
     ok(await row.locator('[data-prs-env-field="repository"]').inputValue() === '' && await p.evaluate(() => document.activeElement?.dataset?.prsEnvField === 'repository') && await row.locator('[data-prs-env-suggest-repo="northwind/infra"]').count() === 1, 'the file repository is left empty with the focus, another environment\'s offered as a suggestion');
