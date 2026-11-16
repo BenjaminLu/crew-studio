@@ -258,6 +258,11 @@ Off by default (settings: "Follow-through"); on, after every refresh each watche
   outcome comes from checks that judge a round's work; the follow-through reads the Pull requests page's row (no check
   produces it) and picks one of five branches, which is what a hook action's outcome is. A deliberate deviation from the
   design's "check · pr.shepherd".
+- **On the Workflows page**: `pr-follow` is the one internal workflow shown there, read-only (docs/units/default-workflow-catalog.md
+  "Internal workflows shown read-only"): its card says whether follow-through is on, and its page shows the graph, every
+  branch with the card it makes (`FOLLOW_BRANCHES` in `src/pr-watch-follow.ts`, a record over the shepherd's branches)
+  and a link to the Pull requests page, where the switch is (settings → Follow-through). Nobody starts, edits, renames,
+  trashes or holds it there; Studio starts it.
 - **Studio never** @-mentions on GitHub, re-requests a review, merges a pull request it did not open, or sends anything
   without the captain's click. It writes nothing to GitHub here.
 - **The github-review workflow** shows the same nodes (PR follow-through `pr.shepherd`, the three cards, Follow to
