@@ -1196,12 +1196,53 @@ export function createPrWatch(d: PrWatchDeps) {
   /** send a text to a channel through its incoming webhook (only on the captain's click) */
   async function sendTo(id: string, text: string) {
     const t = state.settings.sending.targets.find((x) => x.id === id), url = state.hooks[id]; if (!t || !url) throw new Error("Choose a send target that has a webhook");
-    const bad = F.webhookProblem(t.tool, url, process.env.CREW_WEBHOOK_LOOPBACK === "1"); if (bad) throw new Error(bad);
+    await postHook(t.tool, url, t.name, text); return t;
+  }
+  async function postHook(tool: F.Tool, url: string, name: string, text: string) {
+    const bad = F.webhookProblem(tool, url, process.env.CREW_WEBHOOK_LOOPBACK === "1"); if (bad) throw new Error(bad);
     const body = String(text ?? "").trim(); if (!body) throw new Error("Nothing to send"); if (body.length > 8000) throw new Error("The message is too long to send");
     const unsafe = F.messageProblem(body); if (unsafe) throw new Error(unsafe);
-    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(F.webhookBody(t.tool, F.chatMentions(body, t.tool, state.settings.sending.contacts))), redirect: "manual", signal: AbortSignal.timeout(10_000) });
-    await r.body?.cancel().catch(() => {}); if (!r.ok) throw new Error(`${t.name} answered ${r.status}`);
-    return t;
+    let r: Response;
+    try { r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(F.webhookBody(tool, F.chatMentions(body, tool, state.settings.sending.contacts))), redirect: "manual", signal: AbortSignal.timeout(10_000) }); }
+    catch { throw new Error(`${name || "the webhook"} did not answer`); }
+    await r.body?.cancel().catch(() => {}); if (!r.ok) throw new Error(`${name || "the webhook"} answered ${r.status}`);
+  }
+  const TEST_TEXT = "Crew Studio: a test message from the Pull requests page. / Crew Studio：Pull requests 頁的測試訊息。";
+  /** Send a test: to the webhook in the dialog's field as typed (an unsaved one too: it is used for this one post and
+   *  never kept), else the saved one of that target. Only the fixed test text; the same host rules as a save. */
+  async function sendTest(b: any) {
+    const id = String(b?.target ?? ""), saved = state.settings.sending.targets.find((x) => x.id === id) ?? null;
+    const tool = (F.TOOLS as readonly string[]).includes(b?.tool) ? b.tool as F.Tool : saved?.tool;
+    const typed = typeof b?.url === "string" ? b.url.trim() : null, url = typed !== null && !typed.includes("••••") ? typed : saved ? state.hooks[saved.id] : undefined;
+    const name = (String(b?.name ?? "").trim() || saved?.name || "").slice(0, 80);
+    if (!tool) throw new Error("Choose the chat tool"); if (!url) throw new Error("Paste the webhook first");
+    await postHook(tool, url, name, TEST_TEXT); return { ok: true, target: name, tool, unsaved: url !== (saved ? state.hooks[saved.id] : undefined) };
+  }
+  /** Send a test DM through the bot: to the Slack member id typed on a contact row, with the token and workspace id as in
+   *  the dialog (typed, else saved; neither is kept). Two steps, like every bot DM: without `name` it only asks
+   *  users.info (the Check contacts rules) and answers who Slack says the id is; nothing is sent. With the `name` that
+   *  step showed it asks again, refuses when the name differs, then opens the DM and posts the fixed test text once. */
+  let testDmBusy = false;
+  async function sendTestDm(b: any) {
+    const id = String(b?.id ?? "").trim(); if (!/^[UW][A-Z0-9]{2,20}$/.test(id)) throw new Error("A Slack member id looks like U0123ABCD");
+    // a field the captain emptied counts as empty, not as the saved value
+    const tt = typeof b?.token === "string" ? b.token.trim() : null, token = tt === null || tt.includes("••••") ? state.botToken : tt;
+    if (!token) throw new Error("Set a Slack bot token first"); if (token === tt) { const bad = F.botTokenProblem(tt); if (bad) throw new Error(bad); }
+    const tm = typeof b?.team === "string" ? b.team.trim() : null, team = tm === null ? state.settings.sending.slackTeam : tm || null;
+    if (team && !/^T[A-Z0-9]{2,20}$/.test(team)) throw new Error("A Slack workspace id looks like T0123ABCD");
+    if (testDmBusy) throw new Error("A test DM is already on its way"); testDmBusy = true;
+    try {
+      const why = (e: unknown) => { const t = S.slackErrorText(e); return Object.assign(new Error(`Not sent: ${t.en}`), { tw: `沒有發出：${t.tw}` }); };
+      let u: any; try { u = (await S.slackCall(token, "users.info", { user: id })).user; } catch (e) { throw why(e); }
+      const v = S.slackVerdict(u, team, id); if (!v.ok) throw Object.assign(new Error(`Not sent: ${v.problem!.en}`), { tw: `沒有發出：${v.problem!.tw}` });
+      const shown = typeof b?.name === "string" ? b.name : null;
+      if (shown === null) return { ok: true, id, name: v.name, confirm: true };
+      if (shown !== v.name) throw Object.assign(new Error(`Not sent: the confirm showed "${shown}", Slack now says "${v.name}"`), { tw: `沒有發出：確認時顯示「${shown}」，Slack 現在說是「${v.name}」` });
+      let ch: unknown; try { ch = (await S.slackCall(token, "conversations.open", { users: id })).channel?.id;
+        if (typeof ch !== "string" || !/^D[A-Z0-9]{2,30}$/.test(ch)) throw new S.SlackError("no_dm_channel");
+        await S.slackCall(token, "chat.postMessage", { channel: ch, text: TEST_TEXT }); } catch (e) { throw why(e); }
+      return { ok: true, id, name: v.name, channel: ch as string };
+    } finally { testDmBusy = false; }
   }
   /** before a push: when the rules void approvals on a push and there are some, or ask for an approval of the latest push
    *  (the new head then needs one), the captain confirms first (a card) */
@@ -1300,7 +1341,8 @@ export function createPrWatch(d: PrWatchDeps) {
     switch (name) {
       case "send": { const t = await sendTo(String(b?.target ?? ""), String(b?.text ?? "")); return { ok: true, target: t.name }; }
       case "sending/check": return await checkContacts();
-      case "sending/test": { const t = await sendTo(String(b?.target ?? ""), "Crew Studio: a test message from the Pull requests page. / Crew Studio：Pull requests 頁的測試訊息。"); return { ok: true, target: t.name }; }
+      case "sending/test": if (actor) throw new Error("Only the captain sends a test"); return await sendTest(b);
+      case "sending/test-dm": if (actor) throw new Error("Only the captain sends a test DM"); return await sendTestDm(b);
       case "push-check": return await pushCheck(b);
       case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };
         await refresh().catch(() => {}); return view(); }
