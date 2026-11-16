@@ -33,6 +33,8 @@
 // 7. Studio's session for the test's own reads: see below.
 // 8. An entry whose parent is gone stops itself (tests/lib/orphan-watchdog.mjs): a suite left behind by an agent or
 //    terminal that ended never spins on unattended. A restarted run watches the outer entry the same way, so it goes too.
+//    When an entry ends, a Studio (src/server.ts, src/main.ts) it started and left running is sent SIGTERM; the Studio
+//    would stop by itself once its starter is gone (src/parent-watch.ts), this makes it immediate.
 // Production (bun src/main.ts, bun run start) never imports this file.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,10 +42,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { constants as osConstants } from "node:os";
 import { scrubGitEnv, INHERITED_GIT_VARS } from "./git-hygiene.mjs";
-import { watchParent } from "./orphan-watchdog.mjs";
+import { watchParent, stopLeftServers } from "./orphan-watchdog.mjs";
 
-// 8. before anything else: an entry whose parent is gone stops
+// 8. before anything else: an entry whose parent is gone stops, and a Studio it left running stops with it
 watchParent();
+process.on("exit", () => { stopLeftServers(); });
 
 const MARK = "CREW_TEST_ENV_ISOLATED";
 // The shell's own basics are never dropped, even when a .env repeats them.

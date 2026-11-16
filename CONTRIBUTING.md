@@ -10,7 +10,7 @@ Every change takes the same path, in this order:
 1. **Independent review.** A reviewer who did not write the change reads the diff and the tests. Fix what they find
    and have them look again.
 2. **Rebase** onto the current `origin/main`. Resolve conflicts yourself, keeping both sides' intent.
-3. **Core suites.** `bun run test:core` must pass on the rebased head: env-isolation, git-config-guard,
+3. **Core suites.** `bun run test:core` must pass on the rebased head: env-isolation, git-config-guard, server-lifetime,
    firstmate-staffing, smoke-code, acceptance (once as is and once with `ACCEPTANCE_PROVIDER=cursor`; its
    known-fail entries are listed in `tests/acceptance-known.ts`),
    the fast subset of the sandboxed end-to-end gate (`test:sandboxed-e2e:fast`: needs Playwright's Chromium,
@@ -33,6 +33,9 @@ Every change takes the same path, in this order:
   them with `assertTempRepo()` (`tests/lib/git-hygiene.mjs`; `tests/git-config-guard.ts` enforces it).
 - Tests use stub providers and temporary data. No test signs in, calls a paid model, or touches the live server,
   its port or its data directory.
+- A Studio a test starts stops once that test is gone: it watches the process that started it (`src/parent-watch.ts`),
+  and `isolated-env.mjs` stops one its entry left running when the entry ends. Still stop your servers in `finally`.
+  Only `scripts/live-release.ts` starts a Studio meant to outlive its starter (`CREW_DETACHED`).
 - Each fix comes with a test that fails without it.
 
 ## Git

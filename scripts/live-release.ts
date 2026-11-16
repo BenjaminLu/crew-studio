@@ -216,13 +216,14 @@ async function terminate(o: Stopped, s: Settings) {
 }
 
 let launching: ReturnType<typeof Bun.spawn> | null = null;
-/** Start argv detached in cwd (log under <data>/logs) and wait until /api/instance answers 200 with its pid; fail at once if it exits. */
+/** Start argv detached in cwd, marked as detached on purpose (log under <data>/logs), and wait until /api/instance answers 200 with its pid; fail at once if it exits. */
 async function launch(argv: string[], cwd: string, env: Record<string, string | undefined>, s: Settings, label: string) {
   const logs = join(s.data, "logs");
   mkdirSync(logs, { recursive: true });
   const log = join(logs, `live-${label}-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
   const fd = openSync(log, "a", 0o600);
-  const p = Bun.spawn(argv, { cwd, env, stdio: ["ignore", fd, fd], detached: true });
+  // CREW_DETACHED names this script's pid: the live Studio outlives the script on purpose (src/parent-watch.ts)
+  const p = Bun.spawn(argv, { cwd, env: { ...env, CREW_DETACHED: String(process.pid) }, stdio: ["ignore", fd, fd], detached: true });
   launching = p; p.unref(); closeSync(fd);
   const exited = () => p.exitCode !== null || p.signalCode !== null;
   try {
