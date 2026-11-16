@@ -6,6 +6,8 @@
 // Writes: the watch list, settings, order, dependencies and groups (Studio's own record); the dependency block on GitHub
 // only through the captain-only card POST /api/prs/apply starts. Loaded before backbone.js.
 (() => {
+P.repo ??= '<path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v16H7.5A2.5 2.5 0 0 0 5 20.5z"/><path d="M5 20.5A2.5 2.5 0 0 0 7.5 23H19v-5"/>';
+P.issue ??= '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5"/>';
 P.grip ??= '<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>';
 const PW = { data: null, err: null, busy: false, tab: "all", onPage: false, adding: false, addErr: null, addDraft: "", drag: null };
 const getJ = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(T(j.error || `HTTP ${r.status}`, j.tw || j.error || `HTTP ${r.status}`)); return j; };
@@ -142,6 +144,23 @@ function statusLine(d) {
   if (PW.err) lines.push(PW.err);
   return lines.length ? h("div", { class: "pw-status", role: "status", "data-prs-status": "" }, lines.map((l) => h("div", {}, icon("alert", "ic sm"), h("span", {}, l)))) : null;
 }
+const watchSummary = (nr, ns, open) => [nr ? T(`${nr} repo${nr === 1 ? "" : "s"}`, `${nr} 個 repo`) : "", nr ? T(` · ${open} with open PRs`, ` · ${open} 個有 PR`) : "", ns ? T(`${nr ? " · " : ""}${ns} PR${ns === 1 ? "" : "s"}`, `${nr ? " · " : ""}${ns} 個 PR`) : ""].join("");
+// the watch list's menu: repositories with open pull requests first (most first), the rest dimmed after them, then the
+// single pull requests. Stopping one keeps the menu open and redraws it from the answer.
+function repoMenu(anchor) {
+  const m = h("div", { class: "pop pw-menu pw-repomenu", role: "group", "aria-label": T("Watched repositories and pull requests", "追蹤中的 repo 與 PR"), "data-prs-repo-menu": "" });
+  const fill = () => { const w = PW.data?.watch || { repos: [], prs: [] }, repos = [...w.repos].sort((a, b) => (b.count > 0) - (a.count > 0) || b.count - a.count);
+    const x = (attrs, label, title, f) => h("button", { class: "pw-x", ...attrs, "aria-label": label, title, onclick: async (e) => { e.stopPropagation(); await act(...f); fill(); } }, icon("x"));
+    m.replaceChildren(
+      h("div", { class: "tgt" }, watchSummary(w.repos.length, w.prs.length, w.repos.filter((r) => r.count > 0).length)),
+      ...repos.map((r) => h("div", { class: `pw-repo1${r.count ? "" : " zero"}`, "data-prs-repo": r.repo, "data-count": String(r.count) }, pmark(r.project), extLink(ghRepo(r.repo), r.repo),
+        h("span", { class: "faint num", title: T(`${r.count} open pull request${r.count === 1 ? "" : "s"} in the list`, `清單裡 ${r.count} 個 PR`) }, String(r.count)),
+        x({ "data-prs-unwatch-repo": r.repo }, T(`Stop watching ${r.repo}`, `不再追蹤 ${r.repo}`), T("Stop watching this repository", "不再追蹤這個 repo"), ["/api/prs/unwatch", { repo: r.repo }, T(`Stopped watching ${r.repo}`, `不再追蹤 ${r.repo}`)]))),
+      ...w.prs.map((r) => h("div", { class: "pw-repo1", "data-prs-single": r.id }, icon("pr", "ic sm"), extLink(ghPr(r.id), r.id), r.state && r.state !== "open" ? h("span", { class: "faint" }, r.state === "merged" ? T("merged", "已合併") : T("closed", "已關閉")) : h("span"),
+        x({ "data-prs-unwatch-pr": r.id }, T(`Stop watching ${r.id}`, `不再追蹤 ${r.id}`), T("Stop watching this pull request", "不再追蹤這個 PR"), ["/api/prs/unwatch", { pr: r.id }, T(`Stopped watching ${r.id}`, `不再追蹤 ${r.id}`)]))));
+    if (!w.repos.length && !w.prs.length) closeMenu?.(); };
+  fill(); openPop(anchor, m, 340);
+}
 function watchCard(d) {
   // the address being typed lives in PW, so a redraw (Refresh, a filter, a live update) never clears it before it is sent
   const input = h("input", { class: "input", id: "pwAdd", type: "url", maxlength: 300, autocomplete: "off", value: PW.addDraft || "", oninput: (e) => { PW.addDraft = e.target.value; }, "aria-label": T("GitHub repository or pull request address", "GitHub repo 或 pull request 網址"),
@@ -153,11 +172,13 @@ function watchCard(d) {
     catch (err) { PW.addErr = err.message; } finally { PW.adding = false; render();
       // a live redraw while the request ran may have carried the address into a new field: clear the one on the page now
       if (added) { const cur = document.getElementById("pwAdd"); if (cur) cur.value = ""; } } };
+  // the watch list folds into one summary chip; its menu lists every repository (open pull requests first) and single
+  // pull request with the same links and ×; the restore chip stays out, since it asks for attention
+  const nr = d.watch.repos.length, ns = d.watch.prs.length, open = d.watch.repos.filter((w) => w.count > 0).length;
   const chips = [
-    ...d.watch.repos.map((w) => h("span", { class: "chip", "data-prs-repo": w.repo }, pmark(w.project), extLink(ghRepo(w.repo), w.repo), h("span", { class: "faint num" }, String(w.count)),
-      h("button", { class: "pw-x", "data-prs-unwatch-repo": w.repo, "aria-label": T(`Stop watching ${w.repo}`, `不再追蹤 ${w.repo}`), title: T("Stop watching this repository", "不再追蹤這個 repo"), onclick: () => act("/api/prs/unwatch", { repo: w.repo }, T(`Stopped watching ${w.repo}`, `不再追蹤 ${w.repo}`)) }, icon("x")))),
-    ...d.watch.prs.map((w) => h("span", { class: "chip", "data-prs-single": w.id }, icon("pr", "ic sm"), extLink(ghPr(w.id), w.id), w.state && w.state !== "open" ? h("span", { class: "faint" }, w.state === "merged" ? T("merged", "已合併") : T("closed", "已關閉")) : null,
-      h("button", { class: "pw-x", "data-prs-unwatch-pr": w.id, "aria-label": T(`Stop watching ${w.id}`, `不再追蹤 ${w.id}`), title: T("Stop watching this pull request", "不再追蹤這個 PR"), onclick: () => act("/api/prs/unwatch", { pr: w.id }, T(`Stopped watching ${w.id}`, `不再追蹤 ${w.id}`)) }, icon("x")))),
+    nr || ns ? h("button", { class: "chip pw-wsum", type: "button", "data-prs-repos": "", "aria-expanded": "false", "aria-haspopup": "true",
+      title: T("Watched repositories and pull requests: open the list to see or stop watching them", "追蹤中的 repo 與 PR：打開清單查看或取消追蹤"), onclick: (e) => { e.stopPropagation(); repoMenu(e.currentTarget); } },
+      icon("repo", "ic sm"), h("span", {}, watchSummary(nr, ns, open)), h("span", { "aria-hidden": "true" }, "▾")) : null,
     d.watch.excluded.length ? h("button", { class: "chip", "data-prs-restore": "", title: d.watch.excluded.join(", "), onclick: () => act("/api/prs/restore", {}, T("Excluded pull requests restored", "已還原排除的 PR")) },
       T(`excluded ${d.watch.excluded.length} · restore`, `已排除 ${d.watch.excluded.length} 個 · 還原`)) : null];
   return h("div", { class: "card pw-watch" },
@@ -165,14 +186,15 @@ function watchCard(d) {
     PW.addErr ? h("p", { class: "pw-err", role: "alert", "data-prs-add-error": "" }, PW.addErr) : null,
     chips.filter(Boolean).length ? h("div", { class: "chips" }, chips) : null);
 }
+// how the order is proposed: the same for every proposal, so it sits in the icon's tooltip, not in the card's list
+const ORDER_HOW = () => T("The order puts every dependency first, then pull requests that change the same files or link the same issue, older first. These come from the pull requests themselves, not from a model.", "順序先排依賴，再排改到同樣檔案或連到同一個 issue 的，舊的先。這些都來自 PR 本身，不是模型猜的。");
 function proposalCard(d) {
   const p = d.proposal; if (!p?.pending || !d.rows.length) return null;
   const deps = p.deps.flatMap((x) => x.on.map((o) => ({ pr: x.pr, on: o.on, why: o.why })));
   return h("div", { class: "card pw-prop", "data-prs-proposal": "" },
-    h("span", { class: "need-ic pw-prop-ic" }, icon("wand")),
+    h("span", { class: "need-ic pw-prop-ic", "data-prs-order-how": "", role: "img", tabindex: "0", "aria-label": ORDER_HOW(), title: ORDER_HOW() }, icon("wand")),
     h("div", {}, h("b", {}, deps.length ? T(`Proposed order and ${deps.length} dependenc${deps.length === 1 ? "y" : "ies"}, not accepted yet`, `建議的順序與 ${deps.length} 個依賴，尚未確認`) : T("Proposed order, not accepted yet", "建議的順序，尚未確認")),
-      h("ul", { class: "pw-why" }, deps.map((x) => h("li", { "data-prs-proposed-dep": `${x.pr}>${x.on}` }, h("b", {}, x.pr), T(" depends on ", " 依賴 "), h("b", {}, x.on), ": ", x.why)),
-        h("li", { class: "faint" }, T("The order puts every dependency first, then pull requests that change the same files or link the same issue, older first. These come from the pull requests themselves, not from a model.", "順序先排依賴，再排改到同樣檔案或連到同一個 issue 的，舊的先。這些都來自 PR 本身，不是模型猜的。")))),
+      deps.length ? h("ul", { class: "pw-why" }, deps.map((x) => h("li", { "data-prs-proposed-dep": `${x.pr}>${x.on}` }, h("b", {}, x.pr), T(" depends on ", " 依賴 "), h("b", {}, x.on), ": ", x.why))) : null),
     h("div", { class: "pw-acts" }, h("button", { class: "btn primary", "data-prs-accept": "", onclick: () => act("/api/prs/accept", {}, T("Accepted: the order and dependencies are Studio's record; nothing was written to GitHub", "已接受：順序與依賴存在 Studio，尚未寫入 GitHub")) }, T("Accept", "接受")),
       deps.length ? h("button", { class: "btn", "data-prs-accept-apply": "", onclick: async () => { await act("/api/prs/accept", {}); const ids = [...new Set(deps.map((x) => x.pr))]; applyModal(ids); } }, T("Accept and apply to the pull requests…", "接受並套用到 PR…")) : null));
 }
@@ -188,6 +210,15 @@ function groupChips(r) {
   return (r.approvals?.groups || []).map((g) => h("span", { class: `badge pw-agrp ${g.ok ? "ok" : "bad"}`, "data-prs-approval-group": g.who,
     title: g.ok ? T(`${g.kind === "team" ? "Required team" : "Code owners"} ${g.who}: approved by ${g.by.join(", ")}`, `${g.kind === "team" ? "必要 team" : "Code owner"} ${g.who}：${g.by.join("、")} 已 approve`) : T(`${g.kind === "team" ? "Required team" : "Code owners"} ${g.who}: no approval yet`, `${g.kind === "team" ? "必要 team" : "Code owner"} ${g.who}：還沒有 approve`) },
     g.ok ? "✓ " : "✕ ", compact(g.who)));
+}
+// one chip per row: the issue itself when there is one, its icon and a count when there are more; the titles and states
+// are in the tooltip and, in full, in the row's dialog (one place for the detail)
+const issueTip = (i) => `${i.ref}${i.title ? ` ${i.title}` : ""}${i.state ? ` (${i.state})` : ""}${i.external ? T(" · outside the watched repositories, read only", " · 不在監控的 repo，只讀") : ""}`;
+function issueCell(r) {
+  const n = r.issues.length; if (!n) return h("span", { class: "faint" }, "—");
+  if (n === 1) { const i = r.issues[0]; return extLink(ghIssue(i.ref), [icon("issue", "ic sm"), h("span", { class: "pw-isst" }, short(i.ref, r.repo))], { class: `badge pw-iss1${i.external ? " pw-dashed" : ""}`, "data-prs-issues": "1", title: issueTip(i) }); }
+  return h("button", { class: "badge pw-iss1", type: "button", "data-prs-issues": String(n), "aria-label": T(`${n} linked issues: open the details`, `${n} 個關聯 issue：打開詳情`),
+    title: r.issues.map(issueTip).join("\n"), onclick: (e) => { e.stopPropagation(); detail(r); } }, icon("issue", "ic sm"), String(n));
 }
 function rowView(r, d) {
   const c = r.changed, n = r.next, miss = r.approvals?.missing || [];
@@ -222,7 +253,7 @@ function rowView(r, d) {
     h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, "data-prs-env-auto": e.auto ? e.name : null, title: (e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`)) + (e.auto ? T(" (a GitHub environment of this repository: its latest successful deployment contains the head or not; set environments in Settings to choose)", "（這個 repo 的 GitHub 環境：看它最近一次成功的 deployment 有沒有包含這個 head；要自己挑環境請到設定）") : "") }, e.name)) : h("span", { class: "faint" }, "—")),
     h("span", { class: "pw-revs", role: "cell" }, groupChips(r), r.reviews.length || !(r.approvals?.groups || []).length ? (r.reviews.length ? r.reviews.map((x) => h("span", { class: `badge ${x.state === "APPROVED" && !x.stale ? "ok" : x.state === "CHANGES_REQUESTED" ? "bad" : ""}`, title: `${reviewWord(x.state)}${x.stale ? T(" (an older head)", "（較舊的 head）") : ""}${x.author ? T(" (the author: does not count)", "（作者本人：不算）") : ""}` },
       x.login, x.state === "CHANGES_REQUESTED" ? " ✕" : x.stale ? T(" (stale)", "（舊）") : "")) : h("span", { class: "faint" }, "—")) : null),
-    h("span", { class: "pw-iss", role: "cell" }, r.issues.length ? r.issues.map((i) => h("span", { class: "pw-iss1" }, extLink(ghIssue(i.ref), short(i.ref, null), { title: `${i.ref} ${i.title || ""}${i.state ? ` (${i.state})` : ""}${i.external ? T(" · outside the watched repositories, read only", " · 不在監控的 repo，只讀") : ""}` }), i.external ? h("small", {}, T("external", "外部")) : null)) : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-iss", role: "cell" }, issueCell(r)),
     h("span", { role: "cell" }, groupCell(r, d)));
   return el;
 }
@@ -431,7 +462,7 @@ function detail(r) {
     flowSection(r),
     h("div", { class: "pw-cols" },
       h("div", { class: "card x-pad pw-dl" },
-        h("h3", {}, T("Issues", "Issue")), r.issues.length ? r.issues.map((i) => h("div", { class: "kv" }, h("span", {}, extLink(ghIssue(i.ref), i.ref), i.title ? ` ${i.title}` : "", i.external ? T(" (external, read only)", "（外部，只讀）") : ""), h("span", {}, i.state || "?"))) : h("span", { class: "faint" }, T("none", "無")),
+        h("h3", {}, T("Issues", "Issue")), r.issues.length ? r.issues.map((i) => h("div", { class: "kv", "data-prs-issue": i.ref }, h("span", {}, extLink(ghIssue(i.ref), i.ref), i.title ? ` ${i.title}` : "", i.external ? T(" (external, read only)", "（外部，只讀）") : ""), h("span", {}, i.state || "?"))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Reviews", "Reviews")), r.reviews.length ? r.reviews.map((x) => h("div", { class: "kv" }, h("span", {}, x.login, x.author ? T(" (author)", "（作者）") : ""), h("span", {}, reviewWord(x.state), x.stale ? T(" · stale", " · 舊 head") : ""))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Test evidence", "測試證據")), r.evidence ? [h("div", { class: "kv" }, h("span", {}, `${r.evidence.by}${r.evidence.at ? ` · ${day(r.evidence.at)}` : ""} (${r.evidence.source})`), h("span", {}, verdictWord(r.evidence.verdict))),
           h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : r.evidence.covers === "unknown" ? T("unknown: commit not named", "不確定：沒指明 commit") : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
@@ -453,12 +484,25 @@ function detail(r) {
         r.partial?.length ? h("p", { class: "faint pw-small" }, T(`Not read this time: ${r.partial.join(", ")}.`, `這次沒讀到：${r.partial.join("、")}。`)) : null)),
   ], { wide: true, id: "detail" });
 }
-let closeMenu = null; // the open missing-approval menu's close, so a new one (or a second click) closes it properly
-function ctaMenu(anchor, r) {
+let closeMenu = null; // the open menu's close (missing approvals or the watch list), so a new one (or a second click) closes it properly
+// a small menu under its anchor (the missing-approval actions, the watch list): one open at a time; a click outside or
+// Escape closes it; while it is open a live update waits (closeMenu holds redraw back)
+function openPop(anchor, m, width = 280) {
   if (anchor.getAttribute("aria-expanded") === "true" && closeMenu) { closeMenu(); return; }
   closeMenu?.(); document.querySelectorAll(".pw-menu").forEach((x) => x.remove());
   const close = () => { if (closeMenu === close) closeMenu = null; m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("click", off, true); document.removeEventListener("keydown", esc, true);
     if (PW.later && !PW.drag && !closeMenu) { PW.later = false; queueMicrotask(redraw); } };
+  document.body.append(m); anchor.setAttribute("aria-expanded", "true"); closeMenu = close;
+  const w = Math.min(width, innerWidth - 16), b = anchor.getBoundingClientRect(); m.style.position = "fixed"; m.style.width = `${w}px`; m.style.left = `${Math.max(8, Math.min(b.left, innerWidth - w - 8))}px`; m.style.top = `${Math.max(8, Math.min(b.bottom + 6, innerHeight - 220))}px`;
+  m.style.maxHeight = `${Math.max(160, innerHeight - parseFloat(m.style.top) - 8)}px`;
+  const off = (e) => { if (!m.isConnected) return close(); if (!m.contains(e.target) && !anchor.contains(e.target)) close(); }, esc = (e) => { if (e.key === "Escape") { close(); anchor.focus(); } };
+  // the click that opened the menu has already passed the document's capture phase: listening now cannot catch it
+  document.addEventListener("click", off, true); document.addEventListener("keydown", esc, true);
+  m.querySelector("button, a")?.focus();
+  return close;
+}
+function ctaMenu(anchor, r) {
+  let close = () => {};
   const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
   const m = h("div", { class: "pop pw-menu", role: "group", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), "data-prs-menu": r.id },
     h("div", { class: "tgt" }, `${r.id} · `, (r.approvals?.missing || []).map(missWord).join(", ")),
@@ -466,12 +510,7 @@ function ctaMenu(anchor, r) {
     item("room", "monitor", "Open in the review room", "在審查室打開", () => openRoom(r)),
     item("report", "doc", "Handoff report…", "交接報告…", () => reportModal([r])),
     item("md", "copy", "Copy this row as Markdown", "把這一列複製成 Markdown", async () => { flash(await copy(markdown([r])) ? T("Copied as Markdown", "已複製成 Markdown") : T("Could not copy", "無法複製")); }));
-  document.body.append(m); anchor.setAttribute("aria-expanded", "true"); closeMenu = close;
-  const b = anchor.getBoundingClientRect(); m.style.position = "fixed"; m.style.left = `${Math.max(8, Math.min(b.left, innerWidth - 290))}px`; m.style.top = `${Math.min(b.bottom + 6, innerHeight - 220)}px`;
-  const off = (e) => { if (!m.contains(e.target) && !anchor.contains(e.target)) close(); }, esc = (e) => { if (e.key === "Escape") { close(); anchor.focus(); } };
-  // the click that opened the menu has already passed the document's capture phase: listening now cannot catch it
-  document.addEventListener("click", off, true); document.addEventListener("keydown", esc, true);
-  m.querySelector("button")?.focus();
+  close = openPop(anchor, m) || close;
 }
 const visibleRows = () => (PW.data?.rows || []).filter((r) => PW.tab === "all" || r.next.kind === PW.tab);
 function draft(r, lang) {
