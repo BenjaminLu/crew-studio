@@ -157,6 +157,16 @@ A merged pull request stays on the page until it runs in production. Two more ta
   page still too large is reported as such, never as "could not be reached"), and a single watched pull request once
   merged; merged in the last 30 days, or already followed. One followed that those pages no longer show is read on its
   own (at most 30 a refresh). At most 40 merged rows a refresh, the ones merged last.
+- **Release base only**: a pull request is followed only when it was merged into a release base: the repository's
+  default branch, read from GitHub (the pull request's `base.repo.default_branch`, else `GET /repos/<repo>` once a
+  refresh; never assumed to be `main` or `master`), or a branch a production environment of the settings deploys
+  (detected by "branch"). One merged into any other branch, such as a sub-pull-request merged into its umbrella pull
+  request's integration branch, is on neither tab: it reaches production with the pull request that merges that branch,
+  which is the one followed. Such a pull request already in `state.json` (`shipped`, or marked by hand in `manual`)
+  from before this rule is dropped on the next refresh that reads it, nothing else changed (the snapshot's `offBase`:
+  id → base). When the default branch cannot be read, the row is followed as before rather than dropped on a guess.
+  A repository whose production runs another branch than the default (a hotfix merged straight into `main` while the
+  default is `develop`) sets a production environment detected by "branch" on that branch, or those rows are left out.
 - **Environments**: the same settings as the open rows (or the repository's own GitHub environments), read against the
   **merge commit** (squash or merge), never the old head: an environment has the pull request when the commit it runs
   contains the merge commit (`compare`). A GitHub Deployment environment: its newest successful deployment of the last
@@ -445,7 +455,10 @@ sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slac
     each environment read at the merge commit, a closed page over 1 MB read again in pages of 5, the merged and live tabs, live from the first refresh that saw it, dropped
     14 days later and never back, unwatching drops them; a row a merged revert cancels (`Reverts …#n` by someone else,
     or only the title `Revert "…"`) dropped and recorded, an open or unmerged revert or a reverted revert leaving it;
-    × on a merged row excludes it and restore brings it back; in the page the two tabs, their columns and Markdown —
+    × on a merged row excludes it and restore brings it back; only a release base is followed: a sub-pull-request merged
+    into its umbrella's branch is not, the umbrella merged into the default branch is, a default branch other than main
+    (read from the repository when the pull request lacks it) and a production environment's branch work, and an older
+    state.json's sub-pull-requests are dropped on the next refresh with nothing else lost; in the page the two tabs, their columns and Markdown —
     pr-watch-ui.mjs "the merged and live tabs …", "a merged row: on staging …", "the live tab …".
 19. The release brief (`bun tests/pr-watch-release.ts`, pr-watch-merged.ts "selecting 22 alone …", the UI suite): the
     items from path rules and added lines, each with its address; the suggested alert rule; the rollout section quoted;

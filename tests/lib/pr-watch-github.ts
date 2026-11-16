@@ -109,9 +109,12 @@ export function fixtureData() {
   const envs: Record<string, string[]> = { [ca]: ["production", "dev", "staging", "preproduction"] };
   Object.assign(contains, { [sha("tag-v1.4.1")]: [merge(find(ca, 21)!), merge(find(ca, 22)!)], [sha("tag-v1.4.0")]: [merge(find(ca, 21)!), merge(find(ca, 22)!)], [sha("tag-v1.3.0")]: [merge(find(ca, 21)!)] });
   // a pull request a suite adds while it runs (the revert checks): two commits by its author, merged ones closed
-  const more = (repo: string, number: number, title: string, user: string, o: { state?: "open" | "closed"; merged?: boolean; body?: string } = {}) =>
-    add({ repo, number, title, user, commits: two(`${repo}#${number}`).map((c) => ({ ...c, login: user })), ...(o.merged ? { state: "closed", merged: true, mergedAt: ago(1) } : { state: o.state ?? "open" }), ...(o.body ? { body: o.body } : {}) });
-  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi, more };
+  const more = (repo: string, number: number, title: string, user: string, o: { state?: "open" | "closed"; merged?: boolean; body?: string; base?: string; headRef?: string } = {}) =>
+    add({ repo, number, title, user, commits: two(`${repo}#${number}`).map((c) => ({ ...c, login: user })), ...(o.merged ? { state: "closed", merged: true, mergedAt: ago(1) } : { state: o.state ?? "open" }), ...(o.body ? { body: o.body } : {}),
+      ...(o.base ? { base: o.base } : {}), ...(o.headRef ? { headRef: o.headRef } : {}) });
+  // each repository's default branch (GitHub's base.repo.default_branch and GET /repos/<repo>): "main" unless set here
+  const defaultBranch: Record<string, string> = {};
+  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi, more, defaultBranch };
 }
 
 export function prWatchGitHub(data = fixtureData()) {
@@ -120,12 +123,12 @@ export function prWatchGitHub(data = fixtureData()) {
   const json = (v: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", ...headers } });
   const nf = () => json({ message: "Not Found" }, 404);
   const pullJson = (p: Pr) => ({ number: p.number, title: p.title, body: p.body ?? "", state: p.state ?? "open", draft: !!p.draft, merged_at: p.merged ? p.mergedAt ?? at(40) : null, merge_commit_sha: p.merged ? data.merge(p) : null, user: { login: p.user }, assignees: (p.assignees ?? []).map((l) => ({ login: l })),
-    requested_reviewers: [], labels: (p.labels ?? []).map((name) => ({ name })), base: { ref: p.base ?? "main", repo: { full_name: p.repo } }, head: { ref: p.headRef, sha: data.head(p) }, created_at: p.created, changed_files: (p.files ?? []).length, html_url: `https://github.com/${p.repo}/pull/${p.number}` });
+    requested_reviewers: [], labels: (p.labels ?? []).map((name) => ({ name })), base: { ref: p.base ?? "main", repo: { full_name: p.repo, ...(knobs.noDefaultBranch ? {} : { default_branch: data.defaultBranch[p.repo] ?? "main" }) } }, head: { ref: p.headRef, sha: data.head(p) }, created_at: p.created, changed_files: (p.files ?? []).length, html_url: `https://github.com/${p.repo}/pull/${p.number}` });
   const page = (list: any[], q: URLSearchParams) => { const per = Number(q.get("per_page") ?? 30), pg = Number(q.get("page") ?? 1); return list.slice((pg - 1) * per, pg * per); };
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
   let notModified = 0;
   // knobs: a PATCH whose kept body differs from what was sent, a slow GET of one pull request, an unreadable CODEOWNERS
-  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false };
+  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false, noDefaultBranch: false };
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const res = await answer(req);
     if (req.method !== "GET" || res.status !== 200) return res;
@@ -147,6 +150,7 @@ export function prWatchGitHub(data = fixtureData()) {
     let m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p); if (!m) { if ((m = /^\/teams\/(\d+)$/.exec(p))) { const t = data.teamIds[m[1]]; return t ? json({ slug: t.split("/")[1], organization: { login: t.split("/")[0] } }) : nf(); }
       if ((m = /^\/orgs\/([^/]+)\/teams\/([^/]+)\/members$/.exec(p))) { const t = data.teams[`${m[1]}/${m[2]}`]; return t ? json(page(t.map((login) => ({ login })), q)) : nf(); } unknown.push(`${method} ${p}`); return nf(); }
     const repo = `${m[1]}/${m[2]}`, rest = m[3] ?? "";
+    if (method === "GET" && rest === "") return json({ full_name: repo, default_branch: data.defaultBranch[repo] ?? "main" });
     if (method === "GET" && rest === "/pulls") { const list = page(data.prs.filter((x) => x.repo === repo && (x.state ?? "open") === (q.get("state") ?? "open")).map(pullJson), q);
       // hugeClosed: closed pull requests with long bodies, so a page of more than 5 passes the 1 MB Studio reads
       return json(knobs.hugeClosed && q.get("state") === "closed" && Number(q.get("per_page")) > 5 ? list.map((p) => ({ ...p, body: `${p.body}${"x".repeat(Math.ceil(1_100_000 / list.length))}` })) : list); }

@@ -162,6 +162,61 @@ try {
     ok(!gh.calls.slice(before).some((c) => /\/pulls\/(5[0-9]|60)$/.test(c.path)), "reverts are read from the closed pull requests already listed: no read of their own");
     await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
     ok(!merged(v, id(50)) && !merged(v, id(52)) && !!merged(v, id(57)), "a reverted row does not come back on the next refresh"); }
+  // ---------- only a pull request merged into a release base is followed (not a sub-pull-request into its umbrella) ----------
+  { const ca = "northwind/checkout-api", id = (n: number) => `${ca}#${n}`, more = gh.data.more, umbrella = "feature/payments-rework";
+    more(ca, 70, "Umbrella: payments rework", "skipper", { headRef: umbrella });
+    more(ca, 71, "Payments: split the ledger writes", "skipper", { merged: true, base: umbrella });
+    more(ca, 72, "Payments: a table for retries", "skipper", { merged: true, base: umbrella });
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(!merged(v, id(71)) && !merged(v, id(72)) && W.snapshot.offBase?.[id(71)] === umbrella && W.snapshot.offBase?.[id(72)] === umbrella, "a sub-pull-request merged into its umbrella's branch is not followed, on neither tab", JSON.stringify({ merged: v.merged.map((r: any) => r.id), offBase: W.snapshot.offBase }));
+    ok(!W.state.shipped[id(71)] && !W.state.shipped[id(72)] && !v.rows.some((r: any) => r.id === id(71) || r.id === id(72)), "nor recorded in state.json, nor an open row");
+    ok(!!merged(v, id(21)) && !!merged(v, id(22)) && !W.snapshot.offBase?.[id(21)], "the pull requests merged into the default branch are still followed");
+    // the umbrella merges into the default branch: it is the one on its way to production
+    const u = gh.data.find(ca, 70)!; Object.assign(u, { state: "closed", merged: true, mergedAt: new Date(clock - 3600_000).toISOString() });
+    await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+    ok(merged(v, id(70))?.tab === "merged" && merged(v, id(70)).base === "main" && !!W.state.shipped[id(70)] && !merged(v, id(71)), "the umbrella merged into the default branch is followed; its sub-pull-requests still are not", JSON.stringify(v.merged.map((r: any) => r.id)));
+    { // GitHub's answer without base.repo.default_branch: the repository is read once a refresh, and the rule holds
+      gh.knobs.noDefaultBranch = true; const before = gh.calls.length; await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body; gh.knobs.noDefaultBranch = false;
+      const reads = gh.calls.slice(before).filter((c) => c.method === "GET" && c.path === `/repos/${ca}`).length;
+      ok(reads === 1 && !merged(v, id(71)) && !!merged(v, id(70)) && W.snapshot.offBase?.[id(71)] === umbrella, "no default branch in the pull request: read from the repository once, sub-pull-requests still left out", `reads ${reads}`); }
+    { // a state.json and snapshot saved by an older Studio that followed the sub-pull-requests: gone on the next refresh,
+      // nothing else in state.json lost
+      const old = mkdtempSync(join(tmpdir(), "pr-watch-merged-subpr-")); mkdirSync(join(old, "pr-watch"));
+      const st = JSON.parse(readFileSync(join(dir, "pr-watch", "state.json"), "utf8")), sn = JSON.parse(readFileSync(join(dir, "pr-watch", "snapshot.json"), "utf8"));
+      const k71 = id(71).toLowerCase(), k72 = id(72).toLowerCase(), row70 = sn.merged.find((r: any) => r.id === id(70));
+      st.shipped[k71] = { id: id(71), mergedAt: row70.mergedAt, liveAt: null }; st.shipped[k72] = { id: id(72), mergedAt: row70.mergedAt, liveAt: new Date(clock - 60_000).toISOString() };
+      (st.manual ??= {})[k72] = { id: id(72), at: new Date(clock - 60_000).toISOString() };
+      sn.merged.push({ ...row70, id: id(71), number: 71, url: `https://github.com/${ca}/pull/71`, base: umbrella }, { ...row70, id: id(72), number: 72, url: `https://github.com/${ca}/pull/72`, base: umbrella });
+      delete sn.offBase;
+      writeFileSync(join(old, "pr-watch", "state.json"), JSON.stringify(st)); writeFileSync(join(old, "pr-watch", "snapshot.json"), JSON.stringify(sn));
+      const poller4 = new GitHubPoller(), W4 = createPrWatch({ dataDir: old, poller: poller4, now: () => clock });
+      try { const tabs = (w: typeof W4) => Object.fromEntries(w.view().merged.map((r: any) => [r.id, r.tab]));
+        const t0 = tabs(W4);
+        ok(t0[id(71)] === "merged" && t0[id(72)] === "live", "the saved state shows the sub-pull-requests before a refresh (as an older Studio left it)", JSON.stringify(t0));
+        const u4 = new URL("http://127.0.0.1/api/prs/refresh"); await W4.handle(new Request(u4, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), u4, { kind: "desktop" }, true);
+        ok(await until(() => !W4.snapshot.merged?.some((r: any) => r.id === id(71)), 15000) && !!W4.snapshot.offBase?.[id(71)], "the older Studio's saved state is refreshed", JSON.stringify(W4.snapshot.errors));
+        const t1 = tabs(W4), after = JSON.parse(readFileSync(join(old, "pr-watch", "state.json"), "utf8"));
+        ok(!t1[id(71)] && !t1[id(72)] && !after.shipped[k71] && !after.shipped[k72] && !after.manual?.[k72], "the next refresh drops them from both tabs and from state.json (followed and marked by hand)", JSON.stringify({ t1, shipped: Object.keys(after.shipped), manual: after.manual }));
+        const rest = (x: any) => { const y = structuredClone(x); delete y.shipped[k71]; delete y.shipped[k72]; delete y.manual?.[k72]; return y; };
+        ok(JSON.stringify(Object.keys(after).sort()) === JSON.stringify(Object.keys(st).sort()) && ["watch", "settings", "order", "deps", "groups", "retired", "reverted", "follow", "hooks"].every((key) => JSON.stringify(after[key]) === JSON.stringify(st[key]))
+          && JSON.stringify(Object.keys(after.shipped).sort()) === JSON.stringify(Object.keys(rest(st).shipped).sort()) && JSON.stringify(after.manual ?? {}) === JSON.stringify(rest(st).manual ?? {}),
+          "nothing else in state.json is lost: the watch list, settings, the other followed rows, retired and reverted ones stay", JSON.stringify({ before: Object.keys(rest(st).shipped), after: Object.keys(after.shipped) }));
+        ok(t1[id(70)] === "merged" && t1[id(21)] === t0[id(21)] && t1[id(22)] === t0[id(22)], "the other merged rows stay on their tabs", JSON.stringify(t1)); }
+      finally { W4.stop(); poller4.stop(); rmSync(old, { recursive: true, force: true }); } }
+    { // a repository whose default branch is not main; a branch a production environment deploys counts as a release base
+      const lg = "northwind/ledger", lid = (n: number) => `${lg}#${n}`; gh.data.defaultBranch[lg] = "develop";
+      more(lg, 80, "Ledger: round half to even", "skipper", { merged: true, base: "develop" });
+      more(lg, 81, "Ledger: merged into a branch named main", "skipper", { merged: true, base: "main" });
+      more(lg, 82, "Ledger: hotfix on the release branch", "skipper", { merged: true, base: "release" });
+      await call("/api/prs/watch", { url: `https://github.com/${lg}` });
+      await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+      ok(!!merged(v, lid(80)) && !merged(v, lid(81)) && W.snapshot.offBase?.[lid(81)] === "main" && !merged(v, lid(82)), "default branch develop: the one merged into develop is followed, one into main (not the default here) or release is not", JSON.stringify({ merged: v.merged.map((r: any) => r.id), offBase: W.snapshot.offBase }));
+      const prodRelease = { name: "ledger-prod", production: true, repos: [lg], detect: { kind: "branch", branch: "release" } };
+      ok((await call("/api/prs/settings", { settings: { ...fixtureSettings, environments: [...fixtureSettings.environments, prodRelease] } })).status === 200, "a production environment that deploys the ledger's release branch");
+      await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+      ok(!!merged(v, lid(82)) && !!merged(v, lid(80)) && !merged(v, lid(81)), "merged into the branch a production environment deploys: followed", JSON.stringify(v.merged.map((r: any) => r.id)));
+      await call("/api/prs/settings", { settings: fixtureSettings }); await call("/api/prs/unwatch", { repo: lg }); await call("/api/prs/refresh", {}); v = (await call("/api/prs")).body;
+      ok(!v.merged.some((r: any) => r.repo === lg) && !!merged(v, id(21)), "the ledger unwatched again: its rows gone, the others kept"); } }
   // ---------- × on a merged row: excluded, not followed again, restored on request ----------
   { const id = "northwind/checkout-api#21";
     ok((await call("/api/prs/unwatch", { pr: id })).status === 200, "× on a merged row");
