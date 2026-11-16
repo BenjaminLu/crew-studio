@@ -1,6 +1,7 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Pull requests (docs/units/pr-watch.md) in a browser: the real server on temporary data against the fictional GitHub
-// (tests/lib/pr-watch-github.ts). The sidebar item and its count, adding and removing by address, refresh on open, on the
+// (tests/lib/pr-watch-github.ts). The sidebar item and its count, adding and removing by address, the watch list folded into
+// one summary chip and its menu, one issue chip per row, refresh on open, on the
 // button and on the interval, the change mark (no read/unread), the columns and tabs, the detail dialog with the matched
 // rule, the missing-approval menu (the drafted message, the review room, the report, Markdown), the proposal, a drag and a
 // dependency edit, applying through the captain's card in the Inbox, drift and both of its actions, text from GitHub
@@ -49,7 +50,14 @@ try {
   await p.waitForSelector('[data-prs-add-error]'); ok(/github\.com/.test(await p.locator('[data-prs-add-error]').innerText()), 'a non-GitHub address is refused with a message');
   for (const u of ['https://github.com/northwind/checkout-api', 'https://github.com/northwind/web-app', 'https://github.com/northwind/ledger', 'https://github.com/northwind/mobile/pull/5']) {
     await p.fill('#pwAdd', u); await p.press('#pwAdd', 'Enter'); await p.waitForFunction((u) => !document.querySelector('#pwAdd')?.value && !document.querySelector('[data-prs-add-error]'), u); }
-  ok(await p.locator('[data-prs-repo]').count() === 3 && await p.locator('[data-prs-single="northwind/mobile#5"]').count() === 1, 'three watched repositories and a single pull request show as chips');
+  // the watch list is one summary chip; its menu lists every repository and the single pull request, each with its ×
+  ok(await p.locator('[data-prs-repo], [data-prs-single]').count() === 0 && /^3 repos · \d with open PRs · 1 PR/.test(await p.locator('[data-prs-repos]').innerText()) && !!(await p.locator('[data-prs-repos]').getAttribute('title')),
+    'the watched repositories fold into one summary chip (with a tooltip), none listed inline', await p.locator('[data-prs-repos]').innerText());
+  await p.click('[data-prs-repos]'); await p.waitForSelector('[data-prs-repo-menu]');
+  ok(await p.locator('[data-prs-repo-menu] [data-prs-repo]').count() === 3 && await p.locator('[data-prs-repo-menu] [data-prs-single="northwind/mobile#5"]').count() === 1
+    && await p.locator('[data-prs-repo-menu] [data-prs-unwatch-repo]').count() === 3 && await p.locator('[data-prs-repo-menu] [data-prs-unwatch-pr="northwind/mobile#5"]').count() === 1
+    && await p.locator('[data-prs-repo-menu] [data-prs-repo] a[href="https://github.com/northwind/ledger"]').count() === 1, 'its menu lists the three repositories and the single pull request, each linked with its ×');
+  await p.keyboard.press('Escape'); await p.waitForSelector('[data-prs-repo-menu]', { state: 'detached' });
   // before any setting: evidence asks to be set up (offering who commented), environments are the repository's own
   await p.click('[data-prs-refresh]'); await p.waitForFunction(() => document.querySelectorAll('[data-prs-row]').length === 12, null, { timeout: 20000 });
   ok(await p.locator('[data-prs-row="northwind/checkout-api#17"] [data-prs-env-auto="staging"].on').count() === 1, 'no environments set: the GitHub environment whose latest deployment contains the head is on');
@@ -167,7 +175,24 @@ try {
   await p.click('[data-prs-tab="all"]');
   // text from GitHub is text
   ok(await p.evaluate(() => window.__xss === undefined && !document.querySelector('[data-prs-row="northwind/mobile#5"] img')) && (await p.locator('[data-prs-row="northwind/mobile#5"] .pw-title').innerText()).includes('<img src=x'), 'a title with HTML is shown as text, never run');
-  ok(await p.locator('[data-prs-row="northwind/checkout-api#12"] .pw-iss small').innerText() === 'external' && await p.locator('[data-prs-single="northwind/mobile#5"]').count() === 1 && await p.locator('[data-prs-row="northwind/mobile#5"] .badge', { hasText: 'single' }).count() === 1, 'an issue outside the watched repositories is marked external; the single pull request is marked single');
+  { const one = p.locator('[data-prs-row="northwind/checkout-api#12"] .pw-iss [data-prs-issues="1"]');
+    ok(await one.count() === 1 && (await one.innerText()).trim() === 'platform-issues#7' && await one.getAttribute('href') === 'https://github.com/northwind/platform-issues/issues/7' && /outside the watched repositories/.test(await one.getAttribute('title')) && await one.evaluate((e) => e.classList.contains('pw-dashed')),
+      'a row with one issue shows that issue as its one chip; outside the watched repositories it is dashed, said in its tooltip', await one.innerText()); }
+  ok(await p.locator('[data-prs-row="northwind/mobile#5"] .badge', { hasText: 'single' }).count() === 1, 'the single pull request is marked single');
+  // a row with two issues: one chip with the issue icon and the count; the titles are in its tooltip and in the dialog
+  { const cell = p.locator('[data-prs-row="northwind/checkout-api#19"] .pw-iss');
+    ok(await cell.locator('.pw-iss1').count() === 1 && await cell.locator('a').count() === 0 && (await cell.locator('[data-prs-issues="2"]').innerText()).trim() === '2' && await cell.locator('[data-prs-issues="2"] svg').count() === 1
+      && /Retries hammer the API/.test(await cell.locator('[data-prs-issues="2"]').getAttribute('title')) && /2 linked issues/.test(await cell.locator('[data-prs-issues="2"]').getAttribute('aria-label')), 'a row with two issues shows one chip: the issue icon and 2, titles in its tooltip', await cell.innerText());
+    await cell.locator('[data-prs-issues="2"]').click(); await p.waitForSelector('[data-prs-dialog="detail"]');
+    const d = p.locator('[data-prs-dialog="detail"]');
+    ok(await d.locator('[data-prs-issue]').count() === 2 && /Retries hammer the API/.test(await d.locator('[data-prs-issue="northwind/web-app#2"]').innerText()) && /Capture retries double-charge \(external, read only\)/.test(await d.locator('[data-prs-issue="northwind/platform-issues#7"]').innerText()),
+      'the chip opens the dialog, which lists every issue with its title, state and external mark', await d.locator('[data-prs-issue]').allInnerTexts().then((x) => x.join(' | ')));
+    await p.keyboard.press('Escape'); await p.waitForSelector('[data-prs-dialog="detail"]', { state: 'detached' }); }
+  // after the read: repositories with open pull requests first, most first, none dimmed
+  await p.click('[data-prs-repos]'); await p.waitForSelector('[data-prs-repo-menu]');
+  { const order = await p.locator('[data-prs-repo-menu] [data-prs-repo]').evaluateAll((es) => es.map((e) => [e.dataset.prsRepo, Number(e.dataset.count), e.classList.contains('zero')]));
+    ok(order[0][0] === 'northwind/checkout-api' && order.every((x, i) => !i || order[i - 1][1] >= x[1]) && order.every((x) => !x[2]) && /3 with open PRs/.test(await p.locator('[data-prs-repos]').innerText()), 'the menu lists repositories with open pull requests first, most first; none dimmed', JSON.stringify(order)); }
+  await p.keyboard.press('Escape'); await p.waitForSelector('[data-prs-repo-menu]', { state: 'detached' });
   ok(await p.locator('[data-prs-row="northwind/checkout-api#19"] [data-prs-ci="SUCCESS"]').count() === 1 && await p.locator('[data-prs-row="northwind/web-app#30"] [data-prs-ci="FAILURE"]').count() === 1, 'the CI column: passing and failing heads');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#18"] [data-prs-approval-group="@northwind/release"].bad').count() === 1 && await p.locator('[data-prs-row="northwind/checkout-api#19"] [data-prs-approval-group="@northwind/release"].ok').count() === 1, 'a required team shows ✕ until a member approves, then ✓');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#19"] .pw-unreg').count() === 1, 'a repository that is not a registered project gets the grey mark');
@@ -229,6 +254,7 @@ try {
   await p.fill('#pwAdd', ''); await p.click('[data-prs-tab="all"]');
   // the proposal, a drag and a dependency edit
   ok(await p.locator('[data-prs-proposed-dep="northwind/checkout-api#14>northwind/checkout-api#15"]').count() === 1 && /Depends-on/.test(await p.locator('[data-prs-proposal]').innerText()), 'the proposal shows each dependency with its reason');
+  ok(!/older first/.test(await p.locator('[data-prs-proposal]').innerText()) && /older first/.test(await p.locator('[data-prs-proposal] [data-prs-order-how]').getAttribute('title')), 'how the order is proposed (the same every time) is the icon\'s tooltip, not a line in the list');
   ok(await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-prop-tag').count() === 1 && await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-proposed-pos').count() === 1, 'the row shows the dependency and its position as proposed');
   const fitsCell = await p.locator('[data-prs-row="northwind/checkout-api#14"] .pw-prop-tag').evaluate((t) => { const cell = t.closest('[role="cell"]').getBoundingClientRect(), r = t.getBoundingClientRect(); return r.right <= cell.right + 1; });
   ok(fitsCell, 'the proposed tag stays inside the Depends on column');
@@ -316,6 +342,21 @@ try {
       const dx = await o.p.evaluate(() => document.documentElement.scrollWidth <= innerWidth); ok(dx, `the detail dialog fits at ${w} ${theme}`); await o.p.screenshot({ path: join(shots, `detail-${w}-${theme}.png`) }); }
     await o.ctx.close();
   }
+  // a repository with no open pull request of the captain's sits last, dimmed; its × in the menu stops watching it, the
+  // menu stays open and redraws; the page follows when it closes
+  ok((await api('/api/prs/watch', { url: 'https://github.com/northwind/platform-issues' })).status === 200, 'a fourth repository, with no pull request, watched');
+  { const o = await open(390, 'light'); await o.p.goto(`${base}/#/prs`); await o.p.waitForSelector('[data-prs-row]'); await o.p.waitForFunction(() => /^4 repos/.test(document.querySelector('[data-prs-repos]')?.innerText || ''));
+    await o.p.click('[data-prs-repos]'); await o.p.waitForSelector('[data-prs-repo-menu]');
+    const fits = await o.p.evaluate(() => { const m = document.querySelector('[data-prs-repo-menu]').getBoundingClientRect(); return m.left >= 0 && m.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth; });
+    ok(fits, 'at 390 the watch list menu stays inside the screen');
+    const order = await o.p.locator('[data-prs-repo-menu] [data-prs-repo]').evaluateAll((es) => es.map((e) => [e.dataset.prsRepo, e.classList.contains('zero')]));
+    ok(order.length === 4 && order[3][0] === 'northwind/platform-issues' && order[3][1] && order.slice(0, 3).every((x) => !x[1]), 'the repository with 0 comes after those with open pull requests, dimmed', JSON.stringify(order));
+    await o.p.screenshot({ path: join(shots, 'watch-menu-390-light.png') });
+    await o.p.click('[data-prs-repo-menu] [data-prs-unwatch-repo="northwind/platform-issues"]'); await o.p.waitForSelector('[data-prs-repo-menu] [data-prs-repo="northwind/platform-issues"]', { state: 'detached' });
+    ok(await o.p.locator('[data-prs-repo-menu] [data-prs-repo]').count() === 3 && (await api('/api/prs')).body.watch.repos.every((w) => w.repo !== 'northwind/platform-issues'), 'the × in the menu stops watching that repository; the menu stays open with the rest');
+    await o.p.keyboard.press('Escape'); await o.p.waitForSelector('[data-prs-repo-menu]', { state: 'detached' });
+    ok(/^3 repos/.test(await o.p.locator('[data-prs-repos]').innerText()), 'closed, the page redraws: the summary follows', await o.p.locator('[data-prs-repos]').innerText());
+    await o.ctx.close(); }
   ok(!gh.unknown.length, 'every GitHub request was one the fixture knows', JSON.stringify(gh.unknown));
 } catch (e) { ok(false, 'the suite ran to its end', String(e?.stack || e)); }
 finally { await browser?.close().catch(() => {}); app.kill(); gh.stop(); }

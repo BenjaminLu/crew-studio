@@ -22,9 +22,11 @@ the proposal), `src/pr-watch.ts` (state, GitHub reads, refresh, routes, the appl
   when it is not the captain's; its row carries a "single" badge.
 - Only https github.com repository and pull request addresses are accepted, parsed strictly (no other host, port, user,
   issue or tree address; owner and repository match `^[A-Za-z0-9_.-]+$`); anything else is refused with a message.
-- Watched repositories and single pull requests show as chips, each repository with its count, each with an × to stop
-  watching. Removing one row that came in through its repository records it as excluded; an "excluded N · restore" chip
-  brings them back.
+- Watched repositories and single pull requests fold into one summary chip ("13 repos · 3 with open PRs · 1 PR"). It opens
+  a menu that lists each repository with its count (those with open pull requests first, most first; those at 0 dimmed
+  after them), then each single pull request, each linked and with an × to stop watching; the menu stays open after an ×.
+  Removing one row that came in through its repository records it as excluded; an "excluded N · restore" chip, beside the
+  summary, brings them back.
 
 ## Columns, in this order
 
@@ -39,11 +41,11 @@ the proposal), `src/pr-watch.ts` (state, GitHub reads, refresh, routes, the appl
 | test evidence | the latest verdict from the evidence sources, and whether it covers the current head |
 | environments | each environment, lit when it runs the head |
 | reviews | each reviewer's latest verdict; stale when it was given on another head |
-| issues | every linked issue, in any repository; "external" outside the watched repositories |
+| issues | one chip: the issue itself when there is one (dashed outside the watched repositories), else the issue icon and the count, which opens the dialog; titles in the tooltip |
 | group | an optional release group |
 
 Filters (pressed buttons) by next-step kind with counts: all, approve, test, fix, dependency, mergeable, on hold. Clicking a row opens a
-dialog with the issues, reviews, evidence, environments, the order's reasons, the missing approvals and the next-step rule
+dialog with every linked issue (title, state, external), reviews, evidence, environments, the order's reasons, the missing approvals and the next-step rule
 list with the matched rule highlighted. Every text from GitHub is set as text, never as HTML.
 
 ## Settings (the gear on the page)
