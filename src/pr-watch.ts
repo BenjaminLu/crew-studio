@@ -176,7 +176,10 @@ export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: 
   /** merged pull requests still followed (until 14 days after production) */
   merged?: MergedRow[];
   /** followed merged pull requests this refresh found cancelled by a merged revert: id → the reverting pull request */
-  reverted?: Record<string, string> };
+  reverted?: Record<string, string>;
+  /** merged pull requests this refresh found merged into a branch that is not a release base (the default branch, or a
+   *  production environment's deployed branch): id → that base. Not followed; dropped from state.json if they were */
+  offBase?: Record<string, string> };
 const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {}, heads: {} });
 
 const list = (v: unknown, max = 50, each = 100) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : []).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => s.length <= each).slice(0, max);
@@ -303,6 +306,9 @@ export function createPrWatch(d: PrWatchDeps) {
       delete state.shipped[k]; state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000);
       state.reverted = Object.fromEntries([...Object.entries(state.reverted ?? {}).filter(([x]) => x !== k), [k, by]].slice(-500)); changed = true; }
     const manual = state.manual ??= {};
+    // merged into a branch that is not a release base (a saved state may hold some from before this rule): not followed
+    for (const id of Object.keys(sn.offBase ?? {})) { const k = id.toLowerCase();
+      if (state.shipped[k]) { delete state.shipped[k]; changed = true; } if (manual[k]) { delete manual[k]; changed = true; } }
     for (const r of sn.merged ?? []) { const k = r.id.toLowerCase(), cur = state.shipped[k], st = R.shipState(r.envs), mk = manual[k];
       // marked by hand and now confirmed by the environments: an ordinary live row, still counted from the (earlier) mark
       if (st.live && mk) { delete manual[k]; changed = true; }
@@ -367,6 +373,19 @@ export function createPrWatch(d: PrWatchDeps) {
     for (const [k, v] of Object.entries(s.shipped)) { if (mergedFound.has(k) || retired.has(k) || has(s.watch.excluded, v.id)) continue; const sp = R.splitId(v.id); if (!sp || !has(s.watch.repos, sp.repo) || ++followReads > 30) continue;
       try { const p = await g.get(`${repoPath(sp.repo)}/pulls/${sp.number}`); if (p?.merged_at && !has(s.watch.excluded, v.id)) followMerged(p, sp.repo, false); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; } }
+    // only a pull request merged into a release base is on its way to production: the repository's default branch (read
+    // from GitHub: the pull request's own base.repo, else the repository once), or a branch a production environment of
+    // the settings deploys. One merged into another branch (a sub-pull-request into its umbrella's integration branch)
+    // ships with the pull request that merges that branch: not followed, and dropped from state.json if it was
+    const defaultCache = new Map<string, Promise<string | null>>();
+    const defaultOf = (repo: string, p: any) => { const own = p?.base?.repo?.default_branch;
+      if (typeof own === "string" && own && eq(String(p?.base?.repo?.full_name ?? repo), repo)) return Promise.resolve(own);
+      const k = repo.toLowerCase(); if (!defaultCache.has(k)) defaultCache.set(k, (async () => { try { const j = await g.get(repoPath(repo)); return typeof j?.default_branch === "string" && j.default_branch ? j.default_branch : null; }
+        catch (e) { if (e instanceof RateLimited || e instanceof OverBudget || (e as any)?.name === "AbortError") throw e; return null; } })()); return defaultCache.get(k)!; };
+    for (const [k, m] of [...mergedFound]) { const base = String(m.pr?.base?.ref ?? ""), def = await defaultOf(m.repo, m.pr);
+      if (!base || def === null || eq(base, def)) continue; // the default branch unreadable: followed as before, never dropped on a guess
+      if (s.settings.environments.some((e) => e.production && e.detect.kind === "branch" && eq(e.detect.branch, base) && R.envApplies(e, m.repo))) continue;
+      mergedFound.delete(k); (out.offBase ??= {})[R.prId(m.repo, Number(m.pr.number))] = base; }
     // a followed one a merged pull request in its repository reverts (by anyone, read from the closed pull requests above)
     // never reaches production as itself: dropped, and recorded so it is not followed again
     for (const [repo, list] of closedOf) {
