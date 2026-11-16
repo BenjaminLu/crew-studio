@@ -303,7 +303,9 @@ function briefText(b, P) {
   const N = b.of, hash = (id) => `#${String(id).split("#")[1]}`, title = (id) => { const p = b.prs.find((x) => x.id === id); return `${hash(id)} ${p?.title || ""}`.trim(); };
   const forced = b.forced.map((f) => P(`${hash(f.pr)} depends on ${hash(f.on)}`, `${hash(f.pr)} 依賴 ${hash(f.on)}`)).join(P(", ", "，"));
   const order = N === 1 ? "" : b.n === 1 ? P(` (batch 1 of ${N}; batch 2 opens only after this one runs in production)`, `（第 1/${N} 批；第 2 批要等這批上到 production 才開）`) : P(` (batch ${b.n} of ${N}; open it after batch ${b.n - 1} runs in production. ${forced})`, `（第 ${b.n}/${N} 批；等第 ${b.n - 1} 批上到 production 之後再開。${forced}）`);
-  const lines = b.units.flatMap((u) => u.noFile ? [P(`${u.repo}: no production environment reads its image tag from a file; write this change by hand.`, `${u.repo}：沒有 production 環境從檔案讀它的 image tag，這一行請自己寫。`)]
+  // no production environment reads this unit's tag from a file: a neutral note for whoever reads the text (the dialog
+  // offers Set up production beside it, setupProd)
+  const lines = b.units.flatMap((u) => u.noFile ? [P(`${u.repo} · image tag: not tracked (no production environment reads it from a file)`, `${u.repo} · image tag：未追蹤（沒有 production 環境從檔案讀它）`)]
     : u.lines.map((l) => `${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
   const added = b.added.map((a) => P(`${hash(a.id)} was added: ${hash(a.for)} depends on it`, `${hash(a.id)} 是補進來的：${hash(a.for)} 依賴它`));
   const ops = b.ops.map((o) => `- [${opTag(o, P)}] ${opText(o, P)} (${o.url})`);
@@ -311,11 +313,19 @@ function briefText(b, P) {
     ...(added.length ? [added.join("\n")] : []), "", ops.length ? `${P("Before going live:", "上線前要處理：")}\n${ops.join("\n")}` : P("Before going live: none", "上線前要處理：無"),
     "", P("These items are what Studio found in the diffs and the pull requests' own text: arrange them, add none.", "上線前要處理只列 Studio 從 diff 和 PR 原文找到的項目：可以調整順序，不要自行增加。")].join("\n");
 }
-async function openBrief(ids) {
+// a deploy unit with no production environment reading its image tag from a file: one action, opening the settings with
+// that environment begun (production, an image tag in a file, this repository); saving opens the brief again
+function setupProd(repo, ids, lang) {
+  return h("div", { class: "pw-status pw-setprod", "data-prs-brief-setprod": repo }, h("div", {},
+    h("span", { class: "pw-setprod-ic", title: T("No production environment reads this repository's image tag from a file. Set one up and the brief writes the line old → new.", "沒有 production 環境從檔案讀這個 repo 的 image tag。設定好之後 brief 會寫出舊 → 新那一行。") }, icon("alert", "ic sm")),
+    h("span", { class: "x-grow" }, T(`${repo}: image tag not tracked`, `${repo}：image tag 未追蹤`)),
+    h("button", { class: "btn sm primary", "data-prs-setprod": repo, onclick: () => settingsModal({ addEnv: { name: "production", production: true, repos: [repo], detect: { kind: "file", repository: "", path: "", template: "" } }, onSaved: () => openBrief(ids, { lang }) }) }, T("Set up production", "設定 production"))));
+}
+async function openBrief(ids, o = {}) {
   PW.briefBusy = true; render(); let got;
   try { got = await postJ("/api/prs/brief", { prs: ids }); } catch (e) { flash(e.message); return; } finally { PW.briefBusy = false; render(); }
   const langs = window.crewI18n.LANGS, start = PW.data?.settings?.messageLang || document.documentElement.lang || "en";
-  let lang = langs.includes(start) ? start : "en";
+  let lang = langs.includes(o.lang) ? o.lang : langs.includes(start) ? start : "en";
   const unitsOf = (b) => [...new Set(b.units.map((u) => u.unit))].join(" + ");
   for (const b of got.batches) for (const o of b.ops) o.job = (b.units.find((u) => o.pr.startsWith(`${u.repo}#`)) || b.units[0])?.unit || "app";
   const box = h("div", { class: "pw-targets" }), ts = (PW.data?.sending?.targets || []).filter((t) => t.masked), briefTarget = ts.find((t) => t.use === "brief") || ts.find((t) => t.use === "any") || null;
@@ -326,6 +336,7 @@ async function openBrief(ids) {
           briefTarget ? h("button", { class: "btn sm", "data-prs-batch-send": String(b.n), onclick: async (e) => { const btn = e.currentTarget; try { await postJ("/api/prs/send", { target: briefTarget.id, text }); btn.textContent = T(`Sent to ${briefTarget.name}`, `已發到 ${briefTarget.name}`); } catch (err) { flash(err.message); } } }, T(`Send to ${briefTarget.name}`, `發到 ${briefTarget.name}`)) : null,
           h("button", { class: "btn sm", "data-prs-batch-copy": String(b.n), ...(b.n === 1 ? { autofocus: true } : {}), onclick: async (e) => { const ok = await copy(text); e.currentTarget.textContent = ok ? T("Copied", "已複製") : T("Could not copy", "無法複製"); } }, T("Copy this one", "複製這張"))),
         h("pre", { class: "pw-pre", "data-prs-batch-text": String(b.n) }, text),
+        ...b.units.filter((u) => u.noFile).map((u) => setupProd(u.repo, ids, lang)),
         b.ops.length ? h("div", { class: "pw-propbox" }, h("b", { class: "pw-small" }, P("Before going live", "上線前要處理")),
           b.ops.map((o) => h("div", { class: "pw-check", "data-prs-brief-op": o.kind }, h("span", { class: `badge ${OPS[o.kind === "metric" ? "alert" : o.kind][0]}` }, opTag(o, P)), h("span", { class: "pw-optext" }, opText(o, P)), extLink(o.url, o.path ? `${o.path}${o.line ? `:${o.line}` : ""}` : P(`${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`, `${o.pr.split("/")[1]} body · ${o.heading || "Rollout"}`), { class: "mono faint pw-small" })))) : null); })); };
   draw();
@@ -602,21 +613,29 @@ function slackChecks() {
   };
   draw(); return box;
 }
-function settingsModal() {
+// o.addEnv: an environment begun elsewhere (the brief's Set up production), added at the end with the focus on its first
+// empty field; o.onSaved runs after a save
+function settingsModal(o = {}) {
   const s = structuredClone(PW.data?.settings || {}), base = structuredClone(PW.data?.settings || {}), envs = s.environments || [];
+  const added = o.addEnv || null; if (added) envs.push(added);
+  // repositories other file environments read: offered for the new one, never filled in by themselves
+  const repoSug = () => added?.detect?.kind === "file" && !added.detect.repository ? [...new Set(envs.filter((e) => e !== added && e.detect?.kind === "file" && e.detect.repository).map((e) => e.detect.repository))] : [];
   const cb = (k, en, tw) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-which": k, checked: !!s.which?.[k], onchange: (e) => { s.which[k] = e.target.checked; } }), " ", T(en, tw));
   const csv = (key, label, get, set) => h("label", { class: "field" }, h("span", { class: "lbl" }, label), h("input", { class: "input", "data-prs-set": key, value: get().join(", "), oninput: (e) => set(e.target.value.split(",").map((x) => x.trim()).filter(Boolean)) }));
   const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" });
   const KINDS = [["deployment", T("GitHub Deployment to an environment", "GitHub Deployment 到某個環境")], ["check", T("A check run by name on the head", "head 上某個名稱的 check run")], ["branch", T("The latest deployment of a branch containing the head", "某個 branch 最新的部署包含這個 head")], ["file", T("An image tag in a file in a repository", "某個 repo 的檔案裡的 image tag")]];
   const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", "image: registry/app:{tag}"], ["ref", T("ref (optional)", "ref（可省略）")]] };
-  const drawEnvs = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i) },
+  const firstEmpty = (e) => e === added ? (FIELDS[e.detect?.kind] || []).find(([f]) => f !== "ref" && !e.detect?.[f])?.[0] ?? null : null;
+  const drawEnvs = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i), "data-prs-env-new": e === added ? "" : null },
     h("input", { class: "input pw-envname", value: e.name || "", placeholder: T("name", "名稱"), "aria-label": T("Environment name", "環境名稱"), oninput: (ev) => { e.name = ev.target.value; } }),
     h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!e.production, onchange: (ev) => { e.production = ev.target.checked; } }), T(" production", " 正式")),
     h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, KINDS.map(([k, l]) => h("option", { value: k, selected: e.detect?.kind === k }, l))),
-    ...(FIELDS[e.detect?.kind] || []).map(([f, l]) => h("input", { class: "input", value: e.detect?.[f] || "", placeholder: l, "aria-label": l, oninput: (ev) => { e.detect[f] = ev.target.value; } })),
+    ...(FIELDS[e.detect?.kind] || []).map(([f, l]) => h("input", { class: "input", value: e.detect?.[f] || "", placeholder: l, "aria-label": l, "data-prs-env-field": f, ...(f === firstEmpty(e) ? { autofocus: true } : {}), oninput: (ev) => { e.detect[f] = ev.target.value; } })),
     h("input", { class: "input", value: (e.repos || []).join(", "), placeholder: T("only these repositories (optional)", "只用在這些 repo（可省略）"), "aria-label": T("Repositories", "repo"), oninput: (ev) => { e.repos = ev.target.value.split(",").map((x) => x.trim()).filter(Boolean); } }),
     h("button", { class: "pw-x", "aria-label": T("Remove this environment", "移除這個環境"), onclick: () => { envs.splice(i, 1); drawEnvs(); } }, icon("x")),
-    e.detect?.kind === "file" ? h("p", { class: "faint pw-small pw-envhint", "data-prs-template-hint": "" }, T("Studio finds this line in the file and reads the tag at {tag}; the tag must end in the commit (7–40 hex characters), e.g. app:1.4.0-3f2a1c9.", "Studio 在檔案裡找這一行，讀 {tag} 位置的 tag；tag 結尾要是 commit（7–40 個十六進位字元），例如 app:1.4.0-3f2a1c9。")) : null)));
+    e.detect?.kind === "file" ? h("p", { class: "faint pw-small pw-envhint", "data-prs-template-hint": "" }, T("Studio finds this line in the file and reads the tag at {tag}; the tag must end in the commit (7–40 hex characters), e.g. app:1.4.0-3f2a1c9.", "Studio 在檔案裡找這一行，讀 {tag} 位置的 tag；tag 結尾要是 commit（7–40 個十六進位字元），例如 app:1.4.0-3f2a1c9。")) : null,
+    e === added && repoSug().length ? h("div", { class: "pw-sug pw-envhint", "data-prs-env-suggest": "" }, h("span", { class: "faint pw-small" }, T("Suggested, from your other environments:", "建議（來自其他環境）：")),
+      ...repoSug().map((r) => h("button", { class: "badge", "data-prs-env-suggest-repo": r, onclick: () => { added.detect.repository = r; drawEnvs(); envBox.querySelector(`[data-prs-env-new] [data-prs-env-field="${firstEmpty(added) || "path"}"]`)?.focus(); } }, "+ ", r))) : null)));
   drawEnvs();
   const err = h("p", { class: "pw-err", role: "alert", hidden: true });
   const close = pwModal(T("Pull requests settings", "Pull requests 設定"), [
@@ -648,7 +667,7 @@ function settingsModal() {
     err,
     foot(h("span", { class: "x-grow" }), h("button", { class: "btn", onclick: () => close() }, T("Cancel", "取消")), h("button", { class: "btn primary", "data-prs-settings-save": "", onclick: async () => {
       s.environments = envs;
-      try { PW.data = await postJ("/api/prs/settings", { settings: s, base }); setCount(PW.data.count); close(); render(); flash(T("Settings saved", "設定已儲存")); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings" });
+      try { PW.data = await postJ("/api/prs/settings", { settings: s, base }); setCount(PW.data.count); close(); render(); flash(T("Settings saved", "設定已儲存")); o.onSaved?.(); } catch (e) { err.hidden = false; err.textContent = e.message; } } }, T("Save", "儲存")))], { wide: true, id: "settings" });
 }
 
 // opening the page (a link, a reload, the sidebar) loads it and asks for a refresh; a redraw while it is open does not

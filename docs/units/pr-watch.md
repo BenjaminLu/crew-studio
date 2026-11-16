@@ -217,7 +217,13 @@ times, writes nothing). The dialog shows one card per batch, each with its own C
   GitHub lists them, first 20) whose commit contains every selected merge commit of the unit up to this batch, none of a
   later batch's, and whose CI is green (no failing or running check run or status; no CI at all is allowed). The image
   tag is taken to be the git tag's name. When that tag also carries a merged pull request that was not selected, the
-  brief says so. No such tag, or no file environment: the line says what is missing instead.
+  brief says so. No such tag: the line says what is missing instead. No production environment reading the unit's tag
+  from a file: the text says only `<repo> · image tag: not tracked (no production environment reads it from a file)`
+  (no instruction to whoever reads it), and the dialog shows one action beside it, **Set up production** (the reason on
+  its icon). It opens the settings with a new environment begun: named production, production ticked, an image tag in a
+  file, only this repository, its file repository, path and template empty with the focus on the first. Repositories
+  other file environments read are offered as suggestions and fill the field only when picked. Saving opens the brief
+  again, in the language it was in, with the line old → new.
 - **Before going live** (上線前要處理), each item with the address of its file and line at the merge commit (the body's:
   the pull request) — no address, no item: files matching the captain's path rules (settings: migrations, configuration,
   secrets; CODEOWNERS-style patterns, by default `migrations/`, `migrate/`, `*.sql`); configuration and secrets the added
@@ -469,7 +475,10 @@ sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slac
     items from path rules and added lines, each with its address; the suggested alert rule; the rollout section quoted;
     dependent pull requests in different batches, an unselected dependency added before with its reason; old → new tag
     skipping a later batch's tag and a red CI; a tag carrying an unselected pull request said; in the page the badges,
-    the button, one card and one Copy per batch, Simplified Chinese.
+    the button, one card and one Copy per batch, Simplified Chinese; with no production file environment the neutral
+    note in the text and the copy, Set up production opening the settings with the environment begun and a suggested
+    repository not filled in, and after saving the brief again with the image line (pr-watch-ui.mjs "the text has a
+    neutral note …", "saved: the brief opens again …").
 20. Marked in production by hand (pr-watch-merged.ts "marked in production by hand", the UI suite): a row marked moves
     to Live with the mark time and stays there after a refresh and a restart; the brief no longer offers it or warns it is
     carried; Undo returns it; the ticked rows are marked in one action; a live, unlisted or empty mark and an Undo of a
