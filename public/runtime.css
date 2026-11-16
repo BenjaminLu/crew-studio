@@ -278,6 +278,9 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .fw-skill { font-size: 12px; color: var(--accent, #4b7bec); }
 .fw-roadmap { opacity: .75; } .fw-roadmap .badge { font-size: 11px; }
 .fw-staffing tr.missing td { color: var(--danger, #c0392b); }
+/* the read-only page of an internal workflow: the branch table, whose "when" sentences wrap */
+.fw-staffing.wf-branches { display: table; }
+.fw-staffing.wf-branches td:nth-child(2) { white-space: normal; word-break: normal; }
 /* readiness gate: stages 1-5, each problem with its step, reason and fix */
 .gate { display: grid; gap: 10px; min-width: 0; }
 .gate h3 { margin: 4px 0 0; font-size: 15px; }

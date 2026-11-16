@@ -42,6 +42,19 @@ export type ShepherdInput = { draft: boolean; author: string; next: Step; ci: st
   /** the captain chose to skip the test for this head (the QA card's B) */ skipEvidence?: boolean };
 export type Shepherd = { branch: Branch; why: L; note?: Note; stale?: string[] };
 /**
+ * Each branch of the shepherd and the card it makes, as the Workflows page shows the internal pr-follow workflow (read-only).
+ * A Record over Branch: a branch added to the shepherd without a line here does not compile.
+ */
+export const FOLLOW_BRANCHES: Record<Branch, { when: L; card: L | null }> = {
+  wait: { when: { en: "Draft, unread, a required reviewer, a dependency, an environment, CI running, or a change request still with its reviewer", tw: "草稿、未讀、必要 reviewer、相依 PR、環境、CI 還在跑，或要求修改的 reviewer 還沒重看" }, card: null },
+  "code-change": { when: { en: "A reviewer asked for a code change, or evidence or CI fails: back to the author", tw: "reviewer 要求改 code，或證據、CI 失敗：交回作者" }, card: null },
+  "needs-evidence": { when: { en: "No test evidence on the current head, or a reviewer asked for it", tw: "目前的 head 沒有測試證據，或 reviewer 要求提供" }, card: { en: "Ask QA to test", tw: "請 QA 測試" } },
+  "evidence-covers-head": { when: { en: "The evidence covers the current head; a reviewer's verdict is on an older one", tw: "證據已覆蓋目前的 head；reviewer 的意見還停在舊 head" }, card: { en: "Ask reviewers to look again", tw: "請 reviewer 重驗" } },
+  "missing-approvals": { when: { en: "The base branch's rules still miss approvals", tw: "base branch 的規則還缺 approve" }, card: { en: "Ask for approval", tw: "請 approve" } },
+  mergeable: { when: { en: "The base branch's rules, the required reviewers, the evidence and CI are all satisfied", tw: "base branch 的規則、必要 reviewer、證據、CI 都滿足" }, card: { en: "Ready to merge", tw: "可合併" } },
+  ask: { when: { en: "A reviewer's comment Studio cannot classify by rules, or a skipped test to answer", tw: "規則無法分類的 reviewer 意見，或略過實測後要回覆" }, card: { en: "Your call", tw: "等你決定" } },
+};
+/**
  * Where a pull request goes next. State, evidence and CI by rules; a reviewer's change request by its quoted sentence
  * (a low-confidence one asks the captain). Mergeable is not built in: it is the next step "ready" (the base branch's own
  * rules all satisfied, the required reviewers, the evidence when a source is set) and CI passing (or none configured).

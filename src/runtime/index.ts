@@ -86,6 +86,8 @@ export type RuntimeDeps = {
   coffeeVideo?:Parameters<typeof installCoffeeKit>[1]["video"];
   coffeeFilmStatus?:{ready:boolean;reason:string|null};
   coffeeChoice?:()=>{provider:"codex";model:string;effort:string|null}|null;
+  /** what the Workflows page says about a visible internal workflow (pr-follow: where it is started and whether that is on) */
+  internalAbout?:(id:string)=>unknown;
   /** Studio's configured model per provider (chat settings, env, Codex config): the startup workflow's default when no exact model param was given. */
   startupModel?:(provider:"claude"|"codex"|"cursor")=>string|null|undefined;
   generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection, crew?: { model: string; effort: string | null; provider?: "cursor" }) => Promise<import("../providers/cursor-image").StudioImage>;
@@ -434,6 +436,8 @@ export function createRuntime(d: RuntimeDeps) {
       }
       {const packaged=/^\/api\/wf\/([a-z0-9-]+)\/package$/.exec(p);if(packaged){
         if(req.method!=='GET')return json({error:'GET required'},405);if(who.kind!=='desktop')return json({error:'Export packages on desktop'},403);
+        // a package adopts as a new local workflow: an internal one would become a startable copy
+        if(defs.internal(packaged[1]))return json({error:'This workflow is internal: Studio starts it itself and it is not packaged / 此流程為內部流程，不能匯出成套件。',code:'workflow_internal'},409);
         const versions=url.searchParams.getAll('v'),value=versions[0];if(versions.length!==1||!value||!/^[1-9][0-9]*$/.test(value)||!Number.isSafeInteger(Number(value)))return json({error:'Choose one explicit saved version'},400);
         const stored=defs.versions(packaged[1]).find(v=>v.version===Number(value));if(!stored)return json({error:'No such saved workflow version'},404);
         return new Response(snapshotPackage(stored,d.dataDir),{headers:{'content-type':'application/zip','content-disposition':`attachment; filename="${stored.id}-v${stored.version}.crew.zip"`,'cache-control':'no-store'}});
@@ -464,7 +468,7 @@ export function createRuntime(d: RuntimeDeps) {
         try{d.send('workflow-names',{workflow:b.workflow,names:defs.names.map()});}catch{}
         return json({workflow:b.workflow,displayName:after,renamed:done.renamed,defaultName:DEFAULT_DISPLAY_NAMES[b.workflow]??defs.get(b.workflow)?.name??b.workflow,names:defs.names.map()});
       }
-      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), trash:defs.trashCatalog(), names:defs.names.map(), checks: engine.registry.all().map(checkView) });
+      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), internal: defs.internalCatalog().map((w) => ({ ...w, about: d.internalAbout?.(w.id) ?? null })), trash:defs.trashCatalog(), names:defs.names.map(), checks: engine.registry.all().map(checkView) });
       if(readiness){const gated=await readiness.route(p,url,req.method,writing,b,by,who);if(gated)return gated;}
       const drafted=await draftRoute(drafts,p,req.method,writing,b,by);if(drafted)return drafted;
       if (p === "/api/wf" && writing) {
@@ -488,11 +492,13 @@ export function createRuntime(d: RuntimeDeps) {
       let m = /^\/api\/wf\/([a-z0-9-]+)(?:\/(layout))?$/.exec(p);
       if (m) {
         const id = m[1];
+        // an internal workflow is Studio's own: shown read-only, never saved or laid out from the page or the API
+        if (writing && defs.internal(id)) return json({ error: "This workflow is internal: Studio starts it itself and it cannot be edited / 此流程為內部流程：由 Studio 自己啟動，不能編輯。", code: "workflow_internal" }, 409);
         if (m[2] === "layout" && writing) return json({ layout: defs.setLayout(id, Number(b?.version), b?.positions ?? {}) });
         if (!writing) {
           const v = url.searchParams.get("v"); const def = defs.get(id, v ? Number(v) : undefined); if (!def) return json({ error: "no such workflow" }, 404);
           // displayName is beside def, never in it: the editor saves def back, and a rename must not become a definition change
-          return json({ def, displayName:defs.displayName(id), renamed:!!defs.names.overrides()[id], defaultName:DEFAULT_DISPLAY_NAMES[id]??defs.versions(id).at(-1)?.name??id, personal:defs.personal(id), trash:defs.trashState(id), selectable:defs.selectable(id,def.version), held:defs.held(id), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
+          return json({ def, displayName:defs.displayName(id), renamed:!!defs.names.overrides()[id], defaultName:DEFAULT_DISPLAY_NAMES[id]??defs.versions(id).at(-1)?.name??id, personal:defs.personal(id), trash:defs.trashState(id), selectable:defs.selectable(id,def.version), held:defs.held(id), internal:defs.internal(id)?{ about:d.internalAbout?.(id)??null }:null, coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
         // every workflow's node settings are checked the same way (provider, model, effort, agent or loop only); a role-skill ref a bundled node already had is kept as is

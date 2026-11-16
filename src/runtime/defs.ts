@@ -232,6 +232,10 @@ export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved
 
 const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
 const INTERNAL_WORKFLOWS=new Set(["local-project-register","firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github","firstmate-grant-merge","crew-change","issue-triage","issue-categories","review-room-host","review-room-dir-host","pr-watch-apply-depends","pr-follow"]);
+/** Internal workflows the Workflows page still shows, read-only, under "Built in: started by Studio" (pr-follow: the Pull
+ *  requests page's follow-through). Each stays internal: no person or peer starts, edits, renames, trashes or holds it. */
+const VISIBLE_INTERNAL=new Set(["pr-follow"]);
+const INTERNAL_READONLY="internal: Studio keeps this workflow; it cannot be edited, renamed or laid out";
 /** Kept and editable, but no new Task starts until its runtime is activated. The reason is shown in the catalog. */
 const HELD_REASON={en:"held: GitHub review does not run end to end until it is rebuilt from code-firstmate",zh:"暫停：GitHub 審查改由 code-firstmate 重建前無法端到端執行"};
 /**
@@ -257,6 +261,7 @@ export class WorkflowDefs {
   displayName(id: string): string { return this.names.of(id, this.versions(id).at(-1)?.name); }
   /** Rename or reset a workflow's display name. It may not take another workflow's id, display name or default name. */
   rename(id: string, name: unknown, by: string) {
+    if (INTERNAL_WORKFLOWS.has(id)) throw new Error(INTERNAL_READONLY);
     return this.names.set(id, name, by, () => {
       const shown = this.names.map(), out: string[] = [];
       for (const other of new Set([...this.ids(), ...Object.keys(DEFAULT_DISPLAY_NAMES)])) {
@@ -337,11 +342,15 @@ export class WorkflowDefs {
   /** Exact versions remain readable for pinned Tasks; only public choices enter a new dispatch. */
   selectable(id:string,version?:number){const d=this.get(id,version);return !!d&&!this.trashed(id)&&!INTERNAL_WORKFLOWS.has(id)&&!(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"))&&!this.held(id);}
   /** Why a kept workflow cannot start a Task yet (the GitHub review template and copies of it), or null. */
-  held(id:string):{en:string;zh:string}|null{return this.versions(id).length&&this.previewOnly(id)?HELD_REASON:null;}
+  held(id:string):{en:string;zh:string}|null{return !INTERNAL_WORKFLOWS.has(id)&&this.versions(id).length&&this.previewOnly(id)?HELD_REASON:null;}
   catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
   /** Why a person cannot start this workflow from the catalog (null: they can). */
   unavailable(id:string):string|null{const d=this.get(id);if(!d)return "not installed";if(this.trashed(id))return "in the trash";if(INTERNAL_WORKFLOWS.has(id))return "internal: Studio starts it itself (an approval, a setup step or the review room), never a person or a peer";
     if(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"))return "retired: kept for its old Tasks, not offered for new work";const h=this.held(id);return h?h.en:null;}
+  /** An internal workflow: Studio starts it itself; it is never selectable, editable, trashable or held. */
+  internal(id:string){return INTERNAL_WORKFLOWS.has(id);}
+  /** The internal workflows the Workflows page shows read-only (VISIBLE_INTERNAL); the other internal ones stay hidden. */
+  internalCatalog(){return this.list().filter(w=>VISIBLE_INTERNAL.has(w.id)&&INTERNAL_WORKFLOWS.has(w.id)).map(w=>({...w,internal:true as const}));}
   /** Workflows kept in the catalog for editing that the Start form and start routes do not offer. */
   heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!this.trashed(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
   /** An empty folder, or a package-import (imp-*) folder that cannot be read, is left out instead of breaking the whole catalog. */
@@ -350,6 +359,7 @@ export class WorkflowDefs {
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
   setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {
+    if (INTERNAL_WORKFLOWS.has(id)) throw new Error(INTERNAL_READONLY);
     const d = this.versions(id).find((x) => x.version === v); if (!d) throw new Error("no such version");
     const clean: Record<string, { x: number; y: number }> = { ...this.layout(id, v) };
     for (const [k, p] of Object.entries(pos ?? {})) if (d.nodes.some((n) => n.id === k) && Number.isFinite(Number(p?.x)) && Number.isFinite(Number(p?.y))) clean[k] = { x: Math.round(Number(p.x)), y: Math.round(Number(p.y)) };
@@ -411,6 +421,7 @@ export class WorkflowDefs {
     return withLock(this.dir,"create-"+id,()=>this.saveActive(id,body,by,note));
   }
   private saveActive(id: string, body: any, by: string, note?: string): WDef {
+    if(INTERNAL_WORKFLOWS.has(id))throw new Error(INTERNAL_READONLY);
     if(this.trashed(id))throw new Error("Restore this workflow from Trash before editing");
     const prev = this.get(id); if (!prev) throw new Error("no such workflow");
     if (body?.base == null) throw new Error(`say which version you edited (base); v${prev.version} is the latest`);
