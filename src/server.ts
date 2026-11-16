@@ -1,3 +1,4 @@
+import { watchStarter, DETACHED_ENV } from "./parent-watch"; // first: reads the starter pid before anything else runs
 import {teamVerifier,teamProbeContext} from './onboarding-team-probe';
 import { firstmateTurnNote, escalationShown, questionShown } from "./firstmate-turn";
 import {refreshOwnWorkflowClaude} from './providers/own-workflow-claude-refresh';
@@ -28,6 +29,7 @@ import {projectPrAdapter,GitHubPrAdapter,type GitHubProjectGrant} from './adapte
 //   CREW_RECENT_DAYS  how far back the board lists tasks (default 3)
 //   CREW_GH=0       do not poll GitHub;  CREW_GH_REPO  owner/name (default: the firstmate checkout's GitHub origin)
 //   CREW_DATA       Studio's own store: intents, intent links, artifacts (default ./data)
+//   CREW_DETACHED   the starter's pid: this Studio outlives it on purpose (scripts/live-release.ts); otherwise it stops once its starter is gone (src/parent-watch.ts)
 //   CREW_FILE_ALLOW colon-separated directories artifact files may be served from (default: the main session's project folder, CREW_DATA/workspace)
 //   CREW_EXAMPLE_WORKFLOWS=1  also seed the example workflows (the startup competition) on a fresh data folder
 //   main session (M2.5): CREW_MAIN_PROJECT  the firstmate repo whose sessions Studio may drive (default: Studio-owned workspace; an explicit legacy adapter keeps its project)
@@ -248,7 +250,11 @@ main.onEvent = (e: HostEvent) => {
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>{const v=main.view();return v.state!=="detached"&&v.host!=="claude"&&v.host!=="cursor";},configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 // Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{try{terminals.shutdown();}catch{}try{stopLocal();}catch{}void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
+let stopping=false;
+const shutdown=()=>{if(stopping)return;stopping=true;try{terminals.shutdown();}catch{}try{stopLocal();}catch{}void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return (v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));};
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,shutdown);
+// a Studio does not outlive whoever started it (src/parent-watch.ts): once that process is gone, the same shutdown, bounded
+watchStarter({onGone:(p)=>{console.log(`crew-studio: the process that started this Studio (pid ${p}) is gone; shutting down. Start it detached on purpose with ${DETACHED_ENV}=<starter pid> (scripts/live-release.ts does).`);setTimeout(()=>process.exit(1),8000);shutdown();}});
 // a fresh Claude primary: the model the Claude account card checks, Studio's own config folder, the crew token
 const claudePrimaryPair = () => { const model = chatSettings().models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5"; let effort: string | null = null; try { effort = configuredClaudeEffort(model); } catch {} return { model, effort }; };
 // a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone

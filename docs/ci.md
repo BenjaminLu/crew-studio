@@ -5,7 +5,8 @@ runs core and full suites on `chore/github-ci-*` pushes so the initial branch ca
 be verified before the workflow reaches the default branch. Nothing in this workflow deploys Studio.
 
 - **Linux portable checks** runs environment isolation, temporary Git protection,
-  CI runner regression checks, and the build on Ubuntu 24.04. It does not assert
+  a Studio's lifetime (it stops once its starter is gone), CI runner regression checks,
+  and the build on Ubuntu 24.04. It does not assert
   Linux round-sandbox support.
 - **macOS core** runs every command in the existing `test:core` script on macOS 15,
   including real sandboxed acceptance and rendering. A missing prerequisite is a

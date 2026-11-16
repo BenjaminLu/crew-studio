@@ -343,31 +343,32 @@ import b339 from "../docs/units/secrets-migrate-r5.md" with { type: "file" };
 import b340 from "../docs/units/secrets-redaction-r3.md" with { type: "file" };
 import b341 from "../docs/units/secrets-redaction-r4.md" with { type: "file" };
 import b342 from "../docs/units/secrets-v1-model.md" with { type: "file" };
-import b343 from "../docs/units/shared-github-poller.md" with { type: "file" };
-import b344 from "../docs/units/shared-media-library.md" with { type: "file" };
-import b345 from "../docs/units/sidebar-workflow-create.md" with { type: "file" };
-import b346 from "../docs/units/skill-packages.md" with { type: "file" };
-import b347 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
-import b348 from "../docs/units/startup-firstmate.md" with { type: "file" };
-import b349 from "../docs/units/startup-recursion.md" with { type: "file" };
-import b350 from "../docs/units/takeover-codex.md" with { type: "file" };
-import b351 from "../docs/units/takeover.md" with { type: "file" };
-import b352 from "../docs/units/task-round.md" with { type: "file" };
-import b353 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
-import b354 from "../docs/units/transcripts-attempts.md" with { type: "file" };
-import b355 from "../docs/units/transcripts.md" with { type: "file" };
-import b356 from "../docs/units/ui-test-waits.md" with { type: "file" };
-import b357 from "../docs/units/visual-sandbox.md" with { type: "file" };
-import b358 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
-import b359 from "../docs/units/web-terminal.md" with { type: "file" };
-import b360 from "../docs/units/workflow-definition-export.md" with { type: "file" };
-import b361 from "../docs/units/workflow-overview.md" with { type: "file" };
-import b362 from "../docs/units/workflow-packages.md" with { type: "file" };
-import b363 from "../docs/units/workflow-rename.md" with { type: "file" };
-import b364 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
-import b365 from "../docs/units/worktrees.md" with { type: "file" };
-import b366 from "../docs/v2-spec.md" with { type: "file" };
-import b367 from "../docs/w29-local-sandbox.md" with { type: "file" };
+import b343 from "../docs/units/server-lifetime.md" with { type: "file" };
+import b344 from "../docs/units/shared-github-poller.md" with { type: "file" };
+import b345 from "../docs/units/shared-media-library.md" with { type: "file" };
+import b346 from "../docs/units/sidebar-workflow-create.md" with { type: "file" };
+import b347 from "../docs/units/skill-packages.md" with { type: "file" };
+import b348 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
+import b349 from "../docs/units/startup-firstmate.md" with { type: "file" };
+import b350 from "../docs/units/startup-recursion.md" with { type: "file" };
+import b351 from "../docs/units/takeover-codex.md" with { type: "file" };
+import b352 from "../docs/units/takeover.md" with { type: "file" };
+import b353 from "../docs/units/task-round.md" with { type: "file" };
+import b354 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
+import b355 from "../docs/units/transcripts-attempts.md" with { type: "file" };
+import b356 from "../docs/units/transcripts.md" with { type: "file" };
+import b357 from "../docs/units/ui-test-waits.md" with { type: "file" };
+import b358 from "../docs/units/visual-sandbox.md" with { type: "file" };
+import b359 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
+import b360 from "../docs/units/web-terminal.md" with { type: "file" };
+import b361 from "../docs/units/workflow-definition-export.md" with { type: "file" };
+import b362 from "../docs/units/workflow-overview.md" with { type: "file" };
+import b363 from "../docs/units/workflow-packages.md" with { type: "file" };
+import b364 from "../docs/units/workflow-rename.md" with { type: "file" };
+import b365 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
+import b366 from "../docs/units/worktrees.md" with { type: "file" };
+import b367 from "../docs/v2-spec.md" with { type: "file" };
+import b368 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -713,29 +714,30 @@ export const BUNDLED: Record<string, string> = {
   "docs/units/secrets-redaction-r3.md": b340,
   "docs/units/secrets-redaction-r4.md": b341,
   "docs/units/secrets-v1-model.md": b342,
-  "docs/units/shared-github-poller.md": b343,
-  "docs/units/shared-media-library.md": b344,
-  "docs/units/sidebar-workflow-create.md": b345,
-  "docs/units/skill-packages.md": b346,
-  "docs/units/spec-scope-bootstrap.md": b347,
-  "docs/units/startup-firstmate.md": b348,
-  "docs/units/startup-recursion.md": b349,
-  "docs/units/takeover-codex.md": b350,
-  "docs/units/takeover.md": b351,
-  "docs/units/task-round.md": b352,
-  "docs/units/transcripts-attempts-followups.md": b353,
-  "docs/units/transcripts-attempts.md": b354,
-  "docs/units/transcripts.md": b355,
-  "docs/units/ui-test-waits.md": b356,
-  "docs/units/visual-sandbox.md": b357,
-  "docs/units/web-open-task-reopen.md": b358,
-  "docs/units/web-terminal.md": b359,
-  "docs/units/workflow-definition-export.md": b360,
-  "docs/units/workflow-overview.md": b361,
-  "docs/units/workflow-packages.md": b362,
-  "docs/units/workflow-rename.md": b363,
-  "docs/units/workflow-semantic-comparison.md": b364,
-  "docs/units/worktrees.md": b365,
-  "docs/v2-spec.md": b366,
-  "docs/w29-local-sandbox.md": b367,
+  "docs/units/server-lifetime.md": b343,
+  "docs/units/shared-github-poller.md": b344,
+  "docs/units/shared-media-library.md": b345,
+  "docs/units/sidebar-workflow-create.md": b346,
+  "docs/units/skill-packages.md": b347,
+  "docs/units/spec-scope-bootstrap.md": b348,
+  "docs/units/startup-firstmate.md": b349,
+  "docs/units/startup-recursion.md": b350,
+  "docs/units/takeover-codex.md": b351,
+  "docs/units/takeover.md": b352,
+  "docs/units/task-round.md": b353,
+  "docs/units/transcripts-attempts-followups.md": b354,
+  "docs/units/transcripts-attempts.md": b355,
+  "docs/units/transcripts.md": b356,
+  "docs/units/ui-test-waits.md": b357,
+  "docs/units/visual-sandbox.md": b358,
+  "docs/units/web-open-task-reopen.md": b359,
+  "docs/units/web-terminal.md": b360,
+  "docs/units/workflow-definition-export.md": b361,
+  "docs/units/workflow-overview.md": b362,
+  "docs/units/workflow-packages.md": b363,
+  "docs/units/workflow-rename.md": b364,
+  "docs/units/workflow-semantic-comparison.md": b365,
+  "docs/units/worktrees.md": b366,
+  "docs/v2-spec.md": b367,
+  "docs/w29-local-sandbox.md": b368,
 };

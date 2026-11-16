@@ -7,6 +7,8 @@
 // once it is gone). The timer is unref'd: it never keeps a finished entry alive. An entry started by init itself
 // (parent pid 1) has nothing to watch.
 
+import { execFileSync } from "node:child_process";
+
 const POLL_ENV = "CREW_TEST_ORPHAN_POLL_MS";
 
 /** Whether pid is alive: EPERM means alive under another user, ESRCH means gone. */
@@ -34,4 +36,22 @@ export function watchParent(o = {}) {
   }, pollMs);
   timer.unref?.();
   return () => clearInterval(timer);
+}
+
+/**
+ * When the entry ends, a Studio it started and left running (`src/server.ts` or `src/main.ts`, its direct child) is
+ * stopped with SIGTERM. Belt and braces: a Studio stops itself once its starter is gone (src/parent-watch.ts); this
+ * only makes it immediate. Only this process's own children are touched.
+ */
+export function stopLeftServers(o = {}) {
+  const self = o.self ?? process.pid;
+  let rows = "";
+  try { rows = execFileSync("ps", ["-A", "-o", "pid=,ppid=,command="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }); } catch { return []; }
+  const left = [];
+  for (const line of rows.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!m || Number(m[2]) !== self || !/(?:^|[\s/])src\/(?:server|main)\.ts(?:\s|$)/.test(m[3])) continue;
+    try { process.kill(Number(m[1]), "SIGTERM"); left.push(Number(m[1])); } catch {}
+  }
+  return left;
 }

@@ -30,7 +30,7 @@ if(sub==="open"){mkdirSync(data,{recursive:true});writeFileSync(join(data,"opene
 mkdirSync(data,{recursive:true});
 if(existsSync(join(data,"fail-start-"+VERSION))){console.error("stub "+VERSION+" refuses to start");process.exit(3);}
 if(existsSync(join(data,"slow-start-"+VERSION)))await Bun.sleep(60000);
-writeFileSync(join(data,"seen-"+VERSION+".json"),JSON.stringify({cwd:process.cwd(),secret:createHash("sha256").update(process.env.STUB_SECRET||"").digest("hex"),dep:process.env.CREW_LOCAL_DEPENDENCY_ROOT||null,inheritedSecret:process.env.GITHUB_TOKEN||null}));
+writeFileSync(join(data,"seen-"+VERSION+".json"),JSON.stringify({cwd:process.cwd(),secret:createHash("sha256").update(process.env.STUB_SECRET||"").digest("hex"),dep:process.env.CREW_LOCAL_DEPENDENCY_ROOT||null,inheritedSecret:process.env.GITHUB_TOKEN||null,detachedOnPurpose:process.env.CREW_DETACHED===String(process.ppid)}));
 const boot=randomBytes(24).toString("hex"),token=randomBytes(32).toString("hex");const port=Number(process.env.CREW_PORT||4210);
 const server=Bun.serve({port,hostname:"127.0.0.1",fetch(req){const u=new URL(req.url);if(u.pathname==="/api/instance"){const c=u.searchParams.get("challenge");return Response.json({pid:process.pid,boot,version:VERSION,...(c&&/^[a-f0-9]{48}$/.test(c)?{proof:createHmac("sha256",token).update("crew-launch-v1\\0"+boot+"\\0"+c).digest("hex")}:{})});}return new Response("ok "+VERSION);}});
 const rt=process.env.CREW_RUNTIME_DIR;let rec=null;if(rt){mkdirSync(rt,{recursive:true,mode:0o700});chmodSync(rt,0o700);rec=join(rt,boot+".json");writeFileSync(rec,JSON.stringify({schema:1,boot,pid:process.pid,origin:"http://127.0.0.1:"+server.port,data}),{mode:0o600});writeFileSync(join(rt,boot+".key"),token,{mode:0o600});}
@@ -93,6 +93,8 @@ try {
   ok(existsSync(relA) && sh(relA, "git", "rev-parse", "HEAD") === A, "release A is a worktree at exactly A");
   ok(live()?.live?.sha === A, "live.json records A");
   ok((await instance(port))?.version === "A", "the server on the live port is release A");
+  // src/parent-watch.ts: the live Studio is marked as detached on purpose by the script that started it, so it outlives the script
+  ok(JSON.parse(readFileSync(join(data, "seen-A.json"), "utf8")).detachedOnPurpose === true, "release A was started with CREW_DETACHED naming its starter (it outlives live-release)");
   ok(await ended(legacyP), "the legacy dev-checkout instance was stopped (exited, not just signalled)");
   ok(otherP.exitCode === null && (await instance(otherPort))?.version === "OTHER", "a Studio process with another data dir and port is not stopped");
   ok(!existsSync(join(relA, "src", "dirty-untracked.ts")) && !readFileSync(join(relA, "src", "main.ts"), "utf8").includes("DIRTY"), "dirty dev-checkout files never reach the release");

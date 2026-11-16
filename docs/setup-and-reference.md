@@ -372,6 +372,23 @@ bun scripts/live-release.ts deploy --ref <live sha> --no-fetch   # start the liv
   them; deploy refuses while a step runs), then a live end-to-end check of the
   workflow the change touches. Deploy uses exactly the merged `origin/main` commit,
   whatever the dev checkout holds.
+- **Studio's lifetime.** A Studio does not outlive the process that started it
+  (`src/parent-watch.ts`). It reads its starter's pid at start, checks every 2 s
+  (`CREW_PARENT_POLL_MS`) whether that process is still there, and once it is gone
+  logs `the process that started this Studio (pid N) is gone` and runs the same
+  shutdown as SIGTERM (terminals, local runs, Codex and Claude sign-ins, the fresh
+  primary's detach), then exits (at most 8 s later). A test suite or an agent that
+  dies without stopping its server no longer leaves it holding ports for weeks.
+  Exempt: a Studio whose parent is pid 1 (launchd/init) from the start, and one
+  started with `CREW_DETACHED=<its starter's pid>`. Only live-release sets it
+  (deploy, rollback and the restart of a stopped dev instance), so the live board
+  outlives the script. The marker names a pid, so a process the live board itself
+  starts never inherits the exemption. `bun run dev`, `bun run start`, `crew-studio`
+  and `crew-studio launch` (or `Open Crew Studio.command`) keep their terminal as
+  parent: closing the terminal stops Studio, as before. To keep a hand-started Studio
+  running after its shell exits, start it with `CREW_DETACHED=$$ bun src/main.ts &`.
+  Deploy with a `live-release.ts` that sets the marker: an older one starts a
+  release that stops as soon as the script exits.
 - **Development instance.** The dev checkout can still run its own Studio, on another
   port and another data dir. Environment variables win over `.env`, so:
   `CREW_PORT=4211 CREW_DATA="$HOME/.crew-studio/dev-data" bun run dev`. Never start
