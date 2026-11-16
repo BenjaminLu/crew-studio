@@ -566,7 +566,10 @@ function sendingSection(s) {
   const shown = new Map(), resCls = (ok) => `pw-sendres${ok ? " ok" : ok === false ? " bad" : ""}`;
   const resEl = (row, attr, key) => { const v = shown.get(row); return h("span", { class: resCls(v?.[0]), [attr]: key, role: "status" }, v?.[1] ?? ""); };
   const enter = (e) => e.key === "Enter" && !e.isComposing && e.keyCode !== 229;
-  const edited = (row, e) => { shown.delete(row); const r = e.target.closest(".pw-envrow")?.querySelector(".pw-sendres"); if (r) { r.className = resCls(null); r.textContent = ""; } };
+  // a test DM is two steps: the first click or Enter only shows whose id it is (pending: the name Slack reported); the
+  // second sends. Editing the id, or its tool, starts over
+  const pending = new Map(), dmLabel = (c) => (pending.has(c) ? T("Send", "發送") : T("Send test DM", "發測試 DM"));
+  const edited = (row, e) => { shown.delete(row); if (pending.delete(row)) { const b = e.target.closest(".pw-envrow")?.querySelector("[data-prs-contact-test]"); if (b) b.textContent = dmLabel(row); } const r = e.target.closest(".pw-envrow")?.querySelector(".pw-sendres"); if (r) { r.className = resCls(null); r.textContent = ""; } };
   const drawT = () => tbox.replaceChildren(...s.sending.targets.map((t, i) => h("div", { class: "pw-envrow pw-sendrow", "data-prs-target-row": t.id },
       h("input", { class: "input", "aria-label": T("Name", "名稱"), value: t.name || "", placeholder: "#qa-requests", oninput: (e) => { t.name = e.target.value; } }),
       sel(TOOLS(), t.tool, (v) => { t.tool = v; }, T("Tool", "工具")),
@@ -579,10 +582,10 @@ function sendingSection(s) {
     h("div", {}, h("button", { class: "btn", "data-prs-target-add": "", onclick: () => { s.sending.targets.push({ id: `t${Date.now().toString(36)}`, name: "", tool: "slack", use: "any", url: "" }); drawT(); } }, T("+ Add a target", "＋ 加一個目標"))));
   const drawC = () => cbox.replaceChildren(...s.sending.contacts.map((c, i) => h("div", { class: "pw-envrow pw-contactrow", "data-prs-contact": c.gh },
       h("input", { class: "input mono", "aria-label": "GitHub", value: c.gh || "", placeholder: "qa-lead", oninput: (e) => { c.gh = e.target.value; } }),
-      sel(CTOOLS, c.tool, (v) => { c.tool = v; shown.delete(c); drawC(); }, T("Tool", "工具")),
+      sel(CTOOLS, c.tool, (v) => { c.tool = v; shown.delete(c); pending.delete(c); drawC(); }, T("Tool", "工具")),
       h("input", { class: "input mono", "aria-label": T("Their id or address in the chat tool", "對方在聊天工具裡的 ID 或地址"), "data-prs-contact-id": i, value: c.id || "", placeholder: T("Slack member id U0…, or an email", "Slack 成員 ID U0…，或 email"), oninput: (e) => { c.id = e.target.value; edited(c, e); },
         onkeydown: (e) => { if (enter(e) && c.tool === "slack") { e.preventDefault(); testDm(c); } } }),
-      c.tool === "slack" ? h("button", { class: "btn sm", "data-prs-contact-test": i, onclick: () => testDm(c) }, T("Send test DM", "發測試 DM")) : h("span"),
+      c.tool === "slack" ? h("button", { class: "btn sm", "data-prs-contact-test": i, onclick: () => testDm(c) }, dmLabel(c)) : h("span"),
       h("button", { class: "pw-x", "aria-label": T("Remove", "刪除"), onclick: () => { s.sending.contacts.splice(i, 1); drawC(); } }, icon("x")),
       resEl(c, "data-prs-contact-result", i))),
     h("div", {}, h("button", { class: "btn", "data-prs-contact-add": "", onclick: () => { s.sending.contacts.push({ gh: "", tool: "slack", id: "" }); drawC(); } }, T("+ Add a contact", "＋ 加聯絡人"))));
@@ -601,11 +604,15 @@ function sendingSection(s) {
         `已發出 —— 去 ${tool} 的 ${v.target || "頻道"} 看看（webhook 不會告訴 Studio 是哪個頻道）${v.unsaved ? "；尚未儲存" : ""}`)); }
     catch (err) { result(at, false, failed(err)); } finally { busy.delete(at); }
   }
+  const handle = (n) => String(n).replace(/^(.*) \(([^()]+)\)$/, "$1 (@$2)");
+  const relabel = (c) => { const i = s.sending.contacts.indexOf(c), b = i >= 0 ? cbox.querySelector(`[data-prs-contact-test="${i}"]`) : null; if (b) b.textContent = dmLabel(c); };
   async function testDm(c) {
-    const at = c; if (busy.has(at)) return; busy.add(at); result(at, null, T("Sending…", "發送中…"));
-    try { const v = await postJ("/api/prs/sending/test-dm", { id: String(c.id || "").trim(), token: s.sending.botToken, team: s.sending.slackTeam ?? "" });
-      result(at, true, T(`Sent — Slack opened DM ${v.channel} with ${v.name}`, `已發出 —— Slack 開了和 ${v.name} 的 DM ${v.channel}`)); }
-    catch (err) { result(at, false, failed(err)); } finally { busy.delete(at); }
+    const at = c; if (busy.has(at)) return; busy.add(at); const name = pending.get(c);
+    result(at, null, name === undefined ? T("Asking Slack who this is…", "問 Slack 這是誰…") : T("Sending…", "發送中…"));
+    try { const v = await postJ("/api/prs/sending/test-dm", { id: String(c.id || "").trim(), token: s.sending.botToken, team: s.sending.slackTeam ?? "", ...(name === undefined ? {} : { name }) });
+      if (v.confirm) { pending.set(c, v.name); result(at, null, T(`Send test DM to ${handle(v.name)}?`, `要發測試 DM 給 ${handle(v.name)} 嗎？`)); }
+      else { pending.delete(c); result(at, true, T(`Sent — Slack opened DM ${v.channel} with ${handle(v.name)}`, `已發出 —— Slack 開了和 ${handle(v.name)} 的 DM ${v.channel}`)); } }
+    catch (err) { pending.delete(c); result(at, false, failed(err)); } finally { busy.delete(at); relabel(c); }
   }
   drawT(); drawC();
   return [h("h3", {}, T("Send targets", "發送目標"), h("span", { class: "pw-new" }, T("new", "新"))),

@@ -155,8 +155,16 @@ try {
   await p.waitForFunction((id) => document.querySelector(`[data-prs-hook-result="${id}"]`)?.innerText.includes('not a slack webhook'), rid); ok(posted2.length === 1, 'a host that is not the tool\'s own: refused inline, nothing posted');
   await p.locator('[data-prs-targets]').scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, 'settings-send-test-1440.png') });
   // Send test DM: the saved contact, then one typed and not saved
-  await p.click('[data-prs-contact-test="0"]'); await p.waitForSelector('[data-prs-contact-result="0"].ok');
-  { const t = await p.locator('[data-prs-contact-result="0"]').innerText(); ok(t.includes('D04QALEAD') && t.includes('Quinn Lead (qlead)') && slack.posted.at(-1).channel === 'D04QALEAD' && slack.posted.at(-1).text.startsWith('Crew Studio: a test message'), 'Send test DM: the fixed test text, the DM and the name Slack reports on the row', t); }
+  { const dm0 = slack.posted.length, opens0 = slack.calls.filter((c) => c.path === '/conversations.open').length, btn = p.locator('[data-prs-contact-test="0"]'), res = p.locator('[data-prs-contact-result="0"]');
+    await btn.click(); await p.waitForFunction(() => document.querySelector('[data-prs-contact-result="0"]')?.innerText.includes('Quinn Lead (@qlead)'));
+    ok(slack.posted.length === dm0 && slack.calls.filter((c) => c.path === '/conversations.open').length === opens0 && (await res.innerText()).includes('要發測試 DM 給 Quinn Lead (@qlead)') && await btn.innerText() === '發送', 'Send test DM, first click: shows whose id it is and asks; no conversations.open, no chat.postMessage', await res.innerText());
+    await p.locator('[data-prs-contact-id="0"]').fill('U04QALEAD');
+    ok(await btn.innerText() === '發測試 DM' && await res.innerText() === '', 'editing the id resets the confirm step');
+    await p.locator('[data-prs-contact-id="0"]').press('Enter'); await p.waitForFunction(() => document.querySelector('[data-prs-contact-result="0"]')?.innerText.includes('嗎'));
+    ok(slack.posted.length === dm0, 'Enter starts the confirm step again; still nothing sent');
+    await p.locator('[data-prs-contact-id="0"]').press('Enter'); }
+  await p.waitForSelector('[data-prs-contact-result="0"].ok');
+  { const t = await p.locator('[data-prs-contact-result="0"]').innerText(); ok(t.includes('D04QALEAD') && t.includes('Quinn Lead (@qlead)') && slack.posted.at(-1).channel === 'D04QALEAD' && slack.posted.at(-1).text.startsWith('Crew Studio: a test message'), 'Send test DM, second Enter: the fixed test text, the DM and the name Slack reports on the row', t); }
   const dms = slack.posted.length; await p.click('[data-prs-contact-add]'); const ci = await p.locator('[data-prs-contact]').count() - 1;
   await p.locator(`[data-prs-contact-id="${ci}"]`).fill('U04NOBODY'); await p.locator(`[data-prs-contact-id="${ci}"]`).press('Enter');
   await p.waitForSelector(`[data-prs-contact-result="${ci}"].bad`); ok((await p.locator(`[data-prs-contact-result="${ci}"]`).innerText()).includes('user_not_found') && slack.posted.length === dms, 'Enter on an unknown member id: the reason inline, no DM', await p.locator(`[data-prs-contact-result="${ci}"]`).innerText());

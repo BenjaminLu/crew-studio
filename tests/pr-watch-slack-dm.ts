@@ -135,14 +135,18 @@ try {
       a = await call("/api/prs/sending/test", { target: "qa", tool: "slack", url }); ok(a.status === 400 && why.test(a.body.error) && posted.length === n + 1 && posted2.length === 1, `Send test refuses "${url}" with the reason`, JSON.stringify(a.body)); }
     const p0 = slack.posted.length;
     a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001" }); ok(a.status === 400 && /bot token/.test(a.body.error) && slack.posted.length === p0, "no test DM without a bot token, saved or typed");
-    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: TOKEN, team: TEAM, text: "injected", channel: "D0TEST0009" });
+    { const before = sends().length; a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: TOKEN, team: TEAM });
+      ok(a.status === 200 && a.body.confirm === true && a.body.name === "Quinn Lead (qlead)" && sends().length === before && slack.posted.length === p0, "the first step of a test DM only says who the id is: no conversations.open, no chat.postMessage", JSON.stringify(a.body));
+      a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: TOKEN, team: TEAM, name: "Someone Else (else)" });
+      ok(a.status === 400 && /Slack now says "Quinn Lead \(qlead\)"/.test(a.body.error) && sends().length === before, "a second step with a name other than Slack's is refused, nothing sent", JSON.stringify(a.body)); }
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: TOKEN, team: TEAM, name: "Quinn Lead (qlead)", text: "injected", channel: "D0TEST0009" });
     ok(a.status === 200 && a.body.channel === "D0TEST0001" && a.body.name === "Quinn Lead (qlead)" && slack.posted.length === p0 + 1 && slack.posted.at(-1)!.channel === "D0TEST0001" && slack.posted.at(-1)!.text.startsWith("Crew Studio: a test message"), "a test DM with a typed token: the fixed text, to the DM Slack opened, answered with who Slack says it is", JSON.stringify(a.body));
     ok(W.state.botToken === null && !readFileSync(join(H.data, "pr-watch", "state.json"), "utf8").includes(TOKEN), "the typed token is used for the test only, never kept");
     a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: TOKEN, team: "nope" }); ok(a.status === 400 && /workspace id/.test(a.body.error) && slack.posted.length === p0 + 1, "a typed workspace id that is not one is refused");
     settings.sending.botToken = TOKEN; await call("/api/prs/settings", { settings });
     a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", token: "" }); ok(a.status === 400 && /bot token/.test(a.body.error) && slack.posted.length === p0 + 1, "an emptied token field is empty: the saved token is not used behind it");
     a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", team: "" }); ok(a.status === 400 && /workspace id first/.test(a.body.error) && slack.posted.length === p0 + 1, "an emptied workspace id field is empty too");
-    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001" }); ok(a.status === 200 && slack.posted.length === p0 + 2, "an untouched token field uses the saved token");
+    a = await call("/api/prs/sending/test-dm", { id: "U0TEST0001", name: "Quinn Lead (qlead)" }); ok(a.status === 200 && slack.posted.length === p0 + 2, "an untouched token field uses the saved token");
     const p1 = slack.posted.length;
     for (const [id, why] of [["U0TEST0005", /deactivated/], ["U0TEST0004", /another Slack workspace/], ["U0TEST0006", /bot/], ["U0TEST0099", /user_not_found/], ["not-an-id", /member id/]] as const) {
       a = await call("/api/prs/sending/test-dm", { id, token: TOKEN, team: TEAM }); ok(a.status === 400 && why.test(a.body.error) && slack.posted.length === p1, `a test DM to ${id} is refused with the reason, nothing posted`, JSON.stringify(a.body)); } }

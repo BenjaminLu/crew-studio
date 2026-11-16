@@ -1219,8 +1219,9 @@ export function createPrWatch(d: PrWatchDeps) {
     await postHook(tool, url, name, TEST_TEXT); return { ok: true, target: name, tool, unsaved: url !== (saved ? state.hooks[saved.id] : undefined) };
   }
   /** Send a test DM through the bot: to the Slack member id typed on a contact row, with the token and workspace id as in
-   *  the dialog (typed, else saved; neither is kept). Only the fixed test text, only on the captain's click or Enter;
-   *  the same fail rules as Check contacts first. Answers who Slack says it is and the DM channel it opened. */
+   *  the dialog (typed, else saved; neither is kept). Two steps, like every bot DM: without `name` it only asks
+   *  users.info (the Check contacts rules) and answers who Slack says the id is; nothing is sent. With the `name` that
+   *  step showed it asks again, refuses when the name differs, then opens the DM and posts the fixed test text once. */
   let testDmBusy = false;
   async function sendTestDm(b: any) {
     const id = String(b?.id ?? "").trim(); if (!/^[UW][A-Z0-9]{2,20}$/.test(id)) throw new Error("A Slack member id looks like U0123ABCD");
@@ -1234,6 +1235,9 @@ export function createPrWatch(d: PrWatchDeps) {
       const why = (e: unknown) => { const t = S.slackErrorText(e); return Object.assign(new Error(`Not sent: ${t.en}`), { tw: `沒有發出：${t.tw}` }); };
       let u: any; try { u = (await S.slackCall(token, "users.info", { user: id })).user; } catch (e) { throw why(e); }
       const v = S.slackVerdict(u, team, id); if (!v.ok) throw Object.assign(new Error(`Not sent: ${v.problem!.en}`), { tw: `沒有發出：${v.problem!.tw}` });
+      const shown = typeof b?.name === "string" ? b.name : null;
+      if (shown === null) return { ok: true, id, name: v.name, confirm: true };
+      if (shown !== v.name) throw Object.assign(new Error(`Not sent: the confirm showed "${shown}", Slack now says "${v.name}"`), { tw: `沒有發出：確認時顯示「${shown}」，Slack 現在說是「${v.name}」` });
       let ch: unknown; try { ch = (await S.slackCall(token, "conversations.open", { users: id })).channel?.id;
         if (typeof ch !== "string" || !/^D[A-Z0-9]{2,30}$/.test(ch)) throw new S.SlackError("no_dm_channel");
         await S.slackCall(token, "chat.postMessage", { channel: ch, text: TEST_TEXT }); } catch (e) { throw why(e); }

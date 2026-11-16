@@ -313,10 +313,12 @@ resolved from the contact settings by the GitHub login alone, which must be some
 message, the pull request, a comment, or any other field of the request. Before sending Studio asks `users.info` again
 and sends nothing when any fail rule holds or the name differs from the one the confirm showed; then it opens the DM and
 posts the message once. The card's history records who it went to (login, name, member id) or why it was not sent.
-**Send test DM** on a Slack contact row (or Enter in its id field) sends only the fixed test text, on that click, to the
-member id in the field, with the bot token and workspace id as they stand in the dialog (typed or saved; nothing is
-kept): `users.info` first, with the same fail rules as Check contacts, then `conversations.open` and one
-`chat.postMessage`. The row shows the DM channel Slack opened and the name it reports, or the reason it was not sent.
+**Send test DM** on a Slack contact row (or Enter in its id field) takes two steps, like every bot DM: the member id in
+the field, with the bot token and workspace id as they stand in the dialog (typed or saved; nothing is kept). The first
+click or Enter only asks `users.info` (the Check contacts fail rules) and shows on the row "Send test DM to <real name>
+(@handle)?", the button now reading Send; nothing is sent. The second click or Enter asks `users.info` again, refuses
+when the name differs from the one shown, then `conversations.open` and one `chat.postMessage` of the fixed test text.
+Editing the id (or its tool) starts over. The row shows the DM channel Slack opened and the name, or the reason.
 
 **Message guard**: Copy and DM, a Slack DM and a channel send refuse a message with a link that is not https (any
 `scheme://`, the bare `javascript:`, `data:`, `mailto:`, `slack:` … forms, and Slack's `<scheme:…>` links) or a URL with a
@@ -408,7 +410,8 @@ and make the same edits over MCP (`tools` in `src/pr-watch.ts`, the board's `act
 CSRF/session guard: `POST /api/prs/refresh`, `/watch {url}`, `/unwatch {repo|pr}`, `/restore {pr?}`, `/settings`,
 `/order {order}`, `/deps {pr,on}`, `/group {pr,group}`, `/accept`, `/drift/take {pr}`, `/apply {prs,shortForm}`,
 `/ship/mark {prs}`, `/ship/undo {pr}`, `/sending/check` (Check contacts), `/sending/test {target,tool,url,name}` (Send
-test: the fixed text to the typed or saved webhook), `/sending/test-dm {id,token?,team?}` (Send test DM), `/follow/dm-preview {card,login,text}` (the confirm step:
+test: the fixed text to the typed or saved webhook), `/sending/test-dm {id,token?,team?,name?}` (Send test DM: without `name` who the id is, nothing sent; with the name shown,
+the test DM), `/follow/dm-preview {card,login,text}` (the confirm step:
 sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slack DM).
 
 ## Done when (`bun tests/pr-watch.ts`, `bun tests/pr-watch-ui.mjs` (run with bun: it imports the TypeScript fixture), `bun run test:pr-watch` for both; a fictional GitHub, tests/lib/pr-watch-github.ts: three watched repositories, an issues-only one outside the set, an infrastructure repository and a single pull request elsewhere)
@@ -496,8 +499,10 @@ sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slac
     http, `javascript:` or `user:pass@` link is refused for the Slack DM, Copy and DM and a channel send. Send test and
     Send test DM (pr-watch-slack-dm.ts "Send test …", pr-follow-ui.mjs "Enter on an unsaved webhook …"): Enter on an
     unsaved webhook posts the fixed text there and says so on the row; a 500 or a host that is not the tool's own shows
-    the reason inline and posts nothing; the typed webhook, token and contact are not kept unless saved; a test DM goes
-    to the DM Slack opened with the name it reports, and a deactivated, other-workspace, bot or unknown member is refused.
+    the reason inline and posts nothing; the typed webhook, token and contact are not kept unless saved; a test DM's first
+    step shows whose id it is and calls neither `conversations.open` nor `chat.postMessage`, editing the id resets it, a
+    second step with another name is refused, and the second step goes to the DM Slack opened with the name it reports;
+    a deactivated, other-workspace, bot or unknown member is refused.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the
