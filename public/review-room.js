@@ -1592,8 +1592,6 @@ function header(r) {
       ds ? pill({ "data-room-diffstat": "" }, h("b", { class: "add" }, `+${ds.added}`), " ", h("b", { class: "del" }, `−${ds.removed}`), T(` · ${ds.files} file${ds.files === 1 ? "" : "s"}`, ` · ${ds.files} 個檔案`)) : null,
       // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
       // a room that takes turns: the pill is the tutor picker (this room's pick, Studio's default, or Automatic)
-      // "Explain with": the built-in tutor or one of the captain's own skills (public/review-explain.js)
-      !r.snapshot ? window.crewRoomExplain?.picker(r) : null,
       window.crewRoomExplain?.active(id) ? null : r.open && !r.snapshot ? tutorButton(r) : offer?.independence ? pill({ class: offer.independence.level === "same" ? "warn" : "", "data-independence": offer.independence.level }, T(`Tutor: ${offer.provider} · ${offer.model ?? "default model"} — ${offer.independence.en}`, `導師：${offer.provider} · ${offer.model ?? "預設模型"}：${offer.independence.zh}`)) : null),
     RR.tutorMenu === id && r.open && !r.snapshot ? tutorMenu(r) : null,
     kind === "pr" && !r.snapshot ? h("button", { type: "button", class: "rr-back", "data-room-check": id, disabled: PR.checking.has(id) || r.checking || null, onclick: () => checkNow(id) }, PR.checking.has(id) || r.checking ? T("Reading GitHub…", "正在讀取 GitHub…") : T("Check for new commits", "檢查新的 commit")) : null,
@@ -1609,6 +1607,8 @@ function header(r) {
     // 封存: the room stays whole and keeps working; this only moves it on the room list
     !r.snapshot && r.archived ? pill({ "data-room-archived": "" }, T("Archived", "已封存")) : null,
     !r.snapshot ? archiveBtn({ id, zone: r.archived ? "archived" : null }) : null,
+    // "Explain with": the built-in tutor or one of the captain's own skills (public/review-explain.js), at the header's right end
+    !r.snapshot ? window.crewRoomExplain?.picker(r) : null,
     // Firstmate opens over the room as a sheet, never a column beside the board
     h("button", { type: "button", class: "rr-back", "data-room-firstmate": "", "aria-label": T("Firstmate (over the room)", "Firstmate（疊在審查室上）"), onclick: () => (document.body.classList.contains("chat-closed") ? document.getElementById("chatFab") : document.getElementById("chatClose"))?.click() }, ic("msg"), h("span", {}, "Firstmate")));
 }

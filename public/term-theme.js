@@ -1,6 +1,6 @@
 // The web terminal's colours (docs/units/web-terminal.md, "Colours"): every ANSI colour a program writes text in, and its
 // dim (faint, SGR 2) form, reads at WCAG AA (4.5:1 or more) against the terminal's background, in Studio's light theme and
-// its dark one. xterm.js 5.5.0's own palette (Tango) was made for a black background: on Studio's dark surface its black,
+// its dark one. xterm.js's own palette (Tango) was made for a black background: on Studio's dark surface its black,
 // bright black (the colour of hints and autosuggestions), blue and magenta fell to 1.3–3.5:1, and on the light one its
 // yellow, cyan and whites under 2:1; dim text is drawn at half opacity, which halves the contrast again.
 // Pure: no DOM (tests/terminal-theme.ts runs it under Bun). Loaded before terminals.js.
