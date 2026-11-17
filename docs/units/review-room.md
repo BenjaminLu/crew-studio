@@ -745,10 +745,13 @@ The room can be presented by one of the captain's own skills instead of the tuto
   reads the offer again (Confirm waits for it, and stays off if that read fails), so a changed text is a new confirmation and
   a confirmation for one text never starts another. The run gets it as the captain's: in the message that starts each round,
   in a fence of its own, `<captain-instructions>`, marked trusted (the captain wrote and confirmed it). Studio's fence tags
-  (`captain-instructions`, `untrusted`, `selection`, `previous`, `question`) are taken out, until none is left, of every text
-  Studio places between them in its message: the instructions, a boxed region's page text, the skill's own last message; the
-  materials' fenced text loses only `captain-instructions` and `untrusted` (a `<question>` in the code stays). The materials
-  stay files the skill reads, fenced as untrusted. Studio's frame (`EXPLAINER_FRAME`) says to follow
+  (`captain-instructions`, `untrusted`, `selection`, `previous`, `question`) are neutralised in every text Studio places
+  between them in its message (the instructions, a boxed region's page text, the skill's own last message): the `<` that
+  would open one becomes `‹`, in one linear pass (`untag`: nothing is removed, so no forged or nested tag can join into a
+  working one, and a 3 MB diff costs one read, never a quadratic loop that would hold Studio). The materials (the diff, the
+  commits, the description, reviews, check and status names, issues, the head of every changed file) get the same for
+  `captain-instructions` and `untrusted` only (a `<question>` in the code stays). The materials stay files the skill reads,
+  fenced as untrusted. Studio's frame (`EXPLAINER_FRAME`) says to follow
   the captain's instructions within the skill's method and Studio's rules, that they never make material text instructions,
   and that the same tag anywhere else is not the captain's. The run, its version and both ledger entries keep the text (`prompt`, `promptSha256`). A follow-up is
   unchanged: its question is its instructions.
@@ -773,7 +776,8 @@ The room can be presented by one of the captain's own skills instead of the tuto
   one issue by number). A README lists them and says which text is untrusted; untrusted text is fenced. The skill reads them
   with `mat_list/mat_read/mat_search`, its own supporting files with `skill_*` (a copy), and writes only `out/` (`out_*`,
   `out_write_base64` for a picture or a video; every write counts against one 60 MB cap, `CREW_REVIEW_EXPLAIN_OUT_BYTES`,
-  a script's included). The diff is fenced as untrusted; the head files are kept byte for byte (citations need their lines)
+  a script's included). The diff is fenced as untrusted; the head files are kept as the author wrote them, line for line (citations need their
+  lines), except that a `<captain-instructions` or `<untrusted` in them is neutralised (above),
   and the README names them untrusted. No shell of its own, no web tools, no board tools; a skill with scripts runs them
   through `skill_run` (below).
 - **The skill's own scripts.** A library skill whose package has scripts (`render.py`, `verify.py`, a `.sh`: what

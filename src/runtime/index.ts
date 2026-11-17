@@ -828,14 +828,14 @@ export function createRuntime(d: RuntimeDeps) {
         try {
           if (!writing) {
             if (op === "" && !xr[3]) return json(X.view(id));
-            if (op === "offer" && !xr[3]) return json(X.offer(id, url.searchParams.get("skill"), url.searchParams.get("kind"), url.searchParams.get("v"), url.searchParams.has("prompt") ? url.searchParams.get("prompt") : null));
+            if (op === "offer" && !xr[3]) return json(X.offer(id, url.searchParams.get("skill"), url.searchParams.get("kind"), url.searchParams.get("v")));
             if (op === "cap" && !xr[3]) return json(X.cap(id, url.searchParams.get("v")));
             if (op === "media" && xr[3]) return X.media(id, xr[3], decodeURIComponent(xr[4]), req.headers.get("range"));
             return json({ error: "not found" }, 404);
           }
           if (req.method !== "POST" || xr[3] || !["select", "generate", "ask", "stop", "offer"].includes(op)) return json({ error: "POST /api/review-room/<room>/explain/(select|generate|ask|stop|offer)" }, 405);
           if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac runs the room's skill / 只有這台 Mac 上的船長能執行審查室的 skill", code: "desktopOnly" }, 403);
-          // a generation's offer for a text too long for a URL (the captain's instructions): the same offer as the GET
+          // a generation's offer for the captain's instructions: only ever in a body (never a URL, so never in a log); the GET is the prefill's
           if (op === "offer") return json(X.offer(id, b?.skill ?? null, b?.kind ?? null, b?.v ?? null, typeof b?.prompt === "string" ? b.prompt : null));
           if (op === "select") return json(X.select(id, b?.skill ?? null));
           if (op === "stop") return json(X.stop(id));
