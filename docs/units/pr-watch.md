@@ -82,15 +82,29 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   repository, only where no repository sees a difference: same name and production flag, no catch-all entry, no
   repository named twice, and no environment between the two applies to those repositories (each repository keeps its
   environments, their order and detects); anything else stays as it was. The file is rewritten only on the next save.
-- **Find environments automatically** (自動找環境): the settings' first action for environments; the hand editor is
-  under **Advanced** (folded when every environment came from it, open when one was set by hand or one is begun).
+- **Find environments automatically** (自動找環境): the settings' first action for environments (disabled, with the
+  reason, while nothing is watched), above a card per environment listing each repository and where it is read; the
+  hand editor is under **Advanced** (folded when every environment came from it, open when one was set by hand or one
+  is begun). The dialog keeps the keyboard (Escape closes it from anywhere, Tab cycles inside) and has three steps:
+  ① **sources** (`POST /api/prs/envs/sources`, one read): each repository's GitHub deployments, and a GitOps/config
+  repository with its branch, filled in with the one used last or else the first repository that looks like one;
+  ② **scan**, its progress read from `GET /api/prs/envs/progress` (what it reads, reads used of the budget); ③ **the
+  table**: a row per watched repository and a column per environment, each cell green (sure, ticked), amber (pick one)
+  or grey (not found), the evidence under it; repositories with nothing found listed greyed last; repositories where
+  everything is already set folded behind "Show N already set"; a summary (found N repositories' M environments · K
+  need a pick · J not found), the reads used and any note (budget, walk, unreadable) above the table; a legend; a sticky
+  footer whose Accept names the repositories it saves, or links "K need a pick" to the first. A failed search returns
+  to the sources with the message and no table. After Accept the dialog closes with a toast.
   It proposes, for every watched repository at once (the repositories and the single pull requests' repositories):
   - its GitHub environments that have a deployment (`GET …/environments`, then `…/deployments?environment=…&per_page=1`
     for at most 8, `github-pages` left out), as a "GitHub Deployment" detect;
   - with a GitOps/config repository the captain names (or picks: when none is named, the repositories the token can
     read whose name looks like one — deploy, config, gitops, manifests, k8s, helm, argo, flux, cluster, ops, … — are
-    offered, the last one used first): its default branch (or the branch given), its file tree (`git/trees/…?recursive=1`;
-    a truncated tree is said so), then at most 60 YAML/JSON files of 200 KB or less, those whose path names a watched
+    offered, the last one used first): its default branch (or the branch given), resolved to its commit first
+    (`commits?sha=<branch>&per_page=1`, so a branch named `release/v1` works), its file tree at that commit
+    (`git/trees/<sha>?recursive=1`; when GitHub truncates it or it is over the 1 MB Studio reads, walked one folder per
+    read, at most 80 folders, those naming a watched repository or an environment first, and said so with how many were
+    left), then at most 60 YAML/JSON files of 200 KB or less, those whose path names a watched
     repository and an environment first, then a repository, then an environment, shallow first. In each file, a line
     naming an image built from a repository — `registry/path/name:tag` on one line, or the name on one line and
     `tag:`/`newTag:` on one of the next four (Helm values, kustomize `images`) — where the image's name or a path part is
@@ -99,7 +113,11 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     environment is the deepest directory or file-name part that names one: prod, production, prd, live → production;
     staging, stage, stg → staging; dev, develop, development → dev; qa; test; uat; sandbox; preprod, pre-prod,
     preproduction → preprod (pre-prod is not prod; nonprod names none). A GitHub environment's name maps the same way
-    (any other name stays as it is, production when it starts with prod, production or live). A file naming an image
+    (any other name stays as it is, production when a part of it is: eu-prod, production-eu; not eu-preprod, nonprod-eu).
+    A watched repository's name is taken out of a path segment before it is read for an environment
+    (values-shop-api-prod is production; a service named live-feed is no environment). An environment already set
+    under another name of the same kind (prod for production) keeps that name: the table, what is set and Accept agree,
+    and no second production is added. A template holding a tab or another control character cannot be picked. A file naming an image
     under no environment (a kustomize base) is listed as skipped.
   - One review table, a row per repository × environment, each candidate with where it was found (the manifest path
     and line, linked to that line on GitHub, and the line itself; or the GitHub environment and its latest deployment).
@@ -112,7 +130,7 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     detect in the environment of that name (a name not set yet is added in the usual order dev … staging … preprod …
     production), and the config repository is remembered. Nothing is saved before it, and nothing is ever written to a
     repository: discovery reads with GET only.
-  - Budget: at most 300 reads a search (60 of them files); past it the search stops reading, proposes what it read and
+  - Budget: at most 300 reads a search (60 of them files, 80 folders when walking) and 120 s; past it the search stops reading, proposes what it read and
     says so. A rate limit fails the search with a message. Only the board's captain runs it (no agent CLI tool).
 - **Release groups**: names; each row may be put in one.
 - The short same-repository form `Depends-on: #<n>` in the block (off by default), and the language of the drafted message.

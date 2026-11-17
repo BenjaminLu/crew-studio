@@ -130,7 +130,7 @@ export function prWatchGitHub(data = fixtureData()) {
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
   let notModified = 0;
   // knobs: a PATCH whose kept body differs from what was sent, a slow GET of one pull request, an unreadable CODEOWNERS
-  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false, noDefaultBranch: false, treeTruncated: false };
+  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false, noDefaultBranch: false, treeTruncated: false, treeTooBig: false };
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const res = await answer(req);
     if (req.method !== "GET" || res.status !== 200) return res;
@@ -181,10 +181,19 @@ export function prWatchGitHub(data = fixtureData()) {
       if (path.endsWith("CODEOWNERS") && knobs.codeownersFail) return json({ message: "Server Error" }, 500);
       const text = path.endsWith("CODEOWNERS") ? (path === ".github/CODEOWNERS" ? data.rules[repo]?.codeowners : undefined) : data.files[`${repo}/${path}`];
       return text == null ? nf() : json({ type: "file", encoding: "base64", size: text.length, content: Buffer.from(text).toString("base64") }); }
-    // a repository's file tree: every file of `files` under it (each a blob with its size)
-    if ((k = /^\/git\/trees\/(.+)$/.exec(rest)) && q.get("recursive") === "1") { const pre = `${repo}/`, paths = Object.keys(data.files).filter((f) => f.startsWith(pre));
+    // a branch's newest commit (GET /commits?sha=<branch>): one per repository holding files
+    if (rest === "/commits" && q.get("sha")) return Object.keys(data.files).some((f) => f.startsWith(`${repo}/`)) ? json([{ sha: sha(`${repo}-head`) }]) : nf();
+    // a repository's file tree at that commit: recursive, every file of `files` under it (treeTruncated: GitHub's
+    // truncated flag; treeTooBig: an answer over the 1 MB Studio reads); or one folder (the commit is the root)
+    if ((k = /^\/git\/trees\/([0-9a-f]{40})$/.exec(rest))) { const pre = `${repo}/`, paths = Object.keys(data.files).filter((f) => f.startsWith(pre)).map((f) => f.slice(pre.length));
       if (!paths.length) return nf();
-      return json({ sha: sha(`${repo}-tree`), truncated: knobs.treeTruncated, tree: paths.map((f) => ({ path: f.slice(pre.length), type: "blob", size: data.files[f].length })) }); }
+      if (q.get("recursive") === "1") return json({ sha: k[1], truncated: knobs.treeTruncated, tree: paths.map((f) => ({ path: f, type: "blob", size: data.files[pre + f].length })), ...(knobs.treeTooBig ? { padding: "x".repeat(1_100_000) } : {}) });
+      const dirSha = (d: string) => sha(`${repo}:dir:${d}`), dirs = new Set(paths.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/"))));
+      const at = k[1] === sha(`${repo}-head`) ? "" : [...dirs].find((d) => dirSha(d) === k![1]); if (at === undefined) return nf();
+      const kids = new Map<string, any>();
+      for (const f of paths) { if (at && !f.startsWith(`${at}/`)) continue; const rel = at ? f.slice(at.length + 1) : f, name = rel.split("/")[0], full = at ? `${at}/${name}` : name;
+        kids.set(name, rel.includes("/") ? { path: name, type: "tree", sha: dirSha(full) } : { path: name, type: "blob", size: data.files[pre + f].length }); }
+      return json({ sha: k[1], truncated: false, tree: [...kids.values()] }); }
     if (rest === "/tags") return json((data.tags[repo] ?? []).map((t) => ({ name: t.name, commit: { sha: t.sha } })));
     if ((k = /^\/commits\/([0-9a-f]{40})\/status$/.exec(rest))) return json({ state: data.redCi.includes(k[1]) ? "failure" : "success", total_count: 1 });
     if (rest === "/environments") return json({ environments: (data.envs[repo] ?? []).map((name) => ({ name })) });

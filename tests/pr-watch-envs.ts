@@ -29,7 +29,9 @@ const J = (v: unknown) => JSON.stringify(v);
   ok(p("envs/pre-prod/shop.yaml") === "preprod" && p("envs/nonprod/shop.yaml") === null && p("apps/shop/base/deployment.yaml") === null, "pre-prod is not prod; nonprod and base name none");
   ok(p("prod/apps/shop/overlays/staging/x.yaml") === "staging", "the deepest segment that names an environment wins");
   ok(p("staging/live-feed/deployment.yaml") === "staging" && p("prod/test-runner/values.yaml") === "production" && p("envs/nonprod-staging/app.yaml") === "staging", "a name that is exactly an environment wins over a service named live-feed or test-runner; non-prod drops only itself");
-  ok(E.envOfPath("apps/live-feed/overlays/x.yaml", [E.repoKey("acme/live-feed")]) === null && E.envOfPath("apps/live-feed/overlays/x.yaml")?.name === "production", "a directory named after a watched repository is no environment");
+  ok(E.envOfPath("apps/live-feed/overlays/x.yaml", ["acme/live-feed"]) === null && E.envOfPath("apps/live-feed/overlays/x.yaml")?.name === "production", "a directory named after a watched repository is no environment");
+  ok(E.envOfPath("charts/shop-api/values-shop-api-prod.yaml", ["acme/shop-api"])?.name === "production" && E.envOfPath("envs/shop_api-staging.yaml", ["acme/shop-api"])?.name === "staging", "a repository's name is taken out of a name, the rest still names the environment");
+  ok(E.envOfName("eu-prod").production && E.envOfName("eu-prod").name === "eu-prod" && E.envOfName("production-eu").production && !E.envOfName("eu-preprod").production && !E.envOfName("nonprod-eu").production && !E.envOfName("eu-west").production, "a GitHub environment's name is production as a path part would be: eu-prod is, eu-preprod and nonprod-eu are not");
 }
 // ---------- images ----------
 {
@@ -50,6 +52,8 @@ const J = (v: unknown) => JSON.stringify(v);
   ok(second.length === 1 && second[0].problem === "not-first", "a template that would read another image's line first is never usable", J(second));
   const helm = E.scanManifest(`image:\n  repository: registry.example/ledger\n  tag: 1.2.0\n`, "acme/ledger");
   ok(helm.length === 1 && helm[0].template === "tag: {tag}" && helm[0].problem === "no-commit", "Helm values repository/tag: a tag that does not end in a commit cannot say which commit runs", J(helm));
+  const tab = E.scanManifest(`image:\tregistry.example/shop-api:${c}\n`, "acme/shop-api");
+  ok(tab.length === 1 && tab[0].problem === "control", "a line with a tab in its template cannot be picked (the settings would refuse it)", J(tab));
   ok(!E.scanManifest(`url: https://example.invalid/shop-api:8080\nname: shop-api\n`, "acme/shop-api").length && !E.scanManifest(`image: registry.example/shop-api@sha256:${"a".repeat(64)}\n`, "acme/shop-api").length, "an address or a digest is no tag template");
 }
 // ---------- one environment for many repositories (each), and old settings folded losslessly ----------
@@ -111,6 +115,15 @@ const J = (v: unknown) => JSON.stringify(v);
   const again = E.propose(["acme/shop-api"], current, [{ repo: "acme/shop-api", environment: "development", sha: null, ref: null }], files);
   ok(again.groups.find((x) => x.env === "production")!.state === "set" && again.groups.find((x) => x.env === "dev")!.state === "pick", "already detected that way: set; detected another way by hand: a pick (never replaced unasked)");
 
+  // an environment already set as prod: the proposal uses that name, Accept adds no second production
+  const asProd: R.EnvSetting[] = [{ name: "prod", production: true, repos: [], each: [{ repo: "acme/b", detect: { kind: "check", name: "b" } }] }];
+  const pp = E.propose(["acme/a", "acme/b"], asProd, [{ repo: "acme/a", environment: "production", sha: null, ref: null }, { repo: "acme/b", environment: "prd", sha: null, ref: null }], []);
+  const ga = pp.groups.find((x) => x.repo === "acme/a")!, gb = pp.groups.find((x) => x.repo === "acme/b")!;
+  ok(ga.env === "prod" && ga.state === "ok" && gb.env === "prod" && gb.state === "pick" && gb.current?.kind === "check" && J(pp.envs.map((e) => [e.name, e.existing])) === J([["prod", true]]), "a GitHub production next to a set prod: proposed as prod (acme/b, set another way, needs a pick)", J(pp));
+  const after = E.applyPicks(asProd, [{ repo: "acme/a", env: ga.env, detect: ga.candidates[0].detect }], { prod: true });
+  ok(after.length === 1 && after[0].name === "prod" && after[0].each!.length === 2, "Accept puts it in prod: one production environment, not two", J(after));
+  const catchAllProd = E.propose(["acme/a"], [{ name: "prod", production: true, repos: [], detect: { kind: "check", name: "p" } }], [{ repo: "acme/a", environment: "production", sha: null, ref: null }], []);
+  ok(catchAllProd.groups[0].env === "prod" && catchAllProd.groups[0].state === "pick", "a prod that detects every repository one way: a pick, never a second environment");
   const envs: R.EnvSetting[] = [{ name: "dev", production: false, repos: [], detect: { kind: "check", name: "dev" } }, { name: "production", production: true, repos: [], each: [{ repo: "acme/a", detect: { kind: "check", name: "old" } }] }];
   const out = E.applyPicks(envs, [{ repo: "acme/a", env: "production", detect: { kind: "check", name: "new" } }, { repo: "acme/b", env: "production", detect: { kind: "check", name: "b" } }, { repo: "acme/a", env: "staging", detect: { kind: "check", name: "s" } }], { staging: false });
   ok(out.map((e) => e.name).join() === "dev,staging,production" && J(out[2].each) === J([{ repo: "acme/a", detect: { kind: "check", name: "new" } }, { repo: "acme/b", detect: { kind: "check", name: "b" } }]), "a pick replaces the repository's detect in that environment, adds another, and a new name goes in the usual order", J(out));
@@ -156,7 +169,7 @@ try {
   ok(v.skipped.some((x: any) => x.path === "apps/checkout-api/base/deployment.yaml") && !v.groups.some((g: any) => g.candidates.some((c: any) => c.evidence.path?.endsWith("README.md"))), "a base manifest is skipped (no environment); a README is not read");
   ok(J(v.envs.map((e: any) => [e.name, e.production])) === J([["dev", false], ["staging", false], ["preprod", false], ["production", true]]), "the environments, production flagged", J(v.envs));
   ok(!writes().length && readFileSync(join(dir, "pr-watch", "state.json"), "utf8") === stateBefore, "looking writes nothing: no GitHub write, the settings file unchanged");
-  ok(gh.calls.slice(before).every((c) => c.method === "GET"), "every discovery read is a GET");
+  ok(gh.calls.slice(before).every((c) => c.method === "GET" || c.path === "/graphql"), "every discovery read is a GET (a refresh still running may query GraphQL)");
   ok(v.reads > 0 && v.reads <= v.budget && v.budget === 300, "the reads are counted against the budget", `${v.reads}/${v.budget}`);
 
   // Accept: the ticked ones and the picks, one environment per name
@@ -201,10 +214,25 @@ try {
     ok(Array.isArray(b2.groups) && b2.groups.some((g: any) => g.env === "production"), "what was read is still proposed (the most likely manifests first)", J(b2.groups.map((g: any) => [g.repo, g.env])));
     gh.knobs.treeTruncated = true;
     const W3 = make(d2), b3 = (await callOn(W3)("/api/prs/envs/discover", { config: cfg })).body; gh.knobs.treeTruncated = false;
-    ok(b3.notes.some((n: any) => /only part of its file tree/.test(n.en)), "a tree GitHub truncated is said so");
+    ok(b3.notes.some((n: any) => /folder by folder/.test(n.en)) && b3.groups.some((g: any) => g.repo === ca && g.env === "production"), "a tree GitHub truncated is walked folder by folder instead, and says so");
+    W3.stop();
     gh.setRateLimited(true); const rl = await c2("/api/prs/envs/discover", { config: cfg }); gh.setRateLimited(false);
     ok(rl.status === 400 && /rate limit/i.test(rl.body.error), "a rate limit fails the search with a message", J(rl.body));
-    W2.stop(); W3.stop(); }
+    W2.stop(); }
+  // a config repository too large to list at once: walked folder by folder within the budget
+  { const d5 = mkdtempSync(join(tmpdir(), "pr-watch-envs-big-")), W5 = make(d5); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/checkout-api" }); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/web-app" });
+    await until(() => !!W5.snapshot.at && !W5.view().refreshing, 15000);
+    gh.knobs.treeTooBig = true; const n0 = gh.calls.length, b5 = (await callOn(W5)("/api/prs/envs/discover", { config: cfg })).body;
+    const walks = gh.calls.slice(n0).filter((c) => c.path.includes("/git/trees/") && !c.path.includes("recursive"));
+    ok(b5.groups.find((g: any) => g.repo === ca && g.env === "production")?.state === "ok" && b5.groups.find((g: any) => g.repo === "northwind/web-app" && g.env === "production")?.state === "ok", "over 1 MB: the same manifests are found by walking the folders", J(b5.groups.map((g: any) => [g.repo, g.env, g.state])));
+    ok(walks.length > 1 && !walks.some((c) => c.path.includes("README")) && b5.notes.some((n: any) => /too large for GitHub to list at once, so Studio walked it folder by folder/.test(n.en)), "one read per folder, and it says so", J(b5.notes));
+    const W6 = make(d5, { discoverDirs: 2 }), b6 = (await callOn(W6)("/api/prs/envs/discover", { config: cfg })).body; gh.knobs.treeTooBig = false;
+    ok(b6.notes.some((n: any) => /\(2 folders, .*more were not looked at/.test(n.en)), "past its folder budget the walk stops and says how many were left", J(b6.notes));
+    // a branch with a slash goes in a query; the tree is read at the commit it points at
+    const n1 = gh.calls.length; await callOn(W5)("/api/prs/envs/discover", { config: cfg, ref: "release/v1" });
+    const after = gh.calls.slice(n1).map((c) => c.path);
+    ok(after.some((x) => x === `/repos/${cfg}/commits?sha=release%2Fv1&per_page=1`) && after.some((x) => new RegExp(`^/repos/${cfg}/git/trees/[0-9a-f]{40}\\?recursive=1$`).test(x)) && !after.some((x) => x.includes("%2F") && x.includes("/git/trees/")), "a branch named release/v1 is resolved to its commit first", J(after.filter((x) => x.includes(cfg))));
+    W5.stop(); W6.stop(); }
 
   // an old state.json (one environment per repository) loads folded, every repository seeing what it saw
   { const d4 = mkdtempSync(join(tmpdir(), "pr-watch-envs-old-")); mkdirSync(join(d4, "pr-watch"), { recursive: true });

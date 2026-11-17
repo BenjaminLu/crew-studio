@@ -23,35 +23,36 @@ known("staging", false, 40, "stage", "stg");
 known("preprod", false, 50, "preproduction", "pre-prod", "pre-production", "pprd");
 known("production", true, 90, "prod", "prd", "live");
 const UNKNOWN_RANK = 60;
-const PROD = /^(?:prod|production|live)(?:$|[-_ ./])/i; // not preproduction, nonprod
 
 /** A GitHub environment's name as an environment of the settings: a known alias becomes its common name (so one
- *  "production" covers "prod" in one repository and "production" in another); any other name stays as it is. */
+ *  "production" covers "prod" in one repository and "production" in another); any other name stays as it is, and is
+ *  production when a part of it is (eu-prod, production-eu; not pre-prod or nonprod), as a path segment would be. */
 export function envOfName(raw: string): Known {
   const k = KNOWN[String(raw ?? "").trim().toLowerCase()];
-  return k ? { ...k } : { name: String(raw).trim().slice(0, 40), production: PROD.test(String(raw)), rank: UNKNOWN_RANK };
+  return k ? { ...k } : { name: String(raw).trim().slice(0, 40), production: !!envOfPath(String(raw ?? "").replace(/\//g, "-"))?.production, rank: UNKNOWN_RANK };
 }
 export const rankOf = (name: string) => KNOWN[name.toLowerCase()]?.rank ?? UNKNOWN_RANK;
 
 /** The environment a path names, e.g. overlays/prod/deployment.yaml, values-staging.yaml, envs/pre-prod/app.yaml.
  *  First a directory or file name that is exactly a known environment (the deepest one), so a service named live-feed
- *  or test-runner under staging/ stays staging; only then a part of a name (split at - _ .), skipping names that hold a
- *  watched repository's name (`skip`, normalized). pre-prod is preprod, not prod; non-prod names nothing (only that
- *  part). Null when none does. */
-export function envOfPath(path: string, skip: string[] = []): Known | null {
+ *  or test-runner under staging/ stays staging; only then a part of a name (split at - _ .), with the watched
+ *  repositories' names (`repos`, e.g. live-feed) taken out of it first, so values-shop-api-prod is still production.
+ *  pre-prod is preprod, not prod; non-prod names nothing (only that part). Null when none does. */
+export function envOfPath(path: string, repos: string[] = []): Known | null {
   const segs = String(path ?? "").split("/").filter(Boolean).map((s) => s.toLowerCase());
   if (segs.length) segs[segs.length - 1] = segs[segs.length - 1].replace(/\.(ya?ml|json)$/i, "");
   for (let i = segs.length - 1; i >= 0; i--) if (KNOWN[segs[i]]) return { ...KNOWN[segs[i]] };
+  // a repository's name with any of - _ . (or none) between its letters, longest first
+  const names = repos.map((r) => norm(String(r).split("/").pop() ?? "")).filter((r) => r.length >= 3).sort((a, z) => z.length - a.length)
+    .map((r) => new RegExp([...r].map((c) => c.replace(/[^a-z0-9]/g, "\\$&")).join("[-_.]?"), "g"));
   for (let i = segs.length - 1; i >= 0; i--) {
-    const n = norm(segs[i]); if (skip.some((r) => r.length >= 3 && n.includes(r))) continue;
-    const seg = segs[i].replace(/(?:^|[-_.])non-?prod(?:uction)?(?=$|[-_.])/g, "-");
+    let seg = segs[i]; for (const re of names) seg = seg.replace(re, "-");
+    seg = seg.replace(/(?:^|[-_.])non-?prod(?:uction)?(?=$|[-_.])/g, "-");
     if (/(?:^|[-_.])pre-?prod(?:uction)?(?:$|[-_.])/.test(seg)) return { ...KNOWN.preprod };
     for (const part of seg.split(/[-_.]/).reverse()) if (KNOWN[part]) return { ...KNOWN[part] };
   }
   return null;
 }
-/** A repository's name as envOfPath's `skip` takes it. */
-export const repoKey = (repo: string) => norm(String(repo).split("/").pop() ?? "");
 
 /** How well an image reference (registry/path/name, no tag) names a repository: "strong" when its name or a path part
  *  is the repository's name (ignoring - _ . and case), "weak" when one holds the other (4 characters at least). */
@@ -66,7 +67,7 @@ export function imageMatch(image: string, repo: string): "strong" | "weak" | nul
 }
 
 /** A manifest line that names an image of the repository: the template Studio would read the tag with. */
-export type Finding = { line: number; text: string; template: string; tag: string; strength: "strong" | "weak"; problem: "no-commit" | "not-first" | null };
+export type Finding = { line: number; text: string; template: string; tag: string; strength: "strong" | "weak"; problem: "no-commit" | "not-first" | "control" | null };
 const TAGC = "[0-9A-Za-z._-]{1,128}";
 // an image reference with its tag on one line: registry/path/name:tag (the tag up to a quote, space, comma or the end)
 const INLINE = new RegExp(`(?:^|[\\s"'=\\[,])((?:[A-Za-z0-9.-]+(?::\\d+)?/)?(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+):(${TAGC})(?=$|[\\s"',\\]}])`, "g");
@@ -85,7 +86,7 @@ export function scanManifest(text: string, repo: string): Finding[] {
     const template = `${pre}{tag}${post}`; if (R.templateProblem(template)) return;
     const at = R.tagAt(text, template);
     if (out.some((f) => f.template === template && f.line === n + 1)) return;
-    out.push({ line: n + 1, text: lines[n].trim().slice(0, 300), template, tag, strength, problem: !at || at.line !== n || at.tag !== tag ? "not-first" : R.commitOfTag(tag) ? null : "no-commit" }); };
+    out.push({ line: n + 1, text: lines[n].trim().slice(0, 300), template, tag, strength, problem: /[\u0000-\u001f]/.test(template) ? "control" : !at || at.line !== n || at.tag !== tag ? "not-first" : R.commitOfTag(tag) ? null : "no-commit" }); };
   for (let n = 0; n < lines.length; n++) {
     const line = lines[n]; if (line.length > 500) continue;
     for (const m of line.matchAll(INLINE)) {
@@ -106,7 +107,8 @@ export function scanManifest(text: string, repo: string): Finding[] {
 
 // ---------- the proposal ----------
 export type Candidate = { id: string; source: "deployment" | "file"; detect: R.EnvDetect; strength: "strong" | "weak"; problem: Finding["problem"];
-  /** what Studio saw: a deployment's ref and commit, or the manifest line; and where to see it on GitHub */ evidence: { path: string | null; line: number | null; text: string; url: string | null } };
+  /** what Studio saw: a deployment's ref and commit (text, and tw in Traditional Chinese), or the manifest line; and
+   *  where to see it on GitHub */ evidence: { path: string | null; line: number | null; text: string; tw?: string; url: string | null } };
 export type Group = { id: string; repo: string; env: string; candidates: Candidate[];
   /** ok: one strong usable candidate and nothing set yet (ticked); pick: the captain chooses; set: the settings already detect it this way */
   state: "ok" | "pick" | "set"; current: R.EnvDetect | null };
@@ -120,14 +122,18 @@ const blobUrl = (repository: string, ref: string, path: string, line: number) =>
 /** The review table: each watched repository × environment, from its GitHub deployments and the config repository's files. */
 export function propose(repos: string[], existing: R.EnvSetting[], deployments: DeploymentSeen[], files: FileSeen[]): Proposal {
   const groups = new Map<string, Group>(), names = new Map<string, Known>(), skipped: Proposal["skipped"] = [];
-  const groupOf = (repo: string, k: Known) => { const key = `${repo.toLowerCase()}|${k.name}`; if (!names.has(k.name)) names.set(k.name, k);
+  // an environment already set under another name of the same kind (prod for production): proposed under that name, so
+  // what is set, the table and Accept agree and no second production is added
+  const setAs = new Map<string, R.EnvSetting>();
+  for (const e of existing) { const c = envOfName(e.name).name; if (!setAs.has(c)) setAs.set(c, e); if (!setAs.has(e.name)) setAs.set(e.name, e); }
+  const groupOf = (repo: string, k0: Known) => { const ex = setAs.get(k0.name), k = ex ? { ...k0, name: ex.name, production: ex.production } : k0; const key = `${repo.toLowerCase()}|${k.name}`; if (!names.has(k.name)) names.set(k.name, k);
     let g = groups.get(key); if (!g) { g = { id: `g${groups.size + 1}`, repo, env: k.name, candidates: [], state: "pick", current: R.envsFor(existing, repo).find((e) => e.name === k.name)?.detect ?? null }; groups.set(key, g); } return g; };
   for (const d of deployments) { const k = envOfName(d.environment), g = groupOf(d.repo, k);
     g.candidates.push({ id: `${g.id}c${g.candidates.length + 1}`, source: "deployment", detect: { kind: "deployment", environment: d.environment }, strength: "strong", problem: null,
-      evidence: { path: null, line: null, text: `GitHub environment ${d.environment}: latest deployment ${d.sha ? d.sha.slice(0, 7) : "?"}${d.ref ? ` (${d.ref.slice(0, 60)})` : ""}`, url: `https://github.com/${d.repo}/deployments` } }); }
-  const skip = repos.map(repoKey);
+      evidence: { path: null, line: null, text: `GitHub environment ${d.environment}: latest deployment ${d.sha ? d.sha.slice(0, 7) : "?"}${d.ref ? ` (${d.ref.slice(0, 60)})` : ""}`,
+        tw: `GitHub 環境 ${d.environment}：最近一次部署 ${d.sha ? d.sha.slice(0, 7) : "?"}${d.ref ? `（${d.ref.slice(0, 60)}）` : ""}`, url: `https://github.com/${d.repo}/deployments` } }); }
   for (const f of files) {
-    let any = false; const k = envOfPath(f.path, skip);
+    let any = false; const k = envOfPath(f.path, repos);
     for (const repo of repos) for (const x of scanManifest(f.text, repo)) {
       if (!k) { any = true; continue; }
       const g = groupOf(repo, k), detect: R.EnvDetect = { kind: "file", repository: f.repository, path: f.path, template: x.template };

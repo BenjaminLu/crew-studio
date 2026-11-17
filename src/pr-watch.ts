@@ -92,7 +92,8 @@ async function call(api: string, token: string, method: "GET" | "POST" | "PATCH"
 /** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
 export const READ_BUDGET = 1500, MAX_ROWS = 60, MAX_MERGED = 40;
 /** Find environments automatically reads at most this many times, of which at most DISCOVER_FILES manifest files. */
-export const DISCOVER_BUDGET = 300, DISCOVER_FILES = 60, DISCOVER_MS = 120_000;
+/** A config repository too large to list at once is walked one folder per read, at most DISCOVER_DIRS folders. */
+export const DISCOVER_BUDGET = 300, DISCOVER_FILES = 60, DISCOVER_DIRS = 80, DISCOVER_MS = 120_000;
 export class OverBudget extends Error { constructor() { super(`a refresh would read GitHub more than ${READ_BUDGET} times: watch fewer repositories or pull requests`); } }
 const CLOSED_PER = 20, CLOSED_PAGES = 5; // closed pull requests read a refresh: at most 100, in pages small enough for 1 MB
 /** pages: up to max pages of 100; the list carries capped: true when GitHub has more past the last page read */
@@ -243,7 +244,7 @@ export function cleanSettings(v: any): Settings {
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
-  /** tests lower the caps; production uses MAX_ROWS, MAX_MERGED, READ_BUDGET, DISCOVER_BUDGET and DISCOVER_FILES */ limits?: { rows?: number; reads?: number; autoReads?: number; merged?: number; discoverReads?: number; discoverFiles?: number } };
+  /** tests lower the caps; production uses MAX_ROWS, MAX_MERGED, READ_BUDGET, DISCOVER_BUDGET and DISCOVER_FILES */ limits?: { rows?: number; reads?: number; autoReads?: number; merged?: number; discoverReads?: number; discoverFiles?: number; discoverDirs?: number } };
 /** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
 class OverAuto extends Error {}
 
@@ -1287,46 +1288,86 @@ export function createPrWatch(d: PrWatchDeps) {
   /** A proposal of how each watched repository's environments are detected: its GitHub environments that have a
    *  deployment, and the manifest lines of a GitOps/config repository that name its image. Reads only (GET), within
    *  DISCOVER_BUDGET; past it the proposal holds what was read and says so. Nothing is saved: envs/accept does that. */
+  const watchedRepos = () => [...new Map([...state.watch.repos, ...state.watch.prs.map((id) => R.splitId(id)?.repo ?? "")].filter(Boolean).map((r) => [r.toLowerCase(), r] as const)).values()];
+  const noToken = () => Object.assign(new Error("GitHub is not connected: Studio has no token"), { tw: "GitHub 尚未連線：Studio 沒有權杖" });
+  const rateLimited = () => Object.assign(new Error("GitHub rate limit: wait a little and search again"), { tw: "GitHub 限流：請稍等再搜尋一次" });
+  /** where a search runs now, for the dialog's progress line (GET /api/prs/envs/progress) */
+  let discovering: { phase: "config" | "files" | "deployments"; what: string; reads: () => number; budget: number } | null = null;
+  /** The sources step: the watched repositories, the config repository used last, and repositories that look like one (one read). */
+  async function envSources() {
+    const token = tokenNow(); if (!token) throw noToken();
+    const repos = watchedRepos(), g = reader(apiBase(), token, AbortSignal.timeout(15_000), null, null, { budget: { left: 1 } });
+    let suggestions: string[] = [];
+    try { const l = await g.get("/user/repos?per_page=100&sort=pushed"); suggestions = (Array.isArray(l) ? l : []).map((r: any) => String(r?.full_name ?? "")).filter((n: string) => R.repoOk(n) && Env.CONFIG_NAME.test(n.split("/")[1]) && !repos.some((x) => eq(x, n))).slice(0, 8); }
+    catch (e) { if (e instanceof RateLimited) throw rateLimited(); }
+    const saved = state.envConfig?.repository ? [state.envConfig.repository] : [];
+    return { repos, envConfig: state.envConfig ?? null, configSuggestions: [...new Map([...saved, ...suggestions].map((r) => [r.toLowerCase(), r] as const)).values()] };
+  }
   async function discoverEnvs(b: any) {
-    const token = tokenNow(); if (!token) throw Object.assign(new Error("GitHub is not connected: Studio has no token"), { tw: "GitHub 尚未連線：Studio 沒有權杖" });
-    const repos = [...new Map([...state.watch.repos, ...state.watch.prs.map((id) => R.splitId(id)?.repo ?? "")].filter(Boolean).map((r) => [r.toLowerCase(), r] as const)).values()];
+    if (discovering) throw Object.assign(new Error("A search is already running"), { tw: "已經在搜尋了" });
+    const token = tokenNow(); if (!token) throw noToken();
+    const repos = watchedRepos();
     if (!repos.length) throw Object.assign(new Error("Watch a repository first"), { tw: "請先追蹤 repo" });
+    try { return await discoverRun(b, token, repos); } finally { discovering = null; }
+  }
+  async function discoverRun(b: any, token: string, repos: string[]) {
     const cfg = String(b?.config ?? "").trim(), refIn = String(b?.ref ?? "").trim();
     if (cfg && !R.repoOk(cfg)) throw Object.assign(new Error("The config repository is owner/repo"), { tw: "設定 repo 要寫成 owner/repo" });
     if (refIn && (refIn.length > 200 || /[\u0000- ~^:?*\\[]|\.\./.test(refIn))) throw Object.assign(new Error("The ref is a branch, tag or commit"), { tw: "ref 要是 branch、tag 或 commit" });
     const total = d.limits?.discoverReads ?? DISCOVER_BUDGET, budget = { left: total };
     // the whole search ends within DISCOVER_MS: past it nothing more is read, what was read is proposed
     const g = reader(apiBase(), token, AbortSignal.timeout(DISCOVER_MS), null, null, { budget });
+    const at = (phase: "config" | "files" | "deployments", what: string) => { discovering = { phase, what, reads: () => total - Math.max(0, budget.left), budget: total }; };
+    at("config", cfg);
     const notes: { en: string; tw: string }[] = []; let over = false, late = false;
     // one read: past the budget nothing more is read (what was read stays); a rate limit fails the search
     const step = async <T>(f: () => Promise<T>, fallback: T, onError?: (e: any) => void): Promise<T> => { if (over || late) return fallback;
-      try { return await f(); } catch (e: any) { if (e instanceof RateLimited) throw e; if (e instanceof OverBudget) { over = true; return fallback; }
+      try { return await f(); } catch (e: any) { if (e instanceof RateLimited) throw rateLimited(); if (e instanceof OverBudget) { over = true; return fallback; }
         if (e?.name === "TimeoutError" || e?.name === "AbortError") { late = true; return fallback; } onError?.(e); return fallback; } };
-    // the config repository: its tree, then the manifest files most likely to name a watched repository's image
+    // the config repository: the commit its branch points at, its tree (walked folder by folder when GitHub cannot list
+    // it in one answer), then the manifest files most likely to name a watched repository's image
     let config: { repository: string; ref: string } | null = null; const files: Env.FileSeen[] = [];
     if (cfg) {
       const cant = (what: string, wtw: string) => (e: any) => notes.push({ en: `${cfg}: ${what} could not be read (${why(e).en})`, tw: `${cfg}：讀不到${wtw}（${why(e).tw}）` });
       const ref = refIn || await step(async () => { const j = await g.get(repoPath(cfg)); return typeof j?.default_branch === "string" && j.default_branch ? String(j.default_branch) : null; }, null, cant("the repository", " repo"));
-      const tree = ref ? await step(() => g.get(`${repoPath(cfg)}/git/trees/${enc(ref)}?recursive=1`), null, cant(`the file tree at ${ref}`, ` ${ref} 的檔案樹`)) : null;
-      if (ref && tree) { config = { repository: cfg, ref };
-        if (tree.truncated) notes.push({ en: `${cfg}: GitHub listed only part of its file tree (it is very large); files past that part were not looked at`, tw: `${cfg}：檔案樹太大，GitHub 只列出一部分；其餘檔案沒有看` });
-        const nm = (x: string) => x.toLowerCase().replace(/[-_.]/g, ""), names = repos.map((r) => nm(r.split("/")[1])).filter((n) => n.length >= 3);
-        const blobs: string[] = (Array.isArray(tree.tree) ? tree.tree : []).slice(0, 20000).filter((t: any) => t?.type === "blob" && typeof t.path === "string" && t.path.length <= 300 && /\.(ya?ml|json)$/i.test(t.path)
-          && !t.path.split("/").some((x: string) => !x || x === "." || x === "..") && !(Number(t.size) > 200_000)).map((t: any) => String(t.path));
-        const ranked = blobs.map((p) => ({ p, m: p.split("/").some((seg) => names.some((n) => nm(seg).includes(n))), e: !!Env.envOfPath(p) })).filter((x) => x.m || x.e)
+      // a branch with a slash in its name goes in a query, never in the path; the tree and files are read at that commit
+      const commit = ref ? await step(async () => { const l = await g.get(`${repoPath(cfg)}/commits?sha=${enc(ref)}&per_page=1`); const s = Array.isArray(l) ? String(l[0]?.sha ?? "") : ""; return /^[0-9a-f]{40}$/i.test(s) ? s : null; }, null, cant(`the branch ${ref}`, ` ${ref} 這個 branch`)) : null;
+      let big = false;
+      const tree = commit ? await step(() => g.get(`${repoPath(cfg)}/git/trees/${commit}?recursive=1`), null, (e) => { if (e instanceof GitHubTooLarge) big = true; else cant(`the file tree at ${ref}`, ` ${ref} 的檔案樹`)(e); }) : null;
+      const okBlob = (path: string, size: unknown) => path.length <= 300 && /\.(ya?ml|json)$/i.test(path) && !path.split("/").some((x) => !x || x === "." || x === "..") && !(Number(size) > 200_000);
+      let blobs: string[] = [];
+      const nm = (x: string) => x.toLowerCase().replace(/[-_.]/g, ""), names = repos.map((r) => nm(r.split("/")[1])).filter((n) => n.length >= 3), raw = repos.map((r) => r.split("/")[1]);
+      if (commit && tree && !tree.truncated) blobs = (Array.isArray(tree.tree) ? tree.tree : []).slice(0, 20000).filter((t: any) => t?.type === "blob" && typeof t.path === "string" && okBlob(t.path, t.size)).map((t: any) => String(t.path));
+      else if (commit && (big || tree?.truncated)) {
+        // too large for one answer: one folder at a time, those naming a watched repository or an environment first
+        const GITOPS = /^(apps?|applications?|services?|overlays?|envs?|environments?|charts?|helm|clusters?|deploy(ments?)?|k8s|kube|kubernetes|manifests?|releases?|values|workloads?|stacks?|namespaces?|tenants?|teams?|projects?)$/i;
+        const score = (name: string) => (names.some((n) => nm(name).includes(n)) ? 4 : 0) + (Env.envOfPath(name) ? 3 : 0) + (GITOPS.test(name) ? 1 : 0);
+        const queue: { path: string; sha: string; depth: number; score: number }[] = [{ path: "", sha: commit, depth: 0, score: 99 }];
+        const cap = d.limits?.discoverDirs ?? DISCOVER_DIRS; let walked = 0;
+        while (queue.length && walked < cap && !over && !late) {
+          queue.sort((a, z) => z.score - a.score || a.depth - z.depth || a.path.localeCompare(z.path)); const dir = queue.shift()!;
+          const j = await step(() => g.get(`${repoPath(cfg)}/git/trees/${dir.sha}`), null); if (over || late) { queue.unshift(dir); break; } walked++;
+          for (const t of Array.isArray(j?.tree) ? j.tree.slice(0, 5000) : []) {
+            const name = String(t?.path ?? ""); if (!name || name.includes("/")) continue; const path = dir.path ? `${dir.path}/${name}` : name;
+            if (t.type === "blob" && okBlob(path, t.size)) blobs.push(path);
+            else if (t.type === "tree" && /^[0-9a-f]{40}$/i.test(String(t.sha ?? "")) && dir.depth < 8) { const s = score(name); if (s > 0 || dir.depth === 0) queue.push({ path, sha: String(t.sha), depth: dir.depth + 1, score: s + (dir.score === 99 ? 0 : dir.score) }); } } }
+        notes.push({ en: `${cfg}: its file tree is too large for GitHub to list at once, so Studio walked it folder by folder (${walked} folder${walked === 1 ? "" : "s"}, those naming a watched repository or an environment first)${queue.length ? `; ${queue.length} more were not looked at` : ""}`,
+          tw: `${cfg}：檔案樹太大，GitHub 無法一次列出，Studio 改成一層一層看（看了 ${walked} 個資料夾，有 repo 名或環境名的優先）${queue.length ? `；還有 ${queue.length} 個沒看` : ""}` }); }
+      if (commit && (tree || big)) { config = { repository: cfg, ref };
+        const ranked = blobs.map((p) => ({ p, m: p.split("/").some((seg) => names.some((n) => nm(seg).includes(n))), e: !!Env.envOfPath(p, raw) })).filter((x) => x.m || x.e)
           .sort((a, z) => Number(z.m && z.e) - Number(a.m && a.e) || Number(z.m) - Number(a.m) || a.p.split("/").length - z.p.split("/").length || a.p.localeCompare(z.p));
         const cap = d.limits?.discoverFiles ?? DISCOVER_FILES;
         if (ranked.length > cap) notes.push({ en: `${cfg}: ${ranked.length} files could name an image; Studio read the ${cap} most likely (a path naming a watched repository and an environment first)`, tw: `${cfg}：有 ${ranked.length} 個檔案可能寫了 image；Studio 只讀最可能的 ${cap} 個（路徑同時有 repo 名和環境名的優先）` });
-        let unread = 0;
+        let unread = 0; at("files", cfg);
         await pool(ranked.slice(0, cap), 4, async ({ p }) => {
-          const j = await step(() => g.get(`${repoPath(cfg)}/contents/${p.split("/").map(enc).join("/")}?ref=${enc(ref)}`), null, () => { unread++; });
+          const j = await step(() => g.get(`${repoPath(cfg)}/contents/${p.split("/").map(enc).join("/")}?ref=${commit}`), null, () => { unread++; });
           if (j?.type === "file" && j.encoding === "base64" && typeof j.content === "string" && Number(j.size) <= 200_000) files.push({ repository: cfg, ref, path: p, text: Buffer.from(j.content, "base64").toString("utf8") }); });
         if (unread) notes.push({ en: `${cfg}: ${unread} file${unread === 1 ? "" : "s"} could not be read`, tw: `${cfg}：有 ${unread} 個檔案讀不到` });
         files.sort((a, z) => a.path.localeCompare(z.path)); }
     }
     // each repository's GitHub environments that have a deployment (at most 8 a repository)
     const deployments: Env.DeploymentSeen[] = [];
-    await pool(repos, 4, async (repo) => {
+    if (b?.deployments !== false) await pool(repos, 4, async (repo) => { at("deployments", repo);
       const j = await step(() => g.get(`${repoPath(repo)}/environments?per_page=30`), null, (e) => notes.push({ en: `${repo}: its GitHub environments could not be read (${why(e).en})`, tw: `${repo}：讀不到它的 GitHub 環境（${why(e).tw}）` }));
       const names: string[] = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n && n.length <= 40 && !/[\u0000-\u001f]/.test(n) && n.toLowerCase() !== "github-pages").slice(0, 8);
       for (const n of names) { const l = await step(() => g.get(`${repoPath(repo)}/deployments?environment=${enc(n)}&per_page=1`), null);
@@ -1438,6 +1479,7 @@ export function createPrWatch(d: PrWatchDeps) {
       case "sending/test": if (actor) throw new Error("Only the captain sends a test"); return await sendTest(b);
       case "sending/test-dm": if (actor) throw new Error("Only the captain sends a test DM"); return await sendTestDm(b);
       case "push-check": return await pushCheck(b);
+      case "envs/sources": if (actor) throw new Error("Only the captain looks for environments"); return await envSources();
       case "envs/discover": if (actor) throw new Error("Only the captain looks for environments"); return await discoverEnvs(b);
       case "envs/accept": if (actor) throw new Error("Only the captain accepts environments"); return await acceptEnvs(b, actor);
       case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };
@@ -1568,6 +1610,7 @@ export function createPrWatch(d: PrWatchDeps) {
       if (p === "/api/prs") { ensure(); return json(view()); }
       if (p === "/api/prs/count") return json({ count: count(), refreshedAt: snap.at });
       if (p === "/api/prs/sending") return json(sendingView());
+      if (p === "/api/prs/envs/progress") return json(discovering ? { running: true, phase: discovering.phase, what: discovering.what, reads: discovering.reads(), budget: discovering.budget } : { running: false });
       return json({ error: "not found" }, 404);
     }
     if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
