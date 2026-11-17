@@ -107,7 +107,7 @@ const J = (v: unknown) => JSON.stringify(v);
     { repository: "acme/deploy-config", ref: "main", path: "apps/shop-api/base/deployment.yaml", text: `image: registry.example/shop-api:${c}\n` }];
   const p = E.propose(["acme/shop-api"], [], [{ repo: "acme/shop-api", environment: "development", sha: sha("d"), ref: "main" }], files);
   const g = (env: string) => p.groups.find((x) => x.env === env)!;
-  ok(g("production").state === "ok" && g("dev").state === "ok" && g("staging").state === "pick" && g("staging").candidates.length === 2, "one strong candidate: ticked; two files for staging: a pick", J(p.groups.map((x) => [x.env, x.state])));
+  ok(g("production").state === "ok" && g("dev").state === "ok" && g("staging").state === "ok" && g("staging").candidates.length === 1 && g("staging").candidates[0].detect.kind === "files", "one strong candidate: ticked; the image in two staging manifests: one candidate reading both", J(p.groups.map((x) => [x.env, x.state])));
   ok(p.envs.map((e) => e.name).join() === "dev,staging,production" && p.envs.find((e) => e.name === "production")!.production, "the environments in the usual order, production flagged");
   ok(p.skipped.length === 1 && p.skipped[0].path.endsWith("base/deployment.yaml"), "a file naming the image under no environment is listed as skipped");
   ok(g("production").candidates[0].evidence.url === "https://github.com/acme/deploy-config/blob/main/apps/shop-api/overlays/prod/deployment.yaml#L1", "the evidence links the very line on GitHub");
@@ -163,14 +163,14 @@ try {
   ok(G(ca, "staging")?.state === "pick" && J(G(ca, "staging").candidates.map((c: any) => c.source)) === J(["deployment", "file"]), "checkout-api staging: a GitHub deployment and a manifest: the captain picks");
   ok(G(ca, "dev")?.state === "ok" && G(ca, "preprod")?.state === "ok", "dev and preprod from GitHub deployments only: ticked");
   ok(G("northwind/web-app", "production")?.state === "ok" && G("northwind/web-app", "production").candidates[0].detect.template === 'newTag: "{tag}"', "web-app production: a kustomize newTag");
-  ok(G("northwind/web-app", "staging")?.state === "pick" && G("northwind/web-app", "staging").candidates.length === 2, "web-app staging: two manifests name it: a pick");
+  ok(G("northwind/web-app", "staging")?.state === "ok" && G("northwind/web-app", "staging").candidates[0].detect.kind === "files" && !G("northwind/web-app", "staging").candidates[0].evidence.signals.some((x: any) => x.kind === "commit"), "web-app staging: its image (proven by production's commit, which this cell does not show as its own) in two manifests: one candidate reading both", J(G("northwind/web-app", "staging")));
   const lg = G("northwind/ledger", "production");
   ok(lg?.state === "pick" && lg.candidates.some((c: any) => c.problem === "no-commit") && lg.candidates.some((c: any) => c.strength === "weak"), "ledger production: a tag with no commit and a weak match (ledger-tools): never ticked", J(lg));
-  ok(v.skipped.some((x: any) => x.path === "apps/checkout-api/base/deployment.yaml") && !v.groups.some((g: any) => g.candidates.some((c: any) => c.evidence.path?.endsWith("README.md"))), "a base manifest is skipped (no environment); a README is not read");
+  ok(!v.groups.some((g: any) => g.candidates.some((c: any) => /base\/|README/.test(c.evidence.path ?? ""))), "a base manifest (no environment) and a README are not read");
   ok(J(v.envs.map((e: any) => [e.name, e.production])) === J([["dev", false], ["staging", false], ["preprod", false], ["production", true]]), "the environments, production flagged", J(v.envs));
   ok(!writes().length && readFileSync(join(dir, "pr-watch", "state.json"), "utf8") === stateBefore, "looking writes nothing: no GitHub write, the settings file unchanged");
   ok(gh.calls.slice(before).every((c) => c.method === "GET" || c.path === "/graphql"), "every discovery read is a GET (a refresh still running may query GraphQL)");
-  ok(v.reads > 0 && v.reads <= v.budget && v.budget === 300, "the reads are counted against the budget", `${v.reads}/${v.budget}`);
+  ok(v.reads > 0 && v.reads <= v.budget && v.budget === 600, "the reads are counted against the budget", `${v.reads}/${v.budget}`);
 
   // Accept: the ticked ones and the picks, one environment per name
   const pick = (g: any, i = 0) => ({ repo: g.repo, env: g.env, detect: g.candidates[i].detect });
@@ -210,7 +210,7 @@ try {
     const n0 = gh.calls.length, b2 = (await c2("/api/prs/envs/discover", { config: cfg })).body;
     const used = gh.calls.length - n0;
     ok(b2.over === true && b2.reads === 6 && used === 6, "past its budget the search reads no more", `${b2.reads} reads, ${used} calls`);
-    ok(b2.notes.some((n: any) => /stopped after 6 reads/.test(n.en)) && b2.notes.some((n: any) => /Studio read the 2 most likely/.test(n.en)), "and says so: the reads and the files left out", J(b2.notes));
+    ok(b2.notes.some((n: any) => /stopped after 6 reads/.test(n.en)) && b2.notes.some((n: any) => /Studio read 2 \(production first\)/.test(n.en)), "and says so: the reads and the files left out", J(b2.notes));
     ok(Array.isArray(b2.groups) && b2.groups.some((g: any) => g.env === "production"), "what was read is still proposed (the most likely manifests first)", J(b2.groups.map((g: any) => [g.repo, g.env])));
     gh.knobs.treeTruncated = true;
     const W3 = make(d2), b3 = (await callOn(W3)("/api/prs/envs/discover", { config: cfg })).body; gh.knobs.treeTruncated = false;
@@ -223,11 +223,11 @@ try {
   { const d5 = mkdtempSync(join(tmpdir(), "pr-watch-envs-big-")), W5 = createPrWatch({ dataDir: d5, poller: new GitHubPoller() }); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/checkout-api" }); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/web-app" });
     await until(() => !!W5.snapshot.at && !W5.view().refreshing, 15000);
     gh.knobs.treeTooBig = true; const n0 = gh.calls.length, b5 = (await callOn(W5)("/api/prs/envs/discover", { config: cfg })).body;
-    const walks = gh.calls.slice(n0).filter((c) => c.path.includes("/git/trees/") && !c.path.includes("recursive"));
+    const walks = gh.calls.slice(n0).filter((c) => c.path === "/graphql" && /\.\.\.on Tree/.test(String(c.body?.query ?? "")));
     ok(b5.groups.find((g: any) => g.repo === ca && g.env === "production")?.state === "ok" && b5.groups.find((g: any) => g.repo === "northwind/web-app" && g.env === "production")?.state === "ok", "over 1 MB: the same manifests are found by walking the folders", J(b5.groups.map((g: any) => [g.repo, g.env, g.state])));
-    ok(walks.length > 1 && !walks.some((c) => c.path.includes("README")) && b5.notes.some((n: any) => /too large for GitHub to list at once, so Studio walked it folder by folder/.test(n.en)), "one read per folder, and it says so", J(b5.notes));
+    ok(walks.length >= 1 && b5.notes.some((n: any) => /too large for GitHub to list at once, so Studio walked it folder by folder/.test(n.en)), "one read per folder, and it says so", J(b5.notes));
     const W6 = make(d5, { discoverDirs: 2 }), b6 = (await callOn(W6)("/api/prs/envs/discover", { config: cfg })).body; gh.knobs.treeTooBig = false;
-    ok(b6.notes.some((n: any) => /\(2 folders, .*more were not looked at/.test(n.en)), "past its folder budget the walk stops and says how many were left", J(b6.notes));
+    ok(b6.notes.some((n: any) => /\(2 folders\); \d+ more were not looked at/.test(n.en)), "past its folder budget the walk stops and says how many were left", J(b6.notes));
     // a branch with a slash goes in a query; the tree is read at the commit it points at
     const n1 = gh.calls.length; await callOn(W5)("/api/prs/envs/discover", { config: cfg, ref: "release/v1" });
     const after = gh.calls.slice(n1).map((c) => c.path);

@@ -116,7 +116,9 @@ export function fixtureData() {
   const defaultBranch: Record<string, string> = {};
   // the repositories the token can read (GET /user/repos, newest push first): offered as a config repository by name
   const userRepos: string[] = [];
-  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi, more, defaultBranch, userRepos };
+  // more commits a repository has (besides its pull requests' commits, merges and tags): image tags name them
+  const commits: Record<string, string[]> = {};
+  return { commits, prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi, more, defaultBranch, userRepos };
 }
 
 export function prWatchGitHub(data = fixtureData()) {
@@ -130,7 +132,9 @@ export function prWatchGitHub(data = fixtureData()) {
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
   let notModified = 0;
   // knobs: a PATCH whose kept body differs from what was sent, a slow GET of one pull request, an unreadable CODEOWNERS
-  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false, noDefaultBranch: false, treeTruncated: false, treeTooBig: false };
+  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false, noDefaultBranch: false, treeTruncated: false, treeTooBig: false, graphqlMaxObjects: 0 };
+  // every commit a repository has: its pull requests' commits and merges, its tags, `commits`
+  const knownCommits = (repo: string) => [...data.prs.filter((x) => x.repo === repo).flatMap((x) => [...x.commits.map((c) => c.sha), ...(x.merged ? [data.merge(x)] : [])]), ...(data.tags[repo] ?? []).map((t) => t.sha), ...(data.commits[repo] ?? [])];
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const res = await answer(req);
     if (req.method !== "GET" || res.status !== 200) return res;
@@ -145,6 +149,25 @@ export function prWatchGitHub(data = fixtureData()) {
     if (req.headers.get("authorization") !== "Bearer fixture-token") return json({ message: "Bad credentials" }, 401);
     if (rateLimited) return json({ message: "API rate limit exceeded" }, 403, { "x-ratelimit-remaining": "0" });
     if (method === "GET" && p === "/user") return json({ login: ME });
+    // GraphQL objects by expression (`<ref>:<path>`, the ref ignored): a file's text, or a folder's entries, for any
+    // repository holding `files`; repositories aliased repository(owner:"o",name:"n"), objects aliased in each
+    if (method === "POST" && p === "/graphql" && /object\(expression:/.test(String(body?.query ?? ""))) {
+      const query = String(body.query), out: Record<string, any> = {}, str = (x: string) => JSON.parse(x);
+      // graphqlMaxObjects: an answer for more objects than this is over the 1 MB Studio reads
+      if (knobs.graphqlMaxObjects && (query.match(/:object\(/g) ?? []).length > knobs.graphqlMaxObjects) return json({ data: {}, padding: "x".repeat(1_100_000) });
+      const reps = [...query.matchAll(/(\w+):repository\(owner:("(?:[^"\\]|\\.)*"),name:("(?:[^"\\]|\\.)*")\)/g)];
+      reps.forEach((m, i) => { const repo = `${str(m[2])}/${str(m[3])}`, part = query.slice(m.index!, reps[i + 1]?.index ?? query.length), o: Record<string, any> = {};
+        for (const x of part.matchAll(/(\w+):object\(expression:("(?:[^"\\]|\\.)*")\)\{\.\.\.on (Blob|Tree|Commit)/g)) {
+          const expr: string = str(x[2]);
+          if (x[3] === "Commit") { const hit = /^[0-9a-f]{7,40}$/.test(expr) ? knownCommits(repo).find((c) => c.startsWith(expr)) : undefined; o[x[1]] = hit ? { oid: hit } : null; continue; }
+          const path = expr.slice(expr.indexOf(":") + 1).replace(/\/+$/, ""), pre = `${repo}/${path ? `${path}/` : ""}`;
+          if (x[3] === "Blob") { const t = data.files[`${repo}/${path}`]; o[x[1]] = t == null ? null : { text: t }; continue; }
+          const kids = new Map<string, any>();
+          for (const f of Object.keys(data.files)) if (f.startsWith(pre)) { const rel = f.slice(pre.length), name = rel.split("/")[0];
+            kids.set(name, rel.includes("/") ? { name, type: "tree", object: {} } : { name, type: "blob", object: { byteSize: data.files[f].length } }); }
+          o[x[1]] = kids.size ? { entries: [...kids.values()] } : null; }
+        out[m[1]] = o; });
+      return json({ data: out }); }
     if (method === "POST" && p === "/graphql") { const v = body?.variables ?? {}; const pr = data.find(`${v.o}/${v.r}`, v.n);
       return json({ data: { repository: { pullRequest: pr ? { commits: { nodes: [{ commit: { oid: pr.github?.ciOnOlderHead ? pr.commits[0].sha : data.head(pr), statusCheckRollup: pr.github?.ci ? { state: pr.github.ci } : pr.checks?.length ? { state: pr.checks.some((c) => c.conclusion === "failure") ? "FAILURE" : "SUCCESS" } : null } }] }, reviewDecision: pr.github?.reviewDecision ?? null, mergeStateStatus: pr.github?.mergeState ?? "BLOCKED",
         reviewRequests: { nodes: (pr.github?.requested ?? []).map((x: string) => x.includes("/") ? { requestedReviewer: { __typename: "Team", slug: x.split("/")[1], organization: { login: x.split("/")[0] } } } : { requestedReviewer: { __typename: "User", login: x } }) },
@@ -182,14 +205,21 @@ export function prWatchGitHub(data = fixtureData()) {
       const text = path.endsWith("CODEOWNERS") ? (path === ".github/CODEOWNERS" ? data.rules[repo]?.codeowners : undefined) : data.files[`${repo}/${path}`];
       return text == null ? nf() : json({ type: "file", encoding: "base64", size: text.length, content: Buffer.from(text).toString("base64") }); }
     // a branch's newest commit (GET /commits?sha=<branch>): one per repository holding files
+    // GET /commits?sha=<hex>: that commit when the repository has it (its pull requests' commits and merges, its tags,
+    // `commits`), else 404 as GitHub answers "No commit found for SHA"
+    if (rest === "/commits" && /^[0-9a-f]{7,40}$/.test(q.get("sha") ?? "")) { const want = q.get("sha")!;
+      const known = knownCommits(repo);
+      const hit = known.find((c) => c.startsWith(want)); return hit ? json([{ sha: hit }]) : json({ message: `No commit found for SHA: ${want}` }, 404); }
     if (rest === "/commits" && q.get("sha")) return Object.keys(data.files).some((f) => f.startsWith(`${repo}/`)) ? json([{ sha: sha(`${repo}-head`) }]) : nf();
     // a repository's file tree at that commit: recursive, every file of `files` under it (treeTruncated: GitHub's
     // truncated flag; treeTooBig: an answer over the 1 MB Studio reads); or one folder (the commit is the root)
     if ((k = /^\/git\/trees\/([0-9a-f]{40})$/.exec(rest))) { const pre = `${repo}/`, paths = Object.keys(data.files).filter((f) => f.startsWith(pre)).map((f) => f.slice(pre.length));
       if (!paths.length) return nf();
-      if (q.get("recursive") === "1") return json({ sha: k[1], truncated: knobs.treeTruncated, tree: paths.map((f) => ({ path: f, type: "blob", size: data.files[pre + f].length })), ...(knobs.treeTooBig ? { padding: "x".repeat(1_100_000) } : {}) });
       const dirSha = (d: string) => sha(`${repo}:dir:${d}`), dirs = new Set(paths.flatMap((f) => f.split("/").slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join("/"))));
       const at = k[1] === sha(`${repo}-head`) ? "" : [...dirs].find((d) => dirSha(d) === k![1]); if (at === undefined) return nf();
+      // recursive: the files under that folder, relative to it (treeTooBig pads only the whole repository's answer)
+      if (q.get("recursive") === "1") { const under = paths.filter((f) => !at || f.startsWith(`${at}/`)).map((f) => at ? f.slice(at.length + 1) : f);
+        return json({ sha: k[1], truncated: knobs.treeTruncated, tree: under.map((f) => ({ path: f, type: "blob", size: data.files[pre + (at ? `${at}/` : "") + f].length })), ...(knobs.treeTooBig && !at ? { padding: "x".repeat(1_100_000) } : {}) }); }
       const kids = new Map<string, any>();
       for (const f of paths) { if (at && !f.startsWith(`${at}/`)) continue; const rel = at ? f.slice(at.length + 1) : f, name = rel.split("/")[0], full = at ? `${at}/${name}` : name;
         kids.set(name, rel.includes("/") ? { path: name, type: "tree", sha: dirSha(full) } : { path: name, type: "blob", size: data.files[pre + f].length }); }
@@ -241,4 +271,53 @@ export function addDeployConfig(D: ReturnType<typeof fixtureData>, cfg = "northw
   });
   D.userRepos.push(cfg, ca, "northwind/notes", "northwind/cluster-ops");
   return cfg;
+}
+
+/**
+ * A config repository laid out as real GitOps repositories often are (every name invented): one top-level folder
+ * (deploy/) holding <service>/overlays/<prefix>-<environment>/flux-patch.yaml, service and image names that are not the
+ * repositories' names, one repository deployed as three services, and every tag shape: version-sha, branch-sha, a bare
+ * sha and version-only. Who builds what is told by commits, git tags and CI configs (Drone, GitHub Actions), as GitHub
+ * would; a sidecar image nobody watched builds; and one image two kinds of proof disagree about.
+ *   northwind/shop-monorepo  → go-shop (storefront, checkout-server, profile-service), proven by the commit in its tag
+ *   northwind/shop-router    → shop-aggregator, proven by its GitHub Actions build-push tags
+ *   northwind/weather-api         → weatherd, version-only 2.4.1, proven by its git tag v2.4.1 and its Drone config
+ *   northwind/orders         → orders-server (tag v3.0.0-<sha>), proven by the commit
+ *   northwind/orders-notifier → orders-notifier (a bare sha tag, under gke-production; also k8s-staging and k8s-development)
+ *   shared-worker: shop-router's CI publishes it, but the commit in its tag is in orders: a pick
+ */
+export function addRealLayout(D: ReturnType<typeof fixtureData>, cfg = "northwind/cluster-deploy") {
+  const c = (n: string) => sha(n), R = "registry.example/acme", fp = (img: string, tag: string) => `apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: ${R}/${img}:${tag}\n        - name: cache\n          image: redis:7.2\n`;
+  const mono = [c("mono-1"), c("mono-0")], router = c("router-1"), orders = c("orders-1"), relay = [c("notify-p"), c("notify-s"), c("notify-d")], shared = c("shared-1");
+  Object.assign(D.commits, { "northwind/shop-monorepo": mono, "northwind/shop-router": [router], "northwind/orders": [orders, shared], "northwind/orders-notifier": relay });
+  D.tags["northwind/weather-api"] = [{ name: "v2.4.1", sha: c("weather-v2.4.1") }, { name: "v2.4.0", sha: c("weather-v2.4.0") }, { name: "v1.7.0", sha: c("weather-v1.7.0") }];
+  // a version number other repositories happen to have too: no proof on its own
+  D.tags["northwind/orders"] = [{ name: "2.4.1", sha: c("orders-2.4.1") }];
+  const ov = (svc: string, env: string, file = "flux-patch.yaml") => `${cfg}/deploy/${svc}/overlays/${env}/${file}`;
+  Object.assign(D.files, {
+    // a second line naming the same image (a migration init container): Studio reads the first, this one is left out
+    [ov("storefront", "cluster-prod")]: fp("go-shop", `0.9.12-${mono[0].slice(0, 7)}`) + `      initContainers:\n        - name: migrate\n          image: ${R}/go-shop:migrate-latest\n`,
+    [ov("checkout-server", "cluster-prod")]: fp("go-shop", `0.9.12-${mono[0].slice(0, 7)}`),
+    [ov("profile-service", "cluster-prod")]: fp("go-shop", `0.9.11-${mono[1].slice(0, 7)}`),
+    [ov("aggregator", "cluster-prod")]: fp("shop-aggregator", `main-${router.slice(0, 8)}`),
+    [ov("weatherd", "cluster-prod")]: fp("weatherd", "2.4.1"),
+    // an image named like orders-notifier that nobody watched builds, on a version number only weather-api tags (whose CI publishes weatherd)
+    [ov("notifier-admin", "cluster-prod")]: fp("notifier-admin", "1.7.0"),
+    [ov("orders-server", "cluster-prod")]: fp("orders-server", `v3.0.0-${orders.slice(0, 7)}`),
+    [ov("orders-notifier", "gke-production")]: fp("orders-notifier", relay[0].slice(0, 8)),
+    [ov("orders-notifier", "k8s-staging")]: fp("orders-notifier", relay[1].slice(0, 8)),
+    [ov("orders-notifier", "k8s-development")]: fp("orders-notifier", relay[2].slice(0, 12)),
+    [ov("orders-notifier", "gke-production", "kustomization.yaml")]: "resources:\n  - ../../base\npatches:\n  - path: flux-patch.yaml\n",
+    [ov("worker", "k8s-staging")]: fp("shared-worker", `2.1.0-${shared.slice(0, 7)}`),
+    [`${cfg}/deploy/storefront/base/deployment.yaml`]: fp("go-shop", "latest"),
+    [`${cfg}/clusters/gke-production/flux-system/gotk-sync.yaml`]: "kind: Kustomization\n",
+    [`${cfg}/README.md`]: "# deploy\n",
+    // the repositories' build configs
+    ["northwind/shop-router/.github/workflows/build.yml"]: "jobs:\n  build:\n    steps:\n      - uses: docker/build-push-action@v5\n        with:\n          push: true\n          tags: ${{ env.REGISTRY }}/acme/shop-aggregator:${{ github.sha }}\n      - run: docker build -t registry.example/acme/shared-worker:${GITHUB_SHA} worker && docker push registry.example/acme/shared-worker:${GITHUB_SHA}\n",
+    ["northwind/weather-api/.drone.yml"]: "kind: pipeline\nsteps:\n- name: publish\n  image: plugins/docker\n  settings:\n    registry: registry.example\n    repo: registry.example/acme/weatherd\n    tags:\n      - ${DRONE_TAG}\n",
+    ["northwind/weather-api/Dockerfile"]: "FROM alpine\nLABEL org.opencontainers.image.title=\"weatherd\"\n",
+  });
+  // many more files elsewhere: the whole repository's tree is over what GitHub lists at once (with treeTooBig)
+  for (let i = 0; i < 40; i++) D.files[`${cfg}/infra-${i % 8}/component-${i}/values.yaml`] = `replicas: ${i}\n`;
+  return { cfg, mono, router, orders, relay, shared, repos: ["northwind/shop-monorepo", "northwind/shop-router", "northwind/weather-api", "northwind/orders", "northwind/orders-notifier"] };
 }
