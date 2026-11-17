@@ -44,7 +44,7 @@ export const overviewReach=p=>p.locator('svg.rt-graph').evaluate(svg=>{const out
 // Default Overview is the folded main path: a deletion may unfold a branch, but never hides another step.
 // Show all connections draws the actual graph: the visible ID set changes only by the deleted step.
 export async function verifyCloseBranchDeletion(p, base, ok) {
- await p.goto(`${base}/#/workflows/trivial-lane`);await p.locator('svg.rt-graph').waitFor();await revealEditorControl(p,'[data-view-toggle="simple"]');await p.locator('[data-view-toggle="simple"]').click();
+ await p.goto(`${base}/#/workflows/trivial-lane/advanced`);await p.locator('svg.rt-graph').waitFor();await revealEditorControl(p,'[data-view-toggle="simple"]');await p.locator('[data-view-toggle="simple"]').click();
  const before=(await (await p.request.get(`${base}/api/wf/trivial-lane`)).json()).def,sorted=xs=>[...xs].sort(),same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
  const shown=()=>p.locator('svg.rt-graph [data-node]').evaluateAll(xs=>xs.map(x=>x.dataset.node));
  const allEdges=p.locator('[data-graph-all-edges]');

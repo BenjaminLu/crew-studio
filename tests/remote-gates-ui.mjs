@@ -34,7 +34,7 @@ try {
     const p = await context.newPage(); let errors = [];
     p.on("pageerror", e => errors.push(e.message));
     await p.addInitScript(({ language }) => { localStorage.setItem("crew.lang", language); localStorage.setItem("crew.chatOpen", "0"); localStorage.setItem("crew.graphView", "detail"); }, { language });
-    await p.goto(base + "/#/workflows/code-firstmate");
+    await p.goto(base + "/#/workflows/code-firstmate/advanced");
     await p.waitForSelector('svg.rt-graph');
     await p.evaluate(() => document.body.classList.add("chat-closed"));
     await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]");
@@ -52,7 +52,7 @@ try {
     const node = p.locator('[data-node="remote-ready"]'); await node.focus(); await node.press("Enter");
     await p.locator('.rt-panel h3').waitFor(); await p.locator('.rt-panel').scrollIntoViewIfNeeded();
     ok(await p.locator('.rt-panel [data-field="do"]').inputValue() === "remote.ready", `${width}/${theme}/${language} readiness action is reachable through node selection`);
-    await p.screenshot({ path: join(shots, `readiness-selection-${width}-${theme}-${language}.png`), fullPage: true }); await p.goto(base + "/#/workflows/code-firstmate");await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.locator('[data-view-toggle="simple"]').click();await p.waitForSelector('svg.rt-graph[data-view="simple"]');await revealEditorControl(p, '[data-fit]'); await p.click('[data-fit]');await p.waitForTimeout(100);
+    await p.screenshot({ path: join(shots, `readiness-selection-${width}-${theme}-${language}.png`), fullPage: true }); await p.goto(base + "/#/workflows/code-firstmate/advanced");await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.locator('[data-view-toggle="simple"]').click();await p.waitForSelector('svg.rt-graph[data-view="simple"]');await revealEditorControl(p, '[data-fit]'); await p.click('[data-fit]');await p.waitForTimeout(100);
     const simpleFont=await p.evaluate(()=>{const svg=document.querySelector('svg.rt-graph'),k=svg.getScreenCTM().a;return Math.min(...[...svg.querySelectorAll('[data-node] .rt-label')].map(t=>parseFloat(getComputedStyle(t).fontSize)*k));});
     ok(simpleFont>=11,`${width}/${theme}/${language} Simple Fit titles remain at least11px`);await p.screenshot({path:join(shots,`readable-simple-fit-${width}-${theme}-${language}.png`),fullPage:true});
     if(width===390){

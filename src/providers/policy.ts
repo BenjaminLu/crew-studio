@@ -8,7 +8,10 @@ export type ProviderSelection = { role: string; host: string | null; explicit: b
   alternates?: string[];
   /** the captain named this model himself (the review room's tutor): a model id the vendor's probe did not report goes to the
    *  vendor as given, and the vendor accepts or rejects it. Never set for a pick Studio makes (Automatic, any other seat). */
-  picked?: boolean };
+  picked?: boolean;
+  /** the step's own reasoning effort (AgentPick.stepEffort): used instead of the chosen effort when the chosen model takes it,
+   *  else the chosen effort stays and the evidence says why */
+  stepEffort?: string | null };
 /** The host whose rules a native step selects under, and the policy reviewer's stand-ins. The chain is the attached Firstmate's
  *  host; with none attached it is Cursor only when Cursor is the one vendor signed in (Codex and Claude are not), so a Codex or
  *  Claude Studio selects as it always did, whatever its chat vendor. Only under Cursor does the policy reviewer stand in along
@@ -18,7 +21,7 @@ export function nativeChain(o: { host: string | null; logins: Record<string, str
   const chain = o.host ?? (cursorOnly ? "cursor" : null);
   return { chain, alternates: !o.explicit && !o.fixture && o.role === "reviewer" && chain === "cursor" ? [...o.fallback, "cursor"] : undefined };
 }
-export type SelectedProvider = { provider: Provider; evidence: { role: string; rule: string; provider: string; model: string; effort: string | null; unavailable: { provider: string; reason: string }[] } };
+export type SelectedProvider = { provider: Provider; evidence: { role: string; rule: string; provider: string; model: string; effort: string | null; unavailable: { provider: string; reason: string }[]; stepEffort?: { asked: string; applied: boolean; reason?: string } } };
 export async function selectNativeProvider(i: ProviderSelection, probe: (id: string,pair:{model:string;effort:string|null}) => Promise<ProviderCapability>, make: (id: string, model: string, effort: string | null) => Provider): Promise<SelectedProvider> {
   if (!Array.isArray(i.known) || !i.known.every(x => typeof x === "string") || !Array.isArray(i.fallback) || !i.fallback.every(x => typeof x === "string") || !i.configured || typeof i.configured !== "object") throw new ProviderRefusal("provider policy configuration is invalid");
   const known = new Set(i.known), validate = (id: string) => { if (!known.has(id)) throw new ProviderRefusal(`unknown provider identity: ${id}`); return id; };
@@ -35,9 +38,19 @@ export async function selectNativeProvider(i: ProviderSelection, probe: (id: str
     const id = chain[k];
     // an optional candidate that is not ready is passed over (recorded), never a hold: the next one decides
     const skip = (reason: string) => { if (!optional.has(id)) return false; unavailable.push({ provider: id, reason }); return true; };
-    const selected = explicit && !standIn ? { model: i.model ?? i.configured[id]?.model ?? null, effort: Object.hasOwn(i,"effort") ? i.effort ?? null : i.configured[id]?.effort ?? null } : i.roleModel && id === chain[0] ? { ...i.configured[id], model: i.roleModel } : i.configured[id];
+    const chosen = explicit && !standIn ? { model: i.model ?? i.configured[id]?.model ?? null, effort: Object.hasOwn(i,"effort") ? i.effort ?? null : i.configured[id]?.effort ?? null } : i.roleModel && id === chain[0] ? { ...i.configured[id], model: i.roleModel } : i.configured[id];
+    let selected = chosen, step: { asked: string; applied: boolean; reason?: string } | undefined;
     if (!selected?.model || typeof selected.model !== "string") { if (skip("no approved model configured")) continue; throw new ProviderRefusal(`no approved model configured for ${id}`); }
     let cap: ProviderCapability; try { cap = await probe(id,{model:selected.model,effort:selected.effort??null}); } catch(error) { if (skip("capability probe failed")) continue; if(error instanceof ProviderRefusal)throw error;throw new ProviderRefusal(`capability probe failed for ${id}; verification unavailable`); }
+    // the step's own effort, when the chosen model takes it (its efforts as the probe reports them): probed again with that pair,
+    // so what runs is what was verified; otherwise the chosen effort stays and the evidence says why
+    if (typeof i.stepEffort === "string" && i.stepEffort && i.stepEffort !== (selected.effort ?? null)) {
+      const listed = cap?.models?.find((m) => m?.id === selected.model)?.efforts;
+      if (Array.isArray(listed) && listed.includes(i.stepEffort)) {
+        try { const again = await probe(id, { model: selected.model, effort: i.stepEffort }); cap = again; selected = { ...selected, effort: i.stepEffort }; step = { asked: i.stepEffort, applied: true }; }
+        catch { step = { asked: i.stepEffort, applied: false, reason: `capability probe failed for ${id} ${selected.model} at ${i.stepEffort}; kept ${selected.effort ?? "its default"}` }; }
+      } else step = { asked: i.stepEffort, applied: false, reason: Array.isArray(listed) ? `${id} ${selected.model} does not take reasoning effort ${i.stepEffort}; kept ${selected.effort ?? "its default"}` : `${id} reported no efforts for ${selected.model}; kept ${selected.effort ?? "its default"}` };
+    }
     if (optional.has(id) && cap && cap.provider === id && !(cap.available && cap.auth === "verified" && (cap.quota === "available" || id === "claude" && isClaudeExecutionAdmission(cap, { model: selected.model, effort: selected.effort ?? null })) && cap.models.some((m) => m?.id === selected.model))) { skip(cap.reason ?? "not ready"); continue; }
     if (!cap || !Array.isArray(cap.models) || cap.models.some(m => !m || typeof m.id !== "string" || m.efforts !== undefined && (!Array.isArray(m.efforts) || m.efforts.some(e => typeof e !== "string"))) || typeof cap.available !== "boolean" || !["verified", "unverified", "missing"].includes(cap.auth) || !["available", "exhausted", "unknown"].includes(cap.quota) || cap.provider !== id || !Number.isFinite(cap.at) || !Number.isFinite(cap.expires) || cap.at > Date.now() || cap.expires <= Date.now() || cap.expires - cap.at > 300_000) throw new ProviderRefusal(`provider capability identity or freshness unavailable: ${id}`);
     const classifiedUnavailable = cap.refusal === "unavailable" && !cap.available;
@@ -62,7 +75,7 @@ export async function selectNativeProvider(i: ProviderSelection, probe: (id: str
     }
     const provider = make(id, selected.model, selected.effort ?? null);
     if (provider.id !== id || provider.model !== selected.model) throw new ProviderRefusal("actual provider/model identity does not match verified selection");
-    return { provider, evidence: { role: i.role, rule: standIn ? "explicit vendor unavailable: configured stand-in" : explicit ? (captains && !model ? "explicit: the captain's pick, not reported by the vendor's probe" : "explicit") : pair.length ? "opposite-of-host" : "configured fallback: unknown host", provider: id, model: selected.model, effort: selected.effort ?? null, unavailable } };
+    return { provider, evidence: { role: i.role, rule: standIn ? "explicit vendor unavailable: configured stand-in" : explicit ? (captains && !model ? "explicit: the captain's pick, not reported by the vendor's probe" : "explicit") : pair.length ? "opposite-of-host" : "configured fallback: unknown host", provider: id, model: selected.model, effort: selected.effort ?? null, unavailable, ...(step ? { stepEffort: step } : {}) } };
   }
   throw new ProviderRefusal(`no verified provider is available (${unavailable.map(v => `${v.provider}: ${v.reason}`).join("; ")})`);
 }

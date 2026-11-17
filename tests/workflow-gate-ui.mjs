@@ -80,14 +80,14 @@ try{
   ok(clear,`${tag} Save as my workflow is clear of the floating Firstmate button`);
   if(width===1280)await p.screenshot({path:join(shots,`draft-save-${tag}.png`)});
   // failing workflow page
-  await p.goto(base+`/#/workflows/${fwid}`);await p.waitForSelector('[data-gate-host] [data-gate]',{timeout:15000,state:'attached'});await p.evaluate(()=>window.openChat?.(false));await p.waitForTimeout(400);
+  await p.goto(base+`/#/workflows/${fwid}/advanced`);await p.waitForSelector('[data-gate-host] [data-gate]',{timeout:15000,state:'attached'});await p.evaluate(()=>window.openChat?.(false));await p.waitForTimeout(400);
   ok(await p.locator('[data-gate-host]').evaluate(d=>d.open)&&await p.locator('[data-gate-host] [data-gate-stage="contract"][data-gate-state="fail"] [data-gate-problem="outcome-unhandled"]').count()===1,`${tag} a failing workflow page opens its gate with the problem`);
   const ftag=await p.locator('[data-run-verified]').innerText();ok(lang==='en'?/Not verified yet · stage 2 failing/.test(ftag):/尚未驗證・第 2 關未通過/.test(ftag),`${tag} Run shows the failing stage`,ftag);
   ok(await p.locator('[data-gate-verify]').count()===0,`${tag} no real-run verification while stages 1-4 fail`);
   ok(await p.locator('[data-gate-host] > summary').innerText().then(t=>!/stage/i.test(t)),`${tag} the status line is not repeated in the summary`);
   await p.locator('[data-gate-host]').scrollIntoViewIfNeeded();await p.screenshot({path:join(shots,`workflow-page-failing-${tag}.png`),fullPage:true});
   // workflow page
-  await p.goto(base+`/#/workflows/${wid}`);await p.waitForSelector('[data-gate-host] [data-gate]',{timeout:15000,state:'attached'});await p.evaluate(()=>window.openChat?.(false));await p.waitForTimeout(300);
+  await p.goto(base+`/#/workflows/${wid}/advanced`);await p.waitForSelector('[data-gate-host] [data-gate]',{timeout:15000,state:'attached'});await p.evaluate(()=>window.openChat?.(false));await p.waitForTimeout(300);
   ok(await p.locator('[data-gate-host]').evaluate(d=>!d.open),`${tag} a passing gate starts collapsed above the graph`);
   await p.locator('[data-gate-host] > summary').click();
   ok(await p.locator('[data-gate-host] [data-gate-stage][data-gate-state="pass"]').count()===4,`${tag} the workflow page shows stages 1-4 passing for this version`);

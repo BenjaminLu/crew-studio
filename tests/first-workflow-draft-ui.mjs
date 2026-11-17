@@ -83,6 +83,7 @@ try{
   ok(await p.locator('[data-first-workflow-badge][data-edited="1"]').count()===1,`${tag} label says the captain edited the model draft`);
   ok(runPosts()===0,`${tag} drafting and inline edits start no Task`);
   await p.locator('[data-first-workflow-save-draft]').click();await p.waitForURL(/#\/workflows\/weekly-coffee-newsletter-/,{timeout:8000});
+  await p.waitForSelector('[data-rail]',{timeout:8000});await p.goto(p.url()+'/advanced');
   await p.waitForSelector('[data-editor]',{timeout:8000});
   ok(runPosts()===0,`${tag} saving starts no Task`);
   const note=await p.locator('[data-editor] .rt-toolbar select').first().innerText();ok(lang==='zh-TW'?note.includes('由 Firstmate 草稿儲存'):note.includes('Saved from a Firstmate draft'),`${tag} W7 the v1 note is localized`,note);
