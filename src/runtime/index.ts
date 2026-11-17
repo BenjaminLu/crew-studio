@@ -819,7 +819,7 @@ export function createRuntime(d: RuntimeDeps) {
         try {
           if (!writing) {
             if (op === "" && !xr[3]) return json(X.view(id));
-            if (op === "offer" && !xr[3]) return json(X.offer(id, url.searchParams.get("skill"), url.searchParams.get("kind")));
+            if (op === "offer" && !xr[3]) return json(X.offer(id, url.searchParams.get("skill"), url.searchParams.get("kind"), url.searchParams.get("v")));
             if (op === "cap" && !xr[3]) return json(X.cap(id, url.searchParams.get("v")));
             if (op === "media" && xr[3]) return X.media(id, xr[3], decodeURIComponent(xr[4]), req.headers.get("range"));
             return json({ error: "not found" }, 404);

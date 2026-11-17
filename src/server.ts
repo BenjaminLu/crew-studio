@@ -626,11 +626,16 @@ Object.assign(TYPES, { ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-
 const pub = join(ROOT, "public");
 const PAGE_RELEASE = pageRelease({ compiled: COMPILED, assets: ASSETS, publicDir: pub });
 // the source checkout serves public/ from disk; the binary serves the copies embedded in it
+// Studio's page frames only Studio's own addresses (artifact previews /af/ and /afc/, document versions, the card's direction
+// thumbnails, skins /skin/, the review room's explainer output /rrx/): a framed page that navigates itself elsewhere (a sandboxed
+// page's `location = "https://…"`, which neither its own CSP nor its sandbox stops) is refused by this frame-src, so nothing a
+// framed page holds leaves through a navigation (docs/units/review-room.md, "Explain with your own skill")
+const PAGE_CSP = "frame-src 'self'; child-src 'self'";
 const serveStatic = (path: string) => {
   const rel = path === "/" || path === "/remote" || path === "/remote/" ? "/index.html" : path;
   if (rel === "/index.html") { // the page names the release it is (src/page-release.ts)
     const f = COMPILED ? ASSETS[rel] : join(pub, rel);
-    try { return new Response(withRelease(readFileSync(f, "utf8"), PAGE_RELEASE), { headers: { "content-type": TYPES[".html"], "cache-control": "no-cache" } }); } catch { return null; }
+    try { return new Response(withRelease(readFileSync(f, "utf8"), PAGE_RELEASE), { headers: { "content-type": TYPES[".html"], "cache-control": "no-cache", "content-security-policy": PAGE_CSP } }); } catch { return null; }
   }
   if (COMPILED) {
     const f = ASSETS[rel];

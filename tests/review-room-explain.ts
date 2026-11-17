@@ -105,6 +105,7 @@ ok(/ROOM EXPLAIN \(continued\)/.test(gen[1].text) && /Round 2/.test(gen[1].text)
 ok(gen[0].tools.includes("mat_read") && gen[0].tools.includes("out_write") && gen[0].tools.includes("explain_done") && !gen[0].tools.some((t) => /^mat_(write|replace)$|^skill_(write|replace)$|web_|board_draw|git_/.test(t)), "materials and the skill's files are read-only; only the output folder is written; no web, no board", gen[0].tools.join(","));
 const res = (name: string, i = 0) => results.filter(([n]) => n === name)[i]?.[1];
 ok(/untrusted/.test(res("mat_read", 0)?.text ?? "") && /diff\.txt/.test(res("mat_read", 0)?.text ?? "") && /percent/.test(res("mat_read", 1)?.text ?? ""), "the materials: a README that says what is untrusted, and the real diff", JSON.stringify(res("mat_read", 1)).slice(0, 600));
+ok(/^<untrusted source="the pull request's diff/.test((res("mat_read", 1)?.text ?? "").replace(/^1\t/, "")) && /<\/untrusted>/.test(res("mat_read", 1)?.text ?? ""), "the diff is fenced as untrusted (its author's code and text)", (res("mat_read", 1)?.text ?? "").slice(0, 120));
 ok(res("mat_list").some((f: any) => f.path === "head/src/percent.ts") && res("mat_list").some((f: any) => f.path === "commits.md") && res("mat_list").some((f: any) => f.path === "checks.md"), "the head of every changed file, the commits and the checks are there", JSON.stringify(res("mat_list").map((f: any) => f.path)));
 ok(!!res("mat_read", 2)?.error && /not allowed/.test(res("mat_read", 2).error), "a path out of the materials is refused", JSON.stringify(res("mat_read", 2)));
 ok(!!res("out_write_base64")?.error && !!res("explain_done", 0)?.error && res("explain_done", 1)?.ok, "a binary that is not a picture or a video, and an entry that is not there, are refused");
@@ -122,7 +123,8 @@ let page = X.page(cap.cap, id, "1", "index.html"), html = await page.text();
 ok(page.status === 200 && page.headers.get("content-security-policy") === OUTPUT_CSP && /default-src 'none'/.test(OUTPUT_CSP) && /connect-src 'none'/.test(OUTPUT_CSP) && /^sandbox allow-scripts;/.test(OUTPUT_CSP) && !/allow-same-origin/.test(OUTPUT_CSP) && page.headers.get("x-content-type-options") === "nosniff",
   "a version's page carries the output CSP: no network, an opaque-origin sandbox", JSON.stringify(Object.fromEntries(page.headers)));
 ok(html.indexOf(STORAGE_SHIM) > 0 && html.indexOf("crew-room-select") > 0 && html.indexOf(STORAGE_SHIM) < html.indexOf("<title>") && html.includes("data-node=\"round\""), "the storage shim and the selection helper come before anything of the page's own");
-ok((await X.page("1.0", id, "1", "index.html").text()).includes("capability") && X.page("1.0", id, "1", "index.html").status === 401 && X.page(cap.cap, id, "2", "index.html").status === 404, "no capability (or another version's) serves nothing");
+ok((await X.page("1.0", id, "1", "index.html").text()).includes("capability") && X.page("1.0", id, "1", "index.html").status === 401 && X.page(cap.cap, id, "2", "index.html").status === 401 && X.page(cap.cap, id, "9", "index.html").status === 401 && X.page(cap.cap, "PR-000000000000-9", "1", "index.html").status === 401,
+  "no capability (or another version's, or another room's) serves nothing, and says nothing about whether the version or room exists");
 ok(X.page(cap.cap, id, "1", "../state.json").status !== 200 && X.page(cap.cap, id, "1", ".notes.md").status === 404, "nothing outside the version is served");
 ok(injected("<p>x</p>").startsWith("<script data-crew-studio=\"storage\">") && kindOf("a.md") === "markdown" && kindOf("v.mp4") === "video" && kindOf("i.png") === "image", "a page without a head still gets the scripts first; kinds by entry");
 
@@ -141,6 +143,7 @@ ok(/^ROOM EXPLAIN ASK/.test(ask.text) && ask.text.includes("Why round here?") &&
 v = X.view(id);
 ok(v.versions.length === 2 && v.versions[1].from === 1 && /halves/.test(v.versions[1].summary) && readFileSync(join(E.rdir(r.id), "review-room", `${id}-explain`, "v2", "index.html"), "utf8").includes("data-node=\"half\"") && !readFileSync(join(vdir, "index.html"), "utf8").includes("half"), "v2 is kept beside v1, which is unchanged");
 ok(v.consent?.plan === askOffer.hash, "the captain agreed to ask the next follow-ups on this plan without confirming each");
+{ const o = X.offer(id, null, "ask", 2) as any; ok(o.kind === "ask" && o.skill?.id === lib.id && o.hash === askOffer.hash, "the follow-up's offer is for the version asked about, the same hash the run checks", JSON.stringify(o)); }
 // with that agreement, a follow-up starts without the confirmation; it does not change the page: no new version
 script.push([["explain_answer", { answer: "No: the test pins 300.", cites: ["test/percent.test.ts:L2"], updated: false }]]);
 v = await X.ask(id, { question: "Is there a test?", version: 2 }, "captain");
@@ -176,10 +179,19 @@ ok(other.status === "done" && other.skill.id === lib.id, "a follow-up on an olde
 X.select(id, lib.id);
 
 // ---------- the stall guard and the safety limit ----------
-script.push([["msg", "thinking"]], [["msg", "still thinking"]]);
+// rounds that keep calling tools (reading, reporting progress) but never change the output are stalled too
+script.push(...[1, 2, 3].map((i) => [["explain_progress", { text: `still reading (${i})` }], ["mat_read", { path: "README.md" }]]));
 await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
 const run5 = await waitRun(X.view(id).runs.at(-1).n);
-ok(run5.status === "failed" && /did nothing/.test(run5.error) && run5.rounds.length === 2, "two rounds in a row that do nothing stop the run (never an endless paid loop)", JSON.stringify(run5));
+ok(run5.status === "failed" && run5.why === "stalled" && /left the output unchanged/.test(run5.error) && run5.rounds.length === 3 && run5.rounds.every((x: any) => x.tools === 2), "three rounds in a row that leave the output unchanged stop the run, whatever tools they call (never an endless paid loop)", JSON.stringify(run5));
+// one cap for every write into the output folder (text tools too)
+process.env.CREW_REVIEW_EXPLAIN_OUT_BYTES = "1000";
+script.push([["out_write", { path: "big.html", content: "x".repeat(1500) }], ["out_write", { path: "a.html", content: "x".repeat(600) }], ["out_write", { path: "b.html", content: "x".repeat(600) }], ["out_write", { path: "index.html", content: "<p>ok</p>" }], ["explain_done", { entry: "index.html", summary: "small" }]]);
+await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
+const capRun = await waitRun(X.view(id).runs.at(-1).n);
+const writes = results.filter(([n]) => n === "out_write").slice(-4).map(([, j]) => j);
+ok(capRun.status === "done" && /full/.test(writes[0]?.error) && writes[1]?.ok && /full/.test(writes[2]?.error) && writes[3]?.ok, "a text write past the output folder's cap is refused, as a picture's is", JSON.stringify(writes));
+delete process.env.CREW_REVIEW_EXPLAIN_OUT_BYTES;
 e = await refused(() => X.setSettings({ limitMin: 0 })); ok(e?.code === "bad_request", "the safety limit is a number of minutes, at least one");
 ok(X.setSettings({ limitMin: 45 }).limitMin === 45 && X.offer(id, lib.id, "generate").limitMin === 45, "the safety limit is the captain's setting, and the offer names it");
 // a fraction of a minute through the environment (tests only): the round that hangs is stopped by the limit
@@ -190,6 +202,8 @@ const run6 = await waitRun(X.view(id).runs.at(-1).n, 30000);
 ok(run6.status === "stopped" && /safety limit/.test(run6.stop), "the wall-clock safety limit stops a run that is still going", JSON.stringify(run6));
 delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
 
-ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === X.view(id).runs.filter((x: any) => x.rounds.length).length, "every run that started a round is on the ledger");
+const started = X.view(id).runs.filter((x: any) => x.rounds.length).length;
+ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === started && E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain-start").length === started,
+  "every run that started is on the ledger twice: when it starts (so one a stopped Studio interrupted is still there) and when it ends");
 globalThis.fetch = realFetch; H.stop();
 end();

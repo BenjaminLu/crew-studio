@@ -703,18 +703,24 @@ the destination and the shape, decided before any DNS lookup:
 The room can be presented by one of the captain's own skills instead of the tutor's board (`src/domain/review-explain.ts`,
 `public/review-explain.js`). Quality first: a skill's run is not one model round.
 
-- **The picker** (`[data-explain-picker]`, "Explain with" / 解釋用, in the header of every room that is not a Library snapshot):
+- **The picker** (`[data-explain-picker]`, "Explain with" / 解釋用, at the right end of the header of every room that is not a Library
+  snapshot; hidden at 760px and narrower, where a paired phone reads only):
   Studio's tutor (the default: the board as above, unchanged) or any skill in Studio's skill library (the Skills page; a skill
   in `~/.claude/skills` or `~/.codex/skills` is imported there first). The captain's own skills (a folder, a skills home, a git
-  URL) come first, then the ones Studio ships. Picking is free: the tutor, or a skill that already has an output in this room,
+  URL) come first; the skills Studio ships for its own workflows are folded under "More from Studio's library". Each option
+  says what it made in this room (HTML page, video, … and how many versions; the tutor: whiteboard). The menu and the
+  confirmation take the focus, keep Tab inside, and give it back to what opened them on Esc or Cancel. Picking is free: the tutor, or a skill that already has an output in this room,
   switches at once (`POST /api/review-room/<room>/explain/select {skill | null}`); a skill with none asks for its first run.
   While a skill is selected, the tutor picker pill steps aside and the room shows the skill's output instead of the board. Arriving in the room
   then starts no tutor lesson by itself (auto-teach waits for the board).
 - **A run is paid and confirmed** like a tutor turn: the offer (`GET …/explain/offer?skill=&kind=generate|ask`) names the
-  room tutor's provider, model and effort (the same pick and independence label as a turn), the skill and its version,
+  room tutor's provider, model and effort (the same pick and independence label as a turn), who pays (that provider's account
+  Studio runs it with on this Mac), what this room's runs cost so far and an estimate (the median cost of this skill's earlier
+  finished runs here, else "no estimate yet"), the skill and its version,
   the materials it gets, "no round cap", the expected time (the median of this skill's earlier finished runs here, else
   "not known yet"), the safety limit, and the isolation. `POST …/explain/generate {skill, confirm}` starts only with that
-  offer's hash; a changed tutor, skill version or limit asks again. A pull request or directory room no Task hosts yet makes
+  offer's hash; a changed tutor, skill version or limit asks again. A follow-up's offer (`kind=ask&v=<n>`) is for the skill
+  that made version n, the same one its run checks. A pull request or directory room no Task hosts yet makes
   its host Task once, after this confirmation, as a tutor turn does (`ensureHost`).
 - **Admission.** A run's rounds are jobs of the room's tutor seat on the same member, admitted the same way (the native
   selection, the round sandbox with nothing to write and no host beyond the model, the staffing receipt), under an auxiliary
@@ -727,8 +733,8 @@ The room can be presented by one of the captain's own skills instead of the tuto
   Stop (`POST …/explain/stop`: the round that runs is cancelled; what it cost is recorded; a stopped generation keeps no
   version), the wall-clock safety limit passes (Studio-wide, `POST /api/review-room/explain/settings {limitMin}`, 1 to
   1440 minutes, default 120, `CREW_REVIEW_EXPLAIN_LIMIT_MIN`; also shown and editable in the confirmation), the provider
-  fails (not signed in, out of quota), or two rounds in a row call no tool and change no file (stalled: never an endless
-  paid loop). A round's own time is 25 minutes (`CREW_REVIEW_EXPLAIN_ROUND_MS`) and 400 tool calls
+  fails (not signed in, out of quota), or three rounds in a row leave the output folder exactly as it was, its notes included,
+  whatever tools they call (stalled: never an endless paid loop; `CREW_REVIEW_EXPLAIN_STALL_ROUNDS`). There is no cost cap. A round's own time is 25 minutes (`CREW_REVIEW_EXPLAIN_ROUND_MS`) and 400 tool calls
   (`CREW_REVIEW_EXPLAIN_ROUND_TOOLS`); running out of either only starts the next round.
 - **Materials, read once, read-only**, into the run's workspace (`materials/`): the pull request's title and description,
   the diff base..head (3 MB at most), the diffstat, the commits with their messages, the head of every changed text file
@@ -736,11 +742,17 @@ The room can be presented by one of the captain's own skills instead of the tuto
   description links (GitHub GET only, when the room's repository is a connected project; the adapter's new `issue` read is
   one issue by number). A README lists them and says which text is untrusted; untrusted text is fenced. The skill reads them
   with `mat_list/mat_read/mat_search`, its own supporting files with `skill_*` (a copy), and writes only `out/` (`out_*`,
-  `out_write_base64` for a picture or a video, 60 MB in all). No shell, no network, no web tools, no board tools; a skill's
+  `out_write_base64` for a picture or a video; every write counts against one 60 MB cap, `CREW_REVIEW_EXPLAIN_OUT_BYTES`).
+  The diff is fenced as untrusted; the head files are kept byte for byte (citations need their lines) and the README names
+  them untrusted. No shell, no network, no web tools, no board tools; a skill's
   scripts never run here.
-- **Live progress**: the stage shows the skill's own `explain_progress` lines, the round, the time so far, the cost and the
-  safety limit, and its live log (the round's tool calls and what it said); it runs in the background, the captain may
-  leave. The explainer's live event is its own (`review-explain`): a progress line redraws the explainer's parts, never the
+- **Live progress**: the stage shows Studio's steps (read the materials, the skill working round by round with its own
+  `explain_progress` lines, its own check, the frame), done, current and upcoming, a bar of the time used of the safety limit,
+  the cost and its live log (the round's tool calls and what it said); it runs in the background, the captain may leave, and
+  Studio says when a run ends while the captain is not watching it (a toast with a link back to the room). A question asked
+  while the first output is being made waits for it, and is asked (and confirmed) once the output is there. Why a run stopped
+  or failed is a code (`why`: captain, limit, stalled, provider, …) the page words in the captain's language, as a warning
+  (stopped) or an error (failed) with its icon; Studio's refusals show only the captain's half of their "English / 中文". The explainer's live event is its own (`review-explain`): a progress line redraws the explainer's parts, never the
   whole room.
 - **Versions.** Every generation, and every follow-up that changed the output, is a new version (`v1`, `v2`, …: the output's
   files, its working notes and dotfiles left out, never changed once written), listed in the left rail with its summary and
@@ -754,7 +766,14 @@ The room can be presented by one of the captain's own skills instead of the tuto
   storage shim (an opaque origin throws `SecurityError` on `localStorage`; the shim keeps an in-memory one so a page that
   stores its language still renders) and the selection helper. A picture or a video is shown by Studio's own `<img>` /
   `<video>` from `GET …/explain/media/<v>/<file>` (session, ranges, the same CSP). The frame sits in a layer of its own over
-  the stage, so a redraw of the room never reloads it. The tutor's own rule (model text only in text nodes) is unchanged.
+  the stage, so a redraw of the room never reloads it; it is unloaded once the room shows the board or the captain leaves.
+  A framed page can still navigate its own frame (`location = …`: neither its CSP nor its sandbox stops that), so Studio's page
+  is served with `frame-src 'self'; child-src 'self'`: every frame Studio shows is one of its own addresses (artifact previews
+  `/af/` and `/afc/`, document versions, the cards' direction thumbnails, skins `/skin/`, the explainer's `/rrx/`), and a frame
+  navigating anywhere else is refused. The capability is checked before anything else, so a wrong one never tells whether a
+  room or a version exists. The tutor's own rule (model text only in text nodes) is unchanged.
+- **Showing a version made by another skill** switches the room to that skill, so the header, the chat and Generate all name
+  the skill a follow-up would run.
 - **Follow-ups** (the chat on the right): each question is a run with the selected skill, given the current version (its
   files in `out/`, with whatever context the output embeds), the question and, optionally, a selection; it answers with
   `explain_answer {answer, cites, updated, summary}`. The answer shows as text with its citations as chips; when the skill
@@ -762,14 +781,17 @@ The room can be presented by one of the captain's own skills instead of the tuto
   "ask the next ones on this plan without confirming each" (kept per room, bound to the offer's hash; a new model, skill
   version or limit asks again).
 - **Box a region to ask.** The frame is cross-origin, so Studio cannot screenshot it: "Box a region to ask" lays a drawing
-  overlay over the output; the rectangle goes to the frame's helper by `postMessage`, which answers with what lies there,
+  overlay over the output (Enter boxes what is in view, from the keyboard); the box stays drawn, with quick questions beside
+  it, until the question is sent or cleared (✕ on the "About" line or the popover, Esc); the rectangle goes to the frame's helper by `postMessage`, which answers with what lies there,
   text only: the visible text, the nearest headings, the ids of figure elements (`data-node`, `data-node-id`, `data-id`,
   an SVG element's id). Studio listens only to the frame it made and only for that request; the reply is clipped and sent
   to the skill as untrusted page text. A video: "Pause here and ask" sends the paused time.
 - **Recorded** like other paid rounds: each round's record under the host's review node (`room-<room>-x<n>/`, attempt k for
   round k), and one `review-room-explain` ledger entry per run: subject, skill pin (id, version, sha256, files hash, body and
   frame hashes), provider, model, effort, confirmation (or consent), rounds with their jobs and costs, status, why it
-  stopped, cost, time, the limit, the version it read and the one it made.
+  stopped, cost, time, the limit, the version it read and the one it made; and a `review-room-explain-start` entry when it
+  starts, so a run a stopped Studio interrupted is still on the ledger (its workspace is removed when the room is next read).
+  A round that throws keeps the cost its job had reported.
 
   data/…/<room>-explain/state.json      the selected skill, runs (rounds, cost, progress, answers), versions, consent
   data/…/<room>-explain/v<n>/            a version's files
