@@ -191,7 +191,7 @@ export function installExplainer(d: ExplainerDeps) {
    *  workflow brings its prepared env), with network through Studio's proxy, the credentials named and, when one is installed,
    *  a headless browser. Nothing is installed or fetched to make a plan. */
   type Plan = { run: boolean; why?: { en: string; zh: string }; scripts: { path: string; lang: string }[]; status: SkillStatus | null; interpreters: string[]; missing: string[];
-    network: boolean; egress: any; browser: string | null; credentials: string[] };
+    network: boolean; egress: any; browser: string | null; credentials: string[]; approved?: boolean };
   const planOf = (p: { id: string; v: number }): Plan | null => {
     const pkg = (() => { try { return engine.skillLibrary().pkg(p.id, p.v); } catch { return null; } })(); if (!pkg?.scripts.length) return null;
     const pk: SkillPackages | null = engine.deps.skillPackages ?? null, egress = engine.deps.agents?.egress ?? null;
@@ -217,16 +217,19 @@ export function installExplainer(d: ExplainerDeps) {
     for (const b of status.bins) if (b.state === "missing") missing.push(b.name);
     const run = interpreters.length > 0;
     return { ...base, run, ...(run ? {} : { why: { en: `no runtime for its scripts on this Mac (${missing.join(", ")})`, zh: `這台 Mac 沒有它腳本需要的執行環境（${missing.join("、")}）` } }), status, interpreters, missing,
-      network: !!egress, egress, browser: headlessBrowser(), credentials: SCRIPT_CREDENTIALS.filter((c) => !!process.env[c]?.trim()) };
+      network: !!egress, egress, browser: headlessBrowser(), credentials: SCRIPT_CREDENTIALS.filter((c) => !!process.env[c]?.trim()), approved: decision?.scripts === "approved" };
   };
+  /** what a confirmation pins of a plan: a change to any of it asks again */
+  const planKey = (t: any) => JSON.stringify(t ? { run: t.run, interpreters: t.interpreters ?? [], network: t.network ?? false, credentials: t.credentials ?? [], browser: t.browser ?? false, approved: t.approved ?? false, limits: t.limits ?? null } : null);
   /** the confirmation's words for a plan */
   const planText = (p: Plan | null) => {
     if (!p) return null;
     if (!p.run) return { run: false, count: p.scripts.length, en: `The skill has ${p.scripts.length} script${p.scripts.length === 1 ? "" : "s"}; they do not run: ${p.why!.en}.`, zh: `這個 skill 有 ${p.scripts.length} 個腳本，不會執行：${p.why!.zh}。` };
     const l = SCRIPT_LIMITS(), creds = p.credentials.length ? p.credentials.join(", ") : null;
-    return { run: true, count: p.scripts.length, interpreters: p.interpreters, network: p.network, browser: !!p.browser, credentials: p.credentials, missing: p.missing, limits: l,
-      en: `The skill's ${p.scripts.length} script${p.scripts.length === 1 ? "" : "s"} run when it calls them, each in Studio's sandbox, with ${p.interpreters.join(", ")}. ${p.network ? "With network: through Studio's proxy, to public hosts only (never this Mac or its network); every host reached is logged." : "No network here: Studio's egress proxy is not running."} A script writes only the output folder and its temp folder, reads the materials, the skill's files and the system's runtimes, and gets ${creds ? `these credentials from your environment: ${creds}` : "no credential"} (never Studio's own keys or tokens). Each call: ${l.cpuS} s of CPU, files up to ${l.fileMB} MB, ${Math.round(l.wallS / 60)} min.${p.browser ? " A headless browser is available." : " No headless browser is installed (Playwright's headless shell): steps that need one fail."}${p.missing.length ? ` Missing here: ${p.missing.join(", ")}.` : ""}`,
-      zh: `這個 skill 的 ${p.scripts.length} 個腳本會在它呼叫時執行，每次都在 Studio 的沙盒裡，用 ${p.interpreters.join("、")}。${p.network ? "可以連網：經過 Studio 的代理，只能連公開的主機（連不到這台 Mac 或區網）；連過的每個主機都會記錄。" : "這裡不能連網：Studio 的對外代理沒有在跑。"}腳本只能寫產出資料夾和它的暫存資料夾，能讀材料、skill 自己的檔案和系統的執行環境，${creds ? `會拿到你環境裡的這些憑證：${creds}` : "拿不到任何憑證"}（絕不會拿到 Studio 自己的金鑰或 token）。每次呼叫上限：CPU ${l.cpuS} 秒、檔案 ${l.fileMB} MB、${Math.round(l.wallS / 60)} 分鐘。${p.browser ? "有無頭瀏覽器可用。" : "沒有安裝無頭瀏覽器（Playwright 的 headless shell）：需要它的步驟會失敗。"}${p.missing.length ? `這裡缺：${p.missing.join("、")}。` : ""}` };
+    const appr = p.approved ? { en: "", zh: "" } : { en: " This version is not approved for workflows on the Skills page: confirming here lets its scripts run for this run only.", zh: "這個版本沒有在技能頁核准給工作流程用：在這裡確認只讓它的腳本在這一次執行裡跑。" };
+    return { run: true, count: p.scripts.length, interpreters: p.interpreters, network: p.network, browser: !!p.browser, credentials: p.credentials, missing: p.missing, limits: { cpuS: l.cpuS, fileMB: l.fileMB, wallS: l.wallS, calls: l.calls }, approved: !!p.approved,
+      en: `The skill's ${p.scripts.length} script${p.scripts.length === 1 ? "" : "s"} run when it calls them, each in Studio's sandbox, with ${p.interpreters.join(", ")}.${appr.en} ${p.network ? "With network: through Studio's proxy, to public hosts only (never this Mac or its network); every host reached is logged." : "No network here: Studio's egress proxy is not running."} A script writes only the output folder and its temp folder, reads the materials, the skill's files and the system's runtimes, and gets ${creds ? `these credentials from your environment: ${creds}` : "no credential"} (never Studio's own keys or tokens). Each call: ${l.cpuS} s of CPU, files up to ${l.fileMB} MB, ${Math.round(l.wallS / 60)} min.${p.browser ? " A headless browser is available." : " No headless browser is installed (Playwright's headless shell): steps that need one fail."}${p.missing.length ? ` Missing here: ${p.missing.join(", ")}.` : ""}`,
+      zh: `這個 skill 的 ${p.scripts.length} 個腳本會在它呼叫時執行，每次都在 Studio 的沙盒裡，用 ${p.interpreters.join("、")}。${appr.zh}${p.network ? "可以連網：經過 Studio 的代理，只能連公開的主機（連不到這台 Mac 或區網）；連過的每個主機都會記錄。" : "這裡不能連網：Studio 的對外代理沒有在跑。"}腳本只能寫產出資料夾和它的暫存資料夾，能讀材料、skill 自己的檔案和系統的執行環境，${creds ? `會拿到你環境裡的這些憑證：${creds}` : "拿不到任何憑證"}（絕不會拿到 Studio 自己的金鑰或 token）。每次呼叫上限：CPU ${l.cpuS} 秒、檔案 ${l.fileMB} MB、${Math.round(l.wallS / 60)} 分鐘。${p.browser ? "有無頭瀏覽器可用。" : "沒有安裝無頭瀏覽器（Playwright 的 headless shell）：需要它的步驟會失敗。"}${p.missing.length ? `這裡缺：${p.missing.join("、")}。` : ""}` };
   };
   const seatOf = (p: Pin) => `review-room-explainer:${p.id}@v${p.v}`;
   const texts = (p: Pin, body: string) => [{ id: "review-room-explainer", sha256: sha(EXPLAINER_FRAME), text: EXPLAINER_FRAME }, { id: `${p.id}@v${p.v}`, sha256: p.bodySha, text: body }];
@@ -244,7 +247,7 @@ export function installExplainer(d: ExplainerDeps) {
     const st = read(k), limitMin = settings().limitMin, scripts = planText(planOf(p));
     // the whole package is pinned (SKILL.md and every file, so a changed script is a new version), and so is what its scripts get
     const hash = sha(JSON.stringify({ room: k.id, tutor: t.hash, kind, skill: p.id, v: p.v, sha256: p.sha256, filesSha256: p.filesSha256, limitMin,
-      scripts: scripts ? { run: scripts.run, interpreters: scripts.interpreters ?? [], network: scripts.network ?? false, credentials: scripts.credentials ?? [], browser: scripts.browser ?? false } : null })).slice(0, 16);
+      scripts: planKey(scripts) })).slice(0, 16);
     return { kind, skill: { id: p.id, v: p.v, name: p.name }, provider: t.provider, model: t.model, effort: t.effort ?? null, independence: t.independence ?? null, paid: true, hash, limitMin,
       rounds: { en: "No round cap: the skill keeps going until it is satisfied, you stop it, or the safety limit passes. It runs in the background; you can leave the room.", zh: "不限輪數：skill 會一直做到它滿意、你按停止，或到安全時限為止。在背景跑，可以先離開。" },
       materials: kind === "generate" ? { en: MATERIALS, zh: MATERIALS_ZH } : { en: ["the current output and what it embeds", "your question and the region you boxed", ...MATERIALS], zh: ["目前的產出和它內嵌的脈絡", "你的問題和框起來的區域", ...MATERIALS_ZH] },
@@ -327,7 +330,9 @@ export function installExplainer(d: ExplainerDeps) {
     if (!t) return [];
     const size = () => filesOf(ws.out).reduce((n, f) => n + f.bytes, 0);
     return [{ ...t, schema: { type: "object", properties: { script: { type: "string" }, args: { type: "array", items: { type: "string" } }, timeout_s: { type: "number" } }, required: ["script"] },
-      run: async (a: any) => { const res: any = await t.run({ ...(a ?? {}), skill: run.skill.id }); const n = size();
+      run: async (a: any) => { const full = `the output folder is over ${OUT_BYTES / 1048576} MB: remove what the page does not need before running another script`;
+        if (size() > OUT_BYTES) return { error: full };
+        const res: any = await t.run({ ...(a ?? {}), skill: run.skill.id }); const n = size();
         return n > OUT_BYTES ? { ...res, error: `the output folder is over ${OUT_BYTES / 1048576} MB (${Math.round(n / 1048576)} MB): remove what the page does not need` } : res; } } as AgentTool];
   }
   type Ws = { root: string; mat: string; skill: string; out: string };
@@ -462,6 +467,9 @@ export function installExplainer(d: ExplainerDeps) {
     const s = d.subjectOf(k); if (!s.run || !s.node) throw refuse("No Task hosts this room's paid rounds / 沒有任務能承載這間審查室的付費回合", "no_host");
     const { pin, body, dir: skillDir, files: skillFiles } = pinOf(skill);
     if (pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind) });
+    // what its scripts run with, as confirmed: read once here and used for the whole run (a change since the offer asks again)
+    const plan = planOf(pin);
+    if (planKey(planText(plan)) !== planKey(o0.scripts)) throw refuse("What the skill's scripts run with changed since you confirmed: confirm again / 確認之後腳本的執行條件變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind) });
     const seat = seatOf(pin);
     engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [seat]: { role: d.role, pins: texts(pin, body).map((t) => t.sha256), adaptive: true } };
     const tutor = d.tutorFor(k, s);
@@ -485,8 +493,6 @@ export function installExplainer(d: ExplainerDeps) {
     const pk: SkillPackages | null = engine.deps.skillPackages ?? null;
     if (pk) ws.skill = pk.roundCopy(pin.id, pin.v, join(root, "pkg"));
     else { mkdirSync(ws.skill, { recursive: true }); for (const f of skillFiles) { try { const src = join(skillDir, f); if (existsSync(src) && lstatSync(src).isFile()) { mkdirSync(dirname(join(ws.skill, f)), { recursive: true }); cpSync(src, join(ws.skill, f)); } } catch {} } }
-    // what its scripts run with is part of the confirmed hash (offer): a change since then was refused above
-    const plan = planOf(pin);
     // a headless browser a script may start: a shim that runs it without its own inner sandbox (it cannot nest in the round's)
     // and with a profile in the call's temp folder
     if (plan?.run && plan.browser) { const bin = join(root, ".bin"); mkdirSync(bin, { recursive: true });

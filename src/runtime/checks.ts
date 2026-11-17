@@ -388,8 +388,8 @@ export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; re
   exec?: string[] | null;
   /** no inbound and no bind at all (work from a peer: src/lan/profile.ts); the default is the caller's sandboxScope */
   noInbound?: boolean;
-  /** a headless Chromium may start (a review room explainer's skill script): it registers and looks up its own org.chromium.*
-   *  mach services (its processes' rendezvous), nothing else; its own inner sandbox cannot nest in this one, this one holds */
+  /** a headless Chromium may start (a review room explainer's skill script): it registers and looks up its processes' rendezvous
+   *  mach service (org.chromium.Chromium.MachPortRendezvousServer.<pid>), nothing else; its own inner sandbox cannot nest in this one, this one holds */
   browser?: boolean }) {
   const noInbound = o.noInbound ?? sandboxScope.getStore()?.noLocalBinding === true;
   // Studio's data folder is closed to the round, its file metadata included, except what the runtime materialized for it
@@ -425,7 +425,7 @@ ${SYSCTL_READ}
 (allow network-outbound (remote tcp ${q(`localhost:${o.proxyPort}`)}) (remote tcp ${q(`localhost:${o.toolPort}`)}))
 ${noInbound ? "" : `(allow network-inbound (local tcp "localhost:*"))`}
 (allow mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc") (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.trustd.agent"))
-${o.browser ? `(allow mach-register mach-lookup (global-name-prefix "org.chromium."))\n` : ""}(deny appleevent-send)
+${o.browser ? `(allow mach-register mach-lookup (global-name-prefix "org.chromium.Chromium.MachPortRendezvousServer."))\n` : ""}(deny appleevent-send)
 ${data ? `(deny file-read* file-read-metadata file-write* (subpath ${q(data)}))
 (allow file-read* file-read-metadata ${sub(opened)})${readOnly.length ? `\n(allow file-read* file-read-metadata ${sub(readOnly)})` : ""}
 (allow file-write* ${sub(writes)})

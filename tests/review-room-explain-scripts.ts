@@ -123,6 +123,11 @@ ok(e?.code === "confirm_required" && offer?.scripts?.run === true && offer.scrip
   && /run when it calls them, each in Studio's sandbox/.test(offer.scripts.en) && /With network: through Studio's proxy, to public hosts only/.test(offer.scripts.en) && /ANTHROPIC_API_KEY/.test(offer.scripts.en) && /never Studio's own keys or tokens/.test(offer.scripts.en)
   && /沙盒/.test(offer.scripts.zh) && /可以連網/.test(offer.scripts.zh) && !/GITHUB_TOKEN|GH_TOKEN/.test(JSON.stringify(offer)),
   "the confirmation says the skill's scripts run, sandboxed, with network, names the interpreters and the one credential they get", JSON.stringify(offer?.scripts));
+ok(offer?.scripts?.approved === false && /not approved for workflows on the Skills page: confirming here lets its scripts run for this run only/.test(offer.scripts.en) && offer.scripts.limits?.cpuS === 300,
+  "a version never approved on the Skills page: the confirmation says this run's confirmation is the approval; the caps are part of it", JSON.stringify(offer?.scripts));
+process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S = "7";
+ok(X.offer(id, v1.id, "generate").hash !== offer.hash, "a changed cap is a new confirmation");
+delete process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S;
 
 // round 1: write the spec, build, check, try the network, try to escape, hit each cap; then finish with the page the scripts made
 const ws = (rel: string) => join(E.rdir(r.id), "review-room", `${id}-explain`, "work", "run-1", rel);
@@ -139,7 +144,10 @@ script.push([
   ["skill_run", { script: "../../etc/passwd" }],
   ["explain_done", { entry: "index.html", summary: "The page page-kit's scripts built and checked" }]]);
 process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S = "2"; process.env.CREW_REVIEW_EXPLAIN_SCRIPT_FILE_MB = "1";
-let v = await X.generate(id, { skill: v1.id, confirm: offer.hash }, "captain");
+// tight caps for the cap checks below (the confirmation names them, so it is read again)
+e = await refused(() => X.generate(id, { skill: v1.id, confirm: offer.hash }, "captain"));
+ok(e?.code === "confirm_required" && e.offer.scripts.limits.cpuS === 2, "the confirmation made before the caps changed does not start the run", JSON.stringify(e?.offer?.scripts?.limits));
+let v = await X.generate(id, { skill: v1.id, confirm: e.offer.hash }, "captain");
 const run1 = await waitRun(1);
 delete process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S; delete process.env.CREW_REVIEW_EXPLAIN_SCRIPT_FILE_MB;
 v = X.view(id);

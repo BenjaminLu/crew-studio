@@ -761,12 +761,15 @@ The room can be presented by one of the captain's own skills instead of the tuto
     exported them in the environment Studio started from (`SCRIPT_CREDENTIALS`), so a skill can call a model itself. Never
     a key Studio keeps, the GitHub token, the session or ledger keys or a device's token: nothing of Studio's environment
     is inherited. A value in a script's env is readable by another process of the same user (the same is true of Studio's).
-  - *Caps per call*: 300 s of CPU for each process it starts (`ulimit -t`, `CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S`), files up to
-    60 MB (`ulimit -f`, `…_FILE_MB`), 600 s of wall clock (`…_WALL_S`; `timeout_s` lowers it), 60 calls per round
-    (`…_CALLS`), output cut to its last 64 KiB; what a script writes counts toward `out/`'s 60 MB.
+  - *Caps per call*: 300 s of CPU for each process it starts (soft `ulimit -t`, SIGXCPU; the hard limit 5 s above;
+    `CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S`), each file up to 60 MB (`ulimit -f`, `…_FILE_MB`), 600 s of wall clock (`…_WALL_S`;
+    `timeout_s` lowers it), 60 calls per round (`…_CALLS`), output cut to its last 64 KiB. A limit that cannot be set stops
+    the call with exit 126 and a message. What a script writes counts toward `out/`'s 60 MB: once over, the next
+    `skill_run` is refused until files are removed; the call's temp folder is removed when it ends. The sandbox does not
+    cap a single call's total writes (only each file and its time).
   - *A headless browser*: a branded Chrome app does not start inside the round sandbox. Playwright's headless shell does
     (the newest under `~/Library/Caches/ms-playwright`, or `CREW_REVIEW_EXPLAIN_BROWSER`), with one more rule (it registers
-    and looks up its own `org.chromium.*` mach services) and its inner sandbox off (it cannot nest; the round's holds).
+    and looks up its processes' rendezvous service, `org.chromium.Chromium.MachPortRendezvousServer.<pid>`) and its inner sandbox off (it cannot nest; the round's holds).
     Studio puts a `chrome` shim for it first on `PATH` and in `CHROME_BIN`. Without one, the first message says so and the
     skill's own instructions decide how it degrades.
   - *Recorded*: every call on its round in `state.json` (the script and its hash, the arguments, exit or signal, timed out,
@@ -774,7 +777,10 @@ The room can be presented by one of the captain's own skills instead of the tuto
     sees live, and in the run's ledger entry.
   - *Confirmed*: the offer's `scripts` says the scripts run, sandboxed, with network, the interpreters, the credentials by
     name, the caps, the browser and what is missing; its hash covers the package's `filesSha256` and that plan, so a
-    changed script (a new library version) or a new interpreter asks again. A version the captain set to text only on the
+    changed script (a new library version), a new interpreter, credential, browser or cap asks again, and the plan is read
+    once before admission and used for the whole run. The captain's confirmation here is the approval for that run only:
+    a version never approved for workflows on the Skills page runs its scripts with no approved hosts' list (any public
+    host, as above), and the confirmation says it is not approved there. A version the captain set to text only on the
     Skills page keeps its scripts from running here too (no `skill_run`, and the first message says so).
 - **Live progress**: the stage shows the skill's own `explain_progress` lines, the round, the time so far, the cost and the
   safety limit, and its live log (the round's tool calls and what it said); it runs in the background, the captain may

@@ -8,7 +8,7 @@
 //                                       credential of its own (the agent's other commands never get them)
 // skill_run exists only for an approved script skill; package managers fail with a clear error (an install at run time
 // would be code nobody approved); each call is recorded with the skill, version, both hashes, the script and its hash.
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { roundExec } from "../runtime/checks";
@@ -91,14 +91,16 @@ export async function resolve(specifier, context, nextResolve) {
       const t0 = Date.now();
       // a caller's limits: CPU seconds and the largest file a process may write (ulimit, inherited by every child), then the script
       const lim = x.limits, wallMax = lim?.wallS ?? 300;
-      const full = lim ? ["/bin/sh", "-c", 'ulimit -t "$1" && ulimit -f "$2" && shift 2 && exec "$@"', "skill-limits", String(Math.max(1, Math.round(lim.cpuS))), String(Math.max(1, Math.round(lim.fileMB * 1024))), ...argv] : argv; // macOS /bin/sh counts ulimit -f in KiB
+      // the hard CPU limit a little above the soft one, so the soft one ends it with SIGXCPU (not SIGKILL); a limit that cannot be set
+      // (Studio inherited a lower hard one) says so instead of running unlimited
+      const full = lim ? ["/bin/sh", "-c", '{ ulimit -Ht "$(($1 + 5))" 2>/dev/null; ulimit -St "$1" && ulimit -f "$2"; } || { echo "Studio: the CPU or file-size limit of this call could not be set" >&2; exit 126; }; shift 2; exec "$@"', "skill-limits", String(Math.max(1, Math.round(lim.cpuS))), String(Math.max(1, Math.round(lim.fileMB * 1024))), ...argv] : argv; // macOS /bin/sh counts ulimit -f in KiB
       let r;
       try {
         r = await roundExec(full, { cwd: o.round.cwd, writes: o.round.writes, tmp, dataDir: o.round.dataDir, protect: o.round.protect, timeoutS: Math.min(wallMax, Math.max(5, Number(a?.timeout_s) || wallMax)),
           egress: o.round.egress, hosts: x.net?.hosts ?? st.decision?.hosts ?? [], egressMeta: { purpose: "skill", run: o.round.run, node: o.round.node, visit: o.round.visit, skill: tag, script: script.path, strict: x.net?.strict ?? true, ...(x.net?.anyHost ? { anyHost: true } : {}) },
           reads: [s.dir, shims, dirname(argv[0])], readOnly: [s.dir, shims, ...(x.readOnly ?? []), ...o.packages.runReads(st)], signal: o.round.signal, stdoutCap: TAIL, browser: x.browser,
           env: { ...(x.env ?? {}), PATH, SKILL_DIR: s.dir, PYTHONDONTWRITEBYTECODE: "1", PYTHONNOUSERSITE: "1", PIP_NO_INDEX: "1", npm_config_offline: "true", ...(venv ? { VIRTUAL_ENV: venv } : {}), ...(nodeModules ? { NODE_PATH: nodeModules } : {}) } });
-      } finally { stop(); }
+      } finally { stop(); if (lim) { try { rmSync(tmp, { recursive: true, force: true }); } catch {} } } // a capped caller's temp folder goes with its call
       const refused = heard.filter((e) => !e.allowed).map((e) => ({ host: e.host, why: e.why ?? "refused" })), allowed = [...new Set(heard.filter((e) => e.allowed).map((e) => e.host))];
       const rec: SkillRunRecord = { skill: s.id, v: s.v, sha256: s.sha256, filesSha256: s.filesSha256, script: script.path, scriptSha256: script.sha256, argv: args, cwd: o.round.cwd, exit: r.code, ms: Date.now() - t0, timedOut: r.timedOut,
         stdoutTail: r.stdout.slice(-2000), stderrTail: r.stderr.slice(-2000), egress: { allowed, refused }, signal: r.signal ?? null };
@@ -106,7 +108,9 @@ export async function resolve(specifier, context, nextResolve) {
       if (r.refused) throw new Error(`the script could not run in the sandbox: ${r.refused}`);
       const hostNote = refused.length && x.net?.anyHost ? `Studio's proxy refused ${refused.map((e) => `${e.host} (${e.why})`).join(", ")}: a script reaches public hosts only, never this Mac, its network or a metadata address`
         : refused.length ? `skill ${tag} tried ${[...new Set(refused.map((x) => x.host))].join(", ")}, not in its approved hosts${st.decision?.hosts.length ? ` (${st.decision.hosts.join(", ")})` : " (it has none)"}; Studio refused it. A new skill version (or a team change) is the way to change that; nobody is asked during a run.` : null;
-      return { skill: tag, script: script.path, exit: r.code, timedOut: r.timedOut, ms: rec.ms, stdout: r.stdout.slice(-TAIL), stderr: r.stderr.slice(-TAIL), ...(r.signal ? { signal: r.signal, note: r.signal === "SIGXCPU" ? "the script ran out of its CPU time and was stopped" : r.signal === "SIGXFSZ" ? "the script wrote a file over its size limit and was stopped" : `the script was stopped by ${r.signal}` } : {}), ...(hostNote ? { refusedHosts: refused, note: hostNote } : {}) };
+      const sigNote = r.signal ? (r.signal === "SIGXCPU" ? "the script ran out of its CPU time and was stopped" : r.signal === "SIGXFSZ" ? "the script wrote a file over its size limit and was stopped" : `the script was stopped by ${r.signal}`) : null;
+      const note = [sigNote, hostNote].filter(Boolean).join("; ");
+      return { skill: tag, script: script.path, exit: r.code, timedOut: r.timedOut, ms: rec.ms, stdout: r.stdout.slice(-TAIL), stderr: r.stderr.slice(-TAIL), ...(r.signal ? { signal: r.signal } : {}), ...(hostNote ? { refusedHosts: refused } : {}), ...(note ? { note } : {}) };
     } } as any);
   return tools;
 }
