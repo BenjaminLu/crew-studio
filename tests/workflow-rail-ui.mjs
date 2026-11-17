@@ -190,6 +190,9 @@ try {
   ok(await p.getAttribute(`.r-step[data-step='${loopId}']`, "draggable") === "false", "a refine loop row is not dragged on its own");
   await p.click(".r-step[data-step='build'] [data-act='stepmenu']"); await p.click(".wf-menu [data-mi='dn']");
   order = await names(p); ok(order.indexOf("Build it") === order.indexOf("Review the change") + 1 && order[order.indexOf("Build it") + 1] === "Repeat until checks pass", "a step moves together with its refine loop", JSON.stringify(order));
+  // and back up: Review now leads into Build twice, by its line and by "requests changes"; only the line moves, the branch keeps Build
+  await p.click(".r-step[data-step='build'] [data-act='stepmenu']"); await p.click(".wf-menu [data-mi='u']");
+  order = await names(p); ok(order.indexOf("Review the change") === order.indexOf("Repeat until checks pass") + 1, "and back up, loop and all", JSON.stringify(order));
   // Duplicate a card copies its other choices too
   await p.click(".r-step[data-step='approve-plan'] [data-act='stepmenu']"); await p.click(".wf-menu [data-mi='dup']"); await p.click("[data-act='close']");
   // the note survives the page redrawing; an edit while Save is on its way is held, not lost
@@ -202,7 +205,8 @@ try {
   ok((await names(p)).includes("QA gate") && await p.textContent("[data-rail-changes]") === before2, "an edit while saving is held (nothing changes under the save)");
   release(); await p.waitForFunction(async () => (await fetch("/api/wf/move-demo").then((r) => r.json())).def.version === 3); await p.unroute(`${base}/api/wf/move-demo`);
   const mv = await wf(ctx, "move-demo"), E_ = (f, t, w) => mv.edges.some((e) => e.from === f && e.to === t && (w === undefined || (e.when || "") === w));
-  ok(E_("build", loopId, "fail|timeout") && E_(loopId, "build", "retry|report") && E_(loopId, "qa", "pass") && E_("build", "qa", "") && E_("review", "build", "") && E_("approve-plan-copy", "review", "approve"), "saved: the loop still repeats Build and both go on to QA", JSON.stringify(mv.edges));
+  ok(E_("build", loopId, "fail|timeout") && E_(loopId, "build", "retry|report") && E_(loopId, "review", "pass") && E_("build", "review", "") && E_("review", "qa", "") && E_("approve-plan-copy", "build", "approve"), "saved: the loop still repeats Build and both go on to Review", JSON.stringify(mv.edges));
+  ok(E_("review", "build", "changes") && !mv.edges.some((e) => e.from === "review" && e.when === "changes" && e.to !== "build"), "saved: a branch that pointed at the next row keeps its target through moves", JSON.stringify(mv.edges.filter((e) => e.from === "review")));
   const dupCard = mv.nodes.find((n) => n.id !== "approve-plan" && n.label.startsWith("You approve the plan"));
   ok(!!dupCard && E_(dupCard.id, "plan", "change") && E_(dupCard.id, "closed", "close"), "saved: a duplicated card keeps every choice", JSON.stringify(mv.edges.filter((e) => e.from === dupCard?.id)));
   ok(mv.note === "Moves", "saved: the note typed before the redraws");

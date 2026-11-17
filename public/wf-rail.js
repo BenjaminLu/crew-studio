@@ -63,6 +63,8 @@ Object.assign(ACTIONS, { "git.merge": ["Merge the branch", "合併分支"], "rep
 const actionName = (id) => (ACTIONS[id] ? T(ACTIONS[id][0], ACTIONS[id][1]) : id ? String(id).replace(/[._-]+/g, " ").replace(/^./, (c) => c.toUpperCase()) : T("does something", "做一件事"));
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh"]; // the efforts a saved step may name (src/workflow-drafts.ts DRAFT_EFFORTS)
 const MODELS = { value: null, pending: null }; // Studio's model catalog, loaded once per page
+// the outcome words of a step's ordinary way on (the line), as against a branch
+const LINE_WORD = /^(|pass|ok|approve|approved|continue|done|accept|accepted|sent|yes|adopted)$/;
 const okEnd = (n) => !n.args?.result && !/clos|drop|park|discard|cancel|empty|none|reject|fail|abandon/i.test(`${n.id} ${n.label}`);
 
 // ---------- the reading: main line, detours, ends, fork groups ----------
@@ -94,7 +96,7 @@ function model(def) {
   const endish = (id) => !groups.has(id) && isEnd(id);
   // the line follows a step's ordinary way on (no outcome word, or pass / ok / approve …, or into its own refine loop) when it
   // has one; an outcome like "blocked" leads onto the line only when the step has no ordinary way on
-  const GOOD = /^(|pass|ok|approve|approved|continue|done|accept|accepted|sent|yes|adopted)$/;
+  const GOOD = LINE_WORD;
   const good = (a, b) => edges.some((e) => rep(e.from) === a && rep(e.to) === b && (String(e.when || "").split("|").some((w) => GOOD.test(w)) || (byId.get(e.to)?.kind === "loop" && byId.get(e.to).args?.producer === e.from)));
   const memo = new Map();
   const lp = (u) => { if (memo.has(u)) return memo.get(u); const cands = (fwd.get(u) || []).filter((v) => !endish(v)), ok = cands.filter((v) => good(u, v));
@@ -210,7 +212,10 @@ function build(ed, X) {
   // outcome words and checks) and now takes it into its new successor; the last unit takes it to the end the line had
   const relink = (U, NU) => { const endT = M.next(M.main.at(-1)); const sig = new Map(), drop = [];
     U.forEach((u, i) => { const nx = i + 1 < U.length ? U[i + 1][0] : endT; if (!nx) { sig.set(u, []); return; } const T_ = targetsOf(nx), own = new Set(u.flatMap(M.froms));
-      const es = M.edges.filter((e) => own.has(e.from) && T_.includes(e.to)); drop.push(...es); sig.set(u, es); });
+      // only the unit's way on moves: its ordinary edges into the next row (no word, pass / ok / approve …); a branch that happens
+      // to point at that row (review → build when it requests changes) keeps its target. With no ordinary edge, all of them move.
+      const all = M.edges.filter((e) => own.has(e.from) && T_.includes(e.to)), plain = all.filter((e) => String(e.when || "").split("|").some((w) => LINE_WORD.test(w)));
+      const es = plain.length ? plain : all; drop.push(...es); sig.set(u, es); });
     dropEdges(drop);
     NU.forEach((u, i) => { const nx = i + 1 < NU.length ? NU[i + 1][0] : endT; if (!nx) return; for (const e of sig.get(u)) for (const t of targetsOf(nx)) addEdge({ from: e.from, to: t, when: e.when, checks: e.checks }); }); };
   const entryOk = (U, NU) => { if (NU[0] === U[0]) return true; const first = NU[0][0], own = new Set(U[0].flatMap(M.froms)); return M.edges.filter((e) => targetsOf(first).includes(e.to)).every((e) => own.has(e.from)); };
@@ -342,6 +347,8 @@ function build(ed, X) {
     const usable = list.filter((e) => e !== "minimal"), strong = list.at(-1), fast = usable[0] || list[0];
     const kind = !n.provider && !n.model && !n.effort ? "default" : !n.provider && !n.model && n.effort === strong ? "strongest" : !n.provider && !n.model && n.effort === fast ? "fast" : "custom";
     return { kind, strong, fast, from }; };
+  // a staffed workflow runs what its staffing card approved: a step's own effort waits for the next approval (as in the graph editor)
+  const staffedNote = () => (ed.def.id === "code-firstmate" || ed.def.kind === "coffee-kit" ? T(" On this staffed workflow it applies once the staffing card approves it.", "這個流程有派工設定：派工卡核准後才生效。") : "");
   const roleOf = (n) => ed.def.roles.find((r) => r.id === (n.role ?? (n.kind === "loop" ? n.args?.coordinator ?? "coordinator" : undefined)));
   const section = (ic, title, small, ...kids) => h("section", { class: "wf-ds" }, h("h3", {}, icon(ic), title, small ? h("small", {}, small) : null), ...kids);
   const setField = (n, k, v) => commit(() => { if (v === "" || v == null) delete n[k]; else n[k] = v; });
@@ -368,8 +375,8 @@ function build(ed, X) {
         h("button", { type: "button", "data-preset": "custom", "aria-pressed": String(pr.kind === "custom"), disabled: ro || null, title: T("Exact provider, model and effort", "指定供應商、模型與推理強度"), onclick: () => { R.advOpenStep = true; drawDrawer(); drawer.querySelector("[data-rail-step-adv]")?.scrollIntoView({ block: "nearest" }); } }, T("Exact…", "指定…")));
       secs.push(section("human", T("Who", "誰來做"), null, h("div", { class: "field" }, h("label", {}, T("Role", "角色")), role),
         h("div", { class: "field" }, h("span", { class: "lbl" }, T("Model", "模型")), preset, h("span", { class: "wf-dim", style: "font-size:12px", "data-rail-preset-note": "" }, pr.kind === "default" ? T("The Crew page decides (approved staffing for this role).", "由 Crew 頁決定（這個角色核准的配置）。")
-          : pr.kind === "strongest" ? T(`The model the Crew page picks, at its highest reasoning effort (${pr.strong})${pr.from}.`, `Crew 頁選的模型，用最高推理強度（${pr.strong}）${pr.from}。`)
-          : pr.kind === "fast" ? T(`The model the Crew page picks, at its lowest reasoning effort (${pr.fast})${pr.from}.`, `Crew 頁選的模型，用最低推理強度（${pr.fast}）${pr.from}。`) : exact))));
+          : pr.kind === "strongest" ? T(`The model the Crew page picks, at its highest reasoning effort (${pr.strong})${pr.from}, when that model takes it.${staffedNote()}`, `Crew 頁選的模型，用最高推理強度（${pr.strong}）${pr.from}，前提是那個模型支援。${staffedNote()}`)
+          : pr.kind === "fast" ? T(`The model the Crew page picks, at its lowest reasoning effort (${pr.fast})${pr.from}, when that model takes it.${staffedNote()}`, `Crew 頁選的模型，用最低推理強度（${pr.fast}）${pr.from}，前提是那個模型支援。${staffedNote()}`) : exact))));
     }
     if (n.kind === "agent" || n.kind === "loop" || (n.kind === "hook" && X.pinsSkills?.(n))) secs.push(skillsSection(n, ro));
     if (n.kind === "hook") { const known = [...new Set([...Object.keys(ACTIONS), ...ed.def.nodes.filter((x) => x.kind === "hook" && x.do).map((x) => x.do)])];

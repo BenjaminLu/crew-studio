@@ -48,7 +48,9 @@ import { appendLines, readLog, repairTail, syncDir, writeAtomic, type LogRead } 
 import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
-export type AgentPick = { provider: string; model: string | null; effort?: string | null };
+/** stepEffort: the node's own reasoning effort when the node names no provider (Strongest / Fast in the Steps view, an
+ *  effort-only override in the graph editor): the provider selection applies it to whatever it picks when that model takes it */
+export type AgentPick = { provider: string; model: string | null; effort?: string | null; stepEffort?: string | null };
 export type NodeRun = {
   state: NState; visits: number; extra: number; attempt: number; outcome: string | null; cause: string | null; error: string | null; startedAt: string | null; endedAt: string | null;
   inbox: string[]; agent: AgentPick | null; swap: AgentPick | null; job: string | null; card: string | null; waiting: "card" | "external" | "firstmate" | null; data: Record<string, any>; note: string | null;
@@ -760,10 +762,12 @@ export class Engine {
       const approved = self.deps.approvedPick?.(r, node); if (approved) return approved;
       if (rn.agent) return rn.agent;
       if (node.provider) return { provider: node.provider, model: node.model ?? null, ...(node.effort ? { effort: node.effort } : {}) };
+      // a node with an effort but no provider of its own: the role's, the Task's or Studio's pick, carrying the node's effort
+      const step = node.effort ? { stepEffort: node.effort } : {};
       const role = r.def.roles.find((x) => x.id === node.role);
-      if (role?.provider) return { provider: role.provider, model: role.model ?? null, ...(role.effort ? { effort: role.effort } : {}) };
-      if (r.params.provider) return { provider: r.params.provider, model: r.params.model || null, ...(r.params.effort ? { effort: r.params.effort } : {}) };
-      return this.deps.defaultProvider();
+      if (role?.provider) return { provider: role.provider, model: role.model ?? null, ...(role.effort ? { effort: role.effort } : {}), ...step };
+      if (r.params.provider) return { provider: r.params.provider, model: r.params.model || null, ...(r.params.effort ? { effort: r.params.effort } : {}), ...step };
+      return { ...this.deps.defaultProvider(), ...step };
     };
     return { run: r, node, rn, visit: rn.visits, engine: this, deps: this.deps, ctx: r.ctx, dir: this.rdir(r.id),
       log: (text, data = {}) => self.emit(r, "log", `${node.id}: ${text}`, { node: node.id, ...data }),
