@@ -522,7 +522,7 @@ function crewFocus(actor) {
     h("div", { class: "phead" }, h("div", { style: "display:flex;gap:12px;align-items:center" }, avaFor(c.name, "ava lg"),
       h("div", {}, h("h1", {}, c.actor), h("p", {}, [c.role, c.task, c.vendor && `${c.vendor}${c.model ? " · " + c.model : ""}`].filter(Boolean).join(" · ")))),
       h("div", { class: "actions" }, h("a", { class: "btn", href: `#/activity/${c.task || ""}` }, icon("activity", "ic sm"), T("Task activity", "任務事件")), h("a", { class: "btn ghost", href: "#/crew" }, T("All crew", "全部船員")))),
-    h("div", { class: "focus" },
+    h("div", { class: "crew-focus" },
       h("div", { style: "position:relative;min-width:0" }, term(c.lines || [], true), c.alive ? h("span", { class: "live" }, h("i"), "LIVE") : null),
       h("div", { class: "card", style: "padding:14px 16px;display:grid;gap:10px;align-content:start" },
         h("h2", {}, T("Round", "回合")),

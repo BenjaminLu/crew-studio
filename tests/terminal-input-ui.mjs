@@ -6,7 +6,11 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   (ㄓ → 中 → 中ㄨ → 中文) sends 中文 exactly once; an input method that commits the front of what it composes while the
 //   rest goes on composing (中 committed, 文 still open, as Zhuyin and Pinyin do when the buffer fills or a word is
 //   confirmed) sends each character once, not the whole word again (xterm.js 5.5.0's own composition helper did);
-//   two words in a row each arrive once; Tab reaches the PTY as "\t", the focus stays in the terminal, and the shell
+//   two words in a row each arrive once; Caps Lock pressed while composing (a Mac switches the input source with it) and
+//   the commit that follows send the text once, not twice (5.5.0 did); Enter, Space and punctuation commits arrive once;
+//   what a program prints keeps Powerline and Nerd Font glyphs (U+E0B0, U+F115), the font stack names the Nerd Fonts a
+//   prompt is drawn for, and an emoji or CJK character takes two
+//   cells (Unicode 11 widths); Tab reaches the PTY as "\t", the focus stays in the terminal, and the shell
 //   completes the command with it; the colours drawn (public/term-theme.js): dim bright black, blue and dim default text
 //   reach 4.5:1 against the terminal's background in the light and the dark theme.
 // Not covered: the operating system's own Zhuyin keyboard (macOS) - CDP drives Chromium's input-method layer, not the OS's.
@@ -15,6 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 import { freePort, waitUp, withSession } from "./boot.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, ".."), tmp = mkdtempSync(join(tmpdir(), "crew-terminal-input-ui-"));
@@ -85,6 +90,79 @@ try {
   await p.keyboard.type(" ok "); await comp("ㄕ"); await comp("世"); await comp("世界"); await cdp.send("Input.insertText", { text: "世界" });
   s = await typed();
   ok(s === "你好 ok 世界", "two words with plain keys between them: each once", JSON.stringify(s));
+
+  // switching the input source while composing: Caps Lock (a Mac switches to and from ABC with it) reaches the page before
+  // the input method commits what it composed; xterm.js 5.5.0 sent the composition on that key and again on the commit
+  const caps = (type) => cdp.send("Input.dispatchKeyEvent", { type, windowsVirtualKeyCode: 20, key: "CapsLock", code: "CapsLock" });
+  await comp("ㄓ"); await comp("中"); await comp("中ㄨ"); await comp("中文");
+  await caps("rawKeyDown"); await cdp.send("Input.insertText", { text: "中文" }); await caps("keyUp");
+  s = await typed();
+  ok(s === "中文", "Caps Lock (switching to ABC) while 中文 composes, then the input method commits: 中文 once, not 中文中文", JSON.stringify(s));
+  await comp("ㄋ"); await comp("你好"); await caps("rawKeyDown"); await cdp.send("Input.insertText", { text: "你好" }); await caps("keyUp"); await p.keyboard.type("abc");
+  s = await typed();
+  ok(s === "你好abc", "and typing on in ABC after the switch: 你好abc", JSON.stringify(s));
+  // the other ways an input method commits: Enter or Space (a keyCode 229 keydown), punctuation it sends without composing
+  const k229 = (key, code) => cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", windowsVirtualKeyCode: 229, key, code });
+  await comp("ㄓ"); await comp("中文"); await k229("Enter", "Enter"); await cdp.send("Input.insertText", { text: "中文" });
+  await comp("ㄗ"); await comp("字"); await k229(" ", "Space"); await cdp.send("Input.insertText", { text: "字" });
+  await k229(",", "Comma"); await cdp.send("Input.insertText", { text: "，" });
+  s = await typed();
+  ok(s === "中文字，", "committed with Enter, with Space, and a full-width comma: each once", JSON.stringify(s));
+
+  // ---------- what a program prints: Powerline and Nerd Font glyphs, emoji, CJK ----------
+  const gid = await open({ command: String.raw`printf 'G1 \xee\x82\xb0\xef\x84\x95|\nG2 \xe2\x9c\x85x|\nG3 \xe4\xb8\xad\xe6\x96\x87y|\n'; sleep 60` });
+  const lineOf = (id, tag) => p.evaluate(([id, tag]) => {
+    const t = window.crewTerminals.panes.get(id)?.term, b = t?.buffer.active; if (!b) return null;
+    for (let i = 0; i < b.length; i++) { const l = b.getLine(i); if (!l?.translateToString(true).startsWith(tag)) continue;
+      const cells = []; for (let x = 0; x < 8; x++) { const c = l.getCell(x); cells.push([c.getChars(), c.getWidth()]); } return { text: l.translateToString(true), cells }; }
+    return null; }, [id, tag]);
+  const g1 = await until(() => lineOf(gid, "G1")), g2 = await lineOf(gid, "G2"), g3 = await lineOf(gid, "G3");
+  ok(g1?.text === "G1 \ue0b0\uf115|", "a Powerline separator and a Nerd Font icon (U+E0B0, U+F115) reach the terminal's buffer as sent (the drawing itself depends on the fonts installed)", JSON.stringify(g1?.text));
+  const font = await p.evaluate((id) => window.crewTerminals.panes.get(id).term.options.fontFamily, gid);
+  ok(/^ui-monospace,/.test(font) && /'MesloLGS NF'/.test(font) && /'Symbols Nerd Font Mono'/.test(font) && /monospace$/.test(font),
+    "the font stack names the Nerd Fonts a prompt is drawn for after the Mac's own monospace, so those glyphs are not empty boxes", font);
+  ok(await p.evaluate((id) => { try { return window.crewTerminals.panes.get(id).term.unicode.activeVersion; } catch (e) { return String(e.message); } }, gid) === "11", "the terminal measures with Unicode 11 widths");
+  ok(g2?.cells[3]?.[0] === "✅" && g2.cells[3][1] === 2 && g2.cells[5]?.[0] === "x", "an emoji (✅) takes two cells and the next character follows it, not drawn over it", JSON.stringify(g2?.cells));
+  ok(g3?.text === "G3 中文y|" && g3.cells[3][1] === 2 && g3.cells[5][0] === "文" && g3.cells[7][0] === "y", "CJK takes two cells each", JSON.stringify(g3?.cells));
+  await p.evaluate((id) => fetch(`/api/terminals/${id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), gid).catch(() => {});
+
+  // ---------- the focused terminal's layout, and the wheel ----------
+  // xterm puts class "focus" on its element when focused; Studio's stylesheet once had a page-wide .focus grid, which laid
+  // xterm 6's scrolling element into a 1.6fr column and left the rest of the pane black
+  const sid = await open({ command: "seq 1 400; sleep 60" });
+  await until(() => p.evaluate((id) => (window.crewTerminals.panes.get(id)?.term?.buffer.active.baseY ?? 0) > 100, sid));
+  const lay = await p.evaluate((id) => {
+    const host = document.querySelector(`[data-term-host="${CSS.escape(id)}"]`), x = host.querySelector(".xterm"), se = host.querySelector(".xterm-scrollable-element");
+    const sc = host.querySelector(".xterm-screen"), bar = host.querySelector(".xterm-scrollable-element > .scrollbar.vertical");
+    const r = (e) => e.getBoundingClientRect(), xs = getComputedStyle(x), inner = x.clientWidth - parseFloat(xs.paddingLeft) - parseFloat(xs.paddingRight);
+    const hr = r(host);
+    return { focus: x.classList.contains("focus"), display: getComputedStyle(x).display, inner, se: r(se).width, seRight: r(se).right, xRight: r(x).right, screenRight: r(sc).right, barLeft: bar ? r(bar).left : null, host: { x: hr.left, y: hr.top, w: hr.width, h: hr.height }, bg: getComputedStyle(se).backgroundColor };
+  }, sid);
+  ok(lay.focus && lay.display === "block" && Math.abs(lay.se - lay.inner) <= 1 && lay.seRight <= lay.xRight + 0.5, "the focused terminal's scrolling area fills the pane's width (no page-wide .focus grid on xterm)", JSON.stringify(lay));
+  // the pixels as drawn, across the pane's width on a row the short numbers leave blank to the right
+  const pixel = async (x, y) => { // a 1×1 screenshot: its one scanline, whatever the PNG filter, is the pixel itself
+    const png = await p.screenshot({ clip: { x, y, width: 1, height: 1 } }); let i = 8; const idat = [];
+    while (i < png.length) { const n = png.readUInt32BE(i), t = png.toString("ascii", i + 4, i + 8); if (t === "IDAT") idat.push(png.subarray(i + 8, i + 8 + n)); i += 12 + n; }
+    const raw = inflateSync(Buffer.concat(idat)); return "#" + [1, 2, 3].map((k) => raw[k].toString(16).padStart(2, "0")).join(""); };
+  const bgHex = "#" + lay.bg.match(/\d+/g).slice(0, 3).map((v) => (+v).toString(16).padStart(2, "0")).join("");
+  const probes = []; for (const f of [0.3, 0.5, 0.7, 0.9, 0.97]) probes.push(await pixel(Math.round(lay.host.x + lay.host.w * f), Math.round(lay.host.y + lay.host.h / 2)));
+  ok(probes.every((c) => c === bgHex), `across the pane's width the terminal is drawn on its theme's background (${bgHex}), nowhere black`, JSON.stringify(probes));
+  ok(lay.barLeft === null || lay.screenRight <= lay.barLeft + 0.5, "the scrollbar sits beside the last column, not over it", JSON.stringify(lay));
+  const top = () => p.evaluate((id) => { const b = window.crewTerminals.panes.get(id).term.buffer.active; return { y: b.viewportY, base: b.baseY, rowPx: document.querySelector(`[data-term-host="${CSS.escape(id)}"] .xterm-screen`).clientHeight / window.crewTerminals.panes.get(id).term.rows }; }, sid);
+  const box = await p.locator(`[data-term-host="${sid}"] .xterm-screen`).boundingBox(); await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const wh0 = await top(); await p.mouse.wheel(0, -400); await p.waitForTimeout(400); const wh1 = await top();
+  const want = Math.trunc(400 / wh0.rowPx);
+  ok(wh0.y === wh0.base && Math.abs((wh0.y - wh1.y) - want) <= 1, `a 400 px wheel up scrolls back about 400 px of rows (${want}), as 5.5.0 did, not a line or two`, JSON.stringify({ wh0, wh1, want }));
+  await p.mouse.wheel(0, 4000); await p.waitForTimeout(400);
+  ok((await top()).y === wh0.base, "and wheeling down returns to the bottom", JSON.stringify(await top()));
+  await p.evaluate((id) => fetch(`/api/terminals/${id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), sid).catch(() => {});
+  // a full-screen program (alternate screen, no mouse reporting): the wheel still reaches it from xterm as arrow keys
+  const aid = await open({ command: String.raw`printf '\033[?1049hALT'; cat >/dev/null` });
+  await until(async () => /ALT/.test(await rows())); sent.length = 0;
+  const abox = await p.locator(`[data-term-host="${aid}"] .xterm-screen`).boundingBox(); await p.mouse.move(abox.x + abox.width / 2, abox.y + abox.height / 2);
+  await p.mouse.wheel(0, -200); s = await typed();
+  ok(/\x1b(\[|O)A/.test(s), "on the alternate screen the wheel still reaches the program as arrow keys (xterm's own handling)", JSON.stringify(s));
+  await p.evaluate((id) => fetch(`/api/terminals/${id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), aid).catch(() => {});
 
   // ---------- Tab ----------
   const shell = await open({ preset: "shell" });
@@ -157,7 +235,7 @@ try {
     const got = await p.evaluate((id) => {
       const TT = window.crewTermTheme, host = document.querySelector(`[data-term-host="${CSS.escape(id)}"]`);
       const hex = (c) => { const m = c.match(/\d+(\.\d+)?/g).map(Number); const a = m[3] ?? 1; return { rgb: m.slice(0, 3), a }; };
-      const bgc = getComputedStyle(host.querySelector(".xterm-viewport")).backgroundColor, bg = hex(bgc).rgb;
+      const bgc = getComputedStyle(host.querySelector(".xterm-scrollable-element")).backgroundColor, bg = hex(bgc).rgb;
       const toHex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
       const out = { bg: toHex(bg), theme: document.documentElement.dataset.theme || "" };
       for (const w of ["DIMHINT", "BLUETXT", "DIMFG", "HINTTXT", "REDONRED", "DIMREDBG"]) {
@@ -192,7 +270,7 @@ try {
       const TT = window.crewTermTheme, host = document.querySelector(`[data-term-host="${CSS.escape(id)}"]`);
       const px = (c) => { const m = c.match(/\d+(\.\d+)?/g).map(Number); return { rgb: m.slice(0, 3), a: m[3] ?? 1 }; };
       const toHex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
-      const bg = px(getComputedStyle(host.querySelector(".xterm-viewport")).backgroundColor).rgb, out = { plain: [], dim: [] };
+      const bg = px(getComputedStyle(host.querySelector(".xterm-scrollable-element")).backgroundColor).rgb, out = { plain: [], dim: [] };
       for (const el of host.querySelectorAll(".xterm-rows span")) {
         const t = el.textContent.trim(); if (!/^[pd][0-7][0-7]$/.test(t)) continue;
         const cb = px(getComputedStyle(el).backgroundColor), under = cb.a > 0 ? cb.rgb.map((v, i) => v * cb.a + bg[i] * (1 - cb.a)) : bg;

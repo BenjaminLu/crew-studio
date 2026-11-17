@@ -6,7 +6,7 @@
 // open terminal (GET /api/terminals/<id>/stream: a replay, then live); the list's changes come on the page's own stream
 // ("terminals"). Loaded before backbone.js.
 (() => {
-const XV = "5.5.0", FITV = "0.10.0";
+const XV = "6.0.0", FITV = "0.11.0", U11V = "0.9.0";
 const TM = { refused: new Map(), list: null, presets: [], projects: [], canWrite: false, err: null, panes: new Map(), prev: new Map(), busy: false, cmd: "", args: "", showNew: null,
   project: store.get("crew.term.project", ""), rc: store.get("crew.term.rc", "1") !== "0", tab: store.get("crew.chat.tab", "chat") };
 window.crewTerminals = TM;
@@ -119,29 +119,37 @@ function xterm() {
   if (window.Terminal && window.FitAddon) return Promise.resolve();
   if (xtermP) return xtermP;
   const add = (tag, attrs) => new Promise((res, rej) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); e.onload = res; e.onerror = () => rej(new Error(`${attrs.src || attrs.href} did not load`)); document.head.append(e); });
-  xtermP = Promise.all([add("link", { rel: "stylesheet", href: `/vendor/xterm-${XV}.css` }), add("script", { src: `/vendor/xterm-${XV}.min.js` }).then(() => add("script", { src: `/vendor/xterm-addon-fit-${FITV}.min.js` }))]).catch((e) => { xtermP = null; throw e; });
+  xtermP = Promise.all([add("link", { rel: "stylesheet", href: `/vendor/xterm-${XV}.css` }), add("script", { src: `/vendor/xterm-${XV}.min.js` }).then(() => Promise.all([add("script", { src: `/vendor/xterm-addon-fit-${FITV}.min.js` }), add("script", { src: `/vendor/xterm-addon-unicode11-${U11V}.min.js` }).catch(() => {}) /* widths only: the terminal works without it */]))]).catch((e) => { xtermP = null; throw e; });
   return xtermP;
 }
 const css = (n, d) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d;
 const b64bytes = (s) => { const b = atob(s), o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = b.charCodeAt(i); return o; };
-// An input method that commits the front of what it composes while the rest goes on composing (Zhuyin and Pinyin do, when
-// the buffer fills or a word is confirmed: compositionend, then compositionstart, in one keystroke) made xterm.js 5.5.0
-// send the committed text together with the part still composing, which it then sent again when that was committed:
-// 中文 typed came out as 中文文 (its CompositionHelper reads up to the old composition's end; 6.0.0 reads up to the new
-// one's start). Here a new composition first sends what the last one committed, up to where the new one starts, and
-// cancels the send the old one had queued. Pinned to 5.5.0 (public/vendor); tests/terminal-input-ui.mjs checks the bytes.
-function imeOnce(term) {
-  const c = term._core?._compositionHelper;
-  if (!c || typeof c.compositionstart !== "function" || !("_isSendingComposition" in c) || !c._textarea || !c._coreService) return;
-  const start = c.compositionstart.bind(c);
-  c.compositionstart = () => {
-    if (c._isSendingComposition) {
-      c._isSendingComposition = false;
-      const d = c._textarea.value.substring(c._compositionPosition.start + c._dataAlreadySent.length);
-      if (d) c._coreService.triggerDataEvent(d, true);
-    }
-    return start();
-  };
+// The font: the Mac's own monospace for text, then the Nerd Fonts a shell prompt is drawn for (powerlevel10k, starship,
+// oh-my-posh: Powerline separators U+E0A0-E0D4 and icons up to U+F8FF, in the private use area), so those glyphs come from the font
+// the captain installed for them instead of drawing as empty boxes. The browser falls back glyph by glyph: text keeps the
+// first font that has it. Unicode 11 widths (its addon): an emoji takes the two cells a program that measures it counts,
+// not one with the next character drawn over it.
+const TERM_FONT = ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "'MesloLGS NF'", "'MesloLGS Nerd Font'", "'Symbols Nerd Font Mono'", "'Symbols Nerd Font'",
+  "'JetBrainsMono Nerd Font'", "'JetBrainsMono NF'", "'FiraCode Nerd Font'", "'Hack Nerd Font'", "'CaskaydiaCove Nerd Font'", "'Powerline Symbols'", "monospace"].join(", ");
+function unicode11(term) {
+  try { if (!window.Unicode11Addon || !term.unicode) return; term.loadAddon(new window.Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = "11"; } catch {}
+}
+// The wheel through the scrollback: as far as the wheel or trackpad moved, a row per row height of pixels (xterm.js 5.5.0's
+// way). 6.0.0's scrollbar reads the deprecated wheelDelta instead, a fixed step per event whatever the distance, so a
+// trackpad flick moved a line or two. In the capture phase, ahead of xterm, and only on the normal screen with no mouse
+// reporting asked for: a full-screen program (vim, less, an agent's TUI) still gets the wheel from xterm as before.
+function wheelRows(host, term) {
+  let part = 0;
+  host.addEventListener("wheel", (e) => {
+    try {
+      if (!e.deltaY || e.shiftKey || e.ctrlKey || term.buffer.active.type !== "normal" || term.modes.mouseTrackingMode !== "none") return;
+      const rowPx = (term.element?.querySelector(".xterm-screen")?.clientHeight || 0) / term.rows; if (!(rowPx > 0)) return;
+      part += e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * term.rows : e.deltaY / rowPx;
+      const n = Math.trunc(part); part -= n;
+      if (n) term.scrollLines(n);
+      e.preventDefault(); e.stopPropagation();
+    } catch {}
+  }, { capture: true, passive: false });
 }
 function pane(t) {
   let p = TM.panes.get(t.id); if (p) return p;
@@ -152,9 +160,9 @@ function pane(t) {
     // xterm keeps any other colour a program asks for (256-colour, truecolor) at 4.5:1 too
     const TT = window.crewTermTheme, { theme, dim } = TT.themeFor(css("--surface-2", "#111111"), css("--text", "#dddddd"), css("--accent", "#6699ff"));
     p.host.append(h("style", {}, TT.dimCss(`[data-term-host="${CSS.escape(t.id)}"]`, dim)));
-    const term = new window.Terminal({ cursorBlink: TM.canWrite, disableStdin: !TM.canWrite, scrollback: 5000, fontSize: 13, allowProposedApi: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme, minimumContrastRatio: TT.AA });
-    const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit); term.open(p.host); p.term = term; p.fit = fit; imeOnce(term);
+    const term = new window.Terminal({ cursorBlink: TM.canWrite, disableStdin: !TM.canWrite, scrollback: 5000, fontSize: 13, allowProposedApi: true, // term.unicode (Unicode 11 widths) is a proposed API
+      fontFamily: TERM_FONT, theme, minimumContrastRatio: TT.AA });
+    const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit); term.open(p.host); p.term = term; p.fit = fit; unicode11(term); wheelRows(p.host, term);
     // a phone watches: no input element at all, so a tap never opens a keyboard
     if (!TM.canWrite) p.host.querySelectorAll("textarea, input").forEach((e) => e.remove());
     else {

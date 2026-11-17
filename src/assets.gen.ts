@@ -189,12 +189,13 @@ import a185 from "../public/transcripts.js" with { type: "file" };
 import a186 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
 import a187 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
 import a188 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a189 from "../public/vendor/xterm-5.5.0.css" with { type: "file" };
-import a190 from "../public/vendor/xterm-5.5.0.min.js" with { type: "file" };
+import a189 from "../public/vendor/xterm-6.0.0.css" with { type: "file" };
+import a190 from "../public/vendor/xterm-6.0.0.min.js" with { type: "file" };
 import a191 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
-import a192 from "../public/vendor/xterm-addon-fit-0.10.0.min.js" with { type: "file" };
-import a193 from "../public/wf-rail.css" with { type: "file" };
-import a194 from "../public/wf-rail.js" with { type: "file" };
+import a192 from "../public/vendor/xterm-addon-fit-0.11.0.min.js" with { type: "file" };
+import a193 from "../public/vendor/xterm-addon-unicode11-0.9.0.min.js" with { type: "file" };
+import a194 from "../public/wf-rail.css" with { type: "file" };
+import a195 from "../public/wf-rail.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -386,10 +387,11 @@ export const ASSETS: Record<string, string> = {
   "/vendor/opencc-js-1.4.2-t2cn.min.js": a186,
   "/vendor/opencc-js-LICENSE.txt": a187,
   "/vendor/qrcode-1.4.4.min.js": a188,
-  "/vendor/xterm-5.5.0.css": a189,
-  "/vendor/xterm-5.5.0.min.js": a190,
+  "/vendor/xterm-6.0.0.css": a189,
+  "/vendor/xterm-6.0.0.min.js": a190,
   "/vendor/xterm-LICENSE.txt": a191,
-  "/vendor/xterm-addon-fit-0.10.0.min.js": a192,
-  "/wf-rail.css": a193,
-  "/wf-rail.js": a194,
+  "/vendor/xterm-addon-fit-0.11.0.min.js": a192,
+  "/vendor/xterm-addon-unicode11-0.9.0.min.js": a193,
+  "/wf-rail.css": a194,
+  "/wf-rail.js": a195,
 };
