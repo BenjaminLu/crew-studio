@@ -19,7 +19,7 @@ app.stdout.resume(); app.stderr.resume();
 let passed = 0, failed = 0, browser;
 const ok = (v, name) => { console.log(`${v ? "PASS" : "FAIL"} ${name}`); v ? passed++ : failed++; };
 const shots = join(root, "tests/out/runtime-gesture"); mkdirSync(shots, { recursive: true });
-const open = async (context) => { const p = await context.newPage(); await p.goto(base + "/#/workflows/gesture"); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.waitForSelector('[data-view-toggle="detail"]'); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.evaluate(() => document.body.classList.add("chat-closed")); await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); return p; };
+const open = async (context) => { const p = await context.newPage(); await p.goto(base + "/#/workflows/gesture/advanced"); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.waitForSelector('[data-view-toggle="detail"]'); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.evaluate(() => document.body.classList.add("chat-closed")); await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); return p; };
 const arm = async (p) => {
   let release, ready; const gate = new Promise(r => release = r), started = new Promise(r => ready = r); let first = true;
   await p.route("**/api/wf/validate", async route => { if (!first) return route.continue(); first = false; const response = await route.fetch(); ready(); await gate; try { await route.fulfill({ response }); } catch {} });
@@ -67,7 +67,7 @@ try {
     const nav = await arm(q); await q.locator('[data-node="a"]').focus(); await q.keyboard.press("Enter"); await q.locator('[data-field="detail"]').fill("navigation pending validation"); await revealEditorControl(q, "[data-fit]"); await q.click("[data-fit]"); await nav.started;
     const navigating = await down(q, "b"); await q.locator('a[href="#/workflows"]').focus(); await q.keyboard.press("Enter"); await q.waitForSelector('[data-wf="gesture"]'); nav.release(); await q.mouse.up(); await q.waitForTimeout(100);
     ok(await navigating.svg.evaluate(el => !el.isConnected && !el.querySelector(".rt-wire")), `${width}/${theme}: navigation cancels pointer ownership and deferred drawing`);
-    await q.click('[data-wf="gesture"]'); await revealEditorControl(q, '[data-view-toggle="detail"]'); await q.waitForSelector('[data-view-toggle="detail"]'); await revealEditorControl(q, '[data-view-toggle="detail"]'); await q.click('[data-view-toggle="detail"]');
+    await q.click('[data-wf="gesture"]'); await q.waitForSelector('[data-rail-wrap]'); await q.click('[data-rail-advanced]'); await revealEditorControl(q, '[data-view-toggle="detail"]'); await q.waitForSelector('[data-view-toggle="detail"]'); await revealEditorControl(q, '[data-view-toggle="detail"]'); await q.click('[data-view-toggle="detail"]');
     ok(await q.locator('[data-edge="b→a"]').count() === 0 && await q.locator('[data-valid]').getAttribute("data-valid") === "ok", `${width}/${theme}: old validation cannot leak into a newly loaded editor`);
     await nav.dispose(); await context.close();
   }

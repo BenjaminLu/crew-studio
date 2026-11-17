@@ -193,6 +193,8 @@ import a189 from "../public/vendor/xterm-5.5.0.css" with { type: "file" };
 import a190 from "../public/vendor/xterm-5.5.0.min.js" with { type: "file" };
 import a191 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
 import a192 from "../public/vendor/xterm-addon-fit-0.10.0.min.js" with { type: "file" };
+import a193 from "../public/wf-rail.css" with { type: "file" };
+import a194 from "../public/wf-rail.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -388,4 +390,6 @@ export const ASSETS: Record<string, string> = {
   "/vendor/xterm-5.5.0.min.js": a190,
   "/vendor/xterm-LICENSE.txt": a191,
   "/vendor/xterm-addon-fit-0.10.0.min.js": a192,
+  "/wf-rail.css": a193,
+  "/wf-rail.js": a194,
 };

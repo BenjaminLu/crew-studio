@@ -73,6 +73,7 @@
     "test:remote-gates": "bun tests/remote-gates-r3.ts && bun tests/remote-gates-naming.ts && bun tests/remote-gates-pending-naming.ts && bun tests/remote-gates-merge.ts && bun tests/remote-gates-context-race.ts && bun tests/remote-gates-intent.ts && bun tests/remote-gates-engine.ts && bun tests/remote-gates-approval.ts && bun tests/remote-gates-worktree.ts && bun tests/remote-gates-readiness.ts && node tests/remote-gates-ui.mjs",
     "test:shared-github-poller": "bun tests/shared-github-poller.ts && bun tests/shared-github-poller-server.ts && bun tests/github-response-lifecycle.ts",
     "test:native-backbone": "bun tests/native-backbone-integration.ts",
+    "test:workflow-rail": "node tests/workflow-rail-ui.mjs",
     "test:workflow-create": "bun tests/native-workflow-create.ts && node tests/sidebar-workflow-create-ui.mjs",
     "test:codex-image": "bun tests/egress-start.ts && bun tests/codex-image.ts",
     "test:cursor-image": "bun tests/cursor-image.ts && bun tests/jpeg-hostile.ts",

@@ -70,7 +70,7 @@ try {
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme); await p.evaluate(() => localStorage.setItem("crew.graphView", "detail"));
     for (const w of wfs0) { const legacy = w.id === "video"; if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "manual" });
-      await p.goto(`${base}/#/workflows/${w.id}${w.id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector("svg.rt-graph [data-node]", { timeout: 15000 }).catch(() => {});
+      await p.goto(`${base}/#/workflows/${w.id}/advanced`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector("svg.rt-graph [data-node]", { timeout: 15000 }).catch(() => {});
       await revealEditorControl(p, "[data-fit]").catch(error=>{console.error("Graph fixture failed before Fit",JSON.stringify({workflow:w.id,width,scheme,url:p.url(),errors}));throw error;}); await p.click("[data-fit]").catch(() => {}); await p.waitForTimeout(150);
       await p.screenshot({ path: join(before, `${w.id}-${width}-${scheme}.png`), fullPage: true });
       if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "auto" }); }
@@ -79,7 +79,7 @@ try {
   ok(wfs0.every((w) => existsSync(join(before, `${w.id}-1440-light.png`)) && existsSync(join(before, `${w.id}-390-dark.png`))), "before screenshots of the hand layouts exist for every workflow, 1440 and 390, light and dark");
   // ---------- the simple view (the default): main path, badges, toggle, docked minimap, readable Fit ----------
   { const p = await page(1440, "light");
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
     const ids = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.map((g) => g.dataset.node));
     const actualDef=(await (await p.request.get(`${base}/api/wf/code-firstmate`)).json()).def;
     const allEdges = p.locator("[data-graph-all-edges]");
@@ -124,7 +124,7 @@ try {
   }
   // ---------- a column reflow keeps an unfitted Overview's scale; a fitted Overview fits again ----------
   { const p = await page(1440, "light");
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
     const look = () => p.evaluate(() => { const g = document.querySelector("svg.rt-graph"), [x, y, w, h] = g.getAttribute("viewBox").split(" ").map(Number), b = g.lay.bbox;
       return { scale: g.getScreenCTM().a, bbox: [b.w, b.h], centred: x + w / 2 >= b.x && x + w / 2 <= b.x + b.w && y + h / 2 >= b.y && y + h / 2 <= b.y + b.h,
         fits: x <= b.x + .5 && y <= b.y + .5 && x + w >= b.x + b.w - .5 && y + h >= b.y + b.h - .5 && (Math.abs(w - b.w) < 1 || Math.abs(h - b.h) < 1) }; });
@@ -143,7 +143,7 @@ try {
   }
   // ---------- a version dragged before graph-tidy opens in manual mode, and a drag keeps its other positions ----------
   { const p = await page(1440, "light"); await p.evaluate(() => localStorage.setItem("crew.graphView", "detail"));
-    await p.goto(`${base}/#/workflows/video`); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="make"]');
+    await p.goto(`${base}/#/workflows/video/advanced`); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="make"]');
     const saved = globalThis.legacyPos; const at = await nodePos(p);
     ok(await p.getAttribute("svg.rt-graph", "data-layout") === "manual" && Object.entries(saved).every(([k, v]) => at[k] && at[k][0] === v.x && at[k][1] === v.y), "a version with a layout saved before this change opens in manual mode with its positions", JSON.stringify(at));
     // Reload only after this actual drag's layout write is acknowledged.
@@ -158,7 +158,7 @@ try {
   }
   // ---------- 1440 light, Detail view: layout, arcs, badges, stages, modes, controls ----------
   { const p = await page(1440, "light"); await p.evaluate(() => localStorage.setItem("crew.graphView", "detail"));
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec"]');
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec"]');
     ok(await p.getAttribute("svg.rt-graph", "data-layout") === "auto" && same(await nodePos(p), await autoPos(p, "code-firstmate")), "a newly loaded built-in workflow uses the auto layout");
     // Detail view: the minimap is docked outside the canvas: it covers no node and no edge
     const hitsMm = await p.evaluate(() => { const mm = document.querySelector("[data-minimap]")?.getBoundingClientRect(); if (!mm) return ["no minimap"]; const cv = document.querySelector(".rt-canvas").getBoundingClientRect();
@@ -239,7 +239,7 @@ try {
   }
   // ---------- a phone starts with the stages collapsed ----------
   { const p = await page(390, "light");
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector("[data-stage-node]");
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector("[data-stage-node]");
     ok(await p.locator("[data-stage-node]").count() === 7 && await p.locator("svg.rt-graph [data-stage]").count() === 0, "on a phone the stages start collapsed");
     await p.context().close();
   }
@@ -253,7 +253,7 @@ try {
     const p = await page(width, scheme);
     for (const id of wfs) for (const mode of ["simple", "all", "detail"]) { const view = mode === "all" ? "simple" : mode;
       await p.evaluate(([v, all]) => { localStorage.setItem("crew.graphView", v); localStorage.setItem("crew.graphAllEdges", all ? "1" : "0"); }, [view, mode === "all"]);
-      await p.goto(`${base}/#/workflows/${id}${id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed"));
+      await p.goto(`${base}/#/workflows/${id}/advanced`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed"));
       const okSel = await p.waitForSelector(`svg.rt-graph[data-view="${view}"] [data-node], svg.rt-graph[data-view="${view}"] [data-stage-node]`, { timeout: 15000 }).then(() => true).catch(() => false);
       await p.waitForTimeout(200);
       const crossings=await through(p),noOverflow=await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);

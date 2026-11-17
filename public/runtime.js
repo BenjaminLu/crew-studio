@@ -2,7 +2,8 @@
 // per workflow) and Runs (a list, and a live view per run). No dependency: the
 // graph is plain SVG.
 //   #/workflows                 the workflows
-//   #/workflows/<id>[/v<N>]     the editor: drag nodes (positions kept per version),
+//   #/workflows/<id>[/v<N>]     the Steps view, "the rail" (public/wf-rail.js); /map and /versions are its tabs
+//   #/workflows/<id>[/v<N>]/advanced  the graph editor: drag nodes (positions kept per version),
 //                               pan (drag the background) and zoom (wheel, + and −),
 //                               connect (drag from a node's port to another node),
 //                               disconnect (select an edge, Delete), add and remove
@@ -254,7 +255,7 @@ function newWorkflow() {
 }
 function workflowTrashDialog(w,restore=false){
   const dlg=h("dialog",{"data-workflow-trash-dialog":"",class:"card x-pad"}),status=h("p",{role:"status"}),ownerHash=location.hash;let pending=false;
-  dlg.append(h("h2",{},restore?T("Restore workflow?","復原流程？"):T("Move workflow to Trash?","將流程移至垃圾桶？")),h("p",{},w.displayName||wfName(w.id,w.name)),h("p",{},restore?T("This workflow will be available for new Tasks again.","復原後可再次用於新任務。"):T("You can restore it from Trash. Saved versions and existing Tasks stay available.","你可以從垃圾桶復原。已儲存的版本與既有任務都會保留。")),h("div",{class:"actions"},h("button",{class:"btn","data-workflow-trash-cancel":"",onclick:()=>{if(pending)return;dlg.close();dlg.remove();}},T("Cancel","取消")),h("button",{class:"btn primary","data-workflow-trash-confirm":"",onclick:async e=>{if(pending)return;pending=true;e.target.disabled=true;dlg.querySelector("[data-workflow-trash-cancel]").disabled=true;try{await api(`/api/wf/${w.id}/${restore?"restore":"trash"}`,{base:w.version,revision:w.trashRevision??0});WF.list=null;WF.listGeneration++;RN.list=null;if(dlg.isConnected&&location.hash===ownerHash){WF.ed?.dispose?.();WF.ed=null;dlg.close();dlg.remove();location.hash="#/workflows";rerender();}else{dlg.close();dlg.remove();}}catch(err){status.textContent=err.message;}finally{pending=false;e.target.disabled=false;const cancel=dlg.querySelector("[data-workflow-trash-cancel]");if(cancel)cancel.disabled=false;}}},restore?T("Restore","復原"):T("Move to Trash","移至垃圾桶"))),status);
+  dlg.append(h("h2",{},restore?T("Restore workflow?","復原流程？"):T("Move workflow to Trash?","將流程移至垃圾桶？")),h("p",{},w.displayName||wfName(w.id,w.name)),h("p",{},restore?T("This workflow will be available for new Tasks again.","復原後可再次用於新任務。"):T("You can restore it from Trash. Saved versions and existing Tasks stay available.","你可以從垃圾桶復原。已儲存的版本與既有任務都會保留。")),h("div",{class:"actions"},h("button",{class:"btn","data-workflow-trash-cancel":"",onclick:()=>{if(pending)return;dlg.close();dlg.remove();}},T("Cancel","取消")),h("button",{class:"btn primary","data-workflow-trash-confirm":"",onclick:async e=>{if(pending)return;pending=true;e.target.disabled=true;dlg.querySelector("[data-workflow-trash-cancel]").disabled=true;try{await api(`/api/wf/${w.id}/${restore?"restore":"trash"}`,{base:w.version,revision:w.trashRevision??0});WF.list=null;WF.listGeneration++;RN.list=null;if(dlg.isConnected&&location.hash===ownerHash){WF.ed?.rail?.dispose?.(); WF.ed?.dispose?.();WF.ed=null;dlg.close();dlg.remove();location.hash="#/workflows";rerender();}else{dlg.close();dlg.remove();}}catch(err){status.textContent=err.message;}finally{pending=false;e.target.disabled=false;const cancel=dlg.querySelector("[data-workflow-trash-cancel]");if(cancel)cancel.disabled=false;}}},restore?T("Restore","復原"):T("Move to Trash","移至垃圾桶"))),status);
   dlg.addEventListener("cancel",event=>{if(pending){event.preventDefault();return;}dlg.remove();});document.body.append(dlg);dlg.showModal();
 }
 function workflowTrashButton(w,restore=false){return h("button",{class:"btn sm",[restore?"data-workflow-restore":"data-workflow-trash"]:w.id,onclick:e=>{e.preventDefault();e.stopPropagation();workflowTrashDialog(w,restore);}},restore?T("Restore","復原"):T("Move to Trash","移至垃圾桶"));}
@@ -328,7 +329,7 @@ function refreshPackageLists(){document.querySelectorAll('[data-package-list]').
 
 function viewWorkflows(arg) {
   if (arg) return viewEditor(arg);
-  WF.ed?.dispose?.(); WF.ed = null;
+  WF.ed?.rail?.dispose?.(); WF.ed?.dispose?.(); WF.ed = null;
   if (!WF.list) { const generation=++WF.listGeneration; WF.list = "loading"; api("/api/wf").then((j) => { if(generation!==WF.listGeneration)return; setWorkflowNames(j.names); WF.list = j.workflows; WF.held = j.held || []; WF.internal = j.internal || []; WF.trash=j.trash||[]; rerender(); }).catch(() => { if(generation!==WF.listGeneration)return; WF.list = []; rerender(); }); }
   const list = Array.isArray(WF.list) ? WF.list : [];
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Workflows", "流程")), h("p", {}, T("Studio's workflows. Open one to see and edit its graph; every save is a new version, and tasks keep the version they started on.", "Studio 的流程。打開一個就能看到並編輯它的流程圖；每次儲存都是新版本，進行中的任務維持它開始時的版本。"))), h("a",{class:"btn",href:"#/first-workflow","data-first-workflow-open":""},T("First workflow tutorial","第一個流程教學")),h("button",{class:"btn","data-package-import":"",onclick:()=>packageDialog()},T("Import package","匯入套件")),h("button",{class:"btn primary","data-wf-new":"1",onclick:newWorkflow},T("New workflow","新增流程"))),
@@ -356,14 +357,44 @@ function workflowsList(list) {
 function viewEditor(arg) {
   const [id, vs] = arg.split("/"); const v = vs && /^v\d+$/.test(vs) ? Number(vs.slice(1)) : null;
   const key = `${id}@${v ?? "latest"}`;
-  if (!WF.ed || WF.ed.key !== key) { WF.ed?.dispose?.(); WF.ed = { key, id, v, loading: true, el: null }; loadEditor(WF.ed); }
+  if (!WF.ed || WF.ed.key !== key) { WF.ed?.rail?.dispose?.(); WF.ed?.dispose?.(); WF.ed = { key, id, v, loading: true, el: null }; loadEditor(WF.ed); }
   if (WF.ed.loading) return h("div", { class: "page" }, h("div", { class: "skel", style: "height:420px" }));
   if (WF.ed.error) return h("div", { class: "page" }, h("div", { class: "card x-pad" }, WF.ed.error));
   if (WF.ed.internal) return buildInternalWorkflow(WF.ed);
   if (WF.ed.def?.kind === "coffee-kit" && !arg.endsWith("/advanced")) { if(!WF.ed.guide)WF.ed.guide=buildCoffeeGuide(WF.ed);return WF.ed.guide; }
   if(WF.ed.def.nodes.some(n=>n.do==="github.review.wait")&&!arg.endsWith("/advanced")){if(!WF.ed.guide)WF.ed.guide=buildGitHubReviewGuide(WF.ed);return WF.ed.guide;}
+  // the Steps view (public/wf-rail.js) is the page; the graph editor is its Advanced view, at …/advanced, both on the same draft
+  if (!arg.endsWith("/advanced") && window.crewRail) {
+    if (WF.ed.el) { WF.ed.dispose?.(); WF.ed.dispose = null; WF.ed.el = null; }
+    if (!WF.ed.rail) { WF.ed.railArg = arg; WF.ed.rail = window.crewRail.build(WF.ed, railHelpers()); }
+    else if (WF.ed.railArg !== arg) { WF.ed.railArg = arg; WF.ed.rail.repaint(); }
+    return WF.ed.rail;
+  }
+  if (WF.ed.rail) { WF.ed.rail.dispose(); WF.ed.rail = null; }
   if (!WF.ed.el) WF.ed.el = buildEditor(WF.ed);
   return WF.ed.el;
+}
+// what the Steps view borrows from this file: the API, the node model fields, the run graph, Start, Trash and copy
+function railHelpers() {
+  return { api, presets: PR_PRESETS, nodeModelControls, buildRunGraph, copyTemplate: copyWorkflowTemplate,
+    pinsSkills: (n) => n.kind === "agent" || n.kind === "loop" || (n.kind === "hook" && ["pr.open", "image.generate"].includes(n.do)),
+    trash: (ed) => workflowTrashDialog({ id: ed.id, name: ed.saved.name, displayName: ed.displayName, version: ed.saved.version, trashRevision: ed.trash?.revision ?? 0 }, ed.trash?.deleted === true),
+    renamed: () => { WF.list = null; WF.listGeneration++; RN.list = null; },
+    renameDialog: (ed, done) => workflowRenameDialog({ id: ed.id, name: ed.saved.name, displayName: ed.displayName, renamed: ed.renamed }, (r) => { ed.displayName = r.displayName; ed.renamed = r.renamed; done?.(); }),
+    saved: (ed) => { WF.list = null; WF.listGeneration++; ed.rail?.dispose?.(); ed.rail = null; if (WF.ed === ed) WF.ed = null; const to = `#/workflows/${ed.id}`; if (location.hash === to) rerender(); else location.hash = to; },
+    startControl: workflowStartControl };
+}
+// Start a task from the Steps view: always the saved version; unsaved edits wait for Save
+function workflowStartControl(ed) {
+  if (ed.held) return h("span", { class: "faint", "data-workflow-held": "1" }, T(ed.held.en, ed.held.zh));
+  if (ed.selectable === false) return h("span", { class: "faint", "data-workflow-unavailable": "1" }, T("Historical or internal workflow · unavailable for new tasks", "歷史或內部流程 · 不提供新任務使用"));
+  if (ed.trash?.deleted) return null;
+  const tip = ed.dirty ? T(`Starts on the saved version (v${ed.saved.version}). Your changes apply only once you save.`, `用已儲存的 v${ed.saved.version} 開始；你的修改要儲存後才生效。`) : null;
+  if (ed.def.origin) return h("button", { class: "btn primary wf-tip", "data-ed-run": ed.id, "data-tip": tip, onclick: async (e) => { e.currentTarget.disabled = true; const b = e.currentTarget;
+    try { const input = await startInputs(ed.saved, workflowBrief(ed), (value) => saveWorkflowBrief(ed, value)); if (input === null) return;
+      const r = await startOwnRun({ workflow: ed.id, version: ed.saved.version, title: ed.displayName || ed.saved.name, text: input.text, params: input.params }); if (r) { RN.list = null; location.hash = `#/run/${r.id}`; } }
+    catch (err) { toast(err.message); } finally { b.disabled = false; } } }, icon("play"), T("Start a task", "開始一個任務"));
+  return h("a", { class: "btn primary wf-tip", href: "#/runs", "data-start-run": ed.id, "data-tip": tip, onclick: () => { RN.prefill = ed.id; } }, icon("play"), T("Start a task", "開始一個任務"));
 }
 function buildGitHubReviewGuide(ed){
  const root=h('div',{class:'page','data-github-review-guide':''}),project=h('input',{class:'input',required:true,'aria-label':T('Registered project ID','已註冊專案 ID')}),url=h('input',{class:'input',required:true,type:'url',placeholder:'https://github.com/owner/repo/pull/123','aria-label':'PR URL'}),name=h('input',{class:'input',required:true,'aria-label':T('Template name','模板名稱')}),id=h('input',{class:'input',required:true,pattern:'[a-z0-9][a-z0-9-]{0,40}','aria-label':T('Template ID','模板 ID')}),status=h('p',{role:'status','aria-live':'polite'}),found=h('div',{'data-github-review-accounts':''});let scan=null,community=null,busy=false;const publication=h('div',{'data-github-publication':''}),template=h('select',{'aria-label':T('PR template choice','PR 模板選擇')}),title=h('input',{class:'input',required:true,maxlength:200,'aria-label':T('PR title','PR 標題')}),body=h('textarea',{class:'input',rows:12,required:true,maxlength:60000,'aria-label':T('PR body preserving template','保留模板的 PR 內容')}),confirmed=h('input',{type:'checkbox',required:true});template.onchange=()=>{const f=community?.pulls.find(x=>x.path===template.value);body.value=f?.text||'';confirmed.checked=false;};
@@ -778,7 +809,7 @@ function buildEditor(ed) {
         return;
       }
       WF.lastDiff = diffBox; ed.dispose?.(); WF.ed = null;
-      if (location.hash === `#/workflows/${ed.id}`) rerender(); else location.hash = `#/workflows/${ed.id}`;
+      if (location.hash === `#/workflows/${ed.id}/advanced`) rerender(); else location.hash = `#/workflows/${ed.id}/advanced`;
     } catch (e) { if (disposed || WF.ed !== ed) return; if (generation === validationGeneration) { ed.problems = e.problems || ed.problems; drawProblems(); } say(e.message); }
     finally { savePending = false; if (!disposed) { updateHistory(); saveButton.disabled = false; saveButton.textContent = T("Save as new version", "存成新版本"); } }
   };
@@ -869,7 +900,7 @@ function buildEditor(ed) {
   if(ed.runs?.length)compareVersions.append(h("h3",{},T("Compare execution rounds","比较执行回合")),h("p",{},T("Open a task to compare its actual agent transcripts. Feedback and workflow edits create a new version; prior execution records stay intact.","打开任务可比较实际代理执行记录；按反馈修改流程并保存新版本，原执行记录保留。")),...ed.runs.map(r=>h("a",{class:"btn sm",href:`#/tasks/${r.id}/compare`},`${r.id} · v${r.version} · ${stateWord(r)}`)));
   const reuse=h("details",{class:"card x-pad","data-workflow-reuse":""},h("summary",{},T("Reuse this workflow","复用这个流程")),h("p",{},T("Save the exact saved version as a named template. Create independent workflows from it without copying tasks or approvals.","把已保存的确切版本保存为命名模板，再从中创建独立流程，不复制任务或核准。")),h("button",{class:"btn","data-save-workflow-template":"",onclick:()=>copyWorkflowTemplate(ed,true).catch(e=>say(e.message))},T("Save as template","保存为模板")),ed.def.isTemplate?h("button",{class:"btn primary","data-use-workflow-template":"",onclick:()=>copyWorkflowTemplate(ed,false).catch(e=>say(e.message))},T("Create workflow from this template","从此模板创建流程")):null);
   root.append(
-    h("div", { class: "phead" }, h("div", {}, h("h1", { "data-ed-name": ed.id }, ed.displayName || ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
+    h("div", { class: "phead" }, h("div", {}, window.crewRail ? h("a", { class: "faint", href: `#/workflows/${ed.id}${ed.v ? `/v${ed.v}` : ""}`, "data-editor-steps": "" }, T("← Steps view", "← 步驟檢視")) : null, h("h1", { "data-ed-name": ed.id }, ed.displayName || ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
       h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")),workflowRenameButton(()=>({id:ed.id,name:ed.saved.name,displayName:ed.displayName,renamed:ed.renamed}),r=>{ed.displayName=r.displayName;ed.renamed=r.renamed;document.querySelectorAll(`[data-ed-name="${CSS.escape(ed.id)}"]`).forEach(e=>{e.textContent=r.displayName;});}),ed.personal?workflowTrashButton({id:ed.id,name:ed.saved.name,displayName:ed.displayName,version:ed.saved.version,trashRevision:ed.trash?.revision??0},ed.trash?.deleted===true):null, ed.held?h("span",{class:"faint","data-workflow-held":"1"},T(ed.held.en,ed.held.zh)):ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const input=await startInputs(ed.def,workflowBrief(ed),value=>{saveWorkflowBrief(ed,value);direction.value=value;});if(input===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.displayName||ed.def.name,text:input.text,params:input.params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, exportButton, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
@@ -1212,7 +1243,7 @@ live.listeners.add((t, d) => {
 });
 // leaving a page drops what it loaded, so coming back shows fresh data
 addEventListener("hashchange", () => { if (!/^#\/(runs|tasks)(\/|$)/.test(location.hash)) RN.list = null; if (!/^#\/(run\/|tasks\/R-\d+)/.test(location.hash)) RN.view = null;
-  if (!location.hash.startsWith("#/workflows")) { WF.list = null; WF.ed?.dispose?.(); WF.ed = null; } });
+  if (!location.hash.startsWith("#/workflows")) { WF.list = null; WF.ed?.rail?.dispose?.(); WF.ed?.dispose?.(); WF.ed = null; } });
 
 // ---------- Studio's own cards in the Inbox, beside firstmate's (labelled with run, workflow and node; answered with the same buttons) ----------
 // Live (unit inbox-live): a card raised, answered elsewhere or withdrawn reaches the Inbox, the sidebar counts and the
