@@ -387,7 +387,10 @@ export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; re
   /** the only programs the round may execute (SandboxNeeds.exec); unset: any */
   exec?: string[] | null;
   /** no inbound and no bind at all (work from a peer: src/lan/profile.ts); the default is the caller's sandboxScope */
-  noInbound?: boolean }) {
+  noInbound?: boolean;
+  /** a headless Chromium may start (a review room explainer's skill script): it registers and looks up its processes' rendezvous
+   *  mach service (org.chromium.Chromium.MachPortRendezvousServer.<pid>), nothing else; its own inner sandbox cannot nest in this one, this one holds */
+  browser?: boolean }) {
   const noInbound = o.noInbound ?? sandboxScope.getStore()?.noLocalBinding === true;
   // Studio's data folder is closed to the round, its file metadata included, except what the runtime materialized for it
   // (its worktree, its tmp, its throwaway home); a protected root (firstmate's checkout) is closed entirely; the user's
@@ -422,7 +425,7 @@ ${SYSCTL_READ}
 (allow network-outbound (remote tcp ${q(`localhost:${o.proxyPort}`)}) (remote tcp ${q(`localhost:${o.toolPort}`)}))
 ${noInbound ? "" : `(allow network-inbound (local tcp "localhost:*"))`}
 (allow mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc") (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.trustd.agent"))
-(deny appleevent-send)
+${o.browser ? `(allow mach-register mach-lookup (global-name-prefix "org.chromium.Chromium.MachPortRendezvousServer."))\n` : ""}(deny appleevent-send)
 ${data ? `(deny file-read* file-read-metadata file-write* (subpath ${q(data)}))
 (allow file-read* file-read-metadata ${sub(opened)})${readOnly.length ? `\n(allow file-read* file-read-metadata ${sub(readOnly)})` : ""}
 (allow file-write* ${sub(writes)})
@@ -491,6 +494,23 @@ export function reapMarked(marker: string) {
     }
   } catch {}
 }
+/** Kill every process (but Studio) whose working folder or an open file lies under one of these folders, until none is left:
+ *  a call's leftover that double-forked, called setsid() and dropped its environment escapes the group kill and reapMarked, but
+ *  not this while it still sits in or holds a file of its folders. Best effort, like reapMarked; a caller that must be sure no
+ *  leftover can touch a folder also takes the folder out of the sandbox's reach (src/domain/review-explain.ts renames it). */
+export function sweepHolders(dirs: string[], tries = 6): number {
+  if (process.platform !== "darwin") return 0;
+  const ds = dirs.filter((x) => x && existsSync(x)); if (!ds.length) return 0; let killed = 0;
+  for (let i = 0; i < tries; i++) {
+    let pids: number[] = [];
+    try { const r = Bun.spawnSync(["/usr/sbin/lsof", "-t", "-w", ...ds.flatMap((x) => ["+D", x])], { stdout: "pipe", stderr: "ignore", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
+      pids = [...new Set(r.stdout.toString().split("\n").map(Number).filter((p) => Number.isInteger(p) && p > 1 && p !== process.pid))]; } catch { return killed; }
+    if (!pids.length) break;
+    for (const p of pids) { try { process.kill(p, "SIGKILL"); killed++; } catch {} }
+    Bun.sleepSync(50);
+  }
+  return killed;
+}
 export async function sandboxed(argv: string[], o: { cwd: string; out: string; tmp: string; stdin?: string; timeoutS: number; network: boolean; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; signal?: AbortSignal;
   /** false: argv is untrusted (a reviewer's command), so its program's folder is never added to the reads; the caller resolved it on a fixed PATH */
   argvRead?: boolean;
@@ -554,30 +574,33 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
   /** more folders to read, and folders to read and execute but never write (src/skillpkg: a skill's copy, its env, Studio's runtimes and tools) */
   reads?: string[]; readOnly?: string[];
   /** what the credential is for (a skill_run call, a prepare): the proxy logs it, a strict one reaches names only and no private address */
-  egressMeta?: Record<string, unknown>; signal?: AbortSignal; stdoutCap?: number }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; refused?: string }> {
+  egressMeta?: Record<string, unknown>; signal?: AbortSignal; stdoutCap?: number;
+  /** a headless Chromium may start (roundProfile's browser) */ browser?: boolean }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; refused?: string;
+  /** the signal that ended it (a CPU or file-size limit is SIGXCPU or SIGXFSZ), when one did */ signal?: string | null }> {
   const info = sandboxInfo(); if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, refused: info.detail };
   mkdirSync(join(o.tmp, "home"), { recursive: true }); const tmp = realpathSync(o.tmp);
-  const net = !localUnrestricted() && !!o.egress && !!o.hosts?.length;
-  const lease = net ? await openScopedProxy(o.egress!, o.hosts!, o.egressMeta) : null;
+  // a host list, or a credential that reaches any public name (egressMeta.anyHost, set by Studio's own code only)
+  const net = !localUnrestricted() && !!o.egress && (!!o.hosts?.length || o.egressMeta?.anyHost === true);
+  const lease = net ? await openScopedProxy(o.egress!, o.hosts ?? [], o.egressMeta) : null;
   try {
   const proxy = lease?.url ?? null;
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(tmp, "home"), TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
     ...(proxy ? { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1" } : {}), ...(o.env ?? {}) };
   const prof = join(tmp, "round.sb");
-  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : []), ...(o.reads ?? [])], readOnly: o.readOnly ?? [], proxyPort: lease?.port ?? 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [] }));
+  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : []), ...(o.reads ?? [])], readOnly: o.readOnly ?? [], proxyPort: lease?.port ?? 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [], browser: o.browser }));
     return await new Promise((resolveP) => {
-      let stdout = "", stderr = "", done = false, timedOut = false;
+      let stdout = "", stderr = "", done = false, timedOut = false, sig: string | null = null;
       const full=localUnrestricted()?argv:["/usr/bin/sandbox-exec","-f",prof,...argv];
       const marker = randomBytes(12).toString("hex"); env.CREW_RUN_KILL = marker;
       const p = spawnChild(full[0],full.slice(1), { cwd: o.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-      const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} reapMarked(marker); resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut }); };
+      const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} reapMarked(marker); resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut, signal: sig }); };
       const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
       if (o.signal) { if (o.signal.aborted) setTimeout(() => { timedOut = true; finish(null); }, 0); else o.signal.addEventListener("abort", () => { timedOut = true; finish(null); }, { once: true }); }
       // stdoutCap: keep the tail (a skill_run's last lines); otherwise the first megabyte, as before
       const cap = o.stdoutCap;
       if (cap) { p.stdout?.on("data", (d) => { stdout += d; if (stdout.length > cap * 2) stdout = stdout.slice(-cap); }); p.stderr?.on("data", (d) => { stderr += d; if (stderr.length > cap * 2) stderr = stderr.slice(-cap); }); }
       else { p.stdout?.on("data", (d) => { if (stdout.length < 1_000_000) stdout += d; }); p.stderr?.on("data", (d) => { if (stderr.length < 1_000_000) stderr += d; }); }
-      p.on("error", (e) => { stderr += String(e); finish(127); }); p.on("exit", (code) => { setTimeout(() => finish(code), 50); });
+      p.on("error", (e) => { stderr += String(e); finish(127); }); p.on("exit", (code, s) => { sig = s ?? null; setTimeout(() => finish(code), 50); });
     });
   } finally { lease?.close(); }
 }

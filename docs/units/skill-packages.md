@@ -125,6 +125,12 @@ hashed again; the prompt gets a footer naming the folder and the three tools.
   yarn, pip, pip3, uv, brew, gem … that fail with Studio's reason ("dependencies come from the lockfiles … nothing is
   installed at run time"), and `PIP_NO_INDEX`, `npm_config_offline` are set: a skill that says "npm install if missing"
   fails with a clear error. The env carries no vendor token (built fresh: PATH, HOME/TMPDIR in the call's tmp).
+- Another caller with a sandbox of its own shape passes `run` (`skillTools`): the review room explainer
+  (docs/units/review-room.md, "The skill's own scripts") runs a library skill's scripts with the captain's per-run
+  confirmation instead of a workflow approval: the round's output folder as cwd and writes, the materials read-only, any
+  public host through the proxy (`anyHost`, never a policy list), the provider API keys the captain exported, CPU and
+  file-size caps (`ulimit`, the call's exit signal recorded), and a headless Chromium (`roundProfile` `browser`). A version
+  set to text only stays text only there too.
 
 ## 6. Network per skill version (P2, pulled into this branch by the captain)
 

@@ -9,7 +9,14 @@
 //   output unchanged, its notes included, whatever tools they call (stalled).
 //   Materials (the diff, the commits, the head of every changed file, reviews and comments, check runs and statuses, linked issues)
 //   are read once, read-only (git objects and GitHub GET), and written into the run's workspace; the skill reads them and its own
-//   supporting files with read-only tools and writes only to the run's output folder. Its scripts never run here.
+//   supporting files with read-only tools and writes only to the run's output folder.
+//   A skill with scripts (a package: render.py, verify.py …) runs them through skill_run (src/skillpkg/run.ts, the same tool a
+//   workflow round's script skill uses): each call in the round sandbox (roundExec: sandbox-exec, default deny) on a hash-checked
+//   read-only copy of the whole package pinned with the run, its working folder the output folder; it writes only there and in its
+//   own temp folder, reads the materials, the package and the system's runtimes, reaches the network only through Studio's egress
+//   proxy (any public host; never this Mac, its network or a metadata address), under CPU, file-size, wall-clock and output caps,
+//   and every call is kept on its round (command, exit, time, the tail of its output, the hosts it reached) and in the ledger.
+//   The captain's confirmation names the interpreters, the network and the credentials a script gets; text only stays text only.
 //   Every generation, and every follow-up that changes the output, is a new version (v1, v2, …) kept in the room's folder.
 //   An output is shown to the captain only through Studio: an HTML page in an iframe with sandbox="allow-scripts" (never
 //   allow-same-origin) served with a CSP that allows no network at all, a storage shim (an opaque origin has no localStorage)
@@ -21,10 +28,16 @@
 //   ledger: review-room-explain           each run: subject, skill pin, provider, model, rounds (jobs), cost, status, version
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { folderTools, insideDir, type AgentTool } from "../agent";
 import { mdToDocHtml } from "../docrender";
 import { git } from "../git";
+import { chmodTree, type SkillPackages, type SkillStatus } from "../skillpkg";
+import { findBin } from "../skillpkg/recipes";
+import { skillTools, type SkillRunRecord } from "../skillpkg/run";
+import { sweepHolders } from "../runtime/checks";
+import { hostPython, resolveNode, type Runtime } from "../skillpkg/runtimes";
 
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
 const refuse = (message: string, code: string, extra: Record<string, any> = {}) => Object.assign(new Error(message), { code, ...extra });
@@ -45,8 +58,13 @@ What you have:
 - Your output folder: out_list, out_read, out_search, out_write, out_replace (text files) and out_write_base64 (a picture or a
   video: .png .jpg .gif .webp .mp4 .webm).
 - explain_progress {text}: one short line on what you are doing now. The captain sees it live; send one at each step.
-- No shell, no network, no browser and no other folder. When the skill asks for one of those, do the closest thing with your
-  tools and say in your output what you could not do. Never run or imitate a script of the skill.
+- The skill's own scripts, when the first message lists them: skill_run {script, args, timeout_s} runs one in Studio's sandbox.
+  Its working folder is your output folder (relative paths land there); it reads the materials, the skill's files ($SKILL_DIR)
+  and the system's runtimes, writes only your output folder and its own temp folder ($TMPDIR), and reaches the network through
+  Studio's proxy (public hosts only). Run the scripts the way the skill says (build, check, render) instead of imitating them by
+  hand, and read what they print: a failed check is yours to fix. Each call has CPU, file-size and time limits.
+- No shell of your own and no other folder. When the first message says the scripts do not run here, or the skill asks for
+  something the sandbox lacks, do the closest thing with your tools and say in your output what you could not do.
 
 Your output:
 - An HTML page must be self-contained: inline CSS and JavaScript, pictures as inline SVG or data: URIs. It is shown in an
@@ -69,10 +87,17 @@ How a run ends:
 /** a selection the captain boxed on a version (what the frame's helper read in the rectangle), or a video's paused frame */
 export type Selection = { version: number; path: string; rect?: { x: number; y: number; w: number; h: number } | null; text?: string; headings?: string[]; nodes?: string[]; title?: string; time?: number | null };
 type Pin = { id: string; v: number; sha256: string; filesSha256: string; name: string; bodySha: string };
-type Round = { n: number; job: string | null; status: string; tools: number; cost: any; at: string; ended: string | null; error: string | null };
+/** one skill_run call, as its round keeps it: the command, how it ended, its time, the tail of its output, the hosts it reached */
+export type ScriptCall = { round: number; at: string; script: string; scriptSha256: string; argv: string[]; exit: number | null; ms: number; timedOut: boolean; signal: string | null;
+  stdout: string; stderr: string; hosts: string[]; refused: { host: string; why: string }[];
+  /** how it ended, for the captain: ok, failed, a limit it hit, or refused before it ran (and why) */ outcome?: "ok" | "fail" | "limit" | "refused"; limit?: "cpu" | "file" | "time" | "disk" | null; refusal?: string; wallS?: number };
+/** a script call as the progress list shows it (the page words it in the captain's language) */
+export type ScriptLine = { script: string; args: string; outcome: "ok" | "fail" | "limit" | "refused"; limit: "cpu" | "file" | "time" | "disk" | null; limits: { cpuS: number; fileMB: number; wallS: number; diskMB?: number; calls?: number };
+  exit: number | null; signal: string | null; ms: number; hosts: string[]; refused: { host: string; why: string }[]; refusal: string | null; refusalCode?: string | null; stderr: string };
+type Round = { n: number; job: string | null; status: string; tools: number; cost: any; at: string; ended: string | null; error: string | null; scripts?: ScriptCall[] };
 type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running" | "done" | "failed" | "stopped"; by: string; at: string; ended: string | null;
   provider: string; model: string; effort: string | null; confirm: string; limitMin: number; rounds: Round[]; cost: any; error: string | null; stop?: string;
-  progress: { at: string; text: string }[];
+  progress: { at: string; text: string; script?: ScriptLine }[];
   /** why it stopped or failed, as a code the page words in the captain's language (stop / error keep Studio's English detail) */
   /** a stalled run: how many rounds in a row left the output unchanged */
   stalled?: number;
@@ -118,6 +143,24 @@ const MAT_BYTES = { diff: 3_000_000, file: 300_000, files: 3_000_000 };
 /** the output folder's cap, every write counted (CREW_REVIEW_EXPLAIN_OUT_BYTES for tests) */
 const OUT_CAP = () => { const v = Number(process.env.CREW_REVIEW_EXPLAIN_OUT_BYTES); return Number.isFinite(v) && v > 0 ? v : 60 * 1024 * 1024; };
 const CAP_TTL = 30 * 60_000;
+/** one skill_run call's caps: CPU seconds (every process it starts, each), the largest file it may write, its wall clock; and calls per round */
+const envNum = (k: string, dflt: number) => { const v = Number(process.env[k]); return Number.isFinite(v) && v > 0 ? v : dflt; };
+export const SCRIPT_LIMITS = () => ({ cpuS: envNum("CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S", 300), fileMB: envNum("CREW_REVIEW_EXPLAIN_SCRIPT_FILE_MB", 60), wallS: envNum("CREW_REVIEW_EXPLAIN_SCRIPT_WALL_S", 600), calls: envNum("CREW_REVIEW_EXPLAIN_SCRIPT_CALLS", 60) });
+/** The only credentials a skill's script gets: a provider API key and base URL the captain exported in the environment Studio
+ *  was started from (a skill may call a model itself). Never one Studio keeps (its key store, the GitHub token, the session and
+ *  ledger keys, a device's token): those live in Studio's data, which the sandbox denies, and are never put in a script's env. */
+export const SCRIPT_CREDENTIALS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL"] as const;
+/** A headless Chromium a script may start (a snapshot or a PDF): Playwright's headless shell, the newest one installed (or
+ *  CREW_REVIEW_EXPLAIN_BROWSER). A branded Chrome app does not start under the round sandbox; this one does, with one rule. */
+export function headlessBrowser(): string | null {
+  const own = process.env.CREW_REVIEW_EXPLAIN_BROWSER; if (own) return existsSync(own) ? own : null;
+  if (process.platform !== "darwin") return null;
+  for (const root of [process.env.PLAYWRIGHT_BROWSERS_PATH, join(homedir(), "Library", "Caches", "ms-playwright")]) {
+    if (!root || root === "0") continue; let ds: string[] = []; try { ds = readdirSync(root).filter((n) => /^chromium_headless_shell-\d+$/.test(n)).sort((a, b) => Number(b.split("-")[1]) - Number(a.split("-")[1])); } catch { continue; }
+    for (const dd of ds) { let subs: string[] = []; try { subs = readdirSync(join(root, dd)).filter((n) => /^chrome-headless-shell-/.test(n)); } catch {} for (const s of subs) { const b = join(root, dd, s, "chrome-headless-shell"); if (existsSync(b)) return b; } }
+  }
+  return null;
+}
 
 export type ExplainerDeps = {
   engine: any; dataDir: string; role: string;
@@ -157,6 +200,60 @@ export function installExplainer(d: ExplainerDeps) {
     const body = lib.body(s.id, s.current, s.sha256, s.filesSha256);
     return { pin: { id: s.id, v: s.current, sha256: s.sha256, filesSha256: s.filesSha256, name: String(s.name || s.id).slice(0, 80), bodySha: sha(body) }, body, dir: join(lv.dir, "files"), files: lv.rec.files ?? [] };
   };
+  /** What a run of this version may execute: null for a skill without scripts. Its scripts run unless the captain chose text
+   *  only for this version (the Skills page's decision), on the runtimes found here (a version approved and prepared for a
+   *  workflow brings its prepared env), with network through Studio's proxy, the credentials named and, when one is installed,
+   *  a headless browser. Nothing is installed or fetched to make a plan. */
+  type Plan = { run: boolean; why?: { en: string; zh: string }; scripts: { path: string; lang: string }[]; status: SkillStatus | null; interpreters: string[]; missing: string[];
+    network: boolean; egress: any; browser: string | null; credentials: string[]; approved?: boolean };
+  const planOf = (p: { id: string; v: number }): Plan | null => {
+    const pkg = (() => { try { return engine.skillLibrary().pkg(p.id, p.v); } catch { return null; } })(); if (!pkg?.scripts.length) return null;
+    const pk: SkillPackages | null = engine.deps.skillPackages ?? null, egress = engine.deps.agents?.egress ?? null;
+    const base = { scripts: pkg.scripts.map((s: any) => ({ path: s.path, lang: s.lang })), status: null, interpreters: [], missing: [], network: false, egress: null, browser: null, credentials: [] };
+    if (!pk) return { ...base, run: false, why: { en: "Studio's skill packages are not set up here", zh: "這裡沒有 Studio 的 skill 套件服務" } };
+    const decision = pk.decision(p.id, p.v);
+    if (decision?.scripts === "text-only") return { ...base, run: false, why: { en: "you chose text only for this version on the Skills page", zh: "你在技能頁把這個版本設成「只當文字」" } };
+    const dataDir = engine.deps.dataDir;
+    let status: SkillStatus = pk.status(p.id, p.v);
+    if (status.state !== "ready" || status.blocking) {
+      const runtimes: { node?: Runtime; python?: Runtime } = {};
+      if (pkg.runtimes.includes("node")) { const n = resolveNode({ dataDir }); if (n) runtimes.node = n; }
+      if (pkg.runtimes.includes("python")) { const py = hostPython({ dataDir }); if (py) runtimes.python = py; }
+      status = { id: p.id, v: p.v, state: "ready", scripts: pkg.scripts.length, hosts: [], decision, envKey: null, env: null, runtimes, bins: pkg.bins.map((b: string) => findBin(b, { dataDir }) ?? { name: b, state: "missing" as const }), reasons: [], blocking: false, warnings: pkg.warnings ?? [], at: null };
+    }
+    const langs = [...new Set(pkg.scripts.map((s: any) => s.lang))], interpreters: string[] = [], missing: string[] = [];
+    for (const l of langs) {
+      if (l === "python") { const r = status.runtimes.python; if (r) interpreters.push(`python3 ${r.version}${status.env?.python ? " (its prepared env)" : ""}`); else missing.push("python3"); }
+      else if (l === "node") { const r = status.runtimes.node; if (r) interpreters.push(r.source === "studio" ? `bun ${Bun.version} (as node)` : `node ${r.version}`); else missing.push("node"); }
+      else if (l === "shell") interpreters.push("/bin/bash");
+      else missing.push(`${pkg.scripts.filter((s: any) => s.lang === l).length} script(s) in a language Studio does not run`);
+    }
+    for (const b of status.bins) if (b.state === "missing") missing.push(b.name);
+    const run = interpreters.length > 0;
+    return { ...base, run, ...(run ? {} : { why: { en: `no runtime for its scripts on this Mac (${missing.join(", ")})`, zh: `這台 Mac 沒有它腳本需要的執行環境（${missing.join("、")}）` } }), status, interpreters, missing,
+      network: !!egress, egress, browser: headlessBrowser(), credentials: SCRIPT_CREDENTIALS.filter((c) => !!process.env[c]?.trim()), approved: decision?.scripts === "approved" };
+  };
+  /** what a confirmation pins of a plan: a change to any of it asks again */
+  const planKey = (t: any) => JSON.stringify(t ? { run: t.run, interpreters: t.interpreters ?? [], network: t.network ?? false, credentials: t.credentials ?? [], browser: t.browser ?? false, approved: t.approved ?? false, limits: t.limits ?? null } : null);
+  /** the confirmation's words for a plan */
+  const planText = (p: Plan | null) => {
+    if (!p) return null;
+    if (!p.run) return { run: false, count: p.scripts.length, en: `The skill has ${p.scripts.length} script${p.scripts.length === 1 ? "" : "s"}; they do not run: ${p.why!.en}.`, zh: `這個 skill 有 ${p.scripts.length} 個腳本，不會執行：${p.why!.zh}。` };
+    const l = SCRIPT_LIMITS(), keys = p.credentials.filter((c) => !/_BASE_URL$/.test(c)), endpoints = p.credentials.filter((c) => /_BASE_URL$/.test(c));
+    const creds = keys.length ? keys.join(", ") + (endpoints.length ? ` (and the endpoints ${endpoints.join(", ")})` : "") : endpoints.length ? `only the endpoints ${endpoints.join(", ")}` : null;
+    const appr = p.approved ? { en: "", zh: "" } : { en: " This version is not approved for workflows on the Skills page: confirming here lets its scripts run for this run only.", zh: "這個版本沒有在技能頁核准給工作流程用：在這裡確認只讓它的腳本在這一次執行裡跑。" };
+    // the confirmation's rows, each in both languages (credentials and endpoints by name: the page shows them as chips)
+    const rows = {
+      network: p.network ? { en: "Through Studio's proxy, public hosts only (never this Mac or its network); every host is logged", zh: "經過 Studio 的代理，只能連公開主機（連不到這台 Mac 或區網）；每個主機都會記錄" } : { en: "None here: Studio's egress proxy is not running", zh: "這裡不能連網：Studio 的對外代理沒有在跑" },
+      access: { en: "Writes only the output folder and its temp folder; reads the materials, the skill's files, the system's runtimes and the folders on Studio's PATH (read only)", zh: "只寫產出資料夾和自己的暫存資料夾；能讀材料、skill 的檔案和系統執行環境，以及 Studio 的 PATH 上的資料夾（唯讀）" },
+      limits: { en: `${l.cpuS} s of CPU · files up to ${l.fileMB} MB · ${Math.round(l.wallS / 60)} min · ${l.calls} calls per round`, zh: `CPU ${l.cpuS} 秒 · 檔案 ${l.fileMB} MB · ${Math.round(l.wallS / 60)} 分鐘 · 每輪 ${l.calls} 次` },
+      browser: p.browser ? { en: "A headless browser is available", zh: "有無頭瀏覽器可用" } : { en: "None installed (Playwright's headless shell): steps that need one fail", zh: "沒有安裝（Playwright 的 headless shell）：需要它的步驟會失敗" },
+      missing: p.missing.length ? { en: p.missing.join(", "), zh: p.missing.join("、") } : null,
+      approval: p.approved ? null : { en: appr.en.trim(), zh: appr.zh } };
+    return { run: true, count: p.scripts.length, interpreters: p.interpreters, network: p.network, browser: !!p.browser, credentials: p.credentials, keys, endpoints, missing: p.missing, limits: { cpuS: l.cpuS, fileMB: l.fileMB, wallS: l.wallS, calls: l.calls }, approved: !!p.approved, rows,
+      en: `The skill's ${p.scripts.length} script${p.scripts.length === 1 ? "" : "s"} run when it calls them, each in Studio's sandbox, with ${p.interpreters.join(", ")}.${appr.en} ${p.network ? "With network: through Studio's proxy, to public hosts only (never this Mac or its network); every host reached is logged." : "No network here: Studio's egress proxy is not running."} A script writes only the output folder and its temp folder, reads the materials, the skill's files and the system's runtimes, and gets ${creds ? `these credentials from your environment: ${creds}` : "no credential"} (the same environment variables Studio started with; never a key Studio stores, its GitHub token or its session and ledger keys). Each call: ${l.cpuS} s of CPU, files up to ${l.fileMB} MB, ${Math.round(l.wallS / 60)} min.${p.browser ? " A headless browser is available." : " No headless browser is installed (Playwright's headless shell): steps that need one fail."}${p.missing.length ? ` Missing here: ${p.missing.join(", ")}.` : ""}`,
+      zh: `這個 skill 的 ${p.scripts.length} 個腳本會在它呼叫時執行，每次都在 Studio 的沙盒裡，用 ${p.interpreters.join("、")}。${appr.zh}${p.network ? "可以連網：經過 Studio 的代理，只能連公開的主機（連不到這台 Mac 或區網）；連過的每個主機都會記錄。" : "這裡不能連網：Studio 的對外代理沒有在跑。"}腳本只能寫產出資料夾和它的暫存資料夾，能讀材料、skill 自己的檔案和系統的執行環境，${creds ? `會拿到你環境裡的這些憑證：${creds}` : "拿不到任何憑證"}（就是 Studio 啟動時拿到的環境變數；絕不會拿到 Studio 保存的金鑰、它的 GitHub token 或 session／ledger 金鑰）。每次呼叫上限：CPU ${l.cpuS} 秒、檔案 ${l.fileMB} MB、${Math.round(l.wallS / 60)} 分鐘。${p.browser ? "有無頭瀏覽器可用。" : "沒有安裝無頭瀏覽器（Playwright 的 headless shell）：需要它的步驟會失敗。"}${p.missing.length ? `這裡缺：${p.missing.join("、")}。` : ""}` };
+  };
   const seatOf = (p: Pin) => `review-room-explainer:${p.id}@v${p.v}`;
   const texts = (p: Pin, body: string) => [{ id: "review-room-explainer", sha256: sha(EXPLAINER_FRAME), text: EXPLAINER_FRAME }, { id: `${p.id}@v${p.v}`, sha256: p.bodySha, text: body }];
   /** what a run of this skill took before (its median), for "expected time": null until one finished */
@@ -168,18 +265,21 @@ export function installExplainer(d: ExplainerDeps) {
     return { spent: all.length ? Math.round(all.reduce((a, b) => a + b, 0) * 1000) / 1000 : null, runs: all.length, estimate: same.length ? same[Math.floor(same.length / 2)] : null }; };
   const MATERIALS = ["the pull request's title and description", "the diff", "the commits", "the head of every changed file", "reviews and comments", "check runs and statuses", "linked issues"];
   const MATERIALS_ZH = ["pull request 的標題與說明", "diff", "commit", "每個改動檔案在 head 的內容", "review 與留言", "CI／檢查結果", "連結的 issue"];
-  const ISOLATION = { en: "The output is shown in an isolated frame: it cannot read Studio or see any token, it cannot fetch anything, and Studio's page does not let it navigate anywhere outside Studio; storage is Studio's in-memory stand-in. The skill reads the materials and its own files only, writes only its output folder, and its scripts never run.",
-    zh: "產出放在隔離框裡顯示：不能讀 Studio、拿不到任何 token、不能抓任何東西，Studio 的頁面也不讓它導向 Studio 以外的地方；儲存由 Studio 在記憶體裡代管。skill 只讀材料和自己的檔案、只寫自己的產出資料夾，它的腳本不會執行。" };
+  // the output frame's isolation only: what the skill's scripts may do is the confirmation's own rows (planText)
+  const ISOLATION = { en: "The output is shown in an isolated frame: it cannot read Studio or see any token, it cannot fetch anything, and Studio's page does not let it navigate anywhere outside Studio; storage is Studio's in-memory stand-in. The skill reads the materials and its own files and writes only its output folder.",
+    zh: "產出放在隔離框裡顯示：不能讀 Studio、拿不到任何 token、不能抓任何東西，Studio 的頁面也不讓它導向 Studio 以外的地方；儲存由 Studio 在記憶體裡代管。skill 只讀材料和自己的檔案、只寫自己的產出資料夾。" };
   /** the paid run the captain confirms: the room tutor's provider and model, this skill at this version, the safety limit */
   const offer = (k: any, skill: unknown, kind: "generate" | "ask") => {
     const t = d.offerOf(k); if (t?.error) return { error: t.error, code: t.code ?? "no_tutor" };
     let p: Pin; try { p = pinOf(skill).pin; } catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "bad_skill" }; }
-    const st = read(k), limitMin = settings().limitMin;
-    const hash = sha(JSON.stringify({ room: k.id, tutor: t.hash, kind, skill: p.id, v: p.v, sha256: p.sha256, limitMin })).slice(0, 16);
+    const st = read(k), limitMin = settings().limitMin, scripts = planText(planOf(p));
+    // the whole package is pinned (SKILL.md and every file, so a changed script is a new version), and so is what its scripts get
+    const hash = sha(JSON.stringify({ room: k.id, tutor: t.hash, kind, skill: p.id, v: p.v, sha256: p.sha256, filesSha256: p.filesSha256, limitMin,
+      scripts: planKey(scripts) })).slice(0, 16);
     return { kind, skill: { id: p.id, v: p.v, name: p.name }, provider: t.provider, model: t.model, effort: t.effort ?? null, independence: t.independence ?? null, paid: true, hash, limitMin,
       rounds: { en: "No round cap: the skill keeps going until it is satisfied, you stop it, or the safety limit passes. It runs in the background; you can leave the room.", zh: "不限輪數：skill 會一直做到它滿意、你按停止，或到安全時限為止。在背景跑，可以先離開。" },
       materials: kind === "generate" ? { en: MATERIALS, zh: MATERIALS_ZH } : { en: ["the current output and what it embeds", "your question and the region you boxed", ...MATERIALS], zh: ["目前的產出和它內嵌的脈絡", "你的問題和框起來的區域", ...MATERIALS_ZH] },
-      expected: expected(st, p.id, kind), cost: costs(st, p.id, kind), isolation: ISOLATION,
+      expected: expected(st, p.id, kind), cost: costs(st, p.id, kind), isolation: ISOLATION, scripts,
       // who pays: the provider's own account Studio runs it with (its sign-in on this Mac), never Studio
       billing: { en: `Billed to the ${t.provider} account Studio runs ${t.provider} with on this Mac (your own sign-in or key).`, zh: `由這台 Mac 上 Studio 使用的 ${t.provider} 帳號付費（你自己的登入或金鑰）。` } };
   };
@@ -242,14 +342,85 @@ export function installExplainer(d: ExplainerDeps) {
     if (st.isDirectory()) walk(f, depth + 1); else if (st.isFile()) all.push(`${relative(dir, f)}\0${sha(readFileSync(f))}`); } }; walk(dir, 0); return sha(all.join("\n")); };
   const sameFiles = (a: { path: string; sha256: string }[], b: { path: string; sha256: string }[]) => a.length === b.length && a.every((x, i) => x.path === b[i].path && x.sha256 === b[i].sha256);
 
-  function tools(k: any, run: XRun, ws: { mat: string; skill: string; out: string }, end: { done?: { entry: string; summary: string }; answer?: { answer: string; cites: string[]; updated: boolean; summary: string } }): AgentTool[] {
+  /** skill_run for one round of a run whose plan runs scripts (src/skillpkg/run.ts with the explainer's sandbox shape) */
+  function scriptTools(k: any, s: any, run: XRun, ws: Ws, plan: Plan | null, round: Round): AgentTool[] {
+    if (!plan?.run || !plan.status) return [];
+    const pk: SkillPackages = engine.deps.skillPackages, l = SCRIPT_LIMITS(), bin = join(ws.root, ".bin");
+    const creds = Object.fromEntries(plan.credentials.map((c) => [c, String(process.env[c] ?? "")]));
+    const browser = plan.browser && existsSync(join(bin, "chrome")) ? { shim: join(bin, "chrome"), dir: dirname(plan.browser) } : null;
+    // a path as the captain reads it: relative to the output folder, or named by its variable; any other long path shortened
+    const shortArg = (a: string) => { let x = String(a);
+      for (const [p, n] of [[ws.out + "/", ""], [ws.out, "."], [join(ws.root, "live") + "/", ""], [join(ws.root, "live"), "."], [ws.mat, "$MATERIALS_DIR"], [ws.skill, "$SKILL_DIR"], [engine.deps.dataDir, "<Studio data>"]] as [string, string][]) if (p && x.includes(p)) x = x.split(p).join(n);
+      x = x.replace(/(?:\/[^\s/]+){4,}/g, (m) => `…/${m.split("/").slice(-2).join("/")}`); return x.length > 48 ? x.slice(0, 47) + "…" : x; };
+    /** a call kept on its round, its line in the progress list, the room told */
+    const keep = (c: ScriptCall) => {
+      (round.scripts ??= []).push(c); if (round.scripts.length > 200) round.scripts.shift();
+      // the wall clock this call had (timeout_s lowers the configured one), and why a refused call was refused, as a code
+      const wallS = c.wallS ?? l.wallS, code = c.outcome !== "refused" ? null : /is not a script of/.test(c.refusal ?? "") ? "not-script" : /skill_run limit reached/.test(c.refusal ?? "") ? "count" : /output folder is over/.test(c.refusal ?? "") ? "full" : /^args:/.test(c.refusal ?? "") ? "args" : "other";
+      const line: ScriptLine = { script: c.script, args: clip(c.argv.map(shortArg).join(" "), 120), outcome: c.outcome ?? "fail", limit: c.limit ?? null, limits: { cpuS: l.cpuS, fileMB: l.fileMB, wallS, diskMB: 2 * OUT_CAP() / 1048576, calls: l.calls },
+        exit: c.exit, signal: c.signal, ms: c.ms, hosts: c.hosts, refused: c.refused, refusal: c.refusal ?? null, refusalCode: code, stderr: clip(c.stderr.slice(-600), 600) };
+      const span = (s: number) => s < 120 ? `${s} s` : `${Math.round(s / 60)} min`;
+      const short = { "not-script": "not a script of this skill", count: `the ${l.calls} calls of this round are used`, full: `the output folder is over ${OUT_CAP() / 1048576} MB`, args: "its arguments were not accepted", other: "Studio could not run it" } as Record<string, string>;
+      const sec = `${(c.ms / 1000).toFixed(1)} s`, how = c.outcome === "refused" ? `refused: ${short[code!]}` : c.limit === "cpu" ? `hit the CPU limit (${l.cpuS} s)` : c.limit === "file" ? `hit the file-size limit (${l.fileMB} MB)` : c.limit === "time" ? `hit the time limit (${span(wallS)})` : c.limit === "disk" ? `hit the disk limit (${2 * OUT_CAP() / 1048576} MB)` : c.signal ? `stopped by ${c.signal}` : `exit ${c.exit}`;
+      run.progress.push({ at: now(), text: clip(`${c.outcome === "refused" ? c.script : c.script.split("/").pop()} — ${how}${c.outcome === "refused" ? "" : ` · ${sec}`}${c.hosts.length ? ` · reached ${c.hosts.join(", ")}` : ""}${c.refused.length ? ` · refused ${c.refused.map((x) => x.host).join(", ")}` : ""}`, 300), script: line });
+      if (run.progress.length > 200) run.progress.shift(); write(k, read(k)); d.notify(k); };
+    const refusedCall = (a: any, why: string) => keep({ round: round.n, at: now(), script: clip(String(a?.script ?? "?").replace(/^\.\//, ""), 200), scriptSha256: "", argv: (Array.isArray(a?.args) ? a.args : []).slice(0, 64).map((x: unknown) => clip(x, 300)),
+      exit: null, ms: 0, timedOut: false, signal: null, stdout: "", stderr: "", hosts: [], refused: [], outcome: "refused", limit: null, refusal: clip(why, 300) });
+    // A call works in its own folder: out/ is renamed to live/ for the call and back after it. The sandbox's profile names live/
+    // only, and seatbelt checks paths, so a leftover of the call (one that double-forked away from every kill) can no longer
+    // write, link or swap anything in out/ once it is renamed back: what Studio reads and copies between calls is stable.
+    const live = join(ws.root, "live"), roundTmp = join(ws.root, ".tmp", `round-${round.n}`), budget = { calls: 0 };
+    const secrets = Object.values(creds).filter((v) => v.length >= 8);
+    const redact = (t: string) => secrets.reduce((x, v) => x.split(v).join("[redacted]"), String(t ?? ""));
+    const dirBytes = (dir: string): number => { let n = 0; const walk = (p: string, depth: number) => { if (depth > 12) return; let es: string[] = []; try { es = readdirSync(p); } catch { return; }
+      for (const e of es) { const f = join(p, e); let st; try { st = lstatSync(f); } catch { continue; } if (st.isDirectory()) walk(f, depth + 1); else n += st.size; } }; walk(dir, 0); return n; };
+    const describe = `Run one of the skill's own scripts in Studio's sandbox. script: its path inside the skill (e.g. scripts/render.py); args: its arguments, with paths relative to your output folder (the working folder) or under $MATERIALS_DIR, $SKILL_DIR or $OUT_DIR. It reads the materials, the skill and the system's runtimes, writes only the output folder and $TMPDIR, reaches public hosts through Studio's proxy. Limits per call: ${l.cpuS} s CPU, files up to ${l.fileMB} MB, ${l.wallS} s (timeout_s lowers it); at most ${l.calls} calls per round; output is cut to its last 64 KiB. No package installs.${browser ? " A headless browser: $CHROME_BIN." : ""}`;
+    const once = async (a: any) => {
+      const ctl = new AbortController(), runSig: AbortSignal = engine.abortOf(s.run).signal; let overDisk = false;
+      const callWall = Math.min(l.wallS, Math.max(5, Number(a?.timeout_s) || l.wallS)); // what skill_run gives this call (src/skillpkg/run.ts)
+      const onAbort = () => ctl.abort(); if (runSig.aborted) ctl.abort(); else runSig.addEventListener("abort", onAbort, { once: true });
+      // only skill_run: the skill's files are already read with skill_list / skill_read / skill_search
+      const t = skillTools({ skills: [{ id: run.skill.id, v: run.skill.v, sha256: run.skill.sha256, filesSha256: run.skill.filesSha256, dir: ws.skill, status: plan.status!, run: true }], packages: pk, budget, max: l.calls,
+        round: { cwd: live, writes: [live], tmp: roundTmp, dataDir: engine.deps.dataDir, protect: engine.deps.protectedRoots ?? [], egress: plan.egress, run: s.run.id, node: s.node.id, visit: round.n, signal: ctl.signal },
+        record: (r: SkillRunRecord) => {
+          const out = `${r.stdoutTail}\n${r.stderrTail}`;
+          const limit = overDisk ? "disk" : r.timedOut ? "time" : r.signal === "SIGXCPU" ? "cpu" : r.signal === "SIGXFSZ" || (r.exit !== 0 && /File too large|EFBIG|\[Errno 27\]/.test(out)) ? "file" : null;
+          keep({ round: round.n, at: now(), script: r.script, scriptSha256: r.scriptSha256, argv: r.argv.slice(0, 64).map((x) => clip(redact(x), 300)), exit: r.exit, ms: r.ms, timedOut: r.timedOut, signal: r.signal ?? null,
+            stdout: clip(redact(r.stdoutTail), 2000), stderr: clip(redact(r.stderrTail), 2000), hosts: r.egress.allowed.slice(0, 40), refused: r.egress.refused.slice(0, 40),
+            outcome: limit ? "limit" : r.exit === 0 && !r.signal ? "ok" : "fail", limit: limit as any, wallS: callWall }); },
+        run: { net: { hosts: [], anyHost: true, strict: false }, readOnly: [ws.mat, ...(browser ? [bin, browser.dir] : [])], path: browser ? [bin] : [], limits: { cpuS: l.cpuS, fileMB: l.fileMB, wallS: l.wallS }, browser: !!browser,
+          env: { ...creds, MATERIALS_DIR: ws.mat, OUT_DIR: live, ...(browser ? { CHROME_BIN: browser.shim, CHROME_PATH: browser.shim, PUPPETEER_EXECUTABLE_PATH: browser.shim } : {}) }, describe } }).find((x: any) => x.name === "skill_run") as any;
+      if (!t) throw new Error("skill_run is not available");
+      renameSync(ws.out, live);
+      // the output folder and the call's temp folder together stay under twice the output cap while it runs (checked again after)
+      const poll = setInterval(() => { if (dirBytes(live) + dirBytes(roundTmp) > 2 * OUT_CAP()) { overDisk = true; ctl.abort(); } }, 1000);
+      try { return await t.run({ ...(a ?? {}), skill: run.skill.id }); }
+      finally { clearInterval(poll); runSig.removeEventListener("abort", onAbort); sweepHolders([live, roundTmp]); renameSync(live, ws.out); }
+    };
+    const size = () => filesOf(ws.out).reduce((n, f) => n + f.bytes, 0);
+    let busy: Promise<unknown> = Promise.resolve();
+    return [{ name: "skill_run", description: describe, schema: { type: "object", properties: { script: { type: "string" }, args: { type: "array", items: { type: "string" } }, timeout_s: { type: "number" } }, required: ["script"] },
+      run: async (a: any) => { const full = `the output folder is over ${OUT_CAP() / 1048576} MB: remove what the page does not need before running another script`;
+        // one call at a time: the output folder is out of Studio's hands while a call runs
+        const go = busy.then(async () => {
+          if (size() > OUT_CAP()) { refusedCall(a, `the output folder is over ${OUT_CAP() / 1048576} MB`); return { error: full }; }
+          // a call refused before it ran (not a script of the package, the per-round count, bad args) is a line too
+          const before = round.scripts?.length ?? 0; let res: any;
+          try { res = await once(a); } catch (e: any) { if ((round.scripts?.length ?? 0) === before) refusedCall(a, String(e?.message ?? e)); throw e; }
+          res = { ...res, ...(typeof res?.stdout === "string" ? { stdout: redact(res.stdout) } : {}), ...(typeof res?.stderr === "string" ? { stderr: redact(res.stderr) } : {}) };
+          const n = size();
+          return n > OUT_CAP() ? { ...res, error: `the output folder is over ${OUT_CAP() / 1048576} MB (${Math.round(n / 1048576)} MB): remove what the page does not need` } : res; });
+        busy = go.catch(() => {}); return go; } } as AgentTool];
+  }
+  type Ws = { root: string; mat: string; skill: string; out: string };
+  function tools(k: any, run: XRun, ws: { mat: string; skill: string; out: string }, end: { done?: { entry: string; summary: string }; answer?: { answer: string; cites: string[]; updated: boolean; summary: string } }, extra: AgentTool[] = []): AgentTool[] {
     const ro = (dir: string, prefix: string) => folderTools(dir, () => {}, prefix).filter((t) => /_(list|read|search)$/.test(t.name));
     const size = () => filesOf(ws.out).reduce((n, f) => n + f.bytes, 0);
     // every write into the output folder counts against one cap (60 MB), the text tools too
     const out = folderTools(ws.out, () => {}, "out").map((t) => !/_(write|replace)$/.test(t.name) ? t : { ...t, run: (a: any) => { const add = Buffer.byteLength(String(a?.content ?? a?.new ?? ""));
       if (size() + add > OUT_CAP()) return { error: "the output folder is full (60 MB)" }; return t.run(a); } });
     const save = () => write(k, read(k));
-    return [...ro(ws.mat, "mat"), ...ro(ws.skill, "skill"), ...out,
+    return [...ro(ws.mat, "mat"), ...ro(ws.skill, "skill"), ...out, ...extra,
       { name: "out_write_base64", description: "Write a picture or a video into the output folder from base64 (.png .jpg .gif .webp .mp4 .webm).", schema: { type: "object", properties: { path: { type: "string" }, base64: { type: "string" } }, required: ["path", "base64"] },
         run: (a: any) => { const rel = String(a?.path ?? ""); if (!MEDIA[extname(rel).toLowerCase()]) return { error: "a picture or a video only: .png .jpg .gif .webp .mp4 .webm" };
           const b = Buffer.from(String(a?.base64 ?? ""), "base64"); if (!b.length) return { error: "base64 is empty" }; if (size() + b.length > OUT_CAP()) return { error: "the output folder is full (60 MB)" };
@@ -267,10 +438,15 @@ export function installExplainer(d: ExplainerDeps) {
               return { ok: true, note: "End your turn now." }; } }];
   }
 
-  const firstPrompt = (k: any, run: XRun, mats: { path: string; what: string }[], skillFiles: string[], subj: any, from: XVersion | null, sel: Selection | null) => [
+  /** the first message's line on the skill's scripts: which run, with what, and where things are */
+  const scriptLine = (plan: Plan | null, ws: Ws) => !plan ? "" : !plan.run ? `The skill's scripts do not run here: ${plan.why!.en}. Do not run or imitate them; say in your output what you could not do.`
+    : [`The skill's scripts run with skill_run (Studio's sandbox, ${plan.network ? "network through Studio's proxy" : "no network here"}): ${plan.scripts.filter((x) => x.lang !== "other").slice(0, 40).map((x) => `${x.path} (${x.lang})`).join(", ")}. Interpreters: ${plan.interpreters.join(", ")}.`,
+      `Folders, as a script sees them: the working folder is your output folder (give paths in it relative, or under $OUT_DIR: a call runs it under another path); the materials: ${ws.mat} ($MATERIALS_DIR); the skill: ${ws.skill} ($SKILL_DIR).${plan.browser ? " A headless browser: $CHROME_BIN." : " No headless browser here: a step that needs one cannot run."}${plan.credentials.length ? ` Credentials in the environment: ${plan.credentials.join(", ")}.` : ""}${plan.missing.length ? ` Missing here: ${plan.missing.join(", ")}.` : ""}`].join("\n");
+  const firstPrompt = (k: any, run: XRun, mats: { path: string; what: string }[], skillFiles: string[], subj: any, from: XVersion | null, sel: Selection | null, scripts = "") => [
     run.kind === "generate" ? "ROOM EXPLAIN" : "ROOM EXPLAIN ASK",
     `Room: ${k.id} · ${subj.kind} ${subj.url ?? subj.branch ?? ""} · head ${subj.head} · base ${subj.base}`,
     `Skill: ${run.skill.name} (${run.skill.id} v${run.skill.v}); its supporting files: ${skillFiles.length ? skillFiles.slice(0, 60).join(", ") : "(none)"}`,
+    ...(scripts ? [scripts] : []),
     "", "Materials (mat_list, mat_read, mat_search):", ...mats.map((m) => `- ${m.path}: ${m.what}`), "",
     run.kind === "generate" ? "Your output folder is empty. Explain this change the way the skill says, then call explain_done."
       : [`The current output (v${from?.n}, entry ${from?.entry}) is in your output folder, with any context it embeds: read it first.`, "",
@@ -287,7 +463,7 @@ export function installExplainer(d: ExplainerDeps) {
     run.kind === "ask" ? ["", "The captain's question:", "<question>", clip(run.question, 4000), "</question>"].join("\n") : ""].filter(Boolean).join("\n");
 
   /** one run: rounds until the skill says it is done, the captain stops it, the time limit passes, or it stalls */
-  async function loop(k: any, s: any, room: any, run: XRun, adm: any, ws: { root: string; mat: string; skill: string; out: string }, skillFiles: string[], from: XVersion | null) {
+  async function loop(k: any, s: any, room: any, run: XRun, adm: any, ws: Ws, skillFiles: string[], from: XVersion | null, plan: Plan | null) {
     const st = read(k), live = running.get(k.id)!, end: { done?: any; answer?: any } = {}, deadline = Date.parse(run.at) + run.limitMin * 60_000;
     let subj: any = { kind: k.kind, room: k.id, head: s.head, base: s.base }, stalled = 0, last = "";
     const save = () => write(k, st);
@@ -302,13 +478,13 @@ export function installExplainer(d: ExplainerDeps) {
         // each round is its own job with its own staffing receipt (the first was issued at admission)
         let receipt: unknown; try { receipt = n === 1 ? adm.admissionReceipt : adm.receipt(adm.rules); } catch (e: any) { Object.assign(run, { status: "failed", error: `the round could not be admitted: ${clip(e?.message ?? e, 300)}`, why: "admission" }); break; }
         const before = outSig(ws.out), round: Round = { n, job: null, status: "running", tools: 0, cost: null, at: now(), ended: null, error: null }; run.rounds.push(round); save(); d.notify(k);
-        const text = n === 1 ? firstPrompt(k, run, mats, skillFiles, subj, from, run.selection ?? null) : nextPrompt(run, n, last, filesOf(ws.out).map((f) => f.path));
+        const text = n === 1 ? firstPrompt(k, run, mats, skillFiles, subj, from, run.selection ?? null, scriptLine(plan, ws)) : nextPrompt(run, n, last, filesOf(ws.out).map((f) => f.path));
         const job: any = await engine.deps.agents.run({ kind: "review-room-explain", title: `${s.run.id} review room ${k.id} · ${run.skill.id} ${run.kind} ${run.n} · round ${n}`, system: adm.system, text,
-          tools: tools(k, run, ws, end), provider: adm.provider, ref: s.run.id, admissionReceipt: receipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal,
+          tools: tools(k, run, ws, end, scriptTools(k, s, run, ws, plan, round)), provider: adm.provider, ref: s.run.id, admissionReceipt: receipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal,
           owns: () => engine.owns(adm.x) && k.open() && !live.stop, ...(adm.held ? { auxOwner: adm.x } : {}), project: s.run.params?.project || null, rules: adm.rules,
           maxTools: ROUND_TOOLS(), timeoutMs: Math.max(5_000, Math.min(ROUND_MS(), left)), onStart: (id: string) => { live.job = id; round.job = id; save(); d.notify(k); },
           sandbox: { writes: [], reads: [], allow: [] },
-          record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, `room-${k.id}-x${run.n}`), header: { run: s.run.id, node: s.node.id, round: `room-${k.id}-x${run.n}`, head: s.head, base: s.base, card: k.id, subject: subj, explain: run.n, kind: run.kind, role: "review-room-explainer", skills: [`review-room-explainer@sha256:${sha(EXPLAINER_FRAME)}`, `${run.skill.id}@v${run.skill.v}@sha256:${run.skill.sha256}`], ...(n > 1 ? { attempt: n } : {}) } } }).catch((e: any) => { const j = live.job ? engine.deps.agents.jobs?.get(live.job) : null; return { id: j?.id ?? null, status: "failed", error: String(e?.message ?? e), tools: j?.tools ?? 0, cost: j?.cost ?? null }; });
+          record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, `room-${k.id}-x${run.n}`), header: { run: s.run.id, node: s.node.id, round: `room-${k.id}-x${run.n}`, head: s.head, base: s.base, card: k.id, subject: subj, explain: run.n, kind: run.kind, role: "review-room-explainer", skills: [`review-room-explainer@sha256:${sha(EXPLAINER_FRAME)}`, `${run.skill.id}@v${run.skill.v}@sha256:${run.skill.sha256}`], package: { filesSha256: run.skill.filesSha256, scripts: plan ? (plan.run ? plan.interpreters : "not run") : null }, ...(n > 1 ? { attempt: n } : {}) } } }).catch((e: any) => { const j = live.job ? engine.deps.agents.jobs?.get(live.job) : null; return { id: j?.id ?? null, status: "failed", error: String(e?.message ?? e), tools: j?.tools ?? 0, cost: j?.cost ?? null }; });
         live.job = null;
         Object.assign(round, { job: job.id ?? round.job, status: job.status, tools: job.tools ?? 0, cost: job.cost ?? null, ended: now(), error: job.error ?? null });
         run.cost = addCost(run.cost, job.cost); last = String(job.answer ?? "").trim();
@@ -327,7 +503,8 @@ export function installExplainer(d: ExplainerDeps) {
         // a generation is always a version; a follow-up is one only when it changed the output
         if (entry && files.some((f) => f.path === entry) && (run.kind === "generate" || changed)) {
           const n = (st.versions.at(-1)?.n ?? 0) + 1, vdir = join(dirOf(k), `v${n}`); rmSync(vdir, { recursive: true, force: true }); mkdirSync(vdir, { recursive: true });
-          for (const f of files) { mkdirSync(dirname(join(vdir, f.path)), { recursive: true }); cpSync(join(ws.out, f.path), join(vdir, f.path)); }
+          // regular files only, by content (never a link followed); no script can change out/ now (it is out of every profile)
+          for (const f of files) { const src = join(ws.out, f.path); if (!lstatSync(src).isFile()) continue; mkdirSync(dirname(join(vdir, f.path)), { recursive: true }); writeFileSync(join(vdir, f.path), readFileSync(src)); }
           st.versions.push({ n, run: run.n, skill: { id: run.skill.id, v: run.skill.v, name: run.skill.name }, at: now(), entry, kind: kindOf(entry), files, summary: run.kind === "generate" ? end.done.summary : end.answer.summary || clip(end.answer.answer, 160), from: from?.n ?? null });
           run.version = n;
         } else if (run.kind === "generate") Object.assign(run, { status: "failed", error: `the skill named ${entry || "no file"} as its output, and it is not there`, why: "entry", version: null });
@@ -335,9 +512,13 @@ export function installExplainer(d: ExplainerDeps) {
     } catch (e: any) { Object.assign(run, { status: "failed", error: clip(e?.message ?? e, 500), why: "error" }); }
     finally {
       run.ended = now(); running.delete(k.id); adm.held?.release(); save(); d.notify(k);
-      try { rmSync(ws.root, { recursive: true, force: true }); } catch {}
+      // the package's copy is read-only: made writable again so the workspace can go
+      // only the package's copy was made read-only (never chmod what a script could have linked); rmSync removes links, never follows them
+      try { if (existsSync(join(ws.root, "pkg"))) chmodTree(join(ws.root, "pkg"), true); sweepHolders([ws.root]); rmSync(ws.root, { recursive: true, force: true }); } catch {}
       try { engine.record(adm.x, "review-room-explain", { head: s.head, data: { schema: 1, card: k.id, subject: subj, explain: run.n, kind: run.kind, skill: { id: run.skill.id, v: run.skill.v, sha256: run.skill.sha256, filesSha256: run.skill.filesSha256, body: run.skill.bodySha, frame: sha(EXPLAINER_FRAME) },
-        provider: run.provider, model: run.model, effort: run.effort, confirm: run.confirm, ...(run.auto ? { consent: true } : {}), rounds: run.rounds.map((r) => ({ n: r.n, job: r.job, status: r.status, tools: r.tools, cost: r.cost })), status: run.status, stop: run.stop ?? null, error: run.error,
+        provider: run.provider, model: run.model, effort: run.effort, confirm: run.confirm, ...(run.auto ? { consent: true } : {}), rounds: run.rounds.map((r) => ({ n: r.n, job: r.job, status: r.status, tools: r.tools, cost: r.cost,
+          ...(r.scripts?.length ? { scripts: r.scripts.map((c) => ({ script: c.script, scriptSha256: c.scriptSha256, argv: c.argv, exit: c.exit, ms: c.ms, timedOut: c.timedOut, signal: c.signal, hosts: c.hosts, refused: c.refused, outcome: c.outcome ?? null, limit: c.limit ?? null, ...(c.refusal ? { refusal: c.refusal } : {}) })) } : {}) })),
+        scripts: plan ? { run: plan.run, interpreters: plan.interpreters, network: plan.network, credentials: plan.credentials, browser: !!plan.browser } : null, status: run.status, stop: run.stop ?? null, error: run.error,
         cost: run.cost, ms: Date.parse(run.ended) - Date.parse(run.at), limitMin: run.limitMin, from: run.from, version: run.version } } as any); } catch {}
     }
   }
@@ -367,6 +548,9 @@ export function installExplainer(d: ExplainerDeps) {
     const s = d.subjectOf(k); if (!s.run || !s.node) throw refuse("No Task hosts this room's paid rounds / 沒有任務能承載這間審查室的付費回合", "no_host");
     const { pin, body, dir: skillDir, files: skillFiles } = pinOf(skill);
     if (pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind) });
+    // what its scripts run with, as confirmed: read once here and used for the whole run (a change since the offer asks again)
+    const plan = planOf(pin);
+    if (planKey(planText(plan)) !== planKey(o0.scripts)) throw refuse("What the skill's scripts run with changed since you confirmed: confirm again / 確認之後腳本的執行條件變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind) });
     const seat = seatOf(pin);
     engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [seat]: { role: d.role, pins: texts(pin, body).map((t) => t.sha256), adaptive: true } };
     const tutor = d.tutorFor(k, s);
@@ -384,13 +568,21 @@ export function installExplainer(d: ExplainerDeps) {
       effort: tutor.pick.effort ?? null, confirm: o0.hash, limitMin: o0.limitMin, rounds: [], cost: null, error: null, progress: [], from: from?.n ?? null, version: null, ...(kind === "ask" ? { question, selection } : {}), ...(agreed ? { auto: true } : {}) };
     st.runs.push(run); if (st.runs.length > 500) st.runs.splice(0, st.runs.length - 500); write(k, st);
     // the run's workspace: the skill's supporting files (a read-only copy), the output folder (a follow-up's starts as its version)
-    const root = join(dirOf(k), "work", `run-${run.n}`), ws = { root, mat: join(root, "materials"), skill: join(root, "skill"), out: join(root, "out") };
-    rmSync(root, { recursive: true, force: true }); mkdirSync(ws.mat, { recursive: true }); mkdirSync(ws.skill, { recursive: true }); mkdirSync(ws.out, { recursive: true });
-    for (const f of skillFiles) { try { const src = join(skillDir, f); if (existsSync(src) && lstatSync(src).isFile()) { mkdirSync(dirname(join(ws.skill, f)), { recursive: true }); cpSync(src, join(ws.skill, f)); } } catch {} }
-    if (from) for (const f of from.files) { mkdirSync(dirname(join(ws.out, f.path)), { recursive: true }); cpSync(join(dirOf(k), `v${from.n}`, f.path), join(ws.out, f.path)); }
+    const root = join(dirOf(k), "work", `run-${run.n}`), ws: Ws = { root, mat: join(root, "materials"), skill: join(root, "skill"), out: join(root, "out") };
+    if (existsSync(join(root, "pkg"))) chmodTree(join(root, "pkg"), true); rmSync(root, { recursive: true, force: true }); mkdirSync(ws.mat, { recursive: true }); mkdirSync(ws.out, { recursive: true });
+    // the whole package as pinned: Studio's read-only copy, hashed again against both of the version's hashes (or refused)
+    const pk: SkillPackages | null = engine.deps.skillPackages ?? null;
+    if (pk) ws.skill = pk.roundCopy(pin.id, pin.v, join(root, "pkg"));
+    else { mkdirSync(ws.skill, { recursive: true }); for (const f of skillFiles) { try { const src = join(skillDir, f); if (existsSync(src) && lstatSync(src).isFile()) { mkdirSync(dirname(join(ws.skill, f)), { recursive: true }); cpSync(src, join(ws.skill, f)); } } catch {} } }
+    // a headless browser a script may start: a shim that runs it without its own inner sandbox (it cannot nest in the round's)
+    // and with a profile in the call's temp folder
+    if (plan?.run && plan.browser) { const bin = join(root, ".bin"); mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "chrome"), `#!/bin/sh\nexec '${plan.browser.replace(/'/g, `'\\''`)}' --no-sandbox --no-first-run --no-default-browser-check --user-data-dir="\${TMPDIR:-/tmp}/chrome-profile-$$" "$@"\n`, { mode: 0o755 }); }
+    if (from) for (const f of from.files) { mkdirSync(dirname(join(ws.out, f.path)), { recursive: true }); writeFileSync(join(ws.out, f.path), fileOf(k, from, f.path)); }
     running.set(k.id, { run: run.n, job: null, stop: null }); d.notify(k);
-    try { engine.record(adm.x, "review-room-explain-start", { head: s.head, data: { schema: 1, card: k.id, explain: run.n, kind: run.kind, skill: { id: pin.id, v: pin.v, sha256: pin.sha256 }, provider: run.provider, model: run.model, effort: run.effort, confirm: run.confirm, ...(run.auto ? { consent: true } : {}), limitMin: run.limitMin, from: run.from } } as any); } catch {}
-    void loop(k, s, room, run, adm, ws, skillFiles, from);
+    try { engine.record(adm.x, "review-room-explain-start", { head: s.head, data: { schema: 1, card: k.id, explain: run.n, kind: run.kind, skill: { id: pin.id, v: pin.v, sha256: pin.sha256, filesSha256: pin.filesSha256 }, provider: run.provider, model: run.model, effort: run.effort, confirm: run.confirm, ...(run.auto ? { consent: true } : {}), limitMin: run.limitMin, from: run.from,
+      scripts: plan ? { run: plan.run, interpreters: plan.interpreters, network: plan.network, credentials: plan.credentials, browser: !!plan.browser } : null } } as any); } catch {}
+    void loop(k, s, room, run, adm, ws, skillFiles, from, plan);
     } catch (e: any) {
       adm.held?.release(); running.delete(k.id);
       if (run) { Object.assign(run, { status: "failed", error: `the run could not start: ${clip(e?.message ?? e, 300)}`, why: "start", ended: now() }); try { write(k, st); } catch {} d.notify(k); }

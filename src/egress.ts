@@ -16,7 +16,8 @@ import { lookup } from "node:dns/promises";
 import { BROKER_PORTS } from "./egress-client";
 import { guardedLookup, isLoopbackAddress, localAddresses } from "./egress-guard";
 
-export type EgressMeta = { purpose?: "round" | "skill" | "prepare"; run?: string; node?: string; visit?: number; skill?: string; script?: string; strict?: boolean };
+export type EgressMeta = { purpose?: "round" | "skill" | "prepare"; run?: string; node?: string; visit?: number; skill?: string; script?: string; strict?: boolean;
+  /** any public host name (the explainer's skill scripts): only Studio's own code sets it, never a policy's host list */ anyHost?: boolean };
 export type EgressEvent = { at: string; host: string; port: number; allowed: boolean; method: string; round: string | null; why?: string; run?: string; node?: string; skill?: string; script?: string; purpose?: string };
 export class Egress {
   private server: Server | null = null;
@@ -40,10 +41,12 @@ export class Egress {
     this.localPolicies.set(token, {origins, blocked: new Set([4210, this.port, ...BROKER_PORTS, ...(options.blockedPorts ?? [])])});
   }
   close(token: string) { this.rounds.delete(token); this.metas.delete(token); this.localPolicies.delete(token); for (const [client, state] of this.connections) if (state.token === token) { client.destroy(); state.upstream?.destroy(); } }
-  /** A host is allowed for a round when it is on that round's list, or a subdomain of a "*.domain" entry. */
+  /** A host is allowed for a round when it is on that round's list, or a subdomain of a "*.domain" entry; a credential opened with
+   *  anyHost (a review room explainer's skill scripts, src/domain/review-explain.ts; never a policy list) allows any name. Either
+   *  way the resolved-address guard still refuses loopback, this host's own addresses, private, link-local and metadata addresses. */
   allowed(host: string, token: string | null): boolean {
     const list = token ? this.rounds.get(token) : null; if (!list) return false;
-    const h = host.toLowerCase(); return list.has(h) || [...list].some((x) => x.startsWith("*.") && (h === x.slice(2) || h.endsWith(x.slice(1))));
+    const h = host.toLowerCase(); return this.metas.get(token!)?.anyHost === true || list.has(h) || [...list].some((x) => x.startsWith("*.") && (h === x.slice(2) || h.endsWith(x.slice(1))));
   }
   status() { return { running: !!this.server, port: this.port, rounds: this.rounds.size }; }
   private record(host: string, port: number, allowed: boolean, method: string, round: string | null, why?: string, meta: EgressMeta = {}) {
