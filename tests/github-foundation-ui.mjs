@@ -23,7 +23,7 @@ try {
     const p = await context.newPage(); let errors = [];
     p.on("pageerror", e => errors.push(e.message));
     await p.addInitScript(({ language }) => { localStorage.setItem("crew.lang", language); localStorage.setItem("crew.chatOpen", "0"); localStorage.setItem("crew.graphView", "detail"); }, { language });
-    await p.goto(base + "/#/workflows/code-firstmate");
+    await p.goto(base + "/#/workflows/code-firstmate/advanced");
     await p.waitForSelector('svg.rt-graph');
     await p.evaluate(() => document.body.classList.add("chat-closed"));
     await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]");

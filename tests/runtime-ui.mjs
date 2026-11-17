@@ -50,7 +50,7 @@ try {
     await p.goto(`${base}/#/workflows`); await p.waitForSelector('[data-wf="code-firstmate"]');
     ok(await p.locator('[data-wf="code-firstmate"]').isVisible(), "Workflows lists code-firstmate");
     await p.evaluate(() => document.body.classList.add("chat-closed")); // the chat panel closed: the editor gets the room
-    await p.click('[data-wf="code-firstmate"]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]');
+    await p.click('[data-wf="code-firstmate"]'); await p.waitForSelector('[data-rail-wrap]'); await p.click('[data-rail-advanced]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]');
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]'); // editing happens in Detail view
     // spec carries eight checks since 21b3fe5 added firstmate/env-preflight (the round contract's environment preflight)
     ok(await p.getAttribute('[data-node="spec"]', "data-checks") === "8" && await p.locator('[data-edge="remote-ready→merge-card[ok]"]').getAttribute("data-edge-checks") === "7" && (await p.locator("[data-node]").count()) >= 25,
@@ -212,19 +212,19 @@ try {
     ok(await p.locator('[data-node="done"][data-state="passed"]').count() === 1 && await p.locator(`[data-node="${added}"][data-state="passed"]`).count() === 1, "the run reaches Merged through the v2 graph (the new hand-off node ran)", runId);
     await p.screenshot({ path: join(shots, "runtime-run-merged-1440-light.png"), fullPage: true });
     // the run as an overlay in the editor
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-overlay]'); await p.selectOption("[data-overlay]", runId); await p.waitForTimeout(800);
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector('[data-overlay]'); await p.selectOption("[data-overlay]", runId); await p.waitForTimeout(800);
     ok(await p.locator('[data-node="merge"][data-state="passed"]').count() === 1, "the editor overlays a run's node states on the graph");
     await ctx.close(); }
   // ---------- every page at 1440 and 390, light and dark ----------
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme }); const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
-    for (const [route, sel, name] of [["#/workflows", "[data-wf]", "workflows"], ["#/workflows/code-firstmate", "[data-node]", "editor"], ["#/runs", "[data-run]", "runs"], [`#/run/${runId}`, "[data-runview] [data-node]", "run"]]) {
+    for (const [route, sel, name] of [["#/workflows", "[data-wf]", "workflows"], ["#/workflows/code-firstmate/advanced", "[data-node]", "editor"], ["#/runs", "[data-run]", "runs"], [`#/run/${runId}`, "[data-runview] [data-node]", "run"]]) {
       await p.goto(`${base}/${route}`); await p.waitForSelector(sel, { timeout: 15000 }).catch(() => {});
       const sw = await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
       ok((await p.locator(sel).count()) > 0 && sw, `${name} renders at ${width} ${scheme} with no sideways scroll`);
       await p.screenshot({ path: join(shots, `runtime-${name}-${width}-${scheme}.png`) });
     }
-    if (width === 390) { await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector("[data-node]");
+    if (width === 390) { await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector("[data-node]");
       const c = await p.locator(".rt-canvas").boundingBox(); ok(c.width > 300 && c.width <= 390 && await p.$eval("#main",el=>el.scrollWidth<=el.clientWidth+1), "on a phone the canvas takes the width without clipped main content", JSON.stringify(c)); }
     await ctx.close();
   }

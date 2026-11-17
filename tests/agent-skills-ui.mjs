@@ -111,7 +111,7 @@ try {
     await importFolder(p, greedy); await wait(p, '[data-skill="greedy"]');
     ok(/allowed-tools/.test(await p.textContent('[data-skill="greedy"] [data-skill-ignored]')), "the Skills page says which frontmatter keys were ignored");
     // done 3: two skills on one node, ordered, saved as a new version whose diff names both in order
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]').catch(() => {});
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]').catch(() => {});
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="plan"]').catch(() => {});
     await selectNode(p, "plan");
     const v0def = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def; const v0 = v0def.version;
@@ -134,7 +134,7 @@ try {
     writeFileSync(join(alpha, "SKILL.md"), md("alpha", "Alpha: short sentences, one idea each", "ALPHA TWO"));
     await p.goto(`${base}/#/library/skills`); await importFolder(p, alpha);
     await p.waitForFunction(() => document.querySelector('[data-skill="alpha"] [data-skill-version]')?.textContent.trim() === "v2", null, { timeout: 8000 }).catch(() => {});
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="plan"]').catch(() => {});
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="plan"]').catch(() => {});
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await selectNode(p, "plan");
     ok(await wait(p, '[data-skill-newer="alpha"]') && /v2/.test(await p.textContent('[data-skill-newer="alpha"]')) && (await p.textContent('[data-node-skill="alpha"]')).includes("alpha@v1"), "re-import makes v2; the editor shows that v2 exists while the node keeps v1");
     await p.click('[data-skill-upgrade="alpha"]'); await p.click("[data-save]");
@@ -159,7 +159,7 @@ try {
     await importFolder(p, bigA); await wait(p, '[data-skill="big-a"]'); await importFolder(p, bigB); await wait(p, '[data-skill="big-b"]');
     ok(/^9 bytes$/.test((await p.textContent('[data-skill="delta"] [data-skill-size]')).trim()) && !/frontmatter/i.test(await p.textContent("main")) && (await p.textContent('[data-role-skill="code/worker"]').catch(() => "")).includes("not versioned"),
       "the Skills page's words: the size in bytes, 'not versioned' for a role with no version, no 'frontmatter'", await p.textContent('[data-skill="delta"] [data-skill-size]'));
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="plan"]').catch(() => {});
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="plan"]').catch(() => {});
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await selectNode(p, "plan");
     await turnOn(p, "delta"); await p.click("[data-save]"); await wait(p, '[data-diff-k="skills"]');
     writeFileSync(join(delta, "SKILL.md"), md("delta", "Delta: say what changed first", "DELTA TWO"));
@@ -172,7 +172,7 @@ try {
     ok(stepOk && (await p.textContent('[data-step-skills="spec"]')).includes("plain-writing@v1"), "the step shows name@v1 on the run page", stepOk ? await p.textContent('[data-step-skills="spec"]') : "no step");
     await p.evaluate(async (id) => fetch(`/api/wruns/${id}/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), runId);
     // the built-in library in the node panel (captain: "這裡沒有多個skill可以選"): every skill with its description and fit, the reviewer's suggestions first
-    await p.goto(`${base}/#/workflows/code-firstmate`); await revealEditorControl(p, '[data-editor="code-firstmate"] [data-view-toggle="detail"]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-view-toggle="detail"]').catch(() => {});
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await revealEditorControl(p, '[data-editor="code-firstmate"] [data-view-toggle="detail"]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-view-toggle="detail"]').catch(() => {});
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="review"]').catch(() => {});
     await selectNode(p, "review");
     const avail = await p.evaluate(() => { const rows = [...document.querySelectorAll('[data-node-skills="review"] [data-skill-avail]')];
@@ -254,7 +254,7 @@ try {
     await shot(p, "git", width, scheme);
     ok(/only https:\/\//.test(await p.textContent("[data-import-msg]")) && await noHScroll(p), `the Git URL tab refuses an http:// URL with its reason at ${tag}`);
     // the node panel
-    await p.goto(`${base}/#/workflows/code-firstmate`); await revealEditorControl(p, '[data-editor="code-firstmate"] [data-view-toggle="detail"]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-view-toggle="detail"]').catch(() => {});
+    await p.goto(`${base}/#/workflows/code-firstmate/advanced`); await revealEditorControl(p, '[data-editor="code-firstmate"] [data-view-toggle="detail"]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-view-toggle="detail"]').catch(() => {});
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"]').catch(() => {});
     if (!(await p.locator('[data-node="plan"]').count())) { await p.locator('[data-stage-node="plan"]').dispatchEvent("click").catch(() => {}); await p.waitForSelector('[data-node="plan"]').catch(() => {}); } // a phone starts with the stages collapsed
     await selectNode(p, "plan");
